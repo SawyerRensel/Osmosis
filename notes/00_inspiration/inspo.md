@@ -12,8 +12,6 @@
 
 *What triggered this idea? What problem are you trying to solve or what capability do you want to build?*
 
-[Describe the core motivation in 2-3 sentences. This is the "why" that will anchor the entire project.]
-
 What if I could combine the best of my favorite learning techniques (mind mapping, linked note taking, and spaced repetition) and their tools (Xmind, Obsidian, and Anki, respectively) into a unified learning system?  What if I could study a mind map using flashcard/cloze spaced repetition techniques?  
 
 I've found that taking notes via mind mapping with tools like Xmind has greatly improved how I capture knowledge, and it also helps me retain that knowledge more easily by tapping into my spatial memory.  However, Xmind encodes information in a closed format and doesn't support linking maps within maps, which is why I've transitioned to using Obsidian for taking notes.  However, Obsidian's existing mind map plugins are a far cry from the experience I'm used to with Xmind.  While Obsidian has multiple spaced repetition plugins, they are designed to use note(s) dedicated as flashcard(s).  What if my raw notes themselves could serve as flashcards in addition to dedicated flashcard notes that require more advanced configuration given the style of the card?  
@@ -41,6 +39,14 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 	- Or it does **progressive disclosure** — shows the top two levels and asks you to reconstruct the third.
 - Mind mapping has to support code blocks 
 - Support Cloze in code blocks? (or maybe a front/back approach)
+- This [Spaced Repetition plugin](https://github.com/st3v3nmw/obsidian-spaced-repetition) seems like the predominant spaced repetition plugin for Obsidian currently available.  I like it's clever ways to replicate different kinds of Anki cards and its customizability.
+- I like how [this new and upcoming spaced repetition plugn "Decks"](https://github.com/dscherdi/decks) generates cards from headings and tables, but it might not always be appropriate to convert notes into cards.  I also like the heatmap it shows. 
+- Need to have a way to filter what notes (Markdown files) are considered flashcards.  Maybe a combination of the following?  Need to have the tags be configurable by the user. 
+	- If note is in a folder/folders configured in Osmosis settings, all notes inside are candidates for cards.
+	- If note has frontmatter tag/tags configured in Osmosis settings, all notes inside are candidates for cards.
+	- If a component of a note has tag/tags configured in Osmosis settings, all notes inside are candidates for cards?  (so not all the content is considered a note), just a section/heading maybe?
+- Mind Map View is powered by Obsidian Bases?  Would that make sense?  I like using the Bases system because it handles large amounts of data very quickly.  You also get the benefit of visualizing/studying the same data in different views, toggleable properties, powerful view filters, grouping and sorting.  
+- 
 
 ### Potential Use Cases
 

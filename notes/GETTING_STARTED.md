@@ -167,9 +167,12 @@ Follow the workflow: Inspiration → Requirements → Planning → Development �
 
 ```
 my-project/
-├── CLAUDE.md                          # Instructions for Claude (this is key!)
+├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
+├── .obsidian/plugins/my-project/      # Build output goes here
+├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
+├── ref/                               # Example plugins and other references
 ├── src/                               # Source code
 │
 └── notes/                             # All project planning & tracking
@@ -202,7 +205,7 @@ my-project/
     └── 04_refinement/
         ├── testing_checklist.md       # All tests + validation
         ├── performance_notes.md       # Optimization notes
-        └── final_review.md            # Final validation
+        └── final_review.md            # Final validation, etc.
 ```
 
 **Key difference from the template**: Your project keeps all planning, progress, and decision-making in a `notes/` folder, with `CLAUDE.md` at the root to guide Claude throughout all phases. This keeps your source code (`src/`) clean and your development documentation organized separately.

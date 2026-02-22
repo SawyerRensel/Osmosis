@@ -21,18 +21,51 @@ This file guides Claude through Osmosis development, from planning through refin
 Osmosis/
 ├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
-├── src/                               # TypeScript source code
-│   └── [plugin code]
-├── vault/                             # Local Obsidian vault for testing
-│   └── .obsidian/plugins/Osmosis/     # Build output goes here
+├── .obsidian/plugins/Osmosis/         # Build output goes here
+├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
-├── notes/                             # Project planning & documentation
-│   ├── 00_inspiration/                # Initial concept & brainstorm
-│   ├── 01_requirements/               # Product requirements
-│   ├── 02_planning/                   # Architecture & implementation plan
-│   ├── 03_development/                # Development progress & logs
-│   └── 04_refinement/                 # Testing, performance, final review
-└── [build config files]               # package.json, tsconfig.json, eslint, etc.
+├── ref/                               # Example plugins and other references
+│   ├── anki                           # Anki's source code
+│   ├── decks                          # Up and coming flashcard Obsidian plugin using FSRS
+│   ├── obsidian-api                   # Type definitions for the latest Obsidian API.
+│   ├── obsidian-maps                  # Map layout for Obsidian Bases. Example for how to build a plugin for Obsidian Bases.
+│   ├── obsidian-map-view              # Map View including support for Obsidian Bases. Example for how to build a plugin for Obsidian Bases and use toggles/switches in Bases configuraiton menus
+│   ├── obsidian-sample-plugin         # Template for Obsidian community plugins with build configuration and development best practices. 
+│   ├── obsidian-spaced-repetition     # Most popular flashcard plugin for Obsidian 
+│   └── zensical-docs-site             # Example zensical docs site source code
+├── src/                               # Source code
+│
+└── notes/                             # All project planning & tracking
+    ├── GETTING_STARTED.md             # Phase overview & workflow
+    ├── OPTIMIZATION_GUIDE.md          # How to optimize for Claude
+    ├── CLAUDE_CONVERSATIONS.md        # Index of important Claude chats
+    ├── index.md                       # Quick reference (optional)
+    │
+    ├── 00_inspiration/
+    │   ├── inspo.md                   # Raw brainstorm + notes
+    │   ├── inspiration_phase_prompts.md
+    │   └── core_concept.md            # One-paragraph concept
+    │
+    ├── 01_requirements/
+    │   ├── prd.md                     # Complete PRD (main artifact)
+    │   ├── prd_template.md            # Blank template for reference
+    │   └── requirements_phase_prompts.md
+    │
+    ├── 02_planning/
+    │   ├── implementation_plan.md     # Architecture + tasks (main artifact)
+    │   ├── planning_phase_prompts.md
+    │   ├── technical_decisions.md     # Tech choice rationale
+    │   └── dependencies.md
+    │
+    ├── 03_development/
+    │   ├── phase_1_tasks.md           # Detailed spec for Phase 1
+    │   ├── phase_2_tasks.md           # Detailed spec for Phase 2
+    │   └── progress_log.md            # Track progress + deviations
+    │
+    └── 04_refinement/
+        ├── testing_checklist.md       # All tests + validation
+        ├── performance_notes.md       # Optimization notes
+        └── final_review.md            # Final validation, etc.
 ```
 
 ### Key Documents to Reference
@@ -43,6 +76,13 @@ Before helping with code, Claude should:
 2. **For Feature Questions**: Read `notes/01_requirements/prd.md`
 3. **For Context on What's Done**: Read `notes/03_development/progress_log.md`
 4. **For Testing/Quality Standards**: Read `notes/04_refinement/testing_checklist.md`
+
+### Key References
+
+- Xmind: [Website](https://xmind.com/), [Documentation](https://xmind.com/user-guide)
+- Anki: Local Repo (see "anki" in "Repository Structure"), [Website](https://apps.ankiweb.net/), [GitHub](https://github.com/ankitects/anki), [Documentation](https://docs.ankiweb.net/)
+- Obsidian: Local API Repo (see "obsidian-api " in "Repository Structure"), [Documentation](https://docs.obsidian.md/Home)
+- Zensical: [Website](https://zensical.org), Local Example Docs Site Repo (see "zensical-docs-site" in "Repository Structure"), [Documentation](https://zensical.org/docs/get-started/)
 
 ---
 
