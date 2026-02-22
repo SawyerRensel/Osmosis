@@ -97,6 +97,121 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 
 *What are the possible features or capabilities? Claude is great at "what could this include?" conversations. Capture those ideas here.*
 
+### Xmind Feature Parity Checklist
+
+*Go through each feature and mark: [x] must-have, [~] nice-to-have, or [N/A] not applicable for Osmosis. Leave [ ] for undecided.*
+
+#### Map Structures
+- [x] Mind Map (classic radial branching)
+- [x] Logic Chart
+- [x] Brace Map
+- [x] Org Chart
+- [x] Fishbone Diagram (cause-and-effect)
+- [ ] Timeline
+- [ ] Tree Chart
+- [ ] Tree Table (nested rectangles, subtopics horizontal)
+- [ ] Matrix
+
+#### Topic Types
+- [x] Central Topic (root node)
+- [x] Main Topic (first-level branches)
+- [x] Subtopic (deeper branches)
+- [x] Floating Topic (unconnected node placed anywhere)
+- [x] Summary Topic (generated from summary element)
+
+#### Topic Elements
+- [ ] Relationship lines (connect two related topics with customizable line style, color, arrow, text)
+- [ ] Boundary (visual frame around a group of topics to highlight/emphasize)
+- [ ] Summary (condense multiple topics into a summary annotation)
+- [ ] Notes (rich text attached to a topic — bold, italic, underline, lists)
+- [ ] Labels (text tags on topics for classification)
+- [ ] Markers/Icons (priority flags, progress indicators, task status icons)
+- [ ] Stickers/Illustrations (decorative images from a built-in library)
+- [ ] Images (insert custom images into topics)
+- [ ] Links (web URLs or internal file links attached to topics)
+- [ ] Audio notes (record audio attached to a topic)
+- [ ] Document attachments (attach files to topics)
+- [ ] LaTeX equations (render math/chemistry formulas in topics)
+- [ ] Numbering (automatic numbering styles for topics)
+- [ ] Task/To-do checkboxes (turn topics into trackable tasks)
+- [ ] Comments (collaborative annotations on nodes)
+
+#### Topic Editing
+- [ ] Add child topic (Tab)
+- [ ] Add sibling topic (Enter)
+- [ ] Drag-and-drop repositioning
+- [ ] Branch collapsing/expanding
+- [ ] Rich text formatting within topics (bold, italic, colors, etc.)
+- [ ] Topic shape customization
+
+#### Styling & Theming
+- [ ] Theme library (pre-built color schemes)
+- [ ] Smart Color Themes (auto-generated palettes)
+- [ ] Theme Editor (create custom themes)
+- [ ] Custom font selection
+- [ ] Layout/structure adjustment per branch
+- [ ] Topic shape styling (rounded, rectangle, etc.)
+- [ ] Branch line styling (curved, straight, etc.)
+- [ ] Legend (key explaining markers/icons used in the map)
+
+#### View Modes
+- [ ] Standard mind map view
+- [ ] Outliner mode (hierarchical list view, switchable to/from map)
+- [ ] Zen Mode (distraction-free full-screen editing)
+- [ ] Pitch Mode (auto-convert map to slide deck with transitions)
+
+#### Navigation & Filtering
+- [ ] Navigation panel
+- [ ] Filter by topic content
+- [ ] Filter by notes
+- [ ] Filter by markers/labels
+- [ ] Search within map
+- [ ] Navigate/jump to specific topic
+
+#### File & Export
+- [ ] Export to PNG
+- [ ] Export to SVG
+- [ ] Export to PDF
+- [ ] Export to Markdown
+- [ ] Export to Word
+- [ ] Export to Excel
+- [ ] Export to PowerPoint
+- [ ] Export to OPML
+- [ ] Export to TextBundle
+- [ ] Import from Markdown
+- [ ] Import from OPML
+- [ ] Import from FreeMind
+- [ ] Import from MindManager
+- [ ] Multi-sheet files (multiple maps in one file)
+- [ ] Map Shot (capture/screenshot of map region)
+- [ ] Batch export
+- [ ] Password protection
+
+#### Collaboration
+- [ ] Share via link
+- [ ] Real-time co-editing
+- [ ] User avatars/cursors showing active editors
+- [ ] View-following (follow another user's view)
+- [ ] Node-level comments
+- [ ] Task assignment to team members
+- [ ] Deadline/priority assignment
+- [ ] Version history
+
+#### AI Features
+- [ ] Text/URL/PDF to mind map generation
+- [ ] AI brainstorming / idea expansion
+- [ ] AI-driven map reorganization/summarization
+- [ ] AI content refinement
+- [ ] AI language translation
+
+#### Platform & Performance
+- [ ] Desktop (Windows, macOS, Linux)
+- [ ] Mobile (iOS, Android)
+- [ ] Web version
+- [ ] Offline functionality
+- [ ] Cloud sync across devices
+- [ ] Keyboard shortcuts throughout
+
 ### Must-Have Features
 - 
 - 
