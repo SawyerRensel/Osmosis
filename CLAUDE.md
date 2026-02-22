@@ -27,6 +27,7 @@ Osmosis/
 ├── ref/                               # Example plugins and other references
 │   ├── anki                           # Anki's source code
 │   ├── decks                          # Up and coming flashcard Obsidian plugin using FSRS
+│   ├── markmap                        # Typescript library to build mindmaps with plain text
 │   ├── obsidian-api                   # Type definitions for the latest Obsidian API.
 │   ├── obsidian-maps                  # Map layout for Obsidian Bases. Example for how to build a plugin for Obsidian Bases.
 │   ├── obsidian-map-view              # Map View including support for Obsidian Bases. Example for how to build a plugin for Obsidian Bases and use toggles/switches in Bases configuraiton menus

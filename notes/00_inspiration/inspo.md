@@ -46,22 +46,34 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 	- If note has frontmatter tag/tags configured in Osmosis settings, all notes inside are candidates for cards.
 	- If a component of a note has tag/tags configured in Osmosis settings, all notes inside are candidates for cards?  (so not all the content is considered a note), just a section/heading maybe?
 - Mind Map View is powered by Obsidian Bases?  Would that make sense?  I like using the Bases system because it handles large amounts of data very quickly.  You also get the benefit of visualizing/studying the same data in different views, toggleable properties, powerful view filters, grouping and sorting.  
-- 
+- [obsidian-mind-map](https://github.com/lynchjames/obsidian-mind-map) is an existing implementation of creating a mind map from a Markdown note, but it's very "bare bones" and has little configuration options. 
+- Perhaps we could use (or at least start from) [Markmap](https://github.com/markmap/markmap) to create our Mind Map View?
+- [Minder](https://github.com/phase1geo/Minder) is probably the best open-source alternative to Xmind.  Still not as feature-rich and robust, but not bad.
+- Osmosis needs to work on Desktop and Mobile
+- Osmosis Mind Map View needs to be *fast* and render/update quickly.  
+- I want to be able to take notes either in classic Obsidian fashion but also via the Mind Map View like a classic experience in any mind map software. 
+	- Not just a mind map viewer, it's also an editor.  Editing the mind map writes the content to a markdown note.  
+- Mind Map View supports showing mind maps within mind maps, like how you can link/embed an Obsidian Note into another with `![[]]` or `![]()`.  This would be a novel and powerful thing I've never seen done before.  I really want to make this work.  
+	- For example, say I have three notes.  `Animals.md`, `Cats.md`, and `Dogs.md`.  `Animals.md` has some of its own notes and also embedded links (`![]()`) to both `Cats.md` and `Dogs.md`.  Both of these latter notes contain headings and bulleted lists of all the different branches/breeds of their respective kinds.  When I view `Animals.md`, It shows it's own notes as nodes and also shows the `Cats.md` mind map as its own branch and `Dogs.md` as its own branch.
+- When in study/flashcard mode and using the mind map, the flashcard mode drives the visibility of nodes and/or parts of nodes (e.g. cloze) without editing the actual note content.
+- How to store spaced repetition data?  Could do a centralized JSON.  I'm also a big fan of storing metadata in frontmatter.  I wonder if we could store the spaced repetition metadata in frontmatter of a given note, which would allow the user to easily edit, for example, the next time a card is shown? 
 
 ### Potential Use Cases
 
-- Learning a new programming language (e.g. from CodeCademy)
-- 
+- Learning any academic subject (e.g. a new programming language, a spoken language, biology, history, chemistry, math, etc.)
+- Taking notes from a self-help book and remembering key takeaways (e.g. *Atomic Habits*)
+- Remembering birthdays and recent events of friends and family
+- Quickly creating flashcards from existing notes or parts of notes to easily remember information there (even something as simple as a grocery list in a Daily Note)
 
 ### Open Questions
 
-- 
-- 
+- Is it possible to build an entire mind map viewer/editor in Obsidian?  or would this be trying to fit a jet engine inside a Toyota Prius?
+- Does it make sense to "power" the mind map viewer/editor via Obsidian Bases?  I don't want to be constrained by that system if it limits our ability to achieve feature parity with Xmind. 
 
 ### Concerns or Constraints
 
-- 
-- 
+- Must work on desktop and mobile
+- Must be *fast*.  A tool is useless if it creates friction due to lag.
 
 ---
 
