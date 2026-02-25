@@ -79,17 +79,89 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 
 ## Claude Brainstorm Session
 
-*Paste relevant excerpts from your initial Claude conversation here, or note key insights Claude provided.*
+*Recorded from initial Claude Code ideation session, 2026-02-24.*
 
 ### Conversation Summary
-[What did Claude help clarify? What insights shifted your thinking?]
+
+Claude helped clarify several foundational decisions by asking probing questions about scope priority, rendering technology, data storage, and mobile importance. The conversation covered the mind map engine, rendering approach, map structures, study modes, markdown-to-map mapping, Xmind feature audit, and spaced repetition data storage.
 
 ### Key Takeaways
-- 
-- 
+
+#### Core Philosophy: Unified System
+- Notes, mind maps, and flashcards are three views of the *same knowledge* — not separate workflows.  Author once, study in multiple modes.
+- You cannot build one pillar in isolation; they are interdependent.  The thinnest vertical slice that demonstrates the concept: a single markdown note with headings and highlights renders as a mind map, and you can enter study mode where nodes get hidden for recall.
+
+#### Mind Map Engine Decision: Custom Engine
+- Markmap is a rendering library only (markdown → SVG). It has no editing, no node interaction, no animation for study mode. Bolting everything onto it would be harder than building custom.
+- **Decision**: Build a custom mind map engine, potentially published as a separate repo/package.
+- Architecture inspired by Markwhen Parser: **fast parser → intermediate representation → swappable views** (mind map, timeline, study mode all consume the same tree model).
+
+#### Rendering Approach: SVG + foreignObject Hybrid
+- **SVG** handles the map skeleton: lines, curves, layout. Fast, scalable, exportable.
+- **`<foreignObject>`** inside SVG nodes embeds full HTML/CSS for node content: markdown rendering, code blocks, LaTeX, images, footnote tooltips.
+- This gives us the best of both worlds: SVG's layout/export strengths + HTML's rich content rendering.
+- **Risk**: `<foreignObject>` has historically had quirks on mobile WebViews. Needs early prototyping on iOS/Android Obsidian to validate. Modern Obsidian mobile should be fine.
+- CSS theming applies to both structure and content. Export to SVG/PNG/PDF comes nearly for free.
+
+#### Map Structures: Mind Map + Timeline
+- Decided on two structures for v1: **Mind Map** and **Timeline**.
+- Mind Map has three toggles:
+  1. Branch direction: left/right vs. up/down
+  2. Node placement: both sides vs. one side
+  3. Flip side toggle
+- All structures share the same underlying tree data — the difference is purely the **layout algorithm** (how x,y coordinates are assigned to nodes). Swappable layout strategies plug into the same rendering engine.
+- Abandoned: Logic Chart, Brace Map, Org Chart, Fishbone (can be added later since they're just layout algorithms on the same data).
+
+#### Markdown ↔ Mind Map Node Mapping
+- Node type is driven by markdown syntax with a 1:1 correspondence:
+  - `#` prefix → heading node
+  - `-` prefix → bulleted list node
+  - `1.` prefix → ordered list node
+  - No prefix → paragraph node
+- "Source mode" toggle in the mind map (like Obsidian's reading/source toggle) where the editing experience matches markdown exactly.
+- Split view possible: map on one side, markdown on the other, with live sync between them.
+
+#### Bidirectional Sync Model
+- Obsidian auto-saves in near-realtime, which handles file-level persistence.
+- The real challenge is the **parsing loop**: user edits markdown → re-parse → update map (and vice versa). Needs to be fast and not cause cursor jumps or flicker.
+- Solution: **shared in-memory model** that both views read/write to, with the markdown file as the persistence layer.
+- Inspired by Markwhen Parser's approach:
+  - **Incremental parsing**: track changed ranges, only re-parse affected sections (not the entire file).
+  - **Range tracking**: every AST node knows its character position in the source. This enables cursor position sync between markdown editor and mind map.
+  - **LRU caching**: cache parsed results so repeated operations (switching views, etc.) are near-instant.
+  - **Early-exit optimizations**: skip expensive parsing for lines that clearly aren't relevant (e.g., Markwhen skips lines without `:` — we'd skip lines without heading/bullet/number prefixes).
+
+#### Study Mode: Context-Driven UX
+- **Spatial study** when launching from Mind Map View: fill in blanks on the tree, recall hidden nodes in-place.
+- **Sequential study** when launching from Obsidian editor: classic Anki-style card-by-card flow.
+- Same FSRS scheduling engine underneath, different UX.
+
+#### Footnote Tooltips (New Idea)
+- Leverage markdown footnotes (`[^1]`) so that hovering or clicking a node in Mind Map View shows a popup with the footnote content.
+- Allows adding context to a node without cluttering the visible map.
+- Zero new syntax — uses standard markdown footnotes.
+
+#### Data Storage: Hybrid Approach
+- **Frontmatter** for note-level metadata: `sr-enabled: true`, deck tags, etc.
+- **Centralized data store** (e.g., `.osmosis/` folder or single JSON file) for per-card scheduling state, keyed by stable card identifiers (e.g., `noteId:heading:clozeIndex`).
+- Keeps notes clean while making SR data manageable for notes with many cards.
+
+#### Scope Decisions: What We Abandoned
+- **Floating Topics**: No natural markdown representation. Removed from scope.
+- **Relationship Lines** (custom cross-connections between non-parent-child nodes): Moved to nice-to-have/backburner. No natural markdown representation and adds significant complexity to the data model.
+- **Obsidian Bases for mind map rendering**: Cautious — Bases is optimized for tabular/structured data, not tree/graph rendering. Could constrain the interaction model. Keep as an option, not a foundation.
+
+#### Embedded/Transclusion Mind Maps
+- Rendering `![[linked-note]]` as a sub-branch in the parent map is a must-have.
+- Needs: cycle detection (A embeds B embeds A), lazy-loading of collapsed branches for performance, and clear UX for editing nodes that belong to embedded files (edits write to the embedded file).
+- Goal: embed 100 notes together with no perceptible lag.
+
+#### Navigation Sync
+- The Obsidian note itself serves as the "navigation panel" — cursor position in the note syncs to selected node in the map, and vice versa. This sync can be toggled on/off.
 
 ### Refined Understanding
-[Based on the conversation, what's your updated understanding of the problem or opportunity?]
+
+Osmosis is a custom mind map engine + spaced repetition system built as an Obsidian plugin.  The core insight is that markdown structure *is* the mind map — headings, bullets, and lists map directly to nodes.  The same content can be studied spatially (in the map) or sequentially (in the editor).  The engine needs to be fast enough to handle large transclusion trees (100+ embedded notes) and support incremental parsing for real-time bidirectional sync.  The rendering approach (SVG + foreignObject) gives us rich content in nodes while keeping the map exportable and performant.
 
 ---
 
@@ -102,127 +174,157 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 *Go through each feature and mark: [x] must-have, [~] nice-to-have, or [N/A] not applicable for Osmosis. Leave [ ] for undecided.*
 
 #### Map Structures
-- [x] Mind Map (classic radial branching)
-- [x] Logic Chart
-- [x] Brace Map
-- [x] Org Chart
-- [x] Fishbone Diagram (cause-and-effect)
-- [ ] Timeline
-- [ ] Tree Chart
-- [ ] Tree Table (nested rectangles, subtopics horizontal)
-- [ ] Matrix
+- [x] Mind Map (classic radial branching) — with three toggles: branch direction (L/R vs U/D), node placement (both sides vs one side), flip side
+- [~] Logic Chart — future: just a layout algorithm swap on the same tree data
+- [~] Brace Map — future: just a layout algorithm swap on the same tree data
+- [~] Org Chart — future: just a layout algorithm swap on the same tree data
+- [~] Fishbone Diagram (cause-and-effect) — future: just a layout algorithm swap on the same tree data
+- [x] Timeline — v1 alongside Mind Map
+- [N/A] Tree Chart
+- [N/A] Tree Table (nested rectangles, subtopics horizontal)
+- [N/A] Matrix
 
 #### Topic Types
 - [x] Central Topic (root node)
 - [x] Main Topic (first-level branches)
 - [x] Subtopic (deeper branches)
-- [x] Floating Topic (unconnected node placed anywhere)
+- [N/A] Floating Topic (unconnected node placed anywhere) — abandoned, no natural markdown representation
 - [x] Summary Topic (generated from summary element)
 
 #### Topic Elements
-- [ ] Relationship lines (connect two related topics with customizable line style, color, arrow, text)
-- [ ] Boundary (visual frame around a group of topics to highlight/emphasize)
-- [ ] Summary (condense multiple topics into a summary annotation)
-- [ ] Notes (rich text attached to a topic — bold, italic, underline, lists)
-- [ ] Labels (text tags on topics for classification)
-- [ ] Markers/Icons (priority flags, progress indicators, task status icons)
-- [ ] Stickers/Illustrations (decorative images from a built-in library)
-- [ ] Images (insert custom images into topics)
-- [ ] Links (web URLs or internal file links attached to topics)
-- [ ] Audio notes (record audio attached to a topic)
-- [ ] Document attachments (attach files to topics)
-- [ ] LaTeX equations (render math/chemistry formulas in topics)
-- [ ] Numbering (automatic numbering styles for topics)
-- [ ] Task/To-do checkboxes (turn topics into trackable tasks)
-- [ ] Comments (collaborative annotations on nodes)
+- [~] Relationship lines (connect two related topics with customizable line style, color, arrow, text) — backburner, no natural markdown representation
+- [x] Boundary (visual frame around a group of topics to highlight/emphasize)
+- [x] Summary (condense multiple topics into a summary annotation)
+  - Achieved by an "Abstract" Obsidian callout?
+- [x] Notes (rich text attached to a topic — bold, italic, underline, lists)
+- [x] Labels (text tags on topics for classification)
+  - Achieved by Obsidian tags
+- [N/A] Markers/Icons (priority flags, progress indicators, task status icons)
+- [N/A] Stickers/Illustrations (decorative images from a built-in library)
+- [x] Images (insert custom images into topics)
+- [x] Links (web URLs or internal file links attached to topics)
+- [x] Audio notes (record audio attached to a topic)
+- [x] Document attachments (attach files to topics)
+- [x] LaTeX equations (render math/chemistry formulas in topics)
+- [x] Numbering (automatic numbering styles for topics)
+- [x] Task/To-do checkboxes (turn topics into trackable tasks)
+- [~] Comments (collaborative annotations on nodes)
+  - Achieved via Obsidian quotes ("> Lorem ipsum")?
 
 #### Topic Editing
-- [ ] Add child topic (Tab)
-- [ ] Add sibling topic (Enter)
-- [ ] Drag-and-drop repositioning
-- [ ] Branch collapsing/expanding
-- [ ] Rich text formatting within topics (bold, italic, colors, etc.)
-- [ ] Topic shape customization
+- [x] Add child topic (Tab)
+- [x] Add sibling topic (Enter)
+- [x] Drag-and-drop repositioning
+- [x] Multi topic selection, formatting, repositioning, etc.
+- [x] Branch collapsing/expanding
+- [x] Rich text formatting within topics (bold, italic, colors, etc.)
+- [x] Topic shape customization
 
 #### Styling & Theming
-- [ ] Theme library (pre-built color schemes)
-- [ ] Smart Color Themes (auto-generated palettes)
-- [ ] Theme Editor (create custom themes)
-- [ ] Custom font selection
-- [ ] Layout/structure adjustment per branch
-- [ ] Topic shape styling (rounded, rectangle, etc.)
-- [ ] Branch line styling (curved, straight, etc.)
-- [ ] Legend (key explaining markers/icons used in the map)
+- [x] Theme library (pre-built color schemes)
+  - Use https://github.com/mbadolato/iTerm2-Color-Schemes
+- [x] Smart Color Themes (auto-generated palettes) 
+- [~] Theme Editor (create custom themes)
+- [~] Custom font selection
+- [x] Layout/structure adjustment per branch
+- [x] Topic shape styling (rounded, rectangle, etc.)
+- [x] Branch line styling (curved, straight, etc.)
+- [N/A] Legend (key explaining markers/icons used in the map)
 
 #### View Modes
-- [ ] Standard mind map view
-- [ ] Outliner mode (hierarchical list view, switchable to/from map)
-- [ ] Zen Mode (distraction-free full-screen editing)
-- [ ] Pitch Mode (auto-convert map to slide deck with transitions)
+- [x] Standard mind map view
+- [N/A] Outliner mode (hierarchical list view, switchable to/from map)
+  - This is achieved naturally by an Obsidian Note
+- [x] Zen Mode (distraction-free full-screen editing)
+- [N/A] Pitch Mode (auto-convert map to slide deck with transitions)
 
 #### Navigation & Filtering
-- [ ] Navigation panel
-- [ ] Filter by topic content
-- [ ] Filter by notes
-- [ ] Filter by markers/labels
-- [ ] Search within map
-- [ ] Navigate/jump to specific topic
+- [x] Navigation panel
+  - Could use the Obsidian Note itself to accomplish this by "syncing" Note with Mind Map and vis versa depending on where the mouse cursor is/what node is selected.  This sync could be toggled on and off.
+- [~] Filter by topic content
+- [~] Filter by notes
+- [N/A] Filter by markers/labels
+- [x] Search within map
+- [x] Navigate/jump to specific topic
 
 #### File & Export
-- [ ] Export to PNG
-- [ ] Export to SVG
-- [ ] Export to PDF
-- [ ] Export to Markdown
-- [ ] Export to Word
-- [ ] Export to Excel
-- [ ] Export to PowerPoint
-- [ ] Export to OPML
-- [ ] Export to TextBundle
-- [ ] Import from Markdown
-- [ ] Import from OPML
-- [ ] Import from FreeMind
-- [ ] Import from MindManager
-- [ ] Multi-sheet files (multiple maps in one file)
-- [ ] Map Shot (capture/screenshot of map region)
-- [ ] Batch export
-- [ ] Password protection
+- [x] Export to PNG
+- [x] Export to SVG
+- [x] Export to PDF
+- [N/A] Export to Markdown
+  - It's already stored as a Markdown file
+- [N/A] Export to Word
+- [N/A] Export to Excel
+- [N/A] Export to PowerPoint
+- [N/A] Export to OPML
+- [N/A] Export to TextBundle
+- [N/A] Import from Markdown
+- [N/A] Import from OPML
+- [N/A] Import from FreeMind
+- [N/A] Import from MindManager
+- [x] Multi-sheet files (multiple maps in one file)
+  - Yes, if this refers to linking notes within notes
+- [x] Map Shot (capture/screenshot of map region)
+  - I call this a "Mini Map"
+- [N/A] Batch export
+- [N/A] Password protection
 
 #### Collaboration
-- [ ] Share via link
-- [ ] Real-time co-editing
-- [ ] User avatars/cursors showing active editors
-- [ ] View-following (follow another user's view)
-- [ ] Node-level comments
-- [ ] Task assignment to team members
-- [ ] Deadline/priority assignment
-- [ ] Version history
+- [N/A] Share via link
+- [N/A] Real-time co-editing
+- [N/A] User avatars/cursors showing active editors
+- [N/A] View-following (follow another user's view)
+- [N/A] Node-level comments
+- [N/A] Task assignment to team members
+- [N/A] Deadline/priority assignment
+- [N/A] Version history
 
 #### AI Features
-- [ ] Text/URL/PDF to mind map generation
-- [ ] AI brainstorming / idea expansion
-- [ ] AI-driven map reorganization/summarization
-- [ ] AI content refinement
-- [ ] AI language translation
+- [N/A] Text/URL/PDF to mind map generation
+- [N/A] AI brainstorming / idea expansion
+- [N/A] AI-driven map reorganization/summarization
+- [N/A] AI content refinement
+- [N/A] AI language translation
 
 #### Platform & Performance
-- [ ] Desktop (Windows, macOS, Linux)
-- [ ] Mobile (iOS, Android)
-- [ ] Web version
-- [ ] Offline functionality
-- [ ] Cloud sync across devices
-- [ ] Keyboard shortcuts throughout
+- [x] Desktop (Windows, macOS, Linux)
+- [x] Mobile (iOS, Android)
+- [N/A] Web version
+- [x] Offline functionality
+- [N/A] Cloud sync across devices
+- [x] Keyboard shortcuts throughout
+
+### Additional Feature Ideas (from brainstorm session)
+- **Footnote tooltips**: Hover/click a node in Mind Map View to see a popup with footnote content (`[^1]`). Adds context without cluttering the visible map. Uses standard markdown footnotes — zero new syntax.
+- **Source mode toggle**: Switch between visual mind map and raw markdown within the mind map view, like Obsidian's reading/source toggle.
+- **Split view**: Map on one side, markdown on the other, with live bidirectional sync.
+- **Embedded/transclusion mind maps**: `![[linked-note]]` renders as a sub-branch. Recursive, with cycle detection and lazy-loading.
 
 ### Must-Have Features
-- 
-- 
+- Custom mind map engine (SVG + foreignObject hybrid rendering)
+- Mind Map view (with direction/side toggles) and Timeline view
+- Bidirectional markdown ↔ mind map sync with incremental parsing
+- Embedded/transclusion mind maps (`![[]]` renders linked notes as sub-branches)
+- Spaced repetition with FSRS scheduling
+- Zero-effort card generation (headings, highlights, bold → cards)
+- Spatial study mode (in mind map) + sequential study mode (in editor)
+- Desktop and mobile as first-class citizens
+- Footnote tooltips in mind map view
 
 ### Nice-to-Have Features
-- 
-- 
+- Relationship lines (custom cross-connections)
+- Additional map structures (Logic Chart, Brace Map, Org Chart, Fishbone)
+- Theme editor for custom themes
+- Custom font selection
+- Filter by topic content / notes
+- Comments via Obsidian quotes
+- Spaced repetition heatmap
 
 ### Future Possibilities
-- 
-- 
+- AI-assisted mind map generation
+- Collaborative editing (if Obsidian adds native support)
+- Additional layout algorithms as the engine matures
+- Plugin API for third-party layout strategies
 
 ---
 
@@ -230,8 +332,14 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 
 *Initial ideas about tech stack, language, or platforms. These are rough and will be refined in Planning phase.*
 
-- 
-- 
+- **Language**: TypeScript (strict mode), consistent with Obsidian plugin ecosystem
+- **Rendering**: SVG for map structure (lines, curves, layout) + `<foreignObject>` for node content (HTML/CSS — enables markdown rendering, code blocks, LaTeX, images)
+- **Parser architecture**: Inspired by Markwhen Parser — fast parser → intermediate tree representation → swappable view consumers. Incremental parsing for real-time sync, range tracking for cursor sync, LRU caching for performance.
+- **Spaced repetition algorithm**: FSRS (Free Spaced Repetition Scheduler) — open-source, well-documented, actively maintained
+- **Mind map engine**: Custom-built, potentially published as a separate package/repo. Layout algorithms are swappable strategies that plug into the same rendering engine.
+- **Build**: Obsidian plugin standard (esbuild via obsidian-sample-plugin template)
+- **Linting**: ESLint with `eslint-plugin-obsidianmd`
+- **Reference repos in `/ref/`**: Markwhen Parser (parser architecture), Markwhen Timeline (timeline view), Markmap (mind map rendering inspiration), obsidian-spaced-repetition, Decks, obsidian-sample-plugin, Anki source, Minder
 
 ---
 
