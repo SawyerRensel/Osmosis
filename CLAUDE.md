@@ -75,7 +75,7 @@ Before helping with code, Claude should:
 
 1. **For Architecture Questions**: Read `notes/02_planning/implementation_plan.md` and `notes/02_planning/technical_decisions.md`
 2. **For Feature Questions**: Read `notes/01_requirements/prd.md`
-3. **For Context on What's Done**: Read `notes/03_development/progress_log.md`
+3. **For Context on What's Done**: Run `bd ready` and `bd list --status=in_progress` (Beads is the source of truth for task state)
 4. **For Testing/Quality Standards**: Read `notes/04_refinement/testing_checklist.md`
 
 ### Key References
@@ -410,14 +410,18 @@ TESTING:
 What am I missing?
 ```
 
-### Step 5: Update Progress Log
+### Step 5: Update Beads
 
-Update `notes/03_development/progress_log.md`:
-- Feature name
-- Completion date
-- Acceptance criteria met? (Y/N)
-- Notes (anything that took longer or was tricky?)
-- Blockers or follow-up tasks?
+```bash
+bd close <id>                        # Mark issue complete
+bd close <id> --reason="explanation" # Close with context
+```
+
+For follow-up tasks discovered during implementation, create new issues before closing the current one:
+```bash
+bd create --title="Follow-up task" --type=task --priority=2
+bd dep add <new-id> <blocking-id>    # If there are dependencies
+```
 
 ---
 
@@ -591,12 +595,9 @@ npm run build     # Build plugin
 # Test in Obsidian vault
 ```
 
-**Step 6**: Update progress log
-```markdown
-## [Feature Name]
-- Completed: YYYY-MM-DD
-- Acceptance Criteria: [All met? Y/N]
-- Notes: [Anything tricky? Blockers?]
+**Step 6**: Close the Beads issue
+```bash
+bd close <id> --reason="Acceptance criteria met: X, Y, Z"
 ```
 
 ---
@@ -622,6 +623,44 @@ Always include:
 3. **Your attempt**: What did you try?
 4. **What's wrong**: What's the problem?
 5. **What you've tried**: What did you already attempt?
+
+---
+
+## Task Tracking with Beads
+
+Beads (`bd`) is the source of truth for all task state. **Do not use TodoWrite or markdown files for task tracking.**
+
+### Claude's Workflow with Beads
+
+```bash
+bd ready                              # Check what's available at session start
+bd list --status=in_progress          # See what's already claimed
+bd show <id>                          # Review issue details before starting
+bd update <id> --status=in_progress   # Claim an issue before working on it
+bd close <id>                         # Mark complete when done
+```
+
+### Creating Issues
+
+```bash
+bd create --title="Summary" --description="Why this exists and what to do" --type=task --priority=2
+```
+
+Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+
+### Dependencies
+
+```bash
+bd dep add <child-id> <parent-id>   # child depends on parent (parent blocks child)
+bd blocked                           # See all blocked issues
+```
+
+### Session End
+
+```bash
+bd close <id1> <id2> ...            # Close completed issues
+git add <files> && git commit -m "..." && git push
+```
 
 ---
 
@@ -659,10 +698,10 @@ Before asking Claude for help on any code task:
 
 - **About the project**: Check `notes/01_requirements/prd.md` (what we're building)
 - **About architecture**: Check `notes/02_planning/technical_decisions.md` (why we chose this tech)
-- **About what's done**: Check `notes/03_development/progress_log.md`
+- **About what's done**: Run `bd list --status=in_progress` and `bd ready`
 - **About quality standards**: Check `notes/04_refinement/testing_checklist.md`
 
 ---
 
-**Last Updated**: YYYY-MM-DD  
+**Last Updated**: 2026-02-26
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.

@@ -1,3 +1,6 @@
 .obsidian
 ref
 scratchpad.md
+
+# Dolt server runtime files (not the Beads database, which is managed by .beads/.gitignore)
+.dolt/
