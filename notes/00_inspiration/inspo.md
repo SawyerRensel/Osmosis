@@ -67,8 +67,8 @@ I've used Anki in the past, and it's worked really well for me - except for one 
 
 ### Open Questions
 
-- Is it possible to build an entire mind map viewer/editor in Obsidian?  or would this be trying to fit a jet engine inside a Toyota Prius?
-- Does it make sense to "power" the mind map viewer/editor via Obsidian Bases?  I don't want to be constrained by that system if it limits our ability to achieve feature parity with Xmind. 
+- ~~Is it possible to build an entire mind map viewer/editor in Obsidian?~~ → **Yes. Custom SVG + foreignObject engine.**
+- ~~Does it make sense to "power" the mind map viewer/editor via Obsidian Bases?~~ → **No. Bases is optimized for tabular data, not tree/graph rendering. Could constrain interaction model.**
 
 ### Concerns or Constraints
 
@@ -339,7 +339,151 @@ Osmosis is a custom mind map engine + spaced repetition system built as an Obsid
 - **Mind map engine**: Custom-built, potentially published as a separate package/repo. Layout algorithms are swappable strategies that plug into the same rendering engine.
 - **Build**: Obsidian plugin standard (esbuild via obsidian-sample-plugin template)
 - **Linting**: ESLint with `eslint-plugin-obsidianmd`
-- **Reference repos in `/ref/`**: Markwhen Parser (parser architecture), Markwhen Timeline (timeline view), Markmap (mind map rendering inspiration), obsidian-spaced-repetition, Decks, obsidian-sample-plugin, Anki source, Minder
+- **Image occlusion editor**: Fabric.js or Konva.js (modern canvas/SVG drawing library; replaces Anki's embedded SVG-Edit 2.6)
+- **SR database**: SQLite via sql.js (embedded, no native dependency, works in Obsidian's WebView)
+- **Reference repos in `/ref/`**: Markwhen Parser (parser architecture), Markwhen Timeline (timeline view), Markmap (mind map rendering inspiration), obsidian-spaced-repetition, Decks, obsidian-sample-plugin, Anki source, Minder, image-occlusion-enhanced
+
+---
+
+---
+
+## Flashcard / Spaced Repetition Ideation Session
+
+*Recorded from Claude Code ideation session, 2026-02-26. Builds on the Mind Map session above. References studied: `ref/decks`, `ref/obsidian-spaced-repetition`, `ref/image-occlusion-enhanced`.*
+
+### Reference Plugin Analysis
+
+#### Decks (modern, FSRS-based)
+- SQLite database (centralized, queryable, merge-before-save for multi-device sync)
+- Deterministic hash of front text as card ID — stable across devices
+- Card types: header-paragraph (H2 = front, content = back) and markdown tables
+- FSRS scheduling; comprehensive review logging; session quotas with daily limits
+- Rich stats: heatmap, forecast chart, interval distribution
+- Single-pass efficient parser; keyboard shortcuts (Space to flip, 1–4 to rate)
+- **Weaknesses**: No cloze, no graph features, hardcoded FSRS profiles, no daily limit customization
+
+#### Obsidian-Spaced-Repetition (SM-2, FSRS migration planned)
+- Scheduling data embedded as HTML comments in markdown (`<!--SR:!2025-01-20,3,260-->`) — clutters notes
+- Card types: single-line (`Q::A`), multi-line (`Q / ? / A`), reversed (`:::`), cloze (`==highlight==`, `**bold**`, `{{curly}}`)
+- Graph-aware OSR scheduling: PageRank boosts ease of highly-connected concepts
+- Full markdown rendering (images, audio, video, LaTeX)
+- **Weaknesses**: SM-2 (older than FSRS), file-embedded clutter, no session quotas, hash-based IDs break on text edit
+
+#### Anki — Image Occlusion Enhanced
+- SVG-based masks stored in media folder (three files per card: Original, Question, Answer)
+- Each drawn shape → one card; grouped shapes → one card
+- Two modes: **Hide-All, Guess-One** (harder — all regions masked, only target revealed on back) and **Hide-One, Guess-One** (easier — only target masked, full context visible)
+- Card ID: UUID + sequential shape index, stable across edits
+- Editor: embedded SVG-Edit 2.6 (old); Osmosis will modernize with Fabric.js or Konva.js
+
+### Key Decisions
+
+#### Card Identity
+- **Inline comment co-located with the card**: `<!--osmosis-id:abc123-->` placed adjacent to the card source in markdown
+- One note can contain many cards — frontmatter can't cleanly map IDs back to specific headings/cloze/table rows
+- Frontmatter used for **note-level** metadata only: `osmosis: true`, `osmosis-deck:`
+- Image occlusion card IDs stored as `id` attributes on SVG shape elements
+- If an `osmosis-id` comment is deleted, re-generate and treat as new card (graceful degradation)
+
+#### Note Opt-In
+- `osmosis: true` in frontmatter opts a note into card generation
+- `osmosis-deck: programming/python` in frontmatter sets explicit deck assignment
+- Nothing in the vault is indexed by default — user must opt in
+
+#### Card Types
+
+| Type | Syntax | Cards generated |
+|---|---|---|
+| Heading-paragraph | `## Heading` + body below | 1 (heading = front, body = back) |
+| Table | 2-column markdown table | 1 per data row |
+| Cloze — highlight | `==term==` | 1 per highlighted term |
+| Cloze — bold | `**term**` | 1 per bolded term |
+| Bidirectional | `Q:::A` | 2 (forward + reverse) |
+| Code block — single line | `# osmosis-hide` or `// osmosis-hide` appended to line | 1 per hidden line/region |
+| Code block — multi-line | `# osmosis-hide-start` / `# osmosis-hide-end` block | 1 per hidden region |
+| Image occlusion | SVG masks drawn over image via editor | 1 per shape/group |
+
+**Code block cloze details:**
+- Language detected from fence tag (` ```python `, ` ```javascript `) to determine comment style (`#` vs `//`)
+- Unknown languages fall back to accepting both
+- Hidden lines replaced by `░░░░░░` on front; full block revealed on back
+- Multiple hidden regions in one block = multiple cards (one per region)
+
+**Heading vs. cloze conflict:**
+- When a section has both a heading card and a cloze in the same paragraph, default: **Cloze only**
+- Configurable in Osmosis Settings: `[Both] [Cloze only*] [Heading only]`
+
+#### Deck Organization — Four Layers (all opt-in)
+1. **Tag hierarchy** — `#study/python/functions` → deck path mirrors tag path
+2. **Folder hierarchy** — notes in `Learning/Python/` → automatically in `Python` deck
+3. **Explicit frontmatter** — `osmosis-deck: python/functions`
+4. **Mind map branch as deck** — studying a branch studies that subtree as a unit
+
+Osmosis Settings has explicit include/exclude lists for folders and tags. Nothing indexed by default.
+
+#### Scheduling & Storage
+- **Algorithm**: FSRS — no question
+- **Storage**: `.osmosis/cards.db` (SQLite via sql.js) for all card state + review logs
+- **Multi-device sync**: SQL merge-before-save (from Decks)
+- **FSRS weights**: Exposed as advanced settings option (neither reference plugin does this)
+- Frontmatter stores note-level metadata only; SR state never touches markdown files
+
+#### Orphaned Cards
+- **Soft-delete**: SR history preserved, card archived. If source is re-created, card can be re-linked.
+
+#### Excluding Cards
+- `<!-- osmosis-exclude -->` above any heading, highlight, or code block suppresses that card
+- Card is soft-deleted; removing the comment re-activates it
+- Configurable globally or per-card
+
+#### Study Session UX
+
+**Entry points (all supported):**
+- Left sidebar Osmosis icon → dashboard panel
+- Command palette: `Osmosis: Study current note`
+- Note "More options" (⋯) menu → "Study this note"
+- Mind Map "More options" menu → "Study this map"
+- Right-click branch in Mind Map View → "Study this branch"
+- Floating "due cards" badge on map branches → click to start
+
+**Session flow:**
+- Default: straight into review (no preamble)
+- Optional pre-session summary screen (Settings toggle): "You have 23 cards due. Estimated 12 min. [Start]"
+- Rating: Again / Hard / Good / Easy (standard FSRS)
+- Session quotas: daily new card limit + daily review limit
+
+**Two study modes (same FSRS engine, different UX):**
+- **Sequential mode** (from editor): classic Anki-style modal, card by card
+- **Spatial mode** (from Mind Map View): nodes hide/reveal in-place on the map; supports both full node hiding AND inline cloze blanking within visible nodes
+
+#### Image Occlusion
+- **Editor**: Fabric.js or Konva.js (modern replacement for Anki's embedded SVG-Edit 2.6)
+- **Authoring**: Right-click image → "Create occlusion cards"; also batch mode via command palette (`Osmosis: Create occlusions for images in this note`) and note ⋯ menu
+- **Two modes**: Hide-All (harder, all regions masked) + Hide-One (easier, context visible)
+- **Mask storage**: `.osmosis/masks/{noteUUID}-{shapeId}-{Q|A|O}.svg`
+- **Spatial integration**: Image occlusion cards render as masked thumbnails inline in Mind Map View; clicking expands to full reviewer in-place
+
+#### Osmosis Sidebar Dashboard
+- Anki-style: deck list + sub-deck list with New / Learn / Due counts per deck
+- Expandable sections per deck for heatmap and charts (forecast, stability distribution, etc.)
+- Navigate from here to start a study session for any deck
+
+#### Card Authoring Transparency
+- **Gutter indicators**: small icon in editor margin next to every line that generated a card
+  - Hover: tooltip showing card type and count
+  - Click: inline preview of front/back, with [Exclude] and [Edit] options
+- **"Cards in this note" panel**: full list of all cards from the current note, with card type, due date, front/back preview, and per-card exclude button
+  - Accessible from note ⋯ menu → "View cards for this note" and from Osmosis sidebar
+- See `notes/00_inspiration/card_authoring_example.md` for a concrete worked example
+
+#### Graph-Aware Ease Boosting (from OSR)
+- Studying a concept boosts ease of linked/connected concepts
+- In spatial mode: revealing a parent node gives small ease boost to its children
+- Configurable link contribution factor in Osmosis Settings
+
+### Refined Understanding
+
+The flashcard system is not a bolt-on to the mind map — it is the same data viewed differently. A heading in a note is simultaneously a mind map node and a card front. A cloze deletion is simultaneously inline text and a testable blank. Image occlusion is simultaneously an embedded image and a spatial quiz. The SR engine schedules what to study; the view layer (sequential modal or spatial map) determines *how* you study it. This is the core value of Osmosis: author once, study in any mode.
 
 ---
 
@@ -347,23 +491,25 @@ Osmosis is a custom mind map engine + spaced repetition system built as an Obsid
 
 *Early thinking about scope: Is this a weekend project, a month-long effort, or something larger?*
 
-**Rough Time Estimate**: 
+**Rough Time Estimate**: Large — months of focused development. This is not a weekend project.
 
-**Known Scope Creep Risks**: 
+**Known Scope Creep Risks**: Mind map engine complexity (bidirectional sync, transclusion, mobile WebView quirks); FSRS implementation correctness; image occlusion SVG editor; mobile performance at scale.
 
-**Ways to Start Small**: 
+**Ways to Start Small**: The value proposition requires both pillars (mind map + SR) working together. The thinnest viable slice is: a single markdown note renders as a mind map AND you can enter study mode where nodes get hidden for recall. Everything else builds on that foundation.
 
 ---
 
 ## Next Steps
 
-- [ ] Review this inspiration doc one more time
-- [ ] Identify the core value proposition (what's the smallest version that still creates value?)
-- [ ] Schedule Claude conversation to generate PRD
-- [ ] Move to Requirements phase
+- [x] Initial brainstorm and ideation
+- [x] Mind Map ideation session (2026-02-24)
+- [x] Flashcard / Spaced Repetition ideation session (2026-02-26)
+- [ ] Final review of inspiration doc
+- [ ] Move to Requirements phase — generate PRD
 
 ---
 
 ## Notes
 
-[Add any additional thoughts, references, or context that doesn't fit elsewhere]
+- See `notes/00_inspiration/card_authoring_example.md` for a worked example of gutter indicators and the "Cards in this note" panel
+- Reference repos studied: `ref/decks`, `ref/obsidian-spaced-repetition`, `ref/image-occlusion-enhanced`
