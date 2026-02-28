@@ -547,8 +547,8 @@ See detailed targets in the Performance Targets section below. Summary:
 | Pan/zoom frame rate (≤1,000 nodes, desktop + mobile) | 60fps |
 | Pan/zoom frame rate (1,000–5,000 nodes, mobile) | 30fps minimum |
 | Markdown ↔ map sync latency | < 16ms (one frame) |
-| Full parse (1,000-line note) | < 50ms |
-| Incremental parse (single line) | < 5ms |
+| Full parse (1,000-line note) | < 20ms |
+| Incremental parse (single line) | < 2ms |
 | Card DB open | < 100ms |
 | Due card query (single deck) | < 20ms |
 | Study session start | < 200ms |
