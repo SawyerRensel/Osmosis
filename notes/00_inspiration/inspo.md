@@ -956,7 +956,7 @@ The MVP must demonstrate Osmosis's core thesis: **author once, study in multiple
 4. You can study those cards in all three modes (sequential, contextual, spatial)
 5. FSRS schedules cards correctly across sessions
 6. `![[linked-note]]` renders the linked note's mind map as a sub-branch
-7. Works on desktop AND mobile with no perceptible lag for maps up to 100 nodes
+7. Works on desktop AND mobile with no perceptible lag for maps up to 500 nodes
 
 ### 2. Performance Targets
 
@@ -964,21 +964,29 @@ Excellent performance under heavy load is non-negotiable. A tool that creates fr
 
 #### Mind Map Rendering
 
+Real-world context: even a "small" mind map routinely reaches 200 nodes. Large maps can easily hit 1,000–2,000+ nodes. The performance targets must treat 200 nodes as the comfortable baseline, not a stretch case.
+
 | Metric | Target (Desktop) | Target (Mobile) | Measurement |
 |---|---|---|---|
-| Initial render (cold) — 50 nodes | < 100ms | < 200ms | Time from view open to fully painted SVG |
-| Initial render (cold) — 200 nodes | < 200ms | < 500ms | Same |
-| Initial render (cold) — 500 nodes | < 500ms | < 1000ms | With viewport culling enabled |
-| Pan/zoom frame rate | 60fps | 30fps minimum, 60fps target | Measured during continuous pan gesture |
-| Node expand/collapse animation | < 150ms | < 250ms | Time from click to animation complete |
-| Incremental re-render (single node edit) | < 50ms | < 100ms | Only affected subtree re-rendered |
+| Initial render (cold) — 200 nodes | < 100ms | < 200ms | Time from view open to fully painted SVG |
+| Initial render (cold) — 500 nodes | < 150ms | < 300ms | Same, viewport culling active |
+| Initial render (cold) — 1,000 nodes | < 250ms | < 500ms | Viewport culling + collapsed deep branches |
+| Initial render (cold) — 2,000 nodes | < 500ms | < 1000ms | Viewport culling + level-of-detail + lazy expand |
+| Initial render (cold) — 5,000+ nodes | < 1000ms | < 2000ms | Full optimization stack; DOM virtualization |
+| Pan/zoom frame rate (≤1,000 nodes) | 60fps | 60fps | Measured during continuous pan gesture |
+| Pan/zoom frame rate (1,000–5,000 nodes) | 60fps | 30fps minimum, 60fps target | With viewport culling |
+| Node expand/collapse animation | < 100ms | < 150ms | Time from click to animation complete |
+| Incremental re-render (single node edit) | < 16ms | < 33ms | Only affected subtree re-rendered (one frame) |
 
 #### Parser & Sync
 
 | Metric | Target | Measurement |
 |---|---|---|
-| Full parse — 1,000-line note | < 50ms | Time from markdown string to tree model |
-| Incremental parse — single line change | < 5ms | Time to update tree model after one-line edit |
+| Full parse — 1,000-line note | < 20ms | Time from markdown string to tree model |
+| Full parse — 5,000-line note | < 80ms | Same; scales sub-linearly with caching |
+| Full parse — 10,000-line note | < 150ms | Same; may be needed for large transclusion trees |
+| Incremental parse — single line change | < 2ms | Time to update tree model after one-line edit |
+| Incremental parse — multi-line paste (100 lines) | < 10ms | Time to update tree model after bulk edit |
 | Markdown → map sync latency | < 16ms (one frame) | User types in editor, map updates within one frame |
 | Map → markdown sync latency | < 16ms (one frame) | User edits map node, markdown updates within one frame |
 
@@ -986,9 +994,10 @@ Excellent performance under heavy load is non-negotiable. A tool that creates fr
 
 | Metric | Target | Measurement |
 |---|---|---|
-| Transclusion resolve — 10 embedded notes | < 100ms | Time to load and parse all embedded note trees |
-| Transclusion resolve — 50 embedded notes | < 500ms | With lazy loading of collapsed branches |
-| Transclusion resolve — 100 embedded notes | < 1000ms | With lazy loading; deep branches loaded on expand |
+| Transclusion resolve — 10 embedded notes | < 50ms | Time to load and parse all embedded note trees |
+| Transclusion resolve — 50 embedded notes | < 200ms | With lazy loading of collapsed branches |
+| Transclusion resolve — 100 embedded notes | < 500ms | With lazy loading; deep branches loaded on expand |
+| Transclusion resolve — 500 embedded notes | < 1500ms | Full lazy loading + DOM virtualization |
 | Cycle detection | < 1ms | Checked during tree construction, not at render time |
 
 #### Spaced Repetition
@@ -1006,8 +1015,10 @@ Excellent performance under heavy load is non-negotiable. A tool that creates fr
 | Metric | Budget | Notes |
 |---|---|---|
 | Base plugin load | < 5 MB | Plugin code + sql.js WASM + initial state |
-| Per-node memory (mind map) | < 2 KB | SVG elements + tree model node |
+| Per-node memory (mind map) | < 1.5 KB | SVG elements + tree model node (lean to support large maps) |
 | 500-node map total | < 6 MB | Base + nodes + DOM overhead |
+| 2,000-node map total | < 10 MB | With viewport culling (only visible nodes in DOM) |
+| 5,000-node map total | < 15 MB | With DOM virtualization; off-screen nodes removed |
 | Card database (10,000 cards) | < 10 MB | SQLite in memory via sql.js |
 
 #### Mobile-Specific
@@ -1064,10 +1075,11 @@ Excellent performance under heavy load is non-negotiable. A tool that creates fr
 - Text can appear blurry at extreme zoom on some devices — use `will-change: transform` on SVG container
 
 **Performance tiers:**
-- **≤100 nodes**: 60fps on all supported devices, no special optimization needed
-- **100–300 nodes**: Requires viewport culling (only render visible nodes) and collapsed branches by default
-- **300–500 nodes**: Level-of-detail rendering (abbreviated labels when zoomed out) + progressive disclosure
-- **500+ nodes**: Consider removing off-screen nodes from DOM entirely and re-adding on scroll (Obsidian Canvas pattern)
+- **≤500 nodes**: 60fps on all supported devices, viewport culling active but no special optimizations needed
+- **500–1,000 nodes**: Viewport culling mandatory + collapsed branches by default for deep trees
+- **1,000–2,000 nodes**: Level-of-detail rendering (abbreviated labels when zoomed out) + progressive disclosure
+- **2,000–5,000 nodes**: DOM virtualization — off-screen nodes removed from DOM and re-added on scroll (Obsidian Canvas pattern)
+- **5,000+ nodes**: All of the above + consider Web Worker for layout computation to keep main thread free
 
 **Decision: Set `isDesktopOnly: false` in manifest.json from day one. Mobile is first-class.**
 
@@ -1081,7 +1093,7 @@ Transclusion (embedding `![[linked-note]]` as a sub-branch in the parent mind ma
 - Lazy loading: collapsed transclusion branches don't parse the embedded file until expanded
 - Edit propagation: editing a transcluded node writes to the source file (the embedded note), not the parent
 - Visual distinction: transcluded branches have a subtle indicator (icon or border style) showing they come from another file
-- Performance: see transclusion targets above (10 embeds < 100ms, 50 embeds < 500ms)
+- Performance: see transclusion targets above (10 embeds < 50ms, 50 embeds < 200ms, 100 embeds < 500ms)
 
 ### 6. Image Occlusion Library: Fabric.js v6
 

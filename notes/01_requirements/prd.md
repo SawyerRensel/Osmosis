@@ -64,7 +64,7 @@ Osmosis makes it possible to author knowledge once and leverage all three techni
 
 2. **Goal**: Deliver a mind map experience that is genuinely useful for both viewing AND editing
    - **Success Metric**: Bidirectional sync between markdown editor and mind map view with no perceptible lag
-   - **Target**: < 16ms sync latency (one frame) for single-line edits; < 200ms cold render for 50-node maps on desktop
+   - **Target**: < 16ms sync latency (one frame) for single-line edits; < 100ms cold render for 200-node maps on desktop
 
 3. **Goal**: Provide spaced repetition that works without disrupting the note-taking workflow
    - **Success Metric**: Zero-effort card generation from standard markdown (headings, highlights, bold text) with opt-in per note
@@ -72,7 +72,7 @@ Osmosis makes it possible to author knowledge once and leverage all three techni
 
 4. **Goal**: Work on both desktop and mobile as a first-class experience
    - **Success Metric**: All features functional on Obsidian mobile; mind maps interactive via touch
-   - **Target**: 30fps minimum on mobile for maps up to 100 nodes
+   - **Target**: 60fps on mobile for maps up to 500 nodes; 30fps minimum up to 2,000 nodes
 
 ### Secondary Goals
 
@@ -155,11 +155,13 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 **Acceptance Criteria**:
 - [ ] Markdown headings, bullets, and numbered lists render as interactive mind map nodes
 - [ ] Nodes display rich content (bold, italic, code, LaTeX, images) via foreignObject
-- [ ] Map supports pan and zoom with 60fps on desktop, 30fps minimum on mobile
-- [ ] Branch expand/collapse works with animation < 150ms on desktop
+- [ ] Map supports pan and zoom with 60fps on desktop and mobile up to 1,000 nodes
+- [ ] Branch expand/collapse works with animation < 100ms on desktop, < 150ms on mobile
 - [ ] Keyboard shortcuts (Tab, Enter, Delete, arrow keys) work for editing
 - [ ] Theme system applies consistent styling across nodes and branches
-- [ ] Cold render < 100ms for 50 nodes on desktop, < 200ms on mobile
+- [ ] Cold render < 100ms for 200 nodes on desktop, < 200ms on mobile
+- [ ] Cold render < 250ms for 1,000 nodes on desktop, < 500ms on mobile
+- [ ] Maps with 2,000+ nodes remain usable with viewport culling and level-of-detail rendering
 
 **Constraints**: Must use SVG + foreignObject hybrid approach (not Canvas) to maintain exportability and rich content rendering. Must work in Obsidian's WebView on both desktop and mobile.
 
@@ -190,8 +192,8 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 - [ ] Editing a heading in the markdown editor updates the corresponding node in the mind map within one frame (< 16ms)
 - [ ] Editing a node label in the mind map updates the markdown source within one frame (< 16ms)
 - [ ] Adding/deleting/reordering nodes in either view reflects immediately in the other
-- [ ] Full parse of a 1,000-line note completes in < 50ms
-- [ ] Incremental parse of a single-line change completes in < 5ms
+- [ ] Full parse of a 1,000-line note completes in < 20ms
+- [ ] Incremental parse of a single-line change completes in < 2ms
 - [ ] Cursor sync between editor and map works bidirectionally when enabled
 - [ ] No cursor jumps, flicker, or loss of undo history during sync
 
@@ -220,9 +222,10 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 - [ ] Recursive embedding works (A embeds B embeds C)
 - [ ] Circular references are detected and displayed gracefully (not infinite loops)
 - [ ] Editing a transcluded node modifies the source file
-- [ ] 10 embedded notes resolve in < 100ms
-- [ ] 50 embedded notes resolve in < 500ms (with lazy loading)
-- [ ] 100 embedded notes resolve in < 1000ms (with lazy loading)
+- [ ] 10 embedded notes resolve in < 50ms
+- [ ] 50 embedded notes resolve in < 200ms (with lazy loading)
+- [ ] 100 embedded notes resolve in < 500ms (with lazy loading)
+- [ ] 500 embedded notes resolve in < 1500ms (with lazy loading + DOM virtualization)
 - [ ] Transcluded branches are visually distinguishable from local content
 
 **Constraints**: Performance depends on lazy loading of collapsed branches. Deep transclusion trees must not block initial render.
@@ -538,10 +541,11 @@ See detailed targets in the Performance Targets section below. Summary:
 
 | Area | Key Target |
 |---|---|
-| Mind map cold render (50 nodes, desktop) | < 100ms |
-| Mind map cold render (50 nodes, mobile) | < 200ms |
-| Pan/zoom frame rate (desktop) | 60fps |
-| Pan/zoom frame rate (mobile) | 30fps minimum |
+| Mind map cold render (200 nodes, desktop) | < 100ms |
+| Mind map cold render (200 nodes, mobile) | < 200ms |
+| Mind map cold render (1,000 nodes, desktop) | < 250ms |
+| Pan/zoom frame rate (≤1,000 nodes, desktop + mobile) | 60fps |
+| Pan/zoom frame rate (1,000–5,000 nodes, mobile) | 30fps minimum |
 | Markdown ↔ map sync latency | < 16ms (one frame) |
 | Full parse (1,000-line note) | < 50ms |
 | Incremental parse (single line) | < 5ms |
@@ -609,21 +613,29 @@ See detailed targets in the Performance Targets section below. Summary:
 
 ### Mind Map Rendering
 
+Real-world context: even a "small" mind map routinely reaches 200 nodes. Large maps can easily hit 1,000–2,000+ nodes. The performance targets treat 200 nodes as the comfortable baseline, not a stretch case.
+
 | Metric | Desktop | Mobile |
 |---|---|---|
-| Cold render — 50 nodes | < 100ms | < 200ms |
-| Cold render — 200 nodes | < 200ms | < 500ms |
-| Cold render — 500 nodes | < 500ms | < 1000ms (with viewport culling) |
-| Pan/zoom frame rate | 60fps | 30fps minimum, 60fps target |
-| Node expand/collapse animation | < 150ms | < 250ms |
-| Incremental re-render (single node edit) | < 50ms | < 100ms |
+| Cold render — 200 nodes | < 100ms | < 200ms |
+| Cold render — 500 nodes | < 150ms | < 300ms |
+| Cold render — 1,000 nodes | < 250ms | < 500ms |
+| Cold render — 2,000 nodes | < 500ms | < 1000ms |
+| Cold render — 5,000+ nodes | < 1000ms | < 2000ms |
+| Pan/zoom frame rate (≤1,000 nodes) | 60fps | 60fps |
+| Pan/zoom frame rate (1,000–5,000 nodes) | 60fps | 30fps minimum, 60fps target |
+| Node expand/collapse animation | < 100ms | < 150ms |
+| Incremental re-render (single node edit) | < 16ms (one frame) | < 33ms (one frame) |
 
 ### Parser & Sync
 
 | Metric | Target |
 |---|---|
-| Full parse — 1,000-line note | < 50ms |
-| Incremental parse — single line change | < 5ms |
+| Full parse — 1,000-line note | < 20ms |
+| Full parse — 5,000-line note | < 80ms |
+| Full parse — 10,000-line note | < 150ms |
+| Incremental parse — single line change | < 2ms |
+| Incremental parse — multi-line paste (100 lines) | < 10ms |
 | Markdown → map sync latency | < 16ms (one frame) |
 | Map → markdown sync latency | < 16ms (one frame) |
 
@@ -631,9 +643,10 @@ See detailed targets in the Performance Targets section below. Summary:
 
 | Metric | Target |
 |---|---|
-| 10 embedded notes | < 100ms |
-| 50 embedded notes | < 500ms (with lazy loading) |
-| 100 embedded notes | < 1000ms (with lazy loading) |
+| 10 embedded notes | < 50ms |
+| 50 embedded notes | < 200ms (with lazy loading) |
+| 100 embedded notes | < 500ms (with lazy loading) |
+| 500 embedded notes | < 1500ms (with lazy loading + DOM virtualization) |
 | Cycle detection | < 1ms |
 
 ### Spaced Repetition
@@ -651,8 +664,10 @@ See detailed targets in the Performance Targets section below. Summary:
 | Metric | Budget |
 |---|---|
 | Base plugin load | < 5 MB |
-| Per-node memory | < 2 KB |
+| Per-node memory | < 1.5 KB (lean to support large maps) |
 | 500-node map total | < 6 MB |
+| 2,000-node map total | < 10 MB (with viewport culling) |
+| 5,000-node map total | < 15 MB (with DOM virtualization) |
 | Card database (10,000 cards) | < 10 MB |
 
 ### Mobile-Specific
@@ -667,10 +682,11 @@ See detailed targets in the Performance Targets section below. Summary:
 
 | Tier | Strategy |
 |---|---|
-| ≤ 100 nodes | No special optimization needed; 60fps on all devices |
-| 100–300 nodes | Viewport culling + collapsed branches by default |
-| 300–500 nodes | Level-of-detail rendering (abbreviated labels zoomed out) + progressive disclosure |
-| 500+ nodes | Off-screen DOM removal and re-add on scroll (Obsidian Canvas pattern) |
+| ≤ 500 nodes | 60fps on all devices; viewport culling active but no special optimizations needed |
+| 500–1,000 nodes | Viewport culling mandatory + collapsed branches by default for deep trees |
+| 1,000–2,000 nodes | Level-of-detail rendering (abbreviated labels zoomed out) + progressive disclosure |
+| 2,000–5,000 nodes | DOM virtualization — off-screen nodes removed from DOM and re-added on scroll (Obsidian Canvas pattern) |
+| 5,000+ nodes | All of the above + consider Web Worker for layout computation to keep main thread free |
 
 ---
 
@@ -684,7 +700,7 @@ See detailed targets in the Performance Targets section below. Summary:
 - [ ] All three study modes are functional (sequential, contextual, spatial)
 - [ ] FSRS schedules cards correctly across sessions
 - [ ] `![[linked-note]]` renders as a sub-branch in the mind map
-- [ ] Works on desktop AND mobile with no perceptible lag for maps up to 100 nodes
+- [ ] Works on desktop AND mobile with no perceptible lag for maps up to 500 nodes
 - [ ] `npm run lint` passes with no errors
 - [ ] `npm run build` succeeds
 - [ ] Manual testing in Obsidian desktop and mobile passes all acceptance criteria
