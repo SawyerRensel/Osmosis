@@ -911,6 +911,212 @@ Anki import/export is a data portability feature, not a core pillar of Osmosis. 
 
 ---
 
+## MVP Definition, Performance Targets & Gap Resolution Ideation Session
+
+*Recorded from Claude Code ideation session, 2026-02-28. Addresses six open gaps identified during pre-PRD review: MVP scope, performance budgets, study mode UX details, mobile feasibility, transclusion scope, and image occlusion library choice.*
+
+### 1. MVP Definition
+
+The MVP must demonstrate Osmosis's core thesis: **author once, study in multiple modes**. It must include both pillars (mind map + spaced repetition) working together — neither is valuable in isolation. The thinnest slice that proves the concept:
+
+**MVP Scope (v1.0):**
+
+| Feature | In MVP | Rationale |
+|---|---|---|
+| Custom mind map engine (SVG + foreignObject) | Yes | Core differentiator |
+| Mind Map view with direction/side toggles | Yes | Core UX |
+| Timeline view | No — v1.1 | Just a layout algorithm swap; mind map view is sufficient to prove concept |
+| Bidirectional markdown ↔ mind map sync | Yes | Core value — "your notes ARE the map" |
+| Incremental parser with range tracking | Yes | Required for non-laggy sync |
+| Embedded/transclusion mind maps (`![[]]`) | Yes | Core competitive advantage (see gap #5) |
+| FSRS scheduling engine | Yes | Core SR functionality |
+| Card types: heading-paragraph, cloze (highlight + bold), explicit (`osmosis` fences) | Yes | Covers the 80% case for card generation |
+| Card types: table rows, code block cloze, bidirectional, type-in | No — v1.1 | Nice-to-have; explicit fences cover these use cases in a less automated way |
+| Image occlusion | No — v1.1 | Significant sub-feature (Fabric.js editor); not needed to prove core thesis |
+| Sequential study mode (Anki-style modal) | Yes | Familiar, proven study UX |
+| Contextual study mode (in-note reading view) | Yes | Unique to Osmosis, low implementation cost on top of post-processor |
+| Spatial study mode (on mind map) | Yes | The "killer feature" — studying a mind map with SR |
+| Card identity via inline comments | Yes | Required for stable SR scheduling |
+| SQLite storage (.osmosis/cards.db via sql.js) | Yes | Required for card state |
+| Osmosis sidebar dashboard (deck list + counts) | Yes — minimal | Just deck list with New/Learn/Due counts; no heatmap/charts yet |
+| Gutter indicators + "Cards in This Note" panel | No — v1.1 | Polish feature; not needed for core functionality |
+| Graph-aware ease boosting | No — v1.1 | Interesting but needs data to tune; ship without and add later |
+| Anki import/export | No — v2.0 | Phase 2 feature as already scoped |
+| Command palette card insertion commands | Yes | Low effort, high UX value |
+| Card templates in settings | No — v1.1 | The 4 built-in types are sufficient for MVP |
+| Footnote tooltips in mind map | No — v1.1 | Nice-to-have polish |
+| Export to PNG/SVG/PDF | No — v1.1 | Comes nearly free from SVG but needs polish |
+| Spaced repetition heatmap/charts | No — v1.1 | Analytics layer; not needed to study |
+| Desktop + mobile | Yes | Mobile is a hard requirement from day one |
+
+**MVP acceptance criteria (what "done" means for v1.0):**
+1. A markdown note with headings, bullets, and `==highlights==` renders as an interactive mind map
+2. Editing the map updates the markdown; editing the markdown updates the map
+3. A note with `osmosis: true` in frontmatter generates cards from headings and clozes
+4. You can study those cards in all three modes (sequential, contextual, spatial)
+5. FSRS schedules cards correctly across sessions
+6. `![[linked-note]]` renders the linked note's mind map as a sub-branch
+7. Works on desktop AND mobile with no perceptible lag for maps up to 100 nodes
+
+### 2. Performance Targets
+
+Excellent performance under heavy load is non-negotiable. A tool that creates friction through lag is useless.
+
+#### Mind Map Rendering
+
+| Metric | Target (Desktop) | Target (Mobile) | Measurement |
+|---|---|---|---|
+| Initial render (cold) — 50 nodes | < 100ms | < 200ms | Time from view open to fully painted SVG |
+| Initial render (cold) — 200 nodes | < 200ms | < 500ms | Same |
+| Initial render (cold) — 500 nodes | < 500ms | < 1000ms | With viewport culling enabled |
+| Pan/zoom frame rate | 60fps | 30fps minimum, 60fps target | Measured during continuous pan gesture |
+| Node expand/collapse animation | < 150ms | < 250ms | Time from click to animation complete |
+| Incremental re-render (single node edit) | < 50ms | < 100ms | Only affected subtree re-rendered |
+
+#### Parser & Sync
+
+| Metric | Target | Measurement |
+|---|---|---|
+| Full parse — 1,000-line note | < 50ms | Time from markdown string to tree model |
+| Incremental parse — single line change | < 5ms | Time to update tree model after one-line edit |
+| Markdown → map sync latency | < 16ms (one frame) | User types in editor, map updates within one frame |
+| Map → markdown sync latency | < 16ms (one frame) | User edits map node, markdown updates within one frame |
+
+#### Transclusion
+
+| Metric | Target | Measurement |
+|---|---|---|
+| Transclusion resolve — 10 embedded notes | < 100ms | Time to load and parse all embedded note trees |
+| Transclusion resolve — 50 embedded notes | < 500ms | With lazy loading of collapsed branches |
+| Transclusion resolve — 100 embedded notes | < 1000ms | With lazy loading; deep branches loaded on expand |
+| Cycle detection | < 1ms | Checked during tree construction, not at render time |
+
+#### Spaced Repetition
+
+| Metric | Target | Measurement |
+|---|---|---|
+| Card database open | < 100ms | Time to load sql.js + open .osmosis/cards.db |
+| Card query (due cards for a deck) | < 20ms | SQL query for cards due now in a single deck |
+| Card query (all due cards across all decks) | < 50ms | For dashboard counts |
+| FSRS schedule computation | < 1ms per card | Single card scheduling after rating |
+| Study session start (from click to first card) | < 200ms | Including DB query + UI render |
+
+#### Memory
+
+| Metric | Budget | Notes |
+|---|---|---|
+| Base plugin load | < 5 MB | Plugin code + sql.js WASM + initial state |
+| Per-node memory (mind map) | < 2 KB | SVG elements + tree model node |
+| 500-node map total | < 6 MB | Base + nodes + DOM overhead |
+| Card database (10,000 cards) | < 10 MB | SQLite in memory via sql.js |
+
+#### Mobile-Specific
+
+| Metric | Target | Notes |
+|---|---|---|
+| Plugin load time contribution | < 500ms | Must not noticeably slow Obsidian startup; use lazy initialization |
+| Touch gesture response | < 100ms | From finger contact to visible response |
+| Battery impact | Minimal when idle | No background polling or animation when view is not active |
+
+### 3. Study Mode UX Details
+
+**Contextual mode (in-note study):**
+- Activates when switching to Obsidian reading view on an opted-in note
+- All `osmosis` fences show the front side; back side is replaced with `░░░░░░` placeholder
+- **Clicking/tapping a card or cloze reveals the answer**
+- **Rating buttons appear as a comment bubble attached to the card or cloze** after reveal — Again / Hard / Good / Easy
+- Without clicking "Start studying" at the top, reveals are **casual peeks** — no FSRS rating buttons shown, no scheduling recorded
+- After "Start studying", every reveal shows the rating bubble
+- Progress: floating widget showing "3/7 cards reviewed"
+- Inline cloze participation (whether `==highlights==` and `**bold**` also blank out) configurable in settings (default: off)
+
+**Spatial mode (mind map study):**
+- Nodes are hidden/revealed by **tapping the node** to show its content
+- **"Show children" plus "(+)" button attached to each node** expands hidden children, exactly like Xmind's expand/collapse UX
+- Supports both full node hiding AND inline cloze blanking within visible nodes
+- Rating bubble appears after node reveal (same pattern as contextual mode)
+- Entry: Mind Map View menu, right-click branch, floating due-cards badge on branches
+
+**Sequential mode (deck study):**
+- Classic Anki-style modal: show front → tap to flip → rate
+- Cards drawn from any deck regardless of source note
+- Entry: sidebar dashboard, command palette
+
+### 4. Mobile Feasibility — Validated
+
+**Verdict: FEASIBLE.** SVG + foreignObject rendering in Obsidian's mobile WebView is proven and viable.
+
+**Key findings:**
+- Obsidian mobile uses **Capacitor.js** wrapping native WebViews: **WKWebView on iOS** (Safari engine), **Android System WebView** (Chromium-based) on Android
+- **markmap** (in `ref/markmap/`) already demonstrates SVG + foreignObject + d3-zoom working in production — this is exactly our architecture
+- Multiple community plugins ship with `isDesktopOnly: false` and do heavy custom rendering: Map View (Leaflet.js), Maps/Bases (Leaflet), Excalidraw (Canvas). All work on mobile.
+- **d3-zoom natively supports touch** — pinch-to-zoom, single-finger pan, tap on elements all work out of the box
+- `Platform.isMobile` / `Platform.isPhone` APIs available for mobile-specific adaptations
+
+**foreignObject gotchas (all solvable):**
+- Must set explicit `width` and `height` (no auto-sizing) — markmap already shows the measurement pattern
+- CSS inheritance inside foreignObject can differ between Safari and Chromium — scope styles to `.markmap` class
+- Touch event propagation: stop propagation on touch events within our view to prevent conflicts with Obsidian's swipe navigation (Map View shows this pattern in `mapContainer.ts`)
+- Text can appear blurry at extreme zoom on some devices — use `will-change: transform` on SVG container
+
+**Performance tiers:**
+- **≤100 nodes**: 60fps on all supported devices, no special optimization needed
+- **100–300 nodes**: Requires viewport culling (only render visible nodes) and collapsed branches by default
+- **300–500 nodes**: Level-of-detail rendering (abbreviated labels when zoomed out) + progressive disclosure
+- **500+ nodes**: Consider removing off-screen nodes from DOM entirely and re-adding on scroll (Obsidian Canvas pattern)
+
+**Decision: Set `isDesktopOnly: false` in manifest.json from day one. Mobile is first-class.**
+
+### 5. Transclusion: Confirmed v1 (Core Competitive Advantage)
+
+Transclusion (embedding `![[linked-note]]` as a sub-branch in the parent mind map) is **confirmed as a v1 must-have**. This is a core competitive advantage that sets Osmosis apart from all existing mind mapping software.
+
+**Implementation requirements for v1:**
+- `![[linked-note]]` renders the linked note's entire heading/bullet tree as a sub-branch
+- Cycle detection: A embeds B embeds A → detected at tree construction time, broken with a visual indicator ("circular reference")
+- Lazy loading: collapsed transclusion branches don't parse the embedded file until expanded
+- Edit propagation: editing a transcluded node writes to the source file (the embedded note), not the parent
+- Visual distinction: transcluded branches have a subtle indicator (icon or border style) showing they come from another file
+- Performance: see transclusion targets above (10 embeds < 100ms, 50 embeds < 500ms)
+
+### 6. Image Occlusion Library: Fabric.js v6
+
+**Decision: Use Fabric.js v6** for the image occlusion editor.
+
+**Rationale (in priority order):**
+
+1. **Anki uses Fabric.js** (v5.3) for its image occlusion editor. The entire reference implementation is in `ref/anki/ts/routes/image-occlusion/`. Using the same library makes Anki SVG mask import/export dramatically easier — same shape primitives, same serialization format, `loadSVGFromString()` / `toSVG()` work natively.
+
+2. **SVG is the interchange format.** Osmosis stores masks as SVG in `.osmosis/masks/`. Fabric.js has native `toSVG()` and `loadSVGFromString()`. Konva.js has **no SVG support at all** — it renders to `<canvas>` only. With Konva, we'd need to build and maintain a custom SVG serialization layer from scratch.
+
+3. **The bundle size difference is manageable.** Fabric.js v6: ~90 KB gzipped. Konva.js: ~45 KB gzipped. The extra 45 KB is acceptable given the engineering time saved by sharing Anki's library choice.
+
+4. **Fabric.js v6 is modernized.** Proper ESM modules, built-in TypeScript support (no more `@types/fabric`), better tree-shaking, dropped legacy browser support. Since Obsidian uses modern Chromium, v6 is the right version.
+
+**Konva.js advantages we're declining:**
+- Better mobile touch support (mitigated: use HammerJS ~7KB alongside Fabric, as Anki does)
+- Smaller bundle (mitigated: 45KB difference is not the deciding factor)
+- Cleaner API (mitigated: isolate Fabric behind a `MaskEditor` abstraction, as Anki does with `MaskEditorAPI`)
+- Built-in snap/transform tools (mitigated: Anki's alignment code can be adapted)
+
+**Other libraries considered and rejected:**
+- Paper.js (~220 KB, less maintained, no TypeScript)
+- Rough.js (hand-drawn style only, no editor)
+- Plain Canvas API (months of work to build selection, resize, hit testing)
+- SVG.js (no interactive drawing editor)
+- Two.js (weak interactive editing)
+
+**Implementation approach** (adapted from Anki's architecture in `ref/anki/ts/routes/image-occlusion/`):
+- Shape model: abstract shape classes (Rect, Ellipse, Polygon) with normalized coordinates (0-1) for storage
+- Tool system: separate modules per tool (rect draw, ellipse draw, select/move, zoom/pan)
+- Undo/redo: JSON state stack via `canvas.toJSON()` / `canvas.loadFromJSON()`
+- SVG export: `canvas.toSVG()` for Anki-compatible output
+- Mobile: HammerJS for pinch-zoom alongside Fabric's pointer events
+
+**Note: Image occlusion is scoped for v1.1, not MVP. This decision locks the library choice for when we get there.**
+
+---
+
 ## Next Steps
 
 - [x] Initial brainstorm and ideation
@@ -918,6 +1124,7 @@ Anki import/export is a data portability feature, not a core pillar of Osmosis. 
 - [x] Flashcard / Spaced Repetition ideation session (2026-02-26)
 - [x] Explicit Card Syntax & Card Type Expansion ideation session (2026-02-27)
 - [x] Anki Import/Export ideation session (2026-02-28)
+- [x] MVP Definition, Performance Targets & Gap Resolution session (2026-02-28)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
@@ -927,3 +1134,4 @@ Anki import/export is a data portability feature, not a core pillar of Osmosis. 
 
 - See `notes/00_inspiration/card_authoring_example.md` for a worked example of gutter indicators and the "Cards in this note" panel
 - Reference repos studied: `ref/decks`, `ref/obsidian-spaced-repetition`, `ref/image-occlusion-enhanced`, `ref/anki` (import/export formats)
+- Mobile feasibility validated via: `ref/markmap` (SVG+foreignObject proof), `ref/obsidian-map-view` (mobile touch patterns), `ref/obsidian-maps` (first-party mobile plugin), `ref/obsidian-api` (Platform detection APIs)
