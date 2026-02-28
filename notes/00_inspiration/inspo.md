@@ -1133,6 +1133,239 @@ Transclusion (embedding `![[linked-note]]` or `![linked-note](path)` as a sub-br
 
 ---
 
+## Mind Map Styling & View State Ideation Session
+
+*Recorded from Claude Code brainstorm session, 2026-02-28. Focused on matching Xmind's styling capabilities while solving the unique challenge of styling persistence in a markdown-first, transclusion-supporting system.*
+
+### Xmind Styling Capabilities (Reference)
+
+Xmind uses a three-tier styling hierarchy:
+
+1. **Theme** (global) — colors, shapes, line patterns, background, fonts applied to the entire map
+2. **Style categories** — topic styles, boundary styles, relationship styles, map styles — each a reusable bundle
+3. **Per-node overrides** — individual topics can override their shape, color, text formatting
+
+Stylable properties include:
+- **Topic shapes** (~31 options: rectangle, rounded rect, ellipse, diamond, underline-only, pill, hexagon, parallelogram, etc.)
+- **Branch lines** — style (curved, straight, angular, rounded-elbow), color, thickness, tapering, end caps
+- **Fill & border** — fill color, border color, border width, border style
+- **Text** — font family, size, weight, color, alignment
+- **Colored branches** — toggle that auto-assigns distinct colors per top-level branch (children inherit)
+- **Background** — color, wallpaper/image
+- **Boundaries & summaries** — shape, color, transparency, line style
+
+Sources: [Xmind Style Guide](https://xmind.com/user-guide/style-new), [Xmind Theme and Style](https://xmind-help.github.io/en/theme_and_style.html), [Xmind Theme Editor](https://xmind-help.github.io/en/theme_and_theme_editor.html), [Xmind Branch Styling](https://xmind.com/user-guide/branch-new), [Xmind Custom Themes](https://xmind.com/user-guide/custom-themes-new)
+
+### The Core Design Challenge
+
+Osmosis has a unique constraint Xmind doesn't: **the markdown file is the source of truth**, and mind maps can **transclude other notes**. This means styling and view state need to answer:
+
+1. Where does styling live? (In the markdown? Separate file? Frontmatter?)
+2. When note A transcludes note B, whose styles win?
+3. Is fold/collapse state part of the document or part of the view?
+4. How do we avoid polluting clean markdown with styling metadata?
+
+### Key Decisions
+
+#### Decision: 3-Layer Styling Architecture
+
+**Layer 1: Theme (map-wide defaults)**
+
+A theme is a named, reusable JSON object that defines defaults for every stylable property at each depth level:
+
+```yaml
+# Lives in .osmosis/themes/ folder or plugin settings
+name: "Ocean"
+background: "#1a1a2e"
+coloredBranches: true
+branchColors: ["#0f3460", "#16213e", "#533483", "#e94560"]
+levels:
+  0:  # root
+    shape: "rounded-rect"
+    fill: "#0f3460"
+    text: { font: "Inter", size: 18, weight: 700, color: "#fff" }
+    branch: { style: "curved", width: 4, taper: true }
+  1:  # first children
+    shape: "rounded-rect"
+    fill: "transparent"
+    text: { font: "Inter", size: 14, weight: 600, color: "#e0e0e0" }
+    branch: { style: "curved", width: 3, taper: true }
+  default:  # depth 2+
+    shape: "underline"
+    fill: "transparent"
+    text: { font: "Inter", size: 13, weight: 400, color: "#ccc" }
+    branch: { style: "curved", width: 2, taper: false }
+```
+
+Themes ship as presets (from iTerm2-Color-Schemes library as already planned) and users can create/save custom themes.
+
+**Layer 2: Per-Note Style Overrides (frontmatter)**
+
+Individual notes can override theme defaults via frontmatter:
+
+```yaml
+---
+osmosis:
+  theme: "Ocean"
+  coloredBranches: false
+  styles:
+    "## Architecture":
+      shape: "diamond"
+      fill: "#e94560"
+    "## Testing":
+      shape: "hexagon"
+---
+```
+
+This keeps overrides **in the note** (portable, git-friendly) but cleanly separated from content in frontmatter. Targeting uses heading text or path syntax (e.g., `"Architecture/Unit Tests"` for nested nodes).
+
+**Layer 3: View State (ephemeral, stored separately)**
+
+View state is **not part of the document** — it's session/viewport state:
+
+- Fold/collapse state per node
+- Pan position and zoom level
+- Selected node(s)
+- Spatial mode hidden/revealed state
+
+Stored in sidecar files within plugin data:
+
+```
+.obsidian/plugins/Osmosis/views/
+  my-note.view.json
+  project-plan.view.json
+```
+
+```json
+{
+  "version": 1,
+  "lastModified": "2026-02-28T...",
+  "viewport": { "x": -120, "y": 50, "zoom": 0.85 },
+  "foldState": {
+    "## Architecture": true,
+    "## Testing/### Unit Tests": true
+  },
+  "spatialState": {
+    "hiddenNodes": ["## Secret Section"]
+  }
+}
+```
+
+**Why separate from the note?**
+- Fold state is subjective/personal — different users viewing the same note want different collapse states
+- Avoids dirtying the markdown (no git noise from zoom changes)
+- Spatial study mode state is purely visual and temporary
+- Mirrors how Obsidian itself handles workspace/view state (`.obsidian/workspace.json`)
+
+**View state saving is explicit** — users click "Save view" to persist the current state. No auto-save to avoid file churn.
+
+#### Decision: Hybrid B+C Node Targeting
+
+Per-node style overrides need a way to **address** specific nodes. Two mechanisms work together:
+
+**Option B — Tree paths (human-facing API):**
+```yaml
+osmosis:
+  styles:
+    "Project Plan/Architecture/Use dependency injection":
+      shape: "diamond"
+```
+Human-readable, easy to write by hand. Breaks if you rename a heading or reorder nodes.
+
+**Option C — Stable auto-generated IDs (GUI-generated):**
+```yaml
+osmosis:
+  styles:
+    _n:a3f2:
+      fill: "#e94560"
+```
+Opaque but survives renames and reordering. Generated by the format panel GUI — users never write these by hand.
+
+**Resolution strategy:**
+- The format panel always generates stable IDs (`_n:` prefix) — casual users never deal with paths
+- Tree paths are a power-user escape hatch for hand-editing frontmatter
+- When a node is renamed, ID-based styles stick; path-based styles become orphaned (with a "style target not found" warning in the format panel)
+- **ID generation**: content-position hash (hash of node content + sibling index) — deterministic, stable through most edits
+
+**Transclusion targeting:**
+```yaml
+osmosis:
+  styles:
+    "![[Note B]]/Architecture/Use dependency injection":
+      shape: "hexagon"
+```
+The `![[Note B]]/` prefix scopes the selector into the transcluded subtree. IDs work across boundaries since they're globally unique within the parse tree.
+
+#### Decision: Transclusion Style Cascade
+
+When note A transcludes note B, styles resolve with **CSS-like cascading**:
+
+```
+Theme defaults → Note B's frontmatter styles → Note A's frontmatter overrides → Per-node inline overrides
+```
+
+Rules:
+1. **Transcluded content inherits the host map's theme** — note B rendered inside note A uses A's theme
+2. **Note B's per-node overrides are preserved** — if B says "## Intro" is a diamond, it stays a diamond
+3. **Note A can override transcluded styles** by targeting paths like `"![[Note B]]/## Intro"`
+4. **View state for transcluded content belongs to the host** — fold state of B's branches inside A's map is stored in A's view file, not B's
+
+This gives predictable behavior: "my map, my theme, but embedded notes keep their personality unless I override."
+
+#### Decision: JSON + CSS Format for Themes
+
+- **JSON** for structured theme definitions (the `levels`, `branchColors`, etc.)
+- **CSS** for advanced overrides — power users can write `.osmosis-node[data-depth="2"] { ... }` custom CSS, leveraging the SVG's `data-depth` and `data-path` attributes (already in the markmap-inspired design)
+- CSS snippets work just like Obsidian CSS snippets — drop a file in a folder, toggle it on
+
+#### Decision: Named View States
+
+Users can save **multiple named view states** per note:
+- "Presentation view" — most branches collapsed, zoomed to fit
+- "Working view" — everything expanded
+- Switch between them like Obsidian workspaces
+
+Stored in the same sidecar file:
+```json
+{
+  "version": 1,
+  "namedStates": {
+    "Presentation": { "viewport": {...}, "foldState": {...} },
+    "Working": { "viewport": {...}, "foldState": {...} }
+  },
+  "activeState": "Working"
+}
+```
+
+### Xmind Feature Parity: Styling
+
+| Xmind Feature | Osmosis Equivalent |
+|---|---|
+| ~31 topic shapes | Ship ~15-20 shapes (rect, rounded, ellipse, diamond, hexagon, underline, pill, parallelogram, etc.) — SVG path-based, easy to add more |
+| Branch line styles | `curved`, `straight`, `angular`, `rounded-elbow` + thickness + taper + color |
+| Colored branches | Auto-assign from theme's `branchColors` palette; children inherit parent's branch color |
+| Theme presets | Ship 10-15 themes derived from iTerm2-Color-Schemes + community submissions |
+| Theme editor | Format panel (sidebar) with live preview — select node, change shape/color/font, see it update |
+| Extract/save theme | "Save current styles as theme" — snapshots all overrides into a new named theme |
+| Per-node format | Select node → format panel shows shape, fill, border, text options → stored as frontmatter overrides |
+| Background | Theme-level background color + optional CSS pattern/gradient |
+| Boundaries | Visual grouping frame with shape, color, transparency, line style |
+| Global font | Theme-level default font, overridable per-level or per-node |
+
+### Ideas Beyond Xmind
+
+1. **CSS snippet support** — advanced users write `.osmosis-node[data-depth="2"] { ... }` custom CSS, just like Obsidian CSS snippets. The SVG uses `data-depth` and `data-path` attributes.
+2. **Dataview-driven conditional styling** — style nodes based on metadata: `if tag contains #urgent → red border`. Natural extension given Obsidian's ecosystem.
+3. **Style inheritance across vault** — vault-level default theme in plugin settings → per-folder override (`.osmosis.yaml`) → per-note override (frontmatter). Three-level cascade mirroring vault organization.
+4. **Named view states** — save multiple named view states per note. Switch between them like Obsidian workspaces.
+5. **Shareable style + view bundles** — export a note's theme + overrides + view state as a single file for sharing styled maps.
+
+### Refined Understanding
+
+Mind map styling in Osmosis follows a 3-layer architecture that cleanly separates concerns: themes provide map-wide defaults (JSON), per-note frontmatter provides style overrides (portable with the note), and view state is stored separately as ephemeral session data (explicit save). Node targeting uses a hybrid approach — stable IDs generated by the GUI for resilience, tree paths as a human-readable power-user escape hatch. Transclusion cascading follows CSS-like rules where the host map's theme wins but embedded notes retain their per-node overrides. The format is JSON for structure + CSS for advanced customization, matching Obsidian's existing snippet system.
+
+---
+
 ## Next Steps
 
 - [x] Initial brainstorm and ideation
@@ -1141,6 +1374,7 @@ Transclusion (embedding `![[linked-note]]` or `![linked-note](path)` as a sub-br
 - [x] Explicit Card Syntax & Card Type Expansion ideation session (2026-02-27)
 - [x] Anki Import/Export ideation session (2026-02-28)
 - [x] MVP Definition, Performance Targets & Gap Resolution session (2026-02-28)
+- [x] Mind Map Styling & View State ideation session (2026-02-28)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
