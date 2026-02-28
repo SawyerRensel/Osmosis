@@ -1366,6 +1366,160 @@ Mind map styling in Osmosis follows a 3-layer architecture that cleanly separate
 
 ---
 
+## OpenUSD-Inspired Styling Refinements (2026-02-28)
+
+*Session focus: Applying design principles from Pixar's OpenUSD composition system to strengthen Osmosis's 3-layer styling architecture.*
+
+### Background: Why USD?
+
+Pixar's [OpenUSD](https://github.com/PixarAnimationStudios/OpenUSD) (Universal Scene Description) solves a problem structurally similar to Osmosis's styling challenge: composing properties from multiple sources (files, references, overrides) into a single resolved value per attribute, with well-defined precedence rules. USD's composition engine has been battle-tested across film production pipelines for over a decade.
+
+Key USD concepts studied:
+- **LIVRPS strength ordering**: Local > Inherits > VariantSets > References > Payloads > Specializes — a deterministic, layered resolution order for property values
+- **Composition arcs**: SubLayers, Inherits, VariantSets, References, Payloads, Specializes — each arc type adds a different composition relationship
+- **Class prims / Inherits**: Named abstract prims that serve as reusable templates; any prim that inherits a class gets all its properties, and updates to the class propagate to all inheritors
+- **VariantSets**: Named sets of switchable configurations on a single prim (e.g., `modelDetail: {low, medium, high}`)
+- **"Over" keyword**: Sparse, non-destructive override — only specifies the properties that differ, everything else falls through from weaker opinions
+- **Payloads**: Deferred loading — heavy data is not loaded until explicitly requested, enabling lazy composition
+- **Composition encapsulation**: A reference brings in a prim's resolved properties, but the referencing context cannot reach into and change the internal composition structure of the referenced prim
+
+### USD → Osmosis Mapping
+
+| USD Concept | Osmosis Analog | Description |
+|---|---|---|
+| LIVRPS ordering | **LCVRT ordering** | Formalized cascade: Local > Class > Variant > Reference > Theme |
+| Class prims / Inherits | **Style classes** | Named reusable style bundles; update the class, all nodes using it update |
+| VariantSets | **Style variants** | Switchable style configurations per note (presentation / study / print) |
+| "Over" keyword | **Sparse overrides** | Only specify changed properties; everything else falls through |
+| Payloads | **Lazy transclusion style resolution** | Don't resolve styles for collapsed/off-screen branches |
+| Composition encapsulation | **Transclusion encapsulation** | Host can override properties on transcluded content, but cannot alter its internal cascade |
+| SubLayer list-editing | **List-editing operations** | Additive theme composition: prepend, append, remove (non-destructive) |
+
+### LCVRT Strength Ordering
+
+Formalizes the previously informal cascade into a deterministic, USD-inspired resolution order:
+
+| Priority | Level | Description | USD Analog |
+|---|---|---|---|
+| 1 (strongest) | **L — Local** | Per-node frontmatter overrides (stable ID or tree path) | Local opinions |
+| 2 | **C — Class** | Style class applied to the node (`class: "important"`) | Inherits |
+| 3 | **V — Variant** | Active style variant selection (`activeVariant: "presentation"`) | VariantSets |
+| 4 | **R — Reference** | Transcluded note's own frontmatter styles | References |
+| 5 (weakest) | **T — Theme** | Theme defaults (per-depth-level shapes, colors, fonts) | Specializes |
+
+Resolution rule: for any property on any node, the **strongest opinion wins**. If a node has a local `fill: "#e94560"` and its style class says `fill: "#333"`, the local value wins. If neither Local nor Class specifies `fill`, the Variant value is checked, then Reference, then Theme.
+
+### Style Classes
+
+Named, reusable style bundles — the Osmosis equivalent of USD class prims with inherits. A style class is defined once and referenced by any number of nodes. Updating the class definition updates all nodes that use it.
+
+```yaml
+osmosis:
+  classes:
+    important:
+      shape: "rounded-rect"
+      fill: "#e94560"
+      border: { color: "#ff0000", width: 2 }
+      text: { weight: 700 }
+    definition:
+      shape: "underline"
+      fill: "#2d6a4f"
+      text: { style: "italic" }
+  styles:
+    "## Key Concepts":
+      class: "important"
+      text: { color: "#ffffff" }   # Local override — stronger than class
+    _n:b7c1:
+      class: "definition"
+```
+
+Classes can be defined at two levels:
+- **Theme-level** (weakest): defined inside the theme JSON, shared across all notes using that theme
+- **Note-level** (stronger): defined in the note's frontmatter, scoped to that note
+
+If both define a class with the same name, the note-level definition wins (just like USD's strength ordering for inherits at different composition levels).
+
+### Style Variants
+
+Switchable style configurations per note — the Osmosis equivalent of USD VariantSets. Each variant is a named set of style overrides that can be activated with a single selection.
+
+```yaml
+osmosis:
+  variants:
+    presentation:
+      "## Architecture": { shape: "diamond", fill: "#e94560", text: { size: 18 } }
+      "## Testing": { fill: "#999", text: { color: "#666" } }
+    study:
+      "## Architecture": { fill: "#333" }
+      "## Testing": { fill: "#333" }
+    print:
+      "*": { fill: "#ffffff", text: { color: "#000000" }, border: { color: "#333" } }
+  activeVariant: "presentation"
+```
+
+Key design decisions:
+- **Variants are orthogonal to view states**: a variant changes *styling* (shapes, colors), a view state changes *viewport* (fold, pan, zoom). They can be combined (e.g., "presentation" variant + "overview" view state).
+- **Variant switching is instant**: no re-parse needed, just re-resolve styles and re-render
+- **Variants compose with the LCVRT cascade**: Local overrides still win over variant values
+- **`"*"` wildcard**: applies to all nodes (useful for print/accessibility variants)
+
+### Sparse Overrides
+
+Explicitly formalized from USD's "over" concept: every override in Osmosis is **sparse by default**. A frontmatter style block only needs to specify the properties it wants to change. Unspecified properties fall through to the next level in the LCVRT cascade.
+
+This was already implicit in the 3-layer design, but USD makes it worth calling out explicitly as a core design principle. It means:
+- A style class that sets `shape` and `fill` doesn't need to set `text` — text falls through to the theme
+- A variant that only changes colors doesn't need to re-specify shapes
+- An override that just changes `fill` on one node leaves everything else untouched
+
+### Composition Encapsulation
+
+From USD's encapsulation principle: when note A transcludes note B, note A can override *properties* on note B's nodes, but cannot alter note B's *internal cascade*. Specifically:
+
+1. Note A can set `"![[Note B]]/## Intro": { fill: "#e94560" }` — overriding a property on a transcluded node
+2. Note A **cannot** change which style class Note B's `## Intro` uses, or modify Note B's variant definitions
+3. Note B's internal LCVRT cascade (Local > Class > Variant) resolves first, then Note A's overrides apply on top (at the Reference level)
+
+This ensures that transcluded notes behave predictably regardless of where they're embedded. The host can *style* the surface, but the embedded note's internal style logic remains intact — just like a USD reference brings in a resolved prim without exposing its internal composition arcs.
+
+### Lazy Transclusion Style Resolution
+
+Inspired by USD's Payload mechanism: don't resolve styles for content that isn't visible. When a transcluded branch is collapsed in the mind map, its style cascade is **deferred** — no LCVRT resolution happens for those nodes until the branch is expanded.
+
+Benefits:
+- Large maps with many transclusions render faster (only resolve visible styles)
+- Consistent with the existing lazy-loading approach for transclusion content
+- Style resolution cost scales with *visible* nodes, not *total* nodes
+
+### List-Editing Operations
+
+Inspired by USD's SubLayer list-editing semantics: themes can be composed additively rather than replaced wholesale. A note can **prepend**, **append**, or **remove** items from a theme's list-valued properties.
+
+```yaml
+osmosis:
+  theme: "Ocean"
+  branchColors:
+    prepend: ["#e94560"]     # Add red as the first branch color
+    remove: ["#2196F3"]      # Remove the default blue
+  # Result: ["#e94560", ...remaining Ocean colors without #2196F3]
+```
+
+This enables non-destructive theme customization — a note can tweak a theme's palette without duplicating the entire color list. Applies to any list-valued theme property (branch colors, font stacks, etc.).
+
+### Refined Understanding (Updated)
+
+The USD-inspired refinements strengthen Osmosis's styling architecture in three key ways:
+
+1. **Deterministic resolution**: The LCVRT ordering (Local > Class > Variant > Reference > Theme) gives every property on every node a single, predictable resolved value with no ambiguity about which source wins.
+
+2. **Reusability without fragility**: Style classes provide USD-like "define once, use everywhere" inheritance. Style variants provide switchable configurations without duplicating notes or views. List-editing operations allow non-destructive theme customization.
+
+3. **Scalable composition**: Composition encapsulation ensures transcluded notes are self-contained styling units. Lazy resolution ensures performance scales with visible content, not total content. Sparse overrides keep frontmatter minimal.
+
+These refinements don't change the fundamental 3-layer architecture — they add precision and power *within* it. The layers remain: Themes (T), Per-note frontmatter (L + C + V), and View state (ephemeral, separate). What changes is that the per-note layer now has a richer, USD-informed internal structure.
+
+---
+
 ## Next Steps
 
 - [x] Initial brainstorm and ideation
@@ -1375,6 +1529,7 @@ Mind map styling in Osmosis follows a 3-layer architecture that cleanly separate
 - [x] Anki Import/Export ideation session (2026-02-28)
 - [x] MVP Definition, Performance Targets & Gap Resolution session (2026-02-28)
 - [x] Mind Map Styling & View State ideation session (2026-02-28)
+- [x] OpenUSD-Inspired Styling Refinements session (2026-02-28)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
