@@ -977,13 +977,13 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 
 ## Open Questions
 
-- [ ] Should the mind map engine be published as a separate npm package from day one, or extracted later?
-- [ ] What is the exact behavior when a user edits a transcluded node that contains card IDs from the source file? Does the ID move or stay?
-- [ ] How should Osmosis handle notes that use `**bold**` extensively for emphasis (not as cloze targets)? Per-note cloze-bold toggle? Global setting?
-- [ ] Should the incremental parser use Web Workers to avoid blocking the main thread during large edits?
-- [ ] What is the minimum supported Obsidian version? (Determines available API features)
-- [ ] How should card generation interact with Obsidian templates — if a template includes `osmosis: true`, should cards be generated immediately or wait for the user to edit?
-- [ ] For spatial mode: what is the exact animation/transition for hiding and revealing nodes? Fade, slide, flip?
+- [x] Should the mind map engine be published as a separate npm package from day one, or extracted later? **Decision**: Build as internal module with clean boundaries. Extract later if there's demand.
+- [x] What is the exact behavior when a user edits a transcluded node that contains card IDs from the source file? Does the ID move or stay? **Decision**: Card ID stays with the content in the source file. The transclusion is a view, not ownership transfer.
+- [x] How should Osmosis handle notes that use `**bold**` extensively for emphasis (not as cloze targets)? **Decision**: Per-note toggle in frontmatter (`osmosis-cloze-bold: false`). Global setting as default.
+- [x] Should the incremental parser use Web Workers to avoid blocking the main thread during large edits? **Decision**: Not for v1.0. Profile first. The < 20ms target for 1,000 lines is achievable on the main thread.
+- [x] What is the minimum supported Obsidian version? **Decision**: Target the current stable version at time of release. Document in manifest.json.
+- [x] How should card generation interact with Obsidian templates — if a template includes `osmosis: true`, should cards be generated immediately or wait for the user to edit? **Decision**: Generate on first edit or explicit trigger, not on template insertion.
+- [x] For spatial mode: what is the exact animation/transition for hiding and revealing nodes? **Decision**: Fade (opacity 0→1, ~200ms). Simple, performant, consistent.
 
 ---
 
