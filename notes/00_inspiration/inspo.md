@@ -452,8 +452,9 @@ Osmosis Settings has explicit include/exclude lists for folders and tags. Nothin
 - Rating: Again / Hard / Good / Easy (standard FSRS)
 - Session quotas: daily new card limit + daily review limit
 
-**Two study modes (same FSRS engine, different UX):**
-- **Sequential mode** (from editor): classic Anki-style modal, card by card
+**Three study modes (same FSRS engine, different UX):**
+- **Sequential mode** (deck study): classic Anki-style modal, card by card
+- **Contextual mode** (in-note study): activates in reading view; cards studied in-place within the note in document order; casual peek or FSRS-rated study (see Explicit Card Syntax session below)
 - **Spatial mode** (from Mind Map View): nodes hide/reveal in-place on the map; supports both full node hiding AND inline cloze blanking within visible nodes
 
 #### Image Occlusion
@@ -487,6 +488,200 @@ The flashcard system is not a bolt-on to the mind map — it is the same data vi
 
 ---
 
+## Explicit Card Syntax & Card Type Expansion Ideation Session
+
+*Recorded from Claude Code ideation session, 2026-02-27. Builds on the Flashcard/SR session above. References studied: `ref/obsidian-spaced-repetition/docs/docs/en/flashcards/q-and-a-cards.md`, `ref/admonitions/`, Anki source code (`ref/anki/`).*
+
+### Anki Feature Parity Audit
+
+Compared all Anki stock note types against Osmosis's planned card types. Three gaps identified:
+
+1. **Basic (optional reversed card)** — Anki allows conditionally generating a reverse card via an "Add Reverse" field. Resolved: Osmosis uses `bidi: true` boolean on any card, which is easier to toggle than Anki's field-based approach.
+2. **Basic (type in the answer)** — Anki's `{{type:FieldName}}` shows a text input for typed recall. Resolved: Osmosis adds `type-in: true` boolean flag (see below).
+3. **Custom notetype templates** — Anki allows arbitrary multi-field notetypes with custom templates. Decision: **Skip for now.** Osmosis's markdown-native card types cover the common cases; custom templates add complexity without clear value for the target workflow.
+
+### Key Decisions
+
+#### Heading Auto-Generation Toggle
+- New setting in Osmosis Settings: **"Auto-generate cards from headings"** (on by default)
+- When **off**, headings are not automatically interpreted as card fronts — only explicit card declarations (code fences, clozes, tables) generate cards
+- When off, heading structure is **still used as context/metadata** for cloze cards within that section (e.g., a cloze under `## Photosynthesis` is tagged with that heading for context)
+- Use case: students who take extensive notes under headings and don't want every section to become a card
+
+#### Explicit Card Syntax: Code Fences
+
+**Decision**: Use code fences (`` ```osmosis ``) for explicit card declarations. Rejected callout syntax (`> [!flashcard]`) — code fences are cleaner, and the Admonitions plugin (`ref/admonitions/`) proves that code fences can render full markdown content (images, math, links, embeds) via `MarkdownRenderer.renderMarkdown()`. Osmosis will build its own post-processor using the same technique — no Admonitions dependency.
+
+**Why code fences over OSR's separator syntax (`::`, `?`, `??`)**:
+- No collision risk — `osmosis` is a unique language tag
+- Structured metadata via key-value lines in the body (deck, hints, flags)
+- Full markdown rendering inside the fence (via custom post-processor)
+- Extensible — new fields are just new keys, no syntax redesign
+- One consistent system instead of mixing inline separators with other syntax
+
+**Decided against keeping `::` / `:::` inline syntax alongside fenced cards** — one system only, for simplicity and consistency.
+
+#### Card Syntax Specification
+
+**Basic unidirectional card:**
+````
+```osmosis
+What is the capital of France?
+***
+Paris
+```
+````
+
+**Bidirectional card:**
+````
+```osmosis
+bidi: true
+
+Paris
+***
+Capital of France
+```
+````
+
+**Type-in-the-answer card:**
+````
+```osmosis
+type-in: true
+
+Spell the capital of France
+***
+Paris
+```
+````
+
+**Bidirectional type-in card:**
+````
+```osmosis
+bidi: true
+type-in: true
+
+Bonjour
+***
+Hello
+```
+````
+
+**Card with metadata:**
+````
+```osmosis
+bidi: true
+type-in: true
+deck: vocabulary/french
+hint: A greeting
+
+Bonjour
+***
+Hello
+```
+````
+
+**Rich content (math, images — all rendered by post-processor):**
+````
+```osmosis
+deck: biology/cell-structure
+hint: Powerhouse of the cell
+
+What organelle produces ATP?
+![[mitochondria.png]]
+***
+Mitochondria
+```
+````
+
+**Syntax rules:**
+- Language tag is `` ```osmosis `` — Osmosis registers a `MarkdownCodeBlockProcessor` for this tag
+- Metadata lines (`key: value`) must appear at the top of the fence body, before any blank line
+- `***` separates front from back (one `***` always, regardless of direction)
+- `bidi: true` makes the card bidirectional (generates two cards: forward + reverse)
+- `type-in: true` enables typed recall mode (text input + diff comparison on review)
+- Flags compose: `bidi: true` + `type-in: true` = bidirectional type-in card
+- All standard markdown renders inside the fence: bold, links, images, LaTeX, code, embeds
+
+#### Command Palette Commands
+
+Commands for inserting cards via command palette, reducing manual typing:
+
+**Separate commands** (for hotkey binding):
+- `Osmosis: Insert card` — basic unidirectional skeleton
+- `Osmosis: Insert bidirectional card` — with `bidi: true`
+- `Osmosis: Insert type-in card` — with `type-in: true`
+- `Osmosis: Insert bidirectional type-in card` — with both flags
+
+**Submenu command** (for command palette search):
+- `Osmosis: Insert card...` → submenu with all four types (plus any user-defined templates)
+
+**Behavior on insert:**
+- Inserts the fence skeleton at cursor with `***` already placed
+- Cursor lands on the first line (front side), ready to type
+- Metadata lines pre-populated based on context (e.g., if the current note has `osmosis-deck:` in frontmatter, auto-fill `deck:`)
+- User-defined templates (see below) appear as additional submenu options
+
+#### Card Templates
+
+**Storage**: In Osmosis Settings UI (stored in `data.json` alongside other plugin settings).
+
+**Settings UI**:
+- A list of named templates ("Basic", "Vocab Bidirectional", "Code Quiz", etc.)
+- Each template defines: which metadata keys to include, default values, and the skeleton structure
+- Users can add, remove, reorder, and edit templates
+- Templates appear as command palette submenu options: `Osmosis: Insert card... → Vocab Bidirectional`
+
+**Built-in defaults** (user can modify or delete):
+- "Basic" — no metadata, just front/back
+- "Bidirectional" — `bidi: true`
+- "Type-in" — `type-in: true`
+- "Bidirectional Type-in" — `bidi: true` + `type-in: true`
+
+**Export/import**: Templates can be exported as JSON and imported by other users.
+
+#### Three Study Modes
+
+**Updated from two to three study modes** (same FSRS engine, different UX):
+
+1. **Sequential mode** (deck study): Classic Anki-style modal, card by card. Cards drawn from a deck regardless of source note. Entry points: sidebar dashboard, command palette (`Osmosis: Study deck`).
+
+2. **Contextual mode** (in-note study): Cards studied in-place within the note, in document reading order. **Activates automatically when the student switches to Obsidian's reading view** on an opted-in note. No extra commands or menu options needed — reading view *is* study mode.
+   - The Osmosis post-processor hides the answer side of every `osmosis` fence (replaced by a "Reveal" button or `░░░░░░` placeholder). Front side stays visible.
+   - Clicking "Reveal" shows the answer. A "Start studying" button at the top of the note activates FSRS rating — after each reveal, inline rating buttons (Again / Hard / Good / Easy) appear below the card.
+   - Without clicking "Start studying", reveals are casual peeks — no FSRS recording.
+   - **All cards in the note participate regardless of FSRS schedule** (unlike sequential/spatial which respect due dates).
+   - **Inline cloze participation**: Whether `==highlighted==` and `**bolded**` clozes in surrounding prose also blank out in contextual mode is **configurable in Osmosis Settings** (default: off).
+   - Progress indicator: small floating widget or status bar showing "3/7 cards reviewed in this note".
+
+3. **Spatial mode** (mind map study): Nodes hide/reveal in-place on the map. Supports both full node hiding and inline cloze blanking within visible nodes. Entry points: Mind Map View menu, right-click branch, floating due-cards badge.
+
+#### FSRS Review Tagging by Study Mode
+
+Every FSRS review is tagged with the study mode that produced it (`contextual`, `sequential`, `spatial`). Stored as an extra column in `cards.db` review logs.
+
+**Rationale**: Contextual mode provides surrounding text as cues, which may inflate ease ratings compared to sequential mode (isolated recall). Tagging the source allows:
+- **Short term**: All reviews count equally. Simple, no wasted effort.
+- **Long term**: If data shows contextual reviews inflate ease, a configurable **contextual difficulty adjustment** multiplier (e.g., 0.8×) can discount contextual ratings.
+- **Analytics**: Students can see study mode distribution — "You review 60% of your cards contextually."
+
+### Updated Card Types Table
+
+| Type | Syntax | Cards generated |
+|---|---|---|
+| Heading-paragraph | `## Heading` + body below (auto-gen, toggleable in settings) | 1 (heading = front, body = back) |
+| Table | 2-column markdown table | 1 per data row |
+| Cloze — highlight | `==term==` | 1 per highlighted term |
+| Cloze — bold | `**term**` | 1 per bolded term |
+| Explicit card | `` ```osmosis `` code fence with `***` separator | 1 (or 2 if `bidi: true`) |
+| Type-in card | `` ```osmosis `` code fence with `type-in: true` | 1 (or 2 if `bidi: true`) |
+| Code block — single line | `# osmosis-hide` or `// osmosis-hide` appended to line | 1 per hidden line/region |
+| Code block — multi-line | `# osmosis-hide-start` / `# osmosis-hide-end` block | 1 per hidden region |
+| Image occlusion | SVG masks drawn over image via editor | 1 per shape/group |
+
+*Note: The old `Q:::A` bidirectional inline syntax has been replaced by `` ```osmosis `` fences with `bidi: true`. All explicit card creation uses the unified code fence syntax.*
+
+---
+
 ## Scope Reality Check
 
 *Early thinking about scope: Is this a weekend project, a month-long effort, or something larger?*
@@ -504,6 +699,7 @@ The flashcard system is not a bolt-on to the mind map — it is the same data vi
 - [x] Initial brainstorm and ideation
 - [x] Mind Map ideation session (2026-02-24)
 - [x] Flashcard / Spaced Repetition ideation session (2026-02-26)
+- [x] Explicit Card Syntax & Card Type Expansion ideation session (2026-02-27)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
