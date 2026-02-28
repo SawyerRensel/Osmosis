@@ -76,7 +76,7 @@ Osmosis makes it possible to author knowledge once and leverage all three techni
 
 ### Secondary Goals
 
-1. Support transclusion (`![[linked-note]]`) as embedded sub-branches in mind maps — a capability no existing mind map tool offers
+1. Support transclusion (`![[linked-note]]` and `![](path-to-linked-note)`) as embedded sub-branches in mind maps — a capability no existing mind map tool offers
 2. Provide an escape hatch to/from Anki via .apkg import/export for users migrating between tools
 3. Offer card authoring transparency (gutter indicators, "Cards in This Note" panel) so users always know what has become a flashcard
 
@@ -206,19 +206,19 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 
 ### Feature 3: Embedded/Transclusion Mind Maps
 
-**User Story**: As a knowledge organizer, I want `![[linked-note]]` to render the linked note's content as a sub-branch in my mind map, so that I can build hierarchical knowledge structures that span multiple notes.
+**User Story**: As a knowledge organizer, I want embedded note links to render the linked note's content as a sub-branch in my mind map, so that I can build hierarchical knowledge structures that span multiple notes.
 
-**Description**: When a markdown note contains `![[linked-note]]`, Osmosis renders the linked note's entire heading/bullet tree as a sub-branch of the parent map. This is recursive — embedded notes can embed other notes. This feature has no equivalent in any existing mind mapping software.
+**Description**: When a markdown note contains an embedded note link — either wikilink-style (`![[linked-note]]`) or markdown-style (`![](path-to-linked-note)`) — Osmosis renders the linked note's entire heading/bullet tree as a sub-branch of the parent map. Both link syntaxes are supported because Obsidian users configure their vaults for one or the other. This is recursive — embedded notes can embed other notes. This feature has no equivalent in any existing mind mapping software.
 
 **Implementation requirements:**
-- `![[linked-note]]` renders the linked note's tree as a sub-branch
+- Both `![[linked-note]]` and `![](path-to-linked-note)` render the linked note's tree as a sub-branch
 - **Cycle detection**: A embeds B embeds A → detected at tree construction time (< 1ms), broken with a visual "circular reference" indicator
 - **Lazy loading**: Collapsed transclusion branches don't parse the embedded file until expanded
 - **Edit propagation**: Editing a transcluded node writes to the source file (the embedded note), not the parent
 - **Visual distinction**: Transcluded branches have a subtle indicator (icon or border style) showing they come from another file
 
 **Acceptance Criteria**:
-- [ ] `![[note]]` in a markdown file renders the linked note's tree as a collapsible sub-branch
+- [ ] `![[note]]` and `![](path-to-note)` both render the linked note's tree as a collapsible sub-branch
 - [ ] Recursive embedding works (A embeds B embeds C)
 - [ ] Circular references are detected and displayed gracefully (not infinite loops)
 - [ ] Editing a transcluded node modifies the source file
@@ -525,7 +525,7 @@ Every review is tagged with the study mode that produced it (`contextual`, `sequ
 
 - **Obsidian API**: Plugin lifecycle, views, settings, commands, workspace, markdown rendering, file operations
 - **Obsidian Markdown Renderer**: `MarkdownRenderer.renderMarkdown()` for rich content inside mind map nodes and card fences
-- **Obsidian File System**: Vault API for reading/writing notes, resolving `![[]]` links for transclusion
+- **Obsidian File System**: Vault API for reading/writing notes, resolving `![[]]` and `![]()` links for transclusion
 - **Obsidian Mobile**: Capacitor.js WebView (WKWebView on iOS, Android System WebView on Android)
 
 ### Data & Privacy
@@ -593,7 +593,7 @@ See detailed targets in the Performance Targets section below. Summary:
 
 #### Flow 5: Building a Knowledge Tree via Transclusion
 1. Create topic notes: `Python.md`, `Functions.md`, `Classes.md`
-2. In `Python.md`, add `![[Functions]]` and `![[Classes]]`
+2. In `Python.md`, embed the notes (`![[Functions]]` / `![[Classes]]` or `![](Functions.md)` / `![](Classes.md)`)
 3. Open `Python.md` in Mind Map View
 4. Functions and Classes appear as expandable sub-branches
 5. Edit a node in the Functions branch → `Functions.md` is updated
@@ -699,7 +699,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 - [ ] A note with `osmosis: true` in frontmatter generates cards from headings and clozes
 - [ ] All three study modes are functional (sequential, contextual, spatial)
 - [ ] FSRS schedules cards correctly across sessions
-- [ ] `![[linked-note]]` renders as a sub-branch in the mind map
+- [ ] Embedded note links (`![[linked-note]]` and `![](path)`) render as sub-branches in the mind map
 - [ ] Works on desktop AND mobile with no perceptible lag for maps up to 500 nodes
 - [ ] `npm run lint` passes with no errors
 - [ ] `npm run build` succeeds

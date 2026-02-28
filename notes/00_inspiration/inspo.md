@@ -152,7 +152,7 @@ Claude helped clarify several foundational decisions by asking probing questions
 - **Obsidian Bases for mind map rendering**: Cautious — Bases is optimized for tabular/structured data, not tree/graph rendering. Could constrain the interaction model. Keep as an option, not a foundation.
 
 #### Embedded/Transclusion Mind Maps
-- Rendering `![[linked-note]]` as a sub-branch in the parent map is a must-have.
+- Rendering `![[linked-note]]` or `![linked-note](path-to-linked-note)` as a sub-branch in the parent map is a must-have. Both wikilink-style and markdown-style links are supported.
 - Needs: cycle detection (A embeds B embeds A), lazy-loading of collapsed branches for performance, and clear UX for editing nodes that belong to embedded files (edits write to the embedded file).
 - Goal: embed 100 notes together with no perceptible lag.
 
@@ -298,13 +298,13 @@ Osmosis is a custom mind map engine + spaced repetition system built as an Obsid
 - **Footnote tooltips**: Hover/click a node in Mind Map View to see a popup with footnote content (`[^1]`). Adds context without cluttering the visible map. Uses standard markdown footnotes — zero new syntax.
 - **Source mode toggle**: Switch between visual mind map and raw markdown within the mind map view, like Obsidian's reading/source toggle.
 - **Split view**: Map on one side, markdown on the other, with live bidirectional sync.
-- **Embedded/transclusion mind maps**: `![[linked-note]]` renders as a sub-branch. Recursive, with cycle detection and lazy-loading.
+- **Embedded/transclusion mind maps**: `![[linked-note]]` or `![linked-note](path)` renders as a sub-branch. Recursive, with cycle detection and lazy-loading.
 
 ### Must-Have Features
 - Custom mind map engine (SVG + foreignObject hybrid rendering)
 - Mind Map view (with direction/side toggles) and Timeline view
 - Bidirectional markdown ↔ mind map sync with incremental parsing
-- Embedded/transclusion mind maps (`![[]]` renders linked notes as sub-branches)
+- Embedded/transclusion mind maps (`![[]]` and `![]()` render linked notes as sub-branches)
 - Spaced repetition with FSRS scheduling
 - Zero-effort card generation (headings, highlights, bold → cards)
 - Spatial study mode (in mind map) + sequential study mode (in editor)
@@ -955,7 +955,7 @@ The MVP must demonstrate Osmosis's core thesis: **author once, study in multiple
 3. A note with `osmosis: true` in frontmatter generates cards from headings and clozes
 4. You can study those cards in all three modes (sequential, contextual, spatial)
 5. FSRS schedules cards correctly across sessions
-6. `![[linked-note]]` renders the linked note's mind map as a sub-branch
+6. `![[linked-note]]` or `![linked-note](path)` renders the linked note's mind map as a sub-branch
 7. Works on desktop AND mobile with no perceptible lag for maps up to 500 nodes
 
 ### 2. Performance Targets
@@ -1085,10 +1085,10 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 
 ### 5. Transclusion: Confirmed v1 (Core Competitive Advantage)
 
-Transclusion (embedding `![[linked-note]]` as a sub-branch in the parent mind map) is **confirmed as a v1 must-have**. This is a core competitive advantage that sets Osmosis apart from all existing mind mapping software.
+Transclusion (embedding `![[linked-note]]` or `![linked-note](path)` as a sub-branch in the parent mind map) is **confirmed as a v1 must-have**. This is a core competitive advantage that sets Osmosis apart from all existing mind mapping software.
 
 **Implementation requirements for v1:**
-- `![[linked-note]]` renders the linked note's entire heading/bullet tree as a sub-branch
+- `![[linked-note]]` or `![linked-note](path)` renders the linked note's entire heading/bullet tree as a sub-branch (both wikilink-style and markdown-style embeds are supported)
 - Cycle detection: A embeds B embeds A → detected at tree construction time, broken with a visual indicator ("circular reference")
 - Lazy loading: collapsed transclusion branches don't parse the embedded file until expanded
 - Edit propagation: editing a transcluded node writes to the source file (the embedded note), not the parent
