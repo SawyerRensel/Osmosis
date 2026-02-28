@@ -319,6 +319,7 @@ Osmosis is a custom mind map engine + spaced repetition system built as an Obsid
 - Filter by topic content / notes
 - Comments via Obsidian quotes
 - Spaced repetition heatmap
+- Anki import/export (.apkg/.colpkg) — see Anki Import/Export Ideation Session
 
 ### Future Possibilities
 - AI-assisted mind map generation
@@ -682,6 +683,222 @@ Every FSRS review is tagged with the study mode that produced it (`contextual`, 
 
 ---
 
+## Anki Import/Export Ideation Session
+
+*Recorded from Claude Code ideation session, 2026-02-28. Builds on the Flashcard/SR and Explicit Card Syntax sessions above. References studied: `ref/anki/` (import/export code, protobuf schemas, database schema).*
+
+### Motivation
+
+Anki is the dominant spaced repetition tool with millions of users and a massive shared deck ecosystem. Providing import/export between Anki packages and Osmosis serves two purposes:
+
+1. **Onboarding** — Users can bring their existing Anki decks (with years of scheduling history) into Osmosis without starting over. This is the higher-value direction.
+2. **Sharing** — Users can export Osmosis decks as .apkg files to share with the broader Anki community, or with collaborators who haven't adopted Osmosis.
+
+**Scope**: Nice-to-have, Phase 2+. The core value of Osmosis (unified notes-maps-flashcards) does not depend on Anki interop. This is an adoption accelerator.
+
+### Anki Package Format Analysis
+
+Both **.apkg** (deck package) and **.colpkg** (full collection package) are **ZIP archives** containing:
+
+| Component | Legacy (.anki2/.anki21) | Modern (.anki21b) |
+|---|---|---|
+| **Database** | SQLite, uncompressed | SQLite, zstd-compressed |
+| **Media manifest** | `media` file: JSON object `{"0": "image.jpg", ...}` | `media` file: protobuf `MediaEntries` (zstd-compressed) |
+| **Media files** | Numbered entries (0, 1, 2...), stored as-is | Numbered entries, zstd-compressed |
+| **Metadata** | None | `meta` file: protobuf `PackageMetadata` with version enum |
+| **Schema version** | V11 (Anki 2.0–2.1.49) | V18 (Anki 2.1.50+, supports FSRS) |
+
+**Key database tables:**
+- `notes`: id, guid, notetype_id, modification_time, tags, fields (separated by `\x1f`)
+- `cards`: id, note_id, deck_id, ordinal, type, queue, due, interval, ease_factor, reps, lapses
+- `revlog`: id (timestamp), card_id, usn, ease, interval, last_interval, factor, time, type
+- `notetypes` (models): Card templates, field definitions, CSS styling
+- `decks`: Deck names, configs, hierarchy
+
+**Protobuf schemas** (in `anki/import_export.proto`):
+- `MediaEntry`: name, size, sha1_hash
+- `MediaEntries`: repeated MediaEntry
+- `PackageMetadata`: version enum (LEGACY_1, LEGACY_2, LATEST)
+
+### Import: .apkg → Osmosis
+
+#### Process
+
+1. **Unzip** the .apkg and detect format version (check for `meta` file → modern; `media` as JSON → legacy)
+2. **Open the SQLite database** and read notes, cards, decks, notetypes, and optionally revlog
+3. **Map Anki notetypes → Osmosis card types** (see mapping table below)
+4. **Convert Anki HTML → Markdown** for card content (using a library like turndown.js)
+5. **Generate markdown files** with Osmosis card syntax (````osmosis` fences, cloze markup, etc.)
+6. **Import media** — copy images/audio into the vault, rewrite references in generated markdown
+7. **Import SR state** — map Anki scheduling data into `.osmosis/cards.db`
+8. **Set frontmatter** — add `osmosis: true` and `osmosis-deck:` to generated files
+
+#### Notetype Mapping
+
+| Anki Notetype | Osmosis Card Type | Notes |
+|---|---|---|
+| Basic | ````osmosis` fence (unidirectional) | Front field → front, Back field → back |
+| Basic (and reversed card) | ````osmosis` fence with `bidi: true` | Always generates both directions |
+| Basic (optional reversed card) | ````osmosis` fence, `bidi: true` if reverse field non-empty | Check the "Add Reverse" field |
+| Basic (type in the answer) | ````osmosis` fence with `type-in: true` | |
+| Cloze | `==cloze==` syntax in markdown prose | Convert `{{c1::text}}` → `==text==`; multiple cloze indices → multiple highlights |
+| Image Occlusion | SVG masks imported into `.osmosis/masks/` | Requires mask format conversion (see below) |
+| Custom notetypes | ````osmosis` fence (best-effort) | Multi-field templates flattened to front/back with warning |
+
+#### Cloze Conversion Details
+
+Anki cloze syntax: `{{c1::answer::hint}}`
+- `{{c1::mitochondria}}` → `==mitochondria==`
+- `{{c1::mitochondria::powerhouse}}` → `==mitochondria==` with `hint:` metadata preserved in an adjacent `<!--osmosis-hint:powerhouse-->` comment
+- Multiple cloze indices (`c1`, `c2`, `c3`) in one note → each becomes a separate highlighted term, each generating its own card (matches Osmosis's one-card-per-highlight behavior)
+- Nested cloze (rare) → flattened with warning
+
+#### SR State Import
+
+Two options presented to the user at import time:
+
+1. **Reset scheduling** (recommended for SM-2 decks): All imported cards start as new. Clean slate, FSRS schedules from scratch. Simplest and most correct.
+2. **Best-effort conversion** (for FSRS decks or users with significant history):
+   - Import `interval`, `ease_factor`, `reps`, `lapses` from Anki's cards table
+   - Import `revlog` entries into `.osmosis/cards.db` review log
+   - FSRS can use review history to compute optimal parameters via its optimizer
+   - SM-2 ease factors don't map cleanly to FSRS stability/difficulty — the FSRS optimizer handles this by re-deriving parameters from the raw review log
+
+**Anki V18 (2.1.50+) decks with FSRS enabled** already store FSRS-compatible data (stability, difficulty, desired_retention). These can be imported directly with minimal conversion.
+
+#### Import UX
+
+- **Entry point**: Command palette → `Osmosis: Import Anki deck (.apkg)`, or via Osmosis Settings → Import/Export tab
+- **File picker**: Standard OS file dialog filtered to `.apkg` / `.colpkg`
+- **Import wizard** (modal):
+  1. Preview: show deck name, card count, notetype breakdown, media count
+  2. Options:
+     - Target folder for generated markdown files (default: `Anki Import/{deck-name}/`)
+     - Scheduling: "Reset (recommended)" vs "Import history"
+     - Deck mapping: import as Osmosis deck tag, folder, or frontmatter `osmosis-deck:`
+     - Media folder location (default: vault attachments folder)
+  3. Import progress bar with per-card status
+  4. Summary: cards imported, cards skipped (with reasons), warnings
+
+#### Edge Cases
+
+- **Anki's HTML content**: Cards can contain arbitrary HTML/CSS (tables, colored text, custom fonts, audio/video embeds). The HTML→markdown conversion is inherently lossy. Strategy: convert what we can, preserve the rest as raw HTML blocks in markdown (which Obsidian renders), and flag heavily-styled cards for manual review.
+- **Sound/video tags**: Anki uses `[sound:filename.mp3]` syntax. Convert to Obsidian's `![[filename.mp3]]` embed syntax.
+- **LaTeX**: Anki renders LaTeX to images at review time. Import the LaTeX source (stored in the field) as `$...$` / `$$...$$` in markdown, which Obsidian renders natively. Discard the pre-rendered images.
+- **Duplicate detection**: If importing a deck that overlaps with existing Osmosis cards, match by content hash. Options: skip duplicates, overwrite, or create duplicates with warning.
+- **Deck hierarchy**: Anki uses `::` as deck separator (`Parent::Child::Grandchild`). Map to Osmosis deck paths (`parent/child/grandchild`).
+
+### Export: Osmosis → .apkg
+
+#### Process
+
+1. **Select scope**: User chooses what to export — a deck, a tag, a folder, a single note, or a mind map branch
+2. **Collect cards** from the selected scope, reading from `.osmosis/cards.db`
+3. **Map Osmosis card types → Anki notetypes** (reverse of the import mapping)
+4. **Convert markdown → HTML** for Anki fields (via Obsidian's `MarkdownRenderer` or a standalone library)
+5. **Build the SQLite database** with Anki's schema (notes, cards, decks, models tables)
+6. **Package media** — gather all images/audio referenced by exported cards, number them sequentially, write the media manifest
+7. **Write the .apkg** ZIP file
+
+#### Card Type Mapping (Export)
+
+| Osmosis Card Type | Anki Notetype | Notes |
+|---|---|---|
+| ````osmosis` fence (unidirectional) | Basic | |
+| ````osmosis` fence with `bidi: true` | Basic (and reversed card) | |
+| ````osmosis` fence with `type-in: true` | Basic (type in the answer) | |
+| `==cloze==` / `**cloze**` | Cloze | Convert `==text==` → `{{c1::text}}`; auto-increment cloze index |
+| Heading-paragraph | Basic | Heading → front field, body → back field |
+| Table row | Basic | Column 1 → front, Column 2 → back |
+| Code block cloze | Cloze | Hidden lines → `{{c1::code}}` with surrounding code as context |
+| Image occlusion | Image Occlusion Enhanced | Convert mask format; export SVG masks as media |
+
+#### Export UX
+
+- **Entry points**:
+  - Command palette → `Osmosis: Export deck as Anki package (.apkg)`
+  - Osmosis sidebar → right-click deck → "Export as .apkg"
+  - Note ⋯ menu → "Export cards as .apkg"
+  - Mind Map View → right-click branch → "Export branch as .apkg"
+- **Export dialog** (modal):
+  1. Scope confirmation: "Exporting 47 cards from deck 'Python/Functions'"
+  2. Options:
+     - Include scheduling data (yes/no — default no, since the recipient likely has their own schedule)
+     - Include media (yes/no — default yes)
+     - Target Anki schema version (V11 for broad compatibility vs V18 for FSRS data)
+  3. File save dialog
+  4. Summary: cards exported, media files included, any conversion warnings
+
+#### Lossy Export Considerations
+
+Some Osmosis features have no Anki equivalent:
+- **Mind map spatial context** — exported cards lose their spatial relationships. The heading hierarchy is preserved as deck structure, but the visual layout is gone.
+- **Footnote tooltips** — exported as part of the back field content, losing their hover/popup behavior.
+- **Transclusion context** — cards from embedded notes lose their transclusion relationship. Exported as standalone cards.
+- **Graph-aware ease boosting** — Anki has no concept of linked-note ease contribution. Scheduling data exported as-is.
+- **Contextual mode** — the in-note study experience doesn't translate. Cards become standard Anki review cards.
+
+These losses are acceptable — the goal is data portability, not feature parity. A warning summary at export time lists what won't transfer.
+
+### Image Occlusion Format Conversion
+
+Anki (Image Occlusion Enhanced) and Osmosis use different mask formats:
+
+| Aspect | Anki IOE | Osmosis |
+|---|---|---|
+| **Editor** | SVG-Edit 2.6 (embedded) | Fabric.js or Konva.js |
+| **Mask storage** | 3 SVGs per card in media folder: Original, Question mask, Answer mask | `.osmosis/masks/{noteUUID}-{shapeId}-{Q\|A\|O}.svg` |
+| **Shape IDs** | UUID + sequential index | UUID + sequential index (compatible) |
+| **Mask format** | Raw SVG with rect/ellipse/polygon elements | Fabric.js/Konva.js JSON serialized to SVG |
+
+**Import conversion**: Parse Anki's SVG masks, extract shape geometries (rect, ellipse, polygon, path), convert to Osmosis's mask format. Shape positions and dimensions are preserved. The SVG primitives are standard — this is a straightforward geometric conversion.
+
+**Export conversion**: Reverse the above. Generate Anki-compatible SVG masks from Osmosis's mask data. Include the three SVG variants (Original, Question, Answer) that Anki IOE expects.
+
+### Bulk Operations
+
+Beyond single-deck import/export:
+
+- **Import .colpkg** (full Anki collection): Imports all decks, all notetypes, all media, all scheduling. This is a "migration" workflow for users switching from Anki to Osmosis entirely.
+- **Batch export**: Export multiple Osmosis decks as separate .apkg files, or as a single .colpkg containing all of them.
+- **Shared deck compatibility**: Imported shared decks (from AnkiWeb) work the same as any other .apkg — the format is identical.
+
+### Dependencies & Technical Requirements
+
+- **JSZip** or similar — for ZIP read/write in the browser/Obsidian environment
+- **sql.js** — already planned for `.osmosis/cards.db`; reuse for reading/writing Anki's SQLite databases
+- **turndown.js** (or similar) — HTML → markdown conversion for import
+- **Obsidian's MarkdownRenderer** — markdown → HTML conversion for export (or a standalone library for cases where Obsidian's renderer isn't available)
+- **protobuf.js** (optional) — for reading modern Anki package metadata; could also just support legacy format only for v1
+
+### Scope & Phasing
+
+**Phase 2a — Import (higher priority):**
+- .apkg import with Basic, Cloze, and Basic (reversed) notetype mapping
+- HTML → markdown conversion
+- Media import
+- SR state: reset only (no history import)
+- Import wizard with preview and options
+
+**Phase 2b — Export:**
+- .apkg export for explicit cards, cloze, heading-paragraph, and table cards
+- Markdown → HTML conversion
+- Media packaging
+- Export dialog with scope selection
+
+**Phase 2c — Advanced:**
+- SR history import (best-effort FSRS conversion)
+- Image occlusion mask conversion (both directions)
+- .colpkg full collection import/export
+- Custom notetype best-effort handling
+- Duplicate detection and merge strategies
+
+### Refined Understanding
+
+Anki import/export is a data portability feature, not a core pillar of Osmosis. Its value is reducing friction: users don't have to choose between Anki and Osmosis, and they don't lose years of scheduling history when they switch. The import path (.apkg → Osmosis) is more valuable than export because it enables onboarding. The export path (Osmosis → .apkg) enables sharing and acts as an escape hatch. Both directions involve lossy conversion — Osmosis features like spatial study, transclusion, and graph-aware scheduling have no Anki equivalent, and Anki's arbitrary HTML templates don't map cleanly to markdown. The goal is "good enough" conversion with clear warnings about what doesn't transfer.
+
+---
+
 ## Scope Reality Check
 
 *Early thinking about scope: Is this a weekend project, a month-long effort, or something larger?*
@@ -700,6 +917,7 @@ Every FSRS review is tagged with the study mode that produced it (`contextual`, 
 - [x] Mind Map ideation session (2026-02-24)
 - [x] Flashcard / Spaced Repetition ideation session (2026-02-26)
 - [x] Explicit Card Syntax & Card Type Expansion ideation session (2026-02-27)
+- [x] Anki Import/Export ideation session (2026-02-28)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
@@ -708,4 +926,4 @@ Every FSRS review is tagged with the study mode that produced it (`contextual`, 
 ## Notes
 
 - See `notes/00_inspiration/card_authoring_example.md` for a worked example of gutter indicators and the "Cards in this note" panel
-- Reference repos studied: `ref/decks`, `ref/obsidian-spaced-repetition`, `ref/image-occlusion-enhanced`
+- Reference repos studied: `ref/decks`, `ref/obsidian-spaced-repetition`, `ref/image-occlusion-enhanced`, `ref/anki` (import/export formats)
