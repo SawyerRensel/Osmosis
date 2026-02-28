@@ -1039,8 +1039,12 @@ Excellent performance under heavy load is non-negotiable. A tool that creates fr
 
 **Sequential mode (deck study):**
 - Classic Anki-style modal: show front → tap to flip → rate
-- Cards drawn from any deck regardless of source note
-- Entry: sidebar dashboard, command palette
+- **Deck scoping** (matches Anki behavior):
+  - Study a single deck (leaf deck — only its own cards)
+  - Study a parent deck (includes its own cards + all children/subdeck cards, recursively)
+  - Study all decks (master study — all due cards across the entire collection)
+- Cards drawn from the selected scope regardless of source note
+- Entry: sidebar dashboard (click any deck or "Study All"), command palette
 
 ### 4. Mobile Feasibility — Validated
 
