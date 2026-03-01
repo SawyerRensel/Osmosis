@@ -9,7 +9,6 @@ This file guides Claude through Osmosis development, from planning through refin
 **Project**: Osmosis - An Obsidian plugin  
 **Tech Stack**: TypeScript, ESLint (obsidianmd plugin), npm  
 **Build Output**: `vault/.obsidian/plugins/Osmosis` (NOT example-vault)  
-**Development Environment**: See `notes/02_planning/technical_decisions.md` for setup details
 
 ---
 
@@ -73,7 +72,7 @@ Osmosis/
 
 Before helping with code, Claude should:
 
-1. **For Architecture Questions**: Read `notes/02_planning/implementation_plan.md` and `notes/02_planning/technical_decisions.md`
+1. **For Architecture Questions**: Read `notes/02_planning/implementation_plan.md`
 2. **For Feature Questions**: Read `notes/01_requirements/prd.md`
 3. **For Context on What's Done**: Run `bd ready` and `bd list --status=in_progress` (Beads is the source of truth for task state)
 4. **For Testing/Quality Standards**: Read `notes/04_refinement/testing_checklist.md`
