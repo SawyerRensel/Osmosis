@@ -7,7 +7,7 @@ import {
 	Component,
 } from "obsidian";
 import { ParseCache } from "../cache";
-import { OsmosisTree } from "../types";
+import { OsmosisNode, OsmosisTree } from "../types";
 import { computeLayout, LayoutNode, LayoutResult, DEFAULT_LAYOUT_CONFIG } from "../layout";
 import type OsmosisPlugin from "../main";
 import type { BranchLineStyle } from "../settings";
@@ -50,6 +50,9 @@ export class MindMapView extends ItemView {
 
 	// Editing state
 	private editingNodeId: string | null = null;
+
+	// Sync state: when true, skip the next vault.modify reload to prevent flicker
+	private suppressNextReload = false;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -97,6 +100,10 @@ export class MindMapView extends ItemView {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (file instanceof TFile && file === this.currentFile) {
+					if (this.suppressNextReload) {
+						this.suppressNextReload = false;
+						return;
+					}
 					void this.loadFile(file);
 				}
 			}),
@@ -320,12 +327,25 @@ export class MindMapView extends ItemView {
 				break;
 			case "Tab":
 				e.preventDefault();
-				// Tab = add child (handled in Task 2.9 when map→markdown sync is implemented)
+				if (this.selectedNodeId) {
+					const tabNode = this.nodeMap.get(this.selectedNodeId);
+					if (tabNode) {
+						void this.addChildNode(tabNode);
+					}
+				}
 				break;
 			case "Enter":
-				if (this.selectedNodeId && !e.shiftKey) {
-					// Enter on selected node = start editing
-					this.startEditing(this.selectedNodeId);
+				if (this.selectedNodeId) {
+					if (e.shiftKey) {
+						// Shift+Enter = add sibling after selected node
+						const enterNode = this.nodeMap.get(this.selectedNodeId);
+						if (enterNode) {
+							void this.addSiblingNode(enterNode);
+						}
+					} else {
+						// Enter = start editing
+						this.startEditing(this.selectedNodeId);
+					}
 					e.preventDefault();
 				}
 				break;
@@ -337,7 +357,13 @@ export class MindMapView extends ItemView {
 				break;
 			case "Delete":
 			case "Backspace":
-				// Delete (handled in Task 2.9 when map→markdown sync is implemented)
+				if (this.selectedNodeId) {
+					const delNode = this.nodeMap.get(this.selectedNodeId);
+					if (delNode) {
+						void this.deleteNode(delNode);
+					}
+				}
+				e.preventDefault();
 				break;
 			case " ":
 				// Space = toggle collapse on selected node
@@ -518,16 +544,191 @@ export class MindMapView extends ItemView {
 		if (!node) return;
 
 		if (save && newContent !== node.source.content) {
-			// Write change back to markdown (will be fully implemented in Task 2.9)
-			// For now, update the in-memory node and re-render
-			node.source.content = newContent;
-			void this.render();
+			// Write change back to markdown
+			void this.renameNode(node, newContent);
 		} else {
 			// Re-render to restore the markdown display
 			void this.render();
 		}
 
 		this.contentEl.focus();
+	}
+
+	// ─── Map → Markdown Sync ────────────────────────────────
+
+	/**
+	 * Serialize a node type/depth/content back to a markdown line.
+	 */
+	private serializeLine(type: OsmosisNode["type"], depth: number, content: string): string {
+		switch (type) {
+			case "heading":
+				return `${"#".repeat(depth)} ${content}`;
+			case "bullet":
+				return `${"  ".repeat(depth)}- ${content}`;
+			case "ordered":
+				return `${"  ".repeat(depth)}1. ${content}`;
+			case "paragraph":
+				return content;
+			case "transclusion":
+				return `![[${content}]]`;
+			default:
+				return content;
+		}
+	}
+
+	/**
+	 * Find the end of a node's entire subtree (the max range.end of all descendants).
+	 */
+	private subtreeEnd(node: OsmosisNode): number {
+		let end = node.range.end;
+		for (const child of node.children) {
+			end = Math.max(end, this.subtreeEnd(child));
+		}
+		return end;
+	}
+
+	/**
+	 * Write markdown content back to the file, suppressing the reload cycle.
+	 */
+	private async writeMarkdown(newContent: string): Promise<void> {
+		if (!this.currentFile) return;
+		this.suppressNextReload = true;
+		this.cache.invalidate(this.currentFile.path);
+		await this.app.vault.modify(this.currentFile, newContent);
+
+		// Re-parse and re-render from the new content
+		this.currentTree = this.cache.get(this.currentFile.path, newContent);
+		await this.render();
+	}
+
+	/**
+	 * Rename a node: replace the line in markdown with updated content.
+	 */
+	private async renameNode(node: LayoutNode, newContent: string): Promise<void> {
+		if (!this.currentFile) return;
+		const content = await this.app.vault.read(this.currentFile);
+		const src = node.source;
+		const newLine = this.serializeLine(src.type, src.depth, newContent);
+		const updated = content.slice(0, src.range.start) + newLine + content.slice(src.range.end);
+		await this.writeMarkdown(updated);
+	}
+
+	/**
+	 * Add a child node under the given parent.
+	 * Inserts a new line after the parent's subtree.
+	 */
+	private async addChildNode(parentNode: LayoutNode): Promise<void> {
+		if (!this.currentFile) return;
+		const content = await this.app.vault.read(this.currentFile);
+		const src = parentNode.source;
+
+		// Determine child type and depth
+		let childType: OsmosisNode["type"];
+		let childDepth: number;
+
+		if (src.type === "heading") {
+			// Child of heading: bullet at depth 0
+			childType = "bullet";
+			childDepth = 0;
+		} else if (src.type === "bullet") {
+			childType = "bullet";
+			childDepth = src.depth + 1;
+		} else if (src.type === "ordered") {
+			childType = "ordered";
+			childDepth = src.depth + 1;
+		} else {
+			childType = "bullet";
+			childDepth = 0;
+		}
+
+		const newLine = this.serializeLine(childType, childDepth, "");
+		const insertPos = this.subtreeEnd(src);
+
+		// Insert after the subtree with a newline
+		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
+
+		const selectedId = this.selectedNodeId;
+		await this.writeMarkdown(updated);
+
+		// Find and start editing the newly added node (last child of parent)
+		this.startEditingNewNode(selectedId, true);
+	}
+
+	/**
+	 * Add a sibling node after the given node.
+	 * Inserts a new line after the node's subtree at the same level.
+	 */
+	private async addSiblingNode(node: LayoutNode): Promise<void> {
+		if (!this.currentFile) return;
+		const content = await this.app.vault.read(this.currentFile);
+		const src = node.source;
+
+		const newLine = this.serializeLine(src.type, src.depth, "");
+		const insertPos = this.subtreeEnd(src);
+
+		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
+
+		const selectedId = this.selectedNodeId;
+		await this.writeMarkdown(updated);
+
+		// Find and start editing the new sibling (node right after the original)
+		this.startEditingNewNode(selectedId, false);
+	}
+
+	/**
+	 * Delete a node and all its children from the markdown.
+	 */
+	private async deleteNode(node: LayoutNode): Promise<void> {
+		if (!this.currentFile) return;
+		const content = await this.app.vault.read(this.currentFile);
+		const src = node.source;
+
+		const start = src.range.start;
+		const end = this.subtreeEnd(src);
+
+		// Also consume the preceding or following newline to avoid blank lines
+		let deleteStart = start;
+		let deleteEnd = end;
+
+		if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
+			deleteStart--;
+		} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
+			deleteEnd++;
+		}
+
+		const updated = content.slice(0, deleteStart) + content.slice(deleteEnd);
+
+		// Select the parent or sibling after deletion
+		const parentId = node.parent?.source.type !== "root" ? node.parent?.source.id : null;
+		await this.writeMarkdown(updated);
+
+		// Try to select something reasonable after deletion
+		if (parentId) {
+			const parentNode = this.nodeMap.get(parentId);
+			if (parentNode) {
+				this.selectNode(parentId);
+			}
+		} else {
+			this.selectFirstNode();
+		}
+	}
+
+	/**
+	 * After adding a child or sibling, find the new node and start editing it.
+	 */
+	private startEditingNewNode(previousSelectedId: string | null, isChild: boolean): void {
+		if (!previousSelectedId) return;
+
+		// The tree has been re-parsed, so we need to find the original node by position match
+		// The new node will be a zero-length content node
+		for (const [id, layoutNode] of this.nodeMap) {
+			if (layoutNode.source.content === "") {
+				this.selectNode(id);
+				this.scrollToSelectedNode();
+				this.startEditing(id);
+				return;
+			}
+		}
 	}
 
 	// ─── Rendering ───────────────────────────────────────────
