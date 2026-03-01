@@ -4,13 +4,21 @@ Uses Obsidian CSS variables for theme compatibility.
 */
 
 .osmosis-mindmap-container {
-	overflow: auto;
+	overflow: hidden;
 	height: 100%;
 	padding: 0;
+	outline: none;
+	cursor: grab;
+}
+
+.osmosis-mindmap-container:active {
+	cursor: grabbing;
 }
 
 .osmosis-mindmap-svg {
 	display: block;
+	width: 100%;
+	height: 100%;
 }
 
 .osmosis-node {
@@ -60,4 +68,57 @@ Uses Obsidian CSS variables for theme compatibility.
 	fill: none;
 	stroke: var(--background-modifier-border);
 	stroke-width: 1.5;
+}
+
+/* Collapse/expand animation */
+.osmosis-animating .osmosis-node-group,
+.osmosis-animating .osmosis-branch-line {
+	transition: transform 80ms ease-out, opacity 80ms ease-out;
+}
+
+/* Selection */
+.osmosis-node-selected > .osmosis-node {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+}
+
+/* Collapse toggle */
+.osmosis-collapse-toggle {
+	cursor: pointer;
+}
+
+.osmosis-collapse-circle {
+	fill: var(--background-secondary);
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.osmosis-collapse-toggle:hover .osmosis-collapse-circle {
+	fill: var(--background-modifier-hover);
+}
+
+.osmosis-collapse-icon {
+	fill: var(--text-muted);
+	font-size: 10px;
+	font-family: var(--font-monospace);
+	user-select: none;
+}
+
+/* Inline editing */
+.osmosis-node-editing {
+	pointer-events: auto;
+}
+
+.osmosis-node-input {
+	width: 100%;
+	height: 100%;
+	border: none;
+	outline: none;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 13px;
+	font-family: var(--font-text);
+	padding: 0;
+	margin: 0;
+	box-sizing: border-box;
 }
