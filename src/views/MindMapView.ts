@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, TFile, MarkdownView } from "obsidian";
 import { ParseCache } from "../cache";
-import { OsmosisTree, OsmosisNode } from "../types";
+import { OsmosisTree } from "../types";
+import { computeLayout, LayoutNode, LayoutResult } from "../layout";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -80,18 +81,102 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
-		// Task 2.1: Debug tree rendering — replaced by SVG in Task 2.2+
-		const pre = container.createEl("pre", { cls: "osmosis-mindmap-debug" });
-		pre.setText(this.treeToString(this.currentTree.root, 0));
+		// Compute layout and render SVG
+		const layout = computeLayout(this.currentTree);
+		this.renderSvg(container, layout);
 	}
 
-	private treeToString(node: OsmosisNode, indent: number): string {
-		const prefix = "  ".repeat(indent);
-		const label = node.type === "root" ? "(root)" : `[${node.type}] ${node.content}`;
-		let result = `${prefix}${label}\n`;
-		for (const child of node.children) {
-			result += this.treeToString(child, indent + 1);
+	private renderSvg(container: HTMLElement, layout: LayoutResult): void {
+		const { bounds, nodes } = layout;
+		const padding = 20;
+		const svgWidth = bounds.width + padding * 2;
+		const svgHeight = bounds.height + padding * 2;
+		const offsetX = -bounds.x1 + padding;
+		const offsetY = -bounds.y1 + padding;
+
+		const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.setAttribute("width", String(svgWidth));
+		svg.setAttribute("height", String(svgHeight));
+		svg.setAttribute("viewBox", `0 0 ${String(svgWidth)} ${String(svgHeight)}`);
+		svg.addClass("osmosis-mindmap-svg");
+
+		// Draw branch lines first (behind nodes)
+		for (const node of nodes) {
+			if (node.source.type === "root") continue;
+			if (node.parent && node.parent.source.type !== "root") {
+				this.drawBranchLine(svg, node.parent, node, offsetX, offsetY);
+			} else if (node.parent?.source.type === "root") {
+				// Root's children get lines from the left edge
+				this.drawBranchLine(svg, null, node, offsetX, offsetY);
+			}
 		}
-		return result;
+
+		// Draw nodes
+		for (const node of nodes) {
+			if (node.source.type === "root") continue;
+			this.drawNode(svg, node, offsetX, offsetY);
+		}
+
+		container.appendChild(svg);
+	}
+
+	private drawNode(
+		svg: SVGSVGElement,
+		node: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): void {
+		const x = node.rect.x + offsetX;
+		const y = node.rect.y + offsetY;
+
+		const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+		rect.setAttribute("x", String(x));
+		rect.setAttribute("y", String(y));
+		rect.setAttribute("width", String(node.rect.width));
+		rect.setAttribute("height", String(node.rect.height));
+		rect.setAttribute("rx", "4");
+		rect.setAttribute("class", `osmosis-node osmosis-node-${node.source.type}`);
+		svg.appendChild(rect);
+
+		const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+		text.setAttribute("x", String(x + node.rect.width / 2));
+		text.setAttribute("y", String(y + node.rect.height / 2));
+		text.setAttribute("text-anchor", "middle");
+		text.setAttribute("dominant-baseline", "central");
+		text.setAttribute("class", "osmosis-node-text");
+		text.textContent = node.source.content;
+		svg.appendChild(text);
+	}
+
+	private drawBranchLine(
+		svg: SVGSVGElement,
+		parent: LayoutNode | null,
+		child: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): void {
+		const cx = child.rect.x + offsetX;
+		const cy = child.rect.y + child.rect.height / 2 + offsetY;
+
+		let px: number;
+		let py: number;
+		if (parent) {
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
+		} else {
+			// Child of root — line starts from child's left edge
+			px = cx;
+			py = cy;
+			return; // No line needed for root children with no visible parent
+		}
+
+		const midX = (px + cx) / 2;
+		const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		path.setAttribute(
+			"d",
+			`M ${String(px)} ${String(py)} C ${String(midX)} ${String(py)}, ${String(midX)} ${String(cy)}, ${String(cx)} ${String(cy)}`,
+		);
+		path.setAttribute("class", "osmosis-branch-line");
+		svg.appendChild(path);
 	}
 }

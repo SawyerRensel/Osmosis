@@ -2,3 +2,37 @@
 Osmosis plugin styles.
 Uses Obsidian CSS variables for theme compatibility.
 */
+
+.osmosis-mindmap-container {
+	overflow: auto;
+	height: 100%;
+	padding: 0;
+}
+
+.osmosis-mindmap-svg {
+	display: block;
+}
+
+.osmosis-node {
+	fill: var(--background-secondary);
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.osmosis-node-heading {
+	fill: var(--background-primary-alt);
+	stroke: var(--interactive-accent);
+	stroke-width: 1.5;
+}
+
+.osmosis-node-text {
+	fill: var(--text-normal);
+	font-size: 13px;
+	font-family: var(--font-text);
+}
+
+.osmosis-branch-line {
+	fill: none;
+	stroke: var(--background-modifier-border);
+	stroke-width: 1.5;
+}
