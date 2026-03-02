@@ -89,6 +89,16 @@ Uses Obsidian CSS variables for theme compatibility.
 	stroke-dasharray: 4 2;
 }
 
+/* Rubber-band selection */
+.osmosis-rubber-band {
+	fill: var(--interactive-accent);
+	fill-opacity: 0.1;
+	stroke: var(--interactive-accent);
+	stroke-width: 1;
+	stroke-dasharray: 4 2;
+	pointer-events: none;
+}
+
 /* Drag-and-drop */
 .osmosis-dragging {
 	cursor: grabbing !important;

@@ -50,7 +50,13 @@ export class MindMapView extends ItemView {
 
 	// Selection state
 	private selectedNodeId: string | null = null;
+	private selectedNodeIds = new Set<string>();
 	private nodeMap = new Map<string, LayoutNode>();
+
+	// Rubber-band selection state
+	private isRubberBanding = false;
+	private rubberBandStart = { x: 0, y: 0 };
+	private rubberBandRect: SVGRectElement | null = null;
 
 	// Editing state
 	private editingNodeId: string | null = null;
@@ -142,7 +148,10 @@ export class MindMapView extends ItemView {
 		this.currentTree = null;
 		this.currentLayout = null;
 		this.nodeMap.clear();
+		this.selectedNodeIds.clear();
 		this.cursorSyncNodeId = null;
+		this.rubberBandRect?.remove();
+		this.rubberBandRect = null;
 		if (this.cursorSyncTimer) {
 			clearTimeout(this.cursorSyncTimer);
 			this.cursorSyncTimer = null;
@@ -203,6 +212,15 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Shift+left-click on background starts rubber-band selection
+		if (e.button === 0 && !nodeId && e.shiftKey) {
+			const svgPt = this.screenToSvg(e.clientX, e.clientY);
+			this.isRubberBanding = true;
+			this.rubberBandStart = svgPt;
+			e.preventDefault();
+			return;
+		}
+
 		// Middle-click or left-click on background starts pan
 		if (e.button === 1 || (e.button === 0 && !nodeId)) {
 			this.isPanning = true;
@@ -212,6 +230,12 @@ export class MindMapView extends ItemView {
 	};
 
 	private handleMouseMove = (e: MouseEvent): void => {
+		// Rubber-band selection
+		if (this.isRubberBanding && this.svg) {
+			this.updateRubberBand(e);
+			return;
+		}
+
 		// Check for drag threshold
 		if (this.dragNodeId && !this.isDragging) {
 			const dx = e.clientX - this.dragStartScreen.x;
@@ -241,6 +265,11 @@ export class MindMapView extends ItemView {
 	};
 
 	private handleMouseUp = (): void => {
+		if (this.isRubberBanding) {
+			this.finishRubberBand();
+			return;
+		}
+
 		if (this.isDragging) {
 			void this.executeDrop();
 			return;
@@ -291,11 +320,17 @@ export class MindMapView extends ItemView {
 		// Check if clicking a node
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
-			this.selectNode(nodeId);
-			this.syncMapSelectionToEditor(nodeId);
+			if (e.shiftKey) {
+				this.toggleNodeInSelection(nodeId);
+			} else {
+				this.selectNode(nodeId);
+				this.syncMapSelectionToEditor(nodeId);
+			}
 			this.contentEl.focus();
 		} else {
-			this.selectNode(null);
+			if (!e.shiftKey) {
+				this.selectNode(null);
+			}
 		}
 	};
 
@@ -348,20 +383,197 @@ export class MindMapView extends ItemView {
 
 	// ─── Selection ───────────────────────────────────────────
 
+	/**
+	 * Set a single node as selected, clearing any multi-selection.
+	 */
 	private selectNode(nodeId: string | null): void {
-		// Remove old selection
-		if (this.selectedNodeId && this.svg) {
-			const oldGroup = this.svg.querySelector(`[data-node-id="${this.selectedNodeId}"]`);
-			oldGroup?.classList.remove("osmosis-node-selected");
-		}
-
+		this.clearSelectionVisuals();
+		this.selectedNodeIds.clear();
 		this.selectedNodeId = nodeId;
 
-		// Apply new selection
-		if (nodeId && this.svg) {
-			const newGroup = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-			newGroup?.classList.add("osmosis-node-selected");
+		if (nodeId) {
+			this.selectedNodeIds.add(nodeId);
 		}
+
+		this.applySelectionVisuals();
+	}
+
+	/**
+	 * Toggle a node in the multi-selection (Shift+click).
+	 */
+	private toggleNodeInSelection(nodeId: string): void {
+		if (this.selectedNodeIds.has(nodeId)) {
+			this.selectedNodeIds.delete(nodeId);
+			if (this.selectedNodeId === nodeId) {
+				// Move primary selection to another selected node or null
+				const next = this.selectedNodeIds.values().next();
+				this.selectedNodeId = next.done ? null : next.value;
+			}
+		} else {
+			this.selectedNodeIds.add(nodeId);
+			this.selectedNodeId = nodeId;
+		}
+		this.applySelectionVisuals();
+	}
+
+	/**
+	 * Select multiple nodes at once (e.g., from rubber-band).
+	 */
+	private selectNodes(nodeIds: Set<string>): void {
+		this.clearSelectionVisuals();
+		this.selectedNodeIds = new Set(nodeIds);
+		const first = nodeIds.values().next();
+		this.selectedNodeId = first.done ? null : first.value;
+		this.applySelectionVisuals();
+	}
+
+	private clearSelectionVisuals(): void {
+		if (!this.svg) return;
+		for (const id of this.selectedNodeIds) {
+			const el = this.svg.querySelector(`[data-node-id="${id}"]`);
+			el?.classList.remove("osmosis-node-selected");
+		}
+	}
+
+	private applySelectionVisuals(): void {
+		if (!this.svg) return;
+		for (const id of this.selectedNodeIds) {
+			const el = this.svg.querySelector(`[data-node-id="${id}"]`);
+			el?.classList.add("osmosis-node-selected");
+		}
+	}
+
+	// ─── Rubber-Band Selection ───────────────────────────────
+
+	private updateRubberBand(e: MouseEvent): void {
+		if (!this.svg) return;
+		const svgPt = this.screenToSvg(e.clientX, e.clientY);
+
+		// Create rect on first move
+		if (!this.rubberBandRect) {
+			const rect = document.createElementNS(SVG_NS, "rect");
+			rect.setAttribute("class", "osmosis-rubber-band");
+			this.svg.appendChild(rect);
+			this.rubberBandRect = rect;
+		}
+
+		const x = Math.min(this.rubberBandStart.x, svgPt.x);
+		const y = Math.min(this.rubberBandStart.y, svgPt.y);
+		const w = Math.abs(svgPt.x - this.rubberBandStart.x);
+		const h = Math.abs(svgPt.y - this.rubberBandStart.y);
+
+		this.rubberBandRect.setAttribute("x", String(x));
+		this.rubberBandRect.setAttribute("y", String(y));
+		this.rubberBandRect.setAttribute("width", String(w));
+		this.rubberBandRect.setAttribute("height", String(h));
+	}
+
+	private finishRubberBand(): void {
+		this.isRubberBanding = false;
+
+		if (!this.rubberBandRect || !this.svg) {
+			this.rubberBandRect?.remove();
+			this.rubberBandRect = null;
+			return;
+		}
+
+		const rx = parseFloat(this.rubberBandRect.getAttribute("x") ?? "0");
+		const ry = parseFloat(this.rubberBandRect.getAttribute("y") ?? "0");
+		const rw = parseFloat(this.rubberBandRect.getAttribute("width") ?? "0");
+		const rh = parseFloat(this.rubberBandRect.getAttribute("height") ?? "0");
+
+		this.rubberBandRect.remove();
+		this.rubberBandRect = null;
+
+		if (rw < 3 && rh < 3) return; // Too small, ignore
+
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const selected = new Set<string>();
+
+		for (const [id, node] of this.nodeMap) {
+			const nx = node.rect.x + offsetX;
+			const ny = node.rect.y + offsetY;
+			const nw = node.rect.width;
+			const nh = node.rect.height;
+
+			// Check if node overlaps with rubber-band rect
+			if (nx + nw > rx && nx < rx + rw && ny + nh > ry && ny < ry + rh) {
+				selected.add(id);
+			}
+		}
+
+		if (selected.size > 0) {
+			this.selectNodes(selected);
+		}
+	}
+
+	// ─── Bulk Operations ────────────────────────────────────
+
+	/**
+	 * Delete all selected nodes from the markdown.
+	 * Processes nodes from end-of-document to start to preserve offsets.
+	 */
+	private async deleteSelectedNodes(): Promise<void> {
+		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
+
+		// Collect ranges sorted by position (descending) to process from end
+		const ranges: { start: number; end: number }[] = [];
+		for (const id of this.selectedNodeIds) {
+			const node = this.nodeMap.get(id);
+			if (!node) continue;
+			ranges.push({
+				start: node.source.range.start,
+				end: this.subtreeEnd(node.source),
+			});
+		}
+		ranges.sort((a, b) => b.start - a.start);
+
+		let content = await this.app.vault.read(this.currentFile);
+
+		for (const range of ranges) {
+			let deleteStart = range.start;
+			let deleteEnd = range.end;
+
+			if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
+				deleteStart--;
+			} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
+				deleteEnd++;
+			}
+
+			content = content.slice(0, deleteStart) + content.slice(deleteEnd);
+		}
+
+		this.selectedNodeIds.clear();
+		this.selectedNodeId = null;
+		await this.writeMarkdown(content);
+		this.selectFirstNode();
+	}
+
+	/**
+	 * Toggle collapse on all selected nodes.
+	 */
+	private toggleCollapseSelected(): void {
+		let anyExpanded = false;
+		for (const id of this.selectedNodeIds) {
+			const node = this.nodeMap.get(id);
+			if (node && node.children.length > 0 && !this.collapsedIds.has(id)) {
+				anyExpanded = true;
+				break;
+			}
+		}
+
+		for (const id of this.selectedNodeIds) {
+			const node = this.nodeMap.get(id);
+			if (!node || node.children.length === 0) continue;
+			if (anyExpanded) {
+				this.collapsedIds.add(id);
+			} else {
+				this.collapsedIds.delete(id);
+			}
+		}
+
+		void this.renderAnimated();
 	}
 
 	// ─── Cursor Sync ────────────────────────────────────────
@@ -837,7 +1049,9 @@ export class MindMapView extends ItemView {
 				break;
 			case "Delete":
 			case "Backspace":
-				if (this.selectedNodeId) {
+				if (this.selectedNodeIds.size > 1) {
+					void this.deleteSelectedNodes();
+				} else if (this.selectedNodeId) {
 					const delNode = this.nodeMap.get(this.selectedNodeId);
 					if (delNode) {
 						void this.deleteNode(delNode);
@@ -846,13 +1060,23 @@ export class MindMapView extends ItemView {
 				e.preventDefault();
 				break;
 			case " ":
-				// Space = toggle collapse on selected node
-				if (this.selectedNodeId) {
+				// Space = toggle collapse on selected node(s)
+				if (this.selectedNodeIds.size > 1) {
+					this.toggleCollapseSelected();
+					e.preventDefault();
+				} else if (this.selectedNodeId) {
 					const node = this.nodeMap.get(this.selectedNodeId);
 					if (node && node.children.length > 0) {
 						this.toggleCollapse(this.selectedNodeId);
 						e.preventDefault();
 					}
+				}
+				break;
+			case "a":
+				// Ctrl/Cmd+A = select all
+				if (e.ctrlKey || e.metaKey) {
+					e.preventDefault();
+					this.selectNodes(new Set(this.nodeMap.keys()));
 				}
 				break;
 		}
@@ -1311,7 +1535,7 @@ export class MindMapView extends ItemView {
 
 		const group = document.createElementNS(SVG_NS, "g");
 		const classes = [`osmosis-node-group`, `osmosis-node-group-${node.source.type}`];
-		if (node.source.id === this.selectedNodeId) {
+		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
 		}
 		group.setAttribute("class", classes.join(" "));
