@@ -33,5 +33,8 @@ export default tseslint.config(
 		"vault",
 		"ref",
 		"vitest.config.ts",
+		"e2e",
+		"e2e-vault",
+		"playwright.config.ts",
 	]),
 );

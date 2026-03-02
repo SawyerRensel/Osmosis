@@ -22,5 +22,11 @@ vault/.obsidian/plugins/Osmosis/main.js
 # Obsidian plugin data (user-specific settings)
 data.json
 
+# E2E test artifacts
+e2e-vault/
+.obsidian-config-e2e/
+test-results/
+playwright-report/
+
 # OS files
 .DS_Store

@@ -7,7 +7,7 @@ This file guides Claude through Osmosis development, from planning through refin
 ## Project Context
 
 **Project**: Osmosis - An Obsidian plugin  
-**Tech Stack**: TypeScript, ESLint (obsidianmd plugin), npm  
+**Tech Stack**: TypeScript, ESLint (obsidianmd plugin), Vitest (unit), Playwright (E2E), npm
 **Build Output**: `vault/.obsidian/plugins/Osmosis` (NOT example-vault)  
 
 ---
@@ -31,9 +31,17 @@ Osmosis/
 │   ├── obsidian-maps                  # Map layout for Obsidian Bases. Example for how to build a plugin for Obsidian Bases.
 │   ├── obsidian-map-view              # Map View including support for Obsidian Bases. Example for how to build a plugin for Obsidian Bases and use toggles/switches in Bases configuraiton menus
 │   ├── obsidian-sample-plugin         # Template for Obsidian community plugins with build configuration and development best practices. 
-│   ├── obsidian-spaced-repetition     # Most popular flashcard plugin for Obsidian 
+│   ├── obsidian-spaced-repetition     # Most popular flashcard plugin for Obsidian
+│   ├── tasknotes                      # Reference Obsidian plugin with Playwright E2E tests
 │   └── zensical-docs-site             # Example zensical docs site source code
 ├── src/                               # Source code
+├── e2e/                               # Playwright E2E tests (runs against real Obsidian)
+│   ├── obsidian.ts                    # Obsidian launcher fixture (CDP via Flatpak)
+│   ├── osmosis.spec.ts                # E2E smoke tests
+│   └── fixtures/                      # Test markdown files copied into e2e-vault
+├── e2e-setup.sh                       # One-time E2E setup (builds, creates vault, registers)
+├── e2e-launch.sh                      # Opens Obsidian with e2e-vault for manual debugging
+├── playwright.config.ts               # Playwright configuration
 │
 └── notes/                             # All project planning & tracking
     ├── GETTING_STARTED.md             # Phase overview & workflow
@@ -181,17 +189,20 @@ Are there scenarios I might not have considered?
 npm run lint
 # Fix any issues before proceeding
 
-# 2. Build the plugin
+# 2. Run unit tests
+npm run test
+# Fix any failures before proceeding
+
+# 3. Build the plugin
 npm run build
 # This compiles TypeScript and copies output to vault/.obsidian/plugins/Osmosis
 
-# 3. If build succeeds, validate in Obsidian
-# - Open vault in Obsidian
-# - Reload the plugin (Community Plugins → Osmosis → Reload)
-# - Test the feature manually
-# - Check Obsidian console for errors (Ctrl+Shift+I on desktop)
+# 4. Run E2E tests (builds automatically, requires Obsidian closed OR running with CDP)
+npm run e2e
+# This launches Obsidian, runs Playwright tests against the real plugin, then closes
+# Tests verify: plugin loads, mind map opens, SVG nodes render from markdown
 
-# 4. If there are issues, fix in src/ and repeat from step 1
+# 5. If there are issues, fix in src/ and repeat from step 1
 ```
 
 ### Linting
@@ -276,31 +287,66 @@ Is this correct? What's missing?
 
 ## Testing
 
+### Three-Layer Testing Strategy
+
+| Layer | Tool | Command | What it tests |
+|-------|------|---------|---------------|
+| Unit | Vitest | `npm test` | Pure logic: parser, layout engine, cache |
+| E2E | Playwright | `npm run e2e` | Real plugin in Obsidian: UI, commands, rendering |
+| Manual | Obsidian | Open vault | Edge cases, visual polish, UX |
+
 ### Before Shipping Any Feature
 
-1. **Manual Testing in Obsidian**:
-   - Load the plugin in your test vault
-   - Test the primary use case
-   - Test edge cases
-   - Check the Obsidian console for errors
+1. **Unit tests** (`npm test`):
+   - Run the existing suite — all must pass
+   - Add unit tests for new pure logic (parser changes, layout algorithms, data transforms)
+   - Test files live alongside source: `src/foo.test.ts`
 
-2. **Automated Testing** (if applicable):
-   - Run any existing test suite: `npm test`
-   - Add tests for new functionality
+2. **E2E tests** (`npm run e2e`):
+   - Run the existing suite — all must pass
+   - Add E2E tests for new UI features (new commands, view changes, interactions)
+   - Test files live in `e2e/osmosis.spec.ts`
+   - Test fixtures (markdown files) go in `e2e/fixtures/` and are copied to vault by setup
+   - Helpers available: `openFile()`, `openMindMap()`, `runCommand()`, `resetWorkspace()`
 
-3. **Linting**:
-   - `npm run lint` passes with no errors
+3. **Linting** (`npm run lint`):
+   - Must pass with no errors
 
-**Prompt Claude for testing help**:
+4. **Manual testing** (when E2E can't cover it):
+   - Visual appearance, animations, drag feel
+   - Edge cases with unusual markdown
+   - Performance with large files
+
+### E2E Test Setup (one-time)
+
+```bash
+npm run e2e:setup    # Build plugin, create e2e-vault, register with Obsidian
+npm run e2e:launch   # Open Obsidian to manually enable plugins (first time only)
+# Then close Obsidian and run:
+npm run e2e          # Run all E2E tests
 ```
-I've implemented [Feature]. What should I test to be confident this works?
 
-FEATURE: [Description]
-ACCEPTANCE CRITERIA: [List]
-MY IMPLEMENTATION: [Code]
+### E2E Test Architecture
 
-What test cases would catch issues? Should any be automated vs. manual?
-```
+- Tests connect to Obsidian via CDP (Chrome DevTools Protocol) over Flatpak
+- `e2e/obsidian.ts` handles launching/connecting to Obsidian, dialog dismissal, helpers
+- Tests reuse a single Obsidian instance per suite (launched in `beforeAll`)
+- `resetWorkspace()` is called in `beforeAll`/`afterAll` to prevent tab/split accumulation
+- If an existing Obsidian instance is running on port 9222, tests connect to it (faster iteration)
+- Screenshots saved to `test-results/` on failure
+
+### When to Write Which Type of Test
+
+**Unit test** (Vitest) when:
+- Testing pure functions (parser, layout, cache, data transforms)
+- No Obsidian API dependency needed
+- Fast feedback desired
+
+**E2E test** (Playwright) when:
+- Testing that a command works end-to-end
+- Testing UI rendering (SVG nodes appear, mind map opens)
+- Testing user interactions (click, keyboard navigation)
+- Verifying plugin loads and integrates with Obsidian correctly
 
 ---
 
@@ -549,9 +595,11 @@ Am I using the API correctly? Is there a better way?
 
 ### Testing in Obsidian
 
-- Test in your `vault/` (the one where build output goes)
+- **Automated**: `npm run e2e` runs Playwright against a real Obsidian instance with `e2e-vault/`
+- **Manual**: Test in your `vault/` (the one where build output goes)
 - Use Obsidian's plugin console for debugging (Ctrl+Shift+I)
 - Reload the plugin to test changes: Community Plugins → Osmosis → Reload
+- For E2E debugging: `npm run e2e:launch` opens Obsidian with the test vault
 
 ---
 
@@ -590,8 +638,8 @@ Here's my implementation. Does it match the spec?
 **Step 5**: Build and test
 ```bash
 npm run lint      # Fix any issues
-npm run build     # Build plugin
-# Test in Obsidian vault
+npm run test      # Run unit tests
+npm run e2e       # Run E2E tests (builds automatically)
 ```
 
 **Step 6**: Close the Beads issue
@@ -666,7 +714,7 @@ git add <files> && git commit -m "..." && git push
 ## Version Control Notes
 
 Commit when:
-- A feature is complete and passes tests
+- A feature is complete and passes all tests (`npm test` + `npm run e2e`)
 - Build succeeds with no lint errors
 - Acceptance criteria are met
 
@@ -702,5 +750,5 @@ Before asking Claude for help on any code task:
 
 ---
 
-**Last Updated**: 2026-02-26
+**Last Updated**: 2026-03-02
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.
