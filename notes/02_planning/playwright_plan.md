@@ -39,14 +39,14 @@ Three initial tests:
 ### 4. `e2e/fixtures/test-note.md` — Test fixture
 Known markdown file with headings and lists that produces a predictable mind map.
 
-### 5. `e2e-vault/` — Isolated test vault (created by setup script)
-Copies `vault/` and symlinks the plugin build output so rebuilds are picked up automatically. Includes `.obsidian/community-plugins.json` with `["osmosis"]` pre-configured.
+### 5. `e2e-vault/` — Single dev + test vault (created by setup script)
+Build output goes directly here. Used for both manual testing and E2E tests. Includes `.obsidian/community-plugins.json` with `["osmosis"]` pre-configured.
 
 ### 6. `e2e-setup.sh` — One-time setup script
-- Builds the plugin (`npm run build`)
-- Creates `e2e-vault/` from `vault/`
-- Symlinks plugin build output into `e2e-vault/.obsidian/plugins/Osmosis/`
+- Creates `e2e-vault/` structure
+- Builds the plugin (outputs directly to `e2e-vault/.obsidian/plugins/Osmosis/`)
 - Copies test fixtures into the vault
+- Registers vault with Obsidian
 - Pre-configures community plugins JSON
 
 ## Files to Modify

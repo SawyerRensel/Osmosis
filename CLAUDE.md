@@ -8,7 +8,7 @@ This file guides Claude through Osmosis development, from planning through refin
 
 **Project**: Osmosis - An Obsidian plugin  
 **Tech Stack**: TypeScript, ESLint (obsidianmd plugin), Vitest (unit), Playwright (E2E), npm
-**Build Output**: `vault/.obsidian/plugins/Osmosis` (NOT example-vault)  
+**Build Output**: `e2e-vault/.obsidian/plugins/Osmosis` (single vault for both dev and E2E testing)
 
 ---
 
@@ -20,7 +20,7 @@ This file guides Claude through Osmosis development, from planning through refin
 Osmosis/
 ├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
-├── .obsidian/plugins/Osmosis/         # Build output goes here
+├── e2e-vault/                         # Dev + E2E vault (build output goes here, gitignored)
 ├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
 ├── ref/                               # Example plugins and other references
@@ -195,7 +195,7 @@ npm run test
 
 # 3. Build the plugin
 npm run build
-# This compiles TypeScript and copies output to vault/.obsidian/plugins/Osmosis
+# This compiles TypeScript and outputs to e2e-vault/.obsidian/plugins/Osmosis
 
 # 4. Run E2E tests (builds automatically, requires Obsidian closed OR running with CDP)
 npm run e2e
@@ -230,9 +230,9 @@ How do I fix this while maintaining the intended behavior?
 ### Building
 
 **Command**: `npm run build`  
-**Output Location**: `vault/.obsidian/plugins/Osmosis/` (this is where the plugin runs)
+**Output Location**: `e2e-vault/.obsidian/plugins/Osmosis/` (single vault for dev and E2E testing)
 
-**Important**: Build output goes to `vault/`, NOT `example-vault/`. Make sure Claude knows this.
+**Important**: Build output goes to `e2e-vault/`. This is the same vault used for both manual testing and Playwright E2E tests.
 
 **If build fails**:
 ```
@@ -596,10 +596,10 @@ Am I using the API correctly? Is there a better way?
 ### Testing in Obsidian
 
 - **Automated**: `npm run e2e` runs Playwright against a real Obsidian instance with `e2e-vault/`
-- **Manual**: Test in your `vault/` (the one where build output goes)
+- **Manual**: Test in `e2e-vault/` (same vault as E2E — build output goes here)
 - Use Obsidian's plugin console for debugging (Ctrl+Shift+I)
 - Reload the plugin to test changes: Community Plugins → Osmosis → Reload
-- For E2E debugging: `npm run e2e:launch` opens Obsidian with the test vault
+- For manual debugging: `npm run e2e:launch` opens Obsidian with the vault
 
 ---
 
