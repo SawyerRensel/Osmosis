@@ -27,6 +27,9 @@ const LAYOUT_PADDING = 50;
 // Animation constants
 const COLLAPSE_ANIMATION_MS = 80;
 
+// Drag constants
+const DRAG_THRESHOLD = 5; // pixels before drag starts
+
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
 	private currentFile: TFile | null = null;
@@ -54,6 +57,14 @@ export class MindMapView extends ItemView {
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	private suppressNextReload = false;
+
+	// Drag-and-drop state
+	private dragNodeId: string | null = null;
+	private dragStartScreen = { x: 0, y: 0 };
+	private isDragging = false;
+	private dragGhost: SVGGElement | null = null;
+	private dropIndicator: SVGLineElement | null = null;
+	private dropTarget: { parentId: string; index: number } | null = null;
 
 	// Cursor sync state
 	private parser = new OsmosisParser();
@@ -136,6 +147,7 @@ export class MindMapView extends ItemView {
 			clearTimeout(this.cursorSyncTimer);
 			this.cursorSyncTimer = null;
 		}
+		this.cleanupDrag();
 	}
 
 	private async loadActiveFile(): Promise<void> {
@@ -175,8 +187,24 @@ export class MindMapView extends ItemView {
 	}
 
 	private handleMouseDown = (e: MouseEvent): void => {
+		if (e.button !== 0 && e.button !== 1) return;
+
+		const nodeId = this.getClickedNodeId(e);
+
+		// Left-click on a node: prepare for potential drag
+		if (e.button === 0 && nodeId && !this.editingNodeId) {
+			// Don't drag collapse toggles
+			const target = e.target as Element;
+			if (target.closest(".osmosis-collapse-toggle")) return;
+
+			this.dragNodeId = nodeId;
+			this.dragStartScreen = { x: e.clientX, y: e.clientY };
+			e.preventDefault();
+			return;
+		}
+
 		// Middle-click or left-click on background starts pan
-		if (e.button === 1 || (e.button === 0 && !this.getClickedNodeId(e))) {
+		if (e.button === 1 || (e.button === 0 && !nodeId)) {
 			this.isPanning = true;
 			this.panStart = { x: e.clientX, y: e.clientY };
 			e.preventDefault();
@@ -184,6 +212,21 @@ export class MindMapView extends ItemView {
 	};
 
 	private handleMouseMove = (e: MouseEvent): void => {
+		// Check for drag threshold
+		if (this.dragNodeId && !this.isDragging) {
+			const dx = e.clientX - this.dragStartScreen.x;
+			const dy = e.clientY - this.dragStartScreen.y;
+			if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) {
+				this.startDrag(this.dragNodeId);
+			}
+		}
+
+		// Update drag position
+		if (this.isDragging && this.svg) {
+			this.updateDrag(e);
+			return;
+		}
+
 		if (!this.isPanning || !this.svg) return;
 
 		const rect = this.svg.getBoundingClientRect();
@@ -198,6 +241,13 @@ export class MindMapView extends ItemView {
 	};
 
 	private handleMouseUp = (): void => {
+		if (this.isDragging) {
+			void this.executeDrop();
+			return;
+		}
+
+		// If we had a drag candidate but didn't reach threshold, treat as click
+		this.dragNodeId = null;
 		this.isPanning = false;
 	};
 
@@ -225,7 +275,7 @@ export class MindMapView extends ItemView {
 	}
 
 	private handleClick = (e: MouseEvent): void => {
-		if (this.isPanning) return;
+		if (this.isPanning || this.isDragging) return;
 
 		// Check if clicking a collapse toggle
 		const target = e.target as Element;
@@ -395,6 +445,335 @@ export class MindMapView extends ItemView {
 			}
 		}
 		return null;
+	}
+
+	// ─── Drag-and-Drop ──────────────────────────────────────
+
+	private startDrag(nodeId: string): void {
+		if (!this.svg) return;
+		const node = this.nodeMap.get(nodeId);
+		if (!node) return;
+
+		this.isDragging = true;
+		this.selectNode(nodeId);
+		this.contentEl.addClass("osmosis-dragging");
+
+		// Create ghost node (semi-transparent clone)
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const ghost = document.createElementNS(SVG_NS, "g");
+		ghost.setAttribute("class", "osmosis-drag-ghost");
+
+		const rect = document.createElementNS(SVG_NS, "rect");
+		rect.setAttribute("width", String(node.rect.width));
+		rect.setAttribute("height", String(node.rect.height));
+		rect.setAttribute("rx", "4");
+		rect.setAttribute("class", "osmosis-node osmosis-node-" + node.source.type);
+		ghost.appendChild(rect);
+
+		const fo = document.createElementNS(SVG_NS, "foreignObject");
+		fo.setAttribute("width", String(node.rect.width));
+		fo.setAttribute("height", String(node.rect.height));
+		const wrapper = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		wrapper.setAttribute("xmlns", XHTML_NS);
+		wrapper.className = "osmosis-node-content";
+		wrapper.textContent = node.source.content;
+		fo.appendChild(wrapper);
+		ghost.appendChild(fo);
+
+		// Position at the node's current location
+		const nx = node.rect.x + offsetX;
+		const ny = node.rect.y + offsetY;
+		ghost.setAttribute("transform", `translate(${nx}, ${ny})`);
+		this.svg.appendChild(ghost);
+		this.dragGhost = ghost;
+
+		// Create drop indicator line
+		const indicator = document.createElementNS(SVG_NS, "line");
+		indicator.setAttribute("class", "osmosis-drop-indicator");
+		indicator.setAttribute("display", "none");
+		this.svg.appendChild(indicator);
+		this.dropIndicator = indicator;
+	}
+
+	private updateDrag(e: MouseEvent): void {
+		if (!this.svg || !this.dragGhost || !this.dragNodeId) return;
+
+		const svgPt = this.screenToSvg(e.clientX, e.clientY);
+
+		// Move ghost to follow cursor (centered on cursor)
+		const node = this.nodeMap.get(this.dragNodeId);
+		if (!node) return;
+		const gx = svgPt.x - node.rect.width / 2;
+		const gy = svgPt.y - node.rect.height / 2;
+		this.dragGhost.setAttribute("transform", `translate(${gx}, ${gy})`);
+
+		// Find drop target
+		this.updateDropTarget(svgPt);
+	}
+
+	private updateDropTarget(svgPt: { x: number; y: number }): void {
+		if (!this.dragNodeId || !this.currentLayout) return;
+
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const dragNode = this.nodeMap.get(this.dragNodeId);
+		if (!dragNode) return;
+
+		let bestDist = Infinity;
+		let bestTarget: { parentId: string; index: number } | null = null;
+		let indicatorY = 0;
+		let indicatorX1 = 0;
+		let indicatorX2 = 0;
+
+		// Check each visible node for potential drop positions
+		for (const [, layoutNode] of this.nodeMap) {
+			if (!layoutNode.parent) continue;
+
+			// Can't drop onto self or descendants
+			if (this.isDescendant(dragNode, layoutNode)) continue;
+
+			const nodeX = layoutNode.rect.x + offsetX;
+			const nodeY = layoutNode.rect.y + offsetY;
+			const nodeCY = nodeY + layoutNode.rect.height / 2;
+
+			// Check gap above this node (insert before)
+			const gapAbove = nodeY;
+			const distAbove = Math.abs(svgPt.y - gapAbove);
+			if (distAbove < bestDist && Math.abs(svgPt.x - nodeX) < 300) {
+				const parentNode = layoutNode.parent;
+				const siblingIdx = parentNode.children.indexOf(layoutNode);
+				// Don't allow dropping right back where it came from
+				if (!this.isSamePosition(dragNode, parentNode.source.id, siblingIdx)) {
+					bestDist = distAbove;
+					bestTarget = { parentId: parentNode.source.id, index: siblingIdx };
+					indicatorY = gapAbove;
+					indicatorX1 = nodeX;
+					indicatorX2 = nodeX + layoutNode.rect.width;
+				}
+			}
+
+			// Check gap below this node (insert after)
+			const gapBelow = nodeY + layoutNode.rect.height;
+			const distBelow = Math.abs(svgPt.y - gapBelow);
+			if (distBelow < bestDist && Math.abs(svgPt.x - nodeX) < 300) {
+				const parentNode = layoutNode.parent;
+				const siblingIdx = parentNode.children.indexOf(layoutNode) + 1;
+				if (!this.isSamePosition(dragNode, parentNode.source.id, siblingIdx)) {
+					bestDist = distBelow;
+					bestTarget = { parentId: parentNode.source.id, index: siblingIdx };
+					indicatorY = gapBelow;
+					indicatorX1 = nodeX;
+					indicatorX2 = nodeX + layoutNode.rect.width;
+				}
+			}
+
+			// Check reparent: if cursor is to the right of a node, drop as its child
+			const rightEdge = nodeX + layoutNode.rect.width + 30;
+			if (svgPt.x > rightEdge && Math.abs(svgPt.y - nodeCY) < layoutNode.rect.height) {
+				const dist = Math.abs(svgPt.y - nodeCY);
+				if (dist < bestDist) {
+					// Don't reparent to self
+					if (layoutNode.source.id !== this.dragNodeId && !this.isDescendant(dragNode, layoutNode)) {
+						bestDist = dist;
+						bestTarget = { parentId: layoutNode.source.id, index: layoutNode.children.length };
+						indicatorY = nodeCY;
+						indicatorX1 = rightEdge;
+						indicatorX2 = rightEdge + 40;
+					}
+				}
+			}
+		}
+
+		this.dropTarget = bestTarget;
+
+		// Update visual indicator
+		if (this.dropIndicator) {
+			if (bestTarget) {
+				this.dropIndicator.setAttribute("x1", String(indicatorX1));
+				this.dropIndicator.setAttribute("y1", String(indicatorY));
+				this.dropIndicator.setAttribute("x2", String(indicatorX2));
+				this.dropIndicator.setAttribute("y2", String(indicatorY));
+				this.dropIndicator.setAttribute("display", "");
+			} else {
+				this.dropIndicator.setAttribute("display", "none");
+			}
+		}
+	}
+
+	private isDescendant(ancestor: LayoutNode, node: LayoutNode): boolean {
+		if (node.source.id === ancestor.source.id) return true;
+		for (const child of ancestor.children) {
+			if (this.isDescendant(child, node)) return true;
+		}
+		return false;
+	}
+
+	private isSamePosition(dragNode: LayoutNode, parentId: string, index: number): boolean {
+		if (!dragNode.parent) return false;
+		const currentParentId = dragNode.parent.source.id;
+		const currentIndex = dragNode.parent.children.indexOf(dragNode);
+		return currentParentId === parentId && (index === currentIndex || index === currentIndex + 1);
+	}
+
+	private async executeDrop(): Promise<void> {
+		const dragNodeId = this.dragNodeId;
+		const dropTarget = this.dropTarget;
+
+		this.cleanupDrag();
+
+		if (!dragNodeId || !dropTarget || !this.currentFile || !this.currentTree) return;
+
+		const dragNode = this.nodeMap.get(dragNodeId);
+		if (!dragNode) return;
+
+		const content = await this.app.vault.read(this.currentFile);
+		const src = dragNode.source;
+
+		// Extract the dragged node's full text (including subtree)
+		const dragStart = src.range.start;
+		const dragEnd = this.subtreeEnd(src);
+		let dragText = content.slice(dragStart, dragEnd);
+
+		// Find the target parent and insertion point
+		const targetParent = this.findNodeById(this.currentTree.root, dropTarget.parentId);
+		if (!targetParent) return;
+
+		// Compute the new type and depth based on target parent
+		const newType = this.inferChildType(targetParent);
+		const newDepth = this.inferChildDepth(targetParent);
+
+		// Re-indent the dragged text if the depth or type changed
+		dragText = this.reindentSubtree(dragText, src, newType, newDepth);
+
+		// Determine insertion offset in the markdown
+		let insertOffset: number;
+		if (dropTarget.index >= targetParent.children.length) {
+			// Append after last child's subtree
+			if (targetParent.children.length > 0) {
+				const lastChild = targetParent.children[targetParent.children.length - 1];
+				if (lastChild) {
+					insertOffset = this.subtreeEnd(lastChild);
+				} else {
+					insertOffset = this.subtreeEnd(targetParent);
+				}
+			} else {
+				insertOffset = targetParent.range.end;
+			}
+		} else {
+			// Insert before the child at dropTarget.index
+			const targetChild = targetParent.children[dropTarget.index];
+			if (targetChild) {
+				insertOffset = targetChild.range.start;
+			} else {
+				insertOffset = this.subtreeEnd(targetParent);
+			}
+		}
+
+		// Build new content: remove old, insert at new position
+		// Must handle the case where removal shifts the insert position
+		let removeStart = dragStart;
+		let removeEnd = dragEnd;
+
+		// Consume adjacent newline with removal
+		if (removeStart > 0 && content[removeStart - 1] === "\n") {
+			removeStart--;
+		} else if (removeEnd < content.length && content[removeEnd] === "\n") {
+			removeEnd++;
+		}
+
+		let updated: string;
+		if (removeStart < insertOffset) {
+			// Dragging forward: remove first, then adjust insert position
+			const afterRemove = content.slice(0, removeStart) + content.slice(removeEnd);
+			const adjustedInsert = insertOffset - (removeEnd - removeStart);
+			// Need a newline before the inserted text
+			const prefix = adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n" ? "\n" : "";
+			const suffix = adjustedInsert < afterRemove.length && afterRemove[adjustedInsert] !== "\n" ? "\n" : "";
+			updated = afterRemove.slice(0, adjustedInsert) + prefix + dragText + suffix + afterRemove.slice(adjustedInsert);
+		} else {
+			// Dragging backward: insert first, then remove (with adjusted position)
+			const prefix = insertOffset > 0 && content[insertOffset - 1] !== "\n" ? "\n" : "";
+			const suffix = insertOffset < content.length && content[insertOffset] !== "\n" ? "\n" : "";
+			const afterInsert = content.slice(0, insertOffset) + prefix + dragText + suffix + content.slice(insertOffset);
+			const shift = prefix.length + dragText.length + suffix.length;
+			updated = afterInsert.slice(0, removeStart + shift) + afterInsert.slice(removeEnd + shift);
+		}
+
+		await this.writeMarkdown(updated);
+	}
+
+	private cleanupDrag(): void {
+		this.isDragging = false;
+		this.dragNodeId = null;
+		this.dropTarget = null;
+		this.contentEl.removeClass("osmosis-dragging");
+
+		if (this.dragGhost) {
+			this.dragGhost.remove();
+			this.dragGhost = null;
+		}
+		if (this.dropIndicator) {
+			this.dropIndicator.remove();
+			this.dropIndicator = null;
+		}
+	}
+
+	private findNodeById(node: OsmosisNode, id: string): OsmosisNode | null {
+		if (node.id === id) return node;
+		for (const child of node.children) {
+			const found = this.findNodeById(child, id);
+			if (found) return found;
+		}
+		return null;
+	}
+
+	private inferChildType(parent: OsmosisNode): OsmosisNode["type"] {
+		if (parent.type === "heading" || parent.type === "root") return "bullet";
+		return parent.type;
+	}
+
+	private inferChildDepth(parent: OsmosisNode): number {
+		if (parent.type === "heading" || parent.type === "root") return 0;
+		return parent.depth + 1;
+	}
+
+	/**
+	 * Re-indent a subtree's text to match a new type/depth.
+	 * Adjusts the first line and all descendant lines proportionally.
+	 */
+	private reindentSubtree(
+		text: string,
+		originalNode: OsmosisNode,
+		newType: OsmosisNode["type"],
+		newDepth: number,
+	): string {
+		const lines = text.split("\n");
+		const depthDelta = newDepth - originalNode.depth;
+		const result: string[] = [];
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			if (line === undefined) continue;
+			if (line.trim() === "") {
+				result.push(line);
+				continue;
+			}
+
+			if (i === 0) {
+				// First line: serialize with new type and depth
+				result.push(this.serializeLine(newType, newDepth, originalNode.content));
+			} else {
+				// Descendant lines: adjust indentation proportionally
+				const match = line.match(/^(\s*)/);
+				const currentIndent = match ? match[1]?.length ?? 0 : 0;
+				const indentPerLevel = 2;
+				const newIndent = Math.max(0, currentIndent + depthDelta * indentPerLevel);
+				result.push(" ".repeat(newIndent) + line.trimStart());
+			}
+		}
+
+		return result.join("\n");
 	}
 
 	// ─── Keyboard ────────────────────────────────────────────

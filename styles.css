@@ -89,6 +89,23 @@ Uses Obsidian CSS variables for theme compatibility.
 	stroke-dasharray: 4 2;
 }
 
+/* Drag-and-drop */
+.osmosis-dragging {
+	cursor: grabbing !important;
+}
+
+.osmosis-drag-ghost {
+	opacity: 0.6;
+	pointer-events: none;
+}
+
+.osmosis-drop-indicator {
+	stroke: var(--interactive-accent);
+	stroke-width: 3;
+	stroke-dasharray: 6 3;
+	pointer-events: none;
+}
+
 /* Collapse toggle */
 .osmosis-collapse-toggle {
 	cursor: pointer;
