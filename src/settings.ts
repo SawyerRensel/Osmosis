@@ -5,10 +5,12 @@ export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow
 
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
+	cursorSync: boolean;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchLineStyle: "curved",
+	cursorSync: true,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
@@ -35,6 +37,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.branchLineStyle)
 					.onChange(async (value) => {
 						this.plugin.settings.branchLineStyle = value as BranchLineStyle;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Cursor sync")
+			.setDesc("Sync cursor position between the Markdown editor and mind map.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.cursorSync)
+					.onChange(async (value) => {
+						this.plugin.settings.cursorSync = value;
 						await this.plugin.saveSettings();
 					}),
 			);

@@ -7,6 +7,7 @@ import {
 	Component,
 } from "obsidian";
 import { ParseCache } from "../cache";
+import { OsmosisParser } from "../parser";
 import { OsmosisNode, OsmosisTree } from "../types";
 import { computeLayout, LayoutNode, LayoutResult, DEFAULT_LAYOUT_CONFIG } from "../layout";
 import type OsmosisPlugin from "../main";
@@ -53,6 +54,12 @@ export class MindMapView extends ItemView {
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	private suppressNextReload = false;
+
+	// Cursor sync state
+	private parser = new OsmosisParser();
+	private cursorSyncNodeId: string | null = null;
+	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private suppressCursorSync = false;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -108,6 +115,11 @@ export class MindMapView extends ItemView {
 				}
 			}),
 		);
+
+		// Cursor sync: editor → map
+		this.registerInterval(
+			window.setInterval(() => this.syncEditorCursorToMap(), 150),
+		);
 	}
 
 	async onClose(): Promise<void> {
@@ -119,6 +131,11 @@ export class MindMapView extends ItemView {
 		this.currentTree = null;
 		this.currentLayout = null;
 		this.nodeMap.clear();
+		this.cursorSyncNodeId = null;
+		if (this.cursorSyncTimer) {
+			clearTimeout(this.cursorSyncTimer);
+			this.cursorSyncTimer = null;
+		}
 	}
 
 	private async loadActiveFile(): Promise<void> {
@@ -225,6 +242,7 @@ export class MindMapView extends ItemView {
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
 			this.selectNode(nodeId);
+			this.syncMapSelectionToEditor(nodeId);
 			this.contentEl.focus();
 		} else {
 			this.selectNode(null);
@@ -294,6 +312,89 @@ export class MindMapView extends ItemView {
 			const newGroup = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 			newGroup?.classList.add("osmosis-node-selected");
 		}
+	}
+
+	// ─── Cursor Sync ────────────────────────────────────────
+
+	/**
+	 * Poll the active editor's cursor position and highlight the corresponding map node.
+	 * Uses a polling interval because Obsidian doesn't expose a reliable cursor-change event.
+	 */
+	private syncEditorCursorToMap(): void {
+		if (!this.isCursorSyncEnabled() || this.suppressCursorSync) return;
+		if (!this.currentTree) return;
+
+		const editor = this.getActiveEditor();
+		if (!editor) return;
+
+		const cursor = editor.getCursor();
+		const offset = editor.posToOffset(cursor);
+		const node = this.parser.findNodeAtPosition(this.currentTree, offset);
+		if (!node || node.type === "root") {
+			this.setCursorSyncHighlight(null);
+			return;
+		}
+
+		if (node.id !== this.cursorSyncNodeId) {
+			this.setCursorSyncHighlight(node.id);
+		}
+	}
+
+	/**
+	 * Move the editor cursor to the start of a node's range.
+	 */
+	private syncMapSelectionToEditor(nodeId: string): void {
+		if (!this.isCursorSyncEnabled()) return;
+
+		const layoutNode = this.nodeMap.get(nodeId);
+		if (!layoutNode) return;
+
+		const editor = this.getActiveEditor();
+		if (!editor) return;
+
+		const pos = editor.offsetToPos(layoutNode.source.range.start);
+		this.suppressCursorSync = true;
+		editor.setCursor(pos);
+		this.suppressCursorSync = false;
+	}
+
+	/**
+	 * Apply or remove the cursor-sync highlight CSS class.
+	 */
+	private setCursorSyncHighlight(nodeId: string | null): void {
+		if (!this.svg) return;
+
+		// Remove old highlight
+		if (this.cursorSyncNodeId) {
+			const old = this.svg.querySelector(`[data-node-id="${this.cursorSyncNodeId}"]`);
+			old?.classList.remove("osmosis-node-cursor-synced");
+		}
+
+		this.cursorSyncNodeId = nodeId;
+
+		// Apply new highlight
+		if (nodeId) {
+			const el = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+			el?.classList.add("osmosis-node-cursor-synced");
+		}
+	}
+
+	private isCursorSyncEnabled(): boolean {
+		return this.plugin?.settings?.cursorSync ?? true;
+	}
+
+	/**
+	 * Get the editor from a MarkdownView showing our current file.
+	 */
+	private getActiveEditor(): MarkdownView["editor"] | null {
+		const leaves = this.app.workspace.getLeavesOfType("markdown");
+		for (const leaf of leaves) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file === this.currentFile) {
+				return view.editor;
+			}
+		}
+		return null;
 	}
 
 	// ─── Keyboard ────────────────────────────────────────────

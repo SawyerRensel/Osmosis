@@ -82,6 +82,13 @@ Uses Obsidian CSS variables for theme compatibility.
 	stroke-width: 2;
 }
 
+/* Cursor sync highlight (editor cursor → map node) */
+.osmosis-node-cursor-synced > .osmosis-node {
+	stroke: var(--text-accent);
+	stroke-width: 2;
+	stroke-dasharray: 4 2;
+}
+
 /* Collapse toggle */
 .osmosis-collapse-toggle {
 	cursor: pointer;
