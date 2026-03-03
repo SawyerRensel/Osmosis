@@ -557,7 +557,7 @@ export class MindMapView extends ItemView {
 		let anyExpanded = false;
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (node && node.children.length > 0 && !this.collapsedIds.has(id)) {
+			if (node && (node.children.length > 0 || node.collapsed) && !this.collapsedIds.has(id)) {
 				anyExpanded = true;
 				break;
 			}
@@ -565,7 +565,7 @@ export class MindMapView extends ItemView {
 
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (!node || node.children.length === 0) continue;
+			if (!node || (node.children.length === 0 && !node.collapsed)) continue;
 			if (anyExpanded) {
 				this.collapsedIds.add(id);
 			} else {
@@ -1066,7 +1066,7 @@ export class MindMapView extends ItemView {
 					e.preventDefault();
 				} else if (this.selectedNodeId) {
 					const node = this.nodeMap.get(this.selectedNodeId);
-					if (node && node.children.length > 0) {
+					if (node && (node.children.length > 0 || node.collapsed)) {
 						this.toggleCollapse(this.selectedNodeId);
 						e.preventDefault();
 					}
