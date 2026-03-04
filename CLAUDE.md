@@ -304,6 +304,7 @@ Is this correct? What's missing?
 
 2. **E2E tests** (`npm run e2e`):
    - Run the existing suite — all must pass
+   - **Every completed beads task MUST include at least one new Playwright E2E test** covering the change
    - Add E2E tests for new UI features (new commands, view changes, interactions)
    - Test files live in `e2e/osmosis.spec.ts`
    - Test fixtures (markdown files) go in `e2e/fixtures/` and are copied to vault by setup
@@ -454,6 +455,10 @@ TESTING:
 
 What am I missing?
 ```
+
+### Step 4.5: Write E2E Test
+
+**Every beads task MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run `npm run e2e` to confirm it passes.
 
 ### Step 5: Update Beads
 
@@ -715,6 +720,7 @@ git add <files> && git commit -m "..." && git push
 
 Commit when:
 - A feature is complete and passes all tests (`npm test` + `npm run e2e`)
+- New Playwright E2E test(s) have been written for the change
 - Build succeeds with no lint errors
 - Acceptance criteria are met
 
