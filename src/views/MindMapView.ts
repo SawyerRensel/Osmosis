@@ -414,6 +414,7 @@ export class MindMapView extends ItemView {
 	 * Toggle a node in the multi-selection (Shift+click).
 	 */
 	private toggleNodeInSelection(nodeId: string): void {
+		this.clearSelectionVisuals();
 		if (this.selectedNodeIds.has(nodeId)) {
 			this.selectedNodeIds.delete(nodeId);
 			if (this.selectedNodeId === nodeId) {

@@ -399,10 +399,7 @@ test("F2 opens inline editor on selected node", async () => {
 	await node.click({ force: true });
 	await page.waitForTimeout(200);
 
-	// Focus container explicitly so F2 reaches our keydown handler
-	const container = page.locator(".osmosis-mindmap-container");
-	await container.focus();
-	await page.keyboard.press("F2");
+	await page.locator(".osmosis-mindmap-container").press("F2");
 	await page.waitForTimeout(300);
 
 	const input = page.locator(".osmosis-node-input");
@@ -497,20 +494,27 @@ test("drop indicator appears when dragging over another node", async () => {
 		first.y + first.height / 2,
 	);
 	await page.mouse.down();
+	// Drag to just past the bottom edge of the second node so the "insert after"
+	// drop position wins — this avoids isSamePosition filtering (inserting before
+	// the immediate next sibling is treated as a no-op).
 	await page.mouse.move(
 		second.x + second.width / 2,
-		second.y + second.height / 2,
+		second.y + second.height + 5,
 		{ steps: 10 },
 	);
 	await page.waitForTimeout(300);
 
+	// SVG <line> elements have near-zero bounding box height, so Playwright's
+	// toBeVisible() doesn't work reliably. Check the display attribute instead.
 	const indicator = page.locator(".osmosis-drop-indicator");
-	await expect(indicator).toBeVisible({ timeout: 3000 });
+	await expect(indicator).not.toHaveAttribute("display", "none", {
+		timeout: 3000,
+	});
 
 	await page.mouse.up();
 	await page.waitForTimeout(300);
 
-	await expect(indicator).not.toBeVisible();
+	await expect(indicator).toHaveCount(0);
 });
 
 // ── 12. Multi-Node Selection (Task 2.12) ─────────────────────────────────────
