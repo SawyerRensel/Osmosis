@@ -14,6 +14,7 @@ import { OsmosisNode, OsmosisTree } from "../types";
 import { computeLayout, LayoutNode, LayoutResult, DEFAULT_LAYOUT_CONFIG } from "../layout";
 import type OsmosisPlugin from "../main";
 import type { BranchLineStyle } from "../settings";
+import { TransclusionResolver } from "../transclusion";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -42,6 +43,7 @@ const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
+	private transclusionResolver: TransclusionResolver;
 	private currentFile: TFile | null = null;
 	private currentTree: OsmosisTree | null = null;
 	private renderComponent: Component | null = null;
@@ -115,6 +117,7 @@ export class MindMapView extends ItemView {
 		this.navigation = true;
 		this.icon = "git-fork";
 		this.plugin = (this.app as unknown as { plugins: { plugins: Record<string, OsmosisPlugin> } }).plugins.plugins["osmosis"] as OsmosisPlugin;
+		this.transclusionResolver = new TransclusionResolver(this.app, this.cache);
 
 		// Register a scope so Obsidian routes key events to this view when focused,
 		// preventing global hotkeys (like F2 = "rename file") from intercepting them.
@@ -245,6 +248,9 @@ export class MindMapView extends ItemView {
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
+
+		// Resolve transclusion links to vault files
+		await this.transclusionResolver.resolveTree(this.currentTree);
 
 		await this.render();
 	}
@@ -2130,8 +2136,17 @@ export class MindMapView extends ItemView {
 		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
 		}
+		if (node.source.type === "transclusion" && node.source.sourceFile) {
+			classes.push("osmosis-node-resolved");
+		}
+		if (node.source.type === "transclusion" && !node.source.sourceFile) {
+			classes.push("osmosis-node-unresolved");
+		}
 		group.setAttribute("class", classes.join(" "));
 		group.setAttribute("data-node-id", node.source.id);
+		if (node.source.sourceFile) {
+			group.setAttribute("data-source-file", node.source.sourceFile);
+		}
 
 		// Background rect
 		const rect = document.createElementNS(SVG_NS, "rect");

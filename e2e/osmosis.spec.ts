@@ -686,3 +686,39 @@ test.describe("Task 2.13: Viewport Culling", () => {
 		expect(await lines.count()).toBeGreaterThan(0);
 	});
 });
+
+// ── Task 3.1: Transclusion Link Resolution ──────────────────────────────────
+
+test.describe("Task 3.1: Transclusion Link Resolution", () => {
+	test.beforeAll(async () => {
+		await setupMindMap("transclusion-source");
+	});
+
+	test("transclusion nodes appear in the mind map", async () => {
+		const transclusionNodes = page.locator(".osmosis-node-group-transclusion");
+		expect(await transclusionNodes.count()).toBeGreaterThanOrEqual(2);
+	});
+
+	test("wiki-link transclusion resolves to target file", async () => {
+		// The first transclusion ![[transclusion-target]] should resolve
+		const resolved = page.locator(
+			'.osmosis-node-group-transclusion.osmosis-node-resolved[data-source-file="transclusion-target.md"]',
+		);
+		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
+	});
+
+	test("markdown-style transclusion resolves to target file", async () => {
+		// ![](transclusion-target.md) should also resolve
+		const resolved = page.locator(
+			'.osmosis-node-group-transclusion.osmosis-node-resolved',
+		);
+		expect(await resolved.count()).toBeGreaterThanOrEqual(2);
+	});
+
+	test("missing file transclusion is marked unresolved", async () => {
+		const unresolved = page.locator(
+			".osmosis-node-group-transclusion.osmosis-node-unresolved",
+		);
+		expect(await unresolved.count()).toBeGreaterThanOrEqual(1);
+	});
+});
