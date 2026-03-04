@@ -31,6 +31,9 @@ const COLLAPSE_ANIMATION_MS = 80;
 // Drag constants
 const DRAG_THRESHOLD = 5; // pixels before drag starts
 
+// Viewport culling constants
+const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
+
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
 	private currentFile: TFile | null = null;
@@ -78,6 +81,12 @@ export class MindMapView extends ItemView {
 	private cursorSyncNodeId: string | null = null;
 	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
 	private suppressCursorSync = false;
+
+	// Viewport culling state
+	private renderedNodeIds = new Set<string>();
+	private cullRafId: number | null = null;
+	private branchLinesGroup: SVGGElement | null = null;
+	private nodesGroup: SVGGElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -156,6 +165,13 @@ export class MindMapView extends ItemView {
 		this.renderComponent?.unload();
 		this.renderComponent = null;
 		this.svg = null;
+		this.branchLinesGroup = null;
+		this.nodesGroup = null;
+		this.renderedNodeIds.clear();
+		if (this.cullRafId !== null) {
+			cancelAnimationFrame(this.cullRafId);
+			this.cullRafId = null;
+		}
 		this.contentEl.empty();
 		this.currentFile = null;
 		this.currentTree = null;
@@ -195,6 +211,107 @@ export class MindMapView extends ItemView {
 		if (!this.svg) return;
 		const { x, y, w, h } = this.viewBox;
 		this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		this.scheduleCullUpdate();
+	}
+
+	/** Check if a node (in SVG coords with offset applied) intersects the expanded viewport */
+	private isNodeInViewport(node: LayoutNode, offsetX: number, offsetY: number): boolean {
+		const nx = node.rect.x + offsetX;
+		const ny = node.rect.y + offsetY;
+		const nw = node.rect.width;
+		const nh = node.rect.height;
+
+		const vx = this.viewBox.x - CULL_MARGIN;
+		const vy = this.viewBox.y - CULL_MARGIN;
+		const vw = this.viewBox.w + CULL_MARGIN * 2;
+		const vh = this.viewBox.h + CULL_MARGIN * 2;
+
+		return nx + nw > vx && nx < vx + vw && ny + nh > vy && ny < vy + vh;
+	}
+
+	/** Check if a branch line (between parent and child) intersects the expanded viewport */
+	private isBranchInViewport(parent: LayoutNode, child: LayoutNode, offsetX: number, offsetY: number): boolean {
+		// Use bounding box of the two connection points
+		const cx = child.rect.x + offsetX;
+		const cy = child.rect.y + child.rect.height / 2 + offsetY;
+		let px: number, py: number;
+		if (parent.source.type === "root") {
+			const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+			px = cx - stubLength;
+			py = cy;
+		} else {
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
+		}
+		const minX = Math.min(px, cx);
+		const minY = Math.min(py, cy);
+		const maxX = Math.max(px, cx);
+		const maxY = Math.max(py, cy);
+
+		const vx = this.viewBox.x - CULL_MARGIN;
+		const vy = this.viewBox.y - CULL_MARGIN;
+		const vw = this.viewBox.w + CULL_MARGIN * 2;
+		const vh = this.viewBox.h + CULL_MARGIN * 2;
+
+		return maxX > vx && minX < vx + vw && maxY > vy && minY < vy + vh;
+	}
+
+	/** Schedule a viewport cull update on the next animation frame */
+	private scheduleCullUpdate(): void {
+		if (this.cullRafId !== null) return;
+		this.cullRafId = requestAnimationFrame(() => {
+			this.cullRafId = null;
+			void this.updateVisibleNodes();
+		});
+	}
+
+	/** Add/remove DOM nodes based on current viewport */
+	private async updateVisibleNodes(): Promise<void> {
+		if (!this.svg || !this.currentLayout || !this.nodesGroup || !this.branchLinesGroup) return;
+
+		const { nodes } = this.currentLayout;
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const lineStyle = this.plugin?.settings?.branchLineStyle ?? "curved";
+
+		const nowVisible = new Set<string>();
+		for (const node of nodes) {
+			if (node.source.type === "root") continue;
+			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+				nowVisible.add(node.source.id);
+			}
+		}
+
+		// Remove nodes that left the viewport
+		for (const id of this.renderedNodeIds) {
+			if (!nowVisible.has(id)) {
+				// Remove node group
+				const el = this.nodesGroup.querySelector(`.osmosis-node-group[data-node-id="${id}"]`);
+				el?.remove();
+				// Remove branch line
+				const line = this.branchLinesGroup.querySelector(`.osmosis-branch-line[data-child-id="${id}"]`);
+				line?.remove();
+			}
+		}
+
+		// Add nodes that entered the viewport
+		const renderPromises: Promise<void>[] = [];
+		for (const node of nodes) {
+			if (node.source.type === "root") continue;
+			const id = node.source.id;
+			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
+				renderPromises.push(this.drawNode(this.nodesGroup, node, offsetX, offsetY));
+				// Draw branch line
+				if (node.parent) {
+					if (this.isBranchInViewport(node.parent, node, offsetX, offsetY)) {
+						this.drawBranchLine(this.branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
+					}
+				}
+			}
+		}
+		await Promise.all(renderPromises);
+
+		this.renderedNodeIds = nowVisible;
 	}
 
 	private screenToSvg(clientX: number, clientY: number): { x: number; y: number } {
@@ -1503,11 +1620,13 @@ export class MindMapView extends ItemView {
 		svg.setAttribute("height", "100%");
 		svg.addClass("osmosis-mindmap-svg");
 
-		// Initialize viewBox to fit content if this is a fresh render (no previous zoom state)
-		// or preserve existing viewBox if user has already panned/zoomed
+		// Initialize viewBox: use actual container dimensions so culling works from the start.
+		// The user sees the top-left portion of the map; pan/zoom to explore.
 		if (!this.svg) {
-			// First render — fit content to view
-			this.viewBox = { x: 0, y: 0, w: contentWidth, h: contentHeight };
+			const containerRect = container.getBoundingClientRect();
+			const w = containerRect.width || contentWidth;
+			const h = containerRect.height || contentHeight;
+			this.viewBox = { x: 0, y: 0, w, h };
 			this.zoom = 1;
 		}
 
@@ -1515,29 +1634,41 @@ export class MindMapView extends ItemView {
 
 		this.svg = svg;
 
+		// Create groups for layering: branch lines behind nodes
+		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
+		branchLinesGroup.setAttribute("class", "osmosis-branch-lines-group");
+		svg.appendChild(branchLinesGroup);
+		this.branchLinesGroup = branchLinesGroup;
+
+		const nodesGroup = document.createElementNS(SVG_NS, "g");
+		nodesGroup.setAttribute("class", "osmosis-nodes-group");
+		svg.appendChild(nodesGroup);
+		this.nodesGroup = nodesGroup;
+
 		const lineStyle = this.plugin?.settings?.branchLineStyle ?? "curved";
 
-		// Draw branch lines first (behind nodes)
+		// Only render nodes visible in the current viewport
+		this.renderedNodeIds.clear();
+		const renderPromises: Promise<void>[] = [];
+
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
-			if (node.parent) {
-				this.drawBranchLine(svg, node.parent, node, offsetX, offsetY, lineStyle);
+			if (!this.isNodeInViewport(node, offsetX, offsetY)) continue;
+
+			this.renderedNodeIds.add(node.source.id);
+			renderPromises.push(this.drawNode(nodesGroup, node, offsetX, offsetY));
+
+			if (node.parent && this.isBranchInViewport(node.parent, node, offsetX, offsetY)) {
+				this.drawBranchLine(branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
 			}
 		}
 
-		// Draw nodes
-		const renderPromises: Promise<void>[] = [];
-		for (const node of nodes) {
-			if (node.source.type === "root") continue;
-			renderPromises.push(this.drawNode(svg, node, offsetX, offsetY));
-		}
 		await Promise.all(renderPromises);
-
 		container.appendChild(svg);
 	}
 
 	private async drawNode(
-		svg: SVGSVGElement,
+		svg: SVGElement,
 		node: LayoutNode,
 		offsetX: number,
 		offsetY: number,
@@ -1636,7 +1767,7 @@ export class MindMapView extends ItemView {
 	}
 
 	private drawBranchLine(
-		svg: SVGSVGElement,
+		svg: SVGElement,
 		parent: LayoutNode,
 		child: LayoutNode,
 		offsetX: number,
@@ -1662,6 +1793,7 @@ export class MindMapView extends ItemView {
 		const path = document.createElementNS(SVG_NS, "path");
 		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, lineStyle));
 		path.setAttribute("class", "osmosis-branch-line");
+		path.setAttribute("data-child-id", child.source.id);
 		svg.appendChild(path);
 	}
 

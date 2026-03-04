@@ -197,12 +197,15 @@ npm run test
 npm run build
 # This compiles TypeScript and outputs to e2e-vault/.obsidian/plugins/Osmosis
 
-# 4. Run E2E tests (builds automatically, requires Obsidian closed OR running with CDP)
-npm run e2e
-# This launches Obsidian, runs Playwright tests against the real plugin, then closes
-# Tests verify: plugin loads, mind map opens, SVG nodes render from markdown
+# 4. Run E2E tests for the current subtask only (faster iteration)
+npx playwright test --grep "Task 2.13"   # Replace with the current task's test name/grep pattern
+# Only run tests relevant to the subtask you just completed
 
 # 5. If there are issues, fix in src/ and repeat from step 1
+
+# 6. When ALL subtasks of a parent task (e.g., Phase 2) are complete, run the FULL suite:
+npm run e2e
+# This runs ALL E2E tests to catch regressions across the entire feature set
 ```
 
 ### Linting
@@ -302,9 +305,10 @@ Is this correct? What's missing?
    - Add unit tests for new pure logic (parser changes, layout algorithms, data transforms)
    - Test files live alongside source: `src/foo.test.ts`
 
-2. **E2E tests** (`npm run e2e`):
-   - Run the existing suite — all must pass
-   - **Every completed beads task MUST include at least one new Playwright E2E test** covering the change
+2. **E2E tests** (two-tier strategy):
+   - **Every completed beads subtask (X.Y) MUST include at least one new Playwright E2E test** covering the change
+   - **Per-subtask**: Run ONLY the new task's tests: `npx playwright test --grep "Task X.Y"` (fast iteration)
+   - **Per-parent task**: When ALL subtasks of a parent (X) are complete, run the FULL suite: `npm run e2e` (regression check)
    - Add E2E tests for new UI features (new commands, view changes, interactions)
    - Test files live in `e2e/osmosis.spec.ts`
    - Test fixtures (markdown files) go in `e2e/fixtures/` and are copied to vault by setup
@@ -458,7 +462,7 @@ What am I missing?
 
 ### Step 4.5: Write E2E Test
 
-**Every beads task MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run `npm run e2e` to confirm it passes.
+**Every beads subtask (X.Y) MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run only the new tests: `npx playwright test --grep "Task X.Y"`. Run the full suite (`npm run e2e`) only when completing the parent task (X).
 
 ### Step 5: Update Beads
 
@@ -642,9 +646,10 @@ Here's my implementation. Does it match the spec?
 
 **Step 5**: Build and test
 ```bash
-npm run lint      # Fix any issues
-npm run test      # Run unit tests
-npm run e2e       # Run E2E tests (builds automatically)
+npm run lint                              # Fix any issues
+npm run test                              # Run unit tests
+npx playwright test --grep "Task X.Y"    # Run only this subtask's E2E tests
+# Run full `npm run e2e` only when completing the parent task (X)
 ```
 
 **Step 6**: Close the Beads issue
@@ -719,10 +724,11 @@ git add <files> && git commit -m "..." && git push
 ## Version Control Notes
 
 Commit when:
-- A feature is complete and passes all tests (`npm test` + `npm run e2e`)
+- A subtask is complete and passes its own E2E tests (`npm test` + `npx playwright test --grep "Task X.Y"`)
 - New Playwright E2E test(s) have been written for the change
 - Build succeeds with no lint errors
 - Acceptance criteria are met
+- Full E2E suite (`npm run e2e`) passes when completing a parent task
 
 Example commit messages:
 ```
