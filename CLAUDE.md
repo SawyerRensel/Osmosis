@@ -198,7 +198,7 @@ npm run build
 # This compiles TypeScript and outputs to e2e-vault/.obsidian/plugins/Osmosis
 
 # 4. Run E2E tests for the current subtask only (faster iteration)
-npx playwright test --grep "Task 2.13"   # Replace with the current task's test name/grep pattern
+npx playwright test --grep "Task 2.13:"   # Include trailing colon to avoid prefix matching (e.g., "Task 2.1:" won't match "Task 2.13:")
 # Only run tests relevant to the subtask you just completed
 
 # 5. If there are issues, fix in src/ and repeat from step 1
@@ -307,7 +307,7 @@ Is this correct? What's missing?
 
 2. **E2E tests** (two-tier strategy):
    - **Every completed beads subtask (X.Y) MUST include at least one new Playwright E2E test** covering the change
-   - **Per-subtask**: Run ONLY the new task's tests: `npx playwright test --grep "Task X.Y"` (fast iteration)
+   - **Per-subtask**: Run ONLY the new task's tests: `npx playwright test --grep "Task X.Y:"` — trailing colon prevents prefix matching (fast iteration)
    - **Per-parent task**: When ALL subtasks of a parent (X) are complete, run the FULL suite: `npm run e2e` (regression check)
    - Add E2E tests for new UI features (new commands, view changes, interactions)
    - Test files live in `e2e/osmosis.spec.ts`
@@ -462,7 +462,7 @@ What am I missing?
 
 ### Step 4.5: Write E2E Test
 
-**Every beads subtask (X.Y) MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run only the new tests: `npx playwright test --grep "Task X.Y"`. Run the full suite (`npm run e2e`) only when completing the parent task (X).
+**Every beads subtask (X.Y) MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run only the new tests: `npx playwright test --grep "Task X.Y:"` (trailing colon prevents prefix matching). Run the full suite (`npm run e2e`) only when completing the parent task (X).
 
 ### Step 5: Update Beads
 
@@ -648,7 +648,7 @@ Here's my implementation. Does it match the spec?
 ```bash
 npm run lint                              # Fix any issues
 npm run test                              # Run unit tests
-npx playwright test --grep "Task X.Y"    # Run only this subtask's E2E tests
+npx playwright test --grep "Task X.Y:"   # Trailing colon prevents prefix matching
 # Run full `npm run e2e` only when completing the parent task (X)
 ```
 
@@ -724,7 +724,7 @@ git add <files> && git commit -m "..." && git push
 ## Version Control Notes
 
 Commit when:
-- A subtask is complete and passes its own E2E tests (`npm test` + `npx playwright test --grep "Task X.Y"`)
+- A subtask is complete and passes its own E2E tests (`npm test` + `npx playwright test --grep "Task X.Y:"`)
 - New Playwright E2E test(s) have been written for the change
 - Build succeeds with no lint errors
 - Acceptance criteria are met
