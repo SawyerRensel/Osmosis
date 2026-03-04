@@ -1681,11 +1681,19 @@ export class MindMapView extends ItemView {
 		const isMobile = Platform.isMobile;
 
 		if (isMobile) {
-			// Lock the container's height so Obsidian's layout resize when the
-			// virtual keyboard opens doesn't collapse the SVG to near-zero height.
-			const containerRect = this.contentEl.getBoundingClientRect();
-			this.contentEl.setCssProps({ "--osmosis-locked-height": `${containerRect.height}px` });
-			this.contentEl.addClass("osmosis-editing-locked");
+			// Lock the SVG to position:fixed so it escapes Obsidian's layout
+			// resize when the virtual keyboard opens. The SVG keeps its
+			// pre-keyboard pixel dimensions and is unaffected by parent shrinking.
+			if (this.svg) {
+				const svgRect = this.svg.getBoundingClientRect();
+				const s = this.svg.style;
+				s.position = "fixed";
+				s.left = `${svgRect.left}px`;
+				s.top = `${svgRect.top}px`;
+				s.width = `${svgRect.width}px`;
+				s.height = `${svgRect.height}px`;
+				s.zIndex = "9998";
+			}
 
 			// Mobile: use fixed positioning on document.body to escape
 			// Obsidian's layout resize when the keyboard opens.
@@ -1799,8 +1807,16 @@ export class MindMapView extends ItemView {
 			this.editOverlay = null;
 		}
 
-		// Unlock container height that was locked during mobile editing
-		this.contentEl.removeClass("osmosis-editing-locked");
+		// Restore SVG from fixed positioning used during mobile editing
+		if (this.svg) {
+			const s = this.svg.style;
+			s.position = "";
+			s.left = "";
+			s.top = "";
+			s.width = "";
+			s.height = "";
+			s.zIndex = "";
+		}
 
 		// Restore visibility of the in-SVG content
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);

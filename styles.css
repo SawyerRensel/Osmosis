@@ -17,11 +17,8 @@ Uses Obsidian CSS variables for theme compatibility.
 	cursor: grabbing;
 }
 
-/* Lock container height while editing on mobile so the virtual keyboard
-   opening doesn't collapse the SVG to near-zero height. */
-.osmosis-mindmap-container.osmosis-editing-locked {
-	min-height: var(--osmosis-locked-height);
-}
+/* Mobile editing: SVG gets position:fixed inline to escape Obsidian's
+   layout resize when the keyboard opens. No CSS overrides needed here. */
 
 .osmosis-mindmap-svg {
 	display: block;
