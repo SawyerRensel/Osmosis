@@ -5,6 +5,7 @@ import {
 	MarkdownView,
 	MarkdownRenderer,
 	Component,
+	Platform,
 	Scope,
 } from "obsidian";
 import { ParseCache } from "../cache";
@@ -30,6 +31,11 @@ const COLLAPSE_ANIMATION_MS = 80;
 
 // Drag constants
 const DRAG_THRESHOLD = 5; // pixels before drag starts
+
+// Touch constants
+const LONG_PRESS_MS = 400; // ms before touch-on-node becomes drag
+const DOUBLE_TAP_MS = 300; // max ms between taps for double-tap
+const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
@@ -64,6 +70,8 @@ export class MindMapView extends ItemView {
 
 	// Editing state
 	private editingNodeId: string | null = null;
+	private editOverlay: HTMLInputElement | null = null;
+	private editCleanup: (() => void) | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	private suppressNextReload = false;
@@ -87,6 +95,20 @@ export class MindMapView extends ItemView {
 	private cullRafId: number | null = null;
 	private branchLinesGroup: SVGGElement | null = null;
 	private nodesGroup: SVGGElement | null = null;
+
+	// Touch/pointer state
+	private activePointers = new Map<number, { x: number; y: number }>();
+	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	private longPressTriggered = false;
+	private lastTapTime = 0;
+	private lastTapPosition = { x: 0, y: 0 };
+	private lastTapNodeId: string | null = null;
+	private pinchStartDistance: number | null = null;
+	private pinchStartZoom = 1;
+	private pinchCenter = { x: 0, y: 0 };
+	private lastPointerType = "mouse";
+	private touchSelectionMode = false;
+	private resizeObserver: ResizeObserver | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -125,13 +147,25 @@ export class MindMapView extends ItemView {
 		this.registerDomEvent(container, "keydown", (e: KeyboardEvent) => {
 			this.handleKeyDown(e);
 		});
-		this.registerDomEvent(container, "mousedown", this.handleMouseDown);
-		this.registerDomEvent(container, "mousemove", this.handleMouseMove);
-		this.registerDomEvent(container, "mouseup", this.handleMouseUp);
-		this.registerDomEvent(container, "mouseleave", this.handleMouseUp);
+		this.registerDomEvent(container, "pointerdown", this.handlePointerDown);
+		this.registerDomEvent(container, "pointermove", this.handlePointerMove);
+		this.registerDomEvent(container, "pointerup", this.handlePointerUp);
+		this.registerDomEvent(container, "pointercancel", this.handlePointerCancel);
+		this.registerDomEvent(container, "pointerleave", this.handlePointerLeave);
 		this.registerDomEvent(container, "wheel", this.handleWheel, { passive: false });
 		this.registerDomEvent(container, "click", this.handleClick);
 		this.registerDomEvent(container, "dblclick", this.handleDblClick);
+
+		// Block touch events from reaching Obsidian's gesture handlers (drawer swipes,
+		// command palette pull-down). Pointer events and touch events are separate
+		// streams — stopPropagation on pointer events does not affect touch events.
+		this.registerDomEvent(container, "touchstart", this.handleTouchCapture, { passive: false } as AddEventListenerOptions);
+		this.registerDomEvent(container, "touchmove", this.handleTouchCapture, { passive: false } as AddEventListenerOptions);
+		this.registerDomEvent(container, "touchend", this.handleTouchCapture as EventListener);
+
+		// Respond to container resize (e.g. mobile keyboard opening) by updating viewBox
+		this.resizeObserver = new ResizeObserver(() => this.handleContainerResize());
+		this.resizeObserver.observe(container);
 
 		await this.loadActiveFile();
 
@@ -162,12 +196,18 @@ export class MindMapView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.resizeObserver?.disconnect();
+		this.resizeObserver = null;
 		this.renderComponent?.unload();
 		this.renderComponent = null;
 		this.svg = null;
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
+		this.cancelLongPress();
+		this.activePointers.clear();
+		this.pinchStartDistance = null;
+		this.longPressTriggered = false;
 		if (this.cullRafId !== null) {
 			cancelAnimationFrame(this.cullRafId);
 			this.cullRafId = null;
@@ -197,6 +237,10 @@ export class MindMapView extends ItemView {
 
 	private async loadFile(file: TFile | null): Promise<void> {
 		if (!file || file.extension !== "md") return;
+		// Don't reload/re-render while inline editing is active — focus changes
+		// (e.g. input on document.body) can trigger active-leaf-change which
+		// would destroy the SVG mid-edit.
+		if (this.editingNodeId) return;
 
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
@@ -277,14 +321,14 @@ export class MindMapView extends ItemView {
 		const nowVisible = new Set<string>();
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
-			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+			if (this.isNodeInViewport(node, offsetX, offsetY) || node.source.id === this.editingNodeId) {
 				nowVisible.add(node.source.id);
 			}
 		}
 
-		// Remove nodes that left the viewport
+		// Remove nodes that left the viewport (but never cull the node being edited)
 		for (const id of this.renderedNodeIds) {
-			if (!nowVisible.has(id)) {
+			if (!nowVisible.has(id) && id !== this.editingNodeId) {
 				// Remove node group
 				const el = this.nodesGroup.querySelector(`.osmosis-node-group[data-node-id="${id}"]`);
 				el?.remove();
@@ -301,11 +345,9 @@ export class MindMapView extends ItemView {
 			const id = node.source.id;
 			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
 				renderPromises.push(this.drawNode(this.nodesGroup, node, offsetX, offsetY));
-				// Draw branch line
+				// Draw branch line whenever the child node is visible
 				if (node.parent) {
-					if (this.isBranchInViewport(node.parent, node, offsetX, offsetY)) {
-						this.drawBranchLine(this.branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
-					}
+					this.drawBranchLine(this.branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
 				}
 			}
 		}
@@ -325,43 +367,110 @@ export class MindMapView extends ItemView {
 		};
 	}
 
-	private handleMouseDown = (e: MouseEvent): void => {
+	// ─── Pointer event handlers (unified mouse + touch) ─────
+
+	private handlePointerDown = (e: PointerEvent): void => {
+		this.lastPointerType = e.pointerType;
+		this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+		// Two+ pointers = pinch gesture — cancel any single-finger state
+		if (this.activePointers.size >= 2) {
+			this.cancelLongPress();
+			this.dragNodeId = null;
+			this.isPanning = false;
+			this.initPinch();
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
+
 		if (e.button !== 0 && e.button !== 1) return;
 
 		const nodeId = this.getClickedNodeId(e);
 
-		// Left-click on a node: prepare for potential drag
+		// Touch: double-tap detection
+		if (e.pointerType === "touch") {
+			const now = Date.now();
+			const dx = e.clientX - this.lastTapPosition.x;
+			const dy = e.clientY - this.lastTapPosition.y;
+			const dist = Math.sqrt(dx * dx + dy * dy);
+
+			if (
+				now - this.lastTapTime < DOUBLE_TAP_MS &&
+				dist < DOUBLE_TAP_DISTANCE &&
+				nodeId &&
+				nodeId === this.lastTapNodeId
+			) {
+				this.cancelLongPress();
+				this.startEditing(nodeId);
+				e.preventDefault();
+				e.stopPropagation();
+				return;
+			}
+		}
+
+		// Left-click / touch on a node: prepare for potential drag
 		if (e.button === 0 && nodeId && !this.editingNodeId) {
-			// Don't drag collapse toggles
 			const target = e.target as Element;
 			if (target.closest(".osmosis-collapse-toggle")) return;
 
 			this.dragNodeId = nodeId;
 			this.dragStartScreen = { x: e.clientX, y: e.clientY };
-			e.preventDefault();
+
+			// Touch: start long-press timer for selection mode + potential drag
+			if (e.pointerType === "touch") {
+				this.longPressTriggered = false;
+				this.longPressTimer = setTimeout(() => {
+					this.longPressTriggered = true;
+					// Enter touch selection mode and select this node
+					this.touchSelectionMode = true;
+					if (this.dragNodeId) {
+						this.toggleNodeInSelection(this.dragNodeId);
+					}
+					if (navigator.vibrate) navigator.vibrate(50);
+				}, LONG_PRESS_MS);
+				e.preventDefault();
+				e.stopPropagation();
+			}
+			// Mouse: don't preventDefault — it would suppress click/dblclick events
 			return;
 		}
 
-		// Shift+left-click on background starts rubber-band selection
-		if (e.button === 0 && !nodeId && e.shiftKey) {
+		// Shift+left-click on background: rubber-band (mouse only)
+		if (e.button === 0 && !nodeId && e.shiftKey && e.pointerType !== "touch") {
 			const svgPt = this.screenToSvg(e.clientX, e.clientY);
 			this.isRubberBanding = true;
 			this.rubberBandStart = svgPt;
 			e.preventDefault();
+			e.stopPropagation();
 			return;
 		}
 
-		// Middle-click or left-click on background starts pan
+		// Middle-click or left-click/touch on background: pan
 		if (e.button === 1 || (e.button === 0 && !nodeId)) {
 			this.isPanning = true;
 			this.panStart = { x: e.clientX, y: e.clientY };
 			e.preventDefault();
+			e.stopPropagation();
 		}
 	};
 
-	private handleMouseMove = (e: MouseEvent): void => {
+	private handlePointerMove = (e: PointerEvent): void => {
+		if (this.activePointers.has(e.pointerId)) {
+			this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+		}
+
+		// Pinch zoom (2+ pointers)
+		if (this.activePointers.size >= 2 && this.pinchStartDistance !== null) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.updatePinch();
+			return;
+		}
+
 		// Rubber-band selection
 		if (this.isRubberBanding && this.svg) {
+			e.stopPropagation();
 			this.updateRubberBand(e);
 			return;
 		}
@@ -370,19 +479,39 @@ export class MindMapView extends ItemView {
 		if (this.dragNodeId && !this.isDragging) {
 			const dx = e.clientX - this.dragStartScreen.x;
 			const dy = e.clientY - this.dragStartScreen.y;
-			if (Math.sqrt(dx * dx + dy * dy) >= DRAG_THRESHOLD) {
-				this.startDrag(this.dragNodeId);
+			const dist = Math.sqrt(dx * dx + dy * dy);
+
+			if (e.pointerType === "touch") {
+				// Movement cancels long-press; if not triggered, convert to pan
+				if (dist >= DRAG_THRESHOLD) {
+					this.cancelLongPress();
+					if (!this.longPressTriggered) {
+						this.dragNodeId = null;
+						this.isPanning = true;
+						this.panStart = { x: e.clientX, y: e.clientY };
+					} else {
+						// Long-press triggered + movement → start drag
+						this.startDrag(this.dragNodeId);
+					}
+					e.stopPropagation();
+				}
+			} else {
+				if (dist >= DRAG_THRESHOLD) {
+					this.startDrag(this.dragNodeId);
+				}
 			}
 		}
 
 		// Update drag position
 		if (this.isDragging && this.svg) {
+			e.stopPropagation();
 			this.updateDrag(e);
 			return;
 		}
 
 		if (!this.isPanning || !this.svg) return;
 
+		e.stopPropagation();
 		const svgCurrent = this.screenToSvg(e.clientX, e.clientY);
 		const svgStart = this.screenToSvg(this.panStart.x, this.panStart.y);
 
@@ -393,7 +522,21 @@ export class MindMapView extends ItemView {
 		this.updateViewBox();
 	};
 
-	private handleMouseUp = (): void => {
+	private handlePointerUp = (e: PointerEvent): void => {
+		this.activePointers.delete(e.pointerId);
+		this.cancelLongPress();
+
+		// Was pinching — if one finger lifts, transition to pan with remaining finger
+		if (this.pinchStartDistance !== null) {
+			this.pinchStartDistance = null;
+			if (this.activePointers.size === 1) {
+				const remaining = this.activePointers.values().next().value as { x: number; y: number };
+				this.isPanning = true;
+				this.panStart = { x: remaining.x, y: remaining.y };
+			}
+			return;
+		}
+
 		if (this.isRubberBanding) {
 			this.finishRubberBand();
 			return;
@@ -404,10 +547,202 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
-		// If we had a drag candidate but didn't reach threshold, treat as click
+		// If we had a drag candidate but didn't reach threshold, treat as tap
+		const wasDragCandidate = this.dragNodeId !== null;
+		const dragCandidateId = this.dragNodeId;
 		this.dragNodeId = null;
 		this.isPanning = false;
+
+		// Don't interfere with active editing (e.g. double-tap just started editing)
+		if (e.pointerType === "touch" && this.editingNodeId) return;
+
+		// Touch: synthesize tap
+		if (e.pointerType === "touch") {
+			if (wasDragCandidate && !this.longPressTriggered && dragCandidateId) {
+				this.handleTouchTap(e, dragCandidateId);
+			} else if (!wasDragCandidate) {
+				const nodeId = this.getClickedNodeId(e);
+				this.handleTouchTap(e, nodeId);
+			}
+			// Long-press triggered but no drag → already handled in timer (selection mode)
+		}
 	};
+
+	private handlePointerCancel = (e: PointerEvent): void => {
+		this.activePointers.delete(e.pointerId);
+		this.cancelLongPress();
+		if (this.activePointers.size === 0) {
+			this.cleanupAllInteractions();
+		}
+	};
+
+	private handlePointerLeave = (e: PointerEvent): void => {
+		// For mouse: treat like pointerup (finish interactions)
+		if (e.pointerType === "mouse") {
+			this.activePointers.delete(e.pointerId);
+			this.handlePointerUp(e);
+		}
+		// Touch: pointercancel handles cleanup instead
+	};
+
+	// ─── Touch gesture helpers ──────────────────────────────
+
+	private handleTouchTap(e: PointerEvent, nodeId: string | null): void {
+		if (!nodeId) {
+			this.selectNode(null);
+			this.touchSelectionMode = false;
+			this.lastTapTime = Date.now();
+			this.lastTapPosition = { x: e.clientX, y: e.clientY };
+			this.lastTapNodeId = null;
+			return;
+		}
+
+		// Check collapse toggle
+		const target = e.target as Element;
+		const toggle = target.closest(".osmosis-collapse-toggle");
+		if (toggle) {
+			const toggleNodeId = toggle.getAttribute("data-node-id");
+			if (toggleNodeId) {
+				this.toggleCollapse(toggleNodeId);
+			}
+			this.lastTapTime = 0; // Reset so next tap isn't treated as double-tap
+			return;
+		}
+
+		// In touch selection mode, taps toggle selection (like shift+click)
+		if (this.touchSelectionMode) {
+			this.toggleNodeInSelection(nodeId);
+			this.contentEl.focus();
+			// Record for double-tap but don't allow double-tap in selection mode
+			this.lastTapTime = 0;
+			this.lastTapPosition = { x: e.clientX, y: e.clientY };
+			this.lastTapNodeId = null;
+			return;
+		}
+
+		// Normal tap: select the node
+		this.selectNode(nodeId);
+		this.syncMapSelectionToEditor(nodeId);
+		this.contentEl.focus();
+
+		// Record for double-tap detection
+		this.lastTapTime = Date.now();
+		this.lastTapPosition = { x: e.clientX, y: e.clientY };
+		this.lastTapNodeId = nodeId;
+	}
+
+	private initPinch(): void {
+		const pointers = Array.from(this.activePointers.values());
+		const p1 = pointers[0];
+		const p2 = pointers[1];
+		if (!p1 || !p2) return;
+
+		this.pinchStartDistance = Math.sqrt(
+			(p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2,
+		);
+		this.pinchStartZoom = this.zoom;
+		this.pinchCenter = {
+			x: (p1.x + p2.x) / 2,
+			y: (p1.y + p2.y) / 2,
+		};
+	}
+
+	private updatePinch(): void {
+		const pointers = Array.from(this.activePointers.values());
+		const p1 = pointers[0];
+		const p2 = pointers[1];
+		if (!p1 || !p2 || this.pinchStartDistance === null) return;
+
+		const currentDistance = Math.sqrt(
+			(p2.x - p1.x) ** 2 + (p2.y - p1.y) ** 2,
+		);
+
+		const ratio = currentDistance / this.pinchStartDistance;
+		const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinchStartZoom * ratio));
+
+		// Zoom around the pinch center (same math as handleWheel)
+		const newCenter = {
+			x: (p1.x + p2.x) / 2,
+			y: (p1.y + p2.y) / 2,
+		};
+		const svgPoint = this.screenToSvg(newCenter.x, newCenter.y);
+		const scale = this.zoom / newZoom;
+		this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
+		this.viewBox.y = svgPoint.y - (svgPoint.y - this.viewBox.y) * scale;
+		this.viewBox.w *= scale;
+		this.viewBox.h *= scale;
+		this.zoom = newZoom;
+
+		// Pan if pinch center moved
+		const svgOldCenter = this.screenToSvg(this.pinchCenter.x, this.pinchCenter.y);
+		const svgNewCenter = this.screenToSvg(newCenter.x, newCenter.y);
+		this.viewBox.x -= svgNewCenter.x - svgOldCenter.x;
+		this.viewBox.y -= svgNewCenter.y - svgOldCenter.y;
+
+		this.pinchCenter = newCenter;
+		this.updateViewBox();
+	}
+
+	/**
+	 * Block touch events from propagating to Obsidian's gesture handlers.
+	 * This prevents drawer swipes and command palette pull-down on mobile.
+	 */
+	private handleTouchCapture = (e: TouchEvent): void => {
+		e.stopPropagation();
+	};
+
+	/**
+	 * Handle container resize (e.g. mobile keyboard opening/closing).
+	 * Adjusts viewBox dimensions to match new container size while keeping
+	 * the center point stable.
+	 */
+	private handleContainerResize(): void {
+		if (!this.svg) return;
+		// Skip resize while editing — virtual keyboard opening/closing would
+		// shift the viewBox and cause the map to jump away from the edit node.
+		if (this.editingNodeId) return;
+
+		const rect = this.contentEl.getBoundingClientRect();
+		if (rect.width === 0 || rect.height === 0) return;
+
+		// Compute new viewBox dimensions at current zoom level
+		const newW = rect.width / this.zoom;
+		const newH = rect.height / this.zoom;
+
+		// Keep the center point stable
+		const cx = this.viewBox.x + this.viewBox.w / 2;
+		const cy = this.viewBox.y + this.viewBox.h / 2;
+		this.viewBox.x = cx - newW / 2;
+		this.viewBox.y = cy - newH / 2;
+		this.viewBox.w = newW;
+		this.viewBox.h = newH;
+
+		this.updateViewBox();
+	}
+
+	private cancelLongPress(): void {
+		if (this.longPressTimer !== null) {
+			clearTimeout(this.longPressTimer);
+			this.longPressTimer = null;
+		}
+	}
+
+	private cleanupAllInteractions(): void {
+		this.cancelLongPress();
+		this.isPanning = false;
+		this.isRubberBanding = false;
+		this.dragNodeId = null;
+		this.pinchStartDistance = null;
+		this.longPressTriggered = false;
+		this.touchSelectionMode = false;
+		if (this.isDragging) {
+			this.cleanupDrag();
+		}
+		if (this.rubberBandRect) {
+			this.rubberBandRect.remove();
+			this.rubberBandRect = null;
+		}
+	}
 
 	private handleWheel = (e: WheelEvent): void => {
 		e.preventDefault();
@@ -426,13 +761,14 @@ export class MindMapView extends ItemView {
 		this.updateViewBox();
 	};
 
-	private getClickedNodeId(e: MouseEvent): string | null {
+	private getClickedNodeId(e: { target: EventTarget | null }): string | null {
 		const target = e.target as Element;
 		const group = target.closest(".osmosis-node-group");
 		return group?.getAttribute("data-node-id") ?? null;
 	}
 
 	private handleClick = (e: MouseEvent): void => {
+		if (this.lastPointerType === "touch") return;
 		if (this.isPanning || this.isDragging) return;
 
 		// Check if clicking a collapse toggle
@@ -464,6 +800,7 @@ export class MindMapView extends ItemView {
 	};
 
 	private handleDblClick = (e: MouseEvent): void => {
+		if (this.lastPointerType === "touch") return;
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
 			this.startEditing(nodeId);
@@ -1319,20 +1656,61 @@ export class MindMapView extends ItemView {
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
 
+		const rectEl = group.querySelector("rect.osmosis-node");
+		if (!rectEl) return;
+
+		// Get the node's screen position from the SVG rect element
+		const screenRect = rectEl.getBoundingClientRect();
+
+		// Hide the in-SVG content while the overlay is active
 		const fo = group.querySelector("foreignObject");
-		if (!fo) return;
+		if (fo) fo.classList.add("osmosis-fo-hidden");
 
-		const contentDiv = fo.querySelector(".osmosis-node-content") as HTMLDivElement;
-		if (!contentDiv) return;
-
-		// Replace rendered markdown with editable input
-		contentDiv.empty();
-		contentDiv.addClass("osmosis-node-editing");
+		// On mobile, tell the Chromium WebView to overlay the keyboard instead
+		// of resizing the viewport (the root cause of the map disappearing).
+		// VirtualKeyboard API is not in TS standard lib, so we need unsafe access.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
+		const vk: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } | null = "virtualKeyboard" in navigator ? (navigator as any).virtualKeyboard : null;
+		if (vk) vk.overlaysContent = true;
 
 		const input = document.createElement("input");
 		input.type = "text";
-		input.className = "osmosis-node-input";
+		input.className = "osmosis-node-input osmosis-edit-overlay";
 		input.value = node.source.content;
+
+		const isMobile = Platform.isMobile;
+
+		if (isMobile) {
+			// Lock the container's height so Obsidian's layout resize when the
+			// virtual keyboard opens doesn't collapse the SVG to near-zero height.
+			const containerRect = this.contentEl.getBoundingClientRect();
+			this.contentEl.setCssProps({ "--osmosis-locked-height": `${containerRect.height}px` });
+			this.contentEl.addClass("osmosis-editing-locked");
+
+			// Mobile: use fixed positioning on document.body to escape
+			// Obsidian's layout resize when the keyboard opens.
+			input.setCssStyles({
+				position: "fixed",
+				left: `${screenRect.left}px`,
+				top: `${screenRect.top}px`,
+				width: `${screenRect.width}px`,
+				height: `${screenRect.height}px`,
+				zIndex: "10000",
+			});
+			document.body.appendChild(input);
+		} else {
+			// Desktop: absolute positioning inside container
+			const containerRect = this.contentEl.getBoundingClientRect();
+			input.setCssStyles({
+				position: "absolute",
+				left: `${screenRect.left - containerRect.left}px`,
+				top: `${screenRect.top - containerRect.top}px`,
+				width: `${screenRect.width}px`,
+				height: `${screenRect.height}px`,
+				zIndex: "1000",
+			});
+			this.contentEl.appendChild(input);
+		}
 
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key === "Enter") {
@@ -1357,35 +1735,89 @@ export class MindMapView extends ItemView {
 			}, 100);
 		});
 
-		contentDiv.appendChild(input);
-		input.focus();
+		this.editOverlay = input;
+
+		// On mobile, reposition input above keyboard if it would be hidden
+		const cleanups: Array<() => void> = [];
+		if (isMobile) {
+			const repositionAboveKeyboard = () => {
+				if (!this.editOverlay) return;
+				const availableH = window.visualViewport?.height ?? window.innerHeight;
+				const inputRect = this.editOverlay.getBoundingClientRect();
+				if (inputRect.bottom > availableH - 10) {
+					this.editOverlay.style.top = `${availableH - inputRect.height - 10}px`;
+				}
+			};
+			if (vk) {
+				vk.addEventListener("geometrychange", repositionAboveKeyboard);
+				cleanups.push(() => vk.removeEventListener("geometrychange", repositionAboveKeyboard));
+			}
+			if (window.visualViewport) {
+				window.visualViewport.addEventListener("resize", repositionAboveKeyboard);
+				cleanups.push(() => window.visualViewport?.removeEventListener("resize", repositionAboveKeyboard));
+			}
+		}
+
+		// Scroll lock as a safety net
+		const lockScroll = () => {
+			let el: Element | null = this.contentEl;
+			while (el) {
+				el.scrollTop = 0;
+				el.scrollLeft = 0;
+				el = el.parentElement;
+			}
+		};
+		this.contentEl.addEventListener("scroll", lockScroll, true);
+		cleanups.push(() => this.contentEl.removeEventListener("scroll", lockScroll, true));
+
+		this.editCleanup = () => {
+			for (const fn of cleanups) fn();
+			if (vk) vk.overlaysContent = false;
+		};
+
+		input.focus({ preventScroll: true });
 		input.select();
+		lockScroll();
 	}
 
 	private stopEditing(save: boolean): void {
 		if (!this.editingNodeId || !this.svg) return;
 
 		const nodeId = this.editingNodeId;
+		const newContent = this.editOverlay?.value ?? "";
 		this.editingNodeId = null;
 
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
+		// Clean up event listeners, virtualKeyboard state, scroll locks
+		if (this.editCleanup) {
+			this.editCleanup();
+			this.editCleanup = null;
+		}
 
-		const input = group.querySelector<HTMLInputElement>(".osmosis-node-input");
-		const newContent = input?.value ?? "";
+		// Remove the HTML overlay (works for both body and contentEl)
+		if (this.editOverlay) {
+			this.editOverlay.remove();
+			this.editOverlay = null;
+		}
+
+		// Unlock container height that was locked during mobile editing
+		this.contentEl.removeClass("osmosis-editing-locked");
+
+		// Restore visibility of the in-SVG content
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (group) {
+			const fo = group.querySelector("foreignObject");
+			if (fo) fo.classList.remove("osmosis-fo-hidden");
+		}
 
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
 
 		if (save && newContent !== node.source.content) {
-			// Write change back to markdown
+			// Write change back to markdown (triggers re-render)
 			void this.renameNode(node, newContent);
-		} else {
-			// Re-render to restore the markdown display
-			void this.render();
 		}
 
-		this.contentEl.focus();
+		this.contentEl.focus({ preventScroll: true });
 	}
 
 	// ─── Map → Markdown Sync ────────────────────────────────
