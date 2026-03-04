@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const E2E_VAULT_DIR = path.join(PROJECT_ROOT, "e2e-vault");
+const FIXTURES_DIR = path.join(PROJECT_ROOT, "e2e", "fixtures");
 
 const FLATPAK_APP_ID = "md.obsidian.Obsidian";
 const CDP_PORT = 9222;
@@ -287,5 +288,19 @@ export async function resetWorkspace(page: Page): Promise<void> {
 		await page.waitForTimeout(300);
 	} catch {
 		// Only one tab open — fine
+	}
+}
+
+/**
+ * Copy all fixture files from e2e/fixtures/ into e2e-vault/,
+ * restoring any files that tests may have modified.
+ */
+export function resetFixtures(): void {
+	const files = fs.readdirSync(FIXTURES_DIR);
+	for (const file of files) {
+		fs.copyFileSync(
+			path.join(FIXTURES_DIR, file),
+			path.join(E2E_VAULT_DIR, file),
+		);
 	}
 }

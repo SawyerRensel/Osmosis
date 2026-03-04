@@ -4,6 +4,7 @@ import {
 	disconnectObsidian,
 	ObsidianApp,
 	resetWorkspace,
+	resetFixtures,
 	openFile,
 	openMindMap,
 } from "./obsidian";
@@ -57,6 +58,7 @@ async function setupMindMap(fixture = "test-note"): Promise<void> {
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
+	resetFixtures();
 	app = await launchObsidian();
 	page = app.page;
 });
