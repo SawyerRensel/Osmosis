@@ -5,6 +5,7 @@ import {
 	MarkdownView,
 	MarkdownRenderer,
 	Component,
+	Scope,
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
@@ -83,6 +84,18 @@ export class MindMapView extends ItemView {
 		this.navigation = true;
 		this.icon = "git-fork";
 		this.plugin = (this.app as unknown as { plugins: { plugins: Record<string, OsmosisPlugin> } }).plugins.plugins["osmosis"] as OsmosisPlugin;
+
+		// Register a scope so Obsidian routes key events to this view when focused,
+		// preventing global hotkeys (like F2 = "rename file") from intercepting them.
+		this.scope = new Scope(this.app.scope);
+		this.scope.register([], "F2", (e: KeyboardEvent) => {
+			if (!this.editingNodeId && this.selectedNodeId) {
+				this.startEditing(this.selectedNodeId);
+				e.preventDefault();
+				return false;
+			}
+			return undefined;
+		});
 	}
 
 	getViewType(): string {
@@ -186,12 +199,12 @@ export class MindMapView extends ItemView {
 
 	private screenToSvg(clientX: number, clientY: number): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
-		const rect = this.svg.getBoundingClientRect();
-		const ratioX = this.viewBox.w / rect.width;
-		const ratioY = this.viewBox.h / rect.height;
+		const ctm = this.svg.getScreenCTM();
+		if (!ctm) return { x: 0, y: 0 };
+		const inv = ctm.inverse();
 		return {
-			x: this.viewBox.x + (clientX - rect.left) * ratioX,
-			y: this.viewBox.y + (clientY - rect.top) * ratioY,
+			x: inv.a * clientX + inv.c * clientY + inv.e,
+			y: inv.b * clientX + inv.d * clientY + inv.f,
 		};
 	}
 
@@ -253,12 +266,11 @@ export class MindMapView extends ItemView {
 
 		if (!this.isPanning || !this.svg) return;
 
-		const rect = this.svg.getBoundingClientRect();
-		const dx = (e.clientX - this.panStart.x) * (this.viewBox.w / rect.width);
-		const dy = (e.clientY - this.panStart.y) * (this.viewBox.h / rect.height);
+		const svgCurrent = this.screenToSvg(e.clientX, e.clientY);
+		const svgStart = this.screenToSvg(this.panStart.x, this.panStart.y);
 
-		this.viewBox.x -= dx;
-		this.viewBox.y -= dy;
+		this.viewBox.x -= svgCurrent.x - svgStart.x;
+		this.viewBox.y -= svgCurrent.y - svgStart.y;
 		this.panStart = { x: e.clientX, y: e.clientY };
 
 		this.updateViewBox();
@@ -806,7 +818,7 @@ export class MindMapView extends ItemView {
 				this.dropIndicator.setAttribute("y1", String(indicatorY));
 				this.dropIndicator.setAttribute("x2", String(indicatorX2));
 				this.dropIndicator.setAttribute("y2", String(indicatorY));
-				this.dropIndicator.setAttribute("display", "");
+				this.dropIndicator.removeAttribute("display");
 			} else {
 				this.dropIndicator.setAttribute("display", "none");
 			}
