@@ -65,51 +65,78 @@ export class TransclusionResolver {
 
 	/**
 	 * Recursively resolve and expand transclusion nodes.
+	 * Transclusion nodes are replaced in-place in their parent's children
+	 * array with the parsed content, so the filename node is not shown.
 	 */
 	private async expandNode(
 		node: OsmosisNode,
 		sourceFilePath: string,
 		visited: Set<string>,
 	): Promise<void> {
-		if (node.type === "transclusion") {
-			const resolvedFile = this.resolveToFile(node, sourceFilePath);
-
-			if (resolvedFile) {
-				// Cycle detection: skip if we've already visited this file
-				if (visited.has(resolvedFile.path)) {
-					node.metadata = {
-						...node.metadata,
-						cyclic: true,
-						cyclicPath: resolvedFile.path,
-					};
-					return;
-				}
-
-				// Read and parse the resolved file
-				const content = await this.app.vault.read(resolvedFile);
-				const childTree = this.cache.get(resolvedFile.path, content);
-
-				// Mark all children as transcluded from this source
-				const children = childTree.root.children;
-				this.markChildrenTranscluded(children, resolvedFile.path);
-
-				// Attach parsed children to the transclusion node
-				node.children = children;
-
-				// Recurse into expanded content for nested transclusions
-				const childVisited = new Set(visited);
-				childVisited.add(resolvedFile.path);
-				for (const child of node.children) {
-					await this.expandNode(child, resolvedFile.path, childVisited);
-				}
-			}
-			return;
-		}
-
-		// Non-transclusion nodes: recurse into children
+		// Process children, replacing transclusion nodes with expanded content
+		const newChildren: OsmosisNode[] = [];
 		for (const child of node.children) {
-			await this.expandNode(child, sourceFilePath, visited);
+			if (child.type === "transclusion") {
+				const expanded = await this.expandTransclusion(
+					child,
+					sourceFilePath,
+					visited,
+				);
+				if (expanded) {
+					newChildren.push(...expanded);
+				} else {
+					// Keep unresolved/cyclic transclusion nodes as-is
+					newChildren.push(child);
+				}
+			} else {
+				newChildren.push(child);
+				await this.expandNode(child, sourceFilePath, visited);
+			}
 		}
+		node.children = newChildren;
+	}
+
+	/**
+	 * Expand a single transclusion node: resolve link, read file, parse,
+	 * and return the parsed children (or null to keep the node as-is).
+	 */
+	private async expandTransclusion(
+		node: OsmosisNode,
+		sourceFilePath: string,
+		visited: Set<string>,
+	): Promise<OsmosisNode[] | null> {
+		const resolvedFile = this.resolveToFile(node, sourceFilePath);
+
+		if (!resolvedFile) {
+			return null;
+		}
+
+		// Cycle detection: skip if we've already visited this file
+		if (visited.has(resolvedFile.path)) {
+			node.metadata = {
+				...node.metadata,
+				cyclic: true,
+				cyclicPath: resolvedFile.path,
+			};
+			return null;
+		}
+
+		// Read and parse the resolved file
+		const content = await this.app.vault.read(resolvedFile);
+		const childTree = this.cache.get(resolvedFile.path, content);
+
+		// Mark all children as transcluded from this source
+		const children = childTree.root.children;
+		this.markChildrenTranscluded(children, resolvedFile.path);
+
+		// Recurse into expanded content for nested transclusions
+		const childVisited = new Set(visited);
+		childVisited.add(resolvedFile.path);
+		for (const child of children) {
+			await this.expandNode(child, resolvedFile.path, childVisited);
+		}
+
+		return children;
 	}
 
 	/**

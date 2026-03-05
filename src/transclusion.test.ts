@@ -224,7 +224,7 @@ describe("TransclusionResolver", () => {
 	});
 
 	describe("expandTree", () => {
-		it("expands a resolved transclusion with parsed children", async () => {
+		it("replaces transclusion node with parsed children in parent", async () => {
 			const app = mockApp(
 				{
 					"child": { path: "child.md" },
@@ -241,10 +241,9 @@ describe("TransclusionResolver", () => {
 
 			await resolver.expandTree(tree);
 
-			expect(node.sourceFile).toBe("child.md");
-			expect(node.children.length).toBeGreaterThan(0);
-			// Should have a heading child with bullet children
-			const heading = node.children[0]!;
+			// Transclusion node should be replaced by parsed content in root's children
+			expect(tree.root.children.length).toBeGreaterThan(0);
+			const heading = tree.root.children[0]!;
 			expect(heading.type).toBe("heading");
 			expect(heading.content).toBe("Heading");
 			expect(heading.isTranscluded).toBe(true);
@@ -268,7 +267,8 @@ describe("TransclusionResolver", () => {
 
 			await resolver.expandTree(tree);
 
-			for (const child of node.children) {
+			// Transcluded bullets should replace the transclusion node in root
+			for (const child of tree.root.children) {
 				expect(child.isTranscluded).toBe(true);
 				expect(child.sourceFile).toBe("note.md");
 			}
@@ -294,22 +294,21 @@ describe("TransclusionResolver", () => {
 
 			await resolver.expandTree(tree);
 
-			// B's content should be expanded
-			expect(node.children.length).toBeGreaterThan(0);
-			const headingB = node.children[0]!;
+			// B's content should replace the transclusion node
+			expect(tree.root.children.length).toBeGreaterThan(0);
+			const headingB = tree.root.children[0]!;
 			expect(headingB.content).toBe("From B");
 
-			// The transclusion to C within B should also be expanded
-			const transclusionC = headingB.children.find(
-				(c) => c.type === "transclusion",
+			// C's transclusion within B should also be replaced by C's content
+			const headingC = headingB.children.find(
+				(c) => c.content === "From C",
 			);
-			expect(transclusionC).toBeDefined();
-			expect(transclusionC!.children.length).toBeGreaterThan(0);
-			const headingC = transclusionC!.children[0]!;
-			expect(headingC.content).toBe("From C");
+			expect(headingC).toBeDefined();
+			expect(headingC!.type).toBe("heading");
+			expect(headingC!.isTranscluded).toBe(true);
 		});
 
-		it("detects cycles and marks cyclic nodes", async () => {
+		it("detects cycles and keeps cyclic transclusion node", async () => {
 			// A embeds B, B embeds A → cycle
 			const app = mockApp(
 				{
@@ -329,11 +328,12 @@ describe("TransclusionResolver", () => {
 
 			await resolver.expandTree(tree);
 
-			// B should be expanded
-			expect(node.children.length).toBeGreaterThan(0);
+			// B's content should replace the transclusion node
+			expect(tree.root.children.length).toBeGreaterThan(0);
+			const headingB = tree.root.children[0]!;
+			expect(headingB.content).toBe("From B");
 
-			// The transclusion back to A should be detected as cyclic
-			const headingB = node.children[0]!;
+			// The cyclic transclusion back to A should remain as a transclusion node
 			const backToA = headingB.children.find(
 				(c) => c.type === "transclusion",
 			);
@@ -351,8 +351,10 @@ describe("TransclusionResolver", () => {
 
 			await resolver.expandTree(tree);
 
-			expect(node.children.length).toBe(0);
-			expect(node.metadata?.resolved).toBe(false);
+			// Unresolved transclusion node should remain in root's children
+			expect(tree.root.children.length).toBe(1);
+			expect(tree.root.children[0]!.type).toBe("transclusion");
+			expect(tree.root.children[0]!.metadata?.resolved).toBe(false);
 		});
 	});
 });

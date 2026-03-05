@@ -694,25 +694,16 @@ test.describe("Task 3.1: Transclusion Link Resolution", () => {
 		await setupMindMap("transclusion-source");
 	});
 
-	test("transclusion nodes appear in the mind map", async () => {
-		const transclusionNodes = page.locator(".osmosis-node-group-transclusion");
-		expect(await transclusionNodes.count()).toBeGreaterThanOrEqual(2);
-	});
-
-	test("wiki-link transclusion resolves to target file", async () => {
-		// The first transclusion ![[transclusion-target]] should resolve
+	test("resolved transclusions are replaced by their content (no filename node)", async () => {
+		// Resolved transclusion nodes should NOT appear — their content is spliced in directly
 		const resolved = page.locator(
-			'.osmosis-node-group-transclusion.osmosis-node-resolved[data-source-file="transclusion-target.md"]',
+			".osmosis-node-group-transclusion.osmosis-node-resolved",
 		);
-		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
-	});
+		expect(await resolved.count()).toBe(0);
 
-	test("markdown-style transclusion resolves to target file", async () => {
-		// ![](transclusion-target.md) should also resolve
-		const resolved = page.locator(
-			'.osmosis-node-group-transclusion.osmosis-node-resolved',
-		);
-		expect(await resolved.count()).toBeGreaterThanOrEqual(2);
+		// But transcluded content from the target file should be present
+		const transcludedNodes = page.locator('[data-source-file="transclusion-target.md"]');
+		expect(await transcludedNodes.count()).toBeGreaterThan(0);
 	});
 
 	test("missing file transclusion is marked unresolved", async () => {
@@ -730,21 +721,13 @@ test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 		await setupMindMap("transclusion-source");
 	});
 
-	test("resolved transclusion expands target content as child nodes", async () => {
-		// The ![[transclusion-target]] node should have children from the target file
-		const resolved = page.locator(
-			'.osmosis-node-group-transclusion.osmosis-node-resolved[data-source-file="transclusion-target.md"]',
-		);
-		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
-
-		// Transcluded children from target file should appear in the SVG.
-		// Some may be off-screen due to viewport culling, so check for
-		// specific transcluded nodes rather than total count.
+	test("transcluded content from target file appears directly in mind map", async () => {
+		// Transcluded children from target file should appear in the SVG
+		// directly spliced into the parent (no intermediary filename node)
 		const transcludedNodes = page.locator(
 			'[data-source-file="transclusion-target.md"]',
 		);
-		// At minimum: the transclusion node itself + some expanded children
-		expect(await transcludedNodes.count()).toBeGreaterThanOrEqual(2);
+		expect(await transcludedNodes.count()).toBeGreaterThan(0);
 	});
 
 	test("transcluded children are marked with sourceFile", async () => {
@@ -759,7 +742,7 @@ test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 
 		// After zooming out, transcluded children should be visible
 		const transcludedChildren = page.locator(
-			'[data-source-file="transclusion-target.md"]:not(.osmosis-node-group-transclusion)',
+			'[data-source-file="transclusion-target.md"]',
 		);
 		expect(await transcludedChildren.count()).toBeGreaterThan(0);
 	});
@@ -767,27 +750,11 @@ test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 	test("recursive embedding works (A→B chain)", async () => {
 		await setupMindMap("transclusion-chain-a");
 
-		// Chain A embeds B. B has "Deep item from B".
+		// Chain A embeds B. B's content is spliced in directly.
 		// Verify B's content appears as transcluded nodes.
 		const transcludedFromB = page.locator(
 			'[data-source-file="transclusion-chain-b.md"]',
 		);
-		// At least the transclusion node itself should be visible
 		expect(await transcludedFromB.count()).toBeGreaterThanOrEqual(1);
-	});
-
-	test("transclusion node is collapsible", async () => {
-		await setupMindMap("transclusion-source");
-
-		// Resolved transclusion nodes with children should have a collapse toggle
-		const resolved = page.locator(
-			".osmosis-node-group-transclusion.osmosis-node-resolved",
-		);
-		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
-
-		// Find a collapse toggle within the first resolved transclusion
-		const firstResolved = resolved.first();
-		const toggle = firstResolved.locator(".osmosis-collapse-toggle");
-		expect(await toggle.count()).toBe(1);
 	});
 });
