@@ -121,17 +121,18 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 **Goals**: Implement the theme system, LCVRT cascade for style resolution, per-note style overrides, and view state persistence.
 
 **Key Tasks**:
-1. Define the stylable property schema (shape, fill, border, text, branch line, background)
-2. Implement the LCVRT cascade resolver (Local > Class > Variant > Reference > Theme — v1.0 ships L, R, T; C and V are v1.1)
-3. Build 10–15 preset themes from iTerm2-Color-Schemes + auto-generated palettes
-4. Implement per-depth-level styling (themes define defaults per heading level)
-5. Implement colored branches toggle (auto-assign distinct colors per top-level branch)
-6. Implement per-node style overrides via frontmatter (`osmosis:` key, tree path and stable ID selectors)
-7. Implement node targeting: tree paths (human-facing) and stable IDs (content-position hash)
-8. Apply composition encapsulation for transcluded notes (host theme applies, internal cascade preserved)
-9. Implement lazy style resolution (defer for collapsed/off-screen transcluded branches)
-10. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`)
-11. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.)
+1. Heading-level typography: replace the accent-colored border on heading nodes with typographic styling (font size + weight scaled by heading depth, matching Obsidian's editor). The current border conflicts visually with multi-node selection which also uses a border highlight.
+2. Define the stylable property schema (shape, fill, border, text, branch line, background)
+3. Implement the LCVRT cascade resolver (Local > Class > Variant > Reference > Theme — v1.0 ships L, R, T; C and V are v1.1)
+4. Build 10–15 preset themes from iTerm2-Color-Schemes + auto-generated palettes
+5. Implement per-depth-level styling (themes define defaults per heading level)
+6. Implement colored branches toggle (auto-assign distinct colors per top-level branch)
+7. Implement per-node style overrides via frontmatter (`osmosis:` key, tree path and stable ID selectors)
+8. Implement node targeting: tree paths (human-facing) and stable IDs (content-position hash)
+9. Apply composition encapsulation for transcluded notes (host theme applies, internal cascade preserved)
+10. Implement lazy style resolution (defer for collapsed/off-screen transcluded branches)
+11. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`)
+12. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.)
 
 **Deliverables**:
 - [ ] Working theme system with 10–15 preset themes
@@ -140,6 +141,7 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 - [ ] View state save/load
 
 **Success Criteria for Phase 4**:
+- [ ] Heading nodes use typographic styling (size/weight by depth) instead of border color
 - [ ] Themes apply consistent styling across nodes by depth level
 - [ ] Per-node overrides in frontmatter work (both tree path and stable ID selectors)
 - [ ] Colored branches auto-assign and children inherit
@@ -629,6 +631,12 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 ---
 
 ### Phase 4 Tasks
+
+**Task 4.0: Heading-Level Typography**
+- Description: Replace the accent-colored border on heading nodes with typographic styling that reflects heading depth. H1 nodes should use larger, bolder text; H2 slightly smaller; etc. — mirroring Obsidian's editor. Remove `.osmosis-node-heading` border override so it doesn't conflict with the selection highlight (which also uses border color). Use `data-depth` attribute + CSS to scale `font-size` and `font-weight` per heading level.
+- Acceptance Criteria: Heading nodes are visually distinguishable from list/paragraph nodes via font size and weight (not border). Selection border is clearly distinct from heading styling. H1–H6 have progressively decreasing size/weight.
+- Estimated Effort: 2–4 hours
+- Dependencies: None (can be done immediately, before the full theme system)
 
 **Task 4.1: Stylable Property Schema**
 - Description: Define the TypeScript interfaces for all stylable properties (NodeStyle, BranchLineStyle, ThemeDefinition) and the LCVRT cascade resolution function.
