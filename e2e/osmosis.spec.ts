@@ -692,16 +692,17 @@ test.describe("Task 2.13: Viewport Culling", () => {
 test.describe("Task 3.1: Transclusion Link Resolution", () => {
 	test.beforeAll(async () => {
 		await setupMindMap("transclusion-source");
+		await expandAll(); // Expand lazy-loaded transclusions
 	});
 
 	test("resolved transclusions are replaced by their content (no filename node)", async () => {
-		// Resolved transclusion nodes should NOT appear — their content is spliced in directly
+		// After expanding, resolved transclusion nodes should be spliced out
 		const resolved = page.locator(
 			".osmosis-node-group-transclusion.osmosis-node-resolved",
 		);
 		expect(await resolved.count()).toBe(0);
 
-		// But transcluded content from the target file should be present
+		// Transcluded content from the target file should be present
 		const transcludedNodes = page.locator('[data-source-file="transclusion-target.md"]');
 		expect(await transcludedNodes.count()).toBeGreaterThan(0);
 	});
@@ -719,6 +720,7 @@ test.describe("Task 3.1: Transclusion Link Resolution", () => {
 test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 	test.beforeAll(async () => {
 		await setupMindMap("transclusion-source");
+		await expandAll(); // Expand lazy-loaded transclusions
 	});
 
 	test("transcluded content from target file appears directly in mind map", async () => {
@@ -749,6 +751,7 @@ test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 
 	test("recursive embedding works (A→B chain)", async () => {
 		await setupMindMap("transclusion-chain-a");
+		await expandAll(); // Expand lazy-loaded transclusions
 
 		// Chain A embeds B. B's content is spliced in directly.
 		// Verify B's content appears as transcluded nodes.
@@ -756,5 +759,95 @@ test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
 			'[data-source-file="transclusion-chain-b.md"]',
 		);
 		expect(await transcludedFromB.count()).toBeGreaterThanOrEqual(1);
+	});
+});
+
+// ── Task 3.3: Cycle Detection ───────────────────────────────────────────────
+
+test.describe("Task 3.3: Cycle Detection", () => {
+	test.beforeAll(async () => {
+		await setupMindMap("transclusion-cycle-a");
+		await expandAll(); // Expand lazy-loaded transclusions (triggers cycle detection)
+	});
+
+	test("circular reference does not cause infinite loop", async () => {
+		// If we got here, the map rendered without hanging — no infinite loop.
+		// Verify B's content is spliced in (first pass succeeds).
+		const transcludedFromB = page.locator(
+			'[data-source-file="transclusion-cycle-b.md"]',
+		);
+		expect(await transcludedFromB.count()).toBeGreaterThanOrEqual(1);
+	});
+
+	test("cyclic node shows visual indicator", async () => {
+		// Zoom out so the cyclic node at the end of the chain enters viewport
+		const box = await svgBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 8; i++) {
+			await page.mouse.wheel(0, 300);
+			await page.waitForTimeout(100);
+		}
+		await page.waitForTimeout(500);
+
+		// The back-reference from B→A should be rendered with the cyclic class
+		const cyclicNode = page.locator(".osmosis-node-cyclic");
+		expect(await cyclicNode.count()).toBeGreaterThanOrEqual(1);
+
+		// The cycle indicator should contain the recycle symbol and link target
+		const indicator = page.locator(".osmosis-cycle-indicator");
+		expect(await indicator.count()).toBeGreaterThanOrEqual(1);
+		const text = await indicator.first().textContent();
+		expect(text).toContain("transclusion-cycle-a");
+	});
+});
+
+// ── Task 3.4: Lazy Loading ──────────────────────────────────────────────────
+
+test.describe("Task 3.4: Lazy Loading", () => {
+	test.beforeAll(async () => {
+		await setupMindMap("transclusion-source");
+	});
+
+	test("transclusion nodes start collapsed on initial render", async () => {
+		// Resolved transclusion placeholders should be visible (collapsed, with + toggle)
+		const resolvedTransclusions = page.locator(
+			".osmosis-node-group-transclusion.osmosis-node-resolved",
+		);
+		expect(await resolvedTransclusions.count()).toBeGreaterThanOrEqual(1);
+
+		// Each should have a collapse toggle showing "+"
+		const toggleIcon = resolvedTransclusions.first().locator(".osmosis-collapse-icon");
+		await expect(toggleIcon).toHaveText("+");
+
+		// Spliced-in content (heading/list nodes from target) should NOT be present
+		const transcludedHeadings = page.locator(
+			'.osmosis-node-group-heading[data-source-file="transclusion-target.md"]',
+		);
+		expect(await transcludedHeadings.count()).toBe(0);
+	});
+
+	test("expanding a collapsed transclusion loads its content", async () => {
+		// Click the collapse toggle on the first resolved transclusion
+		const resolvedTransclusion = page.locator(
+			".osmosis-node-group-transclusion.osmosis-node-resolved",
+		);
+		const toggle = resolvedTransclusion.first().locator(".osmosis-collapse-toggle");
+		await toggle.click();
+		await page.waitForTimeout(500);
+
+		// Zoom out to see all loaded content
+		const box = await svgBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 5; i++) {
+			await page.mouse.wheel(0, 300);
+			await page.waitForTimeout(100);
+		}
+		await page.waitForTimeout(500);
+
+		// Now transcluded heading/list content from target should appear
+		const transcludedHeadings = page.locator(
+			'.osmosis-node-group-heading[data-source-file="transclusion-target.md"]',
+		);
+		expect(await transcludedHeadings.count()).toBeGreaterThanOrEqual(1);
 	});
 });

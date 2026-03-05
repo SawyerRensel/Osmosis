@@ -58,6 +58,8 @@ export class MindMapView extends ItemView {
 
 	// Collapse state
 	private collapsedIds = new Set<string>();
+	/** Transclusion nodes deferred for lazy loading (not yet parsed/expanded). */
+	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
 
 	// Selection state
@@ -249,8 +251,15 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
 
-		// Resolve and expand transclusion links (parse embedded files as sub-branches)
-		await this.transclusionResolver.expandTree(this.currentTree);
+		// Lazy loading: auto-collapse transclusion nodes so they're deferred
+		this.lazyTransclusionIds.clear();
+		this.collectTransclusionIds(this.currentTree.root, this.lazyTransclusionIds);
+		for (const id of this.lazyTransclusionIds) {
+			this.collapsedIds.add(id);
+		}
+
+		// Resolve and expand transclusion links (skip lazy/collapsed ones)
+		await this.transclusionResolver.expandTree(this.currentTree, this.lazyTransclusionIds);
 
 		await this.render();
 	}
@@ -818,10 +827,59 @@ export class MindMapView extends ItemView {
 	private toggleCollapse(nodeId: string): void {
 		if (this.collapsedIds.has(nodeId)) {
 			this.collapsedIds.delete(nodeId);
+
+			// Lazy loading: if this is a deferred transclusion, expand it now
+			if (this.lazyTransclusionIds.has(nodeId)) {
+				this.lazyTransclusionIds.delete(nodeId);
+				void this.expandLazyTransclusion(nodeId);
+				return;
+			}
 		} else {
 			this.collapsedIds.add(nodeId);
 		}
 		void this.renderAnimated();
+	}
+
+	/**
+	 * Expand a single lazy transclusion node on demand.
+	 * Finds the node in the tree, parses and splices its content, then re-renders.
+	 */
+	private async expandLazyTransclusion(nodeId: string): Promise<void> {
+		if (!this.currentTree || !this.currentFile) return;
+
+		const { parent, node } = this.findNodeWithParent(this.currentTree.root, nodeId) ?? {};
+		if (!parent || !node || node.type !== "transclusion") return;
+
+		await this.transclusionResolver.expandSingleNode(
+			parent,
+			node,
+			node.sourceFile ? this.currentFile.path : this.currentFile.path,
+		);
+
+		await this.renderAnimated();
+	}
+
+	/** Walk the tree to find a node and its parent by ID. */
+	private findNodeWithParent(
+		current: OsmosisNode,
+		targetId: string,
+	): { parent: OsmosisNode; node: OsmosisNode } | null {
+		for (const child of current.children) {
+			if (child.id === targetId) return { parent: current, node: child };
+			const found = this.findNodeWithParent(child, targetId);
+			if (found) return found;
+		}
+		return null;
+	}
+
+	/** Collect IDs of all transclusion nodes in the tree. */
+	private collectTransclusionIds(node: OsmosisNode, ids: Set<string>): void {
+		if (node.type === "transclusion") {
+			ids.add(node.id);
+		}
+		for (const child of node.children) {
+			this.collectTransclusionIds(child, ids);
+		}
 	}
 
 	private async renderAnimated(): Promise<void> {
@@ -2136,10 +2194,11 @@ export class MindMapView extends ItemView {
 		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
 		}
-		if (node.source.type === "transclusion" && node.source.sourceFile) {
+		if (node.source.type === "transclusion" && node.source.metadata?.cyclic) {
+			classes.push("osmosis-node-cyclic");
+		} else if (node.source.type === "transclusion" && node.source.sourceFile) {
 			classes.push("osmosis-node-resolved");
-		}
-		if (node.source.type === "transclusion" && !node.source.sourceFile) {
+		} else if (node.source.type === "transclusion" && !node.source.sourceFile) {
 			classes.push("osmosis-node-unresolved");
 		}
 		group.setAttribute("class", classes.join(" "));
@@ -2173,7 +2232,14 @@ export class MindMapView extends ItemView {
 
 		// Render markdown content into the wrapper
 		const sourcePath = this.currentFile?.path ?? "";
-		if (this.renderComponent) {
+		if (node.source.type === "transclusion" && node.source.metadata?.cyclic) {
+			// Cycle indicator: show warning instead of raw link
+			const cycleLabel = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
+			cycleLabel.setAttribute("xmlns", XHTML_NS);
+			cycleLabel.className = "osmosis-cycle-indicator";
+			cycleLabel.textContent = `\u21BB ${node.source.content}`;
+			wrapper.appendChild(cycleLabel);
+		} else if (this.renderComponent) {
 			await MarkdownRenderer.render(
 				this.app,
 				node.source.content,
@@ -2183,8 +2249,10 @@ export class MindMapView extends ItemView {
 			);
 		}
 
-		// Collapse toggle for nodes with children
-		if (node.source.children.length > 0) {
+		// Collapse toggle for nodes with children, or lazy transclusions with content to load
+		const isLazyTransclusion = this.lazyTransclusionIds.has(node.source.id)
+			&& node.source.metadata?.resolved;
+		if (node.source.children.length > 0 || isLazyTransclusion) {
 			this.drawCollapseToggle(group, node, x, y, width, height);
 		}
 

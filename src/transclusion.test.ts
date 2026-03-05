@@ -356,5 +356,54 @@ describe("TransclusionResolver", () => {
 			expect(tree.root.children[0]!.type).toBe("transclusion");
 			expect(tree.root.children[0]!.metadata?.resolved).toBe(false);
 		});
+
+		it("skips expansion for nodes in skipIds (lazy loading)", async () => {
+			const app = mockApp(
+				{ "target": { path: "target.md" }, "target.md": { path: "target.md" } },
+				{ "target.md": "# From Target\n- Item 1" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "target" });
+			const tree = makeTree([node]);
+
+			// Skip this node's ID
+			await resolver.expandTree(tree, new Set([node.id]));
+
+			// Node should remain as transclusion (not spliced)
+			expect(tree.root.children.length).toBe(1);
+			expect(tree.root.children[0]!.type).toBe("transclusion");
+			// But it should be resolved (link checked)
+			expect(tree.root.children[0]!.metadata?.resolved).toBe(true);
+			expect(tree.root.children[0]!.sourceFile).toBe("target.md");
+		});
+
+		it("expandSingleNode expands a deferred transclusion in-place", async () => {
+			const app = mockApp(
+				{ "target": { path: "target.md" }, "target.md": { path: "target.md" } },
+				{ "target.md": "# From Target\n- Item 1" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "target" });
+			const tree = makeTree([node], "source.md");
+
+			// First: skip expansion (lazy)
+			await resolver.expandTree(tree, new Set([node.id]));
+			expect(tree.root.children[0]!.type).toBe("transclusion");
+
+			// Now expand it on demand
+			const result = await resolver.expandSingleNode(
+				tree.root,
+				tree.root.children[0]!,
+				"source.md",
+			);
+			expect(result).toBe(true);
+
+			// Transclusion node should be replaced by target's content
+			expect(tree.root.children[0]!.type).toBe("heading");
+			expect(tree.root.children[0]!.content).toBe("From Target");
+			expect(tree.root.children[0]!.isTranscluded).toBe(true);
+		});
 	});
 });

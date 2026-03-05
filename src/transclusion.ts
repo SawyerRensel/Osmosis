@@ -41,10 +41,35 @@ export class TransclusionResolver {
 	 * Resolve and expand all transclusion nodes: resolve links, read files,
 	 * parse content, and attach as children. Supports recursive embedding
 	 * (A→B→C) with cycle detection via a visited set.
+	 *
+	 * @param skipIds - Transclusion node IDs to resolve but NOT expand (for lazy loading).
+	 *                  These nodes keep their type "transclusion" and get metadata.resolved set.
 	 */
-	async expandTree(tree: OsmosisTree): Promise<void> {
+	async expandTree(tree: OsmosisTree, skipIds?: Set<string>): Promise<void> {
 		const visited = new Set<string>([tree.filePath]);
-		await this.expandNode(tree.root, tree.filePath, visited);
+		await this.expandNode(tree.root, tree.filePath, visited, skipIds);
+	}
+
+	/**
+	 * Expand a single transclusion node in-place within the tree.
+	 * Used for lazy loading: when a collapsed transclusion is expanded by the user.
+	 */
+	async expandSingleNode(
+		parent: OsmosisNode,
+		node: OsmosisNode,
+		sourceFilePath: string,
+	): Promise<boolean> {
+		if (node.type !== "transclusion") return false;
+		const visited = new Set<string>([sourceFilePath]);
+		const expanded = await this.expandTransclusion(node, sourceFilePath, visited);
+		if (!expanded) return false;
+
+		// Splice expanded content into parent's children, replacing the transclusion node
+		const idx = parent.children.indexOf(node);
+		if (idx !== -1) {
+			parent.children.splice(idx, 1, ...expanded);
+		}
+		return true;
 	}
 
 	/**
@@ -72,11 +97,18 @@ export class TransclusionResolver {
 		node: OsmosisNode,
 		sourceFilePath: string,
 		visited: Set<string>,
+		skipIds?: Set<string>,
 	): Promise<void> {
 		// Process children, replacing transclusion nodes with expanded content
 		const newChildren: OsmosisNode[] = [];
 		for (const child of node.children) {
 			if (child.type === "transclusion") {
+				// Lazy loading: skip expansion for nodes in skipIds (just resolve link)
+				if (skipIds?.has(child.id)) {
+					this.resolveToFile(child, sourceFilePath);
+					newChildren.push(child);
+					continue;
+				}
 				const expanded = await this.expandTransclusion(
 					child,
 					sourceFilePath,
@@ -90,7 +122,7 @@ export class TransclusionResolver {
 				}
 			} else {
 				newChildren.push(child);
-				await this.expandNode(child, sourceFilePath, visited);
+				await this.expandNode(child, sourceFilePath, visited, skipIds);
 			}
 		}
 		node.children = newChildren;

@@ -143,6 +143,25 @@ Uses Obsidian CSS variables for theme compatibility.
 	user-select: none;
 }
 
+/* Unresolved transclusion */
+.osmosis-node-group-transclusion.osmosis-node-unresolved > .osmosis-node {
+	stroke: var(--text-faint);
+	stroke-dasharray: 4 2;
+}
+
+/* Cyclic transclusion indicator */
+.osmosis-node-cyclic > .osmosis-node {
+	stroke: var(--text-warning);
+	stroke-width: 2;
+	stroke-dasharray: 6 3;
+}
+
+.osmosis-cycle-indicator {
+	color: var(--text-warning);
+	font-size: 12px;
+	font-style: italic;
+}
+
 /* Inline editing — overlay input positioned outside the SVG */
 .osmosis-fo-hidden {
 	visibility: hidden;
