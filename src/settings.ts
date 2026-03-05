@@ -6,11 +6,13 @@ export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
+	showTransclusionStyle: boolean;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchLineStyle: "curved",
 	cursorSync: true,
+	showTransclusionStyle: false,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
@@ -37,6 +39,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.branchLineStyle)
 					.onChange(async (value) => {
 						this.plugin.settings.branchLineStyle = value as BranchLineStyle;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Highlight transcluded branches")
+			.setDesc("Visually distinguish nodes embedded from other files.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showTransclusionStyle)
+					.onChange(async (value) => {
+						this.plugin.settings.showTransclusionStyle = value;
 						await this.plugin.saveSettings();
 					}),
 			);

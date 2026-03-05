@@ -851,3 +851,56 @@ test.describe("Task 3.4: Lazy Loading", () => {
 		expect(await transcludedHeadings.count()).toBeGreaterThanOrEqual(1);
 	});
 });
+
+// ── Task 3.5: Visual Distinction ────────────────────────────────────────────
+
+test.describe("Task 3.5: Visual Distinction", () => {
+	test("transcluded nodes are NOT styled by default", async () => {
+		await setupMindMap("transclusion-source");
+		await expandAll();
+
+		// Zoom out to see transcluded content
+		const box = await svgBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 5; i++) {
+			await page.mouse.wheel(0, 300);
+			await page.waitForTimeout(100);
+		}
+		await page.waitForTimeout(500);
+
+		// With setting off (default), no nodes should have the transcluded class
+		const styled = page.locator(".osmosis-node-transcluded");
+		expect(await styled.count()).toBe(0);
+	});
+
+	test("transcluded nodes are styled when setting is enabled", async () => {
+		// Toggle the setting on via the plugin instance
+		await page.evaluate(() => {
+			const app = (window as unknown as { app: { plugins: { plugins: Record<string, { settings: { showTransclusionStyle: boolean } }> } } }).app;
+			app.plugins.plugins["osmosis"]!.settings.showTransclusionStyle = true;
+		});
+
+		// Re-open the mind map to pick up the new setting
+		await setupMindMap("transclusion-source");
+		await expandAll();
+
+		// Zoom out to see transcluded content
+		const box = await svgBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 5; i++) {
+			await page.mouse.wheel(0, 300);
+			await page.waitForTimeout(100);
+		}
+		await page.waitForTimeout(500);
+
+		// With setting on, transcluded nodes should have the class
+		const styled = page.locator(".osmosis-node-transcluded");
+		expect(await styled.count()).toBeGreaterThanOrEqual(1);
+
+		// Reset setting for subsequent tests
+		await page.evaluate(() => {
+			const app = (window as unknown as { app: { plugins: { plugins: Record<string, { settings: { showTransclusionStyle: boolean } }> } } }).app;
+			app.plugins.plugins["osmosis"]!.settings.showTransclusionStyle = false;
+		});
+	});
+});

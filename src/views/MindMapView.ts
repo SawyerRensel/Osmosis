@@ -2201,6 +2201,9 @@ export class MindMapView extends ItemView {
 		} else if (node.source.type === "transclusion" && !node.source.sourceFile) {
 			classes.push("osmosis-node-unresolved");
 		}
+		if (node.source.isTranscluded && this.plugin?.settings?.showTransclusionStyle) {
+			classes.push("osmosis-node-transcluded");
+		}
 		group.setAttribute("class", classes.join(" "));
 		group.setAttribute("data-node-id", node.source.id);
 		if (node.source.sourceFile) {

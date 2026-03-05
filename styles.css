@@ -162,6 +162,13 @@ Uses Obsidian CSS variables for theme compatibility.
 	font-style: italic;
 }
 
+/* Transcluded branch visual distinction (opt-in via settings) */
+.osmosis-node-transcluded > .osmosis-node {
+	stroke: var(--text-accent);
+	stroke-dasharray: 3 2;
+	stroke-opacity: 0.6;
+}
+
 /* Inline editing — overlay input positioned outside the SVG */
 .osmosis-fo-hidden {
 	visibility: hidden;
