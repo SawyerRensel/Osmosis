@@ -197,15 +197,11 @@ npm run test
 npm run build
 # This compiles TypeScript and outputs to e2e-vault/.obsidian/plugins/Osmosis
 
-# 4. Run E2E tests for the current subtask only (faster iteration)
-npx playwright test --grep "Task 2.13:"   # Include trailing colon to avoid prefix matching (e.g., "Task 2.1:" won't match "Task 2.13:")
-# Only run tests relevant to the subtask you just completed
+# 4. Provide manual test instructions to the user
+# After each task/subtask, tell the user exactly what to do in Obsidian to verify the change.
+# The user will perform manual testing — do NOT run Playwright E2E tests.
 
 # 5. If there are issues, fix in src/ and repeat from step 1
-
-# 6. When ALL subtasks of a parent task (e.g., Phase 2) are complete, run the FULL suite:
-npm run e2e
-# This runs ALL E2E tests to catch regressions across the entire feature set
 ```
 
 ### Linting
@@ -290,13 +286,14 @@ Is this correct? What's missing?
 
 ## Testing
 
-### Three-Layer Testing Strategy
+### Two-Layer Testing Strategy
 
 | Layer | Tool | Command | What it tests |
 |-------|------|---------|---------------|
 | Unit | Vitest | `npm test` | Pure logic: parser, layout engine, cache |
-| E2E | Playwright | `npm run e2e` | Real plugin in Obsidian: UI, commands, rendering |
-| Manual | Obsidian | Open vault | Edge cases, visual polish, UX |
+| Manual | Obsidian | Open vault | UI, commands, rendering, edge cases, visual polish, UX |
+
+**Note**: Playwright E2E tests exist in `e2e/` but are NOT part of the current workflow. The user performs manual testing instead. Do NOT write new Playwright tests or run `npm run e2e`.
 
 ### Before Shipping Any Feature
 
@@ -305,53 +302,14 @@ Is this correct? What's missing?
    - Add unit tests for new pure logic (parser changes, layout algorithms, data transforms)
    - Test files live alongside source: `src/foo.test.ts`
 
-2. **E2E tests** (two-tier strategy):
-   - **Every completed beads subtask (X.Y) MUST include at least one new Playwright E2E test** covering the change
-   - **Per-subtask**: Run ONLY the new task's tests: `npx playwright test --grep "Task X.Y:"` — trailing colon prevents prefix matching (fast iteration)
-   - **Per-parent task**: When ALL subtasks of a parent (X) are complete, run the FULL suite: `npm run e2e` (regression check)
-   - Add E2E tests for new UI features (new commands, view changes, interactions)
-   - Test files live in `e2e/osmosis.spec.ts`
-   - Test fixtures (markdown files) go in `e2e/fixtures/` and are copied to vault by setup
-   - Helpers available: `openFile()`, `openMindMap()`, `runCommand()`, `resetWorkspace()`
-
-3. **Linting** (`npm run lint`):
+2. **Linting** (`npm run lint`):
    - Must pass with no errors
 
-4. **Manual testing** (when E2E can't cover it):
-   - Visual appearance, animations, drag feel
-   - Edge cases with unusual markdown
-   - Performance with large files
-
-### E2E Test Setup (one-time)
-
-```bash
-npm run e2e:setup    # Build plugin, create e2e-vault, register with Obsidian
-npm run e2e:launch   # Open Obsidian to manually enable plugins (first time only)
-# Then close Obsidian and run:
-npm run e2e          # Run all E2E tests
-```
-
-### E2E Test Architecture
-
-- Tests connect to Obsidian via CDP (Chrome DevTools Protocol) over Flatpak
-- `e2e/obsidian.ts` handles launching/connecting to Obsidian, dialog dismissal, helpers
-- Tests reuse a single Obsidian instance per suite (launched in `beforeAll`)
-- `resetWorkspace()` is called in `beforeAll`/`afterAll` to prevent tab/split accumulation
-- If an existing Obsidian instance is running on port 9222, tests connect to it (faster iteration)
-- Screenshots saved to `test-results/` on failure
-
-### When to Write Which Type of Test
-
-**Unit test** (Vitest) when:
-- Testing pure functions (parser, layout, cache, data transforms)
-- No Obsidian API dependency needed
-- Fast feedback desired
-
-**E2E test** (Playwright) when:
-- Testing that a command works end-to-end
-- Testing UI rendering (SVG nodes appear, mind map opens)
-- Testing user interactions (click, keyboard navigation)
-- Verifying plugin loads and integrates with Obsidian correctly
+3. **Manual testing** (user-performed):
+   - After each task/subtask, create test fixture files in `e2e/fixtures/` and copy them to `e2e-vault/`
+   - Provide the user with clear step-by-step instructions for what to test in Obsidian
+   - Include: which file to open, what actions to perform, what to expect
+   - The user will report back with results or screenshots
 
 ---
 
@@ -460,9 +418,15 @@ TESTING:
 What am I missing?
 ```
 
-### Step 4.5: Write E2E Test
+### Step 4.5: Provide Manual Test Instructions
 
-**Every beads subtask (X.Y) MUST have a corresponding Playwright E2E test before it can be closed.** Write at least one new test in `e2e/osmosis.spec.ts` that verifies the change, then run only the new tests: `npx playwright test --grep "Task X.Y:"` (trailing colon prevents prefix matching). Run the full suite (`npm run e2e`) only when completing the parent task (X).
+After completing each subtask:
+- Create test fixture files in `e2e/fixtures/` and copy them to `e2e-vault/`
+- Provide the user with clear manual testing steps:
+  - Which file to open in Obsidian
+  - What actions to perform (open mind map, click nodes, edit, etc.)
+  - What the expected result should be
+  - What to check to confirm it works (e.g., "the source file should now contain X")
 
 ### Step 5: Update Beads
 
@@ -604,11 +568,10 @@ Am I using the API correctly? Is there a better way?
 
 ### Testing in Obsidian
 
-- **Automated**: `npm run e2e` runs Playwright against a real Obsidian instance with `e2e-vault/`
-- **Manual**: Test in `e2e-vault/` (same vault as E2E — build output goes here)
+- **Manual**: Test in `e2e-vault/` (build output goes here)
 - Use Obsidian's plugin console for debugging (Ctrl+Shift+I)
 - Reload the plugin to test changes: Community Plugins → Osmosis → Reload
-- For manual debugging: `npm run e2e:launch` opens Obsidian with the vault
+- To open Obsidian with the vault: `npm run e2e:launch`
 
 ---
 
@@ -648,8 +611,8 @@ Here's my implementation. Does it match the spec?
 ```bash
 npm run lint                              # Fix any issues
 npm run test                              # Run unit tests
-npx playwright test --grep "Task X.Y:"   # Trailing colon prevents prefix matching
-# Run full `npm run e2e` only when completing the parent task (X)
+npm run build                             # Build the plugin
+# Provide manual test instructions to the user
 ```
 
 **Step 6**: Close the Beads issue
@@ -724,11 +687,10 @@ git add <files> && git commit -m "..." && git push
 ## Version Control Notes
 
 Commit when:
-- A subtask is complete and passes its own E2E tests (`npm test` + `npx playwright test --grep "Task X.Y:"`)
-- New Playwright E2E test(s) have been written for the change
-- Build succeeds with no lint errors
+- A subtask is complete with passing unit tests (`npm test`) and clean lint (`npm run lint`)
+- Build succeeds (`npm run build`)
 - Acceptance criteria are met
-- Full E2E suite (`npm run e2e`) passes when completing a parent task
+- Manual test instructions have been provided to the user
 
 Example commit messages:
 ```

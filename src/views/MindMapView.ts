@@ -1948,25 +1948,75 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Write markdown content to a transcluded source file, then re-render
+	 * the current file (re-expanding transclusions to pick up the change).
+	 */
+	private async writeTranscludedMarkdown(sourceFilePath: string, newContent: string): Promise<void> {
+		if (!this.currentFile) return;
+		const sourceFile = this.app.vault.getFileByPath(sourceFilePath);
+		if (!(sourceFile instanceof TFile)) return;
+
+		this.suppressNextReload = true;
+		this.cache.invalidate(sourceFilePath);
+		await this.app.vault.modify(sourceFile, newContent);
+
+		// Re-read and re-expand the current (parent) file to pick up the change
+		const parentContent = await this.app.vault.read(this.currentFile);
+		this.cache.invalidate(this.currentFile.path);
+		this.currentTree = this.cache.get(this.currentFile.path, parentContent);
+		await this.transclusionResolver.expandTree(this.currentTree, this.lazyTransclusionIds);
+		await this.render();
+	}
+
+	/**
 	 * Rename a node: replace the line in markdown with updated content.
+	 * For transcluded nodes, writes to the source file (not the parent note).
 	 */
 	private async renameNode(node: LayoutNode, newContent: string): Promise<void> {
 		if (!this.currentFile) return;
-		const content = await this.app.vault.read(this.currentFile);
 		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
 		const newLine = this.serializeLine(src.type, src.depth, newContent);
 		const updated = content.slice(0, src.range.start) + newLine + content.slice(src.range.end);
-		await this.writeMarkdown(updated);
+		await this.writeNodeFile(src, updated);
+	}
+
+	/**
+	 * Get the file a node belongs to: source file for transcluded nodes, current file otherwise.
+	 */
+	private getNodeFile(src: OsmosisNode): TFile | null {
+		if (src.isTranscluded && src.sourceFile) {
+			const file = this.app.vault.getFileByPath(src.sourceFile);
+			return file instanceof TFile ? file : null;
+		}
+		return this.currentFile;
+	}
+
+	/**
+	 * Write updated content to the correct file for a node.
+	 */
+	private async writeNodeFile(src: OsmosisNode, updated: string): Promise<void> {
+		if (src.isTranscluded && src.sourceFile) {
+			await this.writeTranscludedMarkdown(src.sourceFile, updated);
+		} else {
+			await this.writeMarkdown(updated);
+		}
 	}
 
 	/**
 	 * Add a child node under the given parent.
 	 * Inserts a new line after the parent's subtree.
+	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
 		if (!this.currentFile) return;
-		const content = await this.app.vault.read(this.currentFile);
 		const src = parentNode.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Determine child type and depth
 		let childType: OsmosisNode["type"];
@@ -1994,7 +2044,7 @@ export class MindMapView extends ItemView {
 		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
 
 		const selectedId = this.selectedNodeId;
-		await this.writeMarkdown(updated);
+		await this.writeNodeFile(src, updated);
 
 		// Find and start editing the newly added node (last child of parent)
 		this.startEditingNewNode(selectedId, true);
@@ -2003,11 +2053,14 @@ export class MindMapView extends ItemView {
 	/**
 	 * Add a sibling node after the given node.
 	 * Inserts a new line after the node's subtree at the same level.
+	 * For transcluded nodes, writes to the source file.
 	 */
 	private async addSiblingNode(node: LayoutNode): Promise<void> {
 		if (!this.currentFile) return;
-		const content = await this.app.vault.read(this.currentFile);
 		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		const newLine = this.serializeLine(src.type, src.depth, "");
 		const insertPos = this.subtreeEnd(src);
@@ -2015,7 +2068,7 @@ export class MindMapView extends ItemView {
 		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
 
 		const selectedId = this.selectedNodeId;
-		await this.writeMarkdown(updated);
+		await this.writeNodeFile(src, updated);
 
 		// Find and start editing the new sibling (node right after the original)
 		this.startEditingNewNode(selectedId, false);
@@ -2023,11 +2076,14 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Delete a node and all its children from the markdown.
+	 * For transcluded nodes, deletes from the source file.
 	 */
 	private async deleteNode(node: LayoutNode): Promise<void> {
 		if (!this.currentFile) return;
-		const content = await this.app.vault.read(this.currentFile);
 		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		const start = src.range.start;
 		const end = this.subtreeEnd(src);
@@ -2046,7 +2102,7 @@ export class MindMapView extends ItemView {
 
 		// Select the parent or sibling after deletion
 		const parentId = node.parent?.source.type !== "root" ? node.parent?.source.id : null;
-		await this.writeMarkdown(updated);
+		await this.writeNodeFile(src, updated);
 
 		// Try to select something reasonable after deletion
 		if (parentId) {

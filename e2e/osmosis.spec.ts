@@ -904,3 +904,51 @@ test.describe("Task 3.5: Visual Distinction", () => {
 		});
 	});
 });
+
+// ── Task 3.6: Edit Propagation ──────────────────────────────────────────────
+
+test.describe("Task 3.6: Edit Propagation", () => {
+	test.beforeAll(async () => {
+		await setupMindMap("editprop-parent");
+		await expandAll();
+	});
+
+	test("editing transcluded node writes to source file, not parent", async () => {
+		// Find a transcluded bullet node containing "Editable item"
+		const transcludedNode = page.locator('.osmosis-node-content:text("Editable item")').first();
+		await expect(transcludedNode).toBeVisible({ timeout: 5000 });
+
+		// Double-click to start editing
+		const nodeGroup = transcludedNode.locator("xpath=ancestor::*[contains(@class, 'osmosis-node-group')]").first();
+		await nodeGroup.dblclick({ force: true });
+		await page.waitForTimeout(300);
+
+		const input = page.locator(".osmosis-node-input");
+		await expect(input).toBeVisible({ timeout: 5000 });
+
+		// Change the content and save with Enter
+		await input.fill("Edited via mind map");
+		await input.press("Enter");
+		await page.waitForTimeout(1000);
+
+		// Read the target (source) file — it should contain the edit
+		const targetContent = await page.evaluate(async () => {
+			const app = (window as unknown as { app: { vault: { read: (f: unknown) => Promise<string>; getFileByPath: (p: string) => unknown } } }).app;
+			const file = app.vault.getFileByPath("editprop-target.md");
+			if (!file) return null;
+			return app.vault.read(file);
+		});
+		expect(targetContent).toContain("Edited via mind map");
+		expect(targetContent).not.toContain("Editable item");
+
+		// Read the parent file — it should NOT be changed (still just the embed link)
+		const sourceContent = await page.evaluate(async () => {
+			const app = (window as unknown as { app: { vault: { read: (f: unknown) => Promise<string>; getFileByPath: (p: string) => unknown } } }).app;
+			const file = app.vault.getFileByPath("editprop-parent.md");
+			if (!file) return null;
+			return app.vault.read(file);
+		});
+		expect(sourceContent).toContain("![[editprop-target]]");
+		expect(sourceContent).not.toContain("Edited via mind map");
+	});
+});
