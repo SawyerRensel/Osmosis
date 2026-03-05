@@ -56,7 +56,7 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 1. Implement the SVG mind map layout algorithm (tree layout with left-right and top-down modes)
 2. Implement node rendering with `<foreignObject>` for rich content (markdown, code, LaTeX, images)
 3. Implement branch line rendering (curved, straight, angular, rounded-elbow)
-4. Add pan and zoom (pointer events + wheel/pinch gestures)
+4. Add pan and zoom (Scroll/Shift+Scroll = pan, Ctrl+Scroll = zoom, pinch = zoom, drag = pan)
 5. Add branch expand/collapse with animation
 6. Implement keyboard shortcuts (Tab = add child, Enter = add sibling, Delete, arrow navigation)
 7. Implement node editing (click to edit, inline text input)
@@ -67,6 +67,14 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 12. Register the Mind Map View as an Obsidian `ItemView`
 13. Add viewport culling (don't render off-screen nodes)
 14. Mobile touch gesture support (tap, pinch zoom, drag)
+15. Move nodes up/down (Alt+Up/Down, matching Obsidian's move-line hotkeys)
+16. Copy/cut/paste nodes (Ctrl+C/X/V with subtree serialization)
+17. Undo/redo for mind map operations (integrated with Obsidian's undo system)
+18. Indent/outdent nodes — reparent via Alt+Right/Alt+Left
+19. Duplicate node (Ctrl+D deep-copies subtree as sibling)
+20. Fold/unfold toggle via keyboard (matching Obsidian's fold hotkeys)
+21. Insert parent topic (Ctrl+Enter wraps selected node(s) under a new parent)
+22. Shift+Arrow multi-node selection (extend selection across siblings, children, cousins)
 
 **Deliverables**:
 - [ ] `MindMapView` registered as an Obsidian view
@@ -97,7 +105,7 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 4. Implement lazy loading (collapsed transclusion branches don't parse until expanded)
 5. Add visual distinction for transcluded branches (icon/border style)
 6. Implement edit propagation (editing a transcluded node writes to the source file)
-7. Performance testing with 10, 50, 100 embedded notes
+7. Performance testing with 10, 50, 100 embedded notes (use `e2e/fixtures/transclusion/` subfolder)
 
 **Deliverables**:
 - [ ] Transclusion rendering in mind map view
@@ -133,6 +141,7 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 10. Implement lazy style resolution (defer for collapsed/off-screen transcluded branches)
 11. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`)
 12. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.)
+13. Markdown & OFM rendering parity: ensure all Markdown/OFM syntax renders in mind map nodes identically to Obsidian's note view (code blocks, callouts, math, Mermaid, tables, media, task lists, third-party plugins). Editing hotkeys (Ctrl+B, Ctrl+I, etc.) work on nodes.
 
 **Deliverables**:
 - [ ] Working theme system with 10–15 preset themes
@@ -529,8 +538,8 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Dependencies: Task 2.2
 
 **Task 2.5: Pan and Zoom**
-- Description: Implement viewport pan (drag/pointer) and zoom (scroll wheel, pinch gesture). Use SVG `viewBox` transformation. Target 60fps.
-- Acceptance Criteria: Smooth pan and zoom on desktop (mouse) and mobile (touch). 60fps for maps up to 500 nodes.
+- Description: Implement viewport pan and zoom using SVG `viewBox` transformation. Target 60fps. Input mapping: Scroll and Shift+Scroll pan the view (vertical and horizontal respectively; trackpad two-finger gestures produce natural diagonal panning). Ctrl+Scroll zooms. Pointer drag also pans. Pinch gesture zooms on mobile/trackpad. This mapping feels intuitive on laptop trackpads and allows unconstrained diagonal movement.
+- Acceptance Criteria: Scroll/Shift+Scroll pans, Ctrl+Scroll zooms. Trackpad two-finger gesture pans freely (diagonal). Pinch zooms. Smooth 60fps for maps up to 500 nodes on desktop and mobile.
 - Estimated Effort: 1–2 days
 - Dependencies: Task 2.3
 
@@ -588,6 +597,54 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Estimated Effort: 1–2 days
 - Dependencies: Tasks 2.5–2.12
 
+**Task 2.15: Move Nodes Up/Down**
+- Description: Move selected node(s) up or down among siblings, equivalent to Obsidian's "move line up" / "move line down" commands. Should use the same hotkeys the user has configured in Obsidian for those commands (default: Alt+Up / Alt+Down). Works with single or multiple selected nodes. Updates markdown source accordingly.
+- Acceptance Criteria: Alt+Up/Down (or user-configured hotkey) reorders the selected node(s) among siblings. Markdown source updates correctly. Works with multi-selection.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.9, Task 2.12
+
+**Task 2.16: Copy/Cut/Paste Nodes**
+- Description: Support Ctrl+C / Ctrl+X / Ctrl+V for copying, cutting, and pasting selected nodes in the mind map. Copy/cut serializes the node subtree. Paste inserts as sibling(s) below the currently selected node. Works with multi-selection. Updates markdown source accordingly. Clipboard supports both internal (within mind map) and external (paste as markdown text) formats.
+- Acceptance Criteria: Copy/cut/paste works for single and multi-selected nodes. Pasted nodes appear as siblings below selection. Markdown source updates correctly. Can paste mind map nodes as markdown text in the editor.
+- Estimated Effort: 1–2 days
+- Dependencies: Task 2.9, Task 2.12
+
+**Task 2.17: Undo/Redo for Mind Map Operations**
+- Description: Ctrl+Z / Ctrl+Shift+Z (or Ctrl+Y) should undo/redo mind map operations including node edits, moves, deletes, adds, and reordering. Should integrate with Obsidian's undo system where possible so that undo in the editor and undo in the map are coherent.
+- Acceptance Criteria: All mind map operations are undoable/redoable. Undo stack is coherent with Obsidian's editor undo.
+- Estimated Effort: 1–2 days
+- Dependencies: Task 2.9
+
+**Task 2.18: Indent/Outdent Nodes (Reparent)**
+- Description: Alt+Right on a selected node reparents it as a child of its previous sibling (indent / move right). Alt+Left promotes it to its parent's level (outdent / move left). Consistent with Alt+Up/Down for reordering — all four Alt+Arrow keys form a unified spatial movement system. Works with multi-selection. Updates markdown heading levels or list nesting accordingly.
+- Acceptance Criteria: Alt+Right indents (reparents under previous sibling), Alt+Left outdents (promotes to parent level). Markdown heading levels / list nesting update correctly. Works with multi-selection.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.9, Task 2.12
+
+**Task 2.19: Duplicate Node**
+- Description: Ctrl+D duplicates the selected node(s) as sibling(s) immediately below. Deep-copies the entire subtree including all children. Updates markdown source accordingly.
+- Acceptance Criteria: Ctrl+D duplicates selected node(s) with full subtree. Duplicates appear as siblings below the original. Markdown source updates correctly.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.9
+
+**Task 2.20: Fold/Unfold Toggle via Keyboard**
+- Description: Use the same hotkeys Obsidian uses for fold/unfold (default: Ctrl+Shift+[ / Ctrl+Shift+]) to collapse/expand the selected node's branch via keyboard. Should respect the user's configured Obsidian keybindings for these commands.
+- Acceptance Criteria: Fold/unfold hotkeys toggle branch collapse/expand. Respects user-configured Obsidian keybindings.
+- Estimated Effort: 2–4 hours
+- Dependencies: Task 2.6
+
+**Task 2.21: Insert Parent Topic**
+- Description: Ctrl+Enter on a selected node inserts a new parent node between the selected node and its current parent. The selected node (and its siblings if multi-selected) become children of the new node. Updates markdown source accordingly (adjusts heading levels or list nesting). Works with single and multi-selection.
+- Acceptance Criteria: Ctrl+Enter creates a new parent node above the selection. Selected node(s) become children of the new node. Markdown heading levels / list nesting adjust correctly. Works with multi-selection.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.9
+
+**Task 2.22: Shift+Arrow Multi-Node Selection**
+- Description: Shift+Arrow Keys extend the current selection to adjacent nodes. Shift+Down/Up selects the next/previous sibling. Shift+Right selects into children. Shift+Left selects up to the parent. Selection can span across depth levels — siblings, children, cousins, etc. depending on starting point. Complements existing Shift+click and rubber-band selection methods.
+- Acceptance Criteria: Shift+Arrow extends selection in the corresponding direction. Can select across depth levels (children, cousins). Works from any starting node. Visual selection highlight updates immediately.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.12
+
 ---
 
 ### Phase 3 Tasks
@@ -627,6 +684,12 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Acceptance Criteria: Editing a transcluded node modifies the source file. Parent note is unchanged.
 - Estimated Effort: 1 day
 - Dependencies: Task 3.2, Task 2.9
+
+**Task 3.7: Transclusion Performance Testing**
+- Description: Performance testing for transclusion with varying numbers of embedded notes. Use `e2e/fixtures/transclusion/` subfolder for test fixtures. Verify performance targets from Phase 3 success criteria.
+- Acceptance Criteria: 10 embedded notes resolve in < 50ms. 50 embedded notes resolve in < 200ms (with lazy loading). 100 embedded notes remain responsive with no perceptible lag.
+- Estimated Effort: 4–8 hours
+- Dependencies: Tasks 3.1–3.6
 
 ---
 
@@ -685,6 +748,22 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Acceptance Criteria: "Save view" persists state. Re-opening a note restores the last saved view. Files stored in `.obsidian/plugins/Osmosis/views/`.
 - Estimated Effort: 4–8 hours
 - Dependencies: Task 2.6
+
+**Task 4.13: Markdown & OFM Rendering Parity**
+- Description: Mind map nodes must render all Markdown and Obsidian-flavored Markdown (OFM) syntax equivalently to how it appears in an Obsidian note. This is a comprehensive parity effort covering: code blocks with syntax highlighting, Obsidian callouts/admonitions, Obsidian Bases, Dataview tables, Map View embeds, math/LaTeX blocks, Mermaid diagrams, embedded images/videos, tables, blockquotes, footnotes, task lists, and all inline formatting. Additionally, editing commands that work in Obsidian's editor should work in the mind map — e.g., Ctrl+B on a selected node makes its contents bold, Ctrl+B while editing a node makes the selected text bold. Use `e2e/fixtures/rendering/` subfolder for test fixtures. Subtasks:
+  - 4.13.1: Code blocks — render with syntax highlighting (use Obsidian's built-in Prism.js). Fix current bug where code blocks are split across multiple nodes.
+  - 4.13.2: Callouts/Admonitions — render callout blocks within nodes matching Obsidian's styling.
+  - 4.13.3: Math/LaTeX — render `$inline$` and `$$display$$` math within nodes via MathJax/KaTeX.
+  - 4.13.4: Mermaid diagrams — render mermaid code blocks as diagrams within nodes.
+  - 4.13.5: Tables — render markdown tables within nodes.
+  - 4.13.6: Embedded media — images, videos, audio within nodes.
+  - 4.13.7: Task lists — render `- [ ]` / `- [x]` with interactive checkboxes.
+  - 4.13.8: Blockquotes & footnotes — render blockquotes and footnote tooltips within nodes.
+  - 4.13.9: Third-party plugin content — Dataview tables, Obsidian Bases, Map View, etc. via `MarkdownRenderer.renderMarkdown()`.
+  - 4.13.10: Inline formatting hotkeys — Ctrl+B (bold), Ctrl+I (italic), Ctrl+K (link), Ctrl+` (inline code), etc. work on selected nodes or within node edit mode.
+- Acceptance Criteria: Every Markdown and OFM syntax element renders in mind map nodes identically to how it appears in an Obsidian note. Code blocks show syntax highlighting. Editing hotkeys (bold, italic, link, code) work both at node level and within edit mode. Third-party plugin content renders via Obsidian's MarkdownRenderer.
+- Estimated Effort: 3–5 days
+- Dependencies: Task 2.3 (node rendering), Task 2.7 (keyboard editing)
 
 ---
 

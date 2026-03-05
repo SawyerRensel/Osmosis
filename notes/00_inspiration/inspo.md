@@ -300,6 +300,39 @@ Osmosis is a custom mind map engine + spaced repetition system built as an Obsid
 - **Split view**: Map on one side, markdown on the other, with live bidirectional sync.
 - **Embedded/transclusion mind maps**: `![[linked-note]]` or `![linked-note](path)` renders as a sub-branch. Recursive, with cycle detection and lazy-loading.
 
+### Obsidian Editor Parity Features (2026-03-05)
+The mind map editor should feel natural to Obsidian users by supporting the same keyboard commands they already use in the note editor:
+- **Move nodes up/down**: Alt+Up / Alt+Down (or user-configured "move line" hotkeys) to reorder nodes among siblings. Works with multi-selection.
+- **Copy/cut/paste nodes**: Ctrl+C/X/V for node subtree operations. Paste inserts as sibling below selection. Supports both internal (within map) and external (markdown text) clipboard formats.
+- **Undo/redo**: Ctrl+Z / Ctrl+Shift+Z for all mind map operations, integrated with Obsidian's undo system.
+- **Indent/outdent (reparent)**: Alt+Right to reparent a node under its previous sibling (indent / move right), Alt+Left to promote it to parent's level (outdent / move left). All four Alt+Arrow keys form a unified spatial movement system: Up/Down reorder, Right/Left reparent.
+- **Duplicate node**: Ctrl+D deep-copies selected node(s) with full subtree as sibling(s) below.
+- **Fold/unfold via keyboard**: Use Obsidian's fold/unfold hotkeys to collapse/expand branches.
+- **Insert parent topic**: Ctrl+Enter inserts a new parent node between the selected node(s) and their current parent. Selected nodes become children of the new node.
+- **Shift+Arrow multi-node selection**: Shift+Down/Up extends selection to next/previous sibling. Shift+Right selects into children. Shift+Left selects up to parent. Can span across depth levels (siblings, children, cousins).
+- **Inline formatting hotkeys**: Ctrl+B (bold), Ctrl+I (italic), Ctrl+K (link), Ctrl+` (inline code) — work both at node level (applies to entire node content) and within edit mode (applies to selected text).
+
+### Pan & Zoom Input Mapping (2026-03-05)
+Revised for trackpad-friendly interaction:
+- **Scroll / two-finger gesture**: Pans the view (vertical). Trackpad allows natural diagonal panning.
+- **Shift+Scroll**: Pans horizontally.
+- **Ctrl+Scroll**: Zooms in/out.
+- **Pinch gesture**: Zooms (mobile/trackpad).
+- **Pointer drag**: Pans.
+This replaces scroll-to-zoom and feels more intuitive on laptop trackpads, allowing unconstrained diagonal movement.
+
+### Markdown & OFM Rendering Parity (2026-03-05)
+Mind map nodes must render ALL Markdown and Obsidian-flavored Markdown syntax identically to how it appears in a note. Current gaps include code blocks not rendering with syntax highlighting. Full parity includes:
+- Code blocks with syntax highlighting (Prism.js)
+- Callouts/admonitions
+- Math/LaTeX ($inline$ and $$display$$)
+- Mermaid diagrams
+- Tables
+- Embedded images, videos, audio
+- Task lists with interactive checkboxes
+- Blockquotes and footnotes
+- Third-party plugin content: Dataview tables, Obsidian Bases, Map View, etc. — all should render via `MarkdownRenderer.renderMarkdown()` within foreignObject nodes.
+
 ### Must-Have Features
 - Custom mind map engine (SVG + foreignObject hybrid rendering)
 - Mind Map view (with direction/side toggles) and Timeline view
