@@ -722,3 +722,72 @@ test.describe("Task 3.1: Transclusion Link Resolution", () => {
 		expect(await unresolved.count()).toBeGreaterThanOrEqual(1);
 	});
 });
+
+// ── Task 3.2: Embedded Sub-Tree Rendering ───────────────────────────────────
+
+test.describe("Task 3.2: Embedded Sub-Tree Rendering", () => {
+	test.beforeAll(async () => {
+		await setupMindMap("transclusion-source");
+	});
+
+	test("resolved transclusion expands target content as child nodes", async () => {
+		// The ![[transclusion-target]] node should have children from the target file
+		const resolved = page.locator(
+			'.osmosis-node-group-transclusion.osmosis-node-resolved[data-source-file="transclusion-target.md"]',
+		);
+		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
+
+		// Transcluded children from target file should appear in the SVG.
+		// Some may be off-screen due to viewport culling, so check for
+		// specific transcluded nodes rather than total count.
+		const transcludedNodes = page.locator(
+			'[data-source-file="transclusion-target.md"]',
+		);
+		// At minimum: the transclusion node itself + some expanded children
+		expect(await transcludedNodes.count()).toBeGreaterThanOrEqual(2);
+	});
+
+	test("transcluded children are marked with sourceFile", async () => {
+		// Zoom out so culled transcluded children come into the viewport
+		const box = await svgBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		for (let i = 0; i < 5; i++) {
+			await page.mouse.wheel(0, 300);
+			await page.waitForTimeout(100);
+		}
+		await page.waitForTimeout(500);
+
+		// After zooming out, transcluded children should be visible
+		const transcludedChildren = page.locator(
+			'[data-source-file="transclusion-target.md"]:not(.osmosis-node-group-transclusion)',
+		);
+		expect(await transcludedChildren.count()).toBeGreaterThan(0);
+	});
+
+	test("recursive embedding works (A→B chain)", async () => {
+		await setupMindMap("transclusion-chain-a");
+
+		// Chain A embeds B. B has "Deep item from B".
+		// Verify B's content appears as transcluded nodes.
+		const transcludedFromB = page.locator(
+			'[data-source-file="transclusion-chain-b.md"]',
+		);
+		// At least the transclusion node itself should be visible
+		expect(await transcludedFromB.count()).toBeGreaterThanOrEqual(1);
+	});
+
+	test("transclusion node is collapsible", async () => {
+		await setupMindMap("transclusion-source");
+
+		// Resolved transclusion nodes with children should have a collapse toggle
+		const resolved = page.locator(
+			".osmosis-node-group-transclusion.osmosis-node-resolved",
+		);
+		expect(await resolved.count()).toBeGreaterThanOrEqual(1);
+
+		// Find a collapse toggle within the first resolved transclusion
+		const firstResolved = resolved.first();
+		const toggle = firstResolved.locator(".osmosis-collapse-toggle");
+		expect(await toggle.count()).toBe(1);
+	});
+});

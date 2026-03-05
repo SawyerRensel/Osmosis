@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { TransclusionResolver, TransclusionApp } from "./transclusion";
+import { ParseCache } from "./cache";
 import type { OsmosisTree, OsmosisNode } from "./types";
-import type { ParseCache } from "./cache";
 
 /** Helper to create a minimal OsmosisNode */
 function makeNode(
@@ -29,8 +29,15 @@ function makeTree(children: OsmosisNode[], filePath = "source.md"): OsmosisTree 
 	};
 }
 
-/** Create mock App with configurable file resolution */
-function mockApp(fileMap: Record<string, { path: string }> = {}): TransclusionApp {
+/**
+ * Create mock App with configurable file resolution and file contents.
+ * fileMap keys are used for both metadataCache and vault lookups.
+ * contentMap maps file paths to their markdown content (for vault.read).
+ */
+function mockApp(
+	fileMap: Record<string, { path: string }> = {},
+	contentMap: Record<string, string> = {},
+): TransclusionApp {
 	return {
 		metadataCache: {
 			getFirstLinkpathDest: vi.fn((linkpath: string, _sourcePath: string) => {
@@ -41,6 +48,9 @@ function mockApp(fileMap: Record<string, { path: string }> = {}): TransclusionAp
 			getFileByPath: vi.fn((path: string) => {
 				return fileMap[path] ?? null;
 			}),
+			read: vi.fn(async (file: { path: string }) => {
+				return contentMap[file.path] ?? "";
+			}),
 		},
 	};
 }
@@ -49,7 +59,7 @@ describe("TransclusionResolver", () => {
 	let cache: ParseCache;
 
 	beforeEach(() => {
-		cache = {} as ParseCache;
+		cache = new ParseCache();
 	});
 
 	describe("resolveTree", () => {
@@ -88,8 +98,6 @@ describe("TransclusionResolver", () => {
 			const app = mockApp({
 				"my-note.md": { path: "my-note.md" },
 			});
-			// metadataCache returns null, vault.getFileByPath("my-note") returns null,
-			// but vault.getFileByPath("my-note.md") returns the file
 			const resolver = new TransclusionResolver(app, cache);
 
 			const node = makeNode({ type: "transclusion", content: "my-note" });
@@ -212,6 +220,139 @@ describe("TransclusionResolver", () => {
 
 			expect(nodeA.sourceFile).toBe("note-a.md");
 			expect(nodeB.sourceFile).toBe("folder/note-b.md");
+		});
+	});
+
+	describe("expandTree", () => {
+		it("expands a resolved transclusion with parsed children", async () => {
+			const app = mockApp(
+				{
+					"child": { path: "child.md" },
+					"child.md": { path: "child.md" },
+				},
+				{
+					"child.md": "# Heading\n- Item 1\n- Item 2",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "child" });
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			expect(node.sourceFile).toBe("child.md");
+			expect(node.children.length).toBeGreaterThan(0);
+			// Should have a heading child with bullet children
+			const heading = node.children[0]!;
+			expect(heading.type).toBe("heading");
+			expect(heading.content).toBe("Heading");
+			expect(heading.isTranscluded).toBe(true);
+			expect(heading.sourceFile).toBe("child.md");
+		});
+
+		it("marks expanded children as transcluded", async () => {
+			const app = mockApp(
+				{
+					"note": { path: "note.md" },
+					"note.md": { path: "note.md" },
+				},
+				{
+					"note.md": "- Bullet A\n- Bullet B",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "note" });
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			for (const child of node.children) {
+				expect(child.isTranscluded).toBe(true);
+				expect(child.sourceFile).toBe("note.md");
+			}
+		});
+
+		it("supports recursive embedding (A→B→C)", async () => {
+			const app = mockApp(
+				{
+					"b": { path: "b.md" },
+					"b.md": { path: "b.md" },
+					"c": { path: "c.md" },
+					"c.md": { path: "c.md" },
+				},
+				{
+					"b.md": "# From B\n![[c]]",
+					"c.md": "# From C\n- Deep item",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "b" });
+			const tree = makeTree([node], "a.md");
+
+			await resolver.expandTree(tree);
+
+			// B's content should be expanded
+			expect(node.children.length).toBeGreaterThan(0);
+			const headingB = node.children[0]!;
+			expect(headingB.content).toBe("From B");
+
+			// The transclusion to C within B should also be expanded
+			const transclusionC = headingB.children.find(
+				(c) => c.type === "transclusion",
+			);
+			expect(transclusionC).toBeDefined();
+			expect(transclusionC!.children.length).toBeGreaterThan(0);
+			const headingC = transclusionC!.children[0]!;
+			expect(headingC.content).toBe("From C");
+		});
+
+		it("detects cycles and marks cyclic nodes", async () => {
+			// A embeds B, B embeds A → cycle
+			const app = mockApp(
+				{
+					"b": { path: "b.md" },
+					"b.md": { path: "b.md" },
+					"a": { path: "a.md" },
+					"a.md": { path: "a.md" },
+				},
+				{
+					"b.md": "# From B\n![[a]]",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "b" });
+			const tree = makeTree([node], "a.md");
+
+			await resolver.expandTree(tree);
+
+			// B should be expanded
+			expect(node.children.length).toBeGreaterThan(0);
+
+			// The transclusion back to A should be detected as cyclic
+			const headingB = node.children[0]!;
+			const backToA = headingB.children.find(
+				(c) => c.type === "transclusion",
+			);
+			expect(backToA).toBeDefined();
+			expect(backToA!.metadata?.cyclic).toBe(true);
+			expect(backToA!.children.length).toBe(0); // Not expanded
+		});
+
+		it("does not expand unresolved transclusions", async () => {
+			const app = mockApp({}, {});
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "missing" });
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			expect(node.children.length).toBe(0);
+			expect(node.metadata?.resolved).toBe(false);
 		});
 	});
 });

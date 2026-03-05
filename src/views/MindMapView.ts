@@ -249,8 +249,8 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
 
-		// Resolve transclusion links to vault files
-		await this.transclusionResolver.resolveTree(this.currentTree);
+		// Resolve and expand transclusion links (parse embedded files as sub-branches)
+		await this.transclusionResolver.expandTree(this.currentTree);
 
 		await this.render();
 	}

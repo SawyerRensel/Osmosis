@@ -1,5 +1,5 @@
 import { OsmosisNode, OsmosisTree } from "./types";
-import type { ParseCache } from "./cache";
+import { ParseCache } from "./cache";
 
 /** Minimal file interface matching Obsidian's TFile. */
 export interface ResolvedFile {
@@ -13,13 +13,14 @@ export interface TransclusionApp {
 	};
 	vault: {
 		getFileByPath(path: string): ResolvedFile | null;
+		read(file: ResolvedFile): Promise<string>;
 	};
 }
 
 /**
  * Resolves transclusion links (![[note]] and ![](path)) in an OsmosisTree
- * to actual vault files. Populates transclusion nodes with resolved file
- * metadata without yet expanding their content (expansion is Task 3.2).
+ * to actual vault files, then optionally expands them by parsing the
+ * resolved file and attaching its AST as children.
  */
 export class TransclusionResolver {
 	constructor(
@@ -34,6 +35,16 @@ export class TransclusionResolver {
 	 */
 	async resolveTree(tree: OsmosisTree): Promise<void> {
 		await this.resolveNode(tree.root, tree.filePath);
+	}
+
+	/**
+	 * Resolve and expand all transclusion nodes: resolve links, read files,
+	 * parse content, and attach as children. Supports recursive embedding
+	 * (A→B→C) with cycle detection via a visited set.
+	 */
+	async expandTree(tree: OsmosisTree): Promise<void> {
+		const visited = new Set<string>([tree.filePath]);
+		await this.expandNode(tree.root, tree.filePath, visited);
 	}
 
 	/**
@@ -53,61 +64,125 @@ export class TransclusionResolver {
 	}
 
 	/**
+	 * Recursively resolve and expand transclusion nodes.
+	 */
+	private async expandNode(
+		node: OsmosisNode,
+		sourceFilePath: string,
+		visited: Set<string>,
+	): Promise<void> {
+		if (node.type === "transclusion") {
+			const resolvedFile = this.resolveToFile(node, sourceFilePath);
+
+			if (resolvedFile) {
+				// Cycle detection: skip if we've already visited this file
+				if (visited.has(resolvedFile.path)) {
+					node.metadata = {
+						...node.metadata,
+						cyclic: true,
+						cyclicPath: resolvedFile.path,
+					};
+					return;
+				}
+
+				// Read and parse the resolved file
+				const content = await this.app.vault.read(resolvedFile);
+				const childTree = this.cache.get(resolvedFile.path, content);
+
+				// Mark all children as transcluded from this source
+				const children = childTree.root.children;
+				this.markChildrenTranscluded(children, resolvedFile.path);
+
+				// Attach parsed children to the transclusion node
+				node.children = children;
+
+				// Recurse into expanded content for nested transclusions
+				const childVisited = new Set(visited);
+				childVisited.add(resolvedFile.path);
+				for (const child of node.children) {
+					await this.expandNode(child, resolvedFile.path, childVisited);
+				}
+			}
+			return;
+		}
+
+		// Non-transclusion nodes: recurse into children
+		for (const child of node.children) {
+			await this.expandNode(child, sourceFilePath, visited);
+		}
+	}
+
+	/**
+	 * Resolve a transclusion node's link target and return the file object.
+	 * Also sets node metadata (sourceFile, isTranscluded, resolved status).
+	 * Returns the resolved file or null if not found.
+	 */
+	private resolveToFile(
+		node: OsmosisNode,
+		sourceFilePath: string,
+	): ResolvedFile | null {
+		const linkTarget = node.content;
+		if (!linkTarget) {
+			this.markUnresolved(node, "Empty link target");
+			return null;
+		}
+
+		const pathPart = linkTarget.split("#")[0];
+		if (!pathPart) {
+			this.markUnresolved(node, "Link contains only a fragment");
+			return null;
+		}
+
+		// Try wiki-link resolution (handles shortest-path matching)
+		const resolved = this.app.metadataCache.getFirstLinkpathDest(
+			pathPart,
+			sourceFilePath,
+		);
+		if (resolved) {
+			this.markResolved(node, resolved.path);
+			return resolved;
+		}
+
+		// Fallback: direct vault path lookup
+		const directFile = this.app.vault.getFileByPath(pathPart);
+		if (directFile) {
+			this.markResolved(node, directFile.path);
+			return directFile;
+		}
+
+		// Try with .md extension
+		if (!pathPart.endsWith(".md")) {
+			const withExt = this.app.vault.getFileByPath(`${pathPart}.md`);
+			if (withExt) {
+				this.markResolved(node, withExt.path);
+				return withExt;
+			}
+		}
+
+		this.markUnresolved(node, `File not found: ${linkTarget}`);
+		return null;
+	}
+
+	/**
 	 * Resolve a single transclusion node's link target to a vault file.
-	 *
-	 * Handles both link formats:
-	 * - Wiki-links: ![[note]] — resolved via metadataCache.getFirstLinkpathDest
-	 * - Markdown links: ![](path) — resolved as vault-relative path
-	 *
-	 * On success: sets node.sourceFile to the resolved file path
-	 * On failure: sets node.sourceFile to undefined and marks metadata.unresolved
+	 * Used by resolveTree (resolve-only, no expansion).
 	 */
 	private resolveTransclusionLink(
 		node: OsmosisNode,
 		sourceFilePath: string,
 	): void {
-		const linkTarget = node.content;
-		if (!linkTarget) {
-			this.markUnresolved(node, "Empty link target");
-			return;
+		this.resolveToFile(node, sourceFilePath);
+	}
+
+	/**
+	 * Mark all nodes in a subtree as transcluded from the given source file.
+	 */
+	private markChildrenTranscluded(nodes: OsmosisNode[], sourceFile: string): void {
+		for (const node of nodes) {
+			node.sourceFile = sourceFile;
+			node.isTranscluded = true;
+			this.markChildrenTranscluded(node.children, sourceFile);
 		}
-
-		// Strip any heading/block reference (e.g., "note#heading" → "note")
-		const pathPart = linkTarget.split("#")[0];
-		if (!pathPart) {
-			this.markUnresolved(node, "Link contains only a fragment");
-			return;
-		}
-
-		// Try wiki-link resolution first (handles shortest-path matching)
-		const resolved = this.app.metadataCache.getFirstLinkpathDest(
-			pathPart,
-			sourceFilePath,
-		);
-
-		if (resolved) {
-			this.markResolved(node, resolved.path);
-			return;
-		}
-
-		// Fallback: try direct vault path lookup (for markdown-style ![](path))
-		const directFile = this.app.vault.getFileByPath(pathPart);
-		if (directFile) {
-			this.markResolved(node, directFile.path);
-			return;
-		}
-
-		// Try with .md extension appended
-		if (!pathPart.endsWith(".md")) {
-			const withExt = this.app.vault.getFileByPath(`${pathPart}.md`);
-			if (withExt) {
-				this.markResolved(node, withExt.path);
-				return;
-			}
-		}
-
-		// File not found
-		this.markUnresolved(node, `File not found: ${linkTarget}`);
 	}
 
 	private markResolved(node: OsmosisNode, resolvedPath: string): void {
@@ -120,9 +195,6 @@ export class TransclusionResolver {
 		};
 	}
 
-	/**
-	 * Mark a transclusion node as unresolved (file not found or invalid link).
-	 */
 	private markUnresolved(node: OsmosisNode, reason: string): void {
 		node.sourceFile = undefined;
 		node.isTranscluded = false;
