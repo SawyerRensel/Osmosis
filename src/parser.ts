@@ -143,10 +143,14 @@ export class OsmosisParser {
 		}
 
 		// Calculate indentation for list nesting
+		// Supports tab and space indentation (each tab or 2 spaces = 1 level)
+		// Output always uses tabs (Obsidian default)
 		const indentMatch = /^(\s*)/.exec(text);
-		const indent = indentMatch?.[1]?.length ?? 0;
-		const nestingDepth = Math.floor(indent / 2); // 2-space or tab indentation
-		const trimmed = text.slice(indent);
+		const indentStr = indentMatch?.[1] ?? "";
+		const tabCount = (indentStr.match(/\t/g) ?? []).length;
+		const spaceCount = indentStr.length - tabCount;
+		const nestingDepth = tabCount + Math.floor(spaceCount / 2);
+		const trimmed = text.slice(indentStr.length);
 
 		// Transclusion: ![[note]] or ![](path)
 		// Must check before bullet lists since ![] could be confused with list markers

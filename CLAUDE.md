@@ -428,7 +428,11 @@ After completing each subtask:
   - What the expected result should be
   - What to check to confirm it works (e.g., "the source file should now contain X")
 
-### Step 5: Update Beads
+**IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT close beads issues or commit code until the user has validated the changes work.
+
+### Step 5: Update Beads (After User Confirms Testing)
+
+Only proceed to this step after the user has confirmed that manual testing passes.
 
 ```bash
 bd close <id>                        # Mark issue complete
@@ -677,7 +681,10 @@ bd blocked                           # See all blocked issues
 
 ### Session End
 
+**Always prompt the user for manual testing before closing issues or committing.**
+
 ```bash
+# After user confirms testing passes:
 bd close <id1> <id2> ...            # Close completed issues
 git add <files> && git commit -m "..." && git push
 ```
@@ -690,7 +697,9 @@ Commit when:
 - A subtask is complete with passing unit tests (`npm test`) and clean lint (`npm run lint`)
 - Build succeeds (`npm run build`)
 - Acceptance criteria are met
-- Manual test instructions have been provided to the user
+- **The user has manually tested and confirmed the changes work**
+
+**IMPORTANT**: Do NOT commit or close beads issues until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
 
 Example commit messages:
 ```

@@ -80,6 +80,13 @@ export class MindMapView extends ItemView {
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	private suppressNextReload = false;
 
+	// Clipboard state for copy/cut/paste
+	private clipboardText: string | null = null;
+	private clipboardNodeType: OsmosisNode["type"] | null = null;
+	private clipboardNodeDepth: number | null = null;
+	private clipboardIsCut = false;
+	private clipboardSourceIds: Set<string> = new Set();
+
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
 	private dragStartScreen = { x: 0, y: 0 };
@@ -132,6 +139,20 @@ export class MindMapView extends ItemView {
 			}
 			return undefined;
 		});
+
+		// Register Ctrl/Cmd combos that Obsidian would otherwise intercept
+		for (const key of ["d", "c", "x", "v", "Enter"]) {
+			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				this.handleKeyDown(e);
+				return false;
+			});
+		}
+		for (const key of ["[", "]"]) {
+			this.scope.register(["Mod", "Shift"], key, (e: KeyboardEvent) => {
+				this.handleKeyDown(e);
+				return false;
+			});
+		}
 	}
 
 	getViewType(): string {
@@ -1082,6 +1103,367 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Move selected node(s) up or down among siblings.
+	 * direction: -1 = up, 1 = down.
+	 */
+	private async moveNodeUpDown(direction: number): Promise<void> {
+		if (!this.currentFile || !this.selectedNodeId) return;
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node?.parent) return;
+
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		// Find this node's index among its parent's children in the AST
+		const parentSrc = node.parent.source;
+		const siblings = parentSrc.children;
+		const idx = siblings.indexOf(src);
+		if (idx < 0) return;
+
+		const swapIdx = idx + direction;
+		if (swapIdx < 0 || swapIdx >= siblings.length) return;
+
+		const swapSrc = siblings[swapIdx];
+		if (!swapSrc) return;
+
+		const content = await this.app.vault.read(file);
+
+		// Get full subtree ranges for both nodes
+		const aStart = src.range.start;
+		const aEnd = this.subtreeEnd(src);
+		const bStart = swapSrc.range.start;
+		const bEnd = this.subtreeEnd(swapSrc);
+
+		const aText = content.slice(aStart, aEnd);
+		const bText = content.slice(bStart, bEnd);
+
+		// Swap: replace the earlier range first, then the later range
+		let updated: string;
+		if (aStart < bStart) {
+			// a is before b — swap their text
+			updated = content.slice(0, aStart) + bText + content.slice(aEnd, bStart) + aText + content.slice(bEnd);
+		} else {
+			// b is before a — swap their text
+			updated = content.slice(0, bStart) + aText + content.slice(bEnd, aStart) + bText + content.slice(aEnd);
+		}
+
+		const movedId = this.selectedNodeId;
+		await this.writeNodeFile(src, updated);
+
+		// Re-select the moved node (its ID will change after re-parse, find by content match)
+		this.reselectAfterMove(movedId, src.content, direction);
+	}
+
+	/**
+	 * After a move operation, re-select the node that was moved.
+	 * Searches by content and position heuristic since IDs change after re-parse.
+	 */
+	private reselectAfterMove(oldId: string, content: string, direction: number): void {
+		// Try to find the node by matching content — look at the expected sibling position
+		const oldNode = this.nodeMap.get(oldId);
+		if (oldNode) {
+			this.selectNode(oldId);
+			this.scrollToSelectedNode();
+			return;
+		}
+
+		// ID changed: find by content match
+		for (const [id, layoutNode] of this.nodeMap) {
+			if (layoutNode.source.content === content) {
+				this.selectNode(id);
+				this.scrollToSelectedNode();
+				return;
+			}
+		}
+	}
+
+	/**
+	 * Indent node: reparent under previous sibling (Alt+Right).
+	 */
+	private async indentNode(): Promise<void> {
+		if (!this.currentFile || !this.selectedNodeId) return;
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node?.parent) return;
+
+		const src = node.source;
+		const parentSrc = node.parent.source;
+		const siblings = parentSrc.children;
+		const idx = siblings.indexOf(src);
+
+		// Need a previous sibling to reparent under
+		if (idx <= 0) return;
+
+		const prevSibling = siblings[idx - 1];
+		if (!prevSibling) return;
+
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const subtreeEndPos = this.subtreeEnd(src);
+		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+
+		// Determine new type/depth as child of previous sibling
+		const newType = this.inferChildType(prevSibling);
+		const newDepth = this.inferChildDepth(prevSibling);
+
+		// Re-indent the subtree
+		const reindented = this.reindentSubtree(subtreeText, src, newType, newDepth);
+
+		// Remove from current position (node is after prevSibling in document)
+		let removeStart = src.range.start;
+		const removeEnd = subtreeEndPos;
+		if (removeStart > 0 && content[removeStart - 1] === "\n") {
+			removeStart--;
+		}
+
+		// Insert at end of previous sibling's subtree, then remove old position
+		// Since prevSibling is before our node, insertPos is unaffected by removal
+		const insertPos = this.subtreeEnd(prevSibling);
+		const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
+
+		const withoutNode = content.slice(0, removeStart) + content.slice(removeEnd);
+		const updated = withoutNode.slice(0, insertPos) + prefix + reindented + withoutNode.slice(insertPos);
+
+		const movedContent = src.content;
+		await this.writeNodeFile(src, updated);
+		this.reselectAfterMove(this.selectedNodeId, movedContent, 0);
+	}
+
+	/**
+	 * Outdent node: promote to parent's level (Alt+Left).
+	 */
+	private async outdentNode(): Promise<void> {
+		if (!this.currentFile || !this.selectedNodeId) return;
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node?.parent) return;
+
+		const src = node.source;
+		const parentNode = node.parent;
+		if (parentNode.source.type === "root") return; // Can't outdent past root
+
+		// The node should become a sibling of its parent (after the parent's subtree)
+		const grandparent = parentNode.parent;
+		if (!grandparent) return;
+
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const subtreeEndPos = this.subtreeEnd(src);
+		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+
+		// New type/depth matches the parent (since we're becoming a sibling of parent)
+		const newType = parentNode.source.type;
+		const newDepth = parentNode.source.depth;
+
+		const reindented = this.reindentSubtree(subtreeText, src, newType, newDepth);
+
+		// Remove from current position
+		let removeStart = src.range.start;
+		const removeEnd = subtreeEndPos;
+		if (removeStart > 0 && content[removeStart - 1] === "\n") {
+			removeStart--;
+		}
+
+		// Insert after parent's subtree
+		const parentEnd = this.subtreeEnd(parentNode.source);
+
+		// Since removeStart is inside parent's subtree (before parentEnd),
+		// we need to handle the offset shift
+		const withoutNode = content.slice(0, removeStart) + content.slice(removeEnd);
+		const removedLength = removeEnd - removeStart;
+		const adjustedParentEnd = parentEnd - removedLength;
+
+		const prefix = adjustedParentEnd > 0 && withoutNode[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
+		const updated = withoutNode.slice(0, adjustedParentEnd) + prefix + reindented + withoutNode.slice(adjustedParentEnd);
+
+		const movedContent = src.content;
+		await this.writeNodeFile(src, updated);
+		this.reselectAfterMove(this.selectedNodeId, movedContent, 0);
+	}
+
+	/**
+	 * Copy (or cut) selected node subtrees to the internal clipboard.
+	 */
+	private async copySelectedNodes(isCut: boolean): Promise<void> {
+		if (!this.currentFile || !this.selectedNodeId) return;
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node) return;
+
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+
+		// Collect subtree texts for all selected nodes, sorted by document position
+		const selected = [...this.selectedNodeIds]
+			.map(id => this.nodeMap.get(id))
+			.filter((n): n is LayoutNode => n !== undefined)
+			.sort((a, b) => a.source.range.start - b.source.range.start);
+
+		const texts: string[] = [];
+		for (const sel of selected) {
+			const start = sel.source.range.start;
+			const end = this.subtreeEnd(sel.source);
+			texts.push(content.slice(start, end));
+		}
+
+		this.clipboardText = texts.join("\n");
+		this.clipboardNodeType = src.type;
+		this.clipboardNodeDepth = src.depth;
+		this.clipboardIsCut = isCut;
+		this.clipboardSourceIds = new Set(this.selectedNodeIds);
+
+		// Also put plain text on system clipboard for external paste
+		await navigator.clipboard.writeText(this.clipboardText);
+
+		// If cut, delete the selected nodes
+		if (isCut) {
+			if (this.selectedNodeIds.size > 1) {
+				await this.deleteSelectedNodes();
+			} else {
+				await this.deleteNode(node);
+			}
+		}
+	}
+
+	/**
+	 * Paste clipboard content as sibling(s) below the selected node.
+	 */
+	private async pasteNodes(): Promise<void> {
+		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText) return;
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node) return;
+
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const insertPos = this.subtreeEnd(src);
+
+		// Adjust pasted text depth if target differs from source
+		let pasteText = this.clipboardText;
+		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
+			const depthDelta = src.depth - this.clipboardNodeDepth;
+			if (depthDelta !== 0 || this.clipboardNodeType !== src.type) {
+				pasteText = this.adjustPasteDepth(pasteText, this.clipboardNodeType, depthDelta);
+			}
+		}
+
+		const updated = content.slice(0, insertPos) + "\n" + pasteText + content.slice(insertPos);
+		await this.writeNodeFile(src, updated);
+	}
+
+	/**
+	 * Adjust the depth of pasted text line-by-line, preserving content.
+	 */
+	private adjustPasteDepth(text: string, sourceType: OsmosisNode["type"], depthDelta: number): string {
+		return text.split("\n").map(line => {
+			if (line.trim() === "") return line;
+
+			// Handle heading lines
+			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
+			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+				const oldLevel = headingMatch[1].length;
+				const newLevel = Math.max(1, Math.min(6, oldLevel + depthDelta));
+				return "#".repeat(newLevel) + " " + headingMatch[2];
+			}
+
+			// Handle list lines (tab or space indented)
+			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
+			if (listMatch?.[3] !== undefined) {
+				const currentTabs = listMatch[1]?.length ?? 0;
+				const currentSpaces = listMatch[2]?.length ?? 0;
+				const currentDepth = currentTabs + Math.floor(currentSpaces / 2);
+				const newDepth = Math.max(0, currentDepth + depthDelta);
+				return "\t".repeat(newDepth) + listMatch[3].replace(/^[ \t]*/, "");
+			}
+
+			return line;
+		}).join("\n");
+	}
+
+	/**
+	 * Insert a new parent node above the selected node.
+	 * The selected node (and its subtree) become children of the new node.
+	 */
+	private async insertParentNode(node: LayoutNode): Promise<void> {
+		if (!this.currentFile) return;
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const subtreeEndPos = this.subtreeEnd(src);
+		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+
+		// Create the new parent line at the same type/depth as the selected node
+		const newParentLine = this.serializeLine(src.type, src.depth, "");
+
+		// Indent the selected node's subtree by 1 level
+		let indentedSubtree: string;
+		if (src.type === "heading") {
+			// For headings, increase heading level by 1 (## → ###)
+			indentedSubtree = this.indentSubtreeHeadings(subtreeText);
+		} else {
+			// For list items, add one tab of indentation to each line
+			indentedSubtree = subtreeText.split("\n").map(line =>
+				line.trim() === "" ? line : "\t" + line
+			).join("\n");
+		}
+
+		// Replace: [newParentLine]\n[indentedSubtree]
+		const updated = content.slice(0, src.range.start)
+			+ newParentLine + "\n" + indentedSubtree
+			+ content.slice(subtreeEndPos);
+
+		const selectedId = this.selectedNodeId;
+		await this.writeNodeFile(src, updated);
+
+		// Start editing the new (empty) parent node
+		this.startEditingNewNode(selectedId, false);
+	}
+
+	/**
+	 * Increase all heading levels in a subtree by 1 (e.g., ## → ###).
+	 */
+	private indentSubtreeHeadings(text: string): string {
+		return text.split("\n").map(line => {
+			const headingMatch = line.match(/^(#{1,5})\s/);
+			if (headingMatch && headingMatch[1]) {
+				return "#" + line;
+			}
+			return line;
+		}).join("\n");
+	}
+
+	/**
+	 * Duplicate the selected node (and its entire subtree) as a sibling below.
+	 */
+	private async duplicateNode(node: LayoutNode): Promise<void> {
+		if (!this.currentFile) return;
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+
+		const content = await this.app.vault.read(file);
+		const subtreeEndPos = this.subtreeEnd(src);
+		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+
+		const updated = content.slice(0, subtreeEndPos) + "\n" + subtreeText + content.slice(subtreeEndPos);
+		await this.writeNodeFile(src, updated);
+	}
+
+	/**
 	 * Toggle collapse on all selected nodes.
 	 */
 	private toggleCollapseSelected(): void {
@@ -1484,6 +1866,7 @@ export class MindMapView extends ItemView {
 	/**
 	 * Re-indent a subtree's text to match a new type/depth.
 	 * Adjusts the first line and all descendant lines proportionally.
+	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
 	 */
 	private reindentSubtree(
 		text: string,
@@ -1492,8 +1875,13 @@ export class MindMapView extends ItemView {
 		newDepth: number,
 	): string {
 		const lines = text.split("\n");
-		const depthDelta = newDepth - originalNode.depth;
 		const result: string[] = [];
+
+		// Calculate child depth delta — depends on whether we're crossing type boundaries.
+		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
+		const oldChildBase = (originalNode.type === "heading" || originalNode.type === "root") ? 0 : originalNode.depth + 1;
+		const newChildBase = (newType === "heading" || newType === "root") ? 0 : newDepth + 1;
+		const childDepthDelta = newChildBase - oldChildBase;
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
@@ -1507,12 +1895,22 @@ export class MindMapView extends ItemView {
 				// First line: serialize with new type and depth
 				result.push(this.serializeLine(newType, newDepth, originalNode.content));
 			} else {
-				// Descendant lines: adjust indentation proportionally
-				const match = line.match(/^(\s*)/);
-				const currentIndent = match ? match[1]?.length ?? 0 : 0;
-				const indentPerLevel = 2;
-				const newIndent = Math.max(0, currentIndent + depthDelta * indentPerLevel);
-				result.push(" ".repeat(newIndent) + line.trimStart());
+				// Descendant lines: check if heading or list
+				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
+				if (headingMatch?.[1]) {
+					// Heading descendant: adjust heading level
+					const oldLevel = headingMatch[1].length;
+					const newLevel = Math.max(1, Math.min(6, oldLevel + childDepthDelta));
+					result.push("#".repeat(newLevel) + " " + (headingMatch[2] ?? ""));
+				} else {
+					// List/other descendant: adjust tab indentation
+					const match = line.match(/^(\t*)([ ]*)/);
+					const currentTabs = match?.[1]?.length ?? 0;
+					const currentSpaces = match?.[2]?.length ?? 0;
+					const currentDepth = currentTabs + Math.floor(currentSpaces / 2);
+					const newTabDepth = Math.max(0, currentDepth + childDepthDelta);
+					result.push("\t".repeat(newTabDepth) + line.trimStart());
+				}
 			}
 		}
 
@@ -1533,19 +1931,43 @@ export class MindMapView extends ItemView {
 
 		switch (e.key) {
 			case "ArrowUp":
-				this.navigateSibling(-1);
+				if (e.altKey) {
+					void this.moveNodeUpDown(-1);
+				} else if (e.shiftKey) {
+					this.extendSelectionSibling(-1);
+				} else {
+					this.navigateSibling(-1);
+				}
 				e.preventDefault();
 				break;
 			case "ArrowDown":
-				this.navigateSibling(1);
+				if (e.altKey) {
+					void this.moveNodeUpDown(1);
+				} else if (e.shiftKey) {
+					this.extendSelectionSibling(1);
+				} else {
+					this.navigateSibling(1);
+				}
 				e.preventDefault();
 				break;
 			case "ArrowLeft":
-				this.navigateToParent();
+				if (e.altKey) {
+					void this.outdentNode();
+				} else if (e.shiftKey) {
+					this.extendSelectionToParent();
+				} else {
+					this.navigateToParent();
+				}
 				e.preventDefault();
 				break;
 			case "ArrowRight":
-				this.navigateToFirstChild();
+				if (e.altKey) {
+					void this.indentNode();
+				} else if (e.shiftKey) {
+					this.extendSelectionToChildren();
+				} else {
+					this.navigateToFirstChild();
+				}
 				e.preventDefault();
 				break;
 			case "Tab":
@@ -1559,7 +1981,13 @@ export class MindMapView extends ItemView {
 				break;
 			case "Enter":
 				if (this.selectedNodeId) {
-					if (e.shiftKey) {
+					if (e.ctrlKey || e.metaKey) {
+						// Ctrl+Enter = insert parent topic
+						const parentEnterNode = this.nodeMap.get(this.selectedNodeId);
+						if (parentEnterNode) {
+							void this.insertParentNode(parentEnterNode);
+						}
+					} else if (e.shiftKey) {
 						// Shift+Enter = add sibling after selected node
 						const enterNode = this.nodeMap.get(this.selectedNodeId);
 						if (enterNode) {
@@ -1603,11 +2031,63 @@ export class MindMapView extends ItemView {
 					}
 				}
 				break;
+			case "c":
+				// Ctrl/Cmd+C = copy node(s)
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId) {
+					e.preventDefault();
+					void this.copySelectedNodes(false);
+				}
+				break;
+			case "x":
+				// Ctrl/Cmd+X = cut node(s)
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId) {
+					e.preventDefault();
+					void this.copySelectedNodes(true);
+				}
+				break;
+			case "v":
+				// Ctrl/Cmd+V = paste node(s)
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId && this.clipboardText) {
+					e.preventDefault();
+					void this.pasteNodes();
+				}
+				break;
+			case "d":
+				// Ctrl/Cmd+D = duplicate node
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId) {
+					e.preventDefault();
+					const dupNode = this.nodeMap.get(this.selectedNodeId);
+					if (dupNode) {
+						void this.duplicateNode(dupNode);
+					}
+				}
+				break;
 			case "a":
 				// Ctrl/Cmd+A = select all
 				if (e.ctrlKey || e.metaKey) {
 					e.preventDefault();
 					this.selectNodes(new Set(this.nodeMap.keys()));
+				}
+				break;
+			case "[":
+				// Ctrl+Shift+[ = fold (collapse) selected node
+				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
+					if (!this.collapsedIds.has(this.selectedNodeId)) {
+						const foldNode = this.nodeMap.get(this.selectedNodeId);
+						if (foldNode && (foldNode.children.length > 0)) {
+							this.toggleCollapse(this.selectedNodeId);
+						}
+					}
+					e.preventDefault();
+				}
+				break;
+			case "]":
+				// Ctrl+Shift+] = unfold (expand) selected node
+				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
+					if (this.collapsedIds.has(this.selectedNodeId)) {
+						this.toggleCollapse(this.selectedNodeId);
+					}
+					e.preventDefault();
 				}
 				break;
 		}
@@ -1665,6 +2145,86 @@ export class MindMapView extends ItemView {
 		if (firstChild) {
 			this.selectNode(firstChild.source.id);
 			this.scrollToSelectedNode();
+		}
+	}
+
+	/**
+	 * Extend selection to the next/previous sibling (Shift+Up/Down).
+	 */
+	/**
+	 * Move the selection cursor to targetId, adding or removing from selection.
+	 * If target is already selected (backtracking), deselects the current node.
+	 */
+	private extendSelectionTo(targetId: string): void {
+		this.clearSelectionVisuals();
+		if (this.selectedNodeIds.has(targetId) && this.selectedNodeId !== targetId) {
+			// Backtracking: deselect current cursor node, move cursor to target
+			if (this.selectedNodeId) {
+				this.selectedNodeIds.delete(this.selectedNodeId);
+			}
+		} else {
+			// Extending: add target to selection
+			this.selectedNodeIds.add(targetId);
+		}
+		this.selectedNodeId = targetId;
+		this.applySelectionVisuals();
+		this.scrollToSelectedNode();
+	}
+
+	private extendSelectionSibling(direction: number): void {
+		if (!this.selectedNodeId) {
+			this.selectFirstNode();
+			return;
+		}
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node?.parent) return;
+
+		const siblings = node.parent.children;
+		const idx = siblings.indexOf(node);
+		const newIdx = idx + direction;
+		const target = siblings[newIdx];
+		if (newIdx >= 0 && newIdx < siblings.length && target) {
+			this.extendSelectionTo(target.source.id);
+		}
+	}
+
+	/**
+	 * Extend selection to the parent node (Shift+Left).
+	 */
+	private extendSelectionToParent(): void {
+		if (!this.selectedNodeId) {
+			this.selectFirstNode();
+			return;
+		}
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (node?.parent && node.parent.source.type !== "root") {
+			this.extendSelectionTo(node.parent.source.id);
+		}
+	}
+
+	/**
+	 * Extend selection to the first child (Shift+Right).
+	 */
+	private extendSelectionToChildren(): void {
+		if (!this.selectedNodeId) {
+			this.selectFirstNode();
+			return;
+		}
+
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node) return;
+
+		// If collapsed, expand first
+		if (this.collapsedIds.has(this.selectedNodeId) && node.source.children.length > 0) {
+			this.toggleCollapse(this.selectedNodeId);
+			return;
+		}
+
+		const firstChild = node.children[0];
+		if (firstChild) {
+			this.extendSelectionTo(firstChild.source.id);
 		}
 	}
 
@@ -1910,9 +2470,9 @@ export class MindMapView extends ItemView {
 			case "heading":
 				return `${"#".repeat(depth)} ${content}`;
 			case "bullet":
-				return `${"  ".repeat(depth)}- ${content}`;
+				return `${"\t".repeat(depth)}- ${content}`;
 			case "ordered":
-				return `${"  ".repeat(depth)}1. ${content}`;
+				return `${"\t".repeat(depth)}1. ${content}`;
 			case "paragraph":
 				return content;
 			case "transclusion":
