@@ -321,6 +321,12 @@ Revised for trackpad-friendly interaction:
 - **Pointer drag**: Pans.
 This replaces scroll-to-zoom and feels more intuitive on laptop trackpads, allowing unconstrained diagonal movement.
 
+### Node Sizing & Layout Control (2026-03-05)
+- **Node height auto-fit**: Node height always expands to fit its content — never clips. Current bug: long paragraph nodes overflow their box. Height recomputes on content change, zoom, and width change.
+- **Per-node width drag**: Drag the right edge of any node to set a custom width. Height reflows automatically. Custom width persists in view state.
+- **Per-map min/max node width**: Configurable floor and ceiling for node width across the whole map. Per-node manual width can override.
+- **Justify topic alignment**: Per-map toggle that enforces consistent node width across the whole map (or per depth level), giving a clean, presentation-like appearance. Like "justify" in a word processor but for node widths.
+
 ### Markdown & OFM Rendering Parity (2026-03-05)
 Mind map nodes must render ALL Markdown and Obsidian-flavored Markdown syntax identically to how it appears in a note. Current gaps include code blocks not rendering with syntax highlighting. Full parity includes:
 - Code blocks with syntax highlighting (Prism.js)

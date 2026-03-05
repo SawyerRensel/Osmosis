@@ -142,6 +142,10 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 11. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`)
 12. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.)
 13. Markdown & OFM rendering parity: ensure all Markdown/OFM syntax renders in mind map nodes identically to Obsidian's note view (code blocks, callouts, math, Mermaid, tables, media, task lists, third-party plugins). Editing hotkeys (Ctrl+B, Ctrl+I, etc.) work on nodes.
+14. Node height auto-fit: height always expands to fit content, never clips. Fix current paragraph overflow bug.
+15. Per-node width customization: drag right edge of any node to set custom width; height reflows to fit.
+16. Per-map min/max node width: configurable floor and ceiling for node width.
+17. Justify topic alignment: per-map toggle that enforces consistent node width across the whole map.
 
 **Deliverables**:
 - [ ] Working theme system with 10–15 preset themes
@@ -748,6 +752,30 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Acceptance Criteria: "Save view" persists state. Re-opening a note restores the last saved view. Files stored in `.obsidian/plugins/Osmosis/views/`.
 - Estimated Effort: 4–8 hours
 - Dependencies: Task 2.6
+
+**Task 4.9: Node Height Auto-Fit**
+- Description: Node height must always expand to fit its rendered content — never clip or overflow. Current bug: paragraph nodes with long content are visibly cut off (content overflows the node box). Fix `<foreignObject>` sizing so height is derived from the rendered content height, not a fixed value. Height recomputes whenever content changes (on edit, zoom, or width change).
+- Acceptance Criteria: No node clips its content at any zoom level. Long paragraph nodes expand to show all text. Height recomputes on content change and on node width change.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 2.3
+
+**Task 4.10: Per-Node Width Customization**
+- Description: User can drag the right edge of any node to set a custom width. Height automatically reflows to fit content at the new width. Custom width is persisted in view state. Live preview during drag. Resizing one node does not affect siblings.
+- Acceptance Criteria: Right-edge drag handle appears on hover/select. Dragging resizes width and reflows height. Custom width persists across sessions (saved in view state). Sibling nodes are unaffected.
+- Estimated Effort: 1 day
+- Dependencies: Tasks 4.9, 4.8
+
+**Task 4.11: Per-Map Min/Max Node Width**
+- Description: Per-map settings for minimum and maximum node width. Min width prevents nodes from collapsing too narrow (e.g., single-word nodes). Max width caps how wide a node can grow before wrapping content. Configurable in map settings or frontmatter. Per-node manual width (Task 4.10) can override these bounds.
+- Acceptance Criteria: Min/max width settings apply across the whole map. Per-node override takes precedence. Settings persist with the map.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 4.10
+
+**Task 4.12: Justify Topic Alignment**
+- Description: Per-map toggle that enforces a consistent node width across the entire map (or optionally per depth level), giving the map a clean, presentation-like appearance. When enabled, all nodes share the same width. Works alongside min/max width constraints and is toggled in map settings or frontmatter.
+- Acceptance Criteria: Justify alignment toggle forces uniform node width. Per-depth-level option available. Interacts correctly with min/max width settings.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 4.11
 
 **Task 4.13: Markdown & OFM Rendering Parity**
 - Description: Mind map nodes must render all Markdown and Obsidian-flavored Markdown (OFM) syntax equivalently to how it appears in an Obsidian note. This is a comprehensive parity effort covering: code blocks with syntax highlighting, Obsidian callouts/admonitions, Obsidian Bases, Dataview tables, Map View embeds, math/LaTeX blocks, Mermaid diagrams, embedded images/videos, tables, blockquotes, footnotes, task lists, and all inline formatting. Additionally, editing commands that work in Obsidian's editor should work in the mind map — e.g., Ctrl+B on a selected node makes its contents bold, Ctrl+B while editing a node makes the selected text bold. Use `e2e/fixtures/rendering/` subfolder for test fixtures. Subtasks:
