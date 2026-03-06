@@ -55,6 +55,11 @@ export class OsmosisParser {
 				end: line.end,
 			});
 
+			// Store ordered list number in metadata
+			if (parsed.listNumber !== undefined) {
+				node.metadata = { ...node.metadata, listNumber: parsed.listNumber };
+			}
+
 			if (parsed.type === "heading") {
 				// Headings reset list context
 				listStack = [];
@@ -183,12 +188,13 @@ export class OsmosisParser {
 		}
 
 		// Ordered list: 1. item (any number)
-		const orderedMatch = /^\d+\.\s+(.*)$/.exec(trimmed);
-		if (orderedMatch?.[1] !== undefined) {
+		const orderedMatch = /^(\d+)\.\s+(.*)$/.exec(trimmed);
+		if (orderedMatch?.[1] !== undefined && orderedMatch[2] !== undefined) {
 			return {
 				type: "ordered",
 				depth: nestingDepth,
-				content: orderedMatch[1],
+				content: orderedMatch[2],
+				listNumber: parseInt(orderedMatch[1], 10),
 			};
 		}
 
@@ -314,4 +320,6 @@ interface ParsedLine {
 	type: NodeType;
 	depth: number;
 	content: string;
+	/** For ordered list items, the original number (e.g. 1, 2, 3). */
+	listNumber?: number;
 }

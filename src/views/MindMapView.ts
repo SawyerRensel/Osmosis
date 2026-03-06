@@ -74,7 +74,7 @@ export class MindMapView extends ItemView {
 
 	// Editing state
 	private editingNodeId: string | null = null;
-	private editOverlay: HTMLInputElement | null = null;
+	private editOverlay: HTMLTextAreaElement | null = null;
 	private editCleanup: (() => void) | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
@@ -2637,10 +2637,15 @@ export class MindMapView extends ItemView {
 		const vk: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } | null = "virtualKeyboard" in navigator ? (navigator as any).virtualKeyboard : null;
 		if (vk) vk.overlaysContent = true;
 
-		const input = document.createElement("input");
-		input.type = "text";
+		const input = document.createElement("textarea");
 		input.className = "osmosis-node-input osmosis-edit-overlay";
 		input.value = node.source.content;
+		input.rows = 1;
+
+		// Scale font size to match the current zoom level so text appears
+		// the same size as the rendered node content
+		const baseFontSize = 13;
+		const scaledFontSize = baseFontSize * this.zoom;
 
 		const isMobile = Platform.isMobile;
 
@@ -2667,6 +2672,7 @@ export class MindMapView extends ItemView {
 				top: `${screenRect.top}px`,
 				width: `${screenRect.width}px`,
 				height: `${screenRect.height}px`,
+				fontSize: `${scaledFontSize}px`,
 				zIndex: "10000",
 			});
 			document.body.appendChild(input);
@@ -2679,6 +2685,7 @@ export class MindMapView extends ItemView {
 				top: `${screenRect.top - containerRect.top}px`,
 				width: `${screenRect.width}px`,
 				height: `${screenRect.height}px`,
+				fontSize: `${scaledFontSize}px`,
 				zIndex: "1000",
 			});
 			this.contentEl.appendChild(input);
@@ -3113,7 +3120,10 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
-		const layout = computeLayout(this.currentTree, {}, this.collapsedIds);
+		// Measure actual content sizes before layout
+		const nodeSizes = await this.measureNodeSizes(container, this.currentTree);
+
+		const layout = computeLayout(this.currentTree, {}, this.collapsedIds, nodeSizes);
 		this.currentLayout = layout;
 
 		// Build node map for keyboard nav
@@ -3125,6 +3135,96 @@ export class MindMapView extends ItemView {
 		}
 
 		await this.renderSvg(container, layout);
+	}
+
+	/**
+	 * Measure actual rendered content sizes for all nodes.
+	 * Creates a hidden offscreen container, renders each node's markdown,
+	 * and measures the resulting dimensions.
+	 *
+	 * Two-pass approach: first measure natural (unconstrained) width,
+	 * then if it exceeds maxNodeWidth, constrain width and re-measure height.
+	 */
+	private async measureNodeSizes(
+		container: HTMLElement,
+		tree: OsmosisTree,
+	): Promise<Map<string, { width: number; height: number }>> {
+		const sizes = new Map<string, { width: number; height: number }>();
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const contentMaxWidth = cfg.maxNodeWidth - cfg.nodePaddingX * 2;
+
+		// Create hidden measurement container matching node content styling
+		const measurer = document.createElement("div");
+		measurer.style.cssText = `
+			position: absolute; left: -9999px; top: -9999px;
+			visibility: hidden; pointer-events: none;
+		`;
+		container.appendChild(measurer);
+
+		const sourcePath = this.currentFile?.path ?? "";
+		const allNodes = this.collectAllNodes(tree.root);
+
+		for (const node of allNodes) {
+			if (node.type === "root") continue;
+
+			// Render into a wide cell so nothing wraps, then use Range to
+			// measure actual content width (ignores block-level expansion).
+			const cell = document.createElement("div");
+			cell.className = "osmosis-node-content osmosis-measure-cell";
+			cell.setCssStyles({ width: "9999px" });
+			measurer.appendChild(cell);
+
+			const displayContent = this.getNodeDisplayContent(node);
+			if (this.renderComponent) {
+				await MarkdownRenderer.render(
+					this.app,
+					displayContent,
+					cell,
+					sourcePath,
+					this.renderComponent,
+				);
+			}
+
+			// Use Range to get tight bounding box of actual rendered content
+			const range = document.createRange();
+			range.selectNodeContents(cell);
+			const contentRect = range.getBoundingClientRect();
+			const naturalWidth = contentRect.width;
+
+			const finalWidth = Math.min(Math.max(Math.ceil(naturalWidth), 40), contentMaxWidth);
+			let finalHeight: number;
+
+			if (naturalWidth > contentMaxWidth) {
+				// Constrain width and re-measure wrapped height
+				cell.setCssStyles({ width: `${String(contentMaxWidth)}px` });
+				finalHeight = Math.max(Math.ceil(cell.getBoundingClientRect().height), 20);
+			} else {
+				finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+			}
+
+			sizes.set(node.id, { width: finalWidth, height: finalHeight });
+		}
+
+		measurer.remove();
+		return sizes;
+	}
+
+	/** Collect all OsmosisNodes from the tree into a flat array. */
+	private collectAllNodes(node: OsmosisNode): OsmosisNode[] {
+		const result: OsmosisNode[] = [node];
+		for (const child of node.children) {
+			result.push(...this.collectAllNodes(child));
+		}
+		return result;
+	}
+
+	/** Get the display content for a node, adding ordered list prefix if needed. */
+	private getNodeDisplayContent(node: OsmosisNode): string {
+		if (node.type === "ordered" && node.metadata?.listNumber !== undefined) {
+			// Escape the dot so MarkdownRenderer renders as plain text, not <ol>
+			return `${String(node.metadata.listNumber as number)}\\. ${node.content}`;
+		}
+		return node.content;
 	}
 
 	private async renderSvg(container: HTMLElement, layout: LayoutResult): Promise<void> {
@@ -3252,9 +3352,10 @@ export class MindMapView extends ItemView {
 			cycleLabel.textContent = `\u21BB ${node.source.content}`;
 			wrapper.appendChild(cycleLabel);
 		} else if (this.renderComponent) {
+			const displayContent = this.getNodeDisplayContent(node.source);
 			await MarkdownRenderer.render(
 				this.app,
-				node.source.content,
+				displayContent,
 				wrapper,
 				sourcePath,
 				this.renderComponent,
