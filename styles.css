@@ -92,6 +92,7 @@ Uses Obsidian CSS variables for theme compatibility.
 	padding: 4px 6px;
 	overflow-x: auto;
 	white-space: pre;
+	tab-size: 4;
 	font-family: var(--font-monospace);
 	font-size: 12px;
 	line-height: 1.4;
