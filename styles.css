@@ -94,6 +94,12 @@ Uses Obsidian CSS variables for theme compatibility.
 	align-items: initial !important;
 }
 
+/* Force block-level children (p, h1-h6, ul, ol, pre, etc.) to shrink-wrap
+   so Range.getBoundingClientRect() returns actual content width, not 100%. */
+.osmosis-measure-cell > * {
+	width: fit-content;
+}
+
 .osmosis-branch-line {
 	fill: none;
 	stroke: var(--background-modifier-border);
