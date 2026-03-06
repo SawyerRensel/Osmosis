@@ -276,6 +276,58 @@ describe("OsmosisParser", () => {
 		});
 	});
 
+	describe("code blocks", () => {
+		it("parses a fenced code block as a single node", () => {
+			const md = "# Code\n```js\nconst x = 1;\nconsole.log(x);\n```";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			expect(heading?.children).toHaveLength(1);
+			const codeNode = heading?.children[0];
+			expect(codeNode?.type).toBe("codeblock");
+			expect(codeNode?.content).toBe("```js\nconst x = 1;\nconsole.log(x);\n```");
+		});
+
+		it("parses tilde-fenced code blocks", () => {
+			const md = "~~~python\nprint('hello')\n~~~";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("codeblock");
+		});
+
+		it("does not treat ``` inside a code block as nested fence", () => {
+			const md = "````\n```\ninner\n```\n````";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("codeblock");
+			expect(tree.root.children[0]?.content).toContain("inner");
+		});
+
+		it("code block under a heading becomes its child", () => {
+			const md = "## Section\nSome text\n```\ncode\n```";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			expect(heading?.children).toHaveLength(2);
+			expect(heading?.children[0]?.type).toBe("paragraph");
+			expect(heading?.children[1]?.type).toBe("codeblock");
+		});
+
+		it("handles empty code block", () => {
+			const md = "```\n```";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("codeblock");
+			expect(tree.root.children[0]?.content).toBe("```\n```");
+		});
+
+		it("tracks correct range for code blocks", () => {
+			const md = "# Title\n```js\nconst x = 1;\n```";
+			const tree = parser.parse(md, "test.md");
+			const codeNode = tree.root.children[0]?.children[0];
+			expect(codeNode?.range.start).toBe(8); // after "# Title\n"
+			expect(codeNode?.range.end).toBe(md.length);
+		});
+	});
+
 	describe("performance benchmarks", () => {
 		function generateLargeMarkdown(lineCount: number): string {
 			const lines: string[] = [];

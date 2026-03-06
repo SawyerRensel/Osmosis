@@ -85,6 +85,51 @@ Uses Obsidian CSS variables for theme compatibility.
 	font-size: 12px;
 }
 
+/* Code block nodes */
+.osmosis-node-content pre {
+	background: var(--code-background);
+	border-radius: 4px;
+	padding: 4px 6px;
+	overflow-x: auto;
+	white-space: pre;
+	font-family: var(--font-monospace);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.osmosis-node-content pre code {
+	background: none;
+	padding: 0;
+	font-size: inherit;
+}
+
+/* Hide Obsidian's copy button inside mind map nodes (non-functional in SVG foreignObject) */
+.osmosis-node-content .copy-code-button,
+.osmosis-node-content button.copy-code-button {
+	display: none !important;
+}
+
+/* Preserve paragraph spacing for multi-paragraph content (callouts, admonitions) */
+.osmosis-node-content p + p {
+	margin-top: 0.4em;
+}
+
+/* Code block language label */
+.osmosis-node-group-codeblock .osmosis-node-content {
+	position: relative;
+}
+
+.osmosis-code-lang-label {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	font-size: 10px;
+	font-family: var(--font-monospace);
+	color: var(--text-faint);
+	text-transform: lowercase;
+	pointer-events: none;
+}
+
 /* Measurement cell: allow content to flow naturally for Range measurement.
    Width is set via inline style in JS (wide for initial, constrained for wrap). */
 .osmosis-measure-cell {

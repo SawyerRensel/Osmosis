@@ -42,7 +42,44 @@ export class OsmosisParser {
 		// Separate stack for list nesting within the current heading scope.
 		let listStack: OsmosisNode[] = [];
 
+		// Fenced code block accumulator
+		let inCodeBlock = false;
+		let codeFence = "";
+		let codeLines: string[] = [];
+		let codeStart = 0;
+
 		for (const line of lines) {
+			// Fenced code block detection
+			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.text.trim());
+			if (inCodeBlock) {
+				if (fenceMatch && fenceMatch[1]?.startsWith(codeFence.charAt(0)) && (fenceMatch[1]?.length ?? 0) >= codeFence.length && (fenceMatch[2] ?? "").trim() === "") {
+					// Closing fence: create codeblock node with full fenced content
+					codeLines.push(line.text);
+					const content = codeLines.join("\n");
+					const node = this.createNode("codeblock", 0, content, {
+						start: codeStart,
+						end: line.end,
+					});
+					// Insert into tree at current heading context
+					listStack = [];
+					const parent = headingStack[headingStack.length - 1] ?? root;
+					parent.children.push(node);
+					inCodeBlock = false;
+					codeLines = [];
+					continue;
+				}
+				codeLines.push(line.text);
+				continue;
+			}
+			if (fenceMatch?.[1] !== undefined) {
+				// Opening fence
+				inCodeBlock = true;
+				codeFence = fenceMatch[1];
+				codeLines = [line.text];
+				codeStart = line.start;
+				continue;
+			}
+
 			const parsed = this.parseLine(line);
 			if (parsed === null) {
 				// Blank line: reset list context

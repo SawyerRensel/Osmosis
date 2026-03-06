@@ -3360,6 +3360,19 @@ export class MindMapView extends ItemView {
 				sourcePath,
 				this.renderComponent,
 			);
+
+			// Add language label to code block nodes
+			if (node.source.type === "codeblock") {
+				const langMatch = /^(`{3,}|~{3,})(\S+)/.exec(node.source.content);
+				const lang = langMatch?.[2];
+				if (lang && !lang.startsWith("ad-")) {
+					const label = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
+					label.setAttribute("xmlns", XHTML_NS);
+					label.className = "osmosis-code-lang-label";
+					label.textContent = lang;
+					wrapper.appendChild(label);
+				}
+			}
 		}
 
 		// Collapse toggle for nodes with children, or lazy transclusions with content to load

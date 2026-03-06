@@ -13,6 +13,7 @@ export type NodeType =
 	| "bullet"
 	| "ordered"
 	| "paragraph"
+	| "codeblock"
 	| "transclusion";
 
 /** Character range in source markdown (0-based, end-exclusive). */
