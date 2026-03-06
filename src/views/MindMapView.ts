@@ -153,6 +153,12 @@ export class MindMapView extends ItemView {
 				return false;
 			});
 		}
+		for (const key of ["[", "]"]) {
+			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				this.handleKeyDown(e);
+				return false;
+			});
+		}
 	}
 
 	getViewType(): string {
@@ -1223,14 +1229,17 @@ export class MindMapView extends ItemView {
 		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
 		const blockStart = firstSrc.range.start;
 		const blockEnd = this.subtreeEnd(lastSrc);
-		const blockText = content.slice(blockStart, blockEnd);
 
-		// Determine new type/depth as child of previous sibling
-		const newType = this.inferChildType(prevSibling);
-		const newDepth = this.inferChildDepth(prevSibling);
-
-		// Re-indent the entire block
-		const reindented = this.reindentSubtree(blockText, firstSrc, newType, newDepth);
+		// Re-indent each selected node's subtree individually
+		const reindentedParts: string[] = [];
+		for (const idx of selectedIndices) {
+			const nodeSrc = siblings[idx]!;
+			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			const newType = this.inferIndentType(prevSibling, nodeSrc);
+			const newDepth = this.inferIndentDepth(prevSibling, nodeSrc);
+			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+		}
+		const reindented = reindentedParts.join("\n");
 
 		// Remove block from current position
 		let removeStart = blockStart;
@@ -1279,13 +1288,19 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
 		const blockEnd = this.subtreeEnd(lastSrc);
-		const blockText = content.slice(blockStart, blockEnd);
 
-		// New type/depth matches the parent (becoming a sibling of parent)
-		const newType = parentNode.source.type;
-		const newDepth = parentNode.source.depth;
-
-		const reindented = this.reindentSubtree(blockText, firstSrc, newType, newDepth);
+		// Re-indent each selected node's subtree individually
+		const reindentedParts: string[] = [];
+		for (const idx of selectedIndices) {
+			const nodeSrc = siblings[idx]!;
+			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			// Becoming a sibling of parent — match parent's type/depth
+			const newType = (nodeSrc.type === "heading" && parentNode.source.type === "heading")
+				? "heading" : parentNode.source.type;
+			const newDepth = parentNode.source.depth;
+			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+		}
+		const reindented = reindentedParts.join("\n");
 
 		// Remove block from current position
 		let removeStart = blockStart;
@@ -1537,6 +1552,203 @@ export class MindMapView extends ItemView {
 		}
 
 		void this.renderAnimated();
+	}
+
+	/**
+	 * Get all descendant node IDs of a layout node (recursive, layout tree only).
+	 */
+	private getDescendantIds(node: LayoutNode): string[] {
+		const ids: string[] = [];
+		for (const child of node.children) {
+			ids.push(child.source.id);
+			ids.push(...this.getDescendantIds(child));
+		}
+		return ids;
+	}
+
+	/**
+	 * Get all descendant node IDs from the source tree (includes collapsed children).
+	 */
+	private getSourceDescendantIds(node: OsmosisNode): string[] {
+		const ids: string[] = [];
+		for (const child of node.children) {
+			ids.push(child.id);
+			ids.push(...this.getSourceDescendantIds(child));
+		}
+		return ids;
+	}
+
+	/**
+	 * Get the maximum visible depth under a node (not counting collapsed subtrees).
+	 */
+	private getMaxVisibleDepth(node: LayoutNode, currentDepth: number): number {
+		if (this.collapsedIds.has(node.source.id) || node.children.length === 0) {
+			return currentDepth;
+		}
+		let max = currentDepth;
+		for (const child of node.children) {
+			max = Math.max(max, this.getMaxVisibleDepth(child, currentDepth + 1));
+		}
+		return max;
+	}
+
+	/**
+	 * Collect nodes at a specific visible depth under a root node.
+	 */
+	private getNodesAtVisibleDepth(node: LayoutNode, targetDepth: number, currentDepth: number): LayoutNode[] {
+		if (this.collapsedIds.has(node.source.id)) return [];
+		if (currentDepth === targetDepth) return [node];
+		const result: LayoutNode[] = [];
+		for (const child of node.children) {
+			result.push(...this.getNodesAtVisibleDepth(child, targetDepth, currentDepth + 1));
+		}
+		return result;
+	}
+
+	/**
+	 * Fold one level: collapse the deepest visible children of each selected node.
+	 */
+	private foldOneLevel(): void {
+		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		let changed = false;
+
+		for (const id of targetIds) {
+			const node = this.nodeMap.get(id);
+			if (!node) continue;
+
+			const maxDepth = this.getMaxVisibleDepth(node, 0);
+			if (maxDepth <= 0) continue; // Nothing to fold
+
+			// Find nodes at the deepest visible level that have children
+			const deepestParents = this.getNodesAtVisibleDepth(node, maxDepth - 1, 0)
+				.filter(n => n.children.length > 0 && !this.collapsedIds.has(n.source.id));
+
+			for (const parent of deepestParents) {
+				this.collapsedIds.add(parent.source.id);
+				changed = true;
+			}
+		}
+
+		if (changed) void this.renderAnimated();
+	}
+
+	/**
+	 * Unfold one level: expand the shallowest collapsed children of each selected node.
+	 */
+	private unfoldOneLevel(): void {
+		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		let changed = false;
+
+		for (const id of targetIds) {
+			const node = this.nodeMap.get(id);
+			if (!node) continue;
+
+			// If the node itself is collapsed, expand it
+			if (this.collapsedIds.has(id)) {
+				this.collapsedIds.delete(id);
+				changed = true;
+				continue;
+			}
+
+			// Find shallowest collapsed descendants
+			const shallowest = this.findShallowestCollapsed(node, 0);
+			if (shallowest.depth === Infinity) continue;
+
+			for (const n of shallowest.nodes) {
+				this.collapsedIds.delete(n.source.id);
+				changed = true;
+			}
+		}
+
+		if (changed) void this.renderAnimated();
+	}
+
+	/**
+	 * Find collapsed nodes at the shallowest depth under a given node.
+	 */
+	private findShallowestCollapsed(node: LayoutNode, depth: number): { depth: number; nodes: LayoutNode[] } {
+		let minDepth = Infinity;
+		let result: LayoutNode[] = [];
+
+		for (const child of node.children) {
+			if (this.collapsedIds.has(child.source.id)) {
+				if (depth + 1 < minDepth) {
+					minDepth = depth + 1;
+					result = [child];
+				} else if (depth + 1 === minDepth) {
+					result.push(child);
+				}
+			} else {
+				const sub = this.findShallowestCollapsed(child, depth + 1);
+				if (sub.depth < minDepth) {
+					minDepth = sub.depth;
+					result = sub.nodes;
+				} else if (sub.depth === minDepth) {
+					result.push(...sub.nodes);
+				}
+			}
+		}
+
+		return { depth: minDepth, nodes: result };
+	}
+
+	/**
+	 * Fold all: collapse all descendants of selected nodes.
+	 */
+	private foldAll(): void {
+		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		let changed = false;
+
+		for (const id of targetIds) {
+			const node = this.nodeMap.get(id);
+			if (!node) continue;
+
+			const descendants = this.getDescendantIds(node);
+			for (const descId of descendants) {
+				const descNode = this.nodeMap.get(descId);
+				if (descNode && descNode.children.length > 0 && !this.collapsedIds.has(descId)) {
+					this.collapsedIds.add(descId);
+					changed = true;
+				}
+			}
+			// Also collapse the node itself if it has children
+			if (node.children.length > 0 && !this.collapsedIds.has(id)) {
+				this.collapsedIds.add(id);
+				changed = true;
+			}
+		}
+
+		if (changed) void this.renderAnimated();
+	}
+
+	/**
+	 * Unfold all: expand all descendants of selected nodes.
+	 * Uses source tree to find collapsed children (layout tree omits them).
+	 */
+	private unfoldAll(): void {
+		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		let changed = false;
+
+		for (const id of targetIds) {
+			const node = this.nodeMap.get(id);
+			if (!node) continue;
+
+			// Uncollapse this node
+			if (this.collapsedIds.has(id)) {
+				this.collapsedIds.delete(id);
+				changed = true;
+			}
+			// Uncollapse all descendants via source tree
+			const descendants = this.getSourceDescendantIds(node.source);
+			for (const descId of descendants) {
+				if (this.collapsedIds.has(descId)) {
+					this.collapsedIds.delete(descId);
+					changed = true;
+				}
+			}
+		}
+
+		if (changed) void this.renderAnimated();
 	}
 
 	// ─── Cursor Sync ────────────────────────────────────────
@@ -1914,6 +2126,29 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Determine the new type when indenting a node under a new parent.
+	 * Headings indenting under headings stay as headings (deeper level).
+	 * Non-headings indenting under headings become bullets.
+	 */
+	private inferIndentType(newParent: OsmosisNode, movingNode: OsmosisNode): OsmosisNode["type"] {
+		if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+			return "heading";
+		}
+		return this.inferChildType(newParent);
+	}
+
+	/**
+	 * Determine the new depth when indenting a node under a new parent.
+	 * Headings get parent depth + 1. Lists get standard child depth.
+	 */
+	private inferIndentDepth(newParent: OsmosisNode, movingNode: OsmosisNode): number {
+		if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+			return Math.min(6, newParent.depth + 1);
+		}
+		return this.inferChildDepth(newParent);
+	}
+
+	/**
 	 * Re-indent a subtree's text to match a new type/depth.
 	 * Adjusts the first line and all descendant lines proportionally.
 	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
@@ -1924,7 +2159,11 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		const lines = text.split("\n");
+		// When converting heading → list type, strip internal blank lines
+		// that were added by normalizeHeadingSpacing — they break list nesting.
+		const crossingToList = originalNode.type === "heading" && newType !== "heading";
+		const rawLines = text.split("\n");
+		const lines = crossingToList ? rawLines.filter(l => l.trim() !== "") : rawLines;
 		const result: string[] = [];
 
 		// Calculate child depth delta — depends on whether we're crossing type boundaries.
@@ -2118,28 +2357,28 @@ export class MindMapView extends ItemView {
 				break;
 			case "[":
 			case "{": // Shift+[ produces "{" as e.key
-				// Ctrl+Shift+[ = fold (collapse) selected node
-				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
-					if (!this.collapsedIds.has(this.selectedNodeId)) {
-						const foldNode = this.nodeMap.get(this.selectedNodeId);
-						if (foldNode && (foldNode.children.length > 0)) {
-							this.toggleCollapse(this.selectedNodeId);
-						}
-					}
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId) {
 					e.preventDefault();
+					if (e.shiftKey) {
+						this.foldAll(); // Ctrl+Shift+[ = fold all children
+					} else {
+						this.foldOneLevel(); // Ctrl+[ = fold deepest visible level
+					}
 				}
 				break;
 			case "]":
 			case "}": // Shift+] produces "}" as e.key
-				// Ctrl+Shift+] = unfold (expand) selected node
-				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
-					if (this.collapsedIds.has(this.selectedNodeId)) {
-						this.toggleCollapse(this.selectedNodeId);
-					}
+				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId) {
 					e.preventDefault();
+					if (e.shiftKey) {
+						this.unfoldAll(); // Ctrl+Shift+] = unfold all children
+					} else {
+						this.unfoldOneLevel(); // Ctrl+] = unfold shallowest collapsed level
+					}
 				}
 				break;
 			case "z":
+			case "Z": // Shift+z produces "Z" as e.key
 				// Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo
 				if (e.ctrlKey || e.metaKey) {
 					e.preventDefault();
@@ -2568,19 +2807,19 @@ export class MindMapView extends ItemView {
 	 * Follows Obsidian/CommonMark best practices for heading spacing.
 	 */
 	private normalizeHeadingSpacing(content: string): string {
-		const lines = content.split("\n");
+		// First: collapse runs of 2+ blank lines into exactly one blank line
+		const collapsed = content.replace(/\n{3,}/g, "\n\n");
+		const lines = collapsed.split("\n");
 		const result: string[] = [];
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i] ?? "";
 			const isHeading = /^#{1,6}\s/.test(line);
 			const prevLine = result[result.length - 1];
 			if (isHeading && result.length > 0 && prevLine !== undefined && prevLine.trim() !== "") {
-				// Insert blank line before heading (unless already blank or start of file)
 				result.push("");
 			}
 			result.push(line);
 			if (isHeading) {
-				// Insert blank line after heading (unless next line is already blank or end of file)
 				const nextLine = lines[i + 1];
 				if (nextLine !== undefined && nextLine.trim() !== "") {
 					result.push("");
