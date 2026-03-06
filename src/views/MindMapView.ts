@@ -1148,12 +1148,33 @@ export class MindMapView extends ItemView {
 		const swapEnd = this.subtreeEnd(swapSrc);
 		const swapText = content.slice(swapStart, swapEnd);
 
-		// Swap block with target
+		// Swap block with target.
+		// Replace the entire range spanning both nodes (including any gap
+		// and surrounding blank lines) with the swapped texts joined by "\n".
+		// normalizeHeadingSpacing (called by writeNodeFile) will re-add proper
+		// blank lines around headings and top-level code fences.
+		const rangeStart = Math.min(blockStart, swapStart);
+		const rangeEnd = Math.max(blockEnd, swapEnd);
+
+		// Strip trailing blank lines before the swap range
+		let headEnd = rangeStart;
+		while (headEnd > 0 && content[headEnd - 1] === "\n") {
+			headEnd--;
+		}
+		const head = headEnd > 0 ? content.slice(0, headEnd) + "\n" : "";
+
+		// Strip leading blank lines after the swap range
+		let tailPos = rangeEnd;
+		while (tailPos < content.length && content[tailPos] === "\n") {
+			tailPos++;
+		}
+		const tail = tailPos < content.length ? "\n" + content.slice(tailPos) : content.slice(rangeEnd);
+
 		let updated: string;
 		if (blockStart < swapStart) {
-			updated = content.slice(0, blockStart) + swapText + content.slice(blockEnd, swapStart) + blockText + content.slice(swapEnd);
+			updated = head + swapText + "\n" + blockText + tail;
 		} else {
-			updated = content.slice(0, swapStart) + blockText + content.slice(swapEnd, blockStart) + swapText + content.slice(blockEnd);
+			updated = head + blockText + "\n" + swapText + tail;
 		}
 
 		const movedContents = selectedSrcs.map(s => s.content);
@@ -1842,7 +1863,10 @@ export class MindMapView extends ItemView {
 		if (!node) return;
 
 		this.isDragging = true;
-		this.selectNode(nodeId);
+		// Preserve multi-selection if dragging a node that's already selected
+		if (!this.selectedNodeIds.has(nodeId)) {
+			this.selectNode(nodeId);
+		}
 		this.contentEl.addClass("osmosis-dragging");
 
 		// Create ghost node (semi-transparent clone)
@@ -1924,10 +1948,16 @@ export class MindMapView extends ItemView {
 			const nodeY = layoutNode.rect.y + offsetY;
 			const nodeCY = nodeY + layoutNode.rect.height / 2;
 
+			// Use weighted 2D distance so nodes at cursor's X-level are preferred
+			// over nodes at different depths that happen to be close in Y
+			const nodeCX = nodeX + layoutNode.rect.width / 2;
+			const dx = svgPt.x - nodeCX;
+
 			// Check gap above this node (insert before)
 			const gapAbove = nodeY;
-			const distAbove = Math.abs(svgPt.y - gapAbove);
-			if (distAbove < bestDist && Math.abs(svgPt.x - nodeX) < 300) {
+			const dyAbove = svgPt.y - gapAbove;
+			const distAbove = Math.sqrt(dyAbove * dyAbove + dx * dx * 0.25);
+			if (distAbove < bestDist && Math.abs(dx) < 300) {
 				const parentNode = layoutNode.parent;
 				const siblingIdx = parentNode.children.indexOf(layoutNode);
 				// Don't allow dropping right back where it came from
@@ -1942,8 +1972,9 @@ export class MindMapView extends ItemView {
 
 			// Check gap below this node (insert after)
 			const gapBelow = nodeY + layoutNode.rect.height;
-			const distBelow = Math.abs(svgPt.y - gapBelow);
-			if (distBelow < bestDist && Math.abs(svgPt.x - nodeX) < 300) {
+			const dyBelow = svgPt.y - gapBelow;
+			const distBelow = Math.sqrt(dyBelow * dyBelow + dx * dx * 0.25);
+			if (distBelow < bestDist && Math.abs(dx) < 300) {
 				const parentNode = layoutNode.parent;
 				const siblingIdx = parentNode.children.indexOf(layoutNode) + 1;
 				if (!this.isSamePosition(dragNode, parentNode.source.id, siblingIdx)) {
@@ -2006,32 +2037,55 @@ export class MindMapView extends ItemView {
 	private async executeDrop(): Promise<void> {
 		const dragNodeId = this.dragNodeId;
 		const dropTarget = this.dropTarget;
+		// Snapshot selected IDs before cleanup clears drag state
+		const selectedIds = new Set(this.selectedNodeIds);
 
 		this.cleanupDrag();
 
 		if (!dragNodeId || !dropTarget || !this.currentFile || !this.currentTree) return;
 
 		const dragNode = this.nodeMap.get(dragNodeId);
-		if (!dragNode) return;
+		if (!dragNode?.parent) return;
 
 		const content = await this.app.vault.read(this.currentFile);
-		const src = dragNode.source;
-
-		// Extract the dragged node's full text (including subtree)
-		const dragStart = src.range.start;
-		const dragEnd = this.subtreeEnd(src);
-		let dragText = content.slice(dragStart, dragEnd);
 
 		// Find the target parent and insertion point
 		const targetParent = this.findNodeById(this.currentTree.root, dropTarget.parentId);
 		if (!targetParent) return;
 
-		// Compute the new type and depth based on target parent
-		const newType = this.inferChildType(targetParent);
-		const newDepth = this.inferChildDepth(targetParent);
+		// Collect all selected siblings (multi-select support, like Alt+Arrow)
+		const parentSrc = dragNode.parent.source;
+		const siblings = parentSrc.children;
+		const selectedIndices: number[] = [];
+		for (let i = 0; i < siblings.length; i++) {
+			const sib = siblings[i];
+			if (sib && selectedIds.has(sib.id)) {
+				selectedIndices.push(i);
+			}
+		}
+		selectedIndices.sort((a, b) => a - b);
 
-		// Re-indent the dragged text if the depth or type changed
-		dragText = this.reindentSubtree(dragText, src, newType, newDepth);
+		// Fall back to just the dragged node if none of the selection is among siblings
+		if (selectedIndices.length === 0) {
+			const dragIdx = siblings.indexOf(dragNode.source);
+			if (dragIdx >= 0) selectedIndices.push(dragIdx);
+			else return;
+		}
+
+		// Collect block range spanning all selected subtrees
+		const selectedSrcs = selectedIndices.map(i => siblings[i]!);
+		const blockStart = selectedSrcs[0]!.range.start;
+		const blockEnd = this.subtreeEnd(selectedSrcs[selectedSrcs.length - 1]!);
+
+		// Re-indent each selected node's subtree individually
+		const reindentedParts: string[] = [];
+		for (const nodeSrc of selectedSrcs) {
+			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			const newType = this.inferDropType(targetParent, dropTarget.index);
+			const newDepth = this.inferDropDepth(targetParent, dropTarget.index, newType);
+			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+		}
+		let dragText = reindentedParts.join("\n");
 
 		// Determine insertion offset in the markdown
 		let insertOffset: number;
@@ -2059,14 +2113,21 @@ export class MindMapView extends ItemView {
 
 		// Build new content: remove old, insert at new position
 		// Must handle the case where removal shifts the insert position
-		let removeStart = dragStart;
-		let removeEnd = dragEnd;
+		let removeStart = blockStart;
+		let removeEnd = blockEnd;
 
-		// Consume adjacent newline with removal
-		if (removeStart > 0 && content[removeStart - 1] === "\n") {
+		// Consume all surrounding blank lines at the removal site so they
+		// don't accumulate on repeated moves. normalizeHeadingSpacing will
+		// re-add proper spacing around headings and top-level code fences.
+		while (removeStart > 0 && content[removeStart - 1] === "\n") {
 			removeStart--;
-		} else if (removeEnd < content.length && content[removeEnd] === "\n") {
+		}
+		while (removeEnd < content.length && content[removeEnd] === "\n") {
 			removeEnd++;
+		}
+		// Re-add exactly one \n as separator between surrounding content
+		if (removeStart > 0 && removeEnd < content.length) {
+			removeStart++; // preserve one \n from the leading newlines
 		}
 
 		let updated: string;
@@ -2074,7 +2135,6 @@ export class MindMapView extends ItemView {
 			// Dragging forward: remove first, then adjust insert position
 			const afterRemove = content.slice(0, removeStart) + content.slice(removeEnd);
 			const adjustedInsert = insertOffset - (removeEnd - removeStart);
-			// Need a newline before the inserted text
 			const prefix = adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n" ? "\n" : "";
 			const suffix = adjustedInsert < afterRemove.length && afterRemove[adjustedInsert] !== "\n" ? "\n" : "";
 			updated = afterRemove.slice(0, adjustedInsert) + prefix + dragText + suffix + afterRemove.slice(adjustedInsert);
@@ -2087,7 +2147,9 @@ export class MindMapView extends ItemView {
 			updated = afterInsert.slice(0, removeStart + shift) + afterInsert.slice(removeEnd + shift);
 		}
 
+		const movedContents = selectedSrcs.map(s => s.content);
 		await this.writeMarkdown(updated);
+		this.reselectMultiAfterMove(movedContents);
 	}
 
 	private cleanupDrag(): void {
@@ -2149,6 +2211,33 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Determine the new type for a drag-and-drop operation.
+	 * Unlike indent (which makes children), D&D places nodes as siblings.
+	 * When dropping between heading siblings, non-heading nodes promote to headings.
+	 */
+	private inferDropType(targetParent: OsmosisNode, dropIndex: number): OsmosisNode["type"] {
+		if (targetParent.type === "heading" || targetParent.type === "root") {
+			// Check if neighboring siblings at the drop position are headings
+			const neighbor = targetParent.children[dropIndex] ?? targetParent.children[dropIndex - 1];
+			if (neighbor?.type === "heading") return "heading";
+		}
+		return this.inferChildType(targetParent);
+	}
+
+	/**
+	 * Determine the new depth for a drag-and-drop operation.
+	 * Matches the depth of neighboring siblings at the drop position.
+	 */
+	private inferDropDepth(targetParent: OsmosisNode, dropIndex: number, dropType: OsmosisNode["type"]): number {
+		if (dropType === "heading") {
+			const neighbor = targetParent.children[dropIndex] ?? targetParent.children[dropIndex - 1];
+			if (neighbor?.type === "heading") return neighbor.depth;
+			return Math.min(6, targetParent.depth + 1);
+		}
+		return this.inferChildDepth(targetParent);
+	}
+
+	/**
 	 * Re-indent a subtree's text to match a new type/depth.
 	 * Adjusts the first line and all descendant lines proportionally.
 	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
@@ -2159,6 +2248,9 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
+		// Code blocks are atomic — never re-indent their contents
+		if (originalNode.type === "codeblock") return text;
+
 		// When converting heading → list type, strip internal blank lines
 		// that were added by normalizeHeadingSpacing — they break list nesting.
 		const crossingToList = originalNode.type === "heading" && newType !== "heading";
@@ -2818,15 +2910,24 @@ export class MindMapView extends ItemView {
 		const collapsed = content.replace(/\n{3,}/g, "\n\n");
 		const lines = collapsed.split("\n");
 		const result: string[] = [];
+		let inCodeBlock = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i] ?? "";
 			const isHeading = /^#{1,6}\s/.test(line);
+			// Only add spacing around top-level code fences (not indented ones inside lists)
+			const isFence = /^(`{3,}|~{3,})/.test(line.trim());
+			const isTopLevelFence = isFence && /^(`{3,}|~{3,})/.test(line);
+
+			if (isFence) inCodeBlock = !inCodeBlock;
+
 			const prevLine = result[result.length - 1];
-			if (isHeading && result.length > 0 && prevLine !== undefined && prevLine.trim() !== "") {
+			// Blank line before headings and top-level opening code fences
+			if ((isHeading || (isTopLevelFence && inCodeBlock)) && result.length > 0 && prevLine !== undefined && prevLine.trim() !== "") {
 				result.push("");
 			}
 			result.push(line);
-			if (isHeading) {
+			// Blank line after headings and top-level closing code fences
+			if (isHeading || (isTopLevelFence && !inCodeBlock)) {
 				const nextLine = lines[i + 1];
 				if (nextLine !== undefined && nextLine.trim() !== "") {
 					result.push("");
