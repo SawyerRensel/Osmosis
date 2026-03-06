@@ -141,13 +141,13 @@ export class MindMapView extends ItemView {
 		});
 
 		// Register Ctrl/Cmd combos that Obsidian would otherwise intercept
-		for (const key of ["d", "c", "x", "v", "Enter"]) {
+		for (const key of ["d", "c", "x", "v", "z", "y", "Enter"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
-		for (const key of ["[", "]"]) {
+		for (const key of ["[", "]", "z"]) {
 			this.scope.register(["Mod", "Shift"], key, (e: KeyboardEvent) => {
 				this.handleKeyDown(e);
 				return false;
@@ -1116,13 +1116,15 @@ export class MindMapView extends ItemView {
 		const file = this.getNodeFile(src);
 		if (!file) return;
 
-		// Find this node's index among its parent's children in the AST
 		const parentSrc = node.parent.source;
 		const siblings = parentSrc.children;
-		const idx = siblings.indexOf(src);
-		if (idx < 0) return;
 
-		const swapIdx = idx + direction;
+		// Collect selected sibling indices, sorted by position
+		const selectedIndices = this.getSelectedSiblingIndices(siblings);
+		if (selectedIndices.length === 0) return;
+
+		// Find the swap target (the sibling adjacent to the selected block)
+		const swapIdx = direction < 0 ? selectedIndices[0]! + direction : selectedIndices[selectedIndices.length - 1]! + direction;
 		if (swapIdx < 0 || swapIdx >= siblings.length) return;
 
 		const swapSrc = siblings[swapIdx];
@@ -1130,57 +1132,69 @@ export class MindMapView extends ItemView {
 
 		const content = await this.app.vault.read(file);
 
-		// Get full subtree ranges for both nodes
-		const aStart = src.range.start;
-		const aEnd = this.subtreeEnd(src);
-		const bStart = swapSrc.range.start;
-		const bEnd = this.subtreeEnd(swapSrc);
+		// Collect all selected subtree texts in order
+		const selectedSrcs = selectedIndices.map(i => siblings[i]!);
+		const blockStart = selectedSrcs[0]!.range.start;
+		const blockEnd = this.subtreeEnd(selectedSrcs[selectedSrcs.length - 1]!);
+		const blockText = content.slice(blockStart, blockEnd);
 
-		const aText = content.slice(aStart, aEnd);
-		const bText = content.slice(bStart, bEnd);
+		const swapStart = swapSrc.range.start;
+		const swapEnd = this.subtreeEnd(swapSrc);
+		const swapText = content.slice(swapStart, swapEnd);
 
-		// Swap: replace the earlier range first, then the later range
+		// Swap block with target
 		let updated: string;
-		if (aStart < bStart) {
-			// a is before b — swap their text
-			updated = content.slice(0, aStart) + bText + content.slice(aEnd, bStart) + aText + content.slice(bEnd);
+		if (blockStart < swapStart) {
+			updated = content.slice(0, blockStart) + swapText + content.slice(blockEnd, swapStart) + blockText + content.slice(swapEnd);
 		} else {
-			// b is before a — swap their text
-			updated = content.slice(0, bStart) + aText + content.slice(bEnd, aStart) + bText + content.slice(aEnd);
+			updated = content.slice(0, swapStart) + blockText + content.slice(swapEnd, blockStart) + swapText + content.slice(blockEnd);
 		}
 
-		const movedId = this.selectedNodeId;
+		const movedContents = selectedSrcs.map(s => s.content);
 		await this.writeNodeFile(src, updated);
 
-		// Re-select the moved node (its ID will change after re-parse, find by content match)
-		this.reselectAfterMove(movedId, src.content, direction);
+		// Re-select all moved nodes
+		this.reselectMultiAfterMove(movedContents);
 	}
 
 	/**
-	 * After a move operation, re-select the node that was moved.
-	 * Searches by content and position heuristic since IDs change after re-parse.
+	 * Get sorted indices of selected nodes among a sibling list.
 	 */
-	private reselectAfterMove(oldId: string, content: string, direction: number): void {
-		// Try to find the node by matching content — look at the expected sibling position
-		const oldNode = this.nodeMap.get(oldId);
-		if (oldNode) {
-			this.selectNode(oldId);
-			this.scrollToSelectedNode();
-			return;
-		}
-
-		// ID changed: find by content match
-		for (const [id, layoutNode] of this.nodeMap) {
-			if (layoutNode.source.content === content) {
-				this.selectNode(id);
-				this.scrollToSelectedNode();
-				return;
+	private getSelectedSiblingIndices(siblings: OsmosisNode[]): number[] {
+		const indices: number[] = [];
+		for (let i = 0; i < siblings.length; i++) {
+			const sib = siblings[i];
+			if (sib && this.selectedNodeIds.has(sib.id)) {
+				indices.push(i);
 			}
 		}
+		return indices.sort((a, b) => a - b);
 	}
 
 	/**
-	 * Indent node: reparent under previous sibling (Alt+Right).
+	 * After a move operation, re-select moved nodes by content match.
+	 */
+	private reselectMultiAfterMove(contents: string[]): void {
+		const contentSet = new Set(contents);
+		const matchedIds: string[] = [];
+		for (const [id, layoutNode] of this.nodeMap) {
+			if (contentSet.has(layoutNode.source.content)) {
+				matchedIds.push(id);
+				contentSet.delete(layoutNode.source.content);
+			}
+		}
+		if (matchedIds.length > 0) {
+			this.clearSelectionVisuals();
+			this.selectedNodeIds = new Set(matchedIds);
+			this.selectedNodeId = matchedIds[matchedIds.length - 1] ?? null;
+			this.applySelectionVisuals();
+			this.scrollToSelectedNode();
+		}
+	}
+
+	/**
+	 * Indent node(s): reparent under previous sibling (Alt+Right).
+	 * Supports multi-select: all selected siblings become children of the previous sibling.
 	 */
 	private async indentNode(): Promise<void> {
 		if (!this.currentFile || !this.selectedNodeId) return;
@@ -1188,53 +1202,57 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node?.parent) return;
 
-		const src = node.source;
 		const parentSrc = node.parent.source;
 		const siblings = parentSrc.children;
-		const idx = siblings.indexOf(src);
+		const selectedIndices = this.getSelectedSiblingIndices(siblings);
+		if (selectedIndices.length === 0) return;
 
-		// Need a previous sibling to reparent under
-		if (idx <= 0) return;
+		const firstIdx = selectedIndices[0]!;
+		if (firstIdx <= 0) return;
 
-		const prevSibling = siblings[idx - 1];
+		const prevSibling = siblings[firstIdx - 1];
 		if (!prevSibling) return;
 
-		const file = this.getNodeFile(src);
+		const firstSrc = siblings[firstIdx]!;
+		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const subtreeEndPos = this.subtreeEnd(src);
-		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+
+		// Collect block of selected subtrees
+		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+		const blockStart = firstSrc.range.start;
+		const blockEnd = this.subtreeEnd(lastSrc);
+		const blockText = content.slice(blockStart, blockEnd);
 
 		// Determine new type/depth as child of previous sibling
 		const newType = this.inferChildType(prevSibling);
 		const newDepth = this.inferChildDepth(prevSibling);
 
-		// Re-indent the subtree
-		const reindented = this.reindentSubtree(subtreeText, src, newType, newDepth);
+		// Re-indent the entire block
+		const reindented = this.reindentSubtree(blockText, firstSrc, newType, newDepth);
 
-		// Remove from current position (node is after prevSibling in document)
-		let removeStart = src.range.start;
-		const removeEnd = subtreeEndPos;
+		// Remove block from current position
+		let removeStart = blockStart;
 		if (removeStart > 0 && content[removeStart - 1] === "\n") {
 			removeStart--;
 		}
 
-		// Insert at end of previous sibling's subtree, then remove old position
-		// Since prevSibling is before our node, insertPos is unaffected by removal
+		// Insert at end of previous sibling's subtree
 		const insertPos = this.subtreeEnd(prevSibling);
 		const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
 
-		const withoutNode = content.slice(0, removeStart) + content.slice(removeEnd);
-		const updated = withoutNode.slice(0, insertPos) + prefix + reindented + withoutNode.slice(insertPos);
+		const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
+		const updated = withoutBlock.slice(0, insertPos) + prefix + reindented + withoutBlock.slice(insertPos);
 
-		const movedContent = src.content;
-		await this.writeNodeFile(src, updated);
-		this.reselectAfterMove(this.selectedNodeId, movedContent, 0);
+		const movedContents = selectedIndices.map(i => siblings[i]!.content);
+		await this.writeNodeFile(firstSrc, updated);
+		this.reselectMultiAfterMove(movedContents);
 	}
 
 	/**
-	 * Outdent node: promote to parent's level (Alt+Left).
+	 * Outdent node(s): promote to parent's level (Alt+Left).
+	 * Supports multi-select: all selected siblings promote together.
 	 */
 	private async outdentNode(): Promise<void> {
 		if (!this.currentFile || !this.selectedNodeId) return;
@@ -1242,30 +1260,35 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node?.parent) return;
 
-		const src = node.source;
 		const parentNode = node.parent;
-		if (parentNode.source.type === "root") return; // Can't outdent past root
+		if (parentNode.source.type === "root") return;
 
-		// The node should become a sibling of its parent (after the parent's subtree)
 		const grandparent = parentNode.parent;
 		if (!grandparent) return;
 
-		const file = this.getNodeFile(src);
+		const siblings = parentNode.source.children;
+		const selectedIndices = this.getSelectedSiblingIndices(siblings);
+		if (selectedIndices.length === 0) return;
+
+		const firstSrc = siblings[selectedIndices[0]!]!;
+		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+
+		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const subtreeEndPos = this.subtreeEnd(src);
-		const subtreeText = content.slice(src.range.start, subtreeEndPos);
+		const blockStart = firstSrc.range.start;
+		const blockEnd = this.subtreeEnd(lastSrc);
+		const blockText = content.slice(blockStart, blockEnd);
 
-		// New type/depth matches the parent (since we're becoming a sibling of parent)
+		// New type/depth matches the parent (becoming a sibling of parent)
 		const newType = parentNode.source.type;
 		const newDepth = parentNode.source.depth;
 
-		const reindented = this.reindentSubtree(subtreeText, src, newType, newDepth);
+		const reindented = this.reindentSubtree(blockText, firstSrc, newType, newDepth);
 
-		// Remove from current position
-		let removeStart = src.range.start;
-		const removeEnd = subtreeEndPos;
+		// Remove block from current position
+		let removeStart = blockStart;
 		if (removeStart > 0 && content[removeStart - 1] === "\n") {
 			removeStart--;
 		}
@@ -1273,18 +1296,16 @@ export class MindMapView extends ItemView {
 		// Insert after parent's subtree
 		const parentEnd = this.subtreeEnd(parentNode.source);
 
-		// Since removeStart is inside parent's subtree (before parentEnd),
-		// we need to handle the offset shift
-		const withoutNode = content.slice(0, removeStart) + content.slice(removeEnd);
-		const removedLength = removeEnd - removeStart;
+		const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
+		const removedLength = blockEnd - removeStart;
 		const adjustedParentEnd = parentEnd - removedLength;
 
-		const prefix = adjustedParentEnd > 0 && withoutNode[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
-		const updated = withoutNode.slice(0, adjustedParentEnd) + prefix + reindented + withoutNode.slice(adjustedParentEnd);
+		const prefix = adjustedParentEnd > 0 && withoutBlock[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
+		const updated = withoutBlock.slice(0, adjustedParentEnd) + prefix + reindented + withoutBlock.slice(adjustedParentEnd);
 
-		const movedContent = src.content;
-		await this.writeNodeFile(src, updated);
-		this.reselectAfterMove(this.selectedNodeId, movedContent, 0);
+		const movedContents = selectedIndices.map(i => siblings[i]!.content);
+		await this.writeNodeFile(firstSrc, updated);
+		this.reselectMultiAfterMove(movedContents);
 	}
 
 	/**
@@ -1393,38 +1414,56 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Insert a new parent node above the selected node.
-	 * The selected node (and its subtree) become children of the new node.
+	 * Insert a new parent node above the selected node(s).
+	 * The selected node(s) (and their subtrees) become children of the new node.
+	 * Supports multi-select: all selected siblings get parented under the new node.
 	 */
 	private async insertParentNode(node: LayoutNode): Promise<void> {
 		if (!this.currentFile) return;
+
 		const src = node.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const subtreeEndPos = this.subtreeEnd(src);
-		const subtreeText = content.slice(src.range.start, subtreeEndPos);
 
-		// Create the new parent line at the same type/depth as the selected node
+		// Collect selected siblings sorted by position
+		let blockStart: number;
+		let blockEnd: number;
+		let blockText: string;
+
+		if (this.selectedNodeIds.size > 1 && node.parent) {
+			const siblings = node.parent.source.children;
+			const selectedIndices = this.getSelectedSiblingIndices(siblings);
+			if (selectedIndices.length === 0) return;
+
+			const firstSrc = siblings[selectedIndices[0]!]!;
+			const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			blockStart = firstSrc.range.start;
+			blockEnd = this.subtreeEnd(lastSrc);
+		} else {
+			blockStart = src.range.start;
+			blockEnd = this.subtreeEnd(src);
+		}
+		blockText = content.slice(blockStart, blockEnd);
+
+		// Create the new parent line at the same type/depth as the first selected node
 		const newParentLine = this.serializeLine(src.type, src.depth, "");
 
-		// Indent the selected node's subtree by 1 level
+		// Indent all selected subtrees by 1 level
 		let indentedSubtree: string;
 		if (src.type === "heading") {
-			// For headings, increase heading level by 1 (## → ###)
-			indentedSubtree = this.indentSubtreeHeadings(subtreeText);
+			indentedSubtree = this.indentSubtreeHeadings(blockText);
 		} else {
-			// For list items, add one tab of indentation to each line
-			indentedSubtree = subtreeText.split("\n").map(line =>
+			indentedSubtree = blockText.split("\n").map(line =>
 				line.trim() === "" ? line : "\t" + line
 			).join("\n");
 		}
 
 		// Replace: [newParentLine]\n[indentedSubtree]
-		const updated = content.slice(0, src.range.start)
+		const updated = content.slice(0, blockStart)
 			+ newParentLine + "\n" + indentedSubtree
-			+ content.slice(subtreeEndPos);
+			+ content.slice(blockEnd);
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -1447,7 +1486,7 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Duplicate the selected node (and its entire subtree) as a sibling below.
+	 * Duplicate the selected node(s) (and their subtrees) as siblings below.
 	 */
 	private async duplicateNode(node: LayoutNode): Promise<void> {
 		if (!this.currentFile) return;
@@ -1456,10 +1495,21 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const subtreeEndPos = this.subtreeEnd(src);
-		const subtreeText = content.slice(src.range.start, subtreeEndPos);
 
-		const updated = content.slice(0, subtreeEndPos) + "\n" + subtreeText + content.slice(subtreeEndPos);
+		// Collect all selected nodes sorted by document position
+		const selected = [...this.selectedNodeIds]
+			.map(id => this.nodeMap.get(id))
+			.filter((n): n is LayoutNode => n !== undefined)
+			.sort((a, b) => a.source.range.start - b.source.range.start);
+
+		if (selected.length === 0) return;
+
+		// Find the block range covering all selected subtrees
+		const blockStart = selected[0]!.source.range.start;
+		const blockEnd = this.subtreeEnd(selected[selected.length - 1]!.source);
+		const blockText = content.slice(blockStart, blockEnd);
+
+		const updated = content.slice(0, blockEnd) + "\n" + blockText + content.slice(blockEnd);
 		await this.writeNodeFile(src, updated);
 	}
 
@@ -1987,15 +2037,12 @@ export class MindMapView extends ItemView {
 						if (parentEnterNode) {
 							void this.insertParentNode(parentEnterNode);
 						}
-					} else if (e.shiftKey) {
-						// Shift+Enter = add sibling after selected node
+					} else {
+						// Enter = add sibling after selected node
 						const enterNode = this.nodeMap.get(this.selectedNodeId);
 						if (enterNode) {
 							void this.addSiblingNode(enterNode);
 						}
-					} else {
-						// Enter = start editing
-						this.startEditing(this.selectedNodeId);
 					}
 					e.preventDefault();
 				}
@@ -2070,6 +2117,7 @@ export class MindMapView extends ItemView {
 				}
 				break;
 			case "[":
+			case "{": // Shift+[ produces "{" as e.key
 				// Ctrl+Shift+[ = fold (collapse) selected node
 				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
 					if (!this.collapsedIds.has(this.selectedNodeId)) {
@@ -2082,6 +2130,7 @@ export class MindMapView extends ItemView {
 				}
 				break;
 			case "]":
+			case "}": // Shift+] produces "}" as e.key
 				// Ctrl+Shift+] = unfold (expand) selected node
 				if ((e.ctrlKey || e.metaKey) && e.shiftKey && this.selectedNodeId) {
 					if (this.collapsedIds.has(this.selectedNodeId)) {
@@ -2090,12 +2139,25 @@ export class MindMapView extends ItemView {
 					e.preventDefault();
 				}
 				break;
+			case "z":
+				// Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z = redo
+				if (e.ctrlKey || e.metaKey) {
+					e.preventDefault();
+					this.forwardUndoRedo(e.shiftKey);
+				}
+				break;
+			case "y":
+				// Ctrl/Cmd+Y = redo (Windows convention)
+				if (e.ctrlKey || e.metaKey) {
+					e.preventDefault();
+					this.forwardUndoRedo(true);
+				}
+				break;
 		}
 	}
 
 	private navigateSibling(direction: number): void {
 		if (!this.selectedNodeId) {
-			// Select first visible node
 			this.selectFirstNode();
 			return;
 		}
@@ -2110,7 +2172,40 @@ export class MindMapView extends ItemView {
 		if (newIdx >= 0 && newIdx < siblings.length && target) {
 			this.selectNode(target.source.id);
 			this.scrollToSelectedNode();
+		} else {
+			// Jump to cousin at same depth
+			const cousin = this.findCousin(node, direction);
+			if (cousin) {
+				this.selectNode(cousin.source.id);
+				this.scrollToSelectedNode();
+			}
 		}
+	}
+
+	/**
+	 * Find the adjacent cousin node at the same depth level.
+	 * When at end of siblings, traverses up to parent's sibling, then down to its child.
+	 */
+	private findCousin(node: LayoutNode, direction: number): LayoutNode | null {
+		const parent = node.parent;
+		if (!parent?.parent) return null;
+
+		const parentSiblings = parent.parent.children;
+		const parentIdx = parentSiblings.indexOf(parent);
+		const nextParentIdx = parentIdx + direction;
+		const nextParent = parentSiblings[nextParentIdx];
+
+		if (nextParentIdx < 0 || nextParentIdx >= parentSiblings.length || !nextParent) {
+			// Recursively look for cousins further up
+			const parentCousin = this.findCousin(parent, direction);
+			if (parentCousin && parentCousin.children.length > 0) {
+				return direction > 0 ? parentCousin.children[0]! : parentCousin.children[parentCousin.children.length - 1]!;
+			}
+			return null;
+		}
+
+		if (nextParent.children.length === 0) return null;
+		return direction > 0 ? nextParent.children[0]! : nextParent.children[nextParent.children.length - 1]!;
 	}
 
 	private navigateToParent(): void {
@@ -2186,6 +2281,12 @@ export class MindMapView extends ItemView {
 		const target = siblings[newIdx];
 		if (newIdx >= 0 && newIdx < siblings.length && target) {
 			this.extendSelectionTo(target.source.id);
+		} else {
+			// Jump to cousin at same depth
+			const cousin = this.findCousin(node, direction);
+			if (cousin) {
+				this.extendSelectionTo(cousin.source.id);
+			}
 		}
 	}
 
@@ -2463,6 +2564,33 @@ export class MindMapView extends ItemView {
 	// ─── Map → Markdown Sync ────────────────────────────────
 
 	/**
+	 * Ensure exactly one blank line before and after each heading line.
+	 * Follows Obsidian/CommonMark best practices for heading spacing.
+	 */
+	private normalizeHeadingSpacing(content: string): string {
+		const lines = content.split("\n");
+		const result: string[] = [];
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i] ?? "";
+			const isHeading = /^#{1,6}\s/.test(line);
+			const prevLine = result[result.length - 1];
+			if (isHeading && result.length > 0 && prevLine !== undefined && prevLine.trim() !== "") {
+				// Insert blank line before heading (unless already blank or start of file)
+				result.push("");
+			}
+			result.push(line);
+			if (isHeading) {
+				// Insert blank line after heading (unless next line is already blank or end of file)
+				const nextLine = lines[i + 1];
+				if (nextLine !== undefined && nextLine.trim() !== "") {
+					result.push("");
+				}
+			}
+		}
+		return result.join("\n");
+	}
+
+	/**
 	 * Serialize a node type/depth/content back to a markdown line.
 	 */
 	private serializeLine(type: OsmosisNode["type"], depth: number, content: string): string {
@@ -2494,10 +2622,35 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Forward undo/redo to the markdown editor for the current file.
+	 */
+	private forwardUndoRedo(isRedo: boolean): void {
+		if (!this.currentFile) return;
+		// Find an editor that has the same file open
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file === this.currentFile) {
+				if (isRedo) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+					(view.editor as any).redo();
+				} else {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+					(view.editor as any).undo();
+				}
+				return;
+			}
+		}
+		// Fallback: execute Obsidian's built-in commands
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+		(this.app as any).commands?.executeCommandById?.(isRedo ? "editor:redo" : "editor:undo");
+	}
+
+	/**
 	 * Write markdown content back to the file, suppressing the reload cycle.
 	 */
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
+		newContent = this.normalizeHeadingSpacing(newContent);
 		this.suppressNextReload = true;
 		this.cache.invalidate(this.currentFile.path);
 		await this.app.vault.modify(this.currentFile, newContent);
@@ -2516,6 +2669,7 @@ export class MindMapView extends ItemView {
 		const sourceFile = this.app.vault.getFileByPath(sourceFilePath);
 		if (!(sourceFile instanceof TFile)) return;
 
+		newContent = this.normalizeHeadingSpacing(newContent);
 		this.suppressNextReload = true;
 		this.cache.invalidate(sourceFilePath);
 		await this.app.vault.modify(sourceFile, newContent);
