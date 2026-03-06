@@ -25,6 +25,7 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.002;
+const SCROLL_SENSITIVITY = 1;
 const LAYOUT_PADDING = 50;
 
 // Animation constants
@@ -789,16 +790,26 @@ export class MindMapView extends ItemView {
 	private handleWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 
-		const svgPoint = this.screenToSvg(e.clientX, e.clientY);
-		const delta = e.deltaY * ZOOM_SENSITIVITY;
-		const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * (1 - delta)));
+		if (e.ctrlKey || e.metaKey) {
+			// Ctrl+Scroll: zoom in/out
+			const svgPoint = this.screenToSvg(e.clientX, e.clientY);
+			const delta = e.deltaY * ZOOM_SENSITIVITY;
+			const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * (1 - delta)));
 
-		const scale = this.zoom / newZoom;
-		this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
-		this.viewBox.y = svgPoint.y - (svgPoint.y - this.viewBox.y) * scale;
-		this.viewBox.w *= scale;
-		this.viewBox.h *= scale;
-		this.zoom = newZoom;
+			const scale = this.zoom / newZoom;
+			this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
+			this.viewBox.y = svgPoint.y - (svgPoint.y - this.viewBox.y) * scale;
+			this.viewBox.w *= scale;
+			this.viewBox.h *= scale;
+			this.zoom = newZoom;
+		} else {
+			// Scroll/trackpad: pan in both axes (supports diagonal gestures)
+			// Shift+scroll with a mouse wheel: treat deltaY as horizontal
+			const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
+			const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY;
+			this.viewBox.x += (dx * SCROLL_SENSITIVITY) / this.zoom;
+			this.viewBox.y += (dy * SCROLL_SENSITIVITY) / this.zoom;
+		}
 
 		this.updateViewBox();
 	};
