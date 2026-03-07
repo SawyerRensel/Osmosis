@@ -11,12 +11,20 @@ import {
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
 import { OsmosisNode, OsmosisTree } from "../types";
-import { computeLayout, LayoutNode, LayoutResult, DEFAULT_LAYOUT_CONFIG } from "../layout";
+import {
+	computeLayout,
+	LayoutNode,
+	LayoutResult,
+	DEFAULT_LAYOUT_CONFIG,
+} from "../layout";
 import type OsmosisPlugin from "../main";
 import type { BranchLineStyle } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { ToolRibbon } from "./ToolRibbon";
-import { EmbeddableMarkdownEditor, autoResizeExtension } from "../editor/EmbeddableMarkdownEditor";
+import {
+	EmbeddableMarkdownEditor,
+	autoResizeExtension,
+} from "../editor/EmbeddableMarkdownEditor";
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { EditorSelection } from "@codemirror/state";
 
@@ -108,7 +116,10 @@ export class MindMapView extends ItemView {
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
-	private nodeSizeCache = new Map<string, { width: number; height: number }>();
+	private nodeSizeCache = new Map<
+		string,
+		{ width: number; height: number }
+	>();
 	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
 	// nodes whose content hasn't changed (keyed by display content string)
 	private nodeHtmlCache = new Map<string, HTMLElement>();
@@ -138,8 +149,15 @@ export class MindMapView extends ItemView {
 		super(leaf);
 		this.navigation = true;
 		this.icon = "git-fork";
-		this.plugin = (this.app as unknown as { plugins: { plugins: Record<string, OsmosisPlugin> } }).plugins.plugins["osmosis"] as OsmosisPlugin;
-		this.transclusionResolver = new TransclusionResolver(this.app, this.cache);
+		this.plugin = (
+			this.app as unknown as {
+				plugins: { plugins: Record<string, OsmosisPlugin> };
+			}
+		).plugins.plugins["osmosis"] as OsmosisPlugin;
+		this.transclusionResolver = new TransclusionResolver(
+			this.app,
+			this.cache,
+		);
 
 		// Register a scope so Obsidian routes key events to this view when focused,
 		// preventing global hotkeys (like F2 = "rename file") from intercepting them.
@@ -179,7 +197,9 @@ export class MindMapView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return this.currentFile ? `Mind Map: ${this.currentFile.basename}` : "Mind Map";
+		return this.currentFile
+			? `Mind Map: ${this.currentFile.basename}`
+			: "Mind Map";
 	}
 
 	async onOpen(): Promise<void> {
@@ -195,21 +215,44 @@ export class MindMapView extends ItemView {
 		this.registerDomEvent(container, "pointerdown", this.handlePointerDown);
 		this.registerDomEvent(container, "pointermove", this.handlePointerMove);
 		this.registerDomEvent(container, "pointerup", this.handlePointerUp);
-		this.registerDomEvent(container, "pointercancel", this.handlePointerCancel);
-		this.registerDomEvent(container, "pointerleave", this.handlePointerLeave);
-		this.registerDomEvent(container, "wheel", this.handleWheel, { passive: false });
+		this.registerDomEvent(
+			container,
+			"pointercancel",
+			this.handlePointerCancel,
+		);
+		this.registerDomEvent(
+			container,
+			"pointerleave",
+			this.handlePointerLeave,
+		);
+		this.registerDomEvent(container, "wheel", this.handleWheel, {
+			passive: false,
+		});
 		this.registerDomEvent(container, "click", this.handleClick);
 		this.registerDomEvent(container, "dblclick", this.handleDblClick);
 
 		// Block touch events from reaching Obsidian's gesture handlers (drawer swipes,
 		// command palette pull-down). Pointer events and touch events are separate
 		// streams — stopPropagation on pointer events does not affect touch events.
-		this.registerDomEvent(container, "touchstart", this.handleTouchCapture, { passive: false } as AddEventListenerOptions);
-		this.registerDomEvent(container, "touchmove", this.handleTouchCapture, { passive: false } as AddEventListenerOptions);
-		this.registerDomEvent(container, "touchend", this.handleTouchCapture as EventListener);
+		this.registerDomEvent(
+			container,
+			"touchstart",
+			this.handleTouchCapture,
+			{ passive: false } as AddEventListenerOptions,
+		);
+		this.registerDomEvent(container, "touchmove", this.handleTouchCapture, {
+			passive: false,
+		} as AddEventListenerOptions);
+		this.registerDomEvent(
+			container,
+			"touchend",
+			this.handleTouchCapture as EventListener,
+		);
 
 		// Respond to container resize (e.g. mobile keyboard opening) by updating viewBox
-		this.resizeObserver = new ResizeObserver(() => this.handleContainerResize());
+		this.resizeObserver = new ResizeObserver(() =>
+			this.handleContainerResize(),
+		);
 		this.resizeObserver.observe(container);
 
 		// Create the tool ribbon (action bar)
@@ -221,15 +264,21 @@ export class MindMapView extends ItemView {
 			foldAll: () => this.foldAll(),
 			unfoldAll: () => this.unfoldAll(),
 			addSibling: () => {
-				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				const node = this.selectedNodeId
+					? this.nodeMap.get(this.selectedNodeId)
+					: null;
 				if (node) void this.addSiblingNode(node);
 			},
 			addChild: () => {
-				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				const node = this.selectedNodeId
+					? this.nodeMap.get(this.selectedNodeId)
+					: null;
 				if (node) void this.addChildNode(node);
 			},
 			insertParent: () => {
-				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				const node = this.selectedNodeId
+					? this.nodeMap.get(this.selectedNodeId)
+					: null;
 				if (node) void this.insertParentNode(node);
 			},
 			moveUp: () => void this.moveNodeUpDown(-1),
@@ -339,13 +388,19 @@ export class MindMapView extends ItemView {
 
 		// Lazy loading: auto-collapse transclusion nodes so they're deferred
 		this.lazyTransclusionIds.clear();
-		this.collectTransclusionIds(this.currentTree.root, this.lazyTransclusionIds);
+		this.collectTransclusionIds(
+			this.currentTree.root,
+			this.lazyTransclusionIds,
+		);
 		for (const id of this.lazyTransclusionIds) {
 			this.collapsedIds.add(id);
 		}
 
 		// Resolve and expand transclusion links (skip lazy/collapsed ones)
-		await this.transclusionResolver.expandTree(this.currentTree, this.lazyTransclusionIds);
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 
 		await this.render();
 	}
@@ -393,7 +448,10 @@ export class MindMapView extends ItemView {
 
 	/** Step zoom by a multiplier, centered on the viewport center. */
 	private zoomStep(factor: number): void {
-		const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * factor));
+		const newZoom = Math.max(
+			MIN_ZOOM,
+			Math.min(MAX_ZOOM, this.zoom * factor),
+		);
 		const scale = this.zoom / newZoom;
 		const cx = this.viewBox.x + this.viewBox.w / 2;
 		const cy = this.viewBox.y + this.viewBox.h / 2;
@@ -423,7 +481,11 @@ export class MindMapView extends ItemView {
 	}
 
 	/** Check if a node (in SVG coords with offset applied) intersects the expanded viewport */
-	private isNodeInViewport(node: LayoutNode, offsetX: number, offsetY: number): boolean {
+	private isNodeInViewport(
+		node: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): boolean {
 		const nx = node.rect.x + offsetX;
 		const ny = node.rect.y + offsetY;
 		const nw = node.rect.width;
@@ -438,7 +500,12 @@ export class MindMapView extends ItemView {
 	}
 
 	/** Check if a branch line (between parent and child) intersects the expanded viewport */
-	private isBranchInViewport(parent: LayoutNode, child: LayoutNode, offsetX: number, offsetY: number): boolean {
+	private isBranchInViewport(
+		parent: LayoutNode,
+		child: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): boolean {
 		// Use bounding box of the two connection points
 		const cx = child.rect.x + offsetX;
 		const cy = child.rect.y + child.rect.height / 2 + offsetY;
@@ -475,7 +542,13 @@ export class MindMapView extends ItemView {
 
 	/** Add/remove DOM nodes based on current viewport */
 	private async updateVisibleNodes(): Promise<void> {
-		if (!this.svg || !this.currentLayout || !this.nodesGroup || !this.branchLinesGroup) return;
+		if (
+			!this.svg ||
+			!this.currentLayout ||
+			!this.nodesGroup ||
+			!this.branchLinesGroup
+		)
+			return;
 
 		const { nodes } = this.currentLayout;
 		const offsetX = this.getOffsetX();
@@ -485,7 +558,10 @@ export class MindMapView extends ItemView {
 		const nowVisible = new Set<string>();
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
-			if (this.isNodeInViewport(node, offsetX, offsetY) || node.source.id === this.editingNodeId) {
+			if (
+				this.isNodeInViewport(node, offsetX, offsetY) ||
+				node.source.id === this.editingNodeId
+			) {
 				nowVisible.add(node.source.id);
 			}
 		}
@@ -494,10 +570,14 @@ export class MindMapView extends ItemView {
 		for (const id of this.renderedNodeIds) {
 			if (!nowVisible.has(id) && id !== this.editingNodeId) {
 				// Remove node group
-				const el = this.nodesGroup.querySelector(`.osmosis-node-group[data-node-id="${id}"]`);
+				const el = this.nodesGroup.querySelector(
+					`.osmosis-node-group[data-node-id="${id}"]`,
+				);
 				el?.remove();
 				// Remove branch line
-				const line = this.branchLinesGroup.querySelector(`.osmosis-branch-line[data-child-id="${id}"]`);
+				const line = this.branchLinesGroup.querySelector(
+					`.osmosis-branch-line[data-child-id="${id}"]`,
+				);
 				line?.remove();
 			}
 		}
@@ -508,10 +588,19 @@ export class MindMapView extends ItemView {
 			if (node.source.type === "root") continue;
 			const id = node.source.id;
 			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
-				renderPromises.push(this.drawNode(this.nodesGroup, node, offsetX, offsetY));
+				renderPromises.push(
+					this.drawNode(this.nodesGroup, node, offsetX, offsetY),
+				);
 				// Draw branch line whenever the child node is visible
 				if (node.parent) {
-					this.drawBranchLine(this.branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
+					this.drawBranchLine(
+						this.branchLinesGroup,
+						node.parent,
+						node,
+						offsetX,
+						offsetY,
+						lineStyle,
+					);
 				}
 			}
 		}
@@ -520,7 +609,10 @@ export class MindMapView extends ItemView {
 		this.renderedNodeIds = nowVisible;
 	}
 
-	private screenToSvg(clientX: number, clientY: number): { x: number; y: number } {
+	private screenToSvg(
+		clientX: number,
+		clientY: number,
+	): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
 		const ctm = this.svg.getScreenCTM();
 		if (!ctm) return { x: 0, y: 0 };
@@ -601,7 +693,12 @@ export class MindMapView extends ItemView {
 		}
 
 		// Shift+left-click on background: rubber-band (mouse only)
-		if (e.button === 0 && !nodeId && e.shiftKey && e.pointerType !== "touch") {
+		if (
+			e.button === 0 &&
+			!nodeId &&
+			e.shiftKey &&
+			e.pointerType !== "touch"
+		) {
 			const svgPt = this.screenToSvg(e.clientX, e.clientY);
 			this.isRubberBanding = true;
 			this.rubberBandStart = svgPt;
@@ -621,7 +718,10 @@ export class MindMapView extends ItemView {
 
 	private handlePointerMove = (e: PointerEvent): void => {
 		if (this.activePointers.has(e.pointerId)) {
-			this.activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+			this.activePointers.set(e.pointerId, {
+				x: e.clientX,
+				y: e.clientY,
+			});
 		}
 
 		// Pinch zoom (2+ pointers)
@@ -694,7 +794,10 @@ export class MindMapView extends ItemView {
 		if (this.pinchStartDistance !== null) {
 			this.pinchStartDistance = null;
 			if (this.activePointers.size === 1) {
-				const remaining = this.activePointers.values().next().value as { x: number; y: number };
+				const remaining = this.activePointers.values().next().value as {
+					x: number;
+					y: number;
+				};
 				this.isPanning = true;
 				this.panStart = { x: remaining.x, y: remaining.y };
 			}
@@ -722,7 +825,11 @@ export class MindMapView extends ItemView {
 
 		// Touch: synthesize tap
 		if (e.pointerType === "touch") {
-			if (wasDragCandidate && !this.longPressTriggered && dragCandidateId) {
+			if (
+				wasDragCandidate &&
+				!this.longPressTriggered &&
+				dragCandidateId
+			) {
 				this.handleTouchTap(e, dragCandidateId);
 			} else if (!wasDragCandidate) {
 				const nodeId = this.getClickedNodeId(e);
@@ -822,7 +929,10 @@ export class MindMapView extends ItemView {
 		);
 
 		const ratio = currentDistance / this.pinchStartDistance;
-		const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.pinchStartZoom * ratio));
+		const newZoom = Math.max(
+			MIN_ZOOM,
+			Math.min(MAX_ZOOM, this.pinchStartZoom * ratio),
+		);
 
 		// Zoom around the pinch center (same math as handleWheel)
 		const newCenter = {
@@ -838,7 +948,10 @@ export class MindMapView extends ItemView {
 		this.zoom = newZoom;
 
 		// Pan if pinch center moved
-		const svgOldCenter = this.screenToSvg(this.pinchCenter.x, this.pinchCenter.y);
+		const svgOldCenter = this.screenToSvg(
+			this.pinchCenter.x,
+			this.pinchCenter.y,
+		);
 		const svgNewCenter = this.screenToSvg(newCenter.x, newCenter.y);
 		this.viewBox.x -= svgNewCenter.x - svgOldCenter.x;
 		this.viewBox.y -= svgNewCenter.y - svgOldCenter.y;
@@ -915,7 +1028,10 @@ export class MindMapView extends ItemView {
 			// Ctrl+Scroll: zoom in/out
 			const svgPoint = this.screenToSvg(e.clientX, e.clientY);
 			const delta = e.deltaY * ZOOM_SENSITIVITY;
-			const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * (1 - delta)));
+			const newZoom = Math.max(
+				MIN_ZOOM,
+				Math.min(MAX_ZOOM, this.zoom * (1 - delta)),
+			);
 
 			const scale = this.zoom / newZoom;
 			this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
@@ -1006,7 +1122,8 @@ export class MindMapView extends ItemView {
 	private async expandLazyTransclusion(nodeId: string): Promise<void> {
 		if (!this.currentTree || !this.currentFile) return;
 
-		const { parent, node } = this.findNodeWithParent(this.currentTree.root, nodeId) ?? {};
+		const { parent, node } =
+			this.findNodeWithParent(this.currentTree.root, nodeId) ?? {};
 		if (!parent || !node || node.type !== "transclusion") return;
 
 		await this.transclusionResolver.expandSingleNode(
@@ -1052,7 +1169,10 @@ export class MindMapView extends ItemView {
 		if (this.currentLayout) {
 			for (const node of this.currentLayout.nodes) {
 				if (node.source.type === "root") continue;
-				oldPositions.set(node.source.id, { x: node.rect.x, y: node.rect.y });
+				oldPositions.set(node.source.id, {
+					x: node.rect.x,
+					y: node.rect.y,
+				});
 			}
 		}
 
@@ -1171,7 +1291,9 @@ export class MindMapView extends ItemView {
 		const rx = parseFloat(this.rubberBandRect.getAttribute("x") ?? "0");
 		const ry = parseFloat(this.rubberBandRect.getAttribute("y") ?? "0");
 		const rw = parseFloat(this.rubberBandRect.getAttribute("width") ?? "0");
-		const rh = parseFloat(this.rubberBandRect.getAttribute("height") ?? "0");
+		const rh = parseFloat(
+			this.rubberBandRect.getAttribute("height") ?? "0",
+		);
 
 		this.rubberBandRect.remove();
 		this.rubberBandRect = null;
@@ -1228,7 +1350,10 @@ export class MindMapView extends ItemView {
 
 			if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
 				deleteStart--;
-			} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
+			} else if (
+				deleteEnd < content.length &&
+				content[deleteEnd] === "\n"
+			) {
 				deleteEnd++;
 			}
 
@@ -1263,7 +1388,10 @@ export class MindMapView extends ItemView {
 		if (selectedIndices.length === 0) return;
 
 		// Find the swap target (the sibling adjacent to the selected block)
-		const swapIdx = direction < 0 ? selectedIndices[0]! + direction : selectedIndices[selectedIndices.length - 1]! + direction;
+		const swapIdx =
+			direction < 0
+				? selectedIndices[0]! + direction
+				: selectedIndices[selectedIndices.length - 1]! + direction;
 		if (swapIdx < 0 || swapIdx >= siblings.length) return;
 
 		const swapSrc = siblings[swapIdx];
@@ -1272,9 +1400,11 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 
 		// Collect all selected subtree texts in order
-		const selectedSrcs = selectedIndices.map(i => siblings[i]!);
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
 		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(selectedSrcs[selectedSrcs.length - 1]!);
+		const blockEnd = this.subtreeEnd(
+			selectedSrcs[selectedSrcs.length - 1]!,
+		);
 		const blockText = content.slice(blockStart, blockEnd);
 
 		const swapStart = swapSrc.range.start;
@@ -1301,7 +1431,10 @@ export class MindMapView extends ItemView {
 		while (tailPos < content.length && content[tailPos] === "\n") {
 			tailPos++;
 		}
-		const tail = tailPos < content.length ? "\n" + content.slice(tailPos) : content.slice(rangeEnd);
+		const tail =
+			tailPos < content.length
+				? "\n" + content.slice(tailPos)
+				: content.slice(rangeEnd);
 
 		let updated: string;
 		if (blockStart < swapStart) {
@@ -1310,7 +1443,7 @@ export class MindMapView extends ItemView {
 			updated = head + blockText + "\n" + swapText + tail;
 		}
 
-		const movedContents = selectedSrcs.map(s => s.content);
+		const movedContents = selectedSrcs.map((s) => s.content);
 		await this.writeNodeFile(src, updated);
 
 		// Re-select all moved nodes
@@ -1388,10 +1521,15 @@ export class MindMapView extends ItemView {
 		const reindentedParts: string[] = [];
 		for (const idx of selectedIndices) {
 			const nodeSrc = siblings[idx]!;
-			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			const nodeText = content.slice(
+				nodeSrc.range.start,
+				this.subtreeEnd(nodeSrc),
+			);
 			const newType = this.inferIndentType(prevSibling, nodeSrc);
 			const newDepth = this.inferIndentDepth(prevSibling, nodeSrc);
-			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+			reindentedParts.push(
+				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+			);
 		}
 		const reindented = reindentedParts.join("\n");
 
@@ -1403,12 +1541,18 @@ export class MindMapView extends ItemView {
 
 		// Insert at end of previous sibling's subtree
 		const insertPos = this.subtreeEnd(prevSibling);
-		const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
+		const prefix =
+			insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
 
-		const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
-		const updated = withoutBlock.slice(0, insertPos) + prefix + reindented + withoutBlock.slice(insertPos);
+		const withoutBlock =
+			content.slice(0, removeStart) + content.slice(blockEnd);
+		const updated =
+			withoutBlock.slice(0, insertPos) +
+			prefix +
+			reindented +
+			withoutBlock.slice(insertPos);
 
-		const movedContents = selectedIndices.map(i => siblings[i]!.content);
+		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
 		await this.writeNodeFile(firstSrc, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
@@ -1447,12 +1591,20 @@ export class MindMapView extends ItemView {
 		const reindentedParts: string[] = [];
 		for (const idx of selectedIndices) {
 			const nodeSrc = siblings[idx]!;
-			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			const nodeText = content.slice(
+				nodeSrc.range.start,
+				this.subtreeEnd(nodeSrc),
+			);
 			// Becoming a sibling of parent — match parent's type/depth
-			const newType = (nodeSrc.type === "heading" && parentNode.source.type === "heading")
-				? "heading" : parentNode.source.type;
+			const newType =
+				nodeSrc.type === "heading" &&
+				parentNode.source.type === "heading"
+					? "heading"
+					: parentNode.source.type;
 			const newDepth = parentNode.source.depth;
-			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+			reindentedParts.push(
+				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+			);
 		}
 		const reindented = reindentedParts.join("\n");
 
@@ -1465,14 +1617,23 @@ export class MindMapView extends ItemView {
 		// Insert after parent's subtree
 		const parentEnd = this.subtreeEnd(parentNode.source);
 
-		const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
+		const withoutBlock =
+			content.slice(0, removeStart) + content.slice(blockEnd);
 		const removedLength = blockEnd - removeStart;
 		const adjustedParentEnd = parentEnd - removedLength;
 
-		const prefix = adjustedParentEnd > 0 && withoutBlock[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
-		const updated = withoutBlock.slice(0, adjustedParentEnd) + prefix + reindented + withoutBlock.slice(adjustedParentEnd);
+		const prefix =
+			adjustedParentEnd > 0 &&
+			withoutBlock[adjustedParentEnd - 1] !== "\n"
+				? "\n"
+				: "";
+		const updated =
+			withoutBlock.slice(0, adjustedParentEnd) +
+			prefix +
+			reindented +
+			withoutBlock.slice(adjustedParentEnd);
 
-		const movedContents = selectedIndices.map(i => siblings[i]!.content);
+		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
 		await this.writeNodeFile(firstSrc, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
@@ -1494,7 +1655,7 @@ export class MindMapView extends ItemView {
 
 		// Collect subtree texts for all selected nodes, sorted by document position
 		const selected = [...this.selectedNodeIds]
-			.map(id => this.nodeMap.get(id))
+			.map((id) => this.nodeMap.get(id))
 			.filter((n): n is LayoutNode => n !== undefined)
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
@@ -1528,7 +1689,8 @@ export class MindMapView extends ItemView {
 	 * Paste clipboard content as sibling(s) below the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText) return;
+		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
+			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
@@ -1545,41 +1707,63 @@ export class MindMapView extends ItemView {
 		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
 			const depthDelta = src.depth - this.clipboardNodeDepth;
 			if (depthDelta !== 0 || this.clipboardNodeType !== src.type) {
-				pasteText = this.adjustPasteDepth(pasteText, this.clipboardNodeType, depthDelta);
+				pasteText = this.adjustPasteDepth(
+					pasteText,
+					this.clipboardNodeType,
+					depthDelta,
+				);
 			}
 		}
 
-		const updated = content.slice(0, insertPos) + "\n" + pasteText + content.slice(insertPos);
+		const updated =
+			content.slice(0, insertPos) +
+			"\n" +
+			pasteText +
+			content.slice(insertPos);
 		await this.writeNodeFile(src, updated);
 	}
 
 	/**
 	 * Adjust the depth of pasted text line-by-line, preserving content.
 	 */
-	private adjustPasteDepth(text: string, sourceType: OsmosisNode["type"], depthDelta: number): string {
-		return text.split("\n").map(line => {
-			if (line.trim() === "") return line;
+	private adjustPasteDepth(
+		text: string,
+		sourceType: OsmosisNode["type"],
+		depthDelta: number,
+	): string {
+		return text
+			.split("\n")
+			.map((line) => {
+				if (line.trim() === "") return line;
 
-			// Handle heading lines
-			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-				const oldLevel = headingMatch[1].length;
-				const newLevel = Math.max(1, Math.min(6, oldLevel + depthDelta));
-				return "#".repeat(newLevel) + " " + headingMatch[2];
-			}
+				// Handle heading lines
+				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
+				if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+					const oldLevel = headingMatch[1].length;
+					const newLevel = Math.max(
+						1,
+						Math.min(6, oldLevel + depthDelta),
+					);
+					return "#".repeat(newLevel) + " " + headingMatch[2];
+				}
 
-			// Handle list lines (tab or space indented)
-			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
-			if (listMatch?.[3] !== undefined) {
-				const currentTabs = listMatch[1]?.length ?? 0;
-				const currentSpaces = listMatch[2]?.length ?? 0;
-				const currentDepth = currentTabs + Math.floor(currentSpaces / 2);
-				const newDepth = Math.max(0, currentDepth + depthDelta);
-				return "\t".repeat(newDepth) + listMatch[3].replace(/^[ \t]*/, "");
-			}
+				// Handle list lines (tab or space indented)
+				const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
+				if (listMatch?.[3] !== undefined) {
+					const currentTabs = listMatch[1]?.length ?? 0;
+					const currentSpaces = listMatch[2]?.length ?? 0;
+					const currentDepth =
+						currentTabs + Math.floor(currentSpaces / 2);
+					const newDepth = Math.max(0, currentDepth + depthDelta);
+					return (
+						"\t".repeat(newDepth) +
+						listMatch[3].replace(/^[ \t]*/, "")
+					);
+				}
 
-			return line;
-		}).join("\n");
+				return line;
+			})
+			.join("\n");
 	}
 
 	/**
@@ -1607,7 +1791,8 @@ export class MindMapView extends ItemView {
 			if (selectedIndices.length === 0) return;
 
 			const firstSrc = siblings[selectedIndices[0]!]!;
-			const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			const lastSrc =
+				siblings[selectedIndices[selectedIndices.length - 1]!]!;
 			blockStart = firstSrc.range.start;
 			blockEnd = this.subtreeEnd(lastSrc);
 		} else {
@@ -1624,15 +1809,19 @@ export class MindMapView extends ItemView {
 		if (src.type === "heading") {
 			indentedSubtree = this.indentSubtreeHeadings(blockText);
 		} else {
-			indentedSubtree = blockText.split("\n").map(line =>
-				line.trim() === "" ? line : "\t" + line
-			).join("\n");
+			indentedSubtree = blockText
+				.split("\n")
+				.map((line) => (line.trim() === "" ? line : "\t" + line))
+				.join("\n");
 		}
 
 		// Replace: [newParentLine]\n[indentedSubtree]
-		const updated = content.slice(0, blockStart)
-			+ newParentLine + "\n" + indentedSubtree
-			+ content.slice(blockEnd);
+		const updated =
+			content.slice(0, blockStart) +
+			newParentLine +
+			"\n" +
+			indentedSubtree +
+			content.slice(blockEnd);
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -1645,13 +1834,16 @@ export class MindMapView extends ItemView {
 	 * Increase all heading levels in a subtree by 1 (e.g., ## → ###).
 	 */
 	private indentSubtreeHeadings(text: string): string {
-		return text.split("\n").map(line => {
-			const headingMatch = line.match(/^(#{1,5})\s/);
-			if (headingMatch && headingMatch[1]) {
-				return "#" + line;
-			}
-			return line;
-		}).join("\n");
+		return text
+			.split("\n")
+			.map((line) => {
+				const headingMatch = line.match(/^(#{1,5})\s/);
+				if (headingMatch && headingMatch[1]) {
+					return "#" + line;
+				}
+				return line;
+			})
+			.join("\n");
 	}
 
 	/**
@@ -1667,7 +1859,7 @@ export class MindMapView extends ItemView {
 
 		// Collect all selected nodes sorted by document position
 		const selected = [...this.selectedNodeIds]
-			.map(id => this.nodeMap.get(id))
+			.map((id) => this.nodeMap.get(id))
 			.filter((n): n is LayoutNode => n !== undefined)
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
@@ -1678,7 +1870,11 @@ export class MindMapView extends ItemView {
 		const blockEnd = this.subtreeEnd(selected[selected.length - 1]!.source);
 		const blockText = content.slice(blockStart, blockEnd);
 
-		const updated = content.slice(0, blockEnd) + "\n" + blockText + content.slice(blockEnd);
+		const updated =
+			content.slice(0, blockEnd) +
+			"\n" +
+			blockText +
+			content.slice(blockEnd);
 		await this.writeNodeFile(src, updated);
 	}
 
@@ -1689,7 +1885,11 @@ export class MindMapView extends ItemView {
 		let anyExpanded = false;
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (node && (node.children.length > 0 || node.collapsed) && !this.collapsedIds.has(id)) {
+			if (
+				node &&
+				(node.children.length > 0 || node.collapsed) &&
+				!this.collapsedIds.has(id)
+			) {
 				anyExpanded = true;
 				break;
 			}
@@ -1697,7 +1897,8 @@ export class MindMapView extends ItemView {
 
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (!node || (node.children.length === 0 && !node.collapsed)) continue;
+			if (!node || (node.children.length === 0 && !node.collapsed))
+				continue;
 			if (anyExpanded) {
 				this.collapsedIds.add(id);
 			} else {
@@ -1736,12 +1937,18 @@ export class MindMapView extends ItemView {
 	 * Get the maximum visible depth under a node (not counting collapsed subtrees).
 	 */
 	private getMaxVisibleDepth(node: LayoutNode, currentDepth: number): number {
-		if (this.collapsedIds.has(node.source.id) || node.children.length === 0) {
+		if (
+			this.collapsedIds.has(node.source.id) ||
+			node.children.length === 0
+		) {
 			return currentDepth;
 		}
 		let max = currentDepth;
 		for (const child of node.children) {
-			max = Math.max(max, this.getMaxVisibleDepth(child, currentDepth + 1));
+			max = Math.max(
+				max,
+				this.getMaxVisibleDepth(child, currentDepth + 1),
+			);
 		}
 		return max;
 	}
@@ -1749,12 +1956,22 @@ export class MindMapView extends ItemView {
 	/**
 	 * Collect nodes at a specific visible depth under a root node.
 	 */
-	private getNodesAtVisibleDepth(node: LayoutNode, targetDepth: number, currentDepth: number): LayoutNode[] {
+	private getNodesAtVisibleDepth(
+		node: LayoutNode,
+		targetDepth: number,
+		currentDepth: number,
+	): LayoutNode[] {
 		if (this.collapsedIds.has(node.source.id)) return [];
 		if (currentDepth === targetDepth) return [node];
 		const result: LayoutNode[] = [];
 		for (const child of node.children) {
-			result.push(...this.getNodesAtVisibleDepth(child, targetDepth, currentDepth + 1));
+			result.push(
+				...this.getNodesAtVisibleDepth(
+					child,
+					targetDepth,
+					currentDepth + 1,
+				),
+			);
 		}
 		return result;
 	}
@@ -1763,7 +1980,12 @@ export class MindMapView extends ItemView {
 	 * Fold one level: collapse the deepest visible children of each selected node.
 	 */
 	private foldOneLevel(): void {
-		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		const targetIds =
+			this.selectedNodeIds.size > 0
+				? [...this.selectedNodeIds]
+				: this.selectedNodeId
+					? [this.selectedNodeId]
+					: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -1774,8 +1996,15 @@ export class MindMapView extends ItemView {
 			if (maxDepth <= 0) continue; // Nothing to fold
 
 			// Find nodes at the deepest visible level that have children
-			const deepestParents = this.getNodesAtVisibleDepth(node, maxDepth - 1, 0)
-				.filter(n => n.children.length > 0 && !this.collapsedIds.has(n.source.id));
+			const deepestParents = this.getNodesAtVisibleDepth(
+				node,
+				maxDepth - 1,
+				0,
+			).filter(
+				(n) =>
+					n.children.length > 0 &&
+					!this.collapsedIds.has(n.source.id),
+			);
 
 			for (const parent of deepestParents) {
 				this.collapsedIds.add(parent.source.id);
@@ -1790,7 +2019,12 @@ export class MindMapView extends ItemView {
 	 * Unfold one level: expand the shallowest collapsed children of each selected node.
 	 */
 	private unfoldOneLevel(): void {
-		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		const targetIds =
+			this.selectedNodeIds.size > 0
+				? [...this.selectedNodeIds]
+				: this.selectedNodeId
+					? [this.selectedNodeId]
+					: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -1820,7 +2054,10 @@ export class MindMapView extends ItemView {
 	/**
 	 * Find collapsed nodes at the shallowest depth under a given node.
 	 */
-	private findShallowestCollapsed(node: LayoutNode, depth: number): { depth: number; nodes: LayoutNode[] } {
+	private findShallowestCollapsed(
+		node: LayoutNode,
+		depth: number,
+	): { depth: number; nodes: LayoutNode[] } {
 		let minDepth = Infinity;
 		let result: LayoutNode[] = [];
 
@@ -1850,7 +2087,12 @@ export class MindMapView extends ItemView {
 	 * Fold all: collapse all descendants of selected nodes.
 	 */
 	private foldAll(): void {
-		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		const targetIds =
+			this.selectedNodeIds.size > 0
+				? [...this.selectedNodeIds]
+				: this.selectedNodeId
+					? [this.selectedNodeId]
+					: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -1860,7 +2102,11 @@ export class MindMapView extends ItemView {
 			const descendants = this.getDescendantIds(node);
 			for (const descId of descendants) {
 				const descNode = this.nodeMap.get(descId);
-				if (descNode && descNode.children.length > 0 && !this.collapsedIds.has(descId)) {
+				if (
+					descNode &&
+					descNode.children.length > 0 &&
+					!this.collapsedIds.has(descId)
+				) {
 					this.collapsedIds.add(descId);
 					changed = true;
 				}
@@ -1880,7 +2126,12 @@ export class MindMapView extends ItemView {
 	 * Uses source tree to find collapsed children (layout tree omits them).
 	 */
 	private unfoldAll(): void {
-		const targetIds = this.selectedNodeIds.size > 0 ? [...this.selectedNodeIds] : (this.selectedNodeId ? [this.selectedNodeId] : []);
+		const targetIds =
+			this.selectedNodeIds.size > 0
+				? [...this.selectedNodeIds]
+				: this.selectedNodeId
+					? [this.selectedNodeId]
+					: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -1957,7 +2208,9 @@ export class MindMapView extends ItemView {
 
 		// Remove old highlight
 		if (this.cursorSyncNodeId) {
-			const old = this.svg.querySelector(`[data-node-id="${this.cursorSyncNodeId}"]`);
+			const old = this.svg.querySelector(
+				`[data-node-id="${this.cursorSyncNodeId}"]`,
+			);
 			old?.classList.remove("osmosis-node-cursor-synced");
 		}
 
@@ -1981,7 +2234,10 @@ export class MindMapView extends ItemView {
 		const leaves = this.app.workspace.getLeavesOfType("markdown");
 		for (const leaf of leaves) {
 			const view = leaf.view;
-			if (view instanceof MarkdownView && view.file === this.currentFile) {
+			if (
+				view instanceof MarkdownView &&
+				view.file === this.currentFile
+			) {
 				return view.editor;
 			}
 		}
@@ -2012,13 +2268,19 @@ export class MindMapView extends ItemView {
 		rect.setAttribute("width", String(node.rect.width));
 		rect.setAttribute("height", String(node.rect.height));
 		rect.setAttribute("rx", "4");
-		rect.setAttribute("class", "osmosis-node osmosis-node-" + node.source.type);
+		rect.setAttribute(
+			"class",
+			"osmosis-node osmosis-node-" + node.source.type,
+		);
 		ghost.appendChild(rect);
 
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
 		fo.setAttribute("width", String(node.rect.width));
 		fo.setAttribute("height", String(node.rect.height));
-		const wrapper = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		const wrapper = document.createElementNS(
+			XHTML_NS,
+			"div",
+		) as HTMLDivElement;
 		wrapper.setAttribute("xmlns", XHTML_NS);
 		wrapper.className = "osmosis-node-content";
 		wrapper.textContent = node.source.content;
@@ -2094,9 +2356,18 @@ export class MindMapView extends ItemView {
 				const parentNode = layoutNode.parent;
 				const siblingIdx = parentNode.children.indexOf(layoutNode);
 				// Don't allow dropping right back where it came from
-				if (!this.isSamePosition(dragNode, parentNode.source.id, siblingIdx)) {
+				if (
+					!this.isSamePosition(
+						dragNode,
+						parentNode.source.id,
+						siblingIdx,
+					)
+				) {
 					bestDist = distAbove;
-					bestTarget = { parentId: parentNode.source.id, index: siblingIdx };
+					bestTarget = {
+						parentId: parentNode.source.id,
+						index: siblingIdx,
+					};
 					indicatorY = gapAbove;
 					indicatorX1 = nodeX;
 					indicatorX2 = nodeX + layoutNode.rect.width;
@@ -2110,9 +2381,18 @@ export class MindMapView extends ItemView {
 			if (distBelow < bestDist && Math.abs(dx) < 300) {
 				const parentNode = layoutNode.parent;
 				const siblingIdx = parentNode.children.indexOf(layoutNode) + 1;
-				if (!this.isSamePosition(dragNode, parentNode.source.id, siblingIdx)) {
+				if (
+					!this.isSamePosition(
+						dragNode,
+						parentNode.source.id,
+						siblingIdx,
+					)
+				) {
 					bestDist = distBelow;
-					bestTarget = { parentId: parentNode.source.id, index: siblingIdx };
+					bestTarget = {
+						parentId: parentNode.source.id,
+						index: siblingIdx,
+					};
 					indicatorY = gapBelow;
 					indicatorX1 = nodeX;
 					indicatorX2 = nodeX + layoutNode.rect.width;
@@ -2121,13 +2401,22 @@ export class MindMapView extends ItemView {
 
 			// Check reparent: if cursor is to the right of a node, drop as its child
 			const rightEdge = nodeX + layoutNode.rect.width + 30;
-			if (svgPt.x > rightEdge && Math.abs(svgPt.y - nodeCY) < layoutNode.rect.height) {
+			if (
+				svgPt.x > rightEdge &&
+				Math.abs(svgPt.y - nodeCY) < layoutNode.rect.height
+			) {
 				const dist = Math.abs(svgPt.y - nodeCY);
 				if (dist < bestDist) {
 					// Don't reparent to self
-					if (layoutNode.source.id !== this.dragNodeId && !this.isDescendant(dragNode, layoutNode)) {
+					if (
+						layoutNode.source.id !== this.dragNodeId &&
+						!this.isDescendant(dragNode, layoutNode)
+					) {
 						bestDist = dist;
-						bestTarget = { parentId: layoutNode.source.id, index: layoutNode.children.length };
+						bestTarget = {
+							parentId: layoutNode.source.id,
+							index: layoutNode.children.length,
+						};
 						indicatorY = nodeCY;
 						indicatorX1 = rightEdge;
 						indicatorX2 = rightEdge + 40;
@@ -2160,11 +2449,18 @@ export class MindMapView extends ItemView {
 		return false;
 	}
 
-	private isSamePosition(dragNode: LayoutNode, parentId: string, index: number): boolean {
+	private isSamePosition(
+		dragNode: LayoutNode,
+		parentId: string,
+		index: number,
+	): boolean {
 		if (!dragNode.parent) return false;
 		const currentParentId = dragNode.parent.source.id;
 		const currentIndex = dragNode.parent.children.indexOf(dragNode);
-		return currentParentId === parentId && (index === currentIndex || index === currentIndex + 1);
+		return (
+			currentParentId === parentId &&
+			(index === currentIndex || index === currentIndex + 1)
+		);
 	}
 
 	private async executeDrop(): Promise<void> {
@@ -2175,7 +2471,13 @@ export class MindMapView extends ItemView {
 
 		this.cleanupDrag();
 
-		if (!dragNodeId || !dropTarget || !this.currentFile || !this.currentTree) return;
+		if (
+			!dragNodeId ||
+			!dropTarget ||
+			!this.currentFile ||
+			!this.currentTree
+		)
+			return;
 
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
@@ -2183,7 +2485,10 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(this.currentFile);
 
 		// Find the target parent and insertion point
-		const targetParent = this.findNodeById(this.currentTree.root, dropTarget.parentId);
+		const targetParent = this.findNodeById(
+			this.currentTree.root,
+			dropTarget.parentId,
+		);
 		if (!targetParent) return;
 
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
@@ -2206,17 +2511,28 @@ export class MindMapView extends ItemView {
 		}
 
 		// Collect block range spanning all selected subtrees
-		const selectedSrcs = selectedIndices.map(i => siblings[i]!);
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
 		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(selectedSrcs[selectedSrcs.length - 1]!);
+		const blockEnd = this.subtreeEnd(
+			selectedSrcs[selectedSrcs.length - 1]!,
+		);
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
 		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(nodeSrc.range.start, this.subtreeEnd(nodeSrc));
+			const nodeText = content.slice(
+				nodeSrc.range.start,
+				this.subtreeEnd(nodeSrc),
+			);
 			const newType = this.inferDropType(targetParent, dropTarget.index);
-			const newDepth = this.inferDropDepth(targetParent, dropTarget.index, newType);
-			reindentedParts.push(this.reindentSubtree(nodeText, nodeSrc, newType, newDepth));
+			const newDepth = this.inferDropDepth(
+				targetParent,
+				dropTarget.index,
+				newType,
+			);
+			reindentedParts.push(
+				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+			);
 		}
 		let dragText = reindentedParts.join("\n");
 
@@ -2225,7 +2541,8 @@ export class MindMapView extends ItemView {
 		if (dropTarget.index >= targetParent.children.length) {
 			// Append after last child's subtree
 			if (targetParent.children.length > 0) {
-				const lastChild = targetParent.children[targetParent.children.length - 1];
+				const lastChild =
+					targetParent.children[targetParent.children.length - 1];
 				if (lastChild) {
 					insertOffset = this.subtreeEnd(lastChild);
 				} else {
@@ -2266,21 +2583,47 @@ export class MindMapView extends ItemView {
 		let updated: string;
 		if (removeStart < insertOffset) {
 			// Dragging forward: remove first, then adjust insert position
-			const afterRemove = content.slice(0, removeStart) + content.slice(removeEnd);
+			const afterRemove =
+				content.slice(0, removeStart) + content.slice(removeEnd);
 			const adjustedInsert = insertOffset - (removeEnd - removeStart);
-			const prefix = adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n" ? "\n" : "";
-			const suffix = adjustedInsert < afterRemove.length && afterRemove[adjustedInsert] !== "\n" ? "\n" : "";
-			updated = afterRemove.slice(0, adjustedInsert) + prefix + dragText + suffix + afterRemove.slice(adjustedInsert);
+			const prefix =
+				adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n"
+					? "\n"
+					: "";
+			const suffix =
+				adjustedInsert < afterRemove.length &&
+				afterRemove[adjustedInsert] !== "\n"
+					? "\n"
+					: "";
+			updated =
+				afterRemove.slice(0, adjustedInsert) +
+				prefix +
+				dragText +
+				suffix +
+				afterRemove.slice(adjustedInsert);
 		} else {
 			// Dragging backward: insert first, then remove (with adjusted position)
-			const prefix = insertOffset > 0 && content[insertOffset - 1] !== "\n" ? "\n" : "";
-			const suffix = insertOffset < content.length && content[insertOffset] !== "\n" ? "\n" : "";
-			const afterInsert = content.slice(0, insertOffset) + prefix + dragText + suffix + content.slice(insertOffset);
+			const prefix =
+				insertOffset > 0 && content[insertOffset - 1] !== "\n"
+					? "\n"
+					: "";
+			const suffix =
+				insertOffset < content.length && content[insertOffset] !== "\n"
+					? "\n"
+					: "";
+			const afterInsert =
+				content.slice(0, insertOffset) +
+				prefix +
+				dragText +
+				suffix +
+				content.slice(insertOffset);
 			const shift = prefix.length + dragText.length + suffix.length;
-			updated = afterInsert.slice(0, removeStart + shift) + afterInsert.slice(removeEnd + shift);
+			updated =
+				afterInsert.slice(0, removeStart + shift) +
+				afterInsert.slice(removeEnd + shift);
 		}
 
-		const movedContents = selectedSrcs.map(s => s.content);
+		const movedContents = selectedSrcs.map((s) => s.content);
 		await this.writeMarkdown(updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
@@ -2311,7 +2654,8 @@ export class MindMapView extends ItemView {
 	}
 
 	private inferChildType(parent: OsmosisNode): OsmosisNode["type"] {
-		if (parent.type === "heading" || parent.type === "root") return "bullet";
+		if (parent.type === "heading" || parent.type === "root")
+			return "bullet";
 		return parent.type;
 	}
 
@@ -2325,8 +2669,14 @@ export class MindMapView extends ItemView {
 	 * Headings indenting under headings stay as headings (deeper level).
 	 * Non-headings indenting under headings become bullets.
 	 */
-	private inferIndentType(newParent: OsmosisNode, movingNode: OsmosisNode): OsmosisNode["type"] {
-		if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+	private inferIndentType(
+		newParent: OsmosisNode,
+		movingNode: OsmosisNode,
+	): OsmosisNode["type"] {
+		if (
+			movingNode.type === "heading" &&
+			(newParent.type === "heading" || newParent.type === "root")
+		) {
 			return "heading";
 		}
 		return this.inferChildType(newParent);
@@ -2336,8 +2686,14 @@ export class MindMapView extends ItemView {
 	 * Determine the new depth when indenting a node under a new parent.
 	 * Headings get parent depth + 1. Lists get standard child depth.
 	 */
-	private inferIndentDepth(newParent: OsmosisNode, movingNode: OsmosisNode): number {
-		if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+	private inferIndentDepth(
+		newParent: OsmosisNode,
+		movingNode: OsmosisNode,
+	): number {
+		if (
+			movingNode.type === "heading" &&
+			(newParent.type === "heading" || newParent.type === "root")
+		) {
 			return Math.min(6, newParent.depth + 1);
 		}
 		return this.inferChildDepth(newParent);
@@ -2348,10 +2704,15 @@ export class MindMapView extends ItemView {
 	 * Unlike indent (which makes children), D&D places nodes as siblings.
 	 * When dropping between heading siblings, non-heading nodes promote to headings.
 	 */
-	private inferDropType(targetParent: OsmosisNode, dropIndex: number): OsmosisNode["type"] {
+	private inferDropType(
+		targetParent: OsmosisNode,
+		dropIndex: number,
+	): OsmosisNode["type"] {
 		if (targetParent.type === "heading" || targetParent.type === "root") {
 			// Check if neighboring siblings at the drop position are headings
-			const neighbor = targetParent.children[dropIndex] ?? targetParent.children[dropIndex - 1];
+			const neighbor =
+				targetParent.children[dropIndex] ??
+				targetParent.children[dropIndex - 1];
 			if (neighbor?.type === "heading") return "heading";
 		}
 		return this.inferChildType(targetParent);
@@ -2361,9 +2722,15 @@ export class MindMapView extends ItemView {
 	 * Determine the new depth for a drag-and-drop operation.
 	 * Matches the depth of neighboring siblings at the drop position.
 	 */
-	private inferDropDepth(targetParent: OsmosisNode, dropIndex: number, dropType: OsmosisNode["type"]): number {
+	private inferDropDepth(
+		targetParent: OsmosisNode,
+		dropIndex: number,
+		dropType: OsmosisNode["type"],
+	): number {
 		if (dropType === "heading") {
-			const neighbor = targetParent.children[dropIndex] ?? targetParent.children[dropIndex - 1];
+			const neighbor =
+				targetParent.children[dropIndex] ??
+				targetParent.children[dropIndex - 1];
 			if (neighbor?.type === "heading") return neighbor.depth;
 			return Math.min(6, targetParent.depth + 1);
 		}
@@ -2386,15 +2753,22 @@ export class MindMapView extends ItemView {
 
 		// When converting heading → list type, strip internal blank lines
 		// that were added by normalizeHeadingSpacing — they break list nesting.
-		const crossingToList = originalNode.type === "heading" && newType !== "heading";
+		const crossingToList =
+			originalNode.type === "heading" && newType !== "heading";
 		const rawLines = text.split("\n");
-		const lines = crossingToList ? rawLines.filter(l => l.trim() !== "") : rawLines;
+		const lines = crossingToList
+			? rawLines.filter((l) => l.trim() !== "")
+			: rawLines;
 		const result: string[] = [];
 
 		// Calculate child depth delta — depends on whether we're crossing type boundaries.
 		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
-		const oldChildBase = (originalNode.type === "heading" || originalNode.type === "root") ? 0 : originalNode.depth + 1;
-		const newChildBase = (newType === "heading" || newType === "root") ? 0 : newDepth + 1;
+		const oldChildBase =
+			originalNode.type === "heading" || originalNode.type === "root"
+				? 0
+				: originalNode.depth + 1;
+		const newChildBase =
+			newType === "heading" || newType === "root" ? 0 : newDepth + 1;
 		const childDepthDelta = newChildBase - oldChildBase;
 
 		for (let i = 0; i < lines.length; i++) {
@@ -2407,22 +2781,33 @@ export class MindMapView extends ItemView {
 
 			if (i === 0) {
 				// First line: serialize with new type and depth
-				result.push(this.serializeLine(newType, newDepth, originalNode.content));
+				result.push(
+					this.serializeLine(newType, newDepth, originalNode.content),
+				);
 			} else {
 				// Descendant lines: check if heading or list
 				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
 				if (headingMatch?.[1]) {
 					// Heading descendant: adjust heading level
 					const oldLevel = headingMatch[1].length;
-					const newLevel = Math.max(1, Math.min(6, oldLevel + childDepthDelta));
-					result.push("#".repeat(newLevel) + " " + (headingMatch[2] ?? ""));
+					const newLevel = Math.max(
+						1,
+						Math.min(6, oldLevel + childDepthDelta),
+					);
+					result.push(
+						"#".repeat(newLevel) + " " + (headingMatch[2] ?? ""),
+					);
 				} else {
 					// List/other descendant: adjust tab indentation
 					const match = line.match(/^(\t*)([ ]*)/);
 					const currentTabs = match?.[1]?.length ?? 0;
 					const currentSpaces = match?.[2]?.length ?? 0;
-					const currentDepth = currentTabs + Math.floor(currentSpaces / 2);
-					const newTabDepth = Math.max(0, currentDepth + childDepthDelta);
+					const currentDepth =
+						currentTabs + Math.floor(currentSpaces / 2);
+					const newTabDepth = Math.max(
+						0,
+						currentDepth + childDepthDelta,
+					);
 					result.push("\t".repeat(newTabDepth) + line.trimStart());
 				}
 			}
@@ -2497,7 +2882,9 @@ export class MindMapView extends ItemView {
 				if (this.selectedNodeId) {
 					if (e.ctrlKey || e.metaKey) {
 						// Ctrl+Enter = insert parent topic
-						const parentEnterNode = this.nodeMap.get(this.selectedNodeId);
+						const parentEnterNode = this.nodeMap.get(
+							this.selectedNodeId,
+						);
 						if (parentEnterNode) {
 							void this.insertParentNode(parentEnterNode);
 						}
@@ -2558,7 +2945,11 @@ export class MindMapView extends ItemView {
 				break;
 			case "v":
 				// Ctrl/Cmd+V = paste node(s)
-				if ((e.ctrlKey || e.metaKey) && this.selectedNodeId && this.clipboardText) {
+				if (
+					(e.ctrlKey || e.metaKey) &&
+					this.selectedNodeId &&
+					this.clipboardText
+				) {
 					e.preventDefault();
 					void this.pasteNodes();
 				}
@@ -2659,17 +3050,25 @@ export class MindMapView extends ItemView {
 		const nextParentIdx = parentIdx + direction;
 		const nextParent = parentSiblings[nextParentIdx];
 
-		if (nextParentIdx < 0 || nextParentIdx >= parentSiblings.length || !nextParent) {
+		if (
+			nextParentIdx < 0 ||
+			nextParentIdx >= parentSiblings.length ||
+			!nextParent
+		) {
 			// Recursively look for cousins further up
 			const parentCousin = this.findCousin(parent, direction);
 			if (parentCousin && parentCousin.children.length > 0) {
-				return direction > 0 ? parentCousin.children[0]! : parentCousin.children[parentCousin.children.length - 1]!;
+				return direction > 0
+					? parentCousin.children[0]!
+					: parentCousin.children[parentCousin.children.length - 1]!;
 			}
 			return null;
 		}
 
 		if (nextParent.children.length === 0) return null;
-		return direction > 0 ? nextParent.children[0]! : nextParent.children[nextParent.children.length - 1]!;
+		return direction > 0
+			? nextParent.children[0]!
+			: nextParent.children[nextParent.children.length - 1]!;
 	}
 
 	private navigateToParent(): void {
@@ -2695,7 +3094,10 @@ export class MindMapView extends ItemView {
 		if (!node) return;
 
 		// If collapsed, expand first
-		if (this.collapsedIds.has(this.selectedNodeId) && node.source.children.length > 0) {
+		if (
+			this.collapsedIds.has(this.selectedNodeId) &&
+			node.source.children.length > 0
+		) {
 			this.toggleCollapse(this.selectedNodeId);
 			return;
 		}
@@ -2716,7 +3118,10 @@ export class MindMapView extends ItemView {
 	 */
 	private extendSelectionTo(targetId: string): void {
 		this.clearSelectionVisuals();
-		if (this.selectedNodeIds.has(targetId) && this.selectedNodeId !== targetId) {
+		if (
+			this.selectedNodeIds.has(targetId) &&
+			this.selectedNodeId !== targetId
+		) {
 			// Backtracking: deselect current cursor node, move cursor to target
 			if (this.selectedNodeId) {
 				this.selectedNodeIds.delete(this.selectedNodeId);
@@ -2782,7 +3187,10 @@ export class MindMapView extends ItemView {
 		if (!node) return;
 
 		// If collapsed, expand first
-		if (this.collapsedIds.has(this.selectedNodeId) && node.source.children.length > 0) {
+		if (
+			this.collapsedIds.has(this.selectedNodeId) &&
+			node.source.children.length > 0
+		) {
 			this.toggleCollapse(this.selectedNodeId);
 			return;
 		}
@@ -2859,7 +3267,14 @@ export class MindMapView extends ItemView {
 		// of resizing the viewport (the root cause of the map disappearing).
 		// VirtualKeyboard API is not in TS standard lib, so we need unsafe access.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
-		const vk: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } | null = "virtualKeyboard" in navigator ? (navigator as any).virtualKeyboard : null;
+		const vk: {
+			overlaysContent: boolean;
+			addEventListener: (type: string, fn: () => void) => void;
+			removeEventListener: (type: string, fn: () => void) => void;
+		} | null =
+			"virtualKeyboard" in navigator
+				? (navigator as any).virtualKeyboard
+				: null;
 		if (vk) vk.overlaysContent = true;
 
 		// Scale font size to match the current zoom level so text appears
@@ -2888,7 +3303,8 @@ export class MindMapView extends ItemView {
 				s.zIndex = "9998";
 			}
 
-			const availableH = window.visualViewport?.height ?? window.innerHeight;
+			const availableH =
+				window.visualViewport?.height ?? window.innerHeight;
 
 			// Mobile: use fixed positioning on document.body to escape
 			// Obsidian's layout resize when the keyboard opens.
@@ -2924,6 +3340,33 @@ export class MindMapView extends ItemView {
 
 		this.editContainer = container;
 
+		// Add save/cancel buttons floating above the editor
+		const cancelBtn = document.createElement("button");
+		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
+		cancelBtn.setAttribute("aria-label", "Cancel editing");
+		cancelBtn.textContent = "Cancel";
+		cancelBtn.addEventListener("pointerdown", (e) => {
+			e.preventDefault(); // Prevent blur
+			e.stopPropagation();
+			this.stopEditing(false);
+		});
+		const saveBtn = document.createElement("button");
+		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
+		saveBtn.setAttribute("aria-label", "Save changes");
+		saveBtn.textContent = "Save";
+		saveBtn.addEventListener("pointerdown", (e) => {
+			e.preventDefault(); // Prevent blur
+			e.stopPropagation();
+			this.stopEditing(true);
+		});
+		container.appendChild(cancelBtn);
+		container.appendChild(saveBtn);
+
+		// Stack buttons vertically when container is too narrow for side-by-side
+		if (screenRect.width < 160) {
+			container.classList.add("osmosis-edit-narrow");
+		}
+
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
@@ -2934,13 +3377,15 @@ export class MindMapView extends ItemView {
 				value: node.source.content,
 				cls: "osmosis-node-editor",
 				onEnter: () => false, // Let Enter insert newline (default CM behavior)
-				onSubmit: () => { // Ctrl+Enter saves
+				onSubmit: () => {
+					// Ctrl+Enter saves
 					// Defer so CM keymap handler returns true (suppressing the event)
 					// before the editor is destroyed; otherwise the keystroke leaks
 					// to the workspace and reaches the left-side markdown editor.
 					queueMicrotask(() => this.stopEditing(true));
 				},
-				onEscape: () => { // Escape cancels
+				onEscape: () => {
+					// Escape cancels
 					queueMicrotask(() => this.stopEditing(false));
 				},
 				onBlur: () => {
@@ -2951,7 +3396,9 @@ export class MindMapView extends ItemView {
 						}
 					}, 100);
 				},
-				extensions: [autoResizeExtension(() => this.resizeEditContainer())],
+				extensions: [
+					autoResizeExtension(() => this.resizeEditContainer()),
+				],
 			});
 
 			this.editEditor = editor;
@@ -2963,10 +3410,19 @@ export class MindMapView extends ItemView {
 				selection: EditorSelection.range(0, doc.length),
 			});
 		} catch (err) {
-			console.warn("Osmosis: EmbeddableMarkdownEditor failed, falling back to textarea", err);
+			console.warn(
+				"Osmosis: EmbeddableMarkdownEditor failed, falling back to textarea",
+				err,
+			);
 			container.remove();
 			this.editContainer = null;
-			this.createFallbackTextarea(node, nodeId, screenRect, scaledFontSize, isMobile);
+			this.createFallbackTextarea(
+				node,
+				nodeId,
+				screenRect,
+				scaledFontSize,
+				isMobile,
+			);
 		}
 
 		// On mobile, reposition editor above keyboard if it would be hidden
@@ -2974,7 +3430,8 @@ export class MindMapView extends ItemView {
 		if (isMobile) {
 			const repositionAboveKeyboard = () => {
 				if (!this.editContainer) return;
-				const availableH = window.visualViewport?.height ?? window.innerHeight;
+				const availableH =
+					window.visualViewport?.height ?? window.innerHeight;
 				const elRect = this.editContainer.getBoundingClientRect();
 				if (elRect.bottom > availableH - 10) {
 					this.editContainer.style.top = `${availableH - elRect.height - 10}px`;
@@ -2982,11 +3439,24 @@ export class MindMapView extends ItemView {
 			};
 			if (vk) {
 				vk.addEventListener("geometrychange", repositionAboveKeyboard);
-				cleanups.push(() => vk.removeEventListener("geometrychange", repositionAboveKeyboard));
+				cleanups.push(() =>
+					vk.removeEventListener(
+						"geometrychange",
+						repositionAboveKeyboard,
+					),
+				);
 			}
 			if (window.visualViewport) {
-				window.visualViewport.addEventListener("resize", repositionAboveKeyboard);
-				cleanups.push(() => window.visualViewport?.removeEventListener("resize", repositionAboveKeyboard));
+				window.visualViewport.addEventListener(
+					"resize",
+					repositionAboveKeyboard,
+				);
+				cleanups.push(() =>
+					window.visualViewport?.removeEventListener(
+						"resize",
+						repositionAboveKeyboard,
+					),
+				);
 			}
 		}
 
@@ -3000,7 +3470,9 @@ export class MindMapView extends ItemView {
 			}
 		};
 		this.contentEl.addEventListener("scroll", lockScroll, true);
-		cleanups.push(() => this.contentEl.removeEventListener("scroll", lockScroll, true));
+		cleanups.push(() =>
+			this.contentEl.removeEventListener("scroll", lockScroll, true),
+		);
 
 		this.editCleanup = () => {
 			for (const fn of cleanups) fn();
@@ -3030,9 +3502,13 @@ export class MindMapView extends ItemView {
 		const contentWidth = maxChars * charWidth + 24;
 
 		const minWidth = parseFloat(this.editContainer.style.minWidth) || 0;
-		const maxWidth = parseFloat(this.editContainer.style.maxWidth) || Infinity;
+		const maxWidth =
+			parseFloat(this.editContainer.style.maxWidth) || Infinity;
 		const newWidth = Math.min(Math.max(contentWidth, minWidth), maxWidth);
 		this.editContainer.style.width = `${newWidth}px`;
+
+		// Toggle stacked button layout when container is narrow
+		this.editContainer.classList.toggle("osmosis-edit-narrow", newWidth < 160);
 
 		cm.requestMeasure();
 	}
@@ -3195,7 +3671,12 @@ export class MindMapView extends ItemView {
 
 			const prevLine = result[result.length - 1];
 			// Blank line before headings and top-level opening code fences
-			if ((isHeading || (isTopLevelFence && inCodeBlock)) && result.length > 0 && prevLine !== undefined && prevLine.trim() !== "") {
+			if (
+				(isHeading || (isTopLevelFence && inCodeBlock)) &&
+				result.length > 0 &&
+				prevLine !== undefined &&
+				prevLine.trim() !== ""
+			) {
 				result.push("");
 			}
 			result.push(line);
@@ -3213,7 +3694,11 @@ export class MindMapView extends ItemView {
 	/**
 	 * Serialize a node type/depth/content back to a markdown line.
 	 */
-	private serializeLine(type: OsmosisNode["type"], depth: number, content: string): string {
+	private serializeLine(
+		type: OsmosisNode["type"],
+		depth: number,
+		content: string,
+	): string {
 		switch (type) {
 			case "heading":
 				return `${"#".repeat(depth)} ${content}`;
@@ -3249,7 +3734,10 @@ export class MindMapView extends ItemView {
 		// Find an editor that has the same file open
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
-			if (view instanceof MarkdownView && view.file === this.currentFile) {
+			if (
+				view instanceof MarkdownView &&
+				view.file === this.currentFile
+			) {
 				// Suppress the vault modify event so we skip the full loadFile()
 				// cycle (async file read + transclusion expansion). Instead, read
 				// the new content directly from the editor (in-memory, instant).
@@ -3263,14 +3751,19 @@ export class MindMapView extends ItemView {
 				}
 				const newContent = view.editor.getValue();
 				this.cache.invalidate(this.currentFile.path);
-				this.currentTree = this.cache.get(this.currentFile.path, newContent);
+				this.currentTree = this.cache.get(
+					this.currentFile.path,
+					newContent,
+				);
 				void this.render();
 				return;
 			}
 		}
 		// Fallback: execute Obsidian's built-in commands
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-		(this.app as any).commands?.executeCommandById?.(isRedo ? "editor:redo" : "editor:undo");
+		(this.app as any).commands?.executeCommandById?.(
+			isRedo ? "editor:redo" : "editor:undo",
+		);
 	}
 
 	/**
@@ -3292,7 +3785,10 @@ export class MindMapView extends ItemView {
 	 * Write markdown content to a transcluded source file, then re-render
 	 * the current file (re-expanding transclusions to pick up the change).
 	 */
-	private async writeTranscludedMarkdown(sourceFilePath: string, newContent: string): Promise<void> {
+	private async writeTranscludedMarkdown(
+		sourceFilePath: string,
+		newContent: string,
+	): Promise<void> {
 		if (!this.currentFile) return;
 		const sourceFile = this.app.vault.getFileByPath(sourceFilePath);
 		if (!(sourceFile instanceof TFile)) return;
@@ -3306,7 +3802,10 @@ export class MindMapView extends ItemView {
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
 		this.currentTree = this.cache.get(this.currentFile.path, parentContent);
-		await this.transclusionResolver.expandTree(this.currentTree, this.lazyTransclusionIds);
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 		await this.render();
 	}
 
@@ -3314,7 +3813,10 @@ export class MindMapView extends ItemView {
 	 * Rename a node: replace the line in markdown with updated content.
 	 * For transcluded nodes, writes to the source file (not the parent note).
 	 */
-	private async renameNode(node: LayoutNode, newContent: string): Promise<void> {
+	private async renameNode(
+		node: LayoutNode,
+		newContent: string,
+	): Promise<void> {
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -3322,7 +3824,10 @@ export class MindMapView extends ItemView {
 
 		const content = await this.app.vault.read(file);
 		const newLine = this.serializeLine(src.type, src.depth, newContent);
-		const updated = content.slice(0, src.range.start) + newLine + content.slice(src.range.end);
+		const updated =
+			content.slice(0, src.range.start) +
+			newLine +
+			content.slice(src.range.end);
 		await this.writeNodeFile(src, updated);
 	}
 
@@ -3340,7 +3845,10 @@ export class MindMapView extends ItemView {
 	/**
 	 * Write updated content to the correct file for a node.
 	 */
-	private async writeNodeFile(src: OsmosisNode, updated: string): Promise<void> {
+	private async writeNodeFile(
+		src: OsmosisNode,
+		updated: string,
+	): Promise<void> {
 		if (src.isTranscluded && src.sourceFile) {
 			await this.writeTranscludedMarkdown(src.sourceFile, updated);
 		} else {
@@ -3383,7 +3891,11 @@ export class MindMapView extends ItemView {
 		const insertPos = this.subtreeEnd(src);
 
 		// Insert after the subtree with a newline
-		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
+		const updated =
+			content.slice(0, insertPos) +
+			"\n" +
+			newLine +
+			content.slice(insertPos);
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -3407,7 +3919,11 @@ export class MindMapView extends ItemView {
 		const newLine = this.serializeLine(src.type, src.depth, "");
 		const insertPos = this.subtreeEnd(src);
 
-		const updated = content.slice(0, insertPos) + "\n" + newLine + content.slice(insertPos);
+		const updated =
+			content.slice(0, insertPos) +
+			"\n" +
+			newLine +
+			content.slice(insertPos);
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -3440,10 +3956,12 @@ export class MindMapView extends ItemView {
 			deleteEnd++;
 		}
 
-		const updated = content.slice(0, deleteStart) + content.slice(deleteEnd);
+		const updated =
+			content.slice(0, deleteStart) + content.slice(deleteEnd);
 
 		// Select the parent or sibling after deletion
-		const parentId = node.parent?.source.type !== "root" ? node.parent?.source.id : null;
+		const parentId =
+			node.parent?.source.type !== "root" ? node.parent?.source.id : null;
 		await this.writeNodeFile(src, updated);
 
 		// Try to select something reasonable after deletion
@@ -3460,7 +3978,10 @@ export class MindMapView extends ItemView {
 	/**
 	 * After adding a child or sibling, find the new node and start editing it.
 	 */
-	private startEditingNewNode(previousSelectedId: string | null, isChild: boolean): void {
+	private startEditingNewNode(
+		previousSelectedId: string | null,
+		isChild: boolean,
+	): void {
 		if (!previousSelectedId) return;
 
 		// The tree has been re-parsed, so we need to find the original node by position match
@@ -3499,14 +4020,24 @@ export class MindMapView extends ItemView {
 		this.renderComponent.load();
 
 		if (!this.currentTree) {
-			container.createEl("p", { text: "Open a Markdown file to view its mind map." });
+			container.createEl("p", {
+				text: "Open a Markdown file to view its mind map.",
+			});
 			return;
 		}
 
 		// Measure actual content sizes before layout
-		const nodeSizes = await this.measureNodeSizes(container, this.currentTree);
+		const nodeSizes = await this.measureNodeSizes(
+			container,
+			this.currentTree,
+		);
 
-		const layout = computeLayout(this.currentTree, {}, this.collapsedIds, nodeSizes);
+		const layout = computeLayout(
+			this.currentTree,
+			{},
+			this.collapsedIds,
+			nodeSizes,
+		);
 		this.currentLayout = layout;
 
 		// Build node map for keyboard nav
@@ -3589,13 +4120,21 @@ export class MindMapView extends ItemView {
 				const contentRect = range.getBoundingClientRect();
 				const naturalWidth = contentRect.width;
 
-				const finalWidth = Math.min(Math.max(Math.ceil(naturalWidth), 40), contentMaxWidth);
+				const finalWidth = Math.min(
+					Math.max(Math.ceil(naturalWidth), 40),
+					contentMaxWidth,
+				);
 				let finalHeight: number;
 
 				if (naturalWidth > contentMaxWidth) {
 					// Constrain width and re-measure wrapped height
-					cell.setCssStyles({ width: `${String(contentMaxWidth)}px` });
-					finalHeight = Math.max(Math.ceil(cell.getBoundingClientRect().height), 20);
+					cell.setCssStyles({
+						width: `${String(contentMaxWidth)}px`,
+					});
+					finalHeight = Math.max(
+						Math.ceil(cell.getBoundingClientRect().height),
+						20,
+					);
 				} else {
 					finalHeight = Math.max(Math.ceil(contentRect.height), 20);
 				}
@@ -3622,14 +4161,20 @@ export class MindMapView extends ItemView {
 
 	/** Get the display content for a node, adding ordered list prefix if needed. */
 	private getNodeDisplayContent(node: OsmosisNode): string {
-		if (node.type === "ordered" && node.metadata?.listNumber !== undefined) {
+		if (
+			node.type === "ordered" &&
+			node.metadata?.listNumber !== undefined
+		) {
 			// Escape the dot so MarkdownRenderer renders as plain text, not <ol>
 			return `${String(node.metadata.listNumber as number)}\\. ${node.content}`;
 		}
 		return node.content;
 	}
 
-	private async renderSvg(container: HTMLElement, layout: LayoutResult): Promise<void> {
+	private async renderSvg(
+		container: HTMLElement,
+		layout: LayoutResult,
+	): Promise<void> {
 		const { bounds, nodes } = layout;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
@@ -3653,7 +4198,10 @@ export class MindMapView extends ItemView {
 			this.zoom = 1;
 		}
 
-		svg.setAttribute("viewBox", `${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`);
+		svg.setAttribute(
+			"viewBox",
+			`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
+		);
 
 		this.svg = svg;
 
@@ -3679,10 +4227,22 @@ export class MindMapView extends ItemView {
 			if (!this.isNodeInViewport(node, offsetX, offsetY)) continue;
 
 			this.renderedNodeIds.add(node.source.id);
-			renderPromises.push(this.drawNode(nodesGroup, node, offsetX, offsetY));
+			renderPromises.push(
+				this.drawNode(nodesGroup, node, offsetX, offsetY),
+			);
 
-			if (node.parent && this.isBranchInViewport(node.parent, node, offsetX, offsetY)) {
-				this.drawBranchLine(branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
+			if (
+				node.parent &&
+				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
+			) {
+				this.drawBranchLine(
+					branchLinesGroup,
+					node.parent,
+					node,
+					offsetX,
+					offsetY,
+					lineStyle,
+				);
 			}
 		}
 
@@ -3701,18 +4261,33 @@ export class MindMapView extends ItemView {
 		const { width, height } = node.rect;
 
 		const group = document.createElementNS(SVG_NS, "g");
-		const classes = [`osmosis-node-group`, `osmosis-node-group-${node.source.type}`];
+		const classes = [
+			`osmosis-node-group`,
+			`osmosis-node-group-${node.source.type}`,
+		];
 		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
 		}
-		if (node.source.type === "transclusion" && node.source.metadata?.cyclic) {
+		if (
+			node.source.type === "transclusion" &&
+			node.source.metadata?.cyclic
+		) {
 			classes.push("osmosis-node-cyclic");
-		} else if (node.source.type === "transclusion" && node.source.sourceFile) {
+		} else if (
+			node.source.type === "transclusion" &&
+			node.source.sourceFile
+		) {
 			classes.push("osmosis-node-resolved");
-		} else if (node.source.type === "transclusion" && !node.source.sourceFile) {
+		} else if (
+			node.source.type === "transclusion" &&
+			!node.source.sourceFile
+		) {
 			classes.push("osmosis-node-unresolved");
 		}
-		if (node.source.isTranscluded && this.plugin?.settings?.showTransclusionStyle) {
+		if (
+			node.source.isTranscluded &&
+			this.plugin?.settings?.showTransclusionStyle
+		) {
 			classes.push("osmosis-node-transcluded");
 		}
 		group.setAttribute("class", classes.join(" "));
@@ -3728,7 +4303,10 @@ export class MindMapView extends ItemView {
 		rect.setAttribute("width", String(width));
 		rect.setAttribute("height", String(height));
 		rect.setAttribute("rx", "4");
-		rect.setAttribute("class", `osmosis-node osmosis-node-${node.source.type}`);
+		rect.setAttribute(
+			"class",
+			`osmosis-node osmosis-node-${node.source.type}`,
+		);
 		group.appendChild(rect);
 
 		// foreignObject with rendered markdown
@@ -3738,7 +4316,10 @@ export class MindMapView extends ItemView {
 		fo.setAttribute("width", String(width));
 		fo.setAttribute("height", String(height));
 
-		const wrapper = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		const wrapper = document.createElementNS(
+			XHTML_NS,
+			"div",
+		) as HTMLDivElement;
 		wrapper.setAttribute("xmlns", XHTML_NS);
 		wrapper.className = "osmosis-node-content";
 		fo.appendChild(wrapper);
@@ -3746,9 +4327,15 @@ export class MindMapView extends ItemView {
 
 		// Render markdown content into the wrapper
 		const sourcePath = this.currentFile?.path ?? "";
-		if (node.source.type === "transclusion" && node.source.metadata?.cyclic) {
+		if (
+			node.source.type === "transclusion" &&
+			node.source.metadata?.cyclic
+		) {
 			// Cycle indicator: show warning instead of raw link
-			const cycleLabel = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
+			const cycleLabel = document.createElementNS(
+				XHTML_NS,
+				"span",
+			) as HTMLSpanElement;
 			cycleLabel.setAttribute("xmlns", XHTML_NS);
 			cycleLabel.className = "osmosis-cycle-indicator";
 			cycleLabel.textContent = `\u21BB ${node.source.content}`;
@@ -3772,10 +4359,15 @@ export class MindMapView extends ItemView {
 
 				// Add language label to code block nodes
 				if (node.source.type === "codeblock") {
-					const langMatch = /^(`{3,}|~{3,})(\S+)/.exec(node.source.content);
+					const langMatch = /^(`{3,}|~{3,})(\S+)/.exec(
+						node.source.content,
+					);
 					const lang = langMatch?.[2];
 					if (lang && !lang.startsWith("ad-")) {
-						const label = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
+						const label = document.createElementNS(
+							XHTML_NS,
+							"span",
+						) as HTMLSpanElement;
 						label.setAttribute("xmlns", XHTML_NS);
 						label.className = "osmosis-code-lang-label";
 						label.textContent = lang;
@@ -3784,7 +4376,10 @@ export class MindMapView extends ItemView {
 				}
 
 				// Cache the rendered wrapper content for future cloning
-				const cacheEntry = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+				const cacheEntry = document.createElementNS(
+					XHTML_NS,
+					"div",
+				) as HTMLDivElement;
 				for (const child of Array.from(wrapper.childNodes)) {
 					cacheEntry.appendChild(child.cloneNode(true));
 				}
@@ -3793,8 +4388,9 @@ export class MindMapView extends ItemView {
 		}
 
 		// Collapse toggle for nodes with children, or lazy transclusions with content to load
-		const isLazyTransclusion = this.lazyTransclusionIds.has(node.source.id)
-			&& node.source.metadata?.resolved;
+		const isLazyTransclusion =
+			this.lazyTransclusionIds.has(node.source.id) &&
+			node.source.metadata?.resolved;
 		if (node.source.children.length > 0 || isLazyTransclusion) {
 			this.drawCollapseToggle(group, node, x, y, width, height);
 		}
@@ -3888,7 +4484,11 @@ export class MindMapView extends ItemView {
 				return `M ${px} ${py} L ${midX} ${py} L ${midX} ${cy} L ${cx} ${cy}`;
 
 			case "rounded-elbow": {
-				const radius = Math.min(12, Math.abs(cy - py) / 2, Math.abs(cx - px) / 4);
+				const radius = Math.min(
+					12,
+					Math.abs(cy - py) / 2,
+					Math.abs(cx - px) / 4,
+				);
 				if (Math.abs(cy - py) < 1) {
 					return `M ${px} ${py} L ${cx} ${cy}`;
 				}
