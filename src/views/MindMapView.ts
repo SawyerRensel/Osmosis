@@ -232,7 +232,14 @@ export class MindMapView extends ItemView {
 			moveDown: () => void this.moveNodeUpDown(1),
 			indent: () => void this.indentNode(),
 			outdent: () => void this.outdentNode(),
-			deleteNode: () => void this.deleteSelectedNodes(),
+			deleteNode: () => {
+				if (this.selectedNodeIds.size > 1) {
+					void this.deleteSelectedNodes();
+				} else if (this.selectedNodeId) {
+					const node = this.nodeMap.get(this.selectedNodeId);
+					if (node) void this.deleteNode(node);
+				}
+			},
 			copy: () => void this.copySelectedNodes(false),
 			cut: () => void this.copySelectedNodes(true),
 			paste: () => void this.pasteNodes(),
