@@ -267,3 +267,58 @@ Uses Obsidian CSS variables for theme compatibility.
 	resize: none;
 	overflow: auto;
 }
+
+/* Tool ribbon (action bar) */
+.osmosis-toolbar {
+	position: absolute;
+	bottom: 8px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	padding: 4px 6px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	z-index: 10;
+	box-shadow: var(--shadow-s);
+	pointer-events: auto;
+}
+
+.osmosis-toolbar-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--icon-color);
+	cursor: pointer;
+}
+
+.osmosis-toolbar-btn:hover:not(.is-disabled) {
+	background: var(--background-modifier-hover);
+	color: var(--icon-color-hover);
+}
+
+.osmosis-toolbar-btn.is-disabled {
+	color: var(--text-faint);
+	opacity: 0.4;
+	cursor: default;
+}
+
+.osmosis-toolbar-hidden {
+	display: none;
+}
+
+.osmosis-toolbar-divider {
+	width: 1px;
+	height: 20px;
+	margin: 0 4px;
+	background: var(--background-modifier-border);
+	flex-shrink: 0;
+}

@@ -15,6 +15,7 @@ import { computeLayout, LayoutNode, LayoutResult, DEFAULT_LAYOUT_CONFIG } from "
 import type OsmosisPlugin from "../main";
 import type { BranchLineStyle } from "../settings";
 import { TransclusionResolver } from "../transclusion";
+import { ToolRibbon } from "./ToolRibbon";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -121,6 +122,7 @@ export class MindMapView extends ItemView {
 	private lastPointerType = "mouse";
 	private touchSelectionMode = false;
 	private resizeObserver: ResizeObserver | null = null;
+	private toolRibbon: ToolRibbon | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -200,6 +202,38 @@ export class MindMapView extends ItemView {
 		this.resizeObserver = new ResizeObserver(() => this.handleContainerResize());
 		this.resizeObserver.observe(container);
 
+		// Create the tool ribbon (action bar)
+		this.toolRibbon = new ToolRibbon(container, {
+			fitToView: () => this.fitToView(),
+			zoomIn: () => this.zoomStep(1.25),
+			zoomOut: () => this.zoomStep(1 / 1.25),
+			centerOnRoot: () => this.centerOnRoot(),
+			foldAll: () => this.foldAll(),
+			unfoldAll: () => this.unfoldAll(),
+			addSibling: () => {
+				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				if (node) void this.addSiblingNode(node);
+			},
+			addChild: () => {
+				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				if (node) void this.addChildNode(node);
+			},
+			insertParent: () => {
+				const node = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : null;
+				if (node) void this.insertParentNode(node);
+			},
+			moveUp: () => void this.moveNodeUpDown(-1),
+			moveDown: () => void this.moveNodeUpDown(1),
+			indent: () => void this.indentNode(),
+			outdent: () => void this.outdentNode(),
+			deleteNode: () => void this.deleteSelectedNodes(),
+			copy: () => void this.copySelectedNodes(false),
+			cut: () => void this.copySelectedNodes(true),
+			paste: () => void this.pasteNodes(),
+			undo: () => this.forwardUndoRedo(false),
+			redo: () => this.forwardUndoRedo(true),
+		});
+
 		await this.loadActiveFile();
 
 		this.registerEvent(
@@ -229,6 +263,8 @@ export class MindMapView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.toolRibbon?.destroy();
+		this.toolRibbon = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.renderComponent?.unload();
@@ -299,6 +335,69 @@ export class MindMapView extends ItemView {
 		const { x, y, w, h } = this.viewBox;
 		this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
 		this.scheduleCullUpdate();
+	}
+
+	/** Notify the toolbar of current selection/editing state. */
+	private updateToolbarState(): void {
+		this.toolRibbon?.updateState({
+			hasSelection: this.selectedNodeId !== null,
+			isEditing: this.editingNodeId !== null,
+			hasFile: this.currentFile !== null,
+		});
+	}
+
+	/** Fit the entire mind map into the visible viewport with padding. */
+	private fitToView(): void {
+		if (!this.currentLayout) return;
+		const bounds = this.currentLayout.bounds;
+		const contentWidth = bounds.width + LAYOUT_PADDING * 2;
+		const contentHeight = bounds.height + LAYOUT_PADDING * 2;
+
+		const containerRect = this.contentEl.getBoundingClientRect();
+		const cw = containerRect.width || contentWidth;
+		const ch = containerRect.height || contentHeight;
+
+		const zoom = Math.min(cw / contentWidth, ch / contentHeight, MAX_ZOOM);
+		this.zoom = Math.max(MIN_ZOOM, zoom);
+
+		const scaledW = cw / this.zoom;
+		const scaledH = ch / this.zoom;
+		this.viewBox.x = (contentWidth - scaledW) / 2;
+		this.viewBox.y = (contentHeight - scaledH) / 2;
+		this.viewBox.w = scaledW;
+		this.viewBox.h = scaledH;
+		this.updateViewBox();
+	}
+
+	/** Step zoom by a multiplier, centered on the viewport center. */
+	private zoomStep(factor: number): void {
+		const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoom * factor));
+		const scale = this.zoom / newZoom;
+		const cx = this.viewBox.x + this.viewBox.w / 2;
+		const cy = this.viewBox.y + this.viewBox.h / 2;
+		this.viewBox.w *= scale;
+		this.viewBox.h *= scale;
+		this.viewBox.x = cx - this.viewBox.w / 2;
+		this.viewBox.y = cy - this.viewBox.h / 2;
+		this.zoom = newZoom;
+		this.updateViewBox();
+	}
+
+	/** Center the viewport on the root node. */
+	private centerOnRoot(): void {
+		if (!this.currentLayout) return;
+		const root = this.currentLayout.root;
+		// Root node is virtual; center on its first child if possible
+		const target = root.children.length > 0 ? root.children[0] : null;
+		if (!target) return;
+
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const nx = target.rect.x + offsetX + target.rect.width / 2;
+		const ny = target.rect.y + offsetY + target.rect.height / 2;
+		this.viewBox.x = nx - this.viewBox.w / 2;
+		this.viewBox.y = ny - this.viewBox.h / 2;
+		this.updateViewBox();
 	}
 
 	/** Check if a node (in SVG coords with offset applied) intersects the expanded viewport */
@@ -1010,6 +1109,7 @@ export class MindMapView extends ItemView {
 			const el = this.svg.querySelector(`[data-node-id="${id}"]`);
 			el?.classList.add("osmosis-node-selected");
 		}
+		this.updateToolbarState();
 	}
 
 	// ─── Rubber-Band Selection ───────────────────────────────
@@ -2908,6 +3008,7 @@ export class MindMapView extends ItemView {
 		}
 
 		this.contentEl.focus({ preventScroll: true });
+		this.updateToolbarState();
 	}
 
 	// ─── Map → Markdown Sync ────────────────────────────────
@@ -3247,6 +3348,10 @@ export class MindMapView extends ItemView {
 		}
 
 		await this.renderSvg(container, layout);
+
+		// Re-attach toolbar (container.empty() removes it)
+		this.toolRibbon?.attach();
+		this.updateToolbarState();
 	}
 
 	/**
