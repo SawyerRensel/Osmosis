@@ -406,4 +406,102 @@ describe("TransclusionResolver", () => {
 			expect(tree.root.children[0]!.isTranscluded).toBe(true);
 		});
 	});
+
+	describe("performance benchmarks", () => {
+		/**
+		 * Generate N mock files and a tree with N transclusion nodes.
+		 * Each file has a heading + 3 bullet items (~4 lines of markdown).
+		 */
+		function generateTransclusionFixture(count: number) {
+			const fileMap: Record<string, { path: string }> = {};
+			const contentMap: Record<string, string> = {};
+			const nodes: OsmosisNode[] = [];
+
+			for (let i = 0; i < count; i++) {
+				const name = `note-${String(i)}`;
+				const path = `${name}.md`;
+				fileMap[name] = { path };
+				fileMap[path] = { path };
+				contentMap[path] = [
+					`# Section ${String(i)}`,
+					`- Item A from note ${String(i)}`,
+					`- Item B from note ${String(i)}`,
+					`- Item C from note ${String(i)}`,
+				].join("\n");
+				nodes.push(
+					makeNode({ type: "transclusion", content: name }),
+				);
+			}
+
+			return { fileMap, contentMap, nodes };
+		}
+
+		/** Create a fresh tree of transclusion nodes (expandTree mutates in place) */
+		function freshTree(nodes: OsmosisNode[]): OsmosisTree {
+			return makeTree(
+				nodes.map((n) =>
+					makeNode({ type: "transclusion", content: n.content }),
+				),
+			);
+		}
+
+		it("10 embedded notes resolve+expand in < 50ms", async () => {
+			const { fileMap, contentMap, nodes } = generateTransclusionFixture(10);
+			const app = mockApp(fileMap, contentMap);
+
+			// Warmup: let JIT optimize
+			for (let i = 0; i < 5; i++) {
+				await new TransclusionResolver(app, new ParseCache()).expandTree(freshTree(nodes));
+			}
+
+			const resolver = new TransclusionResolver(app, new ParseCache());
+			const tree = freshTree(nodes);
+
+			const start = performance.now();
+			await resolver.expandTree(tree);
+			const elapsed = performance.now() - start;
+
+			expect(elapsed).toBeLessThan(50);
+		});
+
+		it("50 embedded notes resolve+expand in < 200ms (with lazy loading)", async () => {
+			const { fileMap, contentMap, nodes } = generateTransclusionFixture(50);
+			const app = mockApp(fileMap, contentMap);
+
+			const skipIds = new Set(nodes.map((n) => n.id));
+
+			// Warmup
+			for (let i = 0; i < 5; i++) {
+				await new TransclusionResolver(app, new ParseCache()).expandTree(freshTree(nodes), skipIds);
+			}
+
+			const resolver = new TransclusionResolver(app, new ParseCache());
+			const tree = freshTree(nodes);
+
+			const start = performance.now();
+			await resolver.expandTree(tree, skipIds);
+			const elapsed = performance.now() - start;
+
+			expect(elapsed).toBeLessThan(200);
+		});
+
+		it("100 embedded notes remain responsive (< 500ms)", async () => {
+			const { fileMap, contentMap, nodes } = generateTransclusionFixture(100);
+			const app = mockApp(fileMap, contentMap);
+
+			// Warmup
+			for (let i = 0; i < 5; i++) {
+				await new TransclusionResolver(app, new ParseCache()).expandTree(freshTree(nodes));
+			}
+
+			const resolver = new TransclusionResolver(app, new ParseCache());
+			const tree = freshTree(nodes);
+
+			const start = performance.now();
+			await resolver.expandTree(tree);
+			const elapsed = performance.now() - start;
+
+			expect(elapsed).toBeLessThan(500);
+		});
+	});
 });
