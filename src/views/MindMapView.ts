@@ -16,6 +16,9 @@ import type OsmosisPlugin from "../main";
 import type { BranchLineStyle } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { ToolRibbon } from "./ToolRibbon";
+import { EmbeddableMarkdownEditor, autoResizeExtension } from "../editor/EmbeddableMarkdownEditor";
+// eslint-disable-next-line import/no-extraneous-dependencies
+import { EditorSelection } from "@codemirror/state";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -76,7 +79,8 @@ export class MindMapView extends ItemView {
 
 	// Editing state
 	private editingNodeId: string | null = null;
-	private editOverlay: HTMLTextAreaElement | null = null;
+	private editContainer: HTMLDivElement | null = null;
+	private editEditor: EmbeddableMarkdownEditor | null = null;
 	private editCleanup: (() => void) | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
@@ -2858,17 +2862,16 @@ export class MindMapView extends ItemView {
 		const vk: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } | null = "virtualKeyboard" in navigator ? (navigator as any).virtualKeyboard : null;
 		if (vk) vk.overlaysContent = true;
 
-		const input = document.createElement("textarea");
-		input.className = "osmosis-node-input osmosis-edit-overlay";
-		input.value = node.source.content;
-		input.rows = 1;
-
 		// Scale font size to match the current zoom level so text appears
 		// the same size as the rendered node content
 		const baseFontSize = 13;
 		const scaledFontSize = baseFontSize * this.zoom;
 
 		const isMobile = Platform.isMobile;
+
+		// Create container div for the embedded editor
+		const container = document.createElement("div");
+		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
 			// Lock the SVG to position:fixed so it escapes Obsidian's layout
@@ -2885,67 +2888,96 @@ export class MindMapView extends ItemView {
 				s.zIndex = "9998";
 			}
 
+			const availableH = window.visualViewport?.height ?? window.innerHeight;
+
 			// Mobile: use fixed positioning on document.body to escape
 			// Obsidian's layout resize when the keyboard opens.
-			input.setCssStyles({
+			container.setCssStyles({
 				position: "fixed",
 				left: `${screenRect.left}px`,
 				top: `${screenRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
+				minWidth: `${screenRect.width}px`,
+				minHeight: `${screenRect.height}px`,
+				maxWidth: `${window.innerWidth - screenRect.left - 8}px`,
+				maxHeight: `${availableH - 10}px`,
 				fontSize: `${scaledFontSize}px`,
 				zIndex: "10000",
 			});
-			document.body.appendChild(input);
+			document.body.appendChild(container);
 		} else {
 			// Desktop: absolute positioning inside container
 			const containerRect = this.contentEl.getBoundingClientRect();
-			input.setCssStyles({
+			const availableWidth = containerRect.right - screenRect.left - 16;
+			container.setCssStyles({
 				position: "absolute",
 				left: `${screenRect.left - containerRect.left}px`,
 				top: `${screenRect.top - containerRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
+				minWidth: `${screenRect.width}px`,
+				minHeight: `${screenRect.height}px`,
+				maxWidth: `${availableWidth}px`,
+				maxHeight: `${containerRect.height}px`,
 				fontSize: `${scaledFontSize}px`,
 				zIndex: "1000",
 			});
-			this.contentEl.appendChild(input);
+			this.contentEl.appendChild(container);
 		}
 
-		input.addEventListener("keydown", (e: KeyboardEvent) => {
-			if (e.key === "Enter") {
-				this.stopEditing(true);
-				e.preventDefault();
-				e.stopPropagation();
-			} else if (e.key === "Escape") {
-				this.stopEditing(false);
-				e.preventDefault();
-				e.stopPropagation();
-			}
-			// Prevent keyboard nav while editing
-			e.stopPropagation();
-		});
+		this.editContainer = container;
 
-		input.addEventListener("blur", () => {
-			// Small delay to allow click events to process first
-			setTimeout(() => {
-				if (this.editingNodeId === nodeId) {
-					this.stopEditing(true);
-				}
-			}, 100);
-		});
+		// Prevent clicks on the editor container from reaching the SVG/mind map
+		container.addEventListener("pointerdown", (e) => e.stopPropagation());
+		container.addEventListener("click", (e) => e.stopPropagation());
 
-		this.editOverlay = input;
+		// Try to instantiate the embedded Obsidian editor; fall back to textarea
+		try {
+			const editor = new EmbeddableMarkdownEditor(this.app, container, {
+				value: node.source.content,
+				cls: "osmosis-node-editor",
+				onEnter: () => false, // Let Enter insert newline (default CM behavior)
+				onSubmit: () => { // Ctrl+Enter saves
+					// Defer so CM keymap handler returns true (suppressing the event)
+					// before the editor is destroyed; otherwise the keystroke leaks
+					// to the workspace and reaches the left-side markdown editor.
+					queueMicrotask(() => this.stopEditing(true));
+				},
+				onEscape: () => { // Escape cancels
+					queueMicrotask(() => this.stopEditing(false));
+				},
+				onBlur: () => {
+					// Small delay to allow click events to process first
+					setTimeout(() => {
+						if (this.editingNodeId === nodeId) {
+							this.stopEditing(true);
+						}
+					}, 100);
+				},
+				extensions: [autoResizeExtension(() => this.resizeEditContainer())],
+			});
 
-		// On mobile, reposition input above keyboard if it would be hidden
+			this.editEditor = editor;
+
+			// Focus the CM6 editor and select all text
+			editor.editor.cm.focus();
+			const doc = editor.editor.cm.state.doc;
+			editor.editor.cm.dispatch({
+				selection: EditorSelection.range(0, doc.length),
+			});
+		} catch (err) {
+			console.warn("Osmosis: EmbeddableMarkdownEditor failed, falling back to textarea", err);
+			container.remove();
+			this.editContainer = null;
+			this.createFallbackTextarea(node, nodeId, screenRect, scaledFontSize, isMobile);
+		}
+
+		// On mobile, reposition editor above keyboard if it would be hidden
 		const cleanups: Array<() => void> = [];
 		if (isMobile) {
 			const repositionAboveKeyboard = () => {
-				if (!this.editOverlay) return;
+				if (!this.editContainer) return;
 				const availableH = window.visualViewport?.height ?? window.innerHeight;
-				const inputRect = this.editOverlay.getBoundingClientRect();
-				if (inputRect.bottom > availableH - 10) {
-					this.editOverlay.style.top = `${availableH - inputRect.height - 10}px`;
+				const elRect = this.editContainer.getBoundingClientRect();
+				if (elRect.bottom > availableH - 10) {
+					this.editContainer.style.top = `${availableH - elRect.height - 10}px`;
 				}
 			};
 			if (vk) {
@@ -2975,16 +3007,121 @@ export class MindMapView extends ItemView {
 			if (vk) vk.overlaysContent = false;
 		};
 
+		lockScroll();
+	}
+
+	/** Auto-resize the edit container to fit the editor's content.
+	 *  Called via the autoResizeExtension on doc changes. We use
+	 *  requestMeasure to avoid layout thrash — just request CM6 to
+	 *  re-measure, and the container's height:fit-content handles the rest. */
+	private resizeEditContainer(): void {
+		if (!this.editContainer || !this.editEditor) return;
+		const cm = this.editEditor.editor?.cm;
+		if (!cm) return;
+
+		// Measure the longest line's pixel width using CM's character metrics
+		const doc = cm.state.doc;
+		const charWidth = cm.defaultCharacterWidth;
+		let maxChars = 0;
+		for (let i = 1; i <= doc.lines; i++) {
+			maxChars = Math.max(maxChars, doc.line(i).length);
+		}
+		// Content width = longest line + padding (8px each side + 4px buffer + border)
+		const contentWidth = maxChars * charWidth + 24;
+
+		const minWidth = parseFloat(this.editContainer.style.minWidth) || 0;
+		const maxWidth = parseFloat(this.editContainer.style.maxWidth) || Infinity;
+		const newWidth = Math.min(Math.max(contentWidth, minWidth), maxWidth);
+		this.editContainer.style.width = `${newWidth}px`;
+
+		cm.requestMeasure();
+	}
+
+	/** Fallback: create a plain textarea if the embedded editor fails */
+	private createFallbackTextarea(
+		node: LayoutNode,
+		nodeId: string,
+		screenRect: DOMRect,
+		scaledFontSize: number,
+		isMobile: boolean,
+	): void {
+		const container = document.createElement("div");
+		container.className = "osmosis-edit-overlay";
+
+		const input = document.createElement("textarea");
+		input.className = "osmosis-node-input osmosis-fallback-textarea";
+		input.value = node.source.content;
+		input.rows = 1;
+		input.setCssStyles({
+			width: "100%",
+			height: "100%",
+			fontSize: `${scaledFontSize}px`,
+		});
+		container.appendChild(input);
+
+		if (isMobile) {
+			container.setCssStyles({
+				position: "fixed",
+				left: `${screenRect.left}px`,
+				top: `${screenRect.top}px`,
+				width: `${screenRect.width}px`,
+				height: `${screenRect.height}px`,
+				zIndex: "10000",
+			});
+			document.body.appendChild(container);
+		} else {
+			const containerRect = this.contentEl.getBoundingClientRect();
+			container.setCssStyles({
+				position: "absolute",
+				left: `${screenRect.left - containerRect.left}px`,
+				top: `${screenRect.top - containerRect.top}px`,
+				width: `${screenRect.width}px`,
+				height: `${screenRect.height}px`,
+				zIndex: "1000",
+			});
+			this.contentEl.appendChild(container);
+		}
+
+		input.addEventListener("keydown", (e: KeyboardEvent) => {
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+				this.stopEditing(true);
+				e.preventDefault();
+				e.stopPropagation();
+			} else if (e.key === "Escape") {
+				this.stopEditing(false);
+				e.preventDefault();
+				e.stopPropagation();
+			}
+			// Prevent keyboard nav while editing
+			e.stopPropagation();
+		});
+
+		input.addEventListener("blur", () => {
+			setTimeout(() => {
+				if (this.editingNodeId === nodeId) {
+					this.stopEditing(true);
+				}
+			}, 100);
+		});
+
+		this.editContainer = container;
+
 		input.focus({ preventScroll: true });
 		input.select();
-		lockScroll();
 	}
 
 	private stopEditing(save: boolean): void {
 		if (!this.editingNodeId || !this.svg) return;
 
 		const nodeId = this.editingNodeId;
-		const newContent = this.editOverlay?.value ?? "";
+		// Get content from embedded editor or fallback textarea
+		let newContent = "";
+		if (this.editEditor) {
+			newContent = this.editEditor.value;
+		} else if (this.editContainer) {
+			const textarea = this.editContainer.querySelector("textarea");
+			newContent = textarea?.value ?? "";
+		}
 		this.editingNodeId = null;
 
 		// Clean up event listeners, virtualKeyboard state, scroll locks
@@ -2993,10 +3130,16 @@ export class MindMapView extends ItemView {
 			this.editCleanup = null;
 		}
 
-		// Remove the HTML overlay (works for both body and contentEl)
-		if (this.editOverlay) {
-			this.editOverlay.remove();
-			this.editOverlay = null;
+		// Destroy embedded editor if present
+		if (this.editEditor) {
+			this.editEditor.destroy();
+			this.editEditor = null;
+		}
+
+		// Remove the container (works for both body and contentEl)
+		if (this.editContainer) {
+			this.editContainer.remove();
+			this.editContainer = null;
 		}
 
 		// Restore SVG from fixed positioning used during mobile editing
