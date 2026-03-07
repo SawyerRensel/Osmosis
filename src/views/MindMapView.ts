@@ -103,6 +103,12 @@ export class MindMapView extends ItemView {
 	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
 	private suppressCursorSync = false;
 
+	// Node size measurement cache (keyed by display content string)
+	private nodeSizeCache = new Map<string, { width: number; height: number }>();
+	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
+	// nodes whose content hasn't changed (keyed by display content string)
+	private nodeHtmlCache = new Map<string, HTMLElement>();
+
 	// Viewport culling state
 	private renderedNodeIds = new Set<string>();
 	private cullRafId: number | null = null;
@@ -311,6 +317,11 @@ export class MindMapView extends ItemView {
 		// would destroy the SVG mid-edit.
 		if (this.editingNodeId) return;
 
+		// Clear caches when switching to a different file
+		if (file !== this.currentFile) {
+			this.nodeSizeCache.clear();
+			this.nodeHtmlCache.clear();
+		}
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
@@ -3089,6 +3100,10 @@ export class MindMapView extends ItemView {
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (view instanceof MarkdownView && view.file === this.currentFile) {
+				// Suppress the vault modify event so we skip the full loadFile()
+				// cycle (async file read + transclusion expansion). Instead, read
+				// the new content directly from the editor (in-memory, instant).
+				this.suppressNextReload = true;
 				if (isRedo) {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
 					(view.editor as any).redo();
@@ -3096,6 +3111,10 @@ export class MindMapView extends ItemView {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
 					(view.editor as any).undo();
 				}
+				const newContent = view.editor.getValue();
+				this.cache.invalidate(this.currentFile.path);
+				this.currentTree = this.cache.get(this.currentFile.path, newContent);
+				void this.render();
 				return;
 			}
 		}
@@ -3320,6 +3339,7 @@ export class MindMapView extends ItemView {
 
 	private async render(): Promise<void> {
 		const container = this.contentEl;
+		this.toolRibbon?.detach();
 		container.empty();
 		container.addClass("osmosis-mindmap-container");
 
@@ -3370,59 +3390,74 @@ export class MindMapView extends ItemView {
 		const cfg = DEFAULT_LAYOUT_CONFIG;
 		const contentMaxWidth = cfg.maxNodeWidth - cfg.nodePaddingX * 2;
 
-		// Create hidden measurement container matching node content styling
-		const measurer = document.createElement("div");
-		measurer.style.cssText = `
-			position: absolute; left: -9999px; top: -9999px;
-			visibility: hidden; pointer-events: none;
-		`;
-		container.appendChild(measurer);
-
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
 
+		// Collect nodes that need measurement (not in cache)
+		const toMeasure: { node: OsmosisNode; displayContent: string }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
-
-			// Render into a wide cell so nothing wraps, then use Range to
-			// measure actual content width (ignores block-level expansion).
-			const cell = document.createElement("div");
-			cell.className = "osmosis-node-content osmosis-measure-cell";
-			cell.setCssStyles({ width: "9999px" });
-			measurer.appendChild(cell);
-
 			const displayContent = this.getNodeDisplayContent(node);
-			if (this.renderComponent) {
-				await MarkdownRenderer.render(
-					this.app,
-					displayContent,
-					cell,
-					sourcePath,
-					this.renderComponent,
-				);
-			}
-
-			// Use Range to get tight bounding box of actual rendered content
-			const range = document.createRange();
-			range.selectNodeContents(cell);
-			const contentRect = range.getBoundingClientRect();
-			const naturalWidth = contentRect.width;
-
-			const finalWidth = Math.min(Math.max(Math.ceil(naturalWidth), 40), contentMaxWidth);
-			let finalHeight: number;
-
-			if (naturalWidth > contentMaxWidth) {
-				// Constrain width and re-measure wrapped height
-				cell.setCssStyles({ width: `${String(contentMaxWidth)}px` });
-				finalHeight = Math.max(Math.ceil(cell.getBoundingClientRect().height), 20);
+			const cached = this.nodeSizeCache.get(displayContent);
+			if (cached) {
+				sizes.set(node.id, cached);
 			} else {
-				finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+				toMeasure.push({ node, displayContent });
 			}
-
-			sizes.set(node.id, { width: finalWidth, height: finalHeight });
 		}
 
-		measurer.remove();
+		// Only create the measurer if there are uncached nodes
+		if (toMeasure.length > 0) {
+			const measurer = document.createElement("div");
+			measurer.style.cssText = `
+				position: absolute; left: -9999px; top: -9999px;
+				visibility: hidden; pointer-events: none;
+			`;
+			container.appendChild(measurer);
+
+			for (const { node, displayContent } of toMeasure) {
+				// Render into a wide cell so nothing wraps, then use Range to
+				// measure actual content width (ignores block-level expansion).
+				const cell = document.createElement("div");
+				cell.className = "osmosis-node-content osmosis-measure-cell";
+				cell.setCssStyles({ width: "9999px" });
+				measurer.appendChild(cell);
+
+				if (this.renderComponent) {
+					await MarkdownRenderer.render(
+						this.app,
+						displayContent,
+						cell,
+						sourcePath,
+						this.renderComponent,
+					);
+				}
+
+				// Use Range to get tight bounding box of actual rendered content
+				const range = document.createRange();
+				range.selectNodeContents(cell);
+				const contentRect = range.getBoundingClientRect();
+				const naturalWidth = contentRect.width;
+
+				const finalWidth = Math.min(Math.max(Math.ceil(naturalWidth), 40), contentMaxWidth);
+				let finalHeight: number;
+
+				if (naturalWidth > contentMaxWidth) {
+					// Constrain width and re-measure wrapped height
+					cell.setCssStyles({ width: `${String(contentMaxWidth)}px` });
+					finalHeight = Math.max(Math.ceil(cell.getBoundingClientRect().height), 20);
+				} else {
+					finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+				}
+
+				const size = { width: finalWidth, height: finalHeight };
+				sizes.set(node.id, size);
+				this.nodeSizeCache.set(displayContent, size);
+			}
+
+			measurer.remove();
+		}
+
 		return sizes;
 	}
 
@@ -3568,27 +3603,42 @@ export class MindMapView extends ItemView {
 			cycleLabel.className = "osmosis-cycle-indicator";
 			cycleLabel.textContent = `\u21BB ${node.source.content}`;
 			wrapper.appendChild(cycleLabel);
-		} else if (this.renderComponent) {
+		} else {
 			const displayContent = this.getNodeDisplayContent(node.source);
-			await MarkdownRenderer.render(
-				this.app,
-				displayContent,
-				wrapper,
-				sourcePath,
-				this.renderComponent,
-			);
-
-			// Add language label to code block nodes
-			if (node.source.type === "codeblock") {
-				const langMatch = /^(`{3,}|~{3,})(\S+)/.exec(node.source.content);
-				const lang = langMatch?.[2];
-				if (lang && !lang.startsWith("ad-")) {
-					const label = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
-					label.setAttribute("xmlns", XHTML_NS);
-					label.className = "osmosis-code-lang-label";
-					label.textContent = lang;
-					wrapper.appendChild(label);
+			const cachedHtml = this.nodeHtmlCache.get(displayContent);
+			if (cachedHtml) {
+				// Clone cached rendered content instead of re-rendering markdown
+				for (const child of Array.from(cachedHtml.childNodes)) {
+					wrapper.appendChild(child.cloneNode(true));
 				}
+			} else if (this.renderComponent) {
+				await MarkdownRenderer.render(
+					this.app,
+					displayContent,
+					wrapper,
+					sourcePath,
+					this.renderComponent,
+				);
+
+				// Add language label to code block nodes
+				if (node.source.type === "codeblock") {
+					const langMatch = /^(`{3,}|~{3,})(\S+)/.exec(node.source.content);
+					const lang = langMatch?.[2];
+					if (lang && !lang.startsWith("ad-")) {
+						const label = document.createElementNS(XHTML_NS, "span") as HTMLSpanElement;
+						label.setAttribute("xmlns", XHTML_NS);
+						label.className = "osmosis-code-lang-label";
+						label.textContent = lang;
+						wrapper.appendChild(label);
+					}
+				}
+
+				// Cache the rendered wrapper content for future cloning
+				const cacheEntry = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+				for (const child of Array.from(wrapper.childNodes)) {
+					cacheEntry.appendChild(child.cloneNode(true));
+				}
+				this.nodeHtmlCache.set(displayContent, cacheEntry);
 			}
 		}
 

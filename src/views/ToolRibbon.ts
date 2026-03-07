@@ -24,6 +24,7 @@ export class ToolRibbon {
 	private el: HTMLElement;
 	private buttons = new Map<string, HTMLButtonElement>();
 	private state: ToolbarState = { hasSelection: false, isEditing: false, hasFile: false };
+	private savedScrollLeft = 0;
 
 	constructor(
 		private container: HTMLElement,
@@ -122,6 +123,13 @@ export class ToolRibbon {
 			}
 		}
 
+		// Prevent pointer-up on toolbar buttons from bubbling to the mind map
+		// container, which would deselect the current node on mobile (touch)
+		// before the click handler fires.
+		this.el.addEventListener("pointerup", (e) => {
+			e.stopPropagation();
+		});
+
 		// Prevent wheel events on the toolbar from panning the mind map
 		this.el.addEventListener("wheel", (e) => {
 			e.stopPropagation();
@@ -132,10 +140,19 @@ export class ToolRibbon {
 		this.container.appendChild(this.el);
 	}
 
+	/** Detach toolbar before container.empty() to preserve scroll position. */
+	detach(): void {
+		if (this.el.parentElement) {
+			this.savedScrollLeft = this.el.scrollLeft;
+			this.el.remove();
+		}
+	}
+
 	/** Re-append toolbar to the container (needed after container.empty()). */
 	attach(): void {
 		if (!this.el.parentElement) {
 			this.container.appendChild(this.el);
+			this.el.scrollLeft = this.savedScrollLeft;
 		}
 	}
 
