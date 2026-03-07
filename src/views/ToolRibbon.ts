@@ -70,8 +70,8 @@ export class ToolRibbon {
 				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true },
 			],
 			[
-				{ id: "move-up", icon: "chevron-up", label: "Move up", action: actions.moveUp, needsSelection: true },
-				{ id: "move-down", icon: "chevron-down", label: "Move down", action: actions.moveDown, needsSelection: true },
+				{ id: "move-up", icon: "chevrons-up", label: "Move up", action: actions.moveUp, needsSelection: true },
+				{ id: "move-down", icon: "chevrons-down", label: "Move down", action: actions.moveDown, needsSelection: true },
 				{ id: "indent", icon: "indent-increase", label: "Indent", action: actions.indent, needsSelection: true },
 				{ id: "outdent", icon: "indent-decrease", label: "Outdent", action: actions.outdent, needsSelection: true },
 			],
