@@ -35,9 +35,9 @@ export class ToolRibbon {
 			centerOnRoot: () => void;
 			foldAll: () => void;
 			unfoldAll: () => void;
+			insertParent: () => void;
 			addSibling: () => void;
 			addChild: () => void;
-			insertParent: () => void;
 			moveUp: () => void;
 			moveDown: () => void;
 			indent: () => void;
@@ -65,13 +65,13 @@ export class ToolRibbon {
 				{ id: "unfold-all", icon: "chevrons-up-down", label: "Expand all", action: actions.unfoldAll, needsSelection: true },
 			],
 			[
+				{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", action: actions.insertParent, needsSelection: true },
 				{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", action: actions.addSibling, needsSelection: true },
 				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true },
-				{ id: "insert-parent", icon: "arrow-up-from-line", label: "Insert parent", action: actions.insertParent, needsSelection: true },
 			],
 			[
-				{ id: "move-up", icon: "arrow-up", label: "Move up", action: actions.moveUp, needsSelection: true },
-				{ id: "move-down", icon: "arrow-down", label: "Move down", action: actions.moveDown, needsSelection: true },
+				{ id: "move-up", icon: "chevron-up", label: "Move up", action: actions.moveUp, needsSelection: true },
+				{ id: "move-down", icon: "chevron-down", label: "Move down", action: actions.moveDown, needsSelection: true },
 				{ id: "indent", icon: "indent-increase", label: "Indent", action: actions.indent, needsSelection: true },
 				{ id: "outdent", icon: "indent-decrease", label: "Outdent", action: actions.outdent, needsSelection: true },
 			],
