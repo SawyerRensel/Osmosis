@@ -75,6 +75,7 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 20. Fold/unfold toggle via keyboard (matching Obsidian's fold hotkeys)
 21. Insert parent topic (Ctrl+Enter wraps selected node(s) under a new parent)
 22. Shift+Arrow multi-node selection (extend selection across siblings, children, cousins)
+23. Mind Map Tool Ribbon: sticky toolbar at the bottom of the mind map view with GUI buttons for existing hotkey actions. View Mode shows: Fit to view, Zoom in/out, Collapse all, Expand all, Center on root, Add sibling, Add child, Insert parent, Move up/down, Indent/Dedent, Undo/Redo, Copy/Paste. Edit Mode (editing a node) shows Obsidian's native editor formatting toolbar (bold, italic, heading, link, etc.). Always visible on desktop, tablet, and mobile. Rendered inside the view (not injected into Obsidian's chrome).
 
 **Deliverables**:
 - [ ] `MindMapView` registered as an Obsidian view
@@ -146,12 +147,16 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 15. Per-node width customization: drag right edge of any node to set custom width; height reflows to fit.
 16. Per-map min/max node width: configurable floor and ceiling for node width.
 17. Justify topic alignment: per-map toggle that enforces consistent node width across the whole map.
+18. Mind Map Properties Sidebar: register an Obsidian right-leaf "View" (like Backlinks) for per-map settings. Contextualizes to the active mind map view. Shows placeholder when no mind map is active. Settings include: layout direction, color theme overrides, collapse depth default, node spacing/density, branch line style, topic shape defaults, min/max node width, justify alignment toggle. Per-map settings persist per-note. **Build this first** so subsequent Phase 4 features have a UI home.
+19. Pin/Lock Toggle: toggle in mind map header to "pin" the current map — changing active note/tab doesn't switch the rendered mind map. Pinned map still live-updates if underlying note is edited. Visual indicator (pin icon) when active.
 
 **Deliverables**:
 - [ ] Working theme system with 10–15 preset themes
 - [ ] LCVRT cascade resolving L, R, T levels
 - [ ] Per-node frontmatter overrides
 - [ ] View state save/load
+- [ ] Mind Map Properties Sidebar in right leaf
+- [ ] Pin/Lock toggle for map view
 
 **Success Criteria for Phase 4**:
 - [ ] Heading nodes use typographic styling (size/weight by depth) instead of border color
@@ -161,6 +166,8 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 - [ ] View state (fold, pan, zoom) persists across sessions via explicit save
 - [ ] Transcluded branches use host theme, internal cascade untouched
 - [ ] Style resolution cost scales with visible nodes, not total nodes
+- [ ] Properties sidebar shows per-map settings for the active mind map view
+- [ ] Pin toggle prevents map from switching when active note changes
 
 **Dependencies & Blockers**: Phase 3 transclusion must be complete (for composition encapsulation and lazy resolution).
 

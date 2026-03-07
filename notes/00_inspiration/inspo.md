@@ -339,6 +339,43 @@ Mind map nodes must render ALL Markdown and Obsidian-flavored Markdown syntax id
 - Blockquotes and footnotes
 - Third-party plugin content: Dataview tables, Obsidian Bases, Map View, etc. — all should render via `MarkdownRenderer.renderMarkdown()` within foreignObject nodes.
 
+### Mind Map Menu System (2026-03-06)
+
+Three UI components for mind map controls, settings, and actions:
+
+#### 1. Pin/Lock Toggle
+- Toggle in the mind map header/menu to "pin" the current map view
+- When pinned, changing the active Obsidian note or tab does NOT switch the rendered mind map
+- The pinned map still live-updates if the underlying note is edited elsewhere
+- Visual indicator (pin icon, badge) when a map is pinned
+- Useful for referencing a map while navigating other notes
+
+#### 2. Mind Map Properties Sidebar (Right Sidebar Panel)
+- Obsidian "View" registered in the right leaf (like Backlinks, Tags)
+- Houses per-map formatting, styling, and configuration — NOT global Osmosis settings
+- Contextualizes to the active mind map view (if multiple tabs/windows have mind maps open)
+- When no mind map is active, shows a placeholder message
+- Per-map settings persist per-note (stored in frontmatter or sidecar)
+- Settings include:
+  - Layout direction (left-to-right, top-to-bottom, radial)
+  - Color theme / node styling overrides
+  - Collapse depth default
+  - Node spacing / density
+  - Branch line style
+  - Topic shape defaults
+  - Min/max node width
+  - Justify alignment toggle
+  - Any new Phase 4+ per-map features get a home here
+- This should be the **first Phase 4 feature** built, so new features have a UI home as they're developed
+
+#### 3. Mind Map Tool Ribbon (Action Bar)
+- Sticky toolbar at the bottom of the mind map view (inside the view, not injected into Obsidian's chrome)
+- Always visible on desktop, tablet, and mobile
+- **View Mode actions**: Fit to view, Zoom in/out, Collapse all, Expand all, Center on root, Add sibling, Add child, Insert parent, Move up, Move down, Indent, Dedent, Undo, Redo, Copy, Paste
+- **Edit Mode** (editing a node): Shows Obsidian's native editor formatting toolbar (bold, italic, heading, link, checkbox, code, etc.) — mirrors the mobile editing ribbon
+- On mobile, rendered inside the mind map view above Obsidian's native ribbon (not injected into Obsidian's mobile chrome — avoids fragile private API dependency)
+- Phasing: This feels like a **Phase 2 feature** since it surfaces existing hotkey actions as GUI buttons
+
 ### Must-Have Features
 - Custom mind map engine (SVG + foreignObject hybrid rendering)
 - Mind Map view (with direction/side toggles) and Timeline view
