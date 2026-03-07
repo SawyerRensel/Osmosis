@@ -274,6 +274,7 @@ Uses Obsidian CSS variables for theme compatibility.
 	bottom: 8px;
 	left: 50%;
 	transform: translateX(-50%);
+	max-width: calc(100% - 16px);
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -284,12 +285,26 @@ Uses Obsidian CSS variables for theme compatibility.
 	z-index: 10;
 	box-shadow: var(--shadow-s);
 	pointer-events: auto;
+	overflow-x: auto;
+	overflow-y: hidden;
+	/* Hide scrollbar while keeping scroll functional */
+	scrollbar-width: none; /* Firefox */
+}
+
+.osmosis-toolbar::-webkit-scrollbar {
+	display: none; /* Chrome, Safari */
+}
+
+/* Mobile: raise above Obsidian's bottom nav bar */
+.is-mobile .osmosis-toolbar {
+	bottom: 80px;
 }
 
 .osmosis-toolbar-btn {
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	min-width: 28px;
 	width: 28px;
 	height: 28px;
 	padding: 0;
@@ -298,6 +313,7 @@ Uses Obsidian CSS variables for theme compatibility.
 	background: transparent;
 	color: var(--icon-color);
 	cursor: pointer;
+	flex-shrink: 0;
 }
 
 .osmosis-toolbar-btn:hover:not(.is-disabled) {

@@ -122,6 +122,13 @@ export class ToolRibbon {
 			}
 		}
 
+		// Prevent wheel events on the toolbar from panning the mind map
+		this.el.addEventListener("wheel", (e) => {
+			e.stopPropagation();
+			// Scroll the toolbar horizontally if it overflows
+			this.el.scrollLeft += e.deltaX || e.deltaY;
+		}, { passive: true });
+
 		this.container.appendChild(this.el);
 	}
 
