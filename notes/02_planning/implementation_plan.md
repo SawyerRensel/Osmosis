@@ -656,6 +656,12 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Estimated Effort: 4–8 hours
 - Dependencies: Task 2.12
 
+**Task 2.23: Rich Node Editing via Embedded Obsidian Editor**
+- Description: Replace the plain textarea node editor with an embedded Obsidian MarkdownView inside a WorkspaceLeaf to provide a first-class editing experience. When the user enters edit mode (double-click, F2, etc.), create a floating overlay container positioned over the node, embed a WorkspaceLeaf hosting a MarkdownView in Live Preview mode, and populate it with only the node's markdown content. The editor supports all Obsidian editing hotkeys (Ctrl+B, Ctrl+I, Ctrl+K, etc.), `[[link]]` autocomplete, syntax highlighting, and shows Obsidian's built-in mobile editing ribbon on mobile. The overlay auto-resizes: width grows up to pane/screen width, then height grows up to available vertical space (accounting for mobile virtual keyboard). Enter inserts a newline. Ctrl+Enter saves and exits edit mode. Escape discards changes and exits. Blur (clicking away) saves and exits. Edits are written back to the source file (respecting transclusion). Falls back to enhanced textarea if WorkspaceLeaf embedding is unavailable.
+- Acceptance Criteria: Node editor renders in Live Preview mode with syntax highlighting. Ctrl+B/I/K and other Obsidian hotkeys work. `[[link]]` autocomplete works. Mobile editing ribbon appears on mobile. Editor auto-resizes horizontally then vertically within pane bounds. Virtual keyboard doesn't obscure the editor on mobile. Ctrl+Enter saves, Escape cancels, blur saves. Transcluded node edits write to source file. Fallback to textarea works if embedding fails.
+- Estimated Effort: 2–3 days
+- Dependencies: Task 2.7
+
 ---
 
 ### Phase 3 Tasks

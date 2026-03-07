@@ -339,6 +339,43 @@ Mind map nodes must render ALL Markdown and Obsidian-flavored Markdown syntax id
 - Blockquotes and footnotes
 - Third-party plugin content: Dataview tables, Obsidian Bases, Map View, etc. — all should render via `MarkdownRenderer.renderMarkdown()` within foreignObject nodes.
 
+### Rich Node Editing (2026-03-07)
+
+The current node editor is a plain `<textarea>` overlay — no markdown hotkeys, no auto-resize, no mobile ribbon. The goal is to make node editing a first-class citizen on par with editing the Obsidian note itself.
+
+#### Problem
+- Plain text only — no bold/italic hotkeys, no syntax highlighting, no Live Preview
+- Fixed dimensions — editor doesn't grow as content is added
+- No `[[link]]` autocomplete or other Obsidian-native editing features
+- Mobile editing ribbon doesn't appear (it's tied to MarkdownView, not our custom view)
+- Enter saves instead of inserting newlines, which is unintuitive for multi-line content
+
+#### Approach: Embedded WorkspaceLeaf (Canvas-style)
+Obsidian's Canvas and community plugins like Hover Editor embed full MarkdownView editors inside floating containers by creating WorkspaceLeaf instances programmatically. This pattern gives us everything for free:
+
+1. **Full Obsidian Editor**: Live Preview mode with syntax highlighting, inline rendering
+2. **All Hotkeys**: Ctrl+B (bold), Ctrl+I (italic), Ctrl+K (link), etc. — inherited from Obsidian
+3. **`[[Link]]` Autocomplete**: Obsidian's native suggestion system works automatically
+4. **Mobile Ribbon**: Obsidian's built-in mobile editing toolbar appears because we're hosting a real MarkdownView
+5. **Undo/Redo**: Obsidian's editor-level undo/redo, separate from our mind map undo/redo
+
+#### Design Decisions
+- **Content scoping**: Editor shows only the node's markdown text (isolated), not surrounding file context. Cleaner UX, less visual noise.
+- **Mode**: Live Preview (rendered markdown with inline editing) — matches the "delightful" goal
+- **Save semantics**: Ctrl+Enter saves. Escape cancels. Blur (click away) saves. Enter inserts newline.
+- **Auto-resize**: Width grows first (up to pane/screen width), then height (up to available vertical space minus virtual keyboard on mobile)
+- **Fallback**: If WorkspaceLeaf embedding fails (API changes, etc.), fall back to an enhanced textarea with manual hotkey handling
+
+#### Alternatives Considered
+- **Enhanced textarea** (Option A): Lightweight but would require reimplementing a subset of Obsidian's editor. Never feels native.
+- **Direct CodeMirror 6 instance** (Option B): ~80% of the experience but no `[[link]]` autocomplete, no mobile ribbon, no Obsidian extensions. Significant custom wiring needed.
+- **Open source file in split view**: Gives everything for free but breaks the inline editing UX — user leaves the mind map context.
+
+#### Risks
+- WorkspaceLeaf embedding uses semi-private Obsidian APIs — could break in future updates
+- Performance: creating/destroying a full MarkdownView on each edit may have overhead
+- Content isolation: need to handle the case where the node's markdown is a subset of a larger file (extract relevant lines, write back only changed lines)
+
 ### Mind Map Menu System (2026-03-06)
 
 Three UI components for mind map controls, settings, and actions:
@@ -1606,6 +1643,7 @@ These refinements don't change the fundamental 3-layer architecture — they add
 - [x] MVP Definition, Performance Targets & Gap Resolution session (2026-02-28)
 - [x] Mind Map Styling & View State ideation session (2026-02-28)
 - [x] OpenUSD-Inspired Styling Refinements session (2026-02-28)
+- [x] Rich Node Editing ideation session (2026-03-07)
 - [ ] Final review of inspiration doc
 - [ ] Move to Requirements phase — generate PRD
 
