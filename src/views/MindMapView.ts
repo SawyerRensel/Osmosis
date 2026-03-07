@@ -4130,6 +4130,25 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Toggle the checked state of a checkbox node in the source file.
+	 */
+	private async toggleCheckboxNode(src: OsmosisNode): Promise<void> {
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
+		const lineText = content.slice(src.range.start, src.range.end);
+		const isChecked = src.metadata?.checked as boolean;
+		const toggled = isChecked
+			? lineText.replace(/\[x\]/i, "[ ]")
+			: lineText.replace("[ ]", "[x]");
+		const updated =
+			content.slice(0, src.range.start) +
+			toggled +
+			content.slice(src.range.end);
+		await this.writeNodeFile(src, updated);
+	}
+
+	/**
 	 * Add a child node under the given parent.
 	 * Inserts a new line after the parent's subtree.
 	 * For transcluded parents, writes to the source file.
@@ -4652,7 +4671,12 @@ export class MindMapView extends ItemView {
 			wrapper.appendChild(cycleLabel);
 		} else {
 			const displayContent = this.getNodeDisplayContent(node.source);
-			const cachedHtml = this.nodeHtmlCache.get(displayContent);
+			// Checkbox nodes have state (checked/unchecked) baked into cached HTML,
+			// so skip the cache to always render fresh with the current checked state.
+			const isCheckboxNode = !!node.source.metadata?.checkbox;
+			const cachedHtml = isCheckboxNode
+				? null
+				: this.nodeHtmlCache.get(displayContent);
 			if (cachedHtml) {
 				// Clone cached rendered content instead of re-rendering markdown
 				for (const child of Array.from(cachedHtml.childNodes)) {
@@ -4711,14 +4735,30 @@ export class MindMapView extends ItemView {
 				}
 
 				// Cache the rendered wrapper content for future cloning
-				const cacheEntry = document.createElementNS(
-					XHTML_NS,
-					"div",
-				) as HTMLDivElement;
-				for (const child of Array.from(wrapper.childNodes)) {
-					cacheEntry.appendChild(child.cloneNode(true));
+				// (skip checkbox nodes — their checked state makes caching incorrect)
+				if (!isCheckboxNode) {
+					const cacheEntry = document.createElementNS(
+						XHTML_NS,
+						"div",
+					) as HTMLDivElement;
+					for (const child of Array.from(wrapper.childNodes)) {
+						cacheEntry.appendChild(child.cloneNode(true));
+					}
+					this.nodeHtmlCache.set(displayContent, cacheEntry);
 				}
-				this.nodeHtmlCache.set(displayContent, cacheEntry);
+			}
+		}
+
+		// Wire up checkbox toggle — must run after render (both cached and fresh paths)
+		if (node.source.metadata?.checkbox) {
+			const cb = wrapper.querySelector<HTMLInputElement>(
+				"input.task-list-item-checkbox",
+			);
+			if (cb) {
+				cb.addEventListener("click", (e) => {
+					e.stopPropagation();
+					void this.toggleCheckboxNode(node.source);
+				});
 			}
 		}
 
