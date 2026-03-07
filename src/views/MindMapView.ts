@@ -1586,7 +1586,59 @@ export class MindMapView extends ItemView {
 		if (!node?.parent) return;
 
 		const parentNode = node.parent;
-		if (parentNode.source.type === "root") return;
+
+		// Special case: outdenting a direct child of root promotes in-place
+		// list item → paragraph → heading
+		if (parentNode.source.type === "root") {
+			const siblings = parentNode.source.children;
+			const selectedIndices = this.getSelectedSiblingIndices(siblings);
+			if (selectedIndices.length === 0) return;
+
+			const firstSrc = siblings[selectedIndices[0]!]!;
+
+			// Determine promotion target type and depth
+			let newType: OsmosisNode["type"];
+			let newDepth: number;
+			if (firstSrc.type === "bullet" || firstSrc.type === "ordered") {
+				newType = "paragraph";
+				newDepth = 0;
+			} else if (firstSrc.type === "paragraph") {
+				newType = "heading";
+				// Match neighboring heading siblings, default to h1
+				newDepth = this.inferRootHeadingLevel(parentNode.source, selectedIndices[0]!);
+			} else {
+				return; // headings and other types can't promote further at root
+			}
+
+			const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			const file = this.getNodeFile(firstSrc);
+			if (!file) return;
+
+			const content = await this.app.vault.read(file);
+			const blockStart = firstSrc.range.start;
+			const blockEnd = this.subtreeEnd(lastSrc);
+
+			const reindentedParts: string[] = [];
+			for (const idx of selectedIndices) {
+				const nodeSrc = siblings[idx]!;
+				const nodeText = content.slice(
+					nodeSrc.range.start,
+					this.subtreeEnd(nodeSrc),
+				);
+				reindentedParts.push(
+					this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				);
+			}
+			const reindented = reindentedParts.join("\n");
+
+			const updated =
+				content.slice(0, blockStart) + reindented + content.slice(blockEnd);
+
+			const movedContents = selectedIndices.map((i) => siblings[i]!.content);
+			await this.writeNodeFile(firstSrc, updated);
+			this.reselectMultiAfterMove(movedContents);
+			return;
+		}
 
 		const grandparent = parentNode.parent;
 		if (!grandparent) return;
@@ -1618,8 +1670,16 @@ export class MindMapView extends ItemView {
 			let newType: OsmosisNode["type"];
 			if (nodeSrc.type === "heading" && parentNode.source.type === "heading") {
 				newType = "heading";
+			} else if (
+				(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
+				nodeSrc.depth === 0 &&
+				parentNode.source.type === "heading"
+			) {
+				// Depth-0 list item directly under a heading: promote to paragraph
+				// (progressive: bullet → paragraph → heading on successive outdents)
+				newType = "paragraph";
 			} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
-				// List items keep their own type when outdenting
+				// Nested list items keep their own type when outdenting
 				newType = nodeSrc.type;
 			} else {
 				newType = parentNode.source.type;
@@ -2728,6 +2788,22 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Infer heading level when promoting a root child to a heading.
+	 * Matches the nearest heading sibling's level, defaulting to h1.
+	 */
+	private inferRootHeadingLevel(root: OsmosisNode, index: number): number {
+		const siblings = root.children;
+		// Check neighbors outward from the index
+		for (let dist = 1; dist < siblings.length; dist++) {
+			for (const i of [index - dist, index + dist]) {
+				const sib = siblings[i];
+				if (sib?.type === "heading") return sib.depth;
+			}
+		}
+		return 1;
+	}
+
+	/**
 	 * Determine the new type when indenting a node under a new parent.
 	 * Headings indenting under headings stay as headings (deeper level).
 	 * Non-headings indenting under headings become bullets.
@@ -2833,11 +2909,11 @@ export class MindMapView extends ItemView {
 		// Calculate child depth delta — depends on whether we're crossing type boundaries.
 		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
 		const oldChildBase =
-			originalNode.type === "heading" || originalNode.type === "root"
+			originalNode.type === "heading" || originalNode.type === "root" || originalNode.type === "paragraph"
 				? 0
 				: originalNode.depth + 1;
 		const newChildBase =
-			newType === "heading" || newType === "root" ? 0 : newDepth + 1;
+			newType === "heading" || newType === "root" || newType === "paragraph" ? 0 : newDepth + 1;
 		const childDepthDelta = newChildBase - oldChildBase;
 
 		let inFence = false;
