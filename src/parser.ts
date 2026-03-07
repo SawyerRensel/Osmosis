@@ -48,7 +48,14 @@ export class OsmosisParser {
 		let codeLines: string[] = [];
 		let codeStart = 0;
 
-		for (const line of lines) {
+		// Table accumulator
+		let inTable = false;
+		let tableLines: string[] = [];
+		let tableStart = 0;
+		let tableEnd = 0;
+
+		for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+			const line = lines[lineIdx]!;
 			// Fenced code block detection
 			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.text.trim());
 			if (inCodeBlock) {
@@ -80,6 +87,40 @@ export class OsmosisParser {
 				continue;
 			}
 
+			// Table detection: accumulate consecutive pipe-prefixed lines
+			const isPipeLine = /^\s*\|/.test(line.text);
+			if (inTable) {
+				if (isPipeLine) {
+					tableLines.push(line.text);
+					tableEnd = line.end;
+					continue;
+				} else {
+					// End of table: flush accumulated lines as a table node
+					const content = tableLines.join("\n");
+					const node = this.createNode("table", 0, content, {
+						start: tableStart,
+						end: tableEnd,
+					});
+					listStack = [];
+					const parent = headingStack[headingStack.length - 1] ?? root;
+					parent.children.push(node);
+					inTable = false;
+					tableLines = [];
+					// Fall through to process current line normally
+				}
+			}
+			if (!inTable && isPipeLine) {
+				// Check if next line is a table separator (|---|---|)
+				const nextLine = lines[lineIdx + 1];
+				if (nextLine && /^\s*\|[\s:]*-+[\s:]*[-|\s:]*$/.test(nextLine.text)) {
+					inTable = true;
+					tableLines = [line.text];
+					tableStart = line.start;
+					tableEnd = line.end;
+					continue;
+				}
+			}
+
 			const parsed = this.parseLine(line);
 			if (parsed === null) {
 				// Blank line: reset list context
@@ -95,6 +136,11 @@ export class OsmosisParser {
 			// Store ordered list number in metadata
 			if (parsed.listNumber !== undefined) {
 				node.metadata = { ...node.metadata, listNumber: parsed.listNumber };
+			}
+
+			// Store checkbox state in metadata
+			if (parsed.checkbox) {
+				node.metadata = { ...node.metadata, checkbox: true, checked: parsed.checked };
 			}
 
 			if (parsed.type === "heading") {
@@ -160,6 +206,17 @@ export class OsmosisParser {
 				}
 			}
 		}
+
+		// Flush any pending table at end of document
+		if (inTable && tableLines.length > 0) {
+			const content = tableLines.join("\n");
+			const node = this.createNode("table", 0, content, {
+				start: tableStart,
+				end: tableEnd,
+			});
+			const parent = headingStack[headingStack.length - 1] ?? root;
+			parent.children.push(node);
+		}
 	}
 
 	/**
@@ -217,10 +274,22 @@ export class OsmosisParser {
 		// Bullet list: - item or * item
 		const bulletMatch = /^[-*]\s+(.*)$/.exec(trimmed);
 		if (bulletMatch?.[1] !== undefined) {
+			const content = bulletMatch[1];
+			// Detect checkbox syntax: [ ], [x], [X]
+			const checkboxMatch = /^\[([ xX])\]\s*(.*)$/.exec(content);
+			if (checkboxMatch) {
+				return {
+					type: "bullet",
+					depth: nestingDepth,
+					content,
+					checkbox: true,
+					checked: checkboxMatch[1] !== " ",
+				};
+			}
 			return {
 				type: "bullet",
 				depth: nestingDepth,
-				content: bulletMatch[1],
+				content,
 			};
 		}
 
@@ -359,4 +428,8 @@ interface ParsedLine {
 	content: string;
 	/** For ordered list items, the original number (e.g. 1, 2, 3). */
 	listNumber?: number;
+	/** Whether this is a checkbox list item. */
+	checkbox?: boolean;
+	/** Whether the checkbox is checked. */
+	checked?: boolean;
 }

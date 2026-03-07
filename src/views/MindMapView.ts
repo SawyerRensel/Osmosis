@@ -1072,6 +1072,23 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Check if clicking a link inside a node
+		const anchor = target.closest("a");
+		if (anchor) {
+			e.preventDefault();
+			e.stopPropagation();
+			const href = anchor.getAttribute("href");
+			if (href) {
+				if (anchor.classList.contains("internal-link")) {
+					const dataHref = anchor.getAttribute("data-href") ?? href;
+					void this.app.workspace.openLinkText(dataHref, this.currentFile?.path ?? "");
+				} else {
+					window.open(href);
+				}
+			}
+			return;
+		}
+
 		// Check if clicking a node
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
@@ -1091,6 +1108,7 @@ export class MindMapView extends ItemView {
 
 	private handleDblClick = (e: MouseEvent): void => {
 		if (this.lastPointerType === "touch") return;
+		if ((e.target as Element).closest("a")) return;
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
 			this.startEditing(nodeId);
@@ -1362,7 +1380,7 @@ export class MindMapView extends ItemView {
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeMarkdown(content);
+		await this.writeMarkdown(this.renumberOrderedLists(content));
 		this.selectFirstNode();
 	}
 
@@ -1595,12 +1613,17 @@ export class MindMapView extends ItemView {
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			// Becoming a sibling of parent — match parent's type/depth
-			const newType =
-				nodeSrc.type === "heading" &&
-				parentNode.source.type === "heading"
-					? "heading"
-					: parentNode.source.type;
+			// Becoming a sibling of parent — preserve node's own list type
+			// Only switch type for heading transitions
+			let newType: OsmosisNode["type"];
+			if (nodeSrc.type === "heading" && parentNode.source.type === "heading") {
+				newType = "heading";
+			} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
+				// List items keep their own type when outdenting
+				newType = nodeSrc.type;
+			} else {
+				newType = parentNode.source.type;
+			}
 			const newDepth = parentNode.source.depth;
 			reindentedParts.push(
 				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
@@ -1725,45 +1748,85 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Adjust the depth of pasted text line-by-line, preserving content.
+	 * Skips content lines inside code fences (only adjusts fence line indentation).
 	 */
 	private adjustPasteDepth(
 		text: string,
 		sourceType: OsmosisNode["type"],
 		depthDelta: number,
 	): string {
-		return text
-			.split("\n")
-			.map((line) => {
-				if (line.trim() === "") return line;
+		const lines = text.split("\n");
+		const result: string[] = [];
+		let inCodeBlock = false;
+		let codeFenceChar = "";
+		let codeFenceLen = 0;
 
-				// Handle heading lines
-				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-				if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-					const oldLevel = headingMatch[1].length;
-					const newLevel = Math.max(
-						1,
-						Math.min(6, oldLevel + depthDelta),
-					);
-					return "#".repeat(newLevel) + " " + headingMatch[2];
+		for (const line of lines) {
+			if (line.trim() === "") {
+				result.push(line);
+				continue;
+			}
+
+			const trimmed = line.trimStart();
+			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
+
+			// Code block: leave all lines (fences + content) untouched
+			if (inCodeBlock) {
+				if (
+					fenceMatch?.[1] &&
+					fenceMatch[1].charAt(0) === codeFenceChar &&
+					fenceMatch[1].length >= codeFenceLen &&
+					(fenceMatch[2] ?? "").trim() === ""
+				) {
+					inCodeBlock = false;
 				}
+				result.push(line);
+				continue;
+			} else if (fenceMatch?.[1]) {
+				inCodeBlock = true;
+				codeFenceChar = fenceMatch[1].charAt(0);
+				codeFenceLen = fenceMatch[1].length;
+				result.push(line);
+				continue;
+			}
 
-				// Handle list lines (tab or space indented)
-				const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
-				if (listMatch?.[3] !== undefined) {
-					const currentTabs = listMatch[1]?.length ?? 0;
-					const currentSpaces = listMatch[2]?.length ?? 0;
-					const currentDepth =
-						currentTabs + Math.floor(currentSpaces / 2);
-					const newDepth = Math.max(0, currentDepth + depthDelta);
-					return (
-						"\t".repeat(newDepth) +
-						listMatch[3].replace(/^[ \t]*/, "")
-					);
-				}
+			// Table lines (pipe-prefixed): leave untouched
+			if (/^\s*\|/.test(line)) {
+				result.push(line);
+				continue;
+			}
 
-				return line;
-			})
-			.join("\n");
+			// Handle heading lines
+			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
+			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
+				const oldLevel = headingMatch[1].length;
+				const newLevel = Math.max(
+					1,
+					Math.min(6, oldLevel + depthDelta),
+				);
+				result.push("#".repeat(newLevel) + " " + headingMatch[2]);
+				continue;
+			}
+
+			// Handle list lines (tab or space indented)
+			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
+			if (listMatch?.[3] !== undefined) {
+				const currentTabs = listMatch[1]?.length ?? 0;
+				const currentSpaces = listMatch[2]?.length ?? 0;
+				const currentDepth =
+					currentTabs + Math.floor(currentSpaces / 2);
+				const newDepth = Math.max(0, currentDepth + depthDelta);
+				result.push(
+					"\t".repeat(newDepth) +
+					listMatch[3].replace(/^[ \t]*/, ""),
+				);
+				continue;
+			}
+
+			result.push(line);
+		}
+
+		return result.join("\n");
 	}
 
 	/**
@@ -2524,7 +2587,7 @@ export class MindMapView extends ItemView {
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			const newType = this.inferDropType(targetParent, dropTarget.index);
+			const newType = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
 			const newDepth = this.inferDropDepth(
 				targetParent,
 				dropTarget.index,
@@ -2624,7 +2687,7 @@ export class MindMapView extends ItemView {
 		}
 
 		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeMarkdown(updated);
+		await this.writeMarkdown(this.renumberOrderedLists(updated));
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -2703,10 +2766,12 @@ export class MindMapView extends ItemView {
 	 * Determine the new type for a drag-and-drop operation.
 	 * Unlike indent (which makes children), D&D places nodes as siblings.
 	 * When dropping between heading siblings, non-heading nodes promote to headings.
+	 * List items (bullet/ordered) preserve their own type.
 	 */
 	private inferDropType(
 		targetParent: OsmosisNode,
 		dropIndex: number,
+		movingNode: OsmosisNode,
 	): OsmosisNode["type"] {
 		if (targetParent.type === "heading" || targetParent.type === "root") {
 			// Check if neighboring siblings at the drop position are headings
@@ -2714,6 +2779,10 @@ export class MindMapView extends ItemView {
 				targetParent.children[dropIndex] ??
 				targetParent.children[dropIndex - 1];
 			if (neighbor?.type === "heading") return "heading";
+		}
+		// List items preserve their own type
+		if (movingNode.type === "bullet" || movingNode.type === "ordered") {
+			return movingNode.type;
 		}
 		return this.inferChildType(targetParent);
 	}
@@ -2748,8 +2817,8 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		// Code blocks are atomic — never re-indent their contents
-		if (originalNode.type === "codeblock") return text;
+		// Code blocks and tables are atomic — never re-indent their contents
+		if (originalNode.type === "codeblock" || originalNode.type === "table") return text;
 
 		// When converting heading → list type, strip internal blank lines
 		// that were added by normalizeHeadingSpacing — they break list nesting.
@@ -2771,10 +2840,36 @@ export class MindMapView extends ItemView {
 			newType === "heading" || newType === "root" ? 0 : newDepth + 1;
 		const childDepthDelta = newChildBase - oldChildBase;
 
+		let inFence = false;
+		let fenceChar = "";
+		let fenceLen = 0;
+
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (line === undefined) continue;
 			if (line.trim() === "") {
+				result.push(line);
+				continue;
+			}
+
+			// Code block: leave all lines (fences + content) untouched
+			const trimmed = line.trimStart();
+			const fm = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
+			if (inFence) {
+				if (
+					fm?.[1] &&
+					fm[1].charAt(0) === fenceChar &&
+					fm[1].length >= fenceLen &&
+					(fm[2] ?? "").trim() === ""
+				) {
+					inFence = false;
+				}
+				result.push(line);
+				continue;
+			} else if (fm?.[1]) {
+				inFence = true;
+				fenceChar = fm[1].charAt(0);
+				fenceLen = fm[1].length;
 				result.push(line);
 				continue;
 			}
@@ -3371,10 +3466,16 @@ export class MindMapView extends ItemView {
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
 
+		// For checkbox nodes, strip the [ ]/[x] prefix for editing
+		let editValue = node.source.content;
+		if (node.source.metadata?.checkbox) {
+			editValue = editValue.replace(/^\[[ xX]\]\s*/, "");
+		}
+
 		// Try to instantiate the embedded Obsidian editor; fall back to textarea
 		try {
 			const editor = new EmbeddableMarkdownEditor(this.app, container, {
-				value: node.source.content,
+				value: editValue,
 				cls: "osmosis-node-editor",
 				onEnter: () => false, // Let Enter insert newline (default CM behavior)
 				onSubmit: () => {
@@ -3639,6 +3740,12 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
 
+		// Re-add checkbox prefix if this was a checkbox node
+		if (save && node.source.metadata?.checkbox) {
+			const prefix = (node.source.metadata.checked as boolean) ? "[x] " : "[ ] ";
+			newContent = prefix + newContent;
+		}
+
 		if (save && newContent !== node.source.content) {
 			// Write change back to markdown (triggers re-render)
 			void this.renameNode(node, newContent);
@@ -3651,8 +3758,8 @@ export class MindMapView extends ItemView {
 	// ─── Map → Markdown Sync ────────────────────────────────
 
 	/**
-	 * Ensure exactly one blank line before and after each heading line.
-	 * Follows Obsidian/CommonMark best practices for heading spacing.
+	 * Ensure exactly one blank line before and after headings, top-level
+	 * code fences, tables, and standalone paragraphs.
 	 */
 	private normalizeHeadingSpacing(content: string): string {
 		// First: collapse runs of 2+ blank lines into exactly one blank line
@@ -3660,19 +3767,37 @@ export class MindMapView extends ItemView {
 		const lines = collapsed.split("\n");
 		const result: string[] = [];
 		let inCodeBlock = false;
+		let inTable = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i] ?? "";
 			const isHeading = /^#{1,6}\s/.test(line);
 			// Only add spacing around top-level code fences (not indented ones inside lists)
 			const isFence = /^(`{3,}|~{3,})/.test(line.trim());
 			const isTopLevelFence = isFence && /^(`{3,}|~{3,})/.test(line);
+			const isTableLine = /^\s*\|/.test(line);
+			// Detect table start (first pipe line after non-pipe)
+			const isTableStart = isTableLine && !inTable;
+			// Detect paragraph: non-blank, non-list, non-heading, non-fence, non-table,
+			// not indented (top-level), not inside code block
+			const isTopLevelParagraph = !isHeading && !isFence && !isTableLine
+				&& line.trim() !== "" && !/^(\t| {2,})/.test(line)
+				&& !/^[-*]\s/.test(line) && !/^\d+\.\s/.test(line)
+				&& !inCodeBlock;
 
 			if (isFence) inCodeBlock = !inCodeBlock;
+			if (isTableStart) inTable = true;
+			if (inTable && !isTableLine) inTable = false;
 
 			const prevLine = result[result.length - 1];
-			// Blank line before headings and top-level opening code fences
+			const needsBlankBefore =
+				isHeading
+				|| (isTopLevelFence && inCodeBlock)
+				|| isTableStart
+				|| (isTopLevelParagraph && prevLine !== undefined && prevLine.trim() !== ""
+					&& !/^#{1,6}\s/.test(prevLine));
+
 			if (
-				(isHeading || (isTopLevelFence && inCodeBlock)) &&
+				needsBlankBefore &&
 				result.length > 0 &&
 				prevLine !== undefined &&
 				prevLine.trim() !== ""
@@ -3680,9 +3805,18 @@ export class MindMapView extends ItemView {
 				result.push("");
 			}
 			result.push(line);
-			// Blank line after headings and top-level closing code fences
-			if (isHeading || (isTopLevelFence && !inCodeBlock)) {
-				const nextLine = lines[i + 1];
+
+			const nextLine = lines[i + 1];
+			// Detect table end (current is table, next is not)
+			const isTableEnd = isTableLine && (nextLine === undefined || !/^\s*\|/.test(nextLine));
+			const needsBlankAfter =
+				isHeading
+				|| (isTopLevelFence && !inCodeBlock)
+				|| isTableEnd
+				|| (isTopLevelParagraph && nextLine !== undefined && nextLine.trim() !== ""
+					&& !/^#{1,6}\s/.test(nextLine));
+
+			if (needsBlankAfter) {
 				if (nextLine !== undefined && nextLine.trim() !== "") {
 					result.push("");
 				}
@@ -3707,6 +3841,8 @@ export class MindMapView extends ItemView {
 			case "ordered":
 				return `${"\t".repeat(depth)}1. ${content}`;
 			case "paragraph":
+				return content;
+			case "table":
 				return content;
 			case "transclusion":
 				return `![[${content}]]`;
@@ -3843,16 +3979,77 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Renumber ordered list items so consecutive siblings at the same depth
+	 * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.
+	 */
+	private renumberOrderedLists(text: string): string {
+		const lines = text.split("\n");
+		let inCodeBlock = false;
+		// Track the last ordered-list depth and per-depth counters.
+		// A blank line or non-ordered-list line resets the counter for that depth.
+		const counters = new Map<number, number>();
+		let prevWasOrdered = false;
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i]!;
+
+			// Track code fences
+			const trimmed = line.trimStart();
+			const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+			if (fenceMatch) {
+				inCodeBlock = !inCodeBlock;
+				continue;
+			}
+			if (inCodeBlock) continue;
+
+			// Match ordered list lines: optional tabs/spaces, then digit(s), dot, space
+			const match = /^(\t*)([ ]*)(\d+)\.\s+(.*)$/.exec(line);
+			if (match?.[3] !== undefined && match[4] !== undefined) {
+				const tabs = match[1]?.length ?? 0;
+				const spaces = match[2]?.length ?? 0;
+				const depth = tabs + Math.floor(spaces / 2);
+
+				if (!prevWasOrdered) {
+					// Start of a new ordered list group: reset all counters
+					counters.clear();
+				}
+
+				const current = (counters.get(depth) ?? 0) + 1;
+				counters.set(depth, current);
+				// Clear counters for deeper levels (they restart if we come back)
+				for (const [d] of counters) {
+					if (d > depth) counters.delete(d);
+				}
+				prevWasOrdered = true;
+
+				const indent = (match[1] ?? "") + (match[2] ?? "");
+				lines[i] = `${indent}${String(current)}. ${match[4]}`;
+			} else if (line.trim() === "") {
+				// Blank line resets
+				counters.clear();
+				prevWasOrdered = false;
+			} else {
+				// Non-ordered content (bullet, heading, paragraph) — reset
+				counters.clear();
+				prevWasOrdered = false;
+			}
+		}
+
+		return lines.join("\n");
+	}
+
+	/**
 	 * Write updated content to the correct file for a node.
 	 */
 	private async writeNodeFile(
 		src: OsmosisNode,
 		updated: string,
 	): Promise<void> {
+		const renumbered = this.renumberOrderedLists(updated);
 		if (src.isTranscluded && src.sourceFile) {
-			await this.writeTranscludedMarkdown(src.sourceFile, updated);
+			await this.writeTranscludedMarkdown(src.sourceFile, renumbered);
 		} else {
-			await this.writeMarkdown(updated);
+			await this.writeMarkdown(renumbered);
 		}
 	}
 
@@ -3916,13 +4113,23 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const newLine = this.serializeLine(src.type, src.depth, "");
+		// If sibling of a checkbox, create a new unchecked checkbox
+		const newContent = src.metadata?.checkbox ? "[ ] " : "";
 		const insertPos = this.subtreeEnd(src);
+
+		let insertText: string;
+		if (src.type === "paragraph" || src.type === "codeblock" || src.type === "table") {
+			// Paragraphs, code blocks, and tables need a blank line separator
+			// Use a zero-width space as placeholder (not stripped by trim())
+			insertText = "\n\n\u200B";
+		} else {
+			const newLine = this.serializeLine(src.type, src.depth, newContent);
+			insertText = "\n" + newLine;
+		}
 
 		const updated =
 			content.slice(0, insertPos) +
-			"\n" +
-			newLine +
+			insertText +
 			content.slice(insertPos);
 
 		const selectedId = this.selectedNodeId;
@@ -3985,9 +4192,13 @@ export class MindMapView extends ItemView {
 		if (!previousSelectedId) return;
 
 		// The tree has been re-parsed, so we need to find the original node by position match
-		// The new node will be a zero-length content node
+		// The new node will have empty content (or just a checkbox/placeholder)
 		for (const [id, layoutNode] of this.nodeMap) {
-			if (layoutNode.source.content === "") {
+			const c = layoutNode.source.content;
+			const stripped = c.replace(/[\u200B\u00A0]/g, "");
+			const isEmpty = stripped.trim() === ""
+				|| /^\[[ xX]\]\s*$/.test(stripped);
+			if (isEmpty) {
 				this.selectNode(id);
 				this.scrollToSelectedNode();
 				this.startEditing(id);
@@ -4114,6 +4325,22 @@ export class MindMapView extends ItemView {
 					);
 				}
 
+				// Inject checkbox for task-list items (affects size measurement)
+				if (node.metadata?.checkbox) {
+					const cb = document.createElement("input");
+					cb.type = "checkbox";
+					cb.className = "task-list-item-checkbox";
+					if (node.metadata.checked) {
+						cb.checked = true;
+					}
+					const p = cell.querySelector("p");
+					if (p) {
+						p.insertBefore(cb, p.firstChild);
+					} else if (cell.firstChild) {
+						cell.insertBefore(cb, cell.firstChild);
+					}
+				}
+
 				// Use Range to get tight bounding box of actual rendered content
 				const range = document.createRange();
 				range.selectNodeContents(cell);
@@ -4159,7 +4386,7 @@ export class MindMapView extends ItemView {
 		return result;
 	}
 
-	/** Get the display content for a node, adding ordered list prefix if needed. */
+	/** Get the display content for a node, adding list prefix if needed. */
 	private getNodeDisplayContent(node: OsmosisNode): string {
 		if (
 			node.type === "ordered" &&
@@ -4167,6 +4394,13 @@ export class MindMapView extends ItemView {
 		) {
 			// Escape the dot so MarkdownRenderer renders as plain text, not <ol>
 			return `${String(node.metadata.listNumber as number)}\\. ${node.content}`;
+		}
+		if (node.type === "bullet") {
+			if (node.metadata?.checkbox) {
+				// Strip the [ ]/[x] prefix — checkbox input injected post-render
+				return node.content.replace(/^\[[ xX]\]\s*/, "");
+			}
+			return `\u2022 ${node.content}`;
 		}
 		return node.content;
 	}
@@ -4372,6 +4606,31 @@ export class MindMapView extends ItemView {
 						label.className = "osmosis-code-lang-label";
 						label.textContent = lang;
 						wrapper.appendChild(label);
+					}
+				}
+
+				// Inject checkbox for task-list items
+				if (node.source.metadata?.checkbox) {
+					const cb = document.createElementNS(XHTML_NS, "input") as HTMLInputElement;
+					cb.setAttribute("xmlns", XHTML_NS);
+					cb.type = "checkbox";
+					cb.className = "task-list-item-checkbox";
+					cb.dataset.task = (node.source.metadata.checked as boolean) ? "x" : "";
+					if (node.source.metadata.checked) {
+						cb.checked = true;
+					}
+					// Prepend checkbox before existing content
+					const firstChild = wrapper.firstChild;
+					if (firstChild) {
+						// Insert inside the first <p> if present, otherwise before first child
+						const p = wrapper.querySelector("p");
+						if (p) {
+							p.insertBefore(cb, p.firstChild);
+						} else {
+							wrapper.insertBefore(cb, firstChild);
+						}
+					} else {
+						wrapper.appendChild(cb);
 					}
 				}
 

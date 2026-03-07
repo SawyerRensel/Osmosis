@@ -14,6 +14,7 @@ export type NodeType =
 	| "ordered"
 	| "paragraph"
 	| "codeblock"
+	| "table"
 	| "transclusion";
 
 /** Character range in source markdown (0-based, end-exclusive). */
