@@ -253,8 +253,17 @@ export class OsmosisParser {
 
 		// Transclusion: ![[note]] or ![](path)
 		// Must check before bullet lists since ![] could be confused with list markers
+		// Media embeds (images, audio, video, PDF) are treated as paragraphs
+		// so MarkdownRenderer handles them natively instead of expanding as notes.
 		const wikiTransclusion = /^!\[\[([^\]]+)\]\]/.exec(trimmed);
 		if (wikiTransclusion?.[1] !== undefined) {
+			if (this.isMediaEmbed(wikiTransclusion[1])) {
+				return {
+					type: "paragraph",
+					depth: 0,
+					content: trimmed,
+				};
+			}
 			return {
 				type: "transclusion",
 				depth: nestingDepth,
@@ -264,6 +273,13 @@ export class OsmosisParser {
 
 		const mdTransclusion = /^!\[([^\]]*)\]\(([^)]+)\)/.exec(trimmed);
 		if (mdTransclusion?.[2] !== undefined) {
+			if (this.isMediaEmbed(mdTransclusion[2])) {
+				return {
+					type: "paragraph",
+					depth: 0,
+					content: trimmed,
+				};
+			}
 			return {
 				type: "transclusion",
 				depth: nestingDepth,
@@ -310,6 +326,31 @@ export class OsmosisParser {
 			depth: 0,
 			content: text.trim(),
 		};
+	}
+
+	/** File extensions for media embeds that should NOT be expanded as note transclusions. */
+	private static readonly MEDIA_EXTENSIONS = new Set([
+		// Images
+		"png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif",
+		// Audio
+		"mp3", "webm", "wav", "m4a", "ogg", "3gp", "flac",
+		// Video
+		"mp4", "ogv", "mov", "mkv",
+		// PDF
+		"pdf",
+	]);
+
+	/**
+	 * Check if an embed target refers to a media file (image, audio, video, PDF).
+	 * Handles wiki-link pipes (e.g. "image.png|300") and fragments (e.g. "file.pdf#page=2").
+	 */
+	private isMediaEmbed(target: string): boolean {
+		// Strip wiki-link pipe sizing (e.g. "image.png|300" → "image.png")
+		const pathPart = target.split("|")[0]?.split("#")[0] ?? "";
+		const dotIndex = pathPart.lastIndexOf(".");
+		if (dotIndex === -1) return false;
+		const ext = pathPart.slice(dotIndex + 1).toLowerCase();
+		return OsmosisParser.MEDIA_EXTENSIONS.has(ext);
 	}
 
 	/**

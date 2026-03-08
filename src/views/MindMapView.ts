@@ -4420,6 +4420,9 @@ export class MindMapView extends ItemView {
 					);
 				}
 
+				// Replace video platform links with embedded iframes
+				this.replaceVideoEmbeds(cell);
+
 				// Inject checkbox for task-list items (affects size measurement)
 				if (node.metadata?.checkbox) {
 					const cb = document.createElement("input");
@@ -4498,6 +4501,63 @@ export class MindMapView extends ItemView {
 			return `\u2022 ${node.content}`;
 		}
 		return node.content;
+	}
+
+	/** YouTube / video URL patterns → embed URL extractors */
+	private static readonly VIDEO_EMBED_PATTERNS: {
+		pattern: RegExp;
+		toEmbed: (match: RegExpExecArray) => string;
+	}[] = [
+		{
+			// https://www.youtube.com/watch?v=VIDEO_ID or &v=VIDEO_ID
+			pattern: /https?:\/\/(?:www\.)?youtube\.com\/watch\?[^\s]*v=([a-zA-Z0-9_-]+)/,
+			toEmbed: (m) => `https://www.youtube.com/embed/${m[1]}`,
+		},
+		{
+			// https://youtu.be/VIDEO_ID
+			pattern: /https?:\/\/youtu\.be\/([a-zA-Z0-9_-]+)/,
+			toEmbed: (m) => `https://www.youtube.com/embed/${m[1]}`,
+		},
+		{
+			// https://www.youtube.com/embed/VIDEO_ID (already embed format)
+			pattern: /https?:\/\/(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]+)/,
+			toEmbed: (m) => `https://www.youtube.com/embed/${m[1]}`,
+		},
+		{
+			// https://vimeo.com/VIDEO_ID
+			pattern: /https?:\/\/(?:www\.)?vimeo\.com\/(\d+)/,
+			toEmbed: (m) => `https://player.vimeo.com/video/${m[1]}`,
+		},
+	];
+
+	/**
+	 * Post-render: replace links to video platforms with embedded iframes.
+	 * Works in both the measurement div and the actual SVG foreignObject.
+	 */
+	private replaceVideoEmbeds(container: HTMLElement, ns?: string): void {
+		const links = container.querySelectorAll("a");
+		for (const link of Array.from(links)) {
+			const href = link.getAttribute("href") ?? "";
+			for (const { pattern, toEmbed } of MindMapView.VIDEO_EMBED_PATTERNS) {
+				const match = pattern.exec(href);
+				if (match) {
+					const iframe = ns
+						? (document.createElementNS(ns, "iframe") as HTMLIFrameElement)
+						: document.createElement("iframe");
+					if (ns) iframe.setAttribute("xmlns", ns);
+					iframe.setAttribute("src", toEmbed(match));
+					iframe.setAttribute("frameborder", "0");
+					iframe.setAttribute("allowfullscreen", "true");
+					iframe.setAttribute(
+						"allow",
+						"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture",
+					);
+					iframe.className = "osmosis-video-embed";
+					link.replaceWith(iframe);
+					break;
+				}
+			}
+		}
 	}
 
 	private async renderSvg(
@@ -4690,6 +4750,9 @@ export class MindMapView extends ItemView {
 					sourcePath,
 					this.renderComponent,
 				);
+
+				// Replace video platform links with embedded iframes
+				this.replaceVideoEmbeds(wrapper, XHTML_NS);
 
 				// Add language label to code block nodes
 				if (node.source.type === "codeblock") {

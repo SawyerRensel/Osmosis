@@ -131,6 +131,43 @@ describe("OsmosisParser", () => {
 			expect(h1?.children).toHaveLength(1);
 			expect(h1?.children[0]?.type).toBe("transclusion");
 		});
+
+		it("treats wiki-link image embeds as paragraphs", () => {
+			const md = "![[photo.png]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+			expect(tree.root.children[0]?.content).toBe("![[photo.png]]");
+		});
+
+		it("treats wiki-link image embeds with sizing as paragraphs", () => {
+			const md = "![[pine_tree.webp|169]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+			expect(tree.root.children[0]?.content).toBe("![[pine_tree.webp|169]]");
+		});
+
+		it("treats markdown image embeds as paragraphs", () => {
+			const md = "![alt text](image.jpg)";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+			expect(tree.root.children[0]?.content).toBe("![alt text](image.jpg)");
+		});
+
+		it("treats PDF embeds as paragraphs", () => {
+			const md = "![[document.pdf]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+		});
+
+		it("still treats .md links as transclusions", () => {
+			const md = "![[some-note]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children[0]?.type).toBe("transclusion");
+		});
 	});
 
 	describe("blank lines", () => {

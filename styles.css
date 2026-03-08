@@ -87,10 +87,31 @@ Uses Obsidian CSS variables for theme compatibility.
 	padding-left: 0;
 }
 
-.osmosis-node-content img {
+.osmosis-node-content img,
+.osmosis-node-content video {
 	max-width: 100%;
 	max-height: 100%;
 	object-fit: contain;
+}
+
+.osmosis-node-content audio {
+	width: 100%;
+	min-width: 250px;
+}
+
+/* Allow media controls to receive pointer events */
+.osmosis-node-content audio,
+.osmosis-node-content video,
+.osmosis-node-content iframe.osmosis-video-embed {
+	pointer-events: auto;
+}
+
+.osmosis-node-content iframe.osmosis-video-embed {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	min-width: 280px;
+	border: none;
+	border-radius: 4px;
 }
 
 .osmosis-node-content code {
