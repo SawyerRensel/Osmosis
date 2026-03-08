@@ -126,7 +126,11 @@ export interface OsmosisStyleFrontmatter {
 	/** Named reusable style bundles (Class level in LCVRT). */
 	classes?: Record<string, NodeStyle>;
 
-	// v1.1: variants, activeVariant
+	/** Named variant configurations (Variant level in LCVRT). */
+	variants?: Record<string, Record<string, NodeStyle>>;
+
+	/** Currently active variant name. */
+	activeVariant?: string;
 }
 
 // ─── LCVRT Cascade ──────────────────────────────────────────────────────────
@@ -134,7 +138,6 @@ export interface OsmosisStyleFrontmatter {
 /**
  * Inputs to the LCVRT cascade resolver for a single node.
  *
- * v1.0 resolves L → C → R → T (Variant is a v1.1 stub).
  * Each level is optional — missing levels are skipped.
  */
 export interface CascadeInput {
@@ -144,7 +147,8 @@ export interface CascadeInput {
 	/** C — Class: named reusable style bundle. */
 	class?: NodeStyle;
 
-	// v1.1: variant?: NodeStyle;
+	/** V — Variant: switchable per-note style configuration. */
+	variant?: NodeStyle;
 
 	/** R — Reference: style from the transcluded note's own frontmatter. */
 	reference?: NodeStyle;
@@ -167,7 +171,7 @@ export function resolveCascade(input: CascadeInput): NodeStyle {
 	const layers: (NodeStyle | undefined)[] = [
 		input.local,
 		input.class,
-		// input.variant,  // v1.1
+		input.variant,
 		input.reference,
 		input.theme,
 	];
@@ -216,6 +220,7 @@ export function resolveNodeStyle(
 	depth: number | undefined,
 	local?: NodeStyle,
 	classStyle?: NodeStyle,
+	variantStyle?: NodeStyle,
 	reference?: NodeStyle,
 ): NodeStyle {
 	let themeStyle: NodeStyle | undefined;
@@ -229,7 +234,7 @@ export function resolveNodeStyle(
 		}
 	}
 
-	return resolveCascade({ local, class: classStyle, reference, theme: themeStyle });
+	return resolveCascade({ local, class: classStyle, variant: variantStyle, reference, theme: themeStyle });
 }
 
 // ─── Frontmatter Parsing & Node-Style Lookup ─────────────────────────────
@@ -334,6 +339,14 @@ export function parseOsmosisStyleFrontmatter(
 		result.classes = obj["classes"] as Record<string, NodeStyle>;
 	}
 
+	if (obj["variants"] && typeof obj["variants"] === "object") {
+		result.variants = obj["variants"] as Record<string, Record<string, NodeStyle>>;
+	}
+
+	if (typeof obj["activeVariant"] === "string") {
+		result.activeVariant = obj["activeVariant"];
+	}
+
 	return Object.keys(result).length > 0 ? result : undefined;
 }
 
@@ -358,5 +371,33 @@ export function getClassScope(
 ): "local" | "global" | undefined {
 	if (frontmatter?.classes?.[className]) return "local";
 	if (globalClasses?.[className]) return "global";
+	return undefined;
+}
+
+/**
+ * Look up the Variant-level style for a node from the active variant.
+ *
+ * Checks stable-ID selector first, then node content text, then wildcard "*".
+ */
+export function lookupVariantStyle(
+	frontmatter: OsmosisStyleFrontmatter | undefined,
+	layoutNode: LayoutNode,
+): NodeStyle | undefined {
+	if (!frontmatter?.variants || !frontmatter.activeVariant) return undefined;
+
+	const variantDef = frontmatter.variants[frontmatter.activeVariant];
+	if (!variantDef) return undefined;
+
+	// 1. Stable ID selector
+	const stableKey = STABLE_ID_PREFIX + layoutNode.source.id;
+	if (variantDef[stableKey]) return variantDef[stableKey];
+
+	// 2. Node content selector (e.g. "Architecture" matches a heading with that text)
+	const content = layoutNode.source.content;
+	if (content && variantDef[content]) return variantDef[content];
+
+	// 3. Wildcard selector
+	if (variantDef["*"]) return variantDef["*"];
+
 	return undefined;
 }

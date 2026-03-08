@@ -24,7 +24,7 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -568,6 +568,50 @@ export class MindMapView extends ItemView {
 	/** Get the current file (for frontmatter writes). */
 	getCurrentFile(): TFile | null {
 		return this.currentFile;
+	}
+
+	/**
+	 * Set the active variant in frontmatter.
+	 * Pass undefined or empty string to clear the active variant.
+	 */
+	async setActiveVariant(variantName: string | undefined): Promise<void> {
+		if (!this.currentFile) return;
+
+		this.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+
+				if (variantName) {
+					osmosis["activeVariant"] = variantName;
+				} else {
+					delete osmosis["activeVariant"];
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		// Update cached frontmatter
+		if (variantName) {
+			if (!this.osmosisStyleFrontmatter) {
+				this.osmosisStyleFrontmatter = { activeVariant: variantName };
+			} else {
+				this.osmosisStyleFrontmatter.activeVariant = variantName;
+			}
+		} else if (this.osmosisStyleFrontmatter) {
+			delete this.osmosisStyleFrontmatter.activeVariant;
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
 	}
 
 	/**
@@ -5335,6 +5379,9 @@ export class MindMapView extends ItemView {
 		// Collect nodes that need measurement (not in cache).
 		// Cache key includes heading depth and per-node style hash since typography varies.
 		const fmStyles = this.osmosisStyleFrontmatter?.styles;
+		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
+			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
+			: undefined;
 		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string; customWidth?: number }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
@@ -5378,8 +5425,9 @@ export class MindMapView extends ItemView {
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
 				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
 				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
-				const style = (this.activeTheme || nodeLocalStyle || nodeClassStyle)
-					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle, nodeClassStyle)
+				const nodeVariantStyle = activeVariantDef?.[`_n:${node.id}`] ?? activeVariantDef?.[node.content] ?? activeVariantDef?.["*"];
+				const style = (this.activeTheme || nodeLocalStyle || nodeClassStyle || nodeVariantStyle)
+					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle, nodeClassStyle, nodeVariantStyle)
 					: undefined;
 				const textStyles: string[] = ["width: 9999px"];
 				if (style?.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
@@ -5719,12 +5767,13 @@ export class MindMapView extends ItemView {
 			group.setAttribute("data-source-file", node.source.sourceFile);
 		}
 
-		// Resolve style via LCVRT cascade: Local > Class > Reference > Theme
+		// Resolve style via LCVRT cascade: Local > Class > Variant > Reference > Theme
 		const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
 		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
 		const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, localStyle?.class, this.getGlobalClasses());
-		const resolvedStyle = (this.activeTheme || localStyle || classStyle)
-			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle, classStyle)
+		const variantStyle = lookupVariantStyle(this.osmosisStyleFrontmatter, node);
+		const resolvedStyle = (this.activeTheme || localStyle || classStyle || variantStyle)
+			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle, classStyle, variantStyle)
 			: undefined;
 
 		// Background shape (determined by resolved style, map setting, or default)

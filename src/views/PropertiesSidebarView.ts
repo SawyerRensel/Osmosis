@@ -86,6 +86,8 @@ export class PropertiesSidebarView extends ItemView {
 	private formatControlEls: HTMLElement[] = [];
 	private selectionCleanup: (() => void) | null = null;
 	private controls: FormatControls = emptyFormatControls();
+	private variantSetting: HTMLElement | null = null;
+	private variantDropdown: HTMLSelectElement | null = null;
 	private activePickers: ColorPicker[] = [];
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -285,6 +287,22 @@ export class PropertiesSidebarView extends ItemView {
 						await this.saveSetting("theme", value);
 					});
 			});
+
+		// Variant switcher
+		const variantSettingEl = new Setting(container)
+			.setName("Variant")
+			.addDropdown((dropdown) => {
+				this.variantDropdown = dropdown.selectEl;
+				this.rebuildVariantDropdown();
+				dropdown.onChange((value) => {
+					const mindMap = this.getActiveMindMap();
+					if (mindMap) {
+						void mindMap.setActiveVariant(value || undefined);
+					}
+				});
+			});
+		this.variantSetting = variantSettingEl.settingEl;
+		this.updateVariantVisibility();
 
 		// Topic shape
 		new Setting(container)
@@ -938,6 +956,47 @@ export class PropertiesSidebarView extends ItemView {
 		new Notice(`Class "${className}" moved to ${label} scope`);
 	}
 
+	/** Rebuild variant dropdown from frontmatter variants. */
+	private rebuildVariantDropdown(): void {
+		const dd = this.variantDropdown;
+		if (!dd) return;
+
+		const mindMap = this.getActiveMindMap();
+		const fm = mindMap?.getOsmosisStyleFrontmatter();
+		const variants = fm?.variants;
+		const activeVariant = fm?.activeVariant ?? "";
+
+		// Clear existing options
+		while (dd.options.length > 0) dd.remove(0);
+
+		// Add "(none)" option
+		const noneOpt = document.createElement("option");
+		noneOpt.value = "";
+		noneOpt.textContent = "(none)";
+		dd.appendChild(noneOpt);
+
+		if (variants) {
+			for (const name of Object.keys(variants)) {
+				const opt = document.createElement("option");
+				opt.value = name;
+				opt.textContent = name;
+				dd.appendChild(opt);
+			}
+		}
+
+		dd.value = activeVariant;
+		this.updateVariantVisibility();
+	}
+
+	/** Show/hide the variant setting based on whether variants are defined. */
+	private updateVariantVisibility(): void {
+		if (!this.variantSetting) return;
+		const mindMap = this.getActiveMindMap();
+		const fm = mindMap?.getOsmosisStyleFrontmatter();
+		const hasVariants = fm?.variants && Object.keys(fm.variants).length > 0;
+		this.variantSetting.toggleClass("is-hidden", !hasVariants);
+	}
+
 	/** Rebuild the class dropdown options from local and global classes. */
 	private rebuildClassDropdown(
 		fm: OsmosisStyleFrontmatter | undefined,
@@ -1314,6 +1373,9 @@ export class PropertiesSidebarView extends ItemView {
 		const classStyle = lookupClassStyle(fm, localStyle?.class, globalClasses);
 		const nodeDepth = layoutNode.source.type === "heading" ? layoutNode.source.depth : undefined;
 		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle, classStyle);
+
+		// Variant dropdown (Map tab)
+		this.rebuildVariantDropdown();
 
 		// Style class
 		this.rebuildClassDropdown(fm, globalClasses);

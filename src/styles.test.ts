@@ -6,6 +6,7 @@ import {
 	buildStableIdSelector,
 	lookupNodeStyle,
 	lookupClassStyle,
+	lookupVariantStyle,
 	getClassScope,
 	parseOsmosisStyleFrontmatter,
 	type NodeStyle,
@@ -483,5 +484,145 @@ describe("getClassScope", () => {
 
 	it("returns 'global' when frontmatter is undefined", () => {
 		expect(getClassScope(undefined, "highlight", globalClasses)).toBe("global");
+	});
+});
+
+describe("resolveCascade with variant layer", () => {
+	it("variant fills gap between class and theme", () => {
+		const result = resolveCascade({
+			theme: { fill: "#theme", shape: "rect" },
+			variant: { fill: "#variant" },
+		});
+		expect(result.fill).toBe("#variant");
+		expect(result.shape).toBe("rect");
+	});
+
+	it("class overrides variant", () => {
+		const result = resolveCascade({
+			class: { fill: "#class" },
+			variant: { fill: "#variant" },
+			theme: { fill: "#theme" },
+		});
+		expect(result.fill).toBe("#class");
+	});
+
+	it("local overrides variant", () => {
+		const result = resolveCascade({
+			local: { fill: "#local" },
+			variant: { fill: "#variant" },
+		});
+		expect(result.fill).toBe("#local");
+	});
+
+	it("variant overrides reference", () => {
+		const result = resolveCascade({
+			variant: { fill: "#variant" },
+			reference: { fill: "#ref" },
+		});
+		expect(result.fill).toBe("#variant");
+	});
+
+	it("variant merges sub-objects with theme", () => {
+		const result = resolveCascade({
+			theme: { text: { size: 14, color: "#000" } },
+			variant: { text: { size: 18 } },
+		});
+		expect(result.text).toEqual({ size: 18, color: "#000" });
+	});
+});
+
+describe("lookupVariantStyle", () => {
+	const fm: OsmosisStyleFrontmatter = {
+		activeVariant: "presentation",
+		variants: {
+			presentation: {
+				"_n:abc123def456": { fill: "#byId" },
+				"Architecture": { fill: "#byContent" },
+				"*": { text: { size: 18 } },
+			},
+		},
+	};
+
+	it("matches by stable ID selector", () => {
+		const node = makeNode({ id: "abc123def456" });
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(fm, layout)).toEqual({ fill: "#byId" });
+	});
+
+	it("matches by node content", () => {
+		const node = makeNode({ id: "other_id", content: "Architecture" });
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(fm, layout)).toEqual({ fill: "#byContent" });
+	});
+
+	it("falls back to wildcard selector", () => {
+		const node = makeNode({ id: "other_id", type: "bullet", depth: 0, content: "Some item" });
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(fm, layout)).toEqual({ text: { size: 18 } });
+	});
+
+	it("returns undefined when no active variant", () => {
+		const fmNoActive: OsmosisStyleFrontmatter = {
+			variants: { presentation: { "*": { fill: "#x" } } },
+		};
+		const node = makeNode({});
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(fmNoActive, layout)).toBeUndefined();
+	});
+
+	it("returns undefined when active variant not found", () => {
+		const fmBadRef: OsmosisStyleFrontmatter = {
+			activeVariant: "missing",
+			variants: { presentation: { "*": { fill: "#x" } } },
+		};
+		const node = makeNode({});
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(fmBadRef, layout)).toBeUndefined();
+	});
+
+	it("returns undefined when no variants defined", () => {
+		const node = makeNode({});
+		const layout = makeLayoutNode(node);
+		expect(lookupVariantStyle(undefined, layout)).toBeUndefined();
+	});
+
+	it("stable ID takes priority over content match", () => {
+		const node = makeNode({ id: "abc123def456", content: "Architecture" });
+		const layout = makeLayoutNode(node);
+		const result = lookupVariantStyle(fm, layout);
+		expect(result?.fill).toBe("#byId");
+	});
+});
+
+describe("parseOsmosisStyleFrontmatter with variants", () => {
+	it("parses variants and activeVariant", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			osmosis: {
+				activeVariant: "study",
+				variants: {
+					study: { "*": { fill: "#333" } },
+					print: { "*": { fill: "#fff" } },
+				},
+			},
+		});
+		expect(result?.activeVariant).toBe("study");
+		expect(result?.variants).toEqual({
+			study: { "*": { fill: "#333" } },
+			print: { "*": { fill: "#fff" } },
+		});
+	});
+
+	it("ignores non-string activeVariant", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			osmosis: { activeVariant: 42 },
+		});
+		expect(result).toBeUndefined();
+	});
+
+	it("ignores non-object variants", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			osmosis: { variants: "bad" },
+		});
+		expect(result).toBeUndefined();
 	});
 });
