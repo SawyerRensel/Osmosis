@@ -163,6 +163,11 @@ export class MindMapView extends ItemView {
 	private isPinned = false;
 	private pinActionEl: HTMLElement | null = null;
 
+	// Resize state: drag-to-resize node width
+	private resizingNodeId: string | null = null;
+	private resizeStartX = 0;
+	private resizeStartWidth = 0;
+
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.navigation = true;
@@ -576,6 +581,7 @@ export class MindMapView extends ItemView {
 					if (style.text) merged.text = { ...merged.text, ...style.text };
 					if (style.border) merged.border = { ...merged.border, ...style.border };
 					if (style.branchLine) merged.branchLine = { ...merged.branchLine, ...style.branchLine };
+					if (style.width !== undefined) merged.width = style.width;
 
 					styles[selector] = merged;
 				}
@@ -601,6 +607,82 @@ export class MindMapView extends ItemView {
 			}
 		} else {
 			this.loadOsmosisStyleFrontmatter();
+		}
+
+		// Only clear size cache when size-affecting properties changed
+		const sizeAffecting = [...overrides.values()].some(
+			(s) => s.shape !== undefined || s.text !== undefined || s.width !== undefined,
+		);
+		if (sizeAffecting) {
+			this.nodeSizeCache.clear();
+		}
+		await this.render();
+	}
+
+	/**
+	 * Remove specific style properties (or all properties) from selected nodes.
+	 * Pass `keys` to clear specific groups, or omit to clear all local overrides.
+	 */
+	async resetNodeStyles(
+		nodeIds: string[],
+		keys?: (keyof NodeStyle)[],
+	): Promise<void> {
+		if (!this.currentFile || nodeIds.length === 0) return;
+
+		this.suppressNextReload = true;
+
+		let writtenStyles: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
+				osmosis["styles"] = styles;
+
+				for (const nodeId of nodeIds) {
+					const layoutNode = this.nodeMap.get(nodeId);
+					if (!layoutNode) continue;
+					const selector = buildStableIdSelector(layoutNode.source);
+					if (!styles[selector]) continue;
+
+					if (!keys) {
+						// Clear all: remove the entire entry
+						delete styles[selector];
+					} else {
+						// Clear specific keys
+						for (const key of keys) {
+							delete styles[selector][key];
+						}
+						// Remove entry if empty
+						if (Object.keys(styles[selector]).length === 0) {
+							delete styles[selector];
+						}
+					}
+				}
+
+				if (Object.keys(styles).length === 0) {
+					delete osmosis["styles"];
+				} else {
+					writtenStyles = { ...styles };
+				}
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		if (writtenStyles) {
+			if (!this.osmosisStyleFrontmatter) {
+				this.osmosisStyleFrontmatter = { styles: writtenStyles };
+			} else {
+				this.osmosisStyleFrontmatter.styles = writtenStyles;
+			}
+		} else {
+			this.osmosisStyleFrontmatter = undefined;
 		}
 
 		this.nodeSizeCache.clear();
@@ -896,6 +978,23 @@ export class MindMapView extends ItemView {
 			}
 		}
 
+		// Resize handle: start drag-to-resize
+		if (e.button === 0 && !this.editingNodeId) {
+			const target = e.target as Element;
+			if (target.closest(".osmosis-resize-handle")) {
+				const handleNodeId = target.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
+				const handleNode = handleNodeId ? this.nodeMap.get(handleNodeId) : null;
+				if (handleNodeId && handleNode) {
+					this.resizingNodeId = handleNodeId;
+					this.resizeStartX = e.clientX;
+					this.resizeStartWidth = handleNode.rect.width;
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
+			}
+		}
+
 		// Left-click / touch on a node: prepare for potential drag
 		if (e.button === 0 && nodeId && !this.editingNodeId) {
 			const target = e.target as Element;
@@ -960,6 +1059,14 @@ export class MindMapView extends ItemView {
 			e.preventDefault();
 			e.stopPropagation();
 			this.updatePinch();
+			return;
+		}
+
+		// Resize drag: update node width live
+		if (this.resizingNodeId && this.svg) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.updateResize(e.clientX);
 			return;
 		}
 
@@ -1032,6 +1139,11 @@ export class MindMapView extends ItemView {
 				this.isPanning = true;
 				this.panStart = { x: remaining.x, y: remaining.y };
 			}
+			return;
+		}
+
+		if (this.resizingNodeId) {
+			void this.finishResize();
 			return;
 		}
 
@@ -2600,6 +2712,96 @@ export class MindMapView extends ItemView {
 			}
 		}
 		return null;
+	}
+
+	// ─── Drag-to-Resize ─────────────────────────────────────
+
+	private updateResize(clientX: number): void {
+		if (!this.resizingNodeId || !this.svg) return;
+		const dx = (clientX - this.resizeStartX) / this.zoom;
+		const MIN_NODE_WIDTH = 60;
+		const newWidth = Math.max(MIN_NODE_WIDTH, this.resizeStartWidth + dx);
+
+		// Live-update the SVG elements for this node
+		const group = this.svg.querySelector(
+			`[data-node-id="${this.resizingNodeId}"]`,
+		);
+		if (!group) return;
+
+		const node = this.nodeMap.get(this.resizingNodeId);
+		if (!node) return;
+
+		// Update shape element (rect, ellipse, etc.)
+		const shapeEl = group.querySelector(".osmosis-node-shape");
+		if (shapeEl) {
+			if (shapeEl.tagName === "rect") {
+				shapeEl.setAttribute("width", String(newWidth));
+			} else if (shapeEl.tagName === "ellipse") {
+				shapeEl.setAttribute("rx", String(newWidth / 2));
+				shapeEl.setAttribute("cx", String(node.rect.x + this.getOffsetX() + newWidth / 2));
+			}
+		}
+
+		// Update foreignObject width (accounting for shape insets)
+		const fo = group.querySelector("foreignObject");
+		if (fo) {
+			const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
+			const shape = localStyle?.shape ?? this.mapSettings.topicShape ?? "rounded-rect";
+			const insets = getShapeInsets(shape);
+			const foW = newWidth * (1 - insets.left - insets.right);
+			fo.setAttribute("width", String(foW));
+		}
+
+		// Update resize handle position (circle)
+		const handle = group.querySelector(".osmosis-resize-handle");
+		if (handle) {
+			handle.setAttribute("cx", String(node.rect.x + this.getOffsetX() + newWidth));
+		}
+	}
+
+	/** Convert a node's outer width to content width (removes padding + shape insets). */
+	private nodeWidthToContentWidth(node: LayoutNode, nodeWidth: number): number {
+		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
+		const shape = localStyle?.shape ?? this.mapSettings.topicShape ?? "rounded-rect";
+		const insets = getShapeInsets(shape);
+		const totalInsetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
+		const scaleX = totalInsetX > 0 ? 1 / (1 - totalInsetX) : 1;
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		return Math.round(nodeWidth / scaleX - cfg.nodePaddingX * 2);
+	}
+
+	private async finishResize(): Promise<void> {
+		if (!this.resizingNodeId) return;
+		const nodeId = this.resizingNodeId;
+		this.resizingNodeId = null;
+
+		const node = this.nodeMap.get(nodeId);
+		if (!node) return;
+
+		// Compute the width delta applied to the dragged node
+		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+		const shapeEl = group?.querySelector(".osmosis-node-shape");
+		let finalNodeWidth = node.rect.width;
+		if (shapeEl?.tagName === "rect") {
+			finalNodeWidth = parseFloat(shapeEl.getAttribute("width") ?? String(node.rect.width));
+		}
+		const widthDelta = finalNodeWidth - this.resizeStartWidth;
+
+		// Apply to all selected nodes (or just the dragged node if not selected)
+		const overrides = new Map<string, NodeStyle>();
+		const targetIds = this.selectedNodeIds.has(nodeId)
+			? this.selectedNodeIds
+			: new Set([nodeId]);
+
+		const MIN_NODE_WIDTH = 60;
+		for (const id of targetIds) {
+			const n = this.nodeMap.get(id);
+			if (!n) continue;
+			const newNodeWidth = Math.max(MIN_NODE_WIDTH, n.rect.width + widthDelta);
+			overrides.set(id, { width: this.nodeWidthToContentWidth(n, newNodeWidth) });
+		}
+
+		await this.applyNodeStyleOverrides(overrides);
 	}
 
 	// ─── Drag-and-Drop ──────────────────────────────────────
@@ -4566,9 +4768,6 @@ export class MindMapView extends ItemView {
 
 	private async render(): Promise<void> {
 		const container = this.contentEl;
-		this.toolRibbon?.detach();
-		container.empty();
-		container.addClass("osmosis-mindmap-container");
 
 		// Clean up previous render component
 		this.renderComponent?.unload();
@@ -4576,6 +4775,9 @@ export class MindMapView extends ItemView {
 		this.renderComponent.load();
 
 		if (!this.currentTree) {
+			this.toolRibbon?.detach();
+			container.empty();
+			container.addClass("osmosis-mindmap-container");
 			container.createEl("p", {
 				text: "Open a Markdown file to view its mind map.",
 			});
@@ -4585,7 +4787,8 @@ export class MindMapView extends ItemView {
 		// Build per-node shape overrides from frontmatter
 		const nodeShapes = this.buildNodeShapeMap();
 
-		// Measure actual content sizes before layout
+		// Measure actual content sizes in a detached div to avoid clearing the
+		// visible SVG. This prevents the flash/blip during re-renders.
 		const nodeSizes = await this.measureNodeSizes(
 			container,
 			this.currentTree,
@@ -4613,6 +4816,13 @@ export class MindMapView extends ItemView {
 				this.nodeMap.set(node.source.id, node);
 			}
 		}
+
+		// Now that measurement and layout are done, swap out the old SVG.
+		// Defer container.empty() until just before appending the new SVG
+		// to avoid a visible flash.
+		this.toolRibbon?.detach();
+		container.empty();
+		container.addClass("osmosis-mindmap-container");
 
 		await this.renderSvg(container, layout);
 
@@ -4662,24 +4872,25 @@ export class MindMapView extends ItemView {
 		// Collect nodes that need measurement (not in cache).
 		// Cache key includes heading depth and per-node style hash since typography varies.
 		const fmStyles = this.osmosisStyleFrontmatter?.styles;
-		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string }[] = [];
+		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string; customWidth?: number }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
-			// Include per-node text style and shape in cache key so changes invalidate
+			// Include per-node text style, shape, and custom width in cache key so changes invalidate
 			const localStyle = fmStyles?.[`_n:${node.id}`];
 			const textStyleKey = localStyle?.text
 				? JSON.stringify(localStyle.text)
 				: "";
 			const shapeKey = nodeShapes?.get(node.id) ?? "";
+			const widthKey = localStyle?.width ? `w${String(localStyle.width)}` : "";
 			const cacheKey = node.type === "heading"
-				? `h${String(node.depth)}:${displayContent}:${textStyleKey}:${shapeKey}`
-				: `${displayContent}:${textStyleKey}:${shapeKey}`;
+				? `h${String(node.depth)}:${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`
+				: `${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`;
 			const cached = this.nodeSizeCache.get(cacheKey);
 			if (cached) {
 				sizes.set(node.id, cached);
 			} else {
-				toMeasure.push({ node, displayContent, cacheKey });
+				toMeasure.push({ node, displayContent, cacheKey, customWidth: localStyle?.width });
 			}
 		}
 
@@ -4692,7 +4903,7 @@ export class MindMapView extends ItemView {
 			`;
 			container.appendChild(measurer);
 
-			for (const { node, displayContent, cacheKey } of toMeasure) {
+			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = document.createElement("div");
@@ -4757,23 +4968,35 @@ export class MindMapView extends ItemView {
 					contentMaxWidth = cfg.maxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
 				}
 
-				const finalWidth = Math.min(
-					Math.max(Math.ceil(naturalWidth), 40),
-					contentMaxWidth,
-				);
+				let finalWidth: number;
 				let finalHeight: number;
 
-				if (naturalWidth > contentMaxWidth) {
-					// Constrain width and re-measure wrapped height
-					cell.setCssStyles({
-						width: `${String(contentMaxWidth)}px`,
-					});
+				if (customWidth !== undefined) {
+					// Custom width set via drag-to-resize: use it directly
+					finalWidth = customWidth;
+					cell.setCssStyles({ width: `${String(customWidth)}px` });
 					finalHeight = Math.max(
 						Math.ceil(cell.getBoundingClientRect().height),
 						20,
 					);
 				} else {
-					finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+					finalWidth = Math.min(
+						Math.max(Math.ceil(naturalWidth), 40),
+						contentMaxWidth,
+					);
+
+					if (naturalWidth > contentMaxWidth) {
+						// Constrain width and re-measure wrapped height
+						cell.setCssStyles({
+							width: `${String(contentMaxWidth)}px`,
+						});
+						finalHeight = Math.max(
+							Math.ceil(cell.getBoundingClientRect().height),
+							20,
+						);
+					} else {
+						finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+					}
 				}
 
 				const size = { width: finalWidth, height: finalHeight };
@@ -5036,7 +5259,7 @@ export class MindMapView extends ItemView {
 		const shapeEl = createShapeElement(shape, x, y, width, height);
 		shapeEl.setAttribute(
 			"class",
-			`osmosis-node osmosis-node-${node.source.type}`,
+			`osmosis-node osmosis-node-${node.source.type} osmosis-node-shape`,
 		);
 
 		// For non-rectangular shapes (path, ellipse, circle), clicks in the
@@ -5225,6 +5448,17 @@ export class MindMapView extends ItemView {
 			node.source.metadata?.resolved;
 		if (node.source.children.length > 0 || isLazyTransclusion) {
 			this.drawCollapseToggle(group, node, x, y, width, height);
+		}
+
+		// Resize handle: small circle on the right edge of the node
+		if (node.source.type !== "root") {
+			const handleR = 4;
+			const resizeHandle = document.createElementNS(SVG_NS, "circle");
+			resizeHandle.setAttribute("cx", String(x + width));
+			resizeHandle.setAttribute("cy", String(y + height / 2));
+			resizeHandle.setAttribute("r", String(handleR));
+			resizeHandle.setAttribute("class", "osmosis-resize-handle");
+			group.appendChild(resizeHandle);
 		}
 
 		svg.appendChild(group);

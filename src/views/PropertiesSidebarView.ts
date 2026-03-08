@@ -25,9 +25,19 @@ const FORMAT_SECTIONS = [
 	"Branch line",
 ] as const;
 
+/** Maps each format section to the NodeStyle keys it controls, for reset. */
+const SECTION_STYLE_KEYS: Record<string, (keyof NodeStyle)[]> = {
+	"Shape": ["shape", "width"],
+	"Fill": ["fill", "background"],
+	"Border": ["border"],
+	"Text": ["text"],
+	"Branch line": ["branchLine"],
+};
+
 /** References to live Format tab controls for value updates. */
 interface FormatControls {
 	shapeDropdown: HTMLSelectElement | null;
+	nodeWidthInput: HTMLInputElement | null;
 	fillSwatch: HTMLElement | null;
 	borderColorSwatch: HTMLElement | null;
 	borderWidthSlider: HTMLInputElement | null;
@@ -45,6 +55,7 @@ interface FormatControls {
 function emptyFormatControls(): FormatControls {
 	return {
 		shapeDropdown: null,
+		nodeWidthInput: null,
 		fillSwatch: null,
 		borderColorSwatch: null,
 		borderWidthSlider: null,
@@ -376,6 +387,17 @@ export class PropertiesSidebarView extends ItemView {
 		});
 		this.formatControlEls.push(noSelBanner);
 
+		// Global reset button
+		const resetAll = container.createDiv({ cls: "osmosis-format-reset-all" });
+		const resetAllBtn = resetAll.createEl("button", {
+			cls: "osmosis-format-reset-btn",
+			text: "Reset all styles",
+		});
+		resetAllBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.resetSelectedNodeStyles();
+		});
+
 		// Collapsible sections with live controls
 		for (const section of FORMAT_SECTIONS) {
 			const sectionEl = container.createDiv({
@@ -386,6 +408,20 @@ export class PropertiesSidebarView extends ItemView {
 				cls: "osmosis-format-section-header",
 			});
 			header.createSpan({ text: section });
+
+			// Per-section reset button
+			const keys = SECTION_STYLE_KEYS[section];
+			if (keys) {
+				const resetBtn = header.createEl("button", {
+					cls: "osmosis-format-section-reset-btn",
+					attr: { "aria-label": `Reset ${section.toLowerCase()}` },
+				});
+				resetBtn.textContent = "\u21BA"; // ↺ reset icon
+				resetBtn.addEventListener("click", (e) => {
+					e.stopPropagation();
+					void this.resetSelectedNodeStyles(keys);
+				});
+			}
 
 			const body = sectionEl.createDiv({
 				cls: "osmosis-format-section-body",
@@ -457,6 +493,29 @@ export class PropertiesSidebarView extends ItemView {
 					}
 				});
 				this.controls.shapeDropdown = dropdown.selectEl;
+			});
+
+		// Node width (custom content width via drag-to-resize or manual input)
+		new Setting(body)
+			.setName("Width")
+			.setDesc("Content width in px (blank = auto)")
+			.addText((text) => {
+				text.setPlaceholder("Auto");
+				text.inputEl.type = "number";
+				text.inputEl.setCssStyles({ width: "70px" });
+				text.inputEl.min = "40";
+				text.inputEl.addEventListener("change", () => {
+					const raw = text.inputEl.value.trim();
+					if (raw === "") {
+						void this.writeNodeStyle({ width: undefined });
+					} else {
+						const val = parseInt(raw, 10);
+						if (!isNaN(val) && val >= 40) {
+							void this.writeNodeStyle({ width: val });
+						}
+					}
+				});
+				this.controls.nodeWidthInput = text.inputEl;
 			});
 	}
 
@@ -691,6 +750,18 @@ export class PropertiesSidebarView extends ItemView {
 		this.refreshFormatControls();
 	}
 
+	/** Reset style properties for all selected nodes. Pass keys to reset specific groups, omit for all. */
+	private async resetSelectedNodeStyles(keys?: (keyof NodeStyle)[]): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const selection = mindMap.getSelectedNodeInfo();
+		if (!selection || selection.nodeIds.length === 0) return;
+
+		await mindMap.resetNodeStyles(selection.nodeIds, keys);
+		this.refreshFormatControls();
+	}
+
 	// ─── Format Tab State ────────────────────────────────────
 
 	/** Update Format tab disabled/enabled state based on selection. */
@@ -745,6 +816,11 @@ export class PropertiesSidebarView extends ItemView {
 		// Shape
 		if (this.controls.shapeDropdown) {
 			this.controls.shapeDropdown.value = localStyle?.shape ?? "inherit";
+		}
+
+		// Width
+		if (this.controls.nodeWidthInput) {
+			this.controls.nodeWidthInput.value = localStyle?.width != null ? String(localStyle.width) : "";
 		}
 
 		// Fill

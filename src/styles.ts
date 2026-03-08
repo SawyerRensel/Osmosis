@@ -61,6 +61,8 @@ export interface NodeStyle {
 	text?: TextStyle;
 	branchLine?: BranchStyle;
 	background?: string;
+	/** Custom content width in pixels (set via drag-to-resize). */
+	width?: number;
 }
 
 // ─── Theme Definition ───────────────────────────────────────────────────────
