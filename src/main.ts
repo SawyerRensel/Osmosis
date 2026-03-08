@@ -1,13 +1,18 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
+import { CardDatabase } from "./database/CardDatabase";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
+	cardDb!: CardDatabase;
 
 	async onload() {
 		await this.loadSettings();
+
+		// Card database — lazy initialized on first SR access, not here
+		this.cardDb = new CardDatabase(".osmosis/cards.db", this.app.vault.adapter);
 
 		this.addSettingTab(new OsmosisSettingTab(this.app, this));
 
@@ -36,7 +41,7 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	onunload() {
-		// Cleanup handled automatically by this.register*() methods
+		void this.cardDb.close();
 	}
 
 	private async activateMindMapView(): Promise<void> {

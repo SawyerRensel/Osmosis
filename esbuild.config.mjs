@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const banner =
 `/*
@@ -12,9 +12,34 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 const outdir = "e2e-vault/.obsidian/plugins/Osmosis";
+const outfile = `${outdir}/main.js`;
 
 // Ensure output directory exists
 mkdirSync(outdir, { recursive: true });
+
+/**
+ * Post-build plugin that injects the sql.js WASM binary (base64-encoded)
+ * into the bundled output, replacing the placeholder string.
+ */
+const injectWasmPlugin = {
+	name: "inject-sql-wasm",
+	setup(build) {
+		build.onEnd(() => {
+			try {
+				const wasmBuffer = readFileSync("node_modules/sql.js/dist/sql-wasm.wasm");
+				const wasmBase64 = wasmBuffer.toString("base64");
+				let mainJs = readFileSync(outfile, "utf8");
+				mainJs = mainJs.replace(
+					/"__OSMOSIS_SQL_WASM_PLACEHOLDER__"/g,
+					JSON.stringify(wasmBase64),
+				);
+				writeFileSync(outfile, mainJs);
+			} catch (err) {
+				console.error("⚠ Failed to inject sql.js WASM:", err.message);
+			}
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -43,8 +68,9 @@ const context = await esbuild.context({
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: `${outdir}/main.js`,
+	outfile,
 	minify: prod,
+	plugins: [injectWasmPlugin],
 });
 
 if (prod) {

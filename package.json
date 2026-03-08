@@ -32,6 +32,7 @@
 		"vitest": "^4.0.18"
 	},
 	"dependencies": {
-		"obsidian": "latest"
+		"obsidian": "latest",
+		"sql.js": "^1.14.1"
 	}
 }
