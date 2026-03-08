@@ -6,7 +6,7 @@ import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition } from "../styles";
 import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle } from "../styles";
-import { getThemeNames, isPresetTheme } from "../themes";
+import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
 import { FontPicker } from "./FontPicker";
@@ -288,6 +288,15 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Map Tab ─────────────────────────────────────────────
 
+	/** Re-render the Map tab to reflect theme changes (layout controls, style sections). */
+	private rebuildMapTab(): void {
+		const mapContainer = this.tabContents?.map;
+		if (!mapContainer) return;
+		this.closeAllPickers();
+		mapContainer.empty();
+		this.renderMapTab(mapContainer);
+	}
+
 	private renderMapTab(container: HTMLElement): void {
 		const settings = this.getEffectiveSettings();
 
@@ -342,9 +351,26 @@ export class PropertiesSidebarView extends ItemView {
 						delete perNote.branchLineColor;
 						delete perNote.branchLineThickness;
 
+						// Apply theme's layout/branch settings as map-level overrides
+						const theme = getTheme(value, this.plugin.settings.customThemes);
+						if (theme) {
+							if (theme.branchLine?.style) perNote.branchLineStyle = theme.branchLine.style;
+							else delete perNote.branchLineStyle;
+							if (theme.direction) perNote.direction = theme.direction;
+							else delete perNote.direction;
+							if (theme.collapseDepth != null) perNote.collapseDepth = theme.collapseDepth;
+							else delete perNote.collapseDepth;
+							if (theme.horizontalSpacing != null) perNote.horizontalSpacing = theme.horizontalSpacing;
+							else delete perNote.horizontalSpacing;
+							if (theme.verticalSpacing != null) perNote.verticalSpacing = theme.verticalSpacing;
+							else delete perNote.verticalSpacing;
+							if (theme.topicShape) perNote.topicShape = theme.topicShape;
+							else delete perNote.topicShape;
+						}
+
 						await this.saveSetting("theme", value);
-						this.updateThemeMgmtVisibility();
-						this.refreshMapStyleControls();
+						// Re-render the entire Map tab so layout controls reflect theme values
+						this.rebuildMapTab();
 					});
 			});
 
@@ -1795,12 +1821,17 @@ export class PropertiesSidebarView extends ItemView {
 			mergeNodeStyle(base, settings.baseStyle);
 		}
 
-		// Build branch line from theme + map overrides
+		// Build branch line from theme + map overrides (including style)
 		const branchLine = activeTheme?.branchLine ? { ...activeTheme.branchLine } : undefined;
-		const extractedBranchLine = branchLine ?? (settings.branchLineColor || settings.branchLineThickness ? {} : undefined);
+		const hasBranchOverrides = settings.branchLineColor || settings.branchLineThickness ||
+			settings.branchLineStyle !== DEFAULT_MAP_SETTINGS.branchLineStyle;
+		const extractedBranchLine = branchLine ?? (hasBranchOverrides ? {} : undefined);
 		if (extractedBranchLine) {
 			if (settings.branchLineColor) extractedBranchLine.color = settings.branchLineColor;
 			if (settings.branchLineThickness) extractedBranchLine.thickness = settings.branchLineThickness;
+			if (settings.branchLineStyle !== DEFAULT_MAP_SETTINGS.branchLineStyle) {
+				extractedBranchLine.style = settings.branchLineStyle;
+			}
 		}
 
 		return {
@@ -1814,6 +1845,9 @@ export class PropertiesSidebarView extends ItemView {
 			collapseToggle: activeTheme?.collapseToggle ? { ...activeTheme.collapseToggle } : undefined,
 			topicShape: settings.topicShape !== DEFAULT_MAP_SETTINGS.topicShape ? settings.topicShape : activeTheme?.topicShape,
 			direction: settings.direction !== DEFAULT_MAP_SETTINGS.direction ? settings.direction : activeTheme?.direction,
+			collapseDepth: settings.collapseDepth !== DEFAULT_MAP_SETTINGS.collapseDepth ? settings.collapseDepth : activeTheme?.collapseDepth,
+			horizontalSpacing: settings.horizontalSpacing !== DEFAULT_MAP_SETTINGS.horizontalSpacing ? settings.horizontalSpacing : activeTheme?.horizontalSpacing,
+			verticalSpacing: settings.verticalSpacing !== DEFAULT_MAP_SETTINGS.verticalSpacing ? settings.verticalSpacing : activeTheme?.verticalSpacing,
 		};
 	}
 

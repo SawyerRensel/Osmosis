@@ -112,6 +112,15 @@ export interface ThemeDefinition {
 
 	/** Default layout direction for the map. */
 	direction?: LayoutDirection;
+
+	/** Default collapse depth for the map. */
+	collapseDepth?: number;
+
+	/** Horizontal spacing between parent and children. */
+	horizontalSpacing?: number;
+
+	/** Vertical spacing between sibling nodes. */
+	verticalSpacing?: number;
 }
 
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────

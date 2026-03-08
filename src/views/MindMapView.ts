@@ -5493,6 +5493,16 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Resolve active theme BEFORE measurement so font/style changes
+		// are reflected in node sizing (not stale from the previous render).
+		const themeName = this.mapSettings.theme;
+		if (themeName && !isDefaultTheme(themeName)) {
+			this.activeTheme = getTheme(themeName, this.plugin?.settings?.customThemes);
+		} else {
+			this.activeTheme = undefined;
+		}
+		this.effectiveTheme = this.getEffectiveTheme();
+
 		// Build per-node shape overrides from frontmatter
 		const nodeShapes = this.buildNodeShapeMap();
 
@@ -5634,7 +5644,7 @@ export class MindMapView extends ItemView {
 				const textStyles: string[] = ["width: 9999px"];
 				if (style?.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
 				if (style?.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
-				if (style?.text?.font) textStyles.push(`font-family: ${style.text.font}`);
+				if (style?.text?.font) textStyles.push(`font-family: '${style.text.font}', sans-serif`);
 				cell.setAttribute("style", textStyles.join("; "));
 				measurer.appendChild(cell);
 
@@ -5880,16 +5890,8 @@ export class MindMapView extends ItemView {
 
 		const lineStyle = this.mapSettings.branchLineStyle;
 
-		// Resolve active theme for this render pass
-		const themeName = this.mapSettings.theme;
-		if (themeName && !isDefaultTheme(themeName)) {
-			this.activeTheme = getTheme(themeName, this.plugin?.settings?.customThemes);
-		} else {
-			this.activeTheme = undefined;
-		}
-
-		// Compute effective theme: activeTheme + map-level baseStyle overrides
-		this.effectiveTheme = this.getEffectiveTheme();
+		// activeTheme and effectiveTheme are resolved in render() before
+		// measurement so fonts/styles are up-to-date for both sizing and drawing.
 
 		// Apply background: map override > theme > none
 		container.style.backgroundColor = this.mapSettings.background ?? this.activeTheme?.background ?? "";
@@ -6053,7 +6055,7 @@ export class MindMapView extends ItemView {
 			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
 			if (style.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
 			if (style.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
-			if (style.text?.font) textStyles.push(`font-family: ${style.text.font}`);
+			if (style.text?.font) textStyles.push(`font-family: '${style.text.font}', sans-serif`);
 			if (style.text?.alignment) textStyles.push(`text-align: ${style.text.alignment}`);
 			if (style.text?.style === "italic") textStyles.push("font-style: italic");
 			if (textStyles.length > 0) wrapper.setAttribute("style", textStyles.join("; "));
