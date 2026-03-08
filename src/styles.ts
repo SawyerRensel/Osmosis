@@ -94,6 +94,13 @@ export interface ThemeDefinition {
 
 	/** Map background color. */
 	background?: string;
+
+	/** Collapse toggle button colors. */
+	collapseToggle?: {
+		fill?: string;
+		stroke?: string;
+		icon?: string;
+	};
 }
 
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────
@@ -197,7 +204,7 @@ function mergeNodeStyle(target: NodeStyle, source: NodeStyle): void {
  */
 export function resolveNodeStyle(
 	theme: ThemeDefinition | undefined,
-	depth: number,
+	depth: number | undefined,
 	local?: NodeStyle,
 	reference?: NodeStyle,
 ): NodeStyle {
@@ -206,7 +213,7 @@ export function resolveNodeStyle(
 	if (theme) {
 		// Merge base + depth-specific overrides to get the T-level style.
 		themeStyle = { ...theme.base };
-		const depthOverride = theme.depths[String(depth)];
+		const depthOverride = depth != null ? theme.depths[String(depth)] : undefined;
 		if (depthOverride) {
 			mergeNodeStyle(themeStyle, depthOverride);
 		}

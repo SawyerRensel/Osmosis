@@ -4,6 +4,7 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
+import { getThemeNames } from "../themes";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
@@ -134,6 +135,20 @@ export class PropertiesSidebarView extends ItemView {
 			text: fileName.replace(/\.md$/, ""),
 			cls: "osmosis-properties-filename",
 		});
+
+		// Theme
+		new Setting(container)
+			.setName("Theme")
+			.addDropdown((dropdown) => {
+				for (const name of getThemeNames()) {
+					dropdown.addOption(name, name);
+				}
+				dropdown
+					.setValue(settings.theme)
+					.onChange(async (value) => {
+						await this.saveSetting("theme", value);
+					});
+			});
 
 		// Layout direction
 		new Setting(container)

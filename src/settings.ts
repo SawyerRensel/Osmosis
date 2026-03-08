@@ -11,6 +11,7 @@ export interface MapSettings {
 	collapseDepth: number;
 	horizontalSpacing: number;
 	verticalSpacing: number;
+	theme: string;
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
@@ -19,6 +20,7 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 	collapseDepth: 0,
 	horizontalSpacing: 80,
 	verticalSpacing: 8,
+	theme: "Default",
 };
 
 export interface OsmosisSettings {

@@ -21,6 +21,9 @@ import type OsmosisPlugin from "../main";
 import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
+import { getTheme, isDefaultTheme } from "../themes";
+import { resolveNodeStyle } from "../styles";
+import type { ThemeDefinition } from "../styles";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -65,6 +68,7 @@ export class MindMapView extends ItemView {
 
 	// Per-map settings (resolved from defaults + per-note overrides)
 	private mapSettings: MapSettings = { ...DEFAULT_MAP_SETTINGS };
+	private activeTheme: ThemeDefinition | undefined;
 
 	// Viewport state
 	private viewBox = { x: 0, y: 0, w: 800, h: 600 };
@@ -417,6 +421,10 @@ export class MindMapView extends ItemView {
 
 	/** Apply per-map settings from the properties sidebar and re-render. */
 	applyMapSettings(settings: MapSettings): void {
+		// Clear size cache when theme changes (different font sizes)
+		if (settings.theme !== this.mapSettings.theme) {
+			this.nodeSizeCache.clear();
+		}
 		this.mapSettings = { ...settings };
 		void this.render();
 	}
@@ -4445,7 +4453,18 @@ export class MindMapView extends ItemView {
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
 				}
-				cell.setCssStyles({ width: "9999px" });
+				// Apply theme text styles for accurate measurement
+				if (this.activeTheme) {
+					const nodeDepth = node.type === "heading" ? node.depth : 0;
+					const style = resolveNodeStyle(this.activeTheme, nodeDepth);
+					const textStyles: string[] = ["width: 9999px"];
+					if (style.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
+					if (style.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
+					if (style.text?.font) textStyles.push(`font-family: ${style.text.font}`);
+					cell.setAttribute("style", textStyles.join("; "));
+				} else {
+					cell.setCssStyles({ width: "9999px" });
+				}
 				measurer.appendChild(cell);
 
 				if (this.renderComponent) {
@@ -4645,6 +4664,21 @@ export class MindMapView extends ItemView {
 
 		const lineStyle = this.mapSettings.branchLineStyle;
 
+		// Resolve active theme for this render pass
+		const themeName = this.mapSettings.theme;
+		if (themeName && !isDefaultTheme(themeName)) {
+			this.activeTheme = getTheme(themeName);
+		} else {
+			this.activeTheme = undefined;
+		}
+
+		// Apply theme background to container
+		if (this.activeTheme?.background) {
+			container.style.backgroundColor = this.activeTheme.background;
+		} else {
+			container.style.backgroundColor = "";
+		}
+
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();
 		const renderPromises: Promise<void>[] = [];
@@ -4754,6 +4788,29 @@ export class MindMapView extends ItemView {
 		}
 		fo.appendChild(wrapper);
 		group.appendChild(fo);
+
+		// Apply theme styles via inline style (overrides CSS class rules)
+		if (this.activeTheme) {
+			// Only heading nodes get depth-level overrides; non-heading nodes use base style only
+			const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
+			const style = resolveNodeStyle(this.activeTheme, nodeDepth);
+			// Use inline style on rect — SVG attributes are overridden by CSS class rules
+			const rectStyles: string[] = [];
+			if (style.fill) rectStyles.push(`fill: ${style.fill}`);
+			if (style.border?.color) rectStyles.push(`stroke: ${style.border.color}`);
+			if (style.border?.width) rectStyles.push(`stroke-width: ${String(style.border.width)}`);
+			if (style.border?.style === "dashed") rectStyles.push("stroke-dasharray: 4 2");
+			if (style.border?.style === "dotted") rectStyles.push("stroke-dasharray: 1 2");
+			if (rectStyles.length > 0) rect.setAttribute("style", rectStyles.join("; "));
+			const textStyles: string[] = [];
+			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
+			if (style.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
+			if (style.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
+			if (style.text?.font) textStyles.push(`font-family: ${style.text.font}`);
+			if (style.text?.alignment) textStyles.push(`text-align: ${style.text.alignment}`);
+			if (style.text?.style === "italic") textStyles.push("font-style: italic");
+			if (textStyles.length > 0) wrapper.setAttribute("style", textStyles.join("; "));
+		}
 
 		// Render markdown content into the wrapper
 		const sourcePath = this.currentFile?.path ?? "";
@@ -4900,6 +4957,14 @@ export class MindMapView extends ItemView {
 		circle.setAttribute("cy", String(toggleY + toggleSize / 2));
 		circle.setAttribute("r", String(toggleSize / 2));
 		circle.setAttribute("class", "osmosis-collapse-circle");
+		// Apply theme toggle styles via inline style (overrides CSS class rules)
+		if (this.activeTheme?.collapseToggle) {
+			const ct = this.activeTheme.collapseToggle;
+			const circleStyles: string[] = [];
+			if (ct.fill) circleStyles.push(`fill: ${ct.fill}`);
+			if (ct.stroke) circleStyles.push(`stroke: ${ct.stroke}`);
+			if (circleStyles.length > 0) circle.setAttribute("style", circleStyles.join("; "));
+		}
 		toggleGroup.appendChild(circle);
 
 		// +/- icon
@@ -4909,6 +4974,9 @@ export class MindMapView extends ItemView {
 		icon.setAttribute("text-anchor", "middle");
 		icon.setAttribute("dominant-baseline", "central");
 		icon.setAttribute("class", "osmosis-collapse-icon");
+		if (this.activeTheme?.collapseToggle?.icon) {
+			icon.setAttribute("style", `fill: ${this.activeTheme.collapseToggle.icon}`);
+		}
 		icon.textContent = isCollapsed ? "+" : "\u2212";
 		toggleGroup.appendChild(icon);
 
@@ -4943,6 +5011,14 @@ export class MindMapView extends ItemView {
 		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, lineStyle));
 		path.setAttribute("class", "osmosis-branch-line");
 		path.setAttribute("data-child-id", child.source.id);
+		// Apply theme branch line styles via inline style (overrides CSS class rules)
+		if (this.activeTheme?.branchLine) {
+			const bl = this.activeTheme.branchLine;
+			const lineStyles: string[] = ["fill: none"];
+			if (bl.color) lineStyles.push(`stroke: ${bl.color}`);
+			if (bl.thickness) lineStyles.push(`stroke-width: ${String(bl.thickness)}`);
+			path.setAttribute("style", lineStyles.join("; "));
+		}
 		svg.appendChild(path);
 	}
 
