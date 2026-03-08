@@ -1,18 +1,39 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import OsmosisPlugin from "./main";
+import type { LayoutDirection } from "./layout";
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
+
+/** Per-map settings that override global defaults. */
+export interface MapSettings {
+	direction: LayoutDirection;
+	branchLineStyle: BranchLineStyle;
+	collapseDepth: number;
+	horizontalSpacing: number;
+	verticalSpacing: number;
+}
+
+export const DEFAULT_MAP_SETTINGS: MapSettings = {
+	direction: "left-right",
+	branchLineStyle: "curved",
+	collapseDepth: 0,
+	horizontalSpacing: 80,
+	verticalSpacing: 8,
+};
 
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
 	showTransclusionStyle: boolean;
+	/** Per-note map settings keyed by file path. Only non-default values stored. */
+	mapSettings: Record<string, Partial<MapSettings>>;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchLineStyle: "curved",
 	cursorSync: true,
 	showTransclusionStyle: false,
+	mapSettings: {},
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {

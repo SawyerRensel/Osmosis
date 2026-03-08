@@ -18,7 +18,8 @@ import {
 	DEFAULT_LAYOUT_CONFIG,
 } from "../layout";
 import type OsmosisPlugin from "../main";
-import type { BranchLineStyle } from "../settings";
+import type { BranchLineStyle, MapSettings } from "../settings";
+import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { ToolRibbon } from "./ToolRibbon";
 import {
@@ -61,6 +62,9 @@ export class MindMapView extends ItemView {
 	private currentTree: OsmosisTree | null = null;
 	private renderComponent: Component | null = null;
 	plugin: OsmosisPlugin;
+
+	// Per-map settings (resolved from defaults + per-note overrides)
+	private mapSettings: MapSettings = { ...DEFAULT_MAP_SETTINGS };
 
 	// Viewport state
 	private viewBox = { x: 0, y: 0, w: 800, h: 600 };
@@ -383,6 +387,7 @@ export class MindMapView extends ItemView {
 			this.nodeHtmlCache.clear();
 		}
 		this.currentFile = file;
+		this.loadMapSettings();
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
 
@@ -403,6 +408,28 @@ export class MindMapView extends ItemView {
 		);
 
 		await this.render();
+	}
+
+	/** Returns the current file's path, used by the properties sidebar. */
+	getCurrentFilePath(): string | null {
+		return this.currentFile?.path ?? null;
+	}
+
+	/** Apply per-map settings from the properties sidebar and re-render. */
+	applyMapSettings(settings: MapSettings): void {
+		this.mapSettings = { ...settings };
+		void this.render();
+	}
+
+	/** Load per-note map settings from plugin data, merging with defaults. */
+	private loadMapSettings(): void {
+		const path = this.currentFile?.path;
+		if (!path) {
+			this.mapSettings = { ...DEFAULT_MAP_SETTINGS };
+			return;
+		}
+		const overrides = this.plugin?.settings?.mapSettings?.[path] ?? {};
+		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
 	// ─── Viewport ────────────────────────────────────────────
@@ -553,7 +580,7 @@ export class MindMapView extends ItemView {
 		const { nodes } = this.currentLayout;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
-		const lineStyle = this.plugin?.settings?.branchLineStyle ?? "curved";
+		const lineStyle = this.mapSettings.branchLineStyle;
 
 		const nowVisible = new Set<string>();
 		for (const node of nodes) {
@@ -4340,7 +4367,11 @@ export class MindMapView extends ItemView {
 
 		const layout = computeLayout(
 			this.currentTree,
-			{},
+			{
+				direction: this.mapSettings.direction,
+				horizontalSpacing: this.mapSettings.horizontalSpacing,
+				verticalSpacing: this.mapSettings.verticalSpacing,
+			},
 			this.collapsedIds,
 			nodeSizes,
 		);
@@ -4605,7 +4636,7 @@ export class MindMapView extends ItemView {
 		svg.appendChild(nodesGroup);
 		this.nodesGroup = nodesGroup;
 
-		const lineStyle = this.plugin?.settings?.branchLineStyle ?? "curved";
+		const lineStyle = this.mapSettings.branchLineStyle;
 
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();
