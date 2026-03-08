@@ -125,37 +125,60 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 
 ---
 
-### Phase 4: Mind Map Styling & View State [Estimated Duration: 1–2 weeks]
+### Phase 4: Mind Map Styling & View State [Estimated Duration: 3–4 weeks]
 
-**Goals**: Implement the theme system, LCVRT cascade for style resolution, per-note style overrides, and view state persistence.
+**Goals**: Implement the full LCVRT styling cascade (all five levels), theme system with custom theme creation, per-node format panel, style classes & variants, copy/paste style, custom color picker, font selection with cross-device fallback, and view state persistence.
+
+**Design References**: Xmind (format panel, "Extract Theme", "Update Style" affordance, Smart Color Themes), Freeplane (9-layer cascading precedence, conditional styles), Minder (StyleAffects scoping, style copy/paste as first-class, live theme preview, level-based style defaults). See `notes/00_inspiration/inspo.md` for full ideation sessions.
 
 **Key Tasks**:
-1. Heading-level typography: replace the accent-colored border on heading nodes with typographic styling (font size + weight scaled by heading depth, matching Obsidian's editor). The current border conflicts visually with multi-node selection which also uses a border highlight.
-2. Define the stylable property schema (shape, fill, border, text, branch line, background)
-3. Implement the LCVRT cascade resolver (Local > Class > Variant > Reference > Theme — v1.0 ships L, R, T; C and V are v1.1)
-4. Build 10–15 preset themes from iTerm2-Color-Schemes + auto-generated palettes
-5. Implement per-depth-level styling (themes define defaults per heading level)
-6. Implement colored branches toggle (auto-assign distinct colors per top-level branch)
-7. Implement per-node style overrides via frontmatter (`osmosis:` key, tree path and stable ID selectors)
-8. Implement node targeting: tree paths (human-facing) and stable IDs (content-position hash)
-9. Apply composition encapsulation for transcluded notes (host theme applies, internal cascade preserved)
-10. Implement lazy style resolution (defer for collapsed/off-screen transcluded branches)
-11. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`)
-12. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.)
+1. Heading-level typography: replace the accent-colored border on heading nodes with typographic styling (font size + weight scaled by heading depth, matching Obsidian's editor).
+2. Define the stylable property schema (shape, fill, border, text, branch line, background).
+3. Implement the full LCVRT cascade resolver (Local > Class > Variant > Reference > Theme — all five levels ship in v1.0).
+4. Build 10–15 preset themes from iTerm2-Color-Schemes + auto-generated palettes.
+5. Implement per-depth-level styling (themes define defaults per heading level).
+6. Implement colored branches toggle (auto-assign distinct colors per top-level branch).
+7. Implement per-node style overrides via frontmatter (`osmosis:` key, tree path and stable ID selectors).
+8. Implement node targeting: tree paths (human-facing) and stable IDs (content-position hash).
+9. Apply composition encapsulation for transcluded notes (host theme applies, internal cascade preserved).
+10. Implement lazy style resolution (defer for collapsed/off-screen transcluded branches).
+11. Build view state persistence: save/load fold state, pan, zoom to sidecar JSON files (`.obsidian/plugins/Osmosis/views/`). Support named view states (multiple saved views per note, switchable like Obsidian workspaces).
+12. Implement topic shapes (~15–20 shapes: rect, rounded-rect, ellipse, diamond, hexagon, underline, pill, etc.) as SVG path generators.
 13. Markdown & OFM rendering parity: ensure all Markdown/OFM syntax renders in mind map nodes identically to Obsidian's note view (code blocks, callouts, math, Mermaid, tables, media, task lists, third-party plugins). Editing hotkeys (Ctrl+B, Ctrl+I, etc.) work on nodes.
-14. Node height auto-fit: height always expands to fit content, never clips. Fix current paragraph overflow bug.
+14. Node height auto-fit: height always expands to fit content, never clips.
 15. Per-node width customization: drag right edge of any node to set custom width; height reflows to fit.
 16. Per-map min/max node width: configurable floor and ceiling for node width.
 17. Justify topic alignment: per-map toggle that enforces consistent node width across the whole map.
-18. Mind Map Properties Sidebar: register an Obsidian right-leaf "View" (like Backlinks) for per-map settings. Contextualizes to the active mind map view. Shows placeholder when no mind map is active. Settings include: layout direction, color theme overrides, collapse depth default, node spacing/density, branch line style, topic shape defaults, min/max node width, justify alignment toggle. Per-map settings persist per-note. **Build this first** so subsequent Phase 4 features have a UI home.
-19. Pin/Lock Toggle: toggle in mind map header to "pin" the current map — changing active note/tab doesn't switch the rendered mind map. Pinned map still live-updates if underlying note is edited. Visual indicator (pin icon) when active.
+18. Mind Map Properties Sidebar: register an Obsidian right-leaf "View" with **two tabs**: "Map" (map-level settings) and "Format" (per-node styling). Per-map settings persist per-note. **Build this first** so subsequent Phase 4 features have a UI home.
+19. Pin/Lock Toggle: toggle in mind map header to "pin" the current map.
+20. **Format Panel (Per-Node Styling UI)**: "Format" tab in the Properties Sidebar, contextual to the selected node(s). Controls grayed out when no selection. Sections: Style Class dropdown, Shape visual grid, Fill color picker, Border (color/width/style), Text (font family/size/weight/color/alignment), Branch Line (color/thickness/style). Multi-select shows shared values or "mixed". All overrides stored as frontmatter via stable IDs (`_n:xxxx`). Includes Minder-inspired "Changes affect" scoping (Selected Nodes / All Level N / All Nodes).
+21. **Custom Color Picker**: Built-in color picker with three sections: (a) Theme palette — colors extracted from the active theme, updates on theme change; (b) Custom palette — user-saved colors that persist across sessions, "+" to add, right-click to remove; (c) Hex/RGB input + gradient/hue selector for freeform picking. Used by all color controls in Format and Map tabs.
+22. **Font Family Selection**: Font picker dropdown populated via `queryLocalFonts()` on desktop, curated list on mobile. Bundle Inter (~20KB WOFF2) as guaranteed cross-device fallback. Power users can drop WOFF2 files in `.obsidian/plugins/Osmosis/fonts/` for portable custom fonts (loaded via base64 `@font-face`, same technique as obsidian-custom-font plugin). Use `document.fonts.check()` to detect unavailable fonts with subtle indicator. Store as CSS fallback chain.
+23. **Style Classes (C level in LCVRT)**: Named, reusable style bundles defined in frontmatter (`osmosis.classes`) or at theme level. Assign to nodes via Format panel dropdown. Update a class → all nodes using it update. Theme-level classes shared across maps; note-level classes override same-named theme classes.
+24. **Style Variants (V level in LCVRT)**: Switchable style configurations per note (e.g., presentation / study / print). Defined in frontmatter (`osmosis.variants`). Variant switcher in Map tab. Variants change styling (shapes, colors); view states change viewport (fold, pan, zoom). Wildcard `"*"` selector applies to all nodes.
+25. **Copy/Paste Style**: Ctrl+Shift+C copies selected node's explicitly-set style properties (not inherited theme defaults). Ctrl+Shift+V pastes as local overrides on selected node(s). Dedicated buttons in the tool ribbon. Minder-inspired first-class treatment — not buried in menus.
+26. **"Apply to Level N" Affordance**: After changing any property on a node, a contextual link appears: "Apply to all Level N". Clicking prompts the user to either (a) create a copy of the current theme with the change applied to that depth level, or (b) save over the current theme's depth-level defaults. Shipped preset themes include a "Reset to default" action with confirmation dialog to recover original settings.
+27. **Theme Editor (Custom Theme Creation)**: Opens a full Obsidian view showing a sample mind map with all heading levels (H1–H6), bullet/ordered lists, paragraphs — a comprehensive preview of every node type. User styles nodes using the same Format tab controls. Changes apply live to the preview. "Save as theme" names it and adds it to the Theme dropdown alongside presets. Live preview during editing (Minder-inspired). Custom themes stored in plugin settings as `ThemeDefinition` JSON.
+28. **"Extract Theme from Map"**: Complementary to the theme editor — user clicks "Save current map as theme" to snapshot the active map's styling (theme + all per-node overrides + depth-level patterns) into a new named theme. Accessible from the Map tab.
+29. **"Reset to Theme Defaults" (Per-Node)**: Button in Format tab that clears all local style overrides from the selected node(s), reverting to theme defaults. Confirmation dialog: "Remove all local style overrides from this node?"
+30. **Smart Color Themes**: Each preset theme auto-generates 6 color variations (Xmind-inspired): Rainbow (multicolor branches), Light, Dark, Mono, Complementary, Print-friendly. Algorithmically calculated from base palette.
+31. **CSS Snippet Support**: Advanced users can write `.osmosis-node[data-depth="2"] { ... }` custom CSS, leveraging the SVG's `data-depth` and `data-path` attributes. Works like Obsidian CSS snippets — drop a file in a folder, toggle it on.
 
 **Deliverables**:
-- [ ] Working theme system with 10–15 preset themes
-- [ ] LCVRT cascade resolving L, R, T levels
-- [ ] Per-node frontmatter overrides
-- [ ] View state save/load
-- [ ] Mind Map Properties Sidebar in right leaf
+- [ ] Full LCVRT cascade resolving all five levels (L, C, V, R, T)
+- [ ] Working theme system with 13+ preset themes + Smart Color Theme variations
+- [ ] Custom theme creation (theme editor view + "Extract from map")
+- [ ] Format Panel (per-node styling) in Properties Sidebar "Format" tab
+- [ ] Custom color picker with theme palette + custom palette + hex input
+- [ ] Font family selection with cross-device fallback and WOFF2 bundling
+- [ ] Style classes (define, assign, edit, propagate)
+- [ ] Style variants (presentation / study / print, switchable)
+- [ ] Copy/paste style (Ctrl+Shift+C/V + ribbon buttons)
+- [ ] "Apply to Level N" with theme copy/overwrite prompt
+- [ ] Per-node frontmatter overrides via stable IDs
+- [ ] View state save/load with named view states
+- [ ] "Reset to theme defaults" per-node with confirmation
+- [ ] Preset theme "Reset to default" with confirmation
 - [ ] Pin/Lock toggle for map view
 
 **Success Criteria for Phase 4**:
@@ -163,11 +186,22 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 - [ ] Themes apply consistent styling across nodes by depth level
 - [ ] Per-node overrides in frontmatter work (both tree path and stable ID selectors)
 - [ ] Colored branches auto-assign and children inherit
+- [ ] Users can select a node and change its shape, fill, border, text, and branch line via the Format tab
+- [ ] Multi-select styling works (shared values shown, changes apply to all)
+- [ ] Style classes can be defined, assigned, and edited; changes propagate
+- [ ] Style variants can be switched; map re-renders immediately
+- [ ] Copy/paste style works via keyboard shortcuts and ribbon buttons
+- [ ] "Apply to Level N" prompts for theme copy vs overwrite
+- [ ] Custom themes can be created via theme editor and "Extract from map"
+- [ ] Custom color picker shows theme palette, custom palette, and hex input
+- [ ] Font family selection works on desktop (system fonts) and mobile (curated list + fallback)
 - [ ] View state (fold, pan, zoom) persists across sessions via explicit save
+- [ ] Named view states can be saved, loaded, and switched
 - [ ] Transcluded branches use host theme, internal cascade untouched
 - [ ] Style resolution cost scales with visible nodes, not total nodes
-- [ ] Properties sidebar shows per-map settings for the active mind map view
+- [ ] Properties sidebar has Map and Format tabs, both always accessible
 - [ ] Pin toggle prevents map from switching when active note changes
+- [ ] Shipped preset themes can be reset to defaults with confirmation
 
 **Dependencies & Blockers**: Phase 3 transclusion must be complete (for composition encapsulation and lazy resolution).
 
@@ -719,8 +753,8 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Dependencies: None (can be done immediately, before the full theme system)
 
 **Task 4.1: Stylable Property Schema**
-- Description: Define the TypeScript interfaces for all stylable properties (NodeStyle, BranchLineStyle, ThemeDefinition) and the LCVRT cascade resolution function.
-- Acceptance Criteria: Types cover all properties from PRD (shape, fill, border, text, branch line, background). Cascade function resolves a property by checking L → C → V → R → T in order, returning first non-undefined value.
+- Description: Define the TypeScript interfaces for all stylable properties (NodeStyle, BranchLineStyle, ThemeDefinition) and the LCVRT cascade resolution function. All five cascade levels (Local, Class, Variant, Reference, Theme) ship in v1.0.
+- Acceptance Criteria: Types cover all properties from PRD (shape, fill, border, text, branch line, background). Cascade function resolves a property by checking L → C → V → R → T in order, returning first non-undefined value. All five levels are functional.
 - Estimated Effort: 4–8 hours
 - Dependencies: Phase 3 complete
 
@@ -805,6 +839,84 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Acceptance Criteria: Every Markdown and OFM syntax element renders in mind map nodes identically to how it appears in an Obsidian note. Code blocks show syntax highlighting. Editing hotkeys (bold, italic, link, code) work both at node level and within edit mode. Third-party plugin content renders via Obsidian's MarkdownRenderer.
 - Estimated Effort: 3–5 days
 - Dependencies: Task 2.3 (node rendering), Task 2.7 (keyboard editing)
+
+**Task 4.14: Properties Sidebar Tabs (Map + Format)**
+- Description: Refactor the existing Properties Sidebar (`PropertiesSidebarView.ts`) from a single scrollable panel into a two-tab layout: "Map" tab (existing map-level settings) and "Format" tab (per-node styling, new). Both tabs remain accessible regardless of node selection. Format tab controls are grayed out when no node is selected. Uses Obsidian's built-in tab/section UI patterns. This task creates the tab structure and the Format tab skeleton — individual controls are wired up in subsequent tasks.
+- Acceptance Criteria: Properties Sidebar displays two tabs: "Map" and "Format". Map tab contains all existing settings (theme, shape, layout, spacing, etc.). Format tab shows placeholder sections for Shape, Fill, Border, Text, Branch Line, Style Class. Format controls are disabled/grayed when no node is selected. Switching tabs preserves state. Sidebar updates when node selection changes.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 4.18 (Properties Sidebar — already complete)
+
+**Task 4.15: Custom Color Picker**
+- Description: Build a reusable custom color picker component for use throughout the Format and Map tabs. Three sections: (a) **Theme palette** — swatches extracted from the active theme's fills, branch colors, and text colors; updates when theme changes. (b) **Custom palette** — user-saved colors that persist in plugin settings; "+" button to add the current color, right-click/long-press to remove. (c) **Hex/RGB input field** + a gradient/hue area for freeform color selection. The picker is a dropdown/popover triggered by clicking any color swatch in the sidebar. Returns the selected color to the caller.
+- Acceptance Criteria: Color picker renders with all three sections. Theme palette auto-populates from active theme. Custom palette persists across sessions. Hex input accepts and validates hex colors. Gradient/hue selector allows freeform picking. Picker integrates as a reusable component callable from any Setting control.
+- Estimated Effort: 1–2 days
+- Dependencies: Task 4.2 (Theme System — already complete)
+
+**Task 4.16: Font Family Selection**
+- Description: Build a font family picker for the Format tab's Text section. On desktop (Electron), use `queryLocalFonts()` to enumerate all installed system fonts and populate a searchable dropdown. On mobile or when the API is unavailable, show a curated list of common fonts (system defaults, web-safe families). Bundle **Inter** (~20KB WOFF2) in the plugin as a guaranteed cross-device fallback. Support power-user WOFF2 drop-in: users can place `.woff2` files in `.obsidian/plugins/Osmosis/fonts/` — these are loaded via base64 `@font-face` injection (same technique as obsidian-custom-font plugin) and appear in the font dropdown. Store font preference as a CSS fallback chain (`font-family: 'User Choice', 'Inter', sans-serif`). Use `document.fonts.check()` to detect when a chosen font is unavailable on the current device; show a subtle "(fallback)" indicator. Font CSS is scoped to `.osmosis-mind-map` container, not global.
+- Acceptance Criteria: Font dropdown shows system fonts on desktop. Curated fallback list on mobile. Inter bundled and always available. WOFF2 files in fonts/ directory are discovered, loaded, and appear in dropdown. Unavailable fonts show fallback indicator. Font changes apply immediately to selected node(s). Font scoped to mind map only.
+- Estimated Effort: 1–2 days
+- Dependencies: Task 4.14 (Sidebar Tabs)
+
+**Task 4.17: Format Panel — Per-Node Styling Controls**
+- Description: Wire up the Format tab with full per-node styling controls. When one or more nodes are selected, the Format tab enables and shows the node's current resolved style (from LCVRT cascade) with controls to override each property. Sections (collapsible): **Style Class** (dropdown of defined classes + "New class" button), **Shape** (visual grid of ~15 shape thumbnails from Task 4.3), **Fill** (color picker from Task 4.15), **Border** (color picker, width stepper 0–8, style dropdown: solid/dashed/dotted/none), **Text** (font family from Task 4.16, size stepper, weight dropdown 100–900, color picker, alignment toggle group: left/center/right), **Branch Line** (color picker, thickness slider 1–8, style dropdown: curved/straight/angular/rounded-elbow). Multi-select behavior: shared values displayed normally, differing values shown as "Mixed" or blank; changes apply to all selected nodes. Overrides stored in frontmatter as `osmosis.styles._n:xxxx` using stable IDs. Includes Minder-inspired "Changes affect" scoping selector at the top: "Selected Nodes" (default) / "All Level N" / "All Nodes". The "All Level N" option triggers Task 4.26's prompt flow.
+- Acceptance Criteria: All property sections render with correct controls. Selecting a node populates controls with its resolved style. Changing any property updates the node immediately (live preview). Multi-select shows shared/mixed values. Changes persist as frontmatter overrides with stable IDs. "Changes affect" selector scopes the change correctly.
+- Estimated Effort: 2–3 days
+- Dependencies: Tasks 4.14, 4.15, 4.16, 4.3, 4.4
+
+**Task 4.20: Style Classes (C Level in LCVRT)**
+- Description: Implement the Class level of the LCVRT cascade. Style classes are named, reusable style bundles (inspired by USD class prims / Minder templates). A class is defined once and referenced by any number of nodes. Updating the class definition updates all nodes using it. Classes can be defined at two scopes: (a) **Note-level** — in frontmatter under `osmosis.classes`, scoped to that note (stronger); (b) **Theme-level** — inside the ThemeDefinition JSON, shared across all maps using that theme (weaker). Same-named note-level class wins over theme-level. In the Format tab, a "Style class" dropdown lists available classes with a "New class" button. Selecting a class assigns it to the node (`osmosis.styles._n:xxxx.class = "className"`). A "Style classes" management section in the Map tab lists defined classes with edit/delete buttons. Editing a class opens its properties inline; changes propagate to all nodes using it.
+- Acceptance Criteria: Classes can be defined in frontmatter and in themes. Assigning a class to a node applies its properties (shape, fill, border, text, etc.). Local overrides (L level) still win over class values. Updating a class definition propagates to all nodes using it. Note-level classes override same-named theme-level classes. Class management UI in Map tab works (create, edit, delete). Format tab dropdown shows available classes.
+- Estimated Effort: 1–2 days
+- Dependencies: Tasks 4.1, 4.17
+
+**Task 4.21: Style Variants (V Level in LCVRT)**
+- Description: Implement the Variant level of the LCVRT cascade. Style variants are switchable style configurations per note (inspired by USD VariantSets). Each variant is a named set of style overrides defined in frontmatter under `osmosis.variants`. A variant switcher dropdown in the Map tab allows instant switching. Variants are orthogonal to view states — a variant changes *styling* (shapes, colors), a view state changes *viewport* (fold, pan, zoom). They combine freely. Local overrides still win over variant values. The `"*"` wildcard selector applies variant styles to all nodes (useful for print/accessibility variants). Variant switching is instant — no re-parse needed, just re-resolve styles and re-render.
+- Acceptance Criteria: Variants can be defined in frontmatter with named sets of style overrides. Variant switcher in Map tab switches instantly. Active variant is persisted (`osmosis.activeVariant`). Wildcard `"*"` selector works. Local overrides take precedence over variant values. Variants compose correctly with the full LCVRT cascade.
+- Estimated Effort: 1–2 days
+- Dependencies: Tasks 4.1, 4.17
+
+**Task 4.22: Copy/Paste Style**
+- Description: Implement style copy/paste as a first-class feature (inspired by Xmind and Minder). **Ctrl+Shift+C** captures the selected node's explicitly-set style properties (local overrides only — not inherited theme defaults). **Ctrl+Shift+V** applies the copied style as local overrides on the currently selected node(s). Add dedicated "Copy style" and "Paste style" buttons to the tool ribbon (`ToolRibbon.ts`). Only copies properties that were explicitly set (sparse — unset properties are not included, so paste doesn't overwrite the target's other inherited styles). Visual feedback on copy (brief highlight or toast). Paste is undoable.
+- Acceptance Criteria: Ctrl+Shift+C copies style from selected node. Ctrl+Shift+V pastes style onto selected node(s). Ribbon buttons work identically. Only explicitly-set properties are copied (not theme defaults). Paste is undoable. Works with multi-select (paste to all selected).
+- Estimated Effort: 4–8 hours
+- Dependencies: Tasks 4.17, 4.4
+
+**Task 4.23: Theme Editor View**
+- Description: Implement a full Obsidian view for creating and editing custom themes (inspired by Xmind's "Extract Theme" + Minder's live theme preview). Opened via an "Edit theme..." button next to the Theme dropdown in the Map tab. The view displays a **sample mind map** with all heading levels (H1–H6), bullet lists, ordered lists, paragraphs, code blocks — a comprehensive preview of every node type at every depth. The user styles nodes in the preview using the same Format tab controls (the Properties Sidebar contextualizes to the preview map). Changes apply live to the preview. The view has a header with: theme name input, "Save as theme" button, "Cancel" button, "Delete theme" button (for custom themes only). Custom themes are stored in plugin settings as `ThemeDefinition` JSON objects. Editing a built-in preset theme always creates a copy ("Save as new theme"). Built-in presets cannot be overwritten but can be **reset to defaults** — a "Reset to default" action with confirmation dialog restores the original shipped theme definition.
+- Acceptance Criteria: Theme editor opens as a full view with a sample mind map. All heading levels, lists, and paragraphs are represented. User can style the preview using Format tab controls. Changes preview live. "Save as theme" persists to plugin settings and appears in Theme dropdown. Editing a preset creates a copy. "Delete theme" removes custom themes. "Reset to default" restores shipped preset themes with confirmation dialog.
+- Estimated Effort: 2–3 days
+- Dependencies: Tasks 4.14, 4.17, 4.2
+
+**Task 4.24: Extract Theme from Map**
+- Description: Complementary to the Theme Editor (Task 4.23). A "Save current map as theme" action accessible from the Map tab. Snapshots the active map's complete styling — theme base + all per-depth-level patterns + per-node overrides (generalized into depth-level defaults where patterns are detected) — into a new named `ThemeDefinition`. User is prompted for a theme name. The new theme appears in the Theme dropdown. This provides a design-by-example workflow: style a real map the way you want, then extract it as a reusable theme.
+- Acceptance Criteria: "Save current map as theme" action in Map tab. Prompts for theme name. Extracts styling into a valid ThemeDefinition. New theme appears in dropdown and can be applied to other maps. Per-node overrides that follow depth patterns are generalized into depth-level defaults.
+- Estimated Effort: 4–8 hours
+- Dependencies: Tasks 4.2, 4.17
+
+**Task 4.25: Reset to Theme Defaults (Per-Node)**
+- Description: A "Reset to theme defaults" button in the Format tab. When clicked, shows a confirmation dialog: "Remove all local style overrides from this node? It will revert to the theme defaults." On confirm, clears the node's entry from `osmosis.styles` in frontmatter, removing all local (L-level) overrides. The node reverts to its resolved appearance from C → V → R → T cascade levels. Works with multi-select — clears overrides from all selected nodes. Undoable.
+- Acceptance Criteria: "Reset to theme defaults" button appears in Format tab when a styled node is selected. Confirmation dialog shown on click. On confirm, all local overrides are removed from frontmatter. Node reverts to theme appearance. Works with multi-select. Action is undoable.
+- Estimated Effort: 2–4 hours
+- Dependencies: Tasks 4.17, 4.4
+
+**Task 4.26: "Apply to Level N" Affordance**
+- Description: After changing any style property on a node via the Format tab, a contextual link/button appears: "Apply to all Level N" (where N is the node's depth). Clicking it presents a prompt with two options: (a) **Create a copy** of the current theme with the change applied to that depth level's defaults — names the copy and adds it to the Theme dropdown; (b) **Save over** the current theme's depth-level defaults for that level — modifies the active theme in place. For shipped preset themes, option (b) is labeled "Save as custom theme" and always creates a copy (presets cannot be permanently overwritten). The "Reset to default" action (from Task 4.23) can restore any shipped preset.
+- Acceptance Criteria: "Apply to all Level N" link appears after styling a node. Prompt offers copy vs overwrite options. Creating a copy adds a new theme to the dropdown. Overwriting modifies the theme's depth-level defaults. Preset themes force a copy. Changes apply immediately to all nodes at that depth.
+- Estimated Effort: 4–8 hours
+- Dependencies: Tasks 4.17, 4.23
+
+**Task 4.27: Smart Color Themes**
+- Description: Each preset theme auto-generates 6 color variations (inspired by Xmind's Smart Color Theme): (a) **Rainbow** — multicolor branches with distinct colors per top-level branch; (b) **Light** — lighter tones derived from base palette; (c) **Dark** — darker tones; (d) **Mono** — monochromatic using a single hue; (e) **Complementary** — complementary color scheme; (f) **Print-friendly** — high contrast, suitable for printing. Colors are algorithmically calculated from the base theme palette using HSL transformations. Variations appear as sub-options when selecting a theme in the Map tab (e.g., "Ocean" expands to show "Ocean — Rainbow", "Ocean — Light", etc.).
+- Acceptance Criteria: Each preset theme generates 6 algorithmically-derived color variations. Variations are accessible as sub-options in the Theme dropdown. Each variation produces visually distinct, harmonious colors. Print-friendly variation has sufficient contrast for black-and-white printing.
+- Estimated Effort: 1–2 days
+- Dependencies: Task 4.2
+
+**Task 4.28: CSS Snippet Support**
+- Description: Advanced users can write custom CSS targeting mind map nodes using data attributes already present in the SVG (`data-depth`, `data-path`, `data-node-id`). CSS snippets work like Obsidian's native CSS snippet system — users drop a `.css` file in a designated folder (`.obsidian/plugins/Osmosis/snippets/` or reuse Obsidian's own snippet folder with an `.osmosis-` prefix convention), and toggle snippets on/off in the Map tab. Snippets apply at the lowest priority (below Theme level), so they serve as a base layer that themes and local overrides can override.
+- Acceptance Criteria: CSS snippets can target mind map nodes via data attributes. Snippets are discoverable and togglable in the Map tab. Snippets apply below theme priority in the cascade. Changes are reflected immediately on toggle.
+- Estimated Effort: 4–8 hours
+- Dependencies: Task 4.2
 
 ---
 
