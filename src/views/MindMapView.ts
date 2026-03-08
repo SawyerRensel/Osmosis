@@ -118,6 +118,9 @@ export class MindMapView extends ItemView {
 	private dropIndicator: SVGLineElement | null = null;
 	private dropTarget: { parentId: string; index: number } | null = null;
 
+	// Pending selection: after a save-edit re-render, re-select the node at this position
+	private pendingSelectionRangeStart: number | null = null;
+
 	// Cursor sync state
 	private parser = new OsmosisParser();
 	private cursorSyncNodeId: string | null = null;
@@ -1258,6 +1261,9 @@ export class MindMapView extends ItemView {
 		if (nodeId) {
 			this.selectedNodeIds.add(nodeId);
 		}
+
+		// Clear cursor-sync highlight so it doesn't conflict with selection
+		this.setCursorSyncHighlight(null);
 
 		this.applySelectionVisuals();
 	}
@@ -3234,12 +3240,14 @@ export class MindMapView extends ItemView {
 		const target = siblings[newIdx];
 		if (newIdx >= 0 && newIdx < siblings.length && target) {
 			this.selectNode(target.source.id);
+			this.syncMapSelectionToEditor(target.source.id);
 			this.scrollToSelectedNode();
 		} else {
 			// Jump to cousin at same depth
 			const cousin = this.findCousin(node, direction);
 			if (cousin) {
 				this.selectNode(cousin.source.id);
+				this.syncMapSelectionToEditor(cousin.source.id);
 				this.scrollToSelectedNode();
 			}
 		}
@@ -3288,6 +3296,7 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (node?.parent && node.parent.source.type !== "root") {
 			this.selectNode(node.parent.source.id);
+			this.syncMapSelectionToEditor(node.parent.source.id);
 			this.scrollToSelectedNode();
 		}
 	}
@@ -3313,6 +3322,7 @@ export class MindMapView extends ItemView {
 		const firstChild = node.children[0];
 		if (firstChild) {
 			this.selectNode(firstChild.source.id);
+			this.syncMapSelectionToEditor(firstChild.source.id);
 			this.scrollToSelectedNode();
 		}
 	}
@@ -3326,6 +3336,8 @@ export class MindMapView extends ItemView {
 	 */
 	private extendSelectionTo(targetId: string): void {
 		this.clearSelectionVisuals();
+		this.setCursorSyncHighlight(null);
+		this.syncMapSelectionToEditor(targetId);
 		if (
 			this.selectedNodeIds.has(targetId) &&
 			this.selectedNodeId !== targetId
@@ -3415,6 +3427,7 @@ export class MindMapView extends ItemView {
 		for (const node of this.currentLayout.nodes) {
 			if (node.source.type !== "root") {
 				this.selectNode(node.source.id);
+				this.syncMapSelectionToEditor(node.source.id);
 				this.scrollToSelectedNode();
 				return;
 			}
@@ -3863,9 +3876,15 @@ export class MindMapView extends ItemView {
 		}
 
 		if (save && newContent !== node.source.content) {
+			// Store range.start so render() can re-select the node after
+			// the SVG is rebuilt (node IDs change when content changes).
+			this.pendingSelectionRangeStart = node.source.range.start;
 			// Write change back to markdown (triggers re-render)
 			void this.renameNode(node, newContent);
 		}
+
+		// Clear cursor-sync highlight to avoid stale dashed outline
+		this.setCursorSyncHighlight(null);
 
 		this.contentEl.focus({ preventScroll: true });
 		this.updateToolbarState();
@@ -4400,6 +4419,18 @@ export class MindMapView extends ItemView {
 		}
 
 		await this.renderSvg(container, layout);
+
+		// After a save-edit re-render, re-select the node at the stored position
+		if (this.pendingSelectionRangeStart !== null) {
+			const rangeStart = this.pendingSelectionRangeStart;
+			this.pendingSelectionRangeStart = null;
+			for (const [id, layoutNode] of this.nodeMap) {
+				if (layoutNode.source.range.start === rangeStart) {
+					this.selectNode(id);
+					break;
+				}
+			}
+		}
 
 		// Re-attach toolbar (container.empty() removes it)
 		this.toolRibbon?.attach();
