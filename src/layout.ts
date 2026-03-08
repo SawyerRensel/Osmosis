@@ -179,38 +179,32 @@ function assignSizes(
 			contentH = cfg.defaultNodeHeight;
 		}
 
-		// Base padding
-		let padX = cfg.nodePaddingX;
-		let padY = cfg.nodePaddingY;
-
-		// Inflate padding to account for shape insets so content fits
-		// within the inscribed rectangle of the shape.
-		const insets = getShapeInsets(cfg.topicShape);
-		if (insets.x > 0 || insets.y > 0) {
-			// insets.x is the fraction of total width consumed per side.
-			// We need: contentW + 2*padX = (1 - 2*insets.x) * totalW
-			// So: totalW = (contentW + 2*basePad) / (1 - 2*insets.x)
-			// Extra pad per side = (totalW - contentW) / 2 - basePad... simplify:
-			// totalW = (contentW + 2*basePad) / (1 - 2*ix)
-			// padX_new = (totalW - contentW) / 2
-			const ix = Math.min(insets.x, 0.45);
-			const iy = Math.min(insets.y, 0.45);
-			const scale_x = 1 / (1 - 2 * ix);
-			const scale_y = 1 / (1 - 2 * iy);
-			const totalW = (contentW + 2 * cfg.nodePaddingX) * scale_x;
-			const totalH = (contentH + 2 * cfg.nodePaddingY) * scale_y;
-			padX = (totalW - contentW) / 2;
-			padY = (totalH - contentH) / 2;
-		}
-
-		node.rect.width = contentW + padX * 2;
-		node.rect.height = contentH + padY * 2;
-
-		// Circle forces square aspect ratio — use the larger dimension
 		if (cfg.topicShape === "circle") {
-			const side = Math.max(node.rect.width, node.rect.height);
-			node.rect.width = side;
-			node.rect.height = side;
+			// Circle: size so the inscribed content area (after insets) fits content.
+			// With insets of 0.08 per side, available fraction = 0.84.
+			// Use max(paddedW, paddedH) / 0.84 as the baseline, but also
+			// ensure at least the diagonal so content corners don't clip.
+			const paddedW = contentW + cfg.nodePaddingX * 2;
+			const paddedH = contentH + cfg.nodePaddingY * 2;
+			const insets = getShapeInsets("circle");
+			const availFrac = 1 - insets.left - insets.right; // 0.84
+			const fromMax = Math.max(paddedW, paddedH) / availFrac;
+			const fromDiag = Math.sqrt(paddedW * paddedW + paddedH * paddedH);
+			const diameter = Math.max(fromMax, fromDiag);
+			node.rect.width = diameter;
+			node.rect.height = diameter;
+		} else {
+			// Inflate node dimensions to account for shape insets so content fits
+			// within the inscribed rectangle of the shape.
+			const insets = getShapeInsets(cfg.topicShape);
+			const totalInsetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
+			const totalInsetY = Math.min(insets.top, 0.45) + Math.min(insets.bottom, 0.45);
+
+			const scaleX = totalInsetX > 0 ? 1 / (1 - totalInsetX) : 1;
+			const scaleY = totalInsetY > 0 ? 1 / (1 - totalInsetY) : 1;
+
+			node.rect.width = (contentW + cfg.nodePaddingX * 2) * scaleX;
+			node.rect.height = (contentH + cfg.nodePaddingY * 2) * scaleY;
 		}
 	}
 

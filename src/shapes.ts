@@ -31,16 +31,19 @@ export const SHAPE_LABELS: Record<TopicShape, string> = {
 
 /**
  * Content insets: how far inside the bounding box the inscribed content
- * rectangle sits for each shape. Expressed as fractions of width/height.
- *
- * For a shape with insets {x: 0.25, y: 0.25}, the usable content area is
- * the center 50% of width and 50% of height.
+ * rectangle sits for each shape. Expressed as fractions of width (left/right)
+ * or height (top/bottom). Allows asymmetric shapes like triangles.
  */
 export interface ShapeInsets {
-	/** Fraction of width consumed on each side (left and right). */
-	x: number;
-	/** Fraction of height consumed on top and bottom. */
-	y: number;
+	top: number;
+	right: number;
+	bottom: number;
+	left: number;
+}
+
+/** Create symmetric insets from x/y fractions (convenience). */
+function sym(x: number, y: number): ShapeInsets {
+	return { top: y, right: x, bottom: y, left: x };
 }
 
 /**
@@ -57,56 +60,56 @@ export function getShapeInsets(shape: TopicShape): ShapeInsets {
 		case "rounded-rect":
 		case "underline":
 		case "none":
-			return { x: 0, y: 0 };
+			return sym(0, 0);
 
 		// Pill — half-height rounding on each side
 		case "pill":
-			return { x: 0.12, y: 0 };
+			return sym(0.12, 0);
 
-		// Ellipse — inscribed rect of an ellipse is 1/√2 ≈ 70.7% of bounding box
-		// Inset per side ≈ (1 - 1/√2) / 2 ≈ 0.146, round up for comfortable padding
+		// Ellipse — inscribed rect is 1/√2 ≈ 70.7% of bounding box
+		// Inset per side = (1 - 1/√2) / 2 ≈ 0.146
 		case "ellipse":
-			return { x: 0.20, y: 0.20 };
+			return sym(0.15, 0.15);
 
-		// Circle — forced square, inscribed rect is 1/√2 of diameter per axis
-		// Needs large insets since content is usually wider than tall
+		// Circle — tighter insets; layout sizes via max-dimension formula
 		case "circle":
-			return { x: 0.22, y: 0.22 };
+			return sym(0.08, 0.08);
 
-		// Diamond — the inscribed rect of a diamond is exactly 50% width × 50% height
+		// Diamond — inscribed rect is exactly 50% width × 50% height
 		case "diamond":
-			return { x: 0.30, y: 0.30 };
+			return sym(0.25, 0.25);
 
-		// Hexagon — flat-top hex, inset = 0.25 * width on each side (matching makeHexagon)
+		// Hexagon — flat-top, inset = 0.25 * width per side (matching makeHexagon)
 		case "hexagon":
-			return { x: 0.25, y: 0.05 };
+			return sym(0.22, 0.03);
 
-		// Octagon — 0.29 fraction corner cuts on each axis
+		// Octagon — 0.29 fraction corner cuts
 		case "octagon":
-			return { x: 0.18, y: 0.18 };
+			return sym(0.15, 0.15);
 
-		// Triangle — usable content is roughly the middle 40% of width
+		// Triangle — points right: flat left edge, point on right.
+		// Max inscribed rect: left=0, right=0.50, top/bottom=0.25
 		case "triangle":
-			return { x: 0.30, y: 0.25 };
+			return { top: 0.20, right: 0.45, bottom: 0.20, left: 0.05 };
 
-		// Parallelogram — skew of 0.2 * width shifts both sides
+		// Parallelogram — skew of 0.2*w; left edge shifted right, right edge shifted left
 		case "parallelogram":
-			return { x: 0.20, y: 0 };
+			return { top: 0, right: 0.18, bottom: 0, left: 0.18 };
 
-		// Trapezoid — top is narrower by 0.15 on each side
+		// Trapezoid — top narrower by 0.15 per side
 		case "trapezoid":
-			return { x: 0.15, y: 0 };
+			return sym(0.12, 0);
 
-		// Cloud — bumpy bezier edges eat into content area on all sides
+		// Cloud — bumpy bezier edges eat into content area
 		case "cloud":
-			return { x: 0.18, y: 0.20 };
+			return sym(0.15, 0.18);
 
-		// Arrow-right — notch on left (~15% width), point on right (~30% width)
+		// Arrow-right — notch on left (~10%), point on right (~25%)
 		case "arrow-right":
-			return { x: 0.22, y: 0.05 };
+			return { top: 0.03, right: 0.25, bottom: 0.03, left: 0.15 };
 
 		default:
-			return { x: 0, y: 0 };
+			return sym(0, 0);
 	}
 }
 

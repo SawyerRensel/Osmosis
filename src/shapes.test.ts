@@ -92,8 +92,10 @@ describe("getShapeInsets", () => {
 	it("returns zero insets for rectangular shapes", () => {
 		for (const shape of ["rect", "rounded-rect", "underline", "none"] as TopicShape[]) {
 			const insets = getShapeInsets(shape);
-			expect(insets.x).toBe(0);
-			expect(insets.y).toBe(0);
+			expect(insets.top).toBe(0);
+			expect(insets.right).toBe(0);
+			expect(insets.bottom).toBe(0);
+			expect(insets.left).toBe(0);
 		}
 	});
 
@@ -105,22 +107,28 @@ describe("getShapeInsets", () => {
 		];
 		for (const shape of nonRect) {
 			const insets = getShapeInsets(shape);
-			expect(insets.x > 0 || insets.y > 0).toBe(true);
+			const total = insets.top + insets.right + insets.bottom + insets.left;
+			expect(total).toBeGreaterThan(0);
 		}
 	});
 
-	it("insets are less than 0.5 (content area is always positive)", () => {
+	it("insets leave positive content area (sum per axis < 1)", () => {
 		for (const shape of ALL_SHAPES) {
 			const insets = getShapeInsets(shape);
-			expect(insets.x).toBeLessThan(0.5);
-			expect(insets.y).toBeLessThan(0.5);
+			expect(insets.left + insets.right).toBeLessThan(1);
+			expect(insets.top + insets.bottom).toBeLessThan(1);
 		}
 	});
 
-	it("diamond has the largest insets among common shapes", () => {
-		const diamond = getShapeInsets("diamond");
-		const rect = getShapeInsets("rounded-rect");
-		expect(diamond.x).toBeGreaterThan(rect.x);
-		expect(diamond.y).toBeGreaterThan(rect.y);
+	it("triangle has asymmetric insets (small left, large right)", () => {
+		const tri = getShapeInsets("triangle");
+		expect(tri.right).toBeGreaterThan(tri.left);
+	});
+
+	it("diamond has equal symmetric insets", () => {
+		const d = getShapeInsets("diamond");
+		expect(d.left).toBe(d.right);
+		expect(d.top).toBe(d.bottom);
+		expect(d.left).toBeGreaterThan(0);
 	});
 });

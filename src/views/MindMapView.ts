@@ -4420,7 +4420,8 @@ export class MindMapView extends ItemView {
 		// Reduce max content width for shapes with insets so text wraps before
 		// the shape boundary clips it.
 		const shapeInsets = getShapeInsets(this.mapSettings.topicShape ?? "rounded-rect");
-		const shapeScale = 1 - 2 * Math.min(shapeInsets.x, 0.45);
+		const totalInsetX = Math.min(shapeInsets.left, 0.45) + Math.min(shapeInsets.right, 0.45);
+		const shapeScale = 1 - totalInsetX;
 		const contentMaxWidth = cfg.maxNodeWidth * shapeScale - cfg.nodePaddingX * 2;
 
 		const sourcePath = this.currentFile?.path ?? "";
@@ -4783,10 +4784,10 @@ export class MindMapView extends ItemView {
 		// Compute the inscribed content rectangle within the shape.
 		// The foreignObject is inset so text/media stay inside the shape boundary.
 		const insets = getShapeInsets(shape);
-		const foX = x + insets.x * width;
-		const foY = y + insets.y * height;
-		const foW = width * (1 - 2 * insets.x);
-		const foH = height * (1 - 2 * insets.y);
+		const foX = x + insets.left * width;
+		const foY = y + insets.top * height;
+		const foW = width * (1 - insets.left - insets.right);
+		const foH = height * (1 - insets.top - insets.bottom);
 
 		// foreignObject with rendered markdown
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
