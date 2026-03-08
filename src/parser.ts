@@ -340,13 +340,26 @@ export class OsmosisParser {
 		"pdf",
 	]);
 
+	/** Compound extensions that are visual embeds despite ending in .md */
+	private static readonly MEDIA_COMPOUND_EXTENSIONS = [
+		".excalidraw.md",
+	];
+
 	/**
-	 * Check if an embed target refers to a media file (image, audio, video, PDF).
+	 * Check if an embed target refers to a media file (image, audio, video, PDF)
+	 * or a visual embed like Excalidraw.
 	 * Handles wiki-link pipes (e.g. "image.png|300") and fragments (e.g. "file.pdf#page=2").
 	 */
 	private isMediaEmbed(target: string): boolean {
 		// Strip wiki-link pipe sizing (e.g. "image.png|300" → "image.png")
 		const pathPart = target.split("|")[0]?.split("#")[0] ?? "";
+
+		// Check compound extensions first (e.g. .excalidraw.md)
+		const lower = pathPart.toLowerCase();
+		for (const compound of OsmosisParser.MEDIA_COMPOUND_EXTENSIONS) {
+			if (lower.endsWith(compound)) return true;
+		}
+
 		const dotIndex = pathPart.lastIndexOf(".");
 		if (dotIndex === -1) return false;
 		const ext = pathPart.slice(dotIndex + 1).toLowerCase();

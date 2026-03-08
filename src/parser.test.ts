@@ -163,6 +163,14 @@ describe("OsmosisParser", () => {
 			expect(tree.root.children[0]?.type).toBe("paragraph");
 		});
 
+		it("treats Excalidraw embeds as paragraphs", () => {
+			const md = "![[Drawing 2026-03-07 2019.36.10.excalidraw.md]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+			expect(tree.root.children[0]?.content).toBe(md);
+		});
+
 		it("still treats .md links as transclusions", () => {
 			const md = "![[some-note]]";
 			const tree = parser.parse(md, "test.md");
