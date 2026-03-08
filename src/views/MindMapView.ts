@@ -3448,24 +3448,27 @@ export class MindMapView extends ItemView {
 	// ─── Inline Editing ──────────────────────────────────────
 
 	private startEditing(nodeId: string): void {
+		const node = this.nodeMap.get(nodeId);
+		if (!node || !this.svg) return;
+
+		// Validate DOM elements before committing to edit mode.
+		// Without this, editingNodeId could be set with no editor created,
+		// leaving the node in a broken state (ribbon hidden, no overlay).
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+
+		const shapeEl = group.querySelector(".osmosis-node");
+		if (!shapeEl) return;
+
 		if (this.editingNodeId) {
 			this.stopEditing(true);
 		}
 
-		const node = this.nodeMap.get(nodeId);
-		if (!node || !this.svg) return;
-
 		this.editingNodeId = nodeId;
 		this.selectNode(nodeId);
 
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-
-		const rectEl = group.querySelector("rect.osmosis-node");
-		if (!rectEl) return;
-
-		// Get the node's screen position from the SVG rect element
-		const screenRect = rectEl.getBoundingClientRect();
+		// Get the node's screen position from the shape element
+		const screenRect = shapeEl.getBoundingClientRect();
 
 		// Hide the in-SVG content while the overlay is active
 		const fo = group.querySelector("foreignObject");
@@ -4779,6 +4782,24 @@ export class MindMapView extends ItemView {
 			"class",
 			`osmosis-node osmosis-node-${node.source.type}`,
 		);
+
+		// For non-rectangular shapes (path, ellipse, circle), clicks in the
+		// bounding-box corners miss the shape element. Add an invisible hit-area
+		// rect so getClickedNodeId() always finds the parent node group.
+		const needsHitArea =
+			shape !== "rect" && shape !== "rounded-rect" && shape !== "pill";
+		if (needsHitArea) {
+			const hitRect = document.createElementNS(SVG_NS, "rect");
+			hitRect.setAttribute("x", String(x));
+			hitRect.setAttribute("y", String(y));
+			hitRect.setAttribute("width", String(width));
+			hitRect.setAttribute("height", String(height));
+			hitRect.setAttribute("fill", "transparent");
+			hitRect.setAttribute("stroke", "none");
+			hitRect.setAttribute("class", "osmosis-hit-area");
+			group.appendChild(hitRect);
+		}
+
 		group.appendChild(shapeEl);
 
 		// Compute the inscribed content rectangle within the shape.
