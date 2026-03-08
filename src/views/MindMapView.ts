@@ -24,7 +24,7 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -116,6 +116,7 @@ export class MindMapView extends ItemView {
 
 	// Clipboard state for copy/paste style
 	private clipboardNodeStyle: NodeStyle | null = null;
+	private clipboardStyleClassName: string | null = null;
 
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
@@ -482,8 +483,8 @@ export class MindMapView extends ItemView {
 		}
 		this.currentFile = file;
 		this.loadMapSettings();
-		this.loadOsmosisStyleFrontmatter();
 		const content = await this.app.vault.read(file);
+		this.reloadFrontmatterFromContent(content);
 		this.currentTree = this.cache.get(file.path, content);
 
 		// Lazy loading: auto-collapse transclusion nodes so they're deferred
@@ -600,6 +601,7 @@ export class MindMapView extends ItemView {
 					if ("fill" in style) { if (style.fill === undefined) delete merged.fill; else merged.fill = style.fill; }
 					if ("background" in style) { if (style.background === undefined) delete merged.background; else merged.background = style.background; }
 					if ("width" in style) { if (style.width === undefined) delete merged.width; else merged.width = style.width; }
+					if ("class" in style) { if (style.class === undefined) { delete merged.class; } else { merged.class = style.class; } }
 
 					// Compound properties: merge sub-properties, delete undefined sub-keys
 					if ("text" in style) {
@@ -624,7 +626,11 @@ export class MindMapView extends ItemView {
 						}
 					}
 
-					styles[selector] = merged;
+					if (Object.keys(merged).length === 0) {
+						delete styles[selector];
+					} else {
+						styles[selector] = merged;
+					}
 				}
 
 				// Clean up empty
@@ -652,7 +658,7 @@ export class MindMapView extends ItemView {
 
 		// Only clear size cache when size-affecting properties changed
 		const sizeAffecting = [...overrides.values()].some(
-			(s) => "shape" in s || "text" in s || "width" in s,
+			(s) => "shape" in s || "text" in s || "width" in s || "class" in s,
 		);
 		if (sizeAffecting) {
 			this.nodeSizeCache.clear();
@@ -722,15 +728,16 @@ export class MindMapView extends ItemView {
 			} else {
 				this.osmosisStyleFrontmatter.styles = writtenStyles;
 			}
-		} else {
-			this.osmosisStyleFrontmatter = undefined;
+		} else if (this.osmosisStyleFrontmatter) {
+			delete this.osmosisStyleFrontmatter.styles;
 		}
 
 		this.nodeSizeCache.clear();
 		await this.render();
 	}
 
-	/** Copy explicit style overrides from the primary selected node. */
+	/** Copy style from the primary selected node.
+	 *  Preserves the class name so paste can assign the class directly. */
 	private copyNodeStyle(): void {
 		if (!this.selectedNodeId) return;
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -740,7 +747,11 @@ export class MindMapView extends ItemView {
 			new Notice("No style overrides to copy");
 			return;
 		}
-		this.clipboardNodeStyle = structuredClone(localStyle);
+		const cloned = structuredClone(localStyle);
+		// Remember class name for paste, then strip from visual clipboard
+		this.clipboardStyleClassName = cloned.class ?? null;
+		delete cloned.class;
+		this.clipboardNodeStyle = cloned;
 		new Notice("Style copied");
 	}
 
@@ -760,6 +771,12 @@ export class MindMapView extends ItemView {
 		const overrides = new Map<string, NodeStyle>();
 		for (const id of this.selectedNodeIds) {
 			const full: NodeStyle = {};
+			// If source had a class, assign it; otherwise clear it
+			if (this.clipboardStyleClassName) {
+				full.class = this.clipboardStyleClassName;
+			} else {
+				(full as Record<string, unknown>)["class"] = undefined;
+			}
 			for (const key of ALL_KEYS) {
 				if (key in this.clipboardNodeStyle) {
 					(full as Record<string, unknown>)[key] =
@@ -5002,8 +5019,9 @@ export class MindMapView extends ItemView {
 				// Apply theme + per-node text styles for accurate measurement
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
 				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
-				const style = (this.activeTheme || nodeLocalStyle)
-					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle)
+				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class);
+				const style = (this.activeTheme || nodeLocalStyle || nodeClassStyle)
+					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle, nodeClassStyle)
 					: undefined;
 				const textStyles: string[] = ["width: 9999px"];
 				if (style?.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
@@ -5106,9 +5124,18 @@ export class MindMapView extends ItemView {
 		if (!fmStyles) return shapes;
 
 		for (const [selector, style] of Object.entries(fmStyles)) {
-			if (style.shape && selector.startsWith("_n:")) {
+			if (selector.startsWith("_n:")) {
 				const nodeId = selector.slice(3);
-				shapes.set(nodeId, style.shape);
+				// Direct shape override takes priority
+				if (style.shape) {
+					shapes.set(nodeId, style.shape);
+				} else if (style.class) {
+					// Fall back to class-defined shape
+					const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, style.class);
+					if (classStyle?.shape) {
+						shapes.set(nodeId, classStyle.shape);
+					}
+				}
 			}
 		}
 		return shapes;
@@ -5334,11 +5361,12 @@ export class MindMapView extends ItemView {
 			group.setAttribute("data-source-file", node.source.sourceFile);
 		}
 
-		// Resolve style via LCVRT cascade: Local (frontmatter) > Reference > Theme
+		// Resolve style via LCVRT cascade: Local > Class > Reference > Theme
 		const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
 		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
-		const resolvedStyle = (this.activeTheme || localStyle)
-			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle)
+		const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, localStyle?.class);
+		const resolvedStyle = (this.activeTheme || localStyle || classStyle)
+			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle, classStyle)
 			: undefined;
 
 		// Background shape (determined by resolved style, map setting, or default)
@@ -5625,9 +5653,10 @@ export class MindMapView extends ItemView {
 			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
-		// Apply branch line styles: per-node frontmatter overrides > theme defaults
+		// Apply branch line styles: per-node frontmatter overrides > class > theme defaults
 		const childLocalStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, child);
-		const branchLineOverride = childLocalStyle?.branchLine;
+		const childClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, childLocalStyle?.class);
+		const branchLineOverride = childLocalStyle?.branchLine ?? childClassStyle?.branchLine;
 		const themeBranchLine = this.activeTheme?.branchLine;
 		const effectiveLineStyle = branchLineOverride?.style ?? themeBranchLine?.style ?? lineStyle;
 

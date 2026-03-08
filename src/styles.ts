@@ -4,7 +4,7 @@
  * Every stylable property on every node resolves via a deterministic cascade
  * (strongest to weakest): Local > Class > Variant > Reference > Theme.
  *
- * v1.0 ships L, R, T levels. C (Class) and V (Variant) are v1.1.
+ * v1.0 ships L, C, R, T levels. V (Variant) is v1.1.
  * All overrides are sparse — only changed properties need to be specified.
  */
 
@@ -63,6 +63,8 @@ export interface NodeStyle {
 	background?: string;
 	/** Custom content width in pixels (set via drag-to-resize). */
 	width?: number;
+	/** Assigned style class name (metadata, not a visual property). */
+	class?: string;
 }
 
 // ─── Theme Definition ───────────────────────────────────────────────────────
@@ -121,7 +123,10 @@ export interface OsmosisStyleFrontmatter {
 	/** Per-node style overrides (Local level in LCVRT). */
 	styles?: Record<string, NodeStyle>;
 
-	// v1.1: classes, variants, activeVariant
+	/** Named reusable style bundles (Class level in LCVRT). */
+	classes?: Record<string, NodeStyle>;
+
+	// v1.1: variants, activeVariant
 }
 
 // ─── LCVRT Cascade ──────────────────────────────────────────────────────────
@@ -129,14 +134,16 @@ export interface OsmosisStyleFrontmatter {
 /**
  * Inputs to the LCVRT cascade resolver for a single node.
  *
- * v1.0 resolves L → R → T (Class and Variant are v1.1 stubs).
+ * v1.0 resolves L → C → R → T (Variant is a v1.1 stub).
  * Each level is optional — missing levels are skipped.
  */
 export interface CascadeInput {
 	/** L — Local: per-node frontmatter override from the host note. */
 	local?: NodeStyle;
 
-	// v1.1: class?: NodeStyle;
+	/** C — Class: named reusable style bundle. */
+	class?: NodeStyle;
+
 	// v1.1: variant?: NodeStyle;
 
 	/** R — Reference: style from the transcluded note's own frontmatter. */
@@ -156,10 +163,10 @@ export interface CascadeInput {
  * @returns A fully or partially resolved NodeStyle.
  */
 export function resolveCascade(input: CascadeInput): NodeStyle {
-	// Ordered strongest → weakest. v1.1 will insert Class and Variant.
+	// Ordered strongest → weakest.
 	const layers: (NodeStyle | undefined)[] = [
 		input.local,
-		// input.class,    // v1.1
+		input.class,
 		// input.variant,  // v1.1
 		input.reference,
 		input.theme,
@@ -185,6 +192,7 @@ function mergeNodeStyle(target: NodeStyle, source: NodeStyle): void {
 	if (source.shape !== undefined) target.shape = source.shape;
 	if (source.fill !== undefined) target.fill = source.fill;
 	if (source.background !== undefined) target.background = source.background;
+	if (source.width !== undefined) target.width = source.width;
 
 	if (source.text) {
 		target.text = { ...target.text, ...source.text };
@@ -207,6 +215,7 @@ export function resolveNodeStyle(
 	theme: ThemeDefinition | undefined,
 	depth: number | undefined,
 	local?: NodeStyle,
+	classStyle?: NodeStyle,
 	reference?: NodeStyle,
 ): NodeStyle {
 	let themeStyle: NodeStyle | undefined;
@@ -220,7 +229,7 @@ export function resolveNodeStyle(
 		}
 	}
 
-	return resolveCascade({ local, reference, theme: themeStyle });
+	return resolveCascade({ local, class: classStyle, reference, theme: themeStyle });
 }
 
 // ─── Frontmatter Parsing & Node-Style Lookup ─────────────────────────────
@@ -321,5 +330,20 @@ export function parseOsmosisStyleFrontmatter(
 		result.styles = obj["styles"] as Record<string, NodeStyle>;
 	}
 
+	if (obj["classes"] && typeof obj["classes"] === "object") {
+		result.classes = obj["classes"] as Record<string, NodeStyle>;
+	}
+
 	return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Look up a class definition by name from parsed frontmatter.
+ */
+export function lookupClassStyle(
+	frontmatter: OsmosisStyleFrontmatter | undefined,
+	className: string | undefined,
+): NodeStyle | undefined {
+	if (!className || !frontmatter?.classes) return undefined;
+	return frontmatter.classes[className];
 }

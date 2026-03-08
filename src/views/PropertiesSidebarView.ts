@@ -4,8 +4,8 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
-import type { TopicShape, NodeStyle } from "../styles";
-import { lookupNodeStyle, resolveNodeStyle } from "../styles";
+import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle } from "../styles";
 import { getThemeNames } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
@@ -36,6 +36,7 @@ const SECTION_STYLE_KEYS: Record<string, (keyof NodeStyle)[]> = {
 
 /** References to live Format tab controls for value updates. */
 interface FormatControls {
+	classDropdown: HTMLSelectElement | null;
 	shapeDropdown: HTMLSelectElement | null;
 	nodeWidthInput: HTMLInputElement | null;
 	fillSwatch: HTMLElement | null;
@@ -54,6 +55,7 @@ interface FormatControls {
 
 function emptyFormatControls(): FormatControls {
 	return {
+		classDropdown: null,
 		shapeDropdown: null,
 		nodeWidthInput: null,
 		fillSwatch: null,
@@ -492,10 +494,33 @@ export class PropertiesSidebarView extends ItemView {
 	private renderStyleClassSection(body: HTMLElement): void {
 		new Setting(body)
 			.setName("Class")
-			.setDesc("Coming soon")
-			.addDropdown((d) =>
-				d.addOption("none", "(none)").setDisabled(true),
-			);
+			.addDropdown((d) => {
+				d.addOption("", "(none)");
+				d.onChange((value) => {
+					void this.writeNodeStyle({
+						class: value || undefined,
+					});
+				});
+				this.controls.classDropdown = d.selectEl;
+			});
+	}
+
+	/** Rebuild the class dropdown options from the current frontmatter classes. */
+	private rebuildClassDropdown(fm: OsmosisStyleFrontmatter | undefined): void {
+		const dd = this.controls.classDropdown;
+		if (!dd) return;
+		const currentVal = dd.value;
+		// Remove all options except the first "(none)"
+		while (dd.options.length > 1) dd.remove(1);
+		if (fm?.classes) {
+			for (const name of Object.keys(fm.classes)) {
+				const opt = document.createElement("option");
+				opt.value = name;
+				opt.textContent = name;
+				dd.appendChild(opt);
+			}
+		}
+		dd.value = currentVal;
 	}
 
 	private renderShapeSection(body: HTMLElement): void {
@@ -835,8 +860,15 @@ export class PropertiesSidebarView extends ItemView {
 		const theme = mindMap.getActiveTheme();
 		const fm = mindMap.getOsmosisStyleFrontmatter();
 		const localStyle = lookupNodeStyle(fm, layoutNode);
+		const classStyle = lookupClassStyle(fm, localStyle?.class);
 		const nodeDepth = layoutNode.source.type === "heading" ? layoutNode.source.depth : undefined;
-		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle);
+		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle, classStyle);
+
+		// Style class
+		this.rebuildClassDropdown(fm);
+		if (this.controls.classDropdown) {
+			this.controls.classDropdown.value = localStyle?.class ?? "";
+		}
 
 		// Shape
 		if (this.controls.shapeDropdown) {
