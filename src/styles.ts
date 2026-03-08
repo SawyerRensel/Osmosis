@@ -34,7 +34,7 @@ export interface TextStyle {
 	size?: number;
 	weight?: number;
 	color?: string;
-	alignment?: "left" | "center" | "right";
+	alignment?: "left" | "center" | "right" | "justify";
 	style?: "normal" | "italic";
 }
 

@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Setting } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
@@ -407,6 +407,8 @@ export class PropertiesSidebarView extends ItemView {
 			const header = sectionEl.createDiv({
 				cls: "osmosis-format-section-header",
 			});
+			const chevron = header.createSpan({ cls: "osmosis-chevron-icon" });
+			setIcon(chevron, "chevron-right");
 			header.createSpan({ text: section });
 
 			// Per-section reset button
@@ -648,12 +650,12 @@ export class PropertiesSidebarView extends ItemView {
 		const alignGroup = alignSetting.controlEl.createDiv({ cls: "osmosis-align-group" });
 		this.controls.textAlignBtns = alignGroup;
 
-		for (const align of ["left", "center", "right"] as const) {
+		for (const align of ["left", "center", "right", "justify"] as const) {
 			const btn = alignGroup.createEl("button", {
 				cls: "osmosis-align-btn",
 				attr: { "data-align": align },
 			});
-			btn.textContent = align === "left" ? "\u2190" : align === "center" ? "\u2194" : "\u2192";
+			setIcon(btn, `align-${align}`);
 			btn.setAttribute("title", align.charAt(0).toUpperCase() + align.slice(1));
 			btn.addEventListener("click", () => {
 				void this.writeNodeStyle({ text: { alignment: align } });

@@ -540,13 +540,37 @@ Uses Obsidian CSS variables for theme compatibility.
 	flex-shrink: 0;
 }
 
+/* ─── Properties Sidebar: Compact Layout ──────────────── */
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item {
+	padding: 4px 0;
+	min-height: 0;
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-info {
+	padding-right: 8px;
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-name {
+	font-size: var(--font-ui-small);
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-description {
+	font-size: 10px;
+	margin-top: 0;
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item:not(:last-child) {
+	border-bottom: none;
+}
+
 /* ─── Properties Sidebar: Tab Bar ─────────────────────── */
 
 .osmosis-tab-bar {
 	display: flex;
 	gap: 0;
 	border-bottom: 1px solid var(--background-modifier-border);
-	margin-bottom: 8px;
+	margin-bottom: 4px;
 }
 
 .osmosis-tab-btn {
@@ -577,7 +601,7 @@ Uses Obsidian CSS variables for theme compatibility.
 /* ─── Properties Sidebar: Format Tab ──────────────────── */
 
 .osmosis-format-no-selection {
-	padding: 12px 8px;
+	padding: 8px;
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 	text-align: center;
@@ -588,7 +612,10 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 .osmosis-format-section {
-	margin-bottom: 4px;
+	margin: 0 6px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
 }
 
 .osmosis-format-section.is-disabled {
@@ -599,31 +626,32 @@ Uses Obsidian CSS variables for theme compatibility.
 .osmosis-format-section-header {
 	display: flex;
 	align-items: center;
-	padding: 4px 8px;
+	padding: 5px 8px;
 	cursor: pointer;
-	font-size: var(--font-ui-small);
-	font-weight: 600;
-	color: var(--text-muted);
+	font-size: var(--h5-size, 0.95em);
+	font-weight: var(--h5-weight, 700);
+	color: var(--h5-color, var(--text-normal));
 	user-select: none;
 }
 
 .osmosis-format-section-header:hover {
-	color: var(--text-normal);
+	background: var(--background-modifier-hover);
 }
 
-.osmosis-format-section-header::before {
-	content: "";
-	display: inline-block;
-	width: 0;
-	height: 0;
-	margin-right: 6px;
-	border-left: 5px solid currentColor;
-	border-top: 4px solid transparent;
-	border-bottom: 4px solid transparent;
+.osmosis-format-section-header > .osmosis-chevron-icon {
+	display: flex;
+	align-items: center;
+	margin-right: 4px;
 	transition: transform 0.15s;
+	color: var(--text-faint);
 }
 
-.osmosis-format-section:not(.is-collapsed) .osmosis-format-section-header::before {
+.osmosis-format-section-header > .osmosis-chevron-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.osmosis-format-section:not(.is-collapsed) .osmosis-format-section-header > .osmosis-chevron-icon {
 	transform: rotate(90deg);
 }
 
@@ -632,14 +660,14 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 .osmosis-format-section-body {
-	padding: 0 4px;
+	padding: 2px 8px 4px;
+	border-top: 1px solid var(--background-modifier-border);
 }
 
 /* ─── Format Tab: Reset Buttons ──────────────────────── */
 
 .osmosis-format-reset-all {
-	padding: 4px 8px;
-	margin-bottom: 4px;
+	padding: 2px 8px 4px;
 }
 
 .osmosis-format-reset-btn {
@@ -660,20 +688,17 @@ Uses Obsidian CSS variables for theme compatibility.
 
 .osmosis-format-section-reset-btn {
 	margin-left: auto;
-	padding: 0 4px;
+	width: 24px;
+	height: 24px;
+	padding: 0;
 	font-size: 14px;
-	line-height: 1;
+	line-height: 24px;
+	text-align: center;
 	color: var(--text-faint);
 	background: none;
-	border: none;
+	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
 	cursor: pointer;
-	opacity: 0;
-	transition: opacity 0.15s;
-}
-
-.osmosis-format-section-header:hover .osmosis-format-section-reset-btn {
-	opacity: 1;
 }
 
 .osmosis-format-section-reset-btn:hover {
