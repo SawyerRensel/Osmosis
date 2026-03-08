@@ -311,7 +311,7 @@ export class PropertiesSidebarView extends ItemView {
 			cls: "osmosis-class-icon-btn",
 			attr: { "aria-label": "Save current map as theme", title: "Extract theme from map" },
 		});
-		setIcon(extractThemeBtn, "palette");
+		setIcon(extractThemeBtn, "plus");
 		extractThemeBtn.addEventListener("click", () => this.promptExtractTheme());
 
 		const saveThemeBtn = themeBtnGroup.createEl("button", {
