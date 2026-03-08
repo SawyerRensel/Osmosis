@@ -159,6 +159,10 @@ export class MindMapView extends ItemView {
 	private resizeObserver: ResizeObserver | null = null;
 	private toolRibbon: ToolRibbon | null = null;
 
+	// Pin/lock state: when pinned, active-leaf-change doesn't switch the map
+	private isPinned = false;
+	private pinActionEl: HTMLElement | null = null;
+
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.navigation = true;
@@ -211,9 +215,26 @@ export class MindMapView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return this.currentFile
+		const base = this.currentFile
 			? `Mind Map: ${this.currentFile.basename}`
 			: "Mind Map";
+		return this.isPinned ? `${base} (pinned)` : base;
+	}
+
+	private togglePin(): void {
+		this.isPinned = !this.isPinned;
+		if (this.isPinned) {
+			this.pinActionEl?.addClass("is-active");
+		} else {
+			this.pinActionEl?.removeClass("is-active");
+			// Sync to the currently active file
+			const activeLeaf = this.app.workspace.getMostRecentLeaf();
+			if (activeLeaf?.view instanceof MarkdownView && activeLeaf.view.file) {
+				void this.loadFile(activeLeaf.view.file);
+			}
+		}
+		// updateHeader() refreshes the tab title; not in public typings
+		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 	}
 
 	async onOpen(): Promise<void> {
@@ -324,10 +345,16 @@ export class MindMapView extends ItemView {
 			},
 		});
 
+		// Pin/lock header action
+		this.pinActionEl = this.addAction("pin", "Pin this mind map", () => {
+			this.togglePin();
+		});
+
 		await this.loadActiveFile();
 
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf) => {
+				if (this.isPinned) return;
 				if (leaf?.view instanceof MarkdownView) {
 					void this.loadFile(leaf.view.file);
 				}
@@ -342,6 +369,30 @@ export class MindMapView extends ItemView {
 						return;
 					}
 					void this.loadFile(file);
+				}
+			}),
+		);
+
+		// Auto-unpin if pinned file is deleted
+		this.registerEvent(
+			this.app.vault.on("delete", (file) => {
+				if (this.isPinned && file instanceof TFile && file === this.currentFile) {
+					this.isPinned = false;
+					this.pinActionEl?.removeClass("is-active");
+					this.currentFile = null;
+					this.currentTree = null;
+					this.contentEl.empty();
+					(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+				}
+			}),
+		);
+
+		// Update reference if pinned file is renamed
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				if (this.isPinned && file instanceof TFile && oldPath === this.currentFile?.path) {
+					this.currentFile = file;
+					(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 				}
 			}),
 		);
