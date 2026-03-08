@@ -106,6 +106,14 @@ export class PropertiesSidebarView extends ItemView {
 	private mapTextAlignBtns: HTMLElement | null = null;
 	private mapBranchColorSwatch: HTMLElement | null = null;
 	private mapBranchThicknessSlider: HTMLInputElement | null = null;
+	// Map tab layout controls (for refreshing on theme switch)
+	private mapDirectionDropdown: HTMLSelectElement | null = null;
+	private mapCollapseSlider: HTMLInputElement | null = null;
+	private mapHSpacingSlider: HTMLInputElement | null = null;
+	private mapVSpacingSlider: HTMLInputElement | null = null;
+	private mapBranchStyleDropdown: HTMLSelectElement | null = null;
+	private mapTopicShapeDropdown: HTMLSelectElement | null = null;
+	private saveThemeBtn: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -288,15 +296,6 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Map Tab ─────────────────────────────────────────────
 
-	/** Re-render the Map tab to reflect theme changes (layout controls, style sections). */
-	private rebuildMapTab(): void {
-		const mapContainer = this.tabContents?.map;
-		if (!mapContainer) return;
-		this.closeAllPickers();
-		mapContainer.empty();
-		this.renderMapTab(mapContainer);
-	}
-
 	private renderMapTab(container: HTMLElement): void {
 		const settings = this.getEffectiveSettings();
 
@@ -314,6 +313,16 @@ export class PropertiesSidebarView extends ItemView {
 		});
 		setIcon(extractThemeBtn, "palette");
 		extractThemeBtn.addEventListener("click", () => this.promptExtractTheme());
+
+		const saveThemeBtn = themeBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn is-hidden",
+			attr: { "aria-label": "Save changes to theme", title: "Save to theme" },
+		});
+		setIcon(saveThemeBtn, "save");
+		saveThemeBtn.addEventListener("click", () => {
+			void this.saveToCurrentTheme();
+		});
+		this.saveThemeBtn = saveThemeBtn;
 
 		const renameThemeBtn = themeBtnGroup.createEl("button", {
 			cls: "osmosis-class-icon-btn",
@@ -369,12 +378,14 @@ export class PropertiesSidebarView extends ItemView {
 						}
 
 						await this.saveSetting("theme", value);
-						// Re-render the entire Map tab so layout controls reflect theme values
-						this.rebuildMapTab();
+						this.updateThemeMgmtVisibility();
+						this.updateSaveThemeVisibility();
+						this.refreshMapStyleControls();
 					});
 			});
 
 		this.updateThemeMgmtVisibility();
+		this.updateSaveThemeVisibility();
 
 		// Variant section — header row with label + icon buttons, dropdown below
 		const variantSection = container.createDiv({ cls: "osmosis-variant-section" });
@@ -433,7 +444,8 @@ export class PropertiesSidebarView extends ItemView {
 		// Layout direction
 		new Setting(container)
 			.setName("Layout direction")
-			.addDropdown((dropdown) =>
+			.addDropdown((dropdown) => {
+				this.mapDirectionDropdown = dropdown.selectEl;
 				dropdown
 					.addOption("left-right", "Left to right")
 					.addOption("top-down", "Top to bottom")
@@ -443,50 +455,53 @@ export class PropertiesSidebarView extends ItemView {
 							"direction",
 							value as LayoutDirection,
 						);
-					}),
-			);
+					});
+			});
 
 		// Collapse depth
 		new Setting(container)
 			.setName("Default collapse depth")
 			.setDesc("0 = expand all")
-			.addSlider((slider) =>
+			.addSlider((slider) => {
+				this.mapCollapseSlider = slider.sliderEl;
 				slider
 					.setLimits(0, 6, 1)
 					.setValue(settings.collapseDepth)
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("collapseDepth", value);
-					}),
-			);
+					});
+			});
 
 		// Horizontal spacing
 		new Setting(container)
 			.setName("Horizontal spacing")
 			.setDesc("Space between parent and children")
-			.addSlider((slider) =>
+			.addSlider((slider) => {
+				this.mapHSpacingSlider = slider.sliderEl;
 				slider
 					.setLimits(20, 200, 5)
 					.setValue(settings.horizontalSpacing)
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("horizontalSpacing", value);
-					}),
-			);
+					});
+			});
 
 		// Vertical spacing
 		new Setting(container)
 			.setName("Vertical spacing")
 			.setDesc("Space between sibling nodes")
-			.addSlider((slider) =>
+			.addSlider((slider) => {
+				this.mapVSpacingSlider = slider.sliderEl;
 				slider
 					.setLimits(2, 40, 1)
 					.setValue(settings.verticalSpacing)
 					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("verticalSpacing", value);
-					}),
-			);
+					});
+			});
 
 		// ─── Global Style Sections ──────────────────────────────
 		container.createEl("hr", { cls: "osmosis-map-style-divider" });
@@ -739,17 +754,23 @@ export class PropertiesSidebarView extends ItemView {
 
 		const styleToSave = { ...localStyle };
 		delete styleToSave.class; // Don't save the class assignment into the class definition
+		delete styleToSave.width; // Custom width is per-node, not a class property
 
 		if (Object.keys(styleToSave).length === 0) {
 			new Notice("No local style overrides to save");
 			return;
 		}
 
+		// Merge local overrides INTO the existing class definition (don't replace it)
+		const existingClass = lookupClassStyle(fm, className, globalClasses) ?? {};
+		const merged: NodeStyle = { ...existingClass };
+		mergeNodeStyle(merged, styleToSave);
+
 		// Save to the appropriate scope
 		if (scope === "local") {
-			await mindMap.saveClassDefinition(className, styleToSave);
+			await mindMap.saveClassDefinition(className, merged);
 		} else {
-			await mindMap.saveGlobalClassDefinition(className, styleToSave);
+			await mindMap.saveGlobalClassDefinition(className, merged);
 		}
 
 		// Clear local overrides (keep only the class assignment)
@@ -1442,6 +1463,7 @@ export class PropertiesSidebarView extends ItemView {
 		new Setting(body)
 			.setName("Topic shape")
 			.addDropdown((dropdown) => {
+				this.mapTopicShapeDropdown = dropdown.selectEl;
 				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
 					dropdown.addOption(value, label);
 				}
@@ -1595,7 +1617,8 @@ export class PropertiesSidebarView extends ItemView {
 		// Branch line style
 		new Setting(body)
 			.setName("Style")
-			.addDropdown((dropdown) =>
+			.addDropdown((dropdown) => {
+				this.mapBranchStyleDropdown = dropdown.selectEl;
 				dropdown
 					.addOption("curved", "Curved")
 					.addOption("straight", "Straight")
@@ -1604,8 +1627,8 @@ export class PropertiesSidebarView extends ItemView {
 					.setValue(settings.branchLineStyle)
 					.onChange(async (value) => {
 						await this.saveSetting("branchLineStyle", value as BranchLineStyle);
-					}),
-			);
+					});
+			});
 
 		// Color
 		const colorSetting = new Setting(body).setName("Color");
@@ -1717,6 +1740,26 @@ export class PropertiesSidebarView extends ItemView {
 				settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2,
 			);
 		}
+
+		// Layout controls
+		if (this.mapDirectionDropdown) {
+			this.mapDirectionDropdown.value = settings.direction;
+		}
+		if (this.mapCollapseSlider) {
+			this.mapCollapseSlider.value = String(settings.collapseDepth);
+		}
+		if (this.mapHSpacingSlider) {
+			this.mapHSpacingSlider.value = String(settings.horizontalSpacing);
+		}
+		if (this.mapVSpacingSlider) {
+			this.mapVSpacingSlider.value = String(settings.verticalSpacing);
+		}
+		if (this.mapBranchStyleDropdown) {
+			this.mapBranchStyleDropdown.value = settings.branchLineStyle;
+		}
+		if (this.mapTopicShapeDropdown) {
+			this.mapTopicShapeDropdown.value = settings.topicShape;
+		}
 	}
 
 	// ─── Theme Management ────────────────────────────────────
@@ -1727,6 +1770,24 @@ export class PropertiesSidebarView extends ItemView {
 		const isCustom = themeName !== "" && !isPresetTheme(themeName);
 		this.renameThemeBtn?.toggleClass("is-hidden", !isCustom);
 		this.deleteThemeBtn?.toggleClass("is-hidden", !isCustom);
+	}
+
+	/** Show/hide the save-to-theme button (only for custom themes). */
+	private updateSaveThemeVisibility(): void {
+		const themeName = this.themeDropdown?.value ?? "";
+		const isCustom = themeName !== "" && !isPresetTheme(themeName);
+		this.saveThemeBtn?.toggleClass("is-hidden", !isCustom);
+	}
+
+	/** Save current map settings back into the active custom theme. */
+	private async saveToCurrentTheme(): Promise<void> {
+		const themeName = this.themeDropdown?.value;
+		if (!themeName || isPresetTheme(themeName)) return;
+
+		const theme = this.extractThemeFromMap(themeName);
+		this.plugin.settings.customThemes[themeName] = theme;
+		await this.plugin.saveSettings();
+		new Notice(`Theme "${themeName}" updated`);
 	}
 
 	/** Extract the current map's resolved styling into a new ThemeDefinition. */
@@ -1902,6 +1963,7 @@ export class PropertiesSidebarView extends ItemView {
 		// Rebuild dropdown and update UI
 		this.rebuildThemeDropdown();
 		this.updateThemeMgmtVisibility();
+		this.updateSaveThemeVisibility();
 		new Notice(`Theme "${name}" saved`);
 	}
 
@@ -1990,6 +2052,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.rebuildThemeDropdown();
 		if (this.themeDropdown) this.themeDropdown.value = newName;
 		this.updateThemeMgmtVisibility();
+		this.updateSaveThemeVisibility();
 		new Notice(`Theme renamed to "${newName}"`);
 	}
 
@@ -2036,6 +2099,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.rebuildThemeDropdown();
 		if (this.themeDropdown) this.themeDropdown.value = "Default";
 		this.updateThemeMgmtVisibility();
+		this.updateSaveThemeVisibility();
 		new Notice(`Theme "${themeName}" deleted`);
 	}
 
