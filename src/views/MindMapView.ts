@@ -88,6 +88,7 @@ export class MindMapView extends ItemView {
 	private selectedNodeId: string | null = null;
 	private selectedNodeIds = new Set<string>();
 	private nodeMap = new Map<string, LayoutNode>();
+	private selectionChangeListeners = new Set<() => void>();
 
 	// Rubber-band selection state
 	private isRubberBanding = false;
@@ -442,6 +443,30 @@ export class MindMapView extends ItemView {
 		}
 		this.mapSettings = { ...settings };
 		void this.render();
+	}
+
+	/** Get info about the current node selection, used by the Format tab. */
+	getSelectedNodeInfo(): { nodeIds: string[]; primaryId: string | null } {
+		return {
+			nodeIds: [...this.selectedNodeIds],
+			primaryId: this.selectedNodeId,
+		};
+	}
+
+	/** Register a callback for selection changes. */
+	onSelectionChange(fn: () => void): void {
+		this.selectionChangeListeners.add(fn);
+	}
+
+	/** Unregister a selection change callback. */
+	offSelectionChange(fn: () => void): void {
+		this.selectionChangeListeners.delete(fn);
+	}
+
+	private notifySelectionChange(): void {
+		for (const fn of this.selectionChangeListeners) {
+			fn();
+		}
 	}
 
 	/** Load per-note map settings from plugin data, merging with defaults. */
@@ -1323,6 +1348,7 @@ export class MindMapView extends ItemView {
 			el?.classList.add("osmosis-node-selected");
 		}
 		this.updateToolbarState();
+		this.notifySelectionChange();
 	}
 
 	// ─── Rubber-Band Selection ───────────────────────────────
@@ -3500,14 +3526,13 @@ export class MindMapView extends ItemView {
 		// On mobile, tell the Chromium WebView to overlay the keyboard instead
 		// of resizing the viewport (the root cause of the map disappearing).
 		// VirtualKeyboard API is not in TS standard lib, so we need unsafe access.
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access
 		const vk: {
 			overlaysContent: boolean;
 			addEventListener: (type: string, fn: () => void) => void;
 			removeEventListener: (type: string, fn: () => void) => void;
 		} | null =
 			"virtualKeyboard" in navigator
-				? (navigator as any).virtualKeyboard
+				? (navigator as unknown as { virtualKeyboard: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } }).virtualKeyboard
 				: null;
 		if (vk) vk.overlaysContent = true;
 
@@ -4725,11 +4750,7 @@ export class MindMapView extends ItemView {
 		}
 
 		// Apply theme background to container
-		if (this.activeTheme?.background) {
-			container.style.backgroundColor = this.activeTheme.background;
-		} else {
-			container.style.backgroundColor = "";
-		}
+		container.style.backgroundColor = this.activeTheme?.background ?? "";
 
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();

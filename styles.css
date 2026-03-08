@@ -525,3 +525,276 @@ Uses Obsidian CSS variables for theme compatibility.
 	background: var(--background-modifier-border);
 	flex-shrink: 0;
 }
+
+/* ─── Properties Sidebar: Tab Bar ─────────────────────── */
+
+.osmosis-tab-bar {
+	display: flex;
+	gap: 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: 8px;
+}
+
+.osmosis-tab-btn {
+	flex: 1;
+	padding: 6px 12px;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	transition: color 0.15s, border-color 0.15s;
+}
+
+.osmosis-tab-btn:hover {
+	color: var(--text-normal);
+}
+
+.osmosis-tab-btn.is-active {
+	color: var(--text-normal);
+	border-bottom-color: var(--interactive-accent);
+}
+
+.osmosis-tab-content.is-hidden {
+	display: none;
+}
+
+/* ─── Properties Sidebar: Format Tab ──────────────────── */
+
+.osmosis-format-no-selection {
+	padding: 12px 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	text-align: center;
+}
+
+.osmosis-format-no-selection.is-hidden {
+	display: none;
+}
+
+.osmosis-format-section {
+	margin-bottom: 4px;
+}
+
+.osmosis-format-section.is-disabled {
+	opacity: 0.4;
+	pointer-events: none;
+}
+
+.osmosis-format-section-header {
+	display: flex;
+	align-items: center;
+	padding: 4px 8px;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+	color: var(--text-muted);
+	user-select: none;
+}
+
+.osmosis-format-section-header:hover {
+	color: var(--text-normal);
+}
+
+.osmosis-format-section-header::before {
+	content: "";
+	display: inline-block;
+	width: 0;
+	height: 0;
+	margin-right: 6px;
+	border-left: 5px solid currentColor;
+	border-top: 4px solid transparent;
+	border-bottom: 4px solid transparent;
+	transition: transform 0.15s;
+}
+
+.osmosis-format-section:not(.is-collapsed) .osmosis-format-section-header::before {
+	transform: rotate(90deg);
+}
+
+.osmosis-format-section.is-collapsed .osmosis-format-section-body {
+	display: none;
+}
+
+.osmosis-format-section-body {
+	padding: 0 4px;
+}
+
+/* ─── Color Picker Popover ────────────────────────────── */
+
+.osmosis-color-picker {
+	position: fixed;
+	top: var(--picker-top, 0);
+	left: var(--picker-left, 0);
+	z-index: var(--layer-popover);
+	width: 232px;
+	padding: 8px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: var(--shadow-s);
+}
+
+.osmosis-cp-section-label {
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	color: var(--text-muted);
+	margin: 6px 0 3px;
+}
+
+.osmosis-cp-section-label:first-child {
+	margin-top: 0;
+}
+
+.osmosis-cp-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.osmosis-cp-swatch {
+	width: 22px;
+	height: 22px;
+	border-radius: 4px;
+	background-color: var(--swatch-color);
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+	transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.osmosis-cp-swatch:hover {
+	transform: scale(1.15);
+	box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.osmosis-cp-swatch.is-selected {
+	box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+.osmosis-cp-add-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--text-muted);
+	background: var(--background-secondary);
+	border-style: dashed;
+}
+
+.osmosis-cp-add-btn:hover {
+	color: var(--text-normal);
+}
+
+/* Freeform selector */
+
+.osmosis-cp-freeform {
+	margin-top: 4px;
+}
+
+.osmosis-cp-canvas-wrapper {
+	position: relative;
+	width: 100%;
+	height: 150px;
+	border-radius: 4px;
+	overflow: hidden;
+}
+
+.osmosis-cp-sl-canvas {
+	width: 100%;
+	height: 100%;
+	display: block;
+	cursor: crosshair;
+}
+
+.osmosis-cp-crosshair {
+	position: absolute;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 2px solid white;
+	box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+}
+
+.osmosis-cp-hue-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.osmosis-cp-label {
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	color: var(--text-muted);
+	width: 12px;
+	flex-shrink: 0;
+}
+
+.osmosis-cp-hue-slider {
+	flex: 1;
+	-webkit-appearance: none;
+	appearance: none;
+	height: 12px;
+	border-radius: 6px;
+	background: linear-gradient(to right,
+		hsl(0, 100%, 50%),
+		hsl(60, 100%, 50%),
+		hsl(120, 100%, 50%),
+		hsl(180, 100%, 50%),
+		hsl(240, 100%, 50%),
+		hsl(300, 100%, 50%),
+		hsl(360, 100%, 50%)
+	);
+	outline: none;
+}
+
+.osmosis-cp-hue-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: white;
+	border: 2px solid var(--background-modifier-border);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+	cursor: pointer;
+}
+
+.osmosis-cp-input-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.osmosis-cp-preview {
+	width: 28px;
+	height: 28px;
+	border-radius: 4px;
+	background-color: var(--swatch-color);
+	border: 1px solid var(--background-modifier-border);
+	flex-shrink: 0;
+}
+
+.osmosis-cp-hex-input {
+	flex: 1;
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-small);
+	padding: 4px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	outline: none;
+}
+
+.osmosis-cp-hex-input:focus {
+	border-color: var(--interactive-accent);
+}
+
+.osmosis-cp-hex-input.is-invalid {
+	border-color: var(--text-error);
+}

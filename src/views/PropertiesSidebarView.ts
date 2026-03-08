@@ -10,9 +10,26 @@ import { SHAPE_LABELS } from "../shapes";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
+type TabId = "map" | "format";
+
+/** Section header names for the Format tab skeleton. */
+const FORMAT_SECTIONS = [
+	"Style class",
+	"Shape",
+	"Fill",
+	"Border",
+	"Text",
+	"Branch line",
+] as const;
+
 export class PropertiesSidebarView extends ItemView {
 	plugin: OsmosisPlugin;
 	private currentFilePath: string | null = null;
+	private activeTab: TabId = "map";
+	private tabButtons: Record<TabId, HTMLElement> | null = null;
+	private tabContents: Record<TabId, HTMLElement> | null = null;
+	private formatControlEls: HTMLElement[] = [];
+	private selectionCleanup: (() => void) | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -42,6 +59,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.cleanupSelectionListener();
 		this.contentEl.empty();
 	}
 
@@ -113,10 +131,12 @@ export class PropertiesSidebarView extends ItemView {
 			return;
 		}
 
-		this.renderSettings();
+		this.renderTabbedUI();
+		this.setupSelectionListener(mindMap);
 	}
 
 	private renderPlaceholder(): void {
+		this.cleanupSelectionListener();
 		const placeholder = this.contentEl.createDiv({
 			cls: "osmosis-properties-placeholder",
 		});
@@ -125,11 +145,12 @@ export class PropertiesSidebarView extends ItemView {
 		});
 	}
 
-	private renderSettings(): void {
+	// ─── Tab UI ──────────────────────────────────────────────
+
+	private renderTabbedUI(): void {
 		const container = this.contentEl.createDiv({
 			cls: "osmosis-properties-container",
 		});
-		const settings = this.getEffectiveSettings();
 
 		// Header showing which file
 		const fileName = this.currentFilePath?.split("/").pop() ?? "";
@@ -137,6 +158,60 @@ export class PropertiesSidebarView extends ItemView {
 			text: fileName.replace(/\.md$/, ""),
 			cls: "osmosis-properties-filename",
 		});
+
+		// Tab header bar
+		const tabBar = container.createDiv({ cls: "osmosis-tab-bar" });
+
+		const mapBtn = tabBar.createEl("button", {
+			text: "Map",
+			cls: "osmosis-tab-btn",
+		});
+		const formatBtn = tabBar.createEl("button", {
+			text: "Format",
+			cls: "osmosis-tab-btn",
+		});
+
+		this.tabButtons = { map: mapBtn, format: formatBtn };
+
+		// Tab content containers
+		const mapContent = container.createDiv({ cls: "osmosis-tab-content" });
+		const formatContent = container.createDiv({ cls: "osmosis-tab-content" });
+
+		this.tabContents = { map: mapContent, format: formatContent };
+
+		// Render tab contents
+		this.renderMapTab(mapContent);
+		this.renderFormatTab(formatContent);
+
+		// Wire up tab switching
+		mapBtn.addEventListener("click", () => this.switchTab("map"));
+		formatBtn.addEventListener("click", () => this.switchTab("format"));
+
+		// Activate default tab
+		this.switchTab(this.activeTab);
+	}
+
+	private switchTab(tabId: TabId): void {
+		this.activeTab = tabId;
+
+		if (!this.tabButtons || !this.tabContents) return;
+
+		for (const id of ["map", "format"] as TabId[]) {
+			const isActive = id === tabId;
+			this.tabButtons[id].toggleClass("is-active", isActive);
+			this.tabContents[id].toggleClass("is-hidden", !isActive);
+		}
+
+		// Refresh format tab state when switching to it
+		if (tabId === "format") {
+			this.updateFormatTabState();
+		}
+	}
+
+	// ─── Map Tab ─────────────────────────────────────────────
+
+	private renderMapTab(container: HTMLElement): void {
+		const settings = this.getEffectiveSettings();
 
 		// Theme
 		new Setting(container)
@@ -244,5 +319,187 @@ export class PropertiesSidebarView extends ItemView {
 						await this.saveSetting("verticalSpacing", value);
 					}),
 			);
+	}
+
+	// ─── Format Tab ──────────────────────────────────────────
+
+	private renderFormatTab(container: HTMLElement): void {
+		this.formatControlEls = [];
+
+		// "No node selected" banner — shown/hidden dynamically
+		const noSelBanner = container.createDiv({
+			cls: "osmosis-format-no-selection",
+			text: "Select a node to edit its style.",
+		});
+		this.formatControlEls.push(noSelBanner);
+
+		// Collapsible sections with placeholder controls
+		for (const section of FORMAT_SECTIONS) {
+			const sectionEl = container.createDiv({
+				cls: "osmosis-format-section",
+			});
+
+			const header = sectionEl.createDiv({
+				cls: "osmosis-format-section-header",
+			});
+			header.createSpan({ text: section });
+
+			const body = sectionEl.createDiv({
+				cls: "osmosis-format-section-body",
+			});
+
+			this.renderFormatSectionPlaceholder(section, body);
+
+			// Toggle collapse
+			header.addEventListener("click", () => {
+				sectionEl.toggleClass(
+					"is-collapsed",
+					!sectionEl.hasClass("is-collapsed"),
+				);
+			});
+		}
+
+		this.updateFormatTabState();
+	}
+
+	/** Render placeholder controls for a Format section. */
+	private renderFormatSectionPlaceholder(
+		section: (typeof FORMAT_SECTIONS)[number],
+		body: HTMLElement,
+	): void {
+		switch (section) {
+			case "Style class":
+				new Setting(body)
+					.setName("Class")
+					.setDesc("Coming soon")
+					.addDropdown((d) =>
+						d.addOption("none", "(none)").setDisabled(true),
+					);
+				break;
+			case "Shape":
+				new Setting(body)
+					.setName("Shape")
+					.addDropdown((dropdown) => {
+						for (const [value, label] of Object.entries(
+							SHAPE_LABELS,
+						)) {
+							dropdown.addOption(value, label);
+						}
+						dropdown.setDisabled(true);
+					});
+				break;
+			case "Fill":
+				new Setting(body)
+					.setName("Color")
+					.setDesc("Color picker coming soon")
+					.addText((text) =>
+						text
+							.setPlaceholder("#ffffff")
+							.setDisabled(true),
+					);
+				break;
+			case "Border":
+				new Setting(body)
+					.setName("Color")
+					.addText((text) =>
+						text.setPlaceholder("#000000").setDisabled(true),
+					);
+				new Setting(body)
+					.setName("Width")
+					.addSlider((s) =>
+						s.setLimits(0, 8, 1).setValue(1).setDisabled(true),
+					);
+				new Setting(body)
+					.setName("Style")
+					.addDropdown((d) =>
+						d
+							.addOption("solid", "Solid")
+							.addOption("dashed", "Dashed")
+							.addOption("dotted", "Dotted")
+							.addOption("none", "None")
+							.setDisabled(true),
+					);
+				break;
+			case "Text":
+				new Setting(body)
+					.setName("Font family")
+					.setDesc("Font picker coming soon")
+					.addText((text) =>
+						text.setPlaceholder("Inter").setDisabled(true),
+					);
+				new Setting(body)
+					.setName("Size")
+					.addSlider((s) =>
+						s.setLimits(8, 48, 1).setValue(14).setDisabled(true),
+					);
+				new Setting(body)
+					.setName("Color")
+					.addText((text) =>
+						text.setPlaceholder("#000000").setDisabled(true),
+					);
+				break;
+			case "Branch line":
+				new Setting(body)
+					.setName("Color")
+					.addText((text) =>
+						text.setPlaceholder("#888888").setDisabled(true),
+					);
+				new Setting(body)
+					.setName("Thickness")
+					.addSlider((s) =>
+						s.setLimits(1, 8, 1).setValue(2).setDisabled(true),
+					);
+				break;
+		}
+	}
+
+	/** Update Format tab disabled/enabled state based on selection. */
+	private updateFormatTabState(): void {
+		const mindMap = this.getActiveMindMap();
+		const selection = mindMap?.getSelectedNodeInfo() ?? null;
+		const hasSelection = selection !== null && selection.nodeIds.length > 0;
+
+		// Toggle the no-selection banner
+		const container = this.tabContents?.format;
+		if (!container) return;
+
+		const banner = container.querySelector(
+			".osmosis-format-no-selection",
+		);
+		if (banner instanceof HTMLElement) {
+			banner.toggleClass("is-hidden", hasSelection);
+		}
+
+		// Toggle section visibility
+		const sections = Array.from(
+			container.querySelectorAll(".osmosis-format-section"),
+		);
+		for (const section of sections) {
+			if (section instanceof HTMLElement) {
+				section.toggleClass("is-disabled", !hasSelection);
+			}
+		}
+	}
+
+	// ─── Selection Listener ──────────────────────────────────
+
+	private setupSelectionListener(mindMap: MindMapView): void {
+		this.cleanupSelectionListener();
+
+		const handler = () => {
+			this.updateFormatTabState();
+		};
+
+		mindMap.onSelectionChange(handler);
+		this.selectionCleanup = () => {
+			mindMap.offSelectionChange(handler);
+		};
+	}
+
+	private cleanupSelectionListener(): void {
+		if (this.selectionCleanup) {
+			this.selectionCleanup();
+			this.selectionCleanup = null;
+		}
 	}
 }

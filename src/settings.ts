@@ -32,6 +32,8 @@ export interface OsmosisSettings {
 	showTransclusionStyle: boolean;
 	/** Per-note map settings keyed by file path. Only non-default values stored. */
 	mapSettings: Record<string, Partial<MapSettings>>;
+	/** User-saved custom colors for the color picker palette. */
+	customColors: string[];
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -39,6 +41,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	cursorSync: true,
 	showTransclusionStyle: false,
 	mapSettings: {},
+	customColors: [],
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
