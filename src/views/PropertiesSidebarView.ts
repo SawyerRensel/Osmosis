@@ -532,6 +532,16 @@ export class PropertiesSidebarView extends ItemView {
 				this.promptRenameClass();
 			});
 
+			const scopeBtn = btnGroup.createEl("button", {
+				cls: "osmosis-class-icon-btn",
+				attr: { "aria-label": "Change class scope", title: "Change scope" },
+			});
+			setIcon(scopeBtn, "arrow-right-left");
+			scopeBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.changeClassScope();
+			});
+
 			const deleteBtn = btnGroup.createEl("button", {
 				cls: "osmosis-class-icon-btn osmosis-class-delete-btn",
 				attr: { "aria-label": "Delete class", title: "Delete" },
@@ -861,6 +871,71 @@ export class PropertiesSidebarView extends ItemView {
 		}
 		this.updateSaveToClassVisibility();
 		new Notice(`Class "${className}" deleted`);
+	}
+
+	/** Change a class's scope between local and global. */
+	private async changeClassScope(): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const className = this.controls.classDropdown?.value;
+		if (!className) {
+			new Notice("Select a class to change scope");
+			return;
+		}
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const globalClasses = mindMap.getGlobalClasses();
+		const currentScope = getClassScope(fm, className, globalClasses);
+		if (!currentScope) return;
+
+		const targetScope = currentScope === "local" ? "global" : "local";
+		const targetLabel = targetScope === "global" ? "global (all notes)" : "local (this note)";
+
+		// Check if a class with the same name already exists in the target scope
+		if (targetScope === "local" && fm?.classes?.[className]) {
+			new Notice(`A local class "${className}" already exists`);
+			return;
+		}
+		if (targetScope === "global" && globalClasses[className]) {
+			new Notice(`A global class "${className}" already exists`);
+			return;
+		}
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Change class scope");
+		modal.contentEl.createEl("p", {
+			text: `Move class "${className}" to ${targetLabel}?`,
+		});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Move" })
+			.addEventListener("click", () => {
+				modal.close();
+				void this.doChangeClassScope(className, currentScope, targetScope);
+			});
+		modal.open();
+	}
+
+	private async doChangeClassScope(
+		className: string,
+		fromScope: "local" | "global",
+		toScope: "local" | "global",
+	): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		await mindMap.moveClassToScope(className, fromScope, toScope);
+
+		this.rebuildClassDropdown(mindMap.getOsmosisStyleFrontmatter(), mindMap.getGlobalClasses());
+		if (this.controls.classDropdown) {
+			this.controls.classDropdown.value = className;
+		}
+		this.updateSaveToClassVisibility();
+		const label = toScope === "global" ? "global" : "local";
+		new Notice(`Class "${className}" moved to ${label} scope`);
 	}
 
 	/** Rebuild the class dropdown options from local and global classes. */

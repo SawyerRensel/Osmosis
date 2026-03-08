@@ -1019,6 +1019,81 @@ export class MindMapView extends ItemView {
 		await this.render();
 	}
 
+	/**
+	 * Move a class between local and global scope.
+	 * Copies the definition to the target scope and removes it from the source.
+	 * Node assignments (class references) are preserved since the name stays the same.
+	 */
+	async moveClassToScope(
+		className: string,
+		fromScope: "local" | "global",
+		toScope: "local" | "global",
+	): Promise<void> {
+		if (fromScope === toScope || !className) return;
+
+		if (fromScope === "local") {
+			// Local → Global: get definition from frontmatter, save to settings, remove from frontmatter
+			const fm = this.getOsmosisStyleFrontmatter();
+			const def = fm?.classes?.[className];
+			if (!def) return;
+			await this.saveGlobalClassDefinition(className, { ...def });
+			await this.removeLocalClassDefinition(className);
+		} else {
+			// Global → Local: get definition from settings, save to frontmatter, remove from settings
+			const globalClasses = this.getGlobalClasses();
+			const def = globalClasses[className];
+			if (!def) return;
+			await this.saveClassDefinition(className, { ...def });
+			if (this.plugin) {
+				delete this.plugin.settings.globalClasses[className];
+				await this.plugin.saveSettings();
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Remove a local class definition without clearing node assignments.
+	 * Used by moveClassToScope to remove the source definition.
+	 */
+	private async removeLocalClassDefinition(className: string): Promise<void> {
+		if (!this.currentFile || !className) return;
+
+		this.suppressNextReload = true;
+
+		let writtenClasses: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				if (!osmosis) return;
+				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
+				if (!classes) return;
+				delete classes[className];
+				if (Object.keys(classes).length === 0) {
+					delete osmosis["classes"];
+				} else {
+					writtenClasses = { ...classes };
+				}
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		if (this.osmosisStyleFrontmatter) {
+			if (writtenClasses) {
+				this.osmosisStyleFrontmatter.classes = writtenClasses;
+			} else {
+				delete this.osmosisStyleFrontmatter.classes;
+			}
+		}
+	}
+
 	/** Copy style from the primary selected node.
 	 *  Preserves the class name so paste can assign the class directly. */
 	private copyNodeStyle(): void {

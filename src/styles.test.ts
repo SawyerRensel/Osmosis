@@ -5,6 +5,8 @@ import {
 	buildTreePath,
 	buildStableIdSelector,
 	lookupNodeStyle,
+	lookupClassStyle,
+	getClassScope,
 	parseOsmosisStyleFrontmatter,
 	type NodeStyle,
 	type ThemeDefinition,
@@ -407,5 +409,79 @@ describe("parseOsmosisStyleFrontmatter", () => {
 
 	it("returns undefined for empty osmosis object", () => {
 		expect(parseOsmosisStyleFrontmatter({ osmosis: {} })).toBeUndefined();
+	});
+});
+
+describe("lookupClassStyle", () => {
+	const localFm: OsmosisStyleFrontmatter = {
+		classes: {
+			emphasis: { fill: "#ff0000" },
+			shared: { fill: "#local" },
+		},
+	};
+	const globalClasses: Record<string, NodeStyle> = {
+		highlight: { fill: "#00ff00" },
+		shared: { fill: "#global" },
+	};
+
+	it("returns local class when it exists", () => {
+		expect(lookupClassStyle(localFm, "emphasis", globalClasses)).toEqual({ fill: "#ff0000" });
+	});
+
+	it("returns global class when local does not exist", () => {
+		expect(lookupClassStyle(localFm, "highlight", globalClasses)).toEqual({ fill: "#00ff00" });
+	});
+
+	it("local class shadows same-named global class", () => {
+		expect(lookupClassStyle(localFm, "shared", globalClasses)).toEqual({ fill: "#local" });
+	});
+
+	it("returns undefined for unknown class name", () => {
+		expect(lookupClassStyle(localFm, "unknown", globalClasses)).toBeUndefined();
+	});
+
+	it("returns undefined when className is undefined", () => {
+		expect(lookupClassStyle(localFm, undefined, globalClasses)).toBeUndefined();
+	});
+
+	it("returns global class when frontmatter is undefined", () => {
+		expect(lookupClassStyle(undefined, "highlight", globalClasses)).toEqual({ fill: "#00ff00" });
+	});
+
+	it("returns undefined when no global classes provided", () => {
+		expect(lookupClassStyle(undefined, "highlight")).toBeUndefined();
+	});
+});
+
+describe("getClassScope", () => {
+	const localFm: OsmosisStyleFrontmatter = {
+		classes: {
+			emphasis: { fill: "#ff0000" },
+			shared: { fill: "#local" },
+		},
+	};
+	const globalClasses: Record<string, NodeStyle> = {
+		highlight: { fill: "#00ff00" },
+		shared: { fill: "#global" },
+	};
+
+	it("returns 'local' for a local class", () => {
+		expect(getClassScope(localFm, "emphasis", globalClasses)).toBe("local");
+	});
+
+	it("returns 'global' for a global-only class", () => {
+		expect(getClassScope(localFm, "highlight", globalClasses)).toBe("global");
+	});
+
+	it("returns 'local' when class exists in both scopes (local wins)", () => {
+		expect(getClassScope(localFm, "shared", globalClasses)).toBe("local");
+	});
+
+	it("returns undefined for unknown class name", () => {
+		expect(getClassScope(localFm, "unknown", globalClasses)).toBeUndefined();
+	});
+
+	it("returns 'global' when frontmatter is undefined", () => {
+		expect(getClassScope(undefined, "highlight", globalClasses)).toBe("global");
 	});
 });
