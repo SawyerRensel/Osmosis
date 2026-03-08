@@ -46,6 +46,8 @@ export class ToolRibbon {
 			copy: () => void;
 			cut: () => void;
 			paste: () => void;
+			copyStyle: () => void;
+			pasteStyle: () => void;
 			undo: () => void;
 			redo: () => void;
 			refresh: () => void;
@@ -84,6 +86,10 @@ export class ToolRibbon {
 				{ id: "copy", icon: "copy", label: "Copy", action: actions.copy, needsSelection: true },
 				{ id: "cut", icon: "scissors", label: "Cut", action: actions.cut, needsSelection: true },
 				{ id: "paste", icon: "clipboard-paste", label: "Paste", action: actions.paste, needsSelection: true },
+			],
+			[
+				{ id: "copy-style", icon: "paintbrush", label: "Copy style", action: actions.copyStyle, needsSelection: true },
+				{ id: "paste-style", icon: "paint-bucket", label: "Paste style", action: actions.pasteStyle, needsSelection: true },
 			],
 			[
 				{ id: "undo", icon: "undo-2", label: "Undo", action: actions.undo },

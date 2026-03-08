@@ -7,6 +7,7 @@ import {
 	Component,
 	Platform,
 	Scope,
+	Notice,
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
@@ -112,6 +113,9 @@ export class MindMapView extends ItemView {
 	private clipboardIsCut = false;
 	private clipboardSourceIds: Set<string> = new Set();
 
+	// Clipboard state for copy/paste style
+	private clipboardNodeStyle: NodeStyle | null = null;
+
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
 	private dragStartScreen = { x: 0, y: 0 };
@@ -208,6 +212,16 @@ export class MindMapView extends ItemView {
 				return false;
 			});
 		}
+		this.scope.register(["Mod", "Shift"], "c", (e: KeyboardEvent) => {
+			this.copyNodeStyle();
+			e.preventDefault();
+			return false;
+		});
+		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
+			void this.pasteNodeStyle();
+			e.preventDefault();
+			return false;
+		});
 		for (const key of ["[", "]"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
 				this.handleKeyDown(e);
@@ -337,6 +351,8 @@ export class MindMapView extends ItemView {
 			copy: () => void this.copySelectedNodes(false),
 			cut: () => void this.copySelectedNodes(true),
 			paste: () => void this.pasteNodes(),
+			copyStyle: () => this.copyNodeStyle(),
+			pasteStyle: () => void this.pasteNodeStyle(),
 			undo: () => this.forwardUndoRedo(false),
 			redo: () => this.forwardUndoRedo(true),
 			refresh: () => {
@@ -711,6 +727,50 @@ export class MindMapView extends ItemView {
 
 		this.nodeSizeCache.clear();
 		await this.render();
+	}
+
+	/** Copy explicit style overrides from the primary selected node. */
+	private copyNodeStyle(): void {
+		if (!this.selectedNodeId) return;
+		const node = this.nodeMap.get(this.selectedNodeId);
+		if (!node) return;
+		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
+		if (!localStyle || Object.keys(localStyle).length === 0) {
+			new Notice("No style overrides to copy");
+			return;
+		}
+		this.clipboardNodeStyle = structuredClone(localStyle);
+		new Notice("Style copied");
+	}
+
+	/** Paste copied style overrides onto all selected nodes.
+	 *  Replaces target overrides entirely: keys absent from the clipboard
+	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
+	private async pasteNodeStyle(): Promise<void> {
+		if (!this.clipboardNodeStyle) {
+			new Notice("No style to paste");
+			return;
+		}
+		if (this.selectedNodeIds.size === 0) return;
+
+		const ALL_KEYS: (keyof NodeStyle)[] =
+			["shape", "fill", "border", "text", "branchLine", "background", "width"];
+
+		const overrides = new Map<string, NodeStyle>();
+		for (const id of this.selectedNodeIds) {
+			const full: NodeStyle = {};
+			for (const key of ALL_KEYS) {
+				if (key in this.clipboardNodeStyle) {
+					(full as Record<string, unknown>)[key] =
+						structuredClone(this.clipboardNodeStyle[key]);
+				} else {
+					(full as Record<string, unknown>)[key] = undefined;
+				}
+			}
+			overrides.set(id, full);
+		}
+		await this.applyNodeStyleOverrides(overrides);
+		new Notice(`Style pasted to ${this.selectedNodeIds.size} node(s)`);
 	}
 
 	private notifySelectionChange(): void {
