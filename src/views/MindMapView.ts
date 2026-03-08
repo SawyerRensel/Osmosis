@@ -555,6 +555,11 @@ export class MindMapView extends ItemView {
 		return this.osmosisStyleFrontmatter;
 	}
 
+	/** Get global style classes from plugin settings. */
+	getGlobalClasses(): Record<string, NodeStyle> {
+		return this.plugin?.settings?.globalClasses ?? {};
+	}
+
 	/** Get the current file (for frontmatter writes). */
 	getCurrentFile(): TFile | null {
 		return this.currentFile;
@@ -730,6 +735,279 @@ export class MindMapView extends ItemView {
 			}
 		} else if (this.osmosisStyleFrontmatter) {
 			delete this.osmosisStyleFrontmatter.styles;
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Create or update a class definition in `osmosis.classes` frontmatter.
+	 * Pass the full NodeStyle for the class — it replaces the existing definition.
+	 */
+	async saveClassDefinition(className: string, style: NodeStyle): Promise<void> {
+		if (!this.currentFile || !className) return;
+
+		this.suppressNextReload = true;
+
+		let writtenClasses: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
+				osmosis["classes"] = classes;
+
+				// Strip the `class` meta-key — it's not a visual property
+				const cleaned = { ...style };
+				delete cleaned.class;
+				classes[className] = cleaned;
+
+				writtenClasses = { ...classes };
+			},
+		);
+
+		if (writtenClasses) {
+			if (!this.osmosisStyleFrontmatter) {
+				this.osmosisStyleFrontmatter = { classes: writtenClasses };
+			} else {
+				this.osmosisStyleFrontmatter.classes = writtenClasses;
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Delete a class definition and clear `class` assignments from any nodes using it.
+	 */
+	async deleteClassDefinition(className: string): Promise<void> {
+		if (!this.currentFile || !className) return;
+
+		this.suppressNextReload = true;
+
+		let writtenClasses: Record<string, NodeStyle> | undefined;
+		let writtenStyles: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+
+				// Remove the class definition
+				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
+				delete classes[className];
+				if (Object.keys(classes).length === 0) {
+					delete osmosis["classes"];
+				} else {
+					osmosis["classes"] = classes;
+					writtenClasses = { ...classes };
+				}
+
+				// Clear `class` assignment from any nodes using this class
+				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
+				for (const [selector, nodeStyle] of Object.entries(styles)) {
+					if (nodeStyle.class === className) {
+						delete nodeStyle.class;
+						if (Object.keys(nodeStyle).length === 0) {
+							delete styles[selector];
+						}
+					}
+				}
+				if (Object.keys(styles).length === 0) {
+					delete osmosis["styles"];
+				} else {
+					writtenStyles = { ...styles };
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		// Update cache
+		if (this.osmosisStyleFrontmatter) {
+			if (writtenClasses) {
+				this.osmosisStyleFrontmatter.classes = writtenClasses;
+			} else {
+				delete this.osmosisStyleFrontmatter.classes;
+			}
+			if (writtenStyles) {
+				this.osmosisStyleFrontmatter.styles = writtenStyles;
+			} else {
+				delete this.osmosisStyleFrontmatter.styles;
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Rename a class definition and update all node references.
+	 */
+	async renameClassDefinition(oldName: string, newName: string): Promise<void> {
+		if (!this.currentFile || !oldName || !newName || oldName === newName) return;
+
+		this.suppressNextReload = true;
+
+		let writtenClasses: Record<string, NodeStyle> | undefined;
+		let writtenStyles: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+
+				// Rename the class definition
+				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
+				if (classes[oldName]) {
+					classes[newName] = classes[oldName];
+					delete classes[oldName];
+					osmosis["classes"] = classes;
+					writtenClasses = { ...classes };
+				}
+
+				// Update node references
+				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
+				for (const nodeStyle of Object.values(styles)) {
+					if (nodeStyle.class === oldName) {
+						nodeStyle.class = newName;
+					}
+				}
+				if (Object.keys(styles).length > 0) {
+					writtenStyles = { ...styles };
+				}
+			},
+		);
+
+		if (this.osmosisStyleFrontmatter) {
+			if (writtenClasses) this.osmosisStyleFrontmatter.classes = writtenClasses;
+			if (writtenStyles) this.osmosisStyleFrontmatter.styles = writtenStyles;
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Save a global class definition (stored in plugin settings, available across all notes).
+	 */
+	async saveGlobalClassDefinition(className: string, style: NodeStyle): Promise<void> {
+		if (!this.plugin || !className) return;
+		const cleaned = { ...style };
+		delete cleaned.class;
+		this.plugin.settings.globalClasses[className] = cleaned;
+		await this.plugin.saveSettings();
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Delete a global class definition and clear assignments from nodes in this note.
+	 */
+	async deleteGlobalClassDefinition(className: string): Promise<void> {
+		if (!this.plugin || !className) return;
+		delete this.plugin.settings.globalClasses[className];
+		await this.plugin.saveSettings();
+
+		// Also clear assignments in the current note's frontmatter
+		if (this.currentFile) {
+			this.suppressNextReload = true;
+			await this.app.fileManager.processFrontMatter(
+				this.currentFile,
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(fm: any) => {
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+					if (!osmosis) return;
+					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
+					if (!styles) return;
+					for (const [selector, nodeStyle] of Object.entries(styles)) {
+						if (nodeStyle.class === className) {
+							delete nodeStyle.class;
+							if (Object.keys(nodeStyle).length === 0) {
+								delete styles[selector];
+							}
+						}
+					}
+					if (Object.keys(styles).length === 0) delete osmosis["styles"];
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				},
+			);
+			// Update cache directly — metadataCache may lag behind processFrontMatter
+			if (this.osmosisStyleFrontmatter?.styles) {
+				for (const [selector, nodeStyle] of Object.entries(this.osmosisStyleFrontmatter.styles)) {
+					if (nodeStyle.class === className) {
+						delete nodeStyle.class;
+						if (Object.keys(nodeStyle).length === 0) {
+							delete this.osmosisStyleFrontmatter.styles[selector];
+						}
+					}
+				}
+				if (Object.keys(this.osmosisStyleFrontmatter.styles).length === 0) {
+					delete this.osmosisStyleFrontmatter.styles;
+				}
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Rename a global class definition and update node references in the current note.
+	 */
+	async renameGlobalClassDefinition(oldName: string, newName: string): Promise<void> {
+		if (!this.plugin || !oldName || !newName || oldName === newName) return;
+		const def = this.plugin.settings.globalClasses[oldName];
+		if (!def) return;
+		this.plugin.settings.globalClasses[newName] = def;
+		delete this.plugin.settings.globalClasses[oldName];
+		await this.plugin.saveSettings();
+
+		// Update node references in the current note
+		if (this.currentFile) {
+			this.suppressNextReload = true;
+			await this.app.fileManager.processFrontMatter(
+				this.currentFile,
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				(fm: any) => {
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+					if (!osmosis) return;
+					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
+					if (!styles) return;
+					for (const nodeStyle of Object.values(styles)) {
+						if (nodeStyle.class === oldName) {
+							nodeStyle.class = newName;
+						}
+					}
+				},
+			);
+			// Update cache directly — metadataCache may lag behind processFrontMatter
+			if (this.osmosisStyleFrontmatter?.styles) {
+				for (const nodeStyle of Object.values(this.osmosisStyleFrontmatter.styles)) {
+					if (nodeStyle.class === oldName) {
+						nodeStyle.class = newName;
+					}
+				}
+			}
 		}
 
 		this.nodeSizeCache.clear();
@@ -5019,7 +5297,7 @@ export class MindMapView extends ItemView {
 				// Apply theme + per-node text styles for accurate measurement
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
 				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
-				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class);
+				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
 				const style = (this.activeTheme || nodeLocalStyle || nodeClassStyle)
 					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle, nodeClassStyle)
 					: undefined;
@@ -5131,7 +5409,7 @@ export class MindMapView extends ItemView {
 					shapes.set(nodeId, style.shape);
 				} else if (style.class) {
 					// Fall back to class-defined shape
-					const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, style.class);
+					const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, style.class, this.getGlobalClasses());
 					if (classStyle?.shape) {
 						shapes.set(nodeId, classStyle.shape);
 					}
@@ -5364,7 +5642,7 @@ export class MindMapView extends ItemView {
 		// Resolve style via LCVRT cascade: Local > Class > Reference > Theme
 		const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
 		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
-		const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, localStyle?.class);
+		const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, localStyle?.class, this.getGlobalClasses());
 		const resolvedStyle = (this.activeTheme || localStyle || classStyle)
 			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle, classStyle)
 			: undefined;
@@ -5655,7 +5933,7 @@ export class MindMapView extends ItemView {
 
 		// Apply branch line styles: per-node frontmatter overrides > class > theme defaults
 		const childLocalStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, child);
-		const childClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, childLocalStyle?.class);
+		const childClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, childLocalStyle?.class, this.getGlobalClasses());
 		const branchLineOverride = childLocalStyle?.branchLine ?? childClassStyle?.branchLine;
 		const themeBranchLine = this.activeTheme?.branchLine;
 		const effectiveLineStyle = branchLineOverride?.style ?? themeBranchLine?.style ?? lineStyle;

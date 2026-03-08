@@ -338,12 +338,25 @@ export function parseOsmosisStyleFrontmatter(
 }
 
 /**
- * Look up a class definition by name from parsed frontmatter.
+ * Look up a class definition by name.
+ * Checks local (per-note frontmatter) first, then global (plugin settings).
  */
 export function lookupClassStyle(
 	frontmatter: OsmosisStyleFrontmatter | undefined,
 	className: string | undefined,
+	globalClasses?: Record<string, NodeStyle>,
 ): NodeStyle | undefined {
-	if (!className || !frontmatter?.classes) return undefined;
-	return frontmatter.classes[className];
+	if (!className) return undefined;
+	return frontmatter?.classes?.[className] ?? globalClasses?.[className];
+}
+
+/** Determine whether a class is local (per-note) or global. */
+export function getClassScope(
+	frontmatter: OsmosisStyleFrontmatter | undefined,
+	className: string,
+	globalClasses?: Record<string, NodeStyle>,
+): "local" | "global" | undefined {
+	if (frontmatter?.classes?.[className]) return "local";
+	if (globalClasses?.[className]) return "global";
+	return undefined;
 }

@@ -34,6 +34,8 @@ export interface OsmosisSettings {
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
 	customColors: string[];
+	/** Global style classes available across all notes. */
+	globalClasses: Record<string, import("./styles").NodeStyle>;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	showTransclusionStyle: false,
 	mapSettings: {},
 	customColors: [],
+	globalClasses: {},
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {

@@ -1,11 +1,11 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter } from "../styles";
-import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope } from "../styles";
 import { getThemeNames } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
@@ -37,6 +37,8 @@ const SECTION_STYLE_KEYS: Record<string, (keyof NodeStyle)[]> = {
 /** References to live Format tab controls for value updates. */
 interface FormatControls {
 	classDropdown: HTMLSelectElement | null;
+	classMgmtBtns: HTMLElement | null;
+	saveToClassBtn: HTMLElement | null;
 	shapeDropdown: HTMLSelectElement | null;
 	nodeWidthInput: HTMLInputElement | null;
 	fillSwatch: HTMLElement | null;
@@ -56,6 +58,8 @@ interface FormatControls {
 function emptyFormatControls(): FormatControls {
 	return {
 		classDropdown: null,
+		classMgmtBtns: null,
+		saveToClassBtn: null,
 		shapeDropdown: null,
 		nodeWidthInput: null,
 		fillSwatch: null,
@@ -450,7 +454,7 @@ export class PropertiesSidebarView extends ItemView {
 				cls: "osmosis-format-section-body",
 			});
 
-			this.renderFormatSection(section, body);
+			this.renderFormatSection(section, body, header);
 
 			// Toggle collapse
 			header.addEventListener("click", () => {
@@ -468,10 +472,11 @@ export class PropertiesSidebarView extends ItemView {
 	private renderFormatSection(
 		section: (typeof FORMAT_SECTIONS)[number],
 		body: HTMLElement,
+		header?: HTMLElement,
 	): void {
 		switch (section) {
 			case "Style class":
-				this.renderStyleClassSection(body);
+				this.renderStyleClassSection(body, header);
 				break;
 			case "Shape":
 				this.renderShapeSection(body);
@@ -491,7 +496,56 @@ export class PropertiesSidebarView extends ItemView {
 		}
 	}
 
-	private renderStyleClassSection(body: HTMLElement): void {
+	private renderStyleClassSection(body: HTMLElement, header?: HTMLElement): void {
+		// Icon buttons in the section header row
+		if (header) {
+			const btnGroup = header.createDiv({ cls: "osmosis-class-header-btns" });
+
+			const newBtn = btnGroup.createEl("button", {
+				cls: "osmosis-class-icon-btn",
+				attr: { "aria-label": "New class from node styles", title: "New class" },
+			});
+			setIcon(newBtn, "plus");
+			newBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.promptNewClass();
+			});
+
+			const saveBtn = btnGroup.createEl("button", {
+				cls: "osmosis-class-icon-btn osmosis-save-to-class-btn is-hidden",
+				attr: { "aria-label": "Save styles to class", title: "Save to class" },
+			});
+			setIcon(saveBtn, "save");
+			saveBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.saveStylesToClass();
+			});
+			this.controls.saveToClassBtn = saveBtn;
+
+			const renameBtn = btnGroup.createEl("button", {
+				cls: "osmosis-class-icon-btn",
+				attr: { "aria-label": "Rename class", title: "Rename" },
+			});
+			setIcon(renameBtn, "pencil");
+			renameBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.promptRenameClass();
+			});
+
+			const deleteBtn = btnGroup.createEl("button", {
+				cls: "osmosis-class-icon-btn osmosis-class-delete-btn",
+				attr: { "aria-label": "Delete class", title: "Delete" },
+			});
+			setIcon(deleteBtn, "trash-2");
+			deleteBtn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.confirmDeleteClass();
+			});
+
+			this.controls.classMgmtBtns = btnGroup;
+		}
+
+		// Class assignment dropdown
 		new Setting(body)
 			.setName("Class")
 			.addDropdown((d) => {
@@ -500,18 +554,327 @@ export class PropertiesSidebarView extends ItemView {
 					void this.writeNodeStyle({
 						class: value || undefined,
 					});
+					this.updateSaveToClassVisibility();
 				});
 				this.controls.classDropdown = d.selectEl;
 			});
 	}
 
-	/** Rebuild the class dropdown options from the current frontmatter classes. */
-	private rebuildClassDropdown(fm: OsmosisStyleFrontmatter | undefined): void {
+	/** Show "Save to class" button only when the selected node has a class assigned. */
+	private updateSaveToClassVisibility(): void {
+		const btn = this.controls.saveToClassBtn;
+		if (!btn) return;
+		const className = this.controls.classDropdown?.value;
+		btn.toggleClass("is-hidden", !className);
+	}
+
+	/**
+	 * Save the selected node's local style overrides into its assigned class,
+	 * then clear the local overrides so the node inherits from the class.
+	 */
+	private async saveStylesToClass(): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const selection = mindMap.getSelectedNodeInfo();
+		if (!selection?.primaryId) return;
+
+		const layoutNode = mindMap.getLayoutNodeById(selection.primaryId);
+		if (!layoutNode) return;
+
+		const className = this.controls.classDropdown?.value;
+		if (!className) return;
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const globalClasses = mindMap.getGlobalClasses();
+		const scope = getClassScope(fm, className, globalClasses);
+		if (!scope) return;
+
+		// Get the node's local style overrides (excluding the class assignment itself)
+		const localStyle = lookupNodeStyle(fm, layoutNode);
+		if (!localStyle) {
+			new Notice("No local style overrides to save");
+			return;
+		}
+
+		const styleToSave = { ...localStyle };
+		delete styleToSave.class; // Don't save the class assignment into the class definition
+
+		if (Object.keys(styleToSave).length === 0) {
+			new Notice("No local style overrides to save");
+			return;
+		}
+
+		// Save to the appropriate scope
+		if (scope === "local") {
+			await mindMap.saveClassDefinition(className, styleToSave);
+		} else {
+			await mindMap.saveGlobalClassDefinition(className, styleToSave);
+		}
+
+		// Clear local overrides (keep only the class assignment)
+		const ALL_VISUAL_KEYS: (keyof NodeStyle)[] =
+			["shape", "fill", "border", "text", "branchLine", "background", "width"];
+		await mindMap.resetNodeStyles(selection.nodeIds, ALL_VISUAL_KEYS);
+
+		this.refreshFormatControls();
+		new Notice(`Styles saved to ${scope} class "${className}"`);
+	}
+
+	/** Prompt user for a new class name, capturing current node styles. */
+	private promptNewClass(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("New style class");
+
+		let inputValue = "";
+		let scope: "local" | "global" = "local";
+
+		new Setting(modal.contentEl)
+			.setName("Class name")
+			.addText((text) => {
+				text.setPlaceholder("Emphasis");
+				text.onChange((value) => { inputValue = value.trim(); });
+				setTimeout(() => text.inputEl.focus(), 50);
+				text.inputEl.addEventListener("keydown", (e) => {
+					if (e.key === "Enter" && inputValue) {
+						modal.close();
+						void this.createNewClass(inputValue, scope);
+					}
+				});
+			});
+
+		new Setting(modal.contentEl)
+			.setName("Scope")
+			.setDesc("Local classes are saved to this note. Global classes are available across all notes.")
+			.addDropdown((d) => {
+				d.addOption("local", "This note");
+				d.addOption("global", "All notes");
+				d.onChange((value) => { scope = value as "local" | "global"; });
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Create" })
+			.addEventListener("click", () => {
+				if (!inputValue) return;
+				modal.close();
+				void this.createNewClass(inputValue, scope);
+			});
+		modal.open();
+	}
+
+	/** Create a new class from the selected node's current style overrides. */
+	private async createNewClass(name: string, scope: "local" | "global"): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		// Validate name
+		if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(name)) {
+			new Notice("Class name must start with a letter and contain only letters, numbers, hyphens, or underscores");
+			return;
+		}
+
+		// Check if name already exists in either scope
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const globalClasses = mindMap.getGlobalClasses();
+		if (fm?.classes?.[name] || globalClasses[name]) {
+			new Notice(`Class "${name}" already exists`);
+			return;
+		}
+
+		// Capture the selected node's effective visual style as the class definition.
+		// This includes local overrides, class-inherited properties, and theme defaults,
+		// so creating a class from a node that already uses a class works correctly.
+		const selection = mindMap.getSelectedNodeInfo();
+		let styleToSave: NodeStyle = {};
+		if (selection?.primaryId) {
+			const layoutNode = mindMap.getLayoutNodeById(selection.primaryId);
+			if (layoutNode) {
+				const localStyle = lookupNodeStyle(fm, layoutNode);
+				const globalClasses = mindMap.getGlobalClasses();
+				const classStyle = lookupClassStyle(fm, localStyle?.class, globalClasses);
+
+				// Merge local + class overrides (skip theme defaults — class should layer on top of theme)
+				const localVisual = localStyle ? { ...localStyle } : {};
+				delete localVisual.class;
+				if (classStyle) {
+					// Class properties that aren't overridden locally
+					styleToSave = { ...classStyle, ...localVisual };
+				} else if (Object.keys(localVisual).length > 0) {
+					styleToSave = localVisual;
+				}
+
+				// If the node has a shape from map settings (not theme), include it
+				// only if it was explicitly set locally or via class
+				if (!styleToSave.shape && localStyle?.shape) {
+					styleToSave.shape = localStyle.shape;
+				}
+			}
+		}
+
+		// Save to the chosen scope
+		if (scope === "local") {
+			await mindMap.saveClassDefinition(name, styleToSave);
+		} else {
+			await mindMap.saveGlobalClassDefinition(name, styleToSave);
+		}
+
+		// Clear local overrides and assign the new class
+		if (selection) {
+			if (Object.keys(styleToSave).length > 0) {
+				const ALL_VISUAL_KEYS: (keyof NodeStyle)[] =
+					["shape", "fill", "border", "text", "branchLine", "background", "width"];
+				await mindMap.resetNodeStyles(selection.nodeIds, ALL_VISUAL_KEYS);
+			}
+			await this.writeNodeStyle({ class: name });
+		}
+
+		this.rebuildClassDropdown(mindMap.getOsmosisStyleFrontmatter(), mindMap.getGlobalClasses());
+		if (this.controls.classDropdown) {
+			this.controls.classDropdown.value = name;
+		}
+		this.updateSaveToClassVisibility();
+		new Notice(`${scope === "global" ? "Global" : "Local"} class "${name}" created`);
+	}
+
+	/** Prompt to rename the currently selected class. */
+	private promptRenameClass(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const oldName = this.controls.classDropdown?.value;
+		if (!oldName) {
+			new Notice("Select a class to rename");
+			return;
+		}
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Rename class");
+
+		let newName = oldName;
+		new Setting(modal.contentEl)
+			.setName("New name")
+			.addText((text) => {
+				text.setValue(oldName);
+				text.onChange((value) => { newName = value.trim(); });
+				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+				text.inputEl.addEventListener("keydown", (e) => {
+					if (e.key === "Enter" && newName && newName !== oldName) {
+						modal.close();
+						void this.doRenameClass(oldName, newName);
+					}
+				});
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Rename" })
+			.addEventListener("click", () => {
+				if (!newName || newName === oldName) return;
+				modal.close();
+				void this.doRenameClass(oldName, newName);
+			});
+		modal.open();
+	}
+
+	private async doRenameClass(oldName: string, newName: string): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(newName)) {
+			new Notice("Class name must start with a letter and contain only letters, numbers, hyphens, or underscores");
+			return;
+		}
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const globalClasses = mindMap.getGlobalClasses();
+		if (fm?.classes?.[newName] || globalClasses[newName]) {
+			new Notice(`Class "${newName}" already exists`);
+			return;
+		}
+
+		const scope = getClassScope(fm, oldName, globalClasses);
+		if (scope === "local") {
+			await mindMap.renameClassDefinition(oldName, newName);
+		} else if (scope === "global") {
+			await mindMap.renameGlobalClassDefinition(oldName, newName);
+		}
+
+		this.rebuildClassDropdown(mindMap.getOsmosisStyleFrontmatter(), mindMap.getGlobalClasses());
+		if (this.controls.classDropdown) {
+			this.controls.classDropdown.value = newName;
+		}
+		this.updateSaveToClassVisibility();
+		new Notice(`Class renamed to "${newName}"`);
+	}
+
+	/** Confirm and delete the currently selected class. */
+	private confirmDeleteClass(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const className = this.controls.classDropdown?.value;
+		if (!className) {
+			new Notice("Select a class to delete");
+			return;
+		}
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const scope = getClassScope(fm, className, mindMap.getGlobalClasses());
+		const scopeLabel = scope === "global" ? "global " : "";
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Delete class");
+		modal.contentEl.createEl("p", {
+			text: `Delete ${scopeLabel}class "${className}"? This will also remove the class assignment from any nodes using it.`,
+		});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-warning", text: "Delete" })
+			.addEventListener("click", () => {
+				modal.close();
+				void this.doDeleteClass(className, scope ?? "local");
+			});
+		modal.open();
+	}
+
+	private async doDeleteClass(className: string, scope: "local" | "global"): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		if (scope === "local") {
+			await mindMap.deleteClassDefinition(className);
+		} else {
+			await mindMap.deleteGlobalClassDefinition(className);
+		}
+
+		this.rebuildClassDropdown(mindMap.getOsmosisStyleFrontmatter(), mindMap.getGlobalClasses());
+		if (this.controls.classDropdown) {
+			this.controls.classDropdown.value = "";
+		}
+		this.updateSaveToClassVisibility();
+		new Notice(`Class "${className}" deleted`);
+	}
+
+	/** Rebuild the class dropdown options from local and global classes. */
+	private rebuildClassDropdown(
+		fm: OsmosisStyleFrontmatter | undefined,
+		globalClasses?: Record<string, NodeStyle>,
+	): void {
 		const dd = this.controls.classDropdown;
 		if (!dd) return;
 		const currentVal = dd.value;
 		// Remove all options except the first "(none)"
 		while (dd.options.length > 1) dd.remove(1);
+
+		// Local classes (per-note)
 		if (fm?.classes) {
 			for (const name of Object.keys(fm.classes)) {
 				const opt = document.createElement("option");
@@ -520,6 +883,18 @@ export class PropertiesSidebarView extends ItemView {
 				dd.appendChild(opt);
 			}
 		}
+
+		// Global classes (skip if same name exists locally — local shadows global)
+		if (globalClasses) {
+			for (const name of Object.keys(globalClasses)) {
+				if (fm?.classes?.[name]) continue; // local shadows global
+				const opt = document.createElement("option");
+				opt.value = name;
+				opt.textContent = `${name} (global)`;
+				dd.appendChild(opt);
+			}
+		}
+
 		dd.value = currentVal;
 	}
 
@@ -860,15 +1235,17 @@ export class PropertiesSidebarView extends ItemView {
 		const theme = mindMap.getActiveTheme();
 		const fm = mindMap.getOsmosisStyleFrontmatter();
 		const localStyle = lookupNodeStyle(fm, layoutNode);
-		const classStyle = lookupClassStyle(fm, localStyle?.class);
+		const globalClasses = mindMap.getGlobalClasses();
+		const classStyle = lookupClassStyle(fm, localStyle?.class, globalClasses);
 		const nodeDepth = layoutNode.source.type === "heading" ? layoutNode.source.depth : undefined;
 		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle, classStyle);
 
 		// Style class
-		this.rebuildClassDropdown(fm);
+		this.rebuildClassDropdown(fm, globalClasses);
 		if (this.controls.classDropdown) {
 			this.controls.classDropdown.value = localStyle?.class ?? "";
 		}
+		this.updateSaveToClassVisibility();
 
 		// Shape
 		if (this.controls.shapeDropdown) {
