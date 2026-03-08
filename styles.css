@@ -746,6 +746,32 @@ Uses Obsidian CSS variables for theme compatibility.
 	display: none;
 }
 
+/* ─── Map Tab: Variant Section ───────────────────────── */
+
+.osmosis-variant-section {
+	margin-bottom: 8px;
+}
+
+.osmosis-variant-header {
+	display: flex;
+	align-items: center;
+	padding: 4px 0;
+}
+
+.osmosis-variant-label {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-variant-delete-btn:hover {
+	color: var(--text-error);
+}
+
+.osmosis-save-to-variant-btn.is-hidden {
+	display: none;
+}
+
 /* ─── Format Tab: Color Swatch Button ────────────────── */
 
 .osmosis-color-swatch-btn {

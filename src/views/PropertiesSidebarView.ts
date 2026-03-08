@@ -289,9 +289,46 @@ export class PropertiesSidebarView extends ItemView {
 					});
 			});
 
-		// Variant switcher with management buttons
-		const variantSettingEl = new Setting(container)
-			.setName("Variant")
+		// Variant section — header row with label + icon buttons, dropdown below
+		const variantSection = container.createDiv({ cls: "osmosis-variant-section" });
+		this.variantSetting = variantSection;
+
+		const variantHeader = variantSection.createDiv({ cls: "osmosis-variant-header" });
+		variantHeader.createSpan({ text: "Variant", cls: "osmosis-variant-label" });
+
+		const variantBtnGroup = variantHeader.createDiv({ cls: "osmosis-class-header-btns" });
+
+		const newVarBtn = variantBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn",
+			attr: { "aria-label": "New variant", title: "New variant" },
+		});
+		setIcon(newVarBtn, "plus");
+		newVarBtn.addEventListener("click", () => this.promptNewVariant());
+
+		const saveVarBtn = variantBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn osmosis-save-to-variant-btn",
+			attr: { "aria-label": "Save node style to variant", title: "Save to variant" },
+		});
+		setIcon(saveVarBtn, "save");
+		saveVarBtn.addEventListener("click", () => void this.saveStylesToVariant());
+		this.saveToVariantBtn = saveVarBtn;
+
+		const renameVarBtn = variantBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn",
+			attr: { "aria-label": "Rename variant", title: "Rename" },
+		});
+		setIcon(renameVarBtn, "pencil");
+		renameVarBtn.addEventListener("click", () => this.promptRenameVariant());
+
+		const deleteVarBtn = variantBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn osmosis-variant-delete-btn",
+			attr: { "aria-label": "Delete variant", title: "Delete" },
+		});
+		setIcon(deleteVarBtn, "trash-2");
+		deleteVarBtn.addEventListener("click", () => this.confirmDeleteVariant());
+
+		new Setting(variantSection)
+			.setName("Active")
 			.addDropdown((dropdown) => {
 				this.variantDropdown = dropdown.selectEl;
 				this.rebuildVariantDropdown();
@@ -302,30 +339,9 @@ export class PropertiesSidebarView extends ItemView {
 					}
 					this.updateSaveToVariantVisibility();
 				});
-			})
-			.addExtraButton((btn) => {
-				btn.setIcon("plus")
-					.setTooltip("New variant")
-					.onClick(() => this.promptNewVariant());
-			})
-			.addExtraButton((btn) => {
-				btn.setIcon("save")
-					.setTooltip("Save node style to variant")
-					.onClick(() => void this.saveStylesToVariant());
-				this.saveToVariantBtn = btn.extraSettingsEl;
-				this.updateSaveToVariantVisibility();
-			})
-			.addExtraButton((btn) => {
-				btn.setIcon("pencil")
-					.setTooltip("Rename variant")
-					.onClick(() => this.promptRenameVariant());
-			})
-			.addExtraButton((btn) => {
-				btn.setIcon("trash-2")
-					.setTooltip("Delete variant")
-					.onClick(() => this.confirmDeleteVariant());
 			});
-		this.variantSetting = variantSettingEl.settingEl;
+
+		this.updateSaveToVariantVisibility();
 
 		// Topic shape
 		new Setting(container)
