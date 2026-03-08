@@ -88,7 +88,7 @@ export class ToolRibbon {
 				{ id: "paste", icon: "clipboard-paste", label: "Paste", action: actions.paste, needsSelection: true },
 			],
 			[
-				{ id: "copy-style", icon: "paintbrush", label: "Copy style", action: actions.copyStyle, needsSelection: true },
+				{ id: "copy-style", icon: "pipette", label: "Copy style", action: actions.copyStyle, needsSelection: true },
 				{ id: "paste-style", icon: "paint-bucket", label: "Paste style", action: actions.pasteStyle, needsSelection: true },
 			],
 			[
@@ -97,7 +97,7 @@ export class ToolRibbon {
 			],
 			[
 				{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", action: actions.refresh },
-				{ id: "open-properties", icon: "settings", label: "Map properties", action: actions.openProperties },
+				{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: actions.openProperties },
 			],
 		];
 

@@ -369,6 +369,11 @@ export class MindMapView extends ItemView {
 			},
 		});
 
+		// Open properties sidebar action (useful on mobile)
+		this.addAction("paintbrush", "Open style sidebar", () => {
+			void this.plugin.activatePropertiesSidebar();
+		});
+
 		// Pin/lock header action
 		this.pinActionEl = this.addAction("pin", "Pin this mind map", () => {
 			this.togglePin();
