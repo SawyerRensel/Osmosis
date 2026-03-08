@@ -22,8 +22,8 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle } from "../styles";
-import type { ThemeDefinition } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, parseOsmosisStyleFrontmatter } from "../styles";
+import type { ThemeDefinition, OsmosisStyleFrontmatter } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
 import {
@@ -70,6 +70,7 @@ export class MindMapView extends ItemView {
 	// Per-map settings (resolved from defaults + per-note overrides)
 	private mapSettings: MapSettings = { ...DEFAULT_MAP_SETTINGS };
 	private activeTheme: ThemeDefinition | undefined;
+	private osmosisStyleFrontmatter: OsmosisStyleFrontmatter | undefined;
 
 	// Viewport state
 	private viewBox = { x: 0, y: 0, w: 800, h: 600 };
@@ -407,6 +408,7 @@ export class MindMapView extends ItemView {
 		}
 		this.currentFile = file;
 		this.loadMapSettings();
+		this.loadOsmosisStyleFrontmatter();
 		const content = await this.app.vault.read(file);
 		this.currentTree = this.cache.get(file.path, content);
 
@@ -478,6 +480,18 @@ export class MindMapView extends ItemView {
 		}
 		const overrides = this.plugin?.settings?.mapSettings?.[path] ?? {};
 		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
+	}
+
+	/** Parse `osmosis:` frontmatter from the current file's metadata cache. */
+	private loadOsmosisStyleFrontmatter(): void {
+		if (!this.currentFile) {
+			this.osmosisStyleFrontmatter = undefined;
+			return;
+		}
+		const cache = this.app.metadataCache.getFileCache(this.currentFile);
+		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
+			cache?.frontmatter as Record<string, unknown> | undefined,
+		);
 	}
 
 	// ─── Viewport ────────────────────────────────────────────
@@ -4830,10 +4844,11 @@ export class MindMapView extends ItemView {
 			group.setAttribute("data-source-file", node.source.sourceFile);
 		}
 
-		// Resolve style early so shape is available for element creation
+		// Resolve style via LCVRT cascade: Local (frontmatter) > Reference > Theme
 		const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
-		const resolvedStyle = this.activeTheme
-			? resolveNodeStyle(this.activeTheme, nodeDepth)
+		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
+		const resolvedStyle = (this.activeTheme || localStyle)
+			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle)
 			: undefined;
 
 		// Background shape (determined by resolved style, map setting, or default)
@@ -5111,9 +5126,12 @@ export class MindMapView extends ItemView {
 		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, lineStyle));
 		path.setAttribute("class", "osmosis-branch-line");
 		path.setAttribute("data-child-id", child.source.id);
-		// Apply theme branch line styles via inline style (overrides CSS class rules)
-		if (this.activeTheme?.branchLine) {
-			const bl = this.activeTheme.branchLine;
+		// Apply branch line styles: per-node frontmatter overrides > theme defaults
+		const childLocalStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, child);
+		const branchLineOverride = childLocalStyle?.branchLine;
+		const themeBranchLine = this.activeTheme?.branchLine;
+		if (branchLineOverride || themeBranchLine) {
+			const bl = { ...themeBranchLine, ...branchLineOverride };
 			const lineStyles: string[] = ["fill: none"];
 			if (bl.color) lineStyles.push(`stroke: ${bl.color}`);
 			if (bl.thickness) lineStyles.push(`stroke-width: ${String(bl.thickness)}`);

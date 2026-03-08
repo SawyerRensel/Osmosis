@@ -54,7 +54,20 @@ export class OsmosisParser {
 		let tableStart = 0;
 		let tableEnd = 0;
 
-		for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+		// Skip YAML frontmatter (--- delimited block at the start of the file)
+		let lineIdx = 0;
+		if (lines.length > 0 && lines[0]!.text.trim() === "---") {
+			lineIdx = 1;
+			while (lineIdx < lines.length) {
+				if (lines[lineIdx]!.text.trim() === "---") {
+					lineIdx++; // skip closing ---
+					break;
+				}
+				lineIdx++;
+			}
+		}
+
+		for (; lineIdx < lines.length; lineIdx++) {
 			const line = lines[lineIdx]!;
 			// Fenced code block detection
 			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.text.trim());

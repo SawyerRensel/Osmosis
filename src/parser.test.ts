@@ -274,6 +274,30 @@ describe("OsmosisParser", () => {
 			const tree = parser.parse("####### Not a heading", "test.md");
 			expect(tree.root.children[0]?.type).toBe("paragraph");
 		});
+
+		it("skips YAML frontmatter delimited by ---", () => {
+			const md = "---\ntitle: Test\nosmosis:\n  theme: Ocean\n---\n\n# Heading\n\n- Item";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("heading");
+			expect(tree.root.children[0]?.content).toBe("Heading");
+			expect(tree.root.children[0]?.children).toHaveLength(1);
+			expect(tree.root.children[0]?.children[0]?.content).toBe("Item");
+		});
+
+		it("does not skip --- that is not at the start of the file", () => {
+			const md = "# Heading\n\n---\n\nSome text";
+			const tree = parser.parse(md, "test.md");
+			// The --- in the middle is a thematic break, not frontmatter
+			// Should still have the heading and text
+			expect(tree.root.children[0]?.type).toBe("heading");
+		});
+
+		it("handles file with only frontmatter and no content", () => {
+			const md = "---\ntitle: Empty\n---\n";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(0);
+		});
 	});
 
 	describe("incremental parse", () => {
