@@ -113,6 +113,8 @@ export class PropertiesSidebarView extends ItemView {
 	private mapVSpacingSlider: HTMLInputElement | null = null;
 	private mapBranchStyleDropdown: HTMLSelectElement | null = null;
 	private mapTopicShapeDropdown: HTMLSelectElement | null = null;
+	private mapMaxNodeWidthSlider: HTMLInputElement | null = null;
+	private mapNodeWidthInput: HTMLInputElement | null = null;
 	private saveThemeBtn: HTMLElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -373,6 +375,8 @@ export class PropertiesSidebarView extends ItemView {
 							else delete perNote.horizontalSpacing;
 							if (theme.verticalSpacing != null) perNote.verticalSpacing = theme.verticalSpacing;
 							else delete perNote.verticalSpacing;
+							if (theme.maxNodeWidth != null) perNote.maxNodeWidth = theme.maxNodeWidth;
+							else delete perNote.maxNodeWidth;
 							if (theme.topicShape) perNote.topicShape = theme.topicShape;
 							else delete perNote.topicShape;
 						}
@@ -508,6 +512,9 @@ export class PropertiesSidebarView extends ItemView {
 
 		this.renderMapStyleSection(container, "Background", (body) => {
 			this.renderMapBackgroundSection(body);
+		});
+		this.renderMapStyleSection(container, "Default shape", (body) => {
+			this.renderMapShapeSection(body);
 		});
 		this.renderMapStyleSection(container, "Default fill", (body) => {
 			this.renderMapFillSection(body);
@@ -1399,6 +1406,14 @@ export class PropertiesSidebarView extends ItemView {
 			case "Background":
 				delete perNote.background;
 				break;
+			case "Default shape":
+				delete perNote.topicShape;
+				delete perNote.maxNodeWidth;
+				if (perNote.baseStyle) {
+					delete perNote.baseStyle.width;
+					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
+				}
+				break;
 			case "Default fill":
 				if (perNote.baseStyle) {
 					delete perNote.baseStyle.fill;
@@ -1456,12 +1471,13 @@ export class PropertiesSidebarView extends ItemView {
 		});
 	}
 
-	private renderMapFillSection(body: HTMLElement): void {
+	private renderMapShapeSection(body: HTMLElement): void {
 		const settings = this.getEffectiveSettings();
+		const { base } = this.getResolvedThemeBase();
 
 		// Topic shape
 		new Setting(body)
-			.setName("Topic shape")
+			.setName("Shape")
 			.addDropdown((dropdown) => {
 				this.mapTopicShapeDropdown = dropdown.selectEl;
 				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
@@ -1474,6 +1490,64 @@ export class PropertiesSidebarView extends ItemView {
 					});
 			});
 
+		// Set node width (global default, applied via baseStyle.width)
+		new Setting(body)
+			.setName("Width")
+			.setDesc("Content width in px (blank = auto)")
+			.addText((text) => {
+				text.setPlaceholder("Auto");
+				text.inputEl.type = "number";
+				text.inputEl.setCssStyles({ width: "70px" });
+				text.inputEl.min = "40";
+				const currentWidth = base.width;
+				if (currentWidth != null) {
+					text.setValue(String(currentWidth));
+				}
+				const applyWidth = (): void => {
+					const raw = text.inputEl.value.trim();
+					if (raw === "") {
+						// Clear the global width
+						if (!this.currentFilePath) return;
+						const perNote = this.plugin.settings.mapSettings[this.currentFilePath] ?? {};
+						this.plugin.settings.mapSettings[this.currentFilePath] = perNote;
+						if (perNote.baseStyle) {
+							delete perNote.baseStyle.width;
+						}
+						void this.plugin.saveSettings().then(() => {
+							const mindMap = this.getActiveMindMap();
+							if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+						});
+					} else {
+						const val = parseInt(raw, 10);
+						if (!isNaN(val) && val >= 40) {
+							void this.saveBaseStyleProp({ width: val });
+						}
+					}
+				};
+				text.inputEl.addEventListener("change", applyWidth);
+				text.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+					if (e.key === "Enter") applyWidth();
+				});
+				this.mapNodeWidthInput = text.inputEl;
+			});
+
+		// Max node width
+		new Setting(body)
+			.setName("Max width")
+			.setDesc("Maximum width before text wraps (px)")
+			.addSlider((slider) => {
+				this.mapMaxNodeWidthSlider = slider.sliderEl;
+				slider
+					.setLimits(100, 800, 10)
+					.setValue(settings.maxNodeWidth ?? 300)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveSetting("maxNodeWidth", value === 300 ? undefined : value);
+					});
+			});
+	}
+
+	private renderMapFillSection(body: HTMLElement): void {
 		// Fill color
 		const setting = new Setting(body).setName("Color");
 		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
@@ -1760,6 +1834,12 @@ export class PropertiesSidebarView extends ItemView {
 		if (this.mapTopicShapeDropdown) {
 			this.mapTopicShapeDropdown.value = settings.topicShape;
 		}
+		if (this.mapNodeWidthInput) {
+			this.mapNodeWidthInput.value = base.width != null ? String(base.width) : "";
+		}
+		if (this.mapMaxNodeWidthSlider) {
+			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? 300);
+		}
 	}
 
 	// ─── Theme Management ────────────────────────────────────
@@ -1909,6 +1989,7 @@ export class PropertiesSidebarView extends ItemView {
 			collapseDepth: settings.collapseDepth !== DEFAULT_MAP_SETTINGS.collapseDepth ? settings.collapseDepth : activeTheme?.collapseDepth,
 			horizontalSpacing: settings.horizontalSpacing !== DEFAULT_MAP_SETTINGS.horizontalSpacing ? settings.horizontalSpacing : activeTheme?.horizontalSpacing,
 			verticalSpacing: settings.verticalSpacing !== DEFAULT_MAP_SETTINGS.verticalSpacing ? settings.verticalSpacing : activeTheme?.verticalSpacing,
+			maxNodeWidth: settings.maxNodeWidth ?? activeTheme?.maxNodeWidth,
 		};
 	}
 

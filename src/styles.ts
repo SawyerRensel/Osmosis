@@ -121,6 +121,9 @@ export interface ThemeDefinition {
 
 	/** Vertical spacing between sibling nodes. */
 	verticalSpacing?: number;
+
+	/** Maximum node width before text wraps (px). */
+	maxNodeWidth?: number;
 }
 
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────

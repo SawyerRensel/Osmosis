@@ -524,6 +524,7 @@ export class MindMapView extends ItemView {
 		// Always clear when baseStyle is present since sub-objects are shared references.
 		if (settings.theme !== this.mapSettings.theme ||
 			settings.topicShape !== this.mapSettings.topicShape ||
+			settings.maxNodeWidth !== this.mapSettings.maxNodeWidth ||
 			settings.baseStyle) {
 			this.nodeSizeCache.clear();
 		}
@@ -5577,13 +5578,14 @@ export class MindMapView extends ItemView {
 	): Promise<Map<string, { width: number; height: number }>> {
 		const sizes = new Map<string, { width: number; height: number }>();
 		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const effectiveMaxNodeWidth = this.mapSettings.maxNodeWidth ?? cfg.maxNodeWidth;
 		// Reduce max content width for shapes with insets so text wraps before
 		// the shape boundary clips it.
 		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
 		const globalShapeInsets = getShapeInsets(globalShape);
 		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
 		const globalShapeScale = 1 - globalTotalInsetX;
-		const defaultContentMaxWidth = cfg.maxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
+		const defaultContentMaxWidth = effectiveMaxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
 
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
@@ -5594,6 +5596,7 @@ export class MindMapView extends ItemView {
 		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
 			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
 			: undefined;
+		const globalWidth = this.mapSettings.baseStyle?.width;
 		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string; customWidth?: number }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
@@ -5604,7 +5607,8 @@ export class MindMapView extends ItemView {
 				? JSON.stringify(localStyle.text)
 				: "";
 			const shapeKey = nodeShapes?.get(node.id) ?? "";
-			const widthKey = localStyle?.width ? `w${String(localStyle.width)}` : "";
+			const nodeWidth = localStyle?.width ?? globalWidth;
+			const widthKey = nodeWidth ? `w${String(nodeWidth)}` : "";
 			const cacheKey = node.type === "heading"
 				? `h${String(node.depth)}:${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`
 				: `${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`;
@@ -5612,7 +5616,7 @@ export class MindMapView extends ItemView {
 			if (cached) {
 				sizes.set(node.id, cached);
 			} else {
-				toMeasure.push({ node, displayContent, cacheKey, customWidth: localStyle?.width });
+				toMeasure.push({ node, displayContent, cacheKey, customWidth: nodeWidth });
 			}
 		}
 
@@ -5689,7 +5693,7 @@ export class MindMapView extends ItemView {
 				if (nodeShape !== globalShape) {
 					const insets = getShapeInsets(nodeShape);
 					const insetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
-					contentMaxWidth = cfg.maxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
+					contentMaxWidth = effectiveMaxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
 				}
 
 				let finalWidth: number;

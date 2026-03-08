@@ -22,6 +22,8 @@ export interface MapSettings {
 	branchLineColor?: string;
 	/** Branch line thickness override. */
 	branchLineThickness?: number;
+	/** Maximum node width before text wraps (px). */
+	maxNodeWidth?: number;
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
