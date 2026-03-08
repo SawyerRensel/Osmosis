@@ -8,6 +8,7 @@ import {
 	Platform,
 	Scope,
 	Notice,
+	parseYaml,
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
@@ -800,6 +801,25 @@ export class MindMapView extends ItemView {
 		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
 			cache?.frontmatter as Record<string, unknown> | undefined,
 		);
+	}
+
+	/** Re-parse osmosis frontmatter directly from raw markdown content.
+	 *  Used after undo/redo where the metadata cache hasn't updated yet. */
+	private reloadFrontmatterFromContent(content: string): void {
+		const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+		if (!match?.[1]) {
+			this.osmosisStyleFrontmatter = undefined;
+			return;
+		}
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+			const parsed = parseYaml(match[1]);
+			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
+				parsed as Record<string, unknown> | undefined,
+			);
+		} catch {
+			this.osmosisStyleFrontmatter = undefined;
+		}
 	}
 
 	// ─── Viewport ────────────────────────────────────────────
@@ -4483,6 +4503,10 @@ export class MindMapView extends ItemView {
 					this.currentFile.path,
 					newContent,
 				);
+				// Re-parse frontmatter from the editor content so style
+				// changes are reflected immediately (metadataCache is async).
+				this.reloadFrontmatterFromContent(newContent);
+				this.nodeSizeCache.clear();
 				void this.render();
 				return;
 			}
