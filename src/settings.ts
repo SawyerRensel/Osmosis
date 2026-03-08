@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { LayoutDirection } from "./layout";
+import type { TopicShape } from "./styles";
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
 
@@ -12,6 +13,7 @@ export interface MapSettings {
 	horizontalSpacing: number;
 	verticalSpacing: number;
 	theme: string;
+	topicShape: TopicShape;
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
@@ -21,6 +23,7 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 	horizontalSpacing: 80,
 	verticalSpacing: 8,
 	theme: "Default",
+	topicShape: "rounded-rect",
 };
 
 export interface OsmosisSettings {

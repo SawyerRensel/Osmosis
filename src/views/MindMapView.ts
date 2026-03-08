@@ -24,6 +24,7 @@ import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle } from "../styles";
 import type { ThemeDefinition } from "../styles";
+import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -421,8 +422,9 @@ export class MindMapView extends ItemView {
 
 	/** Apply per-map settings from the properties sidebar and re-render. */
 	applyMapSettings(settings: MapSettings): void {
-		// Clear size cache when theme changes (different font sizes)
-		if (settings.theme !== this.mapSettings.theme) {
+		// Clear size cache when theme or shape changes (affects measurement)
+		if (settings.theme !== this.mapSettings.theme ||
+			settings.topicShape !== this.mapSettings.topicShape) {
 			this.nodeSizeCache.clear();
 		}
 		this.mapSettings = { ...settings };
@@ -4379,6 +4381,7 @@ export class MindMapView extends ItemView {
 				direction: this.mapSettings.direction,
 				horizontalSpacing: this.mapSettings.horizontalSpacing,
 				verticalSpacing: this.mapSettings.verticalSpacing,
+				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
 			},
 			this.collapsedIds,
 			nodeSizes,
@@ -4414,7 +4417,11 @@ export class MindMapView extends ItemView {
 	): Promise<Map<string, { width: number; height: number }>> {
 		const sizes = new Map<string, { width: number; height: number }>();
 		const cfg = DEFAULT_LAYOUT_CONFIG;
-		const contentMaxWidth = cfg.maxNodeWidth - cfg.nodePaddingX * 2;
+		// Reduce max content width for shapes with insets so text wraps before
+		// the shape boundary clips it.
+		const shapeInsets = getShapeInsets(this.mapSettings.topicShape ?? "rounded-rect");
+		const shapeScale = 1 - 2 * Math.min(shapeInsets.x, 0.45);
+		const contentMaxWidth = cfg.maxNodeWidth * shapeScale - cfg.nodePaddingX * 2;
 
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
@@ -4757,25 +4764,36 @@ export class MindMapView extends ItemView {
 			group.setAttribute("data-source-file", node.source.sourceFile);
 		}
 
-		// Background rect
-		const rect = document.createElementNS(SVG_NS, "rect");
-		rect.setAttribute("x", String(x));
-		rect.setAttribute("y", String(y));
-		rect.setAttribute("width", String(width));
-		rect.setAttribute("height", String(height));
-		rect.setAttribute("rx", "4");
-		rect.setAttribute(
+		// Resolve style early so shape is available for element creation
+		const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
+		const resolvedStyle = this.activeTheme
+			? resolveNodeStyle(this.activeTheme, nodeDepth)
+			: undefined;
+
+		// Background shape (determined by resolved style, map setting, or default)
+		const shape = resolvedStyle?.shape ?? this.mapSettings.topicShape ?? "rounded-rect";
+		group.setAttribute("data-shape", shape);
+		const shapeEl = createShapeElement(shape, x, y, width, height);
+		shapeEl.setAttribute(
 			"class",
 			`osmosis-node osmosis-node-${node.source.type}`,
 		);
-		group.appendChild(rect);
+		group.appendChild(shapeEl);
+
+		// Compute the inscribed content rectangle within the shape.
+		// The foreignObject is inset so text/media stay inside the shape boundary.
+		const insets = getShapeInsets(shape);
+		const foX = x + insets.x * width;
+		const foY = y + insets.y * height;
+		const foW = width * (1 - 2 * insets.x);
+		const foH = height * (1 - 2 * insets.y);
 
 		// foreignObject with rendered markdown
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
-		fo.setAttribute("x", String(x));
-		fo.setAttribute("y", String(y));
-		fo.setAttribute("width", String(width));
-		fo.setAttribute("height", String(height));
+		fo.setAttribute("x", String(foX));
+		fo.setAttribute("y", String(foY));
+		fo.setAttribute("width", String(foW));
+		fo.setAttribute("height", String(foH));
 
 		const wrapper = document.createElementNS(
 			XHTML_NS,
@@ -4790,18 +4808,16 @@ export class MindMapView extends ItemView {
 		group.appendChild(fo);
 
 		// Apply theme styles via inline style (overrides CSS class rules)
-		if (this.activeTheme) {
-			// Only heading nodes get depth-level overrides; non-heading nodes use base style only
-			const nodeDepth = node.source.type === "heading" ? node.source.depth : undefined;
-			const style = resolveNodeStyle(this.activeTheme, nodeDepth);
-			// Use inline style on rect — SVG attributes are overridden by CSS class rules
-			const rectStyles: string[] = [];
-			if (style.fill) rectStyles.push(`fill: ${style.fill}`);
-			if (style.border?.color) rectStyles.push(`stroke: ${style.border.color}`);
-			if (style.border?.width) rectStyles.push(`stroke-width: ${String(style.border.width)}`);
-			if (style.border?.style === "dashed") rectStyles.push("stroke-dasharray: 4 2");
-			if (style.border?.style === "dotted") rectStyles.push("stroke-dasharray: 1 2");
-			if (rectStyles.length > 0) rect.setAttribute("style", rectStyles.join("; "));
+		if (resolvedStyle) {
+			const style = resolvedStyle;
+			// Use inline style on shape element — SVG attributes are overridden by CSS class rules
+			const shapeStyles: string[] = [];
+			if (style.fill) shapeStyles.push(`fill: ${style.fill}`);
+			if (style.border?.color) shapeStyles.push(`stroke: ${style.border.color}`);
+			if (style.border?.width) shapeStyles.push(`stroke-width: ${String(style.border.width)}`);
+			if (style.border?.style === "dashed") shapeStyles.push("stroke-dasharray: 4 2");
+			if (style.border?.style === "dotted") shapeStyles.push("stroke-dasharray: 1 2");
+			if (shapeStyles.length > 0) shapeEl.setAttribute("style", shapeStyles.join("; "));
 			const textStyles: string[] = [];
 			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
 			if (style.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);

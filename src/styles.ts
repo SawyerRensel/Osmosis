@@ -22,7 +22,6 @@ export type TopicShape =
 	| "trapezoid"
 	| "octagon"
 	| "cloud"
-	| "star"
 	| "circle"
 	| "triangle"
 	| "arrow-right"

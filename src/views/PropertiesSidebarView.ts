@@ -4,7 +4,9 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
+import type { TopicShape } from "../styles";
 import { getThemeNames } from "../themes";
+import { SHAPE_LABELS } from "../shapes";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
@@ -147,6 +149,23 @@ export class PropertiesSidebarView extends ItemView {
 					.setValue(settings.theme)
 					.onChange(async (value) => {
 						await this.saveSetting("theme", value);
+					});
+			});
+
+		// Topic shape
+		new Setting(container)
+			.setName("Topic shape")
+			.addDropdown((dropdown) => {
+				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
+					dropdown.addOption(value, label);
+				}
+				dropdown
+					.setValue(settings.topicShape)
+					.onChange(async (value) => {
+						await this.saveSetting(
+							"topicShape",
+							value as TopicShape,
+						);
 					});
 			});
 

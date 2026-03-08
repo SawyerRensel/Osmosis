@@ -38,6 +38,17 @@ Uses Obsidian CSS variables for theme compatibility.
 	stroke-width: 1;
 }
 
+/* Shape: underline — bottom line only, no background fill */
+.osmosis-node-group[data-shape="underline"] > .osmosis-node {
+	fill: none;
+}
+
+/* Shape: none — fully invisible background */
+.osmosis-node-group[data-shape="none"] > .osmosis-node {
+	fill: none;
+	stroke: none;
+}
+
 .osmosis-node-content {
 	width: 100%;
 	height: 100%;

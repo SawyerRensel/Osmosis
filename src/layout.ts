@@ -1,4 +1,6 @@
 import { OsmosisNode, OsmosisTree } from "./types";
+import type { TopicShape } from "./styles";
+import { getShapeInsets } from "./shapes";
 
 /** Layout direction for the mind map. */
 export type LayoutDirection = "left-right" | "top-down";
@@ -60,6 +62,8 @@ export interface LayoutConfig {
 	defaultNodeHeight: number;
 	/** Maximum node width before text wraps. */
 	maxNodeWidth: number;
+	/** Active topic shape — used to compute shape-specific padding. */
+	topicShape: TopicShape;
 }
 
 export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
@@ -71,6 +75,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
 	defaultNodeWidth: 120,
 	defaultNodeHeight: 28,
 	maxNodeWidth: 300,
+	topicShape: "rounded-rect",
 };
 
 /** Optional externally-measured sizes keyed by node ID. */
@@ -164,12 +169,48 @@ function assignSizes(
 		node.rect.height = 0;
 	} else {
 		const measured = nodeSizes?.get(node.source.id);
+		let contentW: number;
+		let contentH: number;
 		if (measured) {
-			node.rect.width = measured.width + cfg.nodePaddingX * 2;
-			node.rect.height = measured.height + cfg.nodePaddingY * 2;
+			contentW = measured.width;
+			contentH = measured.height;
 		} else {
-			node.rect.width = estimateNodeWidth(node.source, cfg) + cfg.nodePaddingX * 2;
-			node.rect.height = cfg.defaultNodeHeight + cfg.nodePaddingY * 2;
+			contentW = estimateNodeWidth(node.source, cfg);
+			contentH = cfg.defaultNodeHeight;
+		}
+
+		// Base padding
+		let padX = cfg.nodePaddingX;
+		let padY = cfg.nodePaddingY;
+
+		// Inflate padding to account for shape insets so content fits
+		// within the inscribed rectangle of the shape.
+		const insets = getShapeInsets(cfg.topicShape);
+		if (insets.x > 0 || insets.y > 0) {
+			// insets.x is the fraction of total width consumed per side.
+			// We need: contentW + 2*padX = (1 - 2*insets.x) * totalW
+			// So: totalW = (contentW + 2*basePad) / (1 - 2*insets.x)
+			// Extra pad per side = (totalW - contentW) / 2 - basePad... simplify:
+			// totalW = (contentW + 2*basePad) / (1 - 2*ix)
+			// padX_new = (totalW - contentW) / 2
+			const ix = Math.min(insets.x, 0.45);
+			const iy = Math.min(insets.y, 0.45);
+			const scale_x = 1 / (1 - 2 * ix);
+			const scale_y = 1 / (1 - 2 * iy);
+			const totalW = (contentW + 2 * cfg.nodePaddingX) * scale_x;
+			const totalH = (contentH + 2 * cfg.nodePaddingY) * scale_y;
+			padX = (totalW - contentW) / 2;
+			padY = (totalH - contentH) / 2;
+		}
+
+		node.rect.width = contentW + padX * 2;
+		node.rect.height = contentH + padY * 2;
+
+		// Circle forces square aspect ratio — use the larger dimension
+		if (cfg.topicShape === "circle") {
+			const side = Math.max(node.rect.width, node.rect.height);
+			node.rect.width = side;
+			node.rect.height = side;
 		}
 	}
 
