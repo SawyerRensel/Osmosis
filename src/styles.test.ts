@@ -9,6 +9,7 @@ import {
 	lookupVariantStyle,
 	getClassScope,
 	parseOsmosisStyleFrontmatter,
+	mergeNodeStyle,
 	type NodeStyle,
 	type ThemeDefinition,
 	type CascadeInput,
@@ -624,5 +625,55 @@ describe("parseOsmosisStyleFrontmatter with variants", () => {
 			osmosis: { variants: "bad" },
 		});
 		expect(result).toBeUndefined();
+	});
+});
+
+describe("mergeNodeStyle", () => {
+	it("merges scalar fields from source into target", () => {
+		const target: NodeStyle = { fill: "#aaa" };
+		mergeNodeStyle(target, { fill: "#bbb", shape: "ellipse" });
+		expect(target.fill).toBe("#bbb");
+		expect(target.shape).toBe("ellipse");
+	});
+
+	it("preserves target fields not present in source", () => {
+		const target: NodeStyle = { fill: "#aaa", shape: "rect" };
+		mergeNodeStyle(target, { fill: "#bbb" });
+		expect(target.fill).toBe("#bbb");
+		expect(target.shape).toBe("rect");
+	});
+
+	it("shallowly merges text sub-object", () => {
+		const target: NodeStyle = { text: { color: "#000", size: 14 } };
+		mergeNodeStyle(target, { text: { color: "#fff" } });
+		expect(target.text?.color).toBe("#fff");
+		expect(target.text?.size).toBe(14);
+	});
+
+	it("shallowly merges border sub-object", () => {
+		const target: NodeStyle = { border: { color: "#000", width: 2 } };
+		mergeNodeStyle(target, { border: { style: "dashed" } });
+		expect(target.border?.color).toBe("#000");
+		expect(target.border?.width).toBe(2);
+		expect(target.border?.style).toBe("dashed");
+	});
+
+	it("shallowly merges branchLine sub-object", () => {
+		const target: NodeStyle = { branchLine: { color: "#000" } };
+		mergeNodeStyle(target, { branchLine: { thickness: 3 } });
+		expect(target.branchLine?.color).toBe("#000");
+		expect(target.branchLine?.thickness).toBe(3);
+	});
+
+	it("creates sub-objects on target if not present", () => {
+		const target: NodeStyle = {};
+		mergeNodeStyle(target, { text: { font: "Inter" } });
+		expect(target.text?.font).toBe("Inter");
+	});
+
+	it("handles empty source gracefully", () => {
+		const target: NodeStyle = { fill: "#aaa" };
+		mergeNodeStyle(target, {});
+		expect(target.fill).toBe("#aaa");
 	});
 });

@@ -772,6 +772,14 @@ Uses Obsidian CSS variables for theme compatibility.
 	display: none;
 }
 
+/* ─── Map Tab: Style Section Divider ─────────────────── */
+
+hr.osmosis-map-style-divider {
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+	margin: 8px 0;
+}
+
 /* ─── Format Tab: Color Swatch Button ────────────────── */
 
 .osmosis-color-swatch-btn {

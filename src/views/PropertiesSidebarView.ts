@@ -4,9 +4,9 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
-import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter } from "../styles";
-import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope } from "../styles";
-import { getThemeNames } from "../themes";
+import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle } from "../styles";
+import { getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
 import { FontPicker } from "./FontPicker";
@@ -89,7 +89,23 @@ export class PropertiesSidebarView extends ItemView {
 	private variantSetting: HTMLElement | null = null;
 	private variantDropdown: HTMLSelectElement | null = null;
 	private saveToVariantBtn: HTMLElement | null = null;
+	private themeDropdown: HTMLSelectElement | null = null;
+	private renameThemeBtn: HTMLElement | null = null;
+	private deleteThemeBtn: HTMLElement | null = null;
 	private activePickers: ColorPicker[] = [];
+	// Map tab style section controls
+	private mapBackgroundSwatch: HTMLElement | null = null;
+	private mapFillSwatch: HTMLElement | null = null;
+	private mapBorderColorSwatch: HTMLElement | null = null;
+	private mapBorderWidthSlider: HTMLInputElement | null = null;
+	private mapBorderStyleDropdown: HTMLSelectElement | null = null;
+	private mapTextFontPicker: FontPicker | null = null;
+	private mapTextSizeSlider: HTMLInputElement | null = null;
+	private mapTextWeightDropdown: HTMLSelectElement | null = null;
+	private mapTextColorSwatch: HTMLElement | null = null;
+	private mapTextAlignBtns: HTMLElement | null = null;
+	private mapBranchColorSwatch: HTMLElement | null = null;
+	private mapBranchThicknessSlider: HTMLInputElement | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -275,19 +291,64 @@ export class PropertiesSidebarView extends ItemView {
 	private renderMapTab(container: HTMLElement): void {
 		const settings = this.getEffectiveSettings();
 
-		// Theme
-		new Setting(container)
-			.setName("Theme")
+		// Theme — header row with label + icon buttons, dropdown below
+		const themeSection = container.createDiv({ cls: "osmosis-variant-section" });
+
+		const themeHeader = themeSection.createDiv({ cls: "osmosis-variant-header" });
+		themeHeader.createSpan({ text: "Theme", cls: "osmosis-variant-label" });
+
+		const themeBtnGroup = themeHeader.createDiv({ cls: "osmosis-class-header-btns" });
+
+		const extractThemeBtn = themeBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn",
+			attr: { "aria-label": "Save current map as theme", title: "Extract theme from map" },
+		});
+		setIcon(extractThemeBtn, "palette");
+		extractThemeBtn.addEventListener("click", () => this.promptExtractTheme());
+
+		const renameThemeBtn = themeBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn",
+			attr: { "aria-label": "Rename theme", title: "Rename theme" },
+		});
+		setIcon(renameThemeBtn, "pencil");
+		renameThemeBtn.addEventListener("click", () => this.promptRenameTheme());
+		this.renameThemeBtn = renameThemeBtn;
+
+		const deleteThemeBtn = themeBtnGroup.createEl("button", {
+			cls: "osmosis-class-icon-btn",
+			attr: { "aria-label": "Delete theme", title: "Delete theme" },
+		});
+		setIcon(deleteThemeBtn, "trash-2");
+		deleteThemeBtn.addEventListener("click", () => this.confirmDeleteTheme());
+		this.deleteThemeBtn = deleteThemeBtn;
+
+		new Setting(themeSection)
+			.setName("Active")
 			.addDropdown((dropdown) => {
-				for (const name of getThemeNames()) {
+				this.themeDropdown = dropdown.selectEl;
+				for (const name of getThemeNames(this.plugin.settings.customThemes)) {
 					dropdown.addOption(name, name);
 				}
 				dropdown
 					.setValue(settings.theme)
 					.onChange(async (value) => {
+						// Clear map-level style overrides so the new theme's values take effect
+						if (!this.currentFilePath) return;
+						const perNote =
+							this.plugin.settings.mapSettings[this.currentFilePath] ?? {};
+						this.plugin.settings.mapSettings[this.currentFilePath] = perNote;
+						delete perNote.baseStyle;
+						delete perNote.background;
+						delete perNote.branchLineColor;
+						delete perNote.branchLineThickness;
+
 						await this.saveSetting("theme", value);
+						this.updateThemeMgmtVisibility();
+						this.refreshMapStyleControls();
 					});
 			});
+
+		this.updateThemeMgmtVisibility();
 
 		// Variant section — header row with label + icon buttons, dropdown below
 		const variantSection = container.createDiv({ cls: "osmosis-variant-section" });
@@ -343,23 +404,6 @@ export class PropertiesSidebarView extends ItemView {
 
 		this.updateSaveToVariantVisibility();
 
-		// Topic shape
-		new Setting(container)
-			.setName("Topic shape")
-			.addDropdown((dropdown) => {
-				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
-					dropdown.addOption(value, label);
-				}
-				dropdown
-					.setValue(settings.topicShape)
-					.onChange(async (value) => {
-						await this.saveSetting(
-							"topicShape",
-							value as TopicShape,
-						);
-					});
-			});
-
 		// Layout direction
 		new Setting(container)
 			.setName("Layout direction")
@@ -372,24 +416,6 @@ export class PropertiesSidebarView extends ItemView {
 						await this.saveSetting(
 							"direction",
 							value as LayoutDirection,
-						);
-					}),
-			);
-
-		// Branch line style
-		new Setting(container)
-			.setName("Branch line style")
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("curved", "Curved")
-					.addOption("straight", "Straight")
-					.addOption("angular", "Angular")
-					.addOption("rounded-elbow", "Rounded elbow")
-					.setValue(settings.branchLineStyle)
-					.onChange(async (value) => {
-						await this.saveSetting(
-							"branchLineStyle",
-							value as BranchLineStyle,
 						);
 					}),
 			);
@@ -435,6 +461,27 @@ export class PropertiesSidebarView extends ItemView {
 						await this.saveSetting("verticalSpacing", value);
 					}),
 			);
+
+		// ─── Global Style Sections ──────────────────────────────
+		container.createEl("hr", { cls: "osmosis-map-style-divider" });
+
+		this.renderMapStyleSection(container, "Background", (body) => {
+			this.renderMapBackgroundSection(body);
+		});
+		this.renderMapStyleSection(container, "Default fill", (body) => {
+			this.renderMapFillSection(body);
+		});
+		this.renderMapStyleSection(container, "Default border", (body) => {
+			this.renderMapBorderSection(body);
+		});
+		this.renderMapStyleSection(container, "Default text", (body) => {
+			this.renderMapTextSection(body);
+		});
+		this.renderMapStyleSection(container, "Branch line", (body) => {
+			this.renderMapBranchLineSection(body);
+		});
+
+		this.refreshMapStyleControls();
 	}
 
 	// ─── Format Tab ──────────────────────────────────────────
@@ -1242,6 +1289,720 @@ export class PropertiesSidebarView extends ItemView {
 		this.rebuildVariantDropdown();
 		this.updateSaveToVariantVisibility();
 		new Notice(`Variant "${variantName}" deleted`);
+	}
+
+	// ─── Map Tab: Global Style Sections ─────────────────────
+
+	/** Create a collapsible section in the Map tab, matching Format tab pattern. */
+	private renderMapStyleSection(
+		container: HTMLElement,
+		label: string,
+		renderBody: (body: HTMLElement) => void,
+	): void {
+		const sectionEl = container.createDiv({ cls: "osmosis-format-section" });
+		const header = sectionEl.createDiv({ cls: "osmosis-format-section-header" });
+		const chevron = header.createSpan({ cls: "osmosis-chevron-icon" });
+		setIcon(chevron, "chevron-right");
+		header.createSpan({ text: label });
+
+		// Per-section reset button
+		const resetBtn = header.createEl("button", {
+			cls: "osmosis-format-section-reset-btn",
+			attr: { "aria-label": `Reset ${label.toLowerCase()}` },
+		});
+		resetBtn.textContent = "\u21BA";
+		resetBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.resetMapStyleSection(label);
+		});
+
+		const body = sectionEl.createDiv({ cls: "osmosis-format-section-body" });
+		renderBody(body);
+
+		header.addEventListener("click", () => {
+			sectionEl.toggleClass("is-collapsed", !sectionEl.hasClass("is-collapsed"));
+		});
+	}
+
+	/** Save a map-level base style property and re-render. */
+	private async saveBaseStyleProp(update: Partial<NodeStyle>): Promise<void> {
+		if (!this.currentFilePath) return;
+		const filePath = this.currentFilePath;
+		const perNote = this.plugin.settings.mapSettings[filePath] ?? {};
+		this.plugin.settings.mapSettings[filePath] = perNote;
+
+		const base: NodeStyle = perNote.baseStyle ?? {};
+		// Merge update into base, handling sub-objects
+		mergeNodeStyle(base, update as NodeStyle);
+		perNote.baseStyle = base;
+
+		await this.plugin.saveSettings();
+		const mindMap = this.getActiveMindMap();
+		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+	}
+
+	/** Reset specific map-level style keys. */
+	private async resetMapStyleSection(section: string): Promise<void> {
+		if (!this.currentFilePath) return;
+		const filePath = this.currentFilePath;
+		const perNote = this.plugin.settings.mapSettings[filePath];
+		if (!perNote) return;
+
+		switch (section) {
+			case "Background":
+				delete perNote.background;
+				break;
+			case "Default fill":
+				if (perNote.baseStyle) {
+					delete perNote.baseStyle.fill;
+					delete perNote.baseStyle.background;
+					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
+				}
+				break;
+			case "Default border":
+				if (perNote.baseStyle) {
+					delete perNote.baseStyle.border;
+					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
+				}
+				break;
+			case "Default text":
+				if (perNote.baseStyle) {
+					delete perNote.baseStyle.text;
+					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
+				}
+				break;
+			case "Branch line":
+				delete perNote.branchLineColor;
+				delete perNote.branchLineThickness;
+				break;
+		}
+
+		if (Object.keys(perNote).length === 0) {
+			delete this.plugin.settings.mapSettings[filePath];
+		}
+
+		await this.plugin.saveSettings();
+		const mindMap = this.getActiveMindMap();
+		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+		this.refreshMapStyleControls();
+	}
+
+	/** Get the resolved value for a map-level style property (map override ?? theme default). */
+	private getResolvedThemeBase(): { base: NodeStyle; theme: ThemeDefinition | undefined } {
+		const mindMap = this.getActiveMindMap();
+		const theme = mindMap?.getActiveTheme();
+		const settings = this.getEffectiveSettings();
+		const base: NodeStyle = { ...(theme?.base ?? {}) };
+		if (settings.baseStyle) mergeNodeStyle(base, settings.baseStyle);
+		return { base, theme };
+	}
+
+	private renderMapBackgroundSection(body: HTMLElement): void {
+		const setting = new Setting(body).setName("Color");
+		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.mapBackgroundSwatch = swatch;
+
+		swatch.addEventListener("click", () => {
+			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+				void this.saveMapScalarSetting("background", color);
+			});
+		});
+	}
+
+	private renderMapFillSection(body: HTMLElement): void {
+		const settings = this.getEffectiveSettings();
+
+		// Topic shape
+		new Setting(body)
+			.setName("Topic shape")
+			.addDropdown((dropdown) => {
+				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
+					dropdown.addOption(value, label);
+				}
+				dropdown
+					.setValue(settings.topicShape)
+					.onChange(async (value) => {
+						await this.saveSetting("topicShape", value as TopicShape);
+					});
+			});
+
+		// Fill color
+		const setting = new Setting(body).setName("Color");
+		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.mapFillSwatch = swatch;
+
+		swatch.addEventListener("click", () => {
+			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+				void this.saveBaseStyleProp({ fill: color });
+				this.refreshMapStyleControls();
+			});
+		});
+	}
+
+	private renderMapBorderSection(body: HTMLElement): void {
+		// Color
+		const colorSetting = new Setting(body).setName("Color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.mapBorderColorSwatch = colorSwatch;
+
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.saveBaseStyleProp({ border: { color } });
+				this.refreshMapStyleControls();
+			});
+		});
+
+		// Width
+		new Setting(body)
+			.setName("Width")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, 8, 1)
+					.setValue(1)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveBaseStyleProp({ border: { width: value } });
+						this.refreshMapStyleControls();
+					});
+				this.mapBorderWidthSlider = slider.sliderEl;
+			});
+
+		// Style
+		new Setting(body)
+			.setName("Style")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.addOption("none", "None")
+					.onChange(async (value) => {
+						await this.saveBaseStyleProp({
+							border: { style: value as "solid" | "dashed" | "dotted" | "none" },
+						});
+						this.refreshMapStyleControls();
+					});
+				this.mapBorderStyleDropdown = dropdown.selectEl;
+			});
+	}
+
+	private renderMapTextSection(body: HTMLElement): void {
+		// Font family
+		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
+		const fontLabel = new Setting(fontContainer).setName("Font family");
+		const fontPickerEl = fontLabel.controlEl.createDiv();
+		const fp = new FontPicker({
+			app: this.app,
+			plugin: this.plugin,
+			initialFont: "",
+			onChange: (font) => {
+				void this.saveBaseStyleProp({ text: { font: font || undefined } });
+				this.refreshMapStyleControls();
+			},
+		});
+		void fp.render(fontPickerEl);
+		this.mapTextFontPicker = fp;
+
+		// Size
+		new Setting(body)
+			.setName("Size")
+			.addSlider((slider) => {
+				slider
+					.setLimits(8, 48, 1)
+					.setValue(14)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveBaseStyleProp({ text: { size: value } });
+						this.refreshMapStyleControls();
+					});
+				this.mapTextSizeSlider = slider.sliderEl;
+			});
+
+		// Weight
+		new Setting(body)
+			.setName("Weight")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("400", "Normal")
+					.addOption("700", "Bold")
+					.onChange(async (value) => {
+						await this.saveBaseStyleProp({ text: { weight: Number(value) } });
+						this.refreshMapStyleControls();
+					});
+				this.mapTextWeightDropdown = dropdown.selectEl;
+			});
+
+		// Color
+		const textColorSetting = new Setting(body).setName("Color");
+		const textColorSwatch = textColorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.mapTextColorSwatch = textColorSwatch;
+
+		textColorSwatch.addEventListener("click", () => {
+			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.saveBaseStyleProp({ text: { color } });
+				this.refreshMapStyleControls();
+			});
+		});
+
+		// Alignment
+		const alignSetting = new Setting(body).setName("Alignment");
+		const alignGroup = alignSetting.controlEl.createDiv({ cls: "osmosis-align-group" });
+		this.mapTextAlignBtns = alignGroup;
+
+		for (const align of ["left", "center", "right", "justify"] as const) {
+			const btn = alignGroup.createEl("button", {
+				cls: "osmosis-align-btn",
+				attr: { "data-align": align },
+			});
+			setIcon(btn, `align-${align}`);
+			btn.setAttribute("title", align.charAt(0).toUpperCase() + align.slice(1));
+			btn.addEventListener("click", () => {
+				void this.saveBaseStyleProp({ text: { alignment: align } });
+				this.refreshMapStyleControls();
+			});
+		}
+	}
+
+	private renderMapBranchLineSection(body: HTMLElement): void {
+		const settings = this.getEffectiveSettings();
+
+		// Branch line style
+		new Setting(body)
+			.setName("Style")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("curved", "Curved")
+					.addOption("straight", "Straight")
+					.addOption("angular", "Angular")
+					.addOption("rounded-elbow", "Rounded elbow")
+					.setValue(settings.branchLineStyle)
+					.onChange(async (value) => {
+						await this.saveSetting("branchLineStyle", value as BranchLineStyle);
+					}),
+			);
+
+		// Color
+		const colorSetting = new Setting(body).setName("Color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.mapBranchColorSwatch = colorSwatch;
+
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
+				void this.saveMapScalarSetting("branchLineColor", color);
+				this.refreshMapStyleControls();
+			});
+		});
+
+		// Thickness
+		new Setting(body)
+			.setName("Thickness")
+			.addSlider((slider) => {
+				slider
+					.setLimits(1, 8, 1)
+					.setValue(2)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						void this.saveMapScalarSetting("branchLineThickness", value);
+						this.refreshMapStyleControls();
+					});
+				this.mapBranchThicknessSlider = slider.sliderEl;
+			});
+	}
+
+	/** Save a scalar map setting (background, branchLineColor, branchLineThickness). */
+	private async saveMapScalarSetting<K extends "background" | "branchLineColor" | "branchLineThickness">(
+		key: K,
+		value: MapSettings[K],
+	): Promise<void> {
+		if (!this.currentFilePath) return;
+		const filePath = this.currentFilePath;
+		const perNote = this.plugin.settings.mapSettings[filePath] ?? {};
+		this.plugin.settings.mapSettings[filePath] = perNote;
+
+		if (value === undefined || value === "") {
+			delete perNote[key];
+		} else {
+			(perNote as Record<string, unknown>)[key] = value;
+		}
+
+		if (Object.keys(perNote).length === 0) {
+			delete this.plugin.settings.mapSettings[filePath];
+		}
+
+		await this.plugin.saveSettings();
+		const mindMap = this.getActiveMindMap();
+		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+	}
+
+	/** Refresh all map style section controls with resolved values. */
+	private refreshMapStyleControls(): void {
+		const settings = this.getEffectiveSettings();
+		const { base, theme } = this.getResolvedThemeBase();
+
+		// Background
+		if (this.mapBackgroundSwatch) {
+			const bg = settings.background ?? theme?.background ?? "";
+			this.mapBackgroundSwatch.style.backgroundColor = bg;
+		}
+
+		// Fill
+		if (this.mapFillSwatch) {
+			this.mapFillSwatch.style.backgroundColor = base.fill ?? "";
+		}
+
+		// Border
+		if (this.mapBorderColorSwatch) {
+			this.mapBorderColorSwatch.style.backgroundColor = base.border?.color ?? "";
+		}
+		if (this.mapBorderWidthSlider) {
+			this.mapBorderWidthSlider.value = String(base.border?.width ?? 1);
+		}
+		if (this.mapBorderStyleDropdown) {
+			this.mapBorderStyleDropdown.value = base.border?.style ?? "solid";
+		}
+
+		// Text
+		if (this.mapTextFontPicker) {
+			this.mapTextFontPicker.setFont(base.text?.font ?? "");
+		}
+		if (this.mapTextSizeSlider) {
+			this.mapTextSizeSlider.value = String(base.text?.size ?? 14);
+		}
+		if (this.mapTextWeightDropdown) {
+			this.mapTextWeightDropdown.value = String(base.text?.weight ?? 400);
+		}
+		if (this.mapTextColorSwatch) {
+			this.mapTextColorSwatch.style.backgroundColor = base.text?.color ?? "";
+		}
+		if (this.mapTextAlignBtns) {
+			const active = base.text?.alignment ?? "left";
+			for (const btn of Array.from(this.mapTextAlignBtns.children) as HTMLElement[]) {
+				btn.toggleClass("is-active", btn.getAttribute("data-align") === active);
+			}
+		}
+
+		// Branch line
+		if (this.mapBranchColorSwatch) {
+			this.mapBranchColorSwatch.style.backgroundColor =
+				settings.branchLineColor ?? theme?.branchLine?.color ?? "";
+		}
+		if (this.mapBranchThicknessSlider) {
+			this.mapBranchThicknessSlider.value = String(
+				settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2,
+			);
+		}
+	}
+
+	// ─── Theme Management ────────────────────────────────────
+
+	/** Show/hide the rename/delete buttons based on whether a custom theme is active. */
+	private updateThemeMgmtVisibility(): void {
+		const themeName = this.themeDropdown?.value ?? "";
+		const isCustom = themeName !== "" && !isPresetTheme(themeName);
+		this.renameThemeBtn?.toggleClass("is-hidden", !isCustom);
+		this.deleteThemeBtn?.toggleClass("is-hidden", !isCustom);
+	}
+
+	/** Extract the current map's resolved styling into a new ThemeDefinition. */
+	private extractThemeFromMap(name: string): ThemeDefinition {
+		const mindMap = this.getActiveMindMap();
+		const activeTheme = mindMap?.getActiveTheme();
+		const fm = mindMap?.getOsmosisStyleFrontmatter();
+		const nodeMap = mindMap?.getNodeMap();
+		const globalClasses = mindMap?.getGlobalClasses() ?? {};
+		const settings = this.getEffectiveSettings();
+
+		// Start from the current theme as a base, or empty
+		const base: NodeStyle = activeTheme?.base ? { ...activeTheme.base } : {};
+		const depths: Record<string, NodeStyle> = {};
+
+		if (activeTheme?.depths) {
+			for (const [d, style] of Object.entries(activeTheme.depths)) {
+				depths[d] = { ...style };
+			}
+		}
+
+		// Walk all nodes and collect per-depth local overrides to fold into depth styles.
+		// For each depth level, if any node has local overrides, merge them into that depth's style.
+		// This captures the "design by example" pattern — style a real map, extract the pattern.
+		if (nodeMap && fm?.styles) {
+			const depthOverrides = new Map<number, NodeStyle[]>();
+			for (const [, layoutNode] of nodeMap) {
+				if (layoutNode.source.type === "root") continue;
+				const stableKey = `_n:${layoutNode.source.id}`;
+				const localStyle = fm.styles[stableKey];
+				if (!localStyle) continue;
+				const depth = layoutNode.source.type === "heading" ? layoutNode.source.depth : 0;
+				if (!depthOverrides.has(depth)) depthOverrides.set(depth, []);
+				depthOverrides.get(depth)!.push(localStyle);
+			}
+
+			// For each depth, merge overrides into the depth style.
+			// If multiple nodes at the same depth have different overrides, the last one wins
+			// (deterministic since nodeMap insertion order is tree order).
+			for (const [depth, overrides] of depthOverrides) {
+				const key = String(depth);
+				if (!depths[key]) depths[key] = {};
+				for (const override of overrides) {
+					// Strip class reference — that's metadata, not a theme property
+					// eslint-disable-next-line @typescript-eslint/no-unused-vars
+				const { class: _cls, width: _w, ...styleProps } = override;
+					Object.assign(depths[key], styleProps);
+					if (styleProps.text) {
+						depths[key].text = { ...depths[key].text, ...styleProps.text };
+					}
+					if (styleProps.border) {
+						depths[key].border = { ...depths[key].border, ...styleProps.border };
+					}
+					if (styleProps.branchLine) {
+						depths[key].branchLine = { ...depths[key].branchLine, ...styleProps.branchLine };
+					}
+				}
+			}
+		}
+
+		// Also fold in class-level styles that are used by nodes
+		if (nodeMap && fm) {
+			for (const [, layoutNode] of nodeMap) {
+				if (layoutNode.source.type === "root") continue;
+				const stableKey = `_n:${layoutNode.source.id}`;
+				const localStyle = fm.styles?.[stableKey];
+				const className = localStyle?.class;
+				if (!className) continue;
+				const classStyle = lookupClassStyle(fm, className, globalClasses);
+				if (!classStyle) continue;
+				const depth = layoutNode.source.type === "heading" ? layoutNode.source.depth : 0;
+				const key = String(depth);
+				if (!depths[key]) depths[key] = {};
+				// Merge class style as a weaker layer (local overrides already applied above)
+				const existing = depths[key];
+				if (!existing.fill && classStyle.fill) existing.fill = classStyle.fill;
+				if (!existing.shape && classStyle.shape) existing.shape = classStyle.shape;
+				if (classStyle.text) {
+					existing.text = { ...classStyle.text, ...existing.text };
+				}
+				if (classStyle.border) {
+					existing.border = { ...classStyle.border, ...existing.border };
+				}
+				if (classStyle.branchLine) {
+					existing.branchLine = { ...classStyle.branchLine, ...existing.branchLine };
+				}
+			}
+		}
+
+		// Merge map-level baseStyle overrides into the extracted base
+		if (settings.baseStyle) {
+			mergeNodeStyle(base, settings.baseStyle);
+		}
+
+		// Build branch line from theme + map overrides
+		const branchLine = activeTheme?.branchLine ? { ...activeTheme.branchLine } : undefined;
+		const extractedBranchLine = branchLine ?? (settings.branchLineColor || settings.branchLineThickness ? {} : undefined);
+		if (extractedBranchLine) {
+			if (settings.branchLineColor) extractedBranchLine.color = settings.branchLineColor;
+			if (settings.branchLineThickness) extractedBranchLine.thickness = settings.branchLineThickness;
+		}
+
+		return {
+			name,
+			base,
+			depths,
+			coloredBranches: activeTheme?.coloredBranches,
+			branchColors: activeTheme?.branchColors ? [...activeTheme.branchColors] : undefined,
+			branchLine: extractedBranchLine,
+			background: settings.background ?? activeTheme?.background,
+			collapseToggle: activeTheme?.collapseToggle ? { ...activeTheme.collapseToggle } : undefined,
+			topicShape: settings.topicShape !== DEFAULT_MAP_SETTINGS.topicShape ? settings.topicShape : activeTheme?.topicShape,
+			direction: settings.direction !== DEFAULT_MAP_SETTINGS.direction ? settings.direction : activeTheme?.direction,
+		};
+	}
+
+	/** Prompt the user to name a new theme extracted from the current map. */
+	private promptExtractTheme(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) {
+			new Notice("No active mind map");
+			return;
+		}
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Save current map as theme");
+
+		let inputValue = "";
+		new Setting(modal.contentEl)
+			.setName("Theme name")
+			.addText((text) => {
+				text.setPlaceholder("My custom theme");
+				text.onChange((v) => { inputValue = v.trim(); });
+				// Focus and select on open
+				setTimeout(() => text.inputEl.focus(), 50);
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Save" })
+			.addEventListener("click", () => {
+				if (!inputValue) {
+					new Notice("Theme name cannot be empty");
+					return;
+				}
+				if (isPresetTheme(inputValue)) {
+					new Notice("Cannot overwrite a built-in theme");
+					return;
+				}
+				modal.close();
+				void this.doExtractTheme(inputValue);
+			});
+		modal.open();
+	}
+
+	private async doExtractTheme(name: string): Promise<void> {
+		const theme = this.extractThemeFromMap(name);
+		this.plugin.settings.customThemes[name] = theme;
+		await this.plugin.saveSettings();
+
+		// Switch the current map to the new theme
+		await this.saveSetting("theme", name);
+
+		// Rebuild dropdown and update UI
+		this.rebuildThemeDropdown();
+		this.updateThemeMgmtVisibility();
+		new Notice(`Theme "${name}" saved`);
+	}
+
+	/** Rebuild the theme dropdown from presets + custom themes. */
+	private rebuildThemeDropdown(): void {
+		const dd = this.themeDropdown;
+		if (!dd) return;
+
+		const currentVal = dd.value;
+		while (dd.options.length > 0) dd.remove(0);
+
+		for (const name of getThemeNames(this.plugin.settings.customThemes)) {
+			const opt = document.createElement("option");
+			opt.value = name;
+			opt.textContent = name;
+			dd.appendChild(opt);
+		}
+
+		dd.value = currentVal;
+	}
+
+	/** Prompt to rename the current custom theme. */
+	private promptRenameTheme(): void {
+		const oldName = this.themeDropdown?.value;
+		if (!oldName || isPresetTheme(oldName)) return;
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Rename theme");
+
+		let inputValue = oldName;
+		new Setting(modal.contentEl)
+			.setName("New name")
+			.addText((text) => {
+				text.setValue(oldName);
+				text.onChange((v) => { inputValue = v.trim(); });
+				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Rename" })
+			.addEventListener("click", () => {
+				if (!inputValue || inputValue === oldName) {
+					modal.close();
+					return;
+				}
+				if (isPresetTheme(inputValue)) {
+					new Notice("Cannot use a built-in theme name");
+					return;
+				}
+				if (this.plugin.settings.customThemes[inputValue]) {
+					new Notice("A custom theme with that name already exists");
+					return;
+				}
+				modal.close();
+				void this.doRenameTheme(oldName, inputValue);
+			});
+		modal.open();
+	}
+
+	private async doRenameTheme(oldName: string, newName: string): Promise<void> {
+		const themes = this.plugin.settings.customThemes;
+		const theme = themes[oldName];
+		if (!theme) return;
+
+		theme.name = newName;
+		themes[newName] = theme;
+		delete themes[oldName];
+
+		// Update any per-map settings that reference the old name
+		for (const [, mapSettings] of Object.entries(this.plugin.settings.mapSettings)) {
+			if (mapSettings.theme === oldName) {
+				mapSettings.theme = newName;
+			}
+		}
+
+		await this.plugin.saveSettings();
+
+		// If the current map was using the old name, update it
+		const settings = this.getEffectiveSettings();
+		if (settings.theme === oldName) {
+			await this.saveSetting("theme", newName);
+		}
+
+		this.rebuildThemeDropdown();
+		if (this.themeDropdown) this.themeDropdown.value = newName;
+		this.updateThemeMgmtVisibility();
+		new Notice(`Theme renamed to "${newName}"`);
+	}
+
+	/** Confirm and delete the current custom theme. */
+	private confirmDeleteTheme(): void {
+		const themeName = this.themeDropdown?.value;
+		if (!themeName || isPresetTheme(themeName)) return;
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Delete theme");
+		modal.contentEl.createEl("p", {
+			text: `Delete custom theme "${themeName}"? Maps using it will revert to the Default theme.`,
+		});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-warning", text: "Delete" })
+			.addEventListener("click", () => {
+				modal.close();
+				void this.doDeleteTheme(themeName);
+			});
+		modal.open();
+	}
+
+	private async doDeleteTheme(themeName: string): Promise<void> {
+		delete this.plugin.settings.customThemes[themeName];
+
+		// Revert any per-map settings that reference this theme to Default
+		for (const [, mapSettings] of Object.entries(this.plugin.settings.mapSettings)) {
+			if (mapSettings.theme === themeName) {
+				delete mapSettings.theme; // defaults back to "Default"
+			}
+		}
+
+		await this.plugin.saveSettings();
+
+		// If the current map was using this theme, switch to Default
+		const settings = this.getEffectiveSettings();
+		if (settings.theme === themeName || !settings.theme) {
+			await this.saveSetting("theme", "Default");
+		}
+
+		this.rebuildThemeDropdown();
+		if (this.themeDropdown) this.themeDropdown.value = "Default";
+		this.updateThemeMgmtVisibility();
+		new Notice(`Theme "${themeName}" deleted`);
 	}
 
 	/** Rebuild the class dropdown options from local and global classes. */

@@ -8,6 +8,8 @@
  * All overrides are sparse — only changed properties need to be specified.
  */
 
+import type { LayoutDirection } from "./layout";
+
 // ─── Topic Shapes ───────────────────────────────────────────────────────────
 
 export type TopicShape =
@@ -104,6 +106,12 @@ export interface ThemeDefinition {
 		stroke?: string;
 		icon?: string;
 	};
+
+	/** Default topic shape for the map. */
+	topicShape?: TopicShape;
+
+	/** Default layout direction for the map. */
+	direction?: LayoutDirection;
 }
 
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────
@@ -192,7 +200,7 @@ export function resolveCascade(input: CascadeInput): NodeStyle {
  * Merge `source` into `target`, overwriting scalar fields and
  * shallowly merging sub-objects (text, border, branchLine).
  */
-function mergeNodeStyle(target: NodeStyle, source: NodeStyle): void {
+export function mergeNodeStyle(target: NodeStyle, source: NodeStyle): void {
 	if (source.shape !== undefined) target.shape = source.shape;
 	if (source.fill !== undefined) target.fill = source.fill;
 	if (source.background !== undefined) target.background = source.background;

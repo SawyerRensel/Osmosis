@@ -24,7 +24,7 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -72,6 +72,8 @@ export class MindMapView extends ItemView {
 	// Per-map settings (resolved from defaults + per-note overrides)
 	private mapSettings: MapSettings = { ...DEFAULT_MAP_SETTINGS };
 	private activeTheme: ThemeDefinition | undefined;
+	/** Effective theme = activeTheme + map-level baseStyle. Recomputed each render pass. */
+	private effectiveTheme: ThemeDefinition | undefined;
 	private osmosisStyleFrontmatter: OsmosisStyleFrontmatter | undefined;
 
 	// Viewport state
@@ -518,9 +520,11 @@ export class MindMapView extends ItemView {
 
 	/** Apply per-map settings from the properties sidebar and re-render. */
 	applyMapSettings(settings: MapSettings): void {
-		// Clear size cache when theme or shape changes (affects measurement)
+		// Clear size cache when theme, shape, or base style changes (affects measurement).
+		// Always clear when baseStyle is present since sub-objects are shared references.
 		if (settings.theme !== this.mapSettings.theme ||
-			settings.topicShape !== this.mapSettings.topicShape) {
+			settings.topicShape !== this.mapSettings.topicShape ||
+			settings.baseStyle) {
 			this.nodeSizeCache.clear();
 		}
 		this.mapSettings = { ...settings };
@@ -553,6 +557,33 @@ export class MindMapView extends ItemView {
 	/** Get the currently active theme definition. */
 	getActiveTheme(): ThemeDefinition | undefined {
 		return this.activeTheme;
+	}
+
+	/**
+	 * Get the effective theme with map-level baseStyle merged into the base.
+	 * This layers map overrides into the T-level so per-depth overrides still win.
+	 */
+	private getEffectiveTheme(): ThemeDefinition | undefined {
+		const bs = this.mapSettings.baseStyle;
+		if (!this.activeTheme && !bs) return undefined;
+		if (!bs) return this.activeTheme;
+
+		const effective: ThemeDefinition = {
+			...(this.activeTheme ?? { name: "Default", base: {}, depths: {} }),
+			base: { ...(this.activeTheme?.base ?? {}) },
+		};
+		mergeNodeStyle(effective.base, bs);
+		return effective;
+	}
+
+	/** Get the current per-map settings. */
+	getMapSettings(): MapSettings {
+		return { ...this.mapSettings };
+	}
+
+	/** Get all layout nodes, keyed by source node ID. */
+	getNodeMap(): ReadonlyMap<string, LayoutNode> {
+		return this.nodeMap;
 	}
 
 	/** Get the parsed osmosis: frontmatter for the current file. */
@@ -5597,8 +5628,8 @@ export class MindMapView extends ItemView {
 				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
 				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
 				const nodeVariantStyle = activeVariantDef?.[`_n:${node.id}`] ?? activeVariantDef?.[node.content] ?? activeVariantDef?.["*"];
-				const style = (this.activeTheme || nodeLocalStyle || nodeClassStyle || nodeVariantStyle)
-					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle, nodeClassStyle, nodeVariantStyle)
+				const style = (this.effectiveTheme || nodeLocalStyle || nodeClassStyle || nodeVariantStyle)
+					? resolveNodeStyle(this.effectiveTheme, nodeDepth, nodeLocalStyle, nodeClassStyle, nodeVariantStyle)
 					: undefined;
 				const textStyles: string[] = ["width: 9999px"];
 				if (style?.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
@@ -5852,13 +5883,16 @@ export class MindMapView extends ItemView {
 		// Resolve active theme for this render pass
 		const themeName = this.mapSettings.theme;
 		if (themeName && !isDefaultTheme(themeName)) {
-			this.activeTheme = getTheme(themeName);
+			this.activeTheme = getTheme(themeName, this.plugin?.settings?.customThemes);
 		} else {
 			this.activeTheme = undefined;
 		}
 
-		// Apply theme background to container
-		container.style.backgroundColor = this.activeTheme?.background ?? "";
+		// Compute effective theme: activeTheme + map-level baseStyle overrides
+		this.effectiveTheme = this.getEffectiveTheme();
+
+		// Apply background: map override > theme > none
+		container.style.backgroundColor = this.mapSettings.background ?? this.activeTheme?.background ?? "";
 
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();
@@ -5943,12 +5977,12 @@ export class MindMapView extends ItemView {
 		const localStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, node);
 		const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, localStyle?.class, this.getGlobalClasses());
 		const variantStyle = lookupVariantStyle(this.osmosisStyleFrontmatter, node);
-		const resolvedStyle = (this.activeTheme || localStyle || classStyle || variantStyle)
-			? resolveNodeStyle(this.activeTheme, nodeDepth, localStyle, classStyle, variantStyle)
+		const resolvedStyle = (this.effectiveTheme || localStyle || classStyle || variantStyle)
+			? resolveNodeStyle(this.effectiveTheme, nodeDepth, localStyle, classStyle, variantStyle)
 			: undefined;
 
-		// Background shape (determined by resolved style, map setting, or default)
-		const shape = resolvedStyle?.shape ?? this.mapSettings.topicShape ?? "rounded-rect";
+		// Background shape (determined by resolved style, map setting, then theme, then default)
+		const shape = resolvedStyle?.shape ?? this.mapSettings.topicShape ?? this.activeTheme?.topicShape ?? "rounded-rect";
 		group.setAttribute("data-shape", shape);
 		const shapeEl = createShapeElement(shape, x, y, width, height);
 		shapeEl.setAttribute(
@@ -6231,19 +6265,27 @@ export class MindMapView extends ItemView {
 			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
-		// Apply branch line styles: per-node frontmatter overrides > class > theme defaults
+		// Apply branch line styles: per-node overrides > class > map-level > theme > default
 		const childLocalStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, child);
 		const childClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, childLocalStyle?.class, this.getGlobalClasses());
 		const branchLineOverride = childLocalStyle?.branchLine ?? childClassStyle?.branchLine;
 		const themeBranchLine = this.activeTheme?.branchLine;
-		const effectiveLineStyle = branchLineOverride?.style ?? themeBranchLine?.style ?? lineStyle;
+		// Map-level branch line overrides layer between theme and per-node
+		const mapBranchLine = (this.mapSettings.branchLineColor || this.mapSettings.branchLineThickness || themeBranchLine)
+			? {
+				...themeBranchLine,
+				...(this.mapSettings.branchLineColor ? { color: this.mapSettings.branchLineColor } : {}),
+				...(this.mapSettings.branchLineThickness ? { thickness: this.mapSettings.branchLineThickness } : {}),
+			}
+			: undefined;
+		const effectiveLineStyle = branchLineOverride?.style ?? mapBranchLine?.style ?? lineStyle;
 
 		const path = document.createElementNS(SVG_NS, "path");
 		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle));
 		path.setAttribute("class", "osmosis-branch-line");
 		path.setAttribute("data-child-id", child.source.id);
-		if (branchLineOverride || themeBranchLine) {
-			const bl = { ...themeBranchLine, ...branchLineOverride };
+		const bl = { ...mapBranchLine, ...branchLineOverride };
+		if (bl.color || bl.thickness) {
 			const lineStyles: string[] = ["fill: none"];
 			if (bl.color) lineStyles.push(`stroke: ${bl.color}`);
 			if (bl.thickness) lineStyles.push(`stroke-width: ${String(bl.thickness)}`);

@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { LayoutDirection } from "./layout";
-import type { TopicShape } from "./styles";
+import type { TopicShape, NodeStyle } from "./styles";
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
 
@@ -14,6 +14,14 @@ export interface MapSettings {
 	verticalSpacing: number;
 	theme: string;
 	topicShape: TopicShape;
+	/** Map-level global node style overrides (fill, border, text). */
+	baseStyle?: NodeStyle;
+	/** Map background color override. */
+	background?: string;
+	/** Branch line color override. */
+	branchLineColor?: string;
+	/** Branch line thickness override. */
+	branchLineThickness?: number;
 }
 
 export const DEFAULT_MAP_SETTINGS: MapSettings = {
@@ -36,6 +44,8 @@ export interface OsmosisSettings {
 	customColors: string[];
 	/** Global style classes available across all notes. */
 	globalClasses: Record<string, import("./styles").NodeStyle>;
+	/** User-created custom themes, keyed by name. */
+	customThemes: Record<string, import("./styles").ThemeDefinition>;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -45,6 +55,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
+	customThemes: {},
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {

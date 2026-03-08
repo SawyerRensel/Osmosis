@@ -257,9 +257,9 @@ for (const theme of PRESET_THEMES) {
 	themeMap.set(theme.name, theme);
 }
 
-/** Get a theme by name. Returns undefined if not found. */
-export function getTheme(name: string): ThemeDefinition | undefined {
-	return themeMap.get(name);
+/** Get a theme by name. Checks presets first, then custom themes. */
+export function getTheme(name: string, customThemes?: Record<string, ThemeDefinition>): ThemeDefinition | undefined {
+	return themeMap.get(name) ?? customThemes?.[name];
 }
 
 /** Get the default theme. */
@@ -267,12 +267,22 @@ export function getDefaultTheme(): ThemeDefinition {
 	return defaultTheme;
 }
 
-/** Get all available theme names, in display order. */
-export function getThemeNames(): string[] {
-	return PRESET_THEMES.map((t) => t.name);
+/** Get all available theme names, in display order. Presets first, then custom sorted alphabetically. */
+export function getThemeNames(customThemes?: Record<string, ThemeDefinition>): string[] {
+	const names = PRESET_THEMES.map((t) => t.name);
+	if (customThemes) {
+		const customNames = Object.keys(customThemes).sort();
+		names.push(...customNames);
+	}
+	return names;
 }
 
 /** Check if a theme name is the special "Default" (CSS-only) theme. */
 export function isDefaultTheme(name: string): boolean {
 	return name === "Default";
+}
+
+/** Check if a theme name is a built-in preset (not user-created). */
+export function isPresetTheme(name: string): boolean {
+	return themeMap.has(name);
 }
