@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
@@ -395,7 +395,26 @@ export class PropertiesSidebarView extends ItemView {
 		});
 		resetAllBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			void this.resetSelectedNodeStyles();
+			const mindMap = this.getActiveMindMap();
+			const count = mindMap?.getSelectedNodeInfo()?.nodeIds.length ?? 0;
+			if (count === 0) return;
+			const modal = new Modal(this.app);
+			modal.titleEl.setText("Reset all styles");
+			modal.contentEl.createEl("p", {
+				text: `Remove all style overrides from ${count} selected node(s)? They will revert to theme defaults.`,
+			});
+			const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+			btnRow.createEl("button", { text: "Cancel" })
+				.addEventListener("click", () => modal.close());
+			const confirm = btnRow.createEl("button", {
+				cls: "mod-warning",
+				text: "Reset",
+			});
+			confirm.addEventListener("click", () => {
+				modal.close();
+				void this.resetSelectedNodeStyles();
+			});
+			modal.open();
 		});
 
 		// Collapsible sections with live controls
