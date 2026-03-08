@@ -615,6 +615,177 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Save a node's style into a variant definition.
+	 * Creates the variant if it doesn't exist.
+	 */
+	async saveVariantNodeStyle(
+		variantName: string,
+		nodeKey: string,
+		style: NodeStyle,
+	): Promise<void> {
+		if (!this.currentFile || !variantName || !nodeKey) return;
+
+		this.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
+				osmosis["variants"] = variants;
+				const variant = variants[variantName] ?? {};
+				variants[variantName] = variant;
+
+				const cleaned = { ...style };
+				delete cleaned.class;
+				variant[nodeKey] = cleaned;
+			},
+		);
+
+		// Update cache
+		if (!this.osmosisStyleFrontmatter) {
+			this.osmosisStyleFrontmatter = { variants: { [variantName]: { [nodeKey]: style } } };
+		} else {
+			if (!this.osmosisStyleFrontmatter.variants) {
+				this.osmosisStyleFrontmatter.variants = {};
+			}
+			if (!this.osmosisStyleFrontmatter.variants[variantName]) {
+				this.osmosisStyleFrontmatter.variants[variantName] = {};
+			}
+			this.osmosisStyleFrontmatter.variants[variantName][nodeKey] = style;
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Create an empty variant definition and activate it.
+	 */
+	async createVariant(variantName: string): Promise<void> {
+		if (!this.currentFile || !variantName) return;
+
+		this.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
+				osmosis["variants"] = variants;
+				variants[variantName] = {};
+				osmosis["activeVariant"] = variantName;
+			},
+		);
+
+		if (!this.osmosisStyleFrontmatter) {
+			this.osmosisStyleFrontmatter = { variants: { [variantName]: {} }, activeVariant: variantName };
+		} else {
+			if (!this.osmosisStyleFrontmatter.variants) {
+				this.osmosisStyleFrontmatter.variants = {};
+			}
+			this.osmosisStyleFrontmatter.variants[variantName] = {};
+			this.osmosisStyleFrontmatter.activeVariant = variantName;
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Rename a variant. Updates activeVariant if it was the renamed one.
+	 */
+	async renameVariant(oldName: string, newName: string): Promise<void> {
+		if (!this.currentFile || !oldName || !newName || oldName === newName) return;
+
+		this.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				if (!osmosis) return;
+				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
+				if (!variants || !variants[oldName]) return;
+
+				variants[newName] = variants[oldName];
+				delete variants[oldName];
+
+				if (osmosis["activeVariant"] === oldName) {
+					osmosis["activeVariant"] = newName;
+				}
+			},
+		);
+
+		if (this.osmosisStyleFrontmatter?.variants?.[oldName]) {
+			this.osmosisStyleFrontmatter.variants[newName] = this.osmosisStyleFrontmatter.variants[oldName];
+			delete this.osmosisStyleFrontmatter.variants[oldName];
+			if (this.osmosisStyleFrontmatter.activeVariant === oldName) {
+				this.osmosisStyleFrontmatter.activeVariant = newName;
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
+	 * Delete a variant. Clears activeVariant if it was the deleted one.
+	 */
+	async deleteVariant(variantName: string): Promise<void> {
+		if (!this.currentFile || !variantName) return;
+
+		this.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				if (!osmosis) return;
+				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
+				if (!variants) return;
+
+				delete variants[variantName];
+				if (Object.keys(variants).length === 0) delete osmosis["variants"];
+
+				if (osmosis["activeVariant"] === variantName) {
+					delete osmosis["activeVariant"];
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		if (this.osmosisStyleFrontmatter) {
+			if (this.osmosisStyleFrontmatter.variants) {
+				delete this.osmosisStyleFrontmatter.variants[variantName];
+				if (Object.keys(this.osmosisStyleFrontmatter.variants).length === 0) {
+					delete this.osmosisStyleFrontmatter.variants;
+				}
+			}
+			if (this.osmosisStyleFrontmatter.activeVariant === variantName) {
+				delete this.osmosisStyleFrontmatter.activeVariant;
+			}
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
+	}
+
+	/**
 	 * Apply per-node style overrides to frontmatter in a single batch write.
 	 * Each entry maps a node ID to its complete Local-level NodeStyle.
 	 * Existing overrides for unlisted nodes are preserved.

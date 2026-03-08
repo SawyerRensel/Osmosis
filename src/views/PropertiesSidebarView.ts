@@ -88,6 +88,7 @@ export class PropertiesSidebarView extends ItemView {
 	private controls: FormatControls = emptyFormatControls();
 	private variantSetting: HTMLElement | null = null;
 	private variantDropdown: HTMLSelectElement | null = null;
+	private saveToVariantBtn: HTMLElement | null = null;
 	private activePickers: ColorPicker[] = [];
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -288,7 +289,7 @@ export class PropertiesSidebarView extends ItemView {
 					});
 			});
 
-		// Variant switcher
+		// Variant switcher with management buttons
 		const variantSettingEl = new Setting(container)
 			.setName("Variant")
 			.addDropdown((dropdown) => {
@@ -299,10 +300,32 @@ export class PropertiesSidebarView extends ItemView {
 					if (mindMap) {
 						void mindMap.setActiveVariant(value || undefined);
 					}
+					this.updateSaveToVariantVisibility();
 				});
+			})
+			.addExtraButton((btn) => {
+				btn.setIcon("plus")
+					.setTooltip("New variant")
+					.onClick(() => this.promptNewVariant());
+			})
+			.addExtraButton((btn) => {
+				btn.setIcon("save")
+					.setTooltip("Save node style to variant")
+					.onClick(() => void this.saveStylesToVariant());
+				this.saveToVariantBtn = btn.extraSettingsEl;
+				this.updateSaveToVariantVisibility();
+			})
+			.addExtraButton((btn) => {
+				btn.setIcon("pencil")
+					.setTooltip("Rename variant")
+					.onClick(() => this.promptRenameVariant());
+			})
+			.addExtraButton((btn) => {
+				btn.setIcon("trash-2")
+					.setTooltip("Delete variant")
+					.onClick(() => this.confirmDeleteVariant());
 			});
 		this.variantSetting = variantSettingEl.settingEl;
-		this.updateVariantVisibility();
 
 		// Topic shape
 		new Setting(container)
@@ -985,16 +1008,224 @@ export class PropertiesSidebarView extends ItemView {
 		}
 
 		dd.value = activeVariant;
-		this.updateVariantVisibility();
+		this.updateSaveToVariantVisibility();
 	}
 
-	/** Show/hide the variant setting based on whether variants are defined. */
-	private updateVariantVisibility(): void {
-		if (!this.variantSetting) return;
+	/** Show/hide the "Save to variant" button based on whether a variant is active. */
+	private updateSaveToVariantVisibility(): void {
+		if (!this.saveToVariantBtn) return;
+		const activeVariant = this.variantDropdown?.value;
+		this.saveToVariantBtn.toggleClass("is-hidden", !activeVariant);
+	}
+
+	/** Prompt for a new variant name. */
+	private promptNewVariant(): void {
 		const mindMap = this.getActiveMindMap();
-		const fm = mindMap?.getOsmosisStyleFrontmatter();
-		const hasVariants = fm?.variants && Object.keys(fm.variants).length > 0;
-		this.variantSetting.toggleClass("is-hidden", !hasVariants);
+		if (!mindMap) return;
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("New variant");
+
+		let inputValue = "";
+		new Setting(modal.contentEl)
+			.setName("Variant name")
+			.addText((text) => {
+				text.setPlaceholder("Presentation");
+				text.onChange((value) => { inputValue = value.trim(); });
+				setTimeout(() => text.inputEl.focus(), 50);
+				text.inputEl.addEventListener("keydown", (e) => {
+					if (e.key === "Enter" && inputValue) {
+						modal.close();
+						void this.doCreateVariant(inputValue);
+					}
+				});
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Create" })
+			.addEventListener("click", () => {
+				if (!inputValue) return;
+				modal.close();
+				void this.doCreateVariant(inputValue);
+			});
+		modal.open();
+	}
+
+	private async doCreateVariant(name: string): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		if (fm?.variants?.[name]) {
+			new Notice(`Variant "${name}" already exists`);
+			return;
+		}
+
+		await mindMap.createVariant(name);
+
+		this.rebuildVariantDropdown();
+		if (this.variantDropdown) {
+			this.variantDropdown.value = name;
+		}
+		this.updateSaveToVariantVisibility();
+		new Notice(`Variant "${name}" created and activated`);
+	}
+
+	/**
+	 * Save the selected node's local style overrides into the active variant,
+	 * then clear the local overrides so the node inherits from the variant.
+	 */
+	private async saveStylesToVariant(): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const variantName = this.variantDropdown?.value;
+		if (!variantName) {
+			new Notice("No variant is active");
+			return;
+		}
+
+		const selection = mindMap.getSelectedNodeInfo();
+		if (!selection?.primaryId) {
+			new Notice("Select a node first");
+			return;
+		}
+
+		const layoutNode = mindMap.getLayoutNodeById(selection.primaryId);
+		if (!layoutNode) return;
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const localStyle = lookupNodeStyle(fm, layoutNode);
+		if (!localStyle) {
+			new Notice("No local style overrides to save");
+			return;
+		}
+
+		const styleToSave = { ...localStyle };
+		delete styleToSave.class;
+
+		if (Object.keys(styleToSave).length === 0) {
+			new Notice("No local style overrides to save");
+			return;
+		}
+
+		// Use node content as the variant selector key
+		const nodeKey = layoutNode.source.content;
+		if (!nodeKey) {
+			new Notice("Cannot save style for this node type");
+			return;
+		}
+
+		await mindMap.saveVariantNodeStyle(variantName, nodeKey, styleToSave);
+
+		// Clear local overrides
+		const ALL_VISUAL_KEYS: (keyof NodeStyle)[] =
+			["shape", "fill", "border", "text", "branchLine", "background", "width"];
+		await mindMap.resetNodeStyles(selection.nodeIds, ALL_VISUAL_KEYS);
+
+		this.refreshFormatControls();
+		new Notice(`Style saved to variant "${variantName}" for "${nodeKey}"`);
+	}
+
+	/** Prompt to rename the active variant. */
+	private promptRenameVariant(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const oldName = this.variantDropdown?.value;
+		if (!oldName) {
+			new Notice("No variant is active");
+			return;
+		}
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Rename variant");
+
+		let newName = oldName;
+		new Setting(modal.contentEl)
+			.setName("New name")
+			.addText((text) => {
+				text.setValue(oldName);
+				text.onChange((value) => { newName = value.trim(); });
+				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+				text.inputEl.addEventListener("keydown", (e) => {
+					if (e.key === "Enter" && newName && newName !== oldName) {
+						modal.close();
+						void this.doRenameVariant(oldName, newName);
+					}
+				});
+			});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-cta", text: "Rename" })
+			.addEventListener("click", () => {
+				if (!newName || newName === oldName) return;
+				modal.close();
+				void this.doRenameVariant(oldName, newName);
+			});
+		modal.open();
+	}
+
+	private async doRenameVariant(oldName: string, newName: string): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		if (fm?.variants?.[newName]) {
+			new Notice(`Variant "${newName}" already exists`);
+			return;
+		}
+
+		await mindMap.renameVariant(oldName, newName);
+
+		this.rebuildVariantDropdown();
+		if (this.variantDropdown) {
+			this.variantDropdown.value = newName;
+		}
+		new Notice(`Variant renamed to "${newName}"`);
+	}
+
+	/** Confirm and delete the active variant. */
+	private confirmDeleteVariant(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const variantName = this.variantDropdown?.value;
+		if (!variantName) {
+			new Notice("No variant is active");
+			return;
+		}
+
+		const modal = new Modal(this.app);
+		modal.titleEl.setText("Delete variant");
+		modal.contentEl.createEl("p", {
+			text: `Delete variant "${variantName}"? All style overrides in this variant will be lost.`,
+		});
+
+		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+		btnRow.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => modal.close());
+		btnRow.createEl("button", { cls: "mod-warning", text: "Delete" })
+			.addEventListener("click", () => {
+				modal.close();
+				void this.doDeleteVariant(variantName);
+			});
+		modal.open();
+	}
+
+	private async doDeleteVariant(variantName: string): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		await mindMap.deleteVariant(variantName);
+
+		this.rebuildVariantDropdown();
+		this.updateSaveToVariantVisibility();
+		new Notice(`Variant "${variantName}" deleted`);
 	}
 
 	/** Rebuild the class dropdown options from local and global classes. */
