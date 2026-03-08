@@ -310,6 +310,16 @@ export class MindMapView extends ItemView {
 			paste: () => void this.pasteNodes(),
 			undo: () => this.forwardUndoRedo(false),
 			redo: () => this.forwardUndoRedo(true),
+			refresh: () => {
+				if (this.currentFile) {
+					this.nodeSizeCache.clear();
+					this.nodeHtmlCache.clear();
+					void this.loadFile(this.currentFile);
+				}
+			},
+			openProperties: () => {
+				void this.plugin.activatePropertiesSidebar();
+			},
 		});
 
 		await this.loadActiveFile();

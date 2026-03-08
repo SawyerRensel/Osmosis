@@ -48,6 +48,8 @@ export class ToolRibbon {
 			paste: () => void;
 			undo: () => void;
 			redo: () => void;
+			refresh: () => void;
+			openProperties: () => void;
 		},
 	) {
 		this.el = document.createElement("div");
@@ -86,6 +88,10 @@ export class ToolRibbon {
 			[
 				{ id: "undo", icon: "undo-2", label: "Undo", action: actions.undo },
 				{ id: "redo", icon: "redo-2", label: "Redo", action: actions.redo },
+			],
+			[
+				{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", action: actions.refresh },
+				{ id: "open-properties", icon: "settings", label: "Map properties", action: actions.openProperties },
 			],
 		];
 

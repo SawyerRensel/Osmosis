@@ -56,7 +56,7 @@ export default class OsmosisPlugin extends Plugin {
 		void workspace.revealLeaf(leaf);
 	}
 
-	private async activatePropertiesSidebar(): Promise<void> {
+	async activatePropertiesSidebar(): Promise<void> {
 		const { workspace } = this.app;
 
 		const existing = workspace.getLeavesOfType(VIEW_TYPE_PROPERTIES);
