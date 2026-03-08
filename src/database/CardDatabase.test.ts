@@ -295,6 +295,60 @@ describe("Database export/import round-trip", () => {
 	});
 });
 
+describe("Soft-delete preserves history", () => {
+	it("soft-deleted card retains review logs", () => {
+		insertCard(makeCard());
+		insertSchedule(makeSchedule());
+		db.run(
+			`INSERT INTO review_log (card_id, rating, study_mode, reviewed_at, elapsed_days, scheduled_days)
+			 VALUES ('test-card-1', 3, 'sequential', 1000, 0.0, 1.0)`,
+		);
+		db.run(
+			`INSERT INTO review_log (card_id, rating, study_mode, reviewed_at, elapsed_days, scheduled_days)
+			 VALUES ('test-card-1', 4, 'sequential', 2000, 1.0, 3.0)`,
+		);
+
+		// Soft-delete the card
+		db.run("UPDATE cards SET deleted_at = 9999 WHERE id = 'test-card-1'");
+
+		// Card no longer appears in active queries
+		const active = db.exec("SELECT * FROM cards WHERE id = 'test-card-1' AND deleted_at IS NULL");
+		expect(active).toHaveLength(0);
+
+		// But schedule and review logs are preserved
+		const schedule = db.exec("SELECT * FROM card_schedule WHERE card_id = 'test-card-1'");
+		expect(schedule[0]!.values).toHaveLength(1);
+
+		const logs = db.exec("SELECT * FROM review_log WHERE card_id = 'test-card-1'");
+		expect(logs[0]!.values).toHaveLength(2);
+	});
+
+	it("hard-delete cascades to schedule and logs, soft-delete does not", () => {
+		insertCard(makeCard({ id: "keep" }));
+		insertCard(makeCard({ id: "remove" }));
+		insertSchedule(makeSchedule({ card_id: "keep" }));
+		insertSchedule(makeSchedule({ card_id: "remove" }));
+		db.run(
+			`INSERT INTO review_log (card_id, rating, study_mode, reviewed_at, elapsed_days, scheduled_days)
+			 VALUES ('keep', 3, 'sequential', 1000, 0.0, 1.0)`,
+		);
+		db.run(
+			`INSERT INTO review_log (card_id, rating, study_mode, reviewed_at, elapsed_days, scheduled_days)
+			 VALUES ('remove', 3, 'sequential', 1000, 0.0, 1.0)`,
+		);
+
+		// Soft-delete keeps everything
+		db.run("UPDATE cards SET deleted_at = 5000 WHERE id = 'keep'");
+		expect(db.exec("SELECT * FROM card_schedule WHERE card_id = 'keep'")[0]!.values).toHaveLength(1);
+		expect(db.exec("SELECT * FROM review_log WHERE card_id = 'keep'")[0]!.values).toHaveLength(1);
+
+		// Hard-delete cascades
+		db.run("DELETE FROM cards WHERE id = 'remove'");
+		expect(db.exec("SELECT * FROM card_schedule WHERE card_id = 'remove'")).toHaveLength(0);
+		expect(db.exec("SELECT * FROM review_log WHERE card_id = 'remove'")).toHaveLength(0);
+	});
+});
+
 describe("Performance", () => {
 	it("creates schema in under 100ms", () => {
 		const start = performance.now();
@@ -305,5 +359,81 @@ describe("Performance", () => {
 		freshDb.close();
 
 		expect(elapsed).toBeLessThan(100);
+	});
+
+	it("queries due cards for a single deck in under 20ms with 1000 cards", () => {
+		// Insert 1000 cards across 5 decks (200 per deck)
+		const decks = ["math", "science", "history", "english", "art"];
+		for (let i = 0; i < 1000; i++) {
+			const deck = decks[i % decks.length]!;
+			const card = makeCard({
+				id: `perf-${i}`,
+				deck,
+				note_path: `notes/note-${i % 50}.md`,
+			});
+			insertCard(card);
+			insertSchedule(makeSchedule({
+				card_id: `perf-${i}`,
+				due: i < 500 ? 1000 : 5000, // half are due
+				state: "review",
+			}));
+		}
+
+		// Warm up
+		db.exec(`
+			SELECT c.id FROM cards c
+			JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.due <= 2000 AND c.deck = 'math'
+		`);
+
+		const start = performance.now();
+		const result = db.exec(`
+			SELECT c.*, s.stability, s.difficulty, s.due, s.last_review, s.reps, s.lapses, s.state
+			FROM cards c
+			JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.due <= 2000 AND c.deck = 'math'
+			ORDER BY s.due ASC
+		`);
+		const elapsed = performance.now() - start;
+
+		expect(result[0]!.values.length).toBe(100); // 500 due / 5 decks = 100
+		expect(elapsed).toBeLessThan(20); // AC: <20ms single deck
+	});
+
+	it("queries due cards across all decks in under 50ms with 1000 cards", () => {
+		// Insert 1000 cards
+		for (let i = 0; i < 1000; i++) {
+			const card = makeCard({
+				id: `all-${i}`,
+				deck: `deck-${i % 10}`,
+				note_path: `notes/note-${i % 50}.md`,
+			});
+			insertCard(card);
+			insertSchedule(makeSchedule({
+				card_id: `all-${i}`,
+				due: i < 600 ? 1000 : 5000,
+				state: "review",
+			}));
+		}
+
+		// Warm up
+		db.exec(`
+			SELECT c.id FROM cards c
+			JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.due <= 2000
+		`);
+
+		const start = performance.now();
+		const result = db.exec(`
+			SELECT c.*, s.stability, s.difficulty, s.due, s.last_review, s.reps, s.lapses, s.state
+			FROM cards c
+			JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.due <= 2000
+			ORDER BY s.due ASC
+		`);
+		const elapsed = performance.now() - start;
+
+		expect(result[0]!.values.length).toBe(600);
+		expect(elapsed).toBeLessThan(50); // AC: <50ms all decks
 	});
 });

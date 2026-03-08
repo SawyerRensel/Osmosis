@@ -33,6 +33,7 @@
 	},
 	"dependencies": {
 		"obsidian": "latest",
-		"sql.js": "^1.14.1"
+		"sql.js": "^1.14.1",
+		"ts-fsrs": "^5.2.3"
 	}
 }
