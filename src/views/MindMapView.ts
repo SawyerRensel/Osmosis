@@ -167,6 +167,7 @@ export class MindMapView extends ItemView {
 	private resizingNodeId: string | null = null;
 	private resizeStartX = 0;
 	private resizeStartWidth = 0;
+	private resizeCurrentWidth = 0;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -573,15 +574,38 @@ export class MindMapView extends ItemView {
 					const selector = buildStableIdSelector(layoutNode.source);
 					const existing = styles[selector] ?? {};
 
-					// Merge new properties into existing override
+					// Merge new properties into existing override.
+					// Use `"key" in style` so explicit `undefined` deletes the key.
 					const merged = { ...existing };
-					if (style.shape !== undefined) merged.shape = style.shape;
-					if (style.fill !== undefined) merged.fill = style.fill;
-					if (style.background !== undefined) merged.background = style.background;
-					if (style.text) merged.text = { ...merged.text, ...style.text };
-					if (style.border) merged.border = { ...merged.border, ...style.border };
-					if (style.branchLine) merged.branchLine = { ...merged.branchLine, ...style.branchLine };
-					if (style.width !== undefined) merged.width = style.width;
+
+					// Simple properties: set or delete
+					if ("shape" in style) { if (style.shape === undefined) delete merged.shape; else merged.shape = style.shape; }
+					if ("fill" in style) { if (style.fill === undefined) delete merged.fill; else merged.fill = style.fill; }
+					if ("background" in style) { if (style.background === undefined) delete merged.background; else merged.background = style.background; }
+					if ("width" in style) { if (style.width === undefined) delete merged.width; else merged.width = style.width; }
+
+					// Compound properties: merge sub-properties, delete undefined sub-keys
+					if ("text" in style) {
+						if (style.text === undefined) { delete merged.text; } else {
+							const m = { ...merged.text, ...style.text };
+							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
+							if (Object.keys(m).length === 0) delete merged.text; else merged.text = m;
+						}
+					}
+					if ("border" in style) {
+						if (style.border === undefined) { delete merged.border; } else {
+							const m = { ...merged.border, ...style.border };
+							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
+							if (Object.keys(m).length === 0) delete merged.border; else merged.border = m;
+						}
+					}
+					if ("branchLine" in style) {
+						if (style.branchLine === undefined) { delete merged.branchLine; } else {
+							const m = { ...merged.branchLine, ...style.branchLine };
+							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
+							if (Object.keys(m).length === 0) delete merged.branchLine; else merged.branchLine = m;
+						}
+					}
 
 					styles[selector] = merged;
 				}
@@ -611,7 +635,7 @@ export class MindMapView extends ItemView {
 
 		// Only clear size cache when size-affecting properties changed
 		const sizeAffecting = [...overrides.values()].some(
-			(s) => s.shape !== undefined || s.text !== undefined || s.width !== undefined,
+			(s) => "shape" in s || "text" in s || "width" in s,
 		);
 		if (sizeAffecting) {
 			this.nodeSizeCache.clear();
@@ -2721,8 +2745,11 @@ export class MindMapView extends ItemView {
 		const dx = (clientX - this.resizeStartX) / this.zoom;
 		const MIN_NODE_WIDTH = 60;
 		const newWidth = Math.max(MIN_NODE_WIDTH, this.resizeStartWidth + dx);
+		this.resizeCurrentWidth = newWidth;
 
-		// Live-update the SVG elements for this node
+		// Live-update: only update the foreignObject width for text reflow.
+		// The shape element is NOT updated during drag — the full re-render
+		// on pointer-up redraws it correctly for all shape types.
 		const group = this.svg.querySelector(
 			`[data-node-id="${this.resizingNodeId}"]`,
 		);
@@ -2730,17 +2757,6 @@ export class MindMapView extends ItemView {
 
 		const node = this.nodeMap.get(this.resizingNodeId);
 		if (!node) return;
-
-		// Update shape element (rect, ellipse, etc.)
-		const shapeEl = group.querySelector(".osmosis-node-shape");
-		if (shapeEl) {
-			if (shapeEl.tagName === "rect") {
-				shapeEl.setAttribute("width", String(newWidth));
-			} else if (shapeEl.tagName === "ellipse") {
-				shapeEl.setAttribute("rx", String(newWidth / 2));
-				shapeEl.setAttribute("cx", String(node.rect.x + this.getOffsetX() + newWidth / 2));
-			}
-		}
 
 		// Update foreignObject width (accounting for shape insets)
 		const fo = group.querySelector("foreignObject");
@@ -2750,12 +2766,6 @@ export class MindMapView extends ItemView {
 			const insets = getShapeInsets(shape);
 			const foW = newWidth * (1 - insets.left - insets.right);
 			fo.setAttribute("width", String(foW));
-		}
-
-		// Update resize handle position (circle)
-		const handle = group.querySelector(".osmosis-resize-handle");
-		if (handle) {
-			handle.setAttribute("cx", String(node.rect.x + this.getOffsetX() + newWidth));
 		}
 	}
 
@@ -2778,14 +2788,8 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
 
-		// Compute the width delta applied to the dragged node
-		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-		const shapeEl = group?.querySelector(".osmosis-node-shape");
-		let finalNodeWidth = node.rect.width;
-		if (shapeEl?.tagName === "rect") {
-			finalNodeWidth = parseFloat(shapeEl.getAttribute("width") ?? String(node.rect.width));
-		}
-		const widthDelta = finalNodeWidth - this.resizeStartWidth;
+		// Use the tracked current width (works for all shape types)
+		const widthDelta = this.resizeCurrentWidth - this.resizeStartWidth;
 
 		// Apply to all selected nodes (or just the dragged node if not selected)
 		const overrides = new Map<string, NodeStyle>();

@@ -487,7 +487,7 @@ export class PropertiesSidebarView extends ItemView {
 				}
 				dropdown.onChange(async (value) => {
 					if (value === "inherit") {
-						await this.writeNodeStyle({ shape: undefined });
+						await this.resetSelectedNodeStyles(["shape"]);
 					} else {
 						await this.writeNodeStyle({ shape: value as TopicShape });
 					}
@@ -504,16 +504,20 @@ export class PropertiesSidebarView extends ItemView {
 				text.inputEl.type = "number";
 				text.inputEl.setCssStyles({ width: "70px" });
 				text.inputEl.min = "40";
-				text.inputEl.addEventListener("change", () => {
+				const applyWidth = (): void => {
 					const raw = text.inputEl.value.trim();
 					if (raw === "") {
-						void this.writeNodeStyle({ width: undefined });
+						void this.resetSelectedNodeStyles(["width"]);
 					} else {
 						const val = parseInt(raw, 10);
 						if (!isNaN(val) && val >= 40) {
 							void this.writeNodeStyle({ width: val });
 						}
 					}
+				};
+				text.inputEl.addEventListener("change", applyWidth);
+				text.inputEl.addEventListener("keydown", (e) => {
+					if (e.key === "Enter") applyWidth();
 				});
 				this.controls.nodeWidthInput = text.inputEl;
 			});
