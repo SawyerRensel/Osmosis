@@ -4411,16 +4411,20 @@ export class MindMapView extends ItemView {
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
 
-		// Collect nodes that need measurement (not in cache)
-		const toMeasure: { node: OsmosisNode; displayContent: string }[] = [];
+		// Collect nodes that need measurement (not in cache).
+		// Cache key includes heading depth since typography varies by level.
+		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
-			const cached = this.nodeSizeCache.get(displayContent);
+			const cacheKey = node.type === "heading"
+				? `h${String(node.depth)}:${displayContent}`
+				: displayContent;
+			const cached = this.nodeSizeCache.get(cacheKey);
 			if (cached) {
 				sizes.set(node.id, cached);
 			} else {
-				toMeasure.push({ node, displayContent });
+				toMeasure.push({ node, displayContent, cacheKey });
 			}
 		}
 
@@ -4433,11 +4437,14 @@ export class MindMapView extends ItemView {
 			`;
 			container.appendChild(measurer);
 
-			for (const { node, displayContent } of toMeasure) {
+			for (const { node, displayContent, cacheKey } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = document.createElement("div");
 				cell.className = "osmosis-node-content osmosis-measure-cell";
+				if (node.type === "heading") {
+					cell.setAttribute("data-depth", String(node.depth));
+				}
 				cell.setCssStyles({ width: "9999px" });
 				measurer.appendChild(cell);
 
@@ -4497,7 +4504,7 @@ export class MindMapView extends ItemView {
 
 				const size = { width: finalWidth, height: finalHeight };
 				sizes.set(node.id, size);
-				this.nodeSizeCache.set(displayContent, size);
+				this.nodeSizeCache.set(cacheKey, size);
 			}
 
 			measurer.remove();
@@ -4742,6 +4749,9 @@ export class MindMapView extends ItemView {
 		) as HTMLDivElement;
 		wrapper.setAttribute("xmlns", XHTML_NS);
 		wrapper.className = "osmosis-node-content";
+		if (node.source.type === "heading") {
+			wrapper.setAttribute("data-depth", String(node.source.depth));
+		}
 		fo.appendChild(wrapper);
 		group.appendChild(fo);
 
