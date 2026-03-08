@@ -18,6 +18,7 @@ export class OsmosisParser {
 	 * Full parse of a markdown document into an OsmosisTree.
 	 */
 	parse(markdown: string, filePath: string): OsmosisTree {
+		this.resetIdCounters();
 		const root = this.createNode("root", 0, "", { start: 0, end: markdown.length });
 		const lines = this.splitLines(markdown);
 
@@ -398,12 +399,28 @@ export class OsmosisParser {
 		return lines;
 	}
 
+	/** Track occurrence counts for stable ID generation. */
+	private idCounters = new Map<string, number>();
+
+	/** Reset ID counters (called at the start of each parse). */
+	private resetIdCounters(): void {
+		this.idCounters.clear();
+	}
+
+	/** Get the next occurrence index for a given type:depth:content key. */
+	private nextOccurrence(type: NodeType, depth: number, content: string): number {
+		const key = `${type}:${String(depth)}:${content}`;
+		const count = this.idCounters.get(key) ?? 0;
+		this.idCounters.set(key, count + 1);
+		return count;
+	}
+
 	/**
 	 * Create a new AST node.
 	 */
 	private createNode(type: NodeType, depth: number, content: string, range: Range): OsmosisNode {
 		return {
-			id: this.generateId(type, depth, content, range),
+			id: this.generateId(type, depth, content, this.nextOccurrence(type, depth, content)),
 			type,
 			depth,
 			content,
@@ -414,11 +431,12 @@ export class OsmosisParser {
 	}
 
 	/**
-	 * Generate a stable ID from node properties and position.
-	 * Uses a simple hash of type + content + position for identity.
+	 * Generate a stable ID from node properties and occurrence index.
+	 * Uses type + depth + content + occurrence count (not position) so that
+	 * IDs remain stable when frontmatter edits shift character positions.
 	 */
-	private generateId(type: NodeType, depth: number, content: string, range: Range): string {
-		const input = `${type}:${String(depth)}:${content}:${String(range.start)}`;
+	private generateId(type: NodeType, depth: number, content: string, occurrenceIndex: number): string {
+		const input = `${type}:${String(depth)}:${content}:${String(occurrenceIndex)}`;
 		return this.hash(input).slice(0, 12);
 	}
 

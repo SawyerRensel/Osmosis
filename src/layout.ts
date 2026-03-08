@@ -99,6 +99,7 @@ export function computeLayout(
 	config: Partial<LayoutConfig> = {},
 	collapsedIds?: Set<string>,
 	nodeSizes?: NodeSizeMap,
+	nodeShapes?: Map<string, TopicShape>,
 ): LayoutResult {
 	const cfg = { ...DEFAULT_LAYOUT_CONFIG, ...config };
 	const isTopDown = cfg.direction === "top-down";
@@ -107,7 +108,7 @@ export function computeLayout(
 	const root = buildLayoutTree(tree.root, null, 0, collapsedIds);
 
 	// Assign sizes
-	assignSizes(root, cfg, nodeSizes);
+	assignSizes(root, cfg, nodeSizes, nodeShapes);
 
 	// Compute subtree spans (secondary axis extent)
 	computeSubtreeSpans(root, cfg);
@@ -162,6 +163,7 @@ function assignSizes(
 	node: LayoutNode,
 	cfg: LayoutConfig,
 	nodeSizes?: NodeSizeMap,
+	nodeShapes?: Map<string, TopicShape>,
 ): void {
 	if (node.source.type === "root") {
 		// Root node has no visual representation
@@ -179,11 +181,11 @@ function assignSizes(
 			contentH = cfg.defaultNodeHeight;
 		}
 
-		if (cfg.topicShape === "circle") {
+		// Use per-node shape override if available, else fall back to global
+		const effectiveShape = nodeShapes?.get(node.source.id) ?? cfg.topicShape;
+
+		if (effectiveShape === "circle") {
 			// Circle: size so the inscribed content area (after insets) fits content.
-			// With insets of 0.08 per side, available fraction = 0.84.
-			// Use max(paddedW, paddedH) / 0.84 as the baseline, but also
-			// ensure at least the diagonal so content corners don't clip.
 			const paddedW = contentW + cfg.nodePaddingX * 2;
 			const paddedH = contentH + cfg.nodePaddingY * 2;
 			const insets = getShapeInsets("circle");
@@ -196,7 +198,7 @@ function assignSizes(
 		} else {
 			// Inflate node dimensions to account for shape insets so content fits
 			// within the inscribed rectangle of the shape.
-			const insets = getShapeInsets(cfg.topicShape);
+			const insets = getShapeInsets(effectiveShape);
 			const totalInsetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
 			const totalInsetY = Math.min(insets.top, 0.45) + Math.min(insets.bottom, 0.45);
 
@@ -209,7 +211,7 @@ function assignSizes(
 	}
 
 	for (const child of node.children) {
-		assignSizes(child, cfg, nodeSizes);
+		assignSizes(child, cfg, nodeSizes, nodeShapes);
 	}
 }
 

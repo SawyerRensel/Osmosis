@@ -4,15 +4,18 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
-import type { TopicShape } from "../styles";
+import type { TopicShape, NodeStyle } from "../styles";
+import { lookupNodeStyle, resolveNodeStyle } from "../styles";
 import { getThemeNames } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
+import { ColorPicker, extractThemeColors } from "./ColorPicker";
+import { FontPicker } from "./FontPicker";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
 type TabId = "map" | "format";
 
-/** Section header names for the Format tab skeleton. */
+/** Section header names for the Format tab. */
 const FORMAT_SECTIONS = [
 	"Style class",
 	"Shape",
@@ -22,6 +25,41 @@ const FORMAT_SECTIONS = [
 	"Branch line",
 ] as const;
 
+/** References to live Format tab controls for value updates. */
+interface FormatControls {
+	shapeDropdown: HTMLSelectElement | null;
+	fillSwatch: HTMLElement | null;
+	borderColorSwatch: HTMLElement | null;
+	borderWidthSlider: HTMLInputElement | null;
+	borderStyleDropdown: HTMLSelectElement | null;
+	fontPicker: FontPicker | null;
+	textSizeSlider: HTMLInputElement | null;
+	textWeightDropdown: HTMLSelectElement | null;
+	textColorSwatch: HTMLElement | null;
+	textAlignBtns: HTMLElement | null;
+	branchColorSwatch: HTMLElement | null;
+	branchThicknessSlider: HTMLInputElement | null;
+	branchStyleDropdown: HTMLSelectElement | null;
+}
+
+function emptyFormatControls(): FormatControls {
+	return {
+		shapeDropdown: null,
+		fillSwatch: null,
+		borderColorSwatch: null,
+		borderWidthSlider: null,
+		borderStyleDropdown: null,
+		fontPicker: null,
+		textSizeSlider: null,
+		textWeightDropdown: null,
+		textColorSwatch: null,
+		textAlignBtns: null,
+		branchColorSwatch: null,
+		branchThicknessSlider: null,
+		branchStyleDropdown: null,
+	};
+}
+
 export class PropertiesSidebarView extends ItemView {
 	plugin: OsmosisPlugin;
 	private currentFilePath: string | null = null;
@@ -30,6 +68,8 @@ export class PropertiesSidebarView extends ItemView {
 	private tabContents: Record<TabId, HTMLElement> | null = null;
 	private formatControlEls: HTMLElement[] = [];
 	private selectionCleanup: (() => void) | null = null;
+	private controls: FormatControls = emptyFormatControls();
+	private activePickers: ColorPicker[] = [];
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -59,6 +99,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.closeAllPickers();
 		this.cleanupSelectionListener();
 		this.contentEl.empty();
 	}
@@ -124,6 +165,7 @@ export class PropertiesSidebarView extends ItemView {
 		}
 
 		this.currentFilePath = filePath;
+		this.closeAllPickers();
 		this.contentEl.empty();
 
 		if (!mindMap || !filePath) {
@@ -325,6 +367,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	private renderFormatTab(container: HTMLElement): void {
 		this.formatControlEls = [];
+		this.controls = emptyFormatControls();
 
 		// "No node selected" banner — shown/hidden dynamically
 		const noSelBanner = container.createDiv({
@@ -333,7 +376,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 		this.formatControlEls.push(noSelBanner);
 
-		// Collapsible sections with placeholder controls
+		// Collapsible sections with live controls
 		for (const section of FORMAT_SECTIONS) {
 			const sectionEl = container.createDiv({
 				cls: "osmosis-format-section",
@@ -348,7 +391,7 @@ export class PropertiesSidebarView extends ItemView {
 				cls: "osmosis-format-section-body",
 			});
 
-			this.renderFormatSectionPlaceholder(section, body);
+			this.renderFormatSection(section, body);
 
 			// Toggle collapse
 			header.addEventListener("click", () => {
@@ -362,96 +405,293 @@ export class PropertiesSidebarView extends ItemView {
 		this.updateFormatTabState();
 	}
 
-	/** Render placeholder controls for a Format section. */
-	private renderFormatSectionPlaceholder(
+	/** Render live controls for a Format section. */
+	private renderFormatSection(
 		section: (typeof FORMAT_SECTIONS)[number],
 		body: HTMLElement,
 	): void {
 		switch (section) {
 			case "Style class":
-				new Setting(body)
-					.setName("Class")
-					.setDesc("Coming soon")
-					.addDropdown((d) =>
-						d.addOption("none", "(none)").setDisabled(true),
-					);
+				this.renderStyleClassSection(body);
 				break;
 			case "Shape":
-				new Setting(body)
-					.setName("Shape")
-					.addDropdown((dropdown) => {
-						for (const [value, label] of Object.entries(
-							SHAPE_LABELS,
-						)) {
-							dropdown.addOption(value, label);
-						}
-						dropdown.setDisabled(true);
-					});
+				this.renderShapeSection(body);
 				break;
 			case "Fill":
-				new Setting(body)
-					.setName("Color")
-					.setDesc("Color picker coming soon")
-					.addText((text) =>
-						text
-							.setPlaceholder("#ffffff")
-							.setDisabled(true),
-					);
+				this.renderFillSection(body);
 				break;
 			case "Border":
-				new Setting(body)
-					.setName("Color")
-					.addText((text) =>
-						text.setPlaceholder("#000000").setDisabled(true),
-					);
-				new Setting(body)
-					.setName("Width")
-					.addSlider((s) =>
-						s.setLimits(0, 8, 1).setValue(1).setDisabled(true),
-					);
-				new Setting(body)
-					.setName("Style")
-					.addDropdown((d) =>
-						d
-							.addOption("solid", "Solid")
-							.addOption("dashed", "Dashed")
-							.addOption("dotted", "Dotted")
-							.addOption("none", "None")
-							.setDisabled(true),
-					);
+				this.renderBorderSection(body);
 				break;
 			case "Text":
-				new Setting(body)
-					.setName("Font family")
-					.setDesc("Font picker coming soon")
-					.addText((text) =>
-						text.setPlaceholder("Inter").setDisabled(true),
-					);
-				new Setting(body)
-					.setName("Size")
-					.addSlider((s) =>
-						s.setLimits(8, 48, 1).setValue(14).setDisabled(true),
-					);
-				new Setting(body)
-					.setName("Color")
-					.addText((text) =>
-						text.setPlaceholder("#000000").setDisabled(true),
-					);
+				this.renderTextSection(body);
 				break;
 			case "Branch line":
-				new Setting(body)
-					.setName("Color")
-					.addText((text) =>
-						text.setPlaceholder("#888888").setDisabled(true),
-					);
-				new Setting(body)
-					.setName("Thickness")
-					.addSlider((s) =>
-						s.setLimits(1, 8, 1).setValue(2).setDisabled(true),
-					);
+				this.renderBranchLineSection(body);
 				break;
 		}
 	}
+
+	private renderStyleClassSection(body: HTMLElement): void {
+		new Setting(body)
+			.setName("Class")
+			.setDesc("Coming soon")
+			.addDropdown((d) =>
+				d.addOption("none", "(none)").setDisabled(true),
+			);
+	}
+
+	private renderShapeSection(body: HTMLElement): void {
+		new Setting(body)
+			.setName("Shape")
+			.addDropdown((dropdown) => {
+				dropdown.addOption("inherit", "(inherit)");
+				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
+					dropdown.addOption(value, label);
+				}
+				dropdown.onChange(async (value) => {
+					if (value === "inherit") {
+						await this.writeNodeStyle({ shape: undefined });
+					} else {
+						await this.writeNodeStyle({ shape: value as TopicShape });
+					}
+				});
+				this.controls.shapeDropdown = dropdown.selectEl;
+			});
+	}
+
+	private renderFillSection(body: HTMLElement): void {
+		const setting = new Setting(body).setName("Color");
+		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.fillSwatch = swatch;
+
+		swatch.addEventListener("click", () => {
+			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+				void this.writeNodeStyle({ fill: color });
+			});
+		});
+	}
+
+	private renderBorderSection(body: HTMLElement): void {
+		// Color
+		const colorSetting = new Setting(body).setName("Color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.borderColorSwatch = colorSwatch;
+
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ border: { color } });
+			});
+		});
+
+		// Width
+		new Setting(body)
+			.setName("Width")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, 8, 1)
+					.setValue(1)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ border: { width: value } });
+					});
+				this.controls.borderWidthSlider = slider.sliderEl;
+			});
+
+		// Style
+		new Setting(body)
+			.setName("Style")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(inherit)")
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.addOption("none", "None")
+					.onChange(async (value) => {
+						if (value === "inherit") {
+							await this.writeNodeStyle({ border: { style: undefined } });
+						} else {
+							await this.writeNodeStyle({
+								border: { style: value as "solid" | "dashed" | "dotted" | "none" },
+							});
+						}
+					});
+				this.controls.borderStyleDropdown = dropdown.selectEl;
+			});
+	}
+
+	private renderTextSection(body: HTMLElement): void {
+		// Font family
+		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
+		const fontLabel = new Setting(fontContainer).setName("Font family");
+		const fontPickerEl = fontLabel.controlEl.createDiv();
+		const fp = new FontPicker({
+			app: this.app,
+			plugin: this.plugin,
+			initialFont: "",
+			onChange: (font) => {
+				void this.writeNodeStyle({ text: { font: font || undefined } });
+			},
+		});
+		void fp.render(fontPickerEl);
+		this.controls.fontPicker = fp;
+
+		// Size
+		new Setting(body)
+			.setName("Size")
+			.addSlider((slider) => {
+				slider
+					.setLimits(8, 48, 1)
+					.setValue(14)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ text: { size: value } });
+					});
+				this.controls.textSizeSlider = slider.sliderEl;
+			});
+
+		// Weight
+		new Setting(body)
+			.setName("Weight")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(inherit)")
+					.addOption("400", "Normal")
+					.addOption("700", "Bold")
+					.onChange(async (value) => {
+						if (value === "inherit") {
+							await this.writeNodeStyle({ text: { weight: undefined } });
+						} else {
+							await this.writeNodeStyle({ text: { weight: Number(value) } });
+						}
+					});
+				this.controls.textWeightDropdown = dropdown.selectEl;
+			});
+
+		// Color
+		const textColorSetting = new Setting(body).setName("Color");
+		const textColorSwatch = textColorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.textColorSwatch = textColorSwatch;
+
+		textColorSwatch.addEventListener("click", () => {
+			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ text: { color } });
+			});
+		});
+
+		// Alignment
+		const alignSetting = new Setting(body).setName("Alignment");
+		const alignGroup = alignSetting.controlEl.createDiv({ cls: "osmosis-align-group" });
+		this.controls.textAlignBtns = alignGroup;
+
+		for (const align of ["left", "center", "right"] as const) {
+			const btn = alignGroup.createEl("button", {
+				cls: "osmosis-align-btn",
+				attr: { "data-align": align },
+			});
+			btn.textContent = align === "left" ? "\u2190" : align === "center" ? "\u2194" : "\u2192";
+			btn.setAttribute("title", align.charAt(0).toUpperCase() + align.slice(1));
+			btn.addEventListener("click", () => {
+				void this.writeNodeStyle({ text: { alignment: align } });
+			});
+		}
+	}
+
+	private renderBranchLineSection(body: HTMLElement): void {
+		// Shape (line style)
+		new Setting(body)
+			.setName("Shape")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(inherit)")
+					.addOption("curved", "Curved")
+					.addOption("straight", "Straight")
+					.addOption("angular", "Angular")
+					.addOption("rounded-elbow", "Rounded elbow")
+					.onChange(async (value) => {
+						if (value === "inherit") {
+							await this.writeNodeStyle({ branchLine: { style: undefined } });
+						} else {
+							await this.writeNodeStyle({
+								branchLine: { style: value as "curved" | "straight" | "angular" | "rounded-elbow" },
+							});
+						}
+					});
+				this.controls.branchStyleDropdown = dropdown.selectEl;
+			});
+
+		// Color
+		const colorSetting = new Setting(body).setName("Color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.branchColorSwatch = colorSwatch;
+
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
+				void this.writeNodeStyle({ branchLine: { color } });
+			});
+		});
+
+		// Thickness
+		new Setting(body)
+			.setName("Thickness")
+			.addSlider((slider) => {
+				slider
+					.setLimits(1, 8, 1)
+					.setValue(2)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ branchLine: { thickness: value } });
+					});
+				this.controls.branchThicknessSlider = slider.sliderEl;
+			});
+	}
+
+	// ─── Color Picker Helper ─────────────────────────────────
+
+	private openColorPicker(anchor: HTMLElement, initialColor: string, onChange: (color: string) => void): void {
+		this.closeAllPickers();
+		const mindMap = this.getActiveMindMap();
+		const themeColors = extractThemeColors(mindMap?.getActiveTheme());
+
+		const picker = new ColorPicker({
+			app: this.app,
+			plugin: this.plugin,
+			initialColor,
+			themeColors,
+			onChange,
+		});
+		this.activePickers.push(picker);
+		picker.open(anchor);
+	}
+
+	private closeAllPickers(): void {
+		for (const p of this.activePickers) {
+			p.close();
+		}
+		this.activePickers = [];
+	}
+
+	// ─── Node Style Write ────────────────────────────────────
+
+	/** Apply a partial NodeStyle override to all selected nodes. */
+	private async writeNodeStyle(update: NodeStyle): Promise<void> {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const selection = mindMap.getSelectedNodeInfo();
+		if (!selection || selection.nodeIds.length === 0) return;
+
+		const overrides = new Map<string, NodeStyle>();
+		for (const nodeId of selection.nodeIds) {
+			overrides.set(nodeId, update);
+		}
+
+		await mindMap.applyNodeStyleOverrides(overrides);
+		this.refreshFormatControls();
+	}
+
+	// ─── Format Tab State ────────────────────────────────────
 
 	/** Update Format tab disabled/enabled state based on selection. */
 	private updateFormatTabState(): void {
@@ -478,6 +718,82 @@ export class PropertiesSidebarView extends ItemView {
 			if (section instanceof HTMLElement) {
 				section.toggleClass("is-disabled", !hasSelection);
 			}
+		}
+
+		if (hasSelection) {
+			this.refreshFormatControls();
+		}
+	}
+
+	/** Refresh all Format tab controls with the current selection's resolved style. */
+	private refreshFormatControls(): void {
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return;
+
+		const selection = mindMap.getSelectedNodeInfo();
+		if (!selection || !selection.primaryId) return;
+
+		const layoutNode = mindMap.getLayoutNodeById(selection.primaryId);
+		if (!layoutNode) return;
+
+		const theme = mindMap.getActiveTheme();
+		const fm = mindMap.getOsmosisStyleFrontmatter();
+		const localStyle = lookupNodeStyle(fm, layoutNode);
+		const nodeDepth = layoutNode.source.type === "heading" ? layoutNode.source.depth : undefined;
+		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle);
+
+		// Shape
+		if (this.controls.shapeDropdown) {
+			this.controls.shapeDropdown.value = localStyle?.shape ?? "inherit";
+		}
+
+		// Fill
+		if (this.controls.fillSwatch) {
+			this.controls.fillSwatch.style.backgroundColor = resolved.fill ?? "";
+		}
+
+		// Border
+		if (this.controls.borderColorSwatch) {
+			this.controls.borderColorSwatch.style.backgroundColor = resolved.border?.color ?? "";
+		}
+		if (this.controls.borderWidthSlider) {
+			this.controls.borderWidthSlider.value = String(resolved.border?.width ?? 1);
+		}
+		if (this.controls.borderStyleDropdown) {
+			this.controls.borderStyleDropdown.value = localStyle?.border?.style ?? "inherit";
+		}
+
+		// Text
+		this.controls.fontPicker?.setFont(resolved.text?.font ?? "");
+		if (this.controls.textSizeSlider) {
+			this.controls.textSizeSlider.value = String(resolved.text?.size ?? 14);
+		}
+		if (this.controls.textWeightDropdown) {
+			const w = localStyle?.text?.weight;
+			this.controls.textWeightDropdown.value = w != null ? String(w) : "inherit";
+		}
+		if (this.controls.textColorSwatch) {
+			this.controls.textColorSwatch.style.backgroundColor = resolved.text?.color ?? "";
+		}
+		if (this.controls.textAlignBtns) {
+			const align = resolved.text?.alignment ?? "left";
+			const btns = this.controls.textAlignBtns.querySelectorAll(".osmosis-align-btn");
+			btns.forEach((btn) => {
+				if (btn instanceof HTMLElement) {
+					btn.toggleClass("is-active", btn.getAttribute("data-align") === align);
+				}
+			});
+		}
+
+		// Branch line
+		if (this.controls.branchStyleDropdown) {
+			this.controls.branchStyleDropdown.value = localStyle?.branchLine?.style ?? "inherit";
+		}
+		if (this.controls.branchColorSwatch) {
+			this.controls.branchColorSwatch.style.backgroundColor = resolved.branchLine?.color ?? "";
+		}
+		if (this.controls.branchThicknessSlider) {
+			this.controls.branchThicknessSlider.value = String(resolved.branchLine?.thickness ?? 2);
 		}
 	}
 

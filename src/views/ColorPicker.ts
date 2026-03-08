@@ -179,10 +179,24 @@ export class ColorPicker {
 		});
 		this.popoverEl = popover;
 
-		// Position below anchor
+		// Position below anchor, clamped to stay within viewport
 		const rect = anchor.getBoundingClientRect();
-		popover.style.setProperty("--picker-top", `${rect.bottom + 4}px`);
-		popover.style.setProperty("--picker-left", `${rect.left}px`);
+		const pickerWidth = 232; // matches CSS width
+		const left = Math.min(rect.left, window.innerWidth - pickerWidth - 8);
+		popover.style.setProperty("--picker-left", `${Math.max(8, left)}px`);
+
+		// Vertical: prefer below, flip above if not enough room
+		const spaceBelow = window.innerHeight - rect.bottom - 8;
+		const spaceAbove = rect.top - 8;
+		const pickerHeight = 400; // approximate max height
+		if (spaceBelow < pickerHeight && spaceAbove > spaceBelow) {
+			popover.addClass("is-flipped");
+			popover.style.setProperty("--picker-bottom", `${window.innerHeight - rect.top + 4}px`);
+			popover.style.setProperty("--picker-max-height", `${spaceAbove}px`);
+		} else {
+			popover.style.setProperty("--picker-top", `${rect.bottom + 4}px`);
+			popover.style.setProperty("--picker-max-height", `${spaceBelow}px`);
+		}
 
 		// Theme palette
 		this.renderSection(popover, "Theme", () =>
@@ -381,11 +395,15 @@ export class ColorPicker {
 
 		let dragging = false;
 		canvas.addEventListener("mousedown", (e) => {
+			e.stopPropagation(); // Prevent mind map selection changes
 			dragging = true;
 			handleCanvasInput(e);
 		});
 		document.addEventListener("mousemove", (e) => {
-			if (dragging) handleCanvasInput(e);
+			if (dragging) {
+				e.stopPropagation();
+				handleCanvasInput(e);
+			}
 		});
 		document.addEventListener("mouseup", () => {
 			dragging = false;

@@ -22,8 +22,8 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, parseOsmosisStyleFrontmatter } from "../styles";
-import type { ThemeDefinition, OsmosisStyleFrontmatter } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector } from "../styles";
+import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
 import {
@@ -463,6 +463,97 @@ export class MindMapView extends ItemView {
 	/** Unregister a selection change callback. */
 	offSelectionChange(fn: () => void): void {
 		this.selectionChangeListeners.delete(fn);
+	}
+
+	/** Look up a LayoutNode by its source node ID. */
+	getLayoutNodeById(id: string): LayoutNode | null {
+		return this.nodeMap.get(id) ?? null;
+	}
+
+	/** Get the currently active theme definition. */
+	getActiveTheme(): ThemeDefinition | undefined {
+		return this.activeTheme;
+	}
+
+	/** Get the parsed osmosis: frontmatter for the current file. */
+	getOsmosisStyleFrontmatter(): OsmosisStyleFrontmatter | undefined {
+		return this.osmosisStyleFrontmatter;
+	}
+
+	/** Get the current file (for frontmatter writes). */
+	getCurrentFile(): TFile | null {
+		return this.currentFile;
+	}
+
+	/**
+	 * Apply per-node style overrides to frontmatter in a single batch write.
+	 * Each entry maps a node ID to its complete Local-level NodeStyle.
+	 * Existing overrides for unlisted nodes are preserved.
+	 */
+	async applyNodeStyleOverrides(overrides: Map<string, NodeStyle>): Promise<void> {
+		if (!this.currentFile || overrides.size === 0) return;
+
+		this.suppressNextReload = true;
+
+		// Capture the written styles so we can update immediately without
+		// waiting for Obsidian's async metadata cache to refresh.
+		let writtenStyles: Record<string, NodeStyle> | undefined;
+
+		await this.app.fileManager.processFrontMatter(
+			this.currentFile,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis"] = osmosis;
+				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
+				osmosis["styles"] = styles;
+
+				for (const [nodeId, style] of overrides) {
+					const layoutNode = this.nodeMap.get(nodeId);
+					if (!layoutNode) continue;
+
+					const selector = buildStableIdSelector(layoutNode.source);
+					const existing = styles[selector] ?? {};
+
+					// Merge new properties into existing override
+					const merged = { ...existing };
+					if (style.shape !== undefined) merged.shape = style.shape;
+					if (style.fill !== undefined) merged.fill = style.fill;
+					if (style.background !== undefined) merged.background = style.background;
+					if (style.text) merged.text = { ...merged.text, ...style.text };
+					if (style.border) merged.border = { ...merged.border, ...style.border };
+					if (style.branchLine) merged.branchLine = { ...merged.branchLine, ...style.branchLine };
+
+					styles[selector] = merged;
+				}
+
+				// Clean up empty
+				if (Object.keys(styles).length === 0) {
+					delete osmosis["styles"];
+				} else {
+					writtenStyles = { ...styles };
+				}
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+			},
+		);
+
+		// Update frontmatter cache immediately from what we just wrote,
+		// since Obsidian's metadataCache update is async and may lag.
+		if (writtenStyles) {
+			if (!this.osmosisStyleFrontmatter) {
+				this.osmosisStyleFrontmatter = { styles: writtenStyles };
+			} else {
+				this.osmosisStyleFrontmatter.styles = writtenStyles;
+			}
+		} else {
+			this.loadOsmosisStyleFrontmatter();
+		}
+
+		this.nodeSizeCache.clear();
+		await this.render();
 	}
 
 	private notifySelectionChange(): void {
@@ -4440,10 +4531,14 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Build per-node shape overrides from frontmatter
+		const nodeShapes = this.buildNodeShapeMap();
+
 		// Measure actual content sizes before layout
 		const nodeSizes = await this.measureNodeSizes(
 			container,
 			this.currentTree,
+			nodeShapes,
 		);
 
 		const layout = computeLayout(
@@ -4456,6 +4551,7 @@ export class MindMapView extends ItemView {
 			},
 			this.collapsedIds,
 			nodeSizes,
+			nodeShapes,
 		);
 		this.currentLayout = layout;
 
@@ -4497,28 +4593,37 @@ export class MindMapView extends ItemView {
 	private async measureNodeSizes(
 		container: HTMLElement,
 		tree: OsmosisTree,
+		nodeShapes?: Map<string, TopicShape>,
 	): Promise<Map<string, { width: number; height: number }>> {
 		const sizes = new Map<string, { width: number; height: number }>();
 		const cfg = DEFAULT_LAYOUT_CONFIG;
 		// Reduce max content width for shapes with insets so text wraps before
 		// the shape boundary clips it.
-		const shapeInsets = getShapeInsets(this.mapSettings.topicShape ?? "rounded-rect");
-		const totalInsetX = Math.min(shapeInsets.left, 0.45) + Math.min(shapeInsets.right, 0.45);
-		const shapeScale = 1 - totalInsetX;
-		const contentMaxWidth = cfg.maxNodeWidth * shapeScale - cfg.nodePaddingX * 2;
+		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
+		const globalShapeInsets = getShapeInsets(globalShape);
+		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
+		const globalShapeScale = 1 - globalTotalInsetX;
+		const defaultContentMaxWidth = cfg.maxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
 
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
 
 		// Collect nodes that need measurement (not in cache).
-		// Cache key includes heading depth since typography varies by level.
+		// Cache key includes heading depth and per-node style hash since typography varies.
+		const fmStyles = this.osmosisStyleFrontmatter?.styles;
 		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string }[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
+			// Include per-node text style and shape in cache key so changes invalidate
+			const localStyle = fmStyles?.[`_n:${node.id}`];
+			const textStyleKey = localStyle?.text
+				? JSON.stringify(localStyle.text)
+				: "";
+			const shapeKey = nodeShapes?.get(node.id) ?? "";
 			const cacheKey = node.type === "heading"
-				? `h${String(node.depth)}:${displayContent}`
-				: displayContent;
+				? `h${String(node.depth)}:${displayContent}:${textStyleKey}:${shapeKey}`
+				: `${displayContent}:${textStyleKey}:${shapeKey}`;
 			const cached = this.nodeSizeCache.get(cacheKey);
 			if (cached) {
 				sizes.set(node.id, cached);
@@ -4544,18 +4649,17 @@ export class MindMapView extends ItemView {
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
 				}
-				// Apply theme text styles for accurate measurement
-				if (this.activeTheme) {
-					const nodeDepth = node.type === "heading" ? node.depth : 0;
-					const style = resolveNodeStyle(this.activeTheme, nodeDepth);
-					const textStyles: string[] = ["width: 9999px"];
-					if (style.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
-					if (style.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
-					if (style.text?.font) textStyles.push(`font-family: ${style.text.font}`);
-					cell.setAttribute("style", textStyles.join("; "));
-				} else {
-					cell.setCssStyles({ width: "9999px" });
-				}
+				// Apply theme + per-node text styles for accurate measurement
+				const nodeDepth = node.type === "heading" ? node.depth : 0;
+				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
+				const style = (this.activeTheme || nodeLocalStyle)
+					? resolveNodeStyle(this.activeTheme, nodeDepth, nodeLocalStyle)
+					: undefined;
+				const textStyles: string[] = ["width: 9999px"];
+				if (style?.text?.size) textStyles.push(`font-size: ${String(style.text.size)}px`);
+				if (style?.text?.weight) textStyles.push(`font-weight: ${String(style.text.weight)}`);
+				if (style?.text?.font) textStyles.push(`font-family: ${style.text.font}`);
+				cell.setAttribute("style", textStyles.join("; "));
 				measurer.appendChild(cell);
 
 				if (this.renderComponent) {
@@ -4593,6 +4697,15 @@ export class MindMapView extends ItemView {
 				const contentRect = range.getBoundingClientRect();
 				const naturalWidth = contentRect.width;
 
+				// Compute per-node content max width based on effective shape
+				const nodeShape = nodeShapes?.get(node.id) ?? globalShape;
+				let contentMaxWidth = defaultContentMaxWidth;
+				if (nodeShape !== globalShape) {
+					const insets = getShapeInsets(nodeShape);
+					const insetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
+					contentMaxWidth = cfg.maxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
+				}
+
 				const finalWidth = Math.min(
 					Math.max(Math.ceil(naturalWidth), 40),
 					contentMaxWidth,
@@ -4624,6 +4737,21 @@ export class MindMapView extends ItemView {
 	}
 
 	/** Collect all OsmosisNodes from the tree into a flat array. */
+	/** Build a map of node ID → per-node shape override from frontmatter. */
+	private buildNodeShapeMap(): Map<string, TopicShape> {
+		const shapes = new Map<string, TopicShape>();
+		const fmStyles = this.osmosisStyleFrontmatter?.styles;
+		if (!fmStyles) return shapes;
+
+		for (const [selector, style] of Object.entries(fmStyles)) {
+			if (style.shape && selector.startsWith("_n:")) {
+				const nodeId = selector.slice(3);
+				shapes.set(nodeId, style.shape);
+			}
+		}
+		return shapes;
+	}
+
 	private collectAllNodes(node: OsmosisNode): OsmosisNode[] {
 		const result: OsmosisNode[] = [node];
 		for (const child of node.children) {
@@ -4915,7 +5043,9 @@ export class MindMapView extends ItemView {
 			if (style.border?.color) shapeStyles.push(`stroke: ${style.border.color}`);
 			if (style.border?.width) shapeStyles.push(`stroke-width: ${String(style.border.width)}`);
 			if (style.border?.style === "dashed") shapeStyles.push("stroke-dasharray: 4 2");
-			if (style.border?.style === "dotted") shapeStyles.push("stroke-dasharray: 1 2");
+			else if (style.border?.style === "dotted") shapeStyles.push("stroke-dasharray: 1 2");
+			else if (style.border?.style === "none") shapeStyles.push("stroke: none");
+			else if (style.border?.style === "solid") shapeStyles.push("stroke-dasharray: none");
 			if (shapeStyles.length > 0) shapeEl.setAttribute("style", shapeStyles.join("; "));
 			const textStyles: string[] = [];
 			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
@@ -5122,14 +5252,16 @@ export class MindMapView extends ItemView {
 			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
-		const path = document.createElementNS(SVG_NS, "path");
-		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, lineStyle));
-		path.setAttribute("class", "osmosis-branch-line");
-		path.setAttribute("data-child-id", child.source.id);
 		// Apply branch line styles: per-node frontmatter overrides > theme defaults
 		const childLocalStyle = lookupNodeStyle(this.osmosisStyleFrontmatter, child);
 		const branchLineOverride = childLocalStyle?.branchLine;
 		const themeBranchLine = this.activeTheme?.branchLine;
+		const effectiveLineStyle = branchLineOverride?.style ?? themeBranchLine?.style ?? lineStyle;
+
+		const path = document.createElementNS(SVG_NS, "path");
+		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle));
+		path.setAttribute("class", "osmosis-branch-line");
+		path.setAttribute("data-child-id", child.source.id);
 		if (branchLineOverride || themeBranchLine) {
 			const bl = { ...themeBranchLine, ...branchLineOverride };
 			const lineStyles: string[] = ["fill: none"];

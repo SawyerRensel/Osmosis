@@ -266,13 +266,15 @@ export class FontPicker {
 		});
 		this.popoverEl = popover;
 
-		// Position below anchor
+		// Position below anchor, clamped to stay within viewport
 		const rect = anchor.getBoundingClientRect();
+		const popoverWidth = Math.max(rect.width, 200);
+		const left = Math.min(rect.left, window.innerWidth - popoverWidth - 8);
 		popover.style.setProperty("--fp-top", `${rect.bottom + 4}px`);
-		popover.style.setProperty("--fp-left", `${rect.left}px`);
+		popover.style.setProperty("--fp-left", `${Math.max(8, left)}px`);
 		popover.style.setProperty(
 			"--fp-width",
-			`${Math.max(rect.width, 200)}px`,
+			`${popoverWidth}px`,
 		);
 
 		// Search input
@@ -398,6 +400,15 @@ export class FontPicker {
 		this.closePopover();
 
 		// Update the trigger button
+		const btn = this.containerEl?.querySelector(".osmosis-fp-trigger");
+		if (btn instanceof HTMLElement) {
+			this.updateTriggerButton(btn);
+		}
+	}
+
+	/** Update the displayed font without triggering onChange. */
+	setFont(family: string): void {
+		this.currentFont = family;
 		const btn = this.containerEl?.querySelector(".osmosis-fp-trigger");
 		if (btn instanceof HTMLElement) {
 			this.updateTriggerButton(btn);
