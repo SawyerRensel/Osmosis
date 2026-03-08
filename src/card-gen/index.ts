@@ -1,4 +1,10 @@
 export { generateHeadingCards } from "./heading";
 export { generateClozeCards } from "./cloze";
 export { generateExplicitCards } from "./explicit";
+export { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
+export { processNote } from "./note-processor";
+export { detectOrphanedCards, detectRestoredCards, applySessionQuotas } from "./orphans";
 export type { GeneratedCard, FenceMetadata } from "./types";
+export type { OsmosisFrontmatter } from "./frontmatter";
+export type { CardGenerationOptions, NoteProcessingResult } from "./note-processor";
+export type { SessionQuotas } from "./orphans";

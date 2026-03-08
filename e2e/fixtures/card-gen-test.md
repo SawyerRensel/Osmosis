@@ -1,5 +1,6 @@
 ---
 osmosis: true
+osmosis-deck: geography
 ---
 
 ## Capital Cities
@@ -9,6 +10,10 @@ Paris is the capital of France.
 The ==mitochondria== is the **powerhouse** of the cell.
 
 ## Empty Heading
+
+<!-- osmosis-exclude -->
+## Excluded Section
+This heading should not generate a card.
 
 ## History
 The ==Renaissance== began in **Italy** during the **14th century**.

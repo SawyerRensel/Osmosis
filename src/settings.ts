@@ -36,6 +36,9 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 	topicShape: "rounded-rect",
 };
 
+/** How to resolve heading vs. cloze conflicts in the same section. */
+export type HeadingClozeConflict = "both" | "cloze_only" | "heading_only";
+
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
@@ -48,6 +51,18 @@ export interface OsmosisSettings {
 	globalClasses: Record<string, import("./styles").NodeStyle>;
 	/** User-created custom themes, keyed by name. */
 	customThemes: Record<string, import("./styles").ThemeDefinition>;
+
+	// ── Spaced Repetition Settings ────────────────────────────
+	/** Whether headings automatically generate cards (default: true). */
+	headingAutoGenerate: boolean;
+	/** Whether **bold** text generates cloze cards (default: true). */
+	clozeBoldEnabled: boolean;
+	/** How to handle sections with both heading and cloze cards. */
+	headingClozeConflict: HeadingClozeConflict;
+	/** Maximum new cards per day (0 = unlimited). */
+	dailyNewCardLimit: number;
+	/** Maximum review cards per day (0 = unlimited). */
+	dailyReviewCardLimit: number;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -58,6 +73,13 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	customColors: [],
 	globalClasses: {},
 	customThemes: {},
+
+	// SR defaults
+	headingAutoGenerate: true,
+	clozeBoldEnabled: true,
+	headingClozeConflict: "cloze_only",
+	dailyNewCardLimit: 20,
+	dailyReviewCardLimit: 200,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
