@@ -132,7 +132,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "settings";
+		return "paintbrush";
 	}
 
 	async onOpen(): Promise<void> {
