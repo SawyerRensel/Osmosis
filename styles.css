@@ -1110,6 +1110,8 @@ hr.osmosis-map-style-divider {
 .osmosis-study-card {
 	padding: 16px;
 	min-height: 120px;
+	max-height: calc(85vh - 120px);
+	overflow-y: auto;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
 	background: var(--background-primary);
