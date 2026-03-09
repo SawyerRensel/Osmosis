@@ -175,7 +175,6 @@ export class MindMapView extends ItemView {
 	private isSpatialStudy = false;
 	private spatialHiddenIds = new Set<string>();
 	private spatialStudyActionEl: HTMLElement | null = null;
-	private spatialRatingBubble: HTMLDivElement | null = null;
 	/** Nodes whose front (question) is revealed but back (answer) is still hidden. */
 	private spatialFrontRevealedIds = new Set<string>();
 
@@ -375,7 +374,7 @@ export class MindMapView extends ItemView {
 		}
 		this.spatialHiddenIds.clear();
 		this.spatialFrontRevealedIds.clear();
-		this.removeSpatialRatingBubble();
+
 	}
 
 	private applySpatialHidden(nodeId: string, hidden: boolean): void {
@@ -408,7 +407,7 @@ export class MindMapView extends ItemView {
 	private handleSpatialStudyClick(nodeId: string): boolean {
 		if (!this.isSpatialStudy) return false;
 
-		// Step 2: front already revealed → show back + rating bubble
+		// Step 2: front already revealed → show back + auto-rate
 		if (this.spatialFrontRevealedIds.has(nodeId)) {
 			this.spatialFrontRevealedIds.delete(nodeId);
 			this.restoreFenceFullContent(nodeId);
@@ -416,7 +415,7 @@ export class MindMapView extends ItemView {
 			if (group) {
 				group.classList.add("osmosis-spatial-revealed");
 			}
-			this.showSpatialRatingBubble(nodeId);
+			this.rateSpatialNode(nodeId, 3);
 			return true;
 		}
 
@@ -439,12 +438,12 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		// Regular node: single-step reveal + rating
+		// Regular node: single-step reveal + auto-rate
 		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
 		if (group) {
 			group.classList.add("osmosis-spatial-revealed");
 		}
-		this.showSpatialRatingBubble(nodeId);
+		this.rateSpatialNode(nodeId, 3);
 
 		return true; // consumed the click
 	}
@@ -506,43 +505,6 @@ export class MindMapView extends ItemView {
 		wrapper.replaceChildren(stash);
 	}
 
-	private showSpatialRatingBubble(nodeId: string): void {
-		this.removeSpatialRatingBubble();
-
-		const node = this.nodeMap.get(nodeId);
-		if (!node || !this.svg) return;
-
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-
-		const bubble = document.body.createDiv({ cls: "osmosis-spatial-rating-bubble" });
-
-		// Use the actual rendered bounding rect for accurate screen positioning
-		const groupRect = group.getBoundingClientRect();
-
-		bubble.setCssProps({
-			"--osmosis-bubble-left": `${groupRect.left + groupRect.width / 2}px`,
-			"--osmosis-bubble-top": `${groupRect.bottom + 4}px`,
-		});
-
-		const ratings: Array<{ label: string; rating: 1 | 2 | 3 | 4; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-
-		for (const { label, rating, cls } of ratings) {
-			const btn = bubble.createEl("button", { text: label, cls });
-			btn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				this.rateSpatialNode(nodeId, rating);
-			});
-		}
-
-		this.spatialRatingBubble = bubble;
-	}
-
 	private rateSpatialNode(nodeId: string, rating: 1 | 2 | 3 | 4): void {
 		// Record the review via plugin's study session
 		const node = this.nodeMap.get(nodeId);
@@ -551,8 +513,6 @@ export class MindMapView extends ItemView {
 				this.plugin.refreshDashboard();
 			});
 		}
-		this.removeSpatialRatingBubble();
-
 		// Check if all nodes fully revealed (hidden + front-only both empty)
 		if (this.spatialHiddenIds.size === 0 && this.spatialFrontRevealedIds.size === 0) {
 			new Notice("All nodes revealed! Study session complete.");
@@ -579,12 +539,6 @@ export class MindMapView extends ItemView {
 		}
 	}
 
-	private removeSpatialRatingBubble(): void {
-		if (this.spatialRatingBubble) {
-			this.spatialRatingBubble.remove();
-			this.spatialRatingBubble = null;
-		}
-	}
 
 	async onOpen(): Promise<void> {
 		const container = this.contentEl;
@@ -783,7 +737,7 @@ export class MindMapView extends ItemView {
 			cancelAnimationFrame(this.cullRafId);
 			this.cullRafId = null;
 		}
-		this.removeSpatialRatingBubble();
+
 		this.spatialHiddenIds.clear();
 		this.spatialFrontRevealedIds.clear();
 		this.isSpatialStudy = false;
@@ -4479,16 +4433,6 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
-		// Spatial study: 1-4 to rate when rating bubble is visible
-		if (this.spatialRatingBubble) {
-			const ratingKey = ["1", "2", "3", "4"].indexOf(e.key);
-			if (ratingKey >= 0) {
-				e.preventDefault();
-				const btn = this.spatialRatingBubble.querySelectorAll("button")[ratingKey];
-				if (btn instanceof HTMLButtonElement) btn.click();
-				return;
-			}
-		}
 
 		switch (e.key) {
 			case "ArrowUp":
