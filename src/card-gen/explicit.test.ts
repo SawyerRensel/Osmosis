@@ -316,6 +316,44 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.deck).toBe("biology");
 		});
 
+		it("generates cloze cards from **bold** without separator", () => {
+			const md = [
+				"```osmosis",
+				"id: bold001",
+				"",
+				"**Bonjour** means **hello**",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards[0]!.card_type).toBe("explicit_cloze");
+			expect(cards[0]!.id).toBe("bold001-c1");
+			expect(cards[1]!.id).toBe("bold001-c2");
+
+			expect(cards[0]!.front).toBe("[...] means **hello**");
+			expect(cards[1]!.front).toBe("**Bonjour** means [...]");
+
+			for (const card of cards) {
+				expect(card.back).toBe("**Bonjour** means **hello**");
+			}
+		});
+
+		it("generates cloze cards from mixed ==highlight== and **bold**", () => {
+			const md = [
+				"```osmosis",
+				"id: mixed01",
+				"",
+				"==Bonjour== means **hello** in ==French==",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(3);
+
+			expect(cards[0]!.front).toBe("[...] means **hello** in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means [...] in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means **hello** in [...]");
+		});
+
 		it("skips fence without separator and without cloze", () => {
 			const md = [
 				"```osmosis",

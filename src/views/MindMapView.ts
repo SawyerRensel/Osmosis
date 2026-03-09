@@ -303,6 +303,39 @@ export class MindMapView extends ItemView {
 		};
 	}
 
+	/** Match ==term== or **term** cloze deletions. */
+	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
+
+	/**
+	 * If `content` is an ```osmosis fence with cloze deletions (no *** separator),
+	 * return { front, back } with all clozes blanked in front.
+	 */
+	private parseOsmosisCloze(content: string): { front: string; back: string } | null {
+		const lines = content.split("\n");
+		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
+		if (openIdx < 0) return null;
+		let closeIdx = -1;
+		for (let i = lines.length - 1; i > openIdx; i--) {
+			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
+		}
+		if (closeIdx <= openIdx) return null;
+		const body = lines.slice(openIdx + 1, closeIdx);
+		// Skip metadata lines
+		let start = 0;
+		for (let i = 0; i < body.length; i++) {
+			if (body[i]!.trim() === "") { start = i + 1; break; }
+			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
+		}
+		const text = body.slice(start).join("\n").trim();
+		if (!text) return null;
+
+		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
+		if (clozeMatches.length === 0) return null;
+
+		const front = text.replace(MindMapView.CLOZE_REGEX, "[...]");
+		return { front, back: text };
+	}
+
 	private toggleSpatialStudy(): void {
 		if (this.isSpatialStudy) {
 			this.exitSpatialStudy();
@@ -396,7 +429,8 @@ export class MindMapView extends ItemView {
 		// Check if this is an osmosis fence node → two-step reveal
 		const node = this.nodeMap.get(nodeId);
 		if (node?.source.type === "codeblock") {
-			const fence = this.parseOsmosisFence(node.source.content);
+			const fence = this.parseOsmosisFence(node.source.content)
+				?? this.parseOsmosisCloze(node.source.content);
 			if (fence) {
 				// Step 1: show front only
 				this.spatialFrontRevealedIds.add(nodeId);
@@ -443,11 +477,33 @@ export class MindMapView extends ItemView {
 		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
 		if (!wrapper) return;
 		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		if (stash) {
-			wrapper.replaceChildren(stash);
-			delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-			wrapper.classList.remove("osmosis-fence-front-only");
+		if (!stash) return;
+
+		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
+		wrapper.classList.remove("osmosis-fence-front-only");
+
+		// Instead of restoring the stash (which has hidden ░░░░░░ from contextual
+		// processor), render front + back directly as visible markdown.
+		const node = this.nodeMap.get(nodeId);
+		if (node && this.renderComponent) {
+			const fence = this.parseOsmosisFence(node.source.content)
+				?? this.parseOsmosisCloze(node.source.content);
+			if (fence) {
+				wrapper.replaceChildren();
+				const content = `${fence.front}\n\n---\n\n${fence.back}`;
+				void MarkdownRenderer.render(
+					this.app,
+					content,
+					wrapper,
+					this.currentFile?.path ?? "",
+					this.renderComponent,
+				);
+				return;
+			}
 		}
+
+		// Fallback: restore stash as-is
+		wrapper.replaceChildren(stash);
 	}
 
 	private showSpatialRatingBubble(nodeId: string): void {

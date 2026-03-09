@@ -43,6 +43,22 @@ id: cloze999
 ==Bonjour== means ==hello== in ==French==
 ```
 
+## Bold Cloze Card
+
+```osmosis
+id: boldcloze
+
+**Paris** is the capital of **France**
+```
+
+## Mixed Cloze Card
+
+```osmosis
+id: mixcloze
+
+==Bonjour== means **hello** in ==French==
+```
+
 ## Type-in Card
 
 ```osmosis

@@ -165,6 +165,9 @@ export class ContextualStudyProcessor {
 		}
 	}
 
+	/** Match ==term== or **term** cloze deletions. */
+	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
+
 	/**
 	 * Parse fence content into front/back/metadata.
 	 * Reuses the same format as explicit.ts card generators.
@@ -190,15 +193,26 @@ export class ContextualStudyProcessor {
 
 		const contentLines = lines.slice(contentStart);
 		const separatorIdx = contentLines.findIndex((l) => l.trim() === "***");
-		if (separatorIdx === -1) return null;
 
-		const front = contentLines.slice(0, separatorIdx).join("\n").trim();
-		const back = contentLines.slice(separatorIdx + 1).join("\n").trim();
+		if (separatorIdx >= 0) {
+			const front = contentLines.slice(0, separatorIdx).join("\n").trim();
+			const back = contentLines.slice(separatorIdx + 1).join("\n").trim();
+			if (!front && !back) return null;
+			const cardId = this.hashContent(`${front}|||${back}`);
+			return { front, back, cardId };
+		}
 
-		if (!front && !back) return null;
+		// No separator — check for cloze deletions (==term== or **term**)
+		const content = contentLines.join("\n").trim();
+		if (!content) return null;
 
-		const cardId = this.hashContent(`${front}|||${back}`);
-		return { front, back, cardId };
+		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
+		if (clozeMatches.length === 0) return null;
+
+		// Front: all clozes replaced with [...]; Back: full text with markers
+		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "[...]");
+		const cardId = this.hashContent(`cloze|||${content}`);
+		return { front, back: content, cardId };
 	}
 
 	private hashContent(content: string): string {

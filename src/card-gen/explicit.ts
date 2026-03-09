@@ -5,8 +5,8 @@ import type { GeneratedCard, FenceMetadata } from "./types";
 const FENCE_REGEX = /^```osmosis\s*$/;
 const FENCE_END_REGEX = /^```\s*$/;
 const SEPARATOR = "***";
-/** Match ==term== cloze deletions. */
-const CLOZE_REGEX = /==([^=]+)==/g;
+/** Match ==term== or **term** cloze deletions. */
+const CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
 
 /**
  * Generate explicit cards from ```osmosis code fences.
