@@ -360,8 +360,7 @@ export class MindMapView extends ItemView {
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
 
-		const container = this.contentEl;
-		const bubble = container.createDiv({ cls: "osmosis-spatial-rating-bubble" });
+		const bubble = document.body.createDiv({ cls: "osmosis-spatial-rating-bubble" });
 
 		// Use the actual rendered bounding rect for accurate screen positioning
 		const groupRect = group.getBoundingClientRect();
@@ -393,7 +392,9 @@ export class MindMapView extends ItemView {
 		// Record the review via plugin's study session
 		const node = this.nodeMap.get(nodeId);
 		if (node) {
-			void this.recordSpatialReview(node.source.id, rating);
+			void this.recordSpatialReview(node.source.id, rating).then(() => {
+				this.plugin.refreshDashboard();
+			});
 		}
 		this.removeSpatialRatingBubble();
 

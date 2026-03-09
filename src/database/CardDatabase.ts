@@ -242,7 +242,7 @@ export class CardDatabase {
 	 */
 	getAllDecks(): string[] {
 		const results = this.requireDb().exec(
-			`SELECT DISTINCT deck FROM cards WHERE deleted_at IS NULL ORDER BY deck`,
+			`SELECT DISTINCT deck FROM cards WHERE deleted_at IS NULL AND deck != '' ORDER BY deck`,
 		);
 		const first = results[0];
 		if (!first) return [];
@@ -260,7 +260,7 @@ export class CardDatabase {
 				SUM(CASE WHEN s.state = 'review' AND s.due <= ${now} THEN 1 ELSE 0 END) as due_count
 			FROM cards c
 			LEFT JOIN card_schedule s ON c.id = s.card_id
-			WHERE c.deleted_at IS NULL
+			WHERE c.deleted_at IS NULL AND c.deck != ''
 			GROUP BY c.deck
 		`);
 		const first = results[0];

@@ -145,6 +145,7 @@ export class ContextualStudyProcessor {
 			);
 		}
 		this.sessionManager.recordReview(cardId, rating, "contextual");
+		this.plugin.refreshDashboard();
 	}
 
 	/**

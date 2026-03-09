@@ -90,11 +90,7 @@ export default class OsmosisPlugin extends Plugin {
 		// Full vault scan once layout is ready (files are loaded)
 		this.app.workspace.onLayoutReady(() => {
 			void this.cardSync.syncAll().then(() => {
-				// Refresh any open dashboard views after sync completes
-				for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-					const view = leaf.view as DashboardSidebarView;
-					void view.render();
-				}
+				this.refreshDashboard();
 			});
 		});
 
@@ -173,6 +169,14 @@ export default class OsmosisPlugin extends Plugin {
 			active: true,
 		});
 		void workspace.revealLeaf(leaf);
+	}
+
+	/** Re-render any open dashboard sidebar views. */
+	refreshDashboard(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
+			const view = leaf.view as DashboardSidebarView;
+			void view.render();
+		}
 	}
 
 	async activateDashboard(): Promise<void> {
