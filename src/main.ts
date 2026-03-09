@@ -1,8 +1,9 @@
-import { Plugin, WorkspaceLeaf } from "obsidian";
+import { Plugin, TFile, WorkspaceLeaf, debounce } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { CardDatabase } from "./database/CardDatabase";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
+import { CardSyncService } from "./card-gen/CardSyncService";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -13,12 +14,24 @@ import type { DeckScope } from "./study/types";
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
 	cardDb!: CardDatabase;
+	cardSync!: CardSyncService;
 
 	async onload() {
 		await this.loadSettings();
 
 		// Card database — lazy initialized on first SR access, not here
 		this.cardDb = new CardDatabase(".osmosis/cards.db", this.app.vault.adapter);
+
+		// Card sync service — connects note processor to database
+		this.cardSync = new CardSyncService(
+			this.app.vault,
+			this.cardDb,
+			() => ({
+				headingAutoGenerate: this.settings.headingAutoGenerate,
+				clozeBoldEnabled: this.settings.clozeBoldEnabled,
+				headingClozeConflict: this.settings.headingClozeConflict,
+			}),
+		);
 
 		this.addSettingTab(new OsmosisSettingTab(this.app, this));
 
@@ -72,6 +85,49 @@ export default class OsmosisPlugin extends Plugin {
 
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
+
+		// ── Card Sync ───────────────────────────────────────────
+		// Full vault scan once layout is ready (files are loaded)
+		this.app.workspace.onLayoutReady(() => {
+			void this.cardSync.syncAll();
+		});
+
+		// Incremental sync on file changes (debounced)
+		const debouncedSync = debounce((file: TFile) => {
+			void this.cardSync.syncFile(file);
+		}, 2000, true);
+
+		this.registerEvent(
+			this.app.vault.on("modify", (file) => {
+				if (file instanceof TFile && file.extension === "md") {
+					debouncedSync(file);
+				}
+			}),
+		);
+
+		this.registerEvent(
+			this.app.vault.on("create", (file) => {
+				if (file instanceof TFile && file.extension === "md") {
+					debouncedSync(file);
+				}
+			}),
+		);
+
+		this.registerEvent(
+			this.app.vault.on("delete", (file) => {
+				if (file instanceof TFile && file.extension === "md") {
+					this.cardSync.handleDelete(file.path);
+				}
+			}),
+		);
+
+		this.registerEvent(
+			this.app.vault.on("rename", (file, oldPath) => {
+				if (file instanceof TFile && file.extension === "md") {
+					this.cardSync.handleRename(oldPath, file.path);
+				}
+			}),
+		);
 	}
 
 	onunload() {

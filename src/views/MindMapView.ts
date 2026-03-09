@@ -365,8 +365,10 @@ export class MindMapView extends ItemView {
 		const scale = svgRect.width / this.viewBox.w;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
-		const nodeScreenX = (node.rect.x + offsetX - this.viewBox.x) * scale + svgRect.left;
-		const nodeScreenY = (node.rect.y + node.rect.height + offsetY - this.viewBox.y) * scale + svgRect.top;
+		const nodeCenterX = node.rect.x + offsetX + node.rect.width / 2;
+		const nodeBottomY = node.rect.y + offsetY + node.rect.height;
+		const nodeScreenX = (nodeCenterX - this.viewBox.x) * scale + svgRect.left;
+		const nodeScreenY = (nodeBottomY - this.viewBox.y) * scale + svgRect.top;
 
 		bubble.setCssProps({
 			"--osmosis-bubble-left": `${nodeScreenX}px`,

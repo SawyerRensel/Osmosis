@@ -1485,6 +1485,7 @@ hr.osmosis-map-style-divider {
 	position: fixed;
 	left: var(--osmosis-bubble-left, 0);
 	top: var(--osmosis-bubble-top, 0);
+	transform: translateX(-50%);
 	display: flex;
 	gap: 4px;
 	background: var(--background-primary);

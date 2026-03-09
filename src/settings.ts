@@ -143,5 +143,77 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		// ── Spaced Repetition ──────────────────────────────────
+		new Setting(containerEl).setName("Spaced repetition").setHeading();
+
+		new Setting(containerEl)
+			.setName("Auto-generate heading cards")
+			.setDesc("Automatically create cards from headings and their body text.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.headingAutoGenerate)
+					.onChange(async (value) => {
+						this.plugin.settings.headingAutoGenerate = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Bold text cloze cards")
+			.setDesc("Generate cloze cards from **bold** text in opted-in notes.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.clozeBoldEnabled)
+					.onChange(async (value) => {
+						this.plugin.settings.clozeBoldEnabled = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Heading and cloze conflict")
+			.setDesc("When a heading section contains cloze targets, which cards to keep.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("both", "Keep both")
+					.addOption("cloze_only", "Cloze only")
+					.addOption("heading_only", "Heading only")
+					.setValue(this.plugin.settings.headingClozeConflict)
+					.onChange(async (value) => {
+						this.plugin.settings.headingClozeConflict = value as HeadingClozeConflict;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Daily new card limit")
+			.setDesc("Maximum new cards per day (0 = unlimited).")
+			.addText((text) =>
+				text
+					.setValue(String(this.plugin.settings.dailyNewCardLimit))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.dailyNewCardLimit = num;
+							await this.plugin.saveSettings();
+						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Daily review card limit")
+			.setDesc("Maximum review cards per day (0 = unlimited).")
+			.addText((text) =>
+				text
+					.setValue(String(this.plugin.settings.dailyReviewCardLimit))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.dailyReviewCardLimit = num;
+							await this.plugin.saveSettings();
+						}
+					}),
+			);
 	}
 }

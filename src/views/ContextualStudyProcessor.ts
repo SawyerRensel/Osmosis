@@ -3,6 +3,7 @@ import type OsmosisPlugin from "../main";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import { StudySessionManager } from "../study/StudySessionManager";
 import type { FSRSRating } from "../database/FSRSScheduler";
+import type { CardRow } from "../database/types";
 
 /**
  * Contextual study mode: renders `osmosis` code blocks in reading view
@@ -81,7 +82,7 @@ export class ContextualStudyProcessor {
 			);
 
 			if (parsed.cardId) {
-				this.showRating(container, parsed.cardId);
+				this.showRating(container, parsed.cardId, parsed.front, parsed.back, sourcePath);
 			}
 		};
 
@@ -93,7 +94,7 @@ export class ContextualStudyProcessor {
 		});
 	}
 
-	private showRating(container: HTMLElement, cardId: string): void {
+	private showRating(container: HTMLElement, cardId: string, front: string, back: string, sourcePath: string): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -107,16 +108,36 @@ export class ContextualStudyProcessor {
 			const btn = ratingEl.createEl("button", { text: label, cls });
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
-				this.recordRating(cardId, rating);
 				ratingEl.empty();
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
+				void this.recordRating(cardId, rating, front, back, sourcePath);
 			});
 		}
 	}
 
-	private recordRating(cardId: string, rating: FSRSRating): void {
+	private async recordRating(cardId: string, rating: FSRSRating, front: string, back: string, sourcePath: string): Promise<void> {
+		await this.plugin.cardDb.ensureInitialized();
+
+		// Ensure the card row exists — contextual cards use hash-based IDs
+		// that may not be in the database from the sync pipeline
+		if (!this.plugin.cardDb.getCard(cardId)) {
+			const now = Date.now();
+			const card: CardRow = {
+				id: cardId,
+				note_path: sourcePath,
+				deck: "",
+				card_type: "explicit",
+				front,
+				back,
+				created_at: now,
+				updated_at: now,
+				deleted_at: null,
+			};
+			this.plugin.cardDb.upsertCard(card);
+		}
+
 		if (!this.sessionManager) {
 			this.sessionManager = new StudySessionManager(
 				this.plugin.cardDb,
