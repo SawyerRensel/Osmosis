@@ -1513,9 +1513,48 @@ export class PropertiesSidebarView extends ItemView {
 			},
 		);
 
-		// Re-read frontmatter from metadata cache and re-render
+		// Update in-memory frontmatter to match what we just wrote to disk
+		// (metadata cache may not have updated yet, so mutate directly like saveSetting does)
 		if (mindMap) {
-			mindMap.loadOsmosisStyleFrontmatter();
+			const fm = mindMap.getOsmosisStyleFrontmatter();
+			if (fm) {
+				switch (section) {
+					case "Background":
+						delete fm.background;
+						break;
+					case "Default shape":
+						delete fm.topicShape;
+						delete fm.maxNodeWidth;
+						if (fm.baseStyle) {
+							delete fm.baseStyle.width;
+							if (Object.keys(fm.baseStyle).length === 0) delete fm.baseStyle;
+						}
+						break;
+					case "Default fill":
+						if (fm.baseStyle) {
+							delete fm.baseStyle.fill;
+							delete fm.baseStyle.background;
+							if (Object.keys(fm.baseStyle).length === 0) delete fm.baseStyle;
+						}
+						break;
+					case "Default border":
+						if (fm.baseStyle) {
+							delete fm.baseStyle.border;
+							if (Object.keys(fm.baseStyle).length === 0) delete fm.baseStyle;
+						}
+						break;
+					case "Default text":
+						if (fm.baseStyle) {
+							delete fm.baseStyle.text;
+							if (Object.keys(fm.baseStyle).length === 0) delete fm.baseStyle;
+						}
+						break;
+					case "Branch line":
+						delete fm.branchLineColor;
+						delete fm.branchLineThickness;
+						break;
+				}
+			}
 			mindMap.applyMapSettings(this.getEffectiveSettings());
 		}
 		this.refreshMapStyleControls();
@@ -1538,6 +1577,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		swatch.addEventListener("click", () => {
 			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+				swatch.style.backgroundColor = color;
 				void this.saveMapScalarSetting("background", color);
 			});
 		});
@@ -1643,8 +1683,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		swatch.addEventListener("click", () => {
 			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+				swatch.style.backgroundColor = color;
 				void this.saveBaseStyleProp({ fill: color });
-				this.refreshMapStyleControls();
 			});
 		});
 	}
@@ -1657,8 +1697,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		colorSwatch.addEventListener("click", () => {
 			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+				colorSwatch.style.backgroundColor = color;
 				void this.saveBaseStyleProp({ border: { color } });
-				this.refreshMapStyleControls();
 			});
 		});
 
@@ -1749,8 +1789,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		textColorSwatch.addEventListener("click", () => {
 			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
+				textColorSwatch.style.backgroundColor = color;
 				void this.saveBaseStyleProp({ text: { color } });
-				this.refreshMapStyleControls();
 			});
 		});
 
@@ -1799,8 +1839,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		colorSwatch.addEventListener("click", () => {
 			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
+				colorSwatch.style.backgroundColor = color;
 				void this.saveMapScalarSetting("branchLineColor", color);
-				this.refreshMapStyleControls();
 			});
 		});
 
