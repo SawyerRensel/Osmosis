@@ -1,10 +1,8 @@
 /** Card types that Osmosis can generate from markdown. */
 export type CardType =
-	| "heading"
-	| "cloze_highlight"
-	| "cloze_bold"
 	| "explicit"
-	| "explicit_bidi";
+	| "explicit_bidi"
+	| "explicit_cloze";
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";

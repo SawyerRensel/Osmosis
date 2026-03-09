@@ -1,5 +1,3 @@
-export { generateHeadingCards } from "./heading";
-export { generateClozeCards } from "./cloze";
 export { generateExplicitCards } from "./explicit";
 export { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
 export { processNote } from "./note-processor";

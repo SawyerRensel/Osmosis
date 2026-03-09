@@ -32,37 +32,17 @@ describe("parseOsmosisFrontmatter", () => {
 		expect(fm.deck).toBe("python/functions");
 	});
 
-	it("parses osmosis-cloze-bold: false", () => {
-		const md = "---\nosmosis: true\nosmosis-cloze-bold: false\n---";
-		const fm = parseOsmosisFrontmatter(md);
-		expect(fm.clozeBold).toBe(false);
-	});
-
-	it("parses osmosis-cloze-bold: true", () => {
-		const md = "---\nosmosis: true\nosmosis-cloze-bold: true\n---";
-		const fm = parseOsmosisFrontmatter(md);
-		expect(fm.clozeBold).toBe(true);
-	});
-
-	it("defaults clozeBold to null (inherit from global setting)", () => {
-		const md = "---\nosmosis: true\n---";
-		const fm = parseOsmosisFrontmatter(md);
-		expect(fm.clozeBold).toBeNull();
-	});
-
 	it("handles multiple frontmatter fields", () => {
 		const md = [
 			"---",
 			"osmosis: true",
 			"osmosis-deck: vocab/french",
-			"osmosis-cloze-bold: false",
 			"title: French Vocab",
 			"---",
 		].join("\n");
 		const fm = parseOsmosisFrontmatter(md);
 		expect(fm.enabled).toBe(true);
 		expect(fm.deck).toBe("vocab/french");
-		expect(fm.clozeBold).toBe(false);
 	});
 });
 

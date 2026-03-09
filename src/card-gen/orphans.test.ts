@@ -12,7 +12,7 @@ function makeCard(id: string, deletedAt: number | null = null): CardRow {
 		id,
 		note_path: "test.md",
 		deck: "",
-		card_type: "heading",
+		card_type: "explicit",
 		front: "Front",
 		back: "Back",
 		created_at: Date.now(),
@@ -25,7 +25,7 @@ function makeCard(id: string, deletedAt: number | null = null): CardRow {
 function makeGenerated(id: string): GeneratedCard {
 	return {
 		id,
-		card_type: "heading",
+		card_type: "explicit",
 		front: "Front",
 		back: "Back",
 		deck: "",

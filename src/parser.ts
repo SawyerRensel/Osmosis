@@ -1,5 +1,4 @@
 import { OsmosisNode, OsmosisTree, NodeType, Range } from "./types";
-import { OSMOSIS_ID_STRIP_REGEX } from "./card-id";
 
 /**
  * Incremental markdown parser for Osmosis.
@@ -239,8 +238,7 @@ export class OsmosisParser {
 	 * Returns null for blank/empty lines.
 	 */
 	private parseLine(line: LineInfo): ParsedLine | null {
-		// Strip osmosis card ID comments before parsing
-		const text = line.text.replace(OSMOSIS_ID_STRIP_REGEX, "");
+		const text = line.text;
 
 		// Blank line
 		if (text.trim() === "") {

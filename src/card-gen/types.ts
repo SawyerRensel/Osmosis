@@ -2,7 +2,7 @@ import type { CardType } from "../database/types";
 
 /** A generated card before it's inserted into the database. */
 export interface GeneratedCard {
-	/** Stable ID from <!--osmosis-id:xxx--> or newly generated. */
+	/** Stable ID from fence id: metadata or newly generated. */
 	id: string;
 	card_type: CardType;
 	front: string;
@@ -17,6 +17,8 @@ export interface GeneratedCard {
 
 /** Metadata parsed from explicit osmosis fence headers. */
 export interface FenceMetadata {
+	id: string;
+	exclude: boolean;
 	bidi: boolean;
 	typeIn: boolean;
 	deck: string;

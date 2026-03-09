@@ -1,8 +1,28 @@
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** Migrations keyed by target version. Applied in order for existing DBs. */
 export const MIGRATIONS: Record<number, string> = {
 	2: `ALTER TABLE cards ADD COLUMN type_in INTEGER NOT NULL DEFAULT 0;`,
+	3: `
+		CREATE TABLE cards_new (
+			id TEXT PRIMARY KEY,
+			note_path TEXT NOT NULL,
+			deck TEXT NOT NULL DEFAULT '',
+			card_type TEXT NOT NULL CHECK (card_type IN ('explicit', 'explicit_bidi', 'explicit_cloze')),
+			front TEXT NOT NULL,
+			back TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			deleted_at INTEGER,
+			type_in INTEGER NOT NULL DEFAULT 0
+		);
+		INSERT INTO cards_new SELECT * FROM cards WHERE card_type IN ('explicit', 'explicit_bidi');
+		DROP TABLE cards;
+		ALTER TABLE cards_new RENAME TO cards;
+		CREATE INDEX IF NOT EXISTS idx_cards_note_path ON cards(note_path);
+		CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck);
+		CREATE INDEX IF NOT EXISTS idx_cards_deleted ON cards(deleted_at);
+	`,
 };
 
 export const CREATE_TABLES_SQL = `
@@ -10,7 +30,7 @@ CREATE TABLE IF NOT EXISTS cards (
 	id TEXT PRIMARY KEY,
 	note_path TEXT NOT NULL,
 	deck TEXT NOT NULL DEFAULT '',
-	card_type TEXT NOT NULL CHECK (card_type IN ('heading', 'cloze_highlight', 'cloze_bold', 'explicit', 'explicit_bidi')),
+	card_type TEXT NOT NULL CHECK (card_type IN ('explicit', 'explicit_bidi', 'explicit_cloze')),
 	front TEXT NOT NULL,
 	back TEXT NOT NULL,
 	created_at INTEGER NOT NULL,

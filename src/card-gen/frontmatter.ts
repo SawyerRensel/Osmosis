@@ -4,8 +4,6 @@ export interface OsmosisFrontmatter {
 	enabled: boolean;
 	/** Explicit deck override from frontmatter. */
 	deck: string;
-	/** Per-note override for bold cloze generation. */
-	clozeBold: boolean | null;
 }
 
 /**
@@ -26,7 +24,6 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
 	const result: OsmosisFrontmatter = {
 		enabled: false,
 		deck: "",
-		clozeBold: null,
 	};
 
 	const lines = markdown.split("\n");
@@ -50,9 +47,6 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
 				break;
 			case "osmosis-deck":
 				result.deck = value;
-				break;
-			case "osmosis-cloze-bold":
-				result.clozeBold = value === "true";
 				break;
 		}
 	}

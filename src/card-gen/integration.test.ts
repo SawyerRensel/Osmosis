@@ -11,11 +11,7 @@ import type { CardRow } from "../database/types";
  * markdown → card generation → database → FSRS scheduling → review
  */
 
-const defaultOptions: CardGenerationOptions = {
-	headingAutoGenerate: true,
-	clozeBoldEnabled: true,
-	headingClozeConflict: "cloze_only",
-};
+const defaultOptions: CardGenerationOptions = {};
 
 // Use in-memory DB with a mock adapter
 const mockAdapter = {
@@ -42,20 +38,17 @@ describe("SR Integration", () => {
 				"osmosis: true",
 				"osmosis-deck: biology",
 				"---",
-				"## Cell Structure",
-				"Cells are the basic unit of life.",
-				"",
-				"The ==mitochondria== is the powerhouse of the cell.",
+				"```osmosis",
+				"What organelle produces ATP?",
+				"***",
+				"Mitochondria",
+				"```",
 			].join("\n");
 
 			// 1. Generate cards
 			const result = processNote(md, "biology/cells.md", defaultOptions);
 			expect(result.enabled).toBe(true);
-			// cloze_only default: heading dropped because body has cloze
-			const clozeCards = result.cards.filter(
-				(c) => c.card_type === "cloze_highlight",
-			);
-			expect(clozeCards.length).toBeGreaterThan(0);
+			expect(result.cards.length).toBeGreaterThan(0);
 
 			// 2. Store cards in DB
 			const now = Date.now();
@@ -122,6 +115,7 @@ describe("SR Integration", () => {
 				"osmosis: true",
 				"---",
 				"```osmosis",
+				"id: bidi1234",
 				"bidi: true",
 				"deck: vocab/french",
 				"",
@@ -138,8 +132,10 @@ describe("SR Integration", () => {
 			expect(bidiCards).toHaveLength(2);
 			expect(bidiCards[0]!.front).toBe("Bonjour");
 			expect(bidiCards[0]!.back).toBe("Hello");
+			expect(bidiCards[0]!.id).toBe("bidi1234");
 			expect(bidiCards[1]!.front).toBe("Hello");
 			expect(bidiCards[1]!.back).toBe("Bonjour");
+			expect(bidiCards[1]!.id).toBe("bidi1234-r");
 
 			// Store both
 			const now = Date.now();
@@ -174,16 +170,71 @@ describe("SR Integration", () => {
 		});
 	});
 
+	describe("end-to-end: explicit cloze", () => {
+		it("generates and stores cloze cards from explicit fences", async () => {
+			const md = [
+				"---",
+				"osmosis: true",
+				"osmosis-deck: science",
+				"---",
+				"```osmosis",
+				"id: cloze123",
+				"",
+				"The ==mitochondria== is the ==powerhouse== of the cell.",
+				"```",
+			].join("\n");
+
+			const result = processNote(md, "science/bio.md", defaultOptions);
+			const clozeCards = result.cards.filter(
+				(c) => c.card_type === "explicit_cloze",
+			);
+			expect(clozeCards).toHaveLength(2);
+			expect(clozeCards[0]!.id).toBe("cloze123-c1");
+			expect(clozeCards[1]!.id).toBe("cloze123-c2");
+
+			// Store and schedule
+			const now = Date.now();
+			for (const card of clozeCards) {
+				db.upsertCard({
+					id: card.id,
+					note_path: "science/bio.md",
+					deck: card.deck,
+					card_type: card.card_type,
+					front: card.front,
+					back: card.back,
+					created_at: now,
+					updated_at: now,
+					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
+				});
+				db.upsertSchedule(scheduler.createNewSchedule(card.id));
+			}
+
+			const due = db.getDueCards(now + 1000, "science");
+			expect(due).toHaveLength(2);
+		});
+	});
+
 	describe("orphan lifecycle", () => {
 		it("detects orphans when content is removed, restores when re-added", async () => {
 			const mdV1 = [
 				"---",
 				"osmosis: true",
 				"---",
-				"## Topic A <!--osmosis-id:aaaaaaaa-->",
-				"Body A.",
-				"## Topic B <!--osmosis-id:bbbbbbbb-->",
-				"Body B.",
+				"```osmosis",
+				"id: aaaaaaaa",
+				"",
+				"Q1",
+				"***",
+				"A1",
+				"```",
+				"```osmosis",
+				"id: bbbbbbbb",
+				"",
+				"Q2",
+				"***",
+				"A2",
+				"```",
 			].join("\n");
 
 			// Initial generation
@@ -207,13 +258,18 @@ describe("SR Integration", () => {
 				db.upsertSchedule(scheduler.createNewSchedule(card.id));
 			}
 
-			// User removes Topic B
+			// User removes second card
 			const mdV2 = [
 				"---",
 				"osmosis: true",
 				"---",
-				"## Topic A <!--osmosis-id:aaaaaaaa-->",
-				"Body A.",
+				"```osmosis",
+				"id: aaaaaaaa",
+				"",
+				"Q1",
+				"***",
+				"A1",
+				"```",
 			].join("\n");
 
 			const resultV2 = processNote(mdV2, "note.md", defaultOptions);
@@ -240,7 +296,7 @@ describe("SR Integration", () => {
 			const logs = db.getReviewLogs("bbbbbbbb");
 			expect(logs).toHaveLength(1);
 
-			// User re-adds Topic B
+			// User re-adds second card
 			const mdV3 = mdV1;
 			const resultV3 = processNote(mdV3, "note.md", defaultOptions);
 			const allCards = [
@@ -259,21 +315,20 @@ describe("SR Integration", () => {
 
 	describe("session quotas with real cards", () => {
 		it("enforces daily limits on study session", async () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"---",
-				"## A\nBody A.",
-				"## B\nBody B.",
-				"## C\nBody C.",
-				"## D\nBody D.",
-				"## E\nBody E.",
-			].join("\n");
+			// Create 5 explicit cards
+			const fences = Array.from({ length: 5 }, (_, i) => [
+				"```osmosis",
+				`id: card000${i}`,
+				"",
+				`Q${i}`,
+				"***",
+				`A${i}`,
+				"```",
+			].join("\n")).join("\n");
 
-			const result = processNote(md, "note.md", {
-				...defaultOptions,
-				headingClozeConflict: "both",
-			});
+			const md = `---\nosmosis: true\n---\n${fences}`;
+
+			const result = processNote(md, "note.md", defaultOptions);
 			expect(result.cards.length).toBe(5);
 
 			const now = Date.now();
@@ -322,8 +377,13 @@ describe("SR Integration", () => {
 				"---",
 				"osmosis: true",
 				"---",
-				"## Topic <!--osmosis-id:aaaaaaaa-->",
-				"Body with ==term== <!--osmosis-id:bbbbbbbb-->.",
+				"```osmosis",
+				"id: aaaaaaaa",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
 			].join("\n");
 
 			const r1 = processNote(md, "note.md", defaultOptions);
@@ -345,8 +405,13 @@ describe("SR Integration", () => {
 				"---",
 				"osmosis: true",
 				"---",
-				"## Topic <!--osmosis-id:aaaaaaaa-->",
-				"Original body text.",
+				"```osmosis",
+				"id: aaaaaaaa",
+				"",
+				"Original question",
+				"***",
+				"Original answer.",
+				"```",
 			].join("\n");
 
 			const now = Date.now();
@@ -364,18 +429,23 @@ describe("SR Integration", () => {
 				type_in: 0,
 			});
 
-			// User edits the body
+			// User edits the content
 			const mdV2 = [
 				"---",
 				"osmosis: true",
 				"---",
-				"## Topic <!--osmosis-id:aaaaaaaa-->",
-				"Updated body text with new info.",
+				"```osmosis",
+				"id: aaaaaaaa",
+				"",
+				"Updated question",
+				"***",
+				"Updated answer with new info.",
+				"```",
 			].join("\n");
 
 			const r2 = processNote(mdV2, "note.md", defaultOptions);
 			expect(r2.cards[0]!.id).toBe("aaaaaaaa"); // Same ID
-			expect(r2.cards[0]!.back).toBe("Updated body text with new info.");
+			expect(r2.cards[0]!.back).toBe("Updated answer with new info.");
 
 			// Upsert updates the content
 			db.upsertCard({
@@ -392,7 +462,7 @@ describe("SR Integration", () => {
 			});
 
 			const stored = db.getCard("aaaaaaaa")!;
-			expect(stored.back).toBe("Updated body text with new info.");
+			expect(stored.back).toBe("Updated answer with new info.");
 		});
 	});
 
@@ -405,10 +475,6 @@ describe("SR Integration", () => {
 				"---",
 				"## Cell Biology",
 				"Cells are the fundamental unit of life.",
-				"",
-				"The ==plasma membrane== controls what enters and exits.",
-				"",
-				"**Ribosomes** synthesize proteins.",
 				"",
 				"```osmosis",
 				"What organelle produces ATP?",
@@ -423,6 +489,10 @@ describe("SR Integration", () => {
 				"***",
 				"Contains DNA",
 				"```",
+				"",
+				"```osmosis",
+				"The ==plasma membrane== controls what enters and exits.",
+				"```",
 			].join("\n");
 
 			const result = processNote(md, "science/bio.md", defaultOptions);
@@ -430,16 +500,12 @@ describe("SR Integration", () => {
 
 			const types = result.cards.map((c) => c.card_type);
 
-			// Heading should be dropped (cloze_only and body has clozes)
-			expect(types).not.toContain("heading");
-
-			// Clozes from the body
-			expect(types.filter((t) => t === "cloze_highlight")).toHaveLength(1);
-			expect(types.filter((t) => t === "cloze_bold")).toHaveLength(1);
-
-			// Explicit cards
+			// Explicit Q&A card
 			expect(types.filter((t) => t === "explicit")).toHaveLength(1);
+			// Bidi cards (forward + reverse)
 			expect(types.filter((t) => t === "explicit_bidi")).toHaveLength(2);
+			// Cloze card
+			expect(types.filter((t) => t === "explicit_cloze")).toHaveLength(1);
 
 			// All cards have the correct deck
 			for (const card of result.cards) {
@@ -456,7 +522,7 @@ describe("SR Integration", () => {
 			expect(result.cards).toHaveLength(0);
 		});
 
-		it("handles note with only explicit fences (no headings or cloze)", () => {
+		it("handles note with only explicit fences", () => {
 			const md = [
 				"---",
 				"osmosis: true",
@@ -472,33 +538,46 @@ describe("SR Integration", () => {
 			expect(result.cards[0]!.card_type).toBe("explicit");
 		});
 
-		it("handles multiple exclude comments", () => {
+		it("handles multiple exclude: true fences", () => {
 			const md = [
 				"---",
 				"osmosis: true",
 				"---",
-				"## Keep",
-				"Keep body.",
-				"<!-- osmosis-exclude -->",
-				"## Skip 1",
-				"Body 1.",
-				"<!-- osmosis-exclude -->",
-				"## Skip 2",
-				"Body 2.",
-				"## Also Keep",
-				"Keep body 2.",
+				"```osmosis",
+				"id: keep1111",
+				"",
+				"Keep",
+				"***",
+				"Answer",
+				"```",
+				"```osmosis",
+				"exclude: true",
+				"",
+				"Skip 1",
+				"***",
+				"Answer",
+				"```",
+				"```osmosis",
+				"exclude: true",
+				"",
+				"Skip 2",
+				"***",
+				"Answer",
+				"```",
+				"```osmosis",
+				"id: keep2222",
+				"",
+				"Also Keep",
+				"***",
+				"Answer",
+				"```",
 			].join("\n");
-			const result = processNote(md, "note.md", {
-				...defaultOptions,
-				headingClozeConflict: "both",
-			});
-			const headings = result.cards
-				.filter((c) => c.card_type === "heading")
-				.map((c) => c.front);
-			expect(headings).toContain("Keep");
-			expect(headings).toContain("Also Keep");
-			expect(headings).not.toContain("Skip 1");
-			expect(headings).not.toContain("Skip 2");
+			const result = processNote(md, "note.md", defaultOptions);
+			const fronts = result.cards.map((c) => c.front);
+			expect(fronts).toContain("Keep");
+			expect(fronts).toContain("Also Keep");
+			expect(fronts).not.toContain("Skip 1");
+			expect(fronts).not.toContain("Skip 2");
 		});
 
 		it("FSRS rating progression: Again < Hard < Good < Easy intervals", () => {

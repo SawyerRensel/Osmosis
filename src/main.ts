@@ -27,9 +27,6 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault,
 			this.cardDb,
 			() => ({
-				headingAutoGenerate: this.settings.headingAutoGenerate,
-				clozeBoldEnabled: this.settings.clozeBoldEnabled,
-				headingClozeConflict: this.settings.headingClozeConflict,
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
 			}),

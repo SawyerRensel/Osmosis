@@ -4,19 +4,33 @@ osmosis-deck: geography
 ---
 
 ## Capital Cities
-Paris is the capital of France.
+
+```osmosis
+id: cap_paris
+What is the capital of France?
+***
+Paris
+```
 
 ## Science
-The ==mitochondria== is the **powerhouse** of the cell.
 
-## Empty Heading
+```osmosis
+id: cloze_bio
 
-<!-- osmosis-exclude -->
-## Excluded Section
-This heading should not generate a card.
+The ==mitochondria== is the powerhouse of the cell.
+```
+
+## Excluded Card
+
+```osmosis
+exclude: true
+
+This should NOT generate a card
+***
+Because it is excluded
+```
 
 ## History
-The ==Renaissance== began in **Italy** during the **14th century**.
 
 ```osmosis
 bidi: true

@@ -39,6 +39,21 @@ describe("generateExplicitCards", () => {
 	});
 
 	describe("metadata parsing", () => {
+		it("parses id metadata", () => {
+			const md = [
+				"```osmosis",
+				"id: a3f7b2c1",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.id).toBe("a3f7b2c1");
+		});
+
 		it("parses bidi metadata", () => {
 			const md = [
 				"```osmosis",
@@ -89,9 +104,10 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.front).toBe("Bonjour\n\n_Hint: A greeting_");
 		});
 
-		it("parses multiple metadata keys", () => {
+		it("parses multiple metadata keys including id", () => {
 			const md = [
 				"```osmosis",
+				"id: abc12345",
 				"bidi: true",
 				"type-in: true",
 				"deck: vocabulary/french",
@@ -104,6 +120,7 @@ describe("generateExplicitCards", () => {
 			].join("\n");
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(2);
+			expect(cards[0]!.id).toBe("abc12345");
 			expect(cards[0]!.deck).toBe("vocabulary/french");
 			expect(cards[0]!.front).toContain("_Hint: A greeting_");
 			// Reverse card also gets hint
@@ -157,7 +174,21 @@ describe("generateExplicitCards", () => {
 	});
 
 	describe("card identity", () => {
-		it("uses existing osmosis-id on fence line", () => {
+		it("uses id: metadata as primary source", () => {
+			const md = [
+				"```osmosis",
+				"id: meta1234",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards[0]!.id).toBe("meta1234");
+		});
+
+		it("falls back to osmosis-id comment on fence line (backward compat)", () => {
 			const md = [
 				"```osmosis <!--osmosis-id:abc12345-->",
 				"Front",
@@ -165,11 +196,22 @@ describe("generateExplicitCards", () => {
 				"Back",
 				"```",
 			].join("\n");
-			// The ID is on the fence start line
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(1);
-			// Note: the regex on line 0 extracts the ID
 			expect(cards[0]!.id).toBe("abc12345");
+		});
+
+		it("id: metadata takes priority over osmosis-id comment", () => {
+			const md = [
+				"```osmosis <!--osmosis-id:old11111-->",
+				"id: new22222",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards[0]!.id).toBe("new22222");
 		});
 
 		it("generates new ID when none exists", () => {
@@ -182,6 +224,183 @@ describe("generateExplicitCards", () => {
 			].join("\n");
 			const cards = generateExplicitCards(md);
 			expect(cards[0]!.id).toMatch(/^[a-f0-9]{8}$/);
+		});
+	});
+
+	describe("bidi reverse ID", () => {
+		it("derives reverse ID as {id}-r", () => {
+			const md = [
+				"```osmosis",
+				"id: abc12345",
+				"bidi: true",
+				"",
+				"Paris",
+				"***",
+				"Capital of France",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards[0]!.id).toBe("abc12345");
+			expect(cards[1]!.id).toBe("abc12345-r");
+		});
+	});
+
+	describe("cloze cards", () => {
+		it("generates cloze cards from ==term== without separator", () => {
+			const md = [
+				"```osmosis",
+				"id: b8cb51f9",
+				"",
+				"==Bonjour== means ==hello== in ==French==",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(3);
+
+			// All are explicit_cloze type
+			for (const card of cards) {
+				expect(card.card_type).toBe("explicit_cloze");
+			}
+
+			// Derived IDs
+			expect(cards[0]!.id).toBe("b8cb51f9-c1");
+			expect(cards[1]!.id).toBe("b8cb51f9-c2");
+			expect(cards[2]!.id).toBe("b8cb51f9-c3");
+
+			// Fronts have one term blanked each
+			expect(cards[0]!.front).toBe("[...] means ==hello== in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means [...] in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means ==hello== in [...]");
+
+			// All backs show full text
+			for (const card of cards) {
+				expect(card.back).toBe("==Bonjour== means ==hello== in ==French==");
+			}
+		});
+
+		it("generates single cloze card for one ==term==", () => {
+			const md = [
+				"```osmosis",
+				"The ==mitochondria== is the powerhouse of the cell.",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.card_type).toBe("explicit_cloze");
+			expect(cards[0]!.front).toBe("The [...] is the powerhouse of the cell.");
+			expect(cards[0]!.back).toBe("The ==mitochondria== is the powerhouse of the cell.");
+		});
+
+		it("applies hint to cloze cards", () => {
+			const md = [
+				"```osmosis",
+				"hint: Biology term",
+				"",
+				"The ==mitochondria== is important.",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards[0]!.front).toContain("_Hint: Biology term_");
+		});
+
+		it("cloze cards inherit deck metadata", () => {
+			const md = [
+				"```osmosis",
+				"deck: biology",
+				"",
+				"The ==mitochondria== is important.",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards[0]!.deck).toBe("biology");
+		});
+
+		it("skips fence without separator and without cloze", () => {
+			const md = [
+				"```osmosis",
+				"No separator and no cloze here",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(0);
+		});
+
+		it("skips empty fence without separator", () => {
+			const md = [
+				"```osmosis",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(0);
+		});
+	});
+
+	describe("exclude metadata", () => {
+		it("skips fence with exclude: true", () => {
+			const md = [
+				"```osmosis",
+				"exclude: true",
+				"",
+				"This should NOT generate a card",
+				"***",
+				"Because it is excluded",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(0);
+		});
+
+		it("generates card when exclude is not set", () => {
+			const md = [
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+		});
+
+		it("excludes only the fence with exclude: true", () => {
+			const md = [
+				"```osmosis",
+				"Keep this",
+				"***",
+				"Answer",
+				"```",
+				"",
+				"```osmosis",
+				"exclude: true",
+				"",
+				"Skip this",
+				"***",
+				"Answer",
+				"```",
+				"",
+				"```osmosis",
+				"Also keep",
+				"***",
+				"Answer",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards[0]!.front).toBe("Keep this");
+			expect(cards[1]!.front).toBe("Also keep");
+		});
+
+		it("excludes cloze fence with exclude: true", () => {
+			const md = [
+				"```osmosis",
+				"exclude: true",
+				"",
+				"The ==mitochondria== is important.",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(0);
 		});
 	});
 
@@ -210,16 +429,6 @@ describe("generateExplicitCards", () => {
 	});
 
 	describe("edge cases", () => {
-		it("skips fence without separator", () => {
-			const md = [
-				"```osmosis",
-				"No separator here",
-				"```",
-			].join("\n");
-			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
-		});
-
 		it("skips fence with empty front and back", () => {
 			const md = ["```osmosis", "***", "```"].join("\n");
 			const cards = generateExplicitCards(md);

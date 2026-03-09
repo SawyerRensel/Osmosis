@@ -25,7 +25,7 @@ function makeCard(overrides: Partial<CardRow> = {}): CardRow {
 		id: "test-card-1",
 		note_path: "notes/test.md",
 		deck: "default",
-		card_type: "heading",
+		card_type: "explicit",
 		front: "What is X?",
 		back: "X is Y.",
 		created_at: 1000,

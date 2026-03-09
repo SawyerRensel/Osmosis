@@ -537,9 +537,8 @@ Osmosis Settings has explicit include/exclude lists for folders and tags. Nothin
 - **Soft-delete**: SR history preserved, card archived. If source is re-created, card can be re-linked.
 
 #### Excluding Cards
-- `<!-- osmosis-exclude -->` above any heading, highlight, or code block suppresses that card
-- Card is soft-deleted; removing the comment re-activates it
-- Configurable globally or per-card
+- `exclude: true` metadata inside an osmosis fence suppresses that card
+- Card is soft-deleted; removing the metadata re-activates it
 
 #### Study Session UX
 

@@ -4,7 +4,6 @@ import type { CardRow } from "../database/types";
 import type { CardGenerationOptions } from "./note-processor";
 import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
-import { extractCardIds, formatCardIdComment } from "../card-id";
 
 /**
  * Syncs generated cards from vault notes into the card database.
@@ -13,6 +12,7 @@ import { extractCardIds, formatCardIdComment } from "../card-id";
  * - Full vault scan on startup
  * - Incremental sync on file change/rename/delete
  * - Orphan detection (soft-delete cards whose source was removed)
+ * - Write id: metadata back into fences that lack one
  */
 export class CardSyncService {
 	/** Paths currently being written to — skip re-sync for these. */
@@ -64,8 +64,8 @@ export class CardSyncService {
 		const generatedIds = new Set<string>();
 
 		if (result.enabled) {
-			// Write osmosis-id comments back into the source file
-			await this.injectCardIds(file, content, result.cards);
+			// Write id: metadata back into fences that lack one
+			await this.injectFenceIds(file, content, result.cards);
 
 			const now = Date.now();
 
@@ -98,53 +98,44 @@ export class CardSyncService {
 	}
 
 	/**
-	 * Inject <!--osmosis-id:xxx--> comments into the source file for any
-	 * cards that don't already have one. This makes IDs stable across restarts
-	 * so that schedule data (card_schedule rows) persists.
+	 * Write `id: xxx` metadata into osmosis fences that don't already have one.
+	 *
+	 * For each card whose fence lacks an `id:` line, inserts `id: {cardId}`
+	 * as the first metadata line after the fence opening.
 	 */
-	private async injectCardIds(file: TFile, content: string, cards: GeneratedCard[]): Promise<void> {
-		// Determine which IDs already exist in the file
-		const existing = extractCardIds(content);
-		const existingIdSet = new Set(existing.map((e) => e.id));
-
-		// Filter to cards that need IDs injected
-		const needsId = cards.filter((c) => !existingIdSet.has(c.id));
-		if (needsId.length === 0) return;
-
-		// Group by sourceLine, preserving card order within each line
-		const byLine = new Map<number, GeneratedCard[]>();
-		for (const card of needsId) {
-			const line = card.sourceLine;
-			const arr = byLine.get(line) ?? [];
-			arr.push(card);
-			byLine.set(line, arr);
-		}
-
-		// Build line-number → char-offset lookup
+	private async injectFenceIds(file: TFile, content: string, cards: GeneratedCard[]): Promise<void> {
 		const lines = content.split("\n");
-		const lineOffsets: number[] = [];
-		let offset = 0;
-		for (let i = 0; i < lines.length; i++) {
-			lineOffsets.push(offset);
-			offset += lines[i]!.length + 1; // +1 for newline
+
+		// Find fences that need id: injection
+		// A card needs injection if its sourceLine points to a fence that has no id: metadata
+		const fencesNeedingId = new Map<number, string>(); // sourceLine → id
+
+		for (const card of cards) {
+			// Skip derived IDs (cloze -c1, bidi -r) — only inject the base fence ID
+			if (card.id.includes("-")) continue;
+
+			const fenceLine = card.sourceLine;
+			if (fencesNeedingId.has(fenceLine)) continue;
+
+			// Check if this fence already has an id: metadata line
+			if (!this.fenceHasIdMetadata(lines, fenceLine)) {
+				fencesNeedingId.set(fenceLine, card.id);
+			}
 		}
 
-		// Process lines from bottom-up so earlier insertions don't shift offsets
-		const sortedLines = [...byLine.keys()].sort((a, b) => b - a);
+		if (fencesNeedingId.size === 0) return;
 
-		let modified = content;
-		for (const lineNum of sortedLines) {
-			const cardsOnLine = byLine.get(lineNum)!;
-			// Build the combined ID comment string for all cards on this line
-			const idComments = cardsOnLine
-				.map((c) => ` ${formatCardIdComment(c.id)}`)
-				.join("");
+		// Process from bottom-up to avoid offset shifts
+		const sortedLines = [...fencesNeedingId.keys()].sort((a, b) => b - a);
 
-			// Find the end of this line in the current (possibly already modified) content
-			const lineEnd = findLineEnd(modified, lineNum);
-			modified = modified.slice(0, lineEnd) + idComments + modified.slice(lineEnd);
+		const modifiedLines = [...lines];
+		for (const fenceLine of sortedLines) {
+			const id = fencesNeedingId.get(fenceLine)!;
+			// Insert id: line right after the fence opening line
+			modifiedLines.splice(fenceLine + 1, 0, `id: ${id}`);
 		}
 
+		const modified = modifiedLines.join("\n");
 		if (modified !== content) {
 			this.writingPaths.add(file.path);
 			try {
@@ -153,6 +144,21 @@ export class CardSyncService {
 				this.writingPaths.delete(file.path);
 			}
 		}
+	}
+
+	/**
+	 * Check if a fence starting at the given line already has an `id:` metadata line.
+	 */
+	private fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
+		// Scan lines after the fence opening for metadata
+		for (let i = fenceLine + 1; i < lines.length; i++) {
+			const line = lines[i]!.trim();
+			if (line === "" || line === "```") break;
+			if (/^id\s*:\s*.+$/i.test(line)) return true;
+			// If line doesn't match metadata pattern, it's content — stop
+			if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
+		}
+		return false;
 	}
 
 	/**
@@ -181,7 +187,6 @@ export class CardSyncService {
 	 */
 	private cleanOrphans(activePaths: Set<string>): void {
 		const allDecks = this.db.getAllDecks();
-		// Query all cards and check paths — simple approach for now
 		for (const deck of allDecks) {
 			const cards = this.db.getCardsByDeck(deck);
 			for (const card of cards) {
@@ -191,17 +196,4 @@ export class CardSyncService {
 			}
 		}
 	}
-}
-
-/** Find the character offset of the end of a given line (before its newline). */
-function findLineEnd(content: string, lineNum: number): number {
-	let line = 0;
-	let i = 0;
-	while (line < lineNum && i < content.length) {
-		if (content[i] === "\n") line++;
-		i++;
-	}
-	// Now at the start of the target line — find its end
-	const newlinePos = content.indexOf("\n", i);
-	return newlinePos === -1 ? content.length : newlinePos;
 }

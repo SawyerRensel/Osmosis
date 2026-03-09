@@ -83,9 +83,6 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 	topicShape: "rounded-rect",
 };
 
-/** How to resolve heading vs. cloze conflicts in the same section. */
-export type HeadingClozeConflict = "both" | "cloze_only" | "heading_only";
-
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
@@ -100,12 +97,6 @@ export interface OsmosisSettings {
 	customThemes: Record<string, import("./styles").ThemeDefinition>;
 
 	// ── Spaced Repetition Settings ────────────────────────────
-	/** Whether headings automatically generate cards (default: true). */
-	headingAutoGenerate: boolean;
-	/** Whether **bold** text generates cloze cards (default: true). */
-	clozeBoldEnabled: boolean;
-	/** How to handle sections with both heading and cloze cards. */
-	headingClozeConflict: HeadingClozeConflict;
 	/** Maximum new cards per day (0 = unlimited). */
 	dailyNewCardLimit: number;
 	/** Maximum review cards per day (0 = unlimited). */
@@ -134,9 +125,6 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	customThemes: {},
 
 	// SR defaults
-	headingAutoGenerate: true,
-	clozeBoldEnabled: true,
-	headingClozeConflict: "cloze_only",
 	dailyNewCardLimit: 20,
 	dailyReviewCardLimit: 200,
 
@@ -203,45 +191,6 @@ export class OsmosisSettingTab extends PluginSettingTab {
 
 		// ── Spaced Repetition ──────────────────────────────────
 		new Setting(containerEl).setName("Spaced repetition").setHeading();
-
-		new Setting(containerEl)
-			.setName("Auto-generate heading cards")
-			.setDesc("Automatically create cards from headings and their body text.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.headingAutoGenerate)
-					.onChange(async (value) => {
-						this.plugin.settings.headingAutoGenerate = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Bold text cloze cards")
-			.setDesc("Generate cloze cards from **bold** text in opted-in notes.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.clozeBoldEnabled)
-					.onChange(async (value) => {
-						this.plugin.settings.clozeBoldEnabled = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Heading and cloze conflict")
-			.setDesc("When a heading section contains cloze targets, which cards to keep.")
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("both", "Keep both")
-					.addOption("cloze_only", "Cloze only")
-					.addOption("heading_only", "Heading only")
-					.setValue(this.plugin.settings.headingClozeConflict)
-					.onChange(async (value) => {
-						this.plugin.settings.headingClozeConflict = value as HeadingClozeConflict;
-						await this.plugin.saveSettings();
-					}),
-			);
 
 		new Setting(containerEl)
 			.setName("Daily new card limit")
