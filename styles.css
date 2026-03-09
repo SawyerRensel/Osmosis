@@ -1103,3 +1103,403 @@ hr.osmosis-map-style-divider {
 	color: var(--text-muted);
 	font-style: italic;
 }
+
+/* ─── Utility ────────────────────────────────────────────── */
+
+.osmosis-hidden {
+	display: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Sequential Study Modal
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-study-modal {
+	width: 600px;
+	max-width: 90vw;
+}
+
+.osmosis-study-progress {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.osmosis-study-progress-bar {
+	flex: 1;
+	height: 4px;
+	background: var(--background-modifier-border);
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.osmosis-study-progress-fill {
+	height: 100%;
+	width: var(--osmosis-progress-width, 0%);
+	background: var(--interactive-accent);
+	border-radius: 2px;
+	transition: width 0.3s ease;
+}
+
+.osmosis-study-progress-text {
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.osmosis-study-card {
+	padding: 16px;
+	min-height: 120px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+	margin-bottom: 12px;
+}
+
+.osmosis-study-front {
+	font-size: 16px;
+	margin-bottom: 12px;
+}
+
+.osmosis-study-divider {
+	height: 1px;
+	background: var(--background-modifier-border);
+	margin: 8px 0;
+}
+
+.osmosis-study-back {
+	max-height: 0;
+	opacity: 0;
+	overflow: hidden;
+	transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.osmosis-study-back.is-revealed {
+	max-height: 600px;
+	opacity: 1;
+}
+
+.osmosis-study-actions {
+	display: flex;
+	justify-content: center;
+}
+
+.osmosis-study-flip {
+	padding: 8px 24px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	cursor: pointer;
+	font-size: 14px;
+}
+
+.osmosis-study-flip:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-study-rating-bar {
+	display: flex;
+	gap: 8px;
+	justify-content: center;
+}
+
+.osmosis-study-rating-bar button {
+	padding: 8px 16px;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+	transition: filter 0.1s;
+}
+
+.osmosis-study-rating-bar button:hover {
+	filter: brightness(1.1);
+}
+
+.osmosis-rate-again {
+	background: hsl(0, 65%, 50%);
+	color: white;
+}
+
+.osmosis-rate-hard {
+	background: hsl(30, 65%, 50%);
+	color: white;
+}
+
+.osmosis-rate-good {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.osmosis-rate-easy {
+	background: hsl(140, 50%, 42%);
+	color: white;
+}
+
+.osmosis-study-complete {
+	text-align: center;
+	padding: 24px;
+}
+
+.osmosis-study-complete h2 {
+	margin: 0 0 8px;
+}
+
+.osmosis-study-close-btn {
+	margin-top: 16px;
+	padding: 8px 24px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Dashboard Sidebar
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-dashboard {
+	padding: 8px;
+}
+
+.osmosis-dash-header {
+	margin-bottom: 12px;
+}
+
+.osmosis-dash-btn {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	width: 100%;
+	padding: 8px 12px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.osmosis-dash-btn:hover {
+	filter: brightness(1.1);
+}
+
+.osmosis-dash-empty {
+	padding: 16px 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	text-align: center;
+}
+
+.osmosis-dash-deck-row {
+	display: flex;
+	align-items: center;
+	padding: 4px 8px;
+	cursor: pointer;
+	border-radius: 4px;
+	gap: 4px;
+}
+
+.osmosis-dash-depth-1 { padding-left: 24px; }
+.osmosis-dash-depth-2 { padding-left: 40px; }
+.osmosis-dash-depth-3 { padding-left: 56px; }
+
+.osmosis-dash-deck-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-dash-collapse {
+	display: flex;
+	align-items: center;
+	width: 16px;
+	flex-shrink: 0;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.osmosis-dash-collapse svg {
+	width: 14px;
+	height: 14px;
+}
+
+.osmosis-dash-collapse-spacer {
+	width: 16px;
+	flex-shrink: 0;
+}
+
+.osmosis-dash-deck-name {
+	flex: 1;
+	font-size: var(--font-ui-small);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-dash-counts {
+	display: flex;
+	gap: 6px;
+	margin-left: auto;
+	flex-shrink: 0;
+}
+
+.osmosis-dash-new,
+.osmosis-dash-learn,
+.osmosis-dash-due {
+	font-size: 11px;
+	font-weight: 600;
+	padding: 1px 5px;
+	border-radius: 3px;
+	min-width: 16px;
+	text-align: center;
+}
+
+.osmosis-dash-new {
+	color: var(--interactive-accent);
+	background: rgba(var(--interactive-accent-rgb, 99, 135, 255), 0.12);
+}
+
+.osmosis-dash-learn {
+	color: hsl(30, 75%, 50%);
+	background: hsla(30, 75%, 50%, 0.12);
+}
+
+.osmosis-dash-due {
+	color: hsl(140, 50%, 42%);
+	background: hsla(140, 50%, 42%, 0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Contextual Study (Reading View)
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-contextual-card {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 12px;
+	margin: 8px 0;
+}
+
+.osmosis-contextual-hidden {
+	color: var(--text-faint);
+	letter-spacing: 2px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.osmosis-contextual-hidden:hover {
+	color: var(--text-muted);
+}
+
+.osmosis-contextual-revealed {
+	animation: osmosis-fade-in 0.2s;
+}
+
+.osmosis-contextual-rating {
+	display: flex;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.osmosis-contextual-rating button {
+	padding: 4px 10px;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.osmosis-contextual-start-btn {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	margin-bottom: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-contextual-start-btn:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-contextual-start-btn.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
+}
+
+.osmosis-contextual-progress {
+	position: fixed;
+	bottom: 16px;
+	right: 16px;
+	padding: 4px 12px;
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 16px;
+	font-size: 12px;
+	color: var(--text-muted);
+	z-index: 10;
+	box-shadow: var(--shadow-s);
+}
+
+@keyframes osmosis-fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Spatial Study (Mind Map)
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-spatial-hidden .osmosis-node-content {
+	visibility: hidden;
+}
+
+.osmosis-spatial-hidden .osmosis-node {
+	opacity: 0.5;
+}
+
+.osmosis-spatial-placeholder {
+	fill: var(--text-faint);
+	font-size: 18px;
+	text-anchor: middle;
+	dominant-baseline: central;
+	pointer-events: none;
+}
+
+.osmosis-spatial-revealed .osmosis-node-content {
+	animation: osmosis-fade-in 0.2s;
+}
+
+.osmosis-spatial-rating-bubble {
+	position: fixed;
+	left: var(--osmosis-bubble-left, 0);
+	top: var(--osmosis-bubble-top, 0);
+	display: flex;
+	gap: 4px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 4px 6px;
+	box-shadow: var(--shadow-s);
+	z-index: 20;
+}
+
+.osmosis-spatial-rating-bubble button {
+	padding: 4px 8px;
+	border: none;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 11px;
+	font-weight: 500;
+}

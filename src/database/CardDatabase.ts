@@ -235,6 +235,78 @@ export class CardDatabase {
 		return this.queryCards(sql);
 	}
 
+	// ── Deck Queries ──────────────────────────────────────────
+
+	/**
+	 * Get all distinct deck names from active (non-deleted) cards.
+	 */
+	getAllDecks(): string[] {
+		const results = this.requireDb().exec(
+			`SELECT DISTINCT deck FROM cards WHERE deleted_at IS NULL ORDER BY deck`,
+		);
+		const first = results[0];
+		if (!first) return [];
+		return first.values.map((row) => row[0] as string);
+	}
+
+	/**
+	 * Get New/Learn/Due counts grouped by deck. Single efficient query.
+	 */
+	getCardCountsByDeck(now: number): Map<string, { new: number; learn: number; due: number }> {
+		const results = this.requireDb().exec(`
+			SELECT c.deck,
+				SUM(CASE WHEN s.card_id IS NULL OR s.state = 'new' THEN 1 ELSE 0 END) as new_count,
+				SUM(CASE WHEN s.state IN ('learning', 'relearning') THEN 1 ELSE 0 END) as learn_count,
+				SUM(CASE WHEN s.state = 'review' AND s.due <= ${now} THEN 1 ELSE 0 END) as due_count
+			FROM cards c
+			LEFT JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL
+			GROUP BY c.deck
+		`);
+		const first = results[0];
+		const map = new Map<string, { new: number; learn: number; due: number }>();
+		if (!first) return map;
+		for (const row of first.values) {
+			map.set(row[0] as string, {
+				new: row[1] as number,
+				learn: row[2] as number,
+				due: row[3] as number,
+			});
+		}
+		return map;
+	}
+
+	/**
+	 * Get due cards for a deck prefix (parent deck + all sub-decks).
+	 */
+	getDueCardsByDeckPrefix(now: number, deckPrefix: string): Array<CardRow & CardScheduleRow> {
+		const escaped = this.escape(deckPrefix);
+		const sql = `
+			SELECT c.*, s.stability, s.difficulty, s.due, s.last_review, s.reps, s.lapses, s.state
+			FROM cards c
+			JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.due <= ${now}
+			AND (c.deck = '${escaped}' OR c.deck LIKE '${escaped}/%')
+			ORDER BY s.due ASC`;
+		const results = this.requireDb().exec(sql);
+		const first = results[0];
+		if (!first) return [];
+		return first.values.map((row) => this.rowToCardWithSchedule(first.columns, row));
+	}
+
+	/**
+	 * Get new cards (no schedule) for a deck prefix (parent + sub-decks).
+	 */
+	getNewCardsByDeckPrefix(deckPrefix: string): CardRow[] {
+		const escaped = this.escape(deckPrefix);
+		return this.queryCards(`
+			SELECT c.* FROM cards c
+			LEFT JOIN card_schedule s ON c.id = s.card_id
+			WHERE c.deleted_at IS NULL AND s.card_id IS NULL
+			AND (c.deck = '${escaped}' OR c.deck LIKE '${escaped}/%')
+		`);
+	}
+
 	// ── Review Log ─────────────────────────────────────────────
 
 	/**

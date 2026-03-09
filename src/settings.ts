@@ -63,6 +63,12 @@ export interface OsmosisSettings {
 	dailyNewCardLimit: number;
 	/** Maximum review cards per day (0 = unlimited). */
 	dailyReviewCardLimit: number;
+
+	// ── Study Mode Settings ─────────────────────────────────
+	/** Whether contextual mode activates automatically in reading view (default: true). */
+	contextualAutoActivate: boolean;
+	/** Whether inline clozes blank out in contextual mode (default: false). */
+	contextualInlineCloze: boolean;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -80,6 +86,10 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	headingClozeConflict: "cloze_only",
 	dailyNewCardLimit: 20,
 	dailyReviewCardLimit: 200,
+
+	// Study Mode defaults
+	contextualAutoActivate: true,
+	contextualInlineCloze: false,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {

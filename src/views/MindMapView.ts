@@ -171,6 +171,12 @@ export class MindMapView extends ItemView {
 	private isPinned = false;
 	private pinActionEl: HTMLElement | null = null;
 
+	// Spatial study mode state
+	private isSpatialStudy = false;
+	private spatialHiddenIds = new Set<string>();
+	private spatialStudyActionEl: HTMLElement | null = null;
+	private spatialRatingBubble: HTMLDivElement | null = null;
+
 	// Resize state: drag-to-resize node width
 	private resizingNodeId: string | null = null;
 	private resizeStartX = 0;
@@ -259,6 +265,169 @@ export class MindMapView extends ItemView {
 		}
 		// updateHeader() refreshes the tab title; not in public typings
 		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+	}
+
+	// ── Spatial Study Mode ──────────────────────────────────
+
+	private toggleSpatialStudy(): void {
+		if (this.isSpatialStudy) {
+			this.exitSpatialStudy();
+		} else {
+			this.enterSpatialStudy();
+		}
+	}
+
+	private enterSpatialStudy(): void {
+		this.isSpatialStudy = true;
+		this.spatialStudyActionEl?.addClass("is-active");
+		this.spatialHiddenIds.clear();
+
+		// Hide all non-root nodes
+		for (const [nodeId, node] of this.nodeMap) {
+			if (node.depth > 0) {
+				this.spatialHiddenIds.add(nodeId);
+				this.applySpatialHidden(nodeId, true);
+			}
+		}
+
+		new Notice("Study mode: tap nodes to reveal and rate");
+	}
+
+	private exitSpatialStudy(): void {
+		this.isSpatialStudy = false;
+		this.spatialStudyActionEl?.removeClass("is-active");
+
+		// Reveal all nodes
+		for (const nodeId of this.spatialHiddenIds) {
+			this.applySpatialHidden(nodeId, false);
+		}
+		this.spatialHiddenIds.clear();
+		this.removeSpatialRatingBubble();
+	}
+
+	private applySpatialHidden(nodeId: string, hidden: boolean): void {
+		if (!this.svg) return;
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+
+		if (hidden) {
+			group.classList.add("osmosis-spatial-hidden");
+			// Add "?" placeholder text
+			const existing = group.querySelector(".osmosis-spatial-placeholder");
+			if (!existing) {
+				const node = this.nodeMap.get(nodeId);
+				if (node) {
+					const placeholder = document.createElementNS(SVG_NS, "text");
+					placeholder.classList.add("osmosis-spatial-placeholder");
+					placeholder.setAttribute("x", String(node.rect.x + node.rect.width / 2));
+					placeholder.setAttribute("y", String(node.rect.y + node.rect.height / 2));
+					placeholder.textContent = "?";
+					group.appendChild(placeholder);
+				}
+			}
+		} else {
+			group.classList.remove("osmosis-spatial-hidden");
+			const placeholder = group.querySelector(".osmosis-spatial-placeholder");
+			placeholder?.remove();
+		}
+	}
+
+	private handleSpatialStudyClick(nodeId: string): boolean {
+		if (!this.isSpatialStudy) return false;
+		if (!this.spatialHiddenIds.has(nodeId)) return false;
+
+		// Reveal the node
+		this.spatialHiddenIds.delete(nodeId);
+		this.applySpatialHidden(nodeId, false);
+
+		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+		if (group) {
+			group.classList.add("osmosis-spatial-revealed");
+		}
+
+		// Show rating bubble
+		this.showSpatialRatingBubble(nodeId);
+
+		return true; // consumed the click
+	}
+
+	private showSpatialRatingBubble(nodeId: string): void {
+		this.removeSpatialRatingBubble();
+
+		const node = this.nodeMap.get(nodeId);
+		if (!node || !this.svg) return;
+
+		const container = this.contentEl;
+		const bubble = container.createDiv({ cls: "osmosis-spatial-rating-bubble" });
+
+		// Position the bubble near the node
+		const svgRect = this.svg.getBoundingClientRect();
+		const scale = svgRect.width / this.viewBox.w;
+		const nodeScreenX = (node.rect.x - this.viewBox.x) * scale + svgRect.left;
+		const nodeScreenY = (node.rect.y + node.rect.height - this.viewBox.y) * scale + svgRect.top;
+
+		bubble.setCssProps({
+			"--osmosis-bubble-left": `${nodeScreenX}px`,
+			"--osmosis-bubble-top": `${nodeScreenY + 4}px`,
+		});
+
+		const ratings: Array<{ label: string; rating: 1 | 2 | 3 | 4; cls: string }> = [
+			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
+			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
+			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
+			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
+		];
+
+		for (const { label, rating, cls } of ratings) {
+			const btn = bubble.createEl("button", { text: label, cls });
+			btn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				this.rateSpatialNode(nodeId, rating);
+			});
+		}
+
+		this.spatialRatingBubble = bubble;
+	}
+
+	private rateSpatialNode(nodeId: string, rating: 1 | 2 | 3 | 4): void {
+		// Record the review via plugin's study session
+		const node = this.nodeMap.get(nodeId);
+		if (node) {
+			void this.recordSpatialReview(node.source.id, rating);
+		}
+		this.removeSpatialRatingBubble();
+
+		// Check if all nodes revealed
+		if (this.spatialHiddenIds.size === 0) {
+			new Notice("All nodes revealed! Study session complete.");
+			this.exitSpatialStudy();
+		}
+	}
+
+	private async recordSpatialReview(nodeId: string, rating: 1 | 2 | 3 | 4): Promise<void> {
+		try {
+			await this.plugin.cardDb.ensureInitialized();
+			const { FSRSScheduler } = await import("../database/FSRSScheduler");
+			const { StudySessionManager } = await import("../study/StudySessionManager");
+			const sessionManager = new StudySessionManager(this.plugin.cardDb, new FSRSScheduler());
+
+			// Try to find a card for this node
+			const notePath = this.currentFile?.path ?? "";
+			const cards = this.plugin.cardDb.getCardsByNote(notePath);
+			const card = cards.find((c) => c.id === nodeId || c.front.includes(nodeId));
+			if (card) {
+				sessionManager.recordReview(card.id, rating, "spatial");
+			}
+		} catch {
+			// Silently fail if no card found for this node
+		}
+	}
+
+	private removeSpatialRatingBubble(): void {
+		if (this.spatialRatingBubble) {
+			this.spatialRatingBubble.remove();
+			this.spatialRatingBubble = null;
+		}
 	}
 
 	async onOpen(): Promise<void> {
@@ -381,6 +550,11 @@ export class MindMapView extends ItemView {
 			this.togglePin();
 		});
 
+		// Spatial study mode toggle
+		this.spatialStudyActionEl = this.addAction("graduation-cap", "Study mode", () => {
+			this.toggleSpatialStudy();
+		});
+
 		await this.loadActiveFile();
 
 		this.registerEvent(
@@ -453,6 +627,9 @@ export class MindMapView extends ItemView {
 			cancelAnimationFrame(this.cullRafId);
 			this.cullRafId = null;
 		}
+		this.removeSpatialRatingBubble();
+		this.spatialHiddenIds.clear();
+		this.isSpatialStudy = false;
 		this.contentEl.empty();
 		this.currentFile = null;
 		this.currentTree = null;
@@ -2161,6 +2338,9 @@ export class MindMapView extends ItemView {
 		// Check if clicking a node
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
+			// Spatial study mode: reveal hidden nodes on click
+			if (this.handleSpatialStudyClick(nodeId)) return;
+
 			if (e.shiftKey) {
 				this.toggleNodeInSelection(nodeId);
 			} else {
