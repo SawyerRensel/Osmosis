@@ -258,17 +258,18 @@ Uses Obsidian CSS variables for theme compatibility.
 	transition: transform 80ms ease-out, opacity 80ms ease-out;
 }
 
-/* Selection */
+/* Selection — !important needed to override inline theme styles on shape elements */
 .osmosis-node-selected > .osmosis-node {
-	stroke: var(--interactive-accent);
-	stroke-width: 2;
+	stroke: var(--interactive-accent) !important;
+	stroke-width: 2 !important;
+	stroke-dasharray: none !important;
 }
 
 /* Cursor sync highlight (editor cursor → map node) */
 .osmosis-node-cursor-synced > .osmosis-node {
-	stroke: var(--text-accent);
-	stroke-width: 2;
-	stroke-dasharray: 4 2;
+	stroke: var(--text-accent) !important;
+	stroke-width: 2 !important;
+	stroke-dasharray: 4 2 !important;
 }
 
 /* Rubber-band selection */
