@@ -128,15 +128,9 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	private renderCounts(el: HTMLElement, newCount: number, learnCount: number, dueCount: number): void {
-		if (newCount > 0) {
-			el.createSpan({ cls: "osmosis-dash-new", text: String(newCount) });
-		}
-		if (learnCount > 0) {
-			el.createSpan({ cls: "osmosis-dash-learn", text: String(learnCount) });
-		}
-		if (dueCount > 0) {
-			el.createSpan({ cls: "osmosis-dash-due", text: String(dueCount) });
-		}
+		el.createSpan({ cls: `osmosis-dash-new${newCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(newCount) });
+		el.createSpan({ cls: `osmosis-dash-learn${learnCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(learnCount) });
+		el.createSpan({ cls: `osmosis-dash-due${dueCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(dueCount) });
 	}
 
 	private openStudy(scope: DeckScope): void {

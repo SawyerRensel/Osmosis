@@ -357,22 +357,18 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (!node || !this.svg) return;
 
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+
 		const container = this.contentEl;
 		const bubble = container.createDiv({ cls: "osmosis-spatial-rating-bubble" });
 
-		// Position the bubble near the node
-		const svgRect = this.svg.getBoundingClientRect();
-		const scale = svgRect.width / this.viewBox.w;
-		const offsetX = this.getOffsetX();
-		const offsetY = this.getOffsetY();
-		const nodeCenterX = node.rect.x + offsetX + node.rect.width / 2;
-		const nodeBottomY = node.rect.y + offsetY + node.rect.height;
-		const nodeScreenX = (nodeCenterX - this.viewBox.x) * scale + svgRect.left;
-		const nodeScreenY = (nodeBottomY - this.viewBox.y) * scale + svgRect.top;
+		// Use the actual rendered bounding rect for accurate screen positioning
+		const groupRect = group.getBoundingClientRect();
 
 		bubble.setCssProps({
-			"--osmosis-bubble-left": `${nodeScreenX}px`,
-			"--osmosis-bubble-top": `${nodeScreenY + 4}px`,
+			"--osmosis-bubble-left": `${groupRect.left + groupRect.width / 2}px`,
+			"--osmosis-bubble-top": `${groupRect.bottom + 4}px`,
 		});
 
 		const ratings: Array<{ label: string; rating: 1 | 2 | 3 | 4; cls: string }> = [

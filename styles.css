@@ -1373,6 +1373,11 @@ hr.osmosis-map-style-divider {
 	background: hsla(140, 50%, 42%, 0.12);
 }
 
+.osmosis-dash-zero {
+	color: var(--text-faint);
+	background: none;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Contextual Study (Reading View)
    ═══════════════════════════════════════════════════════════ */
