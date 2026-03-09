@@ -430,9 +430,9 @@ export class MindMapView extends ItemView {
 		for (const nodeId of this.spatialHiddenIds) {
 			this.applySpatialHidden(nodeId, false);
 		}
-		// Restore full content for front-only revealed fence nodes
+		// Restore original content for front-only revealed fence nodes
 		for (const nodeId of this.spatialFrontRevealedIds) {
-			this.restoreFenceFullContent(nodeId);
+			this.restoreOriginalFenceContent(nodeId);
 		}
 		this.spatialHiddenIds.clear();
 		this.spatialFrontRevealedIds.clear();
@@ -510,7 +510,7 @@ export class MindMapView extends ItemView {
 		return true; // consumed the click
 	}
 
-	/** Replace the node's rendered content with just the front (question) text. */
+	/** Show front + occluded back (░░░░░░) for an osmosis fence node. */
 	private showFenceFrontOnly(nodeId: string, front: string): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
@@ -522,10 +522,11 @@ export class MindMapView extends ItemView {
 		while (wrapper.firstChild) stash.appendChild(wrapper.firstChild);
 		(wrapper as unknown as { _originalStash: DocumentFragment })._originalStash = stash;
 		wrapper.classList.add("osmosis-fence-front-only");
+
+		// Rendered front
 		const frontEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
 		frontEl.setAttribute("xmlns", XHTML_NS);
-		frontEl.className = "osmosis-fence-front";
-		// Render markdown so images, code blocks, and formatting display properly
+		frontEl.className = "osmosis-contextual-front";
 		if (this.renderComponent) {
 			void MarkdownRenderer.render(
 				this.app,
@@ -536,11 +537,65 @@ export class MindMapView extends ItemView {
 			);
 		}
 		wrapper.appendChild(frontEl);
+
+		// Divider
+		const divider = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		divider.setAttribute("xmlns", XHTML_NS);
+		divider.className = "osmosis-study-divider";
+		wrapper.appendChild(divider);
+
+		// Occluded back placeholder
+		const hiddenEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		hiddenEl.setAttribute("xmlns", XHTML_NS);
+		hiddenEl.className = "osmosis-contextual-hidden";
+		hiddenEl.textContent = "░░░░░░";
+		wrapper.appendChild(hiddenEl);
+
 		group.classList.add("osmosis-spatial-revealed");
 	}
 
-	/** Restore the full osmosis fence content after back is revealed. */
+	/** Reveal the back answer below the front (front stays visible). */
 	private restoreFenceFullContent(nodeId: string): void {
+		if (!this.svg) return;
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
+		if (!wrapper) return;
+
+		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
+		wrapper.classList.remove("osmosis-fence-front-only");
+
+		// Remove the occluded placeholder and replace with rendered back
+		const hiddenEl = wrapper.querySelector(".osmosis-contextual-hidden");
+		if (hiddenEl) hiddenEl.remove();
+
+		const node = this.nodeMap.get(nodeId);
+		if (node && this.renderComponent) {
+			const fence = this.parseOsmosisFence(node.source.content)
+				?? this.parseOsmosisCloze(node.source.content);
+			if (fence) {
+				const backEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+				backEl.setAttribute("xmlns", XHTML_NS);
+				backEl.className = "osmosis-contextual-revealed";
+				void MarkdownRenderer.render(
+					this.app,
+					fence.back,
+					backEl,
+					this.currentFile?.path ?? "",
+					this.renderComponent,
+				);
+				wrapper.appendChild(backEl);
+				return;
+			}
+		}
+
+		// Fallback: restore stash as-is
+		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
+		if (stash) wrapper.replaceChildren(stash);
+	}
+
+	/** Restore original node content when exiting study mode. */
+	private restoreOriginalFenceContent(nodeId: string): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
@@ -551,28 +606,6 @@ export class MindMapView extends ItemView {
 
 		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
 		wrapper.classList.remove("osmosis-fence-front-only");
-
-		// Instead of restoring the stash (which has hidden ░░░░░░ from contextual
-		// processor), show just the answer. The user already saw the question
-		// in step 1 (front-only reveal), so flip to the back like Anki.
-		const node = this.nodeMap.get(nodeId);
-		if (node && this.renderComponent) {
-			const fence = this.parseOsmosisFence(node.source.content)
-				?? this.parseOsmosisCloze(node.source.content);
-			if (fence) {
-				wrapper.replaceChildren();
-				void MarkdownRenderer.render(
-					this.app,
-					fence.back,
-					wrapper,
-					this.currentFile?.path ?? "",
-					this.renderComponent,
-				);
-				return;
-			}
-		}
-
-		// Fallback: restore stash as-is
 		wrapper.replaceChildren(stash);
 	}
 
