@@ -483,17 +483,17 @@ export class MindMapView extends ItemView {
 		wrapper.classList.remove("osmosis-fence-front-only");
 
 		// Instead of restoring the stash (which has hidden ░░░░░░ from contextual
-		// processor), render front + back directly as visible markdown.
+		// processor), show just the answer. The user already saw the question
+		// in step 1 (front-only reveal), so flip to the back like Anki.
 		const node = this.nodeMap.get(nodeId);
 		if (node && this.renderComponent) {
 			const fence = this.parseOsmosisFence(node.source.content)
 				?? this.parseOsmosisCloze(node.source.content);
 			if (fence) {
 				wrapper.replaceChildren();
-				const content = `${fence.front}\n\n---\n\n${fence.back}`;
 				void MarkdownRenderer.render(
 					this.app,
-					content,
+					fence.back,
 					wrapper,
 					this.currentFile?.path ?? "",
 					this.renderComponent,
