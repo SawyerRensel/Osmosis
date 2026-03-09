@@ -2250,6 +2250,9 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Spatial study mode: reveal hidden nodes on tap
+		if (this.handleSpatialStudyClick(nodeId)) return;
+
 		// In touch selection mode, taps toggle selection (like shift+click)
 		if (this.touchSelectionMode) {
 			this.toggleNodeInSelection(nodeId);
