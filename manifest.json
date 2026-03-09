@@ -3,7 +3,7 @@
 	"name": "Osmosis",
 	"version": "0.1.0",
 	"minAppVersion": "0.15.0",
-	"description": "Unifies mind mapping, linked note-taking, and spaced repetition into a single learning system.",
+	"description": "Absorb information faster and longer with unified notes, flashcards, and mind mapping.",
 	"author": "Sawyer Rensel",
 	"isDesktopOnly": false
 }
