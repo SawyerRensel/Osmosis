@@ -493,11 +493,13 @@ Three UI components for mind map controls, settings, and actions:
 ### Key Decisions
 
 #### Card Identity
-- **Inline comment co-located with the card**: `<!--osmosis-id:abc123-->` placed adjacent to the card source in markdown
-- One note can contain many cards — frontmatter can't cleanly map IDs back to specific headings/cloze/table rows
+- **`id:` metadata key inside explicit fences**: Each ` ```osmosis ` fence gets an `id: abc12345` metadata line, auto-generated on first sync if missing
+- IDs are 8-character hex strings from `crypto.randomUUID()`
+- **Derived IDs**: Bidi reverse cards use `{id}-r`, cloze cards use `{id}-c1`, `{id}-c2`, etc. (positional, Anki-style)
 - Frontmatter used for **note-level** metadata only: `osmosis: true`, `osmosis-deck:`
 - Image occlusion card IDs stored as `id` attributes on SVG shape elements
-- If an `osmosis-id` comment is deleted, re-generate and treat as new card (graceful degradation)
+- If an `id:` line is deleted, re-generate and treat as new card (graceful degradation)
+- **Design decision (2026-03-08)**: Abandoned `<!--osmosis-id:xxx-->` inline HTML comments — they were ugly in prose (especially on cloze lines) and required injecting into user content outside of code fences. Moving to `id:` as fence metadata keeps IDs invisible in rendered view and co-located with the card definition.
 
 #### Note Opt-In
 - `osmosis: true` in frontmatter opts a note into card generation
@@ -508,24 +510,13 @@ Three UI components for mind map controls, settings, and actions:
 
 | Type | Syntax | Cards generated |
 |---|---|---|
-| Heading-paragraph | `## Heading` + body below | 1 (heading = front, body = back) |
-| Table | 2-column markdown table | 1 per data row |
-| Cloze — highlight | `==term==` | 1 per highlighted term |
-| Cloze — bold | `**term**` | 1 per bolded term |
-| Bidirectional | `Q:::A` | 2 (forward + reverse) |
-| Code block — single line | `# osmosis-hide` or `// osmosis-hide` appended to line | 1 per hidden line/region |
-| Code block — multi-line | `# osmosis-hide-start` / `# osmosis-hide-end` block | 1 per hidden region |
+| Explicit card | ` ```osmosis ` fence with `***` separator | 1 (or 2 if `bidi: true`) |
+| Explicit cloze | ` ```osmosis ` fence with `==term==` in content (no `***`) | 1 per cloze deletion |
+| Type-in card | ` ```osmosis ` fence with `type-in: true` | 1 (or 2 if `bidi: true`) |
+| Code block cloze | `# osmosis-hide` or `// osmosis-hide` appended to line | 1 per hidden line/region |
 | Image occlusion | SVG masks drawn over image via editor | 1 per shape/group |
 
-**Code block cloze details:**
-- Language detected from fence tag (` ```python `, ` ```javascript `) to determine comment style (`#` vs `//`)
-- Unknown languages fall back to accepting both
-- Hidden lines replaced by `░░░░░░` on front; full block revealed on back
-- Multiple hidden regions in one block = multiple cards (one per region)
-
-**Heading vs. cloze conflict:**
-- When a section has both a heading card and a cloze in the same paragraph, default: **Cloze only**
-- Configurable in Osmosis Settings: `[Both] [Cloze only*] [Heading only]`
+**Design decision (2026-03-08)**: Dropped auto-generated cards (heading-paragraph, inline cloze from `==highlights==` and `**bold**`). Auto-gen required injecting `<!--osmosis-id:xxx-->` HTML comments into user prose, which was ugly and fragile. All cards are now explicit via ` ```osmosis ` fences, keeping notes clean and card authoring intentional. Cloze syntax (`==term==`) is supported inside explicit fences.
 
 #### Deck Organization — Four Layers (all opt-in)
 1. **Tag hierarchy** — `#study/python/functions` → deck path mirrors tag path
@@ -598,7 +589,7 @@ Osmosis Settings has explicit include/exclude lists for folders and tags. Nothin
 
 ### Refined Understanding
 
-The flashcard system is not a bolt-on to the mind map — it is the same data viewed differently. A heading in a note is simultaneously a mind map node and a card front. A cloze deletion is simultaneously inline text and a testable blank. Image occlusion is simultaneously an embedded image and a spatial quiz. The SR engine schedules what to study; the view layer (sequential modal or spatial map) determines *how* you study it. This is the core value of Osmosis: author once, study in any mode.
+The flashcard system is not a bolt-on to the mind map — it is the same data viewed differently. An explicit card fence is simultaneously note content and a reviewable card. Image occlusion is simultaneously an embedded image and a spatial quiz. The SR engine schedules what to study; the view layer (sequential modal, contextual in-note, or spatial map) determines *how* you study it. Cards are authored intentionally via explicit fences — not auto-generated from prose — keeping notes clean and card identity stable.
 
 ---
 
@@ -616,11 +607,11 @@ Compared all Anki stock note types against Osmosis's planned card types. Three g
 
 ### Key Decisions
 
-#### Heading Auto-Generation Toggle
-- New setting in Osmosis Settings: **"Auto-generate cards from headings"** (on by default)
-- When **off**, headings are not automatically interpreted as card fronts — only explicit card declarations (code fences, clozes, tables) generate cards
-- When off, heading structure is **still used as context/metadata** for cloze cards within that section (e.g., a cloze under `## Photosynthesis` is tagged with that heading for context)
-- Use case: students who take extensive notes under headings and don't want every section to become a card
+#### Auto-Generation Removed (2026-03-08)
+- **Removed**: Heading-paragraph auto-gen and inline cloze auto-gen (`==highlights==`, `**bold**`)
+- **Reason**: Auto-gen required injecting `<!--osmosis-id:xxx-->` HTML comments into user prose, which was ugly and brittle (IDs orphaned on every content edit or restart if comments were missing)
+- **Replacement**: All cards are explicit via ` ```osmosis ` fences. Cloze syntax (`==term==`) is supported *inside* explicit fences
+- Heading structure is **still used as context/metadata** for cards within that section (e.g., a card under `## Photosynthesis` inherits that heading as context)
 
 #### Explicit Card Syntax: Code Fences
 
@@ -683,6 +674,7 @@ Hello
 **Card with metadata:**
 ````
 ```osmosis
+id: a3f7b2c1
 bidi: true
 type-in: true
 deck: vocabulary/french
@@ -694,9 +686,21 @@ Hello
 ```
 ````
 
+**Cloze card (no `***` separator — uses `==term==` syntax):**
+````
+```osmosis
+id: b8cb51f9
+deck: vocab/french
+
+==Bonjour== means ==hello== in ==French==
+```
+````
+*Generates 3 cards: `b8cb51f9-c1`, `b8cb51f9-c2`, `b8cb51f9-c3` — one per cloze deletion.*
+
 **Rich content (math, images — all rendered by post-processor):**
 ````
 ```osmosis
+id: c2d4e6f8
 deck: biology/cell-structure
 hint: Powerhouse of the cell
 
@@ -710,8 +714,10 @@ Mitochondria
 **Syntax rules:**
 - Language tag is `` ```osmosis `` — Osmosis registers a `MarkdownCodeBlockProcessor` for this tag
 - Metadata lines (`key: value`) must appear at the top of the fence body, before any blank line
-- `***` separates front from back (one `***` always, regardless of direction)
-- `bidi: true` makes the card bidirectional (generates two cards: forward + reverse)
+- `id:` is auto-generated on first sync if missing — 8 hex chars from `crypto.randomUUID()`
+- `***` separates front from back for Q&A cards (one `***` always, regardless of direction)
+- `==term==` inside a fence (with no `***`) generates cloze cards — one per deletion, IDs derived as `{id}-c1`, `{id}-c2`, etc.
+- `bidi: true` makes the card bidirectional (generates two cards: forward `{id}` + reverse `{id}-r`)
 - `type-in: true` enables typed recall mode (text input + diff comparison on review)
 - Flags compose: `bidi: true` + `type-in: true` = bidirectional type-in card
 - All standard markdown renders inside the fence: bold, links, images, LaTeX, code, embeds
@@ -782,17 +788,13 @@ Every FSRS review is tagged with the study mode that produced it (`contextual`, 
 
 | Type | Syntax | Cards generated |
 |---|---|---|
-| Heading-paragraph | `## Heading` + body below (auto-gen, toggleable in settings) | 1 (heading = front, body = back) |
-| Table | 2-column markdown table | 1 per data row |
-| Cloze — highlight | `==term==` | 1 per highlighted term |
-| Cloze — bold | `**term**` | 1 per bolded term |
-| Explicit card | `` ```osmosis `` code fence with `***` separator | 1 (or 2 if `bidi: true`) |
-| Type-in card | `` ```osmosis `` code fence with `type-in: true` | 1 (or 2 if `bidi: true`) |
-| Code block — single line | `# osmosis-hide` or `// osmosis-hide` appended to line | 1 per hidden line/region |
-| Code block — multi-line | `# osmosis-hide-start` / `# osmosis-hide-end` block | 1 per hidden region |
+| Explicit Q&A | ` ```osmosis ` fence with `***` separator | 1 (or 2 if `bidi: true`; reverse ID: `{id}-r`) |
+| Explicit cloze | ` ```osmosis ` fence with `==term==` (no `***`) | 1 per cloze deletion (IDs: `{id}-c1`, `{id}-c2`, ...) |
+| Type-in card | ` ```osmosis ` fence with `type-in: true` | 1 (or 2 if `bidi: true`) |
+| Code block cloze | `# osmosis-hide` / `// osmosis-hide` appended to line | 1 per hidden line/region |
 | Image occlusion | SVG masks drawn over image via editor | 1 per shape/group |
 
-*Note: The old `Q:::A` bidirectional inline syntax has been replaced by `` ```osmosis `` fences with `bidi: true`. All explicit card creation uses the unified code fence syntax.*
+*Note (2026-03-08): Heading-paragraph auto-gen, inline cloze auto-gen (`==highlights==`, `**bold**`), and table auto-gen have been removed. All cards are now explicit via ` ```osmosis ` fences with auto-generated `id:` metadata. The old `Q:::A` inline syntax and `<!--osmosis-id:xxx-->` HTML comments are also removed.*
 
 ---
 

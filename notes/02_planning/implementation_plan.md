@@ -215,31 +215,30 @@ The implementation follows a bottom-up approach: parser first (the shared founda
 1. Set up sql.js (WASM SQLite) with the card database schema (`.osmosis/cards.db`)
 2. Implement card database operations (create, read, update, soft-delete, query due cards)
 3. Integrate FSRS algorithm (ts-fsrs library or port from Python reference)
-4. Implement card identity system (`<!--osmosis-id:abc123-->` inline comments)
+4. Implement card identity system (`id:` metadata key in explicit fences, auto-generated on first sync)
 5. Build the card generation pipeline:
-   a. Heading-paragraph cards (heading = front, body = back)
-   b. Cloze cards from `==highlights==`
-   c. Cloze cards from `**bold**`
-   d. Explicit cards from ` ```osmosis ` code fences
+   a. Explicit Q&A cards from ` ```osmosis ` code fences (front/back split on `***`)
+   b. Explicit cloze cards from ` ```osmosis ` fences with `==term==` (no `***`)
+   c. Bidi cards (reverse ID derived as `{id}-r`)
+   d. Cloze card IDs derived as `{id}-c1`, `{id}-c2`, etc. (positional, Anki-style)
 6. Implement note opt-in detection (`osmosis: true` in frontmatter)
 7. Implement deck organization (tag hierarchy, folder hierarchy, explicit frontmatter, mind map branch)
 8. Handle orphaned cards (soft-delete when source content is deleted)
 9. Implement session quotas (daily new card limit + daily review limit)
-10. Implement heading auto-generation toggle and heading vs. cloze conflict resolution
-11. Write unit tests for FSRS scheduling and card generation
+10. Write unit tests for FSRS scheduling and card generation
 
 **Deliverables**:
 - [ ] `CardDatabase` class wrapping sql.js
 - [ ] `FSRSScheduler` class
 - [ ] `CardGenerator` class consuming parser AST
-- [ ] Card generation from all four card types
+- [ ] Card generation from explicit fences (Q&A, cloze, bidi, type-in)
 
 **Success Criteria for Phase 5**:
-- [ ] Notes with `osmosis: true` generate cards automatically
+- [ ] Notes with `osmosis: true` generate cards from explicit fences
 - [ ] FSRS schedules correctly (intervals increase after successful recall)
 - [ ] Card DB opens in < 100ms
 - [ ] Due card query < 20ms for single deck
-- [ ] Card IDs remain stable across file edits
+- [ ] Card IDs remain stable across restarts (auto-generated `id:` metadata persists in fences)
 - [ ] Orphaned cards are soft-deleted, not destroyed
 - [ ] All SR unit tests pass
 
@@ -429,10 +428,10 @@ OsmosisNode (in-memory AST)
   - isTranscluded: boolean
 
 Card (SQLite — cards.db)
-  - id: TEXT PRIMARY KEY           # Matches <!--osmosis-id:...-->
+  - id: TEXT PRIMARY KEY           # From id: metadata in fence ({id}, {id}-r, {id}-c1, etc.)
   - note_path: TEXT                # Source note file path
   - deck: TEXT                     # Deck path (e.g., "python/functions")
-  - card_type: TEXT                # heading | cloze_highlight | cloze_bold | explicit | explicit_bidi
+  - card_type: TEXT                # explicit | explicit_bidi | explicit_cloze
   - front: TEXT                    # Front content (markdown)
   - back: TEXT                     # Back content (markdown)
   - created_at: INTEGER            # Unix timestamp
@@ -953,52 +952,46 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - Dependencies: Task 5.1
 
 **Task 5.4: Card Identity System**
-- Description: Generate stable card IDs as `<!--osmosis-id:abc123-->` inline comments. Detect existing IDs during parsing. Handle ID-less content (generate new ID).
-- Acceptance Criteria: IDs are stable across file edits (content changes don't break them). Deleted IDs gracefully regenerate.
+- Description: Implement `id:` as a metadata key in explicit fences. Auto-generate on first sync (8 hex chars from `crypto.randomUUID()`). Write `id:` line back into fence if missing. Derive bidi reverse IDs as `{id}-r` and cloze IDs as `{id}-c1`, `{id}-c2`, etc.
+- Acceptance Criteria: IDs are stable across restarts. Missing IDs auto-generated and written back. Derived IDs are deterministic.
 - Estimated Effort: 4–8 hours
-- Dependencies: Task 1.3
+- Dependencies: Task 5.2
 
-**Task 5.5: Card Generation — Heading-Paragraph**
-- Description: Detect `## Heading` + body text → generate card (heading = front, body = back).
-- Acceptance Criteria: Correct cards generated. Heading auto-generation toggle works. Card IDs assigned.
-- Estimated Effort: 4–8 hours
-- Dependencies: Tasks 5.4, 5.2
-
-**Task 5.6: Card Generation — Cloze (Highlight & Bold)**
-- Description: Detect `==highlighted==` and `**bold**` text → generate cloze cards.
-- Acceptance Criteria: Cloze cards generated with term blanked on front. Both highlight and bold syntax work.
-- Estimated Effort: 4–8 hours
-- Dependencies: Tasks 5.4, 5.2
-
-**Task 5.7: Card Generation — Explicit Fences**
-- Description: Parse ` ```osmosis ` code fences. Extract metadata (bidi, type-in, deck, hint), front/back content split on `***`.
-- Acceptance Criteria: All fence variants parse correctly. Metadata keys applied. Bidi generates two cards.
+**Task 5.5: Card Generation — Explicit Fences (Q&A)**
+- Description: Parse ` ```osmosis ` code fences. Extract metadata (id, bidi, type-in, deck, hint), front/back content split on `***`. Bidi generates forward `{id}` + reverse `{id}-r`.
+- Acceptance Criteria: All fence variants parse correctly. Metadata keys applied. Bidi generates two cards with derived IDs.
 - Estimated Effort: 1 day
 - Dependencies: Tasks 5.4, 5.2
 
-**Task 5.8: Note Opt-In & Deck Organization**
+**Task 5.6: Card Generation — Explicit Cloze**
+- Description: Parse ` ```osmosis ` fences with `==term==` cloze syntax (no `***` separator). Generate one card per cloze deletion with IDs `{id}-c1`, `{id}-c2`, etc.
+- Acceptance Criteria: Cloze cards generated with term blanked on front. Multiple clozes per fence supported. Positional IDs stable.
+- Estimated Effort: 4–8 hours
+- Dependencies: Tasks 5.4, 5.2
+
+**Task 5.7: Note Opt-In & Deck Organization**
 - Description: Detect `osmosis: true` in frontmatter. Implement deck organization via tag hierarchy, folder hierarchy, explicit frontmatter (`osmosis-deck:`), and mind map branch.
 - Acceptance Criteria: Only opted-in notes generate cards. Decks organized correctly by all four methods.
 - Estimated Effort: 1 day
-- Dependencies: Tasks 5.5–5.7
+- Dependencies: Tasks 5.5–5.6
 
-**Task 5.9: Orphaned Cards & Session Quotas**
+**Task 5.8: Orphaned Cards & Session Quotas**
 - Description: Handle deleted source content (soft-delete cards). Implement daily new card limit and review limit.
 - Acceptance Criteria: Orphaned cards archived, not destroyed. Session quotas enforced.
 - Estimated Effort: 4–8 hours
 - Dependencies: Task 5.2
 
-**Task 5.10: Heading vs. Cloze Conflict & Exclusion**
-- Description: Implement configurable behavior when a section has both heading card and cloze. Implement `<!-- osmosis-exclude -->` suppression.
-- Acceptance Criteria: Conflict resolution configurable (Both / Cloze only / Heading only). Exclude comment prevents card generation.
-- Estimated Effort: 4–8 hours
-- Dependencies: Tasks 5.5, 5.6
+**Task 5.9: Card Exclusion**
+- Description: Implement `<!-- osmosis-exclude -->` suppression for explicit fences.
+- Acceptance Criteria: Exclude comment prevents card generation for the next fence.
+- Estimated Effort: 2–4 hours
+- Dependencies: Task 5.5
 
-**Task 5.11: SR Unit Tests**
-- Description: Tests for FSRS scheduling, card generation (all types), deck organization, orphaned cards, conflict resolution.
+**Task 5.10: SR Unit Tests**
+- Description: Tests for FSRS scheduling, card generation (Q&A, cloze, bidi, type-in), deck organization, orphaned cards, exclusion.
 - Acceptance Criteria: All tests pass. Coverage of edge cases.
 - Estimated Effort: 1 day
-- Dependencies: Tasks 5.1–5.10
+- Dependencies: Tasks 5.1–5.9
 
 ---
 
