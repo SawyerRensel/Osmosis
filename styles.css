@@ -1062,6 +1062,20 @@ hr.osmosis-map-style-divider {
 .osmosis-study-modal {
 	width: 600px;
 	max-width: 90vw;
+	max-height: 85vh;
+}
+
+.osmosis-study-modal .modal-content {
+	overflow-y: auto;
+}
+
+/* Constrain images/video inside study cards */
+.osmosis-study-card img,
+.osmosis-study-card video {
+	max-width: 100%;
+	max-height: 50vh;
+	height: auto;
+	object-fit: contain;
 }
 
 .osmosis-study-progress {
@@ -1121,7 +1135,7 @@ hr.osmosis-map-style-divider {
 }
 
 .osmosis-study-back.is-revealed {
-	max-height: 600px;
+	max-height: 5000px;
 	opacity: 1;
 }
 
