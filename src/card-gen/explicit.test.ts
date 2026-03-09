@@ -374,6 +374,173 @@ describe("generateExplicitCards", () => {
 		});
 	});
 
+	describe("code cloze cards", () => {
+		it("generates a single-line code cloze card", () => {
+			const md = [
+				"````osmosis",
+				"id: code001",
+				"",
+				"```python",
+				"def fibonacci(n):",
+				"    if n <= 1:",
+				"        return n  # osmosis-cloze",
+				"    return fibonacci(n-1) + fibonacci(n-2)",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.card_type).toBe("code_cloze");
+			expect(cards[0]!.id).toBe("code001-c1");
+			// Front: line replaced with [...], indentation preserved
+			expect(cards[0]!.front).toContain("        [...]");
+			expect(cards[0]!.front).not.toContain("return n");
+			// Back: marker stripped, code visible
+			expect(cards[0]!.back).toContain("        return n");
+			expect(cards[0]!.back).not.toContain("osmosis-cloze");
+		});
+
+		it("generates multi-line code cloze card", () => {
+			const md = [
+				"````osmosis",
+				"id: code002",
+				"",
+				"```python",
+				"def fibonacci(n):",
+				"    if n <= 1:",
+				"        return n",
+				"    # osmosis-cloze-start",
+				"    a, b = 0, 1",
+				"    for _ in range(2, n + 1):",
+				"        a, b = b, a + b",
+				"    return b",
+				"    # osmosis-cloze-end",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.card_type).toBe("code_cloze");
+			expect(cards[0]!.id).toBe("code002-c1");
+			// Front: multi-line region replaced with single [...]
+			expect(cards[0]!.front).toContain("    [...]");
+			expect(cards[0]!.front).not.toContain("a, b = 0, 1");
+			expect(cards[0]!.front).not.toContain("osmosis-cloze");
+			// Back: content visible, marker lines stripped
+			expect(cards[0]!.back).toContain("    a, b = 0, 1");
+			expect(cards[0]!.back).toContain("    return b");
+			expect(cards[0]!.back).not.toContain("osmosis-cloze");
+		});
+
+		it("generates mixed single and multi-line code cloze cards", () => {
+			const md = [
+				"````osmosis",
+				"id: code003",
+				"",
+				"```python",
+				"def fibonacci(n):",
+				"    if n <= 1:",
+				"        return n  # osmosis-cloze",
+				"    # osmosis-cloze-start",
+				"    a, b = 0, 1",
+				"    for _ in range(2, n + 1):",
+				"        a, b = b, a + b",
+				"    return b",
+				"    # osmosis-cloze-end",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+
+			// Card 1: single-line blanked, multi-line visible
+			expect(cards[0]!.id).toBe("code003-c1");
+			expect(cards[0]!.front).toContain("        [...]");
+			expect(cards[0]!.front).toContain("    a, b = 0, 1");
+
+			// Card 2: single-line visible, multi-line blanked
+			expect(cards[1]!.id).toBe("code003-c2");
+			expect(cards[1]!.front).toContain("        return n");
+			expect(cards[1]!.front).toContain("    [...]");
+			expect(cards[1]!.front).not.toContain("a, b = 0, 1");
+		});
+
+		it("handles JavaScript comment syntax", () => {
+			const md = [
+				"````osmosis",
+				"id: jscode",
+				"",
+				"```javascript",
+				"function add(a, b) {",
+				"    return a + b; // osmosis-cloze",
+				"}",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.back).toContain("    return a + b;");
+			expect(cards[0]!.back).not.toContain("osmosis-cloze");
+		});
+
+		it("code cloze cards inherit deck and hint metadata", () => {
+			const md = [
+				"````osmosis",
+				"id: meta01",
+				"deck: programming",
+				"hint: Think about base case",
+				"",
+				"```python",
+				"def fib(n):",
+				"    if n <= 1:",
+				"        return n  # osmosis-cloze",
+				"    return fib(n-1) + fib(n-2)",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.deck).toBe("programming");
+			expect(cards[0]!.front).toContain("_Hint: Think about base case_");
+		});
+
+		it("preserves surrounding code context in front", () => {
+			const md = [
+				"````osmosis",
+				"id: ctx01",
+				"",
+				"```python",
+				"x = 1",
+				"y = 2  # osmosis-cloze",
+				"z = 3",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			// Front shows context, just the cloze line blanked
+			expect(cards[0]!.front).toContain("x = 1");
+			expect(cards[0]!.front).toContain("[...]");
+			expect(cards[0]!.front).toContain("z = 3");
+			// Front still has code fence markers for rendering
+			expect(cards[0]!.front).toContain("```python");
+		});
+
+		it("skips excluded code cloze fence", () => {
+			const md = [
+				"````osmosis",
+				"exclude: true",
+				"",
+				"```python",
+				"x = 1  # osmosis-cloze",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(0);
+		});
+	});
+
 	describe("exclude metadata", () => {
 		it("skips fence with exclude: true", () => {
 			const md = [

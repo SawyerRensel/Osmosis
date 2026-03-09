@@ -229,9 +229,16 @@ export class ContextualStudyProcessor {
 			return { front, back, cardId };
 		}
 
-		// No separator — check for cloze deletions (==term== or **term**)
+		// No separator — check for code cloze markers first, then text cloze
 		const content = contentLines.join("\n").trim();
 		if (!content) return null;
+
+		// Check for code cloze (osmosis-cloze inside inner code fences)
+		if (content.includes("osmosis-cloze")) {
+			const { front, back } = ContextualStudyProcessor.buildCodeClozeFrontBack(contentLines);
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`code-cloze|||${content}`);
+			return { front, back, cardId };
+		}
 
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
@@ -240,6 +247,50 @@ export class ContextualStudyProcessor {
 		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "[...]");
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
 		return { front, back: content, cardId };
+	}
+
+	/**
+	 * Build front/back for code cloze in contextual mode.
+	 * Front: all cloze regions blanked. Back: all markers stripped.
+	 */
+	private static buildCodeClozeFrontBack(contentLines: string[]): { front: string; back: string } {
+		const MARKER_COMMENT = /\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze\s*(?:\*\/|-->)?\s*$/;
+
+		const frontLines: string[] = [];
+		const backLines: string[] = [];
+		let inMultiCloze = false;
+		let multiFirstSeen = false;
+
+		for (const line of contentLines) {
+			if (line.includes("osmosis-cloze-start")) {
+				inMultiCloze = true;
+				multiFirstSeen = false;
+				continue; // skip marker line
+			}
+			if (line.includes("osmosis-cloze-end")) {
+				inMultiCloze = false;
+				continue; // skip marker line
+			}
+
+			if (inMultiCloze) {
+				if (!multiFirstSeen) {
+					const indent = line.match(/^(\s*)/)?.[1] ?? "";
+					frontLines.push(`${indent}[...]`);
+					multiFirstSeen = true;
+				}
+				backLines.push(line);
+			} else if (line.includes("osmosis-cloze")) {
+				// Single-line cloze
+				const indent = line.match(/^(\s*)/)?.[1] ?? "";
+				frontLines.push(`${indent}[...]`);
+				backLines.push(line.replace(MARKER_COMMENT, ""));
+			} else {
+				frontLines.push(line);
+				backLines.push(line);
+			}
+		}
+
+		return { front: frontLines.join("\n"), back: backLines.join("\n") };
 	}
 
 	/** Extract id: metadata from fence source if present. */

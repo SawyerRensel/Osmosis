@@ -2,7 +2,8 @@
 export type CardType =
 	| "explicit"
 	| "explicit_bidi"
-	| "explicit_cloze";
+	| "explicit_cloze"
+	| "code_cloze";
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";
