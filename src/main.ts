@@ -102,6 +102,9 @@ export default class OsmosisPlugin extends Plugin {
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
 		this.app.workspace.onLayoutReady(() => {
+			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
+			void this.migrateMapSettingsToFrontmatter();
+
 			void this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
 			});
@@ -269,5 +272,47 @@ export default class OsmosisPlugin extends Plugin {
 		void this.cardSync.syncAll().then(() => {
 			this.refreshDashboard();
 		});
+	}
+
+	/** Migrate per-note mapSettings from data.json into osmosis-styles frontmatter. */
+	private async migrateMapSettingsToFrontmatter(): Promise<void> {
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		const entries = Object.entries(this.settings.mapSettings);
+		if (entries.length === 0) return;
+
+		for (const [filePath, overrides] of entries) {
+			if (!overrides || Object.keys(overrides).length === 0) continue;
+			const file = this.app.vault.getFileByPath(filePath);
+			if (!(file instanceof TFile)) continue;
+
+			try {
+				await this.app.fileManager.processFrontMatter(
+					file,
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					(fm: any) => {
+						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+						const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
+						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+						fm["osmosis-styles"] = osmosis;
+
+						// Copy each override into frontmatter (don't overwrite existing values)
+						for (const [key, value] of Object.entries(overrides)) {
+							if (value !== undefined && osmosis[key] === undefined) {
+								osmosis[key] = value;
+							}
+						}
+					},
+				);
+			} catch {
+				// File may have been deleted or be unreadable — skip silently
+				continue;
+			}
+		}
+
+		// Clear migrated entries from data.json
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		this.settings.mapSettings = {};
+		await this.saveData(this.settings);
+		console.debug(`Osmosis: migrated map settings for ${entries.length} note(s) to frontmatter`);
 	}
 }

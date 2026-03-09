@@ -10,6 +10,8 @@
 
 import type { LayoutDirection } from "./layout";
 
+export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
+
 // ─── Topic Shapes ───────────────────────────────────────────────────────────
 
 export type TopicShape =
@@ -126,6 +128,65 @@ export interface ThemeDefinition {
 	maxNodeWidth?: number;
 }
 
+// ─── Map Settings ──────────────────────────────────────────────────────────
+
+/** Per-map settings that override global defaults. */
+export interface MapSettings {
+	direction: LayoutDirection;
+	branchLineStyle: BranchLineStyle;
+	collapseDepth: number;
+	horizontalSpacing: number;
+	verticalSpacing: number;
+	theme: string;
+	topicShape: TopicShape;
+	/** Map-level global node style overrides (fill, border, text). */
+	baseStyle?: NodeStyle;
+	/** Map background color override. */
+	background?: string;
+	/** Branch line color override. */
+	branchLineColor?: string;
+	/** Branch line thickness override. */
+	branchLineThickness?: number;
+	/** Maximum node width before text wraps (px). */
+	maxNodeWidth?: number;
+}
+
+export const DEFAULT_MAP_SETTINGS: MapSettings = {
+	direction: "left-right",
+	branchLineStyle: "curved",
+	collapseDepth: 0,
+	horizontalSpacing: 80,
+	verticalSpacing: 8,
+	theme: "Default",
+	topicShape: "rounded-rect",
+};
+
+/** Keys in OsmosisStyleFrontmatter that correspond to MapSettings fields. */
+const MAP_SETTING_FM_KEYS: (keyof OsmosisStyleFrontmatter & keyof MapSettings)[] = [
+	"theme", "direction", "branchLineStyle", "collapseDepth",
+	"horizontalSpacing", "verticalSpacing", "topicShape",
+	"maxNodeWidth", "background", "branchLineColor",
+	"branchLineThickness", "baseStyle",
+];
+
+/**
+ * Extract MapSettings overrides from parsed frontmatter.
+ * Returns only the fields that are explicitly set (sparse).
+ */
+export function buildMapSettingsFromFrontmatter(
+	fm: OsmosisStyleFrontmatter | undefined,
+): Partial<MapSettings> {
+	if (!fm) return {};
+	const result: Partial<MapSettings> = {};
+	for (const key of MAP_SETTING_FM_KEYS) {
+		if (fm[key] !== undefined) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+			(result as any)[key] = fm[key];
+		}
+	}
+	return result;
+}
+
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────
 
 /**
@@ -139,6 +200,43 @@ export interface OsmosisStyleFrontmatter {
 
 	/** Override colored branches for this note. */
 	coloredBranches?: boolean;
+
+	// ── Map-level settings (previously stored in data.json mapSettings) ──
+
+	/** Layout direction for this note's mind map. */
+	direction?: LayoutDirection;
+
+	/** Branch line style for this note's mind map. */
+	branchLineStyle?: BranchLineStyle;
+
+	/** Auto-collapse depth (0 = no auto-collapse). */
+	collapseDepth?: number;
+
+	/** Horizontal spacing between parent and children (px). */
+	horizontalSpacing?: number;
+
+	/** Vertical spacing between sibling nodes (px). */
+	verticalSpacing?: number;
+
+	/** Default topic shape for nodes. */
+	topicShape?: TopicShape;
+
+	/** Maximum node width before text wraps (px). */
+	maxNodeWidth?: number;
+
+	/** Map background color override. */
+	background?: string;
+
+	/** Branch line color override. */
+	branchLineColor?: string;
+
+	/** Branch line thickness override. */
+	branchLineThickness?: number;
+
+	/** Map-level global node style overrides (fill, border, text). */
+	baseStyle?: NodeStyle;
+
+	// ── Per-node overrides ──
 
 	/** Per-node style overrides (Local level in LCVRT). */
 	styles?: Record<string, NodeStyle>;
@@ -351,6 +449,22 @@ export function parseOsmosisStyleFrontmatter(
 	if (typeof obj["theme"] === "string") result.theme = obj["theme"];
 	if (typeof obj["coloredBranches"] === "boolean") result.coloredBranches = obj["coloredBranches"];
 
+	// Map-level settings
+	if (typeof obj["direction"] === "string") result.direction = obj["direction"] as LayoutDirection;
+	if (typeof obj["branchLineStyle"] === "string") result.branchLineStyle = obj["branchLineStyle"] as BranchLineStyle;
+	if (typeof obj["collapseDepth"] === "number") result.collapseDepth = obj["collapseDepth"];
+	if (typeof obj["horizontalSpacing"] === "number") result.horizontalSpacing = obj["horizontalSpacing"];
+	if (typeof obj["verticalSpacing"] === "number") result.verticalSpacing = obj["verticalSpacing"];
+	if (typeof obj["topicShape"] === "string") result.topicShape = obj["topicShape"] as TopicShape;
+	if (typeof obj["maxNodeWidth"] === "number") result.maxNodeWidth = obj["maxNodeWidth"];
+	if (typeof obj["background"] === "string") result.background = obj["background"];
+	if (typeof obj["branchLineColor"] === "string") result.branchLineColor = obj["branchLineColor"];
+	if (typeof obj["branchLineThickness"] === "number") result.branchLineThickness = obj["branchLineThickness"];
+	if (obj["baseStyle"] && typeof obj["baseStyle"] === "object") {
+		result.baseStyle = obj["baseStyle"] as NodeStyle;
+	}
+
+	// Per-node overrides
 	if (obj["styles"] && typeof obj["styles"] === "object") {
 		result.styles = obj["styles"] as Record<string, NodeStyle>;
 	}

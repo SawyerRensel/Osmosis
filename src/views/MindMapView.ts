@@ -24,7 +24,7 @@ import type { BranchLineStyle, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -107,7 +107,7 @@ export class MindMapView extends ItemView {
 	private editCleanup: (() => void) | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
-	private suppressNextReload = false;
+	suppressNextReload = false;
 
 	// Clipboard state for copy/cut/paste
 	private clipboardText: string | null = null;
@@ -941,9 +941,9 @@ export class MindMapView extends ItemView {
 			this.nodeHtmlCache.clear();
 		}
 		this.currentFile = file;
-		this.loadMapSettings();
 		const content = await this.app.vault.read(file);
 		this.reloadFrontmatterFromContent(content);
+		this.loadMapSettings();
 		this.currentTree = this.cache.get(file.path, content);
 
 		// Lazy loading: auto-collapse transclusion nodes so they're deferred
@@ -1042,6 +1042,11 @@ export class MindMapView extends ItemView {
 	/** Get the parsed osmosis: frontmatter for the current file. */
 	getOsmosisStyleFrontmatter(): OsmosisStyleFrontmatter | undefined {
 		return this.osmosisStyleFrontmatter;
+	}
+
+	/** Update the in-memory frontmatter cache (e.g. after sidebar writes). */
+	setOsmosisStyleFrontmatter(fm: OsmosisStyleFrontmatter | undefined): void {
+		this.osmosisStyleFrontmatter = fm;
 	}
 
 	/** Get global style classes from plugin settings. */
@@ -1854,19 +1859,14 @@ export class MindMapView extends ItemView {
 		}
 	}
 
-	/** Load per-note map settings from plugin data, merging with defaults. */
+	/** Load per-note map settings from frontmatter, merging with defaults. */
 	private loadMapSettings(): void {
-		const path = this.currentFile?.path;
-		if (!path) {
-			this.mapSettings = { ...DEFAULT_MAP_SETTINGS };
-			return;
-		}
-		const overrides = this.plugin?.settings?.mapSettings?.[path] ?? {};
+		const overrides = buildMapSettingsFromFrontmatter(this.osmosisStyleFrontmatter);
 		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
 	/** Parse `osmosis-styles:` frontmatter from the current file's metadata cache. */
-	private loadOsmosisStyleFrontmatter(): void {
+	loadOsmosisStyleFrontmatter(): void {
 		if (!this.currentFile) {
 			this.osmosisStyleFrontmatter = undefined;
 			return;

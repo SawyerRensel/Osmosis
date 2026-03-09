@@ -1,7 +1,8 @@
 import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
-import type { LayoutDirection } from "./layout";
-import type { TopicShape, NodeStyle } from "./styles";
+import type { BranchLineStyle, MapSettings } from "./styles";
+export type { MapSettings, BranchLineStyle } from "./styles";
+export { DEFAULT_MAP_SETTINGS } from "./styles";
 
 /** Auto-suggest for vault folder paths. */
 class FolderSuggest extends AbstractInputSuggest<string> {
@@ -50,44 +51,11 @@ class TagSuggest extends AbstractInputSuggest<string> {
 	}
 }
 
-export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
-
-/** Per-map settings that override global defaults. */
-export interface MapSettings {
-	direction: LayoutDirection;
-	branchLineStyle: BranchLineStyle;
-	collapseDepth: number;
-	horizontalSpacing: number;
-	verticalSpacing: number;
-	theme: string;
-	topicShape: TopicShape;
-	/** Map-level global node style overrides (fill, border, text). */
-	baseStyle?: NodeStyle;
-	/** Map background color override. */
-	background?: string;
-	/** Branch line color override. */
-	branchLineColor?: string;
-	/** Branch line thickness override. */
-	branchLineThickness?: number;
-	/** Maximum node width before text wraps (px). */
-	maxNodeWidth?: number;
-}
-
-export const DEFAULT_MAP_SETTINGS: MapSettings = {
-	direction: "left-right",
-	branchLineStyle: "curved",
-	collapseDepth: 0,
-	horizontalSpacing: 80,
-	verticalSpacing: 8,
-	theme: "Default",
-	topicShape: "rounded-rect",
-};
-
 export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
 	showTransclusionStyle: boolean;
-	/** Per-note map settings keyed by file path. Only non-default values stored. */
+	/** @deprecated Migrated to osmosis-styles frontmatter. Kept for migration only. */
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
 	customColors: string[];

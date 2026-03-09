@@ -1,11 +1,11 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition } from "../styles";
-import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
@@ -161,42 +161,56 @@ export class PropertiesSidebarView extends ItemView {
 		return null;
 	}
 
-	/** Resolve the effective MapSettings for the current file. */
+	/** Resolve the effective MapSettings for the current file from frontmatter. */
 	private getEffectiveSettings(): MapSettings {
-		if (!this.currentFilePath) return { ...DEFAULT_MAP_SETTINGS };
-		const overrides =
-			this.plugin.settings.mapSettings[this.currentFilePath] ?? {};
+		const mindMap = this.getActiveMindMap();
+		const fm = mindMap?.getOsmosisStyleFrontmatter();
+		const overrides = buildMapSettingsFromFrontmatter(fm);
 		return { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
-	/** Save a per-map setting and notify the mind map view. */
+	/** Save a per-map setting to frontmatter and notify the mind map view. */
 	private async saveSetting<K extends keyof MapSettings>(
 		key: K,
 		value: MapSettings[K],
 	): Promise<void> {
 		if (!this.currentFilePath) return;
+		const file = this.app.vault.getFileByPath(this.currentFilePath);
+		if (!(file instanceof TFile)) return;
 
-		const filePath = this.currentFilePath;
-		const perNote = this.plugin.settings.mapSettings[filePath] ?? {};
-		this.plugin.settings.mapSettings[filePath] = perNote;
-
-		// Only store if different from default
-		if (value === DEFAULT_MAP_SETTINGS[key]) {
-			delete perNote[key];
-			// Clean up empty objects
-			if (Object.keys(perNote).length === 0) {
-				delete this.plugin.settings.mapSettings[filePath];
-			}
-		} else {
-			perNote[key] = value;
-		}
-
-		await this.plugin.saveSettings();
-
-		// Notify the mind map to re-render with updated settings
 		const mindMap = this.getActiveMindMap();
+		if (mindMap) mindMap.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			file,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis-styles"] = osmosis;
+
+				// Only store if different from default
+				if (value === DEFAULT_MAP_SETTINGS[key] || value === undefined) {
+					delete osmosis[key];
+				} else {
+					osmosis[key] = value;
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+			},
+		);
+
+		// Update in-memory frontmatter cache and re-render
 		if (mindMap) {
-			mindMap.applyMapSettings(this.getEffectiveSettings());
+			const fm = mindMap.getOsmosisStyleFrontmatter() ?? {};
+			if (value === DEFAULT_MAP_SETTINGS[key] || value === undefined) {
+				delete (fm as Record<string, unknown>)[key];
+			} else {
+				(fm as Record<string, unknown>)[key] = value;
+			}
+			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fm) });
 		}
 	}
 
@@ -352,36 +366,62 @@ export class PropertiesSidebarView extends ItemView {
 				dropdown
 					.setValue(settings.theme)
 					.onChange(async (value) => {
-						// Clear map-level style overrides so the new theme's values take effect
+						// Clear map-level style overrides and apply theme defaults via frontmatter
 						if (!this.currentFilePath) return;
-						const perNote =
-							this.plugin.settings.mapSettings[this.currentFilePath] ?? {};
-						this.plugin.settings.mapSettings[this.currentFilePath] = perNote;
-						delete perNote.baseStyle;
-						delete perNote.background;
-						delete perNote.branchLineColor;
-						delete perNote.branchLineThickness;
+						const file = this.app.vault.getFileByPath(this.currentFilePath);
+						if (!(file instanceof TFile)) return;
 
-						// Apply theme's layout/branch settings as map-level overrides
+						const mindMap = this.getActiveMindMap();
+						if (mindMap) mindMap.suppressNextReload = true;
+
 						const theme = getTheme(value, this.plugin.settings.customThemes);
-						if (theme) {
-							if (theme.branchLine?.style) perNote.branchLineStyle = theme.branchLine.style;
-							else delete perNote.branchLineStyle;
-							if (theme.direction) perNote.direction = theme.direction;
-							else delete perNote.direction;
-							if (theme.collapseDepth != null) perNote.collapseDepth = theme.collapseDepth;
-							else delete perNote.collapseDepth;
-							if (theme.horizontalSpacing != null) perNote.horizontalSpacing = theme.horizontalSpacing;
-							else delete perNote.horizontalSpacing;
-							if (theme.verticalSpacing != null) perNote.verticalSpacing = theme.verticalSpacing;
-							else delete perNote.verticalSpacing;
-							if (theme.maxNodeWidth != null) perNote.maxNodeWidth = theme.maxNodeWidth;
-							else delete perNote.maxNodeWidth;
-							if (theme.topicShape) perNote.topicShape = theme.topicShape;
-							else delete perNote.topicShape;
+
+						await this.app.fileManager.processFrontMatter(
+							file,
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							(fm: any) => {
+								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+								const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
+								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+								fm["osmosis-styles"] = osmosis;
+
+								// Clear style overrides so the new theme's values take effect
+								delete osmosis["baseStyle"];
+								delete osmosis["background"];
+								delete osmosis["branchLineColor"];
+								delete osmosis["branchLineThickness"];
+
+								// Apply theme's layout/branch settings
+								if (theme) {
+									if (theme.branchLine?.style) osmosis["branchLineStyle"] = theme.branchLine.style;
+									else delete osmosis["branchLineStyle"];
+									if (theme.direction) osmosis["direction"] = theme.direction;
+									else delete osmosis["direction"];
+									if (theme.collapseDepth != null) osmosis["collapseDepth"] = theme.collapseDepth;
+									else delete osmosis["collapseDepth"];
+									if (theme.horizontalSpacing != null) osmosis["horizontalSpacing"] = theme.horizontalSpacing;
+									else delete osmosis["horizontalSpacing"];
+									if (theme.verticalSpacing != null) osmosis["verticalSpacing"] = theme.verticalSpacing;
+									else delete osmosis["verticalSpacing"];
+									if (theme.maxNodeWidth != null) osmosis["maxNodeWidth"] = theme.maxNodeWidth;
+									else delete osmosis["maxNodeWidth"];
+									if (theme.topicShape) osmosis["topicShape"] = theme.topicShape;
+									else delete osmosis["topicShape"];
+								}
+
+								osmosis["theme"] = value;
+
+								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+								if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+							},
+						);
+
+						// Reload frontmatter cache and re-render
+						if (mindMap) {
+							mindMap.loadOsmosisStyleFrontmatter();
+							mindMap.applyMapSettings(this.getEffectiveSettings());
 						}
 
-						await this.saveSetting("theme", value);
 						this.updateThemeMgmtVisibility();
 						this.updateSaveThemeVisibility();
 						this.refreshMapStyleControls();
@@ -1378,74 +1418,106 @@ export class PropertiesSidebarView extends ItemView {
 		});
 	}
 
-	/** Save a map-level base style property and re-render. */
+	/** Save a map-level base style property to frontmatter and re-render. */
 	private async saveBaseStyleProp(update: Partial<NodeStyle>): Promise<void> {
 		if (!this.currentFilePath) return;
-		const filePath = this.currentFilePath;
-		const perNote = this.plugin.settings.mapSettings[filePath] ?? {};
-		this.plugin.settings.mapSettings[filePath] = perNote;
+		const file = this.app.vault.getFileByPath(this.currentFilePath);
+		if (!(file instanceof TFile)) return;
 
-		const base: NodeStyle = perNote.baseStyle ?? {};
-		// Merge update into base, handling sub-objects
-		mergeNodeStyle(base, update as NodeStyle);
-		perNote.baseStyle = base;
-
-		await this.plugin.saveSettings();
 		const mindMap = this.getActiveMindMap();
-		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+		if (mindMap) mindMap.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			file,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis-styles"] = osmosis;
+				const base: NodeStyle = (osmosis["baseStyle"] as NodeStyle) ?? {};
+				mergeNodeStyle(base, update as NodeStyle);
+				osmosis["baseStyle"] = base;
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+			},
+		);
+
+		// Update in-memory cache and re-render
+		if (mindMap) {
+			const fmCache = mindMap.getOsmosisStyleFrontmatter() ?? {};
+			const base: NodeStyle = fmCache.baseStyle ?? {};
+			mergeNodeStyle(base, update as NodeStyle);
+			fmCache.baseStyle = base;
+			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
+		}
 	}
 
-	/** Reset specific map-level style keys. */
+	/** Reset specific map-level style keys in frontmatter. */
 	private async resetMapStyleSection(section: string): Promise<void> {
 		if (!this.currentFilePath) return;
-		const filePath = this.currentFilePath;
-		const perNote = this.plugin.settings.mapSettings[filePath];
-		if (!perNote) return;
+		const file = this.app.vault.getFileByPath(this.currentFilePath);
+		if (!(file instanceof TFile)) return;
 
-		switch (section) {
-			case "Background":
-				delete perNote.background;
-				break;
-			case "Default shape":
-				delete perNote.topicShape;
-				delete perNote.maxNodeWidth;
-				if (perNote.baseStyle) {
-					delete perNote.baseStyle.width;
-					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
-				}
-				break;
-			case "Default fill":
-				if (perNote.baseStyle) {
-					delete perNote.baseStyle.fill;
-					delete perNote.baseStyle.background;
-					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
-				}
-				break;
-			case "Default border":
-				if (perNote.baseStyle) {
-					delete perNote.baseStyle.border;
-					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
-				}
-				break;
-			case "Default text":
-				if (perNote.baseStyle) {
-					delete perNote.baseStyle.text;
-					if (Object.keys(perNote.baseStyle).length === 0) delete perNote.baseStyle;
-				}
-				break;
-			case "Branch line":
-				delete perNote.branchLineColor;
-				delete perNote.branchLineThickness;
-				break;
-		}
-
-		if (Object.keys(perNote).length === 0) {
-			delete this.plugin.settings.mapSettings[filePath];
-		}
-
-		await this.plugin.saveSettings();
 		const mindMap = this.getActiveMindMap();
-		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+		if (mindMap) mindMap.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			file,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+				if (!osmosis) return;
+				const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
+
+				switch (section) {
+					case "Background":
+						delete osmosis["background"];
+						break;
+					case "Default shape":
+						delete osmosis["topicShape"];
+						delete osmosis["maxNodeWidth"];
+						if (baseStyle) {
+							delete baseStyle.width;
+							if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
+						}
+						break;
+					case "Default fill":
+						if (baseStyle) {
+							delete baseStyle.fill;
+							delete baseStyle.background;
+							if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
+						}
+						break;
+					case "Default border":
+						if (baseStyle) {
+							delete baseStyle.border;
+							if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
+						}
+						break;
+					case "Default text":
+						if (baseStyle) {
+							delete baseStyle.text;
+							if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
+						}
+						break;
+					case "Branch line":
+						delete osmosis["branchLineColor"];
+						delete osmosis["branchLineThickness"];
+						break;
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+			},
+		);
+
+		// Re-read frontmatter from metadata cache and re-render
+		if (mindMap) {
+			mindMap.loadOsmosisStyleFrontmatter();
+			mindMap.applyMapSettings(this.getEffectiveSettings());
+		}
 		this.refreshMapStyleControls();
 	}
 
@@ -1506,16 +1578,32 @@ export class PropertiesSidebarView extends ItemView {
 				const applyWidth = (): void => {
 					const raw = text.inputEl.value.trim();
 					if (raw === "") {
-						// Clear the global width
+						// Clear the global width via frontmatter
 						if (!this.currentFilePath) return;
-						const perNote = this.plugin.settings.mapSettings[this.currentFilePath] ?? {};
-						this.plugin.settings.mapSettings[this.currentFilePath] = perNote;
-						if (perNote.baseStyle) {
-							delete perNote.baseStyle.width;
-						}
-						void this.plugin.saveSettings().then(() => {
-							const mindMap = this.getActiveMindMap();
-							if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+						const file = this.app.vault.getFileByPath(this.currentFilePath);
+						if (!(file instanceof TFile)) return;
+						const mindMap = this.getActiveMindMap();
+						if (mindMap) mindMap.suppressNextReload = true;
+						void this.app.fileManager.processFrontMatter(
+							file,
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							(fm: any) => {
+								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+								const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+								if (!osmosis) return;
+								const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
+								if (baseStyle) {
+									delete baseStyle.width;
+									if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
+								}
+								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+								if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+							},
+						).then(() => {
+							if (mindMap) {
+								mindMap.loadOsmosisStyleFrontmatter();
+								mindMap.applyMapSettings(this.getEffectiveSettings());
+							}
 						});
 					} else {
 						const val = parseInt(raw, 10);
@@ -1732,29 +1820,48 @@ export class PropertiesSidebarView extends ItemView {
 			});
 	}
 
-	/** Save a scalar map setting (background, branchLineColor, branchLineThickness). */
+	/** Save a scalar map setting (background, branchLineColor, branchLineThickness) to frontmatter. */
 	private async saveMapScalarSetting<K extends "background" | "branchLineColor" | "branchLineThickness">(
 		key: K,
 		value: MapSettings[K],
 	): Promise<void> {
 		if (!this.currentFilePath) return;
-		const filePath = this.currentFilePath;
-		const perNote = this.plugin.settings.mapSettings[filePath] ?? {};
-		this.plugin.settings.mapSettings[filePath] = perNote;
+		const file = this.app.vault.getFileByPath(this.currentFilePath);
+		if (!(file instanceof TFile)) return;
 
-		if (value === undefined || value === "") {
-			delete perNote[key];
-		} else {
-			(perNote as Record<string, unknown>)[key] = value;
-		}
-
-		if (Object.keys(perNote).length === 0) {
-			delete this.plugin.settings.mapSettings[filePath];
-		}
-
-		await this.plugin.saveSettings();
 		const mindMap = this.getActiveMindMap();
-		if (mindMap) mindMap.applyMapSettings(this.getEffectiveSettings());
+		if (mindMap) mindMap.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			file,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				fm["osmosis-styles"] = osmosis;
+
+				if (value === undefined || value === "") {
+					delete osmosis[key];
+				} else {
+					osmosis[key] = value;
+				}
+
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
+			},
+		);
+
+		// Update in-memory cache and re-render
+		if (mindMap) {
+			const fmCache = mindMap.getOsmosisStyleFrontmatter() ?? {};
+			if (value === undefined || value === "") {
+				delete (fmCache as Record<string, unknown>)[key];
+			} else {
+				(fmCache as Record<string, unknown>)[key] = value;
+			}
+			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
+		}
 	}
 
 	/** Refresh all map style section controls with resolved values. */
@@ -2115,16 +2222,9 @@ export class PropertiesSidebarView extends ItemView {
 		themes[newName] = theme;
 		delete themes[oldName];
 
-		// Update any per-map settings that reference the old name
-		for (const [, mapSettings] of Object.entries(this.plugin.settings.mapSettings)) {
-			if (mapSettings.theme === oldName) {
-				mapSettings.theme = newName;
-			}
-		}
-
 		await this.plugin.saveSettings();
 
-		// If the current map was using the old name, update it
+		// If the current map was using the old name, update it in frontmatter
 		const settings = this.getEffectiveSettings();
 		if (settings.theme === oldName) {
 			await this.saveSetting("theme", newName);
@@ -2161,13 +2261,6 @@ export class PropertiesSidebarView extends ItemView {
 
 	private async doDeleteTheme(themeName: string): Promise<void> {
 		delete this.plugin.settings.customThemes[themeName];
-
-		// Revert any per-map settings that reference this theme to Default
-		for (const [, mapSettings] of Object.entries(this.plugin.settings.mapSettings)) {
-			if (mapSettings.theme === themeName) {
-				delete mapSettings.theme; // defaults back to "Default"
-			}
-		}
 
 		await this.plugin.saveSettings();
 

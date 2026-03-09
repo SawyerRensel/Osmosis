@@ -9,7 +9,9 @@ import {
 	lookupVariantStyle,
 	getClassScope,
 	parseOsmosisStyleFrontmatter,
+	buildMapSettingsFromFrontmatter,
 	mergeNodeStyle,
+	DEFAULT_MAP_SETTINGS,
 	type NodeStyle,
 	type ThemeDefinition,
 	type CascadeInput,
@@ -675,5 +677,117 @@ describe("mergeNodeStyle", () => {
 		const target: NodeStyle = { fill: "#aaa" };
 		mergeNodeStyle(target, {});
 		expect(target.fill).toBe("#aaa");
+	});
+});
+
+describe("parseOsmosisStyleFrontmatter — map-level settings", () => {
+	it("parses all map-level fields", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			"osmosis-styles": {
+				theme: "Ocean",
+				direction: "top-down",
+				branchLineStyle: "straight",
+				collapseDepth: 2,
+				horizontalSpacing: 120,
+				verticalSpacing: 16,
+				topicShape: "ellipse",
+				maxNodeWidth: 400,
+				background: "#001122",
+				branchLineColor: "#ff0000",
+				branchLineThickness: 3,
+				baseStyle: { fill: "#abc", text: { weight: 700 } },
+			},
+		});
+		expect(result).toBeDefined();
+		expect(result!.theme).toBe("Ocean");
+		expect(result!.direction).toBe("top-down");
+		expect(result!.branchLineStyle).toBe("straight");
+		expect(result!.collapseDepth).toBe(2);
+		expect(result!.horizontalSpacing).toBe(120);
+		expect(result!.verticalSpacing).toBe(16);
+		expect(result!.topicShape).toBe("ellipse");
+		expect(result!.maxNodeWidth).toBe(400);
+		expect(result!.background).toBe("#001122");
+		expect(result!.branchLineColor).toBe("#ff0000");
+		expect(result!.branchLineThickness).toBe(3);
+		expect(result!.baseStyle).toEqual({ fill: "#abc", text: { weight: 700 } });
+	});
+
+	it("ignores wrong types for map-level fields", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			"osmosis-styles": {
+				direction: 42,
+				branchLineStyle: true,
+				collapseDepth: "two",
+				horizontalSpacing: "wide",
+				background: 123,
+				branchLineThickness: "thick",
+				baseStyle: "not-an-object",
+			},
+		});
+		expect(result).toBeUndefined();
+	});
+
+	it("parses map-level fields alongside per-node styles", () => {
+		const result = parseOsmosisStyleFrontmatter({
+			"osmosis-styles": {
+				theme: "Dracula",
+				horizontalSpacing: 50,
+				styles: { "## Heading": { fill: "#ff0" } },
+			},
+		});
+		expect(result!.theme).toBe("Dracula");
+		expect(result!.horizontalSpacing).toBe(50);
+		expect(result!.styles).toEqual({ "## Heading": { fill: "#ff0" } });
+	});
+});
+
+describe("buildMapSettingsFromFrontmatter", () => {
+	it("returns empty object for undefined frontmatter", () => {
+		expect(buildMapSettingsFromFrontmatter(undefined)).toEqual({});
+	});
+
+	it("extracts only map-level fields", () => {
+		const fm: OsmosisStyleFrontmatter = {
+			theme: "Ocean",
+			horizontalSpacing: 120,
+			styles: { "## A": { fill: "#f00" } },
+			classes: { bold: { text: { weight: 700 } } },
+			activeVariant: "study",
+		};
+		const result = buildMapSettingsFromFrontmatter(fm);
+		expect(result).toEqual({ theme: "Ocean", horizontalSpacing: 120 });
+		// Should not include styles, classes, activeVariant
+		expect(result).not.toHaveProperty("styles");
+		expect(result).not.toHaveProperty("classes");
+		expect(result).not.toHaveProperty("activeVariant");
+	});
+
+	it("extracts all map-level fields when present", () => {
+		const fm: OsmosisStyleFrontmatter = {
+			theme: "Custom",
+			direction: "top-down",
+			branchLineStyle: "angular",
+			collapseDepth: 3,
+			horizontalSpacing: 100,
+			verticalSpacing: 20,
+			topicShape: "hexagon",
+			maxNodeWidth: 500,
+			background: "#000",
+			branchLineColor: "#fff",
+			branchLineThickness: 2,
+			baseStyle: { fill: "#123" },
+		};
+		const result = buildMapSettingsFromFrontmatter(fm);
+		expect(result).toEqual(fm);
+	});
+
+	it("merges correctly with DEFAULT_MAP_SETTINGS", () => {
+		const fm: OsmosisStyleFrontmatter = { theme: "Ocean", horizontalSpacing: 120 };
+		const effective = { ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fm) };
+		expect(effective.theme).toBe("Ocean");
+		expect(effective.horizontalSpacing).toBe(120);
+		expect(effective.direction).toBe("left-right"); // default
+		expect(effective.branchLineStyle).toBe("curved"); // default
 	});
 });
