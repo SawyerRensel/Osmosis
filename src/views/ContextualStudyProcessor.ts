@@ -243,8 +243,8 @@ export class ContextualStudyProcessor {
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		// Front: all clozes replaced with [...]; Back: full text with markers
-		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "[...]");
+		// Front: all clozes replaced with ########; Back: full text with markers
+		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "########");
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
 		return { front, back: content, cardId };
 	}
@@ -275,14 +275,14 @@ export class ContextualStudyProcessor {
 			if (inMultiCloze) {
 				if (!multiFirstSeen) {
 					const indent = line.match(/^(\s*)/)?.[1] ?? "";
-					frontLines.push(`${indent}[...]`);
+					frontLines.push(`${indent}########`);
 					multiFirstSeen = true;
 				}
 				backLines.push(line);
 			} else if (line.includes("osmosis-cloze")) {
 				// Single-line cloze
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
-				frontLines.push(`${indent}[...]`);
+				frontLines.push(`${indent}########`);
 				backLines.push(line.replace(MARKER_COMMENT, ""));
 			} else {
 				frontLines.push(line);

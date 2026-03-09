@@ -269,9 +269,9 @@ describe("generateExplicitCards", () => {
 			expect(cards[2]!.id).toBe("b8cb51f9-c3");
 
 			// Fronts have one term blanked each
-			expect(cards[0]!.front).toBe("[...] means ==hello== in ==French==");
-			expect(cards[1]!.front).toBe("==Bonjour== means [...] in ==French==");
-			expect(cards[2]!.front).toBe("==Bonjour== means ==hello== in [...]");
+			expect(cards[0]!.front).toBe("######## means ==hello== in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means ######## in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means ==hello== in ########");
 
 			// All backs show full text
 			for (const card of cards) {
@@ -288,7 +288,7 @@ describe("generateExplicitCards", () => {
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("explicit_cloze");
-			expect(cards[0]!.front).toBe("The [...] is the powerhouse of the cell.");
+			expect(cards[0]!.front).toBe("The ######## is the powerhouse of the cell.");
 			expect(cards[0]!.back).toBe("The ==mitochondria== is the powerhouse of the cell.");
 		});
 
@@ -330,8 +330,8 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.id).toBe("bold001-c1");
 			expect(cards[1]!.id).toBe("bold001-c2");
 
-			expect(cards[0]!.front).toBe("[...] means **hello**");
-			expect(cards[1]!.front).toBe("**Bonjour** means [...]");
+			expect(cards[0]!.front).toBe("######## means **hello**");
+			expect(cards[1]!.front).toBe("**Bonjour** means ########");
 
 			for (const card of cards) {
 				expect(card.back).toBe("**Bonjour** means **hello**");
@@ -349,9 +349,9 @@ describe("generateExplicitCards", () => {
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(3);
 
-			expect(cards[0]!.front).toBe("[...] means **hello** in ==French==");
-			expect(cards[1]!.front).toBe("==Bonjour== means [...] in ==French==");
-			expect(cards[2]!.front).toBe("==Bonjour== means **hello** in [...]");
+			expect(cards[0]!.front).toBe("######## means **hello** in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means ######## in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means **hello** in ########");
 		});
 
 		it("skips fence without separator and without cloze", () => {
@@ -392,8 +392,8 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("code_cloze");
 			expect(cards[0]!.id).toBe("code001-c1");
-			// Front: line replaced with [...], indentation preserved
-			expect(cards[0]!.front).toContain("        [...]");
+			// Front: line replaced with ########, indentation preserved
+			expect(cards[0]!.front).toContain("        ########");
 			expect(cards[0]!.front).not.toContain("return n");
 			// Back: marker stripped, code visible
 			expect(cards[0]!.back).toContain("        return n");
@@ -422,8 +422,8 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("code_cloze");
 			expect(cards[0]!.id).toBe("code002-c1");
-			// Front: multi-line region replaced with single [...]
-			expect(cards[0]!.front).toContain("    [...]");
+			// Front: multi-line region replaced with single ########
+			expect(cards[0]!.front).toContain("    ########");
 			expect(cards[0]!.front).not.toContain("a, b = 0, 1");
 			expect(cards[0]!.front).not.toContain("osmosis-cloze");
 			// Back: content visible, marker lines stripped
@@ -455,13 +455,13 @@ describe("generateExplicitCards", () => {
 
 			// Card 1: single-line blanked, multi-line visible
 			expect(cards[0]!.id).toBe("code003-c1");
-			expect(cards[0]!.front).toContain("        [...]");
+			expect(cards[0]!.front).toContain("        ########");
 			expect(cards[0]!.front).toContain("    a, b = 0, 1");
 
 			// Card 2: single-line visible, multi-line blanked
 			expect(cards[1]!.id).toBe("code003-c2");
 			expect(cards[1]!.front).toContain("        return n");
-			expect(cards[1]!.front).toContain("    [...]");
+			expect(cards[1]!.front).toContain("    ########");
 			expect(cards[1]!.front).not.toContain("a, b = 0, 1");
 		});
 
@@ -520,7 +520,7 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			// Front shows context, just the cloze line blanked
 			expect(cards[0]!.front).toContain("x = 1");
-			expect(cards[0]!.front).toContain("[...]");
+			expect(cards[0]!.front).toContain("########");
 			expect(cards[0]!.front).toContain("z = 3");
 			// Front still has code fence markers for rendering
 			expect(cards[0]!.front).toContain("```python");

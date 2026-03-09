@@ -191,4 +191,22 @@ A
 		expect(result).toContain("hint: Think about it");
 		expect(result).toContain("due: 2026-03-15T00:00:00.000Z");
 	});
+
+	it("writes schedule into 4-backtick code cloze fence", () => {
+		const content = `\`\`\`\`osmosis
+id: codeclz
+\n\`\`\`python
+def fib(n):
+    return n  # osmosis-cloze
+\`\`\`
+\`\`\`\``;
+
+		const result = updateFenceSchedule(content, "codeclz-c1", baseSchedule);
+
+		expect(result).toContain("c1-due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("c1-stability: 4.5000");
+		// Inner ``` should not be treated as fence end
+		expect(result).toContain("```python");
+		expect(result).toContain("def fib(n):");
+	});
 });

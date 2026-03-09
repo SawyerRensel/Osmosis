@@ -69,13 +69,18 @@ export function updateFenceSchedule(
 	const fenceStart = findFenceForId(lines, baseId);
 	if (fenceStart === -1) return content;
 
+	// Determine backtick count from the opening fence
+	const openMatch = lines[fenceStart]!.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
 	// Find the metadata region (lines after fence opening, before blank line or content)
 	const metaStart = fenceStart + 1;
 	let metaEnd = metaStart; // exclusive — first non-metadata line
 
 	for (let i = metaStart; i < lines.length; i++) {
 		const line = lines[i]!.trim();
-		if (line === "" || line === "```") {
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) {
 			metaEnd = i;
 			break;
 		}
@@ -119,7 +124,9 @@ export function updateFenceSchedule(
 
 	// Ensure a blank line separates metadata from card content
 	const nextLine = lines[metaEnd]?.trim() ?? "";
-	const needsBlank = nextLine !== "" && nextLine !== "```";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	const needsBlank = nextLine !== "" && !isClosingFence;
 	if (needsBlank) {
 		updatedMeta.push("");
 	}
@@ -177,17 +184,21 @@ function buildScheduleKVs(
  * Returns -1 if not found.
  */
 function findFenceForId(lines: string[], targetId: string): number {
-	const fenceRegex = /^```osmosis\s*$/;
-	const fenceEnd = /^```\s*$/;
+	const fenceRegex = /^(`{3,})osmosis\s*$/;
 
 	for (let i = 0; i < lines.length; i++) {
 		const stripped = lines[i]!.replace(/\s*<!--.*?-->/g, "").trim();
-		if (!fenceRegex.test(stripped)) continue;
+		const fenceMatch = stripped.match(fenceRegex);
+		if (!fenceMatch) continue;
+
+		const backtickCount = fenceMatch[1]!.length;
 
 		// Scan metadata lines for id: match
 		for (let j = i + 1; j < lines.length; j++) {
 			const line = lines[j]!.trim();
-			if (line === "" || fenceEnd.test(line)) break;
+			// Check for closing fence (same or more backticks)
+			const closeMatch = line.match(/^(`{3,})\s*$/);
+			if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) break;
 
 			const idMatch = line.match(/^id\s*:\s*(.+)$/i);
 			if (idMatch && idMatch[1]!.trim() === targetId) {

@@ -331,17 +331,80 @@ export class MindMapView extends ItemView {
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		const front = text.replace(MindMapView.CLOZE_REGEX, "[...]");
+		const front = text.replace(MindMapView.CLOZE_REGEX, "########");
 		return { front, back: text };
 	}
 
+	/** Strip osmosis-cloze inline marker (and its comment prefix) from a line. */
+	private static readonly STRIP_CLOZE_COMMENT = /\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze\s*(?:\*\/|-->)?\s*$/;
+
 	/**
-	 * Check if a node is an osmosis fence (Q&A or cloze).
+	 * If `content` is an ```osmosis fence with code cloze markers,
+	 * return { front, back } with all cloze regions blanked in front.
+	 */
+	private parseOsmosisCodeCloze(content: string): { front: string; back: string } | null {
+		const lines = content.split("\n");
+		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
+		if (openIdx < 0) return null;
+		let closeIdx = -1;
+		for (let i = lines.length - 1; i > openIdx; i--) {
+			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
+		}
+		if (closeIdx <= openIdx) return null;
+		const body = lines.slice(openIdx + 1, closeIdx);
+		// Skip metadata lines
+		let start = 0;
+		for (let i = 0; i < body.length; i++) {
+			if (body[i]!.trim() === "") { start = i + 1; break; }
+			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
+		}
+		const contentLines = body.slice(start);
+		if (!contentLines.some((l) => l.includes("osmosis-cloze"))) return null;
+
+		const frontLines: string[] = [];
+		const backLines: string[] = [];
+		let inMultiCloze = false;
+		let multiFirstSeen = false;
+
+		for (const line of contentLines) {
+			if (line.includes("osmosis-cloze-start")) {
+				inMultiCloze = true;
+				multiFirstSeen = false;
+				continue;
+			}
+			if (line.includes("osmosis-cloze-end")) {
+				inMultiCloze = false;
+				continue;
+			}
+			if (inMultiCloze) {
+				if (!multiFirstSeen) {
+					const indent = line.match(/^(\s*)/)?.[1] ?? "";
+					frontLines.push(`${indent}########`);
+					multiFirstSeen = true;
+				}
+				backLines.push(line);
+			} else if (line.includes("osmosis-cloze")) {
+				const indent = line.match(/^(\s*)/)?.[1] ?? "";
+				frontLines.push(`${indent}########`);
+				backLines.push(line.replace(MindMapView.STRIP_CLOZE_COMMENT, ""));
+			} else {
+				frontLines.push(line);
+				backLines.push(line);
+			}
+		}
+
+		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+	}
+
+	/**
+	 * Check if a node is an osmosis fence (Q&A, cloze, or code cloze).
 	 * Returns parsed front/back or null.
 	 */
 	private getOsmosisCardContent(node: OsmosisNode): { front: string; back: string } | null {
 		if (node.type !== "codeblock") return null;
-		return this.parseOsmosisFence(node.content) ?? this.parseOsmosisCloze(node.content);
+		return this.parseOsmosisFence(node.content)
+			?? this.parseOsmosisCodeCloze(node.content)
+			?? this.parseOsmosisCloze(node.content);
 	}
 
 	/**

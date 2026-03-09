@@ -137,7 +137,7 @@ function tryParseCodeClozes(contentLines: string[]): {
 
 /**
  * Generate front/back for a code cloze card, blanking one region.
- * Front: blanked region replaced with [...] (preserving indent).
+ * Front: blanked region replaced with ######## (preserving indent).
  * Back: full code with all markers stripped.
  */
 function generateCodeClozeFrontBack(
@@ -184,13 +184,13 @@ function generateCodeClozeFrontBack(
 			const region = regions[inRegionIdx]!;
 			if (region.type === "single") {
 				const indent = getIndent(contentLines[i]!);
-				frontLines.push(`${indent}[...]`);
+				frontLines.push(`${indent}########`);
 				backLines.push(stripClozeMarker(contentLines[i]!));
 			} else {
-				// Multi-line: single [...] on front, all lines on back
+				// Multi-line: single ######## on front, all lines on back
 				if (!blankedMultiFirstSeen) {
 					const indent = getIndent(contentLines[i]!);
-					frontLines.push(`${indent}[...]`);
+					frontLines.push(`${indent}########`);
 					blankedMultiFirstSeen = true;
 				}
 				backLines.push(contentLines[i]!);
@@ -397,10 +397,10 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 
 			// Generate one card per cloze deletion
 			for (let ci = 0; ci < clozeMatches.length; ci++) {
-				// Replace only the ci-th occurrence with [...]
+				// Replace only the ci-th occurrence with ########
 				let occurrenceIdx = 0;
 				const front = content.replace(CLOZE_REGEX, (match, _group) => {
-					const result = occurrenceIdx === ci ? "[...]" : match;
+					const result = occurrenceIdx === ci ? "########" : match;
 					occurrenceIdx++;
 					return result;
 				});
