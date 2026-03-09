@@ -1,9 +1,10 @@
 import { Plugin, TFile, WorkspaceLeaf, debounce } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
-import { CardDatabase } from "./database/CardDatabase";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
+import { CardStore } from "./store/CardStore";
+import { FenceWriter } from "./store/FenceWriter";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -13,19 +14,24 @@ import type { DeckScope } from "./study/types";
 
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
-	cardDb!: CardDatabase;
+	cardStore!: CardStore;
+	fenceWriter!: FenceWriter;
 	cardSync!: CardSyncService;
 
 	async onload() {
 		await this.loadSettings();
 
-		// Card database — lazy initialized on first SR access, not here
-		this.cardDb = new CardDatabase(".osmosis/cards.db", this.app.vault.adapter);
+		// In-memory card store — replaces SQLite database
+		this.cardStore = new CardStore();
 
-		// Card sync service — connects note processor to database
+		// Fence writer — writes schedule data back into markdown fences
+		this.fenceWriter = new FenceWriter(this.app.vault);
+
+		// Card sync service — connects note processor to card store
 		this.cardSync = new CardSyncService(
 			this.app.vault,
-			this.cardDb,
+			this.cardStore,
+			this.fenceWriter,
 			() => ({
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
@@ -139,10 +145,6 @@ export default class OsmosisPlugin extends Plugin {
 		);
 	}
 
-	onunload() {
-		void this.cardDb.close();
-	}
-
 	private async activateMindMapView(): Promise<void> {
 		const { workspace } = this.app;
 
@@ -205,13 +207,22 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	async openStudySession(scope: DeckScope): Promise<void> {
-		await this.cardDb.ensureInitialized();
-		const sessionManager = new StudySessionManager(this.cardDb, new FSRSScheduler());
+		const sessionManager = this.createSessionManager();
 		const modal = new SequentialStudyModal(this.app, sessionManager, scope, {
 			newLimit: this.settings.dailyNewCardLimit,
 			reviewLimit: this.settings.dailyReviewCardLimit,
 		});
 		modal.open();
+	}
+
+	/** Create a StudySessionManager wired to the plugin's store and writer. */
+	createSessionManager(): StudySessionManager {
+		return new StudySessionManager(
+			this.cardStore,
+			new FSRSScheduler(),
+			this.fenceWriter,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
 	}
 
 	private registerCardInsertionCommands(): void {

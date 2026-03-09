@@ -132,7 +132,7 @@ export class SequentialStudyModal extends Modal {
 			this.app,
 			studyCard.card.front,
 			this.frontEl,
-			studyCard.card.note_path,
+			studyCard.card.notePath,
 			this.renderComponent,
 		);
 
@@ -144,7 +144,7 @@ export class SequentialStudyModal extends Modal {
 		this.ratingBar.addClass("osmosis-hidden");
 
 		// Show flip or type-in based on card type
-		const isTypeIn = studyCard.card.type_in === 1;
+		const isTypeIn = studyCard.card.typeIn;
 		if (isTypeIn) {
 			this.flipBtn.addClass("osmosis-hidden");
 			this.typeInEl.removeClass("osmosis-hidden");
@@ -169,7 +169,7 @@ export class SequentialStudyModal extends Modal {
 			this.app,
 			studyCard.card.back,
 			this.backEl,
-			studyCard.card.note_path,
+			studyCard.card.notePath,
 			this.renderComponent,
 		);
 		this.backEl.addClass("is-revealed");
@@ -195,7 +195,7 @@ export class SequentialStudyModal extends Modal {
 			this.app,
 			studyCard.card.back,
 			this.backEl,
-			studyCard.card.note_path,
+			studyCard.card.notePath,
 			this.renderComponent,
 		);
 
@@ -239,7 +239,7 @@ export class SequentialStudyModal extends Modal {
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) return;
 
-		this.sessionManager.recordReview(studyCard.card.id, rating, "sequential");
+		void this.sessionManager.recordReview(studyCard.card.id, rating);
 		this.reviewed++;
 		this.currentIndex++;
 
@@ -291,7 +291,7 @@ export class SequentialStudyModal extends Modal {
 			if (!this.isFlipped) {
 				e.preventDefault();
 				const studyCard = this.queue[this.currentIndex];
-				if (studyCard?.card.type_in === 1) {
+				if (studyCard?.card.typeIn) {
 					this.checkTypeIn();
 				} else {
 					this.flip();

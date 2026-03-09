@@ -10,40 +10,37 @@ export type CardState = "new" | "learning" | "review" | "relearning";
 /** Study modes for review tagging. */
 export type StudyMode = "sequential" | "contextual" | "spatial";
 
-/** A row in the cards table. */
-export interface CardRow {
+/** A card with content and optional scheduling data. */
+export interface Card {
 	id: string;
-	note_path: string;
+	notePath: string;
 	deck: string;
-	card_type: CardType;
+	cardType: CardType;
 	front: string;
 	back: string;
-	created_at: number;
-	updated_at: number;
-	deleted_at: number | null;
-	/** Whether this card uses type-in answer mode. 0 = false, 1 = true. */
-	type_in: number;
+	typeIn: boolean;
+	sourceLine: number;
+
+	// Schedule fields (all optional — absent means new/unreviewed card)
+	stability?: number;
+	difficulty?: number;
+	due?: number;        // epoch ms
+	lastReview?: number; // epoch ms
+	reps?: number;
+	lapses?: number;
+	state?: CardState;
 }
 
-/** A row in the card_schedule table. */
-export interface CardScheduleRow {
-	card_id: string;
+/**
+ * FSRS schedule data used internally by the scheduler.
+ * Epoch-ms for timestamps. All fields required (new cards use defaults).
+ */
+export interface ScheduleData {
 	stability: number;
 	difficulty: number;
-	due: number;
-	last_review: number | null;
+	due: number;           // epoch ms
+	lastReview: number | null; // epoch ms, null = never reviewed
 	reps: number;
 	lapses: number;
 	state: CardState;
-}
-
-/** A row in the review_log table. */
-export interface ReviewLogRow {
-	id: number;
-	card_id: string;
-	rating: 1 | 2 | 3 | 4;
-	study_mode: StudyMode;
-	reviewed_at: number;
-	elapsed_days: number;
-	scheduled_days: number;
 }

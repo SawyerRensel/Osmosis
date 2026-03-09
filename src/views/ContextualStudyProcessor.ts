@@ -1,9 +1,7 @@
 import { Component, MarkdownRenderer } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { FSRSScheduler } from "../database/FSRSScheduler";
-import { StudySessionManager } from "../study/StudySessionManager";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import type { CardRow } from "../database/types";
+import type { StudySessionManager } from "../study/StudySessionManager";
 
 /**
  * Contextual study mode: renders `osmosis` code blocks in reading view
@@ -82,7 +80,7 @@ export class ContextualStudyProcessor {
 			);
 
 			if (parsed.cardId) {
-				this.showRating(container, parsed.cardId, parsed.front, parsed.back, sourcePath);
+				this.showRating(container, parsed.cardId);
 			}
 		};
 
@@ -94,7 +92,7 @@ export class ContextualStudyProcessor {
 		});
 	}
 
-	private showRating(container: HTMLElement, cardId: string, front: string, back: string, sourcePath: string): void {
+	private showRating(container: HTMLElement, cardId: string): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -112,40 +110,22 @@ export class ContextualStudyProcessor {
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
-				void this.recordRating(cardId, rating, front, back, sourcePath);
+				void this.recordRating(cardId, rating);
 			});
 		}
 	}
 
-	private async recordRating(cardId: string, rating: FSRSRating, front: string, back: string, sourcePath: string): Promise<void> {
-		await this.plugin.cardDb.ensureInitialized();
-
-		// Ensure the card row exists — contextual cards use hash-based IDs
-		// that may not be in the database from the sync pipeline
-		if (!this.plugin.cardDb.getCard(cardId)) {
-			const now = Date.now();
-			const card: CardRow = {
-				id: cardId,
-				note_path: sourcePath,
-				deck: "",
-				card_type: "explicit",
-				front,
-				back,
-				created_at: now,
-				updated_at: now,
-				deleted_at: null,
-				type_in: 0,
-			};
-			this.plugin.cardDb.upsertCard(card);
+	private async recordRating(cardId: string, rating: FSRSRating): Promise<void> {
+		// Ensure the card exists in the store (contextual cards use hash-based IDs)
+		if (!this.plugin.cardStore.getCard(cardId)) {
+			// Card not in store — skip rating (card was generated inline, not from sync)
+			return;
 		}
 
 		if (!this.sessionManager) {
-			this.sessionManager = new StudySessionManager(
-				this.plugin.cardDb,
-				new FSRSScheduler(),
-			);
+			this.sessionManager = this.plugin.createSessionManager();
 		}
-		this.sessionManager.recordReview(cardId, rating, "contextual");
+		await this.sessionManager.recordReview(cardId, rating);
 		this.plugin.refreshDashboard();
 	}
 
@@ -198,7 +178,7 @@ export class ContextualStudyProcessor {
 			const front = contentLines.slice(0, separatorIdx).join("\n").trim();
 			const back = contentLines.slice(separatorIdx + 1).join("\n").trim();
 			if (!front && !back) return null;
-			const cardId = this.hashContent(`${front}|||${back}`);
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`${front}|||${back}`);
 			return { front, back, cardId };
 		}
 
@@ -211,8 +191,21 @@ export class ContextualStudyProcessor {
 
 		// Front: all clozes replaced with [...]; Back: full text with markers
 		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "[...]");
-		const cardId = this.hashContent(`cloze|||${content}`);
+		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
 		return { front, back: content, cardId };
+	}
+
+	/** Extract id: metadata from fence source if present. */
+	private extractIdFromSource(source: string): string | null {
+		const lines = source.split("\n");
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (trimmed === "") break;
+			const match = trimmed.match(/^id\s*:\s*(.+)$/i);
+			if (match) return match[1]!.trim();
+			if (!/^\w[\w-]*\s*:\s*.+$/.test(trimmed)) break;
+		}
+		return null;
 	}
 
 	private hashContent(content: string): string {

@@ -1,7 +1,5 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { FSRSScheduler } from "../database/FSRSScheduler";
-import { StudySessionManager } from "../study/StudySessionManager";
 import { buildDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import { SequentialStudyModal } from "./SequentialStudyModal";
@@ -46,11 +44,9 @@ export class DashboardSidebarView extends ItemView {
 		contentEl.empty();
 		contentEl.addClass("osmosis-dashboard");
 
-		await this.plugin.cardDb.ensureInitialized();
-
 		const now = Date.now();
-		const decks = this.plugin.cardDb.getAllDecks();
-		const counts = this.plugin.cardDb.getCardCountsByDeck(now);
+		const decks = this.plugin.cardStore.getAllDecks();
+		const counts = this.plugin.cardStore.getCardCountsByDeck(now);
 		const tree = buildDeckTree(decks, counts);
 
 		// Total counts
@@ -134,10 +130,7 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	private openStudy(scope: DeckScope): void {
-		const sessionManager = new StudySessionManager(
-			this.plugin.cardDb,
-			new FSRSScheduler(),
-		);
+		const sessionManager = this.plugin.createSessionManager();
 		const modal = new SequentialStudyModal(
 			this.app,
 			sessionManager,

@@ -1,38 +1,35 @@
-import type { CardRow } from "../database/types";
+import type { Card } from "../database/types";
 import type { GeneratedCard } from "./types";
 
 /**
- * Detect orphaned cards — cards in the database that no longer have
+ * Detect orphaned cards — cards in the store that no longer have
  * corresponding source content in the note.
  *
- * Returns the IDs of cards that should be soft-deleted.
+ * Returns the IDs of cards that should be removed.
  */
 export function detectOrphanedCards(
-	existingCards: CardRow[],
+	existingCards: Card[],
 	generatedCards: GeneratedCard[],
 ): string[] {
 	const generatedIds = new Set(generatedCards.map((c) => c.id));
 
 	return existingCards
-		.filter((c) => c.deleted_at === null && !generatedIds.has(c.id))
+		.filter((c) => !generatedIds.has(c.id))
 		.map((c) => c.id);
 }
 
 /**
- * Detect cards that were previously orphaned (soft-deleted) but whose
+ * Detect cards that were previously removed but whose
  * source content has been restored.
  *
- * Returns the IDs of cards that should be restored.
+ * Note: With the in-memory store (no soft-delete), this is a no-op.
+ * Kept for API compatibility.
  */
 export function detectRestoredCards(
-	allCards: CardRow[],
-	generatedCards: GeneratedCard[],
+	_allCards: Card[],
+	_generatedCards: GeneratedCard[],
 ): string[] {
-	const generatedIds = new Set(generatedCards.map((c) => c.id));
-
-	return allCards
-		.filter((c) => c.deleted_at !== null && generatedIds.has(c.id))
-		.map((c) => c.id);
+	return [];
 }
 
 /** Session quota state for limiting daily new/review cards. */
@@ -52,10 +49,10 @@ export interface SessionQuotas {
  * @returns Filtered arrays respecting daily limits (0 = unlimited)
  */
 export function applySessionQuotas(
-	newCards: CardRow[],
-	dueCards: CardRow[],
+	newCards: Card[],
+	dueCards: Card[],
 	quotas: SessionQuotas,
-): { newCards: CardRow[]; dueCards: CardRow[] } {
+): { newCards: Card[]; dueCards: Card[] } {
 	const remainingNew =
 		quotas.dailyNewLimit === 0
 			? newCards.length

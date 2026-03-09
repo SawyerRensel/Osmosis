@@ -4,21 +4,19 @@ import {
 	detectRestoredCards,
 	applySessionQuotas,
 } from "./orphans";
-import type { CardRow } from "../database/types";
+import type { Card } from "../database/types";
 import type { GeneratedCard } from "./types";
 
-function makeCard(id: string, deletedAt: number | null = null): CardRow {
+function makeCard(id: string): Card {
 	return {
 		id,
-		note_path: "test.md",
+		notePath: "test.md",
 		deck: "",
-		card_type: "explicit",
+		cardType: "explicit",
 		front: "Front",
 		back: "Back",
-		created_at: Date.now(),
-		updated_at: Date.now(),
-		deleted_at: deletedAt,
-		type_in: 0,
+		typeIn: false,
+		sourceLine: 0,
 	};
 }
 
@@ -48,13 +46,6 @@ describe("detectOrphanedCards", () => {
 		expect(detectOrphanedCards(existing, generated)).toHaveLength(0);
 	});
 
-	it("ignores already soft-deleted cards", () => {
-		const existing = [makeCard("a"), makeCard("b", Date.now())];
-		const generated = [makeGenerated("a")];
-		// "b" is already deleted, so not reported as new orphan
-		expect(detectOrphanedCards(existing, generated)).toHaveLength(0);
-	});
-
 	it("returns all cards when none match", () => {
 		const existing = [makeCard("a"), makeCard("b")];
 		const generated = [makeGenerated("x")];
@@ -63,20 +54,11 @@ describe("detectOrphanedCards", () => {
 });
 
 describe("detectRestoredCards", () => {
-	it("detects soft-deleted cards that reappear in source", () => {
-		const allCards = [
-			makeCard("a"),
-			makeCard("b", Date.now()), // soft-deleted
-		];
+	it("returns empty (no soft-delete in in-memory store)", () => {
+		const allCards = [makeCard("a"), makeCard("b")];
 		const generated = [makeGenerated("a"), makeGenerated("b")];
 		const restored = detectRestoredCards(allCards, generated);
-		expect(restored).toEqual(["b"]);
-	});
-
-	it("returns empty when no deleted cards match", () => {
-		const allCards = [makeCard("a"), makeCard("b", Date.now())];
-		const generated = [makeGenerated("a")];
-		expect(detectRestoredCards(allCards, generated)).toHaveLength(0);
+		expect(restored).toHaveLength(0);
 	});
 });
 
@@ -96,7 +78,7 @@ describe("applySessionQuotas", () => {
 			dailyNewLimit: 5,
 			dailyReviewLimit: 100,
 		});
-		expect(result.newCards).toHaveLength(2); // 5 - 3 = 2 remaining
+		expect(result.newCards).toHaveLength(2);
 	});
 
 	it("limits review cards to daily quota", () => {
@@ -106,7 +88,7 @@ describe("applySessionQuotas", () => {
 			dailyNewLimit: 20,
 			dailyReviewLimit: 100,
 		});
-		expect(result.dueCards).toHaveLength(3); // 100 - 97 = 3 remaining
+		expect(result.dueCards).toHaveLength(3);
 	});
 
 	it("returns zero when quota exhausted", () => {

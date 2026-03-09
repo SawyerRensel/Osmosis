@@ -1,6 +1,8 @@
-import type { CardDatabase } from "../database/CardDatabase";
+import type { TFile } from "obsidian";
 import type { FSRSScheduler, FSRSRating } from "../database/FSRSScheduler";
-import type { CardRow, CardScheduleRow, StudyMode } from "../database/types";
+import type { Card, ScheduleData } from "../database/types";
+import type { CardStore } from "../store/CardStore";
+import type { FenceWriter } from "../store/FenceWriter";
 import type { DeckScope, StudyCard, DeckCounts } from "./types";
 
 /**
@@ -9,8 +11,10 @@ import type { DeckScope, StudyCard, DeckCounts } from "./types";
  */
 export class StudySessionManager {
 	constructor(
-		private readonly db: CardDatabase,
+		private readonly store: CardStore,
 		private readonly scheduler: FSRSScheduler,
+		private readonly fenceWriter: FenceWriter,
+		private readonly resolveFile: (notePath: string) => TFile | null,
 	) {}
 
 	/**
@@ -43,61 +47,70 @@ export class StudySessionManager {
 		const queue: StudyCard[] = [];
 
 		for (const card of dueCards) {
-			const schedule: CardScheduleRow = {
-				card_id: card.id,
-				stability: card.stability,
-				difficulty: card.difficulty,
-				due: card.due,
-				last_review: card.last_review,
-				reps: card.reps,
-				lapses: card.lapses,
-				state: card.state,
-			};
-			queue.push({ card: this.extractCardRow(card), schedule });
+			queue.push({ card, isNew: false });
 		}
 
 		for (const card of newCards) {
-			queue.push({ card, schedule: null });
+			queue.push({ card, isNew: true });
 		}
 
 		return queue;
 	}
 
 	/**
-	 * Process a rating for a card. Updates DB schedule + inserts review log.
+	 * Process a rating for a card. Updates store + writes schedule to markdown.
 	 * Returns the new schedule.
 	 */
-	recordReview(
+	async recordReview(
 		cardId: string,
 		rating: FSRSRating,
-		studyMode: StudyMode,
 		now?: number,
-	): CardScheduleRow {
+	): Promise<ScheduleData> {
 		const ts = now ?? Date.now();
+		const card = this.store.getCard(cardId);
 
-		// Get or create schedule
-		let currentSchedule = this.db.getSchedule(cardId);
-		if (!currentSchedule) {
-			currentSchedule = this.scheduler.createNewSchedule(cardId, ts);
-			this.db.upsertSchedule(currentSchedule);
-		}
+		// Build current schedule from card data
+		const currentSchedule: ScheduleData = card && card.due !== undefined
+			? {
+				stability: card.stability ?? 0,
+				difficulty: card.difficulty ?? 0,
+				due: card.due,
+				lastReview: card.lastReview ?? null,
+				reps: card.reps ?? 0,
+				lapses: card.lapses ?? 0,
+				state: card.state ?? "new",
+			}
+			: this.scheduler.createNewSchedule(ts);
 
 		// Process through FSRS
 		const update = this.scheduler.review(currentSchedule, rating, ts);
 
-		// Persist
-		this.db.upsertSchedule(update.schedule);
-		this.db.insertReviewLog({
-			card_id: cardId,
-			rating: update.reviewLog.rating,
-			study_mode: studyMode,
-			reviewed_at: update.reviewLog.reviewed_at,
-			elapsed_days: update.reviewLog.elapsed_days,
-			scheduled_days: update.reviewLog.scheduled_days,
+		// Update in-memory store
+		this.store.updateSchedule(cardId, {
+			stability: update.schedule.stability,
+			difficulty: update.schedule.difficulty,
+			due: update.schedule.due,
+			lastReview: update.schedule.lastReview ?? ts,
+			reps: update.schedule.reps,
+			lapses: update.schedule.lapses,
+			state: update.schedule.state,
 		});
 
-		// Flush to disk so progress survives reload/crash
-		void this.db.save();
+		// Write schedule back to markdown file
+		if (card) {
+			const file = this.resolveFile(card.notePath);
+			if (file) {
+				void this.fenceWriter.writeSchedule(file, cardId, {
+					stability: update.schedule.stability,
+					difficulty: update.schedule.difficulty,
+					due: update.schedule.due,
+					lastReview: update.schedule.lastReview ?? ts,
+					reps: update.schedule.reps,
+					lapses: update.schedule.lapses,
+					state: update.schedule.state,
+				});
+			}
+		}
 
 		return update.schedule;
 	}
@@ -125,41 +138,25 @@ export class StudySessionManager {
 
 	// ── Private Helpers ───────────────────────────────────────
 
-	private getDueCards(scope: DeckScope, now: number): Array<CardRow & CardScheduleRow> {
+	private getDueCards(scope: DeckScope, now: number): Card[] {
 		switch (scope.type) {
 			case "single":
-				return this.db.getDueCards(now, scope.deck);
+				return this.store.getDueCards(now, scope.deck);
 			case "parent":
-				return this.db.getDueCardsByDeckPrefix(now, scope.deck);
+				return this.store.getDueCardsByDeckPrefix(now, scope.deck);
 			case "all":
-				return this.db.getDueCards(now);
+				return this.store.getDueCards(now);
 		}
 	}
 
-	private getNewCards(scope: DeckScope): CardRow[] {
+	private getNewCards(scope: DeckScope): Card[] {
 		switch (scope.type) {
 			case "single":
-				return this.db.getNewCards(scope.deck);
+				return this.store.getNewCards(scope.deck);
 			case "parent":
-				return this.db.getNewCardsByDeckPrefix(scope.deck);
+				return this.store.getNewCardsByDeckPrefix(scope.deck);
 			case "all":
-				return this.db.getNewCards();
+				return this.store.getNewCards();
 		}
-	}
-
-	/** Extract just the CardRow fields from a joined card+schedule row. */
-	private extractCardRow(joined: CardRow & CardScheduleRow): CardRow {
-		return {
-			id: joined.id,
-			note_path: joined.note_path,
-			deck: joined.deck,
-			card_type: joined.card_type,
-			front: joined.front,
-			back: joined.back,
-			created_at: joined.created_at,
-			updated_at: joined.updated_at,
-			deleted_at: joined.deleted_at,
-			type_in: joined.type_in ?? 0,
-		};
 	}
 }

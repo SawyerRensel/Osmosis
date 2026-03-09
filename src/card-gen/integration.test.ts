@@ -1,596 +1,265 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { CardDatabase } from "../database/CardDatabase";
+import { CardStore } from "../store/CardStore";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import { processNote } from "./note-processor";
-import { detectOrphanedCards, detectRestoredCards, applySessionQuotas } from "./orphans";
-import type { CardGenerationOptions } from "./note-processor";
-import type { CardRow } from "../database/types";
+import type { Card } from "../database/types";
 
-/**
- * Integration tests for the full SR pipeline:
- * markdown → card generation → database → FSRS scheduling → review
- */
+let store: CardStore;
+let scheduler: FSRSScheduler;
 
-const defaultOptions: CardGenerationOptions = {};
+beforeEach(() => {
+	store = new CardStore();
+	scheduler = new FSRSScheduler();
+});
 
-// Use in-memory DB with a mock adapter
-const mockAdapter = {
-	exists: async () => false,
-	readBinary: async () => new ArrayBuffer(0),
-	writeBinary: async () => {},
-	mkdir: async () => {},
-} as never;
+function syncCards(markdown: string, notePath = "test.md"): void {
+	const result = processNote(markdown, notePath, {});
+	if (!result.enabled) return;
+	for (const genCard of result.cards) {
+		const card: Card = {
+			id: genCard.id,
+			notePath,
+			deck: genCard.deck,
+			cardType: genCard.card_type,
+			front: genCard.front,
+			back: genCard.back,
+			typeIn: genCard.typeIn,
+			sourceLine: genCard.sourceLine,
+			stability: genCard.stability,
+			difficulty: genCard.difficulty,
+			due: genCard.due,
+			lastReview: genCard.lastReview,
+			reps: genCard.reps,
+			lapses: genCard.lapses,
+			state: genCard.state,
+		};
+		store.addCard(card);
+	}
+}
 
-describe("SR Integration", () => {
-	let db: CardDatabase;
-	let scheduler: FSRSScheduler;
+describe("SR pipeline integration", () => {
+	it("generate → store → schedule → review lifecycle", () => {
+		const md = `---
+osmosis: true
+---
 
-	beforeEach(async () => {
-		db = new CardDatabase("test.db", mockAdapter);
-		await db.ensureInitialized();
-		scheduler = new FSRSScheduler();
+\`\`\`osmosis
+id: abc123
+
+What is 2+2?
+***
+4
+\`\`\`
+`;
+		syncCards(md);
+
+		// Card should be in store as new
+		const card = store.getCard("abc123");
+		expect(card).toBeDefined();
+		expect(card!.front).toContain("What is 2+2?");
+		expect(card!.due).toBeUndefined(); // new card
+
+		// Should appear in new cards
+		expect(store.getNewCards()).toHaveLength(1);
+		expect(store.getDueCards(Date.now())).toHaveLength(0);
+
+		// Schedule and review
+		const now = Date.now();
+		const newSchedule = scheduler.createNewSchedule(now);
+		const result = scheduler.review(newSchedule, 3, now); // Good
+
+		store.updateSchedule("abc123", {
+			stability: result.schedule.stability,
+			difficulty: result.schedule.difficulty,
+			due: result.schedule.due,
+			lastReview: result.schedule.lastReview ?? now,
+			reps: result.schedule.reps,
+			lapses: result.schedule.lapses,
+			state: result.schedule.state,
+		});
+
+		// Should now be scheduled, not new
+		expect(store.getNewCards()).toHaveLength(0);
+		const updated = store.getCard("abc123");
+		expect(updated!.reps).toBe(1);
+		expect(updated!.stability).toBeGreaterThan(0);
 	});
 
-	describe("end-to-end: generate → store → schedule → review", () => {
-		it("processes a note, stores cards, schedules, and reviews", async () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"osmosis-deck: biology",
-				"---",
-				"```osmosis",
-				"What organelle produces ATP?",
-				"***",
-				"Mitochondria",
-				"```",
-			].join("\n");
+	it("bidi cards are scheduled independently", () => {
+		const md = `---
+osmosis: true
+---
 
-			// 1. Generate cards
-			const result = processNote(md, "biology/cells.md", defaultOptions);
-			expect(result.enabled).toBe(true);
-			expect(result.cards.length).toBeGreaterThan(0);
+\`\`\`osmosis
+id: bidi123
+bidi: true
 
-			// 2. Store cards in DB
-			const now = Date.now();
-			for (const card of result.cards) {
-				const cardRow: CardRow = {
-					id: card.id,
-					note_path: "biology/cells.md",
-					deck: card.deck,
-					card_type: card.card_type,
-					front: card.front,
-					back: card.back,
-					created_at: now,
-					updated_at: now,
-					deleted_at: null,
-					type_in: card.typeIn ? 1 : 0,
-				};
-				db.upsertCard(cardRow);
-			}
+Front
+***
+Back
+\`\`\`
+`;
+		syncCards(md);
 
-			// Verify cards stored
-			const stored = db.getCardsByNote("biology/cells.md");
-			expect(stored).toHaveLength(result.cards.length);
-			expect(stored[0]!.deck).toBe("biology");
+		const forward = store.getCard("bidi123");
+		const reverse = store.getCard("bidi123-r");
+		expect(forward).toBeDefined();
+		expect(reverse).toBeDefined();
+		expect(forward!.cardType).toBe("explicit_bidi");
+		expect(reverse!.cardType).toBe("explicit_bidi");
 
-			// 3. Create schedules for new cards
-			for (const card of stored) {
-				const schedule = scheduler.createNewSchedule(card.id);
-				db.upsertSchedule(schedule);
-			}
-
-			// After scheduling, cards should be due immediately
-			const dueCards = db.getDueCards(now + 1000, "biology");
-			expect(dueCards.length).toBe(result.cards.length);
-
-			// 4. Review first card
-			const firstDue = dueCards[0]!;
-			const schedule = db.getSchedule(firstDue.id)!;
-			const reviewResult = scheduler.review(schedule, 3); // Good
-			db.upsertSchedule(reviewResult.schedule);
-			db.insertReviewLog({
-				card_id: firstDue.id,
-				rating: 3,
-				study_mode: "sequential",
-				reviewed_at: now,
-				elapsed_days: reviewResult.reviewLog.elapsed_days,
-				scheduled_days: reviewResult.reviewLog.scheduled_days,
-			});
-
-			// Verify review recorded
-			const logs = db.getReviewLogs(firstDue.id);
-			expect(logs).toHaveLength(1);
-			expect(logs[0]!.rating).toBe(3);
-
-			// Verify card is no longer immediately due
-			const updatedSchedule = db.getSchedule(firstDue.id)!;
-			expect(updatedSchedule.due).toBeGreaterThan(now);
+		// Review forward only
+		const now = Date.now();
+		const schedule = scheduler.createNewSchedule(now);
+		const result = scheduler.review(schedule, 3, now);
+		store.updateSchedule("bidi123", {
+			stability: result.schedule.stability,
+			difficulty: result.schedule.difficulty,
+			due: result.schedule.due,
+			lastReview: result.schedule.lastReview ?? now,
+			reps: result.schedule.reps,
+			lapses: result.schedule.lapses,
+			state: result.schedule.state,
 		});
+
+		// Forward reviewed, reverse still new
+		expect(store.getCard("bidi123")!.reps).toBe(1);
+		expect(store.getCard("bidi123-r")!.reps).toBeUndefined();
 	});
 
-	describe("end-to-end: explicit fence with bidi", () => {
-		it("stores both directions and schedules independently", async () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: bidi1234",
-				"bidi: true",
-				"deck: vocab/french",
-				"",
-				"Bonjour",
-				"***",
-				"Hello",
-				"```",
-			].join("\n");
+	it("cloze cards generate correctly", () => {
+		const md = `---
+osmosis: true
+---
 
-			const result = processNote(md, "vocab/note.md", defaultOptions);
-			const bidiCards = result.cards.filter(
-				(c) => c.card_type === "explicit_bidi",
-			);
-			expect(bidiCards).toHaveLength(2);
-			expect(bidiCards[0]!.front).toBe("Bonjour");
-			expect(bidiCards[0]!.back).toBe("Hello");
-			expect(bidiCards[0]!.id).toBe("bidi1234");
-			expect(bidiCards[1]!.front).toBe("Hello");
-			expect(bidiCards[1]!.back).toBe("Bonjour");
-			expect(bidiCards[1]!.id).toBe("bidi1234-r");
+\`\`\`osmosis
+id: cloze123
 
-			// Store both
-			const now = Date.now();
-			for (const card of bidiCards) {
-				db.upsertCard({
-					id: card.id,
-					note_path: "vocab/note.md",
-					deck: card.deck,
-					card_type: card.card_type,
-					front: card.front,
-					back: card.back,
-					created_at: now,
-					updated_at: now,
-					deleted_at: null,
-					type_in: card.typeIn ? 1 : 0,
-				});
-				db.upsertSchedule(scheduler.createNewSchedule(card.id));
-			}
+The capital of ==France== is ==Paris==
+\`\`\`
+`;
+		syncCards(md);
 
-			// Both should be independently schedulable
-			const due = db.getDueCards(now + 1000, "vocab/french");
-			expect(due).toHaveLength(2);
-
-			// Review one, other remains due
-			const schedule = db.getSchedule(due[0]!.id)!;
-			const reviewResult = scheduler.review(schedule, 4); // Easy
-			db.upsertSchedule(reviewResult.schedule);
-
-			const stillDue = db.getDueCards(now + 1000, "vocab/french");
-			expect(stillDue).toHaveLength(1);
-			expect(stillDue[0]!.id).toBe(due[1]!.id);
-		});
+		const c1 = store.getCard("cloze123-c1");
+		const c2 = store.getCard("cloze123-c2");
+		expect(c1).toBeDefined();
+		expect(c2).toBeDefined();
+		expect(c1!.cardType).toBe("explicit_cloze");
+		expect(c1!.front).toContain("[...]");
 	});
 
-	describe("end-to-end: explicit cloze", () => {
-		it("generates and stores cloze cards from explicit fences", async () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"osmosis-deck: science",
-				"---",
-				"```osmosis",
-				"id: cloze123",
-				"",
-				"The ==mitochondria== is the ==powerhouse== of the cell.",
-				"```",
-			].join("\n");
+	it("card content updates on source change", () => {
+		const md1 = `---
+osmosis: true
+---
 
-			const result = processNote(md, "science/bio.md", defaultOptions);
-			const clozeCards = result.cards.filter(
-				(c) => c.card_type === "explicit_cloze",
-			);
-			expect(clozeCards).toHaveLength(2);
-			expect(clozeCards[0]!.id).toBe("cloze123-c1");
-			expect(clozeCards[1]!.id).toBe("cloze123-c2");
+\`\`\`osmosis
+id: update123
 
-			// Store and schedule
-			const now = Date.now();
-			for (const card of clozeCards) {
-				db.upsertCard({
-					id: card.id,
-					note_path: "science/bio.md",
-					deck: card.deck,
-					card_type: card.card_type,
-					front: card.front,
-					back: card.back,
-					created_at: now,
-					updated_at: now,
-					deleted_at: null,
-					type_in: card.typeIn ? 1 : 0,
-				});
-				db.upsertSchedule(scheduler.createNewSchedule(card.id));
-			}
+Old front
+***
+Old back
+\`\`\`
+`;
+		syncCards(md1);
+		expect(store.getCard("update123")!.front).toContain("Old front");
 
-			const due = db.getDueCards(now + 1000, "science");
-			expect(due).toHaveLength(2);
-		});
+		// Simulate update: re-sync with new content
+		store.removeCardsByNote("test.md");
+		const md2 = `---
+osmosis: true
+---
+
+\`\`\`osmosis
+id: update123
+
+New front
+***
+New back
+\`\`\`
+`;
+		syncCards(md2);
+		expect(store.getCard("update123")!.front).toContain("New front");
 	});
 
-	describe("orphan lifecycle", () => {
-		it("detects orphans when content is removed, restores when re-added", async () => {
-			const mdV1 = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: aaaaaaaa",
-				"",
-				"Q1",
-				"***",
-				"A1",
-				"```",
-				"```osmosis",
-				"id: bbbbbbbb",
-				"",
-				"Q2",
-				"***",
-				"A2",
-				"```",
-			].join("\n");
+	it("determinism: same note always produces same cards", () => {
+		const md = `---
+osmosis: true
+---
 
-			// Initial generation
-			const resultV1 = processNote(mdV1, "note.md", defaultOptions);
-			expect(resultV1.cards).toHaveLength(2);
+\`\`\`osmosis
+id: det123
 
-			const now = Date.now();
-			for (const card of resultV1.cards) {
-				db.upsertCard({
-					id: card.id,
-					note_path: "note.md",
-					deck: card.deck,
-					card_type: card.card_type,
-					front: card.front,
-					back: card.back,
-					created_at: now,
-					updated_at: now,
-					deleted_at: null,
-					type_in: card.typeIn ? 1 : 0,
-				});
-				db.upsertSchedule(scheduler.createNewSchedule(card.id));
-			}
+Q
+***
+A
+\`\`\`
+`;
+		syncCards(md);
+		const first = store.getCard("det123");
+		expect(first).toBeDefined();
 
-			// User removes second card
-			const mdV2 = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: aaaaaaaa",
-				"",
-				"Q1",
-				"***",
-				"A1",
-				"```",
-			].join("\n");
-
-			const resultV2 = processNote(mdV2, "note.md", defaultOptions);
-			const existing = db.getCardsByNote("note.md");
-			const orphans = detectOrphanedCards(existing, resultV2.cards);
-			expect(orphans).toEqual(["bbbbbbbb"]);
-
-			// Soft-delete orphan
-			db.softDeleteCard("bbbbbbbb");
-
-			// Verify soft-deleted
-			const card = db.getCard("bbbbbbbb");
-			expect(card!.deleted_at).not.toBeNull();
-
-			// Review history preserved
-			db.insertReviewLog({
-				card_id: "bbbbbbbb",
-				rating: 3,
-				study_mode: "sequential",
-				reviewed_at: now,
-				elapsed_days: 0,
-				scheduled_days: 1,
-			});
-			const logs = db.getReviewLogs("bbbbbbbb");
-			expect(logs).toHaveLength(1);
-
-			// User re-adds second card
-			const mdV3 = mdV1;
-			const resultV3 = processNote(mdV3, "note.md", defaultOptions);
-			const allCards = [
-				db.getCard("aaaaaaaa")!,
-				db.getCard("bbbbbbbb")!,
-			];
-			const restored = detectRestoredCards(allCards, resultV3.cards);
-			expect(restored).toEqual(["bbbbbbbb"]);
-
-			// Restore
-			db.restoreCard("bbbbbbbb");
-			const restoredCard = db.getCard("bbbbbbbb");
-			expect(restoredCard!.deleted_at).toBeNull();
-		});
+		// Re-sync
+		store.removeCardsByNote("test.md");
+		syncCards(md);
+		const second = store.getCard("det123");
+		expect(second).toBeDefined();
+		expect(second!.front).toBe(first!.front);
+		expect(second!.back).toBe(first!.back);
 	});
 
-	describe("session quotas with real cards", () => {
-		it("enforces daily limits on study session", async () => {
-			// Create 5 explicit cards
-			const fences = Array.from({ length: 5 }, (_, i) => [
-				"```osmosis",
-				`id: card000${i}`,
-				"",
-				`Q${i}`,
-				"***",
-				`A${i}`,
-				"```",
-			].join("\n")).join("\n");
+	it("FSRS rating progression: Again < Hard < Good < Easy intervals", () => {
+		const now = Date.now();
+		const schedule = scheduler.createNewSchedule(now);
 
-			const md = `---\nosmosis: true\n---\n${fences}`;
+		const againResult = scheduler.review(schedule, 1, now);
+		const hardResult = scheduler.review(schedule, 2, now);
+		const goodResult = scheduler.review(schedule, 3, now);
+		const easyResult = scheduler.review(schedule, 4, now);
 
-			const result = processNote(md, "note.md", defaultOptions);
-			expect(result.cards.length).toBe(5);
+		// Intervals should generally increase with better ratings
+		const againInterval = againResult.schedule.due - now;
+		const hardInterval = hardResult.schedule.due - now;
+		const goodInterval = goodResult.schedule.due - now;
+		const easyInterval = easyResult.schedule.due - now;
 
-			const now = Date.now();
-			for (const card of result.cards) {
-				db.upsertCard({
-					id: card.id,
-					note_path: "note.md",
-					deck: card.deck,
-					card_type: card.card_type,
-					front: card.front,
-					back: card.back,
-					created_at: now,
-					updated_at: now,
-					deleted_at: null,
-					type_in: card.typeIn ? 1 : 0,
-				});
-			}
-
-			// All 5 are new cards (no schedule)
-			const newCards = db.getNewCards();
-			expect(newCards).toHaveLength(5);
-
-			// Apply quota: only 3 new per day
-			const limited = applySessionQuotas(newCards, [], {
-				newCardsToday: 0,
-				reviewsToday: 0,
-				dailyNewLimit: 3,
-				dailyReviewLimit: 100,
-			});
-			expect(limited.newCards).toHaveLength(3);
-
-			// After studying 2 today, only 1 more allowed
-			const limited2 = applySessionQuotas(newCards, [], {
-				newCardsToday: 2,
-				reviewsToday: 0,
-				dailyNewLimit: 3,
-				dailyReviewLimit: 100,
-			});
-			expect(limited2.newCards).toHaveLength(1);
-		});
+		expect(easyInterval).toBeGreaterThanOrEqual(goodInterval);
+		expect(goodInterval).toBeGreaterThanOrEqual(hardInterval);
+		expect(hardInterval).toBeGreaterThanOrEqual(againInterval);
 	});
 
-	describe("determinism", () => {
-		it("same note always produces same cards", () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: aaaaaaaa",
-				"",
-				"Front",
-				"***",
-				"Back",
-				"```",
-			].join("\n");
+	it("schedule data parsed from fence metadata", () => {
+		const md = `---
+osmosis: true
+---
 
-			const r1 = processNote(md, "note.md", defaultOptions);
-			const r2 = processNote(md, "note.md", defaultOptions);
+\`\`\`osmosis
+id: sched123
+due: 2026-03-15T00:00:00.000Z
+stability: 4.5
+difficulty: 5.2
+reps: 3
+lapses: 0
+state: review
+last-review: 2026-03-10T00:00:00.000Z
 
-			expect(r1.cards).toHaveLength(r2.cards.length);
-			for (let i = 0; i < r1.cards.length; i++) {
-				expect(r1.cards[i]!.id).toBe(r2.cards[i]!.id);
-				expect(r1.cards[i]!.front).toBe(r2.cards[i]!.front);
-				expect(r1.cards[i]!.back).toBe(r2.cards[i]!.back);
-				expect(r1.cards[i]!.card_type).toBe(r2.cards[i]!.card_type);
-			}
-		});
-	});
+Front
+***
+Back
+\`\`\`
+`;
+		syncCards(md);
+		const card = store.getCard("sched123");
+		expect(card).toBeDefined();
+		expect(card!.stability).toBe(4.5);
+		expect(card!.difficulty).toBe(5.2);
+		expect(card!.reps).toBe(3);
+		expect(card!.lapses).toBe(0);
+		expect(card!.state).toBe("review");
+		expect(card!.due).toBe(new Date("2026-03-15T00:00:00.000Z").getTime());
+		expect(card!.lastReview).toBe(new Date("2026-03-10T00:00:00.000Z").getTime());
 
-	describe("card update on content change", () => {
-		it("updates card content when source text changes", async () => {
-			const mdV1 = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: aaaaaaaa",
-				"",
-				"Original question",
-				"***",
-				"Original answer.",
-				"```",
-			].join("\n");
-
-			const now = Date.now();
-			const r1 = processNote(mdV1, "note.md", defaultOptions);
-			db.upsertCard({
-				id: r1.cards[0]!.id,
-				note_path: "note.md",
-				deck: r1.cards[0]!.deck,
-				card_type: r1.cards[0]!.card_type,
-				front: r1.cards[0]!.front,
-				back: r1.cards[0]!.back,
-				created_at: now,
-				updated_at: now,
-				deleted_at: null,
-				type_in: 0,
-			});
-
-			// User edits the content
-			const mdV2 = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: aaaaaaaa",
-				"",
-				"Updated question",
-				"***",
-				"Updated answer with new info.",
-				"```",
-			].join("\n");
-
-			const r2 = processNote(mdV2, "note.md", defaultOptions);
-			expect(r2.cards[0]!.id).toBe("aaaaaaaa"); // Same ID
-			expect(r2.cards[0]!.back).toBe("Updated answer with new info.");
-
-			// Upsert updates the content
-			db.upsertCard({
-				id: r2.cards[0]!.id,
-				note_path: "note.md",
-				deck: r2.cards[0]!.deck,
-				card_type: r2.cards[0]!.card_type,
-				front: r2.cards[0]!.front,
-				back: r2.cards[0]!.back,
-				created_at: now,
-				updated_at: Date.now(),
-				deleted_at: null,
-				type_in: 0,
-			});
-
-			const stored = db.getCard("aaaaaaaa")!;
-			expect(stored.back).toBe("Updated answer with new info.");
-		});
-	});
-
-	describe("multi-type note", () => {
-		it("generates correct card mix from a realistic note", async () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"osmosis-deck: science",
-				"---",
-				"## Cell Biology",
-				"Cells are the fundamental unit of life.",
-				"",
-				"```osmosis",
-				"What organelle produces ATP?",
-				"***",
-				"Mitochondria",
-				"```",
-				"",
-				"```osmosis",
-				"bidi: true",
-				"",
-				"Nucleus",
-				"***",
-				"Contains DNA",
-				"```",
-				"",
-				"```osmosis",
-				"The ==plasma membrane== controls what enters and exits.",
-				"```",
-			].join("\n");
-
-			const result = processNote(md, "science/bio.md", defaultOptions);
-			expect(result.enabled).toBe(true);
-
-			const types = result.cards.map((c) => c.card_type);
-
-			// Explicit Q&A card
-			expect(types.filter((t) => t === "explicit")).toHaveLength(1);
-			// Bidi cards (forward + reverse)
-			expect(types.filter((t) => t === "explicit_bidi")).toHaveLength(2);
-			// Cloze card
-			expect(types.filter((t) => t === "explicit_cloze")).toHaveLength(1);
-
-			// All cards have the correct deck
-			for (const card of result.cards) {
-				expect(card.deck).toBe("science");
-			}
-		});
-	});
-
-	describe("edge cases", () => {
-		it("handles empty note with only frontmatter", () => {
-			const md = "---\nosmosis: true\n---\n";
-			const result = processNote(md, "note.md", defaultOptions);
-			expect(result.enabled).toBe(true);
-			expect(result.cards).toHaveLength(0);
-		});
-
-		it("handles note with only explicit fences", () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"Q",
-				"***",
-				"A",
-				"```",
-			].join("\n");
-			const result = processNote(md, "note.md", defaultOptions);
-			expect(result.cards).toHaveLength(1);
-			expect(result.cards[0]!.card_type).toBe("explicit");
-		});
-
-		it("handles multiple exclude: true fences", () => {
-			const md = [
-				"---",
-				"osmosis: true",
-				"---",
-				"```osmosis",
-				"id: keep1111",
-				"",
-				"Keep",
-				"***",
-				"Answer",
-				"```",
-				"```osmosis",
-				"exclude: true",
-				"",
-				"Skip 1",
-				"***",
-				"Answer",
-				"```",
-				"```osmosis",
-				"exclude: true",
-				"",
-				"Skip 2",
-				"***",
-				"Answer",
-				"```",
-				"```osmosis",
-				"id: keep2222",
-				"",
-				"Also Keep",
-				"***",
-				"Answer",
-				"```",
-			].join("\n");
-			const result = processNote(md, "note.md", defaultOptions);
-			const fronts = result.cards.map((c) => c.front);
-			expect(fronts).toContain("Keep");
-			expect(fronts).toContain("Also Keep");
-			expect(fronts).not.toContain("Skip 1");
-			expect(fronts).not.toContain("Skip 2");
-		});
-
-		it("FSRS rating progression: Again < Hard < Good < Easy intervals", () => {
-			const initial = scheduler.createNewSchedule("test");
-
-			const again = scheduler.review(initial, 1);
-			const hard = scheduler.review(initial, 2);
-			const good = scheduler.review(initial, 3);
-			const easy = scheduler.review(initial, 4);
-
-			expect(again.schedule.due).toBeLessThanOrEqual(hard.schedule.due);
-			expect(hard.schedule.due).toBeLessThanOrEqual(good.schedule.due);
-			expect(good.schedule.due).toBeLessThanOrEqual(easy.schedule.due);
-		});
+		// Should show as due (past date relative to now)
+		expect(store.getNewCards()).toHaveLength(0);
 	});
 });

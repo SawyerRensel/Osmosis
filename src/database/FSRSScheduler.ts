@@ -7,7 +7,7 @@ import {
 	type Grade,
 	type RecordLogItem,
 } from "ts-fsrs";
-import type { CardScheduleRow, CardState } from "./types";
+import type { CardState, ScheduleData } from "./types";
 
 /** Maps our string-based state to ts-fsrs State enum. */
 const STATE_TO_FSRS: Record<CardState, State> = {
@@ -30,13 +30,7 @@ export type FSRSRating = 1 | 2 | 3 | 4;
 
 /** Result of processing a review through FSRS. */
 export interface ScheduleUpdate {
-	schedule: CardScheduleRow;
-	reviewLog: {
-		rating: FSRSRating;
-		reviewed_at: number;
-		elapsed_days: number;
-		scheduled_days: number;
-	};
+	schedule: ScheduleData;
 }
 
 /**
@@ -58,14 +52,13 @@ export class FSRSScheduler {
 	/**
 	 * Create a default schedule for a new card (never reviewed).
 	 */
-	createNewSchedule(cardId: string, now?: number): CardScheduleRow {
+	createNewSchedule(now?: number): ScheduleData {
 		const ts = now ?? Date.now();
 		return {
-			card_id: cardId,
 			stability: 0,
 			difficulty: 0,
 			due: ts,
-			last_review: null,
+			lastReview: null,
 			reps: 0,
 			lapses: 0,
 			state: "new",
@@ -73,11 +66,10 @@ export class FSRSScheduler {
 	}
 
 	/**
-	 * Process a review rating and return the updated schedule + review log data.
-	 * This is the core function: rating → new schedule.
+	 * Process a review rating and return the updated schedule.
 	 */
 	review(
-		currentSchedule: CardScheduleRow,
+		currentSchedule: ScheduleData,
 		rating: FSRSRating,
 		now?: number,
 	): ScheduleUpdate {
@@ -96,43 +88,29 @@ export class FSRSScheduler {
 
 		const newCard = result.card;
 
-		const newSchedule: CardScheduleRow = {
-			card_id: currentSchedule.card_id,
+		const newSchedule: ScheduleData = {
 			stability: newCard.stability,
 			difficulty: newCard.difficulty,
 			due: newCard.due.getTime(),
-			last_review: newCard.last_review?.getTime() ?? reviewTime,
+			lastReview: newCard.last_review?.getTime() ?? reviewTime,
 			reps: newCard.reps,
 			lapses: newCard.lapses,
 			state: FSRS_TO_STATE[newCard.state],
 		};
 
-		// Compute elapsed_days ourselves since the log field is deprecated
-		const elapsedMs = currentSchedule.last_review
-			? reviewTime - currentSchedule.last_review
-			: 0;
-		const elapsedDays = elapsedMs / (1000 * 60 * 60 * 24);
-
-		const reviewLog = {
-			rating: rating,
-			reviewed_at: reviewTime,
-			elapsed_days: elapsedDays,
-			scheduled_days: result.log.scheduled_days,
-		};
-
-		return { schedule: newSchedule, reviewLog };
+		return { schedule: newSchedule };
 	}
 
 	/**
-	 * Convert our CardScheduleRow (epoch-ms, string state) to a ts-fsrs Card (Date, enum state).
+	 * Convert our ScheduleData (epoch-ms, string state) to a ts-fsrs Card (Date, enum state).
 	 */
-	private scheduleToFSRSCard(schedule: CardScheduleRow): TsFsrsCard {
+	private scheduleToFSRSCard(schedule: ScheduleData): TsFsrsCard {
 		if (schedule.state === "new" && schedule.reps === 0) {
 			return createEmptyCard(new Date(schedule.due));
 		}
 
-		const lastReview = schedule.last_review
-			? new Date(schedule.last_review)
+		const lastReview = schedule.lastReview
+			? new Date(schedule.lastReview)
 			: undefined;
 		const dueDate = new Date(schedule.due);
 		const elapsedDays = lastReview

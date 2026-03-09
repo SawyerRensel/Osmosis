@@ -1,9 +1,10 @@
-import type { CardRow, CardScheduleRow, StudyMode } from "../database/types";
+import type { Card, StudyMode } from "../database/types";
 
-/** A card ready for study, combining card content with schedule data. */
+/** A card ready for study. */
 export interface StudyCard {
-	card: CardRow;
-	schedule: CardScheduleRow | null; // null = new card (never reviewed)
+	card: Card;
+	/** True if this card has never been reviewed (no schedule data). */
+	isNew: boolean;
 }
 
 /** Deck scoping for study sessions. */

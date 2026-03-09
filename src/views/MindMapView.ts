@@ -522,17 +522,12 @@ export class MindMapView extends ItemView {
 
 	private async recordSpatialReview(nodeId: string, rating: 1 | 2 | 3 | 4): Promise<void> {
 		try {
-			await this.plugin.cardDb.ensureInitialized();
-			const { FSRSScheduler } = await import("../database/FSRSScheduler");
-			const { StudySessionManager } = await import("../study/StudySessionManager");
-			const sessionManager = new StudySessionManager(this.plugin.cardDb, new FSRSScheduler());
-
-			// Try to find a card for this node
 			const notePath = this.currentFile?.path ?? "";
-			const cards = this.plugin.cardDb.getCardsByNote(notePath);
+			const cards = this.plugin.cardStore.getCardsByNote(notePath);
 			const card = cards.find((c) => c.id === nodeId || c.front.includes(nodeId));
 			if (card) {
-				sessionManager.recordReview(card.id, rating, "spatial");
+				const sessionManager = this.plugin.createSessionManager();
+				await sessionManager.recordReview(card.id, rating);
 			}
 		} catch {
 			// Silently fail if no card found for this node

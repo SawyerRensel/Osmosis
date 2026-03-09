@@ -1,6 +1,6 @@
-import type { CardType } from "../database/types";
+import type { CardState, CardType } from "../database/types";
 
-/** A generated card before it's inserted into the database. */
+/** A generated card parsed from an osmosis code fence. */
 export interface GeneratedCard {
 	/** Stable ID from fence id: metadata or newly generated. */
 	id: string;
@@ -13,6 +13,15 @@ export interface GeneratedCard {
 	sourceLine: number;
 	/** Whether this card requires typed answer input. */
 	typeIn: boolean;
+
+	// Schedule data parsed from fence metadata (optional — absent means new card)
+	stability?: number;
+	difficulty?: number;
+	due?: number;        // epoch ms (parsed from ISO string in fence)
+	lastReview?: number; // epoch ms
+	reps?: number;
+	lapses?: number;
+	state?: CardState;
 }
 
 /** Metadata parsed from explicit osmosis fence headers. */
@@ -23,4 +32,28 @@ export interface FenceMetadata {
 	typeIn: boolean;
 	deck: string;
 	hint: string;
+
+	// Schedule fields for the base card
+	stability?: number;
+	difficulty?: number;
+	due?: number;        // epoch ms
+	lastReview?: number; // epoch ms
+	reps?: number;
+	lapses?: number;
+	state?: CardState;
+
+	// Schedule fields for derived cards (bidi reverse, cloze deletions)
+	// Keyed by suffix: "r" for reverse, "c1"/"c2"/etc. for cloze
+	derivedSchedules?: Map<string, DerivedSchedule>;
+}
+
+/** Schedule data for a derived card (bidi reverse or cloze deletion). */
+export interface DerivedSchedule {
+	stability?: number;
+	difficulty?: number;
+	due?: number;
+	lastReview?: number;
+	reps?: number;
+	lapses?: number;
+	state?: CardState;
 }
