@@ -1546,6 +1546,19 @@ hr.osmosis-map-style-divider {
 	animation: osmosis-fade-in 0.2s;
 }
 
+.osmosis-fence-front-only {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.osmosis-fence-front {
+	font-size: 14px;
+	font-weight: 500;
+	text-align: center;
+	color: var(--text-normal);
+}
+
 .osmosis-spatial-rating-bubble {
 	position: fixed;
 	left: var(--osmosis-bubble-left, 0);

@@ -246,6 +246,123 @@ describe("processNote", () => {
 		});
 	});
 
+	describe("folder-based inclusion", () => {
+		it("enables note when path matches includeFolders", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "Study/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+			});
+			expect(result.enabled).toBe(true);
+			expect(result.cards.length).toBeGreaterThan(0);
+		});
+
+		it("enables note in nested folder", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "Study/Python/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+			});
+			expect(result.enabled).toBe(true);
+		});
+
+		it("does not match partial folder name", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "StudyGuide/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+			});
+			expect(result.enabled).toBe(false);
+		});
+
+		it("does not enable note outside includeFolders", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "Other/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+			});
+			expect(result.enabled).toBe(false);
+		});
+	});
+
+	describe("tag-based inclusion", () => {
+		it("enables note when tag matches includeTags", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+			}, ["study"]);
+			expect(result.enabled).toBe(true);
+			expect(result.cards.length).toBeGreaterThan(0);
+		});
+
+		it("matches tag hierarchy (child matches parent)", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+			}, ["study/python"]);
+			expect(result.enabled).toBe(true);
+		});
+
+		it("does not match parent when child tag is specified", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study/python"],
+			}, ["study"]);
+			expect(result.enabled).toBe(false);
+		});
+
+		it("does not enable note without matching tags", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+			}, ["work"]);
+			expect(result.enabled).toBe(false);
+		});
+
+		it("does not enable note when no tags provided", () => {
+			const md = "## Topic\nBody text.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+			});
+			expect(result.enabled).toBe(false);
+		});
+	});
+
+	describe("combined inclusion (frontmatter OR folder OR tag)", () => {
+		it("frontmatter opt-in works without folder/tag settings", () => {
+			const md = "---\nosmosis: true\n---\n## Topic\nBody.";
+			const result = processNote(md, "Random/note.md", {
+				...defaultOptions,
+				includeFolders: [],
+				includeTags: [],
+			});
+			expect(result.enabled).toBe(true);
+		});
+
+		it("folder match works without frontmatter", () => {
+			const md = "## Topic\nBody.";
+			const result = processNote(md, "Study/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+			});
+			expect(result.enabled).toBe(true);
+		});
+
+		it("tag match works without frontmatter", () => {
+			const md = "## Topic\nBody.";
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+			}, ["study"]);
+			expect(result.enabled).toBe(true);
+		});
+	});
+
 	describe("combined generation", () => {
 		it("generates all card types from a complex note", () => {
 			const md = [

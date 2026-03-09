@@ -176,6 +176,8 @@ export class MindMapView extends ItemView {
 	private spatialHiddenIds = new Set<string>();
 	private spatialStudyActionEl: HTMLElement | null = null;
 	private spatialRatingBubble: HTMLDivElement | null = null;
+	/** Nodes whose front (question) is revealed but back (answer) is still hidden. */
+	private spatialFrontRevealedIds = new Set<string>();
 
 	// Resize state: drag-to-resize node width
 	private resizingNodeId: string | null = null;
@@ -269,6 +271,34 @@ export class MindMapView extends ItemView {
 
 	// ── Spatial Study Mode ──────────────────────────────────
 
+	/**
+	 * If `content` is an ```osmosis fence with a *** separator,
+	 * return { front, back } split. Otherwise return null.
+	 */
+	private parseOsmosisFence(content: string): { front: string; back: string } | null {
+		if (!/^`{3,}osmosis\s*$/m.test(content)) return null;
+		// Strip fence delimiters and metadata lines
+		const lines = content.split("\n");
+		// Remove opening fence line
+		const openIdx = lines.findIndex((l) => /^`{3,}osmosis\s*$/.test(l));
+		const closeIdx = lines.lastIndexOf("```");
+		if (openIdx < 0 || closeIdx <= openIdx) return null;
+		const body = lines.slice(openIdx + 1, closeIdx);
+		// Skip metadata lines (key: value) before first blank line
+		let start = 0;
+		for (let i = 0; i < body.length; i++) {
+			if (body[i]!.trim() === "") { start = i + 1; break; }
+			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
+		}
+		const contentLines = body.slice(start);
+		const sepIdx = contentLines.indexOf("***");
+		if (sepIdx < 0) return null;
+		return {
+			front: contentLines.slice(0, sepIdx).join("\n").trim(),
+			back: contentLines.slice(sepIdx + 1).join("\n").trim(),
+		};
+	}
+
 	private toggleSpatialStudy(): void {
 		if (this.isSpatialStudy) {
 			this.exitSpatialStudy();
@@ -281,6 +311,7 @@ export class MindMapView extends ItemView {
 		this.isSpatialStudy = true;
 		this.spatialStudyActionEl?.addClass("is-active");
 		this.spatialHiddenIds.clear();
+		this.spatialFrontRevealedIds.clear();
 
 		// Hide all non-root nodes
 		for (const [nodeId, node] of this.nodeMap) {
@@ -301,7 +332,12 @@ export class MindMapView extends ItemView {
 		for (const nodeId of this.spatialHiddenIds) {
 			this.applySpatialHidden(nodeId, false);
 		}
+		// Restore full content for front-only revealed fence nodes
+		for (const nodeId of this.spatialFrontRevealedIds) {
+			this.restoreFenceFullContent(nodeId);
+		}
 		this.spatialHiddenIds.clear();
+		this.spatialFrontRevealedIds.clear();
 		this.removeSpatialRatingBubble();
 	}
 
@@ -334,21 +370,80 @@ export class MindMapView extends ItemView {
 
 	private handleSpatialStudyClick(nodeId: string): boolean {
 		if (!this.isSpatialStudy) return false;
+
+		// Step 2: front already revealed → show back + rating bubble
+		if (this.spatialFrontRevealedIds.has(nodeId)) {
+			this.spatialFrontRevealedIds.delete(nodeId);
+			this.restoreFenceFullContent(nodeId);
+			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+			if (group) {
+				group.classList.add("osmosis-spatial-revealed");
+			}
+			this.showSpatialRatingBubble(nodeId);
+			return true;
+		}
+
 		if (!this.spatialHiddenIds.has(nodeId)) return false;
 
 		// Reveal the node
 		this.spatialHiddenIds.delete(nodeId);
 		this.applySpatialHidden(nodeId, false);
 
+		// Check if this is an osmosis fence node → two-step reveal
+		const node = this.nodeMap.get(nodeId);
+		if (node?.source.type === "codeblock") {
+			const fence = this.parseOsmosisFence(node.source.content);
+			if (fence) {
+				// Step 1: show front only
+				this.spatialFrontRevealedIds.add(nodeId);
+				this.showFenceFrontOnly(nodeId, fence.front);
+				return true;
+			}
+		}
+
+		// Regular node: single-step reveal + rating
 		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
 		if (group) {
 			group.classList.add("osmosis-spatial-revealed");
 		}
-
-		// Show rating bubble
 		this.showSpatialRatingBubble(nodeId);
 
 		return true; // consumed the click
+	}
+
+	/** Replace the node's rendered content with just the front (question) text. */
+	private showFenceFrontOnly(nodeId: string, front: string): void {
+		if (!this.svg) return;
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
+		if (!wrapper) return;
+		// Stash original child nodes so we can restore later
+		const stash = document.createDocumentFragment();
+		while (wrapper.firstChild) stash.appendChild(wrapper.firstChild);
+		(wrapper as unknown as { _originalStash: DocumentFragment })._originalStash = stash;
+		wrapper.classList.add("osmosis-fence-front-only");
+		const frontEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		frontEl.setAttribute("xmlns", XHTML_NS);
+		frontEl.className = "osmosis-fence-front";
+		frontEl.textContent = front;
+		wrapper.appendChild(frontEl);
+		group.classList.add("osmosis-spatial-revealed");
+	}
+
+	/** Restore the full osmosis fence content after back is revealed. */
+	private restoreFenceFullContent(nodeId: string): void {
+		if (!this.svg) return;
+		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+		if (!group) return;
+		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
+		if (!wrapper) return;
+		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
+		if (stash) {
+			wrapper.replaceChildren(stash);
+			delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
+			wrapper.classList.remove("osmosis-fence-front-only");
+		}
 	}
 
 	private showSpatialRatingBubble(nodeId: string): void {
@@ -398,8 +493,8 @@ export class MindMapView extends ItemView {
 		}
 		this.removeSpatialRatingBubble();
 
-		// Check if all nodes revealed
-		if (this.spatialHiddenIds.size === 0) {
+		// Check if all nodes fully revealed (hidden + front-only both empty)
+		if (this.spatialHiddenIds.size === 0 && this.spatialFrontRevealedIds.size === 0) {
 			new Notice("All nodes revealed! Study session complete.");
 			this.exitSpatialStudy();
 		}
@@ -630,6 +725,7 @@ export class MindMapView extends ItemView {
 		}
 		this.removeSpatialRatingBubble();
 		this.spatialHiddenIds.clear();
+		this.spatialFrontRevealedIds.clear();
 		this.isSpatialStudy = false;
 		this.contentEl.empty();
 		this.currentFile = null;
