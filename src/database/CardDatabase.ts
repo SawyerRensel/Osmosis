@@ -137,8 +137,17 @@ export class CardDatabase {
 	 */
 	upsertCard(card: CardRow): void {
 		this.requireDb().run(
-			`INSERT OR REPLACE INTO cards (id, note_path, deck, card_type, front, back, created_at, updated_at, deleted_at, type_in)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO cards (id, note_path, deck, card_type, front, back, created_at, updated_at, deleted_at, type_in)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(id) DO UPDATE SET
+				note_path = excluded.note_path,
+				deck = excluded.deck,
+				card_type = excluded.card_type,
+				front = excluded.front,
+				back = excluded.back,
+				updated_at = excluded.updated_at,
+				deleted_at = excluded.deleted_at,
+				type_in = excluded.type_in`,
 			[card.id, card.note_path, card.deck, card.card_type, card.front, card.back, card.created_at, card.updated_at, card.deleted_at, card.type_in ?? 0],
 		);
 	}

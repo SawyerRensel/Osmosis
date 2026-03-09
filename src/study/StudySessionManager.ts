@@ -96,6 +96,9 @@ export class StudySessionManager {
 			scheduled_days: update.reviewLog.scheduled_days,
 		});
 
+		// Flush to disk so progress survives reload/crash
+		void this.db.save();
+
 		return update.schedule;
 	}
 

@@ -151,7 +151,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				front: reverseFront,
 				back: frontContent,
 				deck: metadata.deck,
-				sourceLine: fenceStartLine,
+				sourceLine: fenceStartLine + 1,
 				typeIn: metadata.typeIn,
 			});
 		} else {
