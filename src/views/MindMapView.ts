@@ -1933,6 +1933,19 @@ export class MindMapView extends ItemView {
 		}
 		await Promise.all(renderPromises);
 
+		// Re-apply spatial study state to newly rendered nodes
+		if (this.isSpatialStudy) {
+			for (const node of nodes) {
+				if (node.source.type === "root") continue;
+				const id = node.source.id;
+				if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
+					if (this.spatialHiddenIds.has(id)) {
+						this.applySpatialHidden(id, true);
+					}
+				}
+			}
+		}
+
 		this.renderedNodeIds = nowVisible;
 	}
 
@@ -5837,6 +5850,15 @@ export class MindMapView extends ItemView {
 		container.addClass("osmosis-mindmap-container");
 
 		await this.renderSvg(container, layout);
+
+		// Re-apply spatial study hidden state after re-render (render wipes the DOM)
+		if (this.isSpatialStudy) {
+			for (const id of this.renderedNodeIds) {
+				if (this.spatialHiddenIds.has(id)) {
+					this.applySpatialHidden(id, true);
+				}
+			}
+		}
 
 		// After a save-edit re-render, re-select the node at the stored position
 		if (this.pendingSelectionRangeStart !== null) {
