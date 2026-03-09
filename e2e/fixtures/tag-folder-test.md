@@ -5,7 +5,7 @@ tags:
 
 # Tag Inclusion Test
 
-This note has NO `osmosis: true` but should be included via tag matching.
+This note has NO `osmosis-cards: true` but should be included via tag matching.
 
 ## Python Basics
 

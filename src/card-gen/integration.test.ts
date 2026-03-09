@@ -40,7 +40,7 @@ function syncCards(markdown: string, notePath = "test.md"): void {
 describe("SR pipeline integration", () => {
 	it("generate → store → schedule → review lifecycle", () => {
 		const md = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -87,7 +87,7 @@ What is 2+2?
 
 	it("bidi cards are scheduled independently", () => {
 		const md = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -129,7 +129,7 @@ Back
 
 	it("cloze cards generate correctly", () => {
 		const md = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -150,7 +150,7 @@ The capital of ==France== is ==Paris==
 
 	it("card content updates on source change", () => {
 		const md1 = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -167,7 +167,7 @@ Old back
 		// Simulate update: re-sync with new content
 		store.removeCardsByNote("test.md");
 		const md2 = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -184,7 +184,7 @@ New back
 
 	it("determinism: same note always produces same cards", () => {
 		const md = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis
@@ -230,7 +230,7 @@ A
 
 	it("schedule data parsed from fence metadata", () => {
 		const md = `---
-osmosis: true
+osmosis-cards: true
 ---
 
 \`\`\`osmosis

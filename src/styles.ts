@@ -129,7 +129,7 @@ export interface ThemeDefinition {
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────
 
 /**
- * The `osmosis:` frontmatter key structure for per-note style overrides.
+ * The `osmosis-styles:` frontmatter key structure for per-note style overrides.
  * Keys in `styles` are either tree paths ("## Architecture") or
  * stable IDs ("_n:a3f2").
  */
@@ -342,7 +342,7 @@ export function parseOsmosisStyleFrontmatter(
 ): OsmosisStyleFrontmatter | undefined {
 	if (!frontmatter) return undefined;
 
-	const raw = frontmatter["osmosis"];
+	const raw = frontmatter["osmosis-styles"];
 	if (!raw || typeof raw !== "object") return undefined;
 
 	const obj = raw as Record<string, unknown>;

@@ -1,5 +1,5 @@
 ---
-osmosis:
+osmosis-styles:
   styles:
     _n:7a5dc356:
       shape: rounded-rect

@@ -1,5 +1,5 @@
 ---
-osmosis:
+osmosis-styles:
   activeVariant: presentation
   variants:
     presentation:

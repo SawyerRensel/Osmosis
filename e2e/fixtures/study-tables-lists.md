@@ -1,5 +1,5 @@
 ---
-osmosis: true
+osmosis-cards: true
 osmosis-deck: rich-content
 ---
 

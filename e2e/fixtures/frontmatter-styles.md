@@ -1,5 +1,5 @@
 ---
-osmosis:
+osmosis-styles:
   styles:
     "# Frontend":
       fill: "#ff6b6b"

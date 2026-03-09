@@ -14,7 +14,7 @@ export interface OsmosisFrontmatter {
  * Expected frontmatter format:
  * ```
  * ---
- * osmosis: true
+ * osmosis-cards: true
  * osmosis-deck: python/functions
  * osmosis-cloze-bold: false
  * ---
@@ -42,7 +42,7 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
 		const value = match[2]!.trim();
 
 		switch (key) {
-			case "osmosis":
+			case "osmosis-cards":
 				result.enabled = value === "true";
 				break;
 			case "osmosis-deck":

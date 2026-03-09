@@ -359,25 +359,25 @@ describe("parseOsmosisStyleFrontmatter", () => {
 		expect(parseOsmosisStyleFrontmatter(undefined)).toBeUndefined();
 	});
 
-	it("returns undefined when osmosis key is missing", () => {
+	it("returns undefined when osmosis-styles key is missing", () => {
 		expect(parseOsmosisStyleFrontmatter({ title: "Note" })).toBeUndefined();
 	});
 
-	it("returns undefined when osmosis key is not an object", () => {
-		expect(parseOsmosisStyleFrontmatter({ osmosis: "string" })).toBeUndefined();
-		expect(parseOsmosisStyleFrontmatter({ osmosis: 42 })).toBeUndefined();
+	it("returns undefined when osmosis-styles key is not an object", () => {
+		expect(parseOsmosisStyleFrontmatter({ "osmosis-styles": "string" })).toBeUndefined();
+		expect(parseOsmosisStyleFrontmatter({ "osmosis-styles": 42 })).toBeUndefined();
 	});
 
 	it("parses theme string", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { theme: "Ocean" },
+			"osmosis-styles": { theme: "Ocean" },
 		});
 		expect(result?.theme).toBe("Ocean");
 	});
 
 	it("parses coloredBranches boolean", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { coloredBranches: true },
+			"osmosis-styles": { coloredBranches: true },
 		});
 		expect(result?.coloredBranches).toBe(true);
 	});
@@ -388,14 +388,14 @@ describe("parseOsmosisStyleFrontmatter", () => {
 			"_n:abc123": { text: { weight: 700 } },
 		};
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { styles },
+			"osmosis-styles": { styles },
 		});
 		expect(result?.styles).toEqual(styles);
 	});
 
 	it("ignores non-boolean coloredBranches", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { coloredBranches: "yes", theme: "Test" },
+			"osmosis-styles": { coloredBranches: "yes", theme: "Test" },
 		});
 		expect(result?.coloredBranches).toBeUndefined();
 		expect(result?.theme).toBe("Test");
@@ -403,14 +403,14 @@ describe("parseOsmosisStyleFrontmatter", () => {
 
 	it("ignores non-string theme", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { theme: 42, coloredBranches: false },
+			"osmosis-styles": { theme: 42, coloredBranches: false },
 		});
 		expect(result?.theme).toBeUndefined();
 		expect(result?.coloredBranches).toBe(false);
 	});
 
-	it("returns undefined for empty osmosis object", () => {
-		expect(parseOsmosisStyleFrontmatter({ osmosis: {} })).toBeUndefined();
+	it("returns undefined for empty osmosis-styles object", () => {
+		expect(parseOsmosisStyleFrontmatter({ "osmosis-styles": {} })).toBeUndefined();
 	});
 });
 
@@ -598,7 +598,7 @@ describe("lookupVariantStyle", () => {
 describe("parseOsmosisStyleFrontmatter with variants", () => {
 	it("parses variants and activeVariant", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: {
+			"osmosis-styles": {
 				activeVariant: "study",
 				variants: {
 					study: { "*": { fill: "#333" } },
@@ -615,14 +615,14 @@ describe("parseOsmosisStyleFrontmatter with variants", () => {
 
 	it("ignores non-string activeVariant", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { activeVariant: 42 },
+			"osmosis-styles": { activeVariant: 42 },
 		});
 		expect(result).toBeUndefined();
 	});
 
 	it("ignores non-object variants", () => {
 		const result = parseOsmosisStyleFrontmatter({
-			osmosis: { variants: "bad" },
+			"osmosis-styles": { variants: "bad" },
 		});
 		expect(result).toBeUndefined();
 	});

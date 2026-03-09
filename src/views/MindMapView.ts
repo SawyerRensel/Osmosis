@@ -1068,9 +1068,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 
 				if (variantName) {
 					osmosis["activeVariant"] = variantName;
@@ -1079,7 +1079,7 @@ export class MindMapView extends ItemView {
 				}
 
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1116,9 +1116,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
 				const variant = variants[variantName] ?? {};
@@ -1160,9 +1160,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
 				variants[variantName] = {};
@@ -1197,7 +1197,7 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
 				if (!variants || !variants[oldName]) return;
@@ -1236,7 +1236,7 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
 				if (!variants) return;
@@ -1249,7 +1249,7 @@ export class MindMapView extends ItemView {
 				}
 
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1288,9 +1288,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
 
@@ -1349,7 +1349,7 @@ export class MindMapView extends ItemView {
 					writtenStyles = { ...styles };
 				}
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1394,9 +1394,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
 
@@ -1427,7 +1427,7 @@ export class MindMapView extends ItemView {
 					writtenStyles = { ...styles };
 				}
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1446,7 +1446,7 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Create or update a class definition in `osmosis.classes` frontmatter.
+	 * Create or update a class definition in `osmosis-styles.classes` frontmatter.
 	 * Pass the full NodeStyle for the class — it replaces the existing definition.
 	 */
 	async saveClassDefinition(className: string, style: NodeStyle): Promise<void> {
@@ -1461,9 +1461,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
 				osmosis["classes"] = classes;
 
@@ -1504,9 +1504,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 
 				// Remove the class definition
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
@@ -1535,7 +1535,7 @@ export class MindMapView extends ItemView {
 				}
 
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1573,9 +1573,9 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = (fm["osmosis"] as Record<string, unknown>) ?? {};
+				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				fm["osmosis"] = osmosis;
+				fm["osmosis-styles"] = osmosis;
 
 				// Rename the class definition
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
@@ -1637,7 +1637,7 @@ export class MindMapView extends ItemView {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				(fm: any) => {
 					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-					const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
 					if (!styles) return;
@@ -1651,7 +1651,7 @@ export class MindMapView extends ItemView {
 					}
 					if (Object.keys(styles).length === 0) delete osmosis["styles"];
 					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-					if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+					if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 				},
 			);
 			// Update cache directly — metadataCache may lag behind processFrontMatter
@@ -1693,7 +1693,7 @@ export class MindMapView extends ItemView {
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				(fm: any) => {
 					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-					const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
 					if (!styles) return;
@@ -1769,7 +1769,7 @@ export class MindMapView extends ItemView {
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			(fm: any) => {
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				const osmosis = fm["osmosis"] as Record<string, unknown> | undefined;
+				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
 				if (!classes) return;
@@ -1780,7 +1780,7 @@ export class MindMapView extends ItemView {
 					writtenClasses = { ...classes };
 				}
 				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-				if (Object.keys(osmosis).length === 0) delete fm["osmosis"];
+				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
 
@@ -1865,7 +1865,7 @@ export class MindMapView extends ItemView {
 		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
-	/** Parse `osmosis:` frontmatter from the current file's metadata cache. */
+	/** Parse `osmosis-styles:` frontmatter from the current file's metadata cache. */
 	private loadOsmosisStyleFrontmatter(): void {
 		if (!this.currentFile) {
 			this.osmosisStyleFrontmatter = undefined;

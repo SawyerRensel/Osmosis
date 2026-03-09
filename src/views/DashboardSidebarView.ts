@@ -80,7 +80,7 @@ export class DashboardSidebarView extends ItemView {
 
 		// Deck tree
 		if (tree.length === 0) {
-			contentEl.createDiv({ cls: "osmosis-dash-empty", text: "No decks yet. Add osmosis: true to a note's frontmatter to get started." });
+			contentEl.createDiv({ cls: "osmosis-dash-empty", text: "No decks yet. Add osmosis-cards: true to a note's frontmatter to get started." });
 		} else {
 			const treeEl = contentEl.createDiv({ cls: "osmosis-dash-tree" });
 			this.renderDeckTree(treeEl, tree, 0);

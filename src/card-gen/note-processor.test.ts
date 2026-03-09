@@ -6,17 +6,17 @@ const defaultOptions: CardGenerationOptions = {};
 
 describe("processNote", () => {
 	describe("opt-in", () => {
-		it("skips notes without osmosis: true", () => {
+		it("skips notes without osmosis-cards: true", () => {
 			const md = "## Heading\nBody text.";
 			const result = processNote(md, "note.md", defaultOptions);
 			expect(result.enabled).toBe(false);
 			expect(result.cards).toHaveLength(0);
 		});
 
-		it("processes notes with osmosis: true", () => {
+		it("processes notes with osmosis-cards: true", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"Front",
@@ -34,7 +34,7 @@ describe("processNote", () => {
 		it("uses frontmatter deck", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"osmosis-deck: vocab",
 				"---",
 				"```osmosis",
@@ -50,7 +50,7 @@ describe("processNote", () => {
 		it("falls back to folder name", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"Front",
@@ -69,7 +69,7 @@ describe("processNote", () => {
 		it("explicit fence deck overrides frontmatter", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"osmosis-deck: default-deck",
 				"---",
 				"```osmosis",
@@ -92,7 +92,7 @@ describe("processNote", () => {
 		it("excludes fence with exclude: true", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"Keep this",
@@ -115,7 +115,7 @@ describe("processNote", () => {
 		it("only excludes the fence with exclude: true", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"exclude: true",
@@ -275,7 +275,7 @@ describe("processNote", () => {
 		it("frontmatter opt-in works without folder/tag settings", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"Front",
@@ -326,7 +326,7 @@ describe("processNote", () => {
 		it("generates all explicit card types from a complex note", () => {
 			const md = [
 				"---",
-				"osmosis: true",
+				"osmosis-cards: true",
 				"---",
 				"```osmosis",
 				"Front",

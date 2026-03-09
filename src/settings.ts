@@ -103,9 +103,9 @@ export interface OsmosisSettings {
 	dailyReviewCardLimit: number;
 
 	// ── Note Inclusion Settings ────────────────────────────
-	/** Folder paths that auto-enable card generation (without osmosis: true). */
+	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
 	includeFolders: string[];
-	/** Tags that auto-enable card generation (without #, without osmosis: true). */
+	/** Tags that auto-enable card generation (without #, without osmosis-cards: true). */
 	includeTags: string[];
 
 	// ── Study Mode Settings ─────────────────────────────────
@@ -224,7 +224,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 
 		this.buildChipList(containerEl, {
 			name: "Include folders",
-			desc: "Notes in these folders auto-generate cards without needing osmosis: true.",
+			desc: "Notes in these folders auto-generate cards without needing osmosis-cards: true.",
 			items: this.plugin.settings.includeFolders,
 			placeholder: "Add folder...",
 			createSuggest: (input) => new FolderSuggest(this.app, input),
@@ -236,7 +236,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 
 		this.buildChipList(containerEl, {
 			name: "Include tags",
-			desc: "Notes with these tags auto-generate cards without needing osmosis: true.",
+			desc: "Notes with these tags auto-generate cards without needing osmosis-cards: true.",
 			items: this.plugin.settings.includeTags,
 			placeholder: "Add tag...",
 			createSuggest: (input) => new TagSuggest(this.app, input),

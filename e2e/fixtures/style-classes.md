@@ -1,5 +1,5 @@
 ---
-osmosis:
+osmosis-styles:
   theme: Ocean
   classes:
     emphasis:

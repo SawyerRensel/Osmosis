@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
 
 describe("parseOsmosisFrontmatter", () => {
-	it("detects osmosis: true", () => {
-		const md = "---\nosmosis: true\n---\n## Heading";
+	it("detects osmosis-cards: true", () => {
+		const md = "---\nosmosis-cards: true\n---\n## Heading";
 		const fm = parseOsmosisFrontmatter(md);
 		expect(fm.enabled).toBe(true);
 	});
 
-	it("detects osmosis: false", () => {
-		const md = "---\nosmosis: false\n---\n## Heading";
+	it("detects osmosis-cards: false", () => {
+		const md = "---\nosmosis-cards: false\n---\n## Heading";
 		const fm = parseOsmosisFrontmatter(md);
 		expect(fm.enabled).toBe(false);
 	});
@@ -20,14 +20,14 @@ describe("parseOsmosisFrontmatter", () => {
 		expect(fm.enabled).toBe(false);
 	});
 
-	it("defaults to disabled when osmosis key absent", () => {
+	it("defaults to disabled when osmosis-cards key absent", () => {
 		const md = "---\ntitle: My Note\n---\n## Heading";
 		const fm = parseOsmosisFrontmatter(md);
 		expect(fm.enabled).toBe(false);
 	});
 
 	it("parses osmosis-deck", () => {
-		const md = "---\nosmosis: true\nosmosis-deck: python/functions\n---";
+		const md = "---\nosmosis-cards: true\nosmosis-deck: python/functions\n---";
 		const fm = parseOsmosisFrontmatter(md);
 		expect(fm.deck).toBe("python/functions");
 	});
@@ -35,7 +35,7 @@ describe("parseOsmosisFrontmatter", () => {
 	it("handles multiple frontmatter fields", () => {
 		const md = [
 			"---",
-			"osmosis: true",
+			"osmosis-cards: true",
 			"osmosis-deck: vocab/french",
 			"title: French Vocab",
 			"---",
