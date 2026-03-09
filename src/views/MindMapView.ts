@@ -276,13 +276,16 @@ export class MindMapView extends ItemView {
 	 * return { front, back } split. Otherwise return null.
 	 */
 	private parseOsmosisFence(content: string): { front: string; back: string } | null {
-		if (!/^`{3,}osmosis\s*$/m.test(content)) return null;
-		// Strip fence delimiters and metadata lines
 		const lines = content.split("\n");
-		// Remove opening fence line
-		const openIdx = lines.findIndex((l) => /^`{3,}osmosis\s*$/.test(l));
-		const closeIdx = lines.lastIndexOf("```");
-		if (openIdx < 0 || closeIdx <= openIdx) return null;
+		// Find opening ```osmosis line
+		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
+		if (openIdx < 0) return null;
+		// Find closing fence (``` with optional whitespace)
+		let closeIdx = -1;
+		for (let i = lines.length - 1; i > openIdx; i--) {
+			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
+		}
+		if (closeIdx <= openIdx) return null;
 		const body = lines.slice(openIdx + 1, closeIdx);
 		// Skip metadata lines (key: value) before first blank line
 		let start = 0;
@@ -291,7 +294,8 @@ export class MindMapView extends ItemView {
 			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
 		}
 		const contentLines = body.slice(start);
-		const sepIdx = contentLines.indexOf("***");
+		// Find *** separator (with optional whitespace)
+		const sepIdx = contentLines.findIndex((l) => l.trim() === "***");
 		if (sepIdx < 0) return null;
 		return {
 			front: contentLines.slice(0, sepIdx).join("\n").trim(),
@@ -4417,6 +4421,17 @@ export class MindMapView extends ItemView {
 				e.preventDefault();
 			}
 			return;
+		}
+
+		// Spatial study: 1-4 to rate when rating bubble is visible
+		if (this.spatialRatingBubble) {
+			const ratingKey = ["1", "2", "3", "4"].indexOf(e.key);
+			if (ratingKey >= 0) {
+				e.preventDefault();
+				const btn = this.spatialRatingBubble.querySelectorAll("button")[ratingKey];
+				if (btn instanceof HTMLButtonElement) btn.click();
+				return;
+			}
 		}
 
 		switch (e.key) {

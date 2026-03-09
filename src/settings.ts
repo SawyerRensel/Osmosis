@@ -1,7 +1,54 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { LayoutDirection } from "./layout";
 import type { TopicShape, NodeStyle } from "./styles";
+
+/** Auto-suggest for vault folder paths. */
+class FolderSuggest extends AbstractInputSuggest<string> {
+	getSuggestions(query: string): string[] {
+		const lq = query.toLowerCase();
+		return this.app.vault.getAllFolders(false)
+			.map((f: TFolder) => f.path)
+			.filter((p: string) => p.toLowerCase().includes(lq))
+			.sort();
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	selectSuggestion(value: string): void {
+		this.setValue(value);
+		this.close();
+	}
+}
+
+/** Auto-suggest for vault tags (without #). */
+class TagSuggest extends AbstractInputSuggest<string> {
+	getSuggestions(query: string): string[] {
+		const lq = query.toLowerCase();
+		const tags = new Set<string>();
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			const cache = this.app.metadataCache.getFileCache(file);
+			if (cache) {
+				const fileTags = getAllTags(cache);
+				if (fileTags) {
+					for (const t of fileTags) tags.add(t.replace(/^#/, ""));
+				}
+			}
+		}
+		return [...tags].filter((t) => t.toLowerCase().includes(lq)).sort();
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	selectSuggestion(value: string): void {
+		this.setValue(value);
+		this.close();
+	}
+}
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
 
@@ -226,34 +273,99 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		new Setting(containerEl)
-			.setName("Include folders")
-			.setDesc("Notes in these folders auto-generate cards without needing osmosis: true. One folder path per line.")
-			.addTextArea((text) =>
-				text
-					.setValue(this.plugin.settings.includeFolders.join("\n"))
-					.onChange(async (value) => {
-						this.plugin.settings.includeFolders = value
-							.split("\n")
-							.map((s) => s.trim())
-							.filter((s) => s.length > 0);
-						await this.plugin.saveSettings();
-					}),
-			);
+		this.buildChipList(containerEl, {
+			name: "Include folders",
+			desc: "Notes in these folders auto-generate cards without needing osmosis: true.",
+			items: this.plugin.settings.includeFolders,
+			placeholder: "Add folder...",
+			createSuggest: (input) => new FolderSuggest(this.app, input),
+			onUpdate: async (items) => {
+				this.plugin.settings.includeFolders = items;
+				await this.plugin.saveSettings();
+			},
+		});
 
-		new Setting(containerEl)
-			.setName("Include tags")
-			.setDesc("Notes with these tags auto-generate cards without needing osmosis: true. One tag per line, without #.")
-			.addTextArea((text) =>
-				text
-					.setValue(this.plugin.settings.includeTags.join("\n"))
-					.onChange(async (value) => {
-						this.plugin.settings.includeTags = value
-							.split("\n")
-							.map((s) => s.trim().replace(/^#/, ""))
-							.filter((s) => s.length > 0);
-						await this.plugin.saveSettings();
-					}),
-			);
+		this.buildChipList(containerEl, {
+			name: "Include tags",
+			desc: "Notes with these tags auto-generate cards without needing osmosis: true.",
+			items: this.plugin.settings.includeTags,
+			placeholder: "Add tag...",
+			createSuggest: (input) => new TagSuggest(this.app, input),
+			onUpdate: async (items) => {
+				this.plugin.settings.includeTags = items;
+				await this.plugin.saveSettings();
+			},
+		});
+	}
+
+	/** Build a chip-list setting with auto-suggest input. */
+	private buildChipList(
+		containerEl: HTMLElement,
+		opts: {
+			name: string;
+			desc: string;
+			items: string[];
+			placeholder: string;
+			createSuggest: (input: HTMLInputElement) => AbstractInputSuggest<string>;
+			onUpdate: (items: string[]) => Promise<void>;
+		},
+	): void {
+		const setting = new Setting(containerEl)
+			.setName(opts.name)
+			.setDesc(opts.desc);
+
+		// Chip container
+		const chipContainer = setting.controlEl.createDiv({ cls: "osmosis-chip-list" });
+
+		const renderChips = (): void => {
+			chipContainer.empty();
+			for (const item of opts.items) {
+				const chip = chipContainer.createDiv({ cls: "osmosis-chip" });
+				chip.createSpan({ text: item });
+				const removeBtn = chip.createSpan({ cls: "osmosis-chip-remove", text: "\u00d7" });
+				removeBtn.addEventListener("click", () => {
+					const idx = opts.items.indexOf(item);
+					if (idx >= 0) {
+						opts.items.splice(idx, 1);
+						renderChips();
+						void opts.onUpdate(opts.items);
+					}
+				});
+			}
+		};
+
+		renderChips();
+
+		// Input with auto-suggest
+		const input = chipContainer.createEl("input", {
+			type: "text",
+			placeholder: opts.placeholder,
+			cls: "osmosis-chip-input",
+		});
+
+		const suggest = opts.createSuggest(input);
+
+		const addItem = (value: string): void => {
+			const cleaned = value.trim().replace(/^#/, "");
+			if (cleaned && !opts.items.includes(cleaned)) {
+				opts.items.push(cleaned);
+				renderChips();
+				// Re-append input after chips
+				chipContainer.appendChild(input);
+				void opts.onUpdate(opts.items);
+			}
+			input.value = "";
+		};
+
+		suggest.onSelect((value: string) => {
+			addItem(value);
+		});
+
+		input.addEventListener("keydown", (e: KeyboardEvent) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				addItem(input.value);
+			}
+		});
 	}
 }

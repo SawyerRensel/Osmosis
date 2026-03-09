@@ -1582,3 +1582,50 @@ hr.osmosis-map-style-divider {
 	font-size: 11px;
 	font-weight: 500;
 }
+
+/* ── Chip List (Settings) ──────────────────────────── */
+
+.osmosis-chip-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	align-items: center;
+	min-height: 32px;
+	padding: 4px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	width: 100%;
+}
+
+.osmosis-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	border-radius: 12px;
+	background: var(--background-modifier-hover);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.osmosis-chip-remove {
+	cursor: pointer;
+	opacity: 0.6;
+	font-size: 14px;
+	line-height: 1;
+}
+
+.osmosis-chip-remove:hover {
+	opacity: 1;
+}
+
+.osmosis-chip-input {
+	border: none;
+	background: transparent;
+	outline: none;
+	flex: 1;
+	min-width: 80px;
+	font-size: 13px;
+	padding: 2px 4px;
+}

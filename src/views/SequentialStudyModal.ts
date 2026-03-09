@@ -273,19 +273,23 @@ export class SequentialStudyModal extends Modal {
 		});
 	}
 
+	/** True when the type-in input is focused and should receive keystrokes. */
+	private get isTypeInFocused(): boolean {
+		return document.activeElement === this.typeInInput;
+	}
+
 	private registerKeyboard(): void {
 		this.scope.register([], " ", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused) return;
 			e.preventDefault();
 			if (!this.isFlipped) {
-				const studyCard = this.queue[this.currentIndex];
-				if (studyCard?.card.type_in === 1) return; // Space doesn't submit type-in
 				this.flip();
 			}
 		});
 
 		this.scope.register([], "Enter", (e: KeyboardEvent) => {
-			e.preventDefault();
 			if (!this.isFlipped) {
+				e.preventDefault();
 				const studyCard = this.queue[this.currentIndex];
 				if (studyCard?.card.type_in === 1) {
 					this.checkTypeIn();
@@ -304,6 +308,7 @@ export class SequentialStudyModal extends Modal {
 
 		for (const { key, rating } of ratingKeys) {
 			this.scope.register([], key, (e: KeyboardEvent) => {
+				if (this.isTypeInFocused) return;
 				e.preventDefault();
 				if (this.isFlipped) {
 					this.rate(rating);
