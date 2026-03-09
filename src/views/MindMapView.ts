@@ -319,8 +319,8 @@ export class MindMapView extends ItemView {
 				if (node) {
 					const placeholder = document.createElementNS(SVG_NS, "text");
 					placeholder.classList.add("osmosis-spatial-placeholder");
-					placeholder.setAttribute("x", String(node.rect.x + node.rect.width / 2));
-					placeholder.setAttribute("y", String(node.rect.y + node.rect.height / 2));
+					placeholder.setAttribute("x", String(node.rect.x + node.rect.width / 2 + this.getOffsetX()));
+					placeholder.setAttribute("y", String(node.rect.y + node.rect.height / 2 + this.getOffsetY()));
 					placeholder.textContent = "?";
 					group.appendChild(placeholder);
 				}
@@ -363,8 +363,10 @@ export class MindMapView extends ItemView {
 		// Position the bubble near the node
 		const svgRect = this.svg.getBoundingClientRect();
 		const scale = svgRect.width / this.viewBox.w;
-		const nodeScreenX = (node.rect.x - this.viewBox.x) * scale + svgRect.left;
-		const nodeScreenY = (node.rect.y + node.rect.height - this.viewBox.y) * scale + svgRect.top;
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		const nodeScreenX = (node.rect.x + offsetX - this.viewBox.x) * scale + svgRect.left;
+		const nodeScreenY = (node.rect.y + node.rect.height + offsetY - this.viewBox.y) * scale + svgRect.top;
 
 		bubble.setCssProps({
 			"--osmosis-bubble-left": `${nodeScreenX}px`,

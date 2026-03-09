@@ -80,7 +80,7 @@ export class ContextualStudyProcessor {
 				this.renderComponent,
 			);
 
-			if (this.studyActive && parsed.cardId) {
+			if (parsed.cardId) {
 				this.showRating(container, parsed.cardId);
 			}
 		};
