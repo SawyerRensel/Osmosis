@@ -554,6 +554,7 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (node?.source.type === "codeblock") {
 			const fence = this.parseOsmosisFence(node.source.content)
+				?? this.parseOsmosisCodeCloze(node.source.content)
 				?? this.parseOsmosisCloze(node.source.content);
 			if (fence) {
 				// Step 1: show front only
@@ -635,6 +636,7 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (node && this.renderComponent) {
 			const fence = this.parseOsmosisFence(node.source.content)
+				?? this.parseOsmosisCodeCloze(node.source.content)
 				?? this.parseOsmosisCloze(node.source.content);
 			if (fence) {
 				const backEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
