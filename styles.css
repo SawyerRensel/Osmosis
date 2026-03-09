@@ -1220,22 +1220,26 @@ hr.osmosis-map-style-divider {
 	filter: brightness(1.1);
 }
 
-.osmosis-rate-again {
+.osmosis-study-rating-bar button.osmosis-rate-again,
+.osmosis-contextual-rating button.osmosis-rate-again {
 	background: hsl(0, 65%, 50%);
 	color: white;
 }
 
-.osmosis-rate-hard {
+.osmosis-study-rating-bar button.osmosis-rate-hard,
+.osmosis-contextual-rating button.osmosis-rate-hard {
 	background: hsl(30, 65%, 50%);
 	color: white;
 }
 
-.osmosis-rate-good {
+.osmosis-study-rating-bar button.osmosis-rate-good,
+.osmosis-contextual-rating button.osmosis-rate-good {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 }
 
-.osmosis-rate-easy {
+.osmosis-study-rating-bar button.osmosis-rate-easy,
+.osmosis-contextual-rating button.osmosis-rate-easy {
 	background: hsl(140, 50%, 42%);
 	color: white;
 }

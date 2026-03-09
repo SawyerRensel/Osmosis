@@ -122,7 +122,7 @@ export class SequentialStudyModal extends Modal {
 
 		// Update progress
 		const total = this.queue.length;
-		const pct = total > 0 ? ((this.currentIndex) / total) * 100 : 0;
+		const pct = total > 0 ? ((this.currentIndex + 1) / total) * 100 : 0;
 		this.progressFill.setCssProps({ "--osmosis-progress-width": `${pct}%` });
 		this.progressText.textContent = `${this.currentIndex + 1} / ${total}`;
 
@@ -263,6 +263,7 @@ export class SequentialStudyModal extends Modal {
 		this.typeInEl.addClass("osmosis-hidden");
 
 		// Update progress to 100%
+		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
 		this.progressText.textContent = `${this.reviewed} / ${this.queue.length}`;
 
 		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {

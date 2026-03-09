@@ -194,6 +194,9 @@ export default class OsmosisPlugin extends Plugin {
 		const existing = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
 		if (existing.length > 0 && existing[0]) {
 			void workspace.revealLeaf(existing[0]);
+			// Refresh counts when re-opening an existing dashboard
+			const view = existing[0].view as DashboardSidebarView;
+			void view.render();
 			return;
 		}
 
@@ -262,5 +265,9 @@ export default class OsmosisPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+		// Re-sync all cards so folder/tag filter changes take effect immediately
+		void this.cardSync.syncAll().then(() => {
+			this.refreshDashboard();
+		});
 	}
 }

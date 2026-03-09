@@ -117,6 +117,13 @@ export function updateFenceSchedule(
 		updatedMeta.push(`${key}: ${value}`);
 	}
 
+	// Ensure a blank line separates metadata from card content
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const needsBlank = nextLine !== "" && nextLine !== "```";
+	if (needsBlank) {
+		updatedMeta.push("");
+	}
+
 	// Reconstruct the file content
 	const result = [
 		...lines.slice(0, metaStart),

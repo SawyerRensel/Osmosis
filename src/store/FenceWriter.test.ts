@@ -136,6 +136,44 @@ A2
 		expect(result).toContain("due: 2026-03-15T00:00:00.000Z");
 	});
 
+	it("ensures blank line between metadata and content when none exists", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+What is 2+2?
+***
+4
+\`\`\``;
+
+		const result = updateFenceSchedule(content, "abc123", baseSchedule);
+
+		const lines = result.split("\n");
+		// Find where metadata ends and content begins
+		const contentIdx = lines.findIndex((l) => l.includes("What is 2+2?"));
+		expect(lines[contentIdx - 1]!.trim()).toBe("");
+	});
+
+	it("does not double blank lines when separator already exists", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+
+What is 2+2?
+***
+4
+\`\`\``;
+
+		const result = updateFenceSchedule(content, "abc123", baseSchedule);
+
+		// Count blank lines between last metadata and content
+		const lines = result.split("\n");
+		const contentIdx = lines.findIndex((l) => l.includes("What is 2+2?"));
+		let blankCount = 0;
+		for (let i = contentIdx - 1; i >= 0; i--) {
+			if (lines[i]!.trim() === "") blankCount++;
+			else break;
+		}
+		expect(blankCount).toBe(1);
+	});
+
 	it("preserves non-schedule metadata", () => {
 		const content = `\`\`\`osmosis
 id: abc123

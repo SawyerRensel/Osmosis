@@ -29,7 +29,20 @@ export class ContextualStudyProcessor {
 		this.plugin.registerMarkdownCodeBlockProcessor(
 			"osmosis",
 			(source: string, el: HTMLElement, ctx) => {
-				this.renderCard(source, el, ctx.sourcePath);
+				// Defer so the element is attached to the DOM before we check context
+				setTimeout(() => {
+					const inReadingView = el.closest(".markdown-reading-view") !== null;
+					const inLivePreview = el.closest(".is-live-preview") !== null;
+
+					if (inReadingView) {
+						// Reading view: interactive card with hidden answer
+						this.renderCard(source, el, ctx.sourcePath);
+					} else if (inLivePreview) {
+						// Live preview: render both front and back (no hiding)
+						this.renderPreviewCard(source, el, ctx.sourcePath);
+					}
+					// Source mode: Obsidian handles raw display, nothing to do
+				}, 0);
 			},
 		);
 	}
@@ -90,6 +103,40 @@ export class ContextualStudyProcessor {
 				reveal();
 			}
 		});
+	}
+
+	/** Live preview: render front and back fully visible (no interactivity). */
+	private renderPreviewCard(source: string, el: HTMLElement, sourcePath: string): void {
+		const parsed = this.parseFenceContent(source);
+		if (!parsed) {
+			el.createEl("pre", { text: source });
+			return;
+		}
+
+		const container = el.createDiv({ cls: "osmosis-contextual-card" });
+
+		// Render front
+		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
+		void MarkdownRenderer.render(
+			this.plugin.app,
+			parsed.front,
+			frontEl,
+			sourcePath,
+			this.renderComponent,
+		);
+
+		// Separator
+		container.createDiv({ cls: "osmosis-study-divider" });
+
+		// Render back (fully visible, no hiding)
+		const backEl = container.createDiv({ cls: "osmosis-contextual-revealed" });
+		void MarkdownRenderer.render(
+			this.plugin.app,
+			parsed.back,
+			backEl,
+			sourcePath,
+			this.renderComponent,
+		);
 	}
 
 	private showRating(container: HTMLElement, cardId: string): void {
