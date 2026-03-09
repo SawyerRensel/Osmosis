@@ -1,5 +1,5 @@
 import type { DataAdapter } from "obsidian";
-import { CREATE_TABLES_SQL } from "./schema";
+import { CREATE_TABLES_SQL, SCHEMA_VERSION, MIGRATIONS } from "./schema";
 import { getEmbeddedWasmBinary } from "./embedded-wasm";
 import type { CardRow, CardScheduleRow, ReviewLogRow } from "./types";
 
@@ -69,6 +69,9 @@ export class CardDatabase {
 		this.db.run("PRAGMA foreign_keys = ON;");
 		this.db.run(CREATE_TABLES_SQL);
 
+		// Run pending migrations for existing databases
+		this.runMigrations();
+
 		this.initialized = true;
 	}
 
@@ -106,6 +109,27 @@ export class CardDatabase {
 		this.initialized = false;
 	}
 
+	/**
+	 * Apply pending schema migrations based on PRAGMA user_version.
+	 */
+	private runMigrations(): void {
+		const db = this.requireDb();
+		const result = db.exec("PRAGMA user_version;");
+		const currentVersion = (result[0]?.values[0]?.[0] as number) ?? 0;
+
+		for (let v = currentVersion + 1; v <= SCHEMA_VERSION; v++) {
+			const migration = MIGRATIONS[v];
+			if (migration) {
+				try {
+					db.run(migration);
+				} catch {
+					// Column may already exist (e.g., fresh DB with new schema)
+				}
+			}
+		}
+		db.run(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+	}
+
 	// ── Card CRUD ──────────────────────────────────────────────
 
 	/**
@@ -113,9 +137,9 @@ export class CardDatabase {
 	 */
 	upsertCard(card: CardRow): void {
 		this.requireDb().run(
-			`INSERT OR REPLACE INTO cards (id, note_path, deck, card_type, front, back, created_at, updated_at, deleted_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			[card.id, card.note_path, card.deck, card.card_type, card.front, card.back, card.created_at, card.updated_at, card.deleted_at],
+			`INSERT OR REPLACE INTO cards (id, note_path, deck, card_type, front, back, created_at, updated_at, deleted_at, type_in)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			[card.id, card.note_path, card.deck, card.card_type, card.front, card.back, card.created_at, card.updated_at, card.deleted_at, card.type_in ?? 0],
 		);
 	}
 

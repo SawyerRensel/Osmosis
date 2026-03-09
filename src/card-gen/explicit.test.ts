@@ -108,6 +108,38 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.front).toContain("_Hint: A greeting_");
 			// Reverse card also gets hint
 			expect(cards[1]!.front).toContain("_Hint: A greeting_");
+			// Both bidi cards get typeIn
+			expect(cards[0]!.typeIn).toBe(true);
+			expect(cards[1]!.typeIn).toBe(true);
+		});
+
+		it("sets typeIn false when not specified", () => {
+			const md = [
+				"```osmosis",
+				"",
+				"Q",
+				"***",
+				"A",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards[0]!.typeIn).toBe(false);
+		});
+
+		it("sets typeIn true from metadata", () => {
+			const md = [
+				"```osmosis",
+				"type-in: true",
+				"",
+				"Spell the capital of France",
+				"***",
+				"Paris",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.typeIn).toBe(true);
+			expect(cards[0]!.card_type).toBe("explicit");
 		});
 
 		it("works without metadata (no blank line needed)", () => {

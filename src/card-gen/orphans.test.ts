@@ -18,6 +18,7 @@ function makeCard(id: string, deletedAt: number | null = null): CardRow {
 		created_at: Date.now(),
 		updated_at: Date.now(),
 		deleted_at: deletedAt,
+		type_in: 0,
 	};
 }
 
@@ -29,6 +30,7 @@ function makeGenerated(id: string): GeneratedCard {
 		back: "Back",
 		deck: "",
 		sourceLine: 0,
+		typeIn: false,
 	};
 }
 

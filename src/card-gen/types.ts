@@ -11,6 +11,8 @@ export interface GeneratedCard {
 	deck: string;
 	/** Source line number (0-based) for ID injection back into markdown. */
 	sourceLine: number;
+	/** Whether this card requires typed answer input. */
+	typeIn: boolean;
 }
 
 /** Metadata parsed from explicit osmosis fence headers. */

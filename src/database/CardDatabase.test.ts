@@ -31,6 +31,7 @@ function makeCard(overrides: Partial<CardRow> = {}): CardRow {
 		created_at: 1000,
 		updated_at: 1000,
 		deleted_at: null,
+		type_in: 0,
 		...overrides,
 	};
 }

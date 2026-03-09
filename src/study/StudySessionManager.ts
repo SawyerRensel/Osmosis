@@ -156,6 +156,7 @@ export class StudySessionManager {
 			created_at: joined.created_at,
 			updated_at: joined.updated_at,
 			deleted_at: joined.deleted_at,
+			type_in: joined.type_in ?? 0,
 		};
 	}
 }

@@ -77,6 +77,7 @@ export function generateHeadingCards(markdown: string): GeneratedCard[] {
 					back: body,
 					deck: "",
 					sourceLine: headingLine,
+					typeIn: false,
 				});
 			}
 		}

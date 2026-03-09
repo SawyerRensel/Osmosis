@@ -136,6 +136,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				back: backContent,
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
+				typeIn: metadata.typeIn,
 			});
 
 			// Reverse card gets a derived ID
@@ -151,6 +152,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				back: frontContent,
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
+				typeIn: metadata.typeIn,
 			});
 		} else {
 			cards.push({
@@ -160,6 +162,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				back: backContent,
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
+				typeIn: metadata.typeIn,
 			});
 		}
 	}

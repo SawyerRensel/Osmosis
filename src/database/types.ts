@@ -23,6 +23,8 @@ export interface CardRow {
 	created_at: number;
 	updated_at: number;
 	deleted_at: number | null;
+	/** Whether this card uses type-in answer mode. 0 = false, 1 = true. */
+	type_in: number;
 }
 
 /** A row in the card_schedule table. */

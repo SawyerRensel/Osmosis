@@ -134,6 +134,7 @@ export class ContextualStudyProcessor {
 				created_at: now,
 				updated_at: now,
 				deleted_at: null,
+				type_in: 0,
 			};
 			this.plugin.cardDb.upsertCard(card);
 		}

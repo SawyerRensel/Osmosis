@@ -64,6 +64,12 @@ export interface OsmosisSettings {
 	/** Maximum review cards per day (0 = unlimited). */
 	dailyReviewCardLimit: number;
 
+	// ── Note Inclusion Settings ────────────────────────────
+	/** Folder paths that auto-enable card generation (without osmosis: true). */
+	includeFolders: string[];
+	/** Tags that auto-enable card generation (without #, without osmosis: true). */
+	includeTags: string[];
+
 	// ── Study Mode Settings ─────────────────────────────────
 	/** Whether contextual mode activates automatically in reading view (default: true). */
 	contextualAutoActivate: boolean;
@@ -86,6 +92,10 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	headingClozeConflict: "cloze_only",
 	dailyNewCardLimit: 20,
 	dailyReviewCardLimit: 200,
+
+	// Note inclusion defaults
+	includeFolders: [],
+	includeTags: [],
 
 	// Study Mode defaults
 	contextualAutoActivate: true,
@@ -213,6 +223,36 @@ export class OsmosisSettingTab extends PluginSettingTab {
 							this.plugin.settings.dailyReviewCardLimit = num;
 							await this.plugin.saveSettings();
 						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Include folders")
+			.setDesc("Notes in these folders auto-generate cards without needing osmosis: true. One folder path per line.")
+			.addTextArea((text) =>
+				text
+					.setValue(this.plugin.settings.includeFolders.join("\n"))
+					.onChange(async (value) => {
+						this.plugin.settings.includeFolders = value
+							.split("\n")
+							.map((s) => s.trim())
+							.filter((s) => s.length > 0);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Include tags")
+			.setDesc("Notes with these tags auto-generate cards without needing osmosis: true. One tag per line, without #.")
+			.addTextArea((text) =>
+				text
+					.setValue(this.plugin.settings.includeTags.join("\n"))
+					.onChange(async (value) => {
+						this.plugin.settings.includeTags = value
+							.split("\n")
+							.map((s) => s.trim().replace(/^#/, ""))
+							.filter((s) => s.length > 0);
+						await this.plugin.saveSettings();
 					}),
 			);
 	}

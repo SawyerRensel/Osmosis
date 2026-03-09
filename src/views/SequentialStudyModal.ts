@@ -2,10 +2,12 @@ import { Component, Modal, MarkdownRenderer, type App } from "obsidian";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import type { StudyCard, DeckScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
+import { isCloseMatch } from "../study/match";
 
 /**
  * Anki-style sequential study modal.
  * Shows card front → flip to reveal back → rate (Again/Hard/Good/Easy).
+ * Type-in cards show a text input instead of the flip button.
  */
 export class SequentialStudyModal extends Modal {
 	private queue: StudyCard[] = [];
@@ -23,6 +25,8 @@ export class SequentialStudyModal extends Modal {
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
 	private ratingBar!: HTMLElement;
+	private typeInEl!: HTMLElement;
+	private typeInInput!: HTMLInputElement;
 
 	constructor(
 		app: App,
@@ -79,6 +83,19 @@ export class SequentialStudyModal extends Modal {
 		});
 		this.flipBtn.addEventListener("click", () => this.flip());
 
+		// Type-in area (hidden by default)
+		this.typeInEl = actions.createDiv({ cls: "osmosis-study-typein osmosis-hidden" });
+		this.typeInInput = this.typeInEl.createEl("input", {
+			type: "text",
+			placeholder: "Type your answer...",
+			cls: "osmosis-study-typein-input",
+		});
+		const checkBtn = this.typeInEl.createEl("button", {
+			text: "Check",
+			cls: "osmosis-study-typein-submit",
+		});
+		checkBtn.addEventListener("click", () => this.checkTypeIn());
+
 		this.ratingBar = actions.createDiv({ cls: "osmosis-study-rating-bar osmosis-hidden" });
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -123,9 +140,21 @@ export class SequentialStudyModal extends Modal {
 		this.backEl.empty();
 		this.backEl.removeClass("is-revealed");
 
-		// Show flip button, hide rating
-		this.flipBtn.removeClass("osmosis-hidden");
+		// Hide rating
 		this.ratingBar.addClass("osmosis-hidden");
+
+		// Show flip or type-in based on card type
+		const isTypeIn = studyCard.card.type_in === 1;
+		if (isTypeIn) {
+			this.flipBtn.addClass("osmosis-hidden");
+			this.typeInEl.removeClass("osmosis-hidden");
+			this.typeInInput.value = "";
+			// Focus input after a tick so modal is fully rendered
+			setTimeout(() => this.typeInInput.focus(), 50);
+		} else {
+			this.flipBtn.removeClass("osmosis-hidden");
+			this.typeInEl.addClass("osmosis-hidden");
+		}
 	}
 
 	private flip(): void {
@@ -148,6 +177,62 @@ export class SequentialStudyModal extends Modal {
 		// Show rating buttons, hide flip
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.removeClass("osmosis-hidden");
+	}
+
+	private checkTypeIn(): void {
+		if (this.isFlipped) return;
+
+		const studyCard = this.queue[this.currentIndex];
+		if (!studyCard) return;
+
+		this.isFlipped = true;
+
+		const userAnswer = this.typeInInput.value.trim();
+		const correctAnswer = studyCard.card.back.trim();
+
+		// Render back content
+		void MarkdownRenderer.render(
+			this.app,
+			studyCard.card.back,
+			this.backEl,
+			studyCard.card.note_path,
+			this.renderComponent,
+		);
+
+		// Show comparison result
+		const resultEl = this.backEl.createDiv({ cls: "osmosis-typein-result" });
+		resultEl.createSpan({ text: `Your answer: ${userAnswer}` });
+
+		const exact = userAnswer.toLowerCase() === correctAnswer.toLowerCase();
+		const close = !exact && isCloseMatch(userAnswer, correctAnswer);
+
+		if (exact) {
+			resultEl.addClass("osmosis-typein-correct");
+		} else if (close) {
+			resultEl.addClass("osmosis-typein-close");
+		} else {
+			resultEl.addClass("osmosis-typein-wrong");
+		}
+
+		this.backEl.addClass("is-revealed");
+
+		// Hide type-in, show rating bar with suggested rating highlighted
+		this.typeInEl.addClass("osmosis-hidden");
+		this.ratingBar.removeClass("osmosis-hidden");
+
+		const suggested: FSRSRating = exact ? 3 : close ? 2 : 1;
+		this.highlightSuggestedRating(suggested);
+	}
+
+	private highlightSuggestedRating(rating: FSRSRating): void {
+		const buttons = this.ratingBar.querySelectorAll("button");
+		buttons.forEach((btn, i) => {
+			if (i + 1 === rating) {
+				btn.classList.add("is-suggested");
+			} else {
+				btn.classList.remove("is-suggested");
+			}
+		});
 	}
 
 	private rate(rating: FSRSRating): void {
@@ -175,6 +260,7 @@ export class SequentialStudyModal extends Modal {
 		this.cardEl.empty();
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
+		this.typeInEl.addClass("osmosis-hidden");
 
 		// Update progress to 100%
 		this.progressText.textContent = `${this.reviewed} / ${this.queue.length}`;
@@ -191,6 +277,8 @@ export class SequentialStudyModal extends Modal {
 		this.scope.register([], " ", (e: KeyboardEvent) => {
 			e.preventDefault();
 			if (!this.isFlipped) {
+				const studyCard = this.queue[this.currentIndex];
+				if (studyCard?.card.type_in === 1) return; // Space doesn't submit type-in
 				this.flip();
 			}
 		});
@@ -198,7 +286,12 @@ export class SequentialStudyModal extends Modal {
 		this.scope.register([], "Enter", (e: KeyboardEvent) => {
 			e.preventDefault();
 			if (!this.isFlipped) {
-				this.flip();
+				const studyCard = this.queue[this.currentIndex];
+				if (studyCard?.card.type_in === 1) {
+					this.checkTypeIn();
+				} else {
+					this.flip();
+				}
 			}
 		});
 

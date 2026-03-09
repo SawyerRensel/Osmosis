@@ -95,6 +95,7 @@ export function generateClozeCards(markdown: string): GeneratedCard[] {
 				back: line,
 				deck: "",
 				sourceLine: lineNum,
+				typeIn: false,
 			});
 		}
 

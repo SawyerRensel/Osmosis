@@ -70,6 +70,7 @@ describe("SR Integration", () => {
 					created_at: now,
 					updated_at: now,
 					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
 				};
 				db.upsertCard(cardRow);
 			}
@@ -153,6 +154,7 @@ describe("SR Integration", () => {
 					created_at: now,
 					updated_at: now,
 					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
 				});
 				db.upsertSchedule(scheduler.createNewSchedule(card.id));
 			}
@@ -200,6 +202,7 @@ describe("SR Integration", () => {
 					created_at: now,
 					updated_at: now,
 					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
 				});
 				db.upsertSchedule(scheduler.createNewSchedule(card.id));
 			}
@@ -285,6 +288,7 @@ describe("SR Integration", () => {
 					created_at: now,
 					updated_at: now,
 					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
 				});
 			}
 
@@ -357,6 +361,7 @@ describe("SR Integration", () => {
 				created_at: now,
 				updated_at: now,
 				deleted_at: null,
+				type_in: 0,
 			});
 
 			// User edits the body
@@ -383,6 +388,7 @@ describe("SR Integration", () => {
 				created_at: now,
 				updated_at: Date.now(),
 				deleted_at: null,
+				type_in: 0,
 			});
 
 			const stored = db.getCard("aaaaaaaa")!;

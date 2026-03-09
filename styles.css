@@ -1258,6 +1258,66 @@ hr.osmosis-map-style-divider {
 	cursor: pointer;
 }
 
+/* ─── Type-in Cards ─────────────────────────────────────── */
+
+.osmosis-study-typein {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.osmosis-study-typein-input {
+	flex: 1;
+	padding: 8px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-medium);
+}
+
+.osmosis-study-typein-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+.osmosis-study-typein-submit {
+	padding: 8px 16px;
+	border: none;
+	border-radius: 4px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	font-weight: 500;
+}
+
+.osmosis-typein-result {
+	margin-top: 8px;
+	padding: 8px 12px;
+	border-radius: 4px;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-typein-correct {
+	background: hsla(120, 40%, 50%, 0.15);
+	border-left: 3px solid hsl(120, 40%, 50%);
+}
+
+.osmosis-typein-close {
+	background: hsla(40, 80%, 50%, 0.15);
+	border-left: 3px solid hsl(40, 80%, 50%);
+}
+
+.osmosis-typein-wrong {
+	background: hsla(0, 60%, 50%, 0.15);
+	border-left: 3px solid hsl(0, 60%, 50%);
+}
+
+.osmosis-study-rating-bar button.is-suggested {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: -2px;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Dashboard Sidebar
    ═══════════════════════════════════════════════════════════ */

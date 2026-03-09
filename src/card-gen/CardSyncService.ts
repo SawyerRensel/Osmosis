@@ -17,6 +17,7 @@ export class CardSyncService {
 		private readonly vault: Vault,
 		private readonly db: CardDatabase,
 		private readonly getOptions: () => CardGenerationOptions,
+		private readonly getFileTags?: (file: TFile) => string[],
 	) {}
 
 	/**
@@ -44,7 +45,8 @@ export class CardSyncService {
 		await this.db.ensureInitialized();
 
 		const content = await this.vault.cachedRead(file);
-		const result = processNote(content, file.path, this.getOptions());
+		const tags = this.getFileTags?.(file);
+		const result = processNote(content, file.path, this.getOptions(), tags);
 
 		const existingCards = this.db.getCardsByNote(file.path);
 		const existingIds = new Set(existingCards.map((c) => c.id));
@@ -66,6 +68,7 @@ export class CardSyncService {
 					created_at: existingIds.has(card.id) ? (existingCards.find((c) => c.id === card.id)?.created_at ?? now) : now,
 					updated_at: now,
 					deleted_at: null,
+					type_in: card.typeIn ? 1 : 0,
 				};
 
 				this.db.upsertCard(row);

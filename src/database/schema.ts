@@ -1,4 +1,9 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
+
+/** Migrations keyed by target version. Applied in order for existing DBs. */
+export const MIGRATIONS: Record<number, string> = {
+	2: `ALTER TABLE cards ADD COLUMN type_in INTEGER NOT NULL DEFAULT 0;`,
+};
 
 export const CREATE_TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS cards (
@@ -10,7 +15,8 @@ CREATE TABLE IF NOT EXISTS cards (
 	back TEXT NOT NULL,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
-	deleted_at INTEGER
+	deleted_at INTEGER,
+	type_in INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS card_schedule (

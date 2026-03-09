@@ -10,6 +10,10 @@ export interface CardGenerationOptions {
 	headingAutoGenerate: boolean;
 	clozeBoldEnabled: boolean;
 	headingClozeConflict: HeadingClozeConflict;
+	/** Folders that auto-enable card generation. */
+	includeFolders?: string[];
+	/** Tags that auto-enable card generation. */
+	includeTags?: string[];
 }
 
 /** Result of processing a note for card generation. */
@@ -39,10 +43,23 @@ export function processNote(
 	markdown: string,
 	notePath: string,
 	options: CardGenerationOptions,
+	noteTags?: string[],
 ): NoteProcessingResult {
 	const frontmatter = parseOsmosisFrontmatter(markdown);
 
-	if (!frontmatter.enabled) {
+	// Check if note is enabled: frontmatter opt-in OR folder match OR tag match
+	const folderMatch = (options.includeFolders ?? []).some(
+		(folder) => notePath.startsWith(folder + "/") || notePath === folder,
+	);
+	const tagMatch = noteTags
+		? (options.includeTags ?? []).some((tag) =>
+			noteTags.some((noteTag) => noteTag === tag || noteTag.startsWith(tag + "/")),
+		)
+		: false;
+
+	const enabled = frontmatter.enabled || folderMatch || tagMatch;
+
+	if (!enabled) {
 		return { enabled: false, cards: [], deck: "" };
 	}
 

@@ -30,7 +30,17 @@ export default class OsmosisPlugin extends Plugin {
 				headingAutoGenerate: this.settings.headingAutoGenerate,
 				clozeBoldEnabled: this.settings.clozeBoldEnabled,
 				headingClozeConflict: this.settings.headingClozeConflict,
+				includeFolders: this.settings.includeFolders,
+				includeTags: this.settings.includeTags,
 			}),
+			(file: TFile) => {
+				const cache = this.app.metadataCache.getFileCache(file);
+				const inlineTags = (cache?.tags ?? []).map((t) => t.tag.replace(/^#/, ""));
+				const fmTags: string[] = Array.isArray(cache?.frontmatter?.tags)
+					? (cache.frontmatter.tags as string[]).map((t: string) => t.replace(/^#/, ""))
+					: [];
+				return [...new Set([...inlineTags, ...fmTags])];
+			},
 		);
 
 		this.addSettingTab(new OsmosisSettingTab(this.app, this));
