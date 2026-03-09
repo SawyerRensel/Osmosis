@@ -335,6 +335,68 @@ export class MindMapView extends ItemView {
 		return { front, back: text };
 	}
 
+	/**
+	 * Check if a node is an osmosis fence (Q&A or cloze).
+	 * Returns parsed front/back or null.
+	 */
+	private getOsmosisCardContent(node: OsmosisNode): { front: string; back: string } | null {
+		if (node.type !== "codeblock") return null;
+		return this.parseOsmosisFence(node.content) ?? this.parseOsmosisCloze(node.content);
+	}
+
+	/**
+	 * Render osmosis fence as a card (front + divider + back) into the given container.
+	 * Used in both measurement and drawing phases for consistent sizing.
+	 */
+	private async renderOsmosisCardInto(
+		container: Element,
+		front: string,
+		back: string,
+		sourcePath: string,
+		ns?: string,
+	): Promise<void> {
+		const createElement = (tag: string, cls: string): HTMLElement => {
+			if (ns) {
+				const el = document.createElementNS(ns, tag) as HTMLElement;
+				el.setAttribute("xmlns", ns);
+				el.className = cls;
+				return el;
+			}
+			const el = document.createElement(tag);
+			el.className = cls;
+			return el;
+		};
+
+		const frontEl = createElement("div", "osmosis-contextual-front");
+		container.appendChild(frontEl);
+
+		if (this.renderComponent) {
+			await MarkdownRenderer.render(
+				this.app,
+				front,
+				frontEl,
+				sourcePath,
+				this.renderComponent,
+			);
+		}
+
+		const divider = createElement("div", "osmosis-study-divider");
+		container.appendChild(divider);
+
+		const backEl = createElement("div", "osmosis-contextual-revealed");
+		container.appendChild(backEl);
+
+		if (this.renderComponent) {
+			await MarkdownRenderer.render(
+				this.app,
+				back,
+				backEl,
+				sourcePath,
+				this.renderComponent,
+			);
+		}
+	}
+
 	private toggleSpatialStudy(): void {
 		if (this.isSpatialStudy) {
 			this.exitSpatialStudy();
@@ -463,7 +525,16 @@ export class MindMapView extends ItemView {
 		const frontEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
 		frontEl.setAttribute("xmlns", XHTML_NS);
 		frontEl.className = "osmosis-fence-front";
-		frontEl.textContent = front;
+		// Render markdown so images, code blocks, and formatting display properly
+		if (this.renderComponent) {
+			void MarkdownRenderer.render(
+				this.app,
+				front,
+				frontEl,
+				this.currentFile?.path ?? "",
+				this.renderComponent,
+			);
+		}
 		wrapper.appendChild(frontEl);
 		group.classList.add("osmosis-spatial-revealed");
 	}
@@ -5921,9 +5992,11 @@ export class MindMapView extends ItemView {
 			const shapeKey = nodeShapes?.get(node.id) ?? "";
 			const nodeWidth = localStyle?.width ?? globalWidth;
 			const widthKey = nodeWidth ? `w${String(nodeWidth)}` : "";
+			const isOsmosisCard = this.getOsmosisCardContent(node) !== null;
+			const osmosisPrefix = isOsmosisCard ? "osm:" : "";
 			const cacheKey = node.type === "heading"
 				? `h${String(node.depth)}:${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`
-				: `${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`;
+				: `${osmosisPrefix}${displayContent}:${textStyleKey}:${shapeKey}:${widthKey}`;
 			const cached = this.nodeSizeCache.get(cacheKey);
 			if (cached) {
 				sizes.set(node.id, cached);
@@ -5945,7 +6018,7 @@ export class MindMapView extends ItemView {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = document.createElement("div");
-				cell.className = "osmosis-node-content osmosis-measure-cell";
+				cell.className = "osmosis-node-content osmosis-measure-cell markdown-rendered";
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
 				}
@@ -5964,7 +6037,11 @@ export class MindMapView extends ItemView {
 				cell.setAttribute("style", textStyles.join("; "));
 				measurer.appendChild(cell);
 
-				if (this.renderComponent) {
+				// Render osmosis fences as cards (front+back) instead of code blocks
+				const osmosisCard = this.getOsmosisCardContent(node);
+				if (osmosisCard) {
+					await this.renderOsmosisCardInto(cell, osmosisCard.front, osmosisCard.back, sourcePath);
+				} else if (this.renderComponent) {
 					await MarkdownRenderer.render(
 						this.app,
 						displayContent,
@@ -6347,7 +6424,7 @@ export class MindMapView extends ItemView {
 			"div",
 		) as HTMLDivElement;
 		wrapper.setAttribute("xmlns", XHTML_NS);
-		wrapper.className = "osmosis-node-content";
+		wrapper.className = "osmosis-node-content markdown-rendered";
 		if (node.source.type === "heading") {
 			wrapper.setAttribute("data-depth", String(node.source.depth));
 		}
@@ -6394,17 +6471,30 @@ export class MindMapView extends ItemView {
 			wrapper.appendChild(cycleLabel);
 		} else {
 			const displayContent = this.getNodeDisplayContent(node.source);
+			// Check if this is an osmosis fence that should render as a card
+			const osmosisCard = this.getOsmosisCardContent(node.source);
 			// Checkbox nodes have state (checked/unchecked) baked into cached HTML,
 			// so skip the cache to always render fresh with the current checked state.
 			const isCheckboxNode = !!node.source.metadata?.checkbox;
+			// Osmosis cards use a different cache key so they don't collide
+			const cacheKey = osmosisCard ? `osmosis-card:${displayContent}` : displayContent;
 			const cachedHtml = isCheckboxNode
 				? null
-				: this.nodeHtmlCache.get(displayContent);
+				: this.nodeHtmlCache.get(cacheKey);
 			if (cachedHtml) {
 				// Clone cached rendered content instead of re-rendering markdown
 				for (const child of Array.from(cachedHtml.childNodes)) {
 					wrapper.appendChild(child.cloneNode(true));
 				}
+			} else if (osmosisCard) {
+				// Render osmosis fence as card (front + divider + back)
+				await this.renderOsmosisCardInto(
+					wrapper,
+					osmosisCard.front,
+					osmosisCard.back,
+					sourcePath,
+					XHTML_NS,
+				);
 			} else if (this.renderComponent) {
 				await MarkdownRenderer.render(
 					this.app,
@@ -6470,7 +6560,7 @@ export class MindMapView extends ItemView {
 					for (const child of Array.from(wrapper.childNodes)) {
 						cacheEntry.appendChild(child.cloneNode(true));
 					}
-					this.nodeHtmlCache.set(displayContent, cacheEntry);
+					this.nodeHtmlCache.set(cacheKey, cacheEntry);
 				}
 			}
 		}
