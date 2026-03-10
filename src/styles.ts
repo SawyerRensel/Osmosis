@@ -12,6 +12,12 @@ import type { LayoutDirection } from "./layout";
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
 
+// ─── Layout Modes ───────────────────────────────────────────────────────────
+
+export type MapLayout = "classic" | "radial";
+export type BalanceMode = "one-side" | "both-sides" | "alternating";
+export type LayoutSide = "right" | "left" | "down" | "up";
+
 // ─── Topic Shapes ───────────────────────────────────────────────────────────
 
 export type TopicShape =
@@ -69,6 +75,8 @@ export interface NodeStyle {
 	width?: number;
 	/** Assigned style class name (metadata, not a visual property). */
 	class?: string;
+	/** Which side of the parent this node is placed on (for balance modes). */
+	side?: LayoutSide;
 }
 
 // ─── Theme Definition ───────────────────────────────────────────────────────
@@ -139,6 +147,12 @@ export interface MapSettings {
 	verticalSpacing: number;
 	theme: string;
 	topicShape: TopicShape;
+	/** Map layout algorithm ("classic" tree or "radial"). */
+	mapLayout: MapLayout;
+	/** Balance mode for child distribution. */
+	balance: BalanceMode;
+	/** Which side children are placed on (for one-side balance). */
+	layoutSide: LayoutSide;
 	/** Map-level global node style overrides (fill, border, text). */
 	baseStyle?: NodeStyle;
 	/** Map background color override. */
@@ -159,6 +173,9 @@ export const DEFAULT_MAP_SETTINGS: MapSettings = {
 	verticalSpacing: 8,
 	theme: "Default",
 	topicShape: "rounded-rect",
+	mapLayout: "classic",
+	balance: "one-side",
+	layoutSide: "right",
 };
 
 /** Keys in OsmosisStyleFrontmatter that correspond to MapSettings fields. */
@@ -167,6 +184,7 @@ const MAP_SETTING_FM_KEYS: (keyof OsmosisStyleFrontmatter & keyof MapSettings)[]
 	"horizontalSpacing", "verticalSpacing", "topicShape",
 	"maxNodeWidth", "background", "branchLineColor",
 	"branchLineThickness", "baseStyle",
+	"mapLayout", "balance", "layoutSide",
 ];
 
 /**
@@ -235,6 +253,15 @@ export interface OsmosisStyleFrontmatter {
 
 	/** Map-level global node style overrides (fill, border, text). */
 	baseStyle?: NodeStyle;
+
+	/** Map layout algorithm. */
+	mapLayout?: MapLayout;
+
+	/** Balance mode for child distribution. */
+	balance?: BalanceMode;
+
+	/** Which side children are placed on (for one-side balance). */
+	layoutSide?: LayoutSide;
 
 	// ── Per-node overrides ──
 
@@ -463,6 +490,9 @@ export function parseOsmosisStyleFrontmatter(
 	if (obj["baseStyle"] && typeof obj["baseStyle"] === "object") {
 		result.baseStyle = obj["baseStyle"] as NodeStyle;
 	}
+	if (typeof obj["mapLayout"] === "string") result.mapLayout = obj["mapLayout"] as MapLayout;
+	if (typeof obj["balance"] === "string") result.balance = obj["balance"] as BalanceMode;
+	if (typeof obj["layoutSide"] === "string") result.layoutSide = obj["layoutSide"] as LayoutSide;
 
 	// Per-node overrides
 	if (obj["styles"] && typeof obj["styles"] === "object") {

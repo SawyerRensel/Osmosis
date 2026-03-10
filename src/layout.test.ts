@@ -202,6 +202,267 @@ describe("computeLayout", () => {
 		assertNoOverlap(result.nodes);
 	});
 
+	// ─── Balance Mode Tests ─────────────────────────────────────────
+
+	it("one-side right: all children to the right of root", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "one-side", layoutSide: "right" });
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		for (const node of visible) {
+			expect(node.rect.x).toBeGreaterThanOrEqual(0);
+			expect(node.side).toBe("primary");
+		}
+	});
+
+	it("one-side left: all children to the left (mirrored)", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "one-side", layoutSide: "left" });
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		for (const node of visible) {
+			expect(node.rect.x + node.rect.width).toBeLessThanOrEqual(0);
+			expect(node.side).toBe("secondary");
+		}
+		assertNoOverlap(result.nodes);
+	});
+
+	it("both-sides: children split left and right of root", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+			makeNode("d", "heading", "D", 1),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "both-sides" });
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		const primaryNodes = visible.filter((n) => n.side === "primary");
+		const secondaryNodes = visible.filter((n) => n.side === "secondary");
+
+		expect(primaryNodes.length).toBeGreaterThan(0);
+		expect(secondaryNodes.length).toBeGreaterThan(0);
+
+		// Primary nodes should have positive x, secondary negative
+		for (const node of primaryNodes) {
+			expect(node.rect.x).toBeGreaterThanOrEqual(0);
+		}
+		for (const node of secondaryNodes) {
+			expect(node.rect.x + node.rect.width).toBeLessThanOrEqual(0);
+		}
+		assertNoOverlap(result.nodes);
+	});
+
+	it("alternating: children alternate sides", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+			makeNode("d", "heading", "D", 1),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "alternating" });
+		const a = result.nodes.find((n) => n.source.id === "a")!;
+		const b = result.nodes.find((n) => n.source.id === "b")!;
+		const c = result.nodes.find((n) => n.source.id === "c")!;
+		const d = result.nodes.find((n) => n.source.id === "d")!;
+
+		// Even indices (A, C) on primary side, odd (B, D) on secondary
+		expect(a.side).toBe("primary");
+		expect(b.side).toBe("secondary");
+		expect(c.side).toBe("primary");
+		expect(d.side).toBe("secondary");
+		assertNoOverlap(result.nodes);
+	});
+
+	it("both-sides with per-node side override", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+			makeNode("d", "heading", "D", 1),
+		]);
+		// Force node "a" to the left side
+		const nodeSides = new Map([["a", "left" as const]]);
+		const result = computeLayout(makeTree(root), { balance: "both-sides" }, undefined, undefined, undefined, nodeSides);
+		const a = result.nodes.find((n) => n.source.id === "a")!;
+		expect(a.side).toBe("secondary");
+		expect(a.rect.x + a.rect.width).toBeLessThanOrEqual(0);
+		assertNoOverlap(result.nodes);
+	});
+
+	it("both-sides in top-down mode: children split above and below", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+			makeNode("b", "heading", "B", 1),
+			makeNode("c", "heading", "C", 1),
+			makeNode("d", "heading", "D", 1),
+		]);
+		const result = computeLayout(makeTree(root), { direction: "top-down", balance: "both-sides" });
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		const primaryNodes = visible.filter((n) => n.side === "primary");
+		const secondaryNodes = visible.filter((n) => n.side === "secondary");
+
+		expect(primaryNodes.length).toBeGreaterThan(0);
+		expect(secondaryNodes.length).toBeGreaterThan(0);
+
+		// In top-down + both-sides: primary below (positive y), secondary above (negative y)
+		for (const node of primaryNodes) {
+			expect(node.rect.y).toBeGreaterThanOrEqual(0);
+		}
+		for (const node of secondaryNodes) {
+			expect(node.rect.y + node.rect.height).toBeLessThanOrEqual(0);
+		}
+		assertNoOverlap(result.nodes);
+	});
+
+	it("both-sides with single child falls back to one-side", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("a", "heading", "A", 1),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "both-sides" });
+		const a = result.nodes.find((n) => n.source.id === "a")!;
+		// Single child: both-sides falls back since root.children.length <= 1
+		expect(a.rect.x).toBeGreaterThanOrEqual(0);
+		expect(a.side).toBe("primary");
+	});
+
+	it("both-sides works with root → H1 → H2s structure (real Obsidian tree)", () => {
+		// Real tree: root (virtual) → H1 (single child) → H2s (branches)
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "My Note", 1, [
+				makeNode("a", "heading", "Section A", 2),
+				makeNode("b", "heading", "Section B", 2),
+				makeNode("c", "heading", "Section C", 2),
+				makeNode("d", "heading", "Section D", 2),
+			]),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "both-sides" });
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		const h2s = visible.filter((n) => n.depth === 2);
+		const primaryH2s = h2s.filter((n) => n.side === "primary");
+		const secondaryH2s = h2s.filter((n) => n.side === "secondary");
+
+		expect(primaryH2s.length).toBeGreaterThan(0);
+		expect(secondaryH2s.length).toBeGreaterThan(0);
+
+		// H1 should be positioned; primary H2s to the right, secondary to the left
+		const h1 = result.nodes.find((n) => n.source.id === "h1")!;
+		for (const node of primaryH2s) {
+			expect(node.rect.x).toBeGreaterThan(h1.rect.x);
+		}
+		for (const node of secondaryH2s) {
+			expect(node.rect.x + node.rect.width).toBeLessThan(h1.rect.x);
+		}
+		assertNoOverlap(result.nodes);
+	});
+
+	it("alternating works with root → H1 → H2s structure", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "My Note", 1, [
+				makeNode("a", "heading", "A", 2),
+				makeNode("b", "heading", "B", 2),
+				makeNode("c", "heading", "C", 2),
+				makeNode("d", "heading", "D", 2),
+			]),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "alternating" });
+		const a = result.nodes.find((n) => n.source.id === "a")!;
+		const b = result.nodes.find((n) => n.source.id === "b")!;
+		expect(a.side).toBe("primary");
+		expect(b.side).toBe("secondary");
+		assertNoOverlap(result.nodes);
+	});
+
+	// ─── Regression Tests ──────────────────────────────────────────
+
+	it("one-side left: no overlap in deep tree (mirror fix)", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "Root", 1, [
+				makeNode("a", "heading", "A", 2, [
+					makeNode("a1", "bullet", "A1", 0),
+					makeNode("a2", "bullet", "A2", 0),
+					makeNode("a3", "bullet", "A3", 0),
+				]),
+				makeNode("b", "heading", "B", 2, [
+					makeNode("b1", "bullet", "B1", 0),
+					makeNode("b2", "bullet", "B2", 0),
+				]),
+			]),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "one-side", layoutSide: "left" });
+		assertNoOverlap(result.nodes);
+		// All visible nodes should be to the left
+		const visible = result.nodes.filter((n) => n.source.type !== "root");
+		for (const node of visible) {
+			expect(node.rect.x + node.rect.width).toBeLessThanOrEqual(0.01);
+		}
+	});
+
+	it("both-sides: no overlap with deep subtrees (repositioning fix)", () => {
+		// H2s with children — the old code would overlap subtrees
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "Note", 1, [
+				makeNode("a", "heading", "Section A", 2, [
+					makeNode("a1", "bullet", "Item 1", 0),
+					makeNode("a2", "bullet", "Item 2", 0),
+					makeNode("a3", "bullet", "Item 3", 0),
+				]),
+				makeNode("b", "heading", "Section B", 2, [
+					makeNode("b1", "bullet", "Item 4", 0),
+					makeNode("b2", "bullet", "Item 5", 0),
+					makeNode("b3", "bullet", "Item 6", 0),
+				]),
+				makeNode("c", "heading", "Section C", 2, [
+					makeNode("c1", "bullet", "Item 7", 0),
+					makeNode("c2", "bullet", "Item 8", 0),
+				]),
+				makeNode("d", "heading", "Section D", 2, [
+					makeNode("d1", "bullet", "Item 9", 0),
+					makeNode("d2", "bullet", "Item 10", 0),
+				]),
+			]),
+		]);
+		const resultBoth = computeLayout(makeTree(root), { balance: "both-sides" });
+		assertNoOverlap(resultBoth.nodes);
+
+		const resultAlt = computeLayout(makeTree(root), { balance: "alternating" });
+		assertNoOverlap(resultAlt.nodes);
+	});
+
+	it("top-down: nodes have proper width (not swapped)", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "A wide heading with many words", 1),
+		]);
+		const result = computeLayout(makeTree(root), { direction: "top-down" });
+		const h1 = result.nodes.find((n) => n.source.id === "h1")!;
+		// Width should be the wider dimension (based on text content)
+		expect(h1.rect.width).toBeGreaterThan(h1.rect.height);
+	});
+
+	it("top-down one-side up: no overlap and nodes above root", () => {
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "Root", 1, [
+				makeNode("a", "heading", "A", 2),
+				makeNode("b", "heading", "B", 2),
+			]),
+		]);
+		const result = computeLayout(makeTree(root), {
+			direction: "top-down",
+			balance: "one-side",
+			layoutSide: "up",
+		});
+		assertNoOverlap(result.nodes);
+		const h1 = result.nodes.find((n) => n.source.id === "h1")!;
+		const a = result.nodes.find((n) => n.source.id === "a")!;
+		// Children should be above parent (negative y)
+		expect(a.rect.y + a.rect.height).toBeLessThanOrEqual(h1.rect.y + 0.01);
+	});
+
 	it("performs under 50ms for 500 nodes", () => {
 		// Build a wide + deep tree: 10 top-level headings, each with 10 children, each with ~4 leaves
 		const topChildren: OsmosisNode[] = [];

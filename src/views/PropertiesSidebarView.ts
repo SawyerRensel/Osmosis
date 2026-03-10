@@ -4,7 +4,7 @@ import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
-import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition } from "../styles";
+import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, MapLayout, BalanceMode, LayoutSide } from "../styles";
 import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
@@ -111,6 +111,10 @@ export class PropertiesSidebarView extends ItemView {
 	private mapCollapseSlider: HTMLInputElement | null = null;
 	private mapHSpacingSlider: HTMLInputElement | null = null;
 	private mapVSpacingSlider: HTMLInputElement | null = null;
+	private mapLayoutDropdown: HTMLSelectElement | null = null;
+	private mapBalanceDropdown: HTMLSelectElement | null = null;
+	private mapSideDropdown: HTMLSelectElement | null = null;
+	private mapSideSetting: HTMLElement | null = null;
 	private mapBranchStyleDropdown: HTMLSelectElement | null = null;
 	private mapTopicShapeDropdown: HTMLSelectElement | null = null;
 	private mapMaxNodeWidthSlider: HTMLInputElement | null = null;
@@ -485,67 +489,10 @@ export class PropertiesSidebarView extends ItemView {
 
 		this.updateSaveToVariantVisibility();
 
-		// Layout direction
-		new Setting(container)
-			.setName("Layout direction")
-			.addDropdown((dropdown) => {
-				this.mapDirectionDropdown = dropdown.selectEl;
-				dropdown
-					.addOption("left-right", "Left to right")
-					.addOption("top-down", "Top to bottom")
-					.setValue(settings.direction)
-					.onChange(async (value) => {
-						await this.saveSetting(
-							"direction",
-							value as LayoutDirection,
-						);
-					});
-			});
-
-		// Collapse depth
-		new Setting(container)
-			.setName("Default collapse depth")
-			.setDesc("0 = expand all")
-			.addSlider((slider) => {
-				this.mapCollapseSlider = slider.sliderEl;
-				slider
-					.setLimits(0, 6, 1)
-					.setValue(settings.collapseDepth)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						await this.saveSetting("collapseDepth", value);
-					});
-			});
-
-		// Horizontal spacing
-		new Setting(container)
-			.setName("Horizontal spacing")
-			.setDesc("Space between parent and children")
-			.addSlider((slider) => {
-				this.mapHSpacingSlider = slider.sliderEl;
-				slider
-					.setLimits(20, 200, 5)
-					.setValue(settings.horizontalSpacing)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						await this.saveSetting("horizontalSpacing", value);
-					});
-			});
-
-		// Vertical spacing
-		new Setting(container)
-			.setName("Vertical spacing")
-			.setDesc("Space between sibling nodes")
-			.addSlider((slider) => {
-				this.mapVSpacingSlider = slider.sliderEl;
-				slider
-					.setLimits(2, 40, 1)
-					.setValue(settings.verticalSpacing)
-					.setDynamicTooltip()
-					.onChange(async (value) => {
-						await this.saveSetting("verticalSpacing", value);
-					});
-			});
+		// ─── Layout Section ──────────────────────────────────────
+		this.renderMapStyleSection(container, "Layout", (body) => {
+			this.renderLayoutSection(body, settings);
+		});
 
 		// ─── Global Style Sections ──────────────────────────────
 		container.createEl("hr", { cls: "osmosis-map-style-divider" });
@@ -1472,6 +1419,15 @@ export class PropertiesSidebarView extends ItemView {
 				const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
 
 				switch (section) {
+					case "Layout":
+						delete osmosis["direction"];
+						delete osmosis["collapseDepth"];
+						delete osmosis["horizontalSpacing"];
+						delete osmosis["verticalSpacing"];
+						delete osmosis["mapLayout"];
+						delete osmosis["balance"];
+						delete osmosis["layoutSide"];
+						break;
 					case "Background":
 						delete osmosis["background"];
 						break;
@@ -1519,6 +1475,15 @@ export class PropertiesSidebarView extends ItemView {
 			const fm = mindMap.getOsmosisStyleFrontmatter();
 			if (fm) {
 				switch (section) {
+					case "Layout":
+						delete fm.direction;
+						delete fm.collapseDepth;
+						delete fm.horizontalSpacing;
+						delete fm.verticalSpacing;
+						delete fm.mapLayout;
+						delete fm.balance;
+						delete fm.layoutSide;
+						break;
 					case "Background":
 						delete fm.background;
 						break;
@@ -1568,6 +1533,145 @@ export class PropertiesSidebarView extends ItemView {
 		const base: NodeStyle = { ...(theme?.base ?? {}) };
 		if (settings.baseStyle) mergeNodeStyle(base, settings.baseStyle);
 		return { base, theme };
+	}
+
+	private renderLayoutSection(body: HTMLElement, settings: MapSettings): void {
+		// Map layout
+		new Setting(body)
+			.setName("Map layout")
+			.addDropdown((dropdown) => {
+				this.mapLayoutDropdown = dropdown.selectEl;
+				dropdown
+					.addOption("classic", "Classic")
+					.setValue(settings.mapLayout ?? "classic")
+					.onChange(async (value) => {
+						await this.saveSetting("mapLayout", value as MapLayout);
+					});
+			});
+
+		// Direction
+		new Setting(body)
+			.setName("Direction")
+			.addDropdown((dropdown) => {
+				this.mapDirectionDropdown = dropdown.selectEl;
+				dropdown
+					.addOption("left-right", "Horizontal")
+					.addOption("top-down", "Vertical")
+					.setValue(settings.direction)
+					.onChange(async (value) => {
+						await this.saveSetting(
+							"direction",
+							value as LayoutDirection,
+						);
+						this.updateSideDropdownOptions();
+					});
+			});
+
+		// Balance
+		new Setting(body)
+			.setName("Balance")
+			.addDropdown((dropdown) => {
+				this.mapBalanceDropdown = dropdown.selectEl;
+				dropdown
+					.addOption("one-side", "One side")
+					.addOption("both-sides", "Both sides")
+					.addOption("alternating", "Alternating")
+					.setValue(settings.balance ?? "one-side")
+					.onChange(async (value) => {
+						await this.saveSetting("balance", value as BalanceMode);
+						this.updateSideSettingVisibility();
+					});
+			});
+
+		// Side (conditional — only shown when balance = "one-side")
+		const sideSetting = new Setting(body)
+			.setName("Side");
+		this.mapSideSetting = sideSetting.settingEl;
+		sideSetting.addDropdown((dropdown) => {
+			this.mapSideDropdown = dropdown.selectEl;
+			this.populateSideDropdownOptions(dropdown.selectEl, settings.direction);
+			dropdown
+				.setValue(settings.layoutSide ?? "right")
+				.onChange(async (value) => {
+					await this.saveSetting("layoutSide", value as LayoutSide);
+				});
+		});
+		this.updateSideSettingVisibility();
+
+		// Collapse depth
+		new Setting(body)
+			.setName("Default collapse depth")
+			.setDesc("0 = expand all")
+			.addSlider((slider) => {
+				this.mapCollapseSlider = slider.sliderEl;
+				slider
+					.setLimits(0, 6, 1)
+					.setValue(settings.collapseDepth)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveSetting("collapseDepth", value);
+					});
+			});
+
+		// Horizontal spacing
+		new Setting(body)
+			.setName("Horizontal spacing")
+			.setDesc("Space between parent and children")
+			.addSlider((slider) => {
+				this.mapHSpacingSlider = slider.sliderEl;
+				slider
+					.setLimits(20, 200, 5)
+					.setValue(settings.horizontalSpacing)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveSetting("horizontalSpacing", value);
+					});
+			});
+
+		// Vertical spacing
+		new Setting(body)
+			.setName("Vertical spacing")
+			.setDesc("Space between sibling nodes")
+			.addSlider((slider) => {
+				this.mapVSpacingSlider = slider.sliderEl;
+				slider
+					.setLimits(2, 40, 1)
+					.setValue(settings.verticalSpacing)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						await this.saveSetting("verticalSpacing", value);
+					});
+			});
+	}
+
+	/** Show/hide the Side dropdown based on current balance mode. */
+	private updateSideSettingVisibility(): void {
+		if (!this.mapSideSetting || !this.mapBalanceDropdown) return;
+		const balance = this.mapBalanceDropdown.value;
+		this.mapSideSetting.style.display = balance === "one-side" ? "" : "none";
+	}
+
+	/** Update Side dropdown options based on current direction. */
+	private updateSideDropdownOptions(): void {
+		if (!this.mapSideDropdown || !this.mapDirectionDropdown) return;
+		const direction = this.mapDirectionDropdown.value as LayoutDirection;
+		this.populateSideDropdownOptions(this.mapSideDropdown, direction);
+		// Reset to default side for this direction
+		const defaultSide = direction === "top-down" ? "down" : "right";
+		this.mapSideDropdown.value = defaultSide;
+		void this.saveSetting("layoutSide", defaultSide as LayoutSide);
+	}
+
+	/** Populate a Side dropdown with options appropriate for the given direction. */
+	private populateSideDropdownOptions(select: HTMLSelectElement, direction: LayoutDirection): void {
+		select.empty();
+		if (direction === "top-down") {
+			select.createEl("option", { value: "down", text: "Down" });
+			select.createEl("option", { value: "up", text: "Up" });
+		} else {
+			select.createEl("option", { value: "right", text: "Right" });
+			select.createEl("option", { value: "left", text: "Left" });
+		}
 	}
 
 	private renderMapBackgroundSection(body: HTMLElement): void {
@@ -1963,9 +2067,19 @@ export class PropertiesSidebarView extends ItemView {
 		}
 
 		// Layout controls
+		if (this.mapLayoutDropdown) {
+			this.mapLayoutDropdown.value = settings.mapLayout ?? "classic";
+		}
 		if (this.mapDirectionDropdown) {
 			this.mapDirectionDropdown.value = settings.direction;
 		}
+		if (this.mapBalanceDropdown) {
+			this.mapBalanceDropdown.value = settings.balance ?? "one-side";
+		}
+		if (this.mapSideDropdown) {
+			this.mapSideDropdown.value = settings.layoutSide ?? "right";
+		}
+		this.updateSideSettingVisibility();
 		if (this.mapCollapseSlider) {
 			this.mapCollapseSlider.value = String(settings.collapseDepth);
 		}

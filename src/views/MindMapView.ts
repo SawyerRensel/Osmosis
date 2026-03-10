@@ -25,7 +25,7 @@ import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
-import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape } from "../styles";
+import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
 import {
@@ -1997,18 +1997,53 @@ export class MindMapView extends ItemView {
 		offsetX: number,
 		offsetY: number,
 	): boolean {
-		// Use bounding box of the two connection points
-		const cx = child.rect.x + offsetX;
-		const cy = child.rect.y + child.rect.height / 2 + offsetY;
-		let px: number, py: number;
-		if (parent.source.type === "root") {
-			const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			px = cx - stubLength;
-			py = cy;
+		// Compute bounding box of the two connection points, accounting for side
+		const isSecondary = child.side === "secondary";
+		const isTopDown = this.mapSettings.direction === "top-down";
+
+		let cx: number, cy: number, px: number, py: number;
+		if (isSecondary && isTopDown) {
+			cx = child.rect.x + child.rect.width / 2 + offsetX;
+			cy = child.rect.y + child.rect.height + offsetY;
+			if (parent.source.type === "root") {
+				px = cx;
+				py = cy + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+			} else {
+				px = parent.rect.x + parent.rect.width / 2 + offsetX;
+				py = parent.rect.y + offsetY;
+			}
+		} else if (isSecondary) {
+			cx = child.rect.x + child.rect.width + offsetX;
+			cy = child.rect.y + child.rect.height / 2 + offsetY;
+			if (parent.source.type === "root") {
+				px = cx + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				py = cy;
+			} else {
+				px = parent.rect.x + offsetX;
+				py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			}
+		} else if (isTopDown) {
+			cx = child.rect.x + child.rect.width / 2 + offsetX;
+			cy = child.rect.y + offsetY;
+			if (parent.source.type === "root") {
+				px = cx;
+				py = cy - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+			} else {
+				px = parent.rect.x + parent.rect.width / 2 + offsetX;
+				py = parent.rect.y + parent.rect.height + offsetY;
+			}
 		} else {
-			px = parent.rect.x + parent.rect.width + offsetX;
-			py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			cx = child.rect.x + offsetX;
+			cy = child.rect.y + child.rect.height / 2 + offsetY;
+			if (parent.source.type === "root") {
+				px = cx - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				py = cy;
+			} else {
+				px = parent.rect.x + parent.rect.width + offsetX;
+				py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			}
 		}
+
 		const minX = Math.min(px, cx);
 		const minY = Math.min(py, cy);
 		const maxX = Math.max(px, cx);
@@ -5994,10 +6029,13 @@ export class MindMapView extends ItemView {
 				horizontalSpacing: this.mapSettings.horizontalSpacing,
 				verticalSpacing: this.mapSettings.verticalSpacing,
 				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
+				balance: this.mapSettings.balance ?? "one-side",
+				layoutSide: this.mapSettings.layoutSide ?? "right",
 			},
 			this.collapsedIds,
 			nodeSizes,
 			nodeShapes,
+			this.buildNodeSidesMap(),
 		);
 		this.currentLayout = layout;
 
@@ -6248,6 +6286,20 @@ export class MindMapView extends ItemView {
 			}
 		}
 		return shapes;
+	}
+
+	private buildNodeSidesMap(): Map<string, LayoutSide> {
+		const sides = new Map<string, LayoutSide>();
+		const fmStyles = this.osmosisStyleFrontmatter?.styles;
+		if (!fmStyles) return sides;
+
+		for (const [selector, style] of Object.entries(fmStyles)) {
+			if (selector.startsWith("_n:") && style.side) {
+				const nodeId = selector.slice(3);
+				sides.set(nodeId, style.side);
+			}
+		}
+		return sides;
 	}
 
 	private collectAllNodes(node: OsmosisNode): OsmosisNode[] {
@@ -6708,8 +6760,24 @@ export class MindMapView extends ItemView {
 	): void {
 		const isCollapsed = this.collapsedIds.has(node.source.id);
 		const toggleSize = 14;
-		const toggleX = x + width + 4;
-		const toggleY = y + height / 2 - toggleSize / 2;
+		const isSecondary = node.side === "secondary";
+		const isTopDown = this.mapSettings.direction === "top-down";
+
+		let toggleX: number;
+		let toggleY: number;
+		if (isSecondary && isTopDown) {
+			// Above: toggle at top edge
+			toggleX = x + width / 2 - toggleSize / 2;
+			toggleY = y - toggleSize - 4;
+		} else if (isSecondary) {
+			// Left side: toggle at left edge
+			toggleX = x - toggleSize - 4;
+			toggleY = y + height / 2 - toggleSize / 2;
+		} else {
+			// Default: toggle at right edge
+			toggleX = x + width + 4;
+			toggleY = y + height / 2 - toggleSize / 2;
+		}
 
 		const toggleGroup = document.createElementNS(SVG_NS, "g");
 		toggleGroup.setAttribute("class", "osmosis-collapse-toggle");
@@ -6755,20 +6823,65 @@ export class MindMapView extends ItemView {
 		offsetY: number,
 		lineStyle: BranchLineStyle,
 	): void {
-		// Child attachment point: center-left
-		const cx = child.rect.x + offsetX;
-		const cy = child.rect.y + child.rect.height / 2 + offsetY;
+		const isSecondary = child.side === "secondary";
+		const isTopDown = this.mapSettings.direction === "top-down";
 
+		let cx: number;
+		let cy: number;
 		let px: number;
 		let py: number;
 
-		if (parent.source.type === "root") {
-			const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			px = cx - stubLength;
-			py = cy;
+		if (isSecondary && isTopDown) {
+			// Secondary in top-down: child is above parent
+			// Child attachment: bottom-center
+			cx = child.rect.x + child.rect.width / 2 + offsetX;
+			cy = child.rect.y + child.rect.height + offsetY;
+			if (parent.source.type === "root") {
+				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				px = cx;
+				py = cy + stubLength;
+			} else {
+				px = parent.rect.x + parent.rect.width / 2 + offsetX;
+				py = parent.rect.y + offsetY;
+			}
+		} else if (isSecondary) {
+			// Secondary in horizontal: child is to the left of parent
+			// Child attachment: center-right
+			cx = child.rect.x + child.rect.width + offsetX;
+			cy = child.rect.y + child.rect.height / 2 + offsetY;
+			if (parent.source.type === "root") {
+				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				px = cx + stubLength;
+				py = cy;
+			} else {
+				px = parent.rect.x + offsetX;
+				py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			}
+		} else if (isTopDown) {
+			// Primary in top-down: child is below parent
+			// Child attachment: top-center
+			cx = child.rect.x + child.rect.width / 2 + offsetX;
+			cy = child.rect.y + offsetY;
+			if (parent.source.type === "root") {
+				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				px = cx;
+				py = cy - stubLength;
+			} else {
+				px = parent.rect.x + parent.rect.width / 2 + offsetX;
+				py = parent.rect.y + parent.rect.height + offsetY;
+			}
 		} else {
-			px = parent.rect.x + parent.rect.width + offsetX;
-			py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			// Primary side (default): center-left of child
+			cx = child.rect.x + offsetX;
+			cy = child.rect.y + child.rect.height / 2 + offsetY;
+			if (parent.source.type === "root") {
+				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
+				px = cx - stubLength;
+				py = cy;
+			} else {
+				px = parent.rect.x + parent.rect.width + offsetX;
+				py = parent.rect.y + parent.rect.height / 2 + offsetY;
+			}
 		}
 
 		// Apply branch line styles: per-node overrides > class > map-level > theme > default
@@ -6787,7 +6900,7 @@ export class MindMapView extends ItemView {
 		const effectiveLineStyle = branchLineOverride?.style ?? mapBranchLine?.style ?? lineStyle;
 
 		const path = document.createElementNS(SVG_NS, "path");
-		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle));
+		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle, isTopDown));
 		path.setAttribute("class", "osmosis-branch-line");
 		path.setAttribute("data-child-id", child.source.id);
 		const bl = { ...mapBranchLine, ...branchLineOverride };
@@ -6806,7 +6919,44 @@ export class MindMapView extends ItemView {
 		cx: number,
 		cy: number,
 		style: BranchLineStyle,
+		vertical = false,
 	): string {
+		if (vertical) {
+			const midY = (py + cy) / 2;
+
+			switch (style) {
+				case "straight":
+					return `M ${px} ${py} L ${cx} ${cy}`;
+
+				case "angular":
+					return `M ${px} ${py} L ${px} ${midY} L ${cx} ${midY} L ${cx} ${cy}`;
+
+				case "rounded-elbow": {
+					const radius = Math.min(
+						12,
+						Math.abs(cx - px) / 2,
+						Math.abs(cy - py) / 4,
+					);
+					if (Math.abs(cx - px) < 1) {
+						return `M ${px} ${py} L ${cx} ${cy}`;
+					}
+					const dir = cx > px ? 1 : -1;
+					return (
+						`M ${px} ${py} ` +
+						`L ${px} ${midY - radius} ` +
+						`Q ${px} ${midY}, ${px + radius * dir} ${midY} ` +
+						`L ${cx - radius * dir} ${midY} ` +
+						`Q ${cx} ${midY}, ${cx} ${midY + radius} ` +
+						`L ${cx} ${cy}`
+					);
+				}
+
+				case "curved":
+				default:
+					return `M ${px} ${py} C ${px} ${midY}, ${cx} ${midY}, ${cx} ${cy}`;
+			}
+		}
+
 		const midX = (px + cx) / 2;
 
 		switch (style) {
