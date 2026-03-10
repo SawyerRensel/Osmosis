@@ -84,11 +84,13 @@ function emptyFormatControls(): FormatControls {
 export class PropertiesSidebarView extends ItemView {
 	plugin: OsmosisPlugin;
 	private currentFilePath: string | null = null;
+	private currentMindMap: MindMapView | null = null;
 	private activeTab: TabId = "map";
 	private tabButtons: Record<TabId, HTMLElement> | null = null;
 	private tabContents: Record<TabId, HTMLElement> | null = null;
 	private formatControlEls: HTMLElement[] = [];
 	private selectionCleanup: (() => void) | null = null;
+	private fileLoadCleanup: (() => void) | null = null;
 	private controls: FormatControls = emptyFormatControls();
 	private variantSetting: HTMLElement | null = null;
 	private variantDropdown: HTMLSelectElement | null = null;
@@ -126,6 +128,7 @@ export class PropertiesSidebarView extends ItemView {
 	private mapMaxNodeWidthSlider: HTMLInputElement | null = null;
 	private mapNodeWidthInput: HTMLInputElement | null = null;
 	private saveThemeBtn: HTMLElement | null = null;
+	private lastActiveMindMap: MindMapView | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -147,24 +150,48 @@ export class PropertiesSidebarView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => {
+			this.app.workspace.on("active-leaf-change", (leaf) => {
+				if (leaf?.view instanceof MindMapView) {
+					this.lastActiveMindMap = leaf.view;
+					this.listenForFileLoad(leaf.view);
+				}
 				this.updateContext();
 			}),
 		);
+		// Initialize lastActiveMindMap from the currently active leaf
+		const activeLeaf = this.app.workspace.getActiveViewOfType(MindMapView);
+		if (activeLeaf) {
+			this.lastActiveMindMap = activeLeaf;
+		}
 		this.updateContext();
 	}
 
 	async onClose(): Promise<void> {
 		this.closeAllPickers();
+		this.cleanupFileLoadListener();
 		this.cleanupSelectionListener();
+		this.lastActiveMindMap = null;
 		this.contentEl.empty();
 	}
 
-	/** Find the active MindMapView, if any. */
+	/** Find the most recently active MindMapView, if any. */
 	private getActiveMindMap(): MindMapView | null {
+		// Return the last active mind map if it's still attached to a leaf
+		if (this.lastActiveMindMap) {
+			const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP);
+			for (const leaf of leaves) {
+				if (leaf.view === this.lastActiveMindMap) {
+					return this.lastActiveMindMap;
+				}
+			}
+			// The tracked mind map was closed; clear reference
+			this.lastActiveMindMap = null;
+		}
+		// Fallback: return the first available mind map (e.g., on initial open)
 		const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP);
 		for (const leaf of leaves) {
 			if (leaf.view instanceof MindMapView) {
+				this.lastActiveMindMap = leaf.view;
 				return leaf.view;
 			}
 		}
@@ -229,11 +256,16 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		const filePath = mindMap?.getCurrentFilePath() ?? null;
 
-		// Avoid re-rendering if we're already showing this file's settings
-		if (filePath === this.currentFilePath && this.contentEl.hasChildNodes()) {
+		// Avoid re-rendering if we're already showing this exact mind map's settings
+		if (
+			mindMap === this.currentMindMap &&
+			filePath === this.currentFilePath &&
+			this.contentEl.hasChildNodes()
+		) {
 			return;
 		}
 
+		this.currentMindMap = mindMap;
 		this.currentFilePath = filePath;
 		this.closeAllPickers();
 		this.contentEl.empty();
@@ -3058,6 +3090,31 @@ export class PropertiesSidebarView extends ItemView {
 		}
 		if (this.controls.branchTaperDropdown) {
 			this.controls.branchTaperDropdown.value = localStyle?.branchLine?.taper ?? "inherit";
+		}
+	}
+
+	// ─── File Load Listener ──────────────────────────────────
+
+	/** Subscribe to a mind map's file-load event so the sidebar refreshes
+	 *  once the view finishes its async load (e.g. when opened from a menu). */
+	private listenForFileLoad(mindMap: MindMapView): void {
+		this.cleanupFileLoadListener();
+
+		const handler = () => {
+			this.cleanupFileLoadListener();
+			this.updateContext();
+		};
+
+		mindMap.onFileLoad(handler);
+		this.fileLoadCleanup = () => {
+			mindMap.offFileLoad(handler);
+		};
+	}
+
+	private cleanupFileLoadListener(): void {
+		if (this.fileLoadCleanup) {
+			this.fileLoadCleanup();
+			this.fileLoadCleanup = null;
 		}
 	}
 

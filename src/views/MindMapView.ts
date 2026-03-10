@@ -96,6 +96,7 @@ export class MindMapView extends ItemView {
 	private selectedNodeIds = new Set<string>();
 	private nodeMap = new Map<string, LayoutNode>();
 	private selectionChangeListeners = new Set<() => void>();
+	private fileLoadListeners = new Set<() => void>();
 
 	// Rubber-band selection state
 	private isRubberBanding = false;
@@ -991,6 +992,11 @@ export class MindMapView extends ItemView {
 		);
 
 		await this.render();
+
+		// Notify listeners (e.g. properties sidebar) that the file is loaded
+		for (const fn of this.fileLoadListeners) {
+			fn();
+		}
 	}
 
 	/** Returns the current file's path, used by the properties sidebar. */
@@ -1028,6 +1034,16 @@ export class MindMapView extends ItemView {
 	/** Unregister a selection change callback. */
 	offSelectionChange(fn: () => void): void {
 		this.selectionChangeListeners.delete(fn);
+	}
+
+	/** Register a callback for when a file finishes loading. */
+	onFileLoad(fn: () => void): void {
+		this.fileLoadListeners.add(fn);
+	}
+
+	/** Unregister a file load callback. */
+	offFileLoad(fn: () => void): void {
+		this.fileLoadListeners.delete(fn);
 	}
 
 	/** Look up a LayoutNode by its source node ID. */
