@@ -1,0 +1,11 @@
+/* Osmosis docs custom styles */
+
+/* Keyboard shortcut styling in tables */
+.md-typeset kbd {
+  font-size: 0.75em;
+}
+
+/* Card type examples - give osmosis fences a subtle highlight */
+.md-typeset .highlight code[data-lang="osmosis"] {
+  border-left: 3px solid var(--md-accent-fg-color);
+}

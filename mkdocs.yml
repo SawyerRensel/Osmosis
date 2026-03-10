@@ -1,0 +1,112 @@
+# Project information
+site_name: Osmosis
+site_url: https://sawyerrensel.github.io/osmosis
+site_description: Absorb information faster and longer with unified notes, flashcards, and mind mapping.
+
+# Repository
+repo_name: SawyerRensel/Osmosis
+repo_url: https://github.com/SawyerRensel/Osmosis
+
+# Copyright
+copyright: "&copy; 2026 Sawyer Rensel"
+
+# Configuration
+theme:
+  name: material
+  custom_dir: docs/overrides
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: lucide/sun-moon
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: lucide/sun
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: lucide/moon-star
+        name: Switch to system preference
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+# Plugins
+plugins:
+  - search
+  - tags
+
+# Extensions
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Page tree
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+  - Mind Mapping:
+    - mind-mapping/index.md
+    - Editing: mind-mapping/editing.md
+    - Navigation: mind-mapping/navigation.md
+    - Styling: mind-mapping/styling.md
+  - Flashcards:
+    - flashcards/index.md
+    - Card Types: flashcards/card-types.md
+    - Decks: flashcards/decks.md
+  - Studying:
+    - studying/index.md
+    - Study Modes: studying/study-modes.md
+    - Spaced Repetition: studying/spaced-repetition.md

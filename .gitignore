@@ -27,5 +27,8 @@ e2e-vault/
 test-results/
 playwright-report/
 
+# Docs site build output
+site/
+
 # OS files
 .DS_Store
