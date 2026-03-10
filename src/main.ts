@@ -1,4 +1,4 @@
-import { Plugin, TFile, WorkspaceLeaf, debounce } from "obsidian";
+import { Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -84,6 +84,38 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// ── File menu: "Mind map view" ──────────────────────────
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+				menu.addItem((item) => {
+					item.setTitle("Mind map view")
+						.setIcon("git-fork")
+						.onClick(() => {
+							if (leaf) {
+								void leaf.setViewState({
+									type: VIEW_TYPE_MINDMAP,
+									state: { file: file.path },
+									active: true,
+								});
+							} else {
+								void this.activateMindMapView();
+							}
+						});
+				});
+			}),
+		);
+
+		// ── "Mind map view" icon in markdown view header ────────
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => {
+				this.addMindMapActionToMarkdownLeaves();
+			}),
+		);
+		this.app.workspace.onLayoutReady(() => {
+			this.addMindMapActionToMarkdownLeaves();
+		});
+
 		// ── Study Commands ──────────────────────────────────────
 		this.addCommand({
 			id: "study-all",
@@ -146,6 +178,37 @@ export default class OsmosisPlugin extends Plugin {
 				}
 			}),
 		);
+	}
+
+	private addMindMapActionToMarkdownLeaves(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const viewActions = leaf.view.containerEl.querySelector(".view-actions");
+			if (!viewActions || viewActions.querySelector(".osmosis-mindmap-action")) continue;
+
+			// Find the reading-view toggle to insert before it
+			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
+
+			const btn = document.createElement("a");
+			btn.className = "clickable-icon osmosis-mindmap-action";
+			btn.setAttribute("aria-label", "Mind map view");
+			setIcon(btn, "git-fork");
+			btn.addEventListener("click", () => {
+				const file = (leaf.view as MarkdownView).file;
+				if (file) {
+					void leaf.setViewState({
+						type: VIEW_TYPE_MINDMAP,
+						state: { file: file.path },
+						active: true,
+					});
+				}
+			});
+
+			if (readingViewBtn) {
+				viewActions.insertBefore(btn, readingViewBtn);
+			} else {
+				viewActions.prepend(btn);
+			}
+		}
 	}
 
 	private async activateMindMapView(): Promise<void> {

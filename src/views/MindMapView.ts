@@ -10,6 +10,7 @@ import {
 	Notice,
 	Menu,
 	parseYaml,
+	type ViewStateResult,
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
@@ -251,6 +252,20 @@ export class MindMapView extends ItemView {
 			? `Mind Map: ${this.currentFile.basename}`
 			: "Mind Map";
 		return this.isPinned ? `${base} (pinned)` : base;
+	}
+
+	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
+		if (typeof state?.file === "string") {
+			const file = this.app.vault.getFileByPath(state.file);
+			if (file instanceof TFile) {
+				// Pin so the map stays on this file
+				this.isPinned = true;
+				this.pinActionEl?.addClass("is-active");
+				await this.loadFile(file);
+				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+			}
+		}
+		await super.setState(state, result);
 	}
 
 	private togglePin(): void {
@@ -824,6 +839,17 @@ export class MindMapView extends ItemView {
 		// Pin/lock header action
 		this.pinActionEl = this.addAction("pin", "Pin this mind map", () => {
 			this.togglePin();
+		});
+
+		// Note view action — switch back to markdown editor
+		this.addAction("file-text", "Note view", () => {
+			if (this.currentFile) {
+				void this.leaf.setViewState({
+					type: "markdown",
+					state: { file: this.currentFile.path },
+					active: true,
+				});
+			}
 		});
 
 		// Spatial study mode toggle
