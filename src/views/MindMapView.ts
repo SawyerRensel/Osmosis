@@ -8,6 +8,7 @@ import {
 	Platform,
 	Scope,
 	Notice,
+	Menu,
 	parseYaml,
 } from "obsidian";
 import { ParseCache } from "../cache";
@@ -732,6 +733,7 @@ export class MindMapView extends ItemView {
 		});
 		this.registerDomEvent(container, "click", this.handleClick);
 		this.registerDomEvent(container, "dblclick", this.handleDblClick);
+		this.registerDomEvent(container, "contextmenu", this.handleContextMenu);
 
 		// Block touch events from reaching Obsidian's gesture handlers (drawer swipes,
 		// command palette pull-down). Pointer events and touch events are separate
@@ -783,10 +785,10 @@ export class MindMapView extends ItemView {
 					: null;
 				if (node) void this.insertParentNode(node);
 			},
-			moveUp: () => void this.moveNodeUpDown(-1),
-			moveDown: () => void this.moveNodeUpDown(1),
-			indent: () => void this.indentNode(),
-			outdent: () => void this.outdentNode(),
+			moveUp: () => this.executeDirectionalAction("ArrowUp"),
+			moveDown: () => this.executeDirectionalAction("ArrowDown"),
+			moveLeft: () => this.executeDirectionalAction("ArrowLeft"),
+			moveRight: () => this.executeDirectionalAction("ArrowRight"),
 			deleteNode: () => {
 				if (this.selectedNodeIds.size > 1) {
 					void this.deleteSelectedNodes();
@@ -2690,6 +2692,132 @@ export class MindMapView extends ItemView {
 		}
 	};
 
+	private handleContextMenu = (e: MouseEvent): void => {
+		if (this.editingNodeId) return;
+
+		e.preventDefault();
+		const nodeId = this.getClickedNodeId(e);
+
+		// If right-clicking a node that isn't selected, select it first
+		if (nodeId && nodeId !== this.selectedNodeId) {
+			this.selectNode(nodeId);
+		}
+
+		const menu = new Menu();
+
+		if (nodeId) {
+			const node = this.nodeMap.get(nodeId);
+			// ── Structure ──
+			menu.addItem((item) =>
+				item.setTitle("Add child").setIcon("arrow-right-from-line")
+					.onClick(() => { if (node) void this.addChildNode(node); }),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Add sibling").setIcon("arrow-down-from-line")
+					.onClick(() => { if (node) void this.addSiblingNode(node); }),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Insert parent").setIcon("arrow-right-to-line")
+					.onClick(() => { if (node) void this.insertParentNode(node); }),
+			);
+			menu.addSeparator();
+
+			// ── Clipboard ──
+			menu.addItem((item) =>
+				item.setTitle("Cut").setIcon("scissors")
+					.onClick(() => void this.copySelectedNodes(true)),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Copy").setIcon("copy")
+					.onClick(() => void this.copySelectedNodes(false)),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Paste").setIcon("clipboard-paste")
+					.onClick(() => void this.pasteNodes()),
+			);
+			menu.addSeparator();
+
+			// ── Style ──
+			menu.addItem((item) =>
+				item.setTitle("Copy style").setIcon("pipette")
+					.onClick(() => this.copyNodeStyle()),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Paste style").setIcon("paint-bucket")
+					.onClick(() => void this.pasteNodeStyle()),
+			);
+			menu.addSeparator();
+
+			// ── Fold ──
+			menu.addItem((item) =>
+				item.setTitle("Collapse all").setIcon("chevrons-down-up")
+					.onClick(() => this.foldAll()),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Expand all").setIcon("chevrons-up-down")
+					.onClick(() => this.unfoldAll()),
+			);
+			menu.addSeparator();
+
+			// ── Delete ──
+			menu.addItem((item) =>
+				item.setTitle("Delete").setIcon("trash-2")
+					.setWarning(true)
+					.onClick(() => {
+						if (this.selectedNodeIds.size > 1) {
+							void this.deleteSelectedNodes();
+						} else if (node) {
+							void this.deleteNode(node);
+						}
+					}),
+			);
+		} else {
+			// ── Canvas (no node) context menu ──
+			menu.addItem((item) =>
+				item.setTitle("Fit to view").setIcon("maximize")
+					.onClick(() => this.fitToView()),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Center on root").setIcon("home")
+					.onClick(() => this.centerOnRoot()),
+			);
+			menu.addSeparator();
+
+			menu.addItem((item) =>
+				item.setTitle("Paste").setIcon("clipboard-paste")
+					.onClick(() => void this.pasteNodes()),
+			);
+			menu.addSeparator();
+
+			menu.addItem((item) =>
+				item.setTitle("Collapse all").setIcon("chevrons-down-up")
+					.onClick(() => this.foldAll()),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Expand all").setIcon("chevrons-up-down")
+					.onClick(() => this.unfoldAll()),
+			);
+			menu.addSeparator();
+
+			menu.addItem((item) =>
+				item.setTitle("Refresh mind map").setIcon("refresh-cw")
+					.onClick(() => {
+						if (this.currentFile) {
+							this.nodeSizeCache.clear();
+							this.nodeHtmlCache.clear();
+							void this.loadFile(this.currentFile);
+						}
+					}),
+			);
+			menu.addItem((item) =>
+				item.setTitle("Map properties").setIcon("paintbrush")
+					.onClick(() => void this.plugin.activatePropertiesSidebar()),
+			);
+		}
+
+		menu.showAtMouseEvent(e);
+	};
+
 	// ─── Collapse ────────────────────────────────────────────
 
 	private toggleCollapse(nodeId: string): void {
@@ -3794,7 +3922,9 @@ export class MindMapView extends ItemView {
 				? [...this.selectedNodeIds]
 				: this.selectedNodeId
 					? [this.selectedNodeId]
-					: [];
+					: this.currentLayout
+						? [this.currentLayout.root.source.id]
+						: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -3833,7 +3963,9 @@ export class MindMapView extends ItemView {
 				? [...this.selectedNodeIds]
 				: this.selectedNodeId
 					? [this.selectedNodeId]
-					: [];
+					: this.currentLayout
+						? [this.currentLayout.root.source.id]
+						: [];
 		let changed = false;
 
 		for (const id of targetIds) {
@@ -4678,6 +4810,26 @@ export class MindMapView extends ItemView {
 			}
 		}
 		return null;
+	}
+
+	/** Execute the Alt-arrow action for a physical direction (used by toolbar buttons). */
+	private executeDirectionalAction(key: string): void {
+		const action = this.resolveArrowAction(key);
+		if (!action) return;
+		switch (action) {
+			case "depthDeeper":
+				void this.indentNode();
+				break;
+			case "depthShallower":
+				void this.outdentNode();
+				break;
+			case "siblingPrev":
+				void this.moveNodeUpDown(-1);
+				break;
+			case "siblingNext":
+				void this.moveNodeUpDown(1);
+				break;
+		}
 	}
 
 	private handleKeyDown(e: KeyboardEvent): void {

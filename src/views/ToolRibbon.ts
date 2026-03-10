@@ -40,8 +40,8 @@ export class ToolRibbon {
 			addChild: () => void;
 			moveUp: () => void;
 			moveDown: () => void;
-			indent: () => void;
-			outdent: () => void;
+			moveLeft: () => void;
+			moveRight: () => void;
 			deleteNode: () => void;
 			copy: () => void;
 			cut: () => void;
@@ -74,10 +74,10 @@ export class ToolRibbon {
 				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true },
 			],
 			[
-				{ id: "move-up", icon: "chevrons-up", label: "Move up", action: actions.moveUp, needsSelection: true },
-				{ id: "move-down", icon: "chevrons-down", label: "Move down", action: actions.moveDown, needsSelection: true },
-				{ id: "indent", icon: "indent-increase", label: "Indent", action: actions.indent, needsSelection: true },
-				{ id: "outdent", icon: "indent-decrease", label: "Outdent", action: actions.outdent, needsSelection: true },
+				{ id: "move-up", icon: "arrow-up", label: "Move up", action: actions.moveUp, needsSelection: true },
+				{ id: "move-down", icon: "arrow-down", label: "Move down", action: actions.moveDown, needsSelection: true },
+				{ id: "move-left", icon: "arrow-left", label: "Move left", action: actions.moveLeft, needsSelection: true },
+				{ id: "move-right", icon: "arrow-right", label: "Move right", action: actions.moveRight, needsSelection: true },
 			],
 			[
 				{ id: "delete", icon: "trash-2", label: "Delete", action: actions.deleteNode, needsSelection: true },
