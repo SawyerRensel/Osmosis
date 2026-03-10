@@ -22,7 +22,7 @@ import {
 	DEFAULT_LAYOUT_CONFIG,
 } from "../layout";
 import type OsmosisPlugin from "../main";
-import type { BranchLineStyle, MapSettings } from "../settings";
+import type { BranchLineStyle, BranchLinePattern, BranchLineTaper, MapSettings } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
@@ -7131,15 +7131,60 @@ export class MindMapView extends ItemView {
 			: undefined;
 		const effectiveLineStyle = branchLineOverride?.style ?? mapBranchLine?.style ?? lineStyle;
 
+		const bl = { ...mapBranchLine, ...branchLineOverride };
+		const effectivePattern: BranchLinePattern =
+			bl.pattern ?? this.mapSettings.branchLinePattern ?? "solid";
+		const effectiveTaper: BranchLineTaper =
+			bl.taper ?? this.mapSettings.branchLineTaper ?? "none";
+		const effectiveThickness = bl.thickness ?? 1.5;
+
 		const path = document.createElementNS(SVG_NS, "path");
-		path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle, isTopDown));
 		path.setAttribute("class", "osmosis-branch-line");
 		path.setAttribute("data-child-id", child.source.id);
-		const bl = { ...mapBranchLine, ...branchLineOverride };
-		if (bl.color || bl.thickness) {
+
+		if (effectiveTaper !== "none") {
+			// Taper: draw a filled polygon outline instead of a stroked line
+			const centerLine = this.computeLinePath(px, py, cx, cy, effectiveLineStyle, isTopDown);
+			const taperD = this.buildTaperOutline(
+				px, py, cx, cy, effectiveLineStyle, isTopDown,
+				effectiveThickness, effectiveTaper,
+			);
+			path.setAttribute("d", taperD);
+			const fillColor = bl.color ?? "";
+			const lineStyles: string[] = ["stroke: none"];
+			if (fillColor) {
+				lineStyles.push(`fill: ${fillColor}`);
+			} else {
+				lineStyles.push("fill: var(--background-modifier-border)");
+			}
+			// Apply dash pattern to tapered paths via a clip-path trick:
+			// For tapered + dashed, we overlay the outline with a dashed center-line.
+			if (effectivePattern !== "solid") {
+				// Draw the taper fill as a solid shape, then overlay a dashed stroke
+				// for visual effect. The taper shape itself stays solid-filled.
+				path.setAttribute("style", lineStyles.join("; "));
+				svg.appendChild(path);
+				// Add a dashed center-line overlay on top for the pattern effect
+				const overlay = document.createElementNS(SVG_NS, "path");
+				overlay.setAttribute("d", centerLine);
+				overlay.setAttribute("class", "osmosis-branch-line");
+				overlay.setAttribute("data-child-id", child.source.id);
+				const overlayStyles: string[] = ["fill: none"];
+				overlayStyles.push(`stroke: ${fillColor || "var(--background-modifier-border)"}`);
+				overlayStyles.push(`stroke-width: ${String(effectiveThickness)}`);
+				this.applyPatternAttrs(overlay, effectivePattern);
+				overlay.setAttribute("style", overlayStyles.join("; "));
+				svg.appendChild(overlay);
+				return;
+			}
+			path.setAttribute("style", lineStyles.join("; "));
+		} else {
+			// Standard stroked path
+			path.setAttribute("d", this.computeLinePath(px, py, cx, cy, effectiveLineStyle, isTopDown));
 			const lineStyles: string[] = ["fill: none"];
 			if (bl.color) lineStyles.push(`stroke: ${bl.color}`);
 			if (bl.thickness) lineStyles.push(`stroke-width: ${String(bl.thickness)}`);
+			this.applyPatternAttrs(path, effectivePattern);
 			path.setAttribute("style", lineStyles.join("; "));
 		}
 		svg.appendChild(path);
@@ -7222,5 +7267,192 @@ export class MindMapView extends ItemView {
 			default:
 				return `M ${px} ${py} C ${midX} ${py}, ${midX} ${cy}, ${cx} ${cy}`;
 		}
+	}
+
+	/** Apply stroke-dasharray attributes for dashed/dotted patterns. */
+	private applyPatternAttrs(el: SVGElement, pattern: BranchLinePattern): void {
+		if (pattern === "dashed") {
+			el.setAttribute("stroke-dasharray", "8 4");
+		} else if (pattern === "dotted") {
+			el.setAttribute("stroke-dasharray", "2 4");
+			el.setAttribute("stroke-linecap", "round");
+		}
+	}
+
+	/**
+	 * Sample points along the center-line path for a given style.
+	 * Returns an array of {x, y} points from parent to child.
+	 */
+	private sampleLinePath(
+		px: number, py: number, cx: number, cy: number,
+		style: BranchLineStyle, vertical: boolean, numSamples: number,
+	): { x: number; y: number }[] {
+		const points: { x: number; y: number }[] = [];
+
+		if (style === "straight") {
+			for (let i = 0; i <= numSamples; i++) {
+				const t = i / numSamples;
+				points.push({ x: px + (cx - px) * t, y: py + (cy - py) * t });
+			}
+			return points;
+		}
+
+		if (style === "curved") {
+			// Cubic bezier: same control points as computeLinePath
+			const c1x = vertical ? px : (px + cx) / 2;
+			const c1y = vertical ? (py + cy) / 2 : py;
+			const c2x = vertical ? cx : (px + cx) / 2;
+			const c2y = vertical ? (py + cy) / 2 : cy;
+			for (let i = 0; i <= numSamples; i++) {
+				const t = i / numSamples;
+				const mt = 1 - t;
+				points.push({
+					x: mt * mt * mt * px + 3 * mt * mt * t * c1x + 3 * mt * t * t * c2x + t * t * t * cx,
+					y: mt * mt * mt * py + 3 * mt * mt * t * c1y + 3 * mt * t * t * c2y + t * t * t * cy,
+				});
+			}
+			return points;
+		}
+
+		// For angular and rounded-elbow, generate the path string and
+		// approximate by sampling piecewise-linear segments.
+		if (style === "angular") {
+			if (vertical) {
+				const midY = (py + cy) / 2;
+				const segs = [
+					{ x: px, y: py }, { x: px, y: midY },
+					{ x: cx, y: midY }, { x: cx, y: cy },
+				];
+				return this.samplePiecewiseLinear(segs, numSamples);
+			}
+			const midX = (px + cx) / 2;
+			const segs = [
+				{ x: px, y: py }, { x: midX, y: py },
+				{ x: midX, y: cy }, { x: cx, y: cy },
+			];
+			return this.samplePiecewiseLinear(segs, numSamples);
+		}
+
+		// rounded-elbow: approximate with angular (close enough for taper outline)
+		if (vertical) {
+			const midY = (py + cy) / 2;
+			const segs = [
+				{ x: px, y: py }, { x: px, y: midY },
+				{ x: cx, y: midY }, { x: cx, y: cy },
+			];
+			return this.samplePiecewiseLinear(segs, numSamples);
+		}
+		const midX = (px + cx) / 2;
+		const segs = [
+			{ x: px, y: py }, { x: midX, y: py },
+			{ x: midX, y: cy }, { x: cx, y: cy },
+		];
+		return this.samplePiecewiseLinear(segs, numSamples);
+	}
+
+	/** Resample a polyline of segments into numSamples evenly spaced points. */
+	private samplePiecewiseLinear(
+		vertices: { x: number; y: number }[], numSamples: number,
+	): { x: number; y: number }[] {
+		if (vertices.length < 2) return [{ x: 0, y: 0 }];
+		// Compute cumulative arc lengths
+		const lengths: number[] = [0];
+		for (let i = 1; i < vertices.length; i++) {
+			const dx = vertices[i]!.x - vertices[i - 1]!.x;
+			const dy = vertices[i]!.y - vertices[i - 1]!.y;
+			lengths.push(lengths[i - 1]! + Math.sqrt(dx * dx + dy * dy));
+		}
+		const totalLen = lengths[lengths.length - 1]!;
+		if (totalLen < 0.01) return vertices.slice(0, numSamples + 1);
+
+		const points: { x: number; y: number }[] = [];
+		for (let i = 0; i <= numSamples; i++) {
+			const targetLen = (i / numSamples) * totalLen;
+			// Find segment
+			let seg = 0;
+			for (let j = 1; j < lengths.length; j++) {
+				if (lengths[j]! >= targetLen) { seg = j - 1; break; }
+			}
+			const vA = vertices[seg]!;
+			const vB = vertices[seg + 1]!;
+			const segLen = lengths[seg + 1]! - lengths[seg]!;
+			const t = segLen > 0 ? (targetLen - lengths[seg]!) / segLen : 0;
+			points.push({
+				x: vA.x + (vB.x - vA.x) * t,
+				y: vA.y + (vB.y - vA.y) * t,
+			});
+		}
+		return points;
+	}
+
+	/**
+	 * Build a filled SVG path that traces the outline of a tapered branch line.
+	 * "fade" = thick at parent, thin at child.
+	 * "grow" = thin at parent, thick at child.
+	 */
+	private buildTaperOutline(
+		px: number, py: number, cx: number, cy: number,
+		style: BranchLineStyle, vertical: boolean,
+		thickness: number, taper: BranchLineTaper,
+	): string {
+		const numSamples = 24;
+		const points = this.sampleLinePath(px, py, cx, cy, style, vertical, numSamples);
+		if (points.length < 2) return "";
+
+		const minWidth = 0.3; // minimum stroke at the thin end
+		const maxWidth = thickness;
+
+		const left: { x: number; y: number }[] = [];
+		const right: { x: number; y: number }[] = [];
+
+		for (let i = 0; i < points.length; i++) {
+			const pt = points[i]!;
+			const t = i / (points.length - 1);
+
+			// Width at this point along the path
+			let w: number;
+			if (taper === "fade") {
+				w = maxWidth * (1 - t) + minWidth * t;
+			} else {
+				w = minWidth * (1 - t) + maxWidth * t;
+			}
+			const halfW = w / 2;
+
+			// Compute tangent direction
+			let tx: number;
+			let ty: number;
+			if (i === 0) {
+				tx = points[1]!.x - pt.x;
+				ty = points[1]!.y - pt.y;
+			} else if (i === points.length - 1) {
+				tx = pt.x - points[i - 1]!.x;
+				ty = pt.y - points[i - 1]!.y;
+			} else {
+				tx = points[i + 1]!.x - points[i - 1]!.x;
+				ty = points[i + 1]!.y - points[i - 1]!.y;
+			}
+
+			// Normalize tangent
+			const tLen = Math.sqrt(tx * tx + ty * ty);
+			if (tLen > 0) { tx /= tLen; ty /= tLen; }
+
+			// Normal (perpendicular)
+			const nx = -ty;
+			const ny = tx;
+
+			left.push({ x: pt.x + nx * halfW, y: pt.y + ny * halfW });
+			right.push({ x: pt.x - nx * halfW, y: pt.y - ny * halfW });
+		}
+
+		// Build closed path: left side forward, then right side backward
+		let d = `M ${left[0]!.x} ${left[0]!.y}`;
+		for (let i = 1; i < left.length; i++) {
+			d += ` L ${left[i]!.x} ${left[i]!.y}`;
+		}
+		for (let i = right.length - 1; i >= 0; i--) {
+			d += ` L ${right[i]!.x} ${right[i]!.y}`;
+		}
+		d += " Z";
+		return d;
 	}
 }

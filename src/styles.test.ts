@@ -667,6 +667,14 @@ describe("mergeNodeStyle", () => {
 		expect(target.branchLine?.thickness).toBe(3);
 	});
 
+	it("merges branchLine pattern and taper fields", () => {
+		const target: NodeStyle = { branchLine: { color: "#000", pattern: "solid" } };
+		mergeNodeStyle(target, { branchLine: { taper: "fade" } });
+		expect(target.branchLine?.color).toBe("#000");
+		expect(target.branchLine?.pattern).toBe("solid");
+		expect(target.branchLine?.taper).toBe("fade");
+	});
+
 	it("creates sub-objects on target if not present", () => {
 		const target: NodeStyle = {};
 		mergeNodeStyle(target, { text: { font: "Inter" } });
@@ -695,6 +703,8 @@ describe("parseOsmosisStyleFrontmatter — map-level settings", () => {
 				background: "#001122",
 				branchLineColor: "#ff0000",
 				branchLineThickness: 3,
+				branchLinePattern: "dashed",
+				branchLineTaper: "fade",
 				baseStyle: { fill: "#abc", text: { weight: 700 } },
 			},
 		});
@@ -710,6 +720,8 @@ describe("parseOsmosisStyleFrontmatter — map-level settings", () => {
 		expect(result!.background).toBe("#001122");
 		expect(result!.branchLineColor).toBe("#ff0000");
 		expect(result!.branchLineThickness).toBe(3);
+		expect(result!.branchLinePattern).toBe("dashed");
+		expect(result!.branchLineTaper).toBe("fade");
 		expect(result!.baseStyle).toEqual({ fill: "#abc", text: { weight: 700 } });
 	});
 
@@ -776,6 +788,8 @@ describe("buildMapSettingsFromFrontmatter", () => {
 			background: "#000",
 			branchLineColor: "#fff",
 			branchLineThickness: 2,
+			branchLinePattern: "dotted",
+			branchLineTaper: "grow",
 			baseStyle: { fill: "#123" },
 		};
 		const result = buildMapSettingsFromFrontmatter(fm);

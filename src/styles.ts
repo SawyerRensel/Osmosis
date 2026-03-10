@@ -11,6 +11,8 @@
 import type { LayoutDirection } from "./layout";
 
 export type BranchLineStyle = "curved" | "straight" | "angular" | "rounded-elbow";
+export type BranchLinePattern = "solid" | "dashed" | "dotted";
+export type BranchLineTaper = "none" | "fade" | "grow";
 
 // ─── Layout Modes ───────────────────────────────────────────────────────────
 
@@ -58,7 +60,8 @@ export interface BranchStyle {
 	style?: "curved" | "straight" | "angular" | "rounded-elbow";
 	color?: string;
 	thickness?: number;
-	tapering?: boolean;
+	pattern?: BranchLinePattern;
+	taper?: BranchLineTaper;
 }
 
 // ─── Node Style (per-node stylable properties) ─────────────────────────────
@@ -161,6 +164,10 @@ export interface MapSettings {
 	branchLineColor?: string;
 	/** Branch line thickness override. */
 	branchLineThickness?: number;
+	/** Branch line pattern override (solid, dashed, dotted). */
+	branchLinePattern?: BranchLinePattern;
+	/** Branch line taper override (none, fade, grow). */
+	branchLineTaper?: BranchLineTaper;
 	/** Maximum node width before text wraps (px). */
 	maxNodeWidth?: number;
 }
@@ -183,8 +190,8 @@ const MAP_SETTING_FM_KEYS: (keyof OsmosisStyleFrontmatter & keyof MapSettings)[]
 	"theme", "direction", "branchLineStyle", "collapseDepth",
 	"horizontalSpacing", "verticalSpacing", "topicShape",
 	"maxNodeWidth", "background", "branchLineColor",
-	"branchLineThickness", "baseStyle",
-	"mapLayout", "balance", "layoutSide",
+	"branchLineThickness", "branchLinePattern", "branchLineTaper",
+	"baseStyle", "mapLayout", "balance", "layoutSide",
 ];
 
 /**
@@ -250,6 +257,12 @@ export interface OsmosisStyleFrontmatter {
 
 	/** Branch line thickness override. */
 	branchLineThickness?: number;
+
+	/** Branch line pattern override (solid, dashed, dotted). */
+	branchLinePattern?: BranchLinePattern;
+
+	/** Branch line taper override (none, fade, grow). */
+	branchLineTaper?: BranchLineTaper;
 
 	/** Map-level global node style overrides (fill, border, text). */
 	baseStyle?: NodeStyle;
@@ -487,6 +500,8 @@ export function parseOsmosisStyleFrontmatter(
 	if (typeof obj["background"] === "string") result.background = obj["background"];
 	if (typeof obj["branchLineColor"] === "string") result.branchLineColor = obj["branchLineColor"];
 	if (typeof obj["branchLineThickness"] === "number") result.branchLineThickness = obj["branchLineThickness"];
+	if (typeof obj["branchLinePattern"] === "string") result.branchLinePattern = obj["branchLinePattern"] as BranchLinePattern;
+	if (typeof obj["branchLineTaper"] === "string") result.branchLineTaper = obj["branchLineTaper"] as BranchLineTaper;
 	if (obj["baseStyle"] && typeof obj["baseStyle"] === "object") {
 		result.baseStyle = obj["baseStyle"] as NodeStyle;
 	}

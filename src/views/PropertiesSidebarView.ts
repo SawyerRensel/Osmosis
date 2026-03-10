@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
-import type { MapSettings, BranchLineStyle } from "../settings";
+import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, MapLayout, BalanceMode, LayoutSide } from "../styles";
@@ -53,6 +53,8 @@ interface FormatControls {
 	branchColorSwatch: HTMLElement | null;
 	branchThicknessSlider: HTMLInputElement | null;
 	branchStyleDropdown: HTMLSelectElement | null;
+	branchPatternDropdown: HTMLSelectElement | null;
+	branchTaperDropdown: HTMLSelectElement | null;
 }
 
 function emptyFormatControls(): FormatControls {
@@ -74,6 +76,8 @@ function emptyFormatControls(): FormatControls {
 		branchColorSwatch: null,
 		branchThicknessSlider: null,
 		branchStyleDropdown: null,
+		branchPatternDropdown: null,
+		branchTaperDropdown: null,
 	};
 }
 
@@ -116,6 +120,8 @@ export class PropertiesSidebarView extends ItemView {
 	private mapSideDropdown: HTMLSelectElement | null = null;
 	private mapSideSetting: HTMLElement | null = null;
 	private mapBranchStyleDropdown: HTMLSelectElement | null = null;
+	private mapBranchPatternDropdown: HTMLSelectElement | null = null;
+	private mapBranchTaperDropdown: HTMLSelectElement | null = null;
 	private mapTopicShapeDropdown: HTMLSelectElement | null = null;
 	private mapMaxNodeWidthSlider: HTMLInputElement | null = null;
 	private mapNodeWidthInput: HTMLInputElement | null = null;
@@ -1987,6 +1993,46 @@ export class PropertiesSidebarView extends ItemView {
 					});
 				this.mapBranchThicknessSlider = slider.sliderEl;
 			});
+
+		// Pattern (solid, dashed, dotted)
+		new Setting(body)
+			.setName("Pattern")
+			.addDropdown((dropdown) => {
+				this.mapBranchPatternDropdown = dropdown.selectEl;
+				dropdown
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.setValue(settings.branchLinePattern ?? "solid")
+					.onChange(async (value) => {
+						const pattern = value as BranchLinePattern;
+						await this.saveSetting(
+							"branchLinePattern",
+							pattern === "solid" ? undefined as unknown as BranchLinePattern : pattern,
+						);
+						this.refreshMapStyleControls();
+					});
+			});
+
+		// Taper (none, fade, grow)
+		new Setting(body)
+			.setName("Taper")
+			.addDropdown((dropdown) => {
+				this.mapBranchTaperDropdown = dropdown.selectEl;
+				dropdown
+					.addOption("none", "None")
+					.addOption("fade", "Fade (thick to thin)")
+					.addOption("grow", "Grow (thin to thick)")
+					.setValue(settings.branchLineTaper ?? "none")
+					.onChange(async (value) => {
+						const taper = value as BranchLineTaper;
+						await this.saveSetting(
+							"branchLineTaper",
+							taper === "none" ? undefined as unknown as BranchLineTaper : taper,
+						);
+						this.refreshMapStyleControls();
+					});
+			});
 	}
 
 	/** Save a scalar map setting (background, branchLineColor, branchLineThickness) to frontmatter. */
@@ -2116,6 +2162,12 @@ export class PropertiesSidebarView extends ItemView {
 		}
 		if (this.mapBranchStyleDropdown) {
 			this.mapBranchStyleDropdown.value = settings.branchLineStyle;
+		}
+		if (this.mapBranchPatternDropdown) {
+			this.mapBranchPatternDropdown.value = settings.branchLinePattern ?? "solid";
+		}
+		if (this.mapBranchTaperDropdown) {
+			this.mapBranchTaperDropdown.value = settings.branchLineTaper ?? "none";
 		}
 		if (this.mapTopicShapeDropdown) {
 			this.mapTopicShapeDropdown.value = settings.topicShape;
@@ -2722,6 +2774,48 @@ export class PropertiesSidebarView extends ItemView {
 					});
 				this.controls.branchThicknessSlider = slider.sliderEl;
 			});
+
+		// Pattern (solid, dashed, dotted)
+		new Setting(body)
+			.setName("Pattern")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(inherit)")
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.onChange(async (value) => {
+						if (value === "inherit") {
+							await this.writeNodeStyle({ branchLine: { pattern: undefined } });
+						} else {
+							await this.writeNodeStyle({
+								branchLine: { pattern: value as BranchLinePattern },
+							});
+						}
+					});
+				this.controls.branchPatternDropdown = dropdown.selectEl;
+			});
+
+		// Taper (none, fade, grow)
+		new Setting(body)
+			.setName("Taper")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(inherit)")
+					.addOption("none", "None")
+					.addOption("fade", "Fade (thick to thin)")
+					.addOption("grow", "Grow (thin to thick)")
+					.onChange(async (value) => {
+						if (value === "inherit") {
+							await this.writeNodeStyle({ branchLine: { taper: undefined } });
+						} else {
+							await this.writeNodeStyle({
+								branchLine: { taper: value as BranchLineTaper },
+							});
+						}
+					});
+				this.controls.branchTaperDropdown = dropdown.selectEl;
+			});
 	}
 
 	// ─── Color Picker Helper ─────────────────────────────────
@@ -2900,6 +2994,12 @@ export class PropertiesSidebarView extends ItemView {
 		}
 		if (this.controls.branchThicknessSlider) {
 			this.controls.branchThicknessSlider.value = String(resolved.branchLine?.thickness ?? 2);
+		}
+		if (this.controls.branchPatternDropdown) {
+			this.controls.branchPatternDropdown.value = localStyle?.branchLine?.pattern ?? "inherit";
+		}
+		if (this.controls.branchTaperDropdown) {
+			this.controls.branchTaperDropdown.value = localStyle?.branchLine?.taper ?? "inherit";
 		}
 	}
 

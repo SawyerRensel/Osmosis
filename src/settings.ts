@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { BranchLineStyle, MapSettings } from "./styles";
-export type { MapSettings, BranchLineStyle } from "./styles";
+export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
 /** Auto-suggest for vault folder paths. */
