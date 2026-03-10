@@ -77,4 +77,4 @@ Full documentation is available at the [Osmosis docs site](https://osmosis.md/):
 
 ## License
 
-[MIT](LICENSE)
+[GNU GPL v3](LICENSE)
