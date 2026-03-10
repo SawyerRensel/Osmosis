@@ -399,8 +399,9 @@ export class PropertiesSidebarView extends ItemView {
 								if (theme) {
 									if (theme.branchLine?.style) osmosis["branchLineStyle"] = theme.branchLine.style;
 									else delete osmosis["branchLineStyle"];
+									// Only override direction if the theme explicitly specifies one;
+									// otherwise preserve the user's current direction setting.
 									if (theme.direction) osmosis["direction"] = theme.direction;
-									else delete osmosis["direction"];
 									if (theme.collapseDepth != null) osmosis["collapseDepth"] = theme.collapseDepth;
 									else delete osmosis["collapseDepth"];
 									if (theme.horizontalSpacing != null) osmosis["horizontalSpacing"] = theme.horizontalSpacing;
@@ -420,10 +421,34 @@ export class PropertiesSidebarView extends ItemView {
 							},
 						);
 
-						// Reload frontmatter cache and re-render
+						// Build settings directly from what we just wrote instead of
+						// reading the metadata cache, which may not have updated yet.
 						if (mindMap) {
-							mindMap.loadOsmosisStyleFrontmatter();
-							mindMap.applyMapSettings(this.getEffectiveSettings());
+							const fmCache = mindMap.getOsmosisStyleFrontmatter() ?? {};
+							// Clear style overrides
+							delete fmCache.baseStyle;
+							delete (fmCache as Record<string, unknown>)["background"];
+							delete (fmCache as Record<string, unknown>)["branchLineColor"];
+							delete (fmCache as Record<string, unknown>)["branchLineThickness"];
+							// Apply theme values
+							if (theme) {
+								fmCache.branchLineStyle = theme.branchLine?.style;
+								if (theme.direction) fmCache.direction = theme.direction;
+								fmCache.collapseDepth = theme.collapseDepth;
+								fmCache.horizontalSpacing = theme.horizontalSpacing;
+								fmCache.verticalSpacing = theme.verticalSpacing;
+								fmCache.maxNodeWidth = theme.maxNodeWidth;
+								fmCache.topicShape = theme.topicShape;
+							}
+							fmCache.theme = value;
+							// Clean undefined keys
+							for (const k of Object.keys(fmCache)) {
+								if ((fmCache as Record<string, unknown>)[k] === undefined) {
+									delete (fmCache as Record<string, unknown>)[k];
+								}
+							}
+							mindMap.setOsmosisStyleFrontmatter(fmCache);
+							mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
 						}
 
 						this.updateThemeMgmtVisibility();
