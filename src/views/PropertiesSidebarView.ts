@@ -264,10 +264,9 @@ export class PropertiesSidebarView extends ItemView {
 			cls: "osmosis-properties-container",
 		});
 
-		// Header showing which file
-		const fileName = this.currentFilePath?.split("/").pop() ?? "";
+		// Header
 		container.createEl("h6", {
-			text: fileName.replace(/\.md$/, ""),
+			text: "Map settings",
 			cls: "osmosis-properties-filename",
 		});
 
@@ -279,7 +278,7 @@ export class PropertiesSidebarView extends ItemView {
 			cls: "osmosis-tab-btn",
 		});
 		const formatBtn = tabBar.createEl("button", {
-			text: "Format",
+			text: "Node",
 			cls: "osmosis-tab-btn",
 		});
 
@@ -547,6 +546,33 @@ export class PropertiesSidebarView extends ItemView {
 			this.renderMapBranchLineSection(body);
 		});
 
+		// Reset all map styles button — at bottom
+		const resetAll = container.createDiv({ cls: "osmosis-format-reset-all" });
+		const resetAllBtn = resetAll.createEl("button", {
+			cls: "osmosis-format-reset-btn",
+			text: "Reset all styles",
+		});
+		resetAllBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			const modal = new Modal(this.app);
+			modal.titleEl.setText("Reset all styles");
+			modal.contentEl.createEl("p", {
+				text: "Remove all map-level style overrides? They will revert to theme defaults.",
+			});
+			const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+			btnRow.createEl("button", { text: "Cancel" })
+				.addEventListener("click", () => modal.close());
+			const confirm = btnRow.createEl("button", {
+				cls: "mod-warning",
+				text: "Reset",
+			});
+			confirm.addEventListener("click", () => {
+				modal.close();
+				void this.resetAllMapStyles();
+			});
+			modal.open();
+		});
+
 		this.refreshMapStyleControls();
 	}
 
@@ -562,36 +588,6 @@ export class PropertiesSidebarView extends ItemView {
 			text: "Select a node to edit its style.",
 		});
 		this.formatControlEls.push(noSelBanner);
-
-		// Global reset button
-		const resetAll = container.createDiv({ cls: "osmosis-format-reset-all" });
-		const resetAllBtn = resetAll.createEl("button", {
-			cls: "osmosis-format-reset-btn",
-			text: "Reset all styles",
-		});
-		resetAllBtn.addEventListener("click", (e) => {
-			e.stopPropagation();
-			const mindMap = this.getActiveMindMap();
-			const count = mindMap?.getSelectedNodeInfo()?.nodeIds.length ?? 0;
-			if (count === 0) return;
-			const modal = new Modal(this.app);
-			modal.titleEl.setText("Reset all styles");
-			modal.contentEl.createEl("p", {
-				text: `Remove all style overrides from ${count} selected node(s)? They will revert to theme defaults.`,
-			});
-			const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
-			btnRow.createEl("button", { text: "Cancel" })
-				.addEventListener("click", () => modal.close());
-			const confirm = btnRow.createEl("button", {
-				cls: "mod-warning",
-				text: "Reset",
-			});
-			confirm.addEventListener("click", () => {
-				modal.close();
-				void this.resetSelectedNodeStyles();
-			});
-			modal.open();
-		});
 
 		// Collapsible sections with live controls
 		for (const section of FORMAT_SECTIONS) {
@@ -634,6 +630,36 @@ export class PropertiesSidebarView extends ItemView {
 				);
 			});
 		}
+
+		// Global reset button — at bottom
+		const resetAll = container.createDiv({ cls: "osmosis-format-reset-all" });
+		const resetAllBtn = resetAll.createEl("button", {
+			cls: "osmosis-format-reset-btn",
+			text: "Reset all styles",
+		});
+		resetAllBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			const mindMap = this.getActiveMindMap();
+			const count = mindMap?.getSelectedNodeInfo()?.nodeIds.length ?? 0;
+			if (count === 0) return;
+			const modal = new Modal(this.app);
+			modal.titleEl.setText("Reset all styles");
+			modal.contentEl.createEl("p", {
+				text: `Remove all style overrides from ${count} selected node(s)? They will revert to theme defaults.`,
+			});
+			const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
+			btnRow.createEl("button", { text: "Cancel" })
+				.addEventListener("click", () => modal.close());
+			const confirm = btnRow.createEl("button", {
+				cls: "mod-warning",
+				text: "Reset",
+			});
+			confirm.addEventListener("click", () => {
+				modal.close();
+				void this.resetSelectedNodeStyles();
+			});
+			modal.open();
+		});
 
 		this.updateFormatTabState();
 	}
@@ -1553,6 +1579,38 @@ export class PropertiesSidebarView extends ItemView {
 			}
 			mindMap.applyMapSettings(this.getEffectiveSettings());
 		}
+		this.refreshMapStyleControls();
+	}
+
+	/** Reset ALL map-level settings in frontmatter (theme, variant, and all style overrides). */
+	private async resetAllMapStyles(): Promise<void> {
+		if (!this.currentFilePath) return;
+		const file = this.app.vault.getFileByPath(this.currentFilePath);
+		if (!(file instanceof TFile)) return;
+
+		const mindMap = this.getActiveMindMap();
+		if (mindMap) mindMap.suppressNextReload = true;
+
+		await this.app.fileManager.processFrontMatter(
+			file,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(fm: any) => {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				delete fm["osmosis-styles"];
+			},
+		);
+
+		if (mindMap) {
+			mindMap.setOsmosisStyleFrontmatter({});
+			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter({}) });
+		}
+
+		// Rebuild all Map tab controls to reflect defaults
+		if (this.themeDropdown) this.themeDropdown.value = "Default";
+		this.updateThemeMgmtVisibility();
+		this.updateSaveThemeVisibility();
+		this.rebuildVariantDropdown();
+		this.updateSaveToVariantVisibility();
 		this.refreshMapStyleControls();
 	}
 

@@ -513,8 +513,8 @@ Uses Obsidian CSS variables for theme compatibility.
 
 .osmosis-tab-bar {
 	display: flex;
-	gap: 0;
-	border-bottom: 1px solid var(--background-modifier-border);
+	gap: 4px;
+	padding: 4px 6px;
 	margin-bottom: 4px;
 }
 
@@ -526,17 +526,19 @@ Uses Obsidian CSS variables for theme compatibility.
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 	cursor: pointer;
-	border-bottom: 2px solid transparent;
-	transition: color 0.15s, border-color 0.15s;
+	border-radius: var(--radius-s);
+	transition: color 0.15s, background 0.15s;
 }
 
 .osmosis-tab-btn:hover {
 	color: var(--text-normal);
+	background: var(--background-modifier-hover);
 }
 
 .osmosis-tab-btn.is-active {
 	color: var(--text-normal);
-	border-bottom-color: var(--interactive-accent);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
 }
 
 .osmosis-tab-content.is-hidden {
