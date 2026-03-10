@@ -158,6 +158,19 @@ export class PropertiesSidebarView extends ItemView {
 				this.updateContext();
 			}),
 		);
+		// Also listen for layout-change, which fires when a view type changes
+		// on the same leaf (e.g. opening a mind map from "More options" or the
+		// brain icon replaces the MarkdownView without changing the active leaf).
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => {
+				const view = this.app.workspace.getActiveViewOfType(MindMapView);
+				if (view && view !== this.lastActiveMindMap) {
+					this.lastActiveMindMap = view;
+					this.listenForFileLoad(view);
+					this.updateContext();
+				}
+			}),
+		);
 		// Initialize lastActiveMindMap from the currently active leaf
 		const activeLeaf = this.app.workspace.getActiveViewOfType(MindMapView);
 		if (activeLeaf) {
@@ -3102,13 +3115,28 @@ export class PropertiesSidebarView extends ItemView {
 
 		const handler = () => {
 			this.cleanupFileLoadListener();
-			this.updateContext();
+			this.forceUpdateContext();
 		};
 
 		mindMap.onFileLoad(handler);
 		this.fileLoadCleanup = () => {
 			mindMap.offFileLoad(handler);
 		};
+
+		// If the file already finished loading before we subscribed (e.g.
+		// active-leaf-change fired after setState completed), the callback
+		// will never fire.  Force a refresh now so the sidebar isn't stuck
+		// showing stale default values.
+		if (mindMap.getCurrentFilePath()) {
+			this.forceUpdateContext();
+		}
+	}
+
+	/** Reset the cached context and re-render unconditionally. */
+	private forceUpdateContext(): void {
+		this.currentMindMap = null;
+		this.currentFilePath = null;
+		this.updateContext();
 	}
 
 	private cleanupFileLoadListener(): void {
