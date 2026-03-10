@@ -6282,11 +6282,17 @@ export class MindMapView extends ItemView {
 		// Now that measurement and layout are done, swap out the old SVG.
 		// Defer container.empty() until just before appending the new SVG
 		// to avoid a visible flash.
+		const isFirstRender = !this.svg;
 		this.toolRibbon?.detach();
 		container.empty();
 		container.addClass("osmosis-mindmap-container");
 
 		await this.renderSvg(container, layout);
+
+		// Auto-frame all content on initial open so the user sees the whole map
+		if (isFirstRender) {
+			this.fitToView();
+		}
 
 		// Re-apply spatial study hidden state after re-render (render wipes the DOM)
 		if (this.isSpatialStudy) {
