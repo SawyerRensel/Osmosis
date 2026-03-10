@@ -52,7 +52,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
 
-		this.addRibbonIcon("git-fork", "Open mind map", () => {
+		this.addRibbonIcon("brain-circuit", "Open mind map", () => {
 			void this.activateMindMapView();
 		});
 
@@ -90,7 +90,7 @@ export default class OsmosisPlugin extends Plugin {
 				if (!(file instanceof TFile) || file.extension !== "md") return;
 				menu.addItem((item) => {
 					item.setTitle("Mind map view")
-						.setIcon("git-fork")
+						.setIcon("brain-circuit")
 						.onClick(() => {
 							if (leaf) {
 								void leaf.setViewState({
@@ -191,7 +191,7 @@ export default class OsmosisPlugin extends Plugin {
 			const btn = document.createElement("a");
 			btn.className = "clickable-icon osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
-			setIcon(btn, "git-fork");
+			setIcon(btn, "brain-circuit");
 			btn.addEventListener("click", () => {
 				const file = (leaf.view as MarkdownView).file;
 				if (file) {

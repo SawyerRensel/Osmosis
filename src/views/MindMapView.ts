@@ -189,7 +189,7 @@ export class MindMapView extends ItemView {
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.navigation = true;
-		this.icon = "git-fork";
+		this.icon = "brain-circuit";
 		this.plugin = (
 			this.app as unknown as {
 				plugins: { plugins: Record<string, OsmosisPlugin> };
