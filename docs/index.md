@@ -36,14 +36,6 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 
     [:octicons-arrow-right-24: Studying](studying/index.md)
 
--   :lucide-rocket:{ .lg .middle } __Get Started__
-
-    ---
-
-    Install Osmosis and create your first mind map and flashcard in under five minutes.
-
-    [:octicons-arrow-right-24: Getting Started](getting-started/index.md)
-
 </div>
 
 ## How It Works
