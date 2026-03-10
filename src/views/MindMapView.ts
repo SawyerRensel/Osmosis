@@ -4638,6 +4638,48 @@ export class MindMapView extends ItemView {
 
 	// ─── Keyboard ────────────────────────────────────────────
 
+	/**
+	 * Map a physical arrow key to a logical action based on map direction
+	 * and whether the selected node is on the secondary side.
+	 */
+	private resolveArrowAction(
+		key: string,
+	): "depthDeeper" | "depthShallower" | "siblingPrev" | "siblingNext" | null {
+		const isTopDown = this.mapSettings.direction === "top-down";
+		let isSecondary = false;
+		if (this.selectedNodeId) {
+			const node = this.nodeMap.get(this.selectedNodeId);
+			if (node) {
+				isSecondary = node.side === "secondary";
+			}
+		}
+
+		if (isTopDown) {
+			switch (key) {
+				case "ArrowDown":
+					return isSecondary ? "depthShallower" : "depthDeeper";
+				case "ArrowUp":
+					return isSecondary ? "depthDeeper" : "depthShallower";
+				case "ArrowLeft":
+					return "siblingPrev";
+				case "ArrowRight":
+					return "siblingNext";
+			}
+		} else {
+			switch (key) {
+				case "ArrowRight":
+					return isSecondary ? "depthShallower" : "depthDeeper";
+				case "ArrowLeft":
+					return isSecondary ? "depthDeeper" : "depthShallower";
+				case "ArrowUp":
+					return "siblingPrev";
+				case "ArrowDown":
+					return "siblingNext";
+			}
+		}
+		return null;
+	}
+
 	private handleKeyDown(e: KeyboardEvent): void {
 		// Don't handle keys during editing
 		if (this.editingNodeId) {
@@ -4648,48 +4690,60 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Direction-aware arrow key handling
+		const arrowAction = this.resolveArrowAction(e.key);
+		if (arrowAction) {
+			e.preventDefault();
+			if (e.altKey) {
+				switch (arrowAction) {
+					case "depthDeeper":
+						void this.indentNode();
+						break;
+					case "depthShallower":
+						void this.outdentNode();
+						break;
+					case "siblingPrev":
+						void this.moveNodeUpDown(-1);
+						break;
+					case "siblingNext":
+						void this.moveNodeUpDown(1);
+						break;
+				}
+			} else if (e.shiftKey) {
+				switch (arrowAction) {
+					case "depthDeeper":
+						this.extendSelectionToChildren();
+						break;
+					case "depthShallower":
+						this.extendSelectionToParent();
+						break;
+					case "siblingPrev":
+						this.extendSelectionSibling(-1);
+						break;
+					case "siblingNext":
+						this.extendSelectionSibling(1);
+						break;
+				}
+			} else {
+				switch (arrowAction) {
+					case "depthDeeper":
+						this.navigateToFirstChild();
+						break;
+					case "depthShallower":
+						this.navigateToParent();
+						break;
+					case "siblingPrev":
+						this.navigateSibling(-1);
+						break;
+					case "siblingNext":
+						this.navigateSibling(1);
+						break;
+				}
+			}
+			return;
+		}
 
 		switch (e.key) {
-			case "ArrowUp":
-				if (e.altKey) {
-					void this.moveNodeUpDown(-1);
-				} else if (e.shiftKey) {
-					this.extendSelectionSibling(-1);
-				} else {
-					this.navigateSibling(-1);
-				}
-				e.preventDefault();
-				break;
-			case "ArrowDown":
-				if (e.altKey) {
-					void this.moveNodeUpDown(1);
-				} else if (e.shiftKey) {
-					this.extendSelectionSibling(1);
-				} else {
-					this.navigateSibling(1);
-				}
-				e.preventDefault();
-				break;
-			case "ArrowLeft":
-				if (e.altKey) {
-					void this.outdentNode();
-				} else if (e.shiftKey) {
-					this.extendSelectionToParent();
-				} else {
-					this.navigateToParent();
-				}
-				e.preventDefault();
-				break;
-			case "ArrowRight":
-				if (e.altKey) {
-					void this.indentNode();
-				} else if (e.shiftKey) {
-					this.extendSelectionToChildren();
-				} else {
-					this.navigateToFirstChild();
-				}
-				e.preventDefault();
-				break;
 			case "Tab":
 				e.preventDefault();
 				if (this.selectedNodeId) {
