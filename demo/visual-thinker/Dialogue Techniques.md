@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/dialogue
 osmosis-styles:
   theme: Rose Pine
   topicShape: ellipse
@@ -83,6 +84,8 @@ everyone, and your mother — she changed more than most."
 ## Voice & Individuality
 
 Every character should sound distinct. A reader should be able to identify the speaker without attribution tags.
+
+![Shakespeare gave each character a distinct voice](https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Shakespeare.jpg/220px-Shakespeare.jpg)
 
 - **Elements of Voice**:
   - Vocabulary level and word choice
@@ -183,6 +186,8 @@ lapses: 1
 state: review
 
 What is "subtext" in dialogue and why does it matter?
+
+![Three-Act Structure — subtext intensifies across acts](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 ***
 Subtext is the gap between what characters say and what they actually mean — it matters because real people rarely say exactly what they mean, and the unspoken layer creates tension, depth, and three-dimensional characters
 ```

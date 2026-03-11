@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/data-structures
 osmosis-styles:
   theme: Dracula
   topicShape: rect
@@ -95,6 +96,8 @@ for (date, temp) in temps.range("2026-03-02".to_string()..) {
 
 ## VecDeque
 
+![Circular buffer diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/b/b7/Circular_buffer.svg/300px-Circular_buffer.svg.png)
+
 - Double-ended queue backed by a ring buffer
   - O(1) push/pop at both ends
   - O(1) indexed access
@@ -145,6 +148,8 @@ state: review
 When should you use BTreeMap instead of HashMap?
 ***
 Use BTreeMap when you need sorted key ordering, range queries (`range()`), or deterministic iteration order. HashMap is faster for individual lookups (O(1) vs O(log n)) but provides no ordering guarantees.
+
+![Hash table data structure](https://upload.wikimedia.org/wikipedia/commons/thumb/7/7d/Hash_table_3_1_1_0_1_0_0_SP.svg/315px-Hash_table_3_1_1_0_1_0_0_SP.svg.png)
 ```
 
 ```osmosis
@@ -165,13 +170,20 @@ absent
 
 ```osmosis
 id: dev-ds-003
-stability: 0.4
-difficulty: 0.65
-due: 2026-03-10T15:00:00.000Z
-last-review: 2026-03-10T11:00:00.000Z
-reps: 8
-lapses: 3
-state: relearning
+c1-stability: 5.2
+c1-difficulty: 0.45
+c1-due: 2026-03-16T10:00:00.000Z
+c1-last-review: 2026-03-10T10:00:00.000Z
+c1-reps: 7
+c1-lapses: 1
+c1-state: review
+c2-stability: 0.4
+c2-difficulty: 0.65
+c2-due: 2026-03-10T15:00:00.000Z
+c2-last-review: 2026-03-10T11:00:00.000Z
+c2-reps: 8
+c2-lapses: 3
+c2-state: relearning
 
 ==VecDeque== provides O(1) push and pop at both ends using a ring buffer, while ==Vec== only provides O(1) push and pop at the back.
 ```

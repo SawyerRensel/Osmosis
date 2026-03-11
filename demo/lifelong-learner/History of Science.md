@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science
 osmosis-styles:
   theme: Everforest
   balance: both-sides

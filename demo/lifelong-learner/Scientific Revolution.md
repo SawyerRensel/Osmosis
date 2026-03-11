@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/revolution
 osmosis-styles:
   theme: Everforest
   topicShape: pill
@@ -53,7 +54,7 @@ osmosis-styles:
 
 The Scientific Revolution marks one of the most dramatic shifts in human thought — a period when observation, mathematics, and experimentation replaced dogma as the path to understanding nature.
 
-![Galileo's telescope](https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Galileo_Galilei_by_Justus_Sustermans.jpg/400px-Galileo_Galilei_by_Justus_Sustermans.jpg)
+![Galileo's telescope](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Justus_Sustermans_-_Portrait_of_Galileo_Galilei%2C_1636.jpg/400px-Justus_Sustermans_-_Portrait_of_Galileo_Galilei%2C_1636.jpg)
 
 ## Nicolaus Copernicus (1473–1543)
 
@@ -114,6 +115,8 @@ reps: 11
 lapses: 1
 state: review
 
+![Portrait of Galileo Galilei](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Justus_Sustermans_-_Portrait_of_Galileo_Galilei%2C_1636.jpg/220px-Justus_Sustermans_-_Portrait_of_Galileo_Galilei%2C_1636.jpg)
+
 What did Galileo observe that provided direct evidence for the heliocentric model?
 ***
 The **phases of Venus**. Venus shows a full range of phases (like the Moon) that can only be explained if it orbits the Sun, not the Earth.
@@ -137,6 +140,22 @@ Derived the three laws of planetary motion using Tycho Brahe's data, proving pla
 
 ```osmosis
 id: sci-rev-003
+c1-stability: 14.8
+c1-difficulty: 0.35
+c1-due: 2026-03-20T10:00:00.000Z
+c1-last-review: 2026-03-07T10:00:00.000Z
+c1-reps: 8
+c1-lapses: 0
+c1-state: review
+c2-stability: 4.2
+c2-difficulty: 0.52
+c2-due: 2026-03-14T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 3
+c2-lapses: 1
+c2-state: learning
+
+![Copernicus portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Nikolaus_Kopernikus.jpg/220px-Nikolaus_Kopernikus.jpg)
 
 ==Copernicus== proposed the ==heliocentric== model of the solar system in his 1543 work *De revolutionibus*
 ```
@@ -150,6 +169,8 @@ last-review: 2026-03-10T09:00:00.000Z
 reps: 1
 lapses: 0
 state: learning
+
+![Portrait of Isaac Newton](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Portrait_of_Sir_Isaac_Newton%2C_1689.jpg/220px-Portrait_of_Sir_Isaac_Newton%2C_1689.jpg)
 
 What is Newton's Law of Universal Gravitation?
 ***

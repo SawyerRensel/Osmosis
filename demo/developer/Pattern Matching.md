@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/patterns
 osmosis-styles:
   theme: Dracula
   branchLineStyle: rounded-elbow
@@ -66,6 +67,8 @@ while let Some(top) = stack.pop() {
 ```
 
 ## Destructuring Patterns
+
+![Ferris the Rustacean](https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Rustacean-orig-noshadow.svg/200px-Rustacean-orig-noshadow.svg.png)
 
 - **Structs** — extract fields by name
   - Can rename bindings: `Struct { field: new_name }`

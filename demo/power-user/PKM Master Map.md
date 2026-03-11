@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: pkm
 osmosis-styles:
   theme: Catppuccin Mocha
   layoutSide: right

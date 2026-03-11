@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/worldbuilding
 osmosis-styles:
   theme: Rose Pine
   branchLineStyle: rounded-elbow
@@ -16,6 +17,8 @@ A comprehensive framework for building fictional worlds that feel lived-in. Not 
 ## Geography & Environment
 
 The physical world shapes everything: culture, conflict, trade, and survival.
+
+![The Hero's Journey — worldbuilding defines every stage of the journey](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
 
 ### Terrain & Climate
 
@@ -212,6 +215,8 @@ lapses: 2
 state: relearning
 
 Name three ways geography shapes culture in worldbuilding.
+
+![Three-Act Structure — geography constrains the narrative arc](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 ***
 Natural barriers divide cultures (mountain ranges, rivers), climate determines daily life and agriculture, and resource locations drive trade routes and settlement patterns
 ```

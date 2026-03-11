@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/physics
 osmosis-styles:
   theme: Everforest
   balance: both-sides
@@ -103,6 +104,8 @@ reps: 4
 lapses: 0
 state: review
 
+![Double-slit experiment diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Double-slit.svg/220px-Double-slit.svg.png)
+
 What happens in the double-slit experiment when you detect which slit each particle passes through?
 ***
 The **interference pattern disappears** and you get two bands — as if the particles behave as classical particles. The act of measurement collapses the wave-like behavior.
@@ -110,6 +113,29 @@ The **interference pattern disappears** and you get two bands — as if the part
 
 ```osmosis
 id: sci-qm-002
+c1-stability: 15.7
+c1-difficulty: 0.33
+c1-due: 2026-03-22T10:00:00.000Z
+c1-last-review: 2026-03-07T10:00:00.000Z
+c1-reps: 8
+c1-lapses: 0
+c1-state: review
+c2-stability: 7.3
+c2-difficulty: 0.45
+c2-due: 2026-03-15T10:00:00.000Z
+c2-last-review: 2026-03-08T10:00:00.000Z
+c2-reps: 5
+c2-lapses: 0
+c2-state: review
+c3-stability: 2.1
+c3-difficulty: 0.58
+c3-due: 2026-03-12T10:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 3
+c3-lapses: 1
+c3-state: learning
+
+![Bohr atom model](https://upload.wikimedia.org/wikipedia/commons/thumb/9/93/Bohr_atom_model.svg/220px-Bohr_atom_model.svg.png)
 
 ==Heisenberg's== uncertainty principle states that you cannot simultaneously know both the exact ==position== and exact ==momentum== of a particle
 ```

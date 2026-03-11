@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/error-handling
 osmosis-styles:
   theme: Dracula
   topicShape: rect
@@ -17,6 +18,8 @@ Rust distinguishes between **recoverable** errors (`Result<T, E>`) and **unrecov
 [Rust Error Handling — Let's Get Rusty](https://www.youtube.com/watch?v=wM6o70NAWUI)
 
 ## Result and Option
+
+![Rust logo](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Rust_programming_language_black_logo.svg/200px-Rust_programming_language_black_logo.svg.png)
 
 | Type | Purpose | Variants | Use When |
 |------|---------|----------|----------|
@@ -160,19 +163,40 @@ It propagates errors up the call stack. On `Ok(value)`, it unwraps and continues
 
 ```osmosis
 id: dev-err-003
-stability: 0.9
-difficulty: 0.55
-due: 2026-03-10T19:00:00.000Z
-last-review: 2026-03-10T11:00:00.000Z
-reps: 2
-lapses: 0
-state: learning
+c1-stability: 8.3
+c1-difficulty: 0.38
+c1-due: 2026-03-18T10:00:00.000Z
+c1-last-review: 2026-03-09T10:00:00.000Z
+c1-reps: 7
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.9
+c2-difficulty: 0.55
+c2-due: 2026-03-10T19:00:00.000Z
+c2-last-review: 2026-03-10T11:00:00.000Z
+c2-reps: 2
+c2-lapses: 0
+c2-state: learning
 
 ==Result<T, E>== is used for recoverable errors with variants Ok(T) and Err(E), while ==Option<T>== is used for optional values with variants Some(T) and None.
 ```
 
 ````osmosis
 id: dev-err-004
+c1-stability: 6.4
+c1-difficulty: 0.40
+c1-due: 2026-03-17T10:00:00.000Z
+c1-last-review: 2026-03-10T10:00:00.000Z
+c1-reps: 5
+c1-lapses: 0
+c1-state: review
+c2-stability: 2.1
+c2-difficulty: 0.52
+c2-due: 2026-03-12T14:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 3
+c2-lapses: 1
+c2-state: review
 
 ```rust
 let port: u16 = std::env::var("PORT")

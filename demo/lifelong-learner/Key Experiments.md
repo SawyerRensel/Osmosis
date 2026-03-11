@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/experiments
 osmosis-styles:
   theme: Everforest
   topicShape: rounded-rect
@@ -63,6 +64,8 @@ last-review: 2026-03-10T09:00:00.000Z
 reps: 7
 lapses: 2
 state: relearning
+
+![Newton's portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3b/Portrait_of_Sir_Isaac_Newton%2C_1689.jpg/220px-Portrait_of_Sir_Isaac_Newton%2C_1689.jpg)
 
 What did Rutherford's gold foil experiment (1911) reveal about the structure of the atom?
 ***

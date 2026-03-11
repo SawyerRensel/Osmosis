@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: pkm/frameworks
 osmosis-styles:
   theme: Catppuccin Mocha
   layoutSide: right
@@ -188,6 +189,8 @@ state: review
 What are the three types of notes in the Zettelkasten method?
 ***
 Fleeting notes (quick captures), literature notes (source summaries), and permanent notes (fully developed ideas)
+
+![Zettelkasten slip-box](https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Zettelkasten_%28514941699%29.jpg/300px-Zettelkasten_%28514941699%29.jpg)
 ```
 
 ```osmosis
@@ -203,10 +206,33 @@ state: review
 What is a Map of Content (MOC) and when should you create one?
 ***
 An index note that links to related notes on a topic. Create one when you have 5+ notes on a topic or keep searching for the same cluster.
+
+![Mind map guidelines](https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/MindMapGuidlines.svg/300px-MindMapGuidlines.svg.png)
 ```
 
 ```osmosis
 id: pkm-zk-002
+c1-stability: 25.4
+c1-difficulty: 0.3
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 1
+c1-state: review
+c2-stability: 6.1
+c2-difficulty: 0.5
+c2-due: 2026-03-18T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 5
+c2-lapses: 0
+c2-state: review
+c3-stability: 0.8
+c3-difficulty: 0.6
+c3-due: 2026-03-12T18:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 2
+c3-lapses: 0
+c3-state: learning
 
 ==Zettelkasten== emphasizes ==atomic== notes connected by ==links==
 ```

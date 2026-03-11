@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: productivity/projects
 osmosis-styles:
   theme: Catppuccin Mocha
   topicShape: hexagon
@@ -160,6 +161,8 @@ state: review
 What are the five levels of project hierarchy in an Obsidian-based project management system?
 ***
 Workspace, Program (group of related projects), Project (defined goal and deadline), Milestone (major checkpoint), and Task (atomic unit of work)
+
+![Mind map — visualizing project hierarchies](https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/MindMapGuidlines.svg/300px-MindMapGuidlines.svg.png)
 ```
 
 ```osmosis

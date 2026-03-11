@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: pkm/linking
 osmosis-styles:
   theme: Catppuccin Mocha
   branchLineTaper: grow
@@ -120,6 +121,8 @@ state: review
 What is the principle of atomic notes?
 ***
 Each note captures a single, complete idea that is understandable on its own, typically 100-300 words, with a title that summarizes the claim or concept.
+
+![Zettelkasten slip-box — atomic notes in practice](https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Zettelkasten_%28514941699%29.jpg/300px-Zettelkasten_%28514941699%29.jpg)
 ```
 
 ```osmosis

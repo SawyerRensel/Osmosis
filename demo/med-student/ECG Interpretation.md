@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/diagnostics
 osmosis-styles:
   theme: Ocean
   topicShape: ellipse
@@ -132,6 +133,8 @@ state: review
 What does the P wave represent on an ECG, and in which lead is it best visualized?
 ***
 The P wave represents **atrial depolarization**. It is best visualized in **lead II** (upright) and **lead V1** (biphasic). Normal duration is < 0.12 seconds with amplitude < 2.5 mm in lead II.
+
+![Normal sinus rhythm with labeled waves](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/SinusRhythmLabels.svg/400px-SinusRhythmLabels.svg.png)
 ```
 
 ```osmosis
@@ -169,10 +172,33 @@ What is the mnemonic for distinguishing LBBB from RBBB on ECG?
 - **RBBB**: **M** in V1, **W** in V5-V6 (MaRRoW)
 
 The M represents the rsR' pattern (two upward deflections) and W represents the rS pattern (two downward deflections).
+
+![ECG lead placement](https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/12_Lead_EKG_ST_Elevation_tracing_color_coded.jpg/400px-12_Lead_EKG_ST_Elevation_tracing_color_coded.jpg)
 ```
 
 ```osmosis
 id: med-ecg-004
+c1-stability: 10.5
+c1-difficulty: 0.35
+c1-due: 2026-03-20T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 8
+c1-lapses: 0
+c1-state: review
+c2-stability: 3.2
+c2-difficulty: 0.5
+c2-due: 2026-03-14T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 4
+c2-lapses: 0
+c2-state: review
+c3-stability: 0.7
+c3-difficulty: 0.65
+c3-due: 2026-03-11T14:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 2
+c3-lapses: 1
+c3-state: learning
 
 The earliest ECG sign of hyperkalemia is ==peaked T waves==, which can progress to ==widened QRS== and eventually a ==sine wave== pattern
 ```

@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/concurrency
 osmosis-styles:
   theme: Dracula
   branchLineStyle: angular
@@ -152,13 +153,20 @@ async fn fetch_data(url: &str) -> Result<String, reqwest::Error> {
 
 ````osmosis
 id: dev-conc-001
-stability: 28.1
-difficulty: 0.28
-due: 2026-03-28T10:00:00.000Z
-last-review: 2026-03-07T10:00:00.000Z
-reps: 14
-lapses: 0
-state: review
+c1-stability: 22.5
+c1-difficulty: 0.30
+c1-due: 2026-03-26T10:00:00.000Z
+c1-last-review: 2026-03-07T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 0
+c1-state: review
+c2-stability: 7.8
+c2-difficulty: 0.44
+c2-due: 2026-03-15T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 1
+c2-state: review
 
 ```rust
 use std::sync::{Arc, Mutex};

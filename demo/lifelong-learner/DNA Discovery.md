@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/biology
 osmosis-styles:
   theme: Everforest
   topicShape: ellipse
@@ -83,6 +84,8 @@ reps: 4
 lapses: 0
 state: review
 
+![Photo 51 X-ray diffraction image](https://upload.wikimedia.org/wikipedia/en/thumb/b/b2/Photo_51_x-ray_diffraction_image.jpg/220px-Photo_51_x-ray_diffraction_image.jpg)
+
 Rosalind Franklin
 ***
 X-ray crystallographer who produced **Photo 51** — the key diffraction image revealing DNA's helical structure. Her data was shared with Watson and Crick without her consent. She died at 37 and never received the Nobel Prize.
@@ -113,6 +116,8 @@ last-review: 2026-03-10T09:00:00.000Z
 reps: 1
 lapses: 0
 state: learning
+
+![DNA double helix structure](https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/DNA_Structure%2BKey%2BLabelled.pn_NoBB.png/220px-DNA_Structure%2BKey%2BLabelled.pn_NoBB.png)
 
 What are Chargaff's base-pairing rules?
 ***

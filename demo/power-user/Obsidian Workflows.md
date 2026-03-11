@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: obsidian/workflows
 osmosis-styles:
   theme: Catppuccin Mocha
   branchLineStyle: angular
@@ -128,26 +129,54 @@ Workspaces save and restore your entire pane layout.
 
 ```osmosis
 id: pkm-obsidian-001
-stability: 30.5
-difficulty: 0.25
-due: 2026-03-30T10:00:00.000Z
-last-review: 2026-03-08T10:00:00.000Z
-reps: 15
-lapses: 0
-state: review
+c1-stability: 30.5
+c1-difficulty: 0.25
+c1-due: 2026-03-30T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 15
+c1-lapses: 0
+c1-state: review
+c2-stability: 18.2
+c2-difficulty: 0.35
+c2-due: 2026-03-22T10:00:00.000Z
+c2-last-review: 2026-03-08T10:00:00.000Z
+c2-reps: 10
+c2-lapses: 1
+c2-state: review
+c3-stability: 12.0
+c3-difficulty: 0.30
+c3-due: 2026-03-20T10:00:00.000Z
+c3-last-review: 2026-03-08T10:00:00.000Z
+c3-reps: 8
+c3-lapses: 0
+c3-state: review
 
 ==Cmd+O== (Mac) or ==Ctrl+O== (Windows) opens the ==Quick Switcher== in Obsidian
 ```
 
 ```osmosis
 id: pkm-obsidian-002
-stability: 0.3
-difficulty: 0.68
-due: 2026-03-10T16:00:00.000Z
-last-review: 2026-03-10T12:00:00.000Z
-reps: 9
-lapses: 2
-state: relearning
+c1-stability: 0.3
+c1-difficulty: 0.68
+c1-due: 2026-03-10T16:00:00.000Z
+c1-last-review: 2026-03-10T12:00:00.000Z
+c1-reps: 9
+c1-lapses: 2
+c1-state: relearning
+c2-stability: 4.2
+c2-difficulty: 0.45
+c2-due: 2026-03-15T10:00:00.000Z
+c2-last-review: 2026-03-10T12:00:00.000Z
+c2-reps: 6
+c2-lapses: 1
+c2-state: review
+c3-stability: 1.5
+c3-difficulty: 0.55
+c3-due: 2026-03-12T10:00:00.000Z
+c3-last-review: 2026-03-10T12:00:00.000Z
+c3-reps: 4
+c3-lapses: 0
+c3-state: learning
 
 ==Cmd+P== (Mac) or ==Ctrl+P== (Windows) opens the ==Command Palette== in Obsidian
 ```
@@ -165,6 +194,8 @@ state: learning
 What are the three phases of a recommended daily note workflow?
 ***
 1) Morning review (check tasks, set priorities, review calendar), 2) Capture throughout the day (thoughts, meetings, task updates), 3) Evening processing (process inbox, move tasks, write reflection)
+
+![Mind map — daily workflow overview](https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/MindMapGuidlines.svg/300px-MindMapGuidlines.svg.png)
 ```
 
 ```osmosis

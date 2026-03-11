@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/my-novel
 osmosis-styles:
   theme: Rose Pine
   topicShape: ellipse
@@ -30,6 +31,8 @@ osmosis-styles:
 - **Master Aldric**: Lira's mentor at the Cartographers' Guild — protective, secretive, knows more than he reveals
 - **Pip**: A street kid who can't read maps but has an innate sense of direction — represents intuitive knowledge vs. formal learning
 - **The Unmade**: Beings native to the Uncharted Land — they exist *because* the land has never been mapped and fear being defined
+
+![Three-Act Structure](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 
 ## Act I — The Known World (Chapters 1-8)
 
@@ -171,6 +174,8 @@ lapses: 0
 state: review
 
 What is the "midpoint revelation" and how does it function in a novel's structure?
+
+![The Hero's Journey — the midpoint falls during "The Ordeal"](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
 ***
 A midpoint revelation introduces new information that recontextualizes everything — it shifts the story from a false victory or false defeat into deeper personal stakes, often forcing the protagonist to confront their own flaws
 ```

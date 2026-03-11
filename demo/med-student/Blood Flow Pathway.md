@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/anatomy
 osmosis-styles:
   theme: Ocean
   branchLineStyle: rounded-elbow
@@ -113,6 +114,8 @@ state: learning
 What is unique about the pulmonary arteries and pulmonary veins compared to their systemic counterparts?
 ***
 **Pulmonary arteries** carry **deoxygenated** blood (opposite of systemic arteries), and **pulmonary veins** carry **oxygenated** blood (opposite of systemic veins). This is because the naming convention is based on direction of flow relative to the heart, not oxygen content.
+
+![Circulation of blood through the heart](https://upload.wikimedia.org/wikipedia/commons/thumb/5/5f/Circulation_of_blood_through_the_heart.png/350px-Circulation_of_blood_through_the_heart.png)
 ```
 
 ```osmosis
@@ -131,6 +134,8 @@ List the correct sequence of valves blood passes through during a complete cardi
 2. **Pulmonary valve** (right semilunar) — exiting to pulmonary trunk
 3. **Mitral valve** (left AV valve) — entering left ventricle
 4. **Aortic valve** (left semilunar) — exiting to aorta
+
+![Heart valve anatomy](https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Heart_diagram-en.svg/350px-Heart_diagram-en.svg.png)
 ```
 
 ```osmosis

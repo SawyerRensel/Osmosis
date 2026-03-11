@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing
 osmosis-styles:
   theme: Rose Pine
   mapLayout: radial

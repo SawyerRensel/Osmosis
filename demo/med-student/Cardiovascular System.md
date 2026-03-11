@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/anatomy
 osmosis-styles:
   theme: Ocean
   balance: both-sides
@@ -173,17 +174,40 @@ What are the three layers of the heart wall, from innermost to outermost?
 1. **Endocardium** — endothelial lining
 2. **Myocardium** — cardiac muscle layer
 3. **Epicardium** — visceral pericardium (serous membrane)
+
+![Diagram of the human heart](https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Diagram_of_the_human_heart_%28cropped%29.svg/350px-Diagram_of_the_human_heart_%28cropped%29.svg.png)
 ```
 
 ```osmosis
 id: med-cardio-002
-stability: 5.2
-difficulty: 0.45
-due: 2026-03-12T10:00:00.000Z
-last-review: 2026-03-09T10:00:00.000Z
-reps: 5
-lapses: 0
-state: review
+c1-stability: 20.1
+c1-difficulty: 0.3
+c1-due: 2026-03-30T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 11
+c1-lapses: 0
+c1-state: review
+c2-stability: 5.2
+c2-difficulty: 0.45
+c2-due: 2026-03-12T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 5
+c2-lapses: 0
+c2-state: review
+c3-stability: 2.1
+c3-difficulty: 0.55
+c3-due: 2026-03-13T10:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 3
+c3-lapses: 1
+c3-state: learning
+c4-stability: 0.6
+c4-difficulty: 0.7
+c4-due: 2026-03-11T12:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 2
+c4-lapses: 2
+c4-state: relearning
 
 ==Intercalated discs== connect cardiac myocytes and contain ==gap junctions==, ==desmosomes==, and ==fascia adherens==
 ```
@@ -201,6 +225,8 @@ state: learning
 Which coronary artery is known as the "widow maker" and what does it supply?
 ***
 The **left anterior descending (LAD)** artery. It supplies the anterior wall of the left ventricle and the anterior interventricular septum. Occlusion causes massive anterior MI.
+
+![Coronary arteries](https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Coronary_arteries.svg/350px-Coronary_arteries.svg.png)
 ```
 
 ```osmosis
@@ -222,13 +248,36 @@ left ventricle
 
 ```osmosis
 id: med-cardio-005
-stability: 0.5
-difficulty: 0.7
-due: 2026-03-10T14:00:00.000Z
-last-review: 2026-03-10T10:00:00.000Z
-reps: 6
-lapses: 2
-state: relearning
+c1-stability: 15.3
+c1-difficulty: 0.3
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 10
+c1-lapses: 0
+c1-state: review
+c2-stability: 6.8
+c2-difficulty: 0.4
+c2-due: 2026-03-17T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 0
+c2-state: review
+c3-stability: 22.0
+c3-difficulty: 0.25
+c3-due: 2026-04-01T10:00:00.000Z
+c3-last-review: 2026-03-08T10:00:00.000Z
+c3-reps: 14
+c3-lapses: 0
+c3-state: review
+c4-stability: 0.5
+c4-difficulty: 0.7
+c4-due: 2026-03-10T14:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 6
+c4-lapses: 2
+c4-state: relearning
+
+![Heart valves](https://upload.wikimedia.org/wikipedia/commons/thumb/6/6c/Heart_diagram-en.svg/350px-Heart_diagram-en.svg.png)
 
 The ==mitral valve== (also called the ==bicuspid valve==) has ==two== cusps and is the most commonly affected valve in ==rheumatic heart disease==
 ```

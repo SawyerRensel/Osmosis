@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology
 osmosis-styles:
   theme: Ocean
   topicShape: pill

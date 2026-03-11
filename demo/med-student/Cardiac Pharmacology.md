@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/pharmacology
 osmosis-styles:
   theme: Ocean
   topicShape: ellipse
@@ -103,13 +104,29 @@ Cardiovascular drugs represent one of the most prescribed drug classes worldwide
 
 ```osmosis
 id: med-pharm-001
-stability: 25.4
-difficulty: 0.3
-due: 2026-03-25T10:00:00.000Z
-last-review: 2026-03-08T10:00:00.000Z
-reps: 12
-lapses: 1
-state: review
+c1-stability: 25.4
+c1-difficulty: 0.3
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 1
+c1-state: review
+c2-stability: 8.3
+c2-difficulty: 0.4
+c2-due: 2026-03-19T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 7
+c2-lapses: 0
+c2-state: review
+c3-stability: 1.2
+c3-difficulty: 0.55
+c3-due: 2026-03-12T14:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 3
+c3-lapses: 1
+c3-state: learning
+
+![Renin-angiotensin-aldosterone system](https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Renin-angiotensin-aldosterone_system.svg/350px-Renin-angiotensin-aldosterone_system.svg.png)
 
 ==ACE inhibitors== cause a ==dry cough== due to accumulation of ==bradykinin== in the lungs
 ```
@@ -132,26 +149,77 @@ Aldosterone antagonist (potassium-sparing diuretic) that acts on the collecting 
 
 ```osmosis
 id: med-pharm-003
-stability: 0.5
-difficulty: 0.7
-due: 2026-03-10T14:00:00.000Z
-last-review: 2026-03-10T10:00:00.000Z
-reps: 6
-lapses: 2
-state: relearning
+c1-stability: 12.5
+c1-difficulty: 0.35
+c1-due: 2026-03-22T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 9
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.5
+c2-difficulty: 0.7
+c2-due: 2026-03-10T14:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 2
+c2-state: relearning
+c3-stability: 3.8
+c3-difficulty: 0.5
+c3-due: 2026-03-14T10:00:00.000Z
+c3-last-review: 2026-03-09T10:00:00.000Z
+c3-reps: 4
+c3-lapses: 0
+c3-state: review
+c4-stability: 0.9
+c4-difficulty: 0.6
+c4-due: 2026-03-11T16:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 2
+c4-lapses: 1
+c4-state: learning
+
+![Nephron diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Kidney_Nephron.png/350px-Kidney_Nephron.png)
 
 ==Loop diuretics== (furosemide, bumetanide) inhibit the ==Na⁺/K⁺/2Cl⁻ cotransporter== (==NKCC2==) in the ==thick ascending limb== of the loop of Henle
 ```
 
 ```osmosis
 id: med-pharm-004
-stability: 0.8
-difficulty: 0.6
-due: 2026-03-10T18:00:00.000Z
-last-review: 2026-03-10T10:00:00.000Z
-reps: 2
-lapses: 0
-state: learning
+c1-stability: 18.2
+c1-difficulty: 0.3
+c1-due: 2026-03-28T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 10
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.8
+c2-difficulty: 0.6
+c2-due: 2026-03-10T18:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 2
+c2-lapses: 0
+c2-state: learning
+c3-stability: 4.1
+c3-difficulty: 0.5
+c3-due: 2026-03-15T10:00:00.000Z
+c3-last-review: 2026-03-09T10:00:00.000Z
+c3-reps: 5
+c3-lapses: 1
+c3-state: review
+c4-stability: 1.5
+c4-difficulty: 0.55
+c4-due: 2026-03-12T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 3
+c4-lapses: 0
+c4-state: learning
+c5-stability: 0.4
+c5-difficulty: 0.65
+c5-due: 2026-03-11T08:00:00.000Z
+c5-last-review: 2026-03-10T10:00:00.000Z
+c5-reps: 1
+c5-lapses: 1
+c5-state: relearning
 
 ==Thiazide diuretics== cause ==hypokalemia==, ==hyperuricemia==, ==hypercalcemia==, and ==hyperglycemia== (the "hyper-hypo" pattern)
 ```
@@ -178,4 +246,6 @@ state: review
 What distinguishes dihydropyridine CCBs (e.g., amlodipine) from non-dihydropyridine CCBs (e.g., verapamil)?
 ***
 **Dihydropyridines** are vascular selective — primarily cause vasodilation and may cause reflex tachycardia. **Non-dihydropyridines** are cardiac selective — decrease heart rate and contractility, useful for rate control in atrial fibrillation. Both block L-type calcium channels but at different tissue sites.
+
+![Wiggers diagram — cardiac cycle](https://upload.wikimedia.org/wikipedia/commons/thumb/9/91/Wiggers_Diagram_2.svg/400px-Wiggers_Diagram_2.svg.png)
 ```

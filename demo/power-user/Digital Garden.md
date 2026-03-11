@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: pkm/sharing
 osmosis-styles:
   theme: Catppuccin Mocha
   mapLayout: radial
@@ -170,10 +171,33 @@ state: review
 How does a digital garden differ from a traditional blog?
 ***
 Blogs are chronological streams of polished, finished posts. Digital gardens are interconnected topographies of evolving ideas — notes are discovered rather than announced, and emphasis is on growth over perfection.
+
+![Mind map — digital gardens grow like interconnected webs](https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/MindMapGuidlines.svg/300px-MindMapGuidlines.svg.png)
 ```
 
 ```osmosis
 id: pkm-garden-003
+c1-stability: 20.0
+c1-difficulty: 0.28
+c1-due: 2026-03-28T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 11
+c1-lapses: 0
+c1-state: review
+c2-stability: 8.5
+c2-difficulty: 0.42
+c2-due: 2026-03-19T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 1
+c2-state: review
+c3-stability: 3.2
+c3-difficulty: 0.50
+c3-due: 2026-03-14T10:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 4
+c3-lapses: 0
+c3-state: learning
 
 ==Digital gardens== emphasize ==growth over perfection== and ==connection over categorization==
 ```

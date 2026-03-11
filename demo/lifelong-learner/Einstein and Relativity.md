@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/physics
 osmosis-styles:
   theme: Everforest
   topicShape: rounded-rect
@@ -82,6 +83,8 @@ last-review: 2026-03-06T10:00:00.000Z
 reps: 11
 lapses: 1
 state: review
+
+![Albert Einstein](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Albert_Einstein_Head.jpg/220px-Albert_Einstein_Head.jpg)
 
 What are the two postulates of special relativity?
 ***

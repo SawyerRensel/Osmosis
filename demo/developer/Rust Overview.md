@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust
 osmosis-styles:
   theme: Dracula
   branchLineStyle: angular
@@ -42,6 +43,8 @@ osmosis-styles:
 # Rust Overview
 
 A comprehensive study guide for the Rust programming language. Open this file as a mind map to see all topics interconnected.
+
+![Ferris the Rustacean](https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Rustacean-orig-noshadow.svg/200px-Rustacean-orig-noshadow.svg.png)
 
 ## Core Language
 

@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: pkm/methods
 osmosis-styles:
   theme: Catppuccin Mocha
   branchLineStyle: rounded-elbow
@@ -183,4 +184,6 @@ id: pkm-notes-004
 What is the main advantage of mind mapping over the outline method for note-taking?
 ***
 Mind mapping shows relationships visually and encourages non-linear, creative thinking, while the outline method implies a single hierarchy that may miss cross-cutting connections.
+
+![Mind map example](https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/MindMapGuidlines.svg/300px-MindMapGuidlines.svg.png)
 ```

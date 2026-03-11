@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/characters
 osmosis-styles:
   theme: Rose Pine
   mapLayout: radial
@@ -17,6 +18,8 @@ Strong characters are the engine of great fiction. A compelling character can ca
 ## Character Development Principles
 
 ### The Character Triangle
+
+![Joseph Campbell — archetypes inform character construction](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg/220px-Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg)
 
 Every memorable character exists at the intersection of three forces:
 
@@ -158,6 +161,8 @@ lapses: 0
 state: review
 
 Why is a character's "flaw" essential to good storytelling?
+
+![The Hero's Journey — the flaw is tested at every stage](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
 ***
 The flaw creates internal conflict that mirrors external conflict — it prevents the character from getting what they need, forces them to struggle and grow, and makes their eventual transformation (or failure) meaningful
 ```

@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/projects
 osmosis-styles:
   theme: Dracula
   topicShape: rect
@@ -9,6 +10,8 @@ osmosis-styles:
 # CLI Project
 
 Build a production-quality command-line tool in Rust using `clap` for argument parsing, `anyhow` for error handling, and `serde` for configuration.
+
+![Rust logo](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Rust_programming_language_black_logo.svg/200px-Rust_programming_language_black_logo.svg.png)
 
 ## Step 1: Project Setup
 
@@ -184,13 +187,20 @@ mod tests {
 
 ````osmosis
 id: dev-cli-001
-stability: 0.9
-difficulty: 0.55
-due: 2026-03-10T19:00:00.000Z
-last-review: 2026-03-10T11:00:00.000Z
-reps: 2
-lapses: 0
-state: learning
+c1-stability: 4.2
+c1-difficulty: 0.48
+c1-due: 2026-03-14T10:00:00.000Z
+c1-last-review: 2026-03-10T10:00:00.000Z
+c1-reps: 4
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.9
+c2-difficulty: 0.55
+c2-due: 2026-03-10T19:00:00.000Z
+c2-last-review: 2026-03-10T11:00:00.000Z
+c2-reps: 2
+c2-lapses: 0
+c2-state: learning
 
 ```rust
 /// A minimal grep implementation in Rust
@@ -225,6 +235,20 @@ let contents = fs::read_to_string(file_path)
 
 ````osmosis
 id: dev-cli-003
+c1-stability: 10.3
+c1-difficulty: 0.36
+c1-due: 2026-03-19T10:00:00.000Z
+c1-last-review: 2026-03-09T10:00:00.000Z
+c1-reps: 7
+c1-lapses: 0
+c1-state: review
+c2-stability: 1.5
+c2-difficulty: 0.58
+c2-due: 2026-03-11T16:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 3
+c2-lapses: 1
+c2-state: learning
 
 ```rust
 fn main() -> Result<()> {

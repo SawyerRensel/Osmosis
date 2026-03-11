@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/type-system
 osmosis-styles:
   theme: Dracula
   branchLineStyle: straight
@@ -187,13 +188,20 @@ trait Iterator {
 
 ```osmosis
 id: dev-trait-003
-stability: 0.9
-difficulty: 0.55
-due: 2026-03-10T19:00:00.000Z
-last-review: 2026-03-10T11:00:00.000Z
-reps: 2
-lapses: 0
-state: learning
+c1-stability: 12.6
+c1-difficulty: 0.35
+c1-due: 2026-03-20T10:00:00.000Z
+c1-last-review: 2026-03-09T10:00:00.000Z
+c1-reps: 8
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.9
+c2-difficulty: 0.55
+c2-due: 2026-03-10T19:00:00.000Z
+c2-last-review: 2026-03-10T11:00:00.000Z
+c2-reps: 2
+c2-lapses: 0
+c2-state: learning
 
 ==Static dispatch== (generics) uses monomorphization with zero runtime cost, while ==dynamic dispatch== (`dyn Trait`) uses a vtable with a small runtime cost but enables heterogeneous collections.
 ```

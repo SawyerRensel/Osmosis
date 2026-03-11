@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/enlightenment
 osmosis-styles:
   theme: Everforest
   balance: both-sides
@@ -79,6 +80,8 @@ reps: 11
 lapses: 1
 state: review
 
+![Voltaire](https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/D%27apr%C3%A8s_Maurice_Quentin_de_La_Tour%2C_Portrait_de_Voltaire%2C_d%C3%A9tail_du_visage_%28ch%C3%A2teau_de_Ferney%29.jpg/220px-D%27apr%C3%A8s_Maurice_Quentin_de_La_Tour%2C_Portrait_de_Voltaire%2C_d%C3%A9tail_du_visage_%28ch%C3%A2teau_de_Ferney%29.jpg)
+
 What is Locke's concept of "tabula rasa"?
 ***
 The idea that the human mind begins as a **blank slate** — all knowledge is derived from sensory experience rather than being innate. This challenged the prevailing rationalist view that certain ideas are inborn.
@@ -86,19 +89,47 @@ The idea that the human mind begins as a **blank slate** — all knowledge is de
 
 ```osmosis
 id: sci-enl-002
-stability: 6.1
-difficulty: 0.48
-due: 2026-03-14T10:00:00.000Z
-last-review: 2026-03-09T10:00:00.000Z
-reps: 4
-lapses: 0
-state: review
+c1-stability: 18.5
+c1-difficulty: 0.30
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-07T10:00:00.000Z
+c1-reps: 9
+c1-lapses: 0
+c1-state: review
+c2-stability: 6.1
+c2-difficulty: 0.48
+c2-due: 2026-03-14T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 4
+c2-lapses: 0
+c2-state: review
+c3-stability: 1.2
+c3-difficulty: 0.62
+c3-due: 2026-03-11T14:00:00.000Z
+c3-last-review: 2026-03-10T10:00:00.000Z
+c3-reps: 2
+c3-lapses: 1
+c3-state: relearning
 
 ==Kant's== motto for the Enlightenment was "==Sapere aude==" — meaning "Dare to ==know=="
 ```
 
 ```osmosis
 id: sci-enl-003
+c1-stability: 10.3
+c1-difficulty: 0.40
+c1-due: 2026-03-18T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 6
+c1-lapses: 0
+c1-state: review
+c2-stability: 3.5
+c2-difficulty: 0.55
+c2-due: 2026-03-13T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 3
+c2-lapses: 0
+c2-state: learning
 
 Rousseau's ==social contract== theory argues that legitimate political authority rests on a ==covenant among citizens==, not divine right
 ```

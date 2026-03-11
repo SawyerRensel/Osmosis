@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/fundamentals
 osmosis-styles:
   theme: Dracula
   branchLineStyle: straight
@@ -177,13 +178,20 @@ fn main() {
 
 ```osmosis
 id: dev-rust-003
-stability: 4.8
-difficulty: 0.42
-due: 2026-03-13T10:00:00.000Z
-last-review: 2026-03-09T10:00:00.000Z
-reps: 6
-lapses: 1
-state: review
+c1-stability: 18.2
+c1-difficulty: 0.32
+c1-due: 2026-03-22T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 10
+c1-lapses: 0
+c1-state: review
+c2-stability: 3.5
+c2-difficulty: 0.48
+c2-due: 2026-03-14T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 5
+c2-lapses: 1
+c2-state: review
 
 ==Immutable references== allow multiple simultaneous borrows, while ==mutable references== are exclusive — only one can exist at a time.
 ```

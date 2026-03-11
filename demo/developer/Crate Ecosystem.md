@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: rust/ecosystem
 osmosis-styles:
   theme: Dracula
   branchLineStyle: rounded-elbow
@@ -9,6 +10,8 @@ osmosis-styles:
 # Crate Ecosystem
 
 Rust's package registry, [crates.io](https://crates.io), hosts over 150,000 crates. These are the foundational crates every Rust developer should know.
+
+![Ferris the Rustacean](https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/Rustacean-orig-noshadow.svg/200px-Rustacean-orig-noshadow.svg.png)
 
 ## Web Frameworks
 

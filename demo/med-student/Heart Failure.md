@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/pathology
 osmosis-styles:
   theme: Ocean
   topicShape: pill
@@ -84,13 +85,34 @@ Additional therapies: loop diuretics for congestion, hydralazine/isosorbide dini
 
 ```osmosis
 id: med-hf-001
-stability: 25.4
-difficulty: 0.3
-due: 2026-03-25T10:00:00.000Z
-last-review: 2026-03-08T10:00:00.000Z
-reps: 12
-lapses: 1
-state: review
+c1-stability: 25.4
+c1-difficulty: 0.3
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 1
+c1-state: review
+c2-stability: 7.5
+c2-difficulty: 0.45
+c2-due: 2026-03-18T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 0
+c2-state: review
+c3-stability: 14.2
+c3-difficulty: 0.35
+c3-due: 2026-03-24T10:00:00.000Z
+c3-last-review: 2026-03-08T10:00:00.000Z
+c3-reps: 9
+c3-lapses: 0
+c3-state: review
+c4-stability: 1.1
+c4-difficulty: 0.6
+c4-due: 2026-03-12T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 3
+c4-lapses: 1
+c4-state: learning
 
 ==HFrEF== (systolic heart failure) is defined by an ejection fraction of ==≤ 40%==, while ==HFpEF== (diastolic heart failure) has an ejection fraction of ==≥ 50%==
 ```
@@ -111,6 +133,8 @@ Describe the four NYHA functional classes of heart failure.
 - **Class II**: Slight limitation — comfortable at rest, ordinary activity causes symptoms
 - **Class III**: Marked limitation — comfortable at rest, less than ordinary activity causes symptoms
 - **Class IV**: Symptoms at rest — unable to perform any activity without discomfort
+
+![Heart failure signs and symptoms](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Heart_failure_signs_and_symptoms.svg/350px-Heart_failure_signs_and_symptoms.svg.png)
 ```
 
 ```osmosis
@@ -131,10 +155,40 @@ What are the "four pillars" of guideline-directed medical therapy for HFrEF?
 4. **SGLT2 inhibitor** (dapagliflozin or empagliflozin)
 
 All four should be initiated and titrated in every HFrEF patient who can tolerate them.
+
+![Diagram of the human heart](https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Diagram_of_the_human_heart_%28cropped%29.svg/350px-Diagram_of_the_human_heart_%28cropped%29.svg.png)
 ```
 
 ```osmosis
 id: med-hf-004
+c1-stability: 9.8
+c1-difficulty: 0.4
+c1-due: 2026-03-19T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 7
+c1-lapses: 0
+c1-state: review
+c2-stability: 4.5
+c2-difficulty: 0.5
+c2-due: 2026-03-15T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 4
+c2-lapses: 0
+c2-state: review
+c3-stability: 11.3
+c3-difficulty: 0.35
+c3-due: 2026-03-21T10:00:00.000Z
+c3-last-review: 2026-03-08T10:00:00.000Z
+c3-reps: 8
+c3-lapses: 1
+c3-state: review
+c4-stability: 0.6
+c4-difficulty: 0.6
+c4-due: 2026-03-11T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 2
+c4-lapses: 0
+c4-state: learning
 
 An ==S3 gallop== is associated with ==systolic== heart failure (volume overload, ventricular dilation), while an ==S4 gallop== is associated with ==diastolic== heart failure (stiff, non-compliant ventricle)
 ```

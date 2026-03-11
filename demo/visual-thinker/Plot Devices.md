@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/plot
 osmosis-styles:
   theme: Rose Pine
   topicShape: cloud
@@ -94,6 +95,8 @@ A sudden, unexpected solution to an impossible problem — literally "god from t
 
 The audience knows something the characters don't. One of the most powerful tools for generating tension.
 
+![Shakespeare — the undisputed master of dramatic irony](https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Shakespeare.jpg/220px-Shakespeare.jpg)
+
 - **How to Use It Well**:
   - Create scenes where the audience wants to scream warnings at characters
   - Use it to add layers of meaning to dialogue
@@ -144,6 +147,8 @@ lapses: 1
 state: review
 
 Chekhov's Gun
+
+![Three-Act Structure — where Chekhov's Gun plays out](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 ***
 A dramatic principle stating that every element introduced in a story must be relevant — if a gun appears in Act 1, it must be fired by Act 3. It's a promise to the reader that details will pay off.
 ```

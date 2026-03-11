@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: productivity/review
 osmosis-styles:
   theme: Catppuccin Mocha
   balance: alternating
@@ -168,6 +169,8 @@ state: review
 What are the five layers of progressive summarization?
 ***
 Layer 0: Original source, Layer 1: Captured notes, Layer 2: Bold important passages, Layer 3: Highlight the best bolded passages, Layer 4: Executive summary in your own words
+
+![Zettelkasten — systematic note review](https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Zettelkasten_%28514941699%29.jpg/300px-Zettelkasten_%28514941699%29.jpg)
 ```
 
 ```osmosis

@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: cardiology/pathology
 osmosis-styles:
   theme: Ocean
   balance: both-sides
@@ -102,6 +103,8 @@ state: learning
 What is the most common cause of secondary hypertension from an endocrine source?
 ***
 **Primary aldosteronism (Conn syndrome)** is the most common endocrine cause of secondary hypertension. It is characterized by excess aldosterone production (usually from an adrenal adenoma), causing sodium retention, potassium wasting, and hypertension. Screen with aldosterone-to-renin ratio.
+
+![Adrenal gland](https://upload.wikimedia.org/wikipedia/commons/thumb/5/5a/Illu_adrenal_gland.jpg/300px-Illu_adrenal_gland.jpg)
 ```
 
 ```osmosis
@@ -115,17 +118,33 @@ What are the four target organs damaged by chronic uncontrolled hypertension?
 4. **Eyes** — hypertensive retinopathy (AV nicking, cotton-wool spots, papilledema)
 
 Also: vasculature (aortic dissection, PAD, aneurysm)
+
+![Hypertensive retinopathy](https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Hypertensiveretinopathy.jpg/300px-Hypertensiveretinopathy.jpg)
 ```
 
 ```osmosis
 id: med-htn-004
-stability: 25.4
-difficulty: 0.3
-due: 2026-03-25T10:00:00.000Z
-last-review: 2026-03-08T10:00:00.000Z
-reps: 12
-lapses: 1
-state: review
+c1-stability: 25.4
+c1-difficulty: 0.3
+c1-due: 2026-03-25T10:00:00.000Z
+c1-last-review: 2026-03-08T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 1
+c1-state: review
+c2-stability: 6.1
+c2-difficulty: 0.5
+c2-due: 2026-03-18T10:00:00.000Z
+c2-last-review: 2026-03-10T10:00:00.000Z
+c2-reps: 5
+c2-lapses: 0
+c2-state: review
+c3-stability: 15.8
+c3-difficulty: 0.3
+c3-due: 2026-03-26T10:00:00.000Z
+c3-last-review: 2026-03-08T10:00:00.000Z
+c3-reps: 11
+c3-lapses: 0
+c3-state: review
 
 In a hypertensive emergency, the mean arterial pressure (MAP) should be reduced by no more than ==25%== in the first ==hour==, using ==IV medications== in an ICU setting
 ```

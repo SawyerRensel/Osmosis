@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/worldbuilding
 osmosis-styles:
   theme: Rose Pine
   mapLayout: radial
@@ -89,6 +90,8 @@ Magic that is mysterious, unexplained, and operates on narrative logic rather th
   - The Old Magic (Jonathan Strange & Mr Norrell) — wild and unpredictable
 
 ### Comparison
+
+![The Hero's Journey — magic systems shape every stage](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
 
 | Aspect | Hard Magic | Soft Magic |
 |--------|-----------|------------|
@@ -211,6 +214,8 @@ lapses: 0
 state: review
 
 What is the key difference between hard magic and soft magic systems?
+
+![Three-Act Structure — hard magic resolves conflict in Act III](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 ***
 Hard magic has explicit, well-defined rules the reader understands (enabling clever problem-solving), while soft magic is mysterious and atmospheric (preserving wonder but unsuitable for resolving conflicts)
 ```

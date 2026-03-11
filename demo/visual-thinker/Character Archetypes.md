@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/characters
 osmosis-styles:
   theme: Rose Pine
   balance: both-sides
@@ -56,7 +57,7 @@ osmosis-styles:
 
 Carl Jung proposed that certain character patterns recur across all cultures and eras because they tap into the collective unconscious. These archetypes aren't rigid molds — they're gravitational centers that characters orbit around, bending and combining in infinite ways.
 
-![Joseph Campbell](https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Joseph_Campbell%2C_late_1970s.jpg/400px-Joseph_Campbell%2C_late_1970s.jpg)
+![Joseph Campbell](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg/400px-Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg)
 
 [The Hero's Journey — TED-Ed](https://www.youtube.com/watch?v=Hhk4N9A0oCA)
 
@@ -77,6 +78,8 @@ The central figure who drives the story forward through action and sacrifice.
 ## The Shadow
 
 The antagonist — often a dark mirror of the hero. The Shadow represents what the hero could become without growth.
+
+![Shakespeare — master of archetypal characters](https://upload.wikimedia.org/wikipedia/commons/thumb/a/a2/Shakespeare.jpg/220px-Shakespeare.jpg)
 
 - **Core Drive**: To dominate, destroy, or corrupt
 - **Strengths**: Power, intelligence, ruthlessness
@@ -164,6 +167,8 @@ state: review
 The Trickster (archetype)
 ***
 An agent of chaos who disrupts the status quo, reveals truth through misdirection and humor, and exposes pretense — examples include Loki, the Cheshire Cat, and Jack Sparrow
+
+![The Hero's Journey — archetypes in action](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
 ```
 
 ```osmosis

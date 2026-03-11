@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: history-of-science/evolution
 osmosis-styles:
   theme: Everforest
   topicShape: pill
@@ -79,6 +80,8 @@ reps: 11
 lapses: 1
 state: review
 
+![Charles Darwin](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Charles_Darwin_seated_crop.jpg/220px-Charles_Darwin_seated_crop.jpg)
+
 Charles Darwin
 ***
 Proposed the theory of evolution by **natural selection** in *On the Origin of Species* (1859). His observations during the voyage of HMS *Beagle* — especially in the Galápagos Islands — were foundational.
@@ -86,13 +89,41 @@ Proposed the theory of evolution by **natural selection** in *On the Origin of S
 
 ```osmosis
 id: sci-darwin-002
-stability: 6.1
-difficulty: 0.48
-due: 2026-03-14T10:00:00.000Z
-last-review: 2026-03-09T10:00:00.000Z
-reps: 4
-lapses: 0
-state: review
+c1-stability: 20.1
+c1-difficulty: 0.28
+c1-due: 2026-03-26T10:00:00.000Z
+c1-last-review: 2026-03-06T10:00:00.000Z
+c1-reps: 10
+c1-lapses: 0
+c1-state: review
+c2-stability: 12.4
+c2-difficulty: 0.38
+c2-due: 2026-03-19T10:00:00.000Z
+c2-last-review: 2026-03-07T10:00:00.000Z
+c2-reps: 7
+c2-lapses: 0
+c2-state: review
+c3-stability: 6.1
+c3-difficulty: 0.48
+c3-due: 2026-03-14T10:00:00.000Z
+c3-last-review: 2026-03-09T10:00:00.000Z
+c3-reps: 4
+c3-lapses: 0
+c3-state: review
+c4-stability: 2.8
+c4-difficulty: 0.60
+c4-due: 2026-03-12T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 3
+c4-lapses: 1
+c4-state: learning
+c5-stability: 0.9
+c5-difficulty: 0.65
+c5-due: 2026-03-11T08:00:00.000Z
+c5-last-review: 2026-03-10T10:00:00.000Z
+c5-reps: 2
+c5-lapses: 1
+c5-state: relearning
 
 ==Natural selection== requires four conditions: ==variation== among individuals, ==competition== for resources, ==differential reproduction==, and ==inheritance== of traits
 ```

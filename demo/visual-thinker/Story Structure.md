@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: writing/structure
 osmosis-styles:
   theme: Rose Pine
   mapLayout: radial
@@ -43,6 +44,8 @@ Great stories aren't accidents — they follow patterns that have resonated with
 ## The Three-Act Structure
 
 The backbone of Western storytelling. Every film, novel, and campfire tale echoes this shape.
+
+![Three-Act Structure diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Three_Act_Structure.svg/400px-Three_Act_Structure.svg.png)
 
 ### Act I — Setup (25%)
 
@@ -111,6 +114,8 @@ The final push. The protagonist, transformed by their journey, faces the ultimat
 
 Joseph Campbell's mythic structure, refined by Christopher Vogler for screenwriters.
 
+![The Hero's Journey](https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/Heroesjourney.svg/300px-Heroesjourney.svg.png)
+
 ### Departure
 
 - **The Ordinary World**: Life before the adventure
@@ -154,13 +159,34 @@ A more granular beat sheet used widely in screenwriting.
 
 ```osmosis
 id: write-struct-001
-stability: 20.7
-difficulty: 0.35
-due: 2026-03-22T10:00:00.000Z
-last-review: 2026-03-07T10:00:00.000Z
-reps: 10
-lapses: 0
-state: review
+c1-stability: 22.3
+c1-difficulty: 0.30
+c1-due: 2026-03-24T10:00:00.000Z
+c1-last-review: 2026-03-06T10:00:00.000Z
+c1-reps: 12
+c1-lapses: 0
+c1-state: review
+c2-stability: 8.5
+c2-difficulty: 0.45
+c2-due: 2026-03-17T10:00:00.000Z
+c2-last-review: 2026-03-09T10:00:00.000Z
+c2-reps: 6
+c2-lapses: 1
+c2-state: review
+c3-stability: 15.2
+c3-difficulty: 0.38
+c3-due: 2026-03-21T10:00:00.000Z
+c3-last-review: 2026-03-06T10:00:00.000Z
+c3-reps: 9
+c3-lapses: 0
+c3-state: review
+c4-stability: 3.1
+c4-difficulty: 0.55
+c4-due: 2026-03-13T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 4
+c4-lapses: 1
+c4-state: review
 
 The ==three-act structure== divides a story into ==setup==, ==confrontation==, and ==resolution==
 ```
@@ -182,13 +208,27 @@ The event that disrupts the protagonist's ordinary world and forces them to act 
 
 ```osmosis
 id: write-struct-003
-stability: 0.6
-difficulty: 0.62
-due: 2026-03-10T16:00:00.000Z
-last-review: 2026-03-10T08:00:00.000Z
-reps: 1
-lapses: 0
-state: learning
+c1-stability: 6.1
+c1-difficulty: 0.48
+c1-due: 2026-03-16T10:00:00.000Z
+c1-last-review: 2026-03-10T10:00:00.000Z
+c1-reps: 4
+c1-lapses: 0
+c1-state: review
+c2-stability: 0.6
+c2-difficulty: 0.62
+c2-due: 2026-03-10T16:00:00.000Z
+c2-last-review: 2026-03-10T08:00:00.000Z
+c2-reps: 1
+c2-lapses: 0
+c2-state: learning
+c3-stability: 2.3
+c3-difficulty: 0.58
+c3-due: 2026-03-12T14:00:00.000Z
+c3-last-review: 2026-03-10T08:00:00.000Z
+c3-reps: 2
+c3-lapses: 1
+c3-state: review
 
 The ==midpoint== of a story is typically a ==false victory== or ==false defeat== that shifts the stakes from external to personal
 ```
@@ -212,6 +252,8 @@ lapses: 0
 state: review
 
 In Campbell's Hero's Journey, what are the three major phases?
+
+![Joseph Campbell](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg/220px-Joseph_Campbell_at_Feathered_Pipe_Ranch%2C_Montana_%28cropped%29.jpg)
 ***
 Departure, Initiation, and Return — the hero leaves the ordinary world, faces trials and transformation, then returns with wisdom
 ```

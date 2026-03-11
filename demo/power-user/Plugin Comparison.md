@@ -1,5 +1,6 @@
 ---
 osmosis-cards: true
+osmosis-deck: obsidian/plugins
 osmosis-styles:
   theme: Catppuccin Mocha
   branchLineStyle: straight
@@ -136,6 +137,8 @@ state: learning
 What scheduling algorithm does Osmosis use for spaced repetition, and how does it differ from the Spaced Repetition plugin?
 ***
 Osmosis uses FSRS (Free Spaced Repetition Scheduler), while the Spaced Repetition plugin uses SM-2. FSRS is a more modern algorithm that adapts more precisely to individual learning patterns.
+
+![Zettelkasten — the original spaced review system](https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Zettelkasten_%28514941699%29.jpg/300px-Zettelkasten_%28514941699%29.jpg)
 ```
 
 ```osmosis
