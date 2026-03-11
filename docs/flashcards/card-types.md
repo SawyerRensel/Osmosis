@@ -18,6 +18,10 @@ The mitochondria
 
 Both front and back support full markdown — bold, italic, code, images, LaTeX.
 
+![Basic card — question side](../assets/media/osmosis_sequential_study_flashcard_question_frontback.png)
+
+![Basic card — answer side](../assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
+
 ## Bidirectional
 
 Generates two cards, one in each direction. Add `bidi: true`:
@@ -107,6 +111,10 @@ def greet(name):
 `````
 
 The marked line shows as `________` on the front (preserving indentation). The comment marker is stripped from the back.
+
+![Code cloze — question side](../assets/media/osmosis_sequential_study_flashcard_question_code_cloze.png)
+
+![Code cloze — answer side](../assets/media/osmosis_sequential_study_flashcard_answer_code_cloze.png)
 
 ### Multi-Line Region
 

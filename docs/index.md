@@ -10,6 +10,8 @@ hide:
 
 Osmosis turns your markdown notes into interactive mind maps and study material. Write once, study in multiple modes. No duplicate content, no external tools, no proprietary formats.
 
+![Osmosis — notes and mind map side by side](assets/media/osmosis_note_mind_map_split_view_zoomed.png)
+
 <div class="grid cards" markdown>
 
 -   :lucide-brain-circuit:{ .lg .middle } __Mind Mapping__

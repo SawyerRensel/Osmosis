@@ -39,6 +39,16 @@ Each section has a reset button to clear overrides.
 
 Osmosis includes 13 themes:
 
+![Default theme](../assets/media/osmosis_mind_map_default_theme.png)
+
+![Ocean theme](../assets/media/osmosis_mind_map_ocean_theme.png)
+
+![Monokai theme](../assets/media/osmosis_mind_map_monokai_theme.png)
+
+![Solarized Dark theme](../assets/media/osmosis_mind_map_solarized_dark_theme.png)
+
+![Solarized Light theme](../assets/media/osmosis_mind_map_solarized_light.png)
+
 | Theme | Style |
 |-------|-------|
 | Default | Inherits your Obsidian theme colors |

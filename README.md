@@ -7,7 +7,7 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.10.0+-purple)](https://obsidian.md)
 
-<!-- ![Osmosis Mind Map View](docs/media/osmosis_mind_map.png) -->
+![Osmosis Mind Map View](docs/assets/media/osmosis_note_mind_map_split_view_zoomed.png)
 
 ## Features
 
@@ -60,7 +60,7 @@ No existing tool does what Osmosis does. These aren't incremental improvements â
 
 ### Mind Map View
 
-<!-- ![Mind Map View](docs/media/osmosis_mind_map_view.png) -->
+![Mind Map View](docs/assets/media/osmosis_mind_map_default_theme.png)
 
 Your Markdown rendered as a fully interactive mind map:
 
@@ -72,7 +72,8 @@ Your Markdown rendered as a fully interactive mind map:
 
 ### Flashcard View
 
-<!-- ![Flashcard View](docs/media/osmosis_flashcard_view.png) -->
+![Flashcard Question](docs/assets/media/osmosis_sequential_study_flashcard_question_frontback.png)
+![Flashcard Answer](docs/assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
 
 Cards defined with a simple `osmosis` code fence:
 
@@ -84,7 +85,7 @@ Cards defined with a simple `osmosis` code fence:
 
 ### Study Dashboard
 
-<!-- ![Study Dashboard](docs/media/osmosis_dashboard.png) -->
+![Study Dashboard](docs/assets/media/osmosis_flashcard_dashboard.png)
 
 Central hub for all your study sessions:
 

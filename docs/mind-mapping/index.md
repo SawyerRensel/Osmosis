@@ -6,6 +6,8 @@ icon: lucide/brain-circuit
 
 Osmosis renders your markdown structure as a fully interactive mind map. Headings, bullet lists, and numbered lists become nodes. The map and your markdown stay in sync — edit one, and the other updates instantly.
 
+![Full-screen mind map view](../assets/media/osmosis_note_mind_map_fullscreen.png)
+
 ## How Markdown Maps to Nodes
 
 | Markdown | Node Type |
@@ -27,6 +29,8 @@ Nodes render rich content — bold, italic, code, images, and LaTeX all display 
 | File menu | Right-click a file > "Mind map view" |
 | Ribbon | Click the :lucide-brain-circuit: icon in the left sidebar |
 
+![Launch mind map from note view](../assets/media/osmosis_note_view_how_to_launch_mind_map_view_buttons.png)
+
 ## Transclusion
 
 Embed another note's content as a sub-branch using standard Obsidian syntax:
@@ -38,6 +42,8 @@ Embed another note's content as a sub-branch using standard Obsidian syntax:
 ```
 
 The embedded note's heading and list structure appears as a collapsible sub-branch. Transcluded branches are lazy-loaded — they only parse when expanded. Editing a transcluded node writes changes to the source file.
+
+![osmosis_mind_map_transclusion_split_view](../assets/media/osmosis_mind_map_transclusion_split_view.png)
 
 ## Cursor Sync
 

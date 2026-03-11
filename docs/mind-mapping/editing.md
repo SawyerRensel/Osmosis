@@ -6,6 +6,41 @@ icon: lucide/pencil
 
 Double-click a node (or press ++f2++) to enter edit mode. Press ++escape++ to cancel.
 
+![Drag and drop node repositioning](../assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png)
+
+## Toolbar
+
+The toolbar is a sticky action bar at the bottom of the mind map view. It provides quick access to all major actions — hover over any button for a tooltip.
+
+| Icon | Action | Requires Selection |
+|------|--------|--------------------|
+| :lucide-maximize: | Fit to view | No |
+| :lucide-zoom-in: | Zoom in | No |
+| :lucide-zoom-out: | Zoom out | No |
+| :lucide-home: | Center on root | No |
+| :lucide-chevrons-down-up: | Collapse all | Yes |
+| :lucide-chevrons-up-down: | Expand all | Yes |
+| :lucide-arrow-right-to-line: | Insert parent | Yes |
+| :lucide-arrow-down-from-line: | Add sibling | Yes |
+| :lucide-arrow-right-from-line: | Add child | Yes |
+| :lucide-arrow-up: | Move up | Yes |
+| :lucide-arrow-down: | Move down | Yes |
+| :lucide-arrow-left: | Move left (outdent) | Yes |
+| :lucide-arrow-right: | Move right (indent) | Yes |
+| :lucide-trash-2: | Delete | Yes |
+| :lucide-copy: | Copy | Yes |
+| :lucide-scissors: | Cut | Yes |
+| :lucide-clipboard-paste: | Paste | Yes |
+| :lucide-pipette: | Copy style | Yes |
+| :lucide-paint-bucket: | Paste style | Yes |
+| :lucide-undo-2: | Undo | No |
+| :lucide-redo-2: | Redo | No |
+| :lucide-refresh-cw: | Refresh mind map | No |
+| :lucide-paintbrush: | Map properties | No |
+
+Buttons that require a selection are dimmed when no node is selected. The toolbar hides automatically when you're editing a node's text.
+
+
 ## Structure Operations
 
 | Action | Keyboard | Context Menu |

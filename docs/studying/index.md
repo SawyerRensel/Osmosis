@@ -21,6 +21,8 @@ The Dashboard shows:
 
 Click any deck to study just that deck. The Dashboard refreshes automatically.
 
+![Flashcard dashboard](../assets/media/osmosis_flashcard_dashboard.png)
+
 ## Guides
 
 <div class="grid cards" markdown>
