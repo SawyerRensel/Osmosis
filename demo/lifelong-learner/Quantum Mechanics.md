@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  balance: both-sides
+  branchLineStyle: straight
+  baseStyle:
+    text:
+      size: 14
+      weight: 600
 ---
 
 # Quantum Mechanics

@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  mapLayout: radial
+  branchLineStyle: curved
 ---
 
 # Digital Garden

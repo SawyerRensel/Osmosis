@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  balance: both-sides
+  branchLineTaper: grow
   styles:
     "# History of Science/## The Scientific Revolution":
       fill: "#d4a959"

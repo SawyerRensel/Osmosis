@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  balance: both-sides
+  branchLineStyle: curved
   styles:
     "# Cardiovascular System/## Heart Chambers":
       fill: "#1a5276"

@@ -2,9 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
-  direction: right
-  layout: classic
-  balance: both-sides
+  layoutSide: right
+  mapLayout: classic
+  balance: alternating
   styles:
     "# PKM Framework/## PARA Method":
       fill: "#89b4fa"

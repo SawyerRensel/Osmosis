@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  topicShape: ellipse
+  branchLineStyle: curved
+  branchLineTaper: fade
 ---
 
 # The Cartographer's Daughter

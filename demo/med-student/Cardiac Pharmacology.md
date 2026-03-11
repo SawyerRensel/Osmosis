@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  topicShape: ellipse
+  branchLinePattern: dotted
+  baseStyle:
+    text:
+      size: 13
+      weight: 400
 ---
 
 # Cardiac Pharmacology

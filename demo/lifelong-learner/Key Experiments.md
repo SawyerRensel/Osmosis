@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  topicShape: rounded-rect
+  branchLineStyle: rounded-elbow
 ---
 
 # Key Experiments in the History of Science

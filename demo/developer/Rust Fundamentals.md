@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  branchLineStyle: straight
+  topicShape: rect
   styles:
     "# Rust Fundamentals/## Ownership Rules":
       fill: "#ff79c6"

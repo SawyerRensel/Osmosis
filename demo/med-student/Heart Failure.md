@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  topicShape: pill
+  balance: both-sides
+  branchLineTaper: fade
 ---
 
 # Heart Failure

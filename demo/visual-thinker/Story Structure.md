@@ -2,7 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
-  layout: radial
+  mapLayout: radial
+  balance: both-sides
   styles:
     "# Story Structure/## The Three-Act Structure":
       fill: "#eb6f92"

@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  branchLineStyle: rounded-elbow
+  branchLineTaper: grow
 ---
 
 # Pattern Matching

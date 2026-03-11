@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  branchLineStyle: angular
+  balance: both-sides
   styles:
     "# Rust Overview/## Core Language":
       fill: "#bd93f9"

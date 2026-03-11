@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  topicShape: ellipse
+  branchLinePattern: dotted
 ---
 
 # The Discovery of DNA's Structure

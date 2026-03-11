@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  topicShape: cloud
+  branchLineStyle: curved
+  branchLineTaper: grow
 ---
 
 # Plot Devices

@@ -1,6 +1,8 @@
 ---
 osmosis-styles:
   theme: Ocean
+  topicShape: ellipse
+  branchLineStyle: rounded-elbow
 ---
 
 # Cardiology Rotation — Study Plan

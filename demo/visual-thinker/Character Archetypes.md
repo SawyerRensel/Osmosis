@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  balance: both-sides
+  branchLineTaper: fade
   styles:
     "# Character Archetypes/## The Hero":
       fill: "#f6c177"

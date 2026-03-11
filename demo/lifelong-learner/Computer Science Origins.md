@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  topicShape: rounded-rect
+  branchLineStyle: rounded-elbow
+  branchLineTaper: grow
 ---
 
 # The Origins of Computer Science

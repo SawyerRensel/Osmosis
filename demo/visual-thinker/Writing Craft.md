@@ -2,7 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
-  layout: radial
+  mapLayout: radial
+  topicShape: cloud
   styles:
     "# Writing Craft/## Story Architecture":
       fill: "#eb6f92"

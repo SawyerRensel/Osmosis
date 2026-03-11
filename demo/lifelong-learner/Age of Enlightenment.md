@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  balance: both-sides
+  branchLineTaper: grow
+  baseStyle:
+    text:
+      size: 16
+      weight: 500
 ---
 
 # The Age of Enlightenment (c. 1685–1815)

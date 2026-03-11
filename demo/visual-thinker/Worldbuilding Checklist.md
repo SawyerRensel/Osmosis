@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  branchLineStyle: rounded-elbow
+  branchLinePattern: dashed
+  topicShape: ellipse
 ---
 
 # Worldbuilding Checklist

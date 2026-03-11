@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  balance: alternating
+  branchLineTaper: fade
 ---
 
 # Review Systems

@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  mapLayout: radial
+  topicShape: cloud
+  baseStyle:
+    text:
+      size: 15
+      weight: 600
 ---
 
 # Character Profiles

@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  branchLineStyle: rounded-elbow
+  topicShape: rounded-rect
 ---
 
 # Note-Taking Methods

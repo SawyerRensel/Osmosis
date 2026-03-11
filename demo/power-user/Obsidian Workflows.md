@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  branchLineStyle: angular
+  balance: both-sides
+  baseStyle:
+    text:
+      size: 15
+      weight: 500
 ---
 
 # Obsidian Workflows

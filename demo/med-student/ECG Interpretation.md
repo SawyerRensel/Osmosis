@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  topicShape: ellipse
+  balance: both-sides
   styles:
     "# ECG Interpretation/## Systematic Approach to ECG Reading":
       fill: "#1a6fc4"

@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  topicShape: pill
+  branchLineTaper: fade
   classes:
     anatomy:
       fill: "#1a6fc4"

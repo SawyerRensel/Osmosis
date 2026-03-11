@@ -2,6 +2,12 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  topicShape: rect
+  balance: both-sides
+  baseStyle:
+    text:
+      size: 14
+      weight: 500
 ---
 
 # Error Handling

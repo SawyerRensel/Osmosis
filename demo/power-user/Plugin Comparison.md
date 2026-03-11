@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  branchLineStyle: straight
+  balance: both-sides
 ---
 
 # Plugin Comparison

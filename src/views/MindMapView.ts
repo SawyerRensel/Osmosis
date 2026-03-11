@@ -26,7 +26,7 @@ import type { BranchLineStyle, BranchLinePattern, BranchLineTaper, MapSettings }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -6363,9 +6363,12 @@ export class MindMapView extends ItemView {
 		const sourcePath = this.currentFile?.path ?? "";
 		const allNodes = this.collectAllNodes(tree.root);
 
+		// Build a map of nodeId → tree-path so we can resolve tree-path style
+		// selectors during measurement (before the layout tree exists).
+		const treePathMap = buildTreePathMap(tree.root);
+
 		// Collect nodes that need measurement (not in cache).
 		// Cache key includes heading depth and per-node style hash since typography varies.
-		const fmStyles = this.osmosisStyleFrontmatter?.styles;
 		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
 			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
 			: undefined;
@@ -6375,7 +6378,9 @@ export class MindMapView extends ItemView {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
 			// Include per-node text style, shape, and custom width in cache key so changes invalidate
-			const localStyle = fmStyles?.[`_n:${node.id}`];
+			const localStyle = lookupNodeStyleByPath(
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+			);
 			const textStyleKey = localStyle?.text
 				? JSON.stringify(localStyle.text)
 				: "";
@@ -6414,7 +6419,9 @@ export class MindMapView extends ItemView {
 				}
 				// Apply theme + per-node text styles for accurate measurement
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
-				const nodeLocalStyle = fmStyles?.[`_n:${node.id}`];
+				const nodeLocalStyle = lookupNodeStyleByPath(
+					this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				);
 				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
 				const nodeVariantStyle = activeVariantDef?.[`_n:${node.id}`] ?? activeVariantDef?.[node.content] ?? activeVariantDef?.["*"];
 				const style = (this.effectiveTheme || nodeLocalStyle || nodeClassStyle || nodeVariantStyle)
@@ -6522,20 +6529,24 @@ export class MindMapView extends ItemView {
 	private buildNodeShapeMap(): Map<string, TopicShape> {
 		const shapes = new Map<string, TopicShape>();
 		const fmStyles = this.osmosisStyleFrontmatter?.styles;
-		if (!fmStyles) return shapes;
+		if (!fmStyles || !this.currentTree) return shapes;
 
-		for (const [selector, style] of Object.entries(fmStyles)) {
-			if (selector.startsWith("_n:")) {
-				const nodeId = selector.slice(3);
-				// Direct shape override takes priority
-				if (style.shape) {
-					shapes.set(nodeId, style.shape);
-				} else if (style.class) {
-					// Fall back to class-defined shape
-					const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, style.class, this.getGlobalClasses());
-					if (classStyle?.shape) {
-						shapes.set(nodeId, classStyle.shape);
-					}
+		// Build tree-path map so we can resolve tree-path selectors
+		const treePathMap = buildTreePathMap(this.currentTree.root);
+
+		const allNodes = this.collectAllNodes(this.currentTree.root);
+		for (const node of allNodes) {
+			if (node.type === "root") continue;
+			const style = lookupNodeStyleByPath(
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+			);
+			if (!style) continue;
+			if (style.shape) {
+				shapes.set(node.id, style.shape);
+			} else if (style.class) {
+				const classStyle = lookupClassStyle(this.osmosisStyleFrontmatter, style.class, this.getGlobalClasses());
+				if (classStyle?.shape) {
+					shapes.set(node.id, classStyle.shape);
 				}
 			}
 		}
@@ -6545,12 +6556,19 @@ export class MindMapView extends ItemView {
 	private buildNodeSidesMap(): Map<string, LayoutSide> {
 		const sides = new Map<string, LayoutSide>();
 		const fmStyles = this.osmosisStyleFrontmatter?.styles;
-		if (!fmStyles) return sides;
+		if (!fmStyles || !this.currentTree) return sides;
 
-		for (const [selector, style] of Object.entries(fmStyles)) {
-			if (selector.startsWith("_n:") && style.side) {
-				const nodeId = selector.slice(3);
-				sides.set(nodeId, style.side);
+		// Build tree-path map so we can resolve tree-path selectors
+		const treePathMap = buildTreePathMap(this.currentTree.root);
+
+		const allNodes = this.collectAllNodes(this.currentTree.root);
+		for (const node of allNodes) {
+			if (node.type === "root") continue;
+			const style = lookupNodeStyleByPath(
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+			);
+			if (style?.side) {
+				sides.set(node.id, style.side);
 			}
 		}
 		return sides;

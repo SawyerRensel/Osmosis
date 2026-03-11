@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  topicShape: pill
+  branchLineStyle: curved
 ---
 
 # Valvular Disease

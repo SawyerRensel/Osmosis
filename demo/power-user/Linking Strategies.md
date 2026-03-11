@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  branchLineTaper: grow
+  topicShape: pill
 ---
 
 # Linking Strategies

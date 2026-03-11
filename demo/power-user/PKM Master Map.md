@@ -2,9 +2,11 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
-  direction: right
-  layout: classic
+  layoutSide: right
+  mapLayout: classic
   balance: both-sides
+  branchLineStyle: straight
+  topicShape: hexagon
   classes:
     input:
       fill: "#89b4fa"

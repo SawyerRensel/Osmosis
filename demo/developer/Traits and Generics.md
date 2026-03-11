@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  branchLineStyle: straight
+  balance: both-sides
 ---
 
 # Traits and Generics

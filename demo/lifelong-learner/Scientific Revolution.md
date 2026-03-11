@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  topicShape: pill
+  branchLineStyle: curved
   styles:
     "# The Scientific Revolution (1543–1687)/## Nicolaus Copernicus (1473–1543)":
       fill: "#d4a959"
@@ -44,6 +46,7 @@ osmosis-styles:
       branchLine:
         color: "#d699b6"
         thickness: 2
+  branchLineThickness: 4
 ---
 
 # The Scientific Revolution (1543–1687)

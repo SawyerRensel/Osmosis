@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  balance: both-sides
+  branchLineTaper: fade
 ---
 
 # Hypertension

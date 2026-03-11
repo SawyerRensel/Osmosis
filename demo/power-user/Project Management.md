@@ -2,6 +2,11 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Catppuccin Mocha
+  topicShape: hexagon
+  branchLinePattern: dashed
+  baseStyle:
+    text:
+      alignment: left
 ---
 
 # Project Management

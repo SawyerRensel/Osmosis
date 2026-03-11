@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  topicShape: rect
+  branchLineStyle: angular
 ---
 
 # CLI Project

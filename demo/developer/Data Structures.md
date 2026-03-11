@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Dracula
+  topicShape: rect
+  branchLineTaper: grow
 ---
 
 # Data Structures

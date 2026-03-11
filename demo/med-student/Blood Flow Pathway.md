@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Ocean
+  branchLineStyle: rounded-elbow
+  branchLineTaper: grow
   shapes:
     Pulmonary Circulation: diamond
     Systemic Circulation: hexagon

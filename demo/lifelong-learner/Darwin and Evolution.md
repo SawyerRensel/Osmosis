@@ -2,6 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Everforest
+  topicShape: pill
+  branchLineStyle: rounded-elbow
 ---
 
 # Darwin and the Theory of Evolution

@@ -444,6 +444,54 @@ export function buildStableIdSelector(node: OsmosisNode): string {
 }
 
 /**
+ * Build a map of nodeId → tree-path string from an OsmosisNode tree.
+ *
+ * This enables tree-path style lookups without needing LayoutNode parent
+ * pointers, which is necessary during measurement (before layout is computed).
+ */
+export function buildTreePathMap(root: OsmosisNode): Map<string, string> {
+	const map = new Map<string, string>();
+	function walk(node: OsmosisNode, parentPath: string): void {
+		if (node.type === "root") {
+			for (const child of node.children) {
+				walk(child, "");
+			}
+			return;
+		}
+		const segment = nodeToPathSegment(node);
+		const path = parentPath ? `${parentPath}/${segment}` : segment;
+		map.set(node.id, path);
+		for (const child of node.children) {
+			walk(child, path);
+		}
+	}
+	walk(root, "");
+	return map;
+}
+
+/**
+ * Look up the Local-level style for a node using its ID and pre-built tree path.
+ * Works without LayoutNode parent pointers — suitable for pre-layout measurement.
+ */
+export function lookupNodeStyleByPath(
+	frontmatter: OsmosisStyleFrontmatter | undefined,
+	nodeId: string,
+	treePath: string | undefined,
+): NodeStyle | undefined {
+	if (!frontmatter?.styles) return undefined;
+	const styles = frontmatter.styles;
+
+	// 1. Stable ID selector (highest priority)
+	const stableKey = STABLE_ID_PREFIX + nodeId;
+	if (styles[stableKey]) return styles[stableKey];
+
+	// 2. Tree path selector
+	if (treePath && styles[treePath]) return styles[treePath];
+
+	return undefined;
+}
+
+/**
  * Look up the Local-level style override for a node from parsed frontmatter.
  *
  * Checks both stable-ID selectors ("_n:a3f2...") and tree-path selectors.

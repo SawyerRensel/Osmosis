@@ -2,6 +2,9 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
+  topicShape: ellipse
+  branchLineStyle: curved
+  balance: both-sides
 ---
 
 # Dialogue Techniques

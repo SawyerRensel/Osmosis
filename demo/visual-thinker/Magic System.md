@@ -2,7 +2,8 @@
 osmosis-cards: true
 osmosis-styles:
   theme: Rose Pine
-  layout: radial
+  mapLayout: radial
+  branchLineTaper: fade
   styles:
     "# Magic Systems/## Hard Magic vs. Soft Magic":
       fill: "#eb6f92"
