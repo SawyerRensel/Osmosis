@@ -11,18 +11,30 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 
 ## Features
 
-- **Interactive Mind Maps** - Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
-- **Five Card Types** - Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
-- **FSRS Spaced Repetition** - The same algorithm powering modern Anki, built right into your notes
-- **Three Study Modes** - Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
-- **Plain Markdown** - Everything lives in your files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues
-- **Themes and Styling** - Customize mind map appearance with built-in themes, colors, and layout options
-- **Keyboard Navigation** - Full keyboard support for mind map editing and study sessions
-- **Dashboard** - See all your decks, due card counts, and study statistics at a glance
+- 🧠 **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
+- 🃏 **Five Card Types** — Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
+- 📈 **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
+- 🎯 **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
+- 📝 **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues
+- 🎨 **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
+- ⌨️ **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
+- 📊 **Dashboard** — See all your decks, due card counts, and study statistics at a glance
+
+## Why Osmosis?
+
+Most mind mapping and flashcard tools force you to choose: either your notes are the source of truth, or the tool is. Osmosis refuses that tradeoff.
+
+🗺️ **Not just a viewer — a full editor.** Tools like [Markmap](https://markmap.js.org/) render beautiful mind maps from Markdown, but they're read-only. You can look, but you can't touch. Osmosis mind maps are fully interactive — add nodes, edit text, rearrange branches — and every change writes back to your Markdown instantly.
+
+🔓 **Not proprietary — plain Markdown.** Tools like [Xmind](https://xmind.com/) are powerful mind mappers, but your data lives in a proprietary format. Markdown export is an afterthought. With Osmosis, Markdown *is* the format. Your notes work everywhere, with every tool, forever.
+
+🤖 **AI-native by design.** Because everything is plain Markdown, AI assistants can read, generate, and edit your content natively. Ask your AI to generate Osmosis flashcards from your notes, restructure your mind map, or create study material — no export, no conversion, no friction.
+
+🧩 **One file, multiple views.** Notes, mind maps, and flashcards all live in the same Markdown file. No duplicating content across tools. No syncing between apps. Write once, study in multiple modes.
 
 ## Who It's For
 
-**The Med Student** — You're drowning in anatomy, pharmacology, and pathology. You already use Anki, but maintaining two separate systems — notes and flashcards — is killing your workflow. Osmosis lets you write your lecture notes once and study them as flashcards without ever leaving your vault. Mind maps help you see how body systems connect. FSRS keeps you on schedule.
+**The Med Student** — You're drowning in anatomy, pharmacology, and pathology. You already use Anki, but maintaining two separate systems — notes and flashcards — is killing your workflow. Osmosis lets you define flashcards right inside your lecture notes, so your study material lives where you take notes. Mind maps help you see how body systems connect. FSRS keeps you on schedule.
 
 **The Self-Taught Developer** — You're learning a new language, framework, or codebase on your own. Code cloze cards let you drill syntax and API patterns. Mind maps give you the big-picture architecture view. Everything stays in the same Markdown files you already take notes in.
 
@@ -31,8 +43,6 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 **The Obsidian Power User** — You've built your second brain in Obsidian and you want mind mapping and spaced repetition without leaving the ecosystem. No proprietary formats, no external accounts, no sync issues. Plain Markdown, full ownership.
 
 **The Visual Thinker** — Outlines and bullet points don't click for you. You need to see the structure. Osmosis turns any Markdown file into an interactive mind map you can edit, rearrange, and study from — bridging the gap between linear notes and spatial understanding.
-
-**The Educator** — You're building course material and want students to have both the overview (mind maps) and the practice (flashcards) from a single source. Write your lesson notes once, and students get structured review material for free.
 
 ## Views
 
@@ -57,7 +67,7 @@ Cards defined with a simple `osmosis` code fence:
 - **Basic** — Question and answer
 - **Bidirectional** — Study in both directions
 - **Type-in** — Type your answer before revealing
-- **Cloze** — Fill-in-the-blank with `{{cloze}}` syntax
+- **Cloze** — Fill-in-the-blank with `==highlighted==` or `**bold**` markers
 - **Code Cloze** — Cloze deletions inside code blocks
 
 ### Study Dashboard
@@ -124,10 +134,11 @@ The mitochondria
 
 ````markdown
 ```osmosis
+bidi: true
+
 Mitochondria
 ***
 The powerhouse of the cell
-type: bidirectional
 ```
 ````
 
@@ -135,31 +146,38 @@ type: bidirectional
 
 ````markdown
 ```osmosis
+type-in: true
+
 The powerhouse of the cell is the ___
 ***
 mitochondria
-type: type-in
 ```
 ````
 
 ### Cloze Card
 
+Use `==highlights==` or `**bold**` to mark deletions. Each marked term generates a separate card.
+
 ````markdown
 ```osmosis
-The {{mitochondria}} is the powerhouse of the cell
+==Mitochondria== are the ==powerhouse== of the ==cell==
 ```
 ````
 
 ### Code Cloze Card
 
-````markdown
-```osmosis
-function {{greet}}(name) {
-  return `Hello, {{${name}}}!`;
-}
-lang: javascript
+Use `osmosis-cloze` in a comment to mark lines for deletion. Use `osmosis-cloze-start` / `osmosis-cloze-end` for multi-line regions.
+
+`````markdown
+````osmosis
+```python
+def fibonacci(n):
+    if n <= 1:
+        return n  # osmosis-cloze
+    return fibonacci(n-1) + fibonacci(n-2)
 ```
 ````
+`````
 
 ## Installation
 
@@ -189,10 +207,10 @@ lang: javascript
 
 Full documentation is available at **[osmosis.md](https://osmosis.md/)**:
 
-- [**Getting Started**](https://osmosis.md/getting-started/) — Installation and quick start
-- [**Mind Mapping**](https://osmosis.md/mind-mapping/) — Layout, editing, keyboard shortcuts, styling, themes
-- [**Flashcards**](https://osmosis.md/flashcards/) — Card syntax for every card type, with examples
-- [**Studying**](https://osmosis.md/studying/) — Sequential, contextual, and spatial study modes
+- **Getting Started** — [Installation](https://osmosis.md/getting-started/installation/) · [Quick Start](https://osmosis.md/getting-started/quick-start/)
+- **Mind Mapping** — [Editing](https://osmosis.md/mind-mapping/editing/) · [Navigation](https://osmosis.md/mind-mapping/navigation/) · [Styling](https://osmosis.md/mind-mapping/styling/)
+- **Flashcards** — [Card Types](https://osmosis.md/flashcards/card-types/) · [Decks](https://osmosis.md/flashcards/decks/)
+- **Studying** — [Spaced Repetition](https://osmosis.md/studying/spaced-repetition/) · [Study Modes](https://osmosis.md/studying/study-modes/)
 
 ## Development
 
@@ -232,7 +250,11 @@ This project is licensed under the GNU General Public License v3.0 — see the [
 - [Obsidian](https://obsidian.md) — The incredible knowledge base application
 - [FSRS](https://github.com/open-spaced-repetition/ts-fsrs) — Free Spaced Repetition Scheduler
 - [Anki](https://apps.ankiweb.net/) — Inspiration for spaced repetition workflows
+- [Xmind](https://xmind.com/) — Inspiration for mind mapping UX
+- [Minder](https://github.com/phase1geo/Minder) — Open-source mind mapping software
+- [obsidian-spaced-repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) — The original Obsidian spaced repetition plugin
+- [Decks](https://github.com/pheralb/decks) — Modern flashcard plugin for Obsidian using FSRS
 
 ---
 
-**Author:** Sawyer Rensel ([@SawyerRenworthy](https://github.com/SawyerRenworthy))
+**Author:** Sawyer Rensel ([@SawyerRensel](https://github.com/SawyerRensel))
