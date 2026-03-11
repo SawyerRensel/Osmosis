@@ -6,7 +6,7 @@ icon: lucide/layers
 
 Osmosis flashcards live directly in your markdown files as `osmosis` code fences. No external database, no sync issues — your cards travel with your notes.
 
-![osmosis_sequential_study_flashcard_answer_frontback](../../assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
+![osmosis_sequential_study_flashcard_answer_frontback](../assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
 
 ## Enabling Cards
 
