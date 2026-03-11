@@ -15,7 +15,7 @@ icon: lucide/download
 
 ## Manual Installation
 
-1. Download the latest release (`main.js`, `manifest.json`, `styles.css`) from [GitHub Releases](https://github.com/osmosis-md/osmosis/releases)
+1. Download the latest release (`main.js`, `manifest.json`, `styles.css`) from [GitHub Releases](https://github.com/SawyerRensel/Osmosis/releases)
 2. Create the folder `.obsidian/plugins/osmosis/` in your vault
 3. Copy the downloaded files into that folder
 4. Open **Settings > Community Plugins** and enable "Osmosis"
