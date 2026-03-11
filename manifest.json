@@ -1,9 +1,10 @@
 {
 	"id": "osmosis",
 	"name": "Osmosis",
-	"version": "0.1.0",
-	"minAppVersion": "0.15.0",
+	"version": "0.0.1",
+	"minAppVersion": "1.10.0",
 	"description": "Absorb information faster and longer with unified notes, flashcards, and mind mapping.",
 	"author": "Sawyer Rensel",
+	"authorUrl": "https://github.com/SawyerRensel",
 	"isDesktopOnly": false
 }
