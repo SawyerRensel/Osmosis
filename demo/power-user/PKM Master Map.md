@@ -1,10 +1,84 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
   direction: right
   layout: classic
   balance: both-sides
+  classes:
+    input:
+      fill: "#89b4fa"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+    organize:
+      fill: "#a6e3a1"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+    retain:
+      fill: "#f9e2af"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+    output:
+      fill: "#fab387"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+    share:
+      fill: "#f5c2e7"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+    evaluate:
+      fill: "#cba6f7"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+  styles:
+    "# PKM Master Map/## Frameworks":
+      class: organize
+      shape: hexagon
+      branchLine:
+        color: "#a6e3a1"
+        thickness: 2.5
+    "# PKM Master Map/## Capture":
+      class: input
+      branchLine:
+        color: "#89b4fa"
+        thickness: 2.5
+    "# PKM Master Map/## Tools & Workflows":
+      class: input
+      branchLine:
+        color: "#89b4fa"
+        thickness: 2.5
+    "# PKM Master Map/## Structure":
+      class: organize
+      branchLine:
+        color: "#a6e3a1"
+        thickness: 2.5
+    "# PKM Master Map/## Retention":
+      class: retain
+      shape: hexagon
+      branchLine:
+        color: "#f9e2af"
+        thickness: 2.5
+    "# PKM Master Map/## Execution":
+      class: output
+      branchLine:
+        color: "#fab387"
+        thickness: 2.5
+    "# PKM Master Map/## Sharing":
+      class: share
+      branchLine:
+        color: "#f5c2e7"
+        thickness: 2.5
+    "# PKM Master Map/## Evaluation":
+      class: evaluate
+      branchLine:
+        color: "#cba6f7"
+        thickness: 2.5
 ---
 
 # PKM Master Map

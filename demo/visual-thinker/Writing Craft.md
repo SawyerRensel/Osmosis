@@ -1,8 +1,45 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
   layout: radial
+  styles:
+    "# Writing Craft/## Story Architecture":
+      fill: "#eb6f92"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#eb6f92"
+        thickness: 3
+    "# Writing Craft/## The People Who Live There":
+      fill: "#f6c177"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#f6c177"
+        thickness: 3
+    "# Writing Craft/## The Tricks of the Trade":
+      fill: "#c4a7e7"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#c4a7e7"
+        thickness: 3
+    "# Writing Craft/## Making Them Speak":
+      fill: "#9ccfd8"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#9ccfd8"
+        thickness: 3
 ---
 
 # Writing Craft

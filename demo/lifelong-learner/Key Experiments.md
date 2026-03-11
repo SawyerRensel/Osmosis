@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # Key Experiments in the History of Science

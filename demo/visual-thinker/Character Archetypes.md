@@ -1,12 +1,62 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
+  styles:
+    "# Character Archetypes/## The Hero":
+      fill: "#f6c177"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#f6c177"
+        thickness: 2
+    "# Character Archetypes/## The Shadow":
+      fill: "#eb6f92"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#eb6f92"
+        thickness: 2
+    "# Character Archetypes/## The Mentor":
+      fill: "#9ccfd8"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#9ccfd8"
+        thickness: 2
+    "# Character Archetypes/## The Trickster":
+      fill: "#c4a7e7"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#c4a7e7"
+        thickness: 2
+    "# Character Archetypes/## The Shapeshifter":
+      fill: "#ebbcba"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#ebbcba"
+        thickness: 2
 ---
 
 # Character Archetypes
 
 Carl Jung proposed that certain character patterns recur across all cultures and eras because they tap into the collective unconscious. These archetypes aren't rigid molds — they're gravitational centers that characters orbit around, bending and combining in infinite ways.
+
+![Joseph Campbell](https://upload.wikimedia.org/wikipedia/commons/thumb/4/41/Joseph_Campbell%2C_late_1970s.jpg/400px-Joseph_Campbell%2C_late_1970s.jpg)
+
+[The Hero's Journey — TED-Ed](https://www.youtube.com/watch?v=Hhk4N9A0oCA)
 
 ## The Hero
 

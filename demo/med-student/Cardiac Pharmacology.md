@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
 ---
 
 # Cardiac Pharmacology
 
 Cardiovascular drugs represent one of the most prescribed drug classes worldwide. Understanding their mechanisms, indications, and adverse effects is essential for clinical practice.
+
+[Cardiac Pharmacology Overview — Ninja Nerd](https://www.youtube.com/watch?v=7ynlFfKriqc)
 
 ## Beta-Blockers (-olol)
 

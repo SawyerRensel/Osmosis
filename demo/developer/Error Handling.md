@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
 ---
 
 # Error Handling
 
 Rust distinguishes between **recoverable** errors (`Result<T, E>`) and **unrecoverable** errors (`panic!`). The type system forces you to handle errors explicitly.
+
+[Rust Error Handling — Let's Get Rusty](https://www.youtube.com/watch?v=wM6o70NAWUI)
 
 ## Result and Option
 

@@ -1,21 +1,61 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
-  shapes:
-    default: rounded-rect
-  colors:
-    Arterial System: "#dc2626"
-    Venous System: "#2563eb"
-    Arteries: "#dc2626"
-    Veins: "#2563eb"
+  theme: Ocean
+  styles:
+    "# Cardiovascular System/## Heart Chambers":
+      fill: "#1a5276"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#5dade2"
+        thickness: 2
+    "# Cardiovascular System/## Heart Valves":
+      fill: "#1a5276"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#5dade2"
+        thickness: 2
+    "# Cardiovascular System/## Heart Wall Layers":
+      fill: "#1a5276"
+      text:
+        color: "#ffffff"
+        weight: 700
+    "# Cardiovascular System/## Arterial System":
+      fill: "#922b21"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#dc2626"
+        thickness: 2.5
+    "# Cardiovascular System/## Venous System":
+      fill: "#1a4f8a"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#2563eb"
+        thickness: 2.5
+    "# Cardiovascular System/## Coronary Circulation":
+      fill: "#7d3c98"
+      shape: hexagon
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#a78bfa"
+        thickness: 2
 ---
 
 # Cardiovascular System
 
 The cardiovascular system is a closed circulatory system responsible for transporting blood, nutrients, oxygen, and waste products throughout the body. The heart serves as the central pump, beating approximately 100,000 times per day.
 
-![[heart-anatomy.png]]
+![Diagram of the human heart](https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Diagram_of_the_human_heart_%28cropped%29.svg/800px-Diagram_of_the_human_heart_%28cropped%29.svg.png)
 
 ## Heart Chambers
 

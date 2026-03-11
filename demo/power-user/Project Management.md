@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
 ---
 
 # Project Management

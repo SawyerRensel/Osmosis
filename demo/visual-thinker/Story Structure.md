@@ -1,16 +1,43 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
   layout: radial
   styles:
-    _n:story-root:
+    "# Story Structure/## The Three-Act Structure":
+      fill: "#eb6f92"
       shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#eb6f92"
+        thickness: 2.5
+    "# Story Structure/## The Hero's Journey (Monomyth)":
+      fill: "#f6c177"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#f6c177"
+        thickness: 2.5
+    "# Story Structure/## Story Beats (Blake Snyder's Save the Cat!)":
+      fill: "#c4a7e7"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#c4a7e7"
+        thickness: 2.5
 ---
 
 # Story Structure
 
 Great stories aren't accidents — they follow patterns that have resonated with audiences for millennia. Understanding structure gives you a scaffold to build on, not a cage to write inside.
+
+[Story Structure — Dan Harmon's Story Circle](https://www.youtube.com/watch?v=RG4WcRAgm7Y)
 
 ## The Three-Act Structure
 

@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
 ---
 
 # Valvular Disease

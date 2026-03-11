@@ -1,12 +1,49 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
+  styles:
+    "# Rust Fundamentals/## Ownership Rules":
+      fill: "#ff79c6"
+      text:
+        color: "#282a36"
+        weight: 700
+      branchLine:
+        color: "#ff79c6"
+        thickness: 2
+    "# Rust Fundamentals/## Borrowing":
+      fill: "#50fa7b"
+      text:
+        color: "#282a36"
+        weight: 700
+      branchLine:
+        color: "#50fa7b"
+        thickness: 2
+    "# Rust Fundamentals/## Lifetimes":
+      fill: "#8be9fd"
+      text:
+        color: "#282a36"
+        weight: 700
+      branchLine:
+        color: "#8be9fd"
+        thickness: 2
+    "# Rust Fundamentals/## The Drop Trait":
+      fill: "#ffb86c"
+      text:
+        color: "#282a36"
+        weight: 700
+      branchLine:
+        color: "#ffb86c"
+        thickness: 2
 ---
 
 # Rust Fundamentals
 
 Rust's ownership system is the language's most distinctive feature. It enables memory safety guarantees without a garbage collector, enforced entirely at compile time.
+
+![Rust logo](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/Rust_programming_language_black_logo.svg/240px-Rust_programming_language_black_logo.svg.png)
+
+[Rust Ownership Explained — Let's Get Rusty](https://www.youtube.com/watch?v=VFIOSWy93H0)
 
 ## Ownership Rules
 

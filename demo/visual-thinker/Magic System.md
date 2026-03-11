@@ -1,7 +1,36 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
+  layout: radial
+  styles:
+    "# Magic Systems/## Hard Magic vs. Soft Magic":
+      fill: "#eb6f92"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#eb6f92"
+        thickness: 2.5
+    "# Magic Systems/## Sanderson's Laws of Magic":
+      fill: "#c4a7e7"
+      shape: cloud
+      text:
+        color: "#e0def4"
+        weight: 700
+      branchLine:
+        color: "#c4a7e7"
+        thickness: 2.5
+    "# Magic Systems/## Designing Your System":
+      fill: "#f6c177"
+      shape: ellipse
+      text:
+        color: "#191724"
+        weight: 700
+      branchLine:
+        color: "#f6c177"
+        thickness: 2.5
 ---
 
 # Magic Systems

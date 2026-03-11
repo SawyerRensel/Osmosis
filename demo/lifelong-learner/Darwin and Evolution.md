@@ -1,12 +1,16 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # Darwin and the Theory of Evolution
 
 Charles Darwin's theory of evolution by natural selection is one of the most powerful ideas in the history of science. It unified biology, explained the diversity of life, and forever changed how we see our place in nature.
+
+![Charles Darwin portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Charles_Darwin_seated_crop.jpg/400px-Charles_Darwin_seated_crop.jpg)
+
+[Evolution — CrashCourse Biology](https://www.youtube.com/watch?v=GcjgWov7mTM)
 
 ## Charles Darwin (1809–1882)
 

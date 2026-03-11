@@ -1,12 +1,16 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # Einstein and the Theory of Relativity
 
 Albert Einstein's theories of relativity overthrew Newtonian physics at extreme scales — high speeds and strong gravitational fields. They revealed a universe stranger and more beautiful than anyone had imagined.
+
+![Albert Einstein in 1921](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d3/Albert_Einstein_Head.jpg/400px-Albert_Einstein_Head.jpg)
+
+[General Relativity Explained — PBS Space Time](https://www.youtube.com/watch?v=AwhKZ3fd9JA)
 
 ## Albert Einstein (1879–1955)
 

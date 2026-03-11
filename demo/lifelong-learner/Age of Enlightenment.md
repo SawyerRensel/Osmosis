@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # The Age of Enlightenment (c. 1685–1815)
 
 The Enlightenment was an intellectual movement that championed reason, individual liberty, and skepticism of authority. Its thinkers reshaped philosophy, politics, and science — and their ideas still underpin modern democracies.
+
+![Voltaire portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/D%27apr%C3%A8s_Maurice_Quentin_de_La_Tour%2C_Portrait_de_Voltaire%2C_d%C3%A9tail_du_visage_%28ch%C3%A2teau_de_Ferney%29.jpg/400px-D%27apr%C3%A8s_Maurice_Quentin_de_La_Tour%2C_Portrait_de_Voltaire%2C_d%C3%A9tail_du_visage_%28ch%C3%A2teau_de_Ferney%29.jpg)
 
 ## John Locke (1632–1704)
 

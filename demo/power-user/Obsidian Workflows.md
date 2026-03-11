@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
 ---
 
 # Obsidian Workflows
 
 Obsidian's power comes from combining its core features with community plugins into personalized workflows. Here are the most impactful workflows and how to set them up.
+
+[My Obsidian Workflow — Nicole van der Hoeven](https://www.youtube.com/watch?v=wKNWMBeGCuU)
 
 ## Templates
 

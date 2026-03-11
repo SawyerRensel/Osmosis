@@ -1,12 +1,16 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
 ---
 
 # Concurrency
 
 Rust's ownership model extends naturally to concurrent programming. Data races are caught at compile time, making fearless concurrency a reality.
+
+![Fearless Concurrency in Rust](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2f/Rust_Ferris.svg/240px-Rust_Ferris.svg.png)
+
+[Rust Concurrency Explained — Let's Get Rusty](https://www.youtube.com/watch?v=06WcsNVUODQ)
 
 ## Threads
 

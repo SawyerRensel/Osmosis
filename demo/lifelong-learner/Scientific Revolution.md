@@ -1,12 +1,56 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
+  styles:
+    "# The Scientific Revolution (1543–1687)/## Nicolaus Copernicus (1473–1543)":
+      fill: "#d4a959"
+      text:
+        color: "#2d353b"
+        weight: 700
+      branchLine:
+        color: "#d4a959"
+        thickness: 2
+    "# The Scientific Revolution (1543–1687)/## Galileo Galilei (1564–1642)":
+      fill: "#e67e80"
+      text:
+        color: "#2d353b"
+        weight: 700
+      branchLine:
+        color: "#e67e80"
+        thickness: 2
+    "# The Scientific Revolution (1543–1687)/## Johannes Kepler (1571–1630)":
+      fill: "#7fbbb3"
+      text:
+        color: "#2d353b"
+        weight: 700
+      branchLine:
+        color: "#7fbbb3"
+        thickness: 2
+    "# The Scientific Revolution (1543–1687)/## Isaac Newton (1643–1727)":
+      fill: "#a7c080"
+      shape: hexagon
+      text:
+        color: "#2d353b"
+        weight: 700
+      branchLine:
+        color: "#a7c080"
+        thickness: 2.5
+    "# The Scientific Revolution (1543–1687)/## Legacy":
+      fill: "#d699b6"
+      text:
+        color: "#2d353b"
+        weight: 700
+      branchLine:
+        color: "#d699b6"
+        thickness: 2
 ---
 
 # The Scientific Revolution (1543–1687)
 
 The Scientific Revolution marks one of the most dramatic shifts in human thought — a period when observation, mathematics, and experimentation replaced dogma as the path to understanding nature.
+
+![Galileo's telescope](https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Galileo_Galilei_by_Justus_Sustermans.jpg/400px-Galileo_Galilei_by_Justus_Sustermans.jpg)
 
 ## Nicolaus Copernicus (1473–1543)
 

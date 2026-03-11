@@ -1,12 +1,51 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
+  styles:
+    "# ECG Interpretation/## Systematic Approach to ECG Reading":
+      fill: "#1a6fc4"
+      shape: hexagon
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#4a9eff"
+        thickness: 2
+    "# ECG Interpretation/## ECG Waves and Their Significance":
+      fill: "#2d9a4e"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#4ade80"
+        thickness: 2
+    "# ECG Interpretation/## Key Intervals and Normal Values":
+      fill: "#d97706"
+      text:
+        color: "#ffffff"
+        weight: 700
+      branchLine:
+        color: "#fbbf24"
+        thickness: 2
+    "# ECG Interpretation/## Common ECG Patterns (High-Yield)":
+      fill: "#c43a3a"
+      text:
+        color: "#ffffff"
+        weight: 700
+      border:
+        color: "#ff6b6b"
+        width: 2
+      branchLine:
+        color: "#f87171"
+        thickness: 2.5
 ---
 
 # ECG Interpretation
 
 The electrocardiogram (ECG/EKG) is the most widely used cardiac diagnostic tool. A systematic approach to ECG interpretation is critical for identifying arrhythmias, ischemia, and structural abnormalities.
+
+![Normal sinus rhythm ECG](https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/SinusRhythmLabels.svg/800px-SinusRhythmLabels.svg.png)
 
 ## Systematic Approach to ECG Reading
 

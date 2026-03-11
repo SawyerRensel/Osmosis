@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
 ---
 
 # Worldbuilding Checklist
 
 A comprehensive framework for building fictional worlds that feel lived-in. Not every story needs every element — but knowing what you've *chosen* to leave out is as important as what you include.
+
+[Worldbuilding — Brandon Sanderson BYU Lecture](https://www.youtube.com/watch?v=ATNvOk5rIJA)
 
 ## Geography & Environment
 

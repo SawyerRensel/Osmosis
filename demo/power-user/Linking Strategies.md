@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
 ---
 
 # Linking Strategies
 
 Links are the nervous system of a knowledge base. The way you link notes determines whether your vault becomes a searchable archive or a thinking tool.
+
+[Zettelkasten Linking — Bryan Jenks](https://www.youtube.com/watch?v=7TnUNN39NBU)
 
 ## When to Link
 

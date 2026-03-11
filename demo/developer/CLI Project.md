@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
 ---
 
 # CLI Project

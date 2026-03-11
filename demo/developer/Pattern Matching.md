@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
 ---
 
 # Pattern Matching
 
 Pattern matching is one of Rust's most powerful control flow constructs. The `match` expression and related syntax provide exhaustive, type-safe branching.
+
+[Rust Pattern Matching — No Boilerplate](https://www.youtube.com/watch?v=8_HPKGZGM5I)
 
 ## The `match` Expression
 

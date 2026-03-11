@@ -1,7 +1,66 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
+  classes:
+    anatomy:
+      fill: "#1a6fc4"
+      shape: rounded-rect
+      text:
+        color: "#ffffff"
+        weight: 700
+    diagnostics:
+      fill: "#2d9a4e"
+      shape: hexagon
+      text:
+        color: "#ffffff"
+        weight: 700
+    pathology:
+      fill: "#c43a3a"
+      shape: rounded-rect
+      text:
+        color: "#ffffff"
+        weight: 700
+      border:
+        color: "#ff6b6b"
+        width: 2
+        style: dashed
+    therapeutics:
+      fill: "#7c3aed"
+      shape: rounded-rect
+      text:
+        color: "#ffffff"
+        weight: 700
+  styles:
+    "# Cardiology Overview/## Anatomy & Physiology":
+      class: anatomy
+      branchLine:
+        color: "#4a9eff"
+        thickness: 2.5
+    "# Cardiology Overview/## Diagnostics":
+      class: diagnostics
+      branchLine:
+        color: "#4ade80"
+        thickness: 2.5
+    "# Cardiology Overview/## Pathology":
+      class: pathology
+      branchLine:
+        color: "#f87171"
+        thickness: 2.5
+    "# Cardiology Overview/## Therapeutics":
+      class: therapeutics
+      branchLine:
+        color: "#a78bfa"
+        thickness: 2.5
+    "# Cardiology Overview/## Key Integrative Concepts":
+      fill: "#d97706"
+      shape: rounded-rect
+      text:
+        color: "#ffffff"
+        weight: 600
+      branchLine:
+        color: "#fbbf24"
+        thickness: 2
 ---
 
 # Cardiology Overview

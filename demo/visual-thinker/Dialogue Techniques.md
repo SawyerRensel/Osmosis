@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
 ---
 
 # Dialogue Techniques
 
 Dialogue does more than convey information — it reveals character, advances plot, builds tension, and creates rhythm. Every line a character speaks should do at least two of these things simultaneously.
+
+[Writing Great Dialogue — Brandon Sanderson](https://www.youtube.com/watch?v=SbqSfGfWwFs)
 
 ## Subtext
 

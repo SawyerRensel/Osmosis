@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
 ---
 
 # Character Profiles

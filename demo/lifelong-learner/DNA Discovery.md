@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # The Discovery of DNA's Structure
 
 The race to determine the structure of DNA is one of science's greatest detective stories — a tale of brilliant minds, overlooked contributions, and a discovery that launched the age of molecular biology.
+
+![DNA structure diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/4/4c/DNA_Structure%2BKey%2BLabelled.pn_NoBB.png/400px-DNA_Structure%2BKey%2BLabelled.pn_NoBB.png)
 
 ## Background
 

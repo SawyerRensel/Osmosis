@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # The Origins of Computer Science
 
 Modern computing emerged from a convergence of mathematics, engineering, and wartime urgency. The foundational concepts — algorithms, stored programs, universal computation — were established decades before the first personal computer.
+
+![Alan Turing portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Alan_Turing_Aged_16.jpg/400px-Alan_Turing_Aged_16.jpg)
 
 ## Alan Turing (1912–1954)
 

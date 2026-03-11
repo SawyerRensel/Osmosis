@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: dracula
+  theme: Dracula
 ---
 
 # Traits and Generics
 
 Traits define shared behavior. Generics enable code reuse across types. Together, they form Rust's approach to polymorphism — zero-cost abstractions enforced at compile time.
+
+[Rust Traits — No Boilerplate](https://www.youtube.com/watch?v=bnnacleqg6k)
 
 ## Defining Traits
 

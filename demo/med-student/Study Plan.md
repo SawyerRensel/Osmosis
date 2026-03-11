@@ -1,6 +1,6 @@
 ---
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
 ---
 
 # Cardiology Rotation — Study Plan

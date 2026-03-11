@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
 ---
 
 # Heart Failure
 
 Heart failure (HF) is a clinical syndrome in which the heart is unable to pump sufficient blood to meet the metabolic demands of the body, or can only do so at elevated filling pressures. It affects approximately 6 million adults in the United States.
+
+![Heart failure pathophysiology](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Heart_failure_signs_and_symptoms.svg/800px-Heart_failure_signs_and_symptoms.svg.png)
 
 ## Pathophysiology
 

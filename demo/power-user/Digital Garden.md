@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
 ---
 
 # Digital Garden
 
 A digital garden is a publicly shared collection of evolving ideas — somewhere between a personal blog and a wiki. Unlike traditional blogs, digital gardens emphasize growth and connection over chronological publishing.
+
+[Digital Gardening — Maggie Appleton](https://www.youtube.com/watch?v=RXXXHN516qc)
 
 ## Philosophy
 

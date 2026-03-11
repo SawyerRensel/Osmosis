@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: rose-pine
+  theme: Rose Pine
 ---
 
 # Plot Devices
 
 Plot devices are storytelling tools — mechanisms that move the narrative forward, create tension, or deliver meaning. They're neither good nor bad; what matters is how skillfully they're used.
+
+[Plot Devices Explained — Terrible Writing Advice](https://www.youtube.com/watch?v=29MAL8pJImQ)
 
 ## Chekhov's Gun
 

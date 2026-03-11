@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
 
 const banner =
 `/*
@@ -57,6 +57,28 @@ if (prod) {
 	} catch {
 		// styles.css is optional
 	}
+
+	// Copy build output to demo vaults
+	const demoDir = "demo";
+	try {
+		const vaults = readdirSync(demoDir, { withFileTypes: true })
+			.filter(d => d.isDirectory())
+			.map(d => d.name);
+		for (const vault of vaults) {
+			const pluginDir = `${demoDir}/${vault}/.obsidian/plugins/Osmosis`;
+			mkdirSync(pluginDir, { recursive: true });
+			copyFileSync(outfile, `${pluginDir}/main.js`);
+			copyFileSync("manifest.json", `${pluginDir}/manifest.json`);
+			try {
+				copyFileSync("styles.css", `${pluginDir}/styles.css`);
+			} catch {
+				// styles.css is optional
+			}
+		}
+	} catch {
+		// demo directory may not exist
+	}
+
 	process.exit(0);
 } else {
 	await context.watch();

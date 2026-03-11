@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
 ---
 
 # Note-Taking Methods
 
 Effective note-taking is the foundation of any knowledge management system. The method you choose shapes how you capture, process, and retrieve information.
+
+[How to Take Smart Notes — Sönke Ahrens](https://www.youtube.com/watch?v=nPOI4f7yCag)
 
 ## Cornell Method
 

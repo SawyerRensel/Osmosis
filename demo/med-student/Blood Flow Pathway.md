@@ -1,7 +1,7 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: ocean
+  theme: Ocean
   shapes:
     Pulmonary Circulation: diamond
     Systemic Circulation: hexagon
@@ -11,6 +11,8 @@ osmosis-styles:
 # Blood Flow Pathway
 
 Understanding the complete pathway of blood flow through the heart and vascular system is fundamental to cardiology. Blood follows a predictable, unidirectional path maintained by the heart's valves.
+
+![Blood circulation diagram](https://upload.wikimedia.org/wikipedia/commons/thumb/2/20/2101_Blood_Flow_Through_the_Heart.jpg/800px-2101_Blood_Flow_Through_the_Heart.jpg)
 
 ## Complete Cardiac Cycle — Blood Flow Sequence
 

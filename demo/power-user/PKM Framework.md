@@ -1,15 +1,51 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: catppuccin-mocha
+  theme: Catppuccin Mocha
   direction: right
   layout: classic
   balance: both-sides
+  styles:
+    "# PKM Framework/## PARA Method":
+      fill: "#89b4fa"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+      branchLine:
+        color: "#89b4fa"
+        thickness: 2
+    "# PKM Framework/## Zettelkasten Method":
+      fill: "#a6e3a1"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+      branchLine:
+        color: "#a6e3a1"
+        thickness: 2
+    "# PKM Framework/## Maps of Content (MOCs)":
+      fill: "#f9e2af"
+      shape: hexagon
+      text:
+        color: "#1e1e2e"
+        weight: 700
+      branchLine:
+        color: "#f9e2af"
+        thickness: 2
+    "# PKM Framework/## Hybrid Approaches":
+      fill: "#cba6f7"
+      text:
+        color: "#1e1e2e"
+        weight: 700
+      branchLine:
+        color: "#cba6f7"
+        thickness: 2
 ---
 
 # PKM Framework
 
 Personal Knowledge Management (PKM) is the practice of capturing, organizing, and retrieving information to support thinking, creativity, and decision-making. Several frameworks have emerged to help knowledge workers build effective systems.
+
+[Building a Second Brain — Tiago Forte](https://www.youtube.com/watch?v=OP3dA2GcAh8)
 
 ## PARA Method
 

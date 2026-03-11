@@ -32,6 +32,18 @@ Most mind mapping and flashcard tools force you to choose: either your notes are
 
 🧩 **One file, multiple views.** Notes, mind maps, and flashcards all live in the same Markdown file. No duplicating content across tools. No syncing between apps. Write once, study in multiple modes.
 
+## What Makes Osmosis Different
+
+No existing tool does what Osmosis does. These aren't incremental improvements — they're capabilities that didn't exist before:
+
+**Mind maps + flashcards in one file.** Other tools force you to maintain notes, flashcards, and mind maps in separate apps or formats. Osmosis unifies all three in a single Markdown file. Your headings become mind map branches. Your `osmosis` code fences become flashcards. One file, three views, zero duplication.
+
+**Spatial study mode.** Study your flashcards *on* the mind map. Cards appear in context — right where they belong in your knowledge structure. No other tool lets you study spatially, seeing how each fact connects to the bigger picture while you review.
+
+**Contextual study mode.** Study cards inline in your notes, right where you wrote them. Instead of being yanked into a separate flashcard app, you review in the context of your own writing — surrounded by the explanations, examples, and connections that help you understand.
+
+**Mind map transclusion.** Embed one mind map inside another with `![[note]]`. Build a master map of an entire subject by transcluding individual topic maps. Zoom from the 30,000-foot view down to granular detail — all connected, all editable, all in plain Markdown.
+
 ## Who It's For
 
 **The Med Student** — You're drowning in anatomy, pharmacology, and pathology. You already use Anki, but maintaining two separate systems — notes and flashcards — is killing your workflow. Osmosis lets you define flashcards right inside your lecture notes, so your study material lives where you take notes. Mind maps help you see how body systems connect. FSRS keeps you on schedule.

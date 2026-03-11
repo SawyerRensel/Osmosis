@@ -1,12 +1,14 @@
 ---
 osmosis-cards: true
 osmosis-styles:
-  theme: everforest
+  theme: Everforest
 ---
 
 # Quantum Mechanics
 
 Quantum mechanics governs the behavior of matter and energy at the smallest scales. It is spectacularly successful — no experiment has ever contradicted it — yet its implications remain deeply strange and hotly debated.
+
+![Double-slit experiment](https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Double-slit.svg/400px-Double-slit.svg.png)
 
 ## Origins
 
