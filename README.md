@@ -11,14 +11,14 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 
 ## Features
 
-- 🧠 **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
-- 🃏 **Five Card Types** — Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
-- 📈 **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
-- 🎯 **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
-- 📝 **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues
-- 🎨 **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
-- ⌨️ **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
-- 📊 **Dashboard** — See all your decks, due card counts, and study statistics at a glance
+- **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
+- **Five Card Types** — Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
+- **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
+- **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
+- **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues
+- **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
+- **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
+- **Dashboard** — See all your decks, due card counts, and study statistics at a glance
 
 ## Why Osmosis?
 
