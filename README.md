@@ -218,12 +218,12 @@ def fibonacci(n):
 
 ## Documentation
 
-Full documentation is available at **[osmosis.md](https://osmosis.md/)**:
+Full documentation is available at **[sawyerrensel.github.io/Osmosis](https://sawyerrensel.github.io/Osmosis/)**:
 
-- **Getting Started** — [Installation](https://osmosis.md/getting-started/installation/) · [Quick Start](https://osmosis.md/getting-started/quick-start/)
-- **Mind Mapping** — [Editing](https://osmosis.md/mind-mapping/editing/) · [Navigation](https://osmosis.md/mind-mapping/navigation/) · [Styling](https://osmosis.md/mind-mapping/styling/)
-- **Flashcards** — [Card Types](https://osmosis.md/flashcards/card-types/) · [Decks](https://osmosis.md/flashcards/decks/)
-- **Studying** — [Spaced Repetition](https://osmosis.md/studying/spaced-repetition/) · [Study Modes](https://osmosis.md/studying/study-modes/)
+- **Getting Started** — [Installation](https://sawyerrensel.github.io/Osmosis/getting-started/installation/) · [Quick Start](https://sawyerrensel.github.io/Osmosis/getting-started/quick-start/)
+- **Mind Mapping** — [Editing](https://sawyerrensel.github.io/Osmosis/mind-mapping/editing/) · [Navigation](https://sawyerrensel.github.io/Osmosis/mind-mapping/navigation/) · [Styling](https://sawyerrensel.github.io/Osmosis/mind-mapping/styling/)
+- **Flashcards** — [Card Types](https://sawyerrensel.github.io/Osmosis/flashcards/card-types/) · [Decks](https://sawyerrensel.github.io/Osmosis/flashcards/decks/)
+- **Studying** — [Spaced Repetition](https://sawyerrensel.github.io/Osmosis/studying/spaced-repetition/) · [Study Modes](https://sawyerrensel.github.io/Osmosis/studying/study-modes/)
 
 ## Development
 

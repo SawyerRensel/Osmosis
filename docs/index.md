@@ -31,25 +31,19 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 
 Most mind mapping and flashcard tools force you to choose: either your notes are the source of truth, or the tool is. Osmosis refuses that tradeoff.
 
-🗺️ **Not just a viewer — a full editor.** Tools like [Markmap](https://markmap.js.org/) render beautiful mind maps from Markdown, but they're read-only. You can look, but you can't touch. Osmosis mind maps are fully interactive — add nodes, edit text, rearrange branches — and every change writes back to your Markdown instantly.
+🗺️ **Not just a viewer — a full editor.** Tools like [Markmap](https://markmap.js.org/) render beautiful mind maps from Markdown, but they're read-only. Osmosis mind maps are fully interactive — add nodes, edit text, rearrange branches — and every change writes back to your Markdown instantly.
 
-🔓 **Not proprietary — plain Markdown.** Tools like [Xmind](https://xmind.com/) are powerful mind mappers, but your data lives in a proprietary format. Markdown export is an afterthought. With Osmosis, Markdown *is* the format. Your notes work everywhere, with every tool, forever.
+🔓 **Not proprietary — plain Markdown.** Tools like [Xmind](https://xmind.com/) are powerful mind mappers, but your data lives in a proprietary format. With Osmosis, Markdown *is* the format. Your notes work everywhere, with every tool, forever.
 
-🤖 **AI-native by design.** Because everything is plain Markdown, AI assistants can read, generate, and edit your content natively. Ask your AI to generate Osmosis flashcards from your notes, restructure your mind map, or create study material — no export, no conversion, no friction.
+🤖 **AI-native by design.** Plain Markdown means AI assistants can read, generate, and edit your content natively — flashcards, mind maps, study material — no export, no conversion, no friction.
 
-🧩 **One file, multiple views.** Notes, mind maps, and flashcards all live in the same Markdown file. No duplicating content across tools. No syncing between apps. Write once, study in multiple modes.
+🧩 **Notes + mind maps + flashcards in one file.** Other tools force you to maintain these in separate apps. Osmosis unifies all three in a single Markdown file. Your headings become mind map branches. Your `osmosis` code fences become flashcards. One file, three views, zero duplication.
 
-## What Makes Osmosis Different
+🧭 **Spatial study mode.** Study your flashcards *on* the mind map. Cards appear right where they belong in your knowledge structure — no other tool lets you see how each fact connects to the bigger picture while you review.
 
-No existing tool does what Osmosis does. These aren't incremental improvements — they're capabilities that didn't exist before:
+📝 **Contextual study mode.** Study cards inline in your notes, right where you wrote them. Review surrounded by your own explanations and examples instead of being yanked into a separate flashcard app.
 
-**Mind maps + flashcards in one file.** Other tools force you to maintain notes, flashcards, and mind maps in separate apps or formats. Osmosis unifies all three in a single Markdown file. Your headings become mind map branches. Your `osmosis` code fences become flashcards. One file, three views, zero duplication.
-
-**Spatial study mode.** Study your flashcards *on* the mind map. Cards appear in context — right where they belong in your knowledge structure. No other tool lets you study spatially, seeing how each fact connects to the bigger picture while you review.
-
-**Contextual study mode.** Study cards inline in your notes, right where you wrote them. Instead of being yanked into a separate flashcard app, you review in the context of your own writing — surrounded by the explanations, examples, and connections that help you understand.
-
-**Mind map transclusion.** Embed one mind map inside another with `![[note]]`. Build a master map of an entire subject by transcluding individual topic maps. Zoom from the 30,000-foot view down to granular detail — all connected, all editable, all in plain Markdown.
+🔗 **Mind map transclusion.** Embed one mind map inside another with `![[note]]`. Build a master map of an entire subject by transcluding individual topic maps — zoom from the 30,000-foot view down to granular detail.
 
 ## Who It's For
 
