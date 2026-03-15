@@ -2,7 +2,7 @@
 set -eu -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-E2E_VAULT_DIR="$SCRIPT_DIR/e2e-vault"
+E2E_VAULT_DIR="$SCRIPT_DIR/vault"
 OBSIDIAN_JSON="$HOME/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json"
 
 RED='\033[0;31m'
@@ -23,10 +23,10 @@ if pgrep -f "obsidian" > /dev/null 2>&1; then
     exit 1
 fi
 
-# Register the e2e-vault in Obsidian's vault registry
+# Register the vault in Obsidian's vault registry
 if [[ -f "$OBSIDIAN_JSON" ]]; then
     if ! grep -q "$E2E_VAULT_DIR" "$OBSIDIAN_JSON" 2>/dev/null; then
-        echo -e "${GREEN}[INFO]${NC} Registering e2e-vault with Obsidian..."
+        echo -e "${GREEN}[INFO]${NC} Registering vault with Obsidian..."
         VAULT_HASH=$(echo -n "$E2E_VAULT_DIR" | md5sum | cut -c1-16)
         TIMESTAMP=$(date +%s)000
         python3 -c "

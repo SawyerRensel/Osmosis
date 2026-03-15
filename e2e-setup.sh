@@ -2,7 +2,7 @@
 set -eu -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-E2E_VAULT_DIR="$SCRIPT_DIR/e2e-vault"
+E2E_VAULT_DIR="$SCRIPT_DIR/vault"
 OBSIDIAN_DIR="$E2E_VAULT_DIR/.obsidian"
 PLUGIN_DIR="$OBSIDIAN_DIR/plugins/Osmosis"
 
@@ -23,7 +23,7 @@ mkdir -p "$PLUGIN_DIR"
 echo_info "Configuring community plugins..."
 echo '["osmosis"]' > "$OBSIDIAN_DIR/community-plugins.json"
 
-# Step 3: Build the plugin (outputs directly to e2e-vault)
+# Step 3: Build the plugin (outputs directly to vault)
 echo_info "Building the plugin..."
 cd "$SCRIPT_DIR"
 npm run build
@@ -34,8 +34,8 @@ if [[ -d "$SCRIPT_DIR/e2e/fixtures" ]]; then
     cp "$SCRIPT_DIR"/e2e/fixtures/*.md "$E2E_VAULT_DIR/" 2>/dev/null || true
 fi
 
-# Step 5: Register e2e-vault with Obsidian so obsidian:// URIs work
-echo_info "Registering e2e-vault with Obsidian..."
+# Step 5: Register vault with Obsidian so obsidian:// URIs work
+echo_info "Registering vault with Obsidian..."
 OBSIDIAN_JSON="$HOME/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json"
 if [[ -f "$OBSIDIAN_JSON" ]]; then
     VAULT_HASH=$(echo -n "$E2E_VAULT_DIR" | md5sum | cut -c1-16)
@@ -52,7 +52,7 @@ data['vaults']['$VAULT_HASH'] = {'path': '$E2E_VAULT_DIR', 'ts': $TIMESTAMP}
 with open('$OBSIDIAN_JSON', 'w') as f:
     json.dump(data, f)
 "
-        echo_info "Registered e2e-vault with Obsidian."
+        echo_info "Registered vault with Obsidian."
     fi
 else
     echo_warn "Obsidian config not found at $OBSIDIAN_JSON. You may need to open the vault manually."

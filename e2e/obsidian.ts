@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const E2E_VAULT_DIR = path.join(PROJECT_ROOT, "e2e-vault");
+const E2E_VAULT_DIR = path.join(PROJECT_ROOT, "vault");
 const FIXTURES_DIR = path.join(PROJECT_ROOT, "e2e", "fixtures");
 
 const FLATPAK_APP_ID = "md.obsidian.Obsidian";
@@ -292,7 +292,7 @@ export async function resetWorkspace(page: Page): Promise<void> {
 }
 
 /**
- * Copy all fixture files from e2e/fixtures/ into e2e-vault/,
+ * Copy all fixture files from e2e/fixtures/ into vault/,
  * restoring any files that tests may have modified.
  */
 export function resetFixtures(): void {

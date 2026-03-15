@@ -236,7 +236,7 @@ npm run dev
 npm run build
 ```
 
-Build output goes to `e2e-vault/.obsidian/plugins/Osmosis/` for testing.
+Build output goes to `vault/.obsidian/plugins/Osmosis/` for testing.
 
 ## Contributing
 

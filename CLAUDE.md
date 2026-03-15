@@ -8,7 +8,7 @@ This file guides Claude through Osmosis development, from planning through refin
 
 **Project**: Osmosis - An Obsidian plugin  
 **Tech Stack**: TypeScript, ESLint (obsidianmd plugin), Vitest (unit), Playwright (E2E), npm
-**Build Output**: `e2e-vault/.obsidian/plugins/Osmosis` (single vault for both dev and E2E testing)
+**Build Output**: `vault/.obsidian/plugins/Osmosis` (single vault for both dev and E2E testing)
 
 ---
 
@@ -20,7 +20,7 @@ This file guides Claude through Osmosis development, from planning through refin
 Osmosis/
 ├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
-├── e2e-vault/                         # Dev + E2E vault (build output goes here, gitignored)
+├── vault/                         # Dev + E2E vault (build output goes here, gitignored)
 ├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
 ├── ref/                               # Example plugins and other references
@@ -38,9 +38,9 @@ Osmosis/
 ├── e2e/                               # Playwright E2E tests (runs against real Obsidian)
 │   ├── obsidian.ts                    # Obsidian launcher fixture (CDP via Flatpak)
 │   ├── osmosis.spec.ts                # E2E smoke tests
-│   └── fixtures/                      # Test markdown files copied into e2e-vault
+│   └── fixtures/                      # Test markdown files copied into vault
 ├── e2e-setup.sh                       # One-time E2E setup (builds, creates vault, registers)
-├── e2e-launch.sh                      # Opens Obsidian with e2e-vault for manual debugging
+├── e2e-launch.sh                      # Opens Obsidian with vault for manual debugging
 ├── playwright.config.ts               # Playwright configuration
 │
 └── notes/                             # All project planning & tracking
@@ -195,7 +195,7 @@ npm run test
 
 # 3. Build the plugin
 npm run build
-# This compiles TypeScript and outputs to e2e-vault/.obsidian/plugins/Osmosis
+# This compiles TypeScript and outputs to vault/.obsidian/plugins/Osmosis
 
 # 4. Provide manual test instructions to the user
 # After each task/subtask, tell the user exactly what to do in Obsidian to verify the change.
@@ -229,9 +229,9 @@ How do I fix this while maintaining the intended behavior?
 ### Building
 
 **Command**: `npm run build`  
-**Output Location**: `e2e-vault/.obsidian/plugins/Osmosis/` (single vault for dev and E2E testing)
+**Output Location**: `vault/.obsidian/plugins/Osmosis/` (single vault for dev and E2E testing)
 
-**Important**: Build output goes to `e2e-vault/`. This is the same vault used for both manual testing and Playwright E2E tests.
+**Important**: Build output goes to `vault/`. This is the same vault used for both manual testing and Playwright E2E tests.
 
 **If build fails**:
 ```
@@ -306,7 +306,7 @@ Is this correct? What's missing?
    - Must pass with no errors
 
 3. **Manual testing** (user-performed):
-   - After each task/subtask, create test fixture files in `e2e/fixtures/` and copy them to `e2e-vault/`
+   - After each task/subtask, create test fixture files in `e2e/fixtures/` and copy them to `vault/`
    - Provide the user with clear step-by-step instructions for what to test in Obsidian
    - Include: which file to open, what actions to perform, what to expect
    - The user will report back with results or screenshots
@@ -421,7 +421,7 @@ What am I missing?
 ### Step 4.5: Provide Manual Test Instructions
 
 After completing each subtask:
-- Create test fixture files in `e2e/fixtures/` and copy them to `e2e-vault/`
+- Create test fixture files in `e2e/fixtures/` and copy them to `vault/`
 - Provide the user with clear manual testing steps:
   - Which file to open in Obsidian
   - What actions to perform (open mind map, click nodes, edit, etc.)
@@ -572,7 +572,7 @@ Am I using the API correctly? Is there a better way?
 
 ### Testing in Obsidian
 
-- **Manual**: Test in `e2e-vault/` (build output goes here)
+- **Manual**: Test in `vault/` (build output goes here)
 - Use Obsidian's plugin console for debugging (Ctrl+Shift+I)
 - Reload the plugin to test changes: Community Plugins → Osmosis → Reload
 - To open Obsidian with the vault: `npm run e2e:launch`

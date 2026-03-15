@@ -39,12 +39,12 @@ Three initial tests:
 ### 4. `e2e/fixtures/test-note.md` — Test fixture
 Known markdown file with headings and lists that produces a predictable mind map.
 
-### 5. `e2e-vault/` — Single dev + test vault (created by setup script)
+### 5. `vault/` — Single dev + test vault (created by setup script)
 Build output goes directly here. Used for both manual testing and E2E tests. Includes `.obsidian/community-plugins.json` with `["osmosis"]` pre-configured.
 
 ### 6. `e2e-setup.sh` — One-time setup script
-- Creates `e2e-vault/` structure
-- Builds the plugin (outputs directly to `e2e-vault/.obsidian/plugins/Osmosis/`)
+- Creates `vault/` structure
+- Builds the plugin (outputs directly to `vault/.obsidian/plugins/Osmosis/`)
 - Copies test fixtures into the vault
 - Registers vault with Obsidian
 - Pre-configures community plugins JSON
@@ -56,11 +56,11 @@ Build output goes directly here. Used for both manual testing and E2E tests. Inc
 - Add scripts: `e2e`, `e2e:setup`, `e2e:launch`
 
 ### 8. `eslint.config.mts` — Add ignores
-Add `e2e`, `e2e-vault`, `playwright.config.ts` to `globalIgnores`.
+Add `e2e`, `vault`, `playwright.config.ts` to `globalIgnores`.
 
 ### 9. `.gitignore` — Add generated artifacts
 ```
-e2e-vault/
+vault/
 .obsidian-config-e2e/
 test-results/
 playwright-report/
