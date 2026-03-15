@@ -22,7 +22,7 @@ node_modules
 data.json
 
 # E2E test artifacts
-vault/
+# vault/
 .obsidian-config-e2e/
 test-results/
 playwright-report/
