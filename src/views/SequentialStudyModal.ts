@@ -347,8 +347,11 @@ export class SequentialStudyModal extends Modal {
 			this.deferredCards.splice(idx, 1);
 		}
 
-		// Add card back to the queue right after the current position
-		const insertAt = this.currentIndex;
+		// Insert so the card is next in line:
+		// - If waiting (no card on screen), insert at currentIndex so renderCard() picks it up.
+		// - Otherwise a card is being displayed at currentIndex — insert *after* it
+		//   to avoid corrupting the card the user is currently viewing.
+		const insertAt = this.isWaiting ? this.currentIndex : this.currentIndex + 1;
 		this.queue.splice(insertAt, 0, deferred.studyCard);
 
 		// If we were in the waiting state, show the card immediately
