@@ -69,6 +69,10 @@ export interface OsmosisSettings {
 	dailyNewCardLimit: number;
 	/** Maximum review cards per day (0 = unlimited). */
 	dailyReviewCardLimit: number;
+	/** Learning steps for new cards (e.g., "1m, 10m"). */
+	learningSteps: string;
+	/** Relearning steps for lapsed cards (e.g., "10m"). */
+	relearningSteps: string;
 
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
@@ -95,6 +99,8 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// SR defaults
 	dailyNewCardLimit: 20,
 	dailyReviewCardLimit: 200,
+	learningSteps: "1m, 10m",
+	relearningSteps: "10m",
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -187,6 +193,32 @@ export class OsmosisSettingTab extends PluginSettingTab {
 							this.plugin.settings.dailyReviewCardLimit = num;
 							await this.plugin.saveSettings();
 						}
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Learning steps")
+			.setDesc("Steps for new cards (e.g., \"1m, 10m\"). Cards reappear within the session at each interval.")
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.learningSteps)
+					.setPlaceholder("1m, 10m")
+					.onChange(async (value) => {
+						this.plugin.settings.learningSteps = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Relearning steps")
+			.setDesc("Steps for lapsed cards (e.g., \"10m\"). Cards rated \"again\" reappear after this delay.")
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.relearningSteps)
+					.setPlaceholder("10m")
+					.onChange(async (value) => {
+						this.plugin.settings.relearningSteps = value;
+						await this.plugin.saveSettings();
 					}),
 			);
 

@@ -2,12 +2,23 @@ import { Component, Modal, MarkdownRenderer, type App } from "obsidian";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import type { StudyCard, DeckScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
+import type { ScheduleData } from "../database/types";
 import { isCloseMatch } from "../study/match";
+
+/** A card waiting for its learning timer to fire. */
+interface DeferredCard {
+	studyCard: StudyCard;
+	dueAt: number; // epoch ms when the card should reappear
+	timer: ReturnType<typeof setTimeout>;
+}
 
 /**
  * Anki-style sequential study modal.
  * Shows card front → flip to reveal back → rate (Again/Hard/Good/Easy).
  * Type-in cards show a text input instead of the flip button.
+ *
+ * Cards in learning/relearning steps reappear after timer-based delays,
+ * matching Anki's intra-session behavior.
  */
 export class SequentialStudyModal extends Modal {
 	private queue: StudyCard[] = [];
@@ -15,6 +26,11 @@ export class SequentialStudyModal extends Modal {
 	private reviewed = 0;
 	private isFlipped = false;
 	private readonly renderComponent = new Component();
+
+	/** Cards waiting for their learning timer to fire. */
+	private deferredCards: DeferredCard[] = [];
+	/** True when the modal is showing the "waiting for next card" screen. */
+	private isWaiting = false;
 
 	// DOM elements
 	private progressEl!: HTMLElement;
@@ -55,6 +71,12 @@ export class SequentialStudyModal extends Modal {
 	}
 
 	onClose(): void {
+		// Clear all pending learning timers
+		for (const deferred of this.deferredCards) {
+			clearTimeout(deferred.timer);
+		}
+		this.deferredCards = [];
+
 		this.renderComponent.unload();
 		this.contentEl.empty();
 	}
@@ -107,24 +129,31 @@ export class SequentialStudyModal extends Modal {
 
 		for (const { label, rating, cls } of ratings) {
 			const btn = this.ratingBar.createEl("button", { text: label, cls });
-			btn.addEventListener("click", () => this.rate(rating));
+			btn.addEventListener("click", () => void this.rate(rating));
 		}
 	}
 
 	private renderCard(): void {
+		this.isWaiting = false;
+
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) {
+			// No more cards in the immediate queue — check for deferred learning cards
+			if (this.deferredCards.length > 0) {
+				this.renderWaiting();
+				return;
+			}
 			this.renderComplete();
 			return;
 		}
 
 		this.isFlipped = false;
 
+		// Rebuild card area if it was replaced by waiting/complete screen
+		this.rebuildCardArea();
+
 		// Update progress
-		const total = this.queue.length;
-		const pct = total > 0 ? ((this.currentIndex + 1) / total) * 100 : 0;
-		this.progressFill.setCssProps({ "--osmosis-progress-width": `${pct}%` });
-		this.progressText.textContent = `${this.currentIndex + 1} / ${total}`;
+		this.updateProgress();
 
 		// Render front
 		this.frontEl.empty();
@@ -155,6 +184,27 @@ export class SequentialStudyModal extends Modal {
 			this.flipBtn.removeClass("osmosis-hidden");
 			this.typeInEl.addClass("osmosis-hidden");
 		}
+	}
+
+	/**
+	 * Rebuild the card area DOM elements if they were destroyed
+	 * (e.g., by renderWaiting or renderComplete calling cardEl.empty()).
+	 */
+	private rebuildCardArea(): void {
+		if (this.frontEl.parentElement === this.cardEl) return; // still intact
+
+		this.cardEl.empty();
+		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
+		this.cardEl.createDiv({ cls: "osmosis-study-divider" });
+		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
+	}
+
+	private updateProgress(): void {
+		const remaining = (this.queue.length - this.currentIndex) + this.deferredCards.length;
+		const total = this.reviewed + remaining;
+		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
+		this.progressFill.setCssProps({ "--osmosis-progress-width": `${Math.min(pct, 100)}%` });
+		this.progressText.textContent = `${this.reviewed + 1} / ${total}`;
 	}
 
 	private flip(): void {
@@ -235,15 +285,122 @@ export class SequentialStudyModal extends Modal {
 		});
 	}
 
-	private rate(rating: FSRSRating): void {
+	private async rate(rating: FSRSRating): Promise<void> {
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) return;
 
-		void this.sessionManager.recordReview(studyCard.card.id, rating);
+		const updatedSchedule = await this.sessionManager.recordReview(
+			studyCard.card.id, rating,
+		);
+
 		this.reviewed++;
 		this.currentIndex++;
 
+		// If the card is still in learning/relearning, defer it with a timer
+		if (isLearningState(updatedSchedule)) {
+			this.deferLearningCard(studyCard, updatedSchedule);
+		}
+
 		this.renderCard();
+	}
+
+	/**
+	 * Schedule a learning/relearning card to reappear after its due time.
+	 * Sets a real timer based on the FSRS-computed due date.
+	 */
+	private deferLearningCard(studyCard: StudyCard, schedule: ScheduleData): void {
+		const dueAt = schedule.due;
+		const delayMs = Math.max(0, dueAt - Date.now());
+
+		const updatedStudyCard: StudyCard = {
+			card: {
+				...studyCard.card,
+				stability: schedule.stability,
+				difficulty: schedule.difficulty,
+				due: schedule.due,
+				lastReview: schedule.lastReview ?? undefined,
+				reps: schedule.reps,
+				lapses: schedule.lapses,
+				state: schedule.state,
+				learningSteps: schedule.learningSteps,
+			},
+			isNew: false,
+		};
+
+		const deferred: DeferredCard = {
+			studyCard: updatedStudyCard,
+			dueAt,
+			timer: setTimeout(() => this.onLearningTimerFired(deferred), delayMs),
+		};
+
+		this.deferredCards.push(deferred);
+	}
+
+	/**
+	 * Called when a learning card's timer fires.
+	 * Moves the card from deferred back into the active queue.
+	 */
+	private onLearningTimerFired(deferred: DeferredCard): void {
+		// Remove from deferred list
+		const idx = this.deferredCards.indexOf(deferred);
+		if (idx !== -1) {
+			this.deferredCards.splice(idx, 1);
+		}
+
+		// Add card back to the queue right after the current position
+		const insertAt = this.currentIndex;
+		this.queue.splice(insertAt, 0, deferred.studyCard);
+
+		// If we were in the waiting state, show the card immediately
+		if (this.isWaiting) {
+			this.renderCard();
+		}
+	}
+
+	/**
+	 * Show a "waiting for next card" screen when all immediate cards are done
+	 * but learning cards are still on timers.
+	 */
+	private renderWaiting(): void {
+		this.isWaiting = true;
+
+		this.cardEl.empty();
+		this.flipBtn.addClass("osmosis-hidden");
+		this.ratingBar.addClass("osmosis-hidden");
+		this.typeInEl.addClass("osmosis-hidden");
+
+		// Find the soonest deferred card
+		const soonest = this.deferredCards.reduce((a, b) =>
+			a.dueAt < b.dueAt ? a : b,
+		);
+		const waitSecs = Math.max(0, Math.ceil((soonest.dueAt - Date.now()) / 1000));
+
+		this.updateProgress();
+
+		this.cardEl.createDiv({ cls: "osmosis-study-waiting" }, (el) => {
+			el.createEl("h2", { text: "Waiting for next card..." });
+			const countdownEl = el.createEl("p", {
+				text: `Next card in ${formatWaitTime(waitSecs)}`,
+				cls: "osmosis-study-countdown",
+			});
+			el.createEl("p", {
+				text: `${this.deferredCards.length} card${this.deferredCards.length !== 1 ? "s" : ""} still in learning`,
+				cls: "osmosis-study-waiting-info",
+			});
+
+			// Update countdown every second
+			const countdownInterval = setInterval(() => {
+				if (!this.isWaiting) {
+					clearInterval(countdownInterval);
+					return;
+				}
+				const remaining = Math.max(0, Math.ceil((soonest.dueAt - Date.now()) / 1000));
+				countdownEl.textContent = `Next card in ${formatWaitTime(remaining)}`;
+				if (remaining <= 0) {
+					clearInterval(countdownInterval);
+				}
+			}, 1000);
+		});
 	}
 
 	private renderEmpty(): void {
@@ -264,7 +421,7 @@ export class SequentialStudyModal extends Modal {
 
 		// Update progress to 100%
 		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
-		this.progressText.textContent = `${this.reviewed} / ${this.queue.length}`;
+		this.progressText.textContent = `${this.reviewed} reviewed`;
 
 		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "Session complete" });
@@ -312,9 +469,22 @@ export class SequentialStudyModal extends Modal {
 				if (this.isTypeInFocused) return;
 				e.preventDefault();
 				if (this.isFlipped) {
-					this.rate(rating);
+					void this.rate(rating);
 				}
 			});
 		}
 	}
+}
+
+/** Check if a schedule is in a learning/relearning state. */
+function isLearningState(schedule: ScheduleData): boolean {
+	return schedule.state === "learning" || schedule.state === "relearning";
+}
+
+/** Format seconds into a human-readable wait time. */
+function formatWaitTime(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	const mins = Math.floor(seconds / 60);
+	const secs = seconds % 60;
+	return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
 }

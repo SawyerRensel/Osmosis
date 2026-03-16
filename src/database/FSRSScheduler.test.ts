@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { FSRSScheduler, type FSRSRating } from "./FSRSScheduler";
+import { FSRSScheduler, parseSteps, type FSRSRating } from "./FSRSScheduler";
 
 let scheduler: FSRSScheduler;
 
@@ -142,5 +142,95 @@ describe("FSRSScheduler", () => {
 			expect(schedule.stability).toBeGreaterThan(0);
 			expect(schedule.difficulty).toBeGreaterThan(0);
 		});
+	});
+
+	describe("learning steps", () => {
+		it("new schedule has learningSteps = 0", () => {
+			const schedule = scheduler.createNewSchedule();
+			expect(schedule.learningSteps).toBe(0);
+		});
+
+		it("new card rated Good enters learning state at step 1", () => {
+			const now = Date.now();
+			const schedule = scheduler.createNewSchedule(now);
+			const result = scheduler.review(schedule, 3, now); // Good
+			expect(result.schedule.state).toBe("learning");
+			expect(result.schedule.learningSteps).toBe(1);
+		});
+
+		it("new card rated Again stays in learning at step 0", () => {
+			const now = Date.now();
+			const schedule = scheduler.createNewSchedule(now);
+			const result = scheduler.review(schedule, 1, now); // Again
+			expect(result.schedule.state).toBe("learning");
+			expect(result.schedule.learningSteps).toBe(0);
+		});
+
+		it("learning card at step 1 rated Good graduates to review", () => {
+			const now = Date.now();
+			const schedule = scheduler.createNewSchedule(now);
+			// First review: Good → learning step 1
+			const r1 = scheduler.review(schedule, 3, now);
+			expect(r1.schedule.state).toBe("learning");
+			// Second review: Good → graduates to review
+			const r2 = scheduler.review(r1.schedule, 3, r1.schedule.due);
+			expect(r2.schedule.state).toBe("review");
+			expect(r2.schedule.learningSteps).toBe(0);
+		});
+
+		it("preserves learning_steps counter across reviews", () => {
+			const now = Date.now();
+			const schedule = scheduler.createNewSchedule(now);
+			const r1 = scheduler.review(schedule, 3, now); // Good → step 1
+			// Simulate passing the schedule through persistence (like what the modal does)
+			const roundTripped = { ...r1.schedule };
+			const r2 = scheduler.review(roundTripped, 1, r1.schedule.due); // Again → back to step 0
+			expect(r2.schedule.state).toBe("learning");
+			expect(r2.schedule.learningSteps).toBe(0);
+		});
+
+		it("review card rated Again enters relearning", () => {
+			const now = Date.now();
+			let schedule = scheduler.createNewSchedule(now);
+			let t = now;
+			// Graduate to review state
+			for (let i = 0; i < 3; i++) {
+				const r = scheduler.review(schedule, 3, t);
+				t = r.schedule.due;
+				schedule = r.schedule;
+			}
+			expect(schedule.state).toBe("review");
+
+			// Rate Again → relearning
+			const result = scheduler.review(schedule, 1, t);
+			expect(result.schedule.state).toBe("relearning");
+			expect(result.schedule.learningSteps).toBe(0);
+		});
+	});
+});
+
+describe("parseSteps", () => {
+	it("parses comma-separated step string", () => {
+		expect(parseSteps("1m, 10m")).toEqual(["1m", "10m"]);
+	});
+
+	it("handles single step", () => {
+		expect(parseSteps("10m")).toEqual(["10m"]);
+	});
+
+	it("handles hours and days", () => {
+		expect(parseSteps("1m, 1h, 1d")).toEqual(["1m", "1h", "1d"]);
+	});
+
+	it("filters out invalid steps", () => {
+		expect(parseSteps("1m, invalid, 10m")).toEqual(["1m", "10m"]);
+	});
+
+	it("handles empty string", () => {
+		expect(parseSteps("")).toEqual([]);
+	});
+
+	it("handles whitespace-only", () => {
+		expect(parseSteps("  ,  ")).toEqual([]);
 	});
 });

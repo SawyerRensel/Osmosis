@@ -79,6 +79,7 @@ export class StudySessionManager {
 				reps: card.reps ?? 0,
 				lapses: card.lapses ?? 0,
 				state: card.state ?? "new",
+				learningSteps: card.learningSteps ?? 0,
 			}
 			: this.scheduler.createNewSchedule(ts);
 
@@ -94,6 +95,7 @@ export class StudySessionManager {
 			reps: update.schedule.reps,
 			lapses: update.schedule.lapses,
 			state: update.schedule.state,
+			learningSteps: update.schedule.learningSteps,
 		});
 
 		// Write schedule back to markdown file
@@ -108,6 +110,7 @@ export class StudySessionManager {
 					reps: update.schedule.reps,
 					lapses: update.schedule.lapses,
 					state: update.schedule.state,
+					learningSteps: update.schedule.learningSteps,
 				});
 			}
 		}

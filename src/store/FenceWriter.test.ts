@@ -9,6 +9,7 @@ const baseSchedule: ScheduleFields = {
 	reps: 3,
 	lapses: 0,
 	state: "review",
+	learningSteps: 0,
 };
 
 describe("updateFenceSchedule", () => {

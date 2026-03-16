@@ -22,6 +22,7 @@ export interface GeneratedCard {
 	reps?: number;
 	lapses?: number;
 	state?: CardState;
+	learningSteps?: number;
 }
 
 /** Metadata parsed from explicit osmosis fence headers. */
@@ -41,6 +42,7 @@ export interface FenceMetadata {
 	reps?: number;
 	lapses?: number;
 	state?: CardState;
+	learningSteps?: number;
 
 	// Schedule fields for derived cards (bidi reverse, cloze deletions)
 	// Keyed by suffix: "r" for reverse, "c1"/"c2"/etc. for cloze
@@ -56,4 +58,5 @@ export interface DerivedSchedule {
 	reps?: number;
 	lapses?: number;
 	state?: CardState;
+	learningSteps?: number;
 }

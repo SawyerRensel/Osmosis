@@ -288,7 +288,10 @@ export default class OsmosisPlugin extends Plugin {
 	createSessionManager(): StudySessionManager {
 		return new StudySessionManager(
 			this.cardStore,
-			new FSRSScheduler(),
+			new FSRSScheduler({
+				learningSteps: this.settings.learningSteps,
+				relearningSteps: this.settings.relearningSteps,
+			}),
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 		);

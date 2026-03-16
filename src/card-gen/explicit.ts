@@ -20,7 +20,7 @@ function isClosingFence(line: string, backtickCount: number): boolean {
 /** Schedule field names for derived card prefix matching. */
 const SCHEDULE_FIELDS = new Set([
 	"stability", "difficulty", "due", "last-review",
-	"reps", "lapses", "state",
+	"reps", "lapses", "state", "learning-steps",
 ]);
 
 /** Valid card states for validation. */
@@ -30,7 +30,7 @@ const VALID_STATES = new Set<string>(["new", "learning", "review", "relearning"]
  * Parse a schedule metadata value and apply it to a schedule object.
  */
 function applyScheduleField(
-	target: { stability?: number; difficulty?: number; due?: number; lastReview?: number; reps?: number; lapses?: number; state?: CardState },
+	target: { stability?: number; difficulty?: number; due?: number; lastReview?: number; reps?: number; lapses?: number; state?: CardState; learningSteps?: number },
 	field: string,
 	value: string,
 ): void {
@@ -57,6 +57,9 @@ function applyScheduleField(
 			if (VALID_STATES.has(value)) {
 				target.state = value as CardState;
 			}
+			break;
+		case "learning-steps":
+			target.learningSteps = parseInt(value, 10);
 			break;
 	}
 }
@@ -490,7 +493,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
  */
 function spreadSchedule(
 	source?: DerivedSchedule | FenceMetadata,
-): Partial<Pick<GeneratedCard, "stability" | "difficulty" | "due" | "lastReview" | "reps" | "lapses" | "state">> {
+): Partial<Pick<GeneratedCard, "stability" | "difficulty" | "due" | "lastReview" | "reps" | "lapses" | "state" | "learningSteps">> {
 	if (!source) return {};
 	const result: Record<string, unknown> = {};
 	if (source.stability !== undefined) result.stability = source.stability;
@@ -500,5 +503,6 @@ function spreadSchedule(
 	if (source.reps !== undefined) result.reps = source.reps;
 	if (source.lapses !== undefined) result.lapses = source.lapses;
 	if (source.state !== undefined) result.state = source.state;
+	if (source.learningSteps !== undefined) result.learningSteps = source.learningSteps;
 	return result;
 }

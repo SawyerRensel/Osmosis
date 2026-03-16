@@ -9,6 +9,7 @@ export interface ScheduleFields {
 	reps: number;
 	lapses: number;
 	state: string;
+	learningSteps: number;
 }
 
 /**
@@ -175,6 +176,7 @@ function buildScheduleKVs(
 	kvs.set(`${prefix}lapses`, String(schedule.lapses));
 	kvs.set(`${prefix}state`, schedule.state);
 	kvs.set(`${prefix}last-review`, new Date(schedule.lastReview).toISOString());
+	kvs.set(`${prefix}learning-steps`, String(schedule.learningSteps));
 
 	return kvs;
 }

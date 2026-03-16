@@ -30,6 +30,7 @@ export interface Card {
 	reps?: number;
 	lapses?: number;
 	state?: CardState;
+	learningSteps?: number; // current learning step index (0-based)
 }
 
 /**
@@ -44,4 +45,5 @@ export interface ScheduleData {
 	reps: number;
 	lapses: number;
 	state: CardState;
+	learningSteps: number; // current learning step index (0-based)
 }

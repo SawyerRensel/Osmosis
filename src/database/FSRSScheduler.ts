@@ -6,6 +6,7 @@ import {
 	type Card as TsFsrsCard,
 	type Grade,
 	type RecordLogItem,
+	type StepUnit,
 } from "ts-fsrs";
 import type { CardState, ScheduleData } from "./types";
 
@@ -40,12 +41,19 @@ export interface ScheduleUpdate {
 export class FSRSScheduler {
 	private readonly f: FSRS;
 
-	constructor(params?: { requestRetention?: number; maximumInterval?: number }) {
+	constructor(params?: {
+		requestRetention?: number;
+		maximumInterval?: number;
+		learningSteps?: string;
+		relearningSteps?: string;
+	}) {
 		this.f = fsrs({
 			enable_fuzz: false,
 			enable_short_term: true,
 			request_retention: params?.requestRetention ?? 0.9,
 			maximum_interval: params?.maximumInterval ?? 36500,
+			learning_steps: parseSteps(params?.learningSteps ?? "1m, 10m"),
+			relearning_steps: parseSteps(params?.relearningSteps ?? "10m"),
 		});
 	}
 
@@ -62,6 +70,7 @@ export class FSRSScheduler {
 			reps: 0,
 			lapses: 0,
 			state: "new",
+			learningSteps: 0,
 		};
 	}
 
@@ -96,6 +105,7 @@ export class FSRSScheduler {
 			reps: newCard.reps,
 			lapses: newCard.lapses,
 			state: FSRS_TO_STATE[newCard.state],
+			learningSteps: newCard.learning_steps,
 		};
 
 		return { schedule: newSchedule };
@@ -123,11 +133,23 @@ export class FSRSScheduler {
 			difficulty: schedule.difficulty,
 			elapsed_days: elapsedDays,
 			scheduled_days: 0,
-			learning_steps: 0,
+			learning_steps: schedule.learningSteps,
 			reps: schedule.reps,
 			lapses: schedule.lapses,
 			state: STATE_TO_FSRS[schedule.state],
 			last_review: lastReview,
 		};
 	}
+}
+
+/**
+ * Parse a comma-separated step string (e.g., "1m, 10m") into ts-fsrs StepUnit[].
+ * Valid units: m (minutes), h (hours), d (days).
+ */
+export function parseSteps(input: string): StepUnit[] {
+	const STEP_REGEX = /^\d+[mhd]$/;
+	return input
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => STEP_REGEX.test(s)) as StepUnit[];
 }

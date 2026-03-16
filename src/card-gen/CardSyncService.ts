@@ -84,6 +84,7 @@ export class CardSyncService {
 					reps: genCard.reps ?? existing?.reps,
 					lapses: genCard.lapses ?? existing?.lapses,
 					state: genCard.state ?? existing?.state,
+					learningSteps: genCard.learningSteps ?? existing?.learningSteps,
 				};
 
 				this.store.addCard(card);

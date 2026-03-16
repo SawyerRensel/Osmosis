@@ -149,6 +149,7 @@ export class CardStore {
 		reps: number;
 		lapses: number;
 		state: CardState;
+		learningSteps: number;
 	}): void {
 		const card = this.cards.get(cardId);
 		if (!card) return;
@@ -159,6 +160,7 @@ export class CardStore {
 		card.reps = schedule.reps;
 		card.lapses = schedule.lapses;
 		card.state = schedule.state;
+		card.learningSteps = schedule.learningSteps;
 	}
 
 	/** Total number of cards in the store. */

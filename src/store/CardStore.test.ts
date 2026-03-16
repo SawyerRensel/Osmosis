@@ -112,6 +112,7 @@ describe("CardStore", () => {
 				reps: 2,
 				lapses: 1,
 				state: "review",
+				learningSteps: 0,
 			});
 
 			const card = store.getCard("a")!;
