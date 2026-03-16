@@ -65,13 +65,13 @@ function removeDuplicates(arr) {
 
 ````osmosis
 id: ts-gen01
-c1-due: 2026-03-09T17:59:31.991Z
-c1-stability: 0.2120
-c1-difficulty: 6.4133
-c1-reps: 1
+c1-due: 2026-03-15T15:03:17.839Z
+c1-stability: 0.0834
+c1-difficulty: 8.8063
+c1-reps: 2
 c1-lapses: 0
 c1-state: learning
-c1-last-review: 2026-03-09T17:58:31.991Z
+c1-last-review: 2026-03-15T15:02:17.839Z
 
 ```typescript
 function getProperty<T, K extends keyof T>(obj: T, key: K): T[K] {

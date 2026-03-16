@@ -36,13 +36,13 @@ Good morning
 ```osmosis
 id: es-food
 bidi: true
-due: 2026-03-09T15:53:47.813Z
-stability: 0.0349
-difficulty: 9.5929
-reps: 3
+due: 2026-03-15T15:03:34.131Z
+stability: 0.0155
+difficulty: 9.8514
+reps: 4
 lapses: 0
 state: learning
-last-review: 2026-03-09T15:52:47.813Z
+last-review: 2026-03-15T15:02:34.131Z
 r-due: 2026-03-10T15:24:32.602Z
 r-stability: 0.2467
 r-difficulty: 6.4021

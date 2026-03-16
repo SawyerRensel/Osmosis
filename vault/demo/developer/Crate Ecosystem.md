@@ -2,9 +2,11 @@
 osmosis-cards: true
 osmosis-deck: rust/ecosystem
 osmosis-styles:
-  theme: Dracula
-  branchLineStyle: rounded-elbow
+  theme: Solarized Dark
   balance: both-sides
+  styles:
+    _n:a55f9ea3:
+      width: 155
 ---
 
 # Crate Ecosystem
@@ -25,15 +27,16 @@ Rust's package registry, [crates.io](https://crates.io), hosts over 150,000 crat
 ## Async Runtimes
 
 - `tokio` — the de facto standard async runtime
-  - Multi-threaded work-stealing scheduler
-  - I/O, timers, channels, synchronization primitives
+
+timers, channels, synchronization primitives
+
   - Powers most of the async ecosystem
 - `async-std` — mirrors `std` API with async versions
-  - Lower learning curve for beginners
-  - Smaller ecosystem than Tokio
 - `smol` — minimal, lightweight runtime
   - Very small API surface
   - Good for embedded or minimal use cases
+- Smaller ecosystem than Tokio
+- Lower learning curve for beginners
 
 ## Serialization
 
@@ -89,7 +92,13 @@ let config: Config = toml::from_str(r#"
 
 - `sqlx` — async, compile-time checked SQL
   - Verifies queries against a real database at compile time
-  - Supports PostgreSQL, MySQL, SQLite
+  - Supports PostgreSQL, M
+
+		- Multi-threaded work-stealing scheduler
+		- I/O, 
+
+ySQL, SQLite
+
   - Zero-overhead query builder
 - `diesel` — type-safe ORM and query builder
   - Compile-time query validation
