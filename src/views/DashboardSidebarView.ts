@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { buildDeckTree } from "../study/DeckTreeBuilder";
+import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import { SequentialStudyModal } from "./SequentialStudyModal";
 
@@ -56,7 +56,21 @@ export class DashboardSidebarView extends ItemView {
 		const now = Date.now();
 		const decks = this.plugin.cardStore.getAllDecks();
 		const counts = this.plugin.cardStore.getCardCountsByDeck(now);
-		const tree = buildDeckTree(decks, counts);
+		const rawTree = buildDeckTree(decks, counts);
+
+		// Build the set of paths to keep: all real decks + prefix segments
+		// of explicitly-assigned decks (so their hierarchy isn't pruned).
+		const folderDerived = this.plugin.cardStore.getFolderDerivedDecks();
+		const keepPaths = new Set(decks);
+		for (const deck of decks) {
+			if (!folderDerived.has(deck)) {
+				const parts = deck.split("/");
+				for (let i = 1; i < parts.length; i++) {
+					keepPaths.add(parts.slice(0, i).join("/"));
+				}
+			}
+		}
+		const tree = pruneDeckTree(rawTree, keepPaths);
 
 		// Total counts
 		let totalNew = 0, totalLearn = 0, totalDue = 0;

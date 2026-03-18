@@ -65,6 +65,8 @@ osmosis-styles:
 - "Show breadcrumbs" toggle for sequential review (show deck and or parent folders/note)
 - Use Excalidraw for image occlusion?
 - Show ordered list notations inside a node.  Automatically creat a new list item and make the cursor at the end when going into to edit the node?
-- Doesn't Anki show cards you have a hard time remembering more frequently in a given study session?  Shouldn't our sessions be continuous until a user answers "Easy" for all of the cards of the selected deck to study?  For example, if I answered "Again" for card 1, then study a few more cards, wouldn't it then show it to me card 1 again in the same session as the 5th or 6th card or something like that?  Or does FSRS work differently?
+- [x] Doesn't Anki show cards you have a hard time remembering more frequently in a given study session?  Shouldn't our sessions be continuous until a user answers "Easy" for all of the cards of the selected deck to study?  For example, if I answered "Again" for card 1, then study a few more cards, wouldn't it then show it to me card 1 again in the same session as the 5th or 6th card or something like that?  Or does FSRS work differently?
 - iOS admonitions and other nodes are ghosting in mind map view, where the node content is frozen/stuck at its originally rendered location when mind map is loaded.  When the map is panned/zoomed, the content stays in the same position. 
 - Are there any other features of FSRS like 'learning_steps' that we haven't implemented but should?
+- Disable card button in review (Anki equivalent?)
+	- disabled: true

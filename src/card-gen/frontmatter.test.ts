@@ -57,8 +57,16 @@ describe("resolveDeck", () => {
 		expect(resolveDeck("fm-deck", "", "folder/note.md")).toBe("fm-deck");
 	});
 
-	it("falls back to folder name", () => {
-		expect(resolveDeck("", "", "Learning/Python/note.md")).toBe("Python");
+	it("falls back to full folder path", () => {
+		expect(resolveDeck("", "", "Learning/Python/note.md")).toBe("Learning/Python");
+	});
+
+	it("falls back to single folder name for shallow path", () => {
+		expect(resolveDeck("", "", "Python/note.md")).toBe("Python");
+	});
+
+	it("falls back to deep folder path", () => {
+		expect(resolveDeck("", "", "Study/Math/Algebra/note.md")).toBe("Study/Math/Algebra");
 	});
 
 	it("returns empty string for root-level notes", () => {

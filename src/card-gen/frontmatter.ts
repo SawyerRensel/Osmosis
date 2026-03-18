@@ -58,7 +58,7 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
  * Resolve the deck name for a note, using the priority order:
  * 1. Explicit frontmatter (`osmosis-deck: ...`)
  * 2. Explicit card-level deck (from fence metadata)
- * 3. Folder path (e.g., "Learning/Python/note.md" → "Python")
+ * 3. Full folder path (e.g., "Study/Math/Algebra/note.md" → "Study/Math/Algebra")
  * 4. Empty string (default deck)
  */
 export function resolveDeck(
@@ -69,10 +69,10 @@ export function resolveDeck(
 	if (cardDeck) return cardDeck;
 	if (frontmatterDeck) return frontmatterDeck;
 
-	// Derive from folder path: use parent folder name
+	// Derive from folder path: use full folder hierarchy
 	const parts = notePath.split("/");
 	if (parts.length > 1) {
-		return parts[parts.length - 2]!;
+		return parts.slice(0, -1).join("/");
 	}
 
 	return "";

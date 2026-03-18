@@ -63,7 +63,7 @@ describe("processNote", () => {
 				"Learning/Python/note.md",
 				defaultOptions,
 			);
-			expect(result.cards[0]!.deck).toBe("Python");
+			expect(result.cards[0]!.deck).toBe("Learning/Python");
 		});
 
 		it("explicit fence deck overrides frontmatter", () => {

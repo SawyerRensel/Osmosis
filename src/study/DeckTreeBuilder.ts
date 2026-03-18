@@ -81,3 +81,36 @@ export function buildDeckTree(
 
 	return roots;
 }
+
+/**
+ * Remove intermediate deck nodes that have no direct cards, promoting
+ * their children up. This ensures folder-derived hierarchy only shows
+ * folders that actually contain cards.
+ *
+ * Example: decks = ["Study/Math/Algebra"] with only Algebra having cards
+ * → "Study" and "Math" are pruned, "Algebra" becomes a root node.
+ *
+ * If "Math" also has cards: "Study" is pruned, "Math" becomes root with
+ * "Algebra" as a child.
+ */
+export function pruneDeckTree(roots: DeckNode[], realDecks: Set<string>): DeckNode[] {
+	const result: DeckNode[] = [];
+
+	for (const node of roots) {
+		// Recurse first so children are pruned before we decide about this node
+		node.children = pruneDeckTree(node.children, realDecks);
+
+		if (realDecks.has(node.fullPath)) {
+			// This node has real cards — keep it
+			result.push(node);
+		} else {
+			// Intermediate node with no cards — promote its children
+			result.push(...node.children);
+		}
+	}
+
+	// Re-sort since promoted children may interleave
+	result.sort((a, b) => a.name.localeCompare(b.name));
+
+	return result;
+}

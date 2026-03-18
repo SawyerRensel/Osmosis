@@ -163,6 +163,18 @@ export class CardStore {
 		card.learningSteps = schedule.learningSteps;
 	}
 
+	/** Get deck paths that were derived from folder structure (not explicitly set). */
+	getFolderDerivedDecks(): Set<string> {
+		const result = new Set<string>();
+		for (const card of this.cards.values()) {
+			const folderPath = card.notePath.split("/").slice(0, -1).join("/");
+			if (card.deck === folderPath) {
+				result.add(card.deck);
+			}
+		}
+		return result;
+	}
+
 	/** Total number of cards in the store. */
 	get size(): number {
 		return this.cards.size;
