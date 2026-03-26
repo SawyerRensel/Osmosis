@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { updateFenceSchedule, type ScheduleFields } from "./FenceWriter";
+import { updateFenceSchedule, updateFenceExclude, type ScheduleFields } from "./FenceWriter";
 
 const baseSchedule: ScheduleFields = {
 	stability: 4.5,
@@ -209,5 +209,108 @@ def fib(n):
 		// Inner ``` should not be treated as fence end
 		expect(result).toContain("```python");
 		expect(result).toContain("def fib(n):");
+	});
+});
+
+describe("updateFenceExclude", () => {
+	it("adds exclude: true to a fence that has none", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+
+What is 2+2?
+***
+4
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", true);
+
+		expect(result).toContain("exclude: true");
+		expect(result).toContain("What is 2+2?");
+	});
+
+	it("inserts exclude: true after the id line", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+deck: math
+
+Q
+***
+A
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", true);
+		const lines = result.split("\n");
+		const idIdx = lines.findIndex((l) => l.includes("id: abc123"));
+		expect(lines[idIdx + 1]).toBe("exclude: true");
+	});
+
+	it("removes exclude line when setting to false", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+exclude: true
+
+Q
+***
+A
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", false);
+
+		expect(result).not.toContain("exclude");
+		expect(result).toContain("Q");
+	});
+
+	it("no-ops when fence already has exclude: true and writing true", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+exclude: true
+
+Q
+***
+A
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", true);
+		expect(result).toBe(content);
+	});
+
+	it("no-ops when fence has no exclude and writing false", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+
+Q
+***
+A
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", false);
+		expect(result).toBe(content);
+	});
+
+	it("works with derived card IDs (uses base fence ID)", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+bidi: true
+
+Front
+***
+Back
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123-r", true);
+		expect(result).toContain("exclude: true");
+	});
+
+	it("returns original content if fence not found", () => {
+		const content = `\`\`\`osmosis
+id: other
+
+Q
+***
+A
+\`\`\``;
+
+		const result = updateFenceExclude(content, "abc123", true);
+		expect(result).toBe(content);
 	});
 });

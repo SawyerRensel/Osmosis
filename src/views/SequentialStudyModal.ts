@@ -1,8 +1,9 @@
-import { Component, Modal, MarkdownRenderer, type App } from "obsidian";
+import { Component, Modal, MarkdownRenderer, setIcon, type App } from "obsidian";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import type { StudyCard, DeckScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
+import type { FenceWriter } from "../store/FenceWriter";
 import { isCloseMatch } from "../study/match";
 
 /** A card waiting for its learning timer to fire. */
@@ -32,6 +33,9 @@ export class SequentialStudyModal extends Modal {
 	/** True when the modal is showing the "waiting for next card" screen. */
 	private isWaiting = false;
 
+	/** Last excluded card info for undo support. */
+	private lastExcluded: { studyCard: StudyCard; index: number } | null = null;
+
 	// DOM elements
 	private progressEl!: HTMLElement;
 	private progressFill!: HTMLElement;
@@ -40,6 +44,7 @@ export class SequentialStudyModal extends Modal {
 	private frontEl!: HTMLElement;
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
+	private actionsRight!: HTMLElement;
 	private ratingBar!: HTMLElement;
 	private typeInEl!: HTMLElement;
 	private typeInInput!: HTMLInputElement;
@@ -49,6 +54,8 @@ export class SequentialStudyModal extends Modal {
 		private readonly sessionManager: StudySessionManager,
 		private readonly deckScope: DeckScope,
 		private readonly studyOptions?: { newLimit?: number; reviewLimit?: number },
+		private readonly fenceWriter?: FenceWriter,
+		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
 	) {
 		super(app);
 	}
@@ -131,6 +138,23 @@ export class SequentialStudyModal extends Modal {
 			const btn = this.ratingBar.createEl("button", { text: label, cls });
 			btn.addEventListener("click", () => void this.rate(rating));
 		}
+
+		// Bottom-right icon group: go-to-card and exclude
+		this.actionsRight = actions.createDiv({ cls: "osmosis-study-actions-right" });
+
+		const gotoBtn = this.actionsRight.createEl("button", {
+			cls: "osmosis-study-icon-btn",
+			attr: { "aria-label": "Go to card" },
+		});
+		setIcon(gotoBtn, "file-text");
+		gotoBtn.addEventListener("click", () => this.goToCard());
+
+		const excludeBtn = this.actionsRight.createEl("button", {
+			cls: "osmosis-study-icon-btn",
+			attr: { "aria-label": "Exclude card (e)" },
+		});
+		setIcon(excludeBtn, "ban");
+		excludeBtn.addEventListener("click", () => void this.excludeCard());
 	}
 
 	private renderCard(): void {
@@ -171,6 +195,9 @@ export class SequentialStudyModal extends Modal {
 
 		// Hide rating
 		this.ratingBar.addClass("osmosis-hidden");
+
+		// Show action icons (visible for all cards)
+		this.actionsRight.removeClass("osmosis-hidden");
 
 		// Show flip or type-in based on card type
 		const isTypeIn = studyCard.card.typeIn;
@@ -289,6 +316,10 @@ export class SequentialStudyModal extends Modal {
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) return;
 
+		// Clear any pending undo
+		this.lastExcluded = null;
+		this.contentEl.querySelector(".osmosis-study-undo")?.remove();
+
 		const updatedSchedule = await this.sessionManager.recordReview(
 			studyCard.card.id, rating,
 		);
@@ -302,6 +333,76 @@ export class SequentialStudyModal extends Modal {
 		}
 
 		this.renderCard();
+	}
+
+	/** Exclude the current card: write exclude: true to its fence and advance. */
+	private async excludeCard(): Promise<void> {
+		const studyCard = this.queue[this.currentIndex];
+		if (!studyCard || !this.fenceWriter || !this.resolveFile) return;
+
+		const file = this.resolveFile(studyCard.card.notePath);
+		if (file) {
+			await this.fenceWriter.writeExclude(file, studyCard.card.id, true);
+		}
+
+		// Store for undo
+		this.lastExcluded = { studyCard, index: this.currentIndex };
+
+		// Advance without recording a review
+		this.currentIndex++;
+		this.renderCard();
+
+		// Show brief undo indicator
+		this.showUndoExclude();
+	}
+
+	/** Show a brief undo option after excluding a card. */
+	private showUndoExclude(): void {
+		const existing = this.contentEl.querySelector(".osmosis-study-undo");
+		if (existing) existing.remove();
+
+		const undo = this.contentEl.createDiv({ cls: "osmosis-study-undo" });
+		undo.createSpan({ text: "Card excluded" });
+		const undoBtn = undo.createEl("button", { text: "Undo", cls: "osmosis-study-undo-btn" });
+		undoBtn.addEventListener("click", () => void this.undoExclude());
+
+		// Auto-dismiss after 5 seconds
+		setTimeout(() => undo.remove(), 5000);
+	}
+
+	/** Undo the last exclude: remove exclude: true and re-insert the card. */
+	private async undoExclude(): Promise<void> {
+		if (!this.lastExcluded || !this.fenceWriter || !this.resolveFile) return;
+
+		const { studyCard } = this.lastExcluded;
+		const file = this.resolveFile(studyCard.card.notePath);
+		if (file) {
+			await this.fenceWriter.writeExclude(file, studyCard.card.id, false);
+		}
+
+		// Re-insert card at current position so it shows next
+		this.queue.splice(this.currentIndex, 0, studyCard);
+		this.lastExcluded = null;
+
+		// Remove undo indicator
+		this.contentEl.querySelector(".osmosis-study-undo")?.remove();
+
+		this.renderCard();
+	}
+
+	/** Navigate to the current card's source note and close the modal. */
+	private goToCard(): void {
+		const studyCard = this.queue[this.currentIndex];
+		if (!studyCard) return;
+
+		const notePath = studyCard.card.notePath;
+		this.close();
+
+		// Open the note in the active leaf
+		const file = this.app.vault.getFileByPath(notePath);
+		if (file) {
+			void this.app.workspace.getLeaf(false).openFile(file);
+		}
 	}
 
 	/**
@@ -371,6 +472,7 @@ export class SequentialStudyModal extends Modal {
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
+		this.actionsRight.addClass("osmosis-hidden");
 
 		// Find the soonest deferred card
 		const soonest = this.deferredCards.reduce((a, b) =>
@@ -421,6 +523,7 @@ export class SequentialStudyModal extends Modal {
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
+		this.actionsRight.addClass("osmosis-hidden");
 
 		// Update progress to 100%
 		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
@@ -458,6 +561,24 @@ export class SequentialStudyModal extends Modal {
 					this.flip();
 				}
 			}
+		});
+
+		this.scope.register([], "e", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused) return;
+			e.preventDefault();
+			void this.excludeCard();
+		});
+
+		this.scope.register([], "g", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused) return;
+			e.preventDefault();
+			this.goToCard();
+		});
+
+		this.scope.register([], "z", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused) return;
+			e.preventDefault();
+			void this.undoExclude();
 		});
 
 		const ratingKeys: Array<{ key: string; rating: FSRSRating }> = [

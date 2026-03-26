@@ -280,7 +280,7 @@ export default class OsmosisPlugin extends Plugin {
 		const modal = new SequentialStudyModal(this.app, sessionManager, scope, {
 			newLimit: this.settings.dailyNewCardLimit,
 			reviewLimit: this.settings.dailyReviewCardLimit,
-		});
+		}, this.fenceWriter, (notePath: string) => this.app.vault.getFileByPath(notePath));
 		modal.open();
 	}
 

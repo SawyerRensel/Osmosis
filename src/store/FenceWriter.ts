@@ -48,6 +48,29 @@ export class FenceWriter {
 		}
 	}
 
+	/**
+	 * Write or remove the `exclude` metadata flag on a fence.
+	 * Setting exclude=true adds `exclude: true`; false removes the line.
+	 */
+	async writeExclude(
+		file: TFile,
+		cardId: string,
+		exclude: boolean,
+	): Promise<void> {
+		if (this.writingPaths.has(file.path)) return;
+
+		const content = await this.vault.cachedRead(file);
+		const modified = updateFenceExclude(content, cardId, exclude);
+		if (modified === content) return;
+
+		this.writingPaths.add(file.path);
+		try {
+			await this.vault.modify(file, modified);
+		} finally {
+			this.writingPaths.delete(file.path);
+		}
+	}
+
 	/** Check if a path is currently being written to. */
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
@@ -213,4 +236,82 @@ function findFenceForId(lines: string[], targetId: string): number {
 	}
 
 	return -1;
+}
+
+/**
+ * Pure function: add, update, or remove the `exclude` metadata in a fence.
+ * When exclude is true, ensures `exclude: true` is present.
+ * When exclude is false, removes any existing `exclude` line (absence = not excluded).
+ */
+export function updateFenceExclude(
+	content: string,
+	cardId: string,
+	exclude: boolean,
+): string {
+	const { baseId } = parseCardIdParts(cardId);
+
+	const lines = content.split("\n");
+	const fenceStart = findFenceForId(lines, baseId);
+	if (fenceStart === -1) return content;
+
+	const openMatch = lines[fenceStart]!.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
+	// Find the metadata region
+	const metaStart = fenceStart + 1;
+	let metaEnd = metaStart;
+
+	for (let i = metaStart; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) {
+			metaEnd = i;
+			break;
+		}
+		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+			metaEnd = i + 1;
+			continue;
+		}
+		metaEnd = i;
+		break;
+	}
+
+	const existingMeta = lines.slice(metaStart, metaEnd);
+	const updatedMeta: string[] = [];
+	let found = false;
+
+	for (const line of existingMeta) {
+		const match = line.trim().match(/^exclude\s*:\s*.+$/i);
+		if (match) {
+			found = true;
+			// If excluding, replace the line; if including, drop it entirely
+			if (exclude) {
+				updatedMeta.push("exclude: true");
+			}
+			continue;
+		}
+		updatedMeta.push(line);
+	}
+
+	// If not found and we want to exclude, insert after the id line
+	if (!found && exclude) {
+		const idIdx = updatedMeta.findIndex((l) => /^id\s*:/i.test(l.trim()));
+		const insertAt = idIdx >= 0 ? idIdx + 1 : 0;
+		updatedMeta.splice(insertAt, 0, "exclude: true");
+	}
+
+	// Ensure a blank line separates metadata from card content
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	const needsBlank = nextLine !== "" && !isClosingFence;
+	if (needsBlank && updatedMeta[updatedMeta.length - 1]?.trim() !== "") {
+		updatedMeta.push("");
+	}
+
+	return [
+		...lines.slice(0, metaStart),
+		...updatedMeta,
+		...lines.slice(metaEnd),
+	].join("\n");
 }

@@ -162,6 +162,8 @@ export class DashboardSidebarView extends ItemView {
 				newLimit: this.plugin.settings.dailyNewCardLimit,
 				reviewLimit: this.plugin.settings.dailyReviewCardLimit,
 			},
+			this.plugin.fenceWriter,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
 		);
 		modal.onClose = () => {
 			void this.render();
