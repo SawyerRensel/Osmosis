@@ -119,6 +119,57 @@ export class StudySessionManager {
 	}
 
 	/**
+	 * Revert a review by restoring the previous schedule data.
+	 * If previousSchedule is null, the card was new — clear all schedule fields.
+	 */
+	async revertReview(
+		cardId: string,
+		previousSchedule: ScheduleData | null,
+	): Promise<void> {
+		const card = this.store.getCard(cardId);
+
+		if (previousSchedule) {
+			// Restore old schedule
+			this.store.updateSchedule(cardId, {
+				stability: previousSchedule.stability,
+				difficulty: previousSchedule.difficulty,
+				due: previousSchedule.due,
+				lastReview: previousSchedule.lastReview ?? Date.now(),
+				reps: previousSchedule.reps,
+				lapses: previousSchedule.lapses,
+				state: previousSchedule.state,
+				learningSteps: previousSchedule.learningSteps,
+			});
+
+			if (card) {
+				const file = this.resolveFile(card.notePath);
+				if (file) {
+					void this.fenceWriter.writeSchedule(file, cardId, {
+						stability: previousSchedule.stability,
+						difficulty: previousSchedule.difficulty,
+						due: previousSchedule.due,
+						lastReview: previousSchedule.lastReview ?? Date.now(),
+						reps: previousSchedule.reps,
+						lapses: previousSchedule.lapses,
+						state: previousSchedule.state,
+						learningSteps: previousSchedule.learningSteps,
+					});
+				}
+			}
+		} else {
+			// Card was new — clear schedule entirely
+			this.store.clearSchedule(cardId);
+
+			if (card) {
+				const file = this.resolveFile(card.notePath);
+				if (file) {
+					void this.fenceWriter.removeSchedule(file, cardId);
+				}
+			}
+		}
+	}
+
+	/**
 	 * Get counts for a deck scope.
 	 */
 	getCounts(scope: DeckScope, now?: number): DeckCounts {

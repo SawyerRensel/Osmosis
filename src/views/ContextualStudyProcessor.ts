@@ -1,7 +1,21 @@
 import { Component, MarkdownRenderer, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
+import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
+
+/** An undo entry for contextual review. */
+interface ContextualUndoEntry {
+	type: "rate" | "exclude";
+	cardId: string;
+	sourcePath: string;
+	/** Previous schedule data before the rating (null = card was new). Only for "rate". */
+	previousSchedule?: ScheduleData | null;
+	/** The rating label that was displayed. Only for "rate". */
+	ratingLabel?: string;
+	/** The previous exclude state. Only for "exclude". */
+	previousExclude?: boolean;
+}
 
 /**
  * Contextual study mode: renders `osmosis` code blocks in reading view
@@ -22,6 +36,8 @@ export class ContextualStudyProcessor {
 	private readonly revealedCardIds = new Set<string>();
 	/** Track cards that have been rated this session to hide rating buttons on re-render. */
 	private readonly ratedCardIds = new Set<string>();
+	/** Undo stack for contextual review actions. */
+	private readonly undoStack: ContextualUndoEntry[] = [];
 
 	constructor(private readonly plugin: OsmosisPlugin) {}
 
@@ -30,6 +46,18 @@ export class ContextualStudyProcessor {
 	 */
 	register(): void {
 		this.renderComponent.load();
+
+		// Register Ctrl+Z for undo in contextual mode
+		this.plugin.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "z" && this.undoStack.length > 0) {
+				// Only handle if we're in reading view with osmosis cards
+				const target = e.target as HTMLElement;
+				if (target.closest(".osmosis-contextual-card") || target.closest(".markdown-reading-view")) {
+					e.preventDefault();
+					void this.undo();
+				}
+			}
+		});
 
 		this.plugin.registerMarkdownCodeBlockProcessor(
 			"osmosis",
@@ -87,8 +115,17 @@ export class ContextualStudyProcessor {
 		});
 		const revealedEl = backEl.createDiv({ cls: "osmosis-contextual-revealed osmosis-hidden" });
 
-		// Bottom row: rating area (left) + exclude toggle (right)
+		// Bottom row: undo (far left) + rating area (left) + exclude toggle (right)
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		const undoBtn = bottomRow.createDiv({
+			cls: `osmosis-contextual-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
+		});
+		setIcon(undoBtn, "undo-2");
+		undoBtn.setAttribute("aria-label", "Undo (Ctrl+Z)");
+		undoBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.undo();
+		});
 		const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
 		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
 		setIcon(toggleIcon, parsed.exclude ? "circle-off" : "circle-check-big");
@@ -117,7 +154,7 @@ export class ContextualStudyProcessor {
 			);
 
 			if (parsed.cardId && !alreadyRated) {
-				this.showRating(ratingSlot, parsed.cardId);
+				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		};
 
@@ -135,7 +172,7 @@ export class ContextualStudyProcessor {
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
 			} else if (parsed.cardId) {
-				this.showRating(ratingSlot, parsed.cardId);
+				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		}
 
@@ -196,7 +233,7 @@ export class ContextualStudyProcessor {
 		});
 	}
 
-	private showRating(container: HTMLElement, cardId: string): void {
+	private showRating(container: HTMLElement, cardId: string, sourcePath: string): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -210,12 +247,36 @@ export class ContextualStudyProcessor {
 			const btn = ratingEl.createEl("button", { text: label, cls });
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
+
+				// Snapshot previous schedule before rating
+				const card = this.plugin.cardStore.getCard(cardId);
+				const previousSchedule: ScheduleData | null = card && card.due !== undefined
+					? {
+						stability: card.stability ?? 0,
+						difficulty: card.difficulty ?? 0,
+						due: card.due,
+						lastReview: card.lastReview ?? null,
+						reps: card.reps ?? 0,
+						lapses: card.lapses ?? 0,
+						state: card.state ?? "new",
+						learningSteps: card.learningSteps ?? 0,
+					}
+					: null;
+
 				this.ratedCardIds.add(cardId);
 				ratingEl.empty();
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
 				void this.recordRating(cardId, rating);
+
+				this.undoStack.push({
+					type: "rate",
+					cardId,
+					sourcePath,
+					previousSchedule,
+					ratingLabel: label,
+				});
 			});
 		}
 	}
@@ -236,9 +297,52 @@ export class ContextualStudyProcessor {
 
 	/** Toggle exclude flag on a fence. File modification triggers Obsidian re-render. */
 	private async toggleExclude(cardId: string, exclude: boolean, sourcePath: string): Promise<void> {
+		this.undoStack.push({
+			type: "exclude",
+			cardId,
+			sourcePath,
+			previousExclude: !exclude,
+		});
+
 		const file = this.plugin.app.vault.getFileByPath(sourcePath);
 		if (!file) return;
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
+	}
+
+	/** Undo the last action (rating or exclude). Triggers a file re-render for contextual cards. */
+	private async undo(): Promise<void> {
+		const entry = this.undoStack.pop();
+		if (!entry) return;
+
+		if (entry.type === "exclude") {
+			// Undo exclude toggle: restore previous state
+			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
+			if (file) {
+				await this.plugin.fenceWriter.writeExclude(file, entry.cardId, entry.previousExclude ?? false);
+			}
+		} else {
+			// Undo rating: revert schedule
+			if (!this.sessionManager) {
+				this.sessionManager = this.plugin.createSessionManager();
+			}
+
+			const card = this.plugin.cardStore.getCard(entry.cardId);
+			if (card) {
+				await this.sessionManager.revertReview(entry.cardId, entry.previousSchedule ?? null);
+			}
+
+			this.ratedCardIds.delete(entry.cardId);
+			this.reviewedCount = Math.max(0, this.reviewedCount - 1);
+			this.updateProgress();
+			this.plugin.refreshDashboard();
+
+			// Trigger re-render by modifying the file (touch the file to force Obsidian to re-process code blocks)
+			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
+			if (file) {
+				const content = await this.plugin.app.vault.cachedRead(file);
+				await this.plugin.app.vault.modify(file, content);
+			}
+		}
 	}
 
 	/**

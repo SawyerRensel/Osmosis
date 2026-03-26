@@ -1150,6 +1150,14 @@ hr.osmosis-map-style-divider {
 	justify-content: center;
 }
 
+.osmosis-study-actions-left {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	display: flex;
+	gap: 4px;
+}
+
 .osmosis-study-actions-right {
 	position: absolute;
 	right: 0;
@@ -1179,28 +1187,17 @@ hr.osmosis-map-style-divider {
 	color: var(--text-error);
 }
 
-.osmosis-study-undo {
+.osmosis-contextual-undo {
+	padding: 4px;
+	border-radius: 4px;
+	cursor: pointer;
+	color: var(--text-muted);
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	justify-content: center;
-	padding: 6px 0;
-	font-size: var(--font-ui-small);
-	color: var(--text-muted);
-	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-study-undo-btn {
-	padding: 2px 8px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: transparent;
-	color: var(--interactive-accent);
-	cursor: pointer;
-	font-size: var(--font-ui-small);
-}
-
-.osmosis-study-undo-btn:hover {
+.osmosis-contextual-undo:hover {
+	color: var(--text-normal);
 	background: var(--background-modifier-hover);
 }
 

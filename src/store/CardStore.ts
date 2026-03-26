@@ -163,6 +163,20 @@ export class CardStore {
 		card.learningSteps = schedule.learningSteps;
 	}
 
+	/** Clear schedule fields on a card, returning it to "new" state. */
+	clearSchedule(cardId: string): void {
+		const card = this.cards.get(cardId);
+		if (!card) return;
+		delete card.stability;
+		delete card.difficulty;
+		delete card.due;
+		delete card.lastReview;
+		delete card.reps;
+		delete card.lapses;
+		delete card.state;
+		delete card.learningSteps;
+	}
+
 	/** Get deck paths that were derived from folder structure (not explicitly set). */
 	getFolderDerivedDecks(): Set<string> {
 		const result = new Set<string>();

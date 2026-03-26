@@ -71,6 +71,27 @@ export class FenceWriter {
 		}
 	}
 
+	/**
+	 * Remove all schedule metadata from a fence, returning the card to "new" state.
+	 */
+	async removeSchedule(
+		file: TFile,
+		cardId: string,
+	): Promise<void> {
+		if (this.writingPaths.has(file.path)) return;
+
+		const content = await this.vault.cachedRead(file);
+		const modified = removeFenceSchedule(content, cardId);
+		if (modified === content) return;
+
+		this.writingPaths.add(file.path);
+		try {
+			await this.vault.modify(file, modified);
+		} finally {
+			this.writingPaths.delete(file.path);
+		}
+	}
+
 	/** Check if a path is currently being written to. */
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
@@ -306,6 +327,81 @@ export function updateFenceExclude(
 	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
 	const needsBlank = nextLine !== "" && !isClosingFence;
 	if (needsBlank && updatedMeta[updatedMeta.length - 1]?.trim() !== "") {
+		updatedMeta.push("");
+	}
+
+	return [
+		...lines.slice(0, metaStart),
+		...updatedMeta,
+		...lines.slice(metaEnd),
+	].join("\n");
+}
+
+/** Schedule-related metadata keys (including prefixed variants for derived cards). */
+const SCHEDULE_KEYS = new Set([
+	"due", "stability", "difficulty", "reps", "lapses",
+	"state", "last-review", "learning-steps",
+]);
+
+function isScheduleKey(key: string): boolean {
+	const lower = key.toLowerCase();
+	if (SCHEDULE_KEYS.has(lower)) return true;
+	// Check for prefixed keys like r-due, c1-stability
+	const prefixed = lower.match(/^(?:r|c\d+)-(.+)$/);
+	return prefixed !== null && SCHEDULE_KEYS.has(prefixed[1]!);
+}
+
+/**
+ * Pure function: remove all schedule metadata from a fence, returning the card
+ * to "new" state. Preserves non-schedule metadata like id and exclude.
+ */
+export function removeFenceSchedule(
+	content: string,
+	cardId: string,
+): string {
+	const { baseId } = parseCardIdParts(cardId);
+
+	const lines = content.split("\n");
+	const fenceStart = findFenceForId(lines, baseId);
+	if (fenceStart === -1) return content;
+
+	const openMatch = lines[fenceStart]!.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
+	const metaStart = fenceStart + 1;
+	let metaEnd = metaStart;
+
+	for (let i = metaStart; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) {
+			metaEnd = i;
+			break;
+		}
+		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+			metaEnd = i + 1;
+			continue;
+		}
+		metaEnd = i;
+		break;
+	}
+
+	const existingMeta = lines.slice(metaStart, metaEnd);
+	const updatedMeta: string[] = [];
+
+	for (const line of existingMeta) {
+		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+		if (match && isScheduleKey(match[1]!)) {
+			continue; // drop schedule keys
+		}
+		updatedMeta.push(line);
+	}
+
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	const needsBlank = nextLine !== "" && !isClosingFence;
+	if (needsBlank && updatedMeta.length > 0 && updatedMeta[updatedMeta.length - 1]?.trim() !== "") {
 		updatedMeta.push("");
 	}
 

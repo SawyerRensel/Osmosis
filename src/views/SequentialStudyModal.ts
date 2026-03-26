@@ -13,6 +13,17 @@ interface DeferredCard {
 	timer: ReturnType<typeof setTimeout>;
 }
 
+/** An entry in the undo stack — can represent either a rating or an exclude. */
+interface UndoEntry {
+	type: "rate" | "exclude";
+	studyCard: StudyCard;
+	index: number;
+	/** Previous schedule data before the rating (null = card was new). Only for "rate". */
+	previousSchedule?: ScheduleData | null;
+	/** If the rating created a deferred learning card, store it so we can cancel the timer. */
+	deferredCard?: DeferredCard;
+}
+
 /**
  * Anki-style sequential study modal.
  * Shows card front → flip to reveal back → rate (Again/Hard/Good/Easy).
@@ -33,8 +44,8 @@ export class SequentialStudyModal extends Modal {
 	/** True when the modal is showing the "waiting for next card" screen. */
 	private isWaiting = false;
 
-	/** Last excluded card info for undo support. */
-	private lastExcluded: { studyCard: StudyCard; index: number } | null = null;
+	/** Stack of undoable actions (ratings and excludes). */
+	private undoStack: UndoEntry[] = [];
 
 	// DOM elements
 	private progressEl!: HTMLElement;
@@ -44,7 +55,9 @@ export class SequentialStudyModal extends Modal {
 	private frontEl!: HTMLElement;
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
+	private actionsLeft!: HTMLElement;
 	private actionsRight!: HTMLElement;
+	private undoBtn!: HTMLButtonElement;
 	private ratingBar!: HTMLElement;
 	private typeInEl!: HTMLElement;
 	private typeInInput!: HTMLInputElement;
@@ -139,6 +152,15 @@ export class SequentialStudyModal extends Modal {
 			btn.addEventListener("click", () => void this.rate(rating));
 		}
 
+		// Bottom-left: undo button
+		this.actionsLeft = actions.createDiv({ cls: "osmosis-study-actions-left" });
+		this.undoBtn = this.actionsLeft.createEl("button", {
+			cls: "osmosis-study-icon-btn osmosis-hidden",
+			attr: { "aria-label": "Undo (Ctrl+Z)" },
+		});
+		setIcon(this.undoBtn, "undo-2");
+		this.undoBtn.addEventListener("click", () => void this.undo());
+
 		// Bottom-right icon group: go-to-card and exclude
 		this.actionsRight = actions.createDiv({ cls: "osmosis-study-actions-right" });
 
@@ -198,6 +220,9 @@ export class SequentialStudyModal extends Modal {
 
 		// Show action icons (visible for all cards)
 		this.actionsRight.removeClass("osmosis-hidden");
+
+		// Show undo button if there's something to undo
+		this.updateUndoButton();
 
 		// Show flip or type-in based on card type
 		const isTypeIn = studyCard.card.typeIn;
@@ -316,22 +341,42 @@ export class SequentialStudyModal extends Modal {
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) return;
 
-		// Clear any pending undo
-		this.lastExcluded = null;
-		this.contentEl.querySelector(".osmosis-study-undo")?.remove();
+		// Snapshot previous schedule before rating (null = card was new)
+		const card = studyCard.card;
+		const previousSchedule: ScheduleData | null = card.due !== undefined
+			? {
+				stability: card.stability ?? 0,
+				difficulty: card.difficulty ?? 0,
+				due: card.due,
+				lastReview: card.lastReview ?? null,
+				reps: card.reps ?? 0,
+				lapses: card.lapses ?? 0,
+				state: card.state ?? "new",
+				learningSteps: card.learningSteps ?? 0,
+			}
+			: null;
 
 		const updatedSchedule = await this.sessionManager.recordReview(
 			studyCard.card.id, rating,
 		);
+
+		const undoEntry: UndoEntry = {
+			type: "rate",
+			studyCard,
+			index: this.currentIndex,
+			previousSchedule,
+		};
 
 		this.reviewed++;
 		this.currentIndex++;
 
 		// If the card is still in learning/relearning, defer it with a timer
 		if (isLearningState(updatedSchedule)) {
-			this.deferLearningCard(studyCard, updatedSchedule);
+			const deferred = this.deferLearningCard(studyCard, updatedSchedule);
+			undoEntry.deferredCard = deferred;
 		}
 
+		this.undoStack.push(undoEntry);
 		this.renderCard();
 	}
 
@@ -345,49 +390,61 @@ export class SequentialStudyModal extends Modal {
 			await this.fenceWriter.writeExclude(file, studyCard.card.id, true);
 		}
 
-		// Store for undo
-		this.lastExcluded = { studyCard, index: this.currentIndex };
+		this.undoStack.push({
+			type: "exclude",
+			studyCard,
+			index: this.currentIndex,
+		});
 
 		// Advance without recording a review
 		this.currentIndex++;
 		this.renderCard();
-
-		// Show brief undo indicator
-		this.showUndoExclude();
 	}
 
-	/** Show a brief undo option after excluding a card. */
-	private showUndoExclude(): void {
-		const existing = this.contentEl.querySelector(".osmosis-study-undo");
-		if (existing) existing.remove();
+	/** Undo the last action (rating or exclude). */
+	private async undo(): Promise<void> {
+		const entry = this.undoStack.pop();
+		if (!entry) return;
 
-		const undo = this.contentEl.createDiv({ cls: "osmosis-study-undo" });
-		undo.createSpan({ text: "Card excluded" });
-		const undoBtn = undo.createEl("button", { text: "Undo", cls: "osmosis-study-undo-btn" });
-		undoBtn.addEventListener("click", () => void this.undoExclude());
+		if (entry.type === "exclude") {
+			// Undo exclude: remove exclude flag and re-insert card
+			if (this.fenceWriter && this.resolveFile) {
+				const file = this.resolveFile(entry.studyCard.card.notePath);
+				if (file) {
+					await this.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);
+				}
+			}
+			this.currentIndex--;
+			this.queue.splice(this.currentIndex, 0, entry.studyCard);
+		} else {
+			// Undo rating: revert schedule and re-insert card
+			await this.sessionManager.revertReview(
+				entry.studyCard.card.id,
+				entry.previousSchedule ?? null,
+			);
 
-		// Auto-dismiss after 5 seconds
-		setTimeout(() => undo.remove(), 5000);
-	}
+			// Cancel deferred learning card timer if one was created
+			if (entry.deferredCard) {
+				clearTimeout(entry.deferredCard.timer);
+				const idx = this.deferredCards.indexOf(entry.deferredCard);
+				if (idx !== -1) this.deferredCards.splice(idx, 1);
+			}
 
-	/** Undo the last exclude: remove exclude: true and re-insert the card. */
-	private async undoExclude(): Promise<void> {
-		if (!this.lastExcluded || !this.fenceWriter || !this.resolveFile) return;
-
-		const { studyCard } = this.lastExcluded;
-		const file = this.resolveFile(studyCard.card.notePath);
-		if (file) {
-			await this.fenceWriter.writeExclude(file, studyCard.card.id, false);
+			this.reviewed--;
+			this.currentIndex--;
+			this.queue.splice(this.currentIndex, 0, entry.studyCard);
 		}
 
-		// Re-insert card at current position so it shows next
-		this.queue.splice(this.currentIndex, 0, studyCard);
-		this.lastExcluded = null;
-
-		// Remove undo indicator
-		this.contentEl.querySelector(".osmosis-study-undo")?.remove();
-
 		this.renderCard();
+	}
+
+	/** Show or hide the undo button based on stack state. */
+	private updateUndoButton(): void {
+		if (this.undoStack.length > 0) {
+			this.undoBtn.removeClass("osmosis-hidden");
+		} else {
+			this.undoBtn.addClass("osmosis-hidden");
+		}
 	}
 
 	/** Navigate to the current card's source note and close the modal. */
@@ -411,7 +468,7 @@ export class SequentialStudyModal extends Modal {
 	 * Schedule a learning/relearning card to reappear after its due time.
 	 * Sets a real timer based on the FSRS-computed due date.
 	 */
-	private deferLearningCard(studyCard: StudyCard, schedule: ScheduleData): void {
+	private deferLearningCard(studyCard: StudyCard, schedule: ScheduleData): DeferredCard {
 		const dueAt = schedule.due;
 		const delayMs = Math.max(0, dueAt - Date.now());
 
@@ -437,6 +494,7 @@ export class SequentialStudyModal extends Modal {
 		};
 
 		this.deferredCards.push(deferred);
+		return deferred;
 	}
 
 	/**
@@ -475,6 +533,7 @@ export class SequentialStudyModal extends Modal {
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
 		this.actionsRight.addClass("osmosis-hidden");
+		this.updateUndoButton();
 
 		// Find the soonest deferred card
 		const soonest = this.deferredCards.reduce((a, b) =>
@@ -526,6 +585,7 @@ export class SequentialStudyModal extends Modal {
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
 		this.actionsRight.addClass("osmosis-hidden");
+		this.updateUndoButton();
 
 		// Update progress to 100%
 		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
@@ -577,10 +637,9 @@ export class SequentialStudyModal extends Modal {
 			this.goToCard();
 		});
 
-		this.scope.register([], "z", (e: KeyboardEvent) => {
-			if (this.isTypeInFocused) return;
+		this.scope.register(["Ctrl"], "z", (e: KeyboardEvent) => {
 			e.preventDefault();
-			void this.undoExclude();
+			void this.undo();
 		});
 
 		const ratingKeys: Array<{ key: string; rating: FSRSRating }> = [
