@@ -63,19 +63,19 @@ export class ContextualStudyProcessor {
 			"osmosis",
 			(source: string, el: HTMLElement, ctx) => {
 				// Defer so the element is attached to the DOM before we check context
-				setTimeout(() => {
-					const inReadingView = el.closest(".markdown-reading-view") !== null;
+				requestAnimationFrame(() => {
 					const inLivePreview = el.closest(".is-live-preview") !== null;
 
-					if (inReadingView) {
-						// Reading view: interactive card with hidden answer
-						this.renderCard(source, el, ctx.sourcePath);
-					} else if (inLivePreview) {
+					if (inLivePreview) {
 						// Live preview: render both front and back (no hiding)
 						this.renderPreviewCard(source, el, ctx.sourcePath);
+					} else {
+						// Reading view (default): interactive card with hidden answer.
+						// Code block processors are not called in source mode, so if
+						// we're not in live preview we must be in reading view.
+						this.renderCard(source, el, ctx.sourcePath);
 					}
-					// Source mode: Obsidian handles raw display, nothing to do
-				}, 0);
+				});
 			},
 		);
 	}
