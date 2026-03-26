@@ -398,10 +398,12 @@ export class SequentialStudyModal extends Modal {
 		const notePath = studyCard.card.notePath;
 		this.close();
 
-		// Open the note in the active leaf
+		// Open the note and scroll to the card's source line
 		const file = this.app.vault.getFileByPath(notePath);
 		if (file) {
-			void this.app.workspace.getLeaf(false).openFile(file);
+			void this.app.workspace.getLeaf(false).openFile(file, {
+				eState: { line: studyCard.card.sourceLine },
+			});
 		}
 	}
 
