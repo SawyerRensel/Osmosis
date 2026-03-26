@@ -128,7 +128,7 @@ export class ContextualStudyProcessor {
 		});
 		const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
 		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
-		setIcon(toggleIcon, parsed.exclude ? "circle-off" : "circle-check-big");
+		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
 		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
 		toggleIcon.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -225,7 +225,7 @@ export class ContextualStudyProcessor {
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
 		bottomRow.createDiv(); // spacer
 		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
-		setIcon(toggleIcon, parsed.exclude ? "circle-off" : "circle-check-big");
+		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
 		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
 		toggleIcon.addEventListener("click", (e) => {
 			e.stopPropagation();

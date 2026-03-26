@@ -175,7 +175,7 @@ export class SequentialStudyModal extends Modal {
 			cls: "osmosis-study-icon-btn",
 			attr: { "aria-label": "Exclude card (e)" },
 		});
-		setIcon(excludeBtn, "ban");
+		setIcon(excludeBtn, "eye-off");
 		excludeBtn.addEventListener("click", () => void this.excludeCard());
 	}
 
