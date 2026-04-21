@@ -53,5 +53,6 @@ views:
     colorBy: note.calendar
     borderStyle: left-accent
     badgePlacement: properties-section
+    columnOrder: '["Triage","Backlog","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
   - type: table
     name: Table

@@ -1,10 +1,11 @@
 ---
 name: Bug
 about: Report a problem
-title: 'Bug '
+title: "Bug "
 labels: bug, support
-assignees: ''
-
+assignees: ""
+tags:
+  - task
 ---
 
 **Submitted by:** 

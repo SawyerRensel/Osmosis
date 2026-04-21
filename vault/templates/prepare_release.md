@@ -1,10 +1,11 @@
 ---
 name: Prepare Release
 about: A checklist for a new release
-title: 'Prepare Release'
+title: Prepare Release
 labels: documentation
-assignees: 'SawyerRensel'
-
+assignees: SawyerRensel
+tags:
+  - task
 ---
 
 ## Document

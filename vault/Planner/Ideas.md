@@ -25,16 +25,16 @@ osmosis-styles:
 - [x] Fix up and down maps
 - [x] Add more branch styles
 	- Thick to thin curved
-- [ ] Exclude headings (if so what level?) from study mode in mind map
+- [ ] *Exclude headings (if so what level?) from study mode in mind map*
 - [x] Change "Format" to "Node" and replace map name with "Map Styling".  Active menu should be filled solid, 
-- [ ] Promote/demote save custom theme to map so mind maps are portable if sharing (v0.2)
-- [ ] show card stats in note edit mode and mind map mode (how long until I'll study this again?)
-- [ ] show a calendar heatmap of cards when they're due
-- [ ] Support transclusion titles (Add settings)
-	- [ ] Fileneame as h1 branch node 
-	- [ ] `title` frontmatter fields as h1 branch node
-	- [ ] Add option to ignore h1 headings if picking either of these two
-- [ ] Fixed imbalanced gap between root node for left/right (+ maybe up/down) maps
+- [ ] *Promote/demote save custom theme to map so mind maps are portable if sharing (v0.2)*
+- [ ] *show card stats in note edit mode and mind map mode (how long until I'll study this again?)*
+- [ ] *show a calendar heatmap of cards when they're due*
+- [ ] *Support transclusion titles (Add settings)*
+	- [ ] *Fileneame as h1 branch node* 
+	- [ ] *`title` frontmatter fields as h1 branch node*
+	- [ ] *Add option to ignore h1 headings if picking either of these two*
+- [ ] *Fixed imbalanced gap between root node for left/right (+ maybe up/down) maps*
 	- ![](Pasted%20image%2020260316060950.png)
 - [ ] `Ctrl+Shift+[` (all four fold operators don't work for transcluded maps)
 - [ ] Format button should toggle panel visibility (doesn't close currently) ![](Pasted%20image%2020260316061016.png)
