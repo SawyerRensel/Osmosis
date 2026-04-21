@@ -1081,6 +1081,12 @@ hr.osmosis-map-style-divider {
 	object-fit: contain;
 }
 
+.osmosis-study-top-bar {
+	display: flex;
+	align-items: center;
+	margin-bottom: 10px;
+}
+
 .osmosis-study-progress {
 	display: flex;
 	align-items: center;
@@ -1150,18 +1156,8 @@ hr.osmosis-map-style-divider {
 	justify-content: center;
 }
 
-.osmosis-study-actions-left {
-	position: absolute;
-	left: 0;
-	bottom: 0;
-	display: flex;
-	gap: 4px;
-}
 
 .osmosis-study-actions-right {
-	position: absolute;
-	right: 0;
-	bottom: 0;
 	display: flex;
 	gap: 4px;
 }

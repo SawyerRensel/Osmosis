@@ -55,7 +55,7 @@ export class SequentialStudyModal extends Modal {
 	private frontEl!: HTMLElement;
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
-	private actionsLeft!: HTMLElement;
+
 	private actionsRight!: HTMLElement;
 	private undoBtn!: HTMLButtonElement;
 	private ratingBar!: HTMLElement;
@@ -103,6 +103,31 @@ export class SequentialStudyModal extends Modal {
 
 	private buildLayout(): void {
 		const container = this.contentEl;
+
+		// Top bar: undo, open-note, and exclude buttons (top-left), above progress bar
+		const topBar = container.createDiv({ cls: "osmosis-study-top-bar" });
+		this.actionsRight = topBar.createDiv({ cls: "osmosis-study-actions-right" });
+
+		const gotoBtn = this.actionsRight.createEl("button", {
+			cls: "osmosis-study-icon-btn",
+			attr: { "aria-label": "Go to card" },
+		});
+		setIcon(gotoBtn, "file-text");
+		gotoBtn.addEventListener("click", () => this.goToCard());
+
+		const excludeBtn = this.actionsRight.createEl("button", {
+			cls: "osmosis-study-icon-btn",
+			attr: { "aria-label": "Exclude card (e)" },
+		});
+		setIcon(excludeBtn, "eye-off");
+		excludeBtn.addEventListener("click", () => void this.excludeCard());
+
+		this.undoBtn = this.actionsRight.createEl("button", {
+			cls: "osmosis-study-icon-btn osmosis-hidden",
+			attr: { "aria-label": "Undo (Ctrl+Z)" },
+		});
+		setIcon(this.undoBtn, "undo-2");
+		this.undoBtn.addEventListener("click", () => void this.undo());
 
 		// Progress bar
 		this.progressEl = container.createDiv({ cls: "osmosis-study-progress" });
@@ -152,31 +177,6 @@ export class SequentialStudyModal extends Modal {
 			btn.addEventListener("click", () => void this.rate(rating));
 		}
 
-		// Bottom-left: undo button
-		this.actionsLeft = actions.createDiv({ cls: "osmosis-study-actions-left" });
-		this.undoBtn = this.actionsLeft.createEl("button", {
-			cls: "osmosis-study-icon-btn osmosis-hidden",
-			attr: { "aria-label": "Undo (Ctrl+Z)" },
-		});
-		setIcon(this.undoBtn, "undo-2");
-		this.undoBtn.addEventListener("click", () => void this.undo());
-
-		// Bottom-right icon group: go-to-card and exclude
-		this.actionsRight = actions.createDiv({ cls: "osmosis-study-actions-right" });
-
-		const gotoBtn = this.actionsRight.createEl("button", {
-			cls: "osmosis-study-icon-btn",
-			attr: { "aria-label": "Go to card" },
-		});
-		setIcon(gotoBtn, "file-text");
-		gotoBtn.addEventListener("click", () => this.goToCard());
-
-		const excludeBtn = this.actionsRight.createEl("button", {
-			cls: "osmosis-study-icon-btn",
-			attr: { "aria-label": "Exclude card (e)" },
-		});
-		setIcon(excludeBtn, "eye-off");
-		excludeBtn.addEventListener("click", () => void this.excludeCard());
 	}
 
 	private renderCard(): void {
