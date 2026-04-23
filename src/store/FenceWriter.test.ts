@@ -95,6 +95,22 @@ The capital of ==France== is ==Paris==
 		expect(result).toContain("c1-stability: 4.5000");
 	});
 
+	it("writes prefixed keys for inline cloze cards", () => {
+		const content = `\`\`\`\`osmosis
+id: test-inline-02
+
+\`\`\`python
+def :::1:greet:::(:::2:name:::):
+    return f"Hello, :::2:name:::"
+\`\`\`
+\`\`\`\``;
+
+		const result = updateFenceSchedule(content, "test-inline-02-i1", baseSchedule);
+
+		expect(result).toContain("i1-due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("i1-stability: 4.5000");
+	});
+
 	it("returns original content if fence not found", () => {
 		const content = `\`\`\`osmosis
 id: other123

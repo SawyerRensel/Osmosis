@@ -413,8 +413,8 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					const key = metaMatch[1]!.toLowerCase();
 					const value = metaMatch[2]!.trim();
 
-					// Check for derived schedule prefix (e.g., r-due, c1-stability)
-					const prefixMatch = key.match(/^(r|c\d+)-(.+)$/);
+					// Check for derived schedule prefix (e.g., r-due, c1-stability, i1-due)
+					const prefixMatch = key.match(/^(r|c\d+|i\d+)-(.+)$/);
 					if (prefixMatch && SCHEDULE_FIELDS.has(prefixMatch[2]!)) {
 						const suffix = prefixMatch[1]!;
 						const field = prefixMatch[2]!;

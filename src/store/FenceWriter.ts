@@ -193,10 +193,11 @@ export function updateFenceSchedule(
  *   "abc123"    → { baseId: "abc123", prefix: "" }
  *   "abc123-r"  → { baseId: "abc123", prefix: "r-" }
  *   "abc123-c1" → { baseId: "abc123", prefix: "c1-" }
+ *   "abc123-i1" → { baseId: "abc123", prefix: "i1-" }
  */
 function parseCardIdParts(cardId: string): { baseId: string; prefix: string } {
-	// Match derived suffixes: -r (bidi reverse) or -cN (cloze)
-	const match = cardId.match(/^(.+)-(r|c\d+)$/);
+	// Match derived suffixes: -r (bidi reverse), -cN (line cloze), -iN (inline cloze)
+	const match = cardId.match(/^(.+)-(r|c\d+|i\d+)$/);
 	if (match) {
 		return { baseId: match[1]!, prefix: `${match[2]!}-` };
 	}
@@ -346,8 +347,8 @@ const SCHEDULE_KEYS = new Set([
 function isScheduleKey(key: string): boolean {
 	const lower = key.toLowerCase();
 	if (SCHEDULE_KEYS.has(lower)) return true;
-	// Check for prefixed keys like r-due, c1-stability
-	const prefixed = lower.match(/^(?:r|c\d+)-(.+)$/);
+	// Check for prefixed keys like r-due, c1-stability, i1-due
+	const prefixed = lower.match(/^(?:r|c\d+|i\d+)-(.+)$/);
 	return prefixed !== null && SCHEDULE_KEYS.has(prefixed[1]!);
 }
 
