@@ -3,6 +3,7 @@ import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
+import { CLOZE_BLANK } from "../card-gen/explicit";
 
 /** An undo entry for contextual review. */
 interface ContextualUndoEntry {
@@ -412,11 +413,20 @@ export class ContextualStudyProcessor {
 			return { front, back, cardId, exclude };
 		}
 
+		// Check for inline code cloze (:::...::: markers inside inner code fences)
+		const hasInlineCloze = contentLines.some((l) => /:::(?:\d+:)?(.+?):::/.test(l));
+		const hasInnerFence = contentLines.some((l) => /^```\w/.test(l.trim()));
+		if (hasInlineCloze && hasInnerFence) {
+			const { front, back } = ContextualStudyProcessor.buildInlineClozeFrontBack(contentLines);
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`inline-cloze|||${content}`);
+			return { front, back, cardId, exclude };
+		}
+
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		// Front: all clozes replaced with ########; Back: full text with markers
-		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "########");
+		// Front: all clozes replaced with CLOZE_BLANK; Back: full text with markers
+		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, CLOZE_BLANK);
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
 		return { front, back: content, cardId, exclude };
 	}
@@ -424,6 +434,7 @@ export class ContextualStudyProcessor {
 	/**
 	 * Build front/back for code cloze in contextual mode.
 	 * Front: all cloze regions blanked. Back: all markers stripped.
+	 * Inline cloze markers on non-blanked lines are stripped to plain text.
 	 */
 	private static buildCodeClozeFrontBack(contentLines: string[]): { front: string; back: string } {
 		const MARKER_COMMENT = /\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze\s*(?:\*\/|-->)?\s*$/;
@@ -447,22 +458,43 @@ export class ContextualStudyProcessor {
 			if (inMultiCloze) {
 				if (!multiFirstSeen) {
 					const indent = line.match(/^(\s*)/)?.[1] ?? "";
-					frontLines.push(`${indent}########`);
+					frontLines.push(`${indent}${CLOZE_BLANK}`);
 					multiFirstSeen = true;
 				}
-				backLines.push(line);
+				backLines.push(ContextualStudyProcessor.stripInline(line));
 			} else if (line.includes("osmosis-cloze")) {
 				// Single-line cloze
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
-				frontLines.push(`${indent}########`);
-				backLines.push(line.replace(MARKER_COMMENT, ""));
+				frontLines.push(`${indent}${CLOZE_BLANK}`);
+				backLines.push(ContextualStudyProcessor.stripInline(line.replace(MARKER_COMMENT, "")));
 			} else {
-				frontLines.push(line);
-				backLines.push(line);
+				const stripped = ContextualStudyProcessor.stripInline(line);
+				frontLines.push(stripped);
+				backLines.push(stripped);
 			}
 		}
 
 		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+	}
+
+	/**
+	 * Build front/back for inline code cloze in contextual mode.
+	 * Front: all :::...::: markers replaced with CLOZE_BLANK.
+	 * Back: all markers stripped to plain text.
+	 */
+	private static buildInlineClozeFrontBack(contentLines: string[]): { front: string; back: string } {
+		const front = contentLines
+			.map((l) => l.replace(/:::(?:\d+:)?(.+?):::/g, CLOZE_BLANK))
+			.join("\n");
+		const back = contentLines
+			.map((l) => l.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text))
+			.join("\n");
+		return { front, back };
+	}
+
+	/** Strip :::...::: inline cloze markers, leaving just the text content. */
+	private static stripInline(line: string): string {
+		return line.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text);
 	}
 
 	/** Extract id: metadata from fence source if present. */

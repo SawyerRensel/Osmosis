@@ -1069,6 +1069,7 @@ hr.osmosis-map-style-divider {
 
 .osmosis-study-modal .modal-content {
 	overflow-y: auto;
+	padding-top: 0;
 	padding-bottom: 8px;
 }
 

@@ -269,9 +269,9 @@ describe("generateExplicitCards", () => {
 			expect(cards[2]!.id).toBe("b8cb51f9-c3");
 
 			// Fronts have one term blanked each
-			expect(cards[0]!.front).toBe("######## means ==hello== in ==French==");
-			expect(cards[1]!.front).toBe("==Bonjour== means ######## in ==French==");
-			expect(cards[2]!.front).toBe("==Bonjour== means ==hello== in ########");
+			expect(cards[0]!.front).toBe("░░░░░░░░ means ==hello== in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means ░░░░░░░░ in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means ==hello== in ░░░░░░░░");
 
 			// All backs show full text
 			for (const card of cards) {
@@ -288,7 +288,7 @@ describe("generateExplicitCards", () => {
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("explicit_cloze");
-			expect(cards[0]!.front).toBe("The ######## is the powerhouse of the cell.");
+			expect(cards[0]!.front).toBe("The ░░░░░░░░ is the powerhouse of the cell.");
 			expect(cards[0]!.back).toBe("The ==mitochondria== is the powerhouse of the cell.");
 		});
 
@@ -330,8 +330,8 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.id).toBe("bold001-c1");
 			expect(cards[1]!.id).toBe("bold001-c2");
 
-			expect(cards[0]!.front).toBe("######## means **hello**");
-			expect(cards[1]!.front).toBe("**Bonjour** means ########");
+			expect(cards[0]!.front).toBe("░░░░░░░░ means **hello**");
+			expect(cards[1]!.front).toBe("**Bonjour** means ░░░░░░░░");
 
 			for (const card of cards) {
 				expect(card.back).toBe("**Bonjour** means **hello**");
@@ -349,9 +349,9 @@ describe("generateExplicitCards", () => {
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(3);
 
-			expect(cards[0]!.front).toBe("######## means **hello** in ==French==");
-			expect(cards[1]!.front).toBe("==Bonjour== means ######## in ==French==");
-			expect(cards[2]!.front).toBe("==Bonjour== means **hello** in ########");
+			expect(cards[0]!.front).toBe("░░░░░░░░ means **hello** in ==French==");
+			expect(cards[1]!.front).toBe("==Bonjour== means ░░░░░░░░ in ==French==");
+			expect(cards[2]!.front).toBe("==Bonjour== means **hello** in ░░░░░░░░");
 		});
 
 		it("skips fence without separator and without cloze", () => {
@@ -392,8 +392,8 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("code_cloze");
 			expect(cards[0]!.id).toBe("code001-c1");
-			// Front: line replaced with ########, indentation preserved
-			expect(cards[0]!.front).toContain("        ########");
+			// Front: line replaced with ░░░░░░░░, indentation preserved
+			expect(cards[0]!.front).toContain("        ░░░░░░░░");
 			expect(cards[0]!.front).not.toContain("return n");
 			// Back: marker stripped, code visible
 			expect(cards[0]!.back).toContain("        return n");
@@ -422,8 +422,8 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			expect(cards[0]!.card_type).toBe("code_cloze");
 			expect(cards[0]!.id).toBe("code002-c1");
-			// Front: multi-line region replaced with single ########
-			expect(cards[0]!.front).toContain("    ########");
+			// Front: multi-line region replaced with single ░░░░░░░░
+			expect(cards[0]!.front).toContain("    ░░░░░░░░");
 			expect(cards[0]!.front).not.toContain("a, b = 0, 1");
 			expect(cards[0]!.front).not.toContain("osmosis-cloze");
 			// Back: content visible, marker lines stripped
@@ -455,13 +455,13 @@ describe("generateExplicitCards", () => {
 
 			// Card 1: single-line blanked, multi-line visible
 			expect(cards[0]!.id).toBe("code003-c1");
-			expect(cards[0]!.front).toContain("        ########");
+			expect(cards[0]!.front).toContain("        ░░░░░░░░");
 			expect(cards[0]!.front).toContain("    a, b = 0, 1");
 
 			// Card 2: single-line visible, multi-line blanked
 			expect(cards[1]!.id).toBe("code003-c2");
 			expect(cards[1]!.front).toContain("        return n");
-			expect(cards[1]!.front).toContain("    ########");
+			expect(cards[1]!.front).toContain("    ░░░░░░░░");
 			expect(cards[1]!.front).not.toContain("a, b = 0, 1");
 		});
 
@@ -520,7 +520,7 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 			// Front shows context, just the cloze line blanked
 			expect(cards[0]!.front).toContain("x = 1");
-			expect(cards[0]!.front).toContain("########");
+			expect(cards[0]!.front).toContain("░░░░░░░░");
 			expect(cards[0]!.front).toContain("z = 3");
 			// Front still has code fence markers for rendering
 			expect(cards[0]!.front).toContain("```python");
@@ -538,6 +538,217 @@ describe("generateExplicitCards", () => {
 			].join("\n");
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(0);
+		});
+	});
+
+	describe("inline code cloze cards", () => {
+		it("generates a single inline cloze card", () => {
+			const md = [
+				"````osmosis",
+				"id: inl001",
+				"",
+				"```python",
+				`print(:::"Hello, World":::)`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.card_type).toBe("code_cloze");
+			expect(cards[0]!.id).toBe("inl001-i1");
+			expect(cards[0]!.front).toContain(`print(░░░░░░░░)`);
+			expect(cards[0]!.back).toContain(`print("Hello, World")`);
+			expect(cards[0]!.back).not.toContain(":::");
+		});
+
+		it("generates two cards for two auto-numbered blanks on separate lines", () => {
+			const md = [
+				"````osmosis",
+				"id: inl002",
+				"",
+				"```python",
+				`x = :::"hello":::`,
+				`y = :::"world":::`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards[0]!.id).toBe("inl002-i1");
+			expect(cards[1]!.id).toBe("inl002-i2");
+			// Card 1: x blanked, y visible
+			expect(cards[0]!.front).toContain("x = ░░░░░░░░");
+			expect(cards[0]!.front).toContain(`y = "world"`);
+			// Card 2: x visible, y blanked
+			expect(cards[1]!.front).toContain(`x = "hello"`);
+			expect(cards[1]!.front).toContain("y = ░░░░░░░░");
+			// Both backs show clean code
+			expect(cards[0]!.back).toContain(`x = "hello"`);
+			expect(cards[1]!.back).toContain(`y = "world"`);
+		});
+
+		it("groups multiple occurrences with the same number onto one card", () => {
+			const md = [
+				"````osmosis",
+				"id: inl003",
+				"",
+				"```python",
+				`def :::1:greet:::(:::2:name:::):`,
+				`    return f"Hello, :::2:name:::"`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			// Group 1 (greet) — first occurrence
+			expect(cards[0]!.id).toBe("inl003-i1");
+			expect(cards[0]!.front).toContain("def ░░░░░░░░(name):");
+			expect(cards[0]!.front).toContain(`return f"Hello, name"`);
+			// Group 2 (name) — both occurrences blanked together
+			expect(cards[1]!.id).toBe("inl003-i2");
+			expect(cards[1]!.front).toContain("def greet(░░░░░░░░):");
+			expect(cards[1]!.front).toContain(`return f"Hello, ░░░░░░░░"`);
+			// Backs show clean code
+			expect(cards[0]!.back).toContain("def greet(name):");
+			expect(cards[1]!.back).toContain("def greet(name):");
+		});
+
+		it("assigns card suffixes by source order, not by group number", () => {
+			const md = [
+				"````osmosis",
+				"id: inl004",
+				"",
+				"```python",
+				`:::2:first::: + :::1:second:::`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			// Group 2 appears first in source → i1
+			expect(cards[0]!.id).toBe("inl004-i1");
+			expect(cards[0]!.front).toContain("░░░░░░░░ + second");
+			// Group 1 appears second → i2
+			expect(cards[1]!.id).toBe("inl004-i2");
+			expect(cards[1]!.front).toContain("first + ░░░░░░░░");
+		});
+
+		it("generates both line-level and inline cloze cards from the same fence", () => {
+			const md = [
+				"````osmosis",
+				"id: mix001",
+				"",
+				"```python",
+				"x = 1  # osmosis-cloze",
+				`y = :::"hello":::`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			// Line-level card first (c1)
+			expect(cards[0]!.id).toBe("mix001-c1");
+			expect(cards[0]!.front).toContain("░░░░░░░░");
+			expect(cards[0]!.front).not.toContain("x = 1");
+			// Inline markers stripped from line-level card
+			expect(cards[0]!.front).toContain(`y = "hello"`);
+			expect(cards[0]!.front).not.toContain(":::");
+			// Inline card second (i1)
+			expect(cards[1]!.id).toBe("mix001-i1");
+			expect(cards[1]!.front).toContain("x = 1"); // line-level marker stripped, not blanked
+			expect(cards[1]!.front).toContain("y = ░░░░░░░░");
+		});
+
+		it("ignores inline markers on lines with # osmosis-cloze", () => {
+			const md = [
+				"````osmosis",
+				"id: prec001",
+				"",
+				"```python",
+				`x = :::"value":::  # osmosis-cloze`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			// Only one card — the line-level cloze. Inline marker is ignored.
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.id).toBe("prec001-c1");
+			expect(cards[0]!.front).toContain("░░░░░░░░");
+		});
+
+		it("ignores inline markers inside osmosis-cloze-start/end region", () => {
+			const md = [
+				"````osmosis",
+				"id: prec002",
+				"",
+				"```python",
+				"# osmosis-cloze-start",
+				`a = :::"inside":::`,
+				"# osmosis-cloze-end",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			// Only one card — the multi-line cloze. Inline marker is ignored.
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.id).toBe("prec002-c1");
+		});
+
+		it("strips inline markers from line-level cloze card backs", () => {
+			const md = [
+				"````osmosis",
+				"id: strip01",
+				"",
+				"```python",
+				`x = :::"value":::`,
+				"y = 2  # osmosis-cloze",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			// line-level card back should not contain :::
+			const lineLevelCard = cards.find((c) => c.id === "strip01-c1")!;
+			expect(lineLevelCard).toBeDefined();
+			expect(lineLevelCard.back).not.toContain(":::");
+			expect(lineLevelCard.back).toContain(`x = "value"`);
+		});
+
+		it("preserves surrounding code context in inline cloze front", () => {
+			const md = [
+				"````osmosis",
+				"id: ctx02",
+				"",
+				"```python",
+				"x = 1",
+				`print(:::"Hello":::)`,
+				"y = 2",
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.front).toContain("x = 1");
+			expect(cards[0]!.front).toContain("░░░░░░░░");
+			expect(cards[0]!.front).toContain("y = 2");
+			expect(cards[0]!.front).toContain("```python");
+		});
+
+		it("inline cloze cards inherit deck and hint metadata", () => {
+			const md = [
+				"````osmosis",
+				"id: meta02",
+				"deck: programming",
+				"hint: A string argument",
+				"",
+				"```python",
+				`print(:::"Hello":::)`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.deck).toBe("programming");
+			expect(cards[0]!.front).toContain("_Hint: A string argument_");
 		});
 	});
 

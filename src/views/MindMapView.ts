@@ -36,6 +36,7 @@ import {
 } from "../editor/EmbeddableMarkdownEditor";
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { EditorSelection } from "@codemirror/state";
+import { CLOZE_BLANK } from "../card-gen/explicit";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -348,7 +349,7 @@ export class MindMapView extends ItemView {
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		const front = text.replace(MindMapView.CLOZE_REGEX, "########");
+		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
 		return { front, back: text };
 	}
 
@@ -396,13 +397,13 @@ export class MindMapView extends ItemView {
 			if (inMultiCloze) {
 				if (!multiFirstSeen) {
 					const indent = line.match(/^(\s*)/)?.[1] ?? "";
-					frontLines.push(`${indent}########`);
+					frontLines.push(`${indent}${CLOZE_BLANK}`);
 					multiFirstSeen = true;
 				}
 				backLines.push(line);
 			} else if (line.includes("osmosis-cloze")) {
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
-				frontLines.push(`${indent}########`);
+				frontLines.push(`${indent}${CLOZE_BLANK}`);
 				backLines.push(line.replace(MindMapView.STRIP_CLOZE_COMMENT, ""));
 			} else {
 				frontLines.push(line);
