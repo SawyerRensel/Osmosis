@@ -577,6 +577,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 						continue;
 					}
 
+					let recognized = true;
 					switch (key) {
 						case "id":
 							metadata.id = value;
@@ -596,9 +597,13 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 						case "hint":
 							metadata.hint = value;
 							break;
+						default:
+							recognized = false;
 					}
-					i++;
-					continue;
+					if (recognized) {
+						i++;
+						continue;
+					}
 				}
 				metadataEnded = true;
 			}

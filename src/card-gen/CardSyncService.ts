@@ -103,55 +103,15 @@ export class CardSyncService {
 	 * Write `id: xxx` metadata into osmosis fences that don't already have one.
 	 */
 	private async injectFenceIds(file: TFile, content: string, cards: GeneratedCard[]): Promise<void> {
-		const lines = content.split("\n");
+		const modified = injectFenceIdsIntoContent(content, cards);
+		if (modified === content) return;
 
-		const fencesNeedingId = new Map<number, string>();
-
-		for (const card of cards) {
-			// Skip derived IDs (cloze -c1, bidi -r) — only inject the base fence ID
-			if (card.id.includes("-")) continue;
-
-			const fenceLine = card.sourceLine;
-			if (fencesNeedingId.has(fenceLine)) continue;
-
-			if (!this.fenceHasIdMetadata(lines, fenceLine)) {
-				fencesNeedingId.set(fenceLine, card.id);
-			}
+		this.writingPaths.add(file.path);
+		try {
+			await this.vault.modify(file, modified);
+		} finally {
+			this.writingPaths.delete(file.path);
 		}
-
-		if (fencesNeedingId.size === 0) return;
-
-		// Process from bottom-up to avoid offset shifts
-		const sortedLines = [...fencesNeedingId.keys()].sort((a, b) => b - a);
-
-		const modifiedLines = [...lines];
-		for (const fenceLine of sortedLines) {
-			const id = fencesNeedingId.get(fenceLine)!;
-			modifiedLines.splice(fenceLine + 1, 0, `id: ${id}`);
-		}
-
-		const modified = modifiedLines.join("\n");
-		if (modified !== content) {
-			this.writingPaths.add(file.path);
-			try {
-				await this.vault.modify(file, modified);
-			} finally {
-				this.writingPaths.delete(file.path);
-			}
-		}
-	}
-
-	/**
-	 * Check if a fence starting at the given line already has an `id:` metadata line.
-	 */
-	private fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
-		for (let i = fenceLine + 1; i < lines.length; i++) {
-			const line = lines[i]!.trim();
-			if (line === "" || line === "```") break;
-			if (/^id\s*:\s*.+$/i.test(line)) return true;
-			if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
-		}
-		return false;
 	}
 
 	/**
@@ -187,4 +147,70 @@ export class CardSyncService {
 			}
 		}
 	}
+}
+
+/**
+ * Pure function: return the content with `id: xxx` lines inserted into any
+ * osmosis fence that lacks one. Derived suffixes (`-r`, `-cN`) are stripped
+ * so each fence gets its base id — cloze-only fences whose cards are all
+ * derived still receive an id.
+ */
+export function injectFenceIdsIntoContent(content: string, cards: GeneratedCard[]): string {
+	const lines = content.split("\n");
+	const fencesNeedingId = new Map<number, string>();
+
+	for (const card of cards) {
+		const baseId = card.id.replace(/-(?:r|c\d+)$/, "");
+		const fenceLine = card.sourceLine;
+		if (fencesNeedingId.has(fenceLine)) continue;
+		if (!fenceHasIdMetadata(lines, fenceLine)) {
+			fencesNeedingId.set(fenceLine, baseId);
+		}
+	}
+
+	if (fencesNeedingId.size === 0) return content;
+
+	const sortedLines = [...fencesNeedingId.keys()].sort((a, b) => b - a);
+	const modifiedLines = [...lines];
+	for (const fenceLine of sortedLines) {
+		const id = fencesNeedingId.get(fenceLine)!;
+		// If the fence has no blank-line separator between metadata and content,
+		// inject one after the id line. Otherwise downstream metadata scanners
+		// can't tell where the content begins.
+		const nextLine = modifiedLines[fenceLine + 1]?.trim() ?? "";
+		const needsBlank = nextLine !== "" && !isRecognizedMetadataLine(nextLine);
+		const toInsert = needsBlank ? [`id: ${id}`, ""] : [`id: ${id}`];
+		modifiedLines.splice(fenceLine + 1, 0, ...toInsert);
+	}
+
+	return modifiedLines.join("\n");
+}
+
+const META_KEYS = new Set([
+	"id", "exclude", "bidi", "type-in", "deck", "hint",
+	"due", "stability", "difficulty", "reps", "lapses",
+	"state", "last-review", "learning-steps",
+]);
+
+function isRecognizedMetadataLine(line: string): boolean {
+	const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+	if (!match) return false;
+	const key = match[1]!.toLowerCase();
+	if (META_KEYS.has(key)) return true;
+	const prefixed = key.match(/^(?:r|c\d+)-(.+)$/);
+	return prefixed !== null && META_KEYS.has(prefixed[1]!);
+}
+
+function fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
+	const openMatch = lines[fenceLine]?.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
+	for (let i = fenceLine + 1; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) break;
+		if (/^id\s*:\s*.+$/i.test(line)) return true;
+		if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
+	}
+	return false;
 }

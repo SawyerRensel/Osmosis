@@ -209,6 +209,31 @@ A
 		expect(result).toContain("due: 2026-03-15T00:00:00.000Z");
 	});
 
+	it("does not treat prose content lines containing colons as metadata", () => {
+		// Regression: `The :::mito::: is…` matches `\w[\w-]*: .+`, and the old
+		// scanner accepted any such line as metadata. Result was schedule keys
+		// getting appended AFTER the content line, not before it.
+		const content = [
+			"```osmosis",
+			"id: abc123",
+			"",
+			"The :::mitochondria::: is the powerhouse of the :::cell:::.",
+			"```",
+		].join("\n");
+
+		const result = updateFenceSchedule(content, "abc123-c1", baseSchedule);
+		const lines = result.split("\n");
+
+		// Find the content line and the first schedule line
+		const contentIdx = lines.findIndex((l) => l.includes(":::mitochondria:::"));
+		const scheduleIdx = lines.findIndex((l) => l.startsWith("c1-due:"));
+
+		expect(contentIdx).toBeGreaterThan(-1);
+		expect(scheduleIdx).toBeGreaterThan(-1);
+		// Schedule must appear BEFORE content, not after
+		expect(scheduleIdx).toBeLessThan(contentIdx);
+	});
+
 	it("writes schedule into 4-backtick code cloze fence", () => {
 		const content = `\`\`\`\`osmosis
 id: codeclz

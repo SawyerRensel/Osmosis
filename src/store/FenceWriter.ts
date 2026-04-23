@@ -129,7 +129,7 @@ export function updateFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+		if (isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -252,7 +252,7 @@ function findFenceForId(lines: string[], targetId: string): number {
 			}
 
 			// Stop if we hit a non-metadata line
-			if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
+			if (!isRecognizedMetadataLine(line)) break;
 		}
 	}
 
@@ -289,7 +289,7 @@ export function updateFenceExclude(
 			metaEnd = i;
 			break;
 		}
-		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+		if (isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -343,12 +343,29 @@ const SCHEDULE_KEYS = new Set([
 	"state", "last-review", "learning-steps",
 ]);
 
+/** Non-schedule metadata keys recognized inside an osmosis fence. */
+const METADATA_KEYS = new Set([
+	"id", "exclude", "bidi", "type-in", "deck", "hint",
+]);
+
 function isScheduleKey(key: string): boolean {
 	const lower = key.toLowerCase();
 	if (SCHEDULE_KEYS.has(lower)) return true;
 	// Check for prefixed keys like r-due, c1-stability
 	const prefixed = lower.match(/^(?:r|c\d+)-(.+)$/);
 	return prefixed !== null && SCHEDULE_KEYS.has(prefixed[1]!);
+}
+
+/**
+ * True if the line looks like a recognized metadata key-value pair.
+ * Arbitrary `word: value` lines (e.g., prose content like "The :::mito:::…")
+ * are NOT treated as metadata — only keys the parser knows about.
+ */
+function isRecognizedMetadataLine(line: string): boolean {
+	const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+	if (!match) return false;
+	const key = match[1]!.toLowerCase();
+	return METADATA_KEYS.has(key) || isScheduleKey(key);
 }
 
 /**
@@ -378,7 +395,7 @@ export function removeFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+		if (isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}

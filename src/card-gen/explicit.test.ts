@@ -452,6 +452,21 @@ describe("generateExplicitCards", () => {
 			const cards = generateExplicitCards(md);
 			expect(cards).toHaveLength(0);
 		});
+
+		it("generates cloze cards when fence has no metadata and no leading blank line", () => {
+			// Regression: `The :::mito::: and :::cell:::.` was being consumed as
+			// metadata (key=`The`, value=`::mito:::…`) because any `word:` line
+			// was accepted in the metadata region.
+			const md = [
+				"```osmosis",
+				"The :::mitochondria::: is the powerhouse of the :::cell:::.",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards[0]!.card_type).toBe("explicit_cloze");
+			expect(cards[0]!.front).toContain("░░░░░░░░");
+		});
 	});
 
 	describe("code cloze cards (line-level and region)", () => {
