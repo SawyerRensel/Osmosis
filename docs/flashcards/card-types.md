@@ -160,6 +160,35 @@ def fibonacci(n):
 
 This generates two cards — one blanking the `return n` line, and one blanking the loop body.
 
+### Inline Clozes
+
+Blank out individual tokens *inside* a line of code with `:::N:text:::`, where `N` is a group number:
+
+`````markdown
+````osmosis
+```python
+def :::1:greet:::(:::2:name:::):
+    return f"Hello, :::2:name:::"
+```
+````
+`````
+
+Each distinct group number becomes its own card. Tokens that share a number are blanked together and revealed together — useful when the same identifier appears in several places.
+
+The example above generates **two cards**:
+
+| Card | Front |
+|------|-------|
+| 1 | `def ░░░░░░░░(name):` … `return f"Hello, name"` |
+| 2 | `def greet(░░░░░░░░):` … `return f"Hello, ░░░░░░░░"` |
+
+On every card, markers from *other* groups are stripped to plain text, so only the targeted tokens are obfuscated.
+
+You can also omit the number — `:::text:::` — to make each occurrence its own one-off card without grouping.
+
+!!! tip "Combining with line-level clozes"
+    Inline and line-level markers can coexist in the same fence. Lines covered by `osmosis-cloze` / `osmosis-cloze-start`…`osmosis-cloze-end` are blanked as whole-line cards; their inline `:::…:::` markers, if any, are ignored.
+
 ### Supported Comment Styles
 
 The `osmosis-cloze` marker works with any comment syntax:
