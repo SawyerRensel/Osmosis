@@ -362,8 +362,9 @@ export class ContextualStudyProcessor {
 		}
 	}
 
-	/** Match ==term== or **term** cloze deletions. */
-	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
+	/** Match ==term==, **term**, or :::term::: cloze deletions (with optional cN: group prefix). */
+	private static readonly CLOZE_REGEX =
+		/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g;
 
 	/**
 	 * Parse fence content into front/back/metadata.
@@ -425,10 +426,21 @@ export class ContextualStudyProcessor {
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		// Front: all clozes replaced with CLOZE_BLANK; Back: full text with markers
+		// Front: all clozes replaced with CLOZE_BLANK.
+		// Back: `==`/`**` delimiters are kept (they're valid Markdown for highlight/bold),
+		// `:::` delimiters are removed entirely (not Markdown — would leave visual residue),
+		// and any `cN:` group prefix is stripped from all three forms.
 		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, CLOZE_BLANK);
+		const back = content.replace(
+			/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g,
+			(_m, eq?: string, bold?: string, plain?: string) => {
+				if (eq !== undefined) return `==${eq}==`;
+				if (bold !== undefined) return `**${bold}**`;
+				return plain!;
+			},
+		);
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
-		return { front, back: content, cardId, exclude };
+		return { front, back, cardId, exclude };
 	}
 
 	/**
