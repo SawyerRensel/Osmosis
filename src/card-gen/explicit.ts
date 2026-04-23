@@ -7,10 +7,21 @@ const FENCE_REGEX = /^(`{3,})osmosis\s*$/;
 const SEPARATOR = "***";
 /** Obfuscator shown on card fronts in place of blanked content. */
 export const CLOZE_BLANK = "░░░░░░░░";
-/** Match ==term== or **term** cloze deletions. */
-const CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
 /** Match inner code fence opening (```language). */
 const INNER_FENCE_OPEN = /^```\w/;
+
+/**
+ * Prose cloze token match. Captures the three forms:
+ *   ==text==        (group 1 = optional "cN:", group 2 = text)
+ *   **text**        (group 3 = optional "cN:", group 4 = text)
+ *   :::text:::      (group 5 = optional "cN:", group 6 = text)
+ * The "cN:" prefix is optional on all three. When present it signals grouping.
+ */
+const PROSE_CLOZE_REGEX =
+	/==(c\d+:)?([^=]+)==|\*\*(c\d+:)?([^*]+)\*\*|:::(c\d+:)?(.+?):::/g;
+
+/** Match an inline `:::...:::` token for stripping markers. */
+const INLINE_MARKER_REGEX = /:::(?:c\d+:)?(.+?):::/g;
 
 /** Check if a line closes a fence opened with the given backtick count. */
 function isClosingFence(line: string, backtickCount: number): boolean {
@@ -28,9 +39,6 @@ const SCHEDULE_FIELDS = new Set([
 /** Valid card states for validation. */
 const VALID_STATES = new Set<string>(["new", "learning", "review", "relearning"]);
 
-/**
- * Parse a schedule metadata value and apply it to a schedule object.
- */
 function applyScheduleField(
 	target: { stability?: number; difficulty?: number; due?: number; lastReview?: number; reps?: number; lapses?: number; state?: CardState; learningSteps?: number },
 	field: string,
@@ -66,25 +74,34 @@ function applyScheduleField(
 	}
 }
 
-/** Detect osmosis-cloze marker type on a line. */
-function detectCodeClozeMarker(line: string): "single" | "start" | "end" | null {
-	if (line.includes("osmosis-cloze-start")) return "start";
-	if (line.includes("osmosis-cloze-end")) return "end";
-	if (line.includes("osmosis-cloze")) return "single";
+/**
+ * Detect osmosis-cloze marker type on a line, and extract its optional group
+ * number (-cN suffix). Returns null if the line has no marker.
+ */
+function detectCodeClozeMarker(
+	line: string,
+): { type: "single" | "start" | "end"; group: number | null } | null {
+	// Match -start-cN, -end-cN, or -cN suffixes explicitly (longest first).
+	const startMatch = line.match(/osmosis-cloze-start(?:-c(\d+))?\b/);
+	if (startMatch) return { type: "start", group: startMatch[1] ? parseInt(startMatch[1], 10) : null };
+	const endMatch = line.match(/osmosis-cloze-end(?:-c(\d+))?\b/);
+	if (endMatch) return { type: "end", group: endMatch[1] ? parseInt(endMatch[1], 10) : null };
+	const singleMatch = line.match(/osmosis-cloze(?:-c(\d+))?\b(?!-)/);
+	if (singleMatch) return { type: "single", group: singleMatch[1] ? parseInt(singleMatch[1], 10) : null };
 	return null;
 }
 
 /** Strip osmosis-cloze inline marker (and its comment prefix) from a line. */
-function stripClozeMarker(line: string): string {
+function stripCodeClozeMarker(line: string): string {
 	return line.replace(
-		/\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze\s*(?:\*\/|-->)?\s*$/,
+		/\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze(?:-(?:start|end))?(?:-c\d+)?\s*(?:\*\/|-->)?\s*$/,
 		"",
 	);
 }
 
-/** Strip :::...::: inline cloze markers from a line, leaving just the text content. */
+/** Strip :::...::: inline cloze markers from a line, leaving just the text. */
 function stripInlineClozeMarkers(line: string): string {
-	return line.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text);
+	return line.replace(INLINE_MARKER_REGEX, (_, text: string) => text);
 }
 
 /** Get the leading whitespace from a line. */
@@ -93,21 +110,40 @@ function getIndent(line: string): string {
 	return match ? match[1]! : "";
 }
 
-interface CodeClozeRegion {
-	type: "single" | "multi";
-	startIdx: number;
-	endIdx: number; // inclusive
-}
+/**
+ * A single cloze occurrence. Describes one blanked span; multiple occurrences
+ * that share a group number are blanked together on the same card.
+ */
+type ClozeOccurrence =
+	| {
+		kind: "prose";
+		lineIdx: number;
+		fullMatch: string; // the full ==..==, **..**, or :::..::: token
+		text: string;      // the content without delimiters/group prefix
+		delimiter: "==" | "**" | ":::";
+	  }
+	| {
+		kind: "inline-code";
+		lineIdx: number;
+		fullMatch: string;
+		text: string;
+	  }
+	| {
+		kind: "code-single";
+		lineIdx: number;
+	  }
+	| {
+		kind: "code-multi";
+		startIdx: number; // line index of the start marker (not blanked)
+		endIdx: number;   // line index of the end marker (not blanked)
+	  };
 
-interface InlineClozeOccurrence {
-	lineIdx: number;
-	fullMatch: string; // the full :::...::: token as written
-	text: string;      // the content without delimiters/group prefix
-}
-
-interface InlineClozeGroup {
-	cardSuffix: string; // e.g., "i1", "i2" — assigned by source order
-	occurrences: InlineClozeOccurrence[];
+interface ClozeGroup {
+	/** Card suffix number, e.g. 1 → "c1". */
+	suffix: number;
+	/** First source line the group appears on — used for source-order fallback. */
+	firstLineIdx: number;
+	occurrences: ClozeOccurrence[];
 }
 
 /** Find the inner code fence (```language ... ```) within content lines. */
@@ -126,218 +162,317 @@ function findInnerCodeFence(contentLines: string[]): { start: number; end: numbe
 	return null;
 }
 
-/** Parse line-level osmosis-cloze regions from within a code fence. */
-function parseLineLevelCodeClozes(
-	contentLines: string[],
-	codeFenceStartIdx: number,
-	codeFenceEndIdx: number,
-): CodeClozeRegion[] {
-	const regions: CodeClozeRegion[] = [];
-	let multiStart = -1;
-
-	for (let i = codeFenceStartIdx + 1; i < codeFenceEndIdx; i++) {
-		const marker = detectCodeClozeMarker(contentLines[i]!);
-		if (marker === "single") {
-			regions.push({ type: "single", startIdx: i, endIdx: i });
-		} else if (marker === "start") {
-			multiStart = i;
-		} else if (marker === "end" && multiStart !== -1) {
-			regions.push({ type: "multi", startIdx: multiStart, endIdx: i });
-			multiStart = -1;
-		}
-	}
-
-	return regions;
-}
-
 /**
- * Parse :::...::: inline cloze groups from within a code fence.
- * Lines covered by line-level cloze markers are skipped (per precedence rules).
- * Groups are sorted by first occurrence and assigned card suffixes i1, i2, ...
+ * Collect every cloze occurrence in the fence content, grouped by user-authored
+ * cN label. Anonymous occurrences each become their own group, numbered strictly
+ * above the largest labeled group.
  */
-function parseInlineClozeGroups(
-	contentLines: string[],
-	codeFenceStartIdx: number,
-	codeFenceEndIdx: number,
-	lineLevelRegions: CodeClozeRegion[],
-): InlineClozeGroup[] {
-	// Lines owned by line-level markers (single marker lines + full multi regions)
-	const lineLevelLines = new Set<number>();
-	for (const region of lineLevelRegions) {
-		for (let i = region.startIdx; i <= region.endIdx; i++) {
-			lineLevelLines.add(i);
-		}
-	}
+function collectClozeGroups(contentLines: string[]): ClozeGroup[] {
+	const innerFence = findInnerCodeFence(contentLines);
+	const inCodeFence = (i: number): boolean =>
+		innerFence !== null && i > innerFence.start && i < innerFence.end;
 
-	// Map from user group number to occurrences; auto-numbered get unique keys >= 0x80000000
-	const explicitGroups = new Map<number, InlineClozeOccurrence[]>();
-	const autoGroups: InlineClozeOccurrence[][] = [];
+	// Map of labeled group number → occurrences (in source order).
+	const labeled = new Map<number, ClozeOccurrence[]>();
+	const anonymous: ClozeOccurrence[] = [];
 
-	for (let i = codeFenceStartIdx + 1; i < codeFenceEndIdx; i++) {
-		if (lineLevelLines.has(i)) continue;
+	// Track lines already owned by a line-level code marker so inline markers on
+	// those lines are ignored (existing precedence).
+	const codeLineLevelLines = new Set<number>();
 
-		const line = contentLines[i]!;
-		for (const match of line.matchAll(/:::(\d+:)?(.+?):::/g)) {
-			const numStr = match[1]; // e.g., "1:" or undefined
-			const text = match[2]!;
-			const fullMatch = match[0];
-			const occurrence: InlineClozeOccurrence = { lineIdx: i, fullMatch, text };
-
-			if (numStr !== undefined) {
-				const num = parseInt(numStr, 10);
-				if (!explicitGroups.has(num)) explicitGroups.set(num, []);
-				explicitGroups.get(num)!.push(occurrence);
-			} else {
-				autoGroups.push([occurrence]);
+	// --- Pass 1: line-level code clozes (inside inner fence). --------------
+	if (innerFence) {
+		let multiStart = -1;
+		let multiStartGroup: number | null = null;
+		for (let i = innerFence.start + 1; i < innerFence.end; i++) {
+			const marker = detectCodeClozeMarker(contentLines[i]!);
+			if (!marker) continue;
+			if (marker.type === "single") {
+				codeLineLevelLines.add(i);
+				const occ: ClozeOccurrence = { kind: "code-single", lineIdx: i };
+				if (marker.group !== null) {
+					if (!labeled.has(marker.group)) labeled.set(marker.group, []);
+					labeled.get(marker.group)!.push(occ);
+				} else {
+					anonymous.push(occ);
+				}
+			} else if (marker.type === "start") {
+				multiStart = i;
+				multiStartGroup = marker.group;
+			} else if (marker.type === "end" && multiStart !== -1) {
+				for (let j = multiStart; j <= i; j++) codeLineLevelLines.add(j);
+				const occ: ClozeOccurrence = {
+					kind: "code-multi",
+					startIdx: multiStart,
+					endIdx: i,
+				};
+				// Prefer the start marker's group; fall back to the end marker's.
+				const group = multiStartGroup ?? marker.group;
+				if (group !== null) {
+					if (!labeled.has(group)) labeled.set(group, []);
+					labeled.get(group)!.push(occ);
+				} else {
+					anonymous.push(occ);
+				}
+				multiStart = -1;
+				multiStartGroup = null;
 			}
 		}
 	}
 
-	if (explicitGroups.size === 0 && autoGroups.length === 0) return [];
-
-	// Collect all groups with their first source line for sorting
-	const allGroups: Array<{ firstLineIdx: number; occurrences: InlineClozeOccurrence[] }> = [];
-	for (const occurrences of explicitGroups.values()) {
-		allGroups.push({ firstLineIdx: occurrences[0]!.lineIdx, occurrences });
+	// --- Pass 2: inline :::...::: inside the inner code fence. -------------
+	if (innerFence) {
+		for (let i = innerFence.start + 1; i < innerFence.end; i++) {
+			if (codeLineLevelLines.has(i)) continue;
+			const line = contentLines[i]!;
+			for (const match of line.matchAll(/:::(c\d+:)?(.+?):::/g)) {
+				const numStr = match[1]; // e.g., "c1:" or undefined
+				const text = match[2]!;
+				const fullMatch = match[0];
+				const occ: ClozeOccurrence = {
+					kind: "inline-code",
+					lineIdx: i,
+					fullMatch,
+					text,
+				};
+				if (numStr !== undefined) {
+					const num = parseInt(numStr.slice(1, -1), 10); // strip "c" and ":"
+					if (!labeled.has(num)) labeled.set(num, []);
+					labeled.get(num)!.push(occ);
+				} else {
+					anonymous.push(occ);
+				}
+			}
+		}
 	}
-	for (const occurrences of autoGroups) {
-		allGroups.push({ firstLineIdx: occurrences[0]!.lineIdx, occurrences });
+
+	// --- Pass 3: prose clozes (==/**/:::) outside the inner code fence. ----
+	for (let i = 0; i < contentLines.length; i++) {
+		if (inCodeFence(i)) continue;
+		// Skip the fence delimiter lines themselves.
+		if (innerFence && (i === innerFence.start || i === innerFence.end)) continue;
+
+		const line = contentLines[i]!;
+		for (const match of line.matchAll(PROSE_CLOZE_REGEX)) {
+			const fullMatch = match[0];
+			let delimiter: "==" | "**" | ":::";
+			let labelPrefix: string | undefined;
+			let text: string;
+			if (match[2] !== undefined) {
+				delimiter = "==";
+				labelPrefix = match[1];
+				text = match[2]!;
+			} else if (match[4] !== undefined) {
+				delimiter = "**";
+				labelPrefix = match[3];
+				text = match[4]!;
+			} else {
+				delimiter = ":::";
+				labelPrefix = match[5];
+				text = match[6]!;
+			}
+			const occ: ClozeOccurrence = {
+				kind: "prose",
+				lineIdx: i,
+				fullMatch,
+				text,
+				delimiter,
+			};
+			if (labelPrefix !== undefined) {
+				const num = parseInt(labelPrefix.slice(1, -1), 10); // strip "c" and ":"
+				if (!labeled.has(num)) labeled.set(num, []);
+				labeled.get(num)!.push(occ);
+			} else {
+				anonymous.push(occ);
+			}
+		}
 	}
 
-	// Sort by first occurrence in source order, assign card suffixes
-	allGroups.sort((a, b) => a.firstLineIdx - b.firstLineIdx);
-	return allGroups.map((g, idx) => ({
-		cardSuffix: `i${idx + 1}`,
-		occurrences: g.occurrences,
-	}));
+	if (labeled.size === 0 && anonymous.length === 0) return [];
+
+	// Compose final groups. Labeled groups keep their user-authored suffix
+	// numbers verbatim. Anonymous groups are each their own group, numbered
+	// strictly above the max labeled number, in source order.
+	const firstLineOf = (occs: ClozeOccurrence[]): number => {
+		let min = Number.POSITIVE_INFINITY;
+		for (const o of occs) {
+			const idx = o.kind === "code-multi" ? o.startIdx : o.lineIdx;
+			if (idx < min) min = idx;
+		}
+		return min;
+	};
+
+	const groups: ClozeGroup[] = [];
+	for (const [num, occs] of labeled) {
+		groups.push({ suffix: num, firstLineIdx: firstLineOf(occs), occurrences: occs });
+	}
+
+	let nextAnon = 1;
+	for (const num of labeled.keys()) {
+		if (num >= nextAnon) nextAnon = num + 1;
+	}
+	// Anonymous groups are emitted in source order so the first anonymous
+	// occurrence gets the lowest available number.
+	const anonSorted = [...anonymous].sort((a, b) => {
+		const ai = a.kind === "code-multi" ? a.startIdx : a.lineIdx;
+		const bi = b.kind === "code-multi" ? b.startIdx : b.lineIdx;
+		return ai - bi;
+	});
+	for (const occ of anonSorted) {
+		const idx = occ.kind === "code-multi" ? occ.startIdx : occ.lineIdx;
+		groups.push({ suffix: nextAnon++, firstLineIdx: idx, occurrences: [occ] });
+	}
+
+	groups.sort((a, b) => a.suffix - b.suffix);
+	return groups;
 }
 
 /**
- * Generate front/back for a line-level code cloze card, blanking one region.
- * Front: blanked region replaced with the CLOZE_BLANK obfuscator (preserving indent).
- * Back: full code with all markers stripped.
- * Inline cloze markers on non-blanked lines are stripped to plain text.
+ * Render front/back for one cloze group. Every other group's markers are
+ * stripped (prose: delimiters kept for `==` and `**`, removed for `:::`; code:
+ * markers removed). Only the target group's occurrences are blanked.
  */
-function generateCodeClozeFrontBack(
+function renderClozeCard(
 	contentLines: string[],
-	regions: CodeClozeRegion[],
-	blankedRegionIdx: number,
+	groups: ClozeGroup[],
+	targetIdx: number,
 ): { front: string; back: string } {
-	const multiMarkerLines = new Set<number>();
-	for (const region of regions) {
-		if (region.type === "multi") {
-			multiMarkerLines.add(region.startIdx);
-			multiMarkerLines.add(region.endIdx);
+	const target = groups[targetIdx]!;
+
+	// Lines fully owned by any code-multi region (marker + interior).
+	// Marker lines never appear in output; interior lines are either blanked
+	// (for the target region) or shown as-is (for other regions).
+	const multiRegions: Array<{
+		startIdx: number;
+		endIdx: number;
+		isTarget: boolean;
+	}> = [];
+	for (const group of groups) {
+		for (const occ of group.occurrences) {
+			if (occ.kind === "code-multi") {
+				multiRegions.push({
+					startIdx: occ.startIdx,
+					endIdx: occ.endIdx,
+					isTarget: group === target,
+				});
+			}
 		}
 	}
+
+	// For code-single occurrences: map line index → (is target?).
+	const codeSingleLines = new Map<number, boolean>();
+	for (const group of groups) {
+		for (const occ of group.occurrences) {
+			if (occ.kind === "code-single") {
+				codeSingleLines.set(occ.lineIdx, group === target);
+			}
+		}
+	}
+
+	// For inline-code + prose: collect targets vs. non-targets by line+fullMatch.
+	// Non-targets always render their text (markers stripped); targets get the
+	// blank obfuscator.
+	const renderInlineLine = (i: number, raw: string): { front: string; back: string } => {
+		const front = raw.replace(INLINE_MARKER_REGEX, (fullMatch, _text: string) => {
+			const hit = target.occurrences.find(
+				(o) => o.kind === "inline-code" && o.lineIdx === i && o.fullMatch === fullMatch,
+			);
+			return hit ? CLOZE_BLANK : fullMatch.replace(INLINE_MARKER_REGEX, (_, t: string) => t);
+		});
+		const back = raw.replace(INLINE_MARKER_REGEX, (_, text: string) => text);
+		return { front, back };
+	};
+
+	const renderProseLine = (i: number, raw: string): { front: string; back: string } => {
+		const replaceFront = (full: string): string => {
+			const hit = target.occurrences.find(
+				(o) => o.kind === "prose" && o.lineIdx === i && o.fullMatch === full,
+			);
+			if (hit) return CLOZE_BLANK;
+			// Non-target prose cloze: `:::` gets stripped to its text; `==`/`**`
+			// stay wrapped so highlight/bold rendering is preserved on both sides.
+			if (full.startsWith(":::")) {
+				const inner = full.slice(3, -3);
+				return inner.replace(/^c\d+:/, "");
+			}
+			// `==cN:text==` or `**cN:text**` → strip the `cN:` label; keep delimiters.
+			const delim = full.startsWith("==") ? "==" : "**";
+			const body = full.slice(2, -2).replace(/^c\d+:/, "");
+			return `${delim}${body}${delim}`;
+		};
+		const front = raw.replace(PROSE_CLOZE_REGEX, replaceFront);
+
+		// Back: same as front but the target occurrence is NOT blanked — it's
+		// shown like any other cloze would be on a non-target card.
+		const replaceBack = (full: string): string => {
+			if (full.startsWith(":::")) {
+				const inner = full.slice(3, -3);
+				return inner.replace(/^c\d+:/, "");
+			}
+			const delim = full.startsWith("==") ? "==" : "**";
+			const body = full.slice(2, -2).replace(/^c\d+:/, "");
+			return `${delim}${body}${delim}`;
+		};
+		const back = raw.replace(PROSE_CLOZE_REGEX, replaceBack);
+		return { front, back };
+	};
 
 	const frontLines: string[] = [];
 	const backLines: string[] = [];
-	let blankedMultiFirstSeen = false;
+	let targetMultiBlanked = false;
+	const innerFence = findInnerCodeFence(contentLines);
 
 	for (let i = 0; i < contentLines.length; i++) {
-		// Skip multi-line cloze marker lines from both front and back
-		if (multiMarkerLines.has(i)) continue;
+		// Skip code-multi marker lines outright (never shown).
+		const asMarker = multiRegions.find((r) => r.startIdx === i || r.endIdx === i);
+		if (asMarker) continue;
 
-		// Check if this line is inside any cloze region
-		let inRegionIdx = -1;
-		for (let ri = 0; ri < regions.length; ri++) {
-			const r = regions[ri]!;
-			if (r.type === "single" && r.startIdx === i) {
-				inRegionIdx = ri;
-				break;
-			}
-			if (r.type === "multi" && i > r.startIdx && i < r.endIdx) {
-				inRegionIdx = ri;
-				break;
-			}
-		}
-
-		if (inRegionIdx === -1) {
-			// Regular line — strip any inline cloze markers
-			const line = stripInlineClozeMarkers(contentLines[i]!);
-			frontLines.push(line);
-			backLines.push(line);
-		} else if (inRegionIdx === blankedRegionIdx) {
-			// Blanked region
-			const region = regions[inRegionIdx]!;
-			if (region.type === "single") {
-				const indent = getIndent(contentLines[i]!);
-				frontLines.push(`${indent}${CLOZE_BLANK}`);
-				backLines.push(stripInlineClozeMarkers(stripClozeMarker(contentLines[i]!)));
-			} else {
-				// Multi-line: single CLOZE_BLANK on front, all lines on back
-				if (!blankedMultiFirstSeen) {
+		// Interior of a code-multi region?
+		const interior = multiRegions.find((r) => i > r.startIdx && i < r.endIdx);
+		if (interior) {
+			if (interior.isTarget) {
+				if (!targetMultiBlanked) {
 					const indent = getIndent(contentLines[i]!);
 					frontLines.push(`${indent}${CLOZE_BLANK}`);
-					blankedMultiFirstSeen = true;
+					targetMultiBlanked = true;
 				}
 				backLines.push(stripInlineClozeMarkers(contentLines[i]!));
-			}
-		} else {
-			// Non-blanked cloze region — show content with markers stripped
-			if (regions[inRegionIdx]!.type === "single") {
-				const stripped = stripInlineClozeMarkers(stripClozeMarker(contentLines[i]!));
-				frontLines.push(stripped);
-				backLines.push(stripped);
 			} else {
 				const stripped = stripInlineClozeMarkers(contentLines[i]!);
 				frontLines.push(stripped);
 				backLines.push(stripped);
 			}
-		}
-	}
-
-	return { front: frontLines.join("\n"), back: backLines.join("\n") };
-}
-
-/**
- * Generate front/back for an inline cloze card, blanking one group.
- * Front: blanked group's markers replaced with CLOZE_BLANK, other markers stripped to text.
- * Back: all inline markers stripped to plain text.
- * Line-level cloze markers are stripped but those lines are not blanked.
- */
-function generateInlineClozeFrontBack(
-	contentLines: string[],
-	lineLevelRegions: CodeClozeRegion[],
-	inlineGroups: InlineClozeGroup[],
-	blankedGroupIdx: number,
-): { front: string; back: string } {
-	const blankedGroup = inlineGroups[blankedGroupIdx]!;
-
-	// Start/end marker lines are skipped in output (same as for line-level cards)
-	const multiMarkerLines = new Set<number>();
-	for (const region of lineLevelRegions) {
-		if (region.type === "multi") {
-			multiMarkerLines.add(region.startIdx);
-			multiMarkerLines.add(region.endIdx);
-		}
-	}
-
-	const frontLines: string[] = [];
-	const backLines: string[] = [];
-
-	for (let i = 0; i < contentLines.length; i++) {
-		if (multiMarkerLines.has(i)) continue;
-
-		let line = contentLines[i]!;
-
-		// Strip line-level single markers — these lines are not blanked in inline cards
-		if (detectCodeClozeMarker(line) === "single") {
-			line = stripClozeMarker(line);
+			continue;
 		}
 
-		// Replace inline markers: blank the target group, strip all others
-		const frontLine = line.replace(/:::(?:\d+:)?(.+?):::/g, (fullMatch, text: string) => {
-			const isBlanked = blankedGroup.occurrences.some(
-				(o) => o.lineIdx === i && o.fullMatch === fullMatch,
-			);
-			return isBlanked ? CLOZE_BLANK : text;
-		});
-		const backLine = line.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text);
+		// Single-line code cloze?
+		const singleIsTarget = codeSingleLines.get(i);
+		if (singleIsTarget !== undefined) {
+			const raw = contentLines[i]!;
+			if (singleIsTarget) {
+				const indent = getIndent(raw);
+				frontLines.push(`${indent}${CLOZE_BLANK}`);
+				backLines.push(stripInlineClozeMarkers(stripCodeClozeMarker(raw)));
+			} else {
+				const stripped = stripInlineClozeMarkers(stripCodeClozeMarker(raw));
+				frontLines.push(stripped);
+				backLines.push(stripped);
+			}
+			continue;
+		}
 
-		frontLines.push(frontLine);
-		backLines.push(backLine);
+		// Line may contain inline-code or prose clozes — route by location.
+		const raw = contentLines[i]!;
+		const inCode = innerFence !== null && i > innerFence.start && i < innerFence.end;
+		if (inCode) {
+			const { front, back } = renderInlineLine(i, raw);
+			frontLines.push(front);
+			backLines.push(back);
+		} else {
+			const { front, back } = renderProseLine(i, raw);
+			frontLines.push(front);
+			backLines.push(back);
+		}
 	}
 
 	return { front: frontLines.join("\n"), back: backLines.join("\n") };
@@ -361,8 +496,13 @@ function generateInlineClozeFrontBack(
  * Derived schedule keys: r-due, c1-stability, etc.
  * bidi: true generates two cards (forward + reverse as explicit_bidi type).
  *
- * If no *** separator but content contains ==term== cloze deletions,
- * generates one explicit_cloze card per deletion.
+ * If no *** separator, the fence is treated as a cloze card. Any of these
+ * cloze forms are recognized, prose and code side-by-side in the same fence:
+ *   - Prose:   ==text==, **text**, :::text::: (optional cN: prefix)
+ *   - Inline code: :::text::: (optional cN: prefix) inside an inner ``` fence
+ *   - Line code:   # osmosis-cloze (optional -cN suffix)
+ *   - Region code: # osmosis-cloze-start / -end (optional -cN suffix)
+ * Occurrences sharing a cN label are blanked together as one card.
  */
 export function generateExplicitCards(markdown: string): GeneratedCard[] {
 	const lines = markdown.split("\n");
@@ -413,8 +553,8 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					const key = metaMatch[1]!.toLowerCase();
 					const value = metaMatch[2]!.trim();
 
-					// Check for derived schedule prefix (e.g., r-due, c1-stability, i1-due)
-					const prefixMatch = key.match(/^(r|c\d+|i\d+)-(.+)$/);
+					// Check for derived schedule prefix (e.g., r-due, c1-stability)
+					const prefixMatch = key.match(/^(r|c\d+)-(.+)$/);
 					if (prefixMatch && SCHEDULE_FIELDS.has(prefixMatch[2]!)) {
 						const suffix = prefixMatch[1]!;
 						const field = prefixMatch[2]!;
@@ -431,7 +571,6 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 						continue;
 					}
 
-					// Check for base schedule fields
 					if (SCHEDULE_FIELDS.has(key)) {
 						applyScheduleField(metadata, key, value);
 						i++;
@@ -461,7 +600,6 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					i++;
 					continue;
 				}
-				// Not a metadata line — treat as content start
 				metadataEnded = true;
 			}
 
@@ -475,100 +613,45 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			i++;
 		}
 
-		// Skip closing fence
-		if (i < lines.length) {
-			i++;
-		}
+		if (i < lines.length) i++; // skip closing fence
 
-		// Skip excluded fences
 		if (metadata.exclude) continue;
 
-		// Resolve fence ID: metadata id > HTML comment on fence line > generate new
 		const fenceId = metadata.id
 			|| idsByLine.get(fenceStartLine)
 			|| generateCardId();
 
-		// Split on *** separator
 		const separatorIdx = contentLines.findIndex(
 			(l) => l.trim() === SEPARATOR,
 		);
 
 		if (separatorIdx === -1) {
-			// No separator — check for code cloze or text cloze deletions
+			// Cloze path — unified across prose and code.
 			const content = contentLines.join("\n").trim();
 			if (content.length === 0) continue;
 
-			// Check for inner code fence (line-level or inline cloze)
-			const innerFence = findInnerCodeFence(contentLines);
-			if (innerFence) {
-				const { start: codeFenceStartIdx, end: codeFenceEndIdx } = innerFence;
-				const lineLevelRegions = parseLineLevelCodeClozes(contentLines, codeFenceStartIdx, codeFenceEndIdx);
-				const inlineGroups = parseInlineClozeGroups(contentLines, codeFenceStartIdx, codeFenceEndIdx, lineLevelRegions);
+			const groups = collectClozeGroups(contentLines);
+			if (groups.length === 0) continue;
 
-				if (lineLevelRegions.length > 0 || inlineGroups.length > 0) {
-					for (let ci = 0; ci < lineLevelRegions.length; ci++) {
-						const { front, back } = generateCodeClozeFrontBack(contentLines, lineLevelRegions, ci);
-						const suffix = `c${ci + 1}`;
-						const derivedSched = metadata.derivedSchedules?.get(suffix);
-						cards.push({
-							id: `${fenceId}-${suffix}`,
-							card_type: "code_cloze",
-							front: metadata.hint
-								? `${front}\n\n_Hint: ${metadata.hint}_`
-								: front,
-							back,
-							deck: metadata.deck,
-							sourceLine: fenceStartLine,
-							typeIn: metadata.typeIn,
-							...spreadSchedule(derivedSched),
-						});
-					}
+			const hasInlineCode = groups.some((g) =>
+				g.occurrences.some((o) => o.kind === "inline-code"),
+			);
+			const hasCodeLevel = groups.some((g) =>
+				g.occurrences.some((o) => o.kind === "code-single" || o.kind === "code-multi"),
+			);
+			const cardType = hasInlineCode || hasCodeLevel ? "code_cloze" : "explicit_cloze";
 
-					for (let gi = 0; gi < inlineGroups.length; gi++) {
-						const { front, back } = generateInlineClozeFrontBack(contentLines, lineLevelRegions, inlineGroups, gi);
-						const suffix = inlineGroups[gi]!.cardSuffix;
-						const derivedSched = metadata.derivedSchedules?.get(suffix);
-						cards.push({
-							id: `${fenceId}-${suffix}`,
-							card_type: "code_cloze",
-							front: metadata.hint
-								? `${front}\n\n_Hint: ${metadata.hint}_`
-								: front,
-							back,
-							deck: metadata.deck,
-							sourceLine: fenceStartLine,
-							typeIn: metadata.typeIn,
-							...spreadSchedule(derivedSched),
-						});
-					}
-
-					continue;
-				}
-			}
-
-			const clozeMatches = [...content.matchAll(CLOZE_REGEX)];
-			if (clozeMatches.length === 0) continue; // No separator and no clozes — skip
-
-			// Generate one card per cloze deletion
-			for (let ci = 0; ci < clozeMatches.length; ci++) {
-				// Replace only the ci-th occurrence with CLOZE_BLANK
-				let occurrenceIdx = 0;
-				const front = content.replace(CLOZE_REGEX, (match, _group) => {
-					const result = occurrenceIdx === ci ? CLOZE_BLANK : match;
-					occurrenceIdx++;
-					return result;
-				});
-
-				const suffix = `c${ci + 1}`;
+			for (let gi = 0; gi < groups.length; gi++) {
+				const { front, back } = renderClozeCard(contentLines, groups, gi);
+				const suffix = `c${groups[gi]!.suffix}`;
 				const derivedSched = metadata.derivedSchedules?.get(suffix);
-
 				cards.push({
 					id: `${fenceId}-${suffix}`,
-					card_type: "explicit_cloze",
+					card_type: cardType,
 					front: metadata.hint
 						? `${front}\n\n_Hint: ${metadata.hint}_`
 						: front,
-					back: content,
+					back,
 					deck: metadata.deck,
 					sourceLine: fenceStartLine,
 					typeIn: metadata.typeIn,
@@ -584,17 +667,13 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			.join("\n")
 			.trim();
 
-		if (frontContent.length === 0 && backContent.length === 0) {
-			continue;
-		}
+		if (frontContent.length === 0 && backContent.length === 0) continue;
 
-		// Build front with hint if present
 		const front = metadata.hint
 			? `${frontContent}\n\n_Hint: ${metadata.hint}_`
 			: frontContent;
 
 		if (metadata.bidi) {
-			// Generate two cards: forward and reverse
 			cards.push({
 				id: fenceId,
 				card_type: "explicit_bidi",
@@ -606,7 +685,6 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				...spreadSchedule(metadata),
 			});
 
-			// Reverse card gets deterministic derived ID
 			const reverseFront = metadata.hint
 				? `${backContent}\n\n_Hint: ${metadata.hint}_`
 				: backContent;
