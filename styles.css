@@ -1121,7 +1121,32 @@ hr.osmosis-map-style-divider {
 .osmosis-study-top-bar {
 	display: flex;
 	align-items: center;
-	margin-bottom: 10px;
+	min-height: var(--input-height, 28px);
+	/* Reserve room on the right so icons don't collide with the modal's × close button */
+	padding-right: 36px;
+	margin-bottom: 6px;
+}
+
+.osmosis-study-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	margin-bottom: 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.osmosis-study-breadcrumb-part {
+	white-space: nowrap;
+}
+
+.osmosis-study-breadcrumb-part:last-child {
+	color: var(--text-normal);
+}
+
+.osmosis-study-breadcrumb-sep {
+	color: var(--text-faint);
 }
 
 .osmosis-study-progress {

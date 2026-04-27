@@ -277,10 +277,18 @@ export default class OsmosisPlugin extends Plugin {
 
 	async openStudySession(scope: DeckScope): Promise<void> {
 		const sessionManager = this.createSessionManager();
-		const modal = new SequentialStudyModal(this.app, sessionManager, scope, {
-			newLimit: this.settings.dailyNewCardLimit,
-			reviewLimit: this.settings.dailyReviewCardLimit,
-		}, this.fenceWriter, (notePath: string) => this.app.vault.getFileByPath(notePath));
+		const modal = new SequentialStudyModal(
+			this.app,
+			sessionManager,
+			scope,
+			{
+				newLimit: this.settings.dailyNewCardLimit,
+				reviewLimit: this.settings.dailyReviewCardLimit,
+			},
+			this.fenceWriter,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.settings.showStudyBreadcrumb,
+		);
 		modal.open();
 	}
 

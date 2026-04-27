@@ -71,6 +71,7 @@ export class SequentialStudyModal extends Modal {
 		private readonly studyOptions?: { newLimit?: number; reviewLimit?: number },
 		private readonly fenceWriter?: FenceWriter,
 		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
+		private readonly showBreadcrumb: boolean = false,
 	) {
 		super(app);
 	}
@@ -136,6 +137,21 @@ export class SequentialStudyModal extends Modal {
 		const bar = this.progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
 		this.progressFill = bar.createDiv({ cls: "osmosis-study-progress-fill" });
 		this.progressText = this.progressEl.createSpan({ cls: "osmosis-study-progress-text" });
+
+		// Deck breadcrumb (e.g., "python › functions") — opt-in via settings
+		if (this.showBreadcrumb) {
+			const breadcrumb = container.createDiv({ cls: "osmosis-study-breadcrumb" });
+			const parts: string[] =
+				this.deckScope.type === "all"
+					? ["All decks"]
+					: this.deckScope.deck.split("/").filter((p: string) => p.length > 0);
+			parts.forEach((part: string, i: number) => {
+				breadcrumb.createSpan({ cls: "osmosis-study-breadcrumb-part", text: part });
+				if (i < parts.length - 1) {
+					breadcrumb.createSpan({ cls: "osmosis-study-breadcrumb-sep", text: "›" });
+				}
+			});
+		}
 
 		// Card area
 		this.cardEl = container.createDiv({ cls: "osmosis-study-card" });

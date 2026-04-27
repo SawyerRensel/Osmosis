@@ -164,6 +164,7 @@ export class DashboardSidebarView extends ItemView {
 			},
 			this.plugin.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.plugin.settings.showStudyBreadcrumb,
 		);
 		modal.onClose = () => {
 			void this.render();

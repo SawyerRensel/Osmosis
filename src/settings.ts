@@ -85,6 +85,8 @@ export interface OsmosisSettings {
 	contextualAutoActivate: boolean;
 	/** Whether inline clozes blank out in contextual mode (default: false). */
 	contextualInlineCloze: boolean;
+	/** Whether to show the deck breadcrumb in the sequential study modal (default: false). */
+	showStudyBreadcrumb: boolean;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -109,6 +111,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Study Mode defaults
 	contextualAutoActivate: true,
 	contextualInlineCloze: false,
+	showStudyBreadcrumb: false,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
@@ -218,6 +221,21 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setPlaceholder("10m")
 					.onChange(async (value) => {
 						this.plugin.settings.relearningSteps = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		// ── Study mode ─────────────────────────────────────────
+		new Setting(containerEl).setName("Study mode").setHeading();
+
+		new Setting(containerEl)
+			.setName("Show deck breadcrumb in study modal")
+			.setDesc("Display the deck path between the action buttons and progress bar in sequential study mode.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.showStudyBreadcrumb)
+					.onChange(async (value) => {
+						this.plugin.settings.showStudyBreadcrumb = value;
 						await this.plugin.saveSettings();
 					}),
 			);
