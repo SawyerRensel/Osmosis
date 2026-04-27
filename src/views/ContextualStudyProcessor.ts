@@ -415,7 +415,7 @@ export class ContextualStudyProcessor {
 		}
 
 		// Check for inline code cloze (:::...::: markers inside inner code fences)
-		const hasInlineCloze = contentLines.some((l) => /:::(?:\d+:)?(.+?):::/.test(l));
+		const hasInlineCloze = contentLines.some((l) => /:::(?:c\d+:)?(.+?):::/.test(l));
 		const hasInnerFence = contentLines.some((l) => /^```\w/.test(l.trim()));
 		if (hasInlineCloze && hasInnerFence) {
 			const { front, back } = ContextualStudyProcessor.buildInlineClozeFrontBack(contentLines);
@@ -496,17 +496,17 @@ export class ContextualStudyProcessor {
 	 */
 	private static buildInlineClozeFrontBack(contentLines: string[]): { front: string; back: string } {
 		const front = contentLines
-			.map((l) => l.replace(/:::(?:\d+:)?(.+?):::/g, CLOZE_BLANK))
+			.map((l) => l.replace(/:::(?:c\d+:)?(.+?):::/g, CLOZE_BLANK))
 			.join("\n");
 		const back = contentLines
-			.map((l) => l.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text))
+			.map((l) => l.replace(/:::(?:c\d+:)?(.+?):::/g, (_, text: string) => text))
 			.join("\n");
 		return { front, back };
 	}
 
 	/** Strip :::...::: inline cloze markers, leaving just the text content. */
 	private static stripInline(line: string): string {
-		return line.replace(/:::(?:\d+:)?(.+?):::/g, (_, text: string) => text);
+		return line.replace(/:::(?:c\d+:)?(.+?):::/g, (_, text: string) => text);
 	}
 
 	/** Extract id: metadata from fence source if present. */

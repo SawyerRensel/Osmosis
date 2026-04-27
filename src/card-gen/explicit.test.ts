@@ -741,6 +741,26 @@ describe("generateExplicitCards", () => {
 			expect(cards[1]!.back).toContain("def greet(name):");
 		});
 
+		it("strips the cN: group prefix from grouped inline cloze body even when body contains colons", () => {
+			const md = [
+				"````osmosis",
+				"id: inl005",
+				"",
+				"```python",
+				`students = :::c1:{key: value for key, value in zip(names, heights)}:::`,
+				"```",
+				"````",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.id).toBe("inl005-c1");
+			expect(cards[0]!.front).toContain("students = ░░░░░░░░");
+			expect(cards[0]!.back).toContain(
+				"students = {key: value for key, value in zip(names, heights)}",
+			);
+			expect(cards[0]!.back).not.toContain("c1:");
+		});
+
 		it("preserves user-chosen inline group numbers", () => {
 			const md = [
 				"````osmosis",
