@@ -52,6 +52,7 @@ export class SequentialStudyModal extends Modal {
 	private progressEl!: HTMLElement;
 	private progressFill!: HTMLElement;
 	private progressText!: HTMLElement;
+	private breadcrumbEl: HTMLElement | null = null;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
 	private dividerEl!: HTMLElement;
@@ -138,19 +139,10 @@ export class SequentialStudyModal extends Modal {
 		this.progressFill = bar.createDiv({ cls: "osmosis-study-progress-fill" });
 		this.progressText = this.progressEl.createSpan({ cls: "osmosis-study-progress-text" });
 
-		// Deck breadcrumb (e.g., "python › functions") — opt-in via settings
+		// Deck breadcrumb container (e.g., "python › functions") — opt-in via
+		// settings. Contents are populated per-card in renderCard().
 		if (this.showBreadcrumb) {
-			const breadcrumb = container.createDiv({ cls: "osmosis-study-breadcrumb" });
-			const parts: string[] =
-				this.deckScope.type === "all"
-					? ["All decks"]
-					: this.deckScope.deck.split("/").filter((p: string) => p.length > 0);
-			parts.forEach((part: string, i: number) => {
-				breadcrumb.createSpan({ cls: "osmosis-study-breadcrumb-part", text: part });
-				if (i < parts.length - 1) {
-					breadcrumb.createSpan({ cls: "osmosis-study-breadcrumb-sep", text: "›" });
-				}
-			});
+			this.breadcrumbEl = container.createDiv({ cls: "osmosis-study-breadcrumb" });
 		}
 
 		// Card area
@@ -219,6 +211,9 @@ export class SequentialStudyModal extends Modal {
 		// Update progress
 		this.updateProgress();
 
+		// Update breadcrumb to reflect this card's deck
+		this.updateBreadcrumb(studyCard.card.deck);
+
 		// Render front
 		this.frontEl.empty();
 		this.frontEl.removeClass("osmosis-hidden");
@@ -277,6 +272,21 @@ export class SequentialStudyModal extends Modal {
 		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
 		this.progressFill.setCssProps({ "--osmosis-progress-width": `${Math.min(pct, 100)}%` });
 		this.progressText.textContent = `${this.reviewed + 1} / ${total}`;
+	}
+
+	/** Repopulate the breadcrumb to reflect the given deck path. No-op if the
+	 *  breadcrumb is disabled in settings. */
+	private updateBreadcrumb(deckPath: string): void {
+		if (!this.breadcrumbEl) return;
+		this.breadcrumbEl.empty();
+		const parts = deckPath.split("/").filter((p) => p.length > 0);
+		if (parts.length === 0) return;
+		parts.forEach((part, i) => {
+			this.breadcrumbEl!.createSpan({ cls: "osmosis-study-breadcrumb-part", text: part });
+			if (i < parts.length - 1) {
+				this.breadcrumbEl!.createSpan({ cls: "osmosis-study-breadcrumb-sep", text: "›" });
+			}
+		});
 	}
 
 	private flip(): void {
