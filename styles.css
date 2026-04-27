@@ -1073,6 +1073,10 @@ hr.osmosis-map-style-divider {
 	padding-bottom: 8px;
 }
 
+.osmosis-study-card .copy-code-button {
+	display: none;
+}
+
 /* Constrain images/video inside study cards */
 .osmosis-study-card img,
 .osmosis-study-card video {
