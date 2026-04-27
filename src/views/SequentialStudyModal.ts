@@ -53,6 +53,7 @@ export class SequentialStudyModal extends Modal {
 	private progressText!: HTMLElement;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
+	private dividerEl!: HTMLElement;
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
 
@@ -138,7 +139,7 @@ export class SequentialStudyModal extends Modal {
 		// Card area
 		this.cardEl = container.createDiv({ cls: "osmosis-study-card" });
 		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
-		this.cardEl.createDiv({ cls: "osmosis-study-divider" });
+		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
 		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
 
 		// Actions
@@ -203,6 +204,8 @@ export class SequentialStudyModal extends Modal {
 
 		// Render front
 		this.frontEl.empty();
+		this.frontEl.removeClass("osmosis-hidden");
+		this.dividerEl.removeClass("osmosis-hidden");
 		void MarkdownRenderer.render(
 			this.app,
 			studyCard.card.front,
@@ -247,7 +250,7 @@ export class SequentialStudyModal extends Modal {
 
 		this.cardEl.empty();
 		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
-		this.cardEl.createDiv({ cls: "osmosis-study-divider" });
+		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
 		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
 	}
 
@@ -266,15 +269,34 @@ export class SequentialStudyModal extends Modal {
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) return;
 
-		// Render back content
-		void MarkdownRenderer.render(
-			this.app,
-			studyCard.card.back,
-			this.backEl,
-			studyCard.card.notePath,
-			this.renderComponent,
-		);
-		this.backEl.addClass("is-revealed");
+		const isCloze =
+			studyCard.card.cardType === "explicit_cloze" ||
+			studyCard.card.cardType === "code_cloze";
+
+		if (isCloze) {
+			// Cloze: replace the front in-place with the revealed text rather than
+			// stacking front + back. Keeps the card body anchored where the user
+			// was already reading.
+			this.frontEl.empty();
+			void MarkdownRenderer.render(
+				this.app,
+				studyCard.card.back,
+				this.frontEl,
+				studyCard.card.notePath,
+				this.renderComponent,
+			);
+			this.dividerEl.addClass("osmosis-hidden");
+		} else {
+			// Render back content
+			void MarkdownRenderer.render(
+				this.app,
+				studyCard.card.back,
+				this.backEl,
+				studyCard.card.notePath,
+				this.renderComponent,
+			);
+			this.backEl.addClass("is-revealed");
+		}
 
 		// Show rating buttons, hide flip
 		this.flipBtn.addClass("osmosis-hidden");

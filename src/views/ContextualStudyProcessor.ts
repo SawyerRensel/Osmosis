@@ -106,7 +106,7 @@ export class ContextualStudyProcessor {
 		);
 
 		// Separator
-		container.createDiv({ cls: "osmosis-study-divider" });
+		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Back: hidden placeholder + revealed content
 		const backEl = container.createDiv();
@@ -140,12 +140,15 @@ export class ContextualStudyProcessor {
 		const alreadyRated = this.ratedCardIds.has(parsed.cardId);
 		let revealed = alreadyRevealed;
 
-		const reveal = (): void => {
-			if (revealed) return;
-			revealed = true;
-			this.revealedCardIds.add(parsed.cardId);
+		const showBack = (): void => {
 			hiddenEl.addClass("osmosis-hidden");
 			revealedEl.removeClass("osmosis-hidden");
+			// Cloze cards replace the front in-place rather than stacking, so the
+			// reader's eye stays on the same body of text.
+			if (parsed.isCloze) {
+				frontEl.addClass("osmosis-hidden");
+				dividerEl.addClass("osmosis-hidden");
+			}
 			void MarkdownRenderer.render(
 				this.plugin.app,
 				parsed.back,
@@ -153,6 +156,13 @@ export class ContextualStudyProcessor {
 				sourcePath,
 				this.renderComponent,
 			);
+		};
+
+		const reveal = (): void => {
+			if (revealed) return;
+			revealed = true;
+			this.revealedCardIds.add(parsed.cardId);
+			showBack();
 
 			if (parsed.cardId && !alreadyRated) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
@@ -161,15 +171,7 @@ export class ContextualStudyProcessor {
 
 		// Auto-reveal if this card was previously revealed this session
 		if (alreadyRevealed) {
-			hiddenEl.addClass("osmosis-hidden");
-			revealedEl.removeClass("osmosis-hidden");
-			void MarkdownRenderer.render(
-				this.plugin.app,
-				parsed.back,
-				revealedEl,
-				sourcePath,
-				this.renderComponent,
-			);
+			showBack();
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
 			} else if (parsed.cardId) {
@@ -370,7 +372,7 @@ export class ContextualStudyProcessor {
 	 * Parse fence content into front/back/metadata.
 	 * Reuses the same format as explicit.ts card generators.
 	 */
-	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean } | null {
+	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean; isCloze: boolean } | null {
 		const lines = source.split("\n");
 
 		// Parse metadata lines (key: value before blank line)
@@ -400,7 +402,7 @@ export class ContextualStudyProcessor {
 			const back = contentLines.slice(separatorIdx + 1).join("\n").trim();
 			if (!front && !back) return null;
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`${front}|||${back}`);
-			return { front, back, cardId, exclude };
+			return { front, back, cardId, exclude, isCloze: false };
 		}
 
 		// No separator — check for code cloze markers first, then text cloze
@@ -411,7 +413,7 @@ export class ContextualStudyProcessor {
 		if (content.includes("osmosis-cloze")) {
 			const { front, back } = ContextualStudyProcessor.buildCodeClozeFrontBack(contentLines);
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`code-cloze|||${content}`);
-			return { front, back, cardId, exclude };
+			return { front, back, cardId, exclude, isCloze: true };
 		}
 
 		// Check for inline code cloze (:::...::: markers inside inner code fences)
@@ -420,7 +422,7 @@ export class ContextualStudyProcessor {
 		if (hasInlineCloze && hasInnerFence) {
 			const { front, back } = ContextualStudyProcessor.buildInlineClozeFrontBack(contentLines);
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`inline-cloze|||${content}`);
-			return { front, back, cardId, exclude };
+			return { front, back, cardId, exclude, isCloze: true };
 		}
 
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
@@ -440,7 +442,7 @@ export class ContextualStudyProcessor {
 			},
 		);
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
-		return { front, back, cardId, exclude };
+		return { front, back, cardId, exclude, isCloze: true };
 	}
 
 	/**
