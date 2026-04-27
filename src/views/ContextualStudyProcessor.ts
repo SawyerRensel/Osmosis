@@ -4,6 +4,7 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK } from "../card-gen/explicit";
+import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /** An undo entry for contextual review. */
 interface ContextualUndoEntry {
@@ -103,7 +104,7 @@ export class ContextualStudyProcessor {
 			frontEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(frontEl));
 
 		// Separator
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
@@ -155,7 +156,7 @@ export class ContextualStudyProcessor {
 				revealedEl,
 				sourcePath,
 				this.renderComponent,
-			);
+			).then(() => addCodeBlockLanguageLabels(revealedEl));
 		};
 
 		const reveal = (): void => {
@@ -209,7 +210,7 @@ export class ContextualStudyProcessor {
 			frontEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(frontEl));
 
 		// Separator
 		container.createDiv({ cls: "osmosis-study-divider" });
@@ -222,7 +223,7 @@ export class ContextualStudyProcessor {
 			backEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(backEl));
 
 		// Bottom row with exclude toggle (bottom-right)
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });

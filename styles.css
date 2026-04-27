@@ -160,7 +160,8 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 /* Code block language label */
-.osmosis-node-group-codeblock .osmosis-node-content {
+.osmosis-node-group-codeblock .osmosis-node-content,
+pre.osmosis-code-block {
 	position: relative;
 }
 
@@ -1075,6 +1076,37 @@ hr.osmosis-map-style-divider {
 
 .osmosis-study-card .copy-code-button {
 	display: none;
+}
+
+/* In the sequential study modal, code blocks sit flush with the card so the
+   inline language label would otherwise overlap the first line of code.
+   Reserve just enough room for the label by reducing the top padding of
+   <pre> and giving the inner <code> a small top margin. */
+.osmosis-study-card pre.osmosis-code-block {
+	padding-top: 4px;
+}
+
+.osmosis-study-card pre.osmosis-code-block > code {
+	margin-top: 12px;
+	display: block;
+}
+
+.osmosis-study-card pre.osmosis-code-block > .osmosis-code-lang-label {
+	top: 2px;
+	right: 8px;
+}
+
+/* Strip the default top/bottom margin from the front's first/last block-level
+   children (e.g., a code block as the only content) so the card body isn't
+   padded by markdown's default <pre> / <p> margins on top of the card's own
+   padding. */
+.osmosis-study-front > :first-child,
+.osmosis-study-back > :first-child {
+	margin-top: 0;
+}
+.osmosis-study-front > :last-child,
+.osmosis-study-back > :last-child {
+	margin-bottom: 0;
 }
 
 /* Constrain images/video inside study cards */

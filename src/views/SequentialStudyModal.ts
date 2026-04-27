@@ -5,6 +5,7 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
 import type { FenceWriter } from "../store/FenceWriter";
 import { isCloseMatch } from "../study/match";
+import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /** A card waiting for its learning timer to fire. */
 interface DeferredCard {
@@ -212,7 +213,7 @@ export class SequentialStudyModal extends Modal {
 			this.frontEl,
 			studyCard.card.notePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(this.frontEl));
 
 		// Hide back
 		this.backEl.empty();
@@ -284,7 +285,7 @@ export class SequentialStudyModal extends Modal {
 				this.frontEl,
 				studyCard.card.notePath,
 				this.renderComponent,
-			);
+			).then(() => addCodeBlockLanguageLabels(this.frontEl));
 			this.dividerEl.addClass("osmosis-hidden");
 		} else {
 			// Render back content
@@ -294,7 +295,7 @@ export class SequentialStudyModal extends Modal {
 				this.backEl,
 				studyCard.card.notePath,
 				this.renderComponent,
-			);
+			).then(() => addCodeBlockLanguageLabels(this.backEl));
 			this.backEl.addClass("is-revealed");
 		}
 
@@ -321,7 +322,7 @@ export class SequentialStudyModal extends Modal {
 			this.backEl,
 			studyCard.card.notePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(this.backEl));
 
 		// Show comparison result
 		const resultEl = this.backEl.createDiv({ cls: "osmosis-typein-result" });
