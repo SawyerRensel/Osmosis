@@ -108,8 +108,11 @@ export class SequentialStudyModal extends Modal {
 	private buildLayout(): void {
 		const container = this.contentEl;
 
-		// Top bar: undo, open-note, and exclude buttons (top-left), above progress bar
-		const topBar = container.createDiv({ cls: "osmosis-study-top-bar" });
+		// Top bar: undo, open-note, and exclude buttons. Mounted on modalEl (not
+		// contentEl) so absolute positioning lands them in the modal's header
+		// strip alongside the × close button instead of inside the scrollable
+		// content area where they'd overlap the progress bar.
+		const topBar = this.modalEl.createDiv({ cls: "osmosis-study-top-bar" });
 		this.actionsRight = topBar.createDiv({ cls: "osmosis-study-actions-right" });
 
 		const gotoBtn = this.actionsRight.createEl("button", {

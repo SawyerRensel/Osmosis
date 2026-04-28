@@ -1070,7 +1070,9 @@ hr.osmosis-map-style-divider {
 
 .osmosis-study-modal .modal-content {
 	overflow-y: auto;
-	padding-top: 0;
+	/* Reserve room at the top for the absolutely-positioned icon row + ×
+	   close button so the progress bar doesn't slide underneath them. */
+	padding-top: 28px;
 	padding-bottom: 8px;
 }
 
@@ -1118,13 +1120,19 @@ hr.osmosis-map-style-divider {
 	object-fit: contain;
 }
 
-.osmosis-study-top-bar {
+/* Pin the icon-button row to the modal's top-left, on the same horizontal
+   line as Obsidian's × close button. We position relative to the modal element
+   itself (not modal-content) so we land in the header strip above the content
+   padding rather than overlapping the progress bar. */
+.osmosis-study-modal .osmosis-study-top-bar {
+	position: absolute;
+	/* Match Obsidian's close-button vertical offset */
+	top: 12px;
+	left: 12px;
+	z-index: 1;
 	display: flex;
 	align-items: center;
-	min-height: var(--input-height, 28px);
-	/* Reserve room on the right so icons don't collide with the modal's × close button */
-	padding-right: 36px;
-	margin-bottom: 6px;
+	gap: 4px;
 }
 
 .osmosis-study-breadcrumb {
@@ -1225,15 +1233,18 @@ hr.osmosis-map-style-divider {
 }
 
 .osmosis-study-icon-btn {
-	padding: 4px;
+	width: 42px;
+	height: 42px;
+	padding: 0;
 	border: none;
-	border-radius: 4px;
+	border-radius: 50%;
 	background: transparent;
 	color: var(--text-muted);
 	cursor: pointer;
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	flex-shrink: 0;
 }
 
 .osmosis-study-icon-btn:hover {
