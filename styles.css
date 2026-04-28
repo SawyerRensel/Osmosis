@@ -1290,6 +1290,14 @@ hr.osmosis-map-style-divider {
 	background: var(--background-modifier-hover);
 }
 
+/* Desktop: match the rating buttons' taller height. The flip button has a
+   1px border that the rating buttons don't, so subtract 1px from the
+   vertical padding to keep the rendered heights identical. */
+body:not(.is-mobile) .osmosis-study-flip {
+	padding-top: 17px;
+	padding-bottom: 17px;
+}
+
 .osmosis-study-rating-bar {
 	display: flex;
 	gap: 8px;
