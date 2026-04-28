@@ -1301,7 +1301,7 @@ hr.osmosis-map-style-divider {
 	flex: 1;
 	padding: 12px 18px;
 	border: none;
-	border-radius: 9999px;
+	border-radius: 8px;
 	cursor: pointer;
 	font-size: 15px;
 	font-weight: 500;
@@ -1310,6 +1310,13 @@ hr.osmosis-map-style-divider {
 
 .osmosis-study-rating-bar button:hover {
 	filter: brightness(1.1);
+}
+
+/* Desktop: taller rating buttons. Mobile keeps the default 12px so the
+   thumb-target height (already comfortable) doesn't grow unnecessarily. */
+body:not(.is-mobile) .osmosis-study-rating-bar button {
+	padding-top: 18px;
+	padding-bottom: 18px;
 }
 
 .osmosis-study-rating-bar button.osmosis-rate-again,
