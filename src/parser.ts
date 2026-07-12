@@ -1,4 +1,5 @@
 import { OsmosisNode, OsmosisTree, NodeType, Range } from "./types";
+import { extractTrailingBlockId } from "./block-id";
 
 /**
  * Incremental markdown parser for Osmosis.
@@ -157,6 +158,11 @@ export class OsmosisParser {
 				node.metadata = { ...node.metadata, checkbox: true, checked: parsed.checked };
 			}
 
+			// Attach trailing block ID (line-card identity / style anchor)
+			if (parsed.blockId !== undefined) {
+				node.blockId = parsed.blockId;
+			}
+
 			if (parsed.type === "heading") {
 				// Headings reset list context
 				listStack = [];
@@ -238,13 +244,26 @@ export class OsmosisParser {
 	 * Returns null for blank/empty lines.
 	 */
 	private parseLine(line: LineInfo): ParsedLine | null {
-		const text = line.text;
+		const raw = line.text;
 
 		// Blank line
-		if (text.trim() === "") {
+		if (raw.trim() === "") {
 			return null;
 		}
 
+		// A trailing block ID (e.g. "- item ^os-a1b2c3") is identity metadata,
+		// not content — strip it before structural matching so it never
+		// appears in node labels or card text.
+		const extracted = extractTrailingBlockId(raw);
+		const parsed = this.parseLineContent(extracted?.stripped ?? raw);
+		if (parsed !== null && extracted) {
+			parsed.blockId = extracted.id;
+		}
+		return parsed;
+	}
+
+	/** Structural matching for a line whose trailing block ID (if any) is already stripped. */
+	private parseLineContent(text: string): ParsedLine | null {
 		// Heading: # through ######
 		const headingMatch = /^(#{1,6})\s+(.*)$/.exec(text);
 		if (headingMatch?.[1] !== undefined && headingMatch[2] !== undefined) {
@@ -517,4 +536,6 @@ interface ParsedLine {
 	checkbox?: boolean;
 	/** Whether the checkbox is checked. */
 	checked?: boolean;
+	/** Trailing Obsidian block ID (without caret), stripped from content. */
+	blockId?: string;
 }

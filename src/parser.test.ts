@@ -450,4 +450,71 @@ describe("OsmosisParser", () => {
 			expect(elapsed).toBeLessThan(10);
 		});
 	});
+
+	describe("block IDs", () => {
+		it("strips a trailing block ID from a bullet and records it", () => {
+			const tree = parser.parse("- Mitochondria produce ATP ^os-a1b2c3", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.content).toBe("Mitochondria produce ATP");
+			expect(node?.blockId).toBe("os-a1b2c3");
+		});
+
+		it("strips a trailing block ID from a heading and records it", () => {
+			const tree = parser.parse("## Cellular Respiration ^os-77c4b0", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("heading");
+			expect(node?.depth).toBe(2);
+			expect(node?.content).toBe("Cellular Respiration");
+			expect(node?.blockId).toBe("os-77c4b0");
+		});
+
+		it("records block IDs on ordered items and paragraphs", () => {
+			const tree = parser.parse("1. First step ^os-000001\n\nA paragraph ^user-id", "test.md");
+			expect(tree.root.children[0]?.content).toBe("First step");
+			expect(tree.root.children[0]?.blockId).toBe("os-000001");
+			expect(tree.root.children[1]?.content).toBe("A paragraph");
+			expect(tree.root.children[1]?.blockId).toBe("user-id");
+		});
+
+		it("leaves nodes without block IDs undefined", () => {
+			const tree = parser.parse("- plain item", "test.md");
+			expect(tree.root.children[0]?.blockId).toBeUndefined();
+		});
+
+		it("handles checkbox items with block IDs", () => {
+			const tree = parser.parse("- [x] Done task ^os-abc123", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.blockId).toBe("os-abc123");
+			expect(node?.metadata?.["checkbox"]).toBe(true);
+			expect(node?.metadata?.["checked"]).toBe(true);
+		});
+
+		it("keeps nesting structure with block IDs present", () => {
+			const md = "# Root ^os-r00001\n- parent ^os-p00001\n\t- child ^os-c00001";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			const parent = heading?.children[0];
+			const child = parent?.children[0];
+			expect(heading?.blockId).toBe("os-r00001");
+			expect(parent?.content).toBe("parent");
+			expect(parent?.blockId).toBe("os-p00001");
+			expect(child?.content).toBe("child");
+			expect(child?.blockId).toBe("os-c00001");
+		});
+
+		it("does not strip carets inside code blocks", () => {
+			const md = "```\nlet x = a ^os-abc123\n```";
+			const tree = parser.parse(md, "test.md");
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("codeblock");
+			expect(node?.content).toContain("a ^os-abc123");
+			expect(node?.blockId).toBeUndefined();
+		});
+
+		it("node stable ID is unaffected by adding a block ID", () => {
+			const without = parser.parse("- item", "test.md");
+			const withId = parser.parse("- item ^os-a1b2c3", "test.md");
+			expect(withId.root.children[0]?.id).toBe(without.root.children[0]?.id);
+		});
+	});
 });
