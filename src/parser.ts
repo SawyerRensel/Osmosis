@@ -56,6 +56,11 @@ export class OsmosisParser {
 		let tableStart = 0;
 		let tableEnd = 0;
 
+		// Most recent multi-line block (code block / table), target for a
+		// standalone block-ID line following it. Cleared when any regular
+		// node is created; blank lines do not clear it.
+		let lastMultilineNode: OsmosisNode | null = null;
+
 		// Skip YAML frontmatter (--- delimited block at the start of the file)
 		let lineIdx = 0;
 		if (lines.length > 0 && lines[0]!.text.trim() === "---") {
@@ -86,6 +91,7 @@ export class OsmosisParser {
 					listStack = [];
 					const parent = headingStack[headingStack.length - 1] ?? root;
 					parent.children.push(node);
+					lastMultilineNode = node;
 					inCodeBlock = false;
 					codeLines = [];
 					continue;
@@ -119,6 +125,7 @@ export class OsmosisParser {
 					listStack = [];
 					const parent = headingStack[headingStack.length - 1] ?? root;
 					parent.children.push(node);
+					lastMultilineNode = node;
 					inTable = false;
 					tableLines = [];
 					// Fall through to process current line normally
@@ -136,6 +143,19 @@ export class OsmosisParser {
 				}
 			}
 
+			// Standalone block-ID line (e.g. "^os-a1b2c3") — Obsidian's way to
+			// block-reference a multi-line block. Attach the ID to the
+			// preceding code block / table instead of emitting a paragraph.
+			// The node's range deliberately excludes the ID line so content
+			// edits through the mind map cannot wipe the identity.
+			const standaloneId = /^\^([a-zA-Z0-9-]+)$/.exec(line.text.trim());
+			if (standaloneId?.[1] !== undefined && lastMultilineNode !== null) {
+				if (lastMultilineNode.blockId === undefined) {
+					lastMultilineNode.blockId = standaloneId[1];
+				}
+				continue;
+			}
+
 			const parsed = this.parseLine(line);
 			if (parsed === null) {
 				// Blank line: reset list context
@@ -147,6 +167,7 @@ export class OsmosisParser {
 				start: line.start,
 				end: line.end,
 			});
+			lastMultilineNode = null;
 
 			// Store ordered list number in metadata
 			if (parsed.listNumber !== undefined) {

@@ -516,5 +516,39 @@ describe("OsmosisParser", () => {
 			const withId = parser.parse("- item ^os-a1b2c3", "test.md");
 			expect(withId.root.children[0]?.id).toBe(without.root.children[0]?.id);
 		});
+
+		it("attaches a standalone block-ID line to the preceding code block", () => {
+			const md = "```js\nconst x = 1;\n```\n^os-code01\n\nNext paragraph";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			const code = tree.root.children[0];
+			expect(code?.type).toBe("codeblock");
+			expect(code?.blockId).toBe("os-code01");
+			expect(tree.root.children[1]?.content).toBe("Next paragraph");
+		});
+
+		it("attaches a standalone block-ID line to the preceding table, across a blank line", () => {
+			const md = "| a | b |\n|---|---|\n| 1 | 2 |\n\n^os-tab001";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			const table = tree.root.children[0];
+			expect(table?.type).toBe("table");
+			expect(table?.blockId).toBe("os-tab001");
+		});
+
+		it("does not attach a standalone block-ID line after a regular node", () => {
+			const md = "A paragraph\n^os-abc123";
+			const tree = parser.parse(md, "test.md");
+			// Falls back to previous behavior: standalone line is a paragraph
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[0]?.blockId).toBeUndefined();
+			expect(tree.root.children[1]?.content).toBe("^os-abc123");
+		});
+
+		it("keeps a standalone block-ID line at document start as a paragraph", () => {
+			const tree = parser.parse("^os-abc123", "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
+		});
 	});
 });

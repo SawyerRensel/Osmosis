@@ -1,4 +1,4 @@
-import { Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -10,6 +10,8 @@ import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesS
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
+import { planIdGeneration } from "./card-gen/generate-ids";
 import type { DeckScope } from "./study/types";
 
 export default class OsmosisPlugin extends Plugin {
@@ -103,6 +105,13 @@ export default class OsmosisPlugin extends Plugin {
 							}
 						});
 				});
+				menu.addItem((item) => {
+					item.setTitle("Generate flashcards")
+						.setIcon("layers")
+						.onClick(() => {
+							void this.openGenerateFlashcards(file);
+						});
+				});
 			}),
 		);
 
@@ -122,6 +131,18 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Study all decks",
 			callback: () => {
 				void this.openStudySession({ type: "all" });
+			},
+		});
+
+		// ── Notes as Flashcards: ID generation ──────────────────
+		this.addCommand({
+			id: "generate-flashcards",
+			name: "Generate flashcards from note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) void this.openGenerateFlashcards(file);
+				return true;
 			},
 		});
 
@@ -290,6 +311,42 @@ export default class OsmosisPlugin extends Plugin {
 			this.settings.showStudyBreadcrumb,
 		);
 		modal.open();
+	}
+
+	/**
+	 * "Generate flashcards from note": plan block-ID insertions, show the
+	 * confirmation modal, and on confirm tag the note (and opt it in).
+	 */
+	private async openGenerateFlashcards(file: TFile): Promise<void> {
+		const content = await this.app.vault.cachedRead(file);
+		const plan = planIdGeneration(content);
+
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const rawOptIn: unknown = fm?.["osmosis-cards"];
+		const optedIn = rawOptIn === true || rawOptIn === "true";
+
+		if (plan.insertions.length === 0) {
+			new Notice("Nothing to generate — every element is already tagged.");
+			return;
+		}
+
+		new GenerateFlashcardsModal(this.app, file.basename, plan, !optedIn, () => {
+			void (async () => {
+				let tagged = 0;
+				// Re-plan inside process() so concurrent edits can't clobber
+				await this.app.vault.process(file, (data) => {
+					const fresh = planIdGeneration(data);
+					tagged = fresh.insertions.length;
+					return fresh.content;
+				});
+				if (!optedIn) {
+					await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+						frontmatter["osmosis-cards"] = true;
+					});
+				}
+				new Notice(`Tagged ${String(tagged)} element${tagged === 1 ? "" : "s"} with Osmosis IDs.`);
+			})();
+		}).open();
 	}
 
 	/** Create a StudySessionManager wired to the plugin's store and writer. */

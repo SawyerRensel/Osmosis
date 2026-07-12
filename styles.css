@@ -1753,3 +1753,47 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	font-size: 13px;
 	padding: 2px 4px;
 }
+
+/* ── Generate Flashcards Modal ─────────────────────────────── */
+
+.osmosis-generate-optin-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-generate-list {
+	max-height: 320px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 4px;
+	margin-bottom: 12px;
+}
+
+.osmosis-generate-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 3px 6px;
+	border-radius: 4px;
+}
+
+.osmosis-generate-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-generate-type {
+	flex-shrink: 0;
+	width: 105px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.osmosis-generate-preview {
+	font-size: var(--font-ui-small);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

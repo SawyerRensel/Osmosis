@@ -38,10 +38,19 @@ for mind-map styling data.
   — do not add a second one (Obsidian allows one block ID per block).
 - Parser must strip trailing block IDs from node label text (mind map and cards
   must never display them).
-- **Verify during implementation**: block IDs on heading lines
-  (`## Heading ^os-x1`) — confirm Obsidian registers and hides them in reading
-  view the same way it does for list items/paragraphs. If headings misbehave,
-  fall back to heading-path identity for heading nodes only.
+- ~~**Verify during implementation**: block IDs on heading lines~~
+  **Verified 2026-07-12**: Obsidian hides `^os-` IDs on headings, bullets,
+  and paragraphs in reading view; `[[note#^id]]` links resolve.
+- **Multi-line blocks** (decided 2026-07-12): code blocks and tables are
+  single mind-map nodes, so per-line IDs inside them make no sense.
+  - *Osmosis fences*: identity via the existing `id:` metadata key
+    (explicit.ts already parses it) — the generate command inserts
+    `id: os-xxxxxx` when missing.
+  - *Generic code blocks and tables*: a standalone `^os-xxxxxx` line
+    immediately after the block — Obsidian's native way to block-reference
+    multi-line blocks (hidden in reading view). The parser attaches a
+    standalone block-ID line to the preceding node instead of emitting a
+    stray paragraph node.
 
 ### 2. "Generate flashcards from note" command
 
@@ -122,9 +131,16 @@ for mind-map styling data.
   study point are hidden (`░░░░░░`), revealed top-down one line at a time;
   after each reveal the rating bubble appears. Casual peek (no rating) still
   works without "Start studying".
-- **Spatial (Mind Map View)**: line cards are the node cards — existing
-  hide/reveal + "show children (+)" UX now records FSRS ratings against the
-  line card. Front context is inherent (visible ancestors).
+- **Spatial (Mind Map View)** (design settled 2026-07-12): entering study
+  mode hides **only nodes with due line cards** — the rest of the map stays
+  fully expanded, because spatial context (seeing how information fits
+  together) is the point. Hidden nodes keep the "?" placeholder box
+  (existence/shape visible by design — no subtree collapsing). Tapping a
+  hidden node reveals it and shows a **rating bubble** (Again/Hard/Good/Easy,
+  keys 1–4) anchored to the node. The current silent auto-"Good" rating is
+  removed. Progress widget ("4/9 due reviewed") + completion toast; map
+  stays open afterward. Branch-scoped study ("Study this branch") composes
+  with this.
 - **Sequential (modal)**: front renders the ancestor breadcrumb
   (`Cellular Respiration › Krebs cycle › ?`) plus up to N immediately
   preceding siblings for context (default N=2, setting); back reveals the
@@ -154,7 +170,9 @@ for mind-map styling data.
 1. **Block ID plumbing** — parser strips/records trailing block IDs; ID
    generator (`os-` base36); unit tests. (S)
 2. **Generate command + confirmation modal** — eligibility scan, preview
-   modal, single-transaction write, incremental re-run. (M)
+   modal, single-transaction write, incremental re-run. Includes multi-line
+   block handling: `id:` metadata into osmosis fences, standalone after-block
+   IDs for generic code blocks/tables (+ parser attach support). (M)
 3. **Frontmatter schedule store** — typed parse/serialize of the
    `osmosis-schedule` YAML (unit-tested, incl. ISO↔epoch conversion),
    `processFrontMatter` read/write, debounced flush + session-end/unload
@@ -168,10 +186,11 @@ for mind-map styling data.
    top-down reveal flow, rating bubble, progress widget. (L)
 8. **Spatial integration** — replace today's skeleton (hide-everything +
    silent hardcoded "Good" rating + fuzzy node→card matching,
-   MindMapView.ts `rateSpatialNode`/`recordSpatialReview`): map nodes to
-   line cards exactly via block ID, and add the PRD 7c **rating bubble**
-   (Again/Hard/Good/Easy) after each reveal. (L — grown from M after
-   reviewing current implementation)
+   MindMapView.ts `rateSpatialNode`/`recordSpatialReview`): due-only hiding,
+   map nodes matched to line cards exactly via block ID, **rating bubble**
+   (Again/Hard/Good/Easy, keys 1–4) after each reveal, progress widget +
+   completion toast. (L — grown from M after reviewing current
+   implementation)
 9. **Style selectors via block ID** — resolution + format panel preference. (S)
 10. **Docs + PRD update** — document feature; also fix stale PRD storage
     section (cards.db → in-memory store + fence/sidecar persistence). (S)
@@ -190,14 +209,17 @@ commit.
   Acceptable per native-block-ID decision; optional cosmetic dimming later.
 - **Cloze + line card coexistence** (§4): watch for double-scheduling noise
   during manual testing.
-- **Spatial mode & due dates**: today's study toggle hides all nodes
-  unconditionally. PRD says spatial mode respects due dates (unlike
-  contextual). Decide in task 8: hide only nodes with due line cards, or
-  keep hide-everything with unrated "peek" reveals for non-due nodes.
+- ~~**Spatial mode & due dates**~~ **Resolved 2026-07-12**: due-only hiding;
+  full map stays expanded with "?" placeholders on hidden nodes (see §5).
 - **Frontmatter write vs. open views**: verify a `processFrontMatter` write
   during contextual study (reading view) or with the mind map open doesn't
   flicker or reset reveal state — the debounced flush should make writes
   rare, but confirm manually with a mid-session flush.
+- **Comment-only lines render as empty mind map nodes**: the parser emits a
+  paragraph node for HTML-comment-only lines (e.g. `<!-- osmosis-exclude -->`),
+  which shows as a blank box in the map (seen 2026-07-12 in the
+  generate-flashcards fixture). Pre-existing; parser or map should skip
+  comment-only paragraphs. Small follow-up, not blocking.
 - **Fence schedule storage divergence**: fence cards keep FenceWriter inline
   persistence; line cards use `osmosis-schedule` frontmatter. Consolidating
   fence schedules into frontmatter is a natural follow-up (would also let
