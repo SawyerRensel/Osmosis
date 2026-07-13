@@ -5,6 +5,7 @@ import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
+import { ScheduleStore } from "./store/ScheduleStore";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -18,6 +19,7 @@ export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
+	scheduleStore!: ScheduleStore;
 	cardSync!: CardSyncService;
 
 	async onload() {
@@ -28,6 +30,12 @@ export default class OsmosisPlugin extends Plugin {
 
 		// Fence writer — writes schedule data back into markdown fences
 		this.fenceWriter = new FenceWriter(this.app.vault);
+
+		// Schedule store — debounced osmosis-schedule frontmatter writes for line cards
+		this.scheduleStore = new ScheduleStore(
+			this.app.fileManager,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
 
 		// Card sync service — connects note processor to card store
 		this.cardSync = new CardSyncService(
@@ -199,6 +207,11 @@ export default class OsmosisPlugin extends Plugin {
 				}
 			}),
 		);
+	}
+
+	onunload() {
+		// Force out any pending schedule frontmatter writes
+		void this.scheduleStore.flush();
 	}
 
 	private addMindMapActionToMarkdownLeaves(): void {
