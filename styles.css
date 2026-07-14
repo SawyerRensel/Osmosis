@@ -1671,6 +1671,86 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	box-shadow: var(--shadow-s);
 }
 
+/* ─── Line-Card Progressive Reveal (Reading View) ────────── */
+
+.markdown-reading-view.osmosis-reveal-host {
+	position: relative;
+}
+
+.osmosis-reveal-banner {
+	position: absolute;
+	top: 12px;
+	right: 24px;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 9999px;
+	background: var(--background-secondary);
+	box-shadow: var(--shadow-s);
+}
+
+.osmosis-reveal-progress {
+	padding-left: 8px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn {
+	padding: 4px 12px;
+	border: none;
+	border-radius: 9999px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn:hover {
+	filter: brightness(1.1);
+}
+
+/* Hidden line: the wrapped content collapses, the placeholder shows */
+.osmosis-line-hidden > .osmosis-line-back {
+	display: none;
+}
+
+.osmosis-line-placeholder {
+	color: var(--text-faint);
+	letter-spacing: 2px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.osmosis-line-placeholder:hover {
+	color: var(--text-muted);
+}
+
+/* During study, lines after the next one are locked (top-down reveal) */
+.osmosis-line-placeholder.osmosis-line-locked {
+	cursor: default;
+	opacity: 0.35;
+}
+
+.osmosis-line-placeholder.osmosis-line-locked:hover {
+	color: var(--text-faint);
+}
+
+.osmosis-line-placeholder.osmosis-line-next {
+	color: var(--text-accent);
+}
+
+/* Block-level so the bubble always sits on its own line below the card,
+   regardless of how short the revealed line is */
+.osmosis-line-rating {
+	display: flex;
+	margin: 4px 0;
+	animation: osmosis-fade-in 0.2s;
+}
+
 /* ─── Exclude Toggle (Contextual Cards) ──────────────────── */
 
 .osmosis-contextual-bottom {

@@ -11,6 +11,7 @@ import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesS
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { planIdGeneration } from "./card-gen/generate-ids";
 import type { DeckScope } from "./study/types";
@@ -21,6 +22,7 @@ export default class OsmosisPlugin extends Plugin {
 	fenceWriter!: FenceWriter;
 	scheduleStore!: ScheduleStore;
 	cardSync!: CardSyncService;
+	lineReveal!: LineRevealProcessor;
 
 	async onload() {
 		await this.loadSettings();
@@ -169,6 +171,10 @@ export default class OsmosisPlugin extends Plugin {
 		// ── Contextual Study Mode ───────────────────────────────
 		new ContextualStudyProcessor(this).register();
 
+		// Progressive line-card reveal in reading view (plan §5)
+		this.lineReveal = new LineRevealProcessor(this);
+		this.lineReveal.register();
+
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
 
@@ -180,6 +186,7 @@ export default class OsmosisPlugin extends Plugin {
 
 			void this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
 			});
 		});
 
@@ -187,6 +194,7 @@ export default class OsmosisPlugin extends Plugin {
 		const debouncedSync = debounce((file: TFile) => {
 			void this.cardSync.syncFile(file).then(() => {
 				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
 			});
 		}, 2000, true);
 

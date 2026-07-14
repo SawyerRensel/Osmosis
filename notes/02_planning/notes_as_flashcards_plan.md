@@ -126,11 +126,24 @@ for mind-map styling data.
 
 ### 5. Study modes
 
-- **Contextual (Note View)**: in reading view on an opted-in note with line
-  cards, "Start studying" enters progressive-reveal mode — lines below the
-  study point are hidden (`░░░░░░`), revealed top-down one line at a time;
-  after each reveal the rating bubble appears. Casual peek (no rating) still
-  works without "Start studying".
+- **Contextual (Note View)** (revised 2026-07-14 during task 7 review):
+  reading view stays a normal reading surface by default — nothing hidden,
+  block IDs invisible as usual. On notes with line cards, two header
+  actions appear in reading mode, left of the reading/edit toggle:
+  - *Peek mode* (`eye-dashed` icon): hides every line-card line
+    (`░░░░░░`); click any placeholder to reveal it, any order, nothing
+    recorded. Toggle off to return to normal reading.
+  - *Study mode* (`graduation-cap` icon — same convention as Mind Map
+    View): hides only lines whose card is **due or new** (scheduling
+    decides, mirroring spatial mode's due-only hiding); reveal is
+    top-down one line at a time; after each reveal the rating bubble
+    appears below the line and must be answered before the next line
+    unlocks. Floating pill shows progress ("4/9 rated") + Stop;
+    completion toast; schedule writes flush at session end. If nothing
+    is due, the button notices instead of entering.
+  ~~Original design ("Start studying" button in-note, all lines hidden by
+  default with casual peek)~~ superseded: default reading must stay
+  readable, and study should follow FSRS scheduling.
 - **Spatial (Mind Map View)** (design settled 2026-07-12): entering study
   mode hides **only nodes with due line cards** — the rest of the map stays
   fully expanded, because spatial context (seeing how information fits
