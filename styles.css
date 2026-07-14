@@ -1163,6 +1163,48 @@ hr.osmosis-map-style-divider {
 	color: var(--text-faint);
 }
 
+/* Line-card front: ancestor breadcrumb ending in a "?" placeholder for the
+   hidden line, followed by dimmed preceding-sibling context lines. */
+.osmosis-line-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.osmosis-line-breadcrumb-part {
+	color: var(--text-muted);
+}
+
+.osmosis-line-breadcrumb-sep {
+	color: var(--text-faint);
+}
+
+.osmosis-line-breadcrumb-unknown {
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.osmosis-line-context {
+	margin-top: 10px;
+	padding-left: 10px;
+	border-left: 2px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	opacity: 0.8;
+}
+
+.osmosis-line-context-line > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-line-context-line > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-line-context-line + .osmosis-line-context-line {
+	margin-top: 4px;
+}
+
 .osmosis-study-progress {
 	display: flex;
 	align-items: center;

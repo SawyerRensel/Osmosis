@@ -93,6 +93,7 @@ export class CardSyncService {
 					sourceLine: genCard.sourceLine,
 					blockId: genCard.blockId,
 					excludeFromDecks: genCard.excludeFromDecks,
+					contextBefore: genCard.contextBefore,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
 					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
 					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,

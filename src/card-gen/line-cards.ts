@@ -18,6 +18,13 @@ import type { GeneratedCard } from "./types";
 /** Separator between breadcrumb segments on a line card's front. */
 export const BREADCRUMB_SEPARATOR = " › ";
 
+/**
+ * Maximum preceding-sibling lines stored on a card as sequential-study
+ * context. The "Line card context lines" setting (default 2) picks how
+ * many of these the study modal actually shows.
+ */
+export const MAX_CONTEXT_LINES = 5;
+
 /** Matches the opening line of an osmosis fence (already its own fence card). */
 const OSMOSIS_FENCE_REGEX = /^(?:`{3,}|~{3,})osmosis$/;
 
@@ -56,27 +63,34 @@ export function generateLineCards(markdown: string, notePath: string): Generated
 	const noteName = noteBasename(notePath);
 	const cards: GeneratedCard[] = [];
 
-	const visit = (node: OsmosisNode, crumbs: string[]): void => {
+	const visit = (node: OsmosisNode, crumbs: string[], contextBefore: string[]): void => {
 		if (node.type !== "root" && !node.isTranscluded) {
-			const card = makeLineCard(node, crumbs, notePath, noteName, lineAt);
+			const card = makeLineCard(node, crumbs, contextBefore, notePath, noteName, lineAt);
 			if (card) cards.push(card);
 		}
 		const childCrumbs =
 			node.type === "root" || isMultiline(node)
 				? crumbs
 				: [...crumbs, node.content];
+		// Each child's context = its immediately preceding siblings (document
+		// order), capped at MAX_CONTEXT_LINES.
+		const precedingSiblings: string[] = [];
 		for (const child of node.children) {
-			visit(child, childCrumbs);
+			visit(child, childCrumbs, precedingSiblings.slice(-MAX_CONTEXT_LINES));
+			if (isContextEligible(child)) {
+				precedingSiblings.push(child.content);
+			}
 		}
 	};
 
-	visit(tree.root, []);
+	visit(tree.root, [], []);
 	return cards;
 }
 
 function makeLineCard(
 	node: OsmosisNode,
 	crumbs: string[],
+	contextBefore: string[],
 	notePath: string,
 	noteName: string,
 	lineAt: (offset: number) => number,
@@ -94,7 +108,19 @@ function makeLineCard(
 		sourceLine: lineAt(node.range.start),
 		typeIn: false,
 		blockId: node.blockId,
+		...(contextBefore.length > 0 ? { contextBefore } : {}),
 	};
+}
+
+/**
+ * Whether a node's content may serve as study context for the sibling
+ * after it. Transclusions (embed whole other notes), osmosis fences (raw
+ * card metadata), and comment-only/blank lines are all noise, not context.
+ */
+function isContextEligible(node: OsmosisNode): boolean {
+	if (node.isTranscluded || node.type === "transclusion") return false;
+	if (isOsmosisFence(node)) return false;
+	return node.content.replace(/<!--[\s\S]*?-->/g, "").trim() !== "";
 }
 
 /** Osmosis fences are already cards via the explicit generator. */

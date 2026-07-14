@@ -338,6 +338,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 			this.settings.showStudyBreadcrumb,
+			this.settings.sequentialContextLines,
 			() => {
 				// Session end: force pending line-card schedule writes to disk
 				void this.scheduleStore.flush();

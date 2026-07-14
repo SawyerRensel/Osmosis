@@ -89,6 +89,8 @@ export interface OsmosisSettings {
 	contextualInlineCloze: boolean;
 	/** Whether to show the deck breadcrumb in the sequential study modal (default: false). */
 	showStudyBreadcrumb: boolean;
+	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
+	sequentialContextLines: number;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -115,6 +117,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	contextualAutoActivate: true,
 	contextualInlineCloze: false,
 	showStudyBreadcrumb: false,
+	sequentialContextLines: 2,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
@@ -251,6 +254,20 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showStudyBreadcrumb)
 					.onChange(async (value) => {
 						this.plugin.settings.showStudyBreadcrumb = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Line card context lines")
+			.setDesc("How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).")
+			.addSlider((slider) =>
+				slider
+					.setLimits(0, 5, 1)
+					.setDynamicTooltip()
+					.setValue(this.plugin.settings.sequentialContextLines)
+					.onChange(async (value) => {
+						this.plugin.settings.sequentialContextLines = value;
 						await this.plugin.saveSettings();
 					}),
 			);

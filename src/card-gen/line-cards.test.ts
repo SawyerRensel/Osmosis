@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { generateLineCards, lineCardId } from "./line-cards";
+import { generateLineCards, lineCardId, MAX_CONTEXT_LINES } from "./line-cards";
 
 describe("lineCardId", () => {
 	it("combines note path and block ID in Obsidian link shape", () => {
@@ -131,6 +131,93 @@ describe("generateLineCards", () => {
 			"Plain paragraph.",
 		].join("\n");
 		expect(generateLineCards(markdown, "note.md")).toHaveLength(0);
+	});
+
+	it("records preceding siblings as contextBefore in document order", () => {
+		const markdown = [
+			"# Section ^os-head01",
+			"",
+			"- First bullet ^os-bull01",
+			"- Second bullet ^os-bull02",
+			"- Third bullet ^os-bull03",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const byId = new Map(cards.map((c) => [c.blockId, c]));
+
+		expect(byId.get("os-bull01")?.contextBefore).toBeUndefined();
+		expect(byId.get("os-bull02")?.contextBefore).toEqual(["First bullet"]);
+		expect(byId.get("os-bull03")?.contextBefore).toEqual(["First bullet", "Second bullet"]);
+	});
+
+	it("includes untagged siblings as context", () => {
+		const markdown = [
+			"# Section ^os-head01",
+			"",
+			"- No ID here",
+			"- Tagged line ^os-bull01",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const tagged = cards.find((c) => c.blockId === "os-bull01");
+		expect(tagged?.contextBefore).toEqual(["No ID here"]);
+	});
+
+	it("context is scoped to siblings — resets under a new parent", () => {
+		const markdown = [
+			"# First section ^os-head01",
+			"",
+			"- Bullet under first ^os-bull01",
+			"",
+			"# Second section ^os-head02",
+			"",
+			"- Bullet under second ^os-bull02",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const byId = new Map(cards.map((c) => [c.blockId, c]));
+
+		expect(byId.get("os-bull01")?.contextBefore).toBeUndefined();
+		expect(byId.get("os-bull02")?.contextBefore).toBeUndefined();
+		// Sibling headings do see each other
+		expect(byId.get("os-head02")?.contextBefore).toEqual(["First section"]);
+	});
+
+	it("caps contextBefore at MAX_CONTEXT_LINES, keeping the nearest lines", () => {
+		const bullets = Array.from({ length: 8 }, (_, i) => `- Bullet ${String(i + 1)}`);
+		const markdown = ["# Section ^os-head01", "", ...bullets, "- Target ^os-last01"].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const target = cards.find((c) => c.blockId === "os-last01");
+
+		expect(target?.contextBefore).toHaveLength(MAX_CONTEXT_LINES);
+		expect(target?.contextBefore).toEqual(
+			["Bullet 4", "Bullet 5", "Bullet 6", "Bullet 7", "Bullet 8"],
+		);
+	});
+
+	it("skips osmosis fences and comment-only lines as context", () => {
+		const markdown = [
+			"# Section ^os-head01",
+			"",
+			"A real paragraph. ^os-para01",
+			"",
+			"```osmosis",
+			"id: abc12345",
+			"",
+			"Front",
+			"***",
+			"Back",
+			"```",
+			"",
+			"<!-- just a comment -->",
+			"",
+			"The target line. ^os-para02",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const target = cards.find((c) => c.blockId === "os-para02");
+		expect(target?.contextBefore).toEqual(["A real paragraph."]);
 	});
 
 	it("multi-line blocks do not contribute breadcrumb segments", () => {

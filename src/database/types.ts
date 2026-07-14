@@ -29,6 +29,11 @@ export interface Card {
 	 * opt-out). The card stays in the store for in-place study modes.
 	 */
 	excludeFromDecks?: boolean;
+	/**
+	 * Line cards: contents of the immediately preceding sibling lines
+	 * (document order), rendered as front context in sequential study.
+	 */
+	contextBefore?: string[];
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;
