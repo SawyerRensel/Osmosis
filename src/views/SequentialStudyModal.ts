@@ -73,6 +73,8 @@ export class SequentialStudyModal extends Modal {
 		private readonly fenceWriter?: FenceWriter,
 		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
 		private readonly showBreadcrumb: boolean = false,
+		/** Called when the session ends — flushes pending schedule writes. */
+		private readonly onSessionEnd?: () => void,
 	) {
 		super(app);
 	}
@@ -103,6 +105,7 @@ export class SequentialStudyModal extends Modal {
 
 		this.renderComponent.unload();
 		this.contentEl.empty();
+		this.onSessionEnd?.();
 	}
 
 	private buildLayout(): void {

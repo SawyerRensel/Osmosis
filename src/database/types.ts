@@ -3,7 +3,8 @@ export type CardType =
 	| "explicit"
 	| "explicit_bidi"
 	| "explicit_cloze"
-	| "code_cloze";
+	| "code_cloze"
+	| "line";
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";
@@ -21,6 +22,8 @@ export interface Card {
 	back: string;
 	typeIn: boolean;
 	sourceLine: number;
+	/** Block ID for line cards (e.g. "os-a1b2c3") — routes schedule writes to frontmatter. */
+	blockId?: string;
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;

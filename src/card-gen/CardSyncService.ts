@@ -1,10 +1,11 @@
 import type { TFile, Vault } from "obsidian";
-import type { Card } from "../database/types";
+import type { Card, ScheduleData } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
 import type { CardGenerationOptions } from "./note-processor";
 import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
+import { lineCardId } from "./line-cards";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -24,6 +25,11 @@ export class CardSyncService {
 		private readonly fenceWriter: FenceWriter,
 		private readonly getOptions: () => CardGenerationOptions,
 		private readonly getFileTags?: (file: TFile) => string[],
+		/**
+		 * Resolved line-card schedules for a note, keyed by block ID —
+		 * osmosis-schedule frontmatter overlaid with pending unflushed ratings.
+		 */
+		private readonly getLineSchedules?: (file: TFile) => Map<string, ScheduleData>,
 	) {}
 
 	/**
@@ -61,11 +67,20 @@ export class CardSyncService {
 			// Write id: metadata back into fences that lack one
 			await this.injectFenceIds(file, content, result.cards);
 
+			// Line-card schedules from frontmatter (+ pending overlay), parsed once
+			const lineSchedules = this.getLineSchedules?.(file);
+
 			for (const genCard of result.cards) {
 				generatedIds.add(genCard.id);
 
 				// Preserve existing schedule data if the card already exists in the store
 				const existing = this.store.getCard(genCard.id);
+
+				// Line cards read their schedule from osmosis-schedule frontmatter;
+				// fence cards carry it in fence metadata (genCard fields).
+				const lineSchedule = genCard.blockId !== undefined
+					? lineSchedules?.get(genCard.blockId)
+					: undefined;
 
 				const card: Card = {
 					id: genCard.id,
@@ -76,15 +91,16 @@ export class CardSyncService {
 					back: genCard.back,
 					typeIn: genCard.typeIn,
 					sourceLine: genCard.sourceLine,
-					// Schedule: prefer fence metadata, fall back to existing store data
-					stability: genCard.stability ?? existing?.stability,
-					difficulty: genCard.difficulty ?? existing?.difficulty,
-					due: genCard.due ?? existing?.due,
-					lastReview: genCard.lastReview ?? existing?.lastReview,
-					reps: genCard.reps ?? existing?.reps,
-					lapses: genCard.lapses ?? existing?.lapses,
-					state: genCard.state ?? existing?.state,
-					learningSteps: genCard.learningSteps ?? existing?.learningSteps,
+					blockId: genCard.blockId,
+					// Schedule: prefer source-of-truth metadata, fall back to existing store data
+					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
+					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
+					due: lineSchedule?.due ?? genCard.due ?? existing?.due,
+					lastReview: lineSchedule?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
+					reps: lineSchedule?.reps ?? genCard.reps ?? existing?.reps,
+					lapses: lineSchedule?.lapses ?? genCard.lapses ?? existing?.lapses,
+					state: lineSchedule?.state ?? genCard.state ?? existing?.state,
+					learningSteps: lineSchedule?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
 				};
 
 				this.store.addCard(card);
@@ -123,12 +139,14 @@ export class CardSyncService {
 
 	/**
 	 * Handle file rename — update notePath for all cards.
+	 * Line-card IDs embed the note path, so they are recomputed.
 	 */
 	handleRename(oldPath: string, newPath: string): void {
 		const cards = this.store.getCardsByNote(oldPath);
 		for (const card of cards) {
 			this.store.removeCard(card.id);
-			this.store.addCard({ ...card, notePath: newPath });
+			const id = card.blockId !== undefined ? lineCardId(newPath, card.blockId) : card.id;
+			this.store.addCard({ ...card, id, notePath: newPath });
 		}
 	}
 
@@ -160,6 +178,8 @@ export function injectFenceIdsIntoContent(content: string, cards: GeneratedCard[
 	const fencesNeedingId = new Map<number, string>();
 
 	for (const card of cards) {
+		// Line cards live on regular lines, not fences — never inject for them
+		if (card.card_type === "line") continue;
 		const baseId = card.id.replace(/-(?:r|c\d+)$/, "");
 		const fenceLine = card.sourceLine;
 		if (fencesNeedingId.has(fenceLine)) continue;

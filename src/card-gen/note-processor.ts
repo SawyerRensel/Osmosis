@@ -1,5 +1,6 @@
 import type { GeneratedCard } from "./types";
 import { generateExplicitCards } from "./explicit";
+import { generateLineCards } from "./line-cards";
 import { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
 
 /** Options controlling card generation behavior. */
@@ -26,7 +27,8 @@ export interface NoteProcessingResult {
  * This is the main orchestrator that:
  * 1. Checks opt-in via frontmatter, folder, or tag
  * 2. Runs the explicit fence generator (handles exclude: true internally)
- * 3. Resolves deck names
+ * 3. Runs the line-card generator (block-ID-tagged elements)
+ * 4. Resolves deck names
  */
 export function processNote(
 	markdown: string,
@@ -54,8 +56,12 @@ export function processNote(
 
 	const deck = resolveDeck(frontmatter.deck, "", notePath);
 
-	// Generate explicit cards (exclude: true handled inside generator)
-	const cards = generateExplicitCards(markdown);
+	// Generate explicit cards (exclude: true handled inside generator),
+	// then line cards from block-ID-tagged elements
+	const cards = [
+		...generateExplicitCards(markdown),
+		...generateLineCards(markdown, notePath),
+	];
 
 	// Assign deck
 	for (const card of cards) {

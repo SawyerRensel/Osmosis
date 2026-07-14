@@ -64,6 +64,11 @@ export class ScheduleStore {
 		return this.pending.get(notePath)?.get(blockId);
 	}
 
+	/** All staged-but-unflushed entries for a note (empty map when none). */
+	getPendingEntries(notePath: string): ReadonlyMap<string, ScheduleData | null> {
+		return this.pending.get(notePath) ?? EMPTY_PENDING;
+	}
+
 	/** Check if a path is currently being written to. */
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
@@ -152,6 +157,8 @@ export class ScheduleStore {
 		}
 	}
 }
+
+const EMPTY_PENDING: ReadonlyMap<string, ScheduleData | null> = new Map();
 
 /**
  * Pure function: apply staged schedule entries to a frontmatter object

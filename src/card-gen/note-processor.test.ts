@@ -354,5 +354,41 @@ describe("processNote", () => {
 			expect(types.filter((t) => t === "explicit_bidi")).toHaveLength(2);
 			expect(types.filter((t) => t === "explicit_cloze")).toHaveLength(1);
 		});
+
+		it("generates line cards alongside fence cards with deck resolution", () => {
+			const md = [
+				"---",
+				"osmosis-cards: true",
+				"osmosis-deck: biology/cells",
+				"---",
+				"# Heading ^os-head01",
+				"",
+				"- Tagged line ^os-a1b2c3",
+				"- Untagged line",
+				"",
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const result = processNote(md, "folder/note.md", defaultOptions);
+
+			const lineCards = result.cards.filter((c) => c.card_type === "line");
+			expect(lineCards.map((c) => c.blockId)).toEqual(["os-head01", "os-a1b2c3"]);
+			expect(lineCards.every((c) => c.deck === "biology/cells")).toBe(true);
+			expect(result.cards.some((c) => c.card_type === "explicit")).toBe(true);
+		});
+
+		it("line cards inherit the folder-derived deck when no deck is set", () => {
+			const md = [
+				"---",
+				"osmosis-cards: true",
+				"---",
+				"- Tagged line ^os-a1b2c3",
+			].join("\n");
+			const result = processNote(md, "Study/Math/note.md", defaultOptions);
+			expect(result.cards[0]?.deck).toBe("Study/Math");
+		});
 	});
 });

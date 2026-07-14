@@ -5,7 +5,7 @@ import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
-import { ScheduleStore } from "./store/ScheduleStore";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter } from "./store/ScheduleStore";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -53,6 +53,17 @@ export default class OsmosisPlugin extends Plugin {
 					? (cache.frontmatter.tags as string[]).map((t: string) => t.replace(/^#/, ""))
 					: [];
 				return [...new Set([...inlineTags, ...fmTags])];
+			},
+			(file: TFile) => {
+				// Line-card schedules: osmosis-schedule frontmatter overlaid with
+				// pending ratings that haven't been flushed to disk yet
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const schedules = parseScheduleFrontmatter(raw);
+				for (const [blockId, entry] of this.scheduleStore.getPendingEntries(file.path)) {
+					if (entry === null) schedules.delete(blockId);
+					else schedules.set(blockId, entry);
+				}
+				return schedules;
 			},
 		);
 
@@ -173,7 +184,9 @@ export default class OsmosisPlugin extends Plugin {
 
 		// Incremental sync on file changes (debounced)
 		const debouncedSync = debounce((file: TFile) => {
-			void this.cardSync.syncFile(file);
+			void this.cardSync.syncFile(file).then(() => {
+				this.refreshDashboard();
+			});
 		}, 2000, true);
 
 		this.registerEvent(
@@ -196,6 +209,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("delete", (file) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleDelete(file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
@@ -204,6 +218,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("rename", (file, oldPath) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleRename(oldPath, file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
@@ -322,6 +337,10 @@ export default class OsmosisPlugin extends Plugin {
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 			this.settings.showStudyBreadcrumb,
+			() => {
+				// Session end: force pending line-card schedule writes to disk
+				void this.scheduleStore.flush();
+			},
 		);
 		modal.open();
 	}
@@ -372,6 +391,7 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.scheduleStore,
 		);
 	}
 

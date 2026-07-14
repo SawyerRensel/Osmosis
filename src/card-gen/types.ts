@@ -13,6 +13,8 @@ export interface GeneratedCard {
 	sourceLine: number;
 	/** Whether this card requires typed answer input. */
 	typeIn: boolean;
+	/** Block ID for line cards (e.g. "os-a1b2c3"). */
+	blockId?: string;
 
 	// Schedule data parsed from fence metadata (optional — absent means new card)
 	stability?: number;
