@@ -45,6 +45,7 @@ export default class OsmosisPlugin extends Plugin {
 			() => ({
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
+				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
 			(file: TFile) => {
 				const cache = this.app.metadataCache.getFileCache(file);

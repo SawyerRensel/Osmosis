@@ -9,6 +9,8 @@ export interface CardGenerationOptions {
 	includeFolders?: string[];
 	/** Tags that auto-enable card generation. */
 	includeTags?: string[];
+	/** Global setting: line cards count in decks (default true). */
+	includeLineCardsInDecks?: boolean;
 }
 
 /** Result of processing a note for card generation. */
@@ -63,9 +65,17 @@ export function processNote(
 		...generateLineCards(markdown, notePath),
 	];
 
+	// Line-card deck opt-out: global setting or per-note osmosis-line-cards: false.
+	// Excluded cards stay studiable in-place but leave deck totals/sequential.
+	const excludeLineCards =
+		options.includeLineCardsInDecks === false || !frontmatter.lineCardsInDecks;
+
 	// Assign deck
 	for (const card of cards) {
 		card.deck = resolveDeck(frontmatter.deck, card.deck, notePath);
+		if (excludeLineCards && card.card_type === "line") {
+			card.excludeFromDecks = true;
+		}
 	}
 
 	return { enabled: true, cards, deck };

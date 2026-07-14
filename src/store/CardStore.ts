@@ -56,18 +56,30 @@ export class CardStore {
 		return result;
 	}
 
+	/**
+	 * Deck names, sorted. Cards excluded from decks (line-card opt-out)
+	 * don't contribute — a note whose only cards are opted out never
+	 * surfaces its deck in the dashboard.
+	 */
 	getAllDecks(): string[] {
 		const decks = new Set<string>();
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			decks.add(card.deck);
 		}
 		return [...decks].sort();
+	}
+
+	/** All cards in the store, including deck-excluded ones. */
+	getAllCards(): Card[] {
+		return [...this.cards.values()];
 	}
 
 	/** Get cards that are due for review (have schedule data, due <= now). */
 	getDueCards(now: number, deck?: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			if (card.due === undefined) continue; // no schedule = new card
 			if (card.due > now) continue;
 			if (deck !== undefined && card.deck !== deck) continue;
@@ -82,6 +94,7 @@ export class CardStore {
 	getDueCardsByDeckPrefix(now: number, prefix: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			if (card.due === undefined) continue;
 			if (card.due > now) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
@@ -95,6 +108,7 @@ export class CardStore {
 	getNewCards(deck?: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			if (card.due !== undefined) continue; // has schedule = not new
 			if (deck !== undefined && card.deck !== deck) continue;
 			result.push(card);
@@ -106,6 +120,7 @@ export class CardStore {
 	getNewCardsByDeckPrefix(prefix: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			if (card.due !== undefined) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
 			result.push(card);
@@ -118,6 +133,7 @@ export class CardStore {
 		const counts = new Map<string, { new: number; learn: number; due: number }>();
 
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			let entry = counts.get(card.deck);
 			if (!entry) {
 				entry = { new: 0, learn: 0, due: 0 };
@@ -181,6 +197,7 @@ export class CardStore {
 	getFolderDerivedDecks(): Set<string> {
 		const result = new Set<string>();
 		for (const card of this.cards.values()) {
+			if (card.excludeFromDecks) continue;
 			const folderPath = card.notePath.split("/").slice(0, -1).join("/");
 			if (card.deck === folderPath) {
 				result.add(card.deck);

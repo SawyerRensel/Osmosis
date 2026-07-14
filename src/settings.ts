@@ -73,6 +73,8 @@ export interface OsmosisSettings {
 	learningSteps: string;
 	/** Relearning steps for lapsed cards (e.g., "10m"). */
 	relearningSteps: string;
+	/** Whether line cards count in deck totals and sequential study (default: true). */
+	includeLineCardsInDecks: boolean;
 
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
@@ -103,6 +105,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	dailyReviewCardLimit: 200,
 	learningSteps: "1m, 10m",
 	relearningSteps: "10m",
+	includeLineCardsInDecks: true,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -221,6 +224,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setPlaceholder("10m")
 					.onChange(async (value) => {
 						this.plugin.settings.relearningSteps = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Include line cards in decks")
+			.setDesc("Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.includeLineCardsInDecks)
+					.onChange(async (value) => {
+						this.plugin.settings.includeLineCardsInDecks = value;
 						await this.plugin.saveSettings();
 					}),
 			);

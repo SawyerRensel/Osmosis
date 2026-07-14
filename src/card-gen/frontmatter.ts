@@ -4,6 +4,8 @@ export interface OsmosisFrontmatter {
 	enabled: boolean;
 	/** Explicit deck override from frontmatter. */
 	deck: string;
+	/** Whether this note's line cards count in decks (osmosis-line-cards, default true). */
+	lineCardsInDecks: boolean;
 }
 
 /**
@@ -24,6 +26,7 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
 	const result: OsmosisFrontmatter = {
 		enabled: false,
 		deck: "",
+		lineCardsInDecks: true,
 	};
 
 	const lines = markdown.split("\n");
@@ -47,6 +50,9 @@ export function parseOsmosisFrontmatter(markdown: string): OsmosisFrontmatter {
 				break;
 			case "osmosis-deck":
 				result.deck = value;
+				break;
+			case "osmosis-line-cards":
+				result.lineCardsInDecks = value !== "false";
 				break;
 		}
 	}

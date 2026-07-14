@@ -92,6 +92,7 @@ export class CardSyncService {
 					typeIn: genCard.typeIn,
 					sourceLine: genCard.sourceLine,
 					blockId: genCard.blockId,
+					excludeFromDecks: genCard.excludeFromDecks,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
 					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
 					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
@@ -154,14 +155,9 @@ export class CardSyncService {
 	 * Remove cards whose notePath doesn't exist in activePaths.
 	 */
 	private cleanOrphans(activePaths: Set<string>): void {
-		const allDecks = this.store.getAllDecks();
-		for (const deck of allDecks) {
-			const cards = this.store.getDueCards(Infinity, deck);
-			const newCards = this.store.getNewCards(deck);
-			for (const card of [...cards, ...newCards]) {
-				if (!activePaths.has(card.notePath)) {
-					this.store.removeCard(card.id);
-				}
+		for (const card of this.store.getAllCards()) {
+			if (!activePaths.has(card.notePath)) {
+				this.store.removeCard(card.id);
 			}
 		}
 	}

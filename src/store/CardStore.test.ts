@@ -132,4 +132,45 @@ describe("CardStore", () => {
 			expect(store.size).toBe(0);
 		});
 	});
+
+	describe("deck exclusion (line-card opt-out)", () => {
+		beforeEach(() => {
+			store.addCard(makeCard({ id: "in-new", deck: "bio" }));
+			store.addCard(makeCard({ id: "in-due", deck: "bio", due: 500, state: "review" }));
+			store.addCard(makeCard({
+				id: "out-new", deck: "bio", cardType: "line", excludeFromDecks: true,
+			}));
+			store.addCard(makeCard({
+				id: "out-due", deck: "bio", cardType: "line", due: 500, state: "review", excludeFromDecks: true,
+			}));
+		});
+
+		it("filters excluded cards from deck queries", () => {
+			expect(store.getNewCards("bio").map((c) => c.id)).toEqual(["in-new"]);
+			expect(store.getDueCards(1000, "bio").map((c) => c.id)).toEqual(["in-due"]);
+			expect(store.getNewCardsByDeckPrefix("bio").map((c) => c.id)).toEqual(["in-new"]);
+			expect(store.getDueCardsByDeckPrefix(1000, "bio").map((c) => c.id)).toEqual(["in-due"]);
+		});
+
+		it("filters excluded cards from deck counts", () => {
+			const counts = store.getCardCountsByDeck(1000);
+			expect(counts.get("bio")).toEqual({ new: 1, learn: 0, due: 1 });
+		});
+
+		it("keeps excluded cards reachable for in-place study", () => {
+			expect(store.getCard("out-due")).toBeDefined();
+			expect(store.getCardsByNote("test.md").map((c) => c.id).sort()).toEqual(
+				["in-due", "in-new", "out-due", "out-new"],
+			);
+			expect(store.getAllCards()).toHaveLength(4);
+		});
+
+		it("a deck with only excluded cards does not appear in getAllDecks", () => {
+			store.clear();
+			store.addCard(makeCard({
+				id: "x", deck: "hidden", cardType: "line", excludeFromDecks: true,
+			}));
+			expect(store.getAllDecks()).toEqual([]);
+		});
+	});
 });

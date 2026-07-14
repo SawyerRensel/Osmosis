@@ -24,6 +24,11 @@ export interface Card {
 	sourceLine: number;
 	/** Block ID for line cards (e.g. "os-a1b2c3") — routes schedule writes to frontmatter. */
 	blockId?: string;
+	/**
+	 * Excluded from deck totals and the sequential study queue (line-card
+	 * opt-out). The card stays in the store for in-place study modes.
+	 */
+	excludeFromDecks?: boolean;
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;

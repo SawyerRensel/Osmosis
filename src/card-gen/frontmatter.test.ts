@@ -73,3 +73,20 @@ describe("resolveDeck", () => {
 		expect(resolveDeck("", "", "note.md")).toBe("");
 	});
 });
+
+describe("osmosis-line-cards flag", () => {
+	it("defaults to line cards in decks", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-cards: true\n---\n");
+		expect(fm.lineCardsInDecks).toBe(true);
+	});
+
+	it("parses osmosis-line-cards: false as opt-out", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-cards: true\nosmosis-line-cards: false\n---\n");
+		expect(fm.lineCardsInDecks).toBe(false);
+	});
+
+	it("treats any non-false value as opted in", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-line-cards: true\n---\n");
+		expect(fm.lineCardsInDecks).toBe(true);
+	});
+});

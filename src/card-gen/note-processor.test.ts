@@ -392,3 +392,44 @@ describe("processNote", () => {
 		});
 	});
 });
+
+describe("line-card deck opt-out", () => {
+	const md = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"- Tagged line ^os-a1b2c3",
+		"",
+		"```osmosis",
+		"id: fence001",
+		"",
+		"Front",
+		"***",
+		"Back",
+		"```",
+	].join("\n");
+
+	it("marks line cards excluded when the global setting is off", () => {
+		const result = processNote(md, "note.md", { includeLineCardsInDecks: false });
+		const line = result.cards.find((c) => c.card_type === "line");
+		const fence = result.cards.find((c) => c.card_type === "explicit");
+		expect(line?.excludeFromDecks).toBe(true);
+		expect(fence?.excludeFromDecks).toBeUndefined();
+	});
+
+	it("marks line cards excluded via osmosis-line-cards: false frontmatter", () => {
+		const optedOut = md.replace(
+			"osmosis-cards: true",
+			"osmosis-cards: true\nosmosis-line-cards: false",
+		);
+		const result = processNote(optedOut, "note.md", {});
+		const line = result.cards.find((c) => c.card_type === "line");
+		expect(line?.excludeFromDecks).toBe(true);
+	});
+
+	it("leaves line cards included by default", () => {
+		const result = processNote(md, "note.md", {});
+		const line = result.cards.find((c) => c.card_type === "line");
+		expect(line?.excludeFromDecks).toBeUndefined();
+	});
+});
