@@ -4,6 +4,7 @@ import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
+import { allLineCardBlockIds, dueOrNewLineCardBlockIds } from "../study/spatial-study";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -100,9 +101,25 @@ export class LineRevealProcessor {
 				this.syncBanners();
 			}),
 		);
+		// Tab/leaf activation fires neither of the above: switching between
+		// a mind map and a markdown tab of the same file doesn't change the
+		// active file, and a background tab deferred at startup only becomes
+		// a real MarkdownView (visible to updateHeaderActions) once activated.
+		this.plugin.registerEvent(
+			this.plugin.app.workspace.on("active-leaf-change", () => {
+				this.updateHeaderActions();
+				this.syncBanners();
+			}),
+		);
 
 		// Restore any open reading views if the plugin unloads mid-session
-		this.plugin.register(() => this.removeAllArtifacts());
+		this.plugin.register(() => {
+			if (this.chromeRetryTimer !== null) {
+				window.clearTimeout(this.chromeRetryTimer);
+				this.chromeRetryTimer = null;
+			}
+			this.removeAllArtifacts();
+		});
 	}
 
 	/**
@@ -113,7 +130,7 @@ export class LineRevealProcessor {
 	 * sync finishes).
 	 */
 	refreshChrome(): void {
-		this.updateHeaderActions();
+		const allReady = this.updateHeaderActions();
 		this.syncBanners();
 
 		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
@@ -125,6 +142,31 @@ export class LineRevealProcessor {
 			if (this.hasRenderedLines(path)) continue;
 			view.previewMode.rerender(true);
 		}
+
+		// App-startup race, other direction: syncAll can finish while a
+		// restored markdown view is still loading (leaf not yet a real
+		// MarkdownView, file not yet assigned). No workspace event fires
+		// when it becomes ready, so retry briefly until every leaf was
+		// processable.
+		if (allReady) {
+			this.chromeRetryAttempts = 0;
+		} else {
+			this.scheduleChromeRetry();
+		}
+	}
+
+	private chromeRetryTimer: number | null = null;
+	private chromeRetryAttempts = 0;
+
+	/** One pending retry at a time, capped so a file-less view can't loop forever. */
+	private scheduleChromeRetry(): void {
+		if (this.chromeRetryTimer !== null) return;
+		if (this.chromeRetryAttempts >= 20) return;
+		this.chromeRetryAttempts++;
+		this.chromeRetryTimer = window.setTimeout(() => {
+			this.chromeRetryTimer = null;
+			this.refreshChrome();
+		}, 300);
 	}
 
 	/** Whether any of the note's line-card lines are tracked in the live DOM. */
@@ -376,15 +418,27 @@ export class LineRevealProcessor {
 	 * present on notes with line cards in both reading and edit mode,
 	 * between the mind map button and the reading/edit toggle, with
 	 * `is-active` reflecting the note's current mode.
+	 *
+	 * Returns false when a markdown leaf couldn't be processed because its
+	 * view isn't ready yet (still deferred, header not built, no file) —
+	 * refreshChrome uses this to retry after app startup.
 	 */
-	private updateHeaderActions(): void {
+	private updateHeaderActions(): boolean {
+		let allReady = true;
 		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
-			if (!(view instanceof MarkdownView)) continue;
+			if (!(view instanceof MarkdownView)) {
+				allReady = false;
+				continue;
+			}
 			const actions = view.containerEl.querySelector(".view-actions");
-			if (!actions) continue;
+			if (!actions) {
+				allReady = false;
+				continue;
+			}
 
 			const path = view.file?.path;
+			if (path === undefined) allReady = false;
 			const show = path !== undefined && this.lineCardBlockIds(path).size > 0;
 
 			let studyBtn = actions.querySelector(".osmosis-line-study-action");
@@ -417,6 +471,7 @@ export class LineRevealProcessor {
 			studyBtn.classList.toggle("is-active", state.mode === "study");
 			peekBtn.classList.toggle("is-active", state.mode === "peek");
 		}
+		return allReady;
 	}
 
 	private createHeaderAction(
@@ -501,25 +556,12 @@ export class LineRevealProcessor {
 
 	/** Block IDs of this note's line cards (deck-excluded ones included — in-place study). */
 	private lineCardBlockIds(notePath: string): Set<string> {
-		const ids = new Set<string>();
-		for (const card of this.plugin.cardStore.getCardsByNote(notePath)) {
-			if (card.cardType === "line" && card.blockId !== undefined) {
-				ids.add(card.blockId);
-			}
-		}
-		return ids;
+		return allLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath));
 	}
 
 	/** Line cards the scheduler would study now: due, or new (never reviewed). */
 	private dueOrNewBlockIds(notePath: string, now: number): Set<string> {
-		const ids = new Set<string>();
-		for (const card of this.plugin.cardStore.getCardsByNote(notePath)) {
-			if (card.cardType !== "line" || card.blockId === undefined) continue;
-			if (card.due === undefined || card.due <= now) {
-				ids.add(card.blockId);
-			}
-		}
-		return ids;
+		return dueOrNewLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath), now);
 	}
 
 	private fileCache(notePath: string): CachedMetadata | null {
@@ -581,8 +623,9 @@ function isPreservedNode(node: Node): boolean {
  * Peek-mode icon: `eye-dashed` when this Obsidian's lucide set has it,
  * otherwise the closest available fallback. Checked at button-creation
  * time via getIconIds() — an unknown ID would render an empty button.
+ * Shared with the mind map's peek action.
  */
-function peekIcon(): string {
+export function peekIcon(): string {
 	const available = new Set<string>(getIconIds());
 	for (const candidate of ["eye-dashed", "scan-eye", "eye"]) {
 		if (available.has(candidate) || available.has(`lucide-${candidate}`)) {

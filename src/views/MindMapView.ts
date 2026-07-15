@@ -37,6 +37,11 @@ import {
 // eslint-disable-next-line import/no-extraneous-dependencies
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
+import { lineCardId } from "../card-gen/line-cards";
+import { allLineCardBlockIds, collectSubtreeBlockIds, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import { peekIcon } from "./LineRevealProcessor";
+import type { FSRSRating } from "../database/FSRSScheduler";
+import type { StudySessionManager } from "../study/StudySessionManager";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -175,12 +180,26 @@ export class MindMapView extends ItemView {
 	private isPinned = false;
 	private pinActionEl: HTMLElement | null = null;
 
-	// Spatial study mode state
-	private isSpatialStudy = false;
-	private spatialHiddenIds = new Set<string>();
+	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
+	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
+	// - "study": due-or-new line-card nodes hidden, reveal + rate via FSRS.
+	// Session state is keyed by block ID, not layout node ID — node IDs are
+	// content-position hashes that churn when a schedule flush or edit
+	// shifts the source, while block IDs travel with their lines.
+	private spatialMode: "off" | "peek" | "study" = "off";
 	private spatialStudyActionEl: HTMLElement | null = null;
-	/** Nodes whose front (question) is revealed but back (answer) is still hidden. */
-	private spatialFrontRevealedIds = new Set<string>();
+	private spatialPeekActionEl: HTMLElement | null = null;
+	/** Block IDs hidden this session (all line cards on the map for peek, due-or-new for study). */
+	private spatialTargets = new Set<string>();
+	/** Targets already revealed (rated or awaiting a rating). */
+	private spatialRevealed = new Set<string>();
+	/** Targets rated so far (study progress). */
+	private spatialRated = new Set<string>();
+	/** Revealed-but-unrated card whose rating bubble is showing (study only). */
+	private spatialPendingRating: string | null = null;
+	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
+	private spatialBanner: HTMLElement | null = null;
+	private spatialSessionManager: StudySessionManager | null = null;
 
 	// Resize state: drag-to-resize node width
 	private resizingNodeId: string | null = null;
@@ -479,45 +498,143 @@ export class MindMapView extends ItemView {
 	}
 
 	private toggleSpatialStudy(): void {
-		if (this.isSpatialStudy) {
-			this.exitSpatialStudy();
+		if (this.spatialMode === "study") {
+			this.exitSpatialMode();
 		} else {
 			this.enterSpatialStudy();
 		}
 	}
 
-	private enterSpatialStudy(): void {
-		this.isSpatialStudy = true;
-		this.spatialStudyActionEl?.addClass("is-active");
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
-
-		// Hide all non-root nodes
-		for (const [nodeId, node] of this.nodeMap) {
-			if (node.depth > 0) {
-				this.spatialHiddenIds.add(nodeId);
-				this.applySpatialHidden(nodeId, true);
-			}
+	private toggleSpatialPeek(): void {
+		if (this.spatialMode === "peek") {
+			this.exitSpatialMode();
+		} else {
+			this.enterSpatialPeek();
 		}
-
-		new Notice("Study mode: tap nodes to reveal and rate");
 	}
 
-	private exitSpatialStudy(): void {
-		this.isSpatialStudy = false;
+	/** Restrict card block IDs to nodes actually laid out on the map. */
+	private blockIdsOnMap(cardIds: ReadonlySet<string>, scopeIds?: ReadonlySet<string> | null): Set<string> {
+		const targets = new Set<string>();
+		for (const node of this.nodeMap.values()) {
+			const blockId = node.source.blockId;
+			if (blockId === undefined || node.source.isTranscluded) continue;
+			if (!cardIds.has(blockId)) continue;
+			if (scopeIds && !scopeIds.has(blockId)) continue;
+			targets.add(blockId);
+		}
+		return targets;
+	}
+
+	/**
+	 * Start a study session over the due-or-new line cards on the map,
+	 * optionally scoped to one branch ("Study this branch"). The map stays
+	 * fully expanded — only the target nodes are hidden.
+	 */
+	private enterSpatialStudy(scope?: LayoutNode): void {
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+
+		const notePath = this.currentFile?.path;
+		const dueOrNew = notePath !== undefined
+			? dueOrNewLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath), Date.now())
+			: new Set<string>();
+		const targets = this.blockIdsOnMap(dueOrNew, scope ? collectSubtreeBlockIds(scope) : null);
+
+		if (targets.size === 0) {
+			new Notice(scope ? "No line cards are due in this branch." : "No line cards are due on this map.");
+			return;
+		}
+
+		this.spatialMode = "study";
+		this.spatialTargets = targets;
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialStudyActionEl?.addClass("is-active");
+		this.applySpatialState();
+		new Notice("Study mode: tap a hidden node to reveal and rate it");
+	}
+
+	/**
+	 * Casual recall check: hide every line-card node on the map, reveal in
+	 * any order, record nothing (mirrors reading view's peek mode).
+	 */
+	private enterSpatialPeek(): void {
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+
+		const notePath = this.currentFile?.path;
+		const all = notePath !== undefined
+			? allLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath))
+			: new Set<string>();
+		const targets = this.blockIdsOnMap(all);
+
+		if (targets.size === 0) {
+			new Notice("No line cards on this map.");
+			return;
+		}
+
+		this.spatialMode = "peek";
+		this.spatialTargets = targets;
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialPeekActionEl?.addClass("is-active");
+		this.applySpatialState();
+	}
+
+	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
+	private exitSpatialMode(): void {
+		const wasStudy = this.spatialMode === "study";
+		this.spatialMode = "off";
 		this.spatialStudyActionEl?.removeClass("is-active");
+		this.spatialPeekActionEl?.removeClass("is-active");
 
-		// Reveal all nodes
-		for (const nodeId of this.spatialHiddenIds) {
-			this.applySpatialHidden(nodeId, false);
+		if (this.svg) {
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-hidden"))) {
+				group.classList.remove("osmosis-spatial-hidden");
+				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+			}
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-revealed"))) {
+				group.classList.remove("osmosis-spatial-revealed");
+			}
+			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
 		}
-		// Restore original content for front-only revealed fence nodes
-		for (const nodeId of this.spatialFrontRevealedIds) {
-			this.restoreOriginalFenceContent(nodeId);
-		}
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
+		this.spatialBanner?.remove();
+		this.spatialBanner = null;
+		this.spatialTargets.clear();
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
 
+		// Study session end: push debounced schedule writes out now (plan §3).
+		// Peek records nothing, so there is nothing to flush.
+		if (wasStudy) void this.plugin.scheduleStore.flush();
+	}
+
+	/**
+	 * (Re-)apply peek/study state to the rendered DOM. Idempotent — called
+	 * on entry and after every render pass (viewport culling, full
+	 * re-render), so hidden placeholders and a mid-rating bubble survive
+	 * re-renders.
+	 */
+	private applySpatialState(): void {
+		if (this.spatialMode === "off") return;
+		for (const [nodeId, node] of this.nodeMap) {
+			const blockId = node.source.blockId;
+			if (blockId === undefined || node.source.isTranscluded) continue;
+			if (!this.spatialTargets.has(blockId)) continue;
+
+			if (!this.spatialRevealed.has(blockId)) {
+				this.applySpatialHidden(nodeId, true);
+			} else {
+				this.applySpatialHidden(nodeId, false);
+				this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
+				if (this.spatialMode === "study" && blockId === this.spatialPendingRating) {
+					this.ensureRatingBubble(nodeId, node);
+				}
+			}
+		}
+		if (this.spatialMode === "study") this.ensureSpatialBanner();
 	}
 
 	private applySpatialHidden(nodeId: string, hidden: boolean): void {
@@ -547,178 +664,125 @@ export class MindMapView extends ItemView {
 		}
 	}
 
-	private handleSpatialStudyClick(nodeId: string): boolean {
-		if (!this.isSpatialStudy) return false;
+	/**
+	 * Tap on a node during peek/study. Returns true when the tap was
+	 * consumed. Only hidden targets react. Peek: reveal in any order,
+	 * nothing recorded. Study: reveal opens the rating bubble, which must
+	 * be answered before the next reveal.
+	 */
+	private handleSpatialClick(nodeId: string): boolean {
+		if (this.spatialMode === "off") return false;
+		const node = this.nodeMap.get(nodeId);
+		const blockId = node?.source.blockId;
+		if (!node || blockId === undefined || node.source.isTranscluded) return false;
+		if (!this.spatialTargets.has(blockId) || this.spatialRevealed.has(blockId)) return false;
 
-		// Step 2: front already revealed → show back + auto-rate
-		if (this.spatialFrontRevealedIds.has(nodeId)) {
-			this.spatialFrontRevealedIds.delete(nodeId);
-			this.restoreFenceFullContent(nodeId);
-			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-			if (group) {
-				group.classList.add("osmosis-spatial-revealed");
-			}
-			this.rateSpatialNode(nodeId, 3);
-			return true;
-		}
+		// Study: one rating at a time — the open bubble must be answered first
+		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
 
-		if (!this.spatialHiddenIds.has(nodeId)) return false;
-
-		// Reveal the node
-		this.spatialHiddenIds.delete(nodeId);
+		this.spatialRevealed.add(blockId);
 		this.applySpatialHidden(nodeId, false);
-
-		// Check if this is an osmosis fence node → two-step reveal
-		const node = this.nodeMap.get(nodeId);
-		if (node?.source.type === "codeblock") {
-			const fence = this.parseOsmosisFence(node.source.content)
-				?? this.parseOsmosisCodeCloze(node.source.content)
-				?? this.parseOsmosisCloze(node.source.content);
-			if (fence) {
-				// Step 1: show front only
-				this.spatialFrontRevealedIds.add(nodeId);
-				this.showFenceFrontOnly(nodeId, fence.front);
-				return true;
-			}
+		this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
+		if (this.spatialMode === "study") {
+			this.spatialPendingRating = blockId;
+			this.ensureRatingBubble(nodeId, node);
+			// Keys 1–4 rate via the container's keydown handler
+			this.contentEl.focus();
 		}
-
-		// Regular node: single-step reveal + auto-rate
-		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-		if (group) {
-			group.classList.add("osmosis-spatial-revealed");
-		}
-		this.rateSpatialNode(nodeId, 3);
-
-		return true; // consumed the click
+		return true;
 	}
 
-	/** Show front + occluded back (░░░░░░) for an osmosis fence node. */
-	private showFenceFrontOnly(nodeId: string, front: string): void {
+	/** Rating bubble (Again/Hard/Good/Easy) anchored below the node. */
+	private ensureRatingBubble(nodeId: string, node: LayoutNode): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-		// Stash original child nodes so we can restore later
-		const stash = document.createDocumentFragment();
-		while (wrapper.firstChild) stash.appendChild(wrapper.firstChild);
-		(wrapper as unknown as { _originalStash: DocumentFragment })._originalStash = stash;
-		wrapper.classList.add("osmosis-fence-front-only");
+		if (!group || group.querySelector(".osmosis-spatial-rating-fo")) return;
 
-		// Rendered front
-		const frontEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		frontEl.setAttribute("xmlns", XHTML_NS);
-		frontEl.className = "osmosis-contextual-front";
-		if (this.renderComponent) {
-			void MarkdownRenderer.render(
-				this.app,
-				front,
-				frontEl,
-				this.currentFile?.path ?? "",
-				this.renderComponent,
-			);
-		}
-		wrapper.appendChild(frontEl);
+		// Wide enough for the four buttons even under narrow nodes
+		const width = Math.max(node.rect.width, 240);
+		const fo = document.createElementNS(SVG_NS, "foreignObject");
+		fo.classList.add("osmosis-spatial-rating-fo");
+		fo.setAttribute("x", String(node.rect.x + this.getOffsetX() + (node.rect.width - width) / 2));
+		fo.setAttribute("y", String(node.rect.y + node.rect.height + this.getOffsetY() + 6));
+		fo.setAttribute("width", String(width));
+		fo.setAttribute("height", "40");
 
-		// Divider
-		const divider = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		divider.setAttribute("xmlns", XHTML_NS);
-		divider.className = "osmosis-study-divider";
-		wrapper.appendChild(divider);
+		const bubble = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		bubble.setAttribute("xmlns", XHTML_NS);
+		bubble.className = "osmosis-spatial-rating osmosis-contextual-rating";
 
-		// Occluded back placeholder
-		const hiddenEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		hiddenEl.setAttribute("xmlns", XHTML_NS);
-		hiddenEl.className = "osmosis-contextual-hidden";
-		hiddenEl.textContent = "░░░░░░";
-		wrapper.appendChild(hiddenEl);
-
-		group.classList.add("osmosis-spatial-revealed");
-	}
-
-	/** Reveal the back answer below the front (front stays visible). */
-	private restoreFenceFullContent(nodeId: string): void {
-		if (!this.svg) return;
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-
-		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		wrapper.classList.remove("osmosis-fence-front-only");
-
-		// Remove the occluded placeholder and replace with rendered back
-		const hiddenEl = wrapper.querySelector(".osmosis-contextual-hidden");
-		if (hiddenEl) hiddenEl.remove();
-
-		const node = this.nodeMap.get(nodeId);
-		if (node && this.renderComponent) {
-			const fence = this.parseOsmosisFence(node.source.content)
-				?? this.parseOsmosisCodeCloze(node.source.content)
-				?? this.parseOsmosisCloze(node.source.content);
-			if (fence) {
-				const backEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-				backEl.setAttribute("xmlns", XHTML_NS);
-				backEl.className = "osmosis-contextual-revealed";
-				void MarkdownRenderer.render(
-					this.app,
-					fence.back,
-					backEl,
-					this.currentFile?.path ?? "",
-					this.renderComponent,
-				);
-				wrapper.appendChild(backEl);
-				return;
-			}
-		}
-
-		// Fallback: restore stash as-is
-		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		if (stash) wrapper.replaceChildren(stash);
-	}
-
-	/** Restore original node content when exiting study mode. */
-	private restoreOriginalFenceContent(nodeId: string): void {
-		if (!this.svg) return;
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		if (!stash) return;
-
-		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		wrapper.classList.remove("osmosis-fence-front-only");
-		wrapper.replaceChildren(stash);
-	}
-
-	private rateSpatialNode(nodeId: string, rating: 1 | 2 | 3 | 4): void {
-		// Record the review via plugin's study session
-		const node = this.nodeMap.get(nodeId);
-		if (node) {
-			void this.recordSpatialReview(node.source.id, rating).then(() => {
-				this.plugin.refreshDashboard();
+		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
+			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
+			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
+			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
+			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
+		];
+		for (const { label, rating, cls } of ratings) {
+			const btn = document.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
+			btn.setAttribute("xmlns", XHTML_NS);
+			btn.textContent = label;
+			btn.className = cls;
+			btn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.rateSpatialCard(rating);
 			});
+			bubble.appendChild(btn);
 		}
-		// Check if all nodes fully revealed (hidden + front-only both empty)
-		if (this.spatialHiddenIds.size === 0 && this.spatialFrontRevealedIds.size === 0) {
-			new Notice("All nodes revealed! Study session complete.");
-			this.exitSpatialStudy();
+		fo.appendChild(bubble);
+		group.appendChild(fo);
+
+		// SVG paints in document order — re-append the group so the bubble
+		// (and its node) draw above later-drawn siblings that overlap it
+		group.parentNode?.appendChild(group);
+	}
+
+	/** Rate the pending card: record via FSRS, advance progress, maybe finish. */
+	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
+		const blockId = this.spatialPendingRating;
+		if (this.spatialMode !== "study" || blockId === null) return;
+		this.spatialPendingRating = null;
+		this.spatialRated.add(blockId);
+		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
+
+		const notePath = this.currentFile?.path;
+		if (notePath !== undefined) {
+			const cardId = lineCardId(notePath, blockId);
+			if (this.plugin.cardStore.getCard(cardId)) {
+				this.spatialSessionManager ??= this.plugin.createSessionManager();
+				await this.spatialSessionManager.recordReview(cardId, rating);
+				this.plugin.refreshDashboard();
+			}
+		}
+
+		if (this.spatialRated.size >= this.spatialTargets.size) {
+			const total = this.spatialTargets.size;
+			this.exitSpatialMode(); // flushes schedule writes; map stays open
+			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
+		} else {
+			this.ensureSpatialBanner();
 		}
 	}
 
-	private async recordSpatialReview(nodeId: string, rating: 1 | 2 | 3 | 4): Promise<void> {
-		try {
-			const notePath = this.currentFile?.path ?? "";
-			const cards = this.plugin.cardStore.getCardsByNote(notePath);
-			const card = cards.find((c) => c.id === nodeId || c.front.includes(nodeId));
-			if (card) {
-				const sessionManager = this.plugin.createSessionManager();
-				await sessionManager.recordReview(card.id, rating);
-			}
-		} catch {
-			// Silently fail if no card found for this node
+	/** Floating "x/N due reviewed" pill + Stop. Recreated after re-renders. */
+	private ensureSpatialBanner(): void {
+		if (this.spatialMode !== "study") return;
+		let banner = this.spatialBanner;
+		if (!banner || !banner.isConnected) {
+			banner = this.contentEl.createDiv({ cls: "osmosis-reveal-banner osmosis-spatial-banner" });
+			// Keep pill interactions away from the map's pan/select handlers
+			banner.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
+			banner.addEventListener("click", (e) => { e.stopPropagation(); });
+			this.spatialBanner = banner;
 		}
+		banner.empty();
+		banner.createSpan({
+			cls: "osmosis-reveal-progress",
+			text: `${String(this.spatialRated.size)}/${String(this.spatialTargets.size)} due reviewed`,
+		});
+		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
+		stopBtn.addEventListener("click", () => {
+			this.exitSpatialMode();
+		});
 	}
 
 
@@ -859,6 +923,11 @@ export class MindMapView extends ItemView {
 			this.toggleSpatialStudy();
 		});
 
+		// Spatial peek mode toggle (same icon/fallback as the reading view)
+		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
+			this.toggleSpatialPeek();
+		});
+
 		await this.loadActiveFile();
 
 		this.registerEvent(
@@ -877,6 +946,11 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
+					// Our own schedule flush only touches frontmatter, which
+					// the map doesn't render — skip the reload so a debounced
+					// mid-session write can't flicker or reset study state
+					// (same pattern as CardSyncService with FenceWriter).
+					if (this.plugin.scheduleStore.isWriting(file.path)) return;
 					void this.loadFile(file);
 				}
 			}),
@@ -932,9 +1006,13 @@ export class MindMapView extends ItemView {
 			this.cullRafId = null;
 		}
 
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
-		this.isSpatialStudy = false;
+		this.spatialMode = "off";
+		this.spatialTargets.clear();
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialBanner = null;
+		this.spatialSessionManager = null;
 		this.contentEl.empty();
 		this.currentFile = null;
 		this.currentTree = null;
@@ -964,6 +1042,12 @@ export class MindMapView extends ItemView {
 		// (e.g. input on document.body) can trigger active-leaf-change which
 		// would destroy the SVG mid-edit.
 		if (this.editingNodeId) return;
+
+		// A peek/study session is bound to one note — end it (and flush any
+		// ratings) before the map switches to another file.
+		if (this.spatialMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
+			this.exitSpatialMode();
+		}
 
 		// Clear caches when switching to a different file
 		if (file !== this.currentFile) {
@@ -2178,17 +2262,7 @@ export class MindMapView extends ItemView {
 		await Promise.all(renderPromises);
 
 		// Re-apply spatial study state to newly rendered nodes
-		if (this.isSpatialStudy) {
-			for (const node of nodes) {
-				if (node.source.type === "root") continue;
-				const id = node.source.id;
-				if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
-					if (this.spatialHiddenIds.has(id)) {
-						this.applySpatialHidden(id, true);
-					}
-				}
-			}
-		}
+		this.applySpatialState();
 
 		this.renderedNodeIds = nowVisible;
 	}
@@ -2495,7 +2569,7 @@ export class MindMapView extends ItemView {
 		}
 
 		// Spatial study mode: reveal hidden nodes on tap
-		if (this.handleSpatialStudyClick(nodeId)) return;
+		if (this.handleSpatialClick(nodeId)) return;
 
 		// In touch selection mode, taps toggle selection (like shift+click)
 		if (this.touchSelectionMode) {
@@ -2710,7 +2784,7 @@ export class MindMapView extends ItemView {
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
 			// Spatial study mode: reveal hidden nodes on click
-			if (this.handleSpatialStudyClick(nodeId)) return;
+			if (this.handleSpatialClick(nodeId)) return;
 
 			if (e.shiftKey) {
 				this.toggleNodeInSelection(nodeId);
@@ -2799,6 +2873,13 @@ export class MindMapView extends ItemView {
 			menu.addItem((item) =>
 				item.setTitle("Expand all").setIcon("chevrons-up-down")
 					.onClick(() => this.unfoldAll()),
+			);
+			menu.addSeparator();
+
+			// ── Study ──
+			menu.addItem((item) =>
+				item.setTitle("Study this branch").setIcon("graduation-cap")
+					.onClick(() => { if (node) this.enterSpatialStudy(node); }),
 			);
 			menu.addSeparator();
 
@@ -4885,6 +4966,18 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Spatial study: 1–4 rate the card awaiting a rating
+		if (
+			this.spatialMode === "study" &&
+			this.spatialPendingRating !== null &&
+			!e.ctrlKey && !e.metaKey && !e.altKey &&
+			(e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4")
+		) {
+			e.preventDefault();
+			void this.rateSpatialCard(Number(e.key) as FSRSRating);
+			return;
+		}
+
 		// Direction-aware arrow key handling
 		const arrowAction = this.resolveArrowAction(e.key);
 		if (arrowAction) {
@@ -6311,14 +6404,9 @@ export class MindMapView extends ItemView {
 			this.fitToView();
 		}
 
-		// Re-apply spatial study hidden state after re-render (render wipes the DOM)
-		if (this.isSpatialStudy) {
-			for (const id of this.renderedNodeIds) {
-				if (this.spatialHiddenIds.has(id)) {
-					this.applySpatialHidden(id, true);
-				}
-			}
-		}
+		// Re-apply spatial study state after re-render (render wipes the DOM,
+		// including a mid-rating bubble and the progress pill)
+		this.applySpatialState();
 
 		// After a save-edit re-render, re-select the node at the stored position
 		if (this.pendingSelectionRangeStart !== null) {

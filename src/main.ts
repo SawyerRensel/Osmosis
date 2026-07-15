@@ -184,17 +184,23 @@ export default class OsmosisPlugin extends Plugin {
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
 
-			void this.cardSync.syncAll().then(() => {
+			this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				// A throw here would otherwise vanish AND leave header chrome
+				// and dashboard stale until the next workspace event
+				console.error("Osmosis: startup card sync/refresh failed", error);
 			});
 		});
 
 		// Incremental sync on file changes (debounced)
 		const debouncedSync = debounce((file: TFile) => {
-			void this.cardSync.syncFile(file).then(() => {
+			this.cardSync.syncFile(file).then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				console.error("Osmosis: incremental card sync/refresh failed", error);
 			});
 		}, 2000, true);
 
@@ -307,8 +313,11 @@ export default class OsmosisPlugin extends Plugin {
 	/** Re-render any open dashboard sidebar views. */
 	refreshDashboard(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-			const view = leaf.view as DashboardSidebarView;
-			void view.render();
+			// Sidebar leaves are deferred placeholders until first shown —
+			// they have no render() (calling it would throw and kill the
+			// caller), and render themselves from the store in onOpen().
+			const view = leaf.view;
+			if (view instanceof DashboardSidebarView) void view.render();
 		}
 	}
 
@@ -318,9 +327,10 @@ export default class OsmosisPlugin extends Plugin {
 		const existing = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
 		if (existing.length > 0 && existing[0]) {
 			void workspace.revealLeaf(existing[0]);
-			// Refresh counts when re-opening an existing dashboard
-			const view = existing[0].view as DashboardSidebarView;
-			void view.render();
+			// Refresh counts when re-opening an existing dashboard. A still-
+			// deferred leaf renders itself in onOpen() once revealed.
+			const view = existing[0].view;
+			if (view instanceof DashboardSidebarView) void view.render();
 			return;
 		}
 

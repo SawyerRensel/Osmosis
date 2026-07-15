@@ -1815,17 +1815,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-fence-front-only {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
+/* Rating bubble anchored below a just-revealed node. Button colors come
+   from .osmosis-contextual-rating (shared with contextual study). */
+.osmosis-spatial-rating-fo {
+	overflow: visible;
 }
 
-.osmosis-fence-front {
-	text-align: center;
-	color: var(--text-normal);
-	width: 100%;
+.osmosis-spatial-rating {
+	justify-content: center;
+	margin-top: 0;
+	animation: osmosis-fade-in 0.2s;
 }
 
 
