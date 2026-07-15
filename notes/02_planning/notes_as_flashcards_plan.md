@@ -2,7 +2,7 @@
 
 **Branch**: `feature/notes-as-flashcards` (from `release/0.0.2`)
 **Created**: 2026-07-12
-**Status**: Draft — awaiting sign-off before implementation
+**Status**: In progress — tasks 1–9 shipped and manually verified; task 10 (docs + PRD) in review; task 11 (transclusion × study) awaiting design sign-off
 
 ---
 
@@ -33,7 +33,7 @@ for mind-map styling data.
 
 - Format: `^os-` + 6 lowercase base36 chars (letters/digits/dashes only — valid
   Obsidian block ID charset). Distinct prefix marks them as Osmosis-generated.
-- Appended at end of line, space-separated: `- Mitochondria produce ATP ^os-a1b2c3`
+- Appended at end of line, space-separated: `- Burr grinders give a uniform grind ^os-a1b2c3`
 - If the line already carries a block ID (`^anything`), reuse it as the card ID
   — do not add a second one (Obsidian allows one block ID per block).
 - Parser must strip trailing block IDs from node label text (mind map and cards
@@ -155,10 +155,11 @@ for mind-map styling data.
   stays open afterward. Branch-scoped study ("Study this branch") composes
   with this.
 - **Sequential (modal)**: front renders the ancestor breadcrumb
-  (`Cellular Respiration › Krebs cycle › ?`) plus up to N immediately
+  (`Coffee Brewing › Pour Over › ?`) plus up to N immediately
   preceding siblings for context (default N=2, setting); back reveals the
   line. Review-log mode tags (`contextual`/`sequential`/`spatial`) apply as
-  usual.
+  usual. *(Shipped note: no review-log store exists, so mode tags are
+  currently a no-op — flagged and accepted during task 6.)*
 
 ### 6. Dashboard & opt-out
 
@@ -180,33 +181,61 @@ for mind-map styling data.
 
 ## Task Breakdown
 
-1. **Block ID plumbing** — parser strips/records trailing block IDs; ID
+1. ✅ **Block ID plumbing** — parser strips/records trailing block IDs; ID
    generator (`os-` base36); unit tests. (S)
-2. **Generate command + confirmation modal** — eligibility scan, preview
+2. ✅ **Generate command + confirmation modal** — eligibility scan, preview
    modal, single-transaction write, incremental re-run. Includes multi-line
    block handling: `id:` metadata into osmosis fences, standalone after-block
    IDs for generic code blocks/tables (+ parser attach support). (M)
-3. **Frontmatter schedule store** — typed parse/serialize of the
+3. ✅ **Frontmatter schedule store** — typed parse/serialize of the
    `osmosis-schedule` YAML (unit-tested, incl. ISO↔epoch conversion),
    `processFrontMatter` read/write, debounced flush + session-end/unload
    flush lifecycle. (M)
-4. **Line-card generation** — new card source, identity, deck assignment,
+4. ✅ **Line-card generation** — new card source, identity, deck assignment,
    orphan/soft-delete/re-link, CardStore integration. (M)
-5. **Dashboard + opt-out** — counts, frontmatter flag, global setting. (S)
-6. **Sequential study support** — ancestor-breadcrumb front, preceding-sibling
+5. ✅ **Dashboard + opt-out** — counts, frontmatter flag, global setting. (S)
+6. ✅ **Sequential study support** — ancestor-breadcrumb front, preceding-sibling
    context, review tagging. (M)
-7. **Contextual progressive-reveal study** — reading-view line hiding,
+7. ✅ **Contextual progressive-reveal study** — reading-view line hiding,
    top-down reveal flow, rating bubble, progress widget. (L)
-8. **Spatial integration** — replace today's skeleton (hide-everything +
+8. ✅ **Spatial integration** — replace today's skeleton (hide-everything +
    silent hardcoded "Good" rating + fuzzy node→card matching,
    MindMapView.ts `rateSpatialNode`/`recordSpatialReview`): due-only hiding,
    map nodes matched to line cards exactly via block ID, **rating bubble**
    (Again/Hard/Good/Easy, keys 1–4) after each reveal, progress widget +
    completion toast. (L — grown from M after reviewing current
    implementation)
-9. **Style selectors via block ID** — resolution + format panel preference. (S)
+9. ✅ **Style selectors via block ID** — resolution + format panel preference. (S)
 10. **Docs + PRD update** — document feature; also fix stale PRD storage
-    section (cards.db → in-memory store + fence/sidecar persistence). (S)
+    section (cards.db → in-memory CardStore + fence metadata +
+    `osmosis-schedule` frontmatter). (S)
+11. **Transcluded maps × study/peek modes** *(added 2026-07-15 — new scope,
+    design-first: investigate, propose a design, and get sign-off BEFORE
+    implementing)*. Today transcluded nodes are deliberately excluded
+    everywhere: `generateLineCards` skips `isTranscluded` nodes,
+    `collectSubtreeBlockIds` skips them, and spatial study only loads cards
+    for the host note. The design must answer:
+    - Should transcluded line cards be studiable/peekable in the HOST map's
+      spatial mode? (Inclination: yes — the natural reading of "study this
+      map" — but lay out the tradeoffs.)
+    - Ratings must write to the SOURCE note's `osmosis-schedule`
+      (ScheduleStore is keyed by file path), never the host's. Card identity
+      is already `${sourcePath}#^${blockId}` — verify this makes it natural.
+    - Block-ID matching must become collision-safe: the same blockId string
+      can legitimately exist in both host and source files, so pure-blockId
+      session keying (task 8 design) needs a (path, blockId) notion for
+      transcluded content — without regressing the churn-proofing that
+      motivated blockId keying.
+    - What happens in peek/study when the transcluded source note has
+      `osmosis-line-cards: false`, or block IDs were never generated there?
+    - Reading view: Obsidian renders `![[embeds]]` separately — check how
+      LineRevealProcessor interacts with embedded content and decide whether
+      contextual study should touch embeds at all (out-of-scope is an
+      acceptable answer if justified).
+    - Edge cases: transclusion cycles (fixtures transclusion-cycle-a/b),
+      chains (transclusion-chain-a/b), the same note transcluded twice in
+      one map.
+    Test with fixtures building on the existing `transclusion-*.md` ones. (L)
 
 Each task follows the standard loop: implement → `npm run lint` →
 `npm run test` → `npm run build` → manual test instructions → user confirms →
@@ -216,18 +245,20 @@ commit.
 
 ## Open Items / Risks
 
-- **Heading block IDs**: verify Obsidian hides `^id` on heading lines in
-  reading view (see §1). Early manual test before building on it.
+- ~~**Heading block IDs**~~ **Resolved 2026-07-12**: Obsidian hides `^os-`
+  IDs on headings, bullets, and paragraphs in reading view (see §1).
 - **Live preview appearance**: block IDs are visible (dimmed) in live preview.
   Acceptable per native-block-ID decision; optional cosmetic dimming later.
 - **Cloze + line card coexistence** (§4): watch for double-scheduling noise
   during manual testing.
 - ~~**Spatial mode & due dates**~~ **Resolved 2026-07-12**: due-only hiding;
   full map stays expanded with "?" placeholders on hidden nodes (see §5).
-- **Frontmatter write vs. open views**: verify a `processFrontMatter` write
-  during contextual study (reading view) or with the mind map open doesn't
-  flicker or reset reveal state — the debounced flush should make writes
-  rare, but confirm manually with a mid-session flush.
+- ~~**Frontmatter write vs. open views**~~ **Resolved 2026-07-15** —
+  verified in both surfaces: reading view keeps reveal state (per-note state
+  keyed by block ID survives re-renders), and the mind map's vault-modify
+  handler skips reloads while `scheduleStore.isWriting(path)`, so a
+  mid-session debounced flush neither flickers nor resets spatial state
+  (which is also re-applied idempotently after every render/cull pass).
 - **Comment-only lines render as empty mind map nodes**: the parser emits a
   paragraph node for HTML-comment-only lines (e.g. `<!-- osmosis-exclude -->`),
   which shows as a blank box in the map (seen 2026-07-12 in the

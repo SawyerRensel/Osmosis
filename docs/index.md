@@ -20,9 +20,10 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 
 - **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
 - **Five Card Types** — Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
+- **Notes as Flashcards** — One command turns every line of a note into its own scheduled card, anchored by native block IDs — no duplicate authoring
 - **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
 - **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
-- **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues
+- **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences and note frontmatter — no external databases, no sync issues
 - **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
 - **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
 - **Dashboard** — See all your decks, due card counts, and study statistics at a glance
@@ -101,4 +102,4 @@ Osmosis gives you three views of the same markdown content:
 2. **Flashcard View** — Cards defined with a simple fence syntax, scheduled by the FSRS algorithm
 3. **Study Modes** — Sequential (classic Anki-style), contextual (inline in your notes), and spatial (on the mind map)
 
-Everything lives in your markdown files. Card scheduling data is stored in the fences themselves — no external databases, no sync issues. Any file sync service works automatically.
+Everything lives in your markdown files. Card scheduling data is stored in the fences and note frontmatter — no external databases, no sync issues. Any file sync service works automatically.

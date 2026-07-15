@@ -9,6 +9,26 @@ All notable changes to Osmosis will be documented in this page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Notes as Flashcards (Line Cards)
+- **Generate flashcards from note** command (palette + file menu) tags eligible lines with native `^os-` block IDs behind a confirmation modal; re-runs are incremental
+- Every tagged line is its own FSRS card — front is the ancestor breadcrumb (plus configurable preceding-sibling context in sequential study), back is the line
+- Line-card schedules stored in `osmosis-schedule` note frontmatter (atomic `processFrontMatter` writes, debounced and flushed at session end)
+- Line cards count in decks and sequential study, with per-note (`osmosis-line-cards: false`) and global opt-out
+- Deleted block IDs soft-delete their cards; history re-links when the ID reappears
+
+#### Study Modes
+- Reading view **Peek** and **Study** header actions: hide all line-card lines for casual review, or study due/new lines top-down with an inline rating bubble, progress pill, and completion toast
+- Spatial study reworked: only **due or new** line-card nodes hide behind `?` placeholders (the map stays expanded), tap to reveal, rate via a bubble anchored to the node (keys ++1++–++4++), progress pill + Stop, completion toast
+- Spatial **peek mode** on the mind map — hide all line-card nodes, reveal freely, nothing recorded
+- **Study this branch** now scopes spatial study to a subtree's due cards
+
+#### Styling
+- Block-ID style selectors (`^os-a1b2c3`) in `osmosis-styles`, preferred over stable IDs and tree paths; the format panel writes them automatically and migrates legacy `_n:` entries
+
 ## [0.0.1] - 2026-03-11
 
 Initial release of Osmosis — an Obsidian plugin that unifies mind mapping, flashcards, and spaced repetition into a single learning system.

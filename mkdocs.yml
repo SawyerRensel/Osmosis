@@ -105,6 +105,7 @@ nav:
   - Flashcards:
     - flashcards/index.md
     - Card Types: flashcards/card-types.md
+    - Line Cards: flashcards/line-cards.md
     - Decks: flashcards/decks.md
   - Studying:
     - studying/index.md

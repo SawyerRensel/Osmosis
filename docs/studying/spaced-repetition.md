@@ -40,7 +40,11 @@ Configure in **Settings > Osmosis**:
 
 ## Data Storage
 
-All scheduling data is stored **inside the `osmosis` code fences** in your markdown files:
+All scheduling data lives **in your markdown files** — no external database. Fence cards store it inside the fence itself; [line cards](../flashcards/line-cards.md) store it in the note's frontmatter.
+
+### Fence Cards
+
+Scheduling fields are written into the fence metadata:
 
 ````markdown
 ```osmosis
@@ -59,7 +63,29 @@ Paris
 ```
 ````
 
-This means:
+### Line Cards
+
+[Line card](../flashcards/line-cards.md) schedules are stored in the note's frontmatter under `osmosis-schedule`, keyed by block ID:
+
+```yaml
+---
+osmosis-cards: true
+osmosis-schedule:
+  os-a1b2c3:
+    due: 2026-07-22T10:30:00
+    stability: 4.2
+    difficulty: 5.1
+    lastReview: 2026-07-15T09:12:00
+    reps: 3
+    lapses: 0
+    state: review
+    learningSteps: 0
+---
+```
+
+The key appears after a card's first review (never at ID-generation time), and writes are debounced — a run of ratings during a study session produces a single frontmatter write, flushed when the session ends. Timestamps are ISO 8601 local datetimes so the source view stays human-readable. Frontmatter is hidden in reading view, and the Properties panel shows the key as a single non-editable property.
+
+### Why This Matters
 
 - **No external database** — Everything lives in your markdown files
 - **Sync just works** — Obsidian Sync, iCloud, Dropbox, or any file sync service carries your scheduling data automatically
