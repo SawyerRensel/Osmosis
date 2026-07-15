@@ -26,7 +26,7 @@ import type { BranchLineStyle, BranchLinePattern, BranchLineTaper, MapSettings }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -1432,8 +1432,17 @@ export class MindMapView extends ItemView {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
 
-					const selector = buildStableIdSelector(layoutNode.source);
-					const existing = styles[selector] ?? {};
+					const selector = buildPreferredSelector(layoutNode.source);
+					let existing = styles[selector] ?? {};
+
+					// If the node gained a block ID after an override was written
+					// under its stable-ID selector, migrate that entry to the
+					// block-ID key so the override lives under a single selector.
+					const legacySelector = buildStableIdSelector(layoutNode.source);
+					if (selector !== legacySelector && styles[legacySelector]) {
+						existing = { ...styles[legacySelector], ...existing };
+						delete styles[legacySelector];
+					}
 
 					// Merge new properties into existing override.
 					// Use `"key" in style` so explicit `undefined` deletes the key.
@@ -1537,20 +1546,27 @@ export class MindMapView extends ItemView {
 				for (const nodeId of nodeIds) {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
-					const selector = buildStableIdSelector(layoutNode.source);
-					if (!styles[selector]) continue;
+					// A node's override may live under its block-ID selector,
+					// its stable-ID selector, or both (legacy) — clear all.
+					const selectors = [
+						buildBlockIdSelector(layoutNode.source),
+						buildStableIdSelector(layoutNode.source),
+					];
+					for (const selector of selectors) {
+						if (selector === undefined || !styles[selector]) continue;
 
-					if (!keys) {
-						// Clear all: remove the entire entry
-						delete styles[selector];
-					} else {
-						// Clear specific keys
-						for (const key of keys) {
-							delete styles[selector][key];
-						}
-						// Remove entry if empty
-						if (Object.keys(styles[selector]).length === 0) {
+						if (!keys) {
+							// Clear all: remove the entire entry
 							delete styles[selector];
+						} else {
+							// Clear specific keys
+							for (const key of keys) {
+								delete styles[selector][key];
+							}
+							// Remove entry if empty
+							if (Object.keys(styles[selector]).length === 0) {
+								delete styles[selector];
+							}
 						}
 					}
 				}
@@ -6468,7 +6484,7 @@ export class MindMapView extends ItemView {
 			const displayContent = this.getNodeDisplayContent(node);
 			// Include per-node text style, shape, and custom width in cache key so changes invalidate
 			const localStyle = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			const textStyleKey = localStyle?.text
 				? JSON.stringify(localStyle.text)
@@ -6509,7 +6525,7 @@ export class MindMapView extends ItemView {
 				// Apply theme + per-node text styles for accurate measurement
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
 				const nodeLocalStyle = lookupNodeStyleByPath(
-					this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+					this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 				);
 				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
 				const nodeVariantStyle = activeVariantDef?.[`_n:${node.id}`] ?? activeVariantDef?.[node.content] ?? activeVariantDef?.["*"];
@@ -6627,7 +6643,7 @@ export class MindMapView extends ItemView {
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const style = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			if (!style) continue;
 			if (style.shape) {
@@ -6654,7 +6670,7 @@ export class MindMapView extends ItemView {
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const style = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			if (style?.side) {
 				sides.set(node.id, style.side);
