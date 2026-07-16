@@ -10,6 +10,7 @@ const TYPE_LABELS: Partial<Record<NodeType, string>> = {
 	paragraph: "Paragraph",
 	codeblock: "Code block",
 	table: "Table",
+	blockquote: "Callout / quote",
 };
 
 /**

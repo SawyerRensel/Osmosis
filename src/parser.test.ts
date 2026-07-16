@@ -345,6 +345,72 @@ describe("OsmosisParser", () => {
 		});
 	});
 
+	describe("blockquotes and callouts", () => {
+		it("coalesces a multi-line callout into one blockquote node", () => {
+			const md = "> [!quote] Yali's Question\n> Why did some peoples end up with more?";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("blockquote");
+			expect(node?.content).toBe(
+				"> [!quote] Yali's Question\n> Why did some peoples end up with more?",
+			);
+		});
+
+		it("keeps a `>` empty line inside one callout (multi-paragraph)", () => {
+			const md = "> [!note] Title\n> First para\n>\n> Second para";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.content).toContain("Second para");
+		});
+
+		it("splits blockquotes separated by a blank line into separate nodes", () => {
+			const md = "> First quote\n\n> Second quote";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[1]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.content).toBe("> First quote");
+			expect(tree.root.children[1]?.content).toBe("> Second quote");
+		});
+
+		it("nests a blockquote under the current heading", () => {
+			const md = "## Section\n> A quoted line";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			expect(heading?.children).toHaveLength(1);
+			expect(heading?.children[0]?.type).toBe("blockquote");
+		});
+
+		it("attaches a standalone block-ID line immediately after a blockquote", () => {
+			const md = "> [!quote] Q\n> body\n^os-quo001\n\nAfter";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			const quote = tree.root.children[0];
+			expect(quote?.type).toBe("blockquote");
+			expect(quote?.blockId).toBe("os-quo001");
+			expect(quote?.content).not.toContain("os-quo001");
+			expect(tree.root.children[1]?.content).toBe("After");
+		});
+
+		it("attaches a standalone block-ID line to a blockquote across a blank line", () => {
+			const md = "> a quote\n\n^os-quo002";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.blockId).toBe("os-quo002");
+		});
+
+		it("flushes a trailing blockquote at end of document", () => {
+			const md = "Intro paragraph\n> tail quote";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[1]?.type).toBe("blockquote");
+			expect(tree.root.children[1]?.content).toBe("> tail quote");
+		});
+	});
+
 	describe("code blocks", () => {
 		it("parses a fenced code block as a single node", () => {
 			const md = "# Code\n```js\nconst x = 1;\nconsole.log(x);\n```";

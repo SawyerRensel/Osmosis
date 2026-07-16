@@ -4995,8 +4995,14 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		// Code blocks and tables are atomic — never re-indent their contents
-		if (originalNode.type === "codeblock" || originalNode.type === "table") return text;
+		// Code blocks, tables, and blockquotes are atomic — never re-indent
+		// their contents (blockquote `>` markers must stay intact).
+		if (
+			originalNode.type === "codeblock" ||
+			originalNode.type === "table" ||
+			originalNode.type === "blockquote"
+		)
+			return text;
 
 		// When converting heading → list type, strip internal blank lines
 		// that were added by normalizeHeadingSpacing — they break list nesting.
@@ -6049,6 +6055,7 @@ export class MindMapView extends ItemView {
 		const result: string[] = [];
 		let inCodeBlock = false;
 		let inTable = false;
+		let inBlockquote = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i] ?? "";
 			const isHeading = /^#{1,6}\s/.test(line);
@@ -6056,11 +6063,16 @@ export class MindMapView extends ItemView {
 			const isFence = /^(`{3,}|~{3,})/.test(line.trim());
 			const isTopLevelFence = isFence && /^(`{3,}|~{3,})/.test(line);
 			const isTableLine = /^\s*\|/.test(line);
+			// Blockquote / callout lines (not code-fence contents). A run of
+			// these is one block that needs a blank line before and after but
+			// none inserted between its lines.
+			const isQuoteLine = !inCodeBlock && /^\s*>/.test(line);
+			const isBlockquoteStart = isQuoteLine && !inBlockquote;
 			// Detect table start (first pipe line after non-pipe)
 			const isTableStart = isTableLine && !inTable;
 			// Detect paragraph: non-blank, non-list, non-heading, non-fence, non-table,
-			// not indented (top-level), not inside code block
-			const isTopLevelParagraph = !isHeading && !isFence && !isTableLine
+			// non-quote, not indented (top-level), not inside code block
+			const isTopLevelParagraph = !isHeading && !isFence && !isTableLine && !isQuoteLine
 				&& line.trim() !== "" && !/^(\t| {2,})/.test(line)
 				&& !/^[-*]\s/.test(line) && !/^\d+\.\s/.test(line)
 				&& !inCodeBlock;
@@ -6068,12 +6080,18 @@ export class MindMapView extends ItemView {
 			if (isFence) inCodeBlock = !inCodeBlock;
 			if (isTableStart) inTable = true;
 			if (inTable && !isTableLine) inTable = false;
+			inBlockquote = isQuoteLine;
+
+			const nextLine = lines[i + 1];
+			const nextIsQuote = nextLine !== undefined && /^\s*>/.test(nextLine);
+			const isBlockquoteEnd = isQuoteLine && !nextIsQuote;
 
 			const prevLine = result[result.length - 1];
 			const needsBlankBefore =
 				isHeading
 				|| (isTopLevelFence && inCodeBlock)
 				|| isTableStart
+				|| isBlockquoteStart
 				|| (isTopLevelParagraph && prevLine !== undefined && prevLine.trim() !== ""
 					&& !/^#{1,6}\s/.test(prevLine));
 
@@ -6087,13 +6105,13 @@ export class MindMapView extends ItemView {
 			}
 			result.push(line);
 
-			const nextLine = lines[i + 1];
 			// Detect table end (current is table, next is not)
 			const isTableEnd = isTableLine && (nextLine === undefined || !/^\s*\|/.test(nextLine));
 			const needsBlankAfter =
 				isHeading
 				|| (isTopLevelFence && !inCodeBlock)
 				|| isTableEnd
+				|| isBlockquoteEnd
 				|| (isTopLevelParagraph && nextLine !== undefined && nextLine.trim() !== ""
 					&& !/^#{1,6}\s/.test(nextLine));
 
@@ -6124,6 +6142,9 @@ export class MindMapView extends ItemView {
 			case "paragraph":
 				return content;
 			case "table":
+				return content;
+			case "blockquote":
+				// Content already carries its `>` markers verbatim.
 				return content;
 			case "transclusion":
 				return `![[${content}]]`;
@@ -6425,8 +6446,13 @@ export class MindMapView extends ItemView {
 		const insertPos = this.subtreeEnd(src);
 
 		let insertText: string;
-		if (src.type === "paragraph" || src.type === "codeblock" || src.type === "table") {
-			// Paragraphs, code blocks, and tables need a blank line separator
+		if (
+			src.type === "paragraph" ||
+			src.type === "codeblock" ||
+			src.type === "table" ||
+			src.type === "blockquote"
+		) {
+			// Paragraphs, code blocks, tables, and blockquotes need a blank line separator
 			// Use a zero-width space as placeholder (not stripped by trim())
 			insertText = "\n\n\u200B";
 		} else {
