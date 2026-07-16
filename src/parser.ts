@@ -56,10 +56,39 @@ export class OsmosisParser {
 		let tableStart = 0;
 		let tableEnd = 0;
 
-		// Most recent multi-line block (code block / table), target for a
-		// standalone block-ID line following it. Cleared when any regular
+		// Blockquote / callout accumulator. Consecutive lines starting with `>`
+		// (callout title + body, multi-paragraph quotes, nested content) form a
+		// single node so the whole callout is one mind-map node / one line card.
+		let inBlockquote = false;
+		let quoteLines: string[] = [];
+		let quoteStart = 0;
+		let quoteEnd = 0;
+
+		// Most recent multi-line block (code block / table / blockquote), target
+		// for a standalone block-ID line following it. Cleared when any regular
 		// node is created; blank lines do not clear it.
 		let lastMultilineNode: OsmosisNode | null = null;
+
+		// Flush the accumulated blockquote lines as a single node. Treated like
+		// code blocks / tables: child of the current heading, resets list
+		// context, and becomes the target for a trailing standalone `^id`.
+		const flushBlockquote = (): void => {
+			if (quoteLines.length === 0) {
+				inBlockquote = false;
+				return;
+			}
+			const content = quoteLines.join("\n");
+			const node = this.createNode("blockquote", 0, content, {
+				start: quoteStart,
+				end: quoteEnd,
+			});
+			listStack = [];
+			const parent = headingStack[headingStack.length - 1] ?? root;
+			parent.children.push(node);
+			lastMultilineNode = node;
+			inBlockquote = false;
+			quoteLines = [];
+		};
 
 		// Skip YAML frontmatter (--- delimited block at the start of the file)
 		let lineIdx = 0;
@@ -143,9 +172,32 @@ export class OsmosisParser {
 				}
 			}
 
+			// Blockquote / callout accumulation: consecutive `>`-prefixed lines
+			// (including `>` empty lines inside a callout) coalesce into one
+			// node. A blank or non-`>` line ends the block — standard markdown
+			// boundary — so stacked callouts stay separate nodes.
+			const isQuoteLine = /^\s*>/.test(line.text);
+			if (inBlockquote) {
+				if (isQuoteLine) {
+					quoteLines.push(line.text);
+					quoteEnd = line.end;
+					continue;
+				}
+				// End of blockquote: flush, then process the current line below
+				// (it may be a standalone `^id` that attaches to the block).
+				flushBlockquote();
+			}
+			if (!inBlockquote && isQuoteLine) {
+				inBlockquote = true;
+				quoteLines = [line.text];
+				quoteStart = line.start;
+				quoteEnd = line.end;
+				continue;
+			}
+
 			// Standalone block-ID line (e.g. "^os-a1b2c3") — Obsidian's way to
 			// block-reference a multi-line block. Attach the ID to the
-			// preceding code block / table instead of emitting a paragraph.
+			// preceding code block / table / blockquote instead of a paragraph.
 			// The node's range deliberately excludes the ID line so content
 			// edits through the mind map cannot wipe the identity.
 			const standaloneId = /^\^([a-zA-Z0-9-]+)$/.exec(line.text.trim());
@@ -258,6 +310,9 @@ export class OsmosisParser {
 			const parent = headingStack[headingStack.length - 1] ?? root;
 			parent.children.push(node);
 		}
+
+		// Flush any pending blockquote at end of document
+		flushBlockquote();
 	}
 
 	/**

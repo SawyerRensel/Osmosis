@@ -131,9 +131,13 @@ function isOsmosisFence(node: OsmosisNode): boolean {
 	return OSMOSIS_FENCE_REGEX.test(cleaned);
 }
 
-/** Code blocks and tables never contribute breadcrumb segments. */
+/** Multi-line blocks never contribute breadcrumb segments. */
 function isMultiline(node: OsmosisNode): boolean {
-	return node.type === "codeblock" || node.type === "table";
+	return (
+		node.type === "codeblock" ||
+		node.type === "table" ||
+		node.type === "blockquote"
+	);
 }
 
 /** Note basename without folders or the .md extension. */

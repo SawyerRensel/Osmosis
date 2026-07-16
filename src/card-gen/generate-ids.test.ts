@@ -66,6 +66,25 @@ describe("planIdGeneration", () => {
 		expect(plan.content).toMatch(/\| 1 \| 2 \|\n\^os-[0-9a-z]{6}/);
 	});
 
+	it("adds a standalone after-block ID for blockquotes / callouts", () => {
+		const md = "> [!quote] Yali's Question\n> Why did some peoples end up ahead?";
+		const plan = planIdGeneration(md);
+
+		expect(plan.insertions).toHaveLength(1);
+		expect(plan.insertions[0]?.kind).toBe("after-block");
+		expect(plan.insertions[0]?.nodeType).toBe("blockquote");
+		// Preview strips the `>` markers and reads as prose.
+		expect(plan.insertions[0]?.preview).toBe(
+			"[!quote] Yali's Question Why did some peoples end up ahead?",
+		);
+		expect(plan.content).toMatch(/end up ahead\?\n\^os-[0-9a-z]{6}/);
+	});
+
+	it("skips a blockquote that already has an after-block ID", () => {
+		const md = "> a quote\n> more\n^os-quo001";
+		expect(planIdGeneration(md).insertions).toHaveLength(0);
+	});
+
 	it("skips code blocks and tables that already have an after-block ID", () => {
 		const md = "```python\ncode\n```\n^os-code01\n\n| a |\n|---|\n| 1 |\n\n^os-tab001";
 		const plan = planIdGeneration(md);

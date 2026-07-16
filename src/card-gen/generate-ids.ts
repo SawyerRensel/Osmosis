@@ -148,7 +148,7 @@ export function planIdGeneration(markdown: string): GenerateIdsPlan {
 			return;
 		}
 
-		if (node.type === "table") {
+		if (node.type === "table" || node.type === "blockquote") {
 			addInsertion(node, nodeLine, "after-block", node.range.end, `\n^`);
 		}
 	};
@@ -205,6 +205,14 @@ function makePreview(node: OsmosisNode): string {
 		text = lang === "osmosis" ? "osmosis card fence" : `code block${lang ? ` (${lang})` : ""}`;
 	} else if (node.type === "table") {
 		text = `table: ${node.content.split("\n")[0] ?? ""}`;
+	} else if (node.type === "blockquote") {
+		// Strip the leading `>` markers so the preview reads as prose.
+		text = node.content
+			.split("\n")
+			.map((l) => l.replace(/^\s*>\s?/, ""))
+			.join(" ")
+			.replace(/\s+/g, " ")
+			.trim();
 	} else {
 		text = node.content.replace(/\s+/g, " ").trim();
 	}

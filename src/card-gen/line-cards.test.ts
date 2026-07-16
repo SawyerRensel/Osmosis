@@ -94,6 +94,45 @@ describe("generateLineCards", () => {
 		expect(byId.get("os-tabl01")?.back).toContain("| a | b |");
 	});
 
+	it("generates one card for a whole callout, with the `>` markers intact", () => {
+		const markdown = [
+			"# Section ^os-head01",
+			"",
+			"> [!quote] Yali's Question",
+			"> Why did some peoples end up ahead?",
+			"",
+			"^os-quo001",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const byId = new Map(cards.map((c) => [c.blockId, c]));
+
+		const quote = byId.get("os-quo001");
+		expect(quote?.card_type).toBe("line");
+		expect(quote?.back).toBe(
+			"> [!quote] Yali's Question\n> Why did some peoples end up ahead?",
+		);
+		// Multi-line block → no breadcrumb contribution, front is the ancestor path.
+		expect(quote?.front).toBe("note › Section");
+		// Exactly one card for the callout (title + body are not split).
+		expect(cards.filter((c) => c.blockId === "os-quo001")).toHaveLength(1);
+	});
+
+	it("does not use a blockquote as a breadcrumb segment for its children", () => {
+		// A blockquote is a leaf multi-line node; its content never becomes a crumb.
+		const markdown = [
+			"> quoted context",
+			"",
+			"^os-quo002",
+			"",
+			"A following paragraph ^os-para01",
+		].join("\n");
+
+		const cards = generateLineCards(markdown, "note.md");
+		const byId = new Map(cards.map((c) => [c.blockId, c]));
+		expect(byId.get("os-para01")?.front).toBe("note");
+	});
+
 	it("skips osmosis fences — they are already fence cards", () => {
 		const markdown = [
 			"```osmosis",

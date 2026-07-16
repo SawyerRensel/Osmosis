@@ -195,7 +195,16 @@ export class LineRevealProcessor {
 
 		const state = this.stateFor(notePath);
 
-		const listEls = Array.from(el.querySelectorAll("li"));
+		// A blockquote / callout is a single line card even when it contains a
+		// bullet list — its `<li>`s belong to the one block, not to per-item
+		// cards. Treat the whole section as one block so it hides like the
+		// blockquote node it is (without this, the inner list hijacks the
+		// list-item branch below and nothing gets tracked).
+		const isQuoteSection =
+			el.matches("blockquote, .callout") ||
+			el.querySelector("blockquote, .callout") !== null;
+
+		const listEls = isQuoteSection ? [] : Array.from(el.querySelectorAll("li"));
 		if (listEls.length > 0) {
 			// List section: align cache list items with <li> elements — both
 			// are pre-order traversals of the same list.
