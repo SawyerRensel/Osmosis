@@ -38,7 +38,8 @@ import {
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
-import { allLineCardBlockIds, collectSubtreeBlockIds, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
+import type { Card } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
@@ -183,13 +184,16 @@ export class MindMapView extends ItemView {
 	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
 	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
 	// - "study": due-or-new line-card nodes hidden, reveal + rate via FSRS.
-	// Session state is keyed by block ID, not layout node ID — node IDs are
-	// content-position hashes that churn when a schedule flush or edit
-	// shifts the source, while block IDs travel with their lines.
+	// Session state is keyed by card key (`${notePath}#^${blockId}`, the
+	// line card's ID), not layout node ID — node IDs are content-position
+	// hashes that churn when a schedule flush or edit shifts the source,
+	// while block IDs travel with their lines. The path half disambiguates
+	// transcluded nodes, whose block IDs belong to other notes and may
+	// collide with the host's.
 	private spatialMode: "off" | "peek" | "study" = "off";
 	private spatialStudyActionEl: HTMLElement | null = null;
 	private spatialPeekActionEl: HTMLElement | null = null;
-	/** Block IDs hidden this session (all line cards on the map for peek, due-or-new for study). */
+	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
 	private spatialTargets = new Set<string>();
 	/** Targets already revealed (rated or awaiting a rating). */
 	private spatialRevealed = new Set<string>();
@@ -197,6 +201,12 @@ export class MindMapView extends ItemView {
 	private spatialRated = new Set<string>();
 	/** Revealed-but-unrated card whose rating bubble is showing (study only). */
 	private spatialPendingRating: string | null = null;
+	/**
+	 * Layout node the pending rating bubble anchors to. A note transcluded
+	 * twice puts two nodes on one card key — the bubble follows the node
+	 * the user actually clicked. Re-picked if a reload dropped the node.
+	 */
+	private spatialPendingNodeId: string | null = null;
 	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
 	private spatialBanner: HTMLElement | null = null;
 	private spatialSessionManager: StudySessionManager | null = null;
@@ -513,15 +523,51 @@ export class MindMapView extends ItemView {
 		}
 	}
 
-	/** Restrict card block IDs to nodes actually laid out on the map. */
-	private blockIdsOnMap(cardIds: ReadonlySet<string>, scopeIds?: ReadonlySet<string> | null): Set<string> {
+	/**
+	 * Card key for a laid-out node: its line card's ID. Local nodes key
+	 * against the host note, transcluded nodes against their origin note —
+	 * so ratings and schedules always land in the note that owns the line.
+	 */
+	private nodeCardKey(node: LayoutNode): string | null {
+		const blockId = node.source.blockId;
+		if (blockId === undefined) return null;
+		const path = node.source.isTranscluded
+			? node.source.sourceFile
+			: this.currentFile?.path;
+		if (path === undefined) return null;
+		return lineCardId(path, blockId);
+	}
+
+	/**
+	 * All cards belonging to the notes laid out on this map: the host note
+	 * plus every transcluded source. Cards from all of them are studiable
+	 * in place — `syncAll` keeps the store populated vault-wide, so this
+	 * is a pure lookup.
+	 */
+	private mapCards(): Card[] {
+		const notePath = this.currentFile?.path;
+		if (notePath === undefined) return [];
+		const paths = new Set<string>([notePath]);
+		for (const node of this.nodeMap.values()) {
+			if (node.source.isTranscluded && node.source.sourceFile !== undefined) {
+				paths.add(node.source.sourceFile);
+			}
+		}
+		const cards: Card[] = [];
+		for (const path of paths) {
+			cards.push(...this.plugin.cardStore.getCardsByNote(path));
+		}
+		return cards;
+	}
+
+	/** Restrict card keys to nodes actually laid out on the map. */
+	private cardKeysOnMap(cardIds: ReadonlySet<string>, scopeKeys?: ReadonlySet<string> | null): Set<string> {
 		const targets = new Set<string>();
 		for (const node of this.nodeMap.values()) {
-			const blockId = node.source.blockId;
-			if (blockId === undefined || node.source.isTranscluded) continue;
-			if (!cardIds.has(blockId)) continue;
-			if (scopeIds && !scopeIds.has(blockId)) continue;
-			targets.add(blockId);
+			const key = this.nodeCardKey(node);
+			if (key === null || !cardIds.has(key)) continue;
+			if (scopeKeys && !scopeKeys.has(key)) continue;
+			targets.add(key);
 		}
 		return targets;
 	}
@@ -535,10 +581,11 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
 		const notePath = this.currentFile?.path;
-		const dueOrNew = notePath !== undefined
-			? dueOrNewLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath), Date.now())
-			: new Set<string>();
-		const targets = this.blockIdsOnMap(dueOrNew, scope ? collectSubtreeBlockIds(scope) : null);
+		const dueOrNew = dueOrNewLineCardIds(this.mapCards(), Date.now());
+		const scopeKeys = scope && notePath !== undefined
+			? collectSubtreeCardKeys(scope, notePath)
+			: null;
+		const targets = this.cardKeysOnMap(dueOrNew, scopeKeys);
 
 		if (targets.size === 0) {
 			new Notice(scope ? "No line cards are due in this branch." : "No line cards are due on this map.");
@@ -550,6 +597,7 @@ export class MindMapView extends ItemView {
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
 		this.spatialStudyActionEl?.addClass("is-active");
 		this.applySpatialState();
 		new Notice("Study mode: tap a hidden node to reveal and rate it");
@@ -562,11 +610,7 @@ export class MindMapView extends ItemView {
 	private enterSpatialPeek(): void {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
-		const notePath = this.currentFile?.path;
-		const all = notePath !== undefined
-			? allLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath))
-			: new Set<string>();
-		const targets = this.blockIdsOnMap(all);
+		const targets = this.cardKeysOnMap(allLineCardIds(this.mapCards()));
 
 		if (targets.size === 0) {
 			new Notice("No line cards on this map.");
@@ -578,6 +622,7 @@ export class MindMapView extends ItemView {
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
 		this.spatialPeekActionEl?.addClass("is-active");
 		this.applySpatialState();
 	}
@@ -605,6 +650,7 @@ export class MindMapView extends ItemView {
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
 
 		// Study session end: push debounced schedule writes out now (plan §3).
 		// Peek records nothing, so there is nothing to flush.
@@ -620,17 +666,23 @@ export class MindMapView extends ItemView {
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
 		for (const [nodeId, node] of this.nodeMap) {
-			const blockId = node.source.blockId;
-			if (blockId === undefined || node.source.isTranscluded) continue;
-			if (!this.spatialTargets.has(blockId)) continue;
+			const key = this.nodeCardKey(node);
+			if (key === null || !this.spatialTargets.has(key)) continue;
 
-			if (!this.spatialRevealed.has(blockId)) {
+			if (!this.spatialRevealed.has(key)) {
 				this.applySpatialHidden(nodeId, true);
 			} else {
 				this.applySpatialHidden(nodeId, false);
 				this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
-				if (this.spatialMode === "study" && blockId === this.spatialPendingRating) {
-					this.ensureRatingBubble(nodeId, node);
+				if (this.spatialMode === "study" && key === this.spatialPendingRating) {
+					// Duplicate embeds share a card key — the bubble anchors to
+					// the clicked node, or the first survivor after a reload
+					if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
+						this.spatialPendingNodeId = nodeId;
+					}
+					if (nodeId === this.spatialPendingNodeId) {
+						this.ensureRatingBubble(nodeId, node);
+					}
 				}
 			}
 		}
@@ -673,22 +725,25 @@ export class MindMapView extends ItemView {
 	private handleSpatialClick(nodeId: string): boolean {
 		if (this.spatialMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
-		const blockId = node?.source.blockId;
-		if (!node || blockId === undefined || node.source.isTranscluded) return false;
-		if (!this.spatialTargets.has(blockId) || this.spatialRevealed.has(blockId)) return false;
+		const key = node ? this.nodeCardKey(node) : null;
+		if (!node || key === null) return false;
+		if (!this.spatialTargets.has(key) || this.spatialRevealed.has(key)) return false;
 
 		// Study: one rating at a time — the open bubble must be answered first
 		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
 
-		this.spatialRevealed.add(blockId);
-		this.applySpatialHidden(nodeId, false);
-		this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
+		this.spatialRevealed.add(key);
 		if (this.spatialMode === "study") {
-			this.spatialPendingRating = blockId;
-			this.ensureRatingBubble(nodeId, node);
+			this.spatialPendingRating = key;
+			this.spatialPendingNodeId = nodeId;
 			// Keys 1–4 rate via the container's keydown handler
 			this.contentEl.focus();
 		}
+		// Re-apply instead of touching only the clicked node: a note
+		// transcluded twice shares one card key across two nodes, and both
+		// must reveal together (once the answer is visible anywhere, keeping
+		// the twin hidden would be a fake test). Also creates the bubble.
+		this.applySpatialState();
 		return true;
 	}
 
@@ -738,20 +793,19 @@ export class MindMapView extends ItemView {
 
 	/** Rate the pending card: record via FSRS, advance progress, maybe finish. */
 	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
-		const blockId = this.spatialPendingRating;
-		if (this.spatialMode !== "study" || blockId === null) return;
+		const cardId = this.spatialPendingRating;
+		if (this.spatialMode !== "study" || cardId === null) return;
 		this.spatialPendingRating = null;
-		this.spatialRated.add(blockId);
+		this.spatialPendingNodeId = null;
+		this.spatialRated.add(cardId);
 		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
 
-		const notePath = this.currentFile?.path;
-		if (notePath !== undefined) {
-			const cardId = lineCardId(notePath, blockId);
-			if (this.plugin.cardStore.getCard(cardId)) {
-				this.spatialSessionManager ??= this.plugin.createSessionManager();
-				await this.spatialSessionManager.recordReview(cardId, rating);
-				this.plugin.refreshDashboard();
-			}
+		// The card key is the card's ID; the card's own notePath routes the
+		// schedule write — to the source note for transcluded lines (plan §11)
+		if (this.plugin.cardStore.getCard(cardId)) {
+			this.spatialSessionManager ??= this.plugin.createSessionManager();
+			await this.spatialSessionManager.recordReview(cardId, rating);
+			this.plugin.refreshDashboard();
 		}
 
 		if (this.spatialRated.size >= this.spatialTargets.size) {
@@ -1011,6 +1065,7 @@ export class MindMapView extends ItemView {
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
 		this.spatialBanner = null;
 		this.spatialSessionManager = null;
 		this.contentEl.empty();
@@ -1060,14 +1115,18 @@ export class MindMapView extends ItemView {
 		this.loadMapSettings();
 		this.currentTree = this.cache.get(file.path, content);
 
-		// Lazy loading: auto-collapse transclusion nodes so they're deferred
+		// Lazy loading (opt-in via the "Expand transclusions" setting):
+		// auto-collapse transclusion nodes so they're deferred until first
+		// expand. Default is eager — embedded branches load expanded.
 		this.lazyTransclusionIds.clear();
-		this.collectTransclusionIds(
-			this.currentTree.root,
-			this.lazyTransclusionIds,
-		);
-		for (const id of this.lazyTransclusionIds) {
-			this.collapsedIds.add(id);
+		if (!this.plugin.settings.expandTransclusions) {
+			this.collectTransclusionIds(
+				this.currentTree.root,
+				this.lazyTransclusionIds,
+			);
+			for (const id of this.lazyTransclusionIds) {
+				this.collapsedIds.add(id);
+			}
 		}
 
 		// Resolve and expand transclusion links (skip lazy/collapsed ones)

@@ -66,6 +66,16 @@ Spatial study is especially powerful for topics where understanding the relation
 !!! tip "Study a single branch"
     Right-click any node and choose **Study this branch** to scope the session to that subtree's due cards.
 
+### Transcluded Content
+
+Embedded notes (`![[note]]`) are first-class citizens in spatial study and peek: if the embedded note has line cards, its nodes hide and reveal on the host map just like local ones, and ratings are written to the **embedded note's** own `osmosis-schedule` — the schedule always lives with the note that owns the line. A card studied on a host map and in its home note is the same card, so scheduling stays consistent everywhere.
+
+- Embedded notes without flashcards (no `osmosis-cards` opt-in, or no generated block IDs) simply stay visible as context.
+- A note whose line cards are [opted out of decks](../flashcards/line-cards.md) is still studiable in place — opt-out only affects decks and sequential study.
+- Embedding the same note twice puts both copies on one card: revealing one reveals the other, and it is rated (and counted) once.
+
+Contextual (reading-view) study deliberately leaves `![[embeds]]` alone — study an embedded note's lines in its own reading view or on a map that includes it.
+
 ### Peek on the Map
 
 The :lucide-scan-eye: icon next to the study button enters **peek mode**: every line-card node hides, you reveal them in any order by tapping, and nothing is recorded — the map equivalent of covering the page with your hand.

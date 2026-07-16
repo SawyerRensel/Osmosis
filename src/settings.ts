@@ -55,6 +55,8 @@ export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
 	showTransclusionStyle: boolean;
+	/** Whether transcluded branches load expanded when a map opens (default: true). */
+	expandTransclusions: boolean;
 	/** @deprecated Migrated to osmosis-styles frontmatter. Kept for migration only. */
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
@@ -97,6 +99,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchLineStyle: "curved",
 	cursorSync: true,
 	showTransclusionStyle: false,
+	expandTransclusions: true,
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
@@ -156,6 +159,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showTransclusionStyle)
 					.onChange(async (value) => {
 						this.plugin.settings.showTransclusionStyle = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Expand transclusions")
+			.setDesc("Load embedded notes expanded when a mind map opens. When off, they start collapsed and load on first expand.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.expandTransclusions)
+					.onChange(async (value) => {
+						this.plugin.settings.expandTransclusions = value;
 						await this.plugin.saveSettings();
 					}),
 			);

@@ -209,33 +209,38 @@ for mind-map styling data.
 10. **Docs + PRD update** — document feature; also fix stale PRD storage
     section (cards.db → in-memory CardStore + fence metadata +
     `osmosis-schedule` frontmatter). (S)
-11. **Transcluded maps × study/peek modes** *(added 2026-07-15 — new scope,
-    design-first: investigate, propose a design, and get sign-off BEFORE
-    implementing)*. Today transcluded nodes are deliberately excluded
-    everywhere: `generateLineCards` skips `isTranscluded` nodes,
-    `collectSubtreeBlockIds` skips them, and spatial study only loads cards
-    for the host note. The design must answer:
-    - Should transcluded line cards be studiable/peekable in the HOST map's
-      spatial mode? (Inclination: yes — the natural reading of "study this
-      map" — but lay out the tradeoffs.)
-    - Ratings must write to the SOURCE note's `osmosis-schedule`
-      (ScheduleStore is keyed by file path), never the host's. Card identity
-      is already `${sourcePath}#^${blockId}` — verify this makes it natural.
-    - Block-ID matching must become collision-safe: the same blockId string
-      can legitimately exist in both host and source files, so pure-blockId
-      session keying (task 8 design) needs a (path, blockId) notion for
-      transcluded content — without regressing the churn-proofing that
-      motivated blockId keying.
-    - What happens in peek/study when the transcluded source note has
-      `osmosis-line-cards: false`, or block IDs were never generated there?
-    - Reading view: Obsidian renders `![[embeds]]` separately — check how
-      LineRevealProcessor interacts with embedded content and decide whether
-      contextual study should touch embeds at all (out-of-scope is an
-      acceptable answer if justified).
-    - Edge cases: transclusion cycles (fixtures transclusion-cycle-a/b),
-      chains (transclusion-chain-a/b), the same note transcluded twice in
-      one map.
-    Test with fixtures building on the existing `transclusion-*.md` ones. (L)
+11. ✅ **Transcluded maps × study/peek modes** *(design signed off and
+    implemented 2026-07-15)*. Transcluded line cards are studiable/peekable
+    on the host map. Design decisions (all approved):
+    - Spatial session keying moved from bare block ID to **card key** = the
+      line card's ID (`${notePath}#^${blockId}`) via `nodeCardKey()`:
+      transcluded nodes key against `sourceFile`, local nodes against the
+      host — collision-safe, churn-proofing preserved (still never keyed by
+      layout node ID). `mapCards()` gathers host + transcluded source cards
+      from the vault-wide CardStore.
+    - Ratings route via the card's own `notePath` (`rateSpatialCard` passes
+      the card key straight to `recordReview`) — schedules land in the note
+      that owns the line. Source-note flushes can't re-render the host map
+      (the vault-modify handler only reloads `currentFile`).
+    - Sources without cards stay visible as context; `osmosis-line-cards:
+      false` sources remain studiable in place (opt-out is deck-only —
+      confirmed by Sawyer).
+    - Reading-view embeds stay **out of scope** (already skipped via
+      `.internal-embed`): per-note state would entangle host embeds with the
+      source's own view, partial embeds break reveal order, no header entry
+      point. Possible follow-up: peek-only inside embeds (see Open Items).
+    - Duplicate embeds share one card key: reveal together, rated once;
+      the rating bubble anchors to the clicked instance.
+    - Fixed en route (root cause of duplicate/chain bugs found in manual
+      testing): `TransclusionResolver` spliced **cached, shared node
+      objects** into host trees and mutated them in place. Now each embed
+      instance deep-clones the parsed subtree with instance-unique node ids
+      (`<parser id>~<embed-site id>`), so cached trees stay pristine, chains
+      attribute `sourceFile` correctly in every copy, and duplicate embeds
+      are independent nodes (also fixed selection jumping between copies).
+    - Bonus (Sawyer request): **Expand transclusions** setting (default on)
+      — embedded branches load expanded; off restores lazy collapse.
+    Fixtures: `transclusion-study-{host,source,optout,plain,deep}.md`. (L)
 
 Each task follows the standard loop: implement → `npm run lint` →
 `npm run test` → `npm run build` → manual test instructions → user confirms →
@@ -268,3 +273,13 @@ commit.
   persistence; line cards use `osmosis-schedule` frontmatter. Consolidating
   fence schedules into frontmatter is a natural follow-up (would also let
   FenceWriter's raw string surgery be retired), not in scope here.
+- **Contextual study inside reading-view embeds** (from task 11, 2026-07-15):
+  deliberately out of scope — `LineRevealProcessor` skips `.internal-embed`
+  sections. If ever wanted, start with peek-only inside embeds (no ratings);
+  full study needs a per-(view, note) state model, partial-embed reveal
+  ordering, and a new UI entry point. Sawyer expressed interest but has not
+  committed to it.
+- **Legacy `_n:` style selectors on transcluded nodes** no longer match
+  (task 11's instance-unique node ids). Block-ID and tree-path selectors are
+  unaffected, and the format panel has preferred block-ID selectors since
+  task 9. Accepted trade-off.
