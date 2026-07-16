@@ -1163,6 +1163,48 @@ hr.osmosis-map-style-divider {
 	color: var(--text-faint);
 }
 
+/* Line-card front: ancestor breadcrumb ending in a "?" placeholder for the
+   hidden line, followed by dimmed preceding-sibling context lines. */
+.osmosis-line-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.osmosis-line-breadcrumb-part {
+	color: var(--text-muted);
+}
+
+.osmosis-line-breadcrumb-sep {
+	color: var(--text-faint);
+}
+
+.osmosis-line-breadcrumb-unknown {
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.osmosis-line-context {
+	margin-top: 10px;
+	padding-left: 10px;
+	border-left: 2px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	opacity: 0.8;
+}
+
+.osmosis-line-context-line > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-line-context-line > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-line-context-line + .osmosis-line-context-line {
+	margin-top: 4px;
+}
+
 .osmosis-study-progress {
 	display: flex;
 	align-items: center;
@@ -1629,6 +1671,86 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	box-shadow: var(--shadow-s);
 }
 
+/* ─── Line-Card Progressive Reveal (Reading View) ────────── */
+
+.markdown-reading-view.osmosis-reveal-host {
+	position: relative;
+}
+
+.osmosis-reveal-banner {
+	position: absolute;
+	top: 12px;
+	right: 24px;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 9999px;
+	background: var(--background-secondary);
+	box-shadow: var(--shadow-s);
+}
+
+.osmosis-reveal-progress {
+	padding-left: 8px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn {
+	padding: 4px 12px;
+	border: none;
+	border-radius: 9999px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn:hover {
+	filter: brightness(1.1);
+}
+
+/* Hidden line: the wrapped content collapses, the placeholder shows */
+.osmosis-line-hidden > .osmosis-line-back {
+	display: none;
+}
+
+.osmosis-line-placeholder {
+	color: var(--text-faint);
+	letter-spacing: 2px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.osmosis-line-placeholder:hover {
+	color: var(--text-muted);
+}
+
+/* During study, lines after the next one are locked (top-down reveal) */
+.osmosis-line-placeholder.osmosis-line-locked {
+	cursor: default;
+	opacity: 0.35;
+}
+
+.osmosis-line-placeholder.osmosis-line-locked:hover {
+	color: var(--text-faint);
+}
+
+.osmosis-line-placeholder.osmosis-line-next {
+	color: var(--text-accent);
+}
+
+/* Block-level so the bubble always sits on its own line below the card,
+   regardless of how short the revealed line is */
+.osmosis-line-rating {
+	display: flex;
+	margin: 4px 0;
+	animation: osmosis-fade-in 0.2s;
+}
+
 /* ─── Exclude Toggle (Contextual Cards) ──────────────────── */
 
 .osmosis-contextual-bottom {
@@ -1693,17 +1815,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-fence-front-only {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
+/* Rating bubble anchored below a just-revealed node. Button colors come
+   from .osmosis-contextual-rating (shared with contextual study). */
+.osmosis-spatial-rating-fo {
+	overflow: visible;
 }
 
-.osmosis-fence-front {
-	text-align: center;
-	color: var(--text-normal);
-	width: 100%;
+.osmosis-spatial-rating {
+	justify-content: center;
+	margin-top: 0;
+	animation: osmosis-fade-in 0.2s;
 }
 
 
@@ -1752,4 +1873,59 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	min-width: 80px;
 	font-size: 13px;
 	padding: 2px 4px;
+}
+
+/* ── Generate Flashcards Modal ─────────────────────────────── */
+
+.osmosis-generate-optin-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-generate-list {
+	max-height: 320px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 4px;
+	margin-bottom: 12px;
+}
+
+.osmosis-generate-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 3px 6px;
+	border-radius: 4px;
+}
+
+.osmosis-generate-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-generate-type {
+	flex-shrink: 0;
+	width: 105px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.osmosis-generate-preview {
+	font-size: var(--font-ui-small);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── Reading mode ─────────────────────────────────────────── */
+/* Resize handles are inert while the map is read-only */
+.osmosis-mindmap-container.osmosis-reading-mode .osmosis-resize-handle {
+	display: none;
+}
+
+/* Individual toolbar buttons/dividers hidden in reading mode */
+.osmosis-toolbar-btn-hidden {
+	display: none;
 }

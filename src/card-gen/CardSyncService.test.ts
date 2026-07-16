@@ -185,4 +185,19 @@ describe("injectFenceIdsIntoContent", () => {
 		const secondFenceIdx = lines.findIndex((l, i) => l === "```osmosis" && i > 1);
 		expect(lines[secondFenceIdx + 1]).toBe("id: bbb");
 	});
+
+	it("never injects ids for line cards — they are not fences", () => {
+		const content = [
+			"# Heading ^os-head01",
+			"",
+			"- Tagged line ^os-a1b2c3",
+		].join("\n");
+
+		const cards = [
+			card({ id: "note.md#^os-head01", sourceLine: 0, card_type: "line", blockId: "os-head01" }),
+			card({ id: "note.md#^os-a1b2c3", sourceLine: 2, card_type: "line", blockId: "os-a1b2c3" }),
+		];
+
+		expect(injectFenceIdsIntoContent(content, cards)).toBe(content);
+	});
 });

@@ -35,5 +35,7 @@ export default tseslint.config(
 		"vitest.config.ts",
 		"e2e",
 		"playwright.config.ts",
+		".venv",
+		"site",
 	]),
 );

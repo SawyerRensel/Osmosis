@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { BranchLineStyle, MapSettings } from "./styles";
+import type { MindMapDefaultMode } from "./reading-mode";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
@@ -55,6 +56,10 @@ export interface OsmosisSettings {
 	branchLineStyle: BranchLineStyle;
 	cursorSync: boolean;
 	showTransclusionStyle: boolean;
+	/** Whether transcluded branches load expanded when a map opens (default: true). */
+	expandTransclusions: boolean;
+	/** Which mode new mind map views open in (default: "editing"). */
+	mindMapDefaultMode: MindMapDefaultMode;
 	/** @deprecated Migrated to osmosis-styles frontmatter. Kept for migration only. */
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
@@ -73,6 +78,8 @@ export interface OsmosisSettings {
 	learningSteps: string;
 	/** Relearning steps for lapsed cards (e.g., "10m"). */
 	relearningSteps: string;
+	/** Whether line cards count in deck totals and sequential study (default: true). */
+	includeLineCardsInDecks: boolean;
 
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
@@ -87,12 +94,16 @@ export interface OsmosisSettings {
 	contextualInlineCloze: boolean;
 	/** Whether to show the deck breadcrumb in the sequential study modal (default: false). */
 	showStudyBreadcrumb: boolean;
+	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
+	sequentialContextLines: number;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchLineStyle: "curved",
 	cursorSync: true,
 	showTransclusionStyle: false,
+	expandTransclusions: true,
+	mindMapDefaultMode: "editing",
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
@@ -103,6 +114,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	dailyReviewCardLimit: 200,
 	learningSteps: "1m, 10m",
 	relearningSteps: "10m",
+	includeLineCardsInDecks: true,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -112,6 +124,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	contextualAutoActivate: true,
 	contextualInlineCloze: false,
 	showStudyBreadcrumb: false,
+	sequentialContextLines: 2,
 };
 
 export class OsmosisSettingTab extends PluginSettingTab {
@@ -150,6 +163,33 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showTransclusionStyle)
 					.onChange(async (value) => {
 						this.plugin.settings.showTransclusionStyle = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Expand transclusions")
+			.setDesc("Load embedded notes expanded when a mind map opens. When off, they start collapsed and load on first expand.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.expandTransclusions)
+					.onChange(async (value) => {
+						this.plugin.settings.expandTransclusions = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Default mind map mode")
+			.setDesc("Which mode mind map views open in. Reading mode blocks map edits (drag, in-place editing, structure changes) while pan, zoom, fold, study, and peek stay available.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("editing", "Editing")
+					.addOption("reading", "Reading")
+					.addOption("reading-mobile", "Reading on mobile only")
+					.setValue(this.plugin.settings.mindMapDefaultMode)
+					.onChange(async (value) => {
+						this.plugin.settings.mindMapDefaultMode = value as MindMapDefaultMode;
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -225,6 +265,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl)
+			.setName("Include line cards in decks")
+			.setDesc("Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.includeLineCardsInDecks)
+					.onChange(async (value) => {
+						this.plugin.settings.includeLineCardsInDecks = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
 		// ── Study mode ─────────────────────────────────────────
 		new Setting(containerEl).setName("Study mode").setHeading();
 
@@ -236,6 +288,20 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showStudyBreadcrumb)
 					.onChange(async (value) => {
 						this.plugin.settings.showStudyBreadcrumb = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Line card context lines")
+			.setDesc("How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).")
+			.addSlider((slider) =>
+				slider
+					.setLimits(0, 5, 1)
+					.setDynamicTooltip()
+					.setValue(this.plugin.settings.sequentialContextLines)
+					.onChange(async (value) => {
+						this.plugin.settings.sequentialContextLines = value;
 						await this.plugin.saveSettings();
 					}),
 			);

@@ -157,8 +157,19 @@ export class TransclusionResolver {
 		const content = await this.app.vault.read(resolvedFile);
 		const childTree = this.cache.get(resolvedFile.path, content);
 
+		// Clone before touching anything: the cache hands out shared node
+		// objects, so splicing/marking them in place would corrupt the
+		// cached tree — a second embed of the same file would inherit (and
+		// re-mark) the first embed's already-expanded content, misattributing
+		// nested transclusions' sourceFile. Suffixing ids with the embed
+		// site's id keeps every instance unique: duplicate embeds (and
+		// coincidental host/source content twins, which hash to the same
+		// parser id) would otherwise collide in the layout node map and DOM.
+		const children = childTree.root.children.map((child) =>
+			cloneWithInstanceIds(child, node.id),
+		);
+
 		// Mark all children as transcluded from this source
-		const children = childTree.root.children;
 		this.markChildrenTranscluded(children, resolvedFile.path);
 
 		// Recurse into expanded content for nested transclusions
@@ -263,4 +274,23 @@ export class TransclusionResolver {
 			unresolvedReason: reason,
 		};
 	}
+}
+
+/**
+ * Deep-clone a subtree for splicing into a host tree, giving every node an
+ * instance-unique id: `<parser id>~<embed-site node id>`. The embed site's
+ * id is a stable content-position hash of the `![[...]]` line itself (the
+ * parser's occurrence counter keeps repeated identical embed lines
+ * distinct), so instance ids are deterministic across re-parses. Nested
+ * embeds compound naturally — their site node was itself suffixed by the
+ * outer clone.
+ */
+function cloneWithInstanceIds(node: OsmosisNode, siteId: string): OsmosisNode {
+	return {
+		...node,
+		id: `${node.id}~${siteId}`,
+		range: { ...node.range },
+		...(node.metadata !== undefined ? { metadata: { ...node.metadata } } : {}),
+		children: node.children.map((child) => cloneWithInstanceIds(child, siteId)),
+	};
 }

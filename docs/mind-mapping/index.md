@@ -41,7 +41,7 @@ Embed another note's content as a sub-branch using standard Obsidian syntax:
 - ![[detailed-notes]]
 ```
 
-The embedded note's heading and list structure appears as a collapsible sub-branch. Transcluded branches are lazy-loaded — they only parse when expanded. Editing a transcluded node writes changes to the source file.
+The embedded note's heading and list structure appears as a collapsible sub-branch, loaded expanded by default. Turn off **Expand transclusions** in the plugin settings to lazy-load them instead — collapsed until first expanded. Editing a transcluded node writes changes to the source file.
 
 ![osmosis_mind_map_transclusion_split_view](../assets/media/osmosis_mind_map_transclusion_split_view.png)
 

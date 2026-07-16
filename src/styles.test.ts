@@ -4,7 +4,10 @@ import {
 	resolveNodeStyle,
 	buildTreePath,
 	buildStableIdSelector,
+	buildBlockIdSelector,
+	buildPreferredSelector,
 	lookupNodeStyle,
+	lookupNodeStyleByPath,
 	lookupClassStyle,
 	lookupVariantStyle,
 	getClassScope,
@@ -277,6 +280,37 @@ describe("buildStableIdSelector", () => {
 	});
 });
 
+// ─── buildBlockIdSelector / buildPreferredSelector ───────────────────────
+
+describe("buildBlockIdSelector", () => {
+	it("builds ^ prefixed selector from an Osmosis block ID", () => {
+		const node = makeNode({ blockId: "os-a1b2c3" });
+		expect(buildBlockIdSelector(node)).toBe("^os-a1b2c3");
+	});
+
+	it("works for user-authored block IDs", () => {
+		const node = makeNode({ blockId: "my-anchor" });
+		expect(buildBlockIdSelector(node)).toBe("^my-anchor");
+	});
+
+	it("returns undefined when the node has no block ID", () => {
+		const node = makeNode({});
+		expect(buildBlockIdSelector(node)).toBeUndefined();
+	});
+});
+
+describe("buildPreferredSelector", () => {
+	it("prefers the block-ID selector when the node has a block ID", () => {
+		const node = makeNode({ id: "abc123def456", blockId: "os-a1b2c3" });
+		expect(buildPreferredSelector(node)).toBe("^os-a1b2c3");
+	});
+
+	it("falls back to the stable-ID selector without a block ID", () => {
+		const node = makeNode({ id: "abc123def456" });
+		expect(buildPreferredSelector(node)).toBe("_n:abc123def456");
+	});
+});
+
 // ─── lookupNodeStyle ─────────────────────────────────────────────────────
 
 describe("lookupNodeStyle", () => {
@@ -350,6 +384,80 @@ describe("lookupNodeStyle", () => {
 			},
 		};
 		expect(lookupNodeStyle(fm, layout)).toBeUndefined();
+	});
+
+	it("matches by block-ID selector", () => {
+		const node = makeNode({ blockId: "os-a1b2c3" });
+		const layout = makeLayoutNode(node);
+		const fm: OsmosisStyleFrontmatter = {
+			styles: {
+				"^os-a1b2c3": { fill: "#block" },
+			},
+		};
+		expect(lookupNodeStyle(fm, layout)).toEqual({ fill: "#block" });
+	});
+
+	it("block ID takes priority over stable ID and tree path", () => {
+		const node = makeNode({
+			type: "heading", depth: 2, content: "Architecture",
+			id: "abc123def456", blockId: "os-a1b2c3",
+		});
+		const layout = makeLayoutNode(node);
+		const fm: OsmosisStyleFrontmatter = {
+			styles: {
+				"^os-a1b2c3": { fill: "#block" },
+				"_n:abc123def456": { fill: "#stable" },
+				"## Architecture": { fill: "#treepath" },
+			},
+		};
+		expect(lookupNodeStyle(fm, layout)?.fill).toBe("#block");
+	});
+
+	it("falls back to stable ID when the node's block ID has no entry", () => {
+		const node = makeNode({ id: "abc123def456", blockId: "os-zzzzzz" });
+		const layout = makeLayoutNode(node);
+		const fm: OsmosisStyleFrontmatter = {
+			styles: {
+				"^os-a1b2c3": { fill: "#other" },
+				"_n:abc123def456": { fill: "#stable" },
+			},
+		};
+		expect(lookupNodeStyle(fm, layout)?.fill).toBe("#stable");
+	});
+});
+
+// ─── lookupNodeStyleByPath ───────────────────────────────────────────────
+
+describe("lookupNodeStyleByPath", () => {
+	const fm: OsmosisStyleFrontmatter = {
+		styles: {
+			"^os-a1b2c3": { fill: "#block" },
+			"_n:abc123def456": { fill: "#stable" },
+			"## Architecture": { fill: "#treepath" },
+		},
+	};
+
+	it("returns undefined when no frontmatter or styles", () => {
+		expect(lookupNodeStyleByPath(undefined, "x", undefined)).toBeUndefined();
+		expect(lookupNodeStyleByPath({ theme: "Ocean" }, "x", undefined)).toBeUndefined();
+	});
+
+	it("matches block ID first, then stable ID, then tree path", () => {
+		expect(
+			lookupNodeStyleByPath(fm, "abc123def456", "## Architecture", "os-a1b2c3")?.fill,
+		).toBe("#block");
+		expect(
+			lookupNodeStyleByPath(fm, "abc123def456", "## Architecture", "os-other")?.fill,
+		).toBe("#stable");
+		expect(
+			lookupNodeStyleByPath(fm, "other-id", "## Architecture")?.fill,
+		).toBe("#treepath");
+	});
+
+	it("returns undefined when nothing matches", () => {
+		expect(
+			lookupNodeStyleByPath(fm, "other-id", "## Other", "os-other"),
+		).toBeUndefined();
 	});
 });
 

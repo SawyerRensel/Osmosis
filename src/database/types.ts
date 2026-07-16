@@ -3,7 +3,8 @@ export type CardType =
 	| "explicit"
 	| "explicit_bidi"
 	| "explicit_cloze"
-	| "code_cloze";
+	| "code_cloze"
+	| "line";
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";
@@ -21,6 +22,18 @@ export interface Card {
 	back: string;
 	typeIn: boolean;
 	sourceLine: number;
+	/** Block ID for line cards (e.g. "os-a1b2c3") — routes schedule writes to frontmatter. */
+	blockId?: string;
+	/**
+	 * Excluded from deck totals and the sequential study queue (line-card
+	 * opt-out). The card stays in the store for in-place study modes.
+	 */
+	excludeFromDecks?: boolean;
+	/**
+	 * Line cards: contents of the immediately preceding sibling lines
+	 * (document order), rendered as front context in sequential study.
+	 */
+	contextBefore?: string[];
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;

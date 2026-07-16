@@ -354,5 +354,82 @@ describe("processNote", () => {
 			expect(types.filter((t) => t === "explicit_bidi")).toHaveLength(2);
 			expect(types.filter((t) => t === "explicit_cloze")).toHaveLength(1);
 		});
+
+		it("generates line cards alongside fence cards with deck resolution", () => {
+			const md = [
+				"---",
+				"osmosis-cards: true",
+				"osmosis-deck: biology/cells",
+				"---",
+				"# Heading ^os-head01",
+				"",
+				"- Tagged line ^os-a1b2c3",
+				"- Untagged line",
+				"",
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const result = processNote(md, "folder/note.md", defaultOptions);
+
+			const lineCards = result.cards.filter((c) => c.card_type === "line");
+			expect(lineCards.map((c) => c.blockId)).toEqual(["os-head01", "os-a1b2c3"]);
+			expect(lineCards.every((c) => c.deck === "biology/cells")).toBe(true);
+			expect(result.cards.some((c) => c.card_type === "explicit")).toBe(true);
+		});
+
+		it("line cards inherit the folder-derived deck when no deck is set", () => {
+			const md = [
+				"---",
+				"osmosis-cards: true",
+				"---",
+				"- Tagged line ^os-a1b2c3",
+			].join("\n");
+			const result = processNote(md, "Study/Math/note.md", defaultOptions);
+			expect(result.cards[0]?.deck).toBe("Study/Math");
+		});
+	});
+});
+
+describe("line-card deck opt-out", () => {
+	const md = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"- Tagged line ^os-a1b2c3",
+		"",
+		"```osmosis",
+		"id: fence001",
+		"",
+		"Front",
+		"***",
+		"Back",
+		"```",
+	].join("\n");
+
+	it("marks line cards excluded when the global setting is off", () => {
+		const result = processNote(md, "note.md", { includeLineCardsInDecks: false });
+		const line = result.cards.find((c) => c.card_type === "line");
+		const fence = result.cards.find((c) => c.card_type === "explicit");
+		expect(line?.excludeFromDecks).toBe(true);
+		expect(fence?.excludeFromDecks).toBeUndefined();
+	});
+
+	it("marks line cards excluded via osmosis-line-cards: false frontmatter", () => {
+		const optedOut = md.replace(
+			"osmosis-cards: true",
+			"osmosis-cards: true\nosmosis-line-cards: false",
+		);
+		const result = processNote(optedOut, "note.md", {});
+		const line = result.cards.find((c) => c.card_type === "line");
+		expect(line?.excludeFromDecks).toBe(true);
+	});
+
+	it("leaves line cards included by default", () => {
+		const result = processNote(md, "note.md", {});
+		const line = result.cards.find((c) => c.card_type === "line");
+		expect(line?.excludeFromDecks).toBeUndefined();
 	});
 });

@@ -1,22 +1,28 @@
-import { Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter } from "./store/ScheduleStore";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { LineRevealProcessor } from "./views/LineRevealProcessor";
+import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
+import { planIdGeneration } from "./card-gen/generate-ids";
 import type { DeckScope } from "./study/types";
 
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
+	scheduleStore!: ScheduleStore;
 	cardSync!: CardSyncService;
+	lineReveal!: LineRevealProcessor;
 
 	async onload() {
 		await this.loadSettings();
@@ -27,6 +33,12 @@ export default class OsmosisPlugin extends Plugin {
 		// Fence writer — writes schedule data back into markdown fences
 		this.fenceWriter = new FenceWriter(this.app.vault);
 
+		// Schedule store — debounced osmosis-schedule frontmatter writes for line cards
+		this.scheduleStore = new ScheduleStore(
+			this.app.fileManager,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
+
 		// Card sync service — connects note processor to card store
 		this.cardSync = new CardSyncService(
 			this.app.vault,
@@ -35,6 +47,7 @@ export default class OsmosisPlugin extends Plugin {
 			() => ({
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
+				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
 			(file: TFile) => {
 				const cache = this.app.metadataCache.getFileCache(file);
@@ -43,6 +56,17 @@ export default class OsmosisPlugin extends Plugin {
 					? (cache.frontmatter.tags as string[]).map((t: string) => t.replace(/^#/, ""))
 					: [];
 				return [...new Set([...inlineTags, ...fmTags])];
+			},
+			(file: TFile) => {
+				// Line-card schedules: osmosis-schedule frontmatter overlaid with
+				// pending ratings that haven't been flushed to disk yet
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const schedules = parseScheduleFrontmatter(raw);
+				for (const [blockId, entry] of this.scheduleStore.getPendingEntries(file.path)) {
+					if (entry === null) schedules.delete(blockId);
+					else schedules.set(blockId, entry);
+				}
+				return schedules;
 			},
 		);
 
@@ -65,6 +89,17 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Open mind map view",
 			callback: () => {
 				void this.activateMindMapView();
+			},
+		});
+
+		this.addCommand({
+			id: "toggle-mindmap-reading-mode",
+			name: "Toggle mind map reading mode",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MindMapView);
+				if (!view) return false;
+				if (!checking) view.toggleReadingMode();
+				return true;
 			},
 		});
 
@@ -103,6 +138,13 @@ export default class OsmosisPlugin extends Plugin {
 							}
 						});
 				});
+				menu.addItem((item) => {
+					item.setTitle("Generate flashcards")
+						.setIcon("layers")
+						.onClick(() => {
+							void this.openGenerateFlashcards(file);
+						});
+				});
 			}),
 		);
 
@@ -125,8 +167,24 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// ── Notes as Flashcards: ID generation ──────────────────
+		this.addCommand({
+			id: "generate-flashcards",
+			name: "Generate flashcards from note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) void this.openGenerateFlashcards(file);
+				return true;
+			},
+		});
+
 		// ── Contextual Study Mode ───────────────────────────────
 		new ContextualStudyProcessor(this).register();
+
+		// Progressive line-card reveal in reading view (plan §5)
+		this.lineReveal = new LineRevealProcessor(this);
+		this.lineReveal.register();
 
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
@@ -137,14 +195,24 @@ export default class OsmosisPlugin extends Plugin {
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
 
-			void this.cardSync.syncAll().then(() => {
+			this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				// A throw here would otherwise vanish AND leave header chrome
+				// and dashboard stale until the next workspace event
+				console.error("Osmosis: startup card sync/refresh failed", error);
 			});
 		});
 
 		// Incremental sync on file changes (debounced)
 		const debouncedSync = debounce((file: TFile) => {
-			void this.cardSync.syncFile(file);
+			this.cardSync.syncFile(file).then(() => {
+				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				console.error("Osmosis: incremental card sync/refresh failed", error);
+			});
 		}, 2000, true);
 
 		this.registerEvent(
@@ -167,6 +235,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("delete", (file) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleDelete(file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
@@ -175,9 +244,15 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("rename", (file, oldPath) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleRename(oldPath, file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
+	}
+
+	onunload() {
+		// Force out any pending schedule frontmatter writes
+		void this.scheduleStore.flush();
 	}
 
 	private addMindMapActionToMarkdownLeaves(): void {
@@ -249,8 +324,11 @@ export default class OsmosisPlugin extends Plugin {
 	/** Re-render any open dashboard sidebar views. */
 	refreshDashboard(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-			const view = leaf.view as DashboardSidebarView;
-			void view.render();
+			// Sidebar leaves are deferred placeholders until first shown —
+			// they have no render() (calling it would throw and kill the
+			// caller), and render themselves from the store in onOpen().
+			const view = leaf.view;
+			if (view instanceof DashboardSidebarView) void view.render();
 		}
 	}
 
@@ -260,9 +338,10 @@ export default class OsmosisPlugin extends Plugin {
 		const existing = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
 		if (existing.length > 0 && existing[0]) {
 			void workspace.revealLeaf(existing[0]);
-			// Refresh counts when re-opening an existing dashboard
-			const view = existing[0].view as DashboardSidebarView;
-			void view.render();
+			// Refresh counts when re-opening an existing dashboard. A still-
+			// deferred leaf renders itself in onOpen() once revealed.
+			const view = existing[0].view;
+			if (view instanceof DashboardSidebarView) void view.render();
 			return;
 		}
 
@@ -288,8 +367,49 @@ export default class OsmosisPlugin extends Plugin {
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 			this.settings.showStudyBreadcrumb,
+			this.settings.sequentialContextLines,
+			() => {
+				// Session end: force pending line-card schedule writes to disk
+				void this.scheduleStore.flush();
+			},
 		);
 		modal.open();
+	}
+
+	/**
+	 * "Generate flashcards from note": plan block-ID insertions, show the
+	 * confirmation modal, and on confirm tag the note (and opt it in).
+	 */
+	private async openGenerateFlashcards(file: TFile): Promise<void> {
+		const content = await this.app.vault.cachedRead(file);
+		const plan = planIdGeneration(content);
+
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const rawOptIn: unknown = fm?.["osmosis-cards"];
+		const optedIn = rawOptIn === true || rawOptIn === "true";
+
+		if (plan.insertions.length === 0) {
+			new Notice("Nothing to generate — every element is already tagged.");
+			return;
+		}
+
+		new GenerateFlashcardsModal(this.app, file.basename, plan, !optedIn, () => {
+			void (async () => {
+				let tagged = 0;
+				// Re-plan inside process() so concurrent edits can't clobber
+				await this.app.vault.process(file, (data) => {
+					const fresh = planIdGeneration(data);
+					tagged = fresh.insertions.length;
+					return fresh.content;
+				});
+				if (!optedIn) {
+					await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+						frontmatter["osmosis-cards"] = true;
+					});
+				}
+				new Notice(`Tagged ${String(tagged)} element${tagged === 1 ? "" : "s"} with Osmosis IDs.`);
+			})();
+		}).open();
 	}
 
 	/** Create a StudySessionManager wired to the plugin's store and writer. */
@@ -302,6 +422,7 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.scheduleStore,
 		);
 	}
 

@@ -2,8 +2,9 @@ import { Component, Modal, MarkdownRenderer, setIcon, type App } from "obsidian"
 import type { StudySessionManager } from "../study/StudySessionManager";
 import type { StudyCard, DeckScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import type { ScheduleData } from "../database/types";
+import type { Card, ScheduleData } from "../database/types";
 import type { FenceWriter } from "../store/FenceWriter";
+import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { isCloseMatch } from "../study/match";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
@@ -73,6 +74,10 @@ export class SequentialStudyModal extends Modal {
 		private readonly fenceWriter?: FenceWriter,
 		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
 		private readonly showBreadcrumb: boolean = false,
+		/** Preceding sibling lines shown as context on line-card fronts. */
+		private readonly contextLines: number = 2,
+		/** Called when the session ends — flushes pending schedule writes. */
+		private readonly onSessionEnd?: () => void,
 	) {
 		super(app);
 	}
@@ -103,6 +108,7 @@ export class SequentialStudyModal extends Modal {
 
 		this.renderComponent.unload();
 		this.contentEl.empty();
+		this.onSessionEnd?.();
 	}
 
 	private buildLayout(): void {
@@ -217,17 +223,22 @@ export class SequentialStudyModal extends Modal {
 		// Update breadcrumb to reflect this card's deck
 		this.updateBreadcrumb(studyCard.card.deck);
 
-		// Render front
+		// Render front — line cards get a breadcrumb + preceding-line context
+		// treatment instead of plain markdown
 		this.frontEl.empty();
 		this.frontEl.removeClass("osmosis-hidden");
 		this.dividerEl.removeClass("osmosis-hidden");
-		void MarkdownRenderer.render(
-			this.app,
-			studyCard.card.front,
-			this.frontEl,
-			studyCard.card.notePath,
-			this.renderComponent,
-		).then(() => addCodeBlockLanguageLabels(this.frontEl));
+		if (studyCard.card.cardType === "line") {
+			this.renderLineCardFront(studyCard.card);
+		} else {
+			void MarkdownRenderer.render(
+				this.app,
+				studyCard.card.front,
+				this.frontEl,
+				studyCard.card.notePath,
+				this.renderComponent,
+			).then(() => addCodeBlockLanguageLabels(this.frontEl));
+		}
 
 		// Hide back
 		this.backEl.empty();
@@ -253,6 +264,41 @@ export class SequentialStudyModal extends Modal {
 		} else {
 			this.flipBtn.removeClass("osmosis-hidden");
 			this.typeInEl.addClass("osmosis-hidden");
+		}
+	}
+
+	/**
+	 * Line-card front: the ancestor breadcrumb ending in "?" for the hidden
+	 * line ("Cells › Cellular Respiration › Krebs cycle › ?"), then up to
+	 * `contextLines` immediately preceding sibling lines, dimmed. Flipping
+	 * reveals the line itself as the back, as with any other card.
+	 */
+	private renderLineCardFront(card: Card): void {
+		const crumbEl = this.frontEl.createDiv({ cls: "osmosis-line-breadcrumb" });
+		for (const part of card.front.split(BREADCRUMB_SEPARATOR)) {
+			crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-part", text: part });
+			crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-sep", text: "›" });
+		}
+		crumbEl.createSpan({
+			cls: "osmosis-line-breadcrumb-part osmosis-line-breadcrumb-unknown",
+			text: "?",
+		});
+
+		const context = this.contextLines > 0
+			? (card.contextBefore ?? []).slice(-this.contextLines)
+			: [];
+		if (context.length === 0) return;
+
+		const contextEl = this.frontEl.createDiv({ cls: "osmosis-line-context" });
+		for (const line of context) {
+			const lineEl = contextEl.createDiv({ cls: "osmosis-line-context-line" });
+			void MarkdownRenderer.render(
+				this.app,
+				line,
+				lineEl,
+				card.notePath,
+				this.renderComponent,
+			).then(() => addCodeBlockLanguageLabels(lineEl));
 		}
 	}
 

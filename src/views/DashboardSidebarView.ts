@@ -165,10 +165,16 @@ export class DashboardSidebarView extends ItemView {
 			this.plugin.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 			this.plugin.settings.showStudyBreadcrumb,
+			this.plugin.settings.sequentialContextLines,
+			() => {
+				// Session end: flush pending line-card schedule writes, then
+				// refresh deck counts. Passed as the modal's onSessionEnd
+				// callback — overriding modal.onClose here would replace the
+				// modal's own cleanup (learning timers, render component).
+				void this.plugin.scheduleStore.flush();
+				void this.render();
+			},
 		);
-		modal.onClose = () => {
-			void this.render();
-		};
 		modal.open();
 	}
 }

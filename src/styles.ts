@@ -216,8 +216,8 @@ export function buildMapSettingsFromFrontmatter(
 
 /**
  * The `osmosis-styles:` frontmatter key structure for per-note style overrides.
- * Keys in `styles` are either tree paths ("## Architecture") or
- * stable IDs ("_n:a3f2").
+ * Keys in `styles` are block IDs ("^os-a1b2c3"), tree paths ("## Architecture"),
+ * or stable IDs ("_n:a3f2").
  */
 export interface OsmosisStyleFrontmatter {
 	/** Theme name to apply to this note's mind map. */
@@ -403,6 +403,9 @@ import type { LayoutNode } from "./layout";
 /** Stable-ID selector prefix. */
 const STABLE_ID_PREFIX = "_n:";
 
+/** Block-ID selector prefix (selector form: "^os-a1b2c3"). */
+const BLOCK_ID_SELECTOR_PREFIX = "^";
+
 /**
  * Build the tree-path selector string for a node in the layout tree.
  *
@@ -444,6 +447,26 @@ export function buildStableIdSelector(node: OsmosisNode): string {
 }
 
 /**
+ * Build the block-ID selector for a node ("^os-a1b2c3"), or undefined if
+ * the node's line carries no block ID. Works for user-authored block IDs
+ * too ("^my-anchor"), not just Osmosis-generated ones.
+ */
+export function buildBlockIdSelector(node: OsmosisNode): string | undefined {
+	return node.blockId ? BLOCK_ID_SELECTOR_PREFIX + node.blockId : undefined;
+}
+
+/**
+ * The selector the GUI writes for a node's style override.
+ *
+ * Prefers the block-ID form when the node has one — block IDs survive
+ * renames and reorders (unlike tree paths) and are user-visible/linkable
+ * (unlike _n: hashes). Falls back to the stable-ID selector.
+ */
+export function buildPreferredSelector(node: OsmosisNode): string {
+	return buildBlockIdSelector(node) ?? buildStableIdSelector(node);
+}
+
+/**
  * Build a map of nodeId → tree-path string from an OsmosisNode tree.
  *
  * This enables tree-path style lookups without needing LayoutNode parent
@@ -472,20 +495,29 @@ export function buildTreePathMap(root: OsmosisNode): Map<string, string> {
 /**
  * Look up the Local-level style for a node using its ID and pre-built tree path.
  * Works without LayoutNode parent pointers — suitable for pre-layout measurement.
+ *
+ * Selector priority: block ID ("^os-a1b2c3") > stable ID ("_n:...") > tree path.
  */
 export function lookupNodeStyleByPath(
 	frontmatter: OsmosisStyleFrontmatter | undefined,
 	nodeId: string,
 	treePath: string | undefined,
+	blockId?: string,
 ): NodeStyle | undefined {
 	if (!frontmatter?.styles) return undefined;
 	const styles = frontmatter.styles;
 
-	// 1. Stable ID selector (highest priority)
+	// 1. Block-ID selector (highest priority)
+	if (blockId) {
+		const blockKey = BLOCK_ID_SELECTOR_PREFIX + blockId;
+		if (styles[blockKey]) return styles[blockKey];
+	}
+
+	// 2. Stable ID selector
 	const stableKey = STABLE_ID_PREFIX + nodeId;
 	if (styles[stableKey]) return styles[stableKey];
 
-	// 2. Tree path selector
+	// 3. Tree path selector
 	if (treePath && styles[treePath]) return styles[treePath];
 
 	return undefined;
@@ -494,8 +526,8 @@ export function lookupNodeStyleByPath(
 /**
  * Look up the Local-level style override for a node from parsed frontmatter.
  *
- * Checks both stable-ID selectors ("_n:a3f2...") and tree-path selectors.
- * Stable IDs take priority over tree paths if both match.
+ * Checks block-ID selectors ("^os-a1b2c3"), stable-ID selectors ("_n:a3f2...")
+ * and tree-path selectors, in that priority order.
  */
 export function lookupNodeStyle(
 	frontmatter: OsmosisStyleFrontmatter | undefined,
@@ -505,11 +537,15 @@ export function lookupNodeStyle(
 
 	const styles = frontmatter.styles;
 
-	// 1. Check stable ID selector (highest priority within Local level)
+	// 1. Check block-ID selector (highest priority within Local level)
+	const blockKey = buildBlockIdSelector(layoutNode.source);
+	if (blockKey && styles[blockKey]) return styles[blockKey];
+
+	// 2. Check stable ID selector
 	const stableKey = STABLE_ID_PREFIX + layoutNode.source.id;
 	if (styles[stableKey]) return styles[stableKey];
 
-	// 2. Check tree path selector
+	// 3. Check tree path selector
 	const treePath = buildTreePath(layoutNode);
 	if (treePath && styles[treePath]) return styles[treePath];
 

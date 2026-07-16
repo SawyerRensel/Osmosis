@@ -13,6 +13,15 @@ export interface GeneratedCard {
 	sourceLine: number;
 	/** Whether this card requires typed answer input. */
 	typeIn: boolean;
+	/** Block ID for line cards (e.g. "os-a1b2c3"). */
+	blockId?: string;
+	/** Excluded from deck totals and sequential study (line-card opt-out). */
+	excludeFromDecks?: boolean;
+	/**
+	 * Line cards: contents of up to MAX_CONTEXT_LINES immediately preceding
+	 * sibling lines (document order), shown as front context in sequential study.
+	 */
+	contextBefore?: string[];
 
 	// Schedule data parsed from fence metadata (optional — absent means new card)
 	stability?: number;

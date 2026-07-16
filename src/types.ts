@@ -46,6 +46,13 @@ export interface OsmosisNode {
 	/** Character positions in the source markdown. */
 	range: Range;
 
+	/**
+	 * Obsidian block ID found at the end of this node's line (without the
+	 * leading caret, e.g. "os-a1b2c3"). Stripped from `content`. Used as the
+	 * line-card identity and as a style selector anchor.
+	 */
+	blockId?: string;
+
 	/** For transcluded nodes, the source file path. Undefined for local nodes. */
 	sourceFile?: string;
 
