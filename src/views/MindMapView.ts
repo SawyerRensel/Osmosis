@@ -10,6 +10,7 @@ import {
 	Notice,
 	Menu,
 	parseYaml,
+	setIcon,
 	type ViewStateResult,
 } from "obsidian";
 import { ParseCache } from "../cache";
@@ -41,6 +42,7 @@ import { lineCardId } from "../card-gen/line-cards";
 import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
 import type { Card } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
 
@@ -211,6 +213,12 @@ export class MindMapView extends ItemView {
 	private spatialBanner: HTMLElement | null = null;
 	private spatialSessionManager: StudySessionManager | null = null;
 
+	// Reading mode: the map can be explored and studied but not mutated.
+	// Enforced by guards on the mutation methods (assertEditable/startDrag),
+	// so every entry surface — keyboard, ribbon, menus, gestures — is covered.
+	private isReadingMode = false;
+	private readingActionEl: HTMLElement | null = null;
+
 	// Resize state: drag-to-resize node width
 	private resizingNodeId: string | null = null;
 	private resizeStartX = 0;
@@ -261,6 +269,12 @@ export class MindMapView extends ItemView {
 			e.preventDefault();
 			return false;
 		});
+		// Ctrl/Cmd+E toggles reading mode, matching the markdown view
+		this.scope.register(["Mod"], "e", (e: KeyboardEvent) => {
+			this.toggleReadingMode();
+			e.preventDefault();
+			return false;
+		});
 		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
 			void this.pasteNodeStyle();
 			e.preventDefault();
@@ -285,7 +299,18 @@ export class MindMapView extends ItemView {
 		return this.isPinned ? `${base} (pinned)` : base;
 	}
 
+	getState(): Record<string, unknown> {
+		const state = super.getState();
+		// Persist only the mode — never `file`, which would auto-pin restored
+		// views via setState. collapsedIds stay unpersisted (they churn).
+		state.readingMode = this.isReadingMode;
+		return state;
+	}
+
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
+		if (typeof state?.readingMode === "boolean") {
+			this.setReadingMode(state.readingMode);
+		}
 		if (typeof state?.file === "string") {
 			const file = this.app.vault.getFileByPath(state.file);
 			if (file instanceof TFile) {
@@ -313,6 +338,50 @@ export class MindMapView extends ItemView {
 		}
 		// updateHeader() refreshes the tab title; not in public typings
 		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+	}
+
+	// ── Reading Mode ────────────────────────────────────────
+
+	/** Toggle between reading (explore/study only) and editing mode. */
+	toggleReadingMode(): void {
+		this.setReadingMode(!this.isReadingMode);
+	}
+
+	setReadingMode(reading: boolean): void {
+		if (this.isReadingMode === reading) return;
+		if (reading) {
+			// Finish in-flight mutations before locking the surface
+			if (this.editingNodeId) this.stopEditing(true);
+			this.resizingNodeId = null;
+			this.cleanupAllInteractions();
+		}
+		this.isReadingMode = reading;
+		this.contentEl.toggleClass("osmosis-reading-mode", reading);
+		this.updateReadingAction();
+		this.updateToolbarState();
+		this.app.workspace.requestSaveLayout();
+	}
+
+	/** Header action shows the mode you'd switch to (markdown-view convention). */
+	private updateReadingAction(): void {
+		if (!this.readingActionEl) return;
+		setIcon(this.readingActionEl, this.isReadingMode ? "pencil" : "book-open");
+		this.readingActionEl.setAttribute(
+			"aria-label",
+			this.isReadingMode
+				? "Current view: reading\nClick to edit"
+				: "Current view: editing\nClick to read",
+		);
+	}
+
+	/**
+	 * Gate for every map mutation. In reading mode, tells the user why
+	 * nothing happened and returns false.
+	 */
+	private assertEditable(): boolean {
+		if (!this.isReadingMode) return true;
+		new Notice("Reading mode: map editing is off");
+		return false;
 	}
 
 	// ── Spatial Study Mode ──────────────────────────────────
@@ -951,6 +1020,11 @@ export class MindMapView extends ItemView {
 			},
 		});
 
+		// Reading/editing mode toggle (icon shows the mode you'd switch to)
+		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
+			this.toggleReadingMode();
+		});
+
 		// Open properties sidebar action (useful on mobile)
 		this.addAction("paintbrush", "Open style sidebar", () => {
 			void this.plugin.activatePropertiesSidebar();
@@ -981,6 +1055,15 @@ export class MindMapView extends ItemView {
 		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
 			this.toggleSpatialPeek();
 		});
+
+		// Apply the global default mode; persisted per-leaf state (setState)
+		// arrives afterwards and overrides it.
+		this.setReadingMode(
+			resolveDefaultReadingMode(
+				this.plugin.settings.mindMapDefaultMode,
+				Platform.isMobile,
+			),
+		);
 
 		await this.loadActiveFile();
 
@@ -2025,6 +2108,7 @@ export class MindMapView extends ItemView {
 	 *  Replaces target overrides entirely: keys absent from the clipboard
 	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
 	private async pasteNodeStyle(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.clipboardNodeStyle) {
 			new Notice("No style to paste");
 			return;
@@ -2115,6 +2199,7 @@ export class MindMapView extends ItemView {
 			hasSelection: this.selectedNodeId !== null,
 			isEditing: this.editingNodeId !== null,
 			hasFile: this.currentFile !== null,
+			isReadingMode: this.isReadingMode,
 		});
 	}
 
@@ -2398,8 +2483,9 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		// Resize handle: start drag-to-resize
-		if (e.button === 0 && !this.editingNodeId) {
+		// Resize handle: start drag-to-resize (handles are hidden by CSS in
+		// reading mode, but guard anyway)
+		if (e.button === 0 && !this.editingNodeId && !this.isReadingMode) {
 			const target = e.target as Element;
 			if (target.closest(".osmosis-resize-handle")) {
 				const handleNodeId = target.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
@@ -2507,7 +2593,9 @@ export class MindMapView extends ItemView {
 				// Movement cancels long-press; if not triggered, convert to pan
 				if (dist >= DRAG_THRESHOLD) {
 					this.cancelLongPress();
-					if (!this.longPressTriggered) {
+					if (!this.longPressTriggered || this.isReadingMode) {
+						// Reading mode: node drags always pan — a stray
+						// tap-drag can never restructure the map.
 						this.dragNodeId = null;
 						this.isPanning = true;
 						this.panStart = { x: e.clientX, y: e.clientY };
@@ -2519,7 +2607,14 @@ export class MindMapView extends ItemView {
 				}
 			} else {
 				if (dist >= DRAG_THRESHOLD) {
-					this.startDrag(this.dragNodeId);
+					if (this.isReadingMode) {
+						// Reading mode: dragging a node pans the viewport
+						this.dragNodeId = null;
+						this.isPanning = true;
+						this.panStart = { x: e.clientX, y: e.clientY };
+					} else {
+						this.startDrag(this.dragNodeId);
+					}
 				}
 			}
 		}
@@ -2899,46 +2994,56 @@ export class MindMapView extends ItemView {
 
 		if (nodeId) {
 			const node = this.nodeMap.get(nodeId);
-			// ── Structure ──
-			menu.addItem((item) =>
-				item.setTitle("Add child").setIcon("arrow-right-from-line")
-					.onClick(() => { if (node) void this.addChildNode(node); }),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Add sibling").setIcon("arrow-down-from-line")
-					.onClick(() => { if (node) void this.addSiblingNode(node); }),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Insert parent").setIcon("arrow-right-to-line")
-					.onClick(() => { if (node) void this.insertParentNode(node); }),
-			);
-			menu.addSeparator();
+			// Reading mode keeps navigation, fold, copy, and study items —
+			// structural, clipboard-mutating, style, and delete items go.
+			if (!this.isReadingMode) {
+				// ── Structure ──
+				menu.addItem((item) =>
+					item.setTitle("Add child").setIcon("arrow-right-from-line")
+						.onClick(() => { if (node) void this.addChildNode(node); }),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Add sibling").setIcon("arrow-down-from-line")
+						.onClick(() => { if (node) void this.addSiblingNode(node); }),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Insert parent").setIcon("arrow-right-to-line")
+						.onClick(() => { if (node) void this.insertParentNode(node); }),
+				);
+				menu.addSeparator();
+			}
 
 			// ── Clipboard ──
-			menu.addItem((item) =>
-				item.setTitle("Cut").setIcon("scissors")
-					.onClick(() => void this.copySelectedNodes(true)),
-			);
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Cut").setIcon("scissors")
+						.onClick(() => void this.copySelectedNodes(true)),
+				);
+			}
 			menu.addItem((item) =>
 				item.setTitle("Copy").setIcon("copy")
 					.onClick(() => void this.copySelectedNodes(false)),
 			);
-			menu.addItem((item) =>
-				item.setTitle("Paste").setIcon("clipboard-paste")
-					.onClick(() => void this.pasteNodes()),
-			);
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Paste").setIcon("clipboard-paste")
+						.onClick(() => void this.pasteNodes()),
+				);
+			}
 			menu.addSeparator();
 
 			// ── Style ──
-			menu.addItem((item) =>
-				item.setTitle("Copy style").setIcon("pipette")
-					.onClick(() => this.copyNodeStyle()),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Paste style").setIcon("paint-bucket")
-					.onClick(() => void this.pasteNodeStyle()),
-			);
-			menu.addSeparator();
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Copy style").setIcon("pipette")
+						.onClick(() => this.copyNodeStyle()),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Paste style").setIcon("paint-bucket")
+						.onClick(() => void this.pasteNodeStyle()),
+				);
+				menu.addSeparator();
+			}
 
 			// ── Fold ──
 			menu.addItem((item) =>
@@ -2956,20 +3061,22 @@ export class MindMapView extends ItemView {
 				item.setTitle("Study this branch").setIcon("graduation-cap")
 					.onClick(() => { if (node) this.enterSpatialStudy(node); }),
 			);
-			menu.addSeparator();
 
 			// ── Delete ──
-			menu.addItem((item) =>
-				item.setTitle("Delete").setIcon("trash-2")
-					.setWarning(true)
-					.onClick(() => {
-						if (this.selectedNodeIds.size > 1) {
-							void this.deleteSelectedNodes();
-						} else if (node) {
-							void this.deleteNode(node);
-						}
-					}),
-			);
+			if (!this.isReadingMode) {
+				menu.addSeparator();
+				menu.addItem((item) =>
+					item.setTitle("Delete").setIcon("trash-2")
+						.setWarning(true)
+						.onClick(() => {
+							if (this.selectedNodeIds.size > 1) {
+								void this.deleteSelectedNodes();
+							} else if (node) {
+								void this.deleteNode(node);
+							}
+						}),
+				);
+			}
 		} else {
 			// ── Canvas (no node) context menu ──
 			menu.addItem((item) =>
@@ -2982,11 +3089,13 @@ export class MindMapView extends ItemView {
 			);
 			menu.addSeparator();
 
-			menu.addItem((item) =>
-				item.setTitle("Paste").setIcon("clipboard-paste")
-					.onClick(() => void this.pasteNodes()),
-			);
-			menu.addSeparator();
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Paste").setIcon("clipboard-paste")
+						.onClick(() => void this.pasteNodes()),
+				);
+				menu.addSeparator();
+			}
 
 			menu.addItem((item) =>
 				item.setTitle("Collapse all").setIcon("chevrons-down-up")
@@ -3252,6 +3361,7 @@ export class MindMapView extends ItemView {
 	 * Processes nodes from end-of-document to start to preserve offsets.
 	 */
 	private async deleteSelectedNodes(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
 
 		// Collect ranges sorted by position (descending) to process from end
@@ -3295,6 +3405,7 @@ export class MindMapView extends ItemView {
 	 * direction: -1 = up, 1 = down.
 	 */
 	private async moveNodeUpDown(direction: number): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3414,6 +3525,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings become children of the previous sibling.
 	 */
 	private async indentNode(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3486,6 +3598,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings promote together.
 	 */
 	private async outdentNode(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3631,6 +3744,7 @@ export class MindMapView extends ItemView {
 	 * Copy (or cut) selected node subtrees to the internal clipboard.
 	 */
 	private async copySelectedNodes(isCut: boolean): Promise<void> {
+		if (isCut && !this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3678,6 +3792,7 @@ export class MindMapView extends ItemView {
 	 * Paste clipboard content as sibling(s) below the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
 			return;
 
@@ -3801,6 +3916,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings get parented under the new node.
 	 */
 	private async insertParentNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 
 		const src = node.source;
@@ -3879,6 +3995,7 @@ export class MindMapView extends ItemView {
 	 * Duplicate the selected node(s) (and their subtrees) as siblings below.
 	 */
 	private async duplicateNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -4320,6 +4437,10 @@ export class MindMapView extends ItemView {
 	}
 
 	private async finishResize(): Promise<void> {
+		if (this.isReadingMode) {
+			this.resizingNodeId = null;
+			return;
+		}
 		if (!this.resizingNodeId) return;
 		const nodeId = this.resizingNodeId;
 		this.resizingNodeId = null;
@@ -4350,6 +4471,7 @@ export class MindMapView extends ItemView {
 	// ─── Drag-and-Drop ──────────────────────────────────────
 
 	private startDrag(nodeId: string): void {
+		if (this.isReadingMode) return;
 		if (!this.svg) return;
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
@@ -5485,6 +5607,7 @@ export class MindMapView extends ItemView {
 	// ─── Inline Editing ──────────────────────────────────────
 
 	private startEditing(nodeId: string): void {
+		if (!this.assertEditable()) return;
 		const node = this.nodeMap.get(nodeId);
 		if (!node || !this.svg) return;
 
@@ -6024,6 +6147,7 @@ export class MindMapView extends ItemView {
 	 * Forward undo/redo to the markdown editor for the current file.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		// Find an editor that has the same file open
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
@@ -6240,6 +6364,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = parentNode.source;
 		const file = this.getNodeFile(src);
@@ -6288,6 +6413,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, writes to the source file.
 	 */
 	private async addSiblingNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -6325,6 +6451,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, deletes from the source file.
 	 */
 	private async deleteNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);

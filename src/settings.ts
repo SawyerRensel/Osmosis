@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { BranchLineStyle, MapSettings } from "./styles";
+import type { MindMapDefaultMode } from "./reading-mode";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
@@ -57,6 +58,8 @@ export interface OsmosisSettings {
 	showTransclusionStyle: boolean;
 	/** Whether transcluded branches load expanded when a map opens (default: true). */
 	expandTransclusions: boolean;
+	/** Which mode new mind map views open in (default: "editing"). */
+	mindMapDefaultMode: MindMapDefaultMode;
 	/** @deprecated Migrated to osmosis-styles frontmatter. Kept for migration only. */
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
@@ -100,6 +103,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	cursorSync: true,
 	showTransclusionStyle: false,
 	expandTransclusions: true,
+	mindMapDefaultMode: "editing",
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
@@ -171,6 +175,21 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.expandTransclusions)
 					.onChange(async (value) => {
 						this.plugin.settings.expandTransclusions = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Default mind map mode")
+			.setDesc("Which mode mind map views open in. Reading mode blocks map edits (drag, in-place editing, structure changes) while pan, zoom, fold, study, and peek stay available.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("editing", "Editing")
+					.addOption("reading", "Reading")
+					.addOption("reading-mobile", "Reading on mobile only")
+					.setValue(this.plugin.settings.mindMapDefaultMode)
+					.onChange(async (value) => {
+						this.plugin.settings.mindMapDefaultMode = value as MindMapDefaultMode;
 						await this.plugin.saveSettings();
 					}),
 			);
