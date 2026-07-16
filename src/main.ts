@@ -93,6 +93,17 @@ export default class OsmosisPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: "toggle-mindmap-reading-mode",
+			name: "Toggle mind map reading mode",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MindMapView);
+				if (!view) return false;
+				if (!checking) view.toggleReadingMode();
+				return true;
+			},
+		});
+
+		this.addCommand({
 			id: "open-properties-sidebar",
 			name: "Open mind map properties",
 			callback: () => {

@@ -1918,3 +1918,14 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+/* ── Reading mode ─────────────────────────────────────────── */
+/* Resize handles are inert while the map is read-only */
+.osmosis-mindmap-container.osmosis-reading-mode .osmosis-resize-handle {
+	display: none;
+}
+
+/* Individual toolbar buttons/dividers hidden in reading mode */
+.osmosis-toolbar-btn-hidden {
+	display: none;
+}
