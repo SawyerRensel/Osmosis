@@ -242,9 +242,114 @@ for mind-map styling data.
       — embedded branches load expanded; off restores lazy collapse.
     Fixtures: `transclusion-study-{host,source,optout,plain,deep}.md`. (L)
 
+12. **Granular add / remove / disable of line cards** *(design signed off
+    2026-07-21)* — see §8. Add or remove line-card IDs by editor selection or
+    by mind-map node, and disable/enable individual cards (schedule kept,
+    fully out of study). (L)
+
 Each task follows the standard loop: implement → `npm run lint` →
 `npm run test` → `npm run build` → manual test instructions → user confirms →
 commit.
+
+---
+
+## Design — §8: Granular add / remove / disable (task 12)
+
+The bulk "Generate flashcards from note" command is all-or-nothing. This adds
+per-element control: opt individual lines in/out after the fact, and pause a
+card without losing its history.
+
+### Three actions
+
+- **Add** — tag the selected lines (or the selected map node) with block IDs,
+  exactly as the bulk command does per element: trailing `^os-xxxxxx` on
+  headings/bullets/ordered/paragraphs, standalone after-block IDs on
+  code/table/blockquote, `id:` metadata on osmosis fences. Reuses
+  `planIdGeneration`, scoped to a line range. A selection is explicit intent,
+  so **no confirmation modal** — one undoable edit + a "N cards added" notice.
+- **Remove** — strip the block ID from the selected lines / node. The existing
+  orphan flow soft-deletes the schedule entry (kept in `osmosis-schedule`
+  until cleanup). **Decision (2026-07-21): remove deletes user-created block
+  IDs too**, not just `^os-` ones — with a confirmation warning whenever the
+  selection contains non-`os-` IDs, since that can break existing
+  `[[note#^id]]` links. Consequence: **remove → re-add mints a fresh ID, so
+  the card starts over** (old schedule stays orphaned). Remove is the "start
+  over" action; disable is the "pause" action.
+- **Disable / Enable** — a `disabled: true` field on the card's
+  `osmosis-schedule` entry (a stub entry is written if the card was never
+  studied). A disabled card is **fully out**: not hidden by peek or study in
+  note view or mind map, skipped by the sequential queue, and dropped from
+  dashboard New/Learn/Due counts — exact parity with fence-card `exclude:`,
+  but enable restores full FSRS history. Re-running the bulk generate command
+  leaves disabled cards alone (their lines already carry IDs).
+
+### Storage — `disabled` on the schedule entry (§3 extension)
+
+`osmosis-schedule` entries gain an optional `disabled: true`. It coexists with
+schedule fields:
+
+```yaml
+osmosis-schedule:
+  os-a1b2c3:          # never studied, paused
+    disabled: true
+  os-d4e5f6:          # studied, then paused — history preserved
+    due: 2026-07-25T10:30:00
+    stability: 4.2
+    ...
+    disabled: true
+```
+
+`disabled` and the FSRS schedule are **independent dimensions** of the same
+entry. `ScheduleStore` stages them separately (`pendingSchedule` +
+`pendingDisabled`) and `applyScheduleEntries` **merges** into the existing
+entry object so a rating flush never wipes `disabled`, and a disable flush
+never wipes the schedule. `parseDisabledFrontmatter` reads the flag even for
+schedule-less stubs (which `parseScheduleFrontmatter` skips, since they have
+no `due`). `Card` gains `disabled?: boolean`, populated by `CardSyncService`
+from the parsed set (overlaid with pending, like schedules).
+
+### Where "fully out" is enforced (two chokepoints)
+
+- `study/spatial-study.ts` — `isLineCard()` returns false for disabled cards,
+  so **all four** peek/study filter functions (note view + mind map, peek +
+  due-only) drop them in one place.
+- `store/CardStore.ts` — the same guard that skips `excludeFromDecks` now also
+  skips `disabled`, so the sequential queue (`buildQueue` → `getDue/NewCards`)
+  and dashboard counts exclude them.
+
+### Entry points (decided 2026-07-21)
+
+- **Editor selection** — context-menu items + command-palette commands for
+  add / remove / disable / enable on the selected lines (no selection = current
+  line). Add scopes `planIdGeneration` to the range and writes via one editor
+  transaction; remove strips IDs (confirm modal on user IDs); disable/enable
+  resolve the line cards on those lines and flip the flag.
+- **Mind-map node** — the same four items in the node context menu, routed
+  through `getNodeFile(src)` + `src.range` (works for transcluded nodes: their
+  range/file resolve to the source note) and the node's card key.
+- **Sequential modal** — the existing eye-off "Exclude card" button (key `e`)
+  writes `disabled` through the schedule store for line cards instead of
+  FenceWriter's `exclude:` (fence cards keep the old path); undo reverses.
+
+Not doing: a disable affordance on the spatial/contextual rating bubble.
+Terminology: UI says "Exclude/Include" (matching the sequential button and
+fence `exclude:`); data/field is `disabled`.
+
+### Multi-line prose → one card per line (decided 2026-07-21)
+
+A run of consecutive prose lines with no blank line between them is **one
+Obsidian block**, so only its last line could carry a valid `^id` — the parser
+(line-oriented) showed three mind-map nodes but only one became a card.
+Resolved by aligning the generator with the mind map's existing save
+behavior: both now run a shared **`normalizeBlockSpacing`** (extracted from
+`MindMapView.normalizeHeadingSpacing`) that separates prose runs into
+blank-line-separated blocks. Result: one line = one block = one card = one
+block ID, everywhere. The lever to merge lines into a single card is to remove
+the blank line between them; to split, add one. `planIdGeneration` normalizes
+first and remaps any selection range across the inserted blanks. Consequence:
+"Add line cards" and bulk "Generate flashcards" now normalize spacing
+note-wide (same as the map does on any edit). `normalizeBlockSpacing` passes
+frontmatter and standalone block-ID lines through untouched.
 
 ---
 

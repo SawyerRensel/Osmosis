@@ -8,6 +8,7 @@ import {
 	serializeScheduleEntry,
 	parseScheduleEntry,
 	parseScheduleFrontmatter,
+	parseDisabledFrontmatter,
 	formatLocalTimestamp,
 	parseTimestamp,
 } from "./ScheduleStore";
@@ -182,7 +183,7 @@ describe("parseScheduleFrontmatter", () => {
 describe("applyScheduleEntries", () => {
 	it("creates the osmosis-schedule key when absent", () => {
 		const fm: Record<string, unknown> = { "osmosis-cards": true };
-		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]));
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
 		expect(fm["osmosis-cards"]).toBe(true);
 		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toEqual({
 			"os-a1b2c3": serializeScheduleEntry(baseSchedule),
@@ -195,7 +196,7 @@ describe("applyScheduleEntries", () => {
 				"os-other1": serializeScheduleEntry({ ...baseSchedule, reps: 9 }),
 			},
 		};
-		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]));
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
 		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, unknown>;
 		expect(Object.keys(map).sort()).toEqual(["os-a1b2c3", "os-other1"]);
 	});
@@ -206,16 +207,77 @@ describe("applyScheduleEntries", () => {
 				"os-a1b2c3": serializeScheduleEntry(baseSchedule),
 			},
 		};
-		applyScheduleEntries(fm, new Map([["os-a1b2c3", null]]));
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", null]]), new Map());
 		expect(fm).not.toHaveProperty(SCHEDULE_FRONTMATTER_KEY);
 	});
 
 	it("replaces a corrupt non-object osmosis-schedule value", () => {
 		const fm: Record<string, unknown> = { [SCHEDULE_FRONTMATTER_KEY]: "corrupt" };
-		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]));
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
 		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toEqual({
 			"os-a1b2c3": serializeScheduleEntry(baseSchedule),
 		});
+	});
+
+	it("writes a schedule-less disabled stub", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map([["os-a1b2c3", true]]));
+		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toEqual({ "os-a1b2c3": { disabled: true } });
+	});
+
+	it("merges disabled onto an existing schedule without wiping it", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
+		applyScheduleEntries(fm, new Map(), new Map([["os-a1b2c3", true]]));
+		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toEqual({
+			"os-a1b2c3": { ...serializeScheduleEntry(baseSchedule), disabled: true },
+		});
+	});
+
+	it("keeps the schedule when re-enabling (disabled removed, history intact)", () => {
+		const fm: Record<string, unknown> = {
+			[SCHEDULE_FRONTMATTER_KEY]: {
+				"os-a1b2c3": { ...serializeScheduleEntry(baseSchedule), disabled: true },
+			},
+		};
+		applyScheduleEntries(fm, new Map(), new Map([["os-a1b2c3", false]]));
+		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toEqual({
+			"os-a1b2c3": serializeScheduleEntry(baseSchedule),
+		});
+	});
+
+	it("drops a disabled-only entry (and the key) when re-enabled", () => {
+		const fm: Record<string, unknown> = {
+			[SCHEDULE_FRONTMATTER_KEY]: { "os-a1b2c3": { disabled: true } },
+		};
+		applyScheduleEntries(fm, new Map(), new Map([["os-a1b2c3", false]]));
+		expect(fm).not.toHaveProperty(SCHEDULE_FRONTMATTER_KEY);
+	});
+
+	it("a schedule write does not disturb a sibling's disabled flag", () => {
+		const fm: Record<string, unknown> = {
+			[SCHEDULE_FRONTMATTER_KEY]: { "os-other1": { disabled: true } },
+		};
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
+		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, unknown>;
+		expect(map["os-other1"]).toEqual({ disabled: true });
+	});
+});
+
+describe("parseDisabledFrontmatter", () => {
+	it("collects block IDs flagged disabled, including schedule-less stubs", () => {
+		const raw = {
+			"os-a1b2c3": { disabled: true },
+			"os-d4e5f6": { ...serializeScheduleEntry(baseSchedule), disabled: true },
+			"os-g7h8i9": serializeScheduleEntry(baseSchedule),
+		};
+		expect([...parseDisabledFrontmatter(raw)].sort()).toEqual(["os-a1b2c3", "os-d4e5f6"]);
+	});
+
+	it("ignores non-true disabled values and non-objects", () => {
+		expect(parseDisabledFrontmatter({ "os-a": { disabled: "true" } }).size).toBe(0);
+		expect(parseDisabledFrontmatter(undefined).size).toBe(0);
+		expect(parseDisabledFrontmatter("x").size).toBe(0);
 	});
 });
 

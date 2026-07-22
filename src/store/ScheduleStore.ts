@@ -19,7 +19,21 @@ export interface ScheduleEntryYaml {
 	lapses: number;
 	state: CardState;
 	learningSteps: number;
+	/** Line-card "exclude": card is fully out of study, schedule preserved. */
+	disabled?: boolean;
 }
+
+/** The schedule-data keys written into a frontmatter entry (excludes `disabled`). */
+const SCHEDULE_FIELD_KEYS = [
+	"due",
+	"stability",
+	"difficulty",
+	"lastReview",
+	"reps",
+	"lapses",
+	"state",
+	"learningSteps",
+] as const;
 
 /**
  * Persists FSRS schedule data for line cards into note frontmatter.
@@ -32,8 +46,10 @@ export interface ScheduleEntryYaml {
  * (study-session end, plugin unload).
  */
 export class ScheduleStore {
-	/** Staged entries per note path. `null` value = remove the entry. */
+	/** Staged schedule writes per note path. `null` value = remove the entry's schedule. */
 	private pending = new Map<string, Map<string, ScheduleData | null>>();
+	/** Staged disabled-flag writes per note path (independent of schedule). */
+	private pendingDisabled = new Map<string, Map<string, boolean>>();
 	private timers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** Per-path write chain — serializes processFrontMatter calls per file. */
 	private inflight = new Map<string, Promise<void>>();
@@ -47,26 +63,46 @@ export class ScheduleStore {
 
 	/** Stage a schedule write for a card, debouncing the frontmatter flush. */
 	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void {
-		this.stage(notePath, blockId, { ...schedule });
+		this.stageSchedule(notePath, blockId, { ...schedule });
 	}
 
 	/** Stage removal of a card's schedule entry (e.g., review revert on a new card). */
 	removeSchedule(notePath: string, blockId: string): void {
-		this.stage(notePath, blockId, null);
+		this.stageSchedule(notePath, blockId, null);
 	}
 
 	/**
-	 * Look up a staged-but-unflushed entry. Returns the pending schedule,
-	 * `null` for a pending removal, or `undefined` when nothing is staged.
-	 * Lets readers overlay pending state on top of (stale) frontmatter.
+	 * Stage a disabled-flag change for a card, debouncing the frontmatter
+	 * flush. `disabled` merges onto any existing schedule for the block ID —
+	 * it never clears schedule data, so enabling restores full history.
+	 */
+	setDisabled(notePath: string, blockId: string, disabled: boolean): void {
+		let entries = this.pendingDisabled.get(notePath);
+		if (!entries) {
+			entries = new Map();
+			this.pendingDisabled.set(notePath, entries);
+		}
+		entries.set(blockId, disabled);
+		this.armTimer(notePath);
+	}
+
+	/**
+	 * Look up a staged-but-unflushed schedule entry. Returns the pending
+	 * schedule, `null` for a pending removal, or `undefined` when nothing is
+	 * staged. Lets readers overlay pending state on top of (stale) frontmatter.
 	 */
 	getPendingEntry(notePath: string, blockId: string): ScheduleData | null | undefined {
 		return this.pending.get(notePath)?.get(blockId);
 	}
 
-	/** All staged-but-unflushed entries for a note (empty map when none). */
+	/** All staged-but-unflushed schedule entries for a note (empty map when none). */
 	getPendingEntries(notePath: string): ReadonlyMap<string, ScheduleData | null> {
 		return this.pending.get(notePath) ?? EMPTY_PENDING;
+	}
+
+	/** All staged-but-unflushed disabled flags for a note (empty map when none). */
+	getPendingDisabled(notePath: string): ReadonlyMap<string, boolean> {
+		return this.pendingDisabled.get(notePath) ?? EMPTY_DISABLED;
 	}
 
 	/** Check if a path is currently being written to. */
@@ -76,13 +112,13 @@ export class ScheduleStore {
 
 	/** True when any staged entries have not been flushed yet. */
 	hasPendingWrites(): boolean {
-		return this.pending.size > 0;
+		return this.pending.size > 0 || this.pendingDisabled.size > 0;
 	}
 
 	/** Flush all pending entries immediately, cancelling debounce timers. */
 	async flush(): Promise<void> {
-		const paths = [...this.pending.keys()];
-		await Promise.all(paths.map((path) => this.flushPath(path)));
+		const paths = new Set([...this.pending.keys(), ...this.pendingDisabled.keys()]);
+		await Promise.all([...paths].map((path) => this.flushPath(path)));
 	}
 
 	/** Flush pending entries for one note immediately. */
@@ -102,14 +138,17 @@ export class ScheduleStore {
 
 	// ── Private Helpers ───────────────────────────────────────
 
-	private stage(notePath: string, blockId: string, entry: ScheduleData | null): void {
+	private stageSchedule(notePath: string, blockId: string, entry: ScheduleData | null): void {
 		let entries = this.pending.get(notePath);
 		if (!entries) {
 			entries = new Map();
 			this.pending.set(notePath, entries);
 		}
 		entries.set(blockId, entry);
+		this.armTimer(notePath);
+	}
 
+	private armTimer(notePath: string): void {
 		this.clearTimer(notePath);
 		this.timers.set(
 			notePath,
@@ -128,9 +167,13 @@ export class ScheduleStore {
 	}
 
 	private async writePath(notePath: string): Promise<void> {
-		const entries = this.pending.get(notePath);
+		const schedule = this.pending.get(notePath);
+		const disabled = this.pendingDisabled.get(notePath);
 		this.pending.delete(notePath);
-		if (!entries || entries.size === 0) return;
+		this.pendingDisabled.delete(notePath);
+		const hasSchedule = schedule && schedule.size > 0;
+		const hasDisabled = disabled && disabled.size > 0;
+		if (!hasSchedule && !hasDisabled) return;
 
 		const file = this.resolveFile(notePath);
 		if (!file) return; // note deleted — drop the pending entries
@@ -138,45 +181,72 @@ export class ScheduleStore {
 		this.writingPaths.add(notePath);
 		try {
 			await this.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-				applyScheduleEntries(fm, entries);
+				applyScheduleEntries(fm, schedule ?? EMPTY_PENDING, disabled ?? EMPTY_DISABLED);
 			});
 		} catch (error) {
 			console.error(`Osmosis: failed to write schedule frontmatter for ${notePath}`, error);
 			// Re-stage what wasn't superseded while writing, so the next
 			// rating or forced flush retries (no timer — avoids retry loops).
-			const current = this.pending.get(notePath);
-			if (!current) {
-				this.pending.set(notePath, entries);
-			} else {
-				for (const [blockId, entry] of entries) {
-					if (!current.has(blockId)) current.set(blockId, entry);
-				}
-			}
+			if (schedule) this.restage(this.pending, notePath, schedule);
+			if (disabled) this.restage(this.pendingDisabled, notePath, disabled);
 		} finally {
 			this.writingPaths.delete(notePath);
+		}
+	}
+
+	/** Re-stage entries that failed to flush, without clobbering newer edits. */
+	private restage<V>(target: Map<string, Map<string, V>>, notePath: string, entries: Map<string, V>): void {
+		const current = target.get(notePath);
+		if (!current) {
+			target.set(notePath, entries);
+		} else {
+			for (const [blockId, entry] of entries) {
+				if (!current.has(blockId)) current.set(blockId, entry);
+			}
 		}
 	}
 }
 
 const EMPTY_PENDING: ReadonlyMap<string, ScheduleData | null> = new Map();
+const EMPTY_DISABLED: ReadonlyMap<string, boolean> = new Map();
 
 /**
- * Pure function: apply staged schedule entries to a frontmatter object
- * in place. Removes the `osmosis-schedule` key entirely when it ends up
+ * Pure function: apply staged schedule and disabled changes to a frontmatter
+ * object in place. Schedule and `disabled` are independent dimensions of each
+ * entry — a schedule write never touches `disabled`, and a disabled write
+ * never touches schedule fields (so enabling restores full FSRS history).
+ * Unknown/hand-added keys on an entry are preserved. Removes an entry when it
+ * ends up with no fields, and the whole `osmosis-schedule` key when it ends up
  * empty. Exported for unit testing.
  */
 export function applyScheduleEntries(
 	fm: Record<string, unknown>,
-	entries: Map<string, ScheduleData | null>,
+	schedule: ReadonlyMap<string, ScheduleData | null>,
+	disabled: ReadonlyMap<string, boolean>,
 ): void {
 	const raw = fm[SCHEDULE_FRONTMATTER_KEY];
 	const map: Record<string, unknown> = isPlainObject(raw) ? raw : {};
 
-	for (const [blockId, entry] of entries) {
-		if (entry === null) {
+	const blockIds = new Set([...schedule.keys(), ...disabled.keys()]);
+	for (const blockId of blockIds) {
+		const existing = map[blockId];
+		const entry: Record<string, unknown> = isPlainObject(existing) ? existing : {};
+
+		if (schedule.has(blockId)) {
+			const value = schedule.get(blockId)!;
+			for (const key of SCHEDULE_FIELD_KEYS) delete entry[key];
+			if (value !== null) Object.assign(entry, serializeScheduleEntry(value));
+		}
+
+		if (disabled.has(blockId)) {
+			if (disabled.get(blockId)) entry["disabled"] = true;
+			else delete entry["disabled"];
+		}
+
+		if (Object.keys(entry).length === 0) {
 			delete map[blockId];
 		} else {
-			map[blockId] = serializeScheduleEntry(entry);
+			map[blockId] = entry;
 		}
 	}
 
@@ -237,6 +307,24 @@ export function parseScheduleFrontmatter(raw: unknown): Map<string, ScheduleData
 	for (const [blockId, value] of Object.entries(raw)) {
 		const entry = parseScheduleEntry(value);
 		if (entry) result.set(blockId, entry);
+	}
+	return result;
+}
+
+/**
+ * Block IDs flagged `disabled: true` in the `osmosis-schedule` frontmatter.
+ * Read independently of schedule parsing so schedule-less "paused" stubs
+ * (which have no `due` and are skipped by `parseScheduleFrontmatter`) are
+ * still recognized as disabled.
+ */
+export function parseDisabledFrontmatter(raw: unknown): Set<string> {
+	const result = new Set<string>();
+	if (!isPlainObject(raw)) return result;
+
+	for (const [blockId, value] of Object.entries(raw)) {
+		if (isPlainObject(value) && value["disabled"] === true) {
+			result.add(blockId);
+		}
 	}
 	return result;
 }

@@ -64,7 +64,7 @@ export class CardStore {
 	getAllDecks(): string[] {
 		const decks = new Set<string>();
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			decks.add(card.deck);
 		}
 		return [...decks].sort();
@@ -79,7 +79,7 @@ export class CardStore {
 	getDueCards(now: number, deck?: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			if (card.due === undefined) continue; // no schedule = new card
 			if (card.due > now) continue;
 			if (deck !== undefined && card.deck !== deck) continue;
@@ -94,7 +94,7 @@ export class CardStore {
 	getDueCardsByDeckPrefix(now: number, prefix: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			if (card.due === undefined) continue;
 			if (card.due > now) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
@@ -108,7 +108,7 @@ export class CardStore {
 	getNewCards(deck?: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			if (card.due !== undefined) continue; // has schedule = not new
 			if (deck !== undefined && card.deck !== deck) continue;
 			result.push(card);
@@ -120,7 +120,7 @@ export class CardStore {
 	getNewCardsByDeckPrefix(prefix: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			if (card.due !== undefined) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
 			result.push(card);
@@ -133,7 +133,7 @@ export class CardStore {
 		const counts = new Map<string, { new: number; learn: number; due: number }>();
 
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			let entry = counts.get(card.deck);
 			if (!entry) {
 				entry = { new: 0, learn: 0, due: 0 };
@@ -179,6 +179,18 @@ export class CardStore {
 		card.learningSteps = schedule.learningSteps;
 	}
 
+	/**
+	 * Set (or clear) a card's disabled flag in-memory, so study surfaces and
+	 * dashboard counts reflect an exclude/include immediately, before the
+	 * frontmatter flush re-syncs the card. No-op if the card is absent.
+	 */
+	setDisabled(cardId: string, disabled: boolean): void {
+		const card = this.cards.get(cardId);
+		if (!card) return;
+		if (disabled) card.disabled = true;
+		else delete card.disabled;
+	}
+
 	/** Clear schedule fields on a card, returning it to "new" state. */
 	clearSchedule(cardId: string): void {
 		const card = this.cards.get(cardId);
@@ -197,7 +209,7 @@ export class CardStore {
 	getFolderDerivedDecks(): Set<string> {
 		const result = new Set<string>();
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks) continue;
+			if (card.excludeFromDecks || card.disabled) continue;
 			const folderPath = card.notePath.split("/").slice(0, -1).join("/");
 			if (card.deck === folderPath) {
 				result.add(card.deck);

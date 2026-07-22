@@ -478,14 +478,25 @@ export class SequentialStudyModal extends Modal {
 		this.renderCard();
 	}
 
-	/** Exclude the current card: write exclude: true to its fence and advance. */
+	/**
+	 * Exclude the current card and advance without recording a review.
+	 * Line cards get `disabled: true` in osmosis-schedule frontmatter (schedule
+	 * preserved); fence cards get `exclude: true` in fence metadata.
+	 */
 	private async excludeCard(): Promise<void> {
 		const studyCard = this.queue[this.currentIndex];
-		if (!studyCard || !this.fenceWriter || !this.resolveFile) return;
+		if (!studyCard) return;
 
-		const file = this.resolveFile(studyCard.card.notePath);
-		if (file) {
-			await this.fenceWriter.writeExclude(file, studyCard.card.id, true);
+		const isLineCard = studyCard.card.blockId !== undefined;
+		if (isLineCard) {
+			this.sessionManager.setLineCardDisabled(studyCard.card, true);
+		} else if (this.fenceWriter && this.resolveFile) {
+			const file = this.resolveFile(studyCard.card.notePath);
+			if (file) {
+				await this.fenceWriter.writeExclude(file, studyCard.card.id, true);
+			}
+		} else {
+			return;
 		}
 
 		this.undoStack.push({
@@ -505,8 +516,10 @@ export class SequentialStudyModal extends Modal {
 		if (!entry) return;
 
 		if (entry.type === "exclude") {
-			// Undo exclude: remove exclude flag and re-insert card
-			if (this.fenceWriter && this.resolveFile) {
+			// Undo exclude: clear the flag (frontmatter or fence) and re-insert
+			if (entry.studyCard.card.blockId !== undefined) {
+				this.sessionManager.setLineCardDisabled(entry.studyCard.card, false);
+			} else if (this.fenceWriter && this.resolveFile) {
 				const file = this.resolveFile(entry.studyCard.card.notePath);
 				if (file) {
 					await this.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);

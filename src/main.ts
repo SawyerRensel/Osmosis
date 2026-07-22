@@ -1,11 +1,11 @@
-import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
-import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter } from "./store/ScheduleStore";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter } from "./store/ScheduleStore";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -13,7 +13,9 @@ import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSide
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
-import { planIdGeneration } from "./card-gen/generate-ids";
+import { ConfirmModal } from "./views/ConfirmModal";
+import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
+import type { Card } from "./database/types";
 import type { DeckScope } from "./study/types";
 
 export default class OsmosisPlugin extends Plugin {
@@ -67,6 +69,17 @@ export default class OsmosisPlugin extends Plugin {
 					else schedules.set(blockId, entry);
 				}
 				return schedules;
+			},
+			(file: TFile) => {
+				// Disabled ("excluded") line cards: osmosis-schedule
+				// `disabled: true` overlaid with pending unflushed changes
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const disabled = parseDisabledFrontmatter(raw);
+				for (const [blockId, flag] of this.scheduleStore.getPendingDisabled(file.path)) {
+					if (flag) disabled.add(blockId);
+					else disabled.delete(blockId);
+				}
+				return disabled;
 			},
 		);
 
@@ -188,6 +201,9 @@ export default class OsmosisPlugin extends Plugin {
 
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
+
+		// ── Granular line-card add/remove/exclude (plan §8) ──────
+		this.registerLineCardCommands();
 
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
@@ -455,6 +471,205 @@ export default class OsmosisPlugin extends Plugin {
 				},
 			});
 		}
+	}
+
+	/**
+	 * Register the editor commands and context-menu items for granular
+	 * line-card control: add / remove IDs and exclude / include from study on
+	 * the selected lines (no selection = current line). See plan §8.
+	 */
+	private registerLineCardCommands(): void {
+		this.addCommand({
+			id: "add-line-cards-selection",
+			name: "Add line cards from selection",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.addLineCards(file, this.selectionLineRange(editor));
+			},
+		});
+		this.addCommand({
+			id: "remove-line-cards-selection",
+			name: "Remove line cards from selection",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.removeLineCards(file, this.selectionLineRange(editor));
+			},
+		});
+		this.addCommand({
+			id: "exclude-line-cards-selection",
+			name: "Exclude line cards in selection from study",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.setLineCardsDisabled(file, this.selectionLineRange(editor), true);
+			},
+		});
+		this.addCommand({
+			id: "include-line-cards-selection",
+			name: "Include line cards in selection in study",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.setLineCardsDisabled(file, this.selectionLineRange(editor), false);
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+				const file = info.file;
+				if (!file || file.extension !== "md") return;
+				const range = this.selectionLineRange(editor);
+				// Keep unrelated notes' menus clean: only surface these items on
+				// notes already opted in, or where the selection holds line cards.
+				const rawOptIn: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.["osmosis-cards"];
+				const optedIn = rawOptIn === true || rawOptIn === "true";
+				const { enabled, disabled } = this.lineCardsInRange(file.path, range);
+				if (!optedIn && enabled.length + disabled.length === 0) return;
+				this.addLineCardMenuItems(menu, file, range);
+			}),
+		);
+	}
+
+	/** Selected line range, or the cursor's line when there is no selection. */
+	private selectionLineRange(editor: Editor): LineRange {
+		const from = editor.getCursor("from");
+		const to = editor.getCursor("to");
+		return { start: Math.min(from.line, to.line), end: Math.max(from.line, to.line) };
+	}
+
+	/** Line cards in a note whose source line falls within the range. */
+	private lineCardsInRange(notePath: string, range: LineRange): {
+		enabled: Card[];
+		disabled: Card[];
+	} {
+		const enabled: Card[] = [];
+		const disabled: Card[] = [];
+		for (const card of this.cardStore.getCardsByNote(notePath)) {
+			if (card.cardType !== "line" || card.blockId === undefined) continue;
+			if (card.sourceLine < range.start || card.sourceLine > range.end) continue;
+			if (card.disabled) disabled.push(card);
+			else enabled.push(card);
+		}
+		return { enabled, disabled };
+	}
+
+	/** Add the relevant line-card items to an editor or node context menu. */
+	private addLineCardMenuItems(menu: Menu, file: TFile, range: LineRange): void {
+		const { enabled, disabled } = this.lineCardsInRange(file.path, range);
+		menu.addSeparator();
+		menu.addItem((item) =>
+			item.setTitle("Add line cards").setIcon("layers")
+				.onClick(() => void this.addLineCards(file, range)),
+		);
+		if (enabled.length + disabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Remove line cards").setIcon("layers")
+					.onClick(() => void this.removeLineCards(file, range)),
+			);
+		}
+		if (enabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Exclude from study").setIcon("eye-off")
+					.onClick(() => void this.setLineCardsDisabled(file, range, true)),
+			);
+		}
+		if (disabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Include in study").setIcon("eye")
+					.onClick(() => void this.setLineCardsDisabled(file, range, false)),
+			);
+		}
+	}
+
+	/**
+	 * Tag the elements overlapping a line range with block IDs (opting the
+	 * note in if needed). Re-plans inside `process` so concurrent edits can't
+	 * clobber. Public for the mind-map node menu.
+	 */
+	async addLineCards(file: TFile, range: LineRange): Promise<void> {
+		const preview = planIdGeneration(await this.app.vault.cachedRead(file), range);
+		if (preview.insertions.length === 0) {
+			new Notice("Nothing to add — every element in the selection is already tagged.");
+			return;
+		}
+
+		let tagged = 0;
+		await this.app.vault.process(file, (data) => {
+			const fresh = planIdGeneration(data, range);
+			tagged = fresh.insertions.length;
+			return fresh.content;
+		});
+
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const rawOptIn: unknown = fm?.["osmosis-cards"];
+		if (rawOptIn !== true && rawOptIn !== "true") {
+			await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+				frontmatter["osmosis-cards"] = true;
+			});
+		}
+		new Notice(`Added ${String(tagged)} line card${tagged === 1 ? "" : "s"}.`);
+	}
+
+	/**
+	 * Strip line-card block IDs from a line range. Warns first when the range
+	 * contains user-authored IDs (deleting them can break links). The orphan
+	 * flow soft-deletes the cards' schedules. Public for the mind-map node menu.
+	 */
+	async removeLineCards(file: TFile, range: LineRange): Promise<void> {
+		const dryRun = removeBlockIdsInRange(await this.app.vault.cachedRead(file), range);
+		if (dryRun.removed.length === 0) {
+			new Notice("No line cards to remove in the selection.");
+			return;
+		}
+
+		const apply = async () => {
+			let count = 0;
+			await this.app.vault.process(file, (data) => {
+				const result = removeBlockIdsInRange(data, range);
+				count = result.removed.length;
+				return result.content;
+			});
+			new Notice(`Removed ${String(count)} line card${count === 1 ? "" : "s"}.`);
+		};
+
+		const userIds = dryRun.removed.filter((r) => r.isUserId).length;
+		if (userIds > 0) {
+			new ConfirmModal(
+				this.app,
+				{
+					title: "Remove line cards?",
+					body: `${String(userIds)} of these ${String(dryRun.removed.length)} block ID${dryRun.removed.length === 1 ? "" : "s"} ${userIds === 1 ? "was" : "were"} not created by Osmosis. Removing ${userIds === 1 ? "it" : "them"} may break existing "[[note#^id]]" links. To pause a card without deleting its ID, use "Exclude from study" instead.`,
+					confirmText: "Remove anyway",
+					warning: true,
+				},
+				() => void apply(),
+			).open();
+			return;
+		}
+		await apply();
+	}
+
+	/**
+	 * Exclude (disable) or include (enable) every line card whose source line
+	 * falls in the range. Updates the store immediately and flushes the flag
+	 * to osmosis-schedule frontmatter. Public for the mind-map node menu.
+	 */
+	async setLineCardsDisabled(file: TFile, range: LineRange, disabled: boolean): Promise<void> {
+		const { enabled, disabled: alreadyDisabled } = this.lineCardsInRange(file.path, range);
+		const targets = disabled ? enabled : alreadyDisabled;
+		if (targets.length === 0) {
+			new Notice(disabled ? "No cards to exclude in the selection." : "No excluded cards to include in the selection.");
+			return;
+		}
+
+		for (const card of targets) {
+			this.cardStore.setDisabled(card.id, disabled);
+			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled);
+		}
+		await this.scheduleStore.flushPath(file.path);
+		this.refreshDashboard();
+		this.lineReveal.refreshChrome();
+		new Notice(
+			`${disabled ? "Excluded" : "Included"} ${String(targets.length)} line card${targets.length === 1 ? "" : "s"}.`,
+		);
 	}
 
 	async loadSettings() {

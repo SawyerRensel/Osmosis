@@ -160,7 +160,7 @@ describe("FSRS integration", () => {
 
 describe("StudySessionManager schedule-write routing", () => {
 	interface FenceCall { cardId: string; kind: "write" | "remove" }
-	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" }
+	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" | "disable" | "enable" }
 
 	function makeManager() {
 		const fenceCalls: FenceCall[] = [];
@@ -182,6 +182,9 @@ describe("StudySessionManager schedule-write routing", () => {
 			},
 			removeSchedule: (notePath: string, blockId: string) => {
 				lineCalls.push({ notePath, blockId, kind: "remove" });
+			},
+			setDisabled: (notePath: string, blockId: string, disabled: boolean) => {
+				lineCalls.push({ notePath, blockId, kind: disabled ? "disable" : "enable" });
 			},
 		};
 

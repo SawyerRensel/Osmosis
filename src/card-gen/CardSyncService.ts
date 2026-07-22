@@ -30,6 +30,11 @@ export class CardSyncService {
 		 * osmosis-schedule frontmatter overlaid with pending unflushed ratings.
 		 */
 		private readonly getLineSchedules?: (file: TFile) => Map<string, ScheduleData>,
+		/**
+		 * Block IDs of disabled ("excluded") line cards for a note —
+		 * osmosis-schedule `disabled: true` overlaid with pending changes.
+		 */
+		private readonly getLineDisabled?: (file: TFile) => Set<string>,
 	) {}
 
 	/**
@@ -67,8 +72,10 @@ export class CardSyncService {
 			// Write id: metadata back into fences that lack one
 			await this.injectFenceIds(file, content, result.cards);
 
-			// Line-card schedules from frontmatter (+ pending overlay), parsed once
+			// Line-card schedules + disabled flags from frontmatter (+ pending
+			// overlay), parsed once
 			const lineSchedules = this.getLineSchedules?.(file);
+			const lineDisabled = this.getLineDisabled?.(file);
 
 			for (const genCard of result.cards) {
 				generatedIds.add(genCard.id);
@@ -81,6 +88,9 @@ export class CardSyncService {
 				const lineSchedule = genCard.blockId !== undefined
 					? lineSchedules?.get(genCard.blockId)
 					: undefined;
+				const isDisabled = genCard.blockId !== undefined
+					? lineDisabled?.has(genCard.blockId) ?? false
+					: false;
 
 				const card: Card = {
 					id: genCard.id,
@@ -93,6 +103,7 @@ export class CardSyncService {
 					sourceLine: genCard.sourceLine,
 					blockId: genCard.blockId,
 					excludeFromDecks: genCard.excludeFromDecks,
+					...(isDisabled ? { disabled: true } : {}),
 					contextBefore: genCard.contextBefore,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
 					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
