@@ -36,7 +36,7 @@ import {
 	EmbeddableMarkdownEditor,
 	autoResizeExtension,
 } from "../editor/EmbeddableMarkdownEditor";
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
@@ -147,7 +147,7 @@ export class MindMapView extends ItemView {
 	// Cursor sync state
 	private parser = new OsmosisParser();
 	private cursorSyncNodeId: string | null = null;
-	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private cursorSyncTimer: number | null = null;
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
@@ -167,7 +167,7 @@ export class MindMapView extends ItemView {
 
 	// Touch/pointer state
 	private activePointers = new Map<number, { x: number; y: number }>();
-	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	private longPressTimer: number | null = null;
 	private longPressTriggered = false;
 	private lastTapTime = 0;
 	private lastTapPosition = { x: 0, y: 0 };
@@ -535,14 +535,14 @@ export class MindMapView extends ItemView {
 		sourcePath: string,
 		ns?: string,
 	): Promise<void> {
-		const createElement = (tag: string, cls: string): HTMLElement => {
+		const createElement = (tag: keyof HTMLElementTagNameMap, cls: string): HTMLElement => {
 			if (ns) {
 				const el = document.createElementNS(ns, tag) as HTMLElement;
 				el.setAttribute("xmlns", ns);
 				el.className = cls;
 				return el;
 			}
-			const el = document.createElement(tag);
+			const el = createEl(tag);
 			el.className = cls;
 			return el;
 		};
@@ -1229,7 +1229,7 @@ export class MindMapView extends ItemView {
 		this.rubberBandRect?.remove();
 		this.rubberBandRect = null;
 		if (this.cursorSyncTimer) {
-			clearTimeout(this.cursorSyncTimer);
+			window.clearTimeout(this.cursorSyncTimer);
 			this.cursorSyncTimer = null;
 		}
 		this.cleanupDrag();
@@ -1409,11 +1409,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				if (variantName) {
@@ -1422,7 +1419,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1457,11 +1453,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1501,11 +1494,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1538,9 +1528,7 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1577,9 +1565,7 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1592,7 +1578,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1629,11 +1614,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1701,7 +1683,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1744,11 +1725,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1786,7 +1764,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1818,11 +1795,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
 				osmosis["classes"] = classes;
@@ -1861,11 +1835,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Remove the class definition
@@ -1894,7 +1865,6 @@ export class MindMapView extends ItemView {
 					writtenStyles = { ...styles };
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1930,11 +1900,8 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Rename the class definition
@@ -1994,9 +1961,7 @@ export class MindMapView extends ItemView {
 			this.suppressNextReload = true;
 			await this.app.fileManager.processFrontMatter(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -2010,7 +1975,6 @@ export class MindMapView extends ItemView {
 						}
 					}
 					if (Object.keys(styles).length === 0) delete osmosis["styles"];
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 					if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 				},
 			);
@@ -2050,9 +2014,7 @@ export class MindMapView extends ItemView {
 			this.suppressNextReload = true;
 			await this.app.fileManager.processFrontMatter(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -2126,9 +2088,7 @@ export class MindMapView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
@@ -2139,7 +2099,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenClasses = { ...classes };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -2242,8 +2201,7 @@ export class MindMapView extends ItemView {
 			return;
 		}
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-			const parsed = parseYaml(match[1]);
+			const parsed: unknown = parseYaml(match[1]);
 			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
 				parsed as Record<string, unknown> | undefined,
 			);
@@ -2417,7 +2375,7 @@ export class MindMapView extends ItemView {
 	/** Schedule a viewport cull update on the next animation frame */
 	private scheduleCullUpdate(): void {
 		if (this.cullRafId !== null) return;
-		this.cullRafId = requestAnimationFrame(() => {
+		this.cullRafId = window.requestAnimationFrame(() => {
 			this.cullRafId = null;
 			void this.updateVisibleNodes();
 		});
@@ -2580,7 +2538,7 @@ export class MindMapView extends ItemView {
 			// Touch: start long-press timer for selection mode + potential drag
 			if (e.pointerType === "touch") {
 				this.longPressTriggered = false;
-				this.longPressTimer = setTimeout(() => {
+				this.longPressTimer = window.setTimeout(() => {
 					this.longPressTriggered = true;
 					// Enter touch selection mode and select this node
 					this.touchSelectionMode = true;
@@ -2928,7 +2886,7 @@ export class MindMapView extends ItemView {
 
 	private cancelLongPress(): void {
 		if (this.longPressTimer !== null) {
-			clearTimeout(this.longPressTimer);
+			window.clearTimeout(this.longPressTimer);
 			this.longPressTimer = null;
 		}
 	}
@@ -3283,7 +3241,7 @@ export class MindMapView extends ItemView {
 		// Add animation class to SVG for CSS-driven transition
 		if (this.svg) {
 			this.svg.addClass("osmosis-animating");
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.svg?.removeClass("osmosis-animating");
 			}, COLLAPSE_ANIMATION_MS);
 		}
@@ -5731,7 +5689,7 @@ export class MindMapView extends ItemView {
 		const isMobile = Platform.isMobile;
 
 		// Create container div for the embedded editor
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
@@ -5787,7 +5745,7 @@ export class MindMapView extends ItemView {
 		this.editContainer = container;
 
 		// Add save/cancel buttons floating above the editor
-		const cancelBtn = document.createElement("button");
+		const cancelBtn = createEl("button");
 		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
 		cancelBtn.setAttribute("aria-label", "Cancel editing");
 		cancelBtn.textContent = "Cancel";
@@ -5796,7 +5754,7 @@ export class MindMapView extends ItemView {
 			e.stopPropagation();
 			this.stopEditing(false);
 		});
-		const saveBtn = document.createElement("button");
+		const saveBtn = createEl("button");
 		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
 		saveBtn.setAttribute("aria-label", "Save changes");
 		saveBtn.textContent = "Save";
@@ -5842,7 +5800,7 @@ export class MindMapView extends ItemView {
 				},
 				onBlur: () => {
 					// Small delay to allow click events to process first
-					setTimeout(() => {
+					window.setTimeout(() => {
 						if (this.editingNodeId === nodeId) {
 							this.stopEditing(true);
 						}
@@ -5973,10 +5931,10 @@ export class MindMapView extends ItemView {
 		scaledFontSize: number,
 		isMobile: boolean,
 	): void {
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
-		const input = document.createElement("textarea");
+		const input = createEl("textarea");
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
 		input.value = node.source.content;
 		input.rows = 1;
@@ -6025,7 +5983,7 @@ export class MindMapView extends ItemView {
 		});
 
 		input.addEventListener("blur", () => {
-			setTimeout(() => {
+			window.setTimeout(() => {
 				if (this.editingNodeId === nodeId) {
 					this.stopEditing(true);
 				}
@@ -6182,11 +6140,9 @@ export class MindMapView extends ItemView {
 				// the new content directly from the editor (in-memory, instant).
 				this.suppressNextReload = true;
 				if (isRedo) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).redo();
+					view.editor.redo();
 				} else {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).undo();
+					view.editor.undo();
 				}
 				const newContent = view.editor.getValue();
 				this.cache.invalidate(this.currentFile.path);
@@ -6203,8 +6159,7 @@ export class MindMapView extends ItemView {
 			}
 		}
 		// Fallback: execute Obsidian's built-in commands
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-		(this.app as any).commands?.executeCommandById?.(
+		this.app.commands?.executeCommandById?.(
 			isRedo ? "editor:redo" : "editor:undo",
 		);
 	}
@@ -6719,7 +6674,7 @@ export class MindMapView extends ItemView {
 
 		// Only create the measurer if there are uncached nodes
 		if (toMeasure.length > 0) {
-			const measurer = document.createElement("div");
+			const measurer = createDiv();
 			measurer.style.cssText = `
 				position: absolute; left: -9999px; top: -9999px;
 				visibility: hidden; pointer-events: none;
@@ -6729,7 +6684,7 @@ export class MindMapView extends ItemView {
 			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
-				const cell = document.createElement("div");
+				const cell = createDiv();
 				cell.className = "osmosis-node-content osmosis-measure-cell markdown-rendered";
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
@@ -6770,7 +6725,7 @@ export class MindMapView extends ItemView {
 
 				// Inject checkbox for task-list items (affects size measurement)
 				if (node.metadata?.checkbox) {
-					const cb = document.createElement("input");
+					const cb = createEl("input");
 					cb.type = "checkbox";
 					cb.className = "task-list-item-checkbox";
 					if (node.metadata.checked) {
@@ -6958,7 +6913,7 @@ export class MindMapView extends ItemView {
 				if (match) {
 					const iframe = ns
 						? (document.createElementNS(ns, "iframe") as HTMLIFrameElement)
-						: document.createElement("iframe");
+						: createEl("iframe");
 					if (ns) iframe.setAttribute("xmlns", ns);
 					iframe.setAttribute("src", toEmbed(match));
 					iframe.setAttribute("frameborder", "0");

@@ -12,7 +12,7 @@ import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 interface DeferredCard {
 	studyCard: StudyCard;
 	dueAt: number; // epoch ms when the card should reappear
-	timer: ReturnType<typeof setTimeout>;
+	timer: number;
 }
 
 /** An entry in the undo stack — can represent either a rating or an exclude. */
@@ -102,7 +102,7 @@ export class SequentialStudyModal extends Modal {
 	onClose(): void {
 		// Clear all pending learning timers
 		for (const deferred of this.deferredCards) {
-			clearTimeout(deferred.timer);
+			window.clearTimeout(deferred.timer);
 		}
 		this.deferredCards = [];
 
@@ -260,7 +260,7 @@ export class SequentialStudyModal extends Modal {
 			this.typeInEl.removeClass("osmosis-hidden");
 			this.typeInInput.value = "";
 			// Focus input after a tick so modal is fully rendered
-			setTimeout(() => this.typeInInput.focus(), 50);
+			window.setTimeout(() => this.typeInInput.focus(), 50);
 		} else {
 			this.flipBtn.removeClass("osmosis-hidden");
 			this.typeInEl.addClass("osmosis-hidden");
@@ -536,7 +536,7 @@ export class SequentialStudyModal extends Modal {
 
 			// Cancel deferred learning card timer if one was created
 			if (entry.deferredCard) {
-				clearTimeout(entry.deferredCard.timer);
+				window.clearTimeout(entry.deferredCard.timer);
 				const idx = this.deferredCards.indexOf(entry.deferredCard);
 				if (idx !== -1) this.deferredCards.splice(idx, 1);
 			}
@@ -601,7 +601,7 @@ export class SequentialStudyModal extends Modal {
 		const deferred: DeferredCard = {
 			studyCard: updatedStudyCard,
 			dueAt,
-			timer: setTimeout(() => this.onLearningTimerFired(deferred), delayMs),
+			timer: window.setTimeout(() => this.onLearningTimerFired(deferred), delayMs),
 		};
 
 		this.deferredCards.push(deferred);
@@ -666,15 +666,15 @@ export class SequentialStudyModal extends Modal {
 			});
 
 			// Update countdown every second
-			const countdownInterval = setInterval(() => {
+			const countdownInterval = window.setInterval(() => {
 				if (!this.isWaiting) {
-					clearInterval(countdownInterval);
+					window.clearInterval(countdownInterval);
 					return;
 				}
 				const remaining = Math.max(0, Math.ceil((soonest.dueAt - Date.now()) / 1000));
 				countdownEl.textContent = `Next card in ${formatWaitTime(remaining)}`;
 				if (remaining <= 0) {
-					clearInterval(countdownInterval);
+					window.clearInterval(countdownInterval);
 				}
 			}, 1000);
 		});

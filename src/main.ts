@@ -279,7 +279,7 @@ export default class OsmosisPlugin extends Plugin {
 			// Find the reading-view toggle to insert before it
 			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
 
-			const btn = document.createElement("a");
+			const btn = createEl("a");
 			btn.className = "clickable-icon osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
 			setIcon(btn, "brain-circuit");
@@ -686,7 +686,6 @@ export default class OsmosisPlugin extends Plugin {
 
 	/** Migrate per-note mapSettings from data.json into osmosis-styles frontmatter. */
 	private async migrateMapSettingsToFrontmatter(): Promise<void> {
-		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		const entries = Object.entries(this.settings.mapSettings);
 		if (entries.length === 0) return;
 
@@ -698,11 +697,8 @@ export default class OsmosisPlugin extends Plugin {
 			try {
 				await this.app.fileManager.processFrontMatter(
 					file,
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					(fm: any) => {
-						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					(fm: Record<string, unknown>) => {
 						const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 						fm["osmosis-styles"] = osmosis;
 
 						// Copy each override into frontmatter (don't overwrite existing values)
@@ -720,7 +716,6 @@ export default class OsmosisPlugin extends Plugin {
 		}
 
 		// Clear migrated entries from data.json
-		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		this.settings.mapSettings = {};
 		await this.saveData(this.settings);
 		console.debug(`Osmosis: migrated map settings for ${entries.length} note(s) to frontmatter`);

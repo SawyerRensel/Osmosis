@@ -232,14 +232,14 @@ export class LineRevealProcessor {
 			// Move the line's own content into a hideable wrapper. Nested
 			// lists stay outside it — child items are their own cards and
 			// keep their own placeholders. The collapse indicator stays too.
-			const back = document.createElement(container instanceof HTMLLIElement ? "span" : "div");
+			const back = createEl(container.instanceOf(HTMLLIElement) ? "span" : "div");
 			back.className = "osmosis-line-back";
 			for (const node of Array.from(container.childNodes)) {
 				if (isPreservedNode(node)) continue;
 				back.appendChild(node);
 			}
 
-			placeholder = document.createElement("span");
+			placeholder = createSpan();
 			placeholder.className = "osmosis-line-placeholder osmosis-hidden";
 			placeholder.textContent = PLACEHOLDER_TEXT;
 			placeholder.addEventListener("click", () => {
@@ -322,7 +322,7 @@ export class LineRevealProcessor {
 	}
 
 	private showRatingBubble(notePath: string, blockId: string, line: TrackedLine): void {
-		const bubble = document.createElement("div");
+		const bubble = createDiv();
 		bubble.className = "osmosis-line-rating osmosis-contextual-rating";
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -332,7 +332,7 @@ export class LineRevealProcessor {
 			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
 		];
 		for (const { label, rating, cls } of ratings) {
-			const btn = document.createElement("button");
+			const btn = createEl("button");
 			btn.textContent = label;
 			btn.className = cls;
 			btn.addEventListener("click", (e) => {
@@ -490,7 +490,7 @@ export class LineRevealProcessor {
 		view: MarkdownView,
 		onClick: (notePath: string) => void,
 	): HTMLElement {
-		const btn = document.createElement("a");
+		const btn = createEl("a");
 		btn.className = `clickable-icon view-action ${cls}`;
 		btn.setAttribute("aria-label", label);
 		setIcon(btn, icon);
@@ -516,7 +516,7 @@ export class LineRevealProcessor {
 	private ensureBanner(host: HTMLElement, notePath: string): void {
 		let banner = host.querySelector<HTMLElement>(":scope > .osmosis-reveal-banner");
 		if (!banner) {
-			banner = document.createElement("div");
+			banner = createDiv();
 			banner.className = "osmosis-reveal-banner";
 			host.appendChild(banner);
 		}
@@ -617,7 +617,7 @@ export class LineRevealProcessor {
 
 /** Nodes that stay outside the hideable wrapper. */
 function isPreservedNode(node: Node): boolean {
-	if (!(node instanceof HTMLElement)) return false;
+	if (!(node.instanceOf(HTMLElement))) return false;
 	return (
 		node.tagName === "UL" ||
 		node.tagName === "OL" ||

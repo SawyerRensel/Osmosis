@@ -223,7 +223,7 @@ export class ColorPicker {
 				this.close();
 			}
 		};
-		setTimeout(() => {
+		window.setTimeout(() => {
 			document.addEventListener("mousedown", this.outsideClickHandler!);
 		}, 0);
 	}

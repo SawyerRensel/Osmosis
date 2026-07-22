@@ -57,7 +57,7 @@ export class ToolRibbon {
 			openProperties: () => void;
 		},
 	) {
-		this.el = document.createElement("div");
+		this.el = createDiv();
 		this.el.className = "osmosis-toolbar";
 
 		const groups: ButtonDef[][] = [
@@ -108,7 +108,7 @@ export class ToolRibbon {
 			const group = groups[gi];
 			if (!group) continue;
 			for (const def of group) {
-				const btn = document.createElement("button");
+				const btn = createEl("button");
 				btn.className = "osmosis-toolbar-btn clickable-icon";
 				btn.setAttribute("aria-label", def.label);
 				btn.setAttribute("title", def.label);
@@ -135,7 +135,7 @@ export class ToolRibbon {
 			}
 			// Add divider between groups (except after last)
 			if (gi < groups.length - 1) {
-				const divider = document.createElement("div");
+				const divider = createDiv();
 				divider.className = "osmosis-toolbar-divider";
 				this.el.appendChild(divider);
 			}

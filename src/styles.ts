@@ -204,12 +204,27 @@ export function buildMapSettingsFromFrontmatter(
 	if (!fm) return {};
 	const result: Partial<MapSettings> = {};
 	for (const key of MAP_SETTING_FM_KEYS) {
-		if (fm[key] !== undefined) {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-			(result as any)[key] = fm[key];
-		}
+		copyMapSetting(result, fm, key);
 	}
 	return result;
+}
+
+/**
+ * Copy one frontmatter key into a MapSettings partial.
+ *
+ * Generic over the key so the read and the write are correlated — the cast
+ * only bridges the two structurally identical property types, which TypeScript
+ * cannot prove equal through an indexed access on a union of keys.
+ */
+function copyMapSetting<K extends keyof OsmosisStyleFrontmatter & keyof MapSettings>(
+	result: Partial<MapSettings>,
+	fm: OsmosisStyleFrontmatter,
+	key: K,
+): void {
+	const value = fm[key];
+	if (value !== undefined) {
+		result[key] = value as MapSettings[K];
+	}
 }
 
 // ─── Frontmatter Style Overrides ────────────────────────────────────────────

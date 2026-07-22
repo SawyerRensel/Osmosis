@@ -12,7 +12,7 @@ export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
  */
 export class DashboardSidebarView extends ItemView {
 	plugin!: OsmosisPlugin;
-	private refreshInterval: ReturnType<typeof setInterval> | null = null;
+	private refreshInterval: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -31,18 +31,17 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-		this.plugin = (this.app as any).plugins.plugins["osmosis"] as OsmosisPlugin;
+		this.plugin = this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 		await this.render();
 		// Auto-refresh every 60 seconds so due counts stay current
-		this.refreshInterval = setInterval(() => {
+		this.refreshInterval = window.setInterval(() => {
 			void this.render();
 		}, 60_000);
 	}
 
 	async onClose(): Promise<void> {
 		if (this.refreshInterval !== null) {
-			clearInterval(this.refreshInterval);
+			window.clearInterval(this.refreshInterval);
 			this.refreshInterval = null;
 		}
 		this.contentEl.empty();

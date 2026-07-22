@@ -60,7 +60,11 @@ export interface OsmosisSettings {
 	expandTransclusions: boolean;
 	/** Which mode new mind map views open in (default: "editing"). */
 	mindMapDefaultMode: MindMapDefaultMode;
-	/** @deprecated Migrated to osmosis-styles frontmatter. Kept for migration only. */
+	/**
+	 * Legacy per-note map settings. Superseded by `osmosis-styles` frontmatter;
+	 * retained solely so `migrateMapSettingsToFrontmatter()` can drain existing
+	 * data.json files. Nothing else should read or write this.
+	 */
 	mapSettings: Record<string, Partial<MapSettings>>;
 	/** User-saved custom colors for the color picker palette. */
 	customColors: string[];
@@ -298,7 +302,6 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			.addSlider((slider) =>
 				slider
 					.setLimits(0, 5, 1)
-					.setDynamicTooltip()
 					.setValue(this.plugin.settings.sequentialContextLines)
 					.onChange(async (value) => {
 						this.plugin.settings.sequentialContextLines = value;

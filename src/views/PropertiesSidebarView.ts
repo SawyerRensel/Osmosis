@@ -132,8 +132,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-		this.plugin = (this.app as any).plugins.plugins["osmosis"] as OsmosisPlugin;
+		this.plugin = this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 	}
 
 	getViewType(): string {
@@ -233,11 +232,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			file,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Only store if different from default
@@ -247,7 +243,6 @@ export class PropertiesSidebarView extends ItemView {
 					osmosis[key] = value;
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -432,11 +427,8 @@ export class PropertiesSidebarView extends ItemView {
 
 						await this.app.fileManager.processFrontMatter(
 							file,
-							// eslint-disable-next-line @typescript-eslint/no-explicit-any
-							(fm: any) => {
-								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+							(fm: Record<string, unknown>) => {
 								const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 								fm["osmosis-styles"] = osmosis;
 
 								// Clear style overrides so the new theme's values take effect
@@ -466,7 +458,6 @@ export class PropertiesSidebarView extends ItemView {
 
 								osmosis["theme"] = value;
 
-								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 								if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 							},
 						);
@@ -894,7 +885,7 @@ export class PropertiesSidebarView extends ItemView {
 			.addText((text) => {
 				text.setPlaceholder("Emphasis");
 				text.onChange((value) => { inputValue = value.trim(); });
-				setTimeout(() => text.inputEl.focus(), 50);
+				window.setTimeout(() => text.inputEl.focus(), 50);
 				text.inputEl.addEventListener("keydown", (e) => {
 					if (e.key === "Enter" && inputValue) {
 						modal.close();
@@ -1018,7 +1009,7 @@ export class PropertiesSidebarView extends ItemView {
 			.addText((text) => {
 				text.setValue(oldName);
 				text.onChange((value) => { newName = value.trim(); });
-				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+				window.setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
 				text.inputEl.addEventListener("keydown", (e) => {
 					if (e.key === "Enter" && newName && newName !== oldName) {
 						modal.close();
@@ -1199,14 +1190,14 @@ export class PropertiesSidebarView extends ItemView {
 		while (dd.options.length > 0) dd.remove(0);
 
 		// Add "(none)" option
-		const noneOpt = document.createElement("option");
+		const noneOpt = createEl("option");
 		noneOpt.value = "";
 		noneOpt.textContent = "(none)";
 		dd.appendChild(noneOpt);
 
 		if (variants) {
 			for (const name of Object.keys(variants)) {
-				const opt = document.createElement("option");
+				const opt = createEl("option");
 				opt.value = name;
 				opt.textContent = name;
 				dd.appendChild(opt);
@@ -1238,7 +1229,7 @@ export class PropertiesSidebarView extends ItemView {
 			.addText((text) => {
 				text.setPlaceholder("Presentation");
 				text.onChange((value) => { inputValue = value.trim(); });
-				setTimeout(() => text.inputEl.focus(), 50);
+				window.setTimeout(() => text.inputEl.focus(), 50);
 				text.inputEl.addEventListener("keydown", (e) => {
 					if (e.key === "Enter" && inputValue) {
 						modal.close();
@@ -1355,7 +1346,7 @@ export class PropertiesSidebarView extends ItemView {
 			.addText((text) => {
 				text.setValue(oldName);
 				text.onChange((value) => { newName = value.trim(); });
-				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+				window.setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
 				text.inputEl.addEventListener("keydown", (e) => {
 					if (e.key === "Enter" && newName && newName !== oldName) {
 						modal.close();
@@ -1478,16 +1469,12 @@ export class PropertiesSidebarView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			file,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const base: NodeStyle = (osmosis["baseStyle"] as NodeStyle) ?? {};
 				mergeNodeStyle(base, update as NodeStyle);
 				osmosis["baseStyle"] = base;
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1513,9 +1500,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			file,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
@@ -1566,7 +1551,6 @@ export class PropertiesSidebarView extends ItemView {
 						break;
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1638,9 +1622,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			file,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				delete fm["osmosis-styles"];
 			},
 		);
@@ -1741,7 +1723,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(0, 6, 1)
 					.setValue(settings.collapseDepth)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("collapseDepth", value);
 					});
@@ -1756,7 +1737,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(20, 200, 5)
 					.setValue(settings.horizontalSpacing)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("horizontalSpacing", value);
 					});
@@ -1771,7 +1751,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(2, 40, 1)
 					.setValue(settings.verticalSpacing)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("verticalSpacing", value);
 					});
@@ -1864,9 +1843,7 @@ export class PropertiesSidebarView extends ItemView {
 						if (mindMap) mindMap.suppressNextReload = true;
 						void this.app.fileManager.processFrontMatter(
 							file,
-							// eslint-disable-next-line @typescript-eslint/no-explicit-any
-							(fm: any) => {
-								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+							(fm: Record<string, unknown>) => {
 								const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 								if (!osmosis) return;
 								const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
@@ -1874,7 +1851,6 @@ export class PropertiesSidebarView extends ItemView {
 									delete baseStyle.width;
 									if (Object.keys(baseStyle).length === 0) delete osmosis["baseStyle"];
 								}
-								// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 								if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 							},
 						).then(() => {
@@ -1906,7 +1882,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(100, 800, 10)
 					.setValue(settings.maxNodeWidth ?? 300)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveSetting("maxNodeWidth", value === 300 ? undefined : value);
 					});
@@ -1947,7 +1922,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(0, 8, 1)
 					.setValue(1)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveBaseStyleProp({ border: { width: value } });
 						this.refreshMapStyleControls();
@@ -1998,7 +1972,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(8, 48, 1)
 					.setValue(14)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.saveBaseStyleProp({ text: { size: value } });
 						this.refreshMapStyleControls();
@@ -2089,7 +2062,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(1, 8, 1)
 					.setValue(2)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						void this.saveMapScalarSetting("branchLineThickness", value);
 						this.refreshMapStyleControls();
@@ -2152,11 +2124,8 @@ export class PropertiesSidebarView extends ItemView {
 
 		await this.app.fileManager.processFrontMatter(
 			file,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				if (value === undefined || value === "") {
@@ -2165,7 +2134,6 @@ export class PropertiesSidebarView extends ItemView {
 					osmosis[key] = value;
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -2353,7 +2321,7 @@ export class PropertiesSidebarView extends ItemView {
 				if (!depths[key]) depths[key] = {};
 				for (const override of overrides) {
 					// Strip class reference — that's metadata, not a theme property
-					// eslint-disable-next-line @typescript-eslint/no-unused-vars
+					 
 				const { class: _cls, width: _w, ...styleProps } = override;
 					Object.assign(depths[key], styleProps);
 					if (styleProps.text) {
@@ -2452,7 +2420,7 @@ export class PropertiesSidebarView extends ItemView {
 				text.setPlaceholder("My custom theme");
 				text.onChange((v) => { inputValue = v.trim(); });
 				// Focus and select on open
-				setTimeout(() => text.inputEl.focus(), 50);
+				window.setTimeout(() => text.inputEl.focus(), 50);
 			});
 
 		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
@@ -2498,7 +2466,7 @@ export class PropertiesSidebarView extends ItemView {
 		while (dd.options.length > 0) dd.remove(0);
 
 		for (const name of getThemeNames(this.plugin.settings.customThemes)) {
-			const opt = document.createElement("option");
+			const opt = createEl("option");
 			opt.value = name;
 			opt.textContent = name;
 			dd.appendChild(opt);
@@ -2521,7 +2489,7 @@ export class PropertiesSidebarView extends ItemView {
 			.addText((text) => {
 				text.setValue(oldName);
 				text.onChange((v) => { inputValue = v.trim(); });
-				setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
+				window.setTimeout(() => { text.inputEl.focus(); text.inputEl.select(); }, 50);
 			});
 
 		const btnRow = modal.contentEl.createDiv({ cls: "modal-button-container" });
@@ -2625,7 +2593,7 @@ export class PropertiesSidebarView extends ItemView {
 		// Local classes (per-note)
 		if (fm?.classes) {
 			for (const name of Object.keys(fm.classes)) {
-				const opt = document.createElement("option");
+				const opt = createEl("option");
 				opt.value = name;
 				opt.textContent = name;
 				dd.appendChild(opt);
@@ -2636,7 +2604,7 @@ export class PropertiesSidebarView extends ItemView {
 		if (globalClasses) {
 			for (const name of Object.keys(globalClasses)) {
 				if (fm?.classes?.[name]) continue; // local shadows global
-				const opt = document.createElement("option");
+				const opt = createEl("option");
 				opt.value = name;
 				opt.textContent = `${name} (global)`;
 				dd.appendChild(opt);
@@ -2723,7 +2691,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(0, 8, 1)
 					.setValue(1)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.writeNodeStyle({ border: { width: value } });
 					});
@@ -2776,7 +2743,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(8, 48, 1)
 					.setValue(14)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.writeNodeStyle({ text: { size: value } });
 					});
@@ -2871,7 +2837,6 @@ export class PropertiesSidebarView extends ItemView {
 				slider
 					.setLimits(1, 8, 1)
 					.setValue(2)
-					.setDynamicTooltip()
 					.onChange(async (value) => {
 						await this.writeNodeStyle({ branchLine: { thickness: value } });
 					});
@@ -3001,7 +2966,7 @@ export class PropertiesSidebarView extends ItemView {
 			container.querySelectorAll(".osmosis-format-section"),
 		);
 		for (const section of sections) {
-			if (section instanceof HTMLElement) {
+			if (section.instanceOf(HTMLElement)) {
 				section.toggleClass("is-disabled", !hasSelection);
 			}
 		}
@@ -3082,7 +3047,7 @@ export class PropertiesSidebarView extends ItemView {
 			const align = resolved.text?.alignment ?? "left";
 			const btns = this.controls.textAlignBtns.querySelectorAll(".osmosis-align-btn");
 			btns.forEach((btn) => {
-				if (btn instanceof HTMLElement) {
+				if (btn.instanceOf(HTMLElement)) {
 					btn.toggleClass("is-active", btn.getAttribute("data-align") === align);
 				}
 			});

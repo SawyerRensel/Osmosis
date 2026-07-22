@@ -188,7 +188,7 @@ def fibonacci(n):
 
 ## Installation
 
-### From Community Plugins (Coming Soon)
+### From Community Plugins
 
 1. Open **Settings** > **Community Plugins**
 2. Click **Browse** and search for "Osmosis"
@@ -196,9 +196,9 @@ def fibonacci(n):
 
 ### Manual Installation
 
-1. Download the latest release from [GitHub Releases](https://github.com/SawyerRenworthy/Osmosis/releases)
-2. Extract `main.js`, `main.css`, and `manifest.json` to your vault's `.obsidian/plugins/osmosis/` directory
-3. Enable the plugin in **Settings** > **Community Plugins**
+1. Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](https://github.com/SawyerRensel/Osmosis/releases/latest)
+2. Copy them into your vault's `.obsidian/plugins/osmosis/` directory, creating it if needed
+3. Reload Obsidian, then enable Osmosis in **Settings** > **Community Plugins**
 
 ## Technology Stack
 
@@ -223,7 +223,7 @@ Full documentation is available at **[sawyerrensel.github.io/Osmosis](https://sa
 
 ```bash
 # Clone the repository
-git clone https://github.com/SawyerRenworthy/Osmosis.git
+git clone https://github.com/SawyerRensel/Osmosis.git
 cd Osmosis
 
 # Install dependencies

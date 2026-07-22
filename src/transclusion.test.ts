@@ -150,7 +150,7 @@ describe("TransclusionResolver", () => {
 			await resolver.resolveTree(tree);
 
 			expect(node.sourceFile).toBe("my-note.md");
-			// eslint-disable-next-line @typescript-eslint/unbound-method
+			/* eslint-disable-next-line @typescript-eslint/unbound-method -- Referencing the vi.fn() spy itself for assertion, not calling it. */
 			expect(app.metadataCache.getFirstLinkpathDest).toHaveBeenCalledWith(
 				"my-note",
 				"source.md",

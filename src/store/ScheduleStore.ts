@@ -50,7 +50,7 @@ export class ScheduleStore {
 	private pending = new Map<string, Map<string, ScheduleData | null>>();
 	/** Staged disabled-flag writes per note path (independent of schedule). */
 	private pendingDisabled = new Map<string, Map<string, boolean>>();
-	private timers = new Map<string, ReturnType<typeof setTimeout>>();
+	private timers = new Map<string, number>();
 	/** Per-path write chain — serializes processFrontMatter calls per file. */
 	private inflight = new Map<string, Promise<void>>();
 	private writingPaths = new Set<string>();
@@ -152,7 +152,7 @@ export class ScheduleStore {
 		this.clearTimer(notePath);
 		this.timers.set(
 			notePath,
-			setTimeout(() => {
+			window.setTimeout(() => {
 				void this.flushPath(notePath);
 			}, this.flushDelayMs),
 		);
@@ -161,7 +161,7 @@ export class ScheduleStore {
 	private clearTimer(notePath: string): void {
 		const timer = this.timers.get(notePath);
 		if (timer !== undefined) {
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 			this.timers.delete(notePath);
 		}
 	}
