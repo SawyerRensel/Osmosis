@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planIdGeneration } from "./generate-ids";
+import { planIdGeneration, removeBlockIdsInRange } from "./generate-ids";
 
 describe("planIdGeneration", () => {
 	it("tags headings, bullets, ordered items, and paragraphs with trailing IDs", () => {
@@ -35,15 +35,19 @@ describe("planIdGeneration", () => {
 		expect(second.content).toBe(first.content);
 	});
 
-	it("only tags the last line of a multi-line paragraph block", () => {
+	it("splits a soft-wrapped prose run into separate blocks, one card each", () => {
+		// Consecutive prose lines are normalized into blank-separated blocks so
+		// every line becomes its own Obsidian block with a valid block ID —
+		// one line = one card (matches the mind map's save convention).
 		const md = "First line of prose\ncontinues on second line\n\nSeparate block";
 		const plan = planIdGeneration(md);
 
-		expect(plan.insertions).toHaveLength(2);
+		expect(plan.insertions).toHaveLength(3);
 		const contentLines = plan.content.split("\n");
-		expect(contentLines[0]).toBe("First line of prose");
-		expect(contentLines[1]).toMatch(/continues on second line \^os-/);
-		expect(contentLines[3]).toMatch(/Separate block \^os-/);
+		expect(contentLines[0]).toMatch(/^First line of prose \^os-/);
+		expect(contentLines[1]).toBe(""); // blank inserted between the two lines
+		expect(contentLines[2]).toMatch(/^continues on second line \^os-/);
+		expect(contentLines[4]).toMatch(/^Separate block \^os-/);
 	});
 
 	it("adds a standalone after-block ID for generic code blocks", () => {
@@ -155,5 +159,77 @@ describe("planIdGeneration", () => {
 
 		expect(plan.insertions[0]).toMatchObject({ line: 0, nodeType: "heading", preview: "First" });
 		expect(plan.insertions[1]).toMatchObject({ line: 2, nodeType: "bullet", preview: "second" });
+	});
+});
+
+describe("planIdGeneration with a line range (add from selection)", () => {
+	it("tags only elements overlapping the range", () => {
+		const md = "# One\n\n- two\n- three\n\n# Four";
+		// Select the two bullets (lines 2–3)
+		const plan = planIdGeneration(md, { start: 2, end: 3 });
+		expect(plan.insertions.map((i) => i.line)).toEqual([2, 3]);
+		expect(plan.content).toContain("- two ^os-");
+		expect(plan.content).toContain("- three ^os-");
+		expect(plan.content).not.toContain("# One ^os-");
+		expect(plan.content).not.toContain("# Four ^os-");
+	});
+
+	it("makes each selected prose line its own card, remapping the range across inserted blanks", () => {
+		const md = "# H\n\nLine one\nLine two\nLine three\n\n# Tail";
+		// Select the three prose lines (original indices 2–4)
+		const plan = planIdGeneration(md, { start: 2, end: 4 });
+		expect(plan.insertions).toHaveLength(3);
+		expect(plan.content).toContain("Line one ^os-");
+		expect(plan.content).toContain("Line two ^os-");
+		expect(plan.content).toContain("Line three ^os-");
+		expect(plan.content).not.toContain("# H ^os-");
+		expect(plan.content).not.toContain("# Tail ^os-");
+	});
+
+	it("tags only the selected line within a prose run, not its neighbors", () => {
+		const md = "Line A\ncontinues here\n\n- bullet";
+		// Selection touches only the run's second line (original index 1)
+		const plan = planIdGeneration(md, { start: 1, end: 1 });
+		expect(plan.insertions).toHaveLength(1);
+		expect(plan.insertions[0]).toMatchObject({ nodeType: "paragraph" });
+		expect(plan.content).toContain("continues here ^os-");
+		expect(plan.content).not.toContain("Line A ^os-");
+	});
+
+	it("adds nothing when the range holds only already-tagged elements", () => {
+		const md = "- done ^os-aaaaaa\n- also ^os-bbbbbb";
+		expect(planIdGeneration(md, { start: 0, end: 1 }).insertions).toHaveLength(0);
+	});
+});
+
+describe("removeBlockIdsInRange", () => {
+	it("strips trailing IDs within the range and leaves the text", () => {
+		const md = "- a ^os-aaaaaa\n- b ^os-bbbbbb\n- c ^os-cccccc";
+		const { content, removed } = removeBlockIdsInRange(md, { start: 1, end: 1 });
+		expect(content).toBe("- a ^os-aaaaaa\n- b\n- c ^os-cccccc");
+		expect(removed).toEqual([{ line: 1, id: "os-bbbbbb", isUserId: false }]);
+	});
+
+	it("deletes a standalone after-block ID line entirely", () => {
+		const md = "```\ncode\n```\n^os-aaaaaa\n\nnext";
+		const { content, removed } = removeBlockIdsInRange(md, { start: 0, end: 3 });
+		expect(content).toBe("```\ncode\n```\n\nnext");
+		expect(removed).toEqual([{ line: 3, id: "os-aaaaaa", isUserId: false }]);
+	});
+
+	it("flags user-authored IDs (link-breaking risk)", () => {
+		const md = "- kept ^myid\n- osmo ^os-aaaaaa";
+		const { removed } = removeBlockIdsInRange(md, { start: 0, end: 1 });
+		expect(removed).toEqual([
+			{ line: 0, id: "myid", isUserId: true },
+			{ line: 1, id: "os-aaaaaa", isUserId: false },
+		]);
+	});
+
+	it("removes nothing outside the range", () => {
+		const md = "- a ^os-aaaaaa\n- b ^os-bbbbbb";
+		const { content, removed } = removeBlockIdsInRange(md, { start: 5, end: 9 });
+		expect(content).toBe(md);
+		expect(removed).toHaveLength(0);
 	});
 });

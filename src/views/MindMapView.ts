@@ -15,6 +15,7 @@ import {
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
+import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import {
 	computeLayout,
@@ -605,6 +606,73 @@ export class MindMapView extends ItemView {
 			: this.currentFile?.path;
 		if (path === undefined) return null;
 		return lineCardId(path, blockId);
+	}
+
+	/**
+	 * Add line-card items to a node's context menu (plan §8). Routes through
+	 * the plugin's editor helpers using the node's owning file and line span,
+	 * so it works for transcluded nodes (which resolve to their source note).
+	 * Add when the node has no card; remove/exclude/include when it does.
+	 */
+	private addNodeCardMenuItems(menu: Menu, node: LayoutNode): void {
+		if (node.source.type === "root" || node.source.type === "transclusion") return;
+		const key = this.nodeCardKey(node);
+		const card = key !== null ? this.plugin.cardStore.getCard(key) : null;
+
+		menu.addSeparator();
+		if (!card) {
+			menu.addItem((item) =>
+				item.setTitle("Add line card").setIcon("layers")
+					.onClick(() => void this.runNodeCardAction(node, "add")),
+			);
+			return;
+		}
+		menu.addItem((item) =>
+			item.setTitle("Remove line card").setIcon("layers")
+				.onClick(() => void this.runNodeCardAction(node, "remove")),
+		);
+		if (card.disabled) {
+			menu.addItem((item) =>
+				item.setTitle("Include in study").setIcon("eye")
+					.onClick(() => void this.runNodeCardAction(node, "enable")),
+			);
+		} else {
+			menu.addItem((item) =>
+				item.setTitle("Exclude from study").setIcon("eye-off")
+					.onClick(() => void this.runNodeCardAction(node, "disable")),
+			);
+		}
+	}
+
+	/** Resolve the node's owning file + line span, then dispatch to the plugin. */
+	private async runNodeCardAction(
+		node: LayoutNode,
+		action: "add" | "remove" | "disable" | "enable",
+	): Promise<void> {
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
+		const toLine = (offset: number): number =>
+			content.slice(0, Math.max(0, Math.min(offset, content.length))).split("\n").length - 1;
+		const range = {
+			start: toLine(src.range.start),
+			end: toLine(Math.max(src.range.start, src.range.end - 1)),
+		};
+		switch (action) {
+			case "add":
+				await this.plugin.addLineCards(file, range);
+				break;
+			case "remove":
+				await this.plugin.removeLineCards(file, range);
+				break;
+			case "disable":
+				await this.plugin.setLineCardsDisabled(file, range, true);
+				break;
+			case "enable":
+				await this.plugin.setLineCardsDisabled(file, range, false);
+				break;
+		}
 	}
 
 	/**
@@ -3062,6 +3130,8 @@ export class MindMapView extends ItemView {
 					.onClick(() => { if (node) this.enterSpatialStudy(node); }),
 			);
 
+			// ── Line card (add / remove / exclude) ──
+			if (node) this.addNodeCardMenuItems(menu, node);
 			// ── Delete ──
 			if (!this.isReadingMode) {
 				menu.addSeparator();
@@ -6046,82 +6116,12 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Ensure exactly one blank line before and after headings, top-level
-	 * code fences, tables, and standalone paragraphs.
+	 * code fences, tables, and standalone paragraphs. Delegates to the shared
+	 * `normalizeBlockSpacing` so the map and the line-card generator apply the
+	 * same "one line = one block" convention.
 	 */
 	private normalizeHeadingSpacing(content: string): string {
-		// First: collapse runs of 2+ blank lines into exactly one blank line
-		const collapsed = content.replace(/\n{3,}/g, "\n\n");
-		const lines = collapsed.split("\n");
-		const result: string[] = [];
-		let inCodeBlock = false;
-		let inTable = false;
-		let inBlockquote = false;
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i] ?? "";
-			const isHeading = /^#{1,6}\s/.test(line);
-			// Only add spacing around top-level code fences (not indented ones inside lists)
-			const isFence = /^(`{3,}|~{3,})/.test(line.trim());
-			const isTopLevelFence = isFence && /^(`{3,}|~{3,})/.test(line);
-			const isTableLine = /^\s*\|/.test(line);
-			// Blockquote / callout lines (not code-fence contents). A run of
-			// these is one block that needs a blank line before and after but
-			// none inserted between its lines.
-			const isQuoteLine = !inCodeBlock && /^\s*>/.test(line);
-			const isBlockquoteStart = isQuoteLine && !inBlockquote;
-			// Detect table start (first pipe line after non-pipe)
-			const isTableStart = isTableLine && !inTable;
-			// Detect paragraph: non-blank, non-list, non-heading, non-fence, non-table,
-			// non-quote, not indented (top-level), not inside code block
-			const isTopLevelParagraph = !isHeading && !isFence && !isTableLine && !isQuoteLine
-				&& line.trim() !== "" && !/^(\t| {2,})/.test(line)
-				&& !/^[-*]\s/.test(line) && !/^\d+\.\s/.test(line)
-				&& !inCodeBlock;
-
-			if (isFence) inCodeBlock = !inCodeBlock;
-			if (isTableStart) inTable = true;
-			if (inTable && !isTableLine) inTable = false;
-			inBlockquote = isQuoteLine;
-
-			const nextLine = lines[i + 1];
-			const nextIsQuote = nextLine !== undefined && /^\s*>/.test(nextLine);
-			const isBlockquoteEnd = isQuoteLine && !nextIsQuote;
-
-			const prevLine = result[result.length - 1];
-			const needsBlankBefore =
-				isHeading
-				|| (isTopLevelFence && inCodeBlock)
-				|| isTableStart
-				|| isBlockquoteStart
-				|| (isTopLevelParagraph && prevLine !== undefined && prevLine.trim() !== ""
-					&& !/^#{1,6}\s/.test(prevLine));
-
-			if (
-				needsBlankBefore &&
-				result.length > 0 &&
-				prevLine !== undefined &&
-				prevLine.trim() !== ""
-			) {
-				result.push("");
-			}
-			result.push(line);
-
-			// Detect table end (current is table, next is not)
-			const isTableEnd = isTableLine && (nextLine === undefined || !/^\s*\|/.test(nextLine));
-			const needsBlankAfter =
-				isHeading
-				|| (isTopLevelFence && !inCodeBlock)
-				|| isTableEnd
-				|| isBlockquoteEnd
-				|| (isTopLevelParagraph && nextLine !== undefined && nextLine.trim() !== ""
-					&& !/^#{1,6}\s/.test(nextLine));
-
-			if (needsBlankAfter) {
-				if (nextLine !== undefined && nextLine.trim() !== "") {
-					result.push("");
-				}
-			}
-		}
-		return result.join("\n");
+		return normalizeBlockSpacing(content).content;
 	}
 
 	/**

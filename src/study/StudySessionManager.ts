@@ -9,6 +9,7 @@ import type { DeckScope, StudyCard, DeckCounts } from "./types";
 export interface LineScheduleWriter {
 	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void;
 	removeSchedule(notePath: string, blockId: string): void;
+	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
 }
 
 /**
@@ -190,6 +191,20 @@ export class StudySessionManager {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Exclude (disable) or include (enable) a line card. Updates the store
+	 * immediately so study surfaces reflect it, and persists the flag to the
+	 * card's osmosis-schedule frontmatter entry. No-op for non-line cards
+	 * (fence cards use FenceWriter's `exclude:` metadata instead). Returns
+	 * true when it applied to a line card.
+	 */
+	setLineCardDisabled(card: Card, disabled: boolean): boolean {
+		if (!isLineCard(card)) return false;
+		this.store.setDisabled(card.id, disabled);
+		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled);
+		return true;
 	}
 
 	/**

@@ -30,6 +30,13 @@ export interface Card {
 	 */
 	excludeFromDecks?: boolean;
 	/**
+	 * Disabled (line-card "exclude"): fully out of study — not hidden by peek
+	 * or study in either surface, skipped by the sequential queue, and dropped
+	 * from dashboard counts. FSRS schedule is preserved so enabling restores
+	 * history. Stored as `disabled: true` on the card's osmosis-schedule entry.
+	 */
+	disabled?: boolean;
+	/**
 	 * Line cards: contents of the immediately preceding sibling lines
 	 * (document order), rendered as front context in sequential study.
 	 */

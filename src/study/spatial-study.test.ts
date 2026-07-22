@@ -34,6 +34,18 @@ describe("allLineCardBlockIds", () => {
 		];
 		expect(allLineCardBlockIds(cards)).toEqual(new Set(["os-new001", "os-fut001"]));
 	});
+
+	it("excludes disabled line cards (fully out of peek and study)", () => {
+		const cards = [
+			makeCard({ id: "a", blockId: "os-on0001" }),
+			makeCard({ id: "b", blockId: "os-off001", disabled: true }),
+			makeCard({ id: "c", blockId: "os-off002", due: NOW - 1000, disabled: true }),
+		];
+		expect(allLineCardBlockIds(cards)).toEqual(new Set(["os-on0001"]));
+		expect(dueOrNewLineCardBlockIds(cards, NOW)).toEqual(new Set(["os-on0001"]));
+		expect(allLineCardIds(cards)).toEqual(new Set(["a"]));
+		expect(dueOrNewLineCardIds(cards, NOW)).toEqual(new Set(["a"]));
+	});
 });
 
 describe("dueOrNewLineCardBlockIds", () => {

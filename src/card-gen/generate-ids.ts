@@ -1,6 +1,13 @@
 import { OsmosisParser } from "../parser";
 import type { NodeType, OsmosisNode } from "../types";
-import { generateBlockId } from "../block-id";
+import { extractTrailingBlockId, generateBlockId, isOsmosisBlockId } from "../block-id";
+import { normalizeBlockSpacing } from "../markdown-spacing";
+
+/** An inclusive 0-based line range, used to scope add/remove to a selection. */
+export interface LineRange {
+	start: number;
+	end: number;
+}
 
 /**
  * Planner for the "Generate flashcards from note" command.
@@ -52,8 +59,26 @@ const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\|
 /**
  * Plan block-ID insertions for a note. Returns the transformed content and
  * the list of planned insertions (empty when everything is already tagged).
+ *
+ * When `range` is given, only elements overlapping that inclusive 0-based line
+ * range are tagged — the basis for "add cards from selection". Omit it (the
+ * bulk command) to tag the whole note.
  */
-export function planIdGeneration(markdown: string): GenerateIdsPlan {
+export function planIdGeneration(markdown: string, range?: LineRange): GenerateIdsPlan {
+	// Normalize prose runs into blank-separated blocks first, so each line
+	// becomes its own Obsidian block with a valid block ID (one line = one
+	// card). This is the same convention the mind map applies on every save.
+	// A caller's range is remapped across the inserted blank lines.
+	const normalized = normalizeBlockSpacing(markdown);
+	markdown = normalized.content;
+	if (range !== undefined) {
+		const map = normalized.lineMap;
+		range = {
+			start: map[range.start] ?? range.start,
+			end: map[range.end] ?? range.end,
+		};
+	}
+
 	const parser = new OsmosisParser();
 	const tree = parser.parse(markdown, "");
 
@@ -103,9 +128,20 @@ export function planIdGeneration(markdown: string): GenerateIdsPlan {
 
 		const nodeLine = lineAt(node.range.start);
 
-		// <!-- osmosis-exclude --> on the line above suppresses tagging
-		const prevLine = lines[nodeLine - 1];
-		if (prevLine !== undefined && EXCLUDE_COMMENT_REGEX.test(prevLine)) return;
+		// Selection scope: tag only elements overlapping the range. A node
+		// occupies [nodeLine, nodeEndLine]; include it when that span touches
+		// the selection, so a partial selection inside a block still tags it.
+		if (range !== undefined) {
+			const nodeEndLine = lineAt(Math.max(node.range.start, node.range.end - 1));
+			if (nodeLine > range.end || nodeEndLine < range.start) return;
+		}
+
+		// <!-- osmosis-exclude --> above the element suppresses tagging. Skip
+		// blank lines when looking up, since spacing normalization may have
+		// inserted one between the comment and the element it guards.
+		let prev = nodeLine - 1;
+		while (prev >= 0 && lines[prev]!.trim() === "") prev--;
+		if (prev >= 0 && EXCLUDE_COMMENT_REGEX.test(lines[prev]!)) return;
 
 		if (node.type === "heading" || node.type === "bullet" || node.type === "ordered") {
 			addInsertion(node, nodeLine, "trailing", node.range.end, ` ^`);
@@ -182,6 +218,70 @@ export function planIdGeneration(markdown: string): GenerateIdsPlan {
 
 	insertions.sort((a, b) => a.line - b.line);
 	return { content, insertions };
+}
+
+/** A block ID stripped from the note by `removeBlockIdsInRange`. */
+export interface RemovedBlockId {
+	/** 0-based line the ID was on (before removal). */
+	line: number;
+	/** The removed block ID (without caret). */
+	id: string;
+	/** True when it was a user-authored ID (not `os-` prefixed) — link risk. */
+	isUserId: boolean;
+}
+
+/** Result of removing block IDs from a line range. */
+export interface RemoveBlockIdsResult {
+	/** Markdown with the block IDs removed. */
+	content: string;
+	/** The block IDs that were removed, in document order. */
+	removed: RemovedBlockId[];
+}
+
+/** A line that consists solely of a block ID (Obsidian's after-block reference). */
+const STANDALONE_BLOCK_ID_REGEX = /^\s*\^([a-zA-Z0-9-]+)\s*$/;
+
+/**
+ * Remove line-card block IDs from an inclusive 0-based line range — the basis
+ * for "remove cards from selection / node". Strips both trailing IDs
+ * (`- text ^os-a1b2c3`) and standalone after-block ID lines (`^os-a1b2c3`
+ * following a code block or table, which are deleted entirely).
+ *
+ * Removes user-authored IDs too (not just `os-` ones), per the task-12
+ * decision — the caller warns first, since deleting a user ID can break
+ * `[[note#^id]]` links. The card's schedule entry is left in frontmatter; the
+ * normal orphan flow soft-deletes it once the ID is gone.
+ */
+export function removeBlockIdsInRange(markdown: string, range: LineRange): RemoveBlockIdsResult {
+	const lines = markdown.split("\n");
+	const removed: RemovedBlockId[] = [];
+	const kept: string[] = [];
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!;
+		const inRange = i >= range.start && i <= range.end;
+		if (!inRange) {
+			kept.push(line);
+			continue;
+		}
+
+		const standalone = STANDALONE_BLOCK_ID_REGEX.exec(line);
+		if (standalone) {
+			removed.push({ line: i, id: standalone[1]!, isUserId: !isOsmosisBlockId(standalone[1]!) });
+			continue; // drop the standalone ID line entirely
+		}
+
+		const trailing = extractTrailingBlockId(line);
+		if (trailing) {
+			removed.push({ line: i, id: trailing.id, isUserId: !isOsmosisBlockId(trailing.id) });
+			kept.push(trailing.stripped);
+			continue;
+		}
+
+		kept.push(line);
+	}
+
+	return { content: kept.join("\n"), removed };
 }
 
 /** Whether an osmosis fence already declares an `id:` metadata key. */

@@ -28,9 +28,13 @@ export interface SpatialNodeLike {
 	children: SpatialNodeLike[];
 }
 
-/** A card that participates in line study: line type with a block ID. */
+/**
+ * A card that participates in line study: line type with a block ID, and not
+ * disabled. Disabled ("excluded") line cards are fully out — peek and study,
+ * both surfaces — so this single guard drops them from every filter below.
+ */
 function isLineCard(card: Card): boolean {
-	return card.cardType === "line" && card.blockId !== undefined;
+	return card.cardType === "line" && card.blockId !== undefined && !card.disabled;
 }
 
 /**
