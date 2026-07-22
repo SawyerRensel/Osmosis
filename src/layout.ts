@@ -157,7 +157,13 @@ export function computeLayout(
 		const secondaryPivot = { ...pivot, children: secondary };
 		computeSubtreeSpans(secondaryPivot, cfg);
 		positionNodes(secondaryPivot, 0, 0, cfg);
-		mirrorNodes(secondary);
+		// The secondary group was laid out to the right of a virtual pivot at
+		// x=0 (children start at pivotWidth + hSpacing). Reflect about the
+		// pivot's center so the secondary side sits hSpacing from the pivot's
+		// left edge — symmetric with the primary side — rather than
+		// pivotWidth + hSpacing away (reflecting about x=0 leaves an extra
+		// pivotWidth gap on the secondary side).
+		mirrorNodes(secondary, pivot.rect.width / 2);
 
 		markSide(primary, "primary");
 		markSide(secondary, "secondary");
@@ -347,17 +353,22 @@ function swapDimensions(node: LayoutNode): void {
 	}
 }
 
-/** Mirror nodes horizontally: negate x so they extend to the left. */
-function mirrorNodes(nodes: LayoutNode[]): void {
+/**
+ * Mirror nodes horizontally so they extend to the left, reflecting about the
+ * vertical line x = axis. Reflecting a rect [x, x+width] about `axis` yields a
+ * new left edge of 2*axis - (x + width). Defaults to axis = 0 (reflect about
+ * the origin), which is correct when the parent has no width offset.
+ */
+function mirrorNodes(nodes: LayoutNode[], axis = 0): void {
 	for (const node of nodes) {
-		mirrorSubtree(node);
+		mirrorSubtree(node, axis);
 	}
 }
 
-function mirrorSubtree(node: LayoutNode): void {
-	node.rect.x = -(node.rect.x + node.rect.width);
+function mirrorSubtree(node: LayoutNode, axis: number): void {
+	node.rect.x = 2 * axis - (node.rect.x + node.rect.width);
 	for (const child of node.children) {
-		mirrorSubtree(child);
+		mirrorSubtree(child, axis);
 	}
 }
 
