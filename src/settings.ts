@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
+import { App, PluginSettingTab, Setting, SettingDefinitionItem, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
@@ -131,6 +131,13 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	sequentialContextLines: 2,
 };
 
+/** Reject non-integer or negative daily card limits with an inline message. */
+function validateCardLimit(value: number): string | void {
+	if (!Number.isInteger(value) || value < 0) {
+		return "Enter a whole number of 0 or more.";
+	}
+}
+
 export class OsmosisSettingTab extends PluginSettingTab {
 	plugin: OsmosisPlugin;
 
@@ -139,217 +146,166 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName("Branch line style")
-			.setDesc("Style of connecting lines between nodes.")
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("curved", "Curved")
-					.addOption("straight", "Straight")
-					.addOption("angular", "Angular")
-					.addOption("rounded-elbow", "Rounded elbow")
-					.setValue(this.plugin.settings.branchLineStyle)
-					.onChange(async (value) => {
-						this.plugin.settings.branchLineStyle = value as BranchLineStyle;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Highlight transcluded branches")
-			.setDesc("Visually distinguish nodes embedded from other files.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showTransclusionStyle)
-					.onChange(async (value) => {
-						this.plugin.settings.showTransclusionStyle = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Expand transclusions")
-			.setDesc("Load embedded notes expanded when a mind map opens. When off, they start collapsed and load on first expand.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.expandTransclusions)
-					.onChange(async (value) => {
-						this.plugin.settings.expandTransclusions = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Default mind map mode")
-			.setDesc("Which mode mind map views open in. Reading mode blocks map edits (drag, in-place editing, structure changes) while pan, zoom, fold, study, and peek stay available.")
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption("editing", "Editing")
-					.addOption("reading", "Reading")
-					.addOption("reading-mobile", "Reading on mobile only")
-					.setValue(this.plugin.settings.mindMapDefaultMode)
-					.onChange(async (value) => {
-						this.plugin.settings.mindMapDefaultMode = value as MindMapDefaultMode;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Cursor sync")
-			.setDesc("Sync cursor position between the Markdown editor and mind map.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.cursorSync)
-					.onChange(async (value) => {
-						this.plugin.settings.cursorSync = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		// ── Spaced Repetition ──────────────────────────────────
-		new Setting(containerEl).setName("Spaced repetition").setHeading();
-
-		new Setting(containerEl)
-			.setName("Daily new card limit")
-			.setDesc("Maximum new cards per day (0 = unlimited).")
-			.addText((text) =>
-				text
-					.setValue(String(this.plugin.settings.dailyNewCardLimit))
-					.onChange(async (value) => {
-						const num = parseInt(value, 10);
-						if (!isNaN(num) && num >= 0) {
-							this.plugin.settings.dailyNewCardLimit = num;
-							await this.plugin.saveSettings();
-						}
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Daily review card limit")
-			.setDesc("Maximum review cards per day (0 = unlimited).")
-			.addText((text) =>
-				text
-					.setValue(String(this.plugin.settings.dailyReviewCardLimit))
-					.onChange(async (value) => {
-						const num = parseInt(value, 10);
-						if (!isNaN(num) && num >= 0) {
-							this.plugin.settings.dailyReviewCardLimit = num;
-							await this.plugin.saveSettings();
-						}
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Learning steps")
-			.setDesc("Steps for new cards (e.g., \"1m, 10m\"). Cards reappear within the session at each interval.")
-			.addText((text) =>
-				text
-					.setValue(this.plugin.settings.learningSteps)
-					.setPlaceholder("1m, 10m")
-					.onChange(async (value) => {
-						this.plugin.settings.learningSteps = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Relearning steps")
-			.setDesc("Steps for lapsed cards (e.g., \"10m\"). Cards rated \"again\" reappear after this delay.")
-			.addText((text) =>
-				text
-					.setValue(this.plugin.settings.relearningSteps)
-					.setPlaceholder("10m")
-					.onChange(async (value) => {
-						this.plugin.settings.relearningSteps = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Include line cards in decks")
-			.setDesc("Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.includeLineCardsInDecks)
-					.onChange(async (value) => {
-						this.plugin.settings.includeLineCardsInDecks = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		// ── Study mode ─────────────────────────────────────────
-		new Setting(containerEl).setName("Study mode").setHeading();
-
-		new Setting(containerEl)
-			.setName("Show deck breadcrumb in study modal")
-			.setDesc("Display the deck path between the action buttons and progress bar in sequential study mode.")
-			.addToggle((toggle) =>
-				toggle
-					.setValue(this.plugin.settings.showStudyBreadcrumb)
-					.onChange(async (value) => {
-						this.plugin.settings.showStudyBreadcrumb = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName("Line card context lines")
-			.setDesc("How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).")
-			.addSlider((slider) =>
-				slider
-					.setLimits(0, 5, 1)
-					.setValue(this.plugin.settings.sequentialContextLines)
-					.onChange(async (value) => {
-						this.plugin.settings.sequentialContextLines = value;
-						await this.plugin.saveSettings();
-					}),
-			);
-
-		this.buildChipList(containerEl, {
-			name: "Include folders",
-			desc: "Notes in these folders auto-generate cards without needing osmosis-cards: true.",
-			items: this.plugin.settings.includeFolders,
-			placeholder: "Add folder...",
-			createSuggest: (input) => new FolderSuggest(this.app, input),
-			onUpdate: async (items) => {
-				this.plugin.settings.includeFolders = items;
-				await this.plugin.saveSettings();
-			},
-		});
-
-		this.buildChipList(containerEl, {
-			name: "Include tags",
-			desc: "Notes with these tags auto-generate cards without needing osmosis-cards: true.",
-			items: this.plugin.settings.includeTags,
-			placeholder: "Add tag...",
-			createSuggest: (input) => new TagSuggest(this.app, input),
-			onUpdate: async (items) => {
-				this.plugin.settings.includeTags = items;
-				await this.plugin.saveSettings();
-			},
-		});
+	/**
+	 * Persist through the plugin's own saver rather than the base
+	 * implementation, which writes `plugin.settings` but skips the card re-sync
+	 * and dashboard refresh that `saveSettings()` triggers.
+	 */
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		Object.assign(this.plugin.settings, { [key]: value });
+		await this.plugin.saveSettings();
 	}
 
-	/** Build a chip-list setting with auto-suggest input. */
+	getSettingDefinitions(): SettingDefinitionItem<keyof OsmosisSettings>[] {
+		return [
+			{
+				name: "Branch line style",
+				desc: "Style of connecting lines between nodes.",
+				control: {
+					type: "dropdown",
+					key: "branchLineStyle",
+					options: {
+						curved: "Curved",
+						straight: "Straight",
+						angular: "Angular",
+						"rounded-elbow": "Rounded elbow",
+					},
+				},
+			},
+			{
+				name: "Highlight transcluded branches",
+				desc: "Visually distinguish nodes embedded from other files.",
+				control: { type: "toggle", key: "showTransclusionStyle" },
+			},
+			{
+				name: "Expand transclusions",
+				desc: "Load embedded notes expanded when a mind map opens. When off, they start collapsed and load on first expand.",
+				control: { type: "toggle", key: "expandTransclusions" },
+			},
+			{
+				name: "Default mind map mode",
+				desc: "Which mode mind map views open in. Reading mode blocks map edits (drag, in-place editing, structure changes) while pan, zoom, fold, study, and peek stay available.",
+				control: {
+					type: "dropdown",
+					key: "mindMapDefaultMode",
+					options: {
+						editing: "Editing",
+						reading: "Reading",
+						"reading-mobile": "Reading on mobile only",
+					},
+				},
+			},
+			{
+				name: "Cursor sync",
+				desc: "Sync cursor position between the Markdown editor and mind map.",
+				control: { type: "toggle", key: "cursorSync" },
+			},
+			{
+				type: "group",
+				heading: "Spaced repetition",
+				items: [
+					{
+						name: "Daily new card limit",
+						desc: "Maximum new cards per day (0 = unlimited).",
+						control: {
+							type: "number",
+							key: "dailyNewCardLimit",
+							min: 0,
+							step: 1,
+							validate: validateCardLimit,
+						},
+					},
+					{
+						name: "Daily review card limit",
+						desc: "Maximum review cards per day (0 = unlimited).",
+						control: {
+							type: "number",
+							key: "dailyReviewCardLimit",
+							min: 0,
+							step: 1,
+							validate: validateCardLimit,
+						},
+					},
+					{
+						name: "Learning steps",
+						desc: "Steps for new cards (e.g., \"1m, 10m\"). Cards reappear within the session at each interval.",
+						control: { type: "text", key: "learningSteps", placeholder: "1m, 10m" },
+					},
+					{
+						name: "Relearning steps",
+						desc: "Steps for lapsed cards (e.g., \"10m\"). Cards rated \"again\" reappear after this delay.",
+						control: { type: "text", key: "relearningSteps", placeholder: "10m" },
+					},
+					{
+						name: "Include line cards in decks",
+						desc: "Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.",
+						control: { type: "toggle", key: "includeLineCardsInDecks" },
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Study mode",
+				items: [
+					{
+						name: "Show deck breadcrumb in study modal",
+						desc: "Display the deck path between the action buttons and progress bar in sequential study mode.",
+						control: { type: "toggle", key: "showStudyBreadcrumb" },
+					},
+					{
+						name: "Line card context lines",
+						desc: "How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).",
+						control: {
+							type: "slider",
+							key: "sequentialContextLines",
+							min: 0,
+							max: 5,
+							step: 1,
+						},
+					},
+					{
+						name: "Include folders",
+						desc: "Notes in these folders auto-generate cards without needing osmosis-cards: true.",
+						render: (setting) =>
+							this.buildChipList(setting, {
+								items: this.plugin.settings.includeFolders,
+								placeholder: "Add folder...",
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								onUpdate: async (items) => {
+									this.plugin.settings.includeFolders = items;
+									await this.plugin.saveSettings();
+								},
+							}),
+					},
+					{
+						name: "Include tags",
+						desc: "Notes with these tags auto-generate cards without needing osmosis-cards: true.",
+						render: (setting) =>
+							this.buildChipList(setting, {
+								items: this.plugin.settings.includeTags,
+								placeholder: "Add tag...",
+								createSuggest: (input) => new TagSuggest(this.app, input),
+								onUpdate: async (items) => {
+									this.plugin.settings.includeTags = items;
+									await this.plugin.saveSettings();
+								},
+							}),
+					},
+				],
+			},
+		];
+	}
+
+	/** Attach a chip-list control with auto-suggest input to an existing row. */
 	private buildChipList(
-		containerEl: HTMLElement,
+		setting: Setting,
 		opts: {
-			name: string;
-			desc: string;
 			items: string[];
 			placeholder: string;
 			createSuggest: (input: HTMLInputElement) => AbstractInputSuggest<string>;
 			onUpdate: (items: string[]) => Promise<void>;
 		},
 	): void {
-		const setting = new Setting(containerEl)
-			.setName(opts.name)
-			.setDesc(opts.desc);
-
 		// Chip container
 		const chipContainer = setting.controlEl.createDiv({ cls: "osmosis-chip-list" });
 

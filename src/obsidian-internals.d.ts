@@ -32,11 +32,4 @@ declare module "obsidian" {
 			};
 		};
 	}
-
-	interface Editor {
-		/** CodeMirror-backed undo. Not in the public Editor interface. */
-		undo(): void;
-		/** CodeMirror-backed redo. Not in the public Editor interface. */
-		redo(): void;
-	}
 }
