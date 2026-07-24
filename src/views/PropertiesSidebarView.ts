@@ -791,7 +791,7 @@ export class PropertiesSidebarView extends ItemView {
 		new Setting(body)
 			.setName("Class")
 			.addDropdown((d) => {
-				d.addOption("", "(none)");
+				d.addOption("", "(None)");
 				d.onChange((value) => {
 					void this.writeNodeStyle({
 						class: value || undefined,
@@ -1192,7 +1192,7 @@ export class PropertiesSidebarView extends ItemView {
 		// Add "(none)" option
 		const noneOpt = createEl("option");
 		noneOpt.value = "";
-		noneOpt.textContent = "(none)";
+		noneOpt.textContent = "(None)";
 		dd.appendChild(noneOpt);
 
 		if (variants) {
@@ -2618,7 +2618,7 @@ export class PropertiesSidebarView extends ItemView {
 		new Setting(body)
 			.setName("Shape")
 			.addDropdown((dropdown) => {
-				dropdown.addOption("inherit", "(inherit)");
+				dropdown.addOption("inherit", "(Inherit)");
 				for (const [value, label] of Object.entries(SHAPE_LABELS)) {
 					dropdown.addOption(value, label);
 				}
@@ -2702,7 +2702,7 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Style")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("inherit", "(inherit)")
+					.addOption("inherit", "(Inherit)")
 					.addOption("solid", "Solid")
 					.addOption("dashed", "Dashed")
 					.addOption("dotted", "Dotted")
@@ -2754,7 +2754,7 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Weight")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("inherit", "(inherit)")
+					.addOption("inherit", "(Inherit)")
 					.addOption("400", "Normal")
 					.addOption("700", "Bold")
 					.onChange(async (value) => {
@@ -2802,7 +2802,7 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Shape")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("inherit", "(inherit)")
+					.addOption("inherit", "(Inherit)")
 					.addOption("curved", "Curved")
 					.addOption("straight", "Straight")
 					.addOption("angular", "Angular")
@@ -2848,7 +2848,7 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Pattern")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("inherit", "(inherit)")
+					.addOption("inherit", "(Inherit)")
 					.addOption("solid", "Solid")
 					.addOption("dashed", "Dashed")
 					.addOption("dotted", "Dotted")
@@ -2869,7 +2869,7 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Taper")
 			.addDropdown((dropdown) => {
 				dropdown
-					.addOption("inherit", "(inherit)")
+					.addOption("inherit", "(Inherit)")
 					.addOption("none", "None")
 					.addOption("fade", "Fade (thick to thin)")
 					.addOption("grow", "Grow (thin to thick)")
