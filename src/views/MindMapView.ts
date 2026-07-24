@@ -73,6 +73,13 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
+/** A single reversible map edit: a file's content before and after the change. */
+interface MapEditSnapshot {
+	path: string;
+	before: string;
+	after: string;
+}
+
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
@@ -100,6 +107,15 @@ export class MindMapView extends ItemView {
 	/** Transclusion nodes deferred for lazy loading (not yet parsed/expanded). */
 	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
+
+	// Undo/redo history. Map edits write to disk directly (vault.modify /
+	// processFrontMatter), bypassing CodeMirror, so there is no editor history to
+	// forward to — the map keeps its own snapshot stack of file content before
+	// and after each edit, covering both text/structure and style writes. Cleared
+	// when the map switches to a different file.
+	private readonly undoStack: MapEditSnapshot[] = [];
+	private readonly redoStack: MapEditSnapshot[] = [];
+	private static readonly MAX_UNDO_HISTORY = 50;
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -1255,10 +1271,12 @@ export class MindMapView extends ItemView {
 			this.exitSpatialMode();
 		}
 
-		// Clear caches when switching to a different file
+		// Clear caches and undo history when switching to a different file
 		if (file !== this.currentFile) {
 			this.nodeSizeCache.clear();
 			this.nodeHtmlCache.clear();
+			this.undoStack.length = 0;
+			this.redoStack.length = 0;
 		}
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
@@ -1407,7 +1425,7 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1451,7 +1469,7 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1492,7 +1510,7 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1526,7 +1544,7 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
@@ -1563,7 +1581,7 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
@@ -1612,7 +1630,7 @@ export class MindMapView extends ItemView {
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1723,7 +1741,7 @@ export class MindMapView extends ItemView {
 
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1793,7 +1811,7 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1833,7 +1851,7 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1898,7 +1916,7 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
@@ -1959,7 +1977,7 @@ export class MindMapView extends ItemView {
 		// Also clear assignments in the current note's frontmatter
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
@@ -2012,7 +2030,7 @@ export class MindMapView extends ItemView {
 		// Update node references in the current note
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
@@ -2086,7 +2104,7 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
@@ -6123,45 +6141,78 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Forward undo/redo to the markdown editor for the current file.
+	 * Undo or redo the last map edit from the view's own snapshot history.
+	 *
+	 * Map edits write to disk via vault.modify / processFrontMatter, bypassing
+	 * CodeMirror, so there is no editor undo stack to forward to — this restores
+	 * the recorded before/after content instead. Self-contained: it does not see
+	 * edits made in a separate Markdown editor, and no-ops when the relevant stack
+	 * is empty.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
-		if (!this.currentFile) return;
-		// Find an editor that has the same file open
-		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-			const view = leaf.view;
-			if (
-				view instanceof MarkdownView &&
-				view.file === this.currentFile
-			) {
-				// Suppress the vault modify event so we skip the full loadFile()
-				// cycle (async file read + transclusion expansion). Instead, read
-				// the new content directly from the editor (in-memory, instant).
-				this.suppressNextReload = true;
-				if (isRedo) {
-					view.editor.redo();
-				} else {
-					view.editor.undo();
-				}
-				const newContent = view.editor.getValue();
-				this.cache.invalidate(this.currentFile.path);
-				this.currentTree = this.cache.get(
-					this.currentFile.path,
-					newContent,
-				);
-				// Re-parse frontmatter from the editor content so style
-				// changes are reflected immediately (metadataCache is async).
-				this.reloadFrontmatterFromContent(newContent);
-				this.nodeSizeCache.clear();
-				void this.render();
-				return;
-			}
+		const source = isRedo ? this.redoStack : this.undoStack;
+		const edit = source.pop();
+		if (!edit) return;
+		(isRedo ? this.undoStack : this.redoStack).push(edit);
+		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
+	}
+
+	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
+	private recordEdit(path: string, before: string, after: string): void {
+		if (before === after) return;
+		this.undoStack.push({ path, before, after });
+		if (this.undoStack.length > MindMapView.MAX_UNDO_HISTORY) {
+			this.undoStack.shift();
 		}
-		// Fallback: execute Obsidian's built-in commands
-		this.app.commands?.executeCommandById?.(
-			isRedo ? "editor:redo" : "editor:undo",
-		);
+		// A fresh edit invalidates any redo history.
+		this.redoStack.length = 0;
+	}
+
+	/**
+	 * Frontmatter write that also records an undo snapshot. Every map style write
+	 * goes through this instead of `app.fileManager.processFrontMatter` directly,
+	 * so color/shape/variant changes are undoable alongside text edits.
+	 */
+	private async processFrontMatterTracked(
+		file: TFile,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		const before = await this.app.vault.read(file);
+		await this.app.fileManager.processFrontMatter(file, fn);
+		const after = await this.app.vault.read(file);
+		this.recordEdit(file.path, before, after);
+	}
+
+	/**
+	 * Restore a file to a snapshot's content (undo/redo target). Re-renders from
+	 * the restored content — reloading frontmatter and clearing the size cache so
+	 * both text and style changes are reflected. Handles the current file and a
+	 * transcluded source file, mirroring the two write paths.
+	 */
+	private async applySnapshot(path: string, content: string): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		this.suppressNextReload = true;
+		this.cache.invalidate(path);
+		await this.app.vault.modify(file, content);
+
+		if (this.currentFile && path === this.currentFile.path) {
+			this.currentTree = this.cache.get(path, content);
+			this.reloadFrontmatterFromContent(content);
+			this.nodeSizeCache.clear();
+			await this.render();
+		} else if (this.currentFile) {
+			// Restored a transcluded source; re-read and re-expand the parent.
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(this.currentFile.path);
+			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
+			await this.render();
+		}
 	}
 
 	/**
@@ -6170,9 +6221,11 @@ export class MindMapView extends ItemView {
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(this.currentFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(this.currentFile.path);
 		await this.app.vault.modify(this.currentFile, newContent);
+		this.recordEdit(this.currentFile.path, before, newContent);
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
@@ -6192,9 +6245,11 @@ export class MindMapView extends ItemView {
 		if (!(sourceFile instanceof TFile)) return;
 
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(sourceFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(sourceFilePath);
 		await this.app.vault.modify(sourceFile, newContent);
+		this.recordEdit(sourceFilePath, before, newContent);
 
 		// Re-read and re-expand the current (parent) file to pick up the change
 		const parentContent = await this.app.vault.read(this.currentFile);

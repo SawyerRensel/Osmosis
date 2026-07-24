@@ -16,11 +16,6 @@ declare module "obsidian" {
 			plugins: Record<string, Plugin | undefined>;
 		};
 
-		/** Command registry. Used to fall back to Obsidian's built-in undo/redo. */
-		commands?: {
-			executeCommandById?: (id: string) => boolean;
-		};
-
 		/** Embed registry. Used to resolve the internal Markdown editor prototype. */
 		embedRegistry: {
 			embedByExtension: {
