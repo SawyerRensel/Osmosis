@@ -9,7 +9,7 @@ All notable changes to Osmosis will be documented in this page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.2]
+## [0.0.2] - 2026-07-25
 
 ### Added
 
@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Styling
 - Block-ID style selectors (`^os-a1b2c3`) in `osmosis-styles`, preferred over stable IDs and tree paths; the format panel writes them automatically and migrates legacy `_n:` entries
 
+#### Documentation
+- Full documentation site covering mind mapping, flashcards, line cards, and study modes, with a rebuilt homepage: a single hero and call to action, four story sections carrying one idea each, and a compact feature grid. Persona and comparison copy moved to a dedicated Use Cases page
+- Link previews (Open Graph and Twitter card meta) now read their description from the site configuration, so the tagline can't drift out of sync
+
 ### Changed
 
 - **Minimum Obsidian version is now 1.13.0** (was 1.10.0). Osmosis adopts the declarative settings API introduced in 1.13, which makes every Osmosis setting discoverable from Obsidian's settings search
@@ -98,8 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Structural edits across a transclusion boundary** no longer corrupt the map. Moving, copying, or re-indenting a line keeps its trailing block ID (and with it, its card history); a node containing an `![[embed]]` moves, copies, and deletes as one unit instead of orphaning the `![[…]]` line; drop targets use host-file coordinates so an edit can never splice one file's offsets into another's bytes; and an edit, undo, or redo that carried an embed keeps it rendered instead of collapsing to a bare placeholder
 - Reading-view study and peek hide a callout that contains a list as one block, matching the mind map (previously the two surfaces disagreed)
 - Both-sides balance: the secondary group is reflected about the pivot's center, removing an extra pivot-width gap on the left side
+- **Properties sidebar rows render correctly on newer Obsidian layouts.** Obsidian now draws each setting row as a rounded card with the description stacked differently, which left the card edge touching the label and control and wrapped descriptions raggedly. Rows are laid out explicitly instead of inheriting Obsidian's defaults: name and control share the top line, the description spans the full width beneath, each row carries its own inset, and sliders are pinned narrow so they neither overflow the section nor crowd out the label
 - `versions.json` shipped a template placeholder (`{"0.1.0": "0.15.0"}`) for a version that never existed, so Obsidian could serve the wrong build to older apps
-- Resolved the findings from Obsidian's Community Plugins review: 117 ESLint errors to zero, frontmatter callbacks and undocumented Obsidian internals properly typed, `createEl`/`createDiv` over raw DOM calls, window-scoped timers for popout windows, `instanceOf()` for cross-window checks, 11 deprecated `setDynamicTooltip()` calls removed, and corrected repository links in the README
+- Resolved the findings from Obsidian's Community Plugins review: 117 ESLint errors to zero, frontmatter callbacks and undocumented Obsidian internals properly typed, `createEl`/`createDiv` over raw DOM calls, window-scoped timers for popout windows, `instanceOf()` for cross-window checks, 11 deprecated `setDynamicTooltip()` calls removed, 13 redundant type assertions dropped, and corrected repository links in the README
+- An ordered list's number was read through an unchecked `as number` cast on untyped node metadata; it is now narrowed properly, so a malformed value can't reach the renderer as a number
 
 ## [0.0.1] - 2026-03-11
 
