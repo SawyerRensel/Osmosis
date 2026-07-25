@@ -17,6 +17,7 @@ import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
+import * as edit from "../mindmap-edit";
 import {
 	computeLayout,
 	LayoutNode,
@@ -3410,19 +3411,28 @@ export class MindMapView extends ItemView {
 		if (!this.assertEditable()) return;
 		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
 
-		// Collect ranges sorted by position (descending) to process from end
-		const ranges: { start: number; end: number }[] = [];
+		// Collect the selected nodes, then their ranges (descending, to process
+		// from end so earlier offsets stay valid).
+		const selectedSrcs: OsmosisNode[] = [];
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (!node) continue;
-			ranges.push({
-				start: node.source.range.start,
-				end: this.subtreeEnd(node.source),
-			});
+			if (node) selectedSrcs.push(node.source);
 		}
-		ranges.sort((a, b) => b.start - a.start);
+		if (selectedSrcs.length === 0) return;
 
-		let content = await this.app.vault.read(this.currentFile);
+		// All ranges are spliced out of one file; refuse a mixed-file selection.
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
+		const file = this.getNodeFile(selectedSrcs[0]!);
+		if (!file) return;
+
+		const ranges = selectedSrcs
+			.map((src) => ({
+				start: src.range.start,
+				end: this.subtreeEnd(src),
+			}))
+			.sort((a, b) => b.start - a.start);
+
+		let content = await this.app.vault.read(file);
 
 		for (const range of ranges) {
 			let deleteStart = range.start;
@@ -3442,7 +3452,7 @@ export class MindMapView extends ItemView {
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeMarkdown(this.renumberOrderedLists(content));
+		await this.writeNodeFile(selectedSrcs[0]!, content);
 		this.selectFirstNode();
 	}
 
@@ -3478,10 +3488,11 @@ export class MindMapView extends ItemView {
 		const swapSrc = siblings[swapIdx];
 		if (!swapSrc) return;
 
-		const content = await this.app.vault.read(file);
-
 		// Collect all selected subtree texts in order
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit([...selectedSrcs, swapSrc])) return;
+
+		const content = await this.app.vault.read(file);
 		const blockStart = selectedSrcs[0]!.range.start;
 		const blockEnd = this.subtreeEnd(
 			selectedSrcs[selectedSrcs.length - 1]!,
@@ -3591,6 +3602,14 @@ export class MindMapView extends ItemView {
 		const firstSrc = siblings[firstIdx]!;
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
+
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				prevSibling,
+			])
+		)
+			return;
 
 		const content = await this.app.vault.read(file);
 
@@ -3718,6 +3737,16 @@ export class MindMapView extends ItemView {
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
 
+		// Outdenting inserts the block relative to the parent's subtree, so the
+		// parent must live in the same file as the moved nodes.
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				parentNode.source,
+			])
+		)
+			return;
+
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
 		const blockEnd = this.subtreeEnd(lastSrc);
@@ -3808,6 +3837,10 @@ export class MindMapView extends ItemView {
 			.filter((n): n is LayoutNode => n !== undefined)
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
+		// Every selected subtree is sliced from `file`; a mixed-file selection
+		// would slice one file's bytes at another's offsets.
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
+
 		const texts: string[] = [];
 		for (const sel of selected) {
 			const start = sel.source.range.start;
@@ -3875,85 +3908,14 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Skips content lines inside code fences (only adjusts fence line indentation).
+	 * Delegates to the tested pure transform in `mindmap-edit`.
 	 */
 	private adjustPasteDepth(
 		text: string,
 		sourceType: OsmosisNode["type"],
 		depthDelta: number,
 	): string {
-		const lines = text.split("\n");
-		const result: string[] = [];
-		let inCodeBlock = false;
-		let codeFenceChar = "";
-		let codeFenceLen = 0;
-
-		for (const line of lines) {
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-
-			// Code block: leave all lines (fences + content) untouched
-			if (inCodeBlock) {
-				if (
-					fenceMatch?.[1] &&
-					fenceMatch[1].charAt(0) === codeFenceChar &&
-					fenceMatch[1].length >= codeFenceLen &&
-					(fenceMatch[2] ?? "").trim() === ""
-				) {
-					inCodeBlock = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fenceMatch?.[1]) {
-				inCodeBlock = true;
-				codeFenceChar = fenceMatch[1].charAt(0);
-				codeFenceLen = fenceMatch[1].length;
-				result.push(line);
-				continue;
-			}
-
-			// Table lines (pipe-prefixed): leave untouched
-			if (/^\s*\|/.test(line)) {
-				result.push(line);
-				continue;
-			}
-
-			// Handle heading lines
-			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-				const oldLevel = headingMatch[1].length;
-				const newLevel = Math.max(
-					1,
-					Math.min(6, oldLevel + depthDelta),
-				);
-				result.push("#".repeat(newLevel) + " " + headingMatch[2]);
-				continue;
-			}
-
-			// Handle list lines (tab or space indented)
-			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
-			if (listMatch?.[3] !== undefined) {
-				const currentTabs = listMatch[1]?.length ?? 0;
-				const currentSpaces = listMatch[2]?.length ?? 0;
-				const currentDepth =
-					currentTabs + Math.floor(currentSpaces / 2);
-				const newDepth = Math.max(0, currentDepth + depthDelta);
-				result.push(
-					"\t".repeat(newDepth) +
-					listMatch[3].replace(/^[ \t]*/, ""),
-				);
-				continue;
-			}
-
-			result.push(line);
-		}
-
-		return result.join("\n");
+		return edit.adjustPasteDepth(text, sourceType, depthDelta);
 	}
 
 	/**
@@ -3984,6 +3946,12 @@ export class MindMapView extends ItemView {
 			const firstSrc = siblings[selectedIndices[0]!]!;
 			const lastSrc =
 				siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			if (
+				!this.ensureSameFileEdit(
+					selectedIndices.map((i) => siblings[i]!),
+				)
+			)
+				return;
 			blockStart = firstSrc.range.start;
 			blockEnd = this.subtreeEnd(lastSrc);
 		} else {
@@ -4056,6 +4024,7 @@ export class MindMapView extends ItemView {
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
 		if (selected.length === 0) return;
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
 
 		// Find the block range covering all selected subtrees
 		const blockStart = selected[0]!.source.range.start;
@@ -4753,14 +4722,27 @@ export class MindMapView extends ItemView {
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
 
-		const content = await this.app.vault.read(this.currentFile);
-
 		// Find the target parent and insertion point
 		const targetParent = this.findNodeById(
 			this.currentTree.root,
 			dropTarget.parentId,
 		);
 		if (!targetParent) return;
+
+		// Refuse drops that cross a file boundary (e.g. an embedded node onto a
+		// local parent, or between two different embeds). Node ranges are
+		// per-file, so slicing/splicing across files corrupts the destination —
+		// most visibly the `![[embed]]` line itself.
+		if (!edit.sameEditTarget(dragNode.source, targetParent)) {
+			new Notice("Osmosis: can't move a node across an embed boundary");
+			return;
+		}
+
+		// Read (and later write) the file the dragged node actually lives in —
+		// the parent note for local nodes, the source note for embedded ones.
+		const file = this.getNodeFile(dragNode.source);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
 		const parentSrc = dragNode.parent.source;
@@ -4807,7 +4789,10 @@ export class MindMapView extends ItemView {
 		}
 		let dragText = reindentedParts.join("\n");
 
-		// Determine insertion offset in the markdown
+		// Determine insertion offset in the markdown. Use host-file offsets: a
+		// reference child may be transcluded content (its own `range` indexes
+		// the source note), so an embed collapses to its `![[…]]` line's host
+		// span rather than splicing a source offset into this file.
 		let insertOffset: number;
 		if (dropTarget.index >= targetParent.children.length) {
 			// Append after last child's subtree
@@ -4815,7 +4800,7 @@ export class MindMapView extends ItemView {
 				const lastChild =
 					targetParent.children[targetParent.children.length - 1];
 				if (lastChild) {
-					insertOffset = this.subtreeEnd(lastChild);
+					insertOffset = this.subtreeHostEnd(lastChild);
 				} else {
 					insertOffset = this.subtreeEnd(targetParent);
 				}
@@ -4826,7 +4811,7 @@ export class MindMapView extends ItemView {
 			// Insert before the child at dropTarget.index
 			const targetChild = targetParent.children[dropTarget.index];
 			if (targetChild) {
-				insertOffset = targetChild.range.start;
+				insertOffset = this.nodeHostStart(targetChild);
 			} else {
 				insertOffset = this.subtreeEnd(targetParent);
 			}
@@ -4895,7 +4880,9 @@ export class MindMapView extends ItemView {
 		}
 
 		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeMarkdown(this.renumberOrderedLists(updated));
+		// writeNodeFile renumbers and routes to the correct file (parent note
+		// or embedded source) based on the dragged node.
+		await this.writeNodeFile(dragNode.source, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -5031,9 +5018,9 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Re-indent a subtree's text to match a new type/depth.
-	 * Adjusts the first line and all descendant lines proportionally.
-	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
+	 * Re-indent a subtree's text to match a new type/depth. Delegates to the
+	 * tested pure transform in `mindmap-edit` (preserves the first line's
+	 * block ID, which `content` has stripped).
 	 */
 	private reindentSubtree(
 		text: string,
@@ -5041,104 +5028,7 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		// Code blocks, tables, and blockquotes are atomic — never re-indent
-		// their contents (blockquote `>` markers must stay intact).
-		if (
-			originalNode.type === "codeblock" ||
-			originalNode.type === "table" ||
-			originalNode.type === "blockquote"
-		)
-			return text;
-
-		// When converting heading → list type, strip internal blank lines
-		// that were added by normalizeHeadingSpacing — they break list nesting.
-		const crossingToList =
-			originalNode.type === "heading" && newType !== "heading";
-		const rawLines = text.split("\n");
-		const lines = crossingToList
-			? rawLines.filter((l) => l.trim() !== "")
-			: rawLines;
-		const result: string[] = [];
-
-		// Calculate child depth delta — depends on whether we're crossing type boundaries.
-		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
-		const oldChildBase =
-			originalNode.type === "heading" || originalNode.type === "root" || originalNode.type === "paragraph"
-				? 0
-				: originalNode.depth + 1;
-		const newChildBase =
-			newType === "heading" || newType === "root" || newType === "paragraph" ? 0 : newDepth + 1;
-		const childDepthDelta = newChildBase - oldChildBase;
-
-		let inFence = false;
-		let fenceChar = "";
-		let fenceLen = 0;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (line === undefined) continue;
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			// Code block: leave all lines (fences + content) untouched
-			const trimmed = line.trimStart();
-			const fm = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-			if (inFence) {
-				if (
-					fm?.[1] &&
-					fm[1].charAt(0) === fenceChar &&
-					fm[1].length >= fenceLen &&
-					(fm[2] ?? "").trim() === ""
-				) {
-					inFence = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fm?.[1]) {
-				inFence = true;
-				fenceChar = fm[1].charAt(0);
-				fenceLen = fm[1].length;
-				result.push(line);
-				continue;
-			}
-
-			if (i === 0) {
-				// First line: serialize with new type and depth
-				result.push(
-					this.serializeLine(newType, newDepth, originalNode.content),
-				);
-			} else {
-				// Descendant lines: check if heading or list
-				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-				if (headingMatch?.[1]) {
-					// Heading descendant: adjust heading level
-					const oldLevel = headingMatch[1].length;
-					const newLevel = Math.max(
-						1,
-						Math.min(6, oldLevel + childDepthDelta),
-					);
-					result.push(
-						"#".repeat(newLevel) + " " + (headingMatch[2] ?? ""),
-					);
-				} else {
-					// List/other descendant: adjust tab indentation
-					const match = line.match(/^(\t*)([ ]*)/);
-					const currentTabs = match?.[1]?.length ?? 0;
-					const currentSpaces = match?.[2]?.length ?? 0;
-					const currentDepth =
-						currentTabs + Math.floor(currentSpaces / 2);
-					const newTabDepth = Math.max(
-						0,
-						currentDepth + childDepthDelta,
-					);
-					result.push("\t".repeat(newTabDepth) + line.trimStart());
-				}
-			}
-		}
-
-		return result.join("\n");
+		return edit.reindentSubtree(text, originalNode, newType, newDepth);
 	}
 
 	// ─── Keyboard ────────────────────────────────────────────
@@ -6101,43 +5991,38 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Serialize a node type/depth/content back to a markdown line.
+	 * Serialize a node type/depth/content back to a markdown line. Delegates to
+	 * the tested pure transform in `mindmap-edit`; pass `blockId` to preserve a
+	 * trailing `^id` (the parser strips it out of `content`).
 	 */
 	private serializeLine(
 		type: OsmosisNode["type"],
 		depth: number,
 		content: string,
+		blockId?: string,
 	): string {
-		switch (type) {
-			case "heading":
-				return `${"#".repeat(depth)} ${content}`;
-			case "bullet":
-				return `${"\t".repeat(depth)}- ${content}`;
-			case "ordered":
-				return `${"\t".repeat(depth)}1. ${content}`;
-			case "paragraph":
-				return content;
-			case "table":
-				return content;
-			case "blockquote":
-				// Content already carries its `>` markers verbatim.
-				return content;
-			case "transclusion":
-				return `![[${content}]]`;
-			default:
-				return content;
-		}
+		return edit.serializeLine(type, depth, content, blockId);
 	}
 
 	/**
-	 * Find the end of a node's entire subtree (the max range.end of all descendants).
+	 * Find the end of a node's entire subtree. Delegates to the tested pure
+	 * transform in `mindmap-edit` (includes any trailing `^id` line).
 	 */
 	private subtreeEnd(node: OsmosisNode): number {
-		let end = node.range.end;
-		for (const child of node.children) {
-			end = Math.max(end, this.subtreeEnd(child));
-		}
-		return end;
+		return edit.subtreeEnd(node);
+	}
+
+	/**
+	 * Start / end of a node in the file being spliced, folding an embed
+	 * expansion to its `![[…]]` line's host span. Used for drop insert offsets,
+	 * which may reference transcluded content whose own `range` indexes a
+	 * different (source) file. Delegates to `mindmap-edit`.
+	 */
+	private nodeHostStart(node: OsmosisNode): number {
+		return edit.nodeHostStart(node);
+	}
+	private subtreeHostEnd(node: OsmosisNode): number {
+		return edit.subtreeHostEnd(node);
 	}
 
 	/**
@@ -6182,6 +6067,29 @@ export class MindMapView extends ItemView {
 		await this.app.fileManager.processFrontMatter(file, fn);
 		const after = await this.app.vault.read(file);
 		this.recordEdit(file.path, before, after);
+
+		// processFrontMatter inserts or grows the frontmatter block, shifting
+		// every body offset. Rebuild currentTree from the new content so a
+		// subsequent range-based structural edit (rename, move, drag, …) does
+		// not splice using stale (pre-write) offsets — which otherwise corrupts
+		// the file. Callers re-render afterward, repopulating nodeMap from this
+		// refreshed tree. (Reloads are suppressed, so nothing else re-parses.)
+		if (!this.currentFile) return;
+		this.cache.invalidate(file.path);
+		const currentPath = this.currentFile.path;
+		if (file.path === currentPath) {
+			this.currentTree = this.cache.get(currentPath, after);
+		} else {
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(currentPath);
+			this.currentTree = this.cache.get(currentPath, parentContent);
+		}
+		// Re-expand transclusions so embedded content (a no-op when the file has
+		// none) survives the tree rebuild instead of collapsing.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 	}
 
 	/**
@@ -6201,6 +6109,13 @@ export class MindMapView extends ItemView {
 			this.currentTree = this.cache.get(path, content);
 			this.reloadFrontmatterFromContent(content);
 			this.nodeSizeCache.clear();
+			// Re-expand transclusions so an undo/redo of a local edit that
+			// carried an embed keeps it rendered, not collapsed to a bare
+			// `![[…]]` placeholder (mirrors writeMarkdown / the source branch).
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
 			await this.render();
 		} else if (this.currentFile) {
 			// Restored a transcluded source; re-read and re-expand the parent.
@@ -6229,6 +6144,15 @@ export class MindMapView extends ItemView {
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
+		// Re-expand transclusions so an embed the edit carried along (e.g. moving
+		// a local heading that contains an `![[embed]]`) renders expanded again
+		// instead of collapsing to a bare `![[…]]` placeholder. Mirrors
+		// writeTranscludedMarkdown / processFrontMatterTracked; a no-op when the
+		// file has no embeds.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 		await this.render();
 	}
 
@@ -6276,7 +6200,14 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const newLine = this.serializeLine(src.type, src.depth, newContent);
+		// Preserve the trailing block ID (line-card identity / style anchor) —
+		// `content`/`newContent` have it stripped, so it must be re-threaded.
+		const newLine = this.serializeLine(
+			src.type,
+			src.depth,
+			newContent,
+			src.blockId,
+		);
 		const updated =
 			content.slice(0, src.range.start) +
 			newLine +
@@ -6296,63 +6227,28 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Guard for structural edits that splice one file: every node involved must
+	 * share an edit target. A block span or insert offset from one file applied
+	 * to another's bytes corrupts the destination (most visibly the `![[embed]]`
+	 * line), so a move/reorder/indent/copy/delete that crosses a file boundary
+	 * (local ↔ embedded, or between two embeds) is refused with a notice.
+	 * Returns true when the edit is safe to proceed.
+	 */
+	private ensureSameFileEdit(nodes: OsmosisNode[]): boolean {
+		const first = nodes[0];
+		if (!first) return true;
+		if (nodes.every((n) => edit.sameEditTarget(first, n))) return true;
+		new Notice("Osmosis: can't move a node across an embed boundary");
+		return false;
+	}
+
+	/**
 	 * Renumber ordered list items so consecutive siblings at the same depth
-	 * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.
+	 * are numbered sequentially (1, 2, 3, ...). Delegates to the tested pure
+	 * transform in `mindmap-edit`.
 	 */
 	private renumberOrderedLists(text: string): string {
-		const lines = text.split("\n");
-		let inCodeBlock = false;
-		// Track the last ordered-list depth and per-depth counters.
-		// A blank line or non-ordered-list line resets the counter for that depth.
-		const counters = new Map<number, number>();
-		let prevWasOrdered = false;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]!;
-
-			// Track code fences
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
-			if (fenceMatch) {
-				inCodeBlock = !inCodeBlock;
-				continue;
-			}
-			if (inCodeBlock) continue;
-
-			// Match ordered list lines: optional tabs/spaces, then digit(s), dot, space
-			const match = /^(\t*)([ ]*)(\d+)\.\s+(.*)$/.exec(line);
-			if (match?.[3] !== undefined && match[4] !== undefined) {
-				const tabs = match[1]?.length ?? 0;
-				const spaces = match[2]?.length ?? 0;
-				const depth = tabs + Math.floor(spaces / 2);
-
-				if (!prevWasOrdered) {
-					// Start of a new ordered list group: reset all counters
-					counters.clear();
-				}
-
-				const current = (counters.get(depth) ?? 0) + 1;
-				counters.set(depth, current);
-				// Clear counters for deeper levels (they restart if we come back)
-				for (const [d] of counters) {
-					if (d > depth) counters.delete(d);
-				}
-				prevWasOrdered = true;
-
-				const indent = (match[1] ?? "") + (match[2] ?? "");
-				lines[i] = `${indent}${String(current)}. ${match[4]}`;
-			} else if (line.trim() === "") {
-				// Blank line resets
-				counters.clear();
-				prevWasOrdered = false;
-			} else {
-				// Non-ordered content (bullet, heading, paragraph) — reset
-				counters.clear();
-				prevWasOrdered = false;
-			}
-		}
-
-		return lines.join("\n");
+		return edit.renumberOrderedLists(text);
 	}
 
 	/**

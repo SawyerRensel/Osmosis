@@ -204,6 +204,9 @@ export class OsmosisParser {
 			if (standaloneId?.[1] !== undefined && lastMultilineNode !== null) {
 				if (lastMultilineNode.blockId === undefined) {
 					lastMultilineNode.blockId = standaloneId[1];
+					// Record where the `^id` line ends so structural moves carry
+					// it with the block. `range` stays content-only (see types).
+					lastMultilineNode.blockIdLineEnd = line.end;
 				}
 				continue;
 			}

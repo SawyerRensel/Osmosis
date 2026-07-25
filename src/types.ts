@@ -54,8 +54,29 @@ export interface OsmosisNode {
 	 */
 	blockId?: string;
 
+	/**
+	 * For multiline nodes (code block / table / blockquote) whose block ID
+	 * lives on a *separate* trailing `^id` line, the end offset of that line.
+	 * `range` deliberately excludes it — so a content rewrite through the mind
+	 * map can't wipe the identity — but structural moves must carry the line
+	 * along, so subtree-span math (see `subtreeEnd`) uses this when present.
+	 */
+	blockIdLineEnd?: number;
+
 	/** For transcluded nodes, the source file path. Undefined for local nodes. */
 	sourceFile?: string;
+
+	/**
+	 * For a node produced by expanding an `![[embed]]` (i.e. a direct
+	 * replacement of a transclusion node), the range of that `![[…]]` line in
+	 * the *containing* file — the file that embeds it, in that file's
+	 * coordinates. `range`/`blockIdLineEnd` index the node's own source file;
+	 * this indexes the host. Structural edits *in the containing file* treat the
+	 * whole embed as one atomic unit occupying this span (see `subtreeEnd`),
+	 * rather than descending into source-coordinate children. Only set on the
+	 * top-level expanded children; deeper descendants share their source file.
+	 */
+	embedHostRange?: Range;
 
 	/** Whether this node was pulled in via transclusion. */
 	isTranscluded: boolean;

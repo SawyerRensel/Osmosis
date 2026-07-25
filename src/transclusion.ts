@@ -172,6 +172,21 @@ export class TransclusionResolver {
 		// Mark all children as transcluded from this source
 		this.markChildrenTranscluded(children, resolvedFile.path);
 
+		// Record the host-file span of the `![[…]]` line on each top-level
+		// child. In the containing file the embed is a single atomic unit
+		// occupying just this line; edits *there* (move/copy/delete of a local
+		// node that contains this embed) must carry the `![[…]]` bytes along
+		// instead of mistaking the children's source-file offsets for host
+		// offsets. `node.range` is the embed line; its trailing `^id` line, if
+		// any, is covered by `blockIdLineEnd`.
+		const embedHostRange = {
+			start: node.range.start,
+			end: node.blockIdLineEnd ?? node.range.end,
+		};
+		for (const child of children) {
+			child.embedHostRange = embedHostRange;
+		}
+
 		// Recurse into expanded content for nested transclusions
 		const childVisited = new Set(visited);
 		childVisited.add(resolvedFile.path);

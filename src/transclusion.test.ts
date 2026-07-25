@@ -14,6 +14,7 @@ function makeNode(
 		content: overrides.content,
 		children: overrides.children ?? [],
 		range: overrides.range ?? { start: 0, end: 0 },
+		blockIdLineEnd: overrides.blockIdLineEnd,
 		isTranscluded: overrides.isTranscluded ?? false,
 		sourceFile: overrides.sourceFile,
 		metadata: overrides.metadata,
@@ -413,6 +414,55 @@ describe("TransclusionResolver", () => {
 			const deepB = tree.root.children[1]!.children.find((c) => c.content === "Deep line")!;
 			expect(deepA).not.toBe(deepB);
 			expect(deepA.id).not.toBe(deepB.id);
+		});
+
+		it("records the host embed line's range on each top-level expanded child", async () => {
+			const app = mockApp(
+				{ "note": { path: "note.md" }, "note.md": { path: "note.md" } },
+				{ "note.md": "- Bullet A\n- Bullet B" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// The `![[note]]` line occupies host offsets 40..51.
+			const node = makeNode({
+				type: "transclusion",
+				content: "note",
+				range: { start: 40, end: 51 },
+			});
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			// Every spliced-in top-level child carries the embed line's HOST span,
+			// so host-file span math folds the whole embed to that one line rather
+			// than descending into the children's source-file offsets.
+			for (const child of tree.root.children) {
+				expect(child.embedHostRange).toEqual({ start: 40, end: 51 });
+			}
+		});
+
+		it("extends the embed host range past a trailing `^id` line", async () => {
+			const app = mockApp(
+				{ "note": { path: "note.md" }, "note.md": { path: "note.md" } },
+				{ "note.md": "- Bullet A" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// An embed whose block ID sits on a separate `^id` line: the host span
+			// must reach the end of that line, not stop at the `![[…]]`.
+			const node = makeNode({
+				type: "transclusion",
+				content: "note",
+				range: { start: 40, end: 51 },
+				blockIdLineEnd: 60,
+			});
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			for (const child of tree.root.children) {
+				expect(child.embedHostRange).toEqual({ start: 40, end: 60 });
+			}
 		});
 
 		it("detects cycles and keeps cyclic transclusion node", async () => {
