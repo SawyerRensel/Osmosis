@@ -499,26 +499,70 @@ pre.osmosis-code-block {
 
 /* ─── Properties Sidebar: Compact Layout ──────────────── */
 
+/*
+ * Obsidian's default setting row keeps the description in the left-hand info
+ * column next to the control, which wraps into a narrow ragged block at sidebar
+ * widths and pushes the control out of line with its own label. Lay the rows out
+ * explicitly instead so the plugin does not depend on Obsidian's own spacing:
+ * name and control share the first row, description spans the full width below.
+ */
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item {
-	padding: 4px 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+	align-items: center;
+	gap: 0 12px;
+	/*
+	 * Horizontal padding is the row's own breathing room: Obsidian draws each
+	 * setting row as a rounded card, so zeroing this makes the card edge hug the
+	 * label and the control.
+	 */
+	padding: 6px 10px;
 	min-height: 0;
+	border: none;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-info {
-	padding-right: 8px;
+	display: contents;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-name {
+	grid-area: 1 / 1;
 	font-size: var(--font-ui-small);
+	line-height: 1.4;
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control {
+	grid-area: 1 / 2;
+	justify-content: flex-end;
+	/* Separates a slider from the value Obsidian renders beside it. */
+	gap: 6px;
+	max-width: 100%;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-description {
-	font-size: 10px;
-	margin-top: 0;
+	grid-area: 2 / 1 / 2 / -1;
+	margin-top: 2px;
+	font-size: var(--font-ui-smaller);
+	line-height: 1.3;
+	color: var(--text-muted);
+	overflow-wrap: break-word;
 }
 
-.workspace-leaf-content[data-type="osmosis-properties"] .setting-item:not(:last-child) {
-	border-bottom: none;
+/* Obsidian creates the description element even when unused — don't reserve space for it. */
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-description:empty {
+	display: none;
+}
+
+/*
+ * A slider's intrinsic width overflows the sidebar's right inset, but stretching
+ * it to the column instead starves the label and wraps it. Pin it narrow so the
+ * label keeps one line and the track still ends level with the dropdowns above.
+ */
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control .slider,
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control input[type="range"] {
+	width: 96px;
+	min-width: 0;
+	flex: 0 0 auto;
 }
 
 /* ─── Properties Sidebar: Tab Bar ─────────────────────── */
@@ -570,6 +614,9 @@ pre.osmosis-code-block {
 }
 
 .osmosis-format-section {
+	/* Inset for the section header; rows carry their own padding, so they sit closer in. */
+	--osmosis-section-inset: 12px;
+	--osmosis-row-inset: 4px;
 	margin: 0 6px 10px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
@@ -584,7 +631,7 @@ pre.osmosis-code-block {
 .osmosis-format-section-header {
 	display: flex;
 	align-items: center;
-	padding: 5px 8px;
+	padding: 7px var(--osmosis-section-inset);
 	cursor: pointer;
 	font-size: var(--h5-size, 0.95em);
 	font-weight: var(--h5-weight, 700);
@@ -618,7 +665,7 @@ pre.osmosis-code-block {
 }
 
 .osmosis-format-section-body {
-	padding: 2px 8px 4px;
+	padding: 4px var(--osmosis-row-inset) 6px;
 	border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -713,7 +760,8 @@ pre.osmosis-code-block {
 .osmosis-variant-header {
 	display: flex;
 	align-items: center;
-	padding: 4px 0;
+	/* Matches the horizontal padding of the setting rows below it. */
+	padding: 4px 10px;
 }
 
 .osmosis-variant-label {
