@@ -1,7 +1,7 @@
 {
 	"id": "osmosis",
 	"name": "Osmosis",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"minAppVersion": "1.13.0",
 	"description": "Map your mind. Build your memory. Absorb information faster with unified notes, flashcards, and mind maps.",
 	"author": "Sawyer Rensel",
