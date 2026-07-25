@@ -1,11 +1,12 @@
 import {
 	App,
 	Constructor,
+	MarkdownFileInfo,
 	Scope,
 } from "obsidian";
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
 import { EditorSelection, Extension, Prec } from "@codemirror/state";
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView, keymap, placeholder, ViewUpdate, tooltips } from "@codemirror/view";
 
 declare const app: App;
@@ -38,13 +39,12 @@ interface WidgetEditorView {
  * Resolves the internal ScrollableMarkdownEditor prototype from Obsidian
  */
 function resolveEditorPrototype(app: App): Constructor<ScrollableMarkdownEditor> {
-	// @ts-expect-error - Using internal API: embedRegistry.embedByExtension
-	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-	const widgetEditorView: WidgetEditorView = app.embedRegistry.embedByExtension.md(
-		{ app, containerEl: document.createElement("div") },
+	// Internal API — see src/obsidian-internals.d.ts for the declaration.
+	const widgetEditorView = app.embedRegistry.embedByExtension.md(
+		{ app, containerEl: createDiv() },
 		null, // file parameter — not needed for prototype resolution
 		""
-	);
+	) as WidgetEditorView;
 
 	widgetEditorView.editable = true;
 	widgetEditorView.showEditor();
@@ -65,9 +65,9 @@ function getEditorBase(): Constructor<ScrollableMarkdownEditor> {
 		// Test environment mock
 		return class MockScrollableMarkdownEditor {
 			app: App;
-			containerEl: HTMLElement = document.createElement("div");
+			containerEl: HTMLElement = createDiv();
 			editor: { cm: EditorView } = null!;
-			editorEl: HTMLElement = document.createElement("div");
+			editorEl: HTMLElement = createDiv();
 			activeCM: EditorView | null = null;
 			owner: { editMode: unknown; editor: unknown } = { editMode: null, editor: null };
 			_loaded = false;
@@ -80,7 +80,7 @@ function getEditorBase(): Constructor<ScrollableMarkdownEditor> {
 				this.app = a;
 				this.containerEl = container;
 			}
-		} as unknown as Constructor<ScrollableMarkdownEditor>;
+		};
 	}
 	return resolveEditorPrototype(app);
 }
@@ -174,8 +174,9 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 		// Set up focus handler — push scope and set as active editor
 		this.editor.cm.contentDOM.addEventListener("focusin", () => {
 			this.app.keymap.pushScope(this.scope);
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-			(this.app.workspace as any).activeEditor = this.owner;
+			// `owner` is a duck-typed stand-in for MarkdownFileInfo: Obsidian only
+			// reads `editMode`/`editor` off the active editor for our use case.
+			this.app.workspace.activeEditor = this.owner as unknown as MarkdownFileInfo;
 		});
 
 		// Add custom CSS class if provided
@@ -312,7 +313,7 @@ export function autoResizeExtension(onResize: (height: number) => void): Extensi
 	return EditorView.updateListener.of((update: ViewUpdate) => {
 		if (update.docChanged) {
 			// Use requestAnimationFrame to measure after layout settles
-			requestAnimationFrame(() => {
+			window.requestAnimationFrame(() => {
 				const height = update.view.contentDOM.scrollHeight;
 				onResize(height);
 			});

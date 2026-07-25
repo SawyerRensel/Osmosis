@@ -11,7 +11,7 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
-const outdir = "e2e-vault/.obsidian/plugins/Osmosis";
+const outdir = "vault/.obsidian/plugins/Osmosis";
 const outfile = `${outdir}/main.js`;
 
 // Ensure output directory exists

@@ -1,7 +1,7 @@
 {
 	"name": "osmosis",
-	"version": "0.0.1",
-	"description": "Absorb information faster and longer with unified notes, flashcards, and mind mapping.",
+	"version": "0.0.2",
+	"description": "Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
@@ -22,17 +22,17 @@
 		"@playwright/test": "^1.58.2",
 		"@types/node": "^22.19.13",
 		"esbuild": "0.25.5",
-		"eslint-plugin-obsidianmd": "0.1.9",
+		"eslint-plugin-obsidianmd": "^0.4.1",
 		"globals": "14.0.0",
 		"jiti": "2.6.1",
 		"jsdom": "^28.1.0",
+		"obsidian": "^1.13.1",
 		"tslib": "2.4.0",
 		"typescript": "^5.8.3",
 		"typescript-eslint": "8.35.1",
 		"vitest": "^4.0.18"
 	},
 	"dependencies": {
-		"obsidian": "latest",
 		"ts-fsrs": "^5.2.3"
 	}
 }

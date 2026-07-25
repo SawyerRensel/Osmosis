@@ -4,7 +4,7 @@
 **Version**: 1.0
 **Created**: 2026-02-28
 **Owner**: Sawyer Rensel
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-07-15 (storage model + contextual/spatial study modes updated to match shipped implementation; line cards added)
 
 ---
 
@@ -98,7 +98,7 @@ Osmosis makes it possible to author knowledge once and leverage all three techni
 **Role**: University student or self-directed learner
 **Characteristics**: Takes extensive notes in Obsidian using headings, bullets, and links. Familiar with spaced repetition concepts. Currently uses or has used Anki. Wants their notes to "do more" without extra work.
 **Pain Points**: Has hundreds of notes but no systematic way to review them. Creating Anki cards from notes feels like double work. Existing SR plugins are clunky or clutter their notes.
-**How They'll Use This**: Adds `osmosis: true` to frontmatter of notes they want to study. Uses `==highlights==` for key terms. Opens Mind Map View to see the big picture. Studies due cards via the sidebar dashboard each morning.
+**How They'll Use This**: Adds `osmosis-cards: true` to frontmatter of notes they want to study. Uses `==highlights==` for key terms. Opens Mind Map View to see the big picture. Studies due cards via the sidebar dashboard each morning.
 **Success Looks Like**: Their daily review habit is sustained because cards come from their existing notes with zero extra effort. They retain more because spatial context from the mind map reinforces relationships.
 
 ### Secondary Persona: The Visual Thinker
@@ -239,9 +239,16 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 
 **User Story**: As a student, I want my notes to automatically become flashcards that are scheduled for review using a modern SR algorithm, so that I can retain what I learn without manually creating and maintaining a separate flashcard deck.
 
-**Description**: Osmosis uses the **Free Spaced Repetition Scheduler (FSRS)** algorithm for all card scheduling. Cards are stored in a centralized SQLite database (`.osmosis/cards.db` via sql.js). Scheduling state never touches the markdown files — notes stay clean.
+**Description**: Osmosis uses the **Free Spaced Repetition Scheduler (FSRS)** algorithm for all card scheduling.
 
-**Note opt-in**: A note must have `osmosis: true` in frontmatter to generate cards. Nothing in the vault is indexed by default.
+**Storage** *(revised 2026-07-15 — supersedes the original `.osmosis/cards.db` SQLite design)*: there is no database. Cards live in an **in-memory CardStore** rebuilt from the vault on plugin load, and scheduling state persists in the markdown itself:
+
+- **Fence cards** — FSRS fields (`due`, `stability`, `difficulty`, `reps`, `lapses`, `state`, `last-review`) are written into the fence's metadata block (derived cards use prefixed keys: `r-` for reverse, `c1-`/`c2-`/… for clozes).
+- **Line cards** — schedules are written to the note's frontmatter under `osmosis-schedule`, keyed by block ID, via Obsidian's atomic `FileManager.processFrontMatter()`. Values are plain nested YAML with ISO 8601 local timestamps (human-readable in source view). Writes are applied to the in-memory store immediately, debounced (~2s) on disk, and flushed at study-session end and plugin unload.
+
+Everything travels with the note — sync, backup, and portability come free from the files themselves.
+
+**Note opt-in**: A note must have `osmosis-cards: true` in frontmatter to generate cards (or be covered by the folder/tag include lists in settings). Nothing in the vault is indexed by default.
 
 **Deck organization** (four opt-in layers):
 1. **Tag hierarchy**: `#study/python/functions` → deck path mirrors tag path
@@ -251,7 +258,7 @@ The engine uses **SVG for map structure** (lines, curves, layout) and **`<foreig
 
 Osmosis Settings provides explicit include/exclude lists for folders and tags.
 
-**Card identity**: Each card has an inline comment ID (`<!--osmosis-id:abc123-->`) placed adjacent to its source in markdown. If deleted, a new ID is generated (graceful degradation). Image occlusion IDs are stored as `id` attributes on SVG shape elements.
+**Card identity** *(revised 2026-07-15 — no HTML comment IDs shipped)*: fence cards carry an `id:` key in their fence metadata (auto-generated when missing); line cards are identified as `notePath#^blockId`, where the native Obsidian block ID travels with the line through edits and reorders. Image occlusion IDs (v1.1) are planned as `id` attributes on SVG shape elements.
 
 **Orphaned cards**: When source content is deleted, cards are soft-deleted (SR history preserved, card archived). If source is re-created, card can be re-linked.
 
@@ -260,16 +267,16 @@ Osmosis Settings provides explicit include/exclude lists for folders and tags.
 **Rating**: Again / Hard / Good / Easy (standard FSRS).
 
 **Acceptance Criteria**:
-- [ ] Notes with `osmosis: true` generate cards automatically
+- [ ] Notes with `osmosis-cards: true` generate cards automatically
 - [ ] FSRS schedules cards correctly across sessions (intervals increase after successful recall)
-- [ ] Card database opens in < 100ms
+- [ ] Card store rebuild on plugin load stays imperceptible at startup
 - [ ] Due card query for a single deck completes in < 20ms
 - [ ] FSRS computation completes in < 1ms per card
 - [ ] Card IDs remain stable across file edits (content changes don't break scheduling history)
 - [ ] Orphaned cards are soft-deleted, not destroyed
 - [ ] Deck organization works via tags, folders, frontmatter, and mind map branches
 
-**Constraints**: sql.js (WASM-based SQLite) runs entirely in the browser — no native dependencies. Multi-device sync uses merge-before-save strategy.
+**Constraints**: No database dependencies — scheduling persistence rides on Obsidian's own file I/O. Multi-device conflicts reduce to ordinary markdown sync conflicts, handled by the user's sync tool.
 
 **Priority**: Must-Have
 **Estimated Complexity**: High
@@ -287,6 +294,9 @@ Osmosis Settings provides explicit include/exclude lists for folders and tags.
 | Heading-paragraph | `## Heading` + body below | 1 (heading = front, body = back) |
 | Cloze — highlight | `==term==` | 1 per highlighted term |
 | Cloze — bold | `**term**` | 1 per bolded term |
+| Line card | `^os-a1b2c3` block ID trailing the line | 1 per tagged line (breadcrumb = front, line = back) |
+
+**Line cards ("Notes as Flashcards", added 2026-07)**: the `Generate flashcards from note` command tags every eligible line (headings, bullets, numbered items, paragraphs — the same elements that become mind map nodes) with a native Obsidian block ID behind a confirmation modal. Each tagged line is its own FSRS card: front = ancestor breadcrumb (plus up to N preceding siblings for context in sequential study), back = the line. Block IDs are invisible in reading view, deep-linkable (`[[note#^os-a1b2c3]]`), and stable across edits, so scheduling history survives reorders and renames. Re-running the command is incremental; untagged lines never generate cards. Opt-out: `osmosis-line-cards: false` per note, or the global "Include line cards in decks" setting (excluded cards stay studiable in place). A line's block ID doubles as a rename-proof mind map style selector.
 
 **Heading auto-generation toggle**: A setting controls whether headings automatically become cards (on by default). When off, only explicit cards, clozes, and tables generate cards. Heading structure is still used as context/metadata for cloze cards within that section.
 
@@ -413,38 +423,48 @@ Cards drawn from the selected scope regardless of source note.
 
 **Entry points**: Sidebar dashboard (click any deck or "Study All"), command palette (`Osmosis: Study deck`).
 
-#### 7b. Contextual Mode (In-Note Study)
-Cards studied in-place within the note, in document reading order. **Activates automatically when switching to Obsidian's reading view** on an opted-in note.
+#### 7b. Contextual Mode (In-Note Study) *(revised 2026-07-14 — matches shipped implementation)*
+
+Cards studied in-place within the note, in document reading order. Reading view stays a **normal reading surface by default** — nothing hidden until the user asks.
+
+*Fence cards* (activates automatically in reading view on opted-in notes; configurable):
 
 - All `osmosis` fences show front side; back side replaced with `░░░░░░` placeholder
 - Clicking/tapping a card or cloze reveals the answer
-- A "Start studying" button at the top activates FSRS rating — after reveal, inline rating buttons appear as a comment bubble attached to the card
+- A "Start studying" button activates FSRS rating — after reveal, inline rating buttons appear as a comment bubble attached to the card
 - Without "Start studying", reveals are casual peeks — no scheduling recorded
-- All cards in the note participate regardless of FSRS schedule (unlike sequential/spatial which respect due dates)
 - Inline cloze participation (whether `==highlights==` and `**bold**` blank out) configurable in settings (default: off)
-- Progress indicator: floating widget showing "3/7 cards reviewed"
 
-#### 7c. Spatial Mode (Mind Map Study)
-Nodes hide/reveal in-place on the map. Supports both full node hiding and inline cloze blanking within visible nodes.
+*Line cards* (two header actions in reading mode, left of the reading/edit toggle):
 
-- Nodes hidden/revealed by **tapping the node**
-- **"Show children" (+) button** on each node expands hidden children (Xmind-style UX)
-- Rating bubble appears after node reveal
-- **Entry points**: Mind Map View menu, right-click branch → "Study this branch", floating due-cards badge on branches
+- **Peek mode** (`eye-dashed` icon): hides every line-card line behind `░░░░░░`; click any placeholder to reveal, any order, nothing recorded; toggle off to return to normal reading
+- **Study mode** (`graduation-cap` icon, same convention as Mind Map View): hides only lines whose card is **due or new** (scheduling decides, mirroring spatial mode); reveal is top-down, one line at a time; after each reveal a rating bubble appears below the line and must be answered before the next line unlocks
+- Floating pill shows progress ("4/9 rated") + Stop; completion toast; schedule writes flush at session end
+- If nothing is due, the study button notices instead of entering
+
+#### 7c. Spatial Mode (Mind Map Study) *(revised 2026-07 — matches shipped implementation)*
+
+Nodes hide/reveal in-place on the map, driven by line-card scheduling.
+
+- Entering study mode hides **only nodes whose line card is due or new** — the rest of the map stays fully expanded, because spatial context (seeing how information fits together) is the point
+- Hidden nodes keep a "?" placeholder box (existence/shape visible by design — no subtree collapsing)
+- Tapping a hidden node reveals it and shows a **rating bubble** (Again/Hard/Good/Easy, keys 1–4) anchored below the node; one pending rating at a time
+- Progress pill ("4/9 due reviewed") + Stop; completion toast; the map stays open afterward
+- **Peek mode** (companion header action): hides every line-card node, reveal in any order, nothing recorded
+- **Entry points**: Mind Map View header actions (study + peek), right-click branch → "Study this branch" (scopes the session to that subtree's due cards)
 
 #### FSRS Review Tagging
-Every review is tagged with the study mode that produced it (`contextual`, `sequential`, `spatial`). Stored in `cards.db` review logs. Enables future analytics and potential contextual difficulty adjustment.
+Every review carries the study mode that produced it (`contextual`, `sequential`, `spatial`). **Shipped as pass-through only**: no review-log store exists yet, so mode tags are currently a no-op (flagged and accepted 2026-07). A persistent review log for analytics and contextual difficulty adjustment remains future work.
 
 **Acceptance Criteria**:
-- [ ] Sequential mode displays cards in a modal with flip and rating interaction
+- [ ] Sequential mode displays cards in a modal with flip and rating interaction; line-card fronts show breadcrumb + sibling context
 - [ ] Sequential mode supports deck scoping (single deck, parent deck, all decks)
-- [ ] Contextual mode activates in reading view on opted-in notes
-- [ ] Contextual mode hides answers until tap/click, with optional FSRS rating
-- [ ] Spatial mode hides/reveals nodes in the mind map view
-- [ ] Spatial mode supports both full node hiding and inline cloze blanking
-- [ ] All three modes use the same FSRS engine and update the same card database
+- [ ] Contextual fence-card hiding activates in reading view on opted-in notes; peek/study header actions appear on notes with line cards
+- [ ] Contextual study mode hides only due/new lines, reveals top-down, and requires a rating before the next line unlocks
+- [ ] Spatial study mode hides only due/new line-card nodes behind "?" placeholders; tap reveals, rating bubble schedules
+- [ ] Spatial and contextual peek modes reveal freely without recording anything
+- [ ] All three modes use the same FSRS engine and update the same in-memory card store + markdown persistence
 - [ ] Study session starts in < 200ms from click to first card
-- [ ] Review tags are recorded per study mode in the database
 
 **Constraints**: Contextual mode must not modify the note content — answer hiding is purely visual (reading view post-processing).
 
@@ -684,8 +704,8 @@ A sidebar panel for interactive styling: select a node → see shape, fill, bord
 - **Rendering**: SVG for map structure + `<foreignObject>` for node content (HTML/CSS)
 - **Parser**: Custom incremental parser inspired by Markwhen Parser — fast parse → intermediate tree representation → swappable view consumers. Range tracking for cursor sync. LRU caching.
 - **SR Algorithm**: FSRS (Free Spaced Repetition Scheduler)
-- **SR Database**: SQLite via sql.js (WASM, no native dependencies, runs in Obsidian's WebView)
-- **SR Data Location**: `.osmosis/cards.db` — centralized, never touches markdown files
+- **SR Store**: In-memory CardStore rebuilt from the vault on plugin load — no database dependencies *(revised 2026-07-15, supersedes sql.js/SQLite)*
+- **SR Data Location**: In the markdown itself — fence metadata for fence cards, `osmosis-schedule` frontmatter (via `processFrontMatter`) for line cards
 - **Mind Map Engine**: Custom-built, potentially publishable as a separate package
 - **Image Occlusion** (v1.1): Fabric.js v6 — chosen for Anki compatibility and native SVG support
 
@@ -699,12 +719,12 @@ A sidebar panel for interactive styling: select a node → see shape, fill, bord
 ### Data & Privacy
 
 - **All data is local**: No cloud services, no telemetry, no external API calls
-- **SR data**: Stored in `.osmosis/cards.db` within the vault — included in whatever sync mechanism the user has (Obsidian Sync, iCloud, Git, etc.)
+- **SR data**: Stored in the markdown files themselves (fence metadata + `osmosis-schedule` frontmatter) — included in whatever sync mechanism the user has (Obsidian Sync, iCloud, Git, etc.)
 - **Media** (image occlusion masks): Stored in `.osmosis/masks/` within the vault
 - **Themes**: Custom themes stored in `.osmosis/themes/` within the vault (JSON format)
 - **View state**: Stored in `.obsidian/plugins/Osmosis/views/` (per-note sidecar JSON files — fold state, pan, zoom, named views)
-- **Per-note styles**: Stored in note frontmatter under the `osmosis:` key (travels with the note)
-- **Note content**: Never modified for SR purposes — scheduling data stays in the database, not in frontmatter or inline comments (except for card IDs which are lightweight `<!--osmosis-id:...-->` comments)
+- **Per-note styles**: Stored in note frontmatter under the `osmosis-styles` key (travels with the note)
+- **Note content**: SR data is written only to designated, Obsidian-native locations — fence metadata, the `osmosis-schedule` frontmatter key, and trailing block IDs (`^os-…`, hidden in reading view). Prose is never otherwise modified. *(Revised 2026-07-15 — the original "scheduling never touches markdown" stance was superseded by the frontmatter storage decision.)*
 
 ### Performance Requirements
 
@@ -720,7 +740,7 @@ See detailed targets in the Performance Targets section below. Summary:
 | Markdown ↔ map sync latency | < 16ms (one frame) |
 | Full parse (1,000-line note) | < 20ms |
 | Incremental parse (single line) | < 2ms |
-| Card DB open | < 100ms |
+| Card store rebuild (plugin load) | < 100ms |
 | Due card query (single deck) | < 20ms |
 | Study session start | < 200ms |
 | Plugin base load | < 5 MB memory |
@@ -735,7 +755,7 @@ See detailed targets in the Performance Targets section below. Summary:
 #### Flow 1: First-Time Setup
 1. Install Osmosis from Obsidian Community Plugins
 2. Open an existing note
-3. Add `osmosis: true` to frontmatter (or use command palette: `Osmosis: Enable for this note`)
+3. Add `osmosis-cards: true` to frontmatter (or use command palette: `Osmosis: Enable for this note`)
 4. Optionally add `osmosis-deck: my-subject` to set a deck
 5. Open Mind Map View from the "More options" menu or command palette
 6. The note renders as an interactive mind map immediately
@@ -824,7 +844,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 
 | Metric | Target |
 |---|---|
-| Card database open | < 100ms |
+| Card store rebuild (plugin load) | < 100ms |
 | Due card query (single deck) | < 20ms |
 | Due card query (all decks) | < 50ms |
 | FSRS computation | < 1ms per card |
@@ -839,7 +859,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 | 500-node map total | < 6 MB |
 | 2,000-node map total | < 10 MB (with viewport culling) |
 | 5,000-node map total | < 15 MB (with DOM virtualization) |
-| Card database (10,000 cards) | < 10 MB |
+| Card store (10,000 cards, in-memory) | < 10 MB |
 
 ### Mobile-Specific
 
@@ -867,7 +887,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 
 - [ ] A markdown note with headings, bullets, and `==highlights==` renders as an interactive mind map
 - [ ] Editing the map updates the markdown; editing the markdown updates the map
-- [ ] A note with `osmosis: true` in frontmatter generates cards from headings and clozes
+- [ ] A note with `osmosis-cards: true` in frontmatter generates cards from headings and clozes
 - [ ] All three study modes are functional (sequential, contextual, spatial)
 - [ ] FSRS schedules cards correctly across sessions
 - [ ] Embedded note links (`![[linked-note]]` and `![](path)`) render as sub-branches in the mind map
@@ -934,8 +954,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 1. **Assumption**: `<foreignObject>` inside SVG works reliably in Obsidian's mobile WebViews (both WKWebView and Android System WebView)
    - **How to Validate**: Early prototype testing on iOS and Android with `<foreignObject>` containing rendered markdown. Markmap already demonstrates this works, but Osmosis's usage (editable nodes) is more complex.
 
-2. **Assumption**: sql.js (WASM-based SQLite) performs adequately for up to 10,000 cards on mobile
-   - **How to Validate**: Benchmark card queries on mid-tier mobile devices with a populated test database.
+2. ~~**Assumption**: sql.js (WASM-based SQLite) performs adequately for up to 10,000 cards on mobile~~ **Obsolete 2026-07-15**: the SQLite design was dropped; cards live in an in-memory store persisted to markdown, so no database performance assumption remains.
 
 3. **Assumption**: Users will opt in notes to Osmosis via frontmatter — the opt-in friction is low enough that it doesn't prevent adoption
    - **How to Validate**: User testing during beta. If adoption is low, consider folder-level opt-in or a more prominent onboarding flow.
@@ -963,10 +982,10 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
    - **Impact**: Medium (limits practical map sizes)
    - **Mitigation**: Viewport culling, lazy loading, and progressive disclosure are already planned as performance tiers. Accept that very large maps may need these optimizations and build them into the architecture from day one rather than bolting them on later.
 
-4. **Risk**: FSRS scheduling conflicts between devices (multi-device sync via .osmosis/cards.db)
+4. **Risk**: FSRS scheduling conflicts between devices (multi-device sync of scheduling data in markdown)
    - **Likelihood**: Medium
    - **Impact**: Low (worst case: a card is reviewed slightly earlier or later than optimal)
-   - **Mitigation**: Merge-before-save strategy (from Decks plugin). Card reviews are append-only — merge conflicts are rare and low-impact. Consider last-write-wins for card state, with full review log for FSRS to recompute optimal schedule.
+   - **Mitigation** *(updated 2026-07-15 for markdown storage)*: scheduling lives in fence metadata and `osmosis-schedule` frontmatter, so conflicts reduce to ordinary markdown sync conflicts handled by the user's sync tool. Debounced, coalesced writes keep file churn low; worst case is a slightly stale schedule on one device, corrected at the next review.
 
 5. **Risk**: Scope creep — the feature list is ambitious and Phase 1 alone is substantial
    - **Likelihood**: High
@@ -982,7 +1001,7 @@ Real-world context: even a "small" mind map routinely reaches 200 nodes. Large m
 - [x] How should Osmosis handle notes that use `**bold**` extensively for emphasis (not as cloze targets)? **Decision**: Per-note toggle in frontmatter (`osmosis-cloze-bold: false`). Global setting as default.
 - [x] Should the incremental parser use Web Workers to avoid blocking the main thread during large edits? **Decision**: Not for v1.0. Profile first. The < 20ms target for 1,000 lines is achievable on the main thread.
 - [x] What is the minimum supported Obsidian version? **Decision**: Target the current stable version at time of release. Document in manifest.json.
-- [x] How should card generation interact with Obsidian templates — if a template includes `osmosis: true`, should cards be generated immediately or wait for the user to edit? **Decision**: Generate on first edit or explicit trigger, not on template insertion.
+- [x] How should card generation interact with Obsidian templates — if a template includes `osmosis-cards: true`, should cards be generated immediately or wait for the user to edit? **Decision**: Generate on first edit or explicit trigger, not on template insertion.
 - [x] For spatial mode: what is the exact animation/transition for hiding and revealing nodes? **Decision**: Fade (opacity 0→1, ~200ms). Simple, performant, consistent.
 
 ---

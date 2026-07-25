@@ -100,6 +100,37 @@ osmosis-styles:
 | `verticalSpacing` | Pixels | `8` |
 | `maxNodeWidth` | Pixels | — |
 
+## Per-Node Style Selectors
+
+Individual nodes are styled via the `styles` map inside `osmosis-styles`. Keys select a node in one of three forms:
+
+```yaml
+---
+osmosis-styles:
+  styles:
+    "^os-a1b2c3":                          # block ID (preferred)
+      shape: diamond
+      fill: "#e94560"
+    "# Coffee Brewing/## Grinder Types":   # tree path
+      fill: "#533483"
+    "_n:a3f2b7c1d9e0":                     # stable ID (legacy, GUI-generated)
+      shape: pill
+---
+```
+
+| Selector | Form | Survives rename? | Survives reorder? |
+|----------|------|------------------|-------------------|
+| **Block ID** | `^os-a1b2c3` (any block ID works, including your own `^anchors`) | :material-check: | :material-check: |
+| **Tree path** | Full ancestor path from the top heading, segments joined with `/`, each with its markdown prefix (`# `, `## `, `- `, `1. `) | :material-close: | :material-check: |
+| **Stable ID** | `_n:` + content-position hash | :material-check: | :material-close: |
+
+When several selectors match the same node, block ID wins, then stable ID, then tree path.
+
+The Format tab writes **block-ID selectors** whenever the node has a block ID (see [line cards](../flashcards/line-cards.md) — the *Generate flashcards from note* command tags lines with them), and migrates a node's legacy `_n:` entry to the block-ID key on the next style change. Nodes without a block ID fall back to stable IDs. Tree paths are a power-user escape hatch for hand-editing frontmatter.
+
+!!! warning "Tree paths are full paths"
+    A tree-path selector must spell out the *entire* ancestor chain starting at the top-level heading — `"## Grinder Types"` alone matches nothing if the note has a `# Coffee Brewing` heading above it. Block IDs on lines are stripped before matching, so path segments never contain `^os-…`.
+
 ## Node Shapes
 
 Osmosis supports 15 node shapes:

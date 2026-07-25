@@ -1,0 +1,152 @@
+---
+osmosis-cards: true
+osmosis-deck: history-of-science/evolution
+osmosis-styles:
+  theme: Everforest
+  topicShape: pill
+  branchLineStyle: rounded-elbow
+---
+
+# Darwin and the Theory of Evolution
+
+Charles Darwin's theory of evolution by natural selection is one of the most powerful ideas in the history of science. It unified biology, explained the diversity of life, and forever changed how we see our place in nature.
+
+![Charles Darwin portrait](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Charles_Darwin_seated_crop.jpg/400px-Charles_Darwin_seated_crop.jpg)
+
+[Evolution — CrashCourse Biology](https://www.youtube.com/watch?v=GcjgWov7mTM)
+
+## Charles Darwin (1809–1882)
+
+- Voyage of HMS *Beagle* (1831–1836)
+	- Five-year circumnavigation that shaped his thinking
+	- The Galápagos Islands were pivotal — each island had distinct finch species adapted to local conditions
+	- Observed geological gradual change (influenced by Charles Lyell)
+- Published *On the Origin of Species* in 1859
+	- Took over 20 years to develop and refine the theory
+	- Spurred to publish by Alfred Russel Wallace's independent discovery of the same idea
+
+## Natural Selection
+
+- The mechanism driving evolution
+	- **Variation** — individuals in a population differ in heritable traits
+	- **Competition** — resources are limited; not all individuals survive to reproduce
+	- **Differential reproduction** — individuals with advantageous traits leave more offspring
+	- **Inheritance** — advantageous traits are passed to the next generation
+- Over many generations, populations change — new species emerge, others go extinct
+- Often summarized as "survival of the fittest" (Herbert Spencer's phrase, not Darwin's)
+
+## Evidence for Evolution
+
+### Fossil Record
+- Transitional fossils show gradual change over time
+	- *Archaeopteryx* — features of both dinosaurs and birds
+	- *Tiktaalik* — a "fishapod" bridging fish and tetrapods
+- Fossils appear in the geological record in the order predicted by common descent
+
+### Comparative Anatomy
+- **Homologous structures** — same underlying anatomy, different functions
+	- Human arm, whale flipper, bat wing, dog forelimb — all share the same bone pattern
+- **Vestigial structures** — remnants of once-functional features
+	- Human appendix, whale pelvis bones, flightless bird wings
+
+### Molecular Biology
+- DNA comparisons reveal shared ancestry
+	- Humans and chimpanzees share ~98.7% of their DNA
+	- All life shares the same genetic code (DNA → RNA → protein)
+- Molecular phylogenetics confirms and refines evolutionary trees built from anatomy
+
+### Biogeography
+- Species distribution patterns match evolutionary predictions
+	- Island species resemble nearby mainland species (not distant islands with similar climates)
+	- Marsupials dominate Australia due to geographic isolation
+
+## Impact on Science and Society
+
+- Unified biology under a single explanatory framework
+- Inspired genetics (Mendel), modern synthesis, and genomics
+- Provoked fierce debate with religious institutions that continues today
+- Gave rise to fields like evolutionary psychology, evolutionary medicine, and conservation biology
+
+---
+
+```osmosis
+id: sci-darwin-001
+bidi: true
+stability: 22.3
+difficulty: 0.32
+due: 2026-03-24T10:00:00.000Z
+last-review: 2026-03-06T10:00:00.000Z
+reps: 11
+lapses: 1
+state: review
+
+![Charles Darwin](https://upload.wikimedia.org/wikipedia/commons/thumb/2/2e/Charles_Darwin_seated_crop.jpg/220px-Charles_Darwin_seated_crop.jpg)
+
+Charles Darwin
+***
+Proposed the theory of evolution by **natural selection** in *On the Origin of Species* (1859). His observations during the voyage of HMS *Beagle* — especially in the Galápagos Islands — were foundational.
+```
+
+```osmosis
+id: sci-darwin-002
+c1-stability: 20.1
+c1-difficulty: 0.28
+c1-due: 2026-03-26T10:00:00.000Z
+c1-last-review: 2026-03-06T10:00:00.000Z
+c1-reps: 10
+c1-lapses: 0
+c1-state: review
+c2-stability: 12.4
+c2-difficulty: 0.38
+c2-due: 2026-03-19T10:00:00.000Z
+c2-last-review: 2026-03-07T10:00:00.000Z
+c2-reps: 7
+c2-lapses: 0
+c2-state: review
+c3-stability: 6.1
+c3-difficulty: 0.48
+c3-due: 2026-03-14T10:00:00.000Z
+c3-last-review: 2026-03-09T10:00:00.000Z
+c3-reps: 4
+c3-lapses: 0
+c3-state: review
+c4-stability: 2.8
+c4-difficulty: 0.60
+c4-due: 2026-03-12T10:00:00.000Z
+c4-last-review: 2026-03-10T10:00:00.000Z
+c4-reps: 3
+c4-lapses: 1
+c4-state: learning
+c5-stability: 0.9
+c5-difficulty: 0.65
+c5-due: 2026-03-11T08:00:00.000Z
+c5-last-review: 2026-03-10T10:00:00.000Z
+c5-reps: 2
+c5-lapses: 1
+c5-state: relearning
+
+==Natural selection== requires four conditions: ==variation== among individuals, ==competition== for resources, ==differential reproduction==, and ==inheritance== of traits
+```
+
+```osmosis
+id: sci-darwin-003
+
+What are homologous structures, and why are they evidence for evolution?
+***
+Homologous structures are body parts in different species that share the **same underlying anatomy** but serve different functions (e.g., human arm, whale flipper, bat wing). They indicate descent from a **common ancestor**.
+```
+
+```osmosis
+id: sci-darwin-004
+stability: 0.6
+difficulty: 0.72
+due: 2026-03-10T13:00:00.000Z
+last-review: 2026-03-10T09:00:00.000Z
+reps: 7
+lapses: 2
+state: relearning
+
+What transitional fossil bridges fish and four-legged land animals?
+***
+***Tiktaalik*** — a 375-million-year-old "fishapod" with both fish features (scales, fins) and tetrapod features (a flat head, a neck, and limb-like fins with wrist bones)
+```

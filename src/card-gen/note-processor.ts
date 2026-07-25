@@ -1,5 +1,6 @@
 import type { GeneratedCard } from "./types";
 import { generateExplicitCards } from "./explicit";
+import { generateLineCards } from "./line-cards";
 import { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
 
 /** Options controlling card generation behavior. */
@@ -8,6 +9,8 @@ export interface CardGenerationOptions {
 	includeFolders?: string[];
 	/** Tags that auto-enable card generation. */
 	includeTags?: string[];
+	/** Global setting: line cards count in decks (default true). */
+	includeLineCardsInDecks?: boolean;
 }
 
 /** Result of processing a note for card generation. */
@@ -26,7 +29,8 @@ export interface NoteProcessingResult {
  * This is the main orchestrator that:
  * 1. Checks opt-in via frontmatter, folder, or tag
  * 2. Runs the explicit fence generator (handles exclude: true internally)
- * 3. Resolves deck names
+ * 3. Runs the line-card generator (block-ID-tagged elements)
+ * 4. Resolves deck names
  */
 export function processNote(
 	markdown: string,
@@ -54,12 +58,24 @@ export function processNote(
 
 	const deck = resolveDeck(frontmatter.deck, "", notePath);
 
-	// Generate explicit cards (exclude: true handled inside generator)
-	const cards = generateExplicitCards(markdown);
+	// Generate explicit cards (exclude: true handled inside generator),
+	// then line cards from block-ID-tagged elements
+	const cards = [
+		...generateExplicitCards(markdown),
+		...generateLineCards(markdown, notePath),
+	];
+
+	// Line-card deck opt-out: global setting or per-note osmosis-line-cards: false.
+	// Excluded cards stay studiable in-place but leave deck totals/sequential.
+	const excludeLineCards =
+		options.includeLineCardsInDecks === false || !frontmatter.lineCardsInDecks;
 
 	// Assign deck
 	for (const card of cards) {
 		card.deck = resolveDeck(frontmatter.deck, card.deck, notePath);
+		if (excludeLineCards && card.card_type === "line") {
+			card.excludeFromDecks = true;
+		}
 	}
 
 	return { enabled: true, cards, deck };

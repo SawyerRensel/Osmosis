@@ -1,22 +1,30 @@
-import { Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon } from "obsidian";
+import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter } from "./store/ScheduleStore";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { LineRevealProcessor } from "./views/LineRevealProcessor";
+import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
+import { ConfirmModal } from "./views/ConfirmModal";
+import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
+import type { Card } from "./database/types";
 import type { DeckScope } from "./study/types";
 
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
+	scheduleStore!: ScheduleStore;
 	cardSync!: CardSyncService;
+	lineReveal!: LineRevealProcessor;
 
 	async onload() {
 		await this.loadSettings();
@@ -27,6 +35,12 @@ export default class OsmosisPlugin extends Plugin {
 		// Fence writer — writes schedule data back into markdown fences
 		this.fenceWriter = new FenceWriter(this.app.vault);
 
+		// Schedule store — debounced osmosis-schedule frontmatter writes for line cards
+		this.scheduleStore = new ScheduleStore(
+			this.app.fileManager,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
+
 		// Card sync service — connects note processor to card store
 		this.cardSync = new CardSyncService(
 			this.app.vault,
@@ -35,6 +49,7 @@ export default class OsmosisPlugin extends Plugin {
 			() => ({
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
+				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
 			(file: TFile) => {
 				const cache = this.app.metadataCache.getFileCache(file);
@@ -43,6 +58,28 @@ export default class OsmosisPlugin extends Plugin {
 					? (cache.frontmatter.tags as string[]).map((t: string) => t.replace(/^#/, ""))
 					: [];
 				return [...new Set([...inlineTags, ...fmTags])];
+			},
+			(file: TFile) => {
+				// Line-card schedules: osmosis-schedule frontmatter overlaid with
+				// pending ratings that haven't been flushed to disk yet
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const schedules = parseScheduleFrontmatter(raw);
+				for (const [blockId, entry] of this.scheduleStore.getPendingEntries(file.path)) {
+					if (entry === null) schedules.delete(blockId);
+					else schedules.set(blockId, entry);
+				}
+				return schedules;
+			},
+			(file: TFile) => {
+				// Disabled ("excluded") line cards: osmosis-schedule
+				// `disabled: true` overlaid with pending unflushed changes
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const disabled = parseDisabledFrontmatter(raw);
+				for (const [blockId, flag] of this.scheduleStore.getPendingDisabled(file.path)) {
+					if (flag) disabled.add(blockId);
+					else disabled.delete(blockId);
+				}
+				return disabled;
 			},
 		);
 
@@ -65,6 +102,17 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Open mind map view",
 			callback: () => {
 				void this.activateMindMapView();
+			},
+		});
+
+		this.addCommand({
+			id: "toggle-mindmap-reading-mode",
+			name: "Toggle mind map reading mode",
+			checkCallback: (checking) => {
+				const view = this.app.workspace.getActiveViewOfType(MindMapView);
+				if (!view) return false;
+				if (!checking) view.toggleReadingMode();
+				return true;
 			},
 		});
 
@@ -103,6 +151,13 @@ export default class OsmosisPlugin extends Plugin {
 							}
 						});
 				});
+				menu.addItem((item) => {
+					item.setTitle("Generate flashcards")
+						.setIcon("layers")
+						.onClick(() => {
+							void this.openGenerateFlashcards(file);
+						});
+				});
 			}),
 		);
 
@@ -125,11 +180,30 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// ── Notes as Flashcards: ID generation ──────────────────
+		this.addCommand({
+			id: "generate-flashcards",
+			name: "Generate flashcards from note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (!file || file.extension !== "md") return false;
+				if (!checking) void this.openGenerateFlashcards(file);
+				return true;
+			},
+		});
+
 		// ── Contextual Study Mode ───────────────────────────────
 		new ContextualStudyProcessor(this).register();
 
+		// Progressive line-card reveal in reading view (plan §5)
+		this.lineReveal = new LineRevealProcessor(this);
+		this.lineReveal.register();
+
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
+
+		// ── Granular line-card add/remove/exclude (plan §8) ──────
+		this.registerLineCardCommands();
 
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
@@ -137,14 +211,24 @@ export default class OsmosisPlugin extends Plugin {
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
 
-			void this.cardSync.syncAll().then(() => {
+			this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				// A throw here would otherwise vanish AND leave header chrome
+				// and dashboard stale until the next workspace event
+				console.error("Osmosis: startup card sync/refresh failed", error);
 			});
 		});
 
 		// Incremental sync on file changes (debounced)
 		const debouncedSync = debounce((file: TFile) => {
-			void this.cardSync.syncFile(file);
+			this.cardSync.syncFile(file).then(() => {
+				this.refreshDashboard();
+				this.lineReveal.refreshChrome();
+			}).catch((error: unknown) => {
+				console.error("Osmosis: incremental card sync/refresh failed", error);
+			});
 		}, 2000, true);
 
 		this.registerEvent(
@@ -167,6 +251,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("delete", (file) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleDelete(file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
@@ -175,9 +260,15 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.vault.on("rename", (file, oldPath) => {
 				if (file instanceof TFile && file.extension === "md") {
 					this.cardSync.handleRename(oldPath, file.path);
+					this.refreshDashboard();
 				}
 			}),
 		);
+	}
+
+	onunload() {
+		// Force out any pending schedule frontmatter writes
+		void this.scheduleStore.flush();
 	}
 
 	private addMindMapActionToMarkdownLeaves(): void {
@@ -188,7 +279,7 @@ export default class OsmosisPlugin extends Plugin {
 			// Find the reading-view toggle to insert before it
 			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
 
-			const btn = document.createElement("a");
+			const btn = createEl("a");
 			btn.className = "clickable-icon osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
 			setIcon(btn, "brain-circuit");
@@ -249,8 +340,11 @@ export default class OsmosisPlugin extends Plugin {
 	/** Re-render any open dashboard sidebar views. */
 	refreshDashboard(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-			const view = leaf.view as DashboardSidebarView;
-			void view.render();
+			// Sidebar leaves are deferred placeholders until first shown —
+			// they have no render() (calling it would throw and kill the
+			// caller), and render themselves from the store in onOpen().
+			const view = leaf.view;
+			if (view instanceof DashboardSidebarView) void view.render();
 		}
 	}
 
@@ -260,9 +354,10 @@ export default class OsmosisPlugin extends Plugin {
 		const existing = workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
 		if (existing.length > 0 && existing[0]) {
 			void workspace.revealLeaf(existing[0]);
-			// Refresh counts when re-opening an existing dashboard
-			const view = existing[0].view as DashboardSidebarView;
-			void view.render();
+			// Refresh counts when re-opening an existing dashboard. A still-
+			// deferred leaf renders itself in onOpen() once revealed.
+			const view = existing[0].view;
+			if (view instanceof DashboardSidebarView) void view.render();
 			return;
 		}
 
@@ -277,20 +372,73 @@ export default class OsmosisPlugin extends Plugin {
 
 	async openStudySession(scope: DeckScope): Promise<void> {
 		const sessionManager = this.createSessionManager();
-		const modal = new SequentialStudyModal(this.app, sessionManager, scope, {
-			newLimit: this.settings.dailyNewCardLimit,
-			reviewLimit: this.settings.dailyReviewCardLimit,
-		});
+		const modal = new SequentialStudyModal(
+			this.app,
+			sessionManager,
+			scope,
+			{
+				newLimit: this.settings.dailyNewCardLimit,
+				reviewLimit: this.settings.dailyReviewCardLimit,
+			},
+			this.fenceWriter,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.settings.showStudyBreadcrumb,
+			this.settings.sequentialContextLines,
+			() => {
+				// Session end: force pending line-card schedule writes to disk
+				void this.scheduleStore.flush();
+			},
+		);
 		modal.open();
+	}
+
+	/**
+	 * "Generate flashcards from note": plan block-ID insertions, show the
+	 * confirmation modal, and on confirm tag the note (and opt it in).
+	 */
+	private async openGenerateFlashcards(file: TFile): Promise<void> {
+		const content = await this.app.vault.cachedRead(file);
+		const plan = planIdGeneration(content);
+
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const rawOptIn: unknown = fm?.["osmosis-cards"];
+		const optedIn = rawOptIn === true || rawOptIn === "true";
+
+		if (plan.insertions.length === 0) {
+			new Notice("Nothing to generate — every element is already tagged.");
+			return;
+		}
+
+		new GenerateFlashcardsModal(this.app, file.basename, plan, !optedIn, () => {
+			void (async () => {
+				let tagged = 0;
+				// Re-plan inside process() so concurrent edits can't clobber
+				await this.app.vault.process(file, (data) => {
+					const fresh = planIdGeneration(data);
+					tagged = fresh.insertions.length;
+					return fresh.content;
+				});
+				if (!optedIn) {
+					await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+						frontmatter["osmosis-cards"] = true;
+					});
+				}
+				new Notice(`Tagged ${String(tagged)} element${tagged === 1 ? "" : "s"} with Osmosis IDs.`);
+			})();
+		}).open();
 	}
 
 	/** Create a StudySessionManager wired to the plugin's store and writer. */
 	createSessionManager(): StudySessionManager {
 		return new StudySessionManager(
 			this.cardStore,
-			new FSRSScheduler(),
+			new FSRSScheduler({
+				learningSteps: this.settings.learningSteps,
+				relearningSteps: this.settings.relearningSteps,
+			}),
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.scheduleStore,
 		);
 	}
 
@@ -325,6 +473,205 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Register the editor commands and context-menu items for granular
+	 * line-card control: add / remove IDs and exclude / include from study on
+	 * the selected lines (no selection = current line). See plan §8.
+	 */
+	private registerLineCardCommands(): void {
+		this.addCommand({
+			id: "add-line-cards-selection",
+			name: "Add line cards from selection",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.addLineCards(file, this.selectionLineRange(editor));
+			},
+		});
+		this.addCommand({
+			id: "remove-line-cards-selection",
+			name: "Remove line cards from selection",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.removeLineCards(file, this.selectionLineRange(editor));
+			},
+		});
+		this.addCommand({
+			id: "exclude-line-cards-selection",
+			name: "Exclude line cards in selection from study",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.setLineCardsDisabled(file, this.selectionLineRange(editor), true);
+			},
+		});
+		this.addCommand({
+			id: "include-line-cards-selection",
+			name: "Include line cards in selection in study",
+			editorCallback: (editor, ctx) => {
+				const file = ctx.file;
+				if (file) void this.setLineCardsDisabled(file, this.selectionLineRange(editor), false);
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+				const file = info.file;
+				if (!file || file.extension !== "md") return;
+				const range = this.selectionLineRange(editor);
+				// Keep unrelated notes' menus clean: only surface these items on
+				// notes already opted in, or where the selection holds line cards.
+				const rawOptIn: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.["osmosis-cards"];
+				const optedIn = rawOptIn === true || rawOptIn === "true";
+				const { enabled, disabled } = this.lineCardsInRange(file.path, range);
+				if (!optedIn && enabled.length + disabled.length === 0) return;
+				this.addLineCardMenuItems(menu, file, range);
+			}),
+		);
+	}
+
+	/** Selected line range, or the cursor's line when there is no selection. */
+	private selectionLineRange(editor: Editor): LineRange {
+		const from = editor.getCursor("from");
+		const to = editor.getCursor("to");
+		return { start: Math.min(from.line, to.line), end: Math.max(from.line, to.line) };
+	}
+
+	/** Line cards in a note whose source line falls within the range. */
+	private lineCardsInRange(notePath: string, range: LineRange): {
+		enabled: Card[];
+		disabled: Card[];
+	} {
+		const enabled: Card[] = [];
+		const disabled: Card[] = [];
+		for (const card of this.cardStore.getCardsByNote(notePath)) {
+			if (card.cardType !== "line" || card.blockId === undefined) continue;
+			if (card.sourceLine < range.start || card.sourceLine > range.end) continue;
+			if (card.disabled) disabled.push(card);
+			else enabled.push(card);
+		}
+		return { enabled, disabled };
+	}
+
+	/** Add the relevant line-card items to an editor or node context menu. */
+	private addLineCardMenuItems(menu: Menu, file: TFile, range: LineRange): void {
+		const { enabled, disabled } = this.lineCardsInRange(file.path, range);
+		menu.addSeparator();
+		menu.addItem((item) =>
+			item.setTitle("Add line cards").setIcon("layers")
+				.onClick(() => void this.addLineCards(file, range)),
+		);
+		if (enabled.length + disabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Remove line cards").setIcon("layers")
+					.onClick(() => void this.removeLineCards(file, range)),
+			);
+		}
+		if (enabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Exclude from study").setIcon("eye-off")
+					.onClick(() => void this.setLineCardsDisabled(file, range, true)),
+			);
+		}
+		if (disabled.length > 0) {
+			menu.addItem((item) =>
+				item.setTitle("Include in study").setIcon("eye")
+					.onClick(() => void this.setLineCardsDisabled(file, range, false)),
+			);
+		}
+	}
+
+	/**
+	 * Tag the elements overlapping a line range with block IDs (opting the
+	 * note in if needed). Re-plans inside `process` so concurrent edits can't
+	 * clobber. Public for the mind-map node menu.
+	 */
+	async addLineCards(file: TFile, range: LineRange): Promise<void> {
+		const preview = planIdGeneration(await this.app.vault.cachedRead(file), range);
+		if (preview.insertions.length === 0) {
+			new Notice("Nothing to add — every element in the selection is already tagged.");
+			return;
+		}
+
+		let tagged = 0;
+		await this.app.vault.process(file, (data) => {
+			const fresh = planIdGeneration(data, range);
+			tagged = fresh.insertions.length;
+			return fresh.content;
+		});
+
+		const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+		const rawOptIn: unknown = fm?.["osmosis-cards"];
+		if (rawOptIn !== true && rawOptIn !== "true") {
+			await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+				frontmatter["osmosis-cards"] = true;
+			});
+		}
+		new Notice(`Added ${String(tagged)} line card${tagged === 1 ? "" : "s"}.`);
+	}
+
+	/**
+	 * Strip line-card block IDs from a line range. Warns first when the range
+	 * contains user-authored IDs (deleting them can break links). The orphan
+	 * flow soft-deletes the cards' schedules. Public for the mind-map node menu.
+	 */
+	async removeLineCards(file: TFile, range: LineRange): Promise<void> {
+		const dryRun = removeBlockIdsInRange(await this.app.vault.cachedRead(file), range);
+		if (dryRun.removed.length === 0) {
+			new Notice("No line cards to remove in the selection.");
+			return;
+		}
+
+		const apply = async () => {
+			let count = 0;
+			await this.app.vault.process(file, (data) => {
+				const result = removeBlockIdsInRange(data, range);
+				count = result.removed.length;
+				return result.content;
+			});
+			new Notice(`Removed ${String(count)} line card${count === 1 ? "" : "s"}.`);
+		};
+
+		const userIds = dryRun.removed.filter((r) => r.isUserId).length;
+		if (userIds > 0) {
+			new ConfirmModal(
+				this.app,
+				{
+					title: "Remove line cards?",
+					body: `${String(userIds)} of these ${String(dryRun.removed.length)} block ID${dryRun.removed.length === 1 ? "" : "s"} ${userIds === 1 ? "was" : "were"} not created by Osmosis. Removing ${userIds === 1 ? "it" : "them"} may break existing "[[note#^id]]" links. To pause a card without deleting its ID, use "Exclude from study" instead.`,
+					confirmText: "Remove anyway",
+					warning: true,
+				},
+				() => void apply(),
+			).open();
+			return;
+		}
+		await apply();
+	}
+
+	/**
+	 * Exclude (disable) or include (enable) every line card whose source line
+	 * falls in the range. Updates the store immediately and flushes the flag
+	 * to osmosis-schedule frontmatter. Public for the mind-map node menu.
+	 */
+	async setLineCardsDisabled(file: TFile, range: LineRange, disabled: boolean): Promise<void> {
+		const { enabled, disabled: alreadyDisabled } = this.lineCardsInRange(file.path, range);
+		const targets = disabled ? enabled : alreadyDisabled;
+		if (targets.length === 0) {
+			new Notice(disabled ? "No cards to exclude in the selection." : "No excluded cards to include in the selection.");
+			return;
+		}
+
+		for (const card of targets) {
+			this.cardStore.setDisabled(card.id, disabled);
+			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled);
+		}
+		await this.scheduleStore.flushPath(file.path);
+		this.refreshDashboard();
+		this.lineReveal.refreshChrome();
+		new Notice(
+			`${disabled ? "Excluded" : "Included"} ${String(targets.length)} line card${targets.length === 1 ? "" : "s"}.`,
+		);
+	}
+
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
 	}
@@ -339,7 +686,6 @@ export default class OsmosisPlugin extends Plugin {
 
 	/** Migrate per-note mapSettings from data.json into osmosis-styles frontmatter. */
 	private async migrateMapSettingsToFrontmatter(): Promise<void> {
-		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		const entries = Object.entries(this.settings.mapSettings);
 		if (entries.length === 0) return;
 
@@ -351,11 +697,8 @@ export default class OsmosisPlugin extends Plugin {
 			try {
 				await this.app.fileManager.processFrontMatter(
 					file,
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					(fm: any) => {
-						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+					(fm: Record<string, unknown>) => {
 						const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-						// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 						fm["osmosis-styles"] = osmosis;
 
 						// Copy each override into frontmatter (don't overwrite existing values)
@@ -373,7 +716,6 @@ export default class OsmosisPlugin extends Plugin {
 		}
 
 		// Clear migrated entries from data.json
-		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		this.settings.mapSettings = {};
 		await this.saveData(this.settings);
 		console.debug(`Osmosis: migrated map settings for ${entries.length} note(s) to frontmatter`);

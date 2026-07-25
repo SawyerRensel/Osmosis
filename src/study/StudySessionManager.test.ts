@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CardStore } from "../store/CardStore";
 import { FSRSScheduler } from "../database/FSRSScheduler";
+import { StudySessionManager } from "./StudySessionManager";
 import type { Card } from "../database/types";
 
 let store: CardStore;
@@ -154,5 +155,108 @@ describe("FSRS integration", () => {
 		const schedule = scheduler.createNewSchedule(now);
 		const result = scheduler.review(schedule, 3, now);
 		expect(result.schedule.state).not.toBe("new");
+	});
+});
+
+describe("StudySessionManager schedule-write routing", () => {
+	interface FenceCall { cardId: string; kind: "write" | "remove" }
+	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" | "disable" | "enable" }
+
+	function makeManager() {
+		const fenceCalls: FenceCall[] = [];
+		const lineCalls: LineCall[] = [];
+
+		const fenceWriter = {
+			writeSchedule: (_file: unknown, cardId: string) => {
+				fenceCalls.push({ cardId, kind: "write" });
+				return Promise.resolve();
+			},
+			removeSchedule: (_file: unknown, cardId: string) => {
+				fenceCalls.push({ cardId, kind: "remove" });
+				return Promise.resolve();
+			},
+		};
+		const scheduleStore = {
+			setSchedule: (notePath: string, blockId: string) => {
+				lineCalls.push({ notePath, blockId, kind: "set" });
+			},
+			removeSchedule: (notePath: string, blockId: string) => {
+				lineCalls.push({ notePath, blockId, kind: "remove" });
+			},
+			setDisabled: (notePath: string, blockId: string, disabled: boolean) => {
+				lineCalls.push({ notePath, blockId, kind: disabled ? "disable" : "enable" });
+			},
+		};
+
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			scheduleStore,
+		);
+		return { manager, fenceCalls, lineCalls };
+	}
+
+	it("routes line-card ratings to the schedule store, not the fence writer", async () => {
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bio.md#^os-a1b2c3",
+			notePath: "notes/bio.md",
+			cardType: "line",
+			blockId: "os-a1b2c3",
+		}));
+
+		await manager.recordReview("notes/bio.md#^os-a1b2c3", 3);
+
+		expect(fenceCalls).toHaveLength(0);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
+		]);
+	});
+
+	it("routes fence-card ratings to the fence writer", async () => {
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		store.addCard(makeCard({ id: "abc12345" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(lineCalls).toHaveLength(0);
+		expect(fenceCalls).toEqual([{ cardId: "abc12345", kind: "write" }]);
+	});
+
+	it("revert on a previously-new line card removes its schedule entry", async () => {
+		const { manager, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bio.md#^os-a1b2c3",
+			notePath: "notes/bio.md",
+			cardType: "line",
+			blockId: "os-a1b2c3",
+		}));
+
+		await manager.recordReview("notes/bio.md#^os-a1b2c3", 3);
+		await manager.revertReview("notes/bio.md#^os-a1b2c3", null);
+
+		expect(lineCalls[lineCalls.length - 1]).toEqual({
+			notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "remove",
+		});
+		expect(store.getCard("notes/bio.md#^os-a1b2c3")?.due).toBeUndefined();
+	});
+
+	it("revert with a previous schedule restores it via the schedule store", async () => {
+		const { manager, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bio.md#^os-a1b2c3",
+			notePath: "notes/bio.md",
+			cardType: "line",
+			blockId: "os-a1b2c3",
+		}));
+		const previous = scheduler.createNewSchedule(Date.now());
+
+		await manager.revertReview("notes/bio.md#^os-a1b2c3", previous);
+
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
+		]);
 	});
 });

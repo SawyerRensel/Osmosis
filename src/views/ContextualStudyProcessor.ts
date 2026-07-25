@@ -1,7 +1,23 @@
-import { Component, MarkdownRenderer } from "obsidian";
+import { Component, MarkdownRenderer, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
+import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
+import { CLOZE_BLANK } from "../card-gen/explicit";
+import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+
+/** An undo entry for contextual review. */
+interface ContextualUndoEntry {
+	type: "rate" | "exclude";
+	cardId: string;
+	sourcePath: string;
+	/** Previous schedule data before the rating (null = card was new). Only for "rate". */
+	previousSchedule?: ScheduleData | null;
+	/** The rating label that was displayed. Only for "rate". */
+	ratingLabel?: string;
+	/** The previous exclude state. Only for "exclude". */
+	previousExclude?: boolean;
+}
 
 /**
  * Contextual study mode: renders `osmosis` code blocks in reading view
@@ -18,6 +34,13 @@ export class ContextualStudyProcessor {
 	private sessionManager: StudySessionManager | null = null;
 	private readonly renderComponent = new Component();
 
+	/** Track cards whose answers have been revealed this session to survive re-renders. */
+	private readonly revealedCardIds = new Set<string>();
+	/** Track cards that have been rated this session to hide rating buttons on re-render. */
+	private readonly ratedCardIds = new Set<string>();
+	/** Undo stack for contextual review actions. */
+	private readonly undoStack: ContextualUndoEntry[] = [];
+
 	constructor(private readonly plugin: OsmosisPlugin) {}
 
 	/**
@@ -26,23 +49,35 @@ export class ContextualStudyProcessor {
 	register(): void {
 		this.renderComponent.load();
 
+		// Register Ctrl+Z for undo in contextual mode
+		this.plugin.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "z" && this.undoStack.length > 0) {
+				// Only handle if we're in reading view with osmosis cards
+				const target = e.target as HTMLElement;
+				if (target.closest(".osmosis-contextual-card") || target.closest(".markdown-reading-view")) {
+					e.preventDefault();
+					void this.undo();
+				}
+			}
+		});
+
 		this.plugin.registerMarkdownCodeBlockProcessor(
 			"osmosis",
 			(source: string, el: HTMLElement, ctx) => {
 				// Defer so the element is attached to the DOM before we check context
-				setTimeout(() => {
-					const inReadingView = el.closest(".markdown-reading-view") !== null;
+				window.requestAnimationFrame(() => {
 					const inLivePreview = el.closest(".is-live-preview") !== null;
 
-					if (inReadingView) {
-						// Reading view: interactive card with hidden answer
-						this.renderCard(source, el, ctx.sourcePath);
-					} else if (inLivePreview) {
+					if (inLivePreview) {
 						// Live preview: render both front and back (no hiding)
 						this.renderPreviewCard(source, el, ctx.sourcePath);
+					} else {
+						// Reading view (default): interactive card with hidden answer.
+						// Code block processors are not called in source mode, so if
+						// we're not in live preview we must be in reading view.
+						this.renderCard(source, el, ctx.sourcePath);
 					}
-					// Source mode: Obsidian handles raw display, nothing to do
-				}, 0);
+				});
 			},
 		);
 	}
@@ -57,6 +92,10 @@ export class ContextualStudyProcessor {
 		this.totalCards++;
 		const container = el.createDiv({ cls: "osmosis-contextual-card" });
 
+		if (parsed.exclude) {
+			container.addClass("osmosis-contextual-excluded");
+		}
+
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
 		void MarkdownRenderer.render(
@@ -65,10 +104,10 @@ export class ContextualStudyProcessor {
 			frontEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(frontEl));
 
 		// Separator
-		container.createDiv({ cls: "osmosis-study-divider" });
+		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Back: hidden placeholder + revealed content
 		const backEl = container.createDiv();
@@ -78,24 +117,68 @@ export class ContextualStudyProcessor {
 		});
 		const revealedEl = backEl.createDiv({ cls: "osmosis-contextual-revealed osmosis-hidden" });
 
-		let revealed = false;
-		const reveal = (): void => {
-			if (revealed) return;
-			revealed = true;
+		// Bottom row: undo (far left) + rating area (left) + exclude toggle (right)
+		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		const undoBtn = bottomRow.createDiv({
+			cls: `osmosis-contextual-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
+		});
+		setIcon(undoBtn, "undo-2");
+		undoBtn.setAttribute("aria-label", "Undo (Ctrl+Z)");
+		undoBtn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.undo();
+		});
+		const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
+		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
+		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
+		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
+		toggleIcon.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
+		});
+
+		const alreadyRevealed = this.revealedCardIds.has(parsed.cardId);
+		const alreadyRated = this.ratedCardIds.has(parsed.cardId);
+		let revealed = alreadyRevealed;
+
+		const showBack = (): void => {
 			hiddenEl.addClass("osmosis-hidden");
 			revealedEl.removeClass("osmosis-hidden");
+			// Cloze cards replace the front in-place rather than stacking, so the
+			// reader's eye stays on the same body of text.
+			if (parsed.isCloze) {
+				frontEl.addClass("osmosis-hidden");
+				dividerEl.addClass("osmosis-hidden");
+			}
 			void MarkdownRenderer.render(
 				this.plugin.app,
 				parsed.back,
 				revealedEl,
 				sourcePath,
 				this.renderComponent,
-			);
+			).then(() => addCodeBlockLanguageLabels(revealedEl));
+		};
 
-			if (parsed.cardId) {
-				this.showRating(container, parsed.cardId);
+		const reveal = (): void => {
+			if (revealed) return;
+			revealed = true;
+			this.revealedCardIds.add(parsed.cardId);
+			showBack();
+
+			if (parsed.cardId && !alreadyRated) {
+				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		};
+
+		// Auto-reveal if this card was previously revealed this session
+		if (alreadyRevealed) {
+			showBack();
+			if (alreadyRated) {
+				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+			} else if (parsed.cardId) {
+				this.showRating(ratingSlot, parsed.cardId, sourcePath);
+			}
+		}
 
 		hiddenEl.addEventListener("click", reveal);
 		container.addEventListener("click", (e) => {
@@ -115,6 +198,10 @@ export class ContextualStudyProcessor {
 
 		const container = el.createDiv({ cls: "osmosis-contextual-card" });
 
+		if (parsed.exclude) {
+			container.addClass("osmosis-contextual-excluded");
+		}
+
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
 		void MarkdownRenderer.render(
@@ -123,7 +210,7 @@ export class ContextualStudyProcessor {
 			frontEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(frontEl));
 
 		// Separator
 		container.createDiv({ cls: "osmosis-study-divider" });
@@ -136,10 +223,21 @@ export class ContextualStudyProcessor {
 			backEl,
 			sourcePath,
 			this.renderComponent,
-		);
+		).then(() => addCodeBlockLanguageLabels(backEl));
+
+		// Bottom row with exclude toggle (bottom-right)
+		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		bottomRow.createDiv(); // spacer
+		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
+		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
+		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
+		toggleIcon.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
+		});
 	}
 
-	private showRating(container: HTMLElement, cardId: string): void {
+	private showRating(container: HTMLElement, cardId: string, sourcePath: string): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
@@ -153,11 +251,36 @@ export class ContextualStudyProcessor {
 			const btn = ratingEl.createEl("button", { text: label, cls });
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
+
+				// Snapshot previous schedule before rating
+				const card = this.plugin.cardStore.getCard(cardId);
+				const previousSchedule: ScheduleData | null = card && card.due !== undefined
+					? {
+						stability: card.stability ?? 0,
+						difficulty: card.difficulty ?? 0,
+						due: card.due,
+						lastReview: card.lastReview ?? null,
+						reps: card.reps ?? 0,
+						lapses: card.lapses ?? 0,
+						state: card.state ?? "new",
+						learningSteps: card.learningSteps ?? 0,
+					}
+					: null;
+
+				this.ratedCardIds.add(cardId);
 				ratingEl.empty();
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
 				void this.recordRating(cardId, rating);
+
+				this.undoStack.push({
+					type: "rate",
+					cardId,
+					sourcePath,
+					previousSchedule,
+					ratingLabel: label,
+				});
 			});
 		}
 	}
@@ -176,6 +299,56 @@ export class ContextualStudyProcessor {
 		this.plugin.refreshDashboard();
 	}
 
+	/** Toggle exclude flag on a fence. File modification triggers Obsidian re-render. */
+	private async toggleExclude(cardId: string, exclude: boolean, sourcePath: string): Promise<void> {
+		this.undoStack.push({
+			type: "exclude",
+			cardId,
+			sourcePath,
+			previousExclude: !exclude,
+		});
+
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		if (!file) return;
+		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
+	}
+
+	/** Undo the last action (rating or exclude). Triggers a file re-render for contextual cards. */
+	private async undo(): Promise<void> {
+		const entry = this.undoStack.pop();
+		if (!entry) return;
+
+		if (entry.type === "exclude") {
+			// Undo exclude toggle: restore previous state
+			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
+			if (file) {
+				await this.plugin.fenceWriter.writeExclude(file, entry.cardId, entry.previousExclude ?? false);
+			}
+		} else {
+			// Undo rating: revert schedule
+			if (!this.sessionManager) {
+				this.sessionManager = this.plugin.createSessionManager();
+			}
+
+			const card = this.plugin.cardStore.getCard(entry.cardId);
+			if (card) {
+				await this.sessionManager.revertReview(entry.cardId, entry.previousSchedule ?? null);
+			}
+
+			this.ratedCardIds.delete(entry.cardId);
+			this.reviewedCount = Math.max(0, this.reviewedCount - 1);
+			this.updateProgress();
+			this.plugin.refreshDashboard();
+
+			// Trigger re-render by modifying the file (touch the file to force Obsidian to re-process code blocks)
+			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
+			if (file) {
+				const content = await this.plugin.app.vault.cachedRead(file);
+				await this.plugin.app.vault.modify(file, content);
+			}
+		}
+	}
+
 	/**
 	 * Toggle study mode on/off.
 	 */
@@ -192,18 +365,20 @@ export class ContextualStudyProcessor {
 		}
 	}
 
-	/** Match ==term== or **term** cloze deletions. */
-	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
+	/** Match ==term==, **term**, or :::term::: cloze deletions (with optional cN: group prefix). */
+	private static readonly CLOZE_REGEX =
+		/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g;
 
 	/**
 	 * Parse fence content into front/back/metadata.
 	 * Reuses the same format as explicit.ts card generators.
 	 */
-	private parseFenceContent(source: string): { front: string; back: string; cardId: string } | null {
+	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean; isCloze: boolean } | null {
 		const lines = source.split("\n");
 
-		// Skip metadata lines (key: value before blank line)
+		// Parse metadata lines (key: value before blank line)
 		let contentStart = 0;
+		let exclude = false;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i]!.trim();
 			if (line === "") {
@@ -211,6 +386,8 @@ export class ContextualStudyProcessor {
 				break;
 			}
 			if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+				const excludeMatch = line.match(/^exclude\s*:\s*(.+)$/i);
+				if (excludeMatch) exclude = excludeMatch[1]!.trim() === "true";
 				contentStart = i + 1;
 				continue;
 			}
@@ -226,7 +403,7 @@ export class ContextualStudyProcessor {
 			const back = contentLines.slice(separatorIdx + 1).join("\n").trim();
 			if (!front && !back) return null;
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`${front}|||${back}`);
-			return { front, back, cardId };
+			return { front, back, cardId, exclude, isCloze: false };
 		}
 
 		// No separator — check for code cloze markers first, then text cloze
@@ -237,21 +414,42 @@ export class ContextualStudyProcessor {
 		if (content.includes("osmosis-cloze")) {
 			const { front, back } = ContextualStudyProcessor.buildCodeClozeFrontBack(contentLines);
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`code-cloze|||${content}`);
-			return { front, back, cardId };
+			return { front, back, cardId, exclude, isCloze: true };
+		}
+
+		// Check for inline code cloze (:::...::: markers inside inner code fences)
+		const hasInlineCloze = contentLines.some((l) => /:::(?:c\d+:)?(.+?):::/.test(l));
+		const hasInnerFence = contentLines.some((l) => /^```\w/.test(l.trim()));
+		if (hasInlineCloze && hasInnerFence) {
+			const { front, back } = ContextualStudyProcessor.buildInlineClozeFrontBack(contentLines);
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`inline-cloze|||${content}`);
+			return { front, back, cardId, exclude, isCloze: true };
 		}
 
 		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		// Front: all clozes replaced with ########; Back: full text with markers
-		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, "########");
+		// Front: all clozes replaced with CLOZE_BLANK.
+		// Back: `==`/`**` delimiters are kept (they're valid Markdown for highlight/bold),
+		// `:::` delimiters are removed entirely (not Markdown — would leave visual residue),
+		// and any `cN:` group prefix is stripped from all three forms.
+		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, CLOZE_BLANK);
+		const back = content.replace(
+			/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g,
+			(_m, eq?: string, bold?: string, plain?: string) => {
+				if (eq !== undefined) return `==${eq}==`;
+				if (bold !== undefined) return `**${bold}**`;
+				return plain!;
+			},
+		);
 		const cardId = this.extractIdFromSource(source) ?? this.hashContent(`cloze|||${content}`);
-		return { front, back: content, cardId };
+		return { front, back, cardId, exclude, isCloze: true };
 	}
 
 	/**
 	 * Build front/back for code cloze in contextual mode.
 	 * Front: all cloze regions blanked. Back: all markers stripped.
+	 * Inline cloze markers on non-blanked lines are stripped to plain text.
 	 */
 	private static buildCodeClozeFrontBack(contentLines: string[]): { front: string; back: string } {
 		const MARKER_COMMENT = /\s*(?:#|\/\/|\/\*|<!--|--|%)\s*osmosis-cloze\s*(?:\*\/|-->)?\s*$/;
@@ -275,22 +473,43 @@ export class ContextualStudyProcessor {
 			if (inMultiCloze) {
 				if (!multiFirstSeen) {
 					const indent = line.match(/^(\s*)/)?.[1] ?? "";
-					frontLines.push(`${indent}########`);
+					frontLines.push(`${indent}${CLOZE_BLANK}`);
 					multiFirstSeen = true;
 				}
-				backLines.push(line);
+				backLines.push(ContextualStudyProcessor.stripInline(line));
 			} else if (line.includes("osmosis-cloze")) {
 				// Single-line cloze
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
-				frontLines.push(`${indent}########`);
-				backLines.push(line.replace(MARKER_COMMENT, ""));
+				frontLines.push(`${indent}${CLOZE_BLANK}`);
+				backLines.push(ContextualStudyProcessor.stripInline(line.replace(MARKER_COMMENT, "")));
 			} else {
-				frontLines.push(line);
-				backLines.push(line);
+				const stripped = ContextualStudyProcessor.stripInline(line);
+				frontLines.push(stripped);
+				backLines.push(stripped);
 			}
 		}
 
 		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+	}
+
+	/**
+	 * Build front/back for inline code cloze in contextual mode.
+	 * Front: all :::...::: markers replaced with CLOZE_BLANK.
+	 * Back: all markers stripped to plain text.
+	 */
+	private static buildInlineClozeFrontBack(contentLines: string[]): { front: string; back: string } {
+		const front = contentLines
+			.map((l) => l.replace(/:::(?:c\d+:)?(.+?):::/g, CLOZE_BLANK))
+			.join("\n");
+		const back = contentLines
+			.map((l) => l.replace(/:::(?:c\d+:)?(.+?):::/g, (_, text: string) => text))
+			.join("\n");
+		return { front, back };
+	}
+
+	/** Strip :::...::: inline cloze markers, leaving just the text content. */
+	private static stripInline(line: string): string {
+		return line.replace(/:::(?:c\d+:)?(.+?):::/g, (_, text: string) => text);
 	}
 
 	/** Extract id: metadata from fence source if present. */

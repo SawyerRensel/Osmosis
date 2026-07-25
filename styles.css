@@ -153,14 +153,17 @@ Uses Obsidian CSS variables for theme compatibility.
 	border-radius: 4px;
 }
 
-/* Hide Obsidian's copy button inside mind map nodes (non-functional in SVG foreignObject) */
+/* Hide Obsidian's copy button inside mind map nodes (non-functional in SVG
+   foreignObject). !important: Obsidian core toggles this button's display from
+   its own rules, which we cannot outrank by specificity alone. */
 .osmosis-node-content .copy-code-button,
 .osmosis-node-content button.copy-code-button {
 	display: none !important;
 }
 
 /* Code block language label */
-.osmosis-node-group-codeblock .osmosis-node-content {
+.osmosis-node-group-codeblock .osmosis-node-content,
+pre.osmosis-code-block {
 	position: relative;
 }
 
@@ -176,12 +179,14 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 /* Measurement cell: allow content to flow naturally for Range measurement.
-   Width is set via inline style in JS (wide for initial, constrained for wrap). */
+   Width is set via inline style in JS (wide for initial, constrained for wrap).
+   The cell also carries .osmosis-node-content; these win on source order
+   (equal specificity, declared later), so no !important is needed. */
 .osmosis-measure-cell {
-	overflow: visible !important;
-	height: auto !important;
-	display: block !important;
-	align-items: initial !important;
+	overflow: visible;
+	height: auto;
+	display: block;
+	align-items: initial;
 }
 
 /* Force block-level children (p, h1-h6, ul, ol, pre, etc.) to shrink-wrap
@@ -202,14 +207,17 @@ Uses Obsidian CSS variables for theme compatibility.
 	transition: transform 80ms ease-out, opacity 80ms ease-out;
 }
 
-/* Selection — !important needed to override inline theme styles on shape elements */
+/* Selection — !important is required here: per-node theme colors are written as
+   inline style attributes by the renderer, and inline styles outrank every
+   selector. This is the only way to show selection state on a themed node. */
 .osmosis-node-selected > .osmosis-node {
 	stroke: var(--interactive-accent) !important;
 	stroke-width: 2 !important;
 	stroke-dasharray: none !important;
 }
 
-/* Cursor sync highlight (editor cursor → map node) */
+/* Cursor sync highlight (editor cursor → map node).
+   !important for the same reason as selection above: inline theme styles. */
 .osmosis-node-cursor-synced > .osmosis-node {
 	stroke: var(--text-accent) !important;
 	stroke-width: 2 !important;
@@ -226,7 +234,9 @@ Uses Obsidian CSS variables for theme compatibility.
 	pointer-events: none;
 }
 
-/* Drag-and-drop */
+/* Drag-and-drop. !important: applied to the view's content element so the
+   grabbing cursor holds across every descendant that sets its own cursor
+   (nodes, buttons, resize handles) for the duration of the drag. */
 .osmosis-dragging {
 	cursor: grabbing !important;
 }
@@ -372,7 +382,8 @@ Uses Obsidian CSS variables for theme compatibility.
 	top: -32px;
 }
 
-/* Hide CM6 chrome not needed in node editing */
+/* Hide CM6 chrome not needed in node editing. !important: CodeMirror injects
+   these rules into the document at runtime, so source order cannot be relied on. */
 .osmosis-edit-overlay .cm-gutters,
 .osmosis-edit-overlay .cm-lineNumbers,
 .osmosis-edit-overlay .cm-foldGutter {
@@ -386,7 +397,8 @@ Uses Obsidian CSS variables for theme compatibility.
 	line-height: 1.3;
 }
 
-/* Remove CM6 default focus outline (container already has border) */
+/* Remove CM6 default focus outline (container already has border).
+   !important: CodeMirror's own injected .cm-focused rule sets this outline. */
 .osmosis-edit-overlay .cm-focused {
 	outline: none !important;
 }
@@ -487,26 +499,70 @@ Uses Obsidian CSS variables for theme compatibility.
 
 /* ─── Properties Sidebar: Compact Layout ──────────────── */
 
+/*
+ * Obsidian's default setting row keeps the description in the left-hand info
+ * column next to the control, which wraps into a narrow ragged block at sidebar
+ * widths and pushes the control out of line with its own label. Lay the rows out
+ * explicitly instead so the plugin does not depend on Obsidian's own spacing:
+ * name and control share the first row, description spans the full width below.
+ */
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item {
-	padding: 4px 0;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+	align-items: center;
+	gap: 0 12px;
+	/*
+	 * Horizontal padding is the row's own breathing room: Obsidian draws each
+	 * setting row as a rounded card, so zeroing this makes the card edge hug the
+	 * label and the control.
+	 */
+	padding: 6px 10px;
 	min-height: 0;
+	border: none;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-info {
-	padding-right: 8px;
+	display: contents;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-name {
+	grid-area: 1 / 1;
 	font-size: var(--font-ui-small);
+	line-height: 1.4;
+}
+
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control {
+	grid-area: 1 / 2;
+	justify-content: flex-end;
+	/* Separates a slider from the value Obsidian renders beside it. */
+	gap: 6px;
+	max-width: 100%;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-description {
-	font-size: 10px;
-	margin-top: 0;
+	grid-area: 2 / 1 / 2 / -1;
+	margin-top: 2px;
+	font-size: var(--font-ui-smaller);
+	line-height: 1.3;
+	color: var(--text-muted);
+	overflow-wrap: break-word;
 }
 
-.workspace-leaf-content[data-type="osmosis-properties"] .setting-item:not(:last-child) {
-	border-bottom: none;
+/* Obsidian creates the description element even when unused — don't reserve space for it. */
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-description:empty {
+	display: none;
+}
+
+/*
+ * A slider's intrinsic width overflows the sidebar's right inset, but stretching
+ * it to the column instead starves the label and wraps it. Pin it narrow so the
+ * label keeps one line and the track still ends level with the dropdowns above.
+ */
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control .slider,
+.workspace-leaf-content[data-type="osmosis-properties"] .setting-item-control input[type="range"] {
+	width: 96px;
+	min-width: 0;
+	flex: 0 0 auto;
 }
 
 /* ─── Properties Sidebar: Tab Bar ─────────────────────── */
@@ -536,7 +592,6 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 .osmosis-tab-btn.is-active {
-	color: var(--text-normal);
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 }
@@ -559,6 +614,9 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 .osmosis-format-section {
+	/* Inset for the section header; rows carry their own padding, so they sit closer in. */
+	--osmosis-section-inset: 12px;
+	--osmosis-row-inset: 4px;
 	margin: 0 6px 10px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-s);
@@ -573,7 +631,7 @@ Uses Obsidian CSS variables for theme compatibility.
 .osmosis-format-section-header {
 	display: flex;
 	align-items: center;
-	padding: 5px 8px;
+	padding: 7px var(--osmosis-section-inset);
 	cursor: pointer;
 	font-size: var(--h5-size, 0.95em);
 	font-weight: var(--h5-weight, 700);
@@ -607,7 +665,7 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 .osmosis-format-section-body {
-	padding: 2px 8px 4px;
+	padding: 4px var(--osmosis-row-inset) 6px;
 	border-top: 1px solid var(--background-modifier-border);
 }
 
@@ -702,7 +760,8 @@ Uses Obsidian CSS variables for theme compatibility.
 .osmosis-variant-header {
 	display: flex;
 	align-items: center;
-	padding: 4px 0;
+	/* Matches the horizontal padding of the setting rows below it. */
+	padding: 4px 10px;
 }
 
 .osmosis-variant-label {
@@ -1053,6 +1112,9 @@ hr.osmosis-map-style-divider {
 
 /* ─── Utility ────────────────────────────────────────────── */
 
+/* Single-purpose visibility utility. !important is intentional: it is applied
+   on top of components that set their own display (flex/grid), and must win
+   regardless of which component it is toggled on. */
 .osmosis-hidden {
 	display: none !important;
 }
@@ -1069,6 +1131,51 @@ hr.osmosis-map-style-divider {
 
 .osmosis-study-modal .modal-content {
 	overflow-y: auto;
+	/* Reserve room at the top for the absolutely-positioned icon row + ×
+	   close button so the progress bar doesn't slide underneath them. */
+	padding-top: 28px;
+	padding-bottom: 8px;
+}
+
+/* Mobile: leave a comfortable thumb gap between the rating/flip buttons and
+   the bottom of the modal so they don't crowd the rounded corner. */
+.is-mobile .osmosis-study-modal .modal-content {
+	padding-bottom: 24px;
+}
+
+.osmosis-study-card .copy-code-button {
+	display: none;
+}
+
+/* In the sequential study modal, code blocks sit flush with the card so the
+   inline language label would otherwise overlap the first line of code.
+   Reserve just enough room for the label by reducing the top padding of
+   <pre> and giving the inner <code> a small top margin. */
+.osmosis-study-card pre.osmosis-code-block {
+	padding-top: 4px;
+}
+
+.osmosis-study-card pre.osmosis-code-block > code {
+	margin-top: 12px;
+	display: block;
+}
+
+.osmosis-study-card pre.osmosis-code-block > .osmosis-code-lang-label {
+	top: 2px;
+	right: 8px;
+}
+
+/* Strip the default top/bottom margin from the front's first/last block-level
+   children (e.g., a code block as the only content) so the card body isn't
+   padded by markdown's default <pre> / <p> margins on top of the card's own
+   padding. */
+.osmosis-study-front > :first-child,
+.osmosis-study-back > :first-child {
+	margin-top: 0;
+}
+.osmosis-study-front > :last-child,
+.osmosis-study-back > :last-child {
+	margin-bottom: 0;
 }
 
 /* Constrain images/video inside study cards */
@@ -1078,6 +1185,85 @@ hr.osmosis-map-style-divider {
 	max-height: 50vh;
 	height: auto;
 	object-fit: contain;
+}
+
+/* Pin the icon-button row to the modal's top-left, on the same horizontal
+   line as Obsidian's × close button. We position relative to the modal element
+   itself (not modal-content) so we land in the header strip above the content
+   padding rather than overlapping the progress bar. */
+.osmosis-study-modal .osmosis-study-top-bar {
+	position: absolute;
+	/* Match Obsidian's close-button vertical offset */
+	top: 12px;
+	left: 12px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.osmosis-study-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	margin-bottom: 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.osmosis-study-breadcrumb-part {
+	white-space: nowrap;
+}
+
+.osmosis-study-breadcrumb-part:last-child {
+	color: var(--text-normal);
+}
+
+.osmosis-study-breadcrumb-sep {
+	color: var(--text-faint);
+}
+
+/* Line-card front: ancestor breadcrumb ending in a "?" placeholder for the
+   hidden line, followed by dimmed preceding-sibling context lines. */
+.osmosis-line-breadcrumb {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+}
+
+.osmosis-line-breadcrumb-part {
+	color: var(--text-muted);
+}
+
+.osmosis-line-breadcrumb-sep {
+	color: var(--text-faint);
+}
+
+.osmosis-line-breadcrumb-unknown {
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.osmosis-line-context {
+	margin-top: 10px;
+	padding-left: 10px;
+	border-left: 2px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	opacity: 0.8;
+}
+
+.osmosis-line-context-line > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-line-context-line > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-line-context-line + .osmosis-line-context-line {
+	margin-top: 4px;
 }
 
 .osmosis-study-progress {
@@ -1144,42 +1330,104 @@ hr.osmosis-map-style-divider {
 }
 
 .osmosis-study-actions {
+	position: relative;
 	display: flex;
 	justify-content: center;
 }
 
-.osmosis-study-flip {
-	padding: 8px 24px;
-	border: 1px solid var(--background-modifier-border);
+
+.osmosis-study-actions-right {
+	display: flex;
+	gap: 4px;
+}
+
+.osmosis-study-icon-btn {
+	width: 42px;
+	height: 42px;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.osmosis-study-icon-btn:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-study-icon-btn[aria-label*="Exclude"]:hover {
+	color: var(--text-error);
+}
+
+.osmosis-contextual-undo {
+	padding: 4px;
 	border-radius: 4px;
+	cursor: pointer;
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+}
+
+.osmosis-contextual-undo:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-study-flip {
+	padding: 12px 18px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 9999px;
 	background: var(--background-secondary);
 	color: var(--text-normal);
 	cursor: pointer;
-	font-size: 14px;
+	font-size: 15px;
 }
 
 .osmosis-study-flip:hover {
 	background: var(--background-modifier-hover);
 }
 
+/* Desktop: match the rating buttons' taller height. The flip button has a
+   1px border that the rating buttons don't, so subtract 1px from the
+   vertical padding to keep the rendered heights identical. */
+body:not(.is-mobile) .osmosis-study-flip {
+	padding-top: 17px;
+	padding-bottom: 17px;
+}
+
 .osmosis-study-rating-bar {
 	display: flex;
 	gap: 8px;
 	justify-content: center;
+	width: 75%;
 }
 
 .osmosis-study-rating-bar button {
-	padding: 8px 16px;
+	flex: 1;
+	padding: 12px 18px;
 	border: none;
-	border-radius: 4px;
+	border-radius: 8px;
 	cursor: pointer;
-	font-size: 14px;
+	font-size: 15px;
 	font-weight: 500;
 	transition: filter 0.1s;
 }
 
 .osmosis-study-rating-bar button:hover {
 	filter: brightness(1.1);
+}
+
+/* Desktop: taller rating buttons. Mobile keeps the default 12px so the
+   thumb-target height (already comfortable) doesn't grow unnecessarily. */
+body:not(.is-mobile) .osmosis-study-rating-bar button {
+	padding-top: 18px;
+	padding-bottom: 18px;
 }
 
 .osmosis-study-rating-bar button.osmosis-rate-again,
@@ -1484,6 +1732,121 @@ hr.osmosis-map-style-divider {
 	box-shadow: var(--shadow-s);
 }
 
+/* ─── Line-Card Progressive Reveal (Reading View) ────────── */
+
+.markdown-reading-view.osmosis-reveal-host {
+	position: relative;
+}
+
+.osmosis-reveal-banner {
+	position: absolute;
+	top: 12px;
+	right: 24px;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 6px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 9999px;
+	background: var(--background-secondary);
+	box-shadow: var(--shadow-s);
+}
+
+.osmosis-reveal-progress {
+	padding-left: 8px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn {
+	padding: 4px 12px;
+	border: none;
+	border-radius: 9999px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.osmosis-reveal-banner button.osmosis-reveal-btn:hover {
+	filter: brightness(1.1);
+}
+
+/* Hidden line: the wrapped content collapses, the placeholder shows */
+.osmosis-line-hidden > .osmosis-line-back {
+	display: none;
+}
+
+.osmosis-line-placeholder {
+	color: var(--text-faint);
+	letter-spacing: 2px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.osmosis-line-placeholder:hover {
+	color: var(--text-muted);
+}
+
+/* During study, lines after the next one are locked (top-down reveal) */
+.osmosis-line-placeholder.osmosis-line-locked {
+	cursor: default;
+	opacity: 0.35;
+}
+
+.osmosis-line-placeholder.osmosis-line-locked:hover {
+	color: var(--text-faint);
+}
+
+.osmosis-line-placeholder.osmosis-line-next {
+	color: var(--text-accent);
+}
+
+/* Block-level so the bubble always sits on its own line below the card,
+   regardless of how short the revealed line is */
+.osmosis-line-rating {
+	display: flex;
+	margin: 4px 0;
+	animation: osmosis-fade-in 0.2s;
+}
+
+/* ─── Exclude Toggle (Contextual Cards) ──────────────────── */
+
+.osmosis-contextual-bottom {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 4px;
+}
+
+.osmosis-contextual-rating-slot {
+	flex: 1;
+}
+
+.osmosis-contextual-exclude-toggle {
+	cursor: pointer;
+	color: var(--text-muted);
+	opacity: 0.4;
+	transition: opacity 0.15s, color 0.15s;
+	flex-shrink: 0;
+}
+
+.osmosis-contextual-exclude-toggle:hover {
+	opacity: 1;
+	color: var(--text-normal);
+}
+
+.osmosis-contextual-excluded {
+	opacity: 0.45;
+}
+
+.osmosis-contextual-excluded .osmosis-contextual-exclude-toggle {
+	opacity: 0.8;
+	color: var(--text-error);
+}
+
 @keyframes osmosis-fade-in {
 	from { opacity: 0; }
 	to { opacity: 1; }
@@ -1513,17 +1876,16 @@ hr.osmosis-map-style-divider {
 	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-fence-front-only {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
+/* Rating bubble anchored below a just-revealed node. Button colors come
+   from .osmosis-contextual-rating (shared with contextual study). */
+.osmosis-spatial-rating-fo {
+	overflow: visible;
 }
 
-.osmosis-fence-front {
-	text-align: center;
-	color: var(--text-normal);
-	width: 100%;
+.osmosis-spatial-rating {
+	justify-content: center;
+	margin-top: 0;
+	animation: osmosis-fade-in 0.2s;
 }
 
 
@@ -1572,4 +1934,59 @@ hr.osmosis-map-style-divider {
 	min-width: 80px;
 	font-size: 13px;
 	padding: 2px 4px;
+}
+
+/* ── Generate Flashcards Modal ─────────────────────────────── */
+
+.osmosis-generate-optin-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-generate-list {
+	max-height: 320px;
+	overflow-y: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 4px;
+	margin-bottom: 12px;
+}
+
+.osmosis-generate-row {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 3px 6px;
+	border-radius: 4px;
+}
+
+.osmosis-generate-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-generate-type {
+	flex-shrink: 0;
+	width: 105px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+}
+
+.osmosis-generate-preview {
+	font-size: var(--font-ui-small);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── Reading mode ─────────────────────────────────────────── */
+/* Resize handles are inert while the map is read-only */
+.osmosis-mindmap-container.osmosis-reading-mode .osmosis-resize-handle {
+	display: none;
+}
+
+/* Individual toolbar buttons/dividers hidden in reading mode */
+.osmosis-toolbar-btn-hidden {
+	display: none;
 }

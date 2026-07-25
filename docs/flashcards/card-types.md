@@ -72,7 +72,7 @@ Hello
 
 ## Cloze Deletion
 
-Blank out terms in a sentence using `==term==` or `**term**` markers:
+Blank out terms in a sentence using `==term==`, `**term**`, or `:::term:::` markers:
 
 ````markdown
 ```osmosis
@@ -90,8 +90,30 @@ This generates **three cards**, one per deletion:
 
 Each card blanks one term while leaving the others visible. All cards share the same back: the full text.
 
+All three delimiter styles are interchangeable, so pick whichever reads best alongside your prose:
+
+- `==term==` — Obsidian-style highlight; the yellow mark survives on the back.
+- `**term**` — bold; same idea if you prefer bold emphasis.
+- `:::term:::` — plain. Markers are stripped from both sides, leaving no visual residue.
+
 !!! note
     No `***` separator is needed for cloze cards. If you include one, the cloze markers are ignored and the fence is treated as a basic front/back card.
+
+### Grouping clozes
+
+Prefix any marker with `c<N>:` to blank several terms together as a single card. Occurrences that share a number are revealed together.
+
+````markdown
+```osmosis
+==c1:Paris== is the capital of France, and ==c1:Paris== sits on the Seine.
+```
+````
+
+This produces **one card** (not two) with both occurrences of "Paris" blanked at once.
+
+Grouping works with any combination of delimiters — `==c1:…==`, `**c1:…**`, and `:::c1:…:::` with the same number all collapse to one card.
+
+User-chosen numbers are preserved verbatim on card IDs (`…-c1`, `…-c5`), so adding a new cloze later won't renumber existing cards. Unlabeled markers get numbers above the largest labeled one, in source order.
 
 ## Code Cloze
 
@@ -159,6 +181,76 @@ def fibonacci(n):
 `````
 
 This generates two cards — one blanking the `return n` line, and one blanking the loop body.
+
+### Inline Clozes
+
+Blank out individual tokens *inside* a line of code with `:::c<N>:text:::`, where `N` is a group number:
+
+`````markdown
+````osmosis
+```python
+def :::c1:greet:::(:::c2:name:::):
+    return f"Hello, :::c2:name:::"
+```
+````
+`````
+
+Each distinct group number becomes its own card. Tokens that share a number are blanked together and revealed together — useful when the same identifier appears in several places.
+
+The example above generates **two cards**:
+
+| Card | Front |
+|------|-------|
+| 1 | `def ░░░░░░░░(name):` … `return f"Hello, name"` |
+| 2 | `def greet(░░░░░░░░):` … `return f"Hello, ░░░░░░░░"` |
+
+On every card, markers from *other* groups are stripped to plain text, so only the targeted tokens are obfuscated.
+
+You can also omit the number — `:::text:::` — to make each occurrence its own one-off card without grouping.
+
+### Grouping line-level and multi-line code clozes
+
+Line and region markers accept the same `-c<N>` suffix. Any markers that share a number collapse into a single card:
+
+`````markdown
+````osmosis
+```python
+x = 1  # osmosis-cloze-c1
+# osmosis-cloze-start-c1
+y = compute()
+z = y + 1
+# osmosis-cloze-end-c1
+result = x + z
+```
+````
+`````
+
+This generates **one card** with all three hidden lines blanked together and `result = x + z` visible.
+
+### Mixing prose and code clozes in one fence
+
+Prose-level and code-level clozes live happily inside the same `osmosis` fence. Markers sharing a `c<N>` label across prose and code still merge into a single card:
+
+`````markdown
+````osmosis
+
+This is a regular :::c3:cloze:::.
+
+```python
+def :::c1:greet:::(:::c2:name:::):
+    return f"Hello, :::c2:name:::"
+```
+````
+`````
+
+This produces three cards:
+
+- `c1`: `greet` blanked in the code; prose visible.
+- `c2`: both `name` occurrences blanked together; prose visible.
+- `c3`: the prose cloze blanked; the code visible.
+
+!!! tip "Combining with line-level clozes"
+    Inline and line-level markers can coexist in the same code block. Lines covered by `osmosis-cloze` / `osmosis-cloze-start`…`osmosis-cloze-end` are blanked as whole-line cards; their inline `:::…:::` markers, if any, are ignored.
 
 ### Supported Comment Styles
 

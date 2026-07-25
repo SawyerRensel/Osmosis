@@ -1,0 +1,387 @@
+/* ==========================================================================
+   Osmosis landing page
+
+   Scoped entirely under .osmosis-home so the rest of the docs is untouched.
+   The container overrides use :has() to target only the page that contains
+   the landing markup — no body class or template override required.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Break out of the docs content column
+   -------------------------------------------------------------------------- */
+
+.md-main__inner:has(.osmosis-home) {
+  margin: 0;
+  max-width: none;
+}
+
+.md-content__inner:has(> .osmosis-home) {
+  margin: 0;
+  padding: 0;
+}
+
+.md-content__inner:has(> .osmosis-home)::before {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Tokens
+   -------------------------------------------------------------------------- */
+
+.osmosis-home {
+  --home-measure: 68rem;
+  --home-gutter: 1.5rem;
+  --home-section-gap: clamp(4rem, 10vw, 8rem);
+  --home-radius: 0.75rem;
+  --home-muted: var(--md-default-fg-color--light);
+  --home-hairline: color-mix(in srgb, var(--md-default-fg-color) 12%, transparent);
+  --home-surface: color-mix(in srgb, var(--md-default-fg-color) 3%, transparent);
+  --home-glow: color-mix(in srgb, var(--md-primary-fg-color) 16%, transparent);
+}
+
+[data-md-color-scheme="slate"] .osmosis-home {
+  --home-hairline: color-mix(in srgb, var(--md-default-fg-color) 16%, transparent);
+  --home-surface: color-mix(in srgb, var(--md-default-fg-color) 5%, transparent);
+  --home-glow: color-mix(in srgb, var(--md-primary-fg-color) 24%, transparent);
+}
+
+/* Neutralise .md-typeset defaults inside the landing page.
+   Note: the `a` reset below sits at the same specificity as Material's
+   `.md-typeset a`, so it wins on source order — which means the button and
+   link rules further down must carry an `a` element prefix to outrank it. */
+.osmosis-home :is(h1, h2, h3, p) {
+  margin: 0;
+}
+
+.osmosis-home :is(h1, h2, h3) {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.osmosis-home a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* --------------------------------------------------------------------------
+   Shared layout helpers
+   -------------------------------------------------------------------------- */
+
+.osmosis-home__inner {
+  margin-inline: auto;
+  max-width: var(--home-measure);
+  padding-inline: var(--home-gutter);
+}
+
+.osmosis-home__eyebrow {
+  color: var(--md-accent-fg-color);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* --------------------------------------------------------------------------
+   Hero
+   -------------------------------------------------------------------------- */
+
+.osmosis-hero {
+  overflow: hidden;
+  padding-block: clamp(3.5rem, 9vw, 7rem) 0;
+  position: relative;
+  text-align: center;
+}
+
+/* Soft brand wash behind the headline */
+.osmosis-hero::before {
+  background: radial-gradient(
+    ellipse 70% 60% at 50% 0%,
+    var(--home-glow) 0%,
+    transparent 70%
+  );
+  content: "";
+  inset: 0 0 40% 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.osmosis-hero > * {
+  position: relative;
+}
+
+.osmosis-hero h1 {
+  font-size: clamp(2.5rem, 7vw, 4.5rem);
+  margin-bottom: 1.25rem;
+}
+
+/* Needs to outrank the `.osmosis-home :is(h1, h2, h3, p) { margin: 0 }` reset,
+   which would otherwise kill `margin-inline: auto` and left-align the box. */
+.osmosis-home p.osmosis-hero__sub {
+  color: var(--home-muted);
+  font-size: clamp(0.95rem, 2vw, 1.2rem);
+  line-height: 1.6;
+  margin-inline: auto;
+  max-width: 34rem;
+}
+
+.osmosis-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-block: 2rem 1rem;
+}
+
+.osmosis-hero__note {
+  color: var(--home-muted);
+  font-size: 0.72rem;
+}
+
+/* --------------------------------------------------------------------------
+   Buttons
+   -------------------------------------------------------------------------- */
+
+a.osmosis-btn {
+  border-radius: 2rem;
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.7rem 1.6rem;
+  transition: background-color 125ms, color 125ms, transform 125ms;
+}
+
+a.osmosis-btn:hover {
+  transform: translateY(-1px);
+}
+
+a.osmosis-btn--primary {
+  background: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+}
+
+a.osmosis-btn--primary:hover {
+  background: var(--md-accent-fg-color);
+  color: var(--md-primary-bg-color);
+}
+
+a.osmosis-btn--ghost {
+  box-shadow: inset 0 0 0 1px var(--home-hairline);
+}
+
+a.osmosis-btn--ghost:hover {
+  box-shadow: inset 0 0 0 1px var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+}
+
+/* --------------------------------------------------------------------------
+   Media frames
+   -------------------------------------------------------------------------- */
+
+.osmosis-media {
+  border-radius: var(--home-radius);
+  box-shadow:
+    0 0 0 1px var(--home-hairline),
+    0 1.5rem 3rem -1rem rgb(0 0 0 / 25%);
+  display: block;
+  height: auto;
+  overflow: hidden;
+  width: 100%;
+}
+
+/* The hero visual sits wider than the text column and bleeds toward the edges */
+.osmosis-hero__media {
+  margin-inline: auto;
+  margin-top: clamp(2.5rem, 6vw, 4rem);
+  max-width: 84rem;
+  padding-inline: var(--home-gutter);
+}
+
+/* --------------------------------------------------------------------------
+   Alternating story sections
+   -------------------------------------------------------------------------- */
+
+.osmosis-story {
+  align-items: center;
+  display: grid;
+  gap: clamp(2rem, 5vw, 4rem);
+  grid-template-columns: 1fr 1fr;
+  margin-inline: auto;
+  max-width: var(--home-measure);
+  /* Halved: adjacent stories each contribute padding, so the full
+     section gap would double up in the space between them. */
+  padding-block: calc(var(--home-section-gap) / 2);
+  padding-inline: var(--home-gutter);
+}
+
+/* Every second story flips the media to the left */
+.osmosis-story--reverse .osmosis-story__media {
+  order: -1;
+}
+
+.osmosis-story h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+  margin-block: 0.6rem 1rem;
+}
+
+.osmosis-story__body {
+  color: var(--home-muted);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+
+.osmosis-story__body + .osmosis-story__body {
+  margin-top: 0.8rem;
+}
+
+a.osmosis-story__link {
+  color: var(--md-accent-fg-color);
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-top: 1.25rem;
+}
+
+/* Markdown proof block used by the "Plain Markdown" section */
+.osmosis-story__media .highlight {
+  border-radius: var(--home-radius);
+  box-shadow: 0 0 0 1px var(--home-hairline);
+  overflow: hidden;
+}
+
+.osmosis-story__media .highlight pre {
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Feature grid
+   -------------------------------------------------------------------------- */
+
+.osmosis-features {
+  border-block: 1px solid var(--home-hairline);
+  padding-block: var(--home-section-gap);
+}
+
+.osmosis-features h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+  margin-bottom: 3rem;
+  text-align: center;
+}
+
+/* The theme ships `.md-typeset ul:not([hidden]){display:flow-root}` (0,2,1)
+   and `[dir=ltr] .md-typeset ul li{margin-left:1.25em}` (0,2,2). These
+   selectors are deliberately built to outrank both — drop the `:not([hidden])`
+   and the grid silently collapses back to a stacked list with bullets. */
+.osmosis-home ul.osmosis-features__grid:not([hidden]) {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(3, 1fr);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.osmosis-home ul.osmosis-features__grid:not([hidden]) > li {
+  background: var(--home-surface);
+  border-radius: var(--home-radius);
+  margin: 0;
+  padding: 1.5rem;
+}
+
+.osmosis-home ul.osmosis-features__grid:not([hidden]) > li > p {
+  margin: 0;
+}
+
+.osmosis-features__grid svg {
+  color: var(--md-accent-fg-color);
+  height: 1.4rem;
+  margin-bottom: 0.9rem;
+  width: 1.4rem;
+}
+
+.osmosis-features__grid h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.4rem;
+}
+
+.osmosis-features__grid p {
+  color: var(--home-muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   Closing call to action
+   -------------------------------------------------------------------------- */
+
+.osmosis-cta {
+  padding-block: var(--home-section-gap);
+  text-align: center;
+}
+
+.osmosis-cta h2 {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  margin-bottom: 1rem;
+}
+
+.osmosis-cta p {
+  color: var(--home-muted);
+  font-size: 0.9rem;
+  margin-inline: auto;
+  max-width: 30rem;
+}
+
+.osmosis-cta__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+/* --------------------------------------------------------------------------
+   Responsive
+   -------------------------------------------------------------------------- */
+
+@media screen and (max-width: 76.1875em) {
+  .osmosis-home ul.osmosis-features__grid:not([hidden]) {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (max-width: 44.9375em) {
+  .osmosis-story {
+    grid-template-columns: 1fr;
+  }
+
+  .osmosis-home ul.osmosis-features__grid:not([hidden]) {
+    grid-template-columns: 1fr;
+  }
+
+  /* Media always follows the copy once stacked, whatever the desktop order */
+  .osmosis-story--reverse .osmosis-story__media {
+    order: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reduced motion — swap looping video for its poster still
+   -------------------------------------------------------------------------- */
+
+.osmosis-media__fallback {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  video.osmosis-media {
+    display: none;
+  }
+
+  .osmosis-media__fallback {
+    display: block;
+  }
+
+  a.osmosis-btn:hover {
+    transform: none;
+  }
+}

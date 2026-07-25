@@ -5,6 +5,7 @@ export interface ToolbarState {
 	hasSelection: boolean;
 	isEditing: boolean;
 	hasFile: boolean;
+	isReadingMode: boolean;
 }
 
 interface ButtonDef {
@@ -14,6 +15,8 @@ interface ButtonDef {
 	action: () => void;
 	/** Button requires a node to be selected */
 	needsSelection?: boolean;
+	/** Button mutates the map — hidden in reading mode */
+	editOnly?: boolean;
 }
 
 /**
@@ -23,7 +26,7 @@ interface ButtonDef {
 export class ToolRibbon {
 	private el: HTMLElement;
 	private buttons = new Map<string, HTMLButtonElement>();
-	private state: ToolbarState = { hasSelection: false, isEditing: false, hasFile: false };
+	private state: ToolbarState = { hasSelection: false, isEditing: false, hasFile: false, isReadingMode: false };
 	private savedScrollLeft = 0;
 
 	constructor(
@@ -54,7 +57,7 @@ export class ToolRibbon {
 			openProperties: () => void;
 		},
 	) {
-		this.el = document.createElement("div");
+		this.el = createDiv();
 		this.el.className = "osmosis-toolbar";
 
 		const groups: ButtonDef[][] = [
@@ -69,31 +72,31 @@ export class ToolRibbon {
 				{ id: "unfold-all", icon: "chevrons-up-down", label: "Expand all", action: actions.unfoldAll, needsSelection: true },
 			],
 			[
-				{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", action: actions.insertParent, needsSelection: true },
-				{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", action: actions.addSibling, needsSelection: true },
-				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true },
+				{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", action: actions.insertParent, needsSelection: true, editOnly: true },
+				{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", action: actions.addSibling, needsSelection: true, editOnly: true },
+				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true, editOnly: true },
 			],
 			[
-				{ id: "move-up", icon: "arrow-up", label: "Move up", action: actions.moveUp, needsSelection: true },
-				{ id: "move-down", icon: "arrow-down", label: "Move down", action: actions.moveDown, needsSelection: true },
-				{ id: "move-left", icon: "arrow-left", label: "Move left", action: actions.moveLeft, needsSelection: true },
-				{ id: "move-right", icon: "arrow-right", label: "Move right", action: actions.moveRight, needsSelection: true },
+				{ id: "move-up", icon: "arrow-up", label: "Move up", action: actions.moveUp, needsSelection: true, editOnly: true },
+				{ id: "move-down", icon: "arrow-down", label: "Move down", action: actions.moveDown, needsSelection: true, editOnly: true },
+				{ id: "move-left", icon: "arrow-left", label: "Move left", action: actions.moveLeft, needsSelection: true, editOnly: true },
+				{ id: "move-right", icon: "arrow-right", label: "Move right", action: actions.moveRight, needsSelection: true, editOnly: true },
 			],
 			[
-				{ id: "delete", icon: "trash-2", label: "Delete", action: actions.deleteNode, needsSelection: true },
+				{ id: "delete", icon: "trash-2", label: "Delete", action: actions.deleteNode, needsSelection: true, editOnly: true },
 			],
 			[
 				{ id: "copy", icon: "copy", label: "Copy", action: actions.copy, needsSelection: true },
-				{ id: "cut", icon: "scissors", label: "Cut", action: actions.cut, needsSelection: true },
-				{ id: "paste", icon: "clipboard-paste", label: "Paste", action: actions.paste, needsSelection: true },
+				{ id: "cut", icon: "scissors", label: "Cut", action: actions.cut, needsSelection: true, editOnly: true },
+				{ id: "paste", icon: "clipboard-paste", label: "Paste", action: actions.paste, needsSelection: true, editOnly: true },
 			],
 			[
-				{ id: "copy-style", icon: "pipette", label: "Copy style", action: actions.copyStyle, needsSelection: true },
-				{ id: "paste-style", icon: "paint-bucket", label: "Paste style", action: actions.pasteStyle, needsSelection: true },
+				{ id: "copy-style", icon: "pipette", label: "Copy style", action: actions.copyStyle, needsSelection: true, editOnly: true },
+				{ id: "paste-style", icon: "paint-bucket", label: "Paste style", action: actions.pasteStyle, needsSelection: true, editOnly: true },
 			],
 			[
-				{ id: "undo", icon: "undo-2", label: "Undo", action: actions.undo },
-				{ id: "redo", icon: "redo-2", label: "Redo", action: actions.redo },
+				{ id: "undo", icon: "undo-2", label: "Undo", action: actions.undo, editOnly: true },
+				{ id: "redo", icon: "redo-2", label: "Redo", action: actions.redo, editOnly: true },
 			],
 			[
 				{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", action: actions.refresh },
@@ -105,13 +108,16 @@ export class ToolRibbon {
 			const group = groups[gi];
 			if (!group) continue;
 			for (const def of group) {
-				const btn = document.createElement("button");
+				const btn = createEl("button");
 				btn.className = "osmosis-toolbar-btn clickable-icon";
 				btn.setAttribute("aria-label", def.label);
 				btn.setAttribute("title", def.label);
 				btn.dataset.action = def.id;
 				if (def.needsSelection) {
 					btn.dataset.needsSelection = "true";
+				}
+				if (def.editOnly) {
+					btn.dataset.editOnly = "true";
 				}
 				setIcon(btn, def.icon);
 				btn.addEventListener("pointerdown", (e) => {
@@ -129,7 +135,7 @@ export class ToolRibbon {
 			}
 			// Add divider between groups (except after last)
 			if (gi < groups.length - 1) {
-				const divider = document.createElement("div");
+				const divider = createDiv();
 				divider.className = "osmosis-toolbar-divider";
 				this.el.appendChild(divider);
 			}
@@ -183,6 +189,24 @@ export class ToolRibbon {
 			if (btn.dataset.needsSelection === "true") {
 				btn.toggleClass("is-disabled", !state.hasSelection);
 				btn.disabled = !state.hasSelection;
+			}
+			btn.toggleClass(
+				"osmosis-toolbar-btn-hidden",
+				state.isReadingMode && btn.dataset.editOnly === "true",
+			);
+		}
+
+		// Collapse dividers that no longer separate any visible buttons
+		// (reading mode hides whole groups).
+		let visibleSinceLastDivider = 0;
+		for (const child of Array.from(this.el.children)) {
+			const el = child as HTMLElement;
+			if (el.classList.contains("osmosis-toolbar-divider")) {
+				const show = visibleSinceLastDivider > 0;
+				el.toggleClass("osmosis-toolbar-btn-hidden", !show);
+				if (show) visibleSinceLastDivider = 0;
+			} else if (!el.classList.contains("osmosis-toolbar-btn-hidden")) {
+				visibleSinceLastDivider++;
 			}
 		}
 	}

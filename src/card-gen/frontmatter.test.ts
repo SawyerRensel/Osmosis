@@ -57,11 +57,36 @@ describe("resolveDeck", () => {
 		expect(resolveDeck("fm-deck", "", "folder/note.md")).toBe("fm-deck");
 	});
 
-	it("falls back to folder name", () => {
-		expect(resolveDeck("", "", "Learning/Python/note.md")).toBe("Python");
+	it("falls back to full folder path", () => {
+		expect(resolveDeck("", "", "Learning/Python/note.md")).toBe("Learning/Python");
+	});
+
+	it("falls back to single folder name for shallow path", () => {
+		expect(resolveDeck("", "", "Python/note.md")).toBe("Python");
+	});
+
+	it("falls back to deep folder path", () => {
+		expect(resolveDeck("", "", "Study/Math/Algebra/note.md")).toBe("Study/Math/Algebra");
 	});
 
 	it("returns empty string for root-level notes", () => {
 		expect(resolveDeck("", "", "note.md")).toBe("");
+	});
+});
+
+describe("osmosis-line-cards flag", () => {
+	it("defaults to line cards in decks", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-cards: true\n---\n");
+		expect(fm.lineCardsInDecks).toBe(true);
+	});
+
+	it("parses osmosis-line-cards: false as opt-out", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-cards: true\nosmosis-line-cards: false\n---\n");
+		expect(fm.lineCardsInDecks).toBe(false);
+	});
+
+	it("treats any non-false value as opted in", () => {
+		const fm = parseOsmosisFrontmatter("---\nosmosis-line-cards: true\n---\n");
+		expect(fm.lineCardsInDecks).toBe(true);
 	});
 });

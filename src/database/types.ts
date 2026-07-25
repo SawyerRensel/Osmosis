@@ -3,7 +3,8 @@ export type CardType =
 	| "explicit"
 	| "explicit_bidi"
 	| "explicit_cloze"
-	| "code_cloze";
+	| "code_cloze"
+	| "line";
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";
@@ -21,6 +22,25 @@ export interface Card {
 	back: string;
 	typeIn: boolean;
 	sourceLine: number;
+	/** Block ID for line cards (e.g. "os-a1b2c3") — routes schedule writes to frontmatter. */
+	blockId?: string;
+	/**
+	 * Excluded from deck totals and the sequential study queue (line-card
+	 * opt-out). The card stays in the store for in-place study modes.
+	 */
+	excludeFromDecks?: boolean;
+	/**
+	 * Disabled (line-card "exclude"): fully out of study — not hidden by peek
+	 * or study in either surface, skipped by the sequential queue, and dropped
+	 * from dashboard counts. FSRS schedule is preserved so enabling restores
+	 * history. Stored as `disabled: true` on the card's osmosis-schedule entry.
+	 */
+	disabled?: boolean;
+	/**
+	 * Line cards: contents of the immediately preceding sibling lines
+	 * (document order), rendered as front context in sequential study.
+	 */
+	contextBefore?: string[];
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;
@@ -30,6 +50,7 @@ export interface Card {
 	reps?: number;
 	lapses?: number;
 	state?: CardState;
+	learningSteps?: number; // current learning step index (0-based)
 }
 
 /**
@@ -44,4 +65,5 @@ export interface ScheduleData {
 	reps: number;
 	lapses: number;
 	state: CardState;
+	learningSteps: number; // current learning step index (0-based)
 }

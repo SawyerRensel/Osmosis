@@ -2,5 +2,12 @@
 {% block extrahead %}
   <meta property="og:type" content="website">
   <meta property="og:title" content="Osmosis">
-  <meta property="og:description" content="Absorb information faster and longer with unified notes, flashcards, and mind mapping.">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <meta property="og:url" content="{{ config.site_url }}">
+  <!-- MEDIA SWAP: replace with the dedicated 1200x630 social card -->
+  <meta property="og:image" content="{{ config.site_url }}/assets/media/osmosis_note_mind_map_split_view_zoomed.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Osmosis">
+  <meta name="twitter:description" content="{{ config.site_description }}">
+  <meta name="twitter:image" content="{{ config.site_url }}/assets/media/osmosis_note_mind_map_split_view_zoomed.png">
 {% endblock %}

@@ -5,6 +5,13 @@ import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
 import type { DeckScope, StudyCard, DeckCounts } from "./types";
 
+/** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
+export interface LineScheduleWriter {
+	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void;
+	removeSchedule(notePath: string, blockId: string): void;
+	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
+}
+
 /**
  * Pure logic for managing study sessions. Handles queue building,
  * review recording, and deck scoping. Used by all three study modes.
@@ -15,6 +22,7 @@ export class StudySessionManager {
 		private readonly scheduler: FSRSScheduler,
 		private readonly fenceWriter: FenceWriter,
 		private readonly resolveFile: (notePath: string) => TFile | null,
+		private readonly scheduleStore?: LineScheduleWriter,
 	) {}
 
 	/**
@@ -79,6 +87,7 @@ export class StudySessionManager {
 				reps: card.reps ?? 0,
 				lapses: card.lapses ?? 0,
 				state: card.state ?? "new",
+				learningSteps: card.learningSteps ?? 0,
 			}
 			: this.scheduler.createNewSchedule(ts);
 
@@ -94,25 +103,108 @@ export class StudySessionManager {
 			reps: update.schedule.reps,
 			lapses: update.schedule.lapses,
 			state: update.schedule.state,
+			learningSteps: update.schedule.learningSteps,
 		});
 
-		// Write schedule back to markdown file
+		// Persist: line cards → osmosis-schedule frontmatter (debounced),
+		// fence cards → fence metadata
 		if (card) {
-			const file = this.resolveFile(card.notePath);
-			if (file) {
-				void this.fenceWriter.writeSchedule(file, cardId, {
-					stability: update.schedule.stability,
-					difficulty: update.schedule.difficulty,
-					due: update.schedule.due,
+			if (isLineCard(card)) {
+				this.scheduleStore?.setSchedule(card.notePath, card.blockId, {
+					...update.schedule,
 					lastReview: update.schedule.lastReview ?? ts,
-					reps: update.schedule.reps,
-					lapses: update.schedule.lapses,
-					state: update.schedule.state,
 				});
+			} else {
+				const file = this.resolveFile(card.notePath);
+				if (file) {
+					void this.fenceWriter.writeSchedule(file, cardId, {
+						stability: update.schedule.stability,
+						difficulty: update.schedule.difficulty,
+						due: update.schedule.due,
+						lastReview: update.schedule.lastReview ?? ts,
+						reps: update.schedule.reps,
+						lapses: update.schedule.lapses,
+						state: update.schedule.state,
+						learningSteps: update.schedule.learningSteps,
+					});
+				}
 			}
 		}
 
 		return update.schedule;
+	}
+
+	/**
+	 * Revert a review by restoring the previous schedule data.
+	 * If previousSchedule is null, the card was new — clear all schedule fields.
+	 */
+	async revertReview(
+		cardId: string,
+		previousSchedule: ScheduleData | null,
+	): Promise<void> {
+		const card = this.store.getCard(cardId);
+
+		if (previousSchedule) {
+			// Restore old schedule
+			this.store.updateSchedule(cardId, {
+				stability: previousSchedule.stability,
+				difficulty: previousSchedule.difficulty,
+				due: previousSchedule.due,
+				lastReview: previousSchedule.lastReview ?? Date.now(),
+				reps: previousSchedule.reps,
+				lapses: previousSchedule.lapses,
+				state: previousSchedule.state,
+				learningSteps: previousSchedule.learningSteps,
+			});
+
+			if (card) {
+				if (isLineCard(card)) {
+					this.scheduleStore?.setSchedule(card.notePath, card.blockId, previousSchedule);
+				} else {
+					const file = this.resolveFile(card.notePath);
+					if (file) {
+						void this.fenceWriter.writeSchedule(file, cardId, {
+							stability: previousSchedule.stability,
+							difficulty: previousSchedule.difficulty,
+							due: previousSchedule.due,
+							lastReview: previousSchedule.lastReview ?? Date.now(),
+							reps: previousSchedule.reps,
+							lapses: previousSchedule.lapses,
+							state: previousSchedule.state,
+							learningSteps: previousSchedule.learningSteps,
+						});
+					}
+				}
+			}
+		} else {
+			// Card was new — clear schedule entirely
+			this.store.clearSchedule(cardId);
+
+			if (card) {
+				if (isLineCard(card)) {
+					this.scheduleStore?.removeSchedule(card.notePath, card.blockId);
+				} else {
+					const file = this.resolveFile(card.notePath);
+					if (file) {
+						void this.fenceWriter.removeSchedule(file, cardId);
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Exclude (disable) or include (enable) a line card. Updates the store
+	 * immediately so study surfaces reflect it, and persists the flag to the
+	 * card's osmosis-schedule frontmatter entry. No-op for non-line cards
+	 * (fence cards use FenceWriter's `exclude:` metadata instead). Returns
+	 * true when it applied to a line card.
+	 */
+	setLineCardDisabled(card: Card, disabled: boolean): boolean {
+		if (!isLineCard(card)) return false;
+		this.store.setDisabled(card.id, disabled);
+		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled);
+		return true;
 	}
 
 	/**
@@ -159,4 +251,9 @@ export class StudySessionManager {
 				return this.store.getNewCards();
 		}
 	}
+}
+
+/** A line card whose schedule lives in osmosis-schedule frontmatter. */
+function isLineCard(card: Card): card is Card & { blockId: string } {
+	return card.cardType === "line" && card.blockId !== undefined;
 }

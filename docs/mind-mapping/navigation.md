@@ -46,6 +46,9 @@ Arrow keys navigate between nodes. Their behavior adapts to the map's layout dir
 
 The map auto-frames all content when the view first opens.
 
+!!! tip "Pan from anywhere in reading mode"
+    In [reading mode](index.md#reading-mode) you can start a pan by dragging *any*where — including on top of a node — instead of hunting for empty canvas. This is what makes one-finger panning practical on a phone, where a tap-drag would otherwise grab a node.
+
 ## Collapse / Expand
 
 | Action | Keyboard |

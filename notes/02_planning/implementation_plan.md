@@ -494,7 +494,7 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 
 ### Deployment Architecture
 
-- **Development**: Local dev with `npm run dev` (esbuild watch mode). Build output to `e2e-vault/.obsidian/plugins/Osmosis/`. Test in Obsidian desktop vault.
+- **Development**: Local dev with `npm run dev` (esbuild watch mode). Build output to `vault/.obsidian/plugins/Osmosis/`. Test in Obsidian desktop vault.
 - **Testing**: Manual testing in Obsidian desktop + mobile. Unit tests via `npm test`. Performance benchmarks for parser and renderer.
 - **Production**: Community plugin submission via GitHub release + Obsidian plugin registry. Single `main.js` + `manifest.json` + `styles.css`.
 
@@ -505,7 +505,7 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 ### Phase 1 Tasks
 
 **Task 1.1: Plugin Scaffold**
-- Description: Initialize the Obsidian plugin project from obsidian-sample-plugin template. Set up esbuild, TypeScript strict mode, ESLint with obsidian-plugin rules, manifest.json, and build output to `e2e-vault/.obsidian/plugins/Osmosis/`.
+- Description: Initialize the Obsidian plugin project from obsidian-sample-plugin template. Set up esbuild, TypeScript strict mode, ESLint with obsidian-plugin rules, manifest.json, and build output to `vault/.obsidian/plugins/Osmosis/`.
 - Acceptance Criteria: `npm run build` produces `main.js` in build output dir. Plugin loads in Obsidian. `npm run lint` passes.
 - Estimated Effort: 2–4 hours
 - Dependencies: None
@@ -1160,7 +1160,7 @@ ViewState (JSON — .obsidian/plugins/Osmosis/views/*.view.json)
 - [x] Git repository initialized
 - [ ] npm project initialized (package.json, tsconfig.json, esbuild.config.mjs)
 - [ ] ESLint configured with obsidian-plugin rules
-- [ ] Build pipeline outputting to `e2e-vault/.obsidian/plugins/Osmosis/`
+- [ ] Build pipeline outputting to `vault/.obsidian/plugins/Osmosis/`
 - [ ] Test framework (vitest or jest)
 - [ ] Beads for task tracking
 

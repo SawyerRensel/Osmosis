@@ -1,10 +1,11 @@
 import type { TFile, Vault } from "obsidian";
-import type { Card } from "../database/types";
+import type { Card, ScheduleData } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
 import type { CardGenerationOptions } from "./note-processor";
 import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
+import { lineCardId } from "./line-cards";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -24,6 +25,16 @@ export class CardSyncService {
 		private readonly fenceWriter: FenceWriter,
 		private readonly getOptions: () => CardGenerationOptions,
 		private readonly getFileTags?: (file: TFile) => string[],
+		/**
+		 * Resolved line-card schedules for a note, keyed by block ID —
+		 * osmosis-schedule frontmatter overlaid with pending unflushed ratings.
+		 */
+		private readonly getLineSchedules?: (file: TFile) => Map<string, ScheduleData>,
+		/**
+		 * Block IDs of disabled ("excluded") line cards for a note —
+		 * osmosis-schedule `disabled: true` overlaid with pending changes.
+		 */
+		private readonly getLineDisabled?: (file: TFile) => Set<string>,
 	) {}
 
 	/**
@@ -61,11 +72,25 @@ export class CardSyncService {
 			// Write id: metadata back into fences that lack one
 			await this.injectFenceIds(file, content, result.cards);
 
+			// Line-card schedules + disabled flags from frontmatter (+ pending
+			// overlay), parsed once
+			const lineSchedules = this.getLineSchedules?.(file);
+			const lineDisabled = this.getLineDisabled?.(file);
+
 			for (const genCard of result.cards) {
 				generatedIds.add(genCard.id);
 
 				// Preserve existing schedule data if the card already exists in the store
 				const existing = this.store.getCard(genCard.id);
+
+				// Line cards read their schedule from osmosis-schedule frontmatter;
+				// fence cards carry it in fence metadata (genCard fields).
+				const lineSchedule = genCard.blockId !== undefined
+					? lineSchedules?.get(genCard.blockId)
+					: undefined;
+				const isDisabled = genCard.blockId !== undefined
+					? lineDisabled?.has(genCard.blockId) ?? false
+					: false;
 
 				const card: Card = {
 					id: genCard.id,
@@ -76,14 +101,19 @@ export class CardSyncService {
 					back: genCard.back,
 					typeIn: genCard.typeIn,
 					sourceLine: genCard.sourceLine,
-					// Schedule: prefer fence metadata, fall back to existing store data
-					stability: genCard.stability ?? existing?.stability,
-					difficulty: genCard.difficulty ?? existing?.difficulty,
-					due: genCard.due ?? existing?.due,
-					lastReview: genCard.lastReview ?? existing?.lastReview,
-					reps: genCard.reps ?? existing?.reps,
-					lapses: genCard.lapses ?? existing?.lapses,
-					state: genCard.state ?? existing?.state,
+					blockId: genCard.blockId,
+					excludeFromDecks: genCard.excludeFromDecks,
+					...(isDisabled ? { disabled: true } : {}),
+					contextBefore: genCard.contextBefore,
+					// Schedule: prefer source-of-truth metadata, fall back to existing store data
+					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
+					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
+					due: lineSchedule?.due ?? genCard.due ?? existing?.due,
+					lastReview: lineSchedule?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
+					reps: lineSchedule?.reps ?? genCard.reps ?? existing?.reps,
+					lapses: lineSchedule?.lapses ?? genCard.lapses ?? existing?.lapses,
+					state: lineSchedule?.state ?? genCard.state ?? existing?.state,
+					learningSteps: lineSchedule?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
 				};
 
 				this.store.addCard(card);
@@ -102,55 +132,15 @@ export class CardSyncService {
 	 * Write `id: xxx` metadata into osmosis fences that don't already have one.
 	 */
 	private async injectFenceIds(file: TFile, content: string, cards: GeneratedCard[]): Promise<void> {
-		const lines = content.split("\n");
+		const modified = injectFenceIdsIntoContent(content, cards);
+		if (modified === content) return;
 
-		const fencesNeedingId = new Map<number, string>();
-
-		for (const card of cards) {
-			// Skip derived IDs (cloze -c1, bidi -r) — only inject the base fence ID
-			if (card.id.includes("-")) continue;
-
-			const fenceLine = card.sourceLine;
-			if (fencesNeedingId.has(fenceLine)) continue;
-
-			if (!this.fenceHasIdMetadata(lines, fenceLine)) {
-				fencesNeedingId.set(fenceLine, card.id);
-			}
+		this.writingPaths.add(file.path);
+		try {
+			await this.vault.modify(file, modified);
+		} finally {
+			this.writingPaths.delete(file.path);
 		}
-
-		if (fencesNeedingId.size === 0) return;
-
-		// Process from bottom-up to avoid offset shifts
-		const sortedLines = [...fencesNeedingId.keys()].sort((a, b) => b - a);
-
-		const modifiedLines = [...lines];
-		for (const fenceLine of sortedLines) {
-			const id = fencesNeedingId.get(fenceLine)!;
-			modifiedLines.splice(fenceLine + 1, 0, `id: ${id}`);
-		}
-
-		const modified = modifiedLines.join("\n");
-		if (modified !== content) {
-			this.writingPaths.add(file.path);
-			try {
-				await this.vault.modify(file, modified);
-			} finally {
-				this.writingPaths.delete(file.path);
-			}
-		}
-	}
-
-	/**
-	 * Check if a fence starting at the given line already has an `id:` metadata line.
-	 */
-	private fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
-		for (let i = fenceLine + 1; i < lines.length; i++) {
-			const line = lines[i]!.trim();
-			if (line === "" || line === "```") break;
-			if (/^id\s*:\s*.+$/i.test(line)) return true;
-			if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
-		}
-		return false;
 	}
 
 	/**
@@ -162,12 +152,14 @@ export class CardSyncService {
 
 	/**
 	 * Handle file rename — update notePath for all cards.
+	 * Line-card IDs embed the note path, so they are recomputed.
 	 */
 	handleRename(oldPath: string, newPath: string): void {
 		const cards = this.store.getCardsByNote(oldPath);
 		for (const card of cards) {
 			this.store.removeCard(card.id);
-			this.store.addCard({ ...card, notePath: newPath });
+			const id = card.blockId !== undefined ? lineCardId(newPath, card.blockId) : card.id;
+			this.store.addCard({ ...card, id, notePath: newPath });
 		}
 	}
 
@@ -175,15 +167,78 @@ export class CardSyncService {
 	 * Remove cards whose notePath doesn't exist in activePaths.
 	 */
 	private cleanOrphans(activePaths: Set<string>): void {
-		const allDecks = this.store.getAllDecks();
-		for (const deck of allDecks) {
-			const cards = this.store.getDueCards(Infinity, deck);
-			const newCards = this.store.getNewCards(deck);
-			for (const card of [...cards, ...newCards]) {
-				if (!activePaths.has(card.notePath)) {
-					this.store.removeCard(card.id);
-				}
+		for (const card of this.store.getAllCards()) {
+			if (!activePaths.has(card.notePath)) {
+				this.store.removeCard(card.id);
 			}
 		}
 	}
+}
+
+/**
+ * Pure function: return the content with `id: xxx` lines inserted into any
+ * osmosis fence that lacks one. Derived suffixes (`-r`, `-cN`) are stripped
+ * so each fence gets its base id — cloze-only fences whose cards are all
+ * derived still receive an id.
+ */
+export function injectFenceIdsIntoContent(content: string, cards: GeneratedCard[]): string {
+	const lines = content.split("\n");
+	const fencesNeedingId = new Map<number, string>();
+
+	for (const card of cards) {
+		// Line cards live on regular lines, not fences — never inject for them
+		if (card.card_type === "line") continue;
+		const baseId = card.id.replace(/-(?:r|c\d+)$/, "");
+		const fenceLine = card.sourceLine;
+		if (fencesNeedingId.has(fenceLine)) continue;
+		if (!fenceHasIdMetadata(lines, fenceLine)) {
+			fencesNeedingId.set(fenceLine, baseId);
+		}
+	}
+
+	if (fencesNeedingId.size === 0) return content;
+
+	const sortedLines = [...fencesNeedingId.keys()].sort((a, b) => b - a);
+	const modifiedLines = [...lines];
+	for (const fenceLine of sortedLines) {
+		const id = fencesNeedingId.get(fenceLine)!;
+		// If the fence has no blank-line separator between metadata and content,
+		// inject one after the id line. Otherwise downstream metadata scanners
+		// can't tell where the content begins.
+		const nextLine = modifiedLines[fenceLine + 1]?.trim() ?? "";
+		const needsBlank = nextLine !== "" && !isRecognizedMetadataLine(nextLine);
+		const toInsert = needsBlank ? [`id: ${id}`, ""] : [`id: ${id}`];
+		modifiedLines.splice(fenceLine + 1, 0, ...toInsert);
+	}
+
+	return modifiedLines.join("\n");
+}
+
+const META_KEYS = new Set([
+	"id", "exclude", "bidi", "type-in", "deck", "hint",
+	"due", "stability", "difficulty", "reps", "lapses",
+	"state", "last-review", "learning-steps",
+]);
+
+function isRecognizedMetadataLine(line: string): boolean {
+	const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+	if (!match) return false;
+	const key = match[1]!.toLowerCase();
+	if (META_KEYS.has(key)) return true;
+	const prefixed = key.match(/^(?:r|c\d+)-(.+)$/);
+	return prefixed !== null && META_KEYS.has(prefixed[1]!);
+}
+
+function fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
+	const openMatch = lines[fenceLine]?.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
+	for (let i = fenceLine + 1; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) break;
+		if (/^id\s*:\s*.+$/i.test(line)) return true;
+		if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
+	}
+	return false;
 }

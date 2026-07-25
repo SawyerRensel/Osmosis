@@ -16,9 +16,13 @@ Osmosis renders your markdown structure as a fully interactive mind map. Heading
 | `- Item` or `* Item` | Bullet list nodes |
 | `1. Item` | Numbered list nodes |
 | Plain paragraphs | Paragraph nodes |
+| `> Callout` or `> quote` | A single blockquote node |
 | `![[other-note]]` | Transcluded sub-branch |
 
 Nodes render rich content — bold, italic, code, images, and LaTeX all display inside map nodes.
+
+!!! note "Multi-line blocks are one node"
+    Code blocks, tables, and callouts/blockquotes each map to a **single** node rather than one node per line. For callouts, a run of consecutive `>`-prefixed lines — title, body, and any nested list — is one node; a blank or non-`>` line ends the run, so stacked callouts stay separate nodes.
 
 ## Opening a Mind Map
 
@@ -31,6 +35,36 @@ Nodes render rich content — bold, italic, code, images, and LaTeX all display 
 
 ![Launch mind map from note view](../assets/media/osmosis_note_view_how_to_launch_mind_map_view_buttons.png)
 
+## Reading Mode
+
+Mind maps have a reading mode, mirroring the Markdown view's reading/editing toggle. In reading mode the map is safe to explore but **cannot be changed** — useful for reference maps, shared vaults, and phones, where a stray tap-drag used to rearrange your notes.
+
+| Toggle | How |
+|--------|-----|
+| Header action | Click the :lucide-book-open: / :lucide-pencil: icon in the mind map header |
+| Keyboard | ++ctrl+e++ (++cmd+e++ on macOS) |
+| Command palette | "Toggle mind map reading mode" |
+
+**What changes in reading mode:**
+
+| Still works | Blocked |
+|-------------|---------|
+| Pan, zoom, fit to view | Adding, deleting, and moving nodes |
+| Collapse / expand and keyboard navigation | In-place text editing (++f2++ / double-click) |
+| Selection, copy, "Study this branch" | Drag-and-drop repositioning and node resizing |
+| Spatial study and peek, including rating | Copy style / paste style from the map |
+| Line card actions on the node menu | Cut, paste, and delete |
+
+Dragging a node **pans the viewport** instead of moving the node, resize handles are hidden, and the toolbar collapses to navigation-only buttons. Node context menus keep just Copy, collapse/expand, Study this branch, and the [line card](../flashcards/line-cards.md#per-node-and-per-selection-control) actions.
+
+!!! note "Study still counts"
+    Spatial study and peek stay fully available in reading mode. Ratings are study metadata, not map edits — they never touch your note's structure.
+
+The mode is remembered per pane, so one map can be open for reading while another is open for editing. To choose how maps open by default, set **Settings > Osmosis > Default mind map mode** to *Editing*, *Reading*, or *Reading on mobile only*.
+
+!!! tip
+    The properties sidebar stays live in reading mode by design — it's for styling the map, and styling isn't a structural edit to your note.
+
 ## Transclusion
 
 Embed another note's content as a sub-branch using standard Obsidian syntax:
@@ -41,7 +75,7 @@ Embed another note's content as a sub-branch using standard Obsidian syntax:
 - ![[detailed-notes]]
 ```
 
-The embedded note's heading and list structure appears as a collapsible sub-branch. Transcluded branches are lazy-loaded — they only parse when expanded. Editing a transcluded node writes changes to the source file.
+The embedded note's heading and list structure appears as a collapsible sub-branch, loaded expanded by default. Turn off **Expand transclusions** in the plugin settings to lazy-load them instead — collapsed until first expanded. Editing a transcluded node writes changes to the source file.
 
 ![osmosis_mind_map_transclusion_split_view](../assets/media/osmosis_mind_map_transclusion_split_view.png)
 

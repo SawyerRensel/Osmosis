@@ -8,12 +8,13 @@ function makeNode(
 	overrides: Partial<OsmosisNode> & { type: OsmosisNode["type"]; content: string },
 ): OsmosisNode {
 	return {
-		id: `node-${overrides.content}`,
+		id: overrides.id ?? `node-${overrides.content}`,
 		type: overrides.type,
 		depth: overrides.depth ?? 0,
 		content: overrides.content,
 		children: overrides.children ?? [],
 		range: overrides.range ?? { start: 0, end: 0 },
+		blockIdLineEnd: overrides.blockIdLineEnd,
 		isTranscluded: overrides.isTranscluded ?? false,
 		sourceFile: overrides.sourceFile,
 		metadata: overrides.metadata,
@@ -150,7 +151,7 @@ describe("TransclusionResolver", () => {
 			await resolver.resolveTree(tree);
 
 			expect(node.sourceFile).toBe("my-note.md");
-			// eslint-disable-next-line @typescript-eslint/unbound-method
+			/* eslint-disable-next-line @typescript-eslint/unbound-method -- Referencing the vi.fn() spy itself for assertion, not calling it. */
 			expect(app.metadataCache.getFirstLinkpathDest).toHaveBeenCalledWith(
 				"my-note",
 				"source.md",
@@ -306,6 +307,162 @@ describe("TransclusionResolver", () => {
 			expect(headingC).toBeDefined();
 			expect(headingC!.type).toBe("heading");
 			expect(headingC!.isTranscluded).toBe(true);
+
+			// Each node is attributed to its immediate origin note — spatial
+			// study derives card keys (and rating destinations) from sourceFile
+			expect(headingB.sourceFile).toBe("b.md");
+			expect(headingC!.sourceFile).toBe("c.md");
+			for (const deep of headingC!.children) {
+				expect(deep.sourceFile).toBe("c.md");
+			}
+		});
+
+		it("gives duplicate embeds of the same note independent nodes and unique ids", async () => {
+			const app = mockApp(
+				{
+					"note": { path: "note.md" },
+					"note.md": { path: "note.md" },
+				},
+				{
+					"note.md": "- Shared line",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// Two embed sites — parser-realistic distinct ids per site
+			const embedA = makeNode({ type: "transclusion", content: "note", id: "site-a" });
+			const embedB = makeNode({ type: "transclusion", content: "note", id: "site-b" });
+			const tree = makeTree([embedA, embedB]);
+
+			await resolver.expandTree(tree);
+
+			const [copyA, copyB] = tree.root.children;
+			expect(copyA!.content).toBe("Shared line");
+			expect(copyB!.content).toBe("Shared line");
+			// Distinct objects: the cache must not hand both embeds the same node
+			expect(copyA).not.toBe(copyB);
+			// Instance-unique ids so layout node map and DOM lookups can't collide
+			expect(copyA!.id).not.toBe(copyB!.id);
+			expect(copyA!.id).toContain("~site-a");
+			expect(copyB!.id).toContain("~site-b");
+		});
+
+		it("never mutates the cached source tree", async () => {
+			const app = mockApp(
+				{
+					"outer": { path: "outer.md" },
+					"outer.md": { path: "outer.md" },
+					"inner": { path: "inner.md" },
+					"inner.md": { path: "inner.md" },
+				},
+				{
+					"outer.md": "# Outer\n![[inner]]",
+					"inner.md": "- Inner line",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const tree = makeTree([makeNode({ type: "transclusion", content: "outer" })]);
+			await resolver.expandTree(tree);
+
+			// Re-fetch outer's cached parse: it must be pristine — no
+			// transcluded marks, no spliced-in inner content
+			const cachedOuter = cache.get("outer.md", "# Outer\n![[inner]]");
+			const heading = cachedOuter.root.children[0]!;
+			expect(heading.isTranscluded).toBe(false);
+			expect(heading.sourceFile).toBeUndefined();
+			const innerEmbed = heading.children.find((c) => c.type === "transclusion");
+			expect(innerEmbed).toBeDefined();
+			expect(innerEmbed!.children).toEqual([]);
+		});
+
+		it("attributes nested embeds correctly in both copies of a duplicated note", async () => {
+			// Host embeds source twice; source embeds deep. Both copies of
+			// deep's content must carry sourceFile = deep.md — a shared cached
+			// tree would leave the second copy's deep nodes marked source.md.
+			const app = mockApp(
+				{
+					"source": { path: "source.md" },
+					"source.md": { path: "source.md" },
+					"deep": { path: "deep.md" },
+					"deep.md": { path: "deep.md" },
+				},
+				{
+					"source.md": "# Source\n![[deep]]",
+					"deep.md": "- Deep line",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const embedA = makeNode({ type: "transclusion", content: "source", id: "site-a" });
+			const embedB = makeNode({ type: "transclusion", content: "source", id: "site-b" });
+			const tree = makeTree([embedA, embedB], "host.md");
+
+			await resolver.expandTree(tree);
+
+			expect(tree.root.children).toHaveLength(2);
+			for (const copy of tree.root.children) {
+				expect(copy.content).toBe("Source");
+				expect(copy.sourceFile).toBe("source.md");
+				const deepLine = copy.children.find((c) => c.content === "Deep line");
+				expect(deepLine).toBeDefined();
+				expect(deepLine!.isTranscluded).toBe(true);
+				expect(deepLine!.sourceFile).toBe("deep.md");
+			}
+			// The two copies of the deep line are independent nodes too
+			const deepA = tree.root.children[0]!.children.find((c) => c.content === "Deep line")!;
+			const deepB = tree.root.children[1]!.children.find((c) => c.content === "Deep line")!;
+			expect(deepA).not.toBe(deepB);
+			expect(deepA.id).not.toBe(deepB.id);
+		});
+
+		it("records the host embed line's range on each top-level expanded child", async () => {
+			const app = mockApp(
+				{ "note": { path: "note.md" }, "note.md": { path: "note.md" } },
+				{ "note.md": "- Bullet A\n- Bullet B" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// The `![[note]]` line occupies host offsets 40..51.
+			const node = makeNode({
+				type: "transclusion",
+				content: "note",
+				range: { start: 40, end: 51 },
+			});
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			// Every spliced-in top-level child carries the embed line's HOST span,
+			// so host-file span math folds the whole embed to that one line rather
+			// than descending into the children's source-file offsets.
+			for (const child of tree.root.children) {
+				expect(child.embedHostRange).toEqual({ start: 40, end: 51 });
+			}
+		});
+
+		it("extends the embed host range past a trailing `^id` line", async () => {
+			const app = mockApp(
+				{ "note": { path: "note.md" }, "note.md": { path: "note.md" } },
+				{ "note.md": "- Bullet A" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// An embed whose block ID sits on a separate `^id` line: the host span
+			// must reach the end of that line, not stop at the `![[…]]`.
+			const node = makeNode({
+				type: "transclusion",
+				content: "note",
+				range: { start: 40, end: 51 },
+				blockIdLineEnd: 60,
+			});
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			for (const child of tree.root.children) {
+				expect(child.embedHostRange).toEqual({ start: 40, end: 60 });
+			}
 		});
 
 		it("detects cycles and keeps cyclic transclusion node", async () => {

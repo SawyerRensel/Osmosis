@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { buildDeckTree } from "../study/DeckTreeBuilder";
+import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import { SequentialStudyModal } from "./SequentialStudyModal";
 
@@ -12,7 +12,7 @@ export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
  */
 export class DashboardSidebarView extends ItemView {
 	plugin!: OsmosisPlugin;
-	private refreshInterval: ReturnType<typeof setInterval> | null = null;
+	private refreshInterval: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -31,18 +31,17 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	async onOpen(): Promise<void> {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-		this.plugin = (this.app as any).plugins.plugins["osmosis"] as OsmosisPlugin;
+		this.plugin = this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 		await this.render();
 		// Auto-refresh every 60 seconds so due counts stay current
-		this.refreshInterval = setInterval(() => {
+		this.refreshInterval = window.setInterval(() => {
 			void this.render();
 		}, 60_000);
 	}
 
 	async onClose(): Promise<void> {
 		if (this.refreshInterval !== null) {
-			clearInterval(this.refreshInterval);
+			window.clearInterval(this.refreshInterval);
 			this.refreshInterval = null;
 		}
 		this.contentEl.empty();
@@ -56,7 +55,21 @@ export class DashboardSidebarView extends ItemView {
 		const now = Date.now();
 		const decks = this.plugin.cardStore.getAllDecks();
 		const counts = this.plugin.cardStore.getCardCountsByDeck(now);
-		const tree = buildDeckTree(decks, counts);
+		const rawTree = buildDeckTree(decks, counts);
+
+		// Build the set of paths to keep: all real decks + prefix segments
+		// of explicitly-assigned decks (so their hierarchy isn't pruned).
+		const folderDerived = this.plugin.cardStore.getFolderDerivedDecks();
+		const keepPaths = new Set(decks);
+		for (const deck of decks) {
+			if (!folderDerived.has(deck)) {
+				const parts = deck.split("/");
+				for (let i = 1; i < parts.length; i++) {
+					keepPaths.add(parts.slice(0, i).join("/"));
+				}
+			}
+		}
+		const tree = pruneDeckTree(rawTree, keepPaths);
 
 		// Total counts
 		let totalNew = 0, totalLearn = 0, totalDue = 0;
@@ -148,10 +161,19 @@ export class DashboardSidebarView extends ItemView {
 				newLimit: this.plugin.settings.dailyNewCardLimit,
 				reviewLimit: this.plugin.settings.dailyReviewCardLimit,
 			},
+			this.plugin.fenceWriter,
+			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			this.plugin.settings.showStudyBreadcrumb,
+			this.plugin.settings.sequentialContextLines,
+			() => {
+				// Session end: flush pending line-card schedule writes, then
+				// refresh deck counts. Passed as the modal's onSessionEnd
+				// callback — overriding modal.onClose here would replace the
+				// modal's own cleanup (learning timers, render component).
+				void this.plugin.scheduleStore.flush();
+				void this.render();
+			},
 		);
-		modal.onClose = () => {
-			void this.render();
-		};
 		modal.open();
 	}
 }

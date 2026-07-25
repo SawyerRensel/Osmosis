@@ -345,6 +345,72 @@ describe("OsmosisParser", () => {
 		});
 	});
 
+	describe("blockquotes and callouts", () => {
+		it("coalesces a multi-line callout into one blockquote node", () => {
+			const md = "> [!quote] Yali's Question\n> Why did some peoples end up with more?";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("blockquote");
+			expect(node?.content).toBe(
+				"> [!quote] Yali's Question\n> Why did some peoples end up with more?",
+			);
+		});
+
+		it("keeps a `>` empty line inside one callout (multi-paragraph)", () => {
+			const md = "> [!note] Title\n> First para\n>\n> Second para";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.content).toContain("Second para");
+		});
+
+		it("splits blockquotes separated by a blank line into separate nodes", () => {
+			const md = "> First quote\n\n> Second quote";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[1]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.content).toBe("> First quote");
+			expect(tree.root.children[1]?.content).toBe("> Second quote");
+		});
+
+		it("nests a blockquote under the current heading", () => {
+			const md = "## Section\n> A quoted line";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			expect(heading?.children).toHaveLength(1);
+			expect(heading?.children[0]?.type).toBe("blockquote");
+		});
+
+		it("attaches a standalone block-ID line immediately after a blockquote", () => {
+			const md = "> [!quote] Q\n> body\n^os-quo001\n\nAfter";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			const quote = tree.root.children[0];
+			expect(quote?.type).toBe("blockquote");
+			expect(quote?.blockId).toBe("os-quo001");
+			expect(quote?.content).not.toContain("os-quo001");
+			expect(tree.root.children[1]?.content).toBe("After");
+		});
+
+		it("attaches a standalone block-ID line to a blockquote across a blank line", () => {
+			const md = "> a quote\n\n^os-quo002";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("blockquote");
+			expect(tree.root.children[0]?.blockId).toBe("os-quo002");
+		});
+
+		it("flushes a trailing blockquote at end of document", () => {
+			const md = "Intro paragraph\n> tail quote";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[1]?.type).toBe("blockquote");
+			expect(tree.root.children[1]?.content).toBe("> tail quote");
+		});
+	});
+
 	describe("code blocks", () => {
 		it("parses a fenced code block as a single node", () => {
 			const md = "# Code\n```js\nconst x = 1;\nconsole.log(x);\n```";
@@ -448,6 +514,107 @@ describe("OsmosisParser", () => {
 			const elapsed = performance.now() - start;
 
 			expect(elapsed).toBeLessThan(10);
+		});
+	});
+
+	describe("block IDs", () => {
+		it("strips a trailing block ID from a bullet and records it", () => {
+			const tree = parser.parse("- Mitochondria produce ATP ^os-a1b2c3", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.content).toBe("Mitochondria produce ATP");
+			expect(node?.blockId).toBe("os-a1b2c3");
+		});
+
+		it("strips a trailing block ID from a heading and records it", () => {
+			const tree = parser.parse("## Cellular Respiration ^os-77c4b0", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("heading");
+			expect(node?.depth).toBe(2);
+			expect(node?.content).toBe("Cellular Respiration");
+			expect(node?.blockId).toBe("os-77c4b0");
+		});
+
+		it("records block IDs on ordered items and paragraphs", () => {
+			const tree = parser.parse("1. First step ^os-000001\n\nA paragraph ^user-id", "test.md");
+			expect(tree.root.children[0]?.content).toBe("First step");
+			expect(tree.root.children[0]?.blockId).toBe("os-000001");
+			expect(tree.root.children[1]?.content).toBe("A paragraph");
+			expect(tree.root.children[1]?.blockId).toBe("user-id");
+		});
+
+		it("leaves nodes without block IDs undefined", () => {
+			const tree = parser.parse("- plain item", "test.md");
+			expect(tree.root.children[0]?.blockId).toBeUndefined();
+		});
+
+		it("handles checkbox items with block IDs", () => {
+			const tree = parser.parse("- [x] Done task ^os-abc123", "test.md");
+			const node = tree.root.children[0];
+			expect(node?.blockId).toBe("os-abc123");
+			expect(node?.metadata?.["checkbox"]).toBe(true);
+			expect(node?.metadata?.["checked"]).toBe(true);
+		});
+
+		it("keeps nesting structure with block IDs present", () => {
+			const md = "# Root ^os-r00001\n- parent ^os-p00001\n\t- child ^os-c00001";
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			const parent = heading?.children[0];
+			const child = parent?.children[0];
+			expect(heading?.blockId).toBe("os-r00001");
+			expect(parent?.content).toBe("parent");
+			expect(parent?.blockId).toBe("os-p00001");
+			expect(child?.content).toBe("child");
+			expect(child?.blockId).toBe("os-c00001");
+		});
+
+		it("does not strip carets inside code blocks", () => {
+			const md = "```\nlet x = a ^os-abc123\n```";
+			const tree = parser.parse(md, "test.md");
+			const node = tree.root.children[0];
+			expect(node?.type).toBe("codeblock");
+			expect(node?.content).toContain("a ^os-abc123");
+			expect(node?.blockId).toBeUndefined();
+		});
+
+		it("node stable ID is unaffected by adding a block ID", () => {
+			const without = parser.parse("- item", "test.md");
+			const withId = parser.parse("- item ^os-a1b2c3", "test.md");
+			expect(withId.root.children[0]?.id).toBe(without.root.children[0]?.id);
+		});
+
+		it("attaches a standalone block-ID line to the preceding code block", () => {
+			const md = "```js\nconst x = 1;\n```\n^os-code01\n\nNext paragraph";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(2);
+			const code = tree.root.children[0];
+			expect(code?.type).toBe("codeblock");
+			expect(code?.blockId).toBe("os-code01");
+			expect(tree.root.children[1]?.content).toBe("Next paragraph");
+		});
+
+		it("attaches a standalone block-ID line to the preceding table, across a blank line", () => {
+			const md = "| a | b |\n|---|---|\n| 1 | 2 |\n\n^os-tab001";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			const table = tree.root.children[0];
+			expect(table?.type).toBe("table");
+			expect(table?.blockId).toBe("os-tab001");
+		});
+
+		it("does not attach a standalone block-ID line after a regular node", () => {
+			const md = "A paragraph\n^os-abc123";
+			const tree = parser.parse(md, "test.md");
+			// Falls back to previous behavior: standalone line is a paragraph
+			expect(tree.root.children).toHaveLength(2);
+			expect(tree.root.children[0]?.blockId).toBeUndefined();
+			expect(tree.root.children[1]?.content).toBe("^os-abc123");
+		});
+
+		it("keeps a standalone block-ID line at document start as a paragraph", () => {
+			const tree = parser.parse("^os-abc123", "test.md");
+			expect(tree.root.children).toHaveLength(1);
+			expect(tree.root.children[0]?.type).toBe("paragraph");
 		});
 	});
 });

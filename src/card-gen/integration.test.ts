@@ -32,6 +32,7 @@ function syncCards(markdown: string, notePath = "test.md"): void {
 			reps: genCard.reps,
 			lapses: genCard.lapses,
 			state: genCard.state,
+			learningSteps: genCard.learningSteps,
 		};
 		store.addCard(card);
 	}
@@ -76,6 +77,7 @@ What is 2+2?
 			reps: result.schedule.reps,
 			lapses: result.schedule.lapses,
 			state: result.schedule.state,
+			learningSteps: result.schedule.learningSteps,
 		});
 
 		// Should now be scheduled, not new
@@ -120,6 +122,7 @@ Back
 			reps: result.schedule.reps,
 			lapses: result.schedule.lapses,
 			state: result.schedule.state,
+			learningSteps: result.schedule.learningSteps,
 		});
 
 		// Forward reviewed, reverse still new
@@ -145,7 +148,7 @@ The capital of ==France== is ==Paris==
 		expect(c1).toBeDefined();
 		expect(c2).toBeDefined();
 		expect(c1!.cardType).toBe("explicit_cloze");
-		expect(c1!.front).toContain("########");
+		expect(c1!.front).toContain("░░░░░░░░");
 	});
 
 	it("card content updates on source change", () => {

@@ -4,7 +4,7 @@ icon: lucide/layers
 
 # Flashcards
 
-Osmosis flashcards live directly in your markdown files as `osmosis` code fences. No external database, no sync issues — your cards travel with your notes.
+Osmosis flashcards live directly in your markdown files — as `osmosis` code fences for authored cards, or as [line cards](line-cards.md) generated from the note's own lines. No external database, no sync issues — your cards travel with your notes.
 
 ![osmosis_sequential_study_flashcard_answer_frontback](../assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
 
@@ -69,7 +69,7 @@ Paris
 
 ## Scheduling Data
 
-After you review a card, Osmosis writes scheduling fields (`due`, `stability`, `difficulty`, `reps`, `lapses`, `state`, `last-review`) back into the fence metadata. These are managed by the FSRS algorithm — don't edit them manually.
+After you review a card, Osmosis writes scheduling fields (`due`, `stability`, `difficulty`, `reps`, `lapses`, `state`, `last-review`) back into the fence metadata. [Line cards](line-cards.md) store their schedules in the note's `osmosis-schedule` frontmatter instead. Both are managed by the FSRS algorithm — don't edit them manually.
 
 ## Guides
 
@@ -78,6 +78,10 @@ After you review a card, Osmosis writes scheduling fields (`due`, `stability`, `
 -   [:octicons-note-24: __Card Types__](card-types.md)
 
     Basic, bidirectional, type-in, cloze, and code cloze cards with examples
+
+-   [:octicons-list-unordered-24: __Line Cards__](line-cards.md)
+
+    Turn every line of a note into its own flashcard — no extra authoring
 
 -   [:octicons-stack-24: __Decks__](decks.md)
 

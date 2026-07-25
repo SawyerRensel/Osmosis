@@ -10,11 +10,14 @@ import {
 	Notice,
 	Menu,
 	parseYaml,
+	setIcon,
 	type ViewStateResult,
 } from "obsidian";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
+import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
+import * as edit from "../mindmap-edit";
 import {
 	computeLayout,
 	LayoutNode,
@@ -26,7 +29,7 @@ import type { BranchLineStyle, BranchLinePattern, BranchLineTaper, MapSettings }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { ToolRibbon } from "./ToolRibbon";
@@ -34,8 +37,16 @@ import {
 	EmbeddableMarkdownEditor,
 	autoResizeExtension,
 } from "../editor/EmbeddableMarkdownEditor";
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
 import { EditorSelection } from "@codemirror/state";
+import { CLOZE_BLANK } from "../card-gen/explicit";
+import { lineCardId } from "../card-gen/line-cards";
+import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
+import type { Card } from "../database/types";
+import { peekIcon } from "./LineRevealProcessor";
+import { resolveDefaultReadingMode } from "../reading-mode";
+import type { FSRSRating } from "../database/FSRSScheduler";
+import type { StudySessionManager } from "../study/StudySessionManager";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -62,6 +73,13 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
+
+/** A single reversible map edit: a file's content before and after the change. */
+interface MapEditSnapshot {
+	path: string;
+	before: string;
+	after: string;
+}
 
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
@@ -90,6 +108,21 @@ export class MindMapView extends ItemView {
 	/** Transclusion nodes deferred for lazy loading (not yet parsed/expanded). */
 	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
+
+	// Undo/redo history. Map edits write to disk directly (vault.modify /
+	// processFrontMatter), bypassing CodeMirror, so there is no editor history to
+	// forward to — the map keeps its own snapshot stack of file content before
+	// and after each edit, covering both text/structure and style writes. Cleared
+	// when the map switches to a different file.
+	private readonly undoStack: MapEditSnapshot[] = [];
+	private readonly redoStack: MapEditSnapshot[] = [];
+
+	// Live-edit session (e.g. a color-picker drag). While active, self-writes
+	// neither trigger a reload — which would tear down an open picker mid-drag —
+	// nor push individual undo entries; instead the whole session collapses into
+	// one before→after snapshot recorded when it ends.
+	private liveEditActive = false;
+	private liveEditSnapshot: MapEditSnapshot | null = null;
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -137,7 +170,7 @@ export class MindMapView extends ItemView {
 	// Cursor sync state
 	private parser = new OsmosisParser();
 	private cursorSyncNodeId: string | null = null;
-	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private cursorSyncTimer: number | null = null;
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
@@ -157,7 +190,7 @@ export class MindMapView extends ItemView {
 
 	// Touch/pointer state
 	private activePointers = new Map<number, { x: number; y: number }>();
-	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	private longPressTimer: number | null = null;
 	private longPressTriggered = false;
 	private lastTapTime = 0;
 	private lastTapPosition = { x: 0, y: 0 };
@@ -174,12 +207,41 @@ export class MindMapView extends ItemView {
 	private isPinned = false;
 	private pinActionEl: HTMLElement | null = null;
 
-	// Spatial study mode state
-	private isSpatialStudy = false;
-	private spatialHiddenIds = new Set<string>();
+	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
+	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
+	// - "study": due-or-new line-card nodes hidden, reveal + rate via FSRS.
+	// Session state is keyed by card key (`${notePath}#^${blockId}`, the
+	// line card's ID), not layout node ID — node IDs are content-position
+	// hashes that churn when a schedule flush or edit shifts the source,
+	// while block IDs travel with their lines. The path half disambiguates
+	// transcluded nodes, whose block IDs belong to other notes and may
+	// collide with the host's.
+	private spatialMode: "off" | "peek" | "study" = "off";
 	private spatialStudyActionEl: HTMLElement | null = null;
-	/** Nodes whose front (question) is revealed but back (answer) is still hidden. */
-	private spatialFrontRevealedIds = new Set<string>();
+	private spatialPeekActionEl: HTMLElement | null = null;
+	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
+	private spatialTargets = new Set<string>();
+	/** Targets already revealed (rated or awaiting a rating). */
+	private spatialRevealed = new Set<string>();
+	/** Targets rated so far (study progress). */
+	private spatialRated = new Set<string>();
+	/** Revealed-but-unrated card whose rating bubble is showing (study only). */
+	private spatialPendingRating: string | null = null;
+	/**
+	 * Layout node the pending rating bubble anchors to. A note transcluded
+	 * twice puts two nodes on one card key — the bubble follows the node
+	 * the user actually clicked. Re-picked if a reload dropped the node.
+	 */
+	private spatialPendingNodeId: string | null = null;
+	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
+	private spatialBanner: HTMLElement | null = null;
+	private spatialSessionManager: StudySessionManager | null = null;
+
+	// Reading mode: the map can be explored and studied but not mutated.
+	// Enforced by guards on the mutation methods (assertEditable/startDrag),
+	// so every entry surface — keyboard, ribbon, menus, gestures — is covered.
+	private isReadingMode = false;
+	private readingActionEl: HTMLElement | null = null;
 
 	// Resize state: drag-to-resize node width
 	private resizingNodeId: string | null = null;
@@ -231,6 +293,12 @@ export class MindMapView extends ItemView {
 			e.preventDefault();
 			return false;
 		});
+		// Ctrl/Cmd+E toggles reading mode, matching the markdown view
+		this.scope.register(["Mod"], "e", (e: KeyboardEvent) => {
+			this.toggleReadingMode();
+			e.preventDefault();
+			return false;
+		});
 		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
 			void this.pasteNodeStyle();
 			e.preventDefault();
@@ -255,7 +323,18 @@ export class MindMapView extends ItemView {
 		return this.isPinned ? `${base} (pinned)` : base;
 	}
 
+	getState(): Record<string, unknown> {
+		const state = super.getState();
+		// Persist only the mode — never `file`, which would auto-pin restored
+		// views via setState. collapsedIds stay unpersisted (they churn).
+		state.readingMode = this.isReadingMode;
+		return state;
+	}
+
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
+		if (typeof state?.readingMode === "boolean") {
+			this.setReadingMode(state.readingMode);
+		}
 		if (typeof state?.file === "string") {
 			const file = this.app.vault.getFileByPath(state.file);
 			if (file instanceof TFile) {
@@ -283,6 +362,50 @@ export class MindMapView extends ItemView {
 		}
 		// updateHeader() refreshes the tab title; not in public typings
 		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+	}
+
+	// ── Reading Mode ────────────────────────────────────────
+
+	/** Toggle between reading (explore/study only) and editing mode. */
+	toggleReadingMode(): void {
+		this.setReadingMode(!this.isReadingMode);
+	}
+
+	setReadingMode(reading: boolean): void {
+		if (this.isReadingMode === reading) return;
+		if (reading) {
+			// Finish in-flight mutations before locking the surface
+			if (this.editingNodeId) this.stopEditing(true);
+			this.resizingNodeId = null;
+			this.cleanupAllInteractions();
+		}
+		this.isReadingMode = reading;
+		this.contentEl.toggleClass("osmosis-reading-mode", reading);
+		this.updateReadingAction();
+		this.updateToolbarState();
+		this.app.workspace.requestSaveLayout();
+	}
+
+	/** Header action shows the mode you'd switch to (markdown-view convention). */
+	private updateReadingAction(): void {
+		if (!this.readingActionEl) return;
+		setIcon(this.readingActionEl, this.isReadingMode ? "pencil" : "book-open");
+		this.readingActionEl.setAttribute(
+			"aria-label",
+			this.isReadingMode
+				? "Current view: reading\nClick to edit"
+				: "Current view: editing\nClick to read",
+		);
+	}
+
+	/**
+	 * Gate for every map mutation. In reading mode, tells the user why
+	 * nothing happened and returns false.
+	 */
+	private assertEditable(): boolean {
+		if (!this.isReadingMode) return true;
+		new Notice("Reading mode: map editing is off");
+		return false;
 	}
 
 	// ── Spatial Study Mode ──────────────────────────────────
@@ -348,7 +471,7 @@ export class MindMapView extends ItemView {
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		const front = text.replace(MindMapView.CLOZE_REGEX, "########");
+		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
 		return { front, back: text };
 	}
 
@@ -396,13 +519,13 @@ export class MindMapView extends ItemView {
 			if (inMultiCloze) {
 				if (!multiFirstSeen) {
 					const indent = line.match(/^(\s*)/)?.[1] ?? "";
-					frontLines.push(`${indent}########`);
+					frontLines.push(`${indent}${CLOZE_BLANK}`);
 					multiFirstSeen = true;
 				}
 				backLines.push(line);
 			} else if (line.includes("osmosis-cloze")) {
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
-				frontLines.push(`${indent}########`);
+				frontLines.push(`${indent}${CLOZE_BLANK}`);
 				backLines.push(line.replace(MindMapView.STRIP_CLOZE_COMMENT, ""));
 			} else {
 				frontLines.push(line);
@@ -435,14 +558,14 @@ export class MindMapView extends ItemView {
 		sourcePath: string,
 		ns?: string,
 	): Promise<void> {
-		const createElement = (tag: string, cls: string): HTMLElement => {
+		const createElement = (tag: keyof HTMLElementTagNameMap, cls: string): HTMLElement => {
 			if (ns) {
 				const el = document.createElementNS(ns, tag) as HTMLElement;
 				el.setAttribute("xmlns", ns);
 				el.className = cls;
 				return el;
 			}
-			const el = document.createElement(tag);
+			const el = createEl(tag);
 			el.className = cls;
 			return el;
 		};
@@ -478,45 +601,252 @@ export class MindMapView extends ItemView {
 	}
 
 	private toggleSpatialStudy(): void {
-		if (this.isSpatialStudy) {
-			this.exitSpatialStudy();
+		if (this.spatialMode === "study") {
+			this.exitSpatialMode();
 		} else {
 			this.enterSpatialStudy();
 		}
 	}
 
-	private enterSpatialStudy(): void {
-		this.isSpatialStudy = true;
-		this.spatialStudyActionEl?.addClass("is-active");
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
-
-		// Hide all non-root nodes
-		for (const [nodeId, node] of this.nodeMap) {
-			if (node.depth > 0) {
-				this.spatialHiddenIds.add(nodeId);
-				this.applySpatialHidden(nodeId, true);
-			}
+	private toggleSpatialPeek(): void {
+		if (this.spatialMode === "peek") {
+			this.exitSpatialMode();
+		} else {
+			this.enterSpatialPeek();
 		}
-
-		new Notice("Study mode: tap nodes to reveal and rate");
 	}
 
-	private exitSpatialStudy(): void {
-		this.isSpatialStudy = false;
+	/**
+	 * Card key for a laid-out node: its line card's ID. Local nodes key
+	 * against the host note, transcluded nodes against their origin note —
+	 * so ratings and schedules always land in the note that owns the line.
+	 */
+	private nodeCardKey(node: LayoutNode): string | null {
+		const blockId = node.source.blockId;
+		if (blockId === undefined) return null;
+		const path = node.source.isTranscluded
+			? node.source.sourceFile
+			: this.currentFile?.path;
+		if (path === undefined) return null;
+		return lineCardId(path, blockId);
+	}
+
+	/**
+	 * Add line-card items to a node's context menu (plan §8). Routes through
+	 * the plugin's editor helpers using the node's owning file and line span,
+	 * so it works for transcluded nodes (which resolve to their source note).
+	 * Add when the node has no card; remove/exclude/include when it does.
+	 */
+	private addNodeCardMenuItems(menu: Menu, node: LayoutNode): void {
+		if (node.source.type === "root" || node.source.type === "transclusion") return;
+		const key = this.nodeCardKey(node);
+		const card = key !== null ? this.plugin.cardStore.getCard(key) : null;
+
+		menu.addSeparator();
+		if (!card) {
+			menu.addItem((item) =>
+				item.setTitle("Add line card").setIcon("layers")
+					.onClick(() => void this.runNodeCardAction(node, "add")),
+			);
+			return;
+		}
+		menu.addItem((item) =>
+			item.setTitle("Remove line card").setIcon("layers")
+				.onClick(() => void this.runNodeCardAction(node, "remove")),
+		);
+		if (card.disabled) {
+			menu.addItem((item) =>
+				item.setTitle("Include in study").setIcon("eye")
+					.onClick(() => void this.runNodeCardAction(node, "enable")),
+			);
+		} else {
+			menu.addItem((item) =>
+				item.setTitle("Exclude from study").setIcon("eye-off")
+					.onClick(() => void this.runNodeCardAction(node, "disable")),
+			);
+		}
+	}
+
+	/** Resolve the node's owning file + line span, then dispatch to the plugin. */
+	private async runNodeCardAction(
+		node: LayoutNode,
+		action: "add" | "remove" | "disable" | "enable",
+	): Promise<void> {
+		const src = node.source;
+		const file = this.getNodeFile(src);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
+		const toLine = (offset: number): number =>
+			content.slice(0, Math.max(0, Math.min(offset, content.length))).split("\n").length - 1;
+		const range = {
+			start: toLine(src.range.start),
+			end: toLine(Math.max(src.range.start, src.range.end - 1)),
+		};
+		switch (action) {
+			case "add":
+				await this.plugin.addLineCards(file, range);
+				break;
+			case "remove":
+				await this.plugin.removeLineCards(file, range);
+				break;
+			case "disable":
+				await this.plugin.setLineCardsDisabled(file, range, true);
+				break;
+			case "enable":
+				await this.plugin.setLineCardsDisabled(file, range, false);
+				break;
+		}
+	}
+
+	/**
+	 * All cards belonging to the notes laid out on this map: the host note
+	 * plus every transcluded source. Cards from all of them are studiable
+	 * in place — `syncAll` keeps the store populated vault-wide, so this
+	 * is a pure lookup.
+	 */
+	private mapCards(): Card[] {
+		const notePath = this.currentFile?.path;
+		if (notePath === undefined) return [];
+		const paths = new Set<string>([notePath]);
+		for (const node of this.nodeMap.values()) {
+			if (node.source.isTranscluded && node.source.sourceFile !== undefined) {
+				paths.add(node.source.sourceFile);
+			}
+		}
+		const cards: Card[] = [];
+		for (const path of paths) {
+			cards.push(...this.plugin.cardStore.getCardsByNote(path));
+		}
+		return cards;
+	}
+
+	/** Restrict card keys to nodes actually laid out on the map. */
+	private cardKeysOnMap(cardIds: ReadonlySet<string>, scopeKeys?: ReadonlySet<string> | null): Set<string> {
+		const targets = new Set<string>();
+		for (const node of this.nodeMap.values()) {
+			const key = this.nodeCardKey(node);
+			if (key === null || !cardIds.has(key)) continue;
+			if (scopeKeys && !scopeKeys.has(key)) continue;
+			targets.add(key);
+		}
+		return targets;
+	}
+
+	/**
+	 * Start a study session over the due-or-new line cards on the map,
+	 * optionally scoped to one branch ("Study this branch"). The map stays
+	 * fully expanded — only the target nodes are hidden.
+	 */
+	private enterSpatialStudy(scope?: LayoutNode): void {
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+
+		const notePath = this.currentFile?.path;
+		const dueOrNew = dueOrNewLineCardIds(this.mapCards(), Date.now());
+		const scopeKeys = scope && notePath !== undefined
+			? collectSubtreeCardKeys(scope, notePath)
+			: null;
+		const targets = this.cardKeysOnMap(dueOrNew, scopeKeys);
+
+		if (targets.size === 0) {
+			new Notice(scope ? "No line cards are due in this branch." : "No line cards are due on this map.");
+			return;
+		}
+
+		this.spatialMode = "study";
+		this.spatialTargets = targets;
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
+		this.spatialStudyActionEl?.addClass("is-active");
+		this.applySpatialState();
+		new Notice("Study mode: tap a hidden node to reveal and rate it");
+	}
+
+	/**
+	 * Casual recall check: hide every line-card node on the map, reveal in
+	 * any order, record nothing (mirrors reading view's peek mode).
+	 */
+	private enterSpatialPeek(): void {
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+
+		const targets = this.cardKeysOnMap(allLineCardIds(this.mapCards()));
+
+		if (targets.size === 0) {
+			new Notice("No line cards on this map.");
+			return;
+		}
+
+		this.spatialMode = "peek";
+		this.spatialTargets = targets;
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
+		this.spatialPeekActionEl?.addClass("is-active");
+		this.applySpatialState();
+	}
+
+	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
+	private exitSpatialMode(): void {
+		const wasStudy = this.spatialMode === "study";
+		this.spatialMode = "off";
 		this.spatialStudyActionEl?.removeClass("is-active");
+		this.spatialPeekActionEl?.removeClass("is-active");
 
-		// Reveal all nodes
-		for (const nodeId of this.spatialHiddenIds) {
-			this.applySpatialHidden(nodeId, false);
+		if (this.svg) {
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-hidden"))) {
+				group.classList.remove("osmosis-spatial-hidden");
+				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+			}
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-revealed"))) {
+				group.classList.remove("osmosis-spatial-revealed");
+			}
+			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
 		}
-		// Restore original content for front-only revealed fence nodes
-		for (const nodeId of this.spatialFrontRevealedIds) {
-			this.restoreOriginalFenceContent(nodeId);
-		}
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
+		this.spatialBanner?.remove();
+		this.spatialBanner = null;
+		this.spatialTargets.clear();
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
 
+		// Study session end: push debounced schedule writes out now (plan §3).
+		// Peek records nothing, so there is nothing to flush.
+		if (wasStudy) void this.plugin.scheduleStore.flush();
+	}
+
+	/**
+	 * (Re-)apply peek/study state to the rendered DOM. Idempotent — called
+	 * on entry and after every render pass (viewport culling, full
+	 * re-render), so hidden placeholders and a mid-rating bubble survive
+	 * re-renders.
+	 */
+	private applySpatialState(): void {
+		if (this.spatialMode === "off") return;
+		for (const [nodeId, node] of this.nodeMap) {
+			const key = this.nodeCardKey(node);
+			if (key === null || !this.spatialTargets.has(key)) continue;
+
+			if (!this.spatialRevealed.has(key)) {
+				this.applySpatialHidden(nodeId, true);
+			} else {
+				this.applySpatialHidden(nodeId, false);
+				this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
+				if (this.spatialMode === "study" && key === this.spatialPendingRating) {
+					// Duplicate embeds share a card key — the bubble anchors to
+					// the clicked node, or the first survivor after a reload
+					if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
+						this.spatialPendingNodeId = nodeId;
+					}
+					if (nodeId === this.spatialPendingNodeId) {
+						this.ensureRatingBubble(nodeId, node);
+					}
+				}
+			}
+		}
+		if (this.spatialMode === "study") this.ensureSpatialBanner();
 	}
 
 	private applySpatialHidden(nodeId: string, hidden: boolean): void {
@@ -546,178 +876,127 @@ export class MindMapView extends ItemView {
 		}
 	}
 
-	private handleSpatialStudyClick(nodeId: string): boolean {
-		if (!this.isSpatialStudy) return false;
-
-		// Step 2: front already revealed → show back + auto-rate
-		if (this.spatialFrontRevealedIds.has(nodeId)) {
-			this.spatialFrontRevealedIds.delete(nodeId);
-			this.restoreFenceFullContent(nodeId);
-			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-			if (group) {
-				group.classList.add("osmosis-spatial-revealed");
-			}
-			this.rateSpatialNode(nodeId, 3);
-			return true;
-		}
-
-		if (!this.spatialHiddenIds.has(nodeId)) return false;
-
-		// Reveal the node
-		this.spatialHiddenIds.delete(nodeId);
-		this.applySpatialHidden(nodeId, false);
-
-		// Check if this is an osmosis fence node → two-step reveal
+	/**
+	 * Tap on a node during peek/study. Returns true when the tap was
+	 * consumed. Only hidden targets react. Peek: reveal in any order,
+	 * nothing recorded. Study: reveal opens the rating bubble, which must
+	 * be answered before the next reveal.
+	 */
+	private handleSpatialClick(nodeId: string): boolean {
+		if (this.spatialMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
-		if (node?.source.type === "codeblock") {
-			const fence = this.parseOsmosisFence(node.source.content)
-				?? this.parseOsmosisCodeCloze(node.source.content)
-				?? this.parseOsmosisCloze(node.source.content);
-			if (fence) {
-				// Step 1: show front only
-				this.spatialFrontRevealedIds.add(nodeId);
-				this.showFenceFrontOnly(nodeId, fence.front);
-				return true;
-			}
-		}
+		const key = node ? this.nodeCardKey(node) : null;
+		if (!node || key === null) return false;
+		if (!this.spatialTargets.has(key) || this.spatialRevealed.has(key)) return false;
 
-		// Regular node: single-step reveal + auto-rate
-		const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-		if (group) {
-			group.classList.add("osmosis-spatial-revealed");
-		}
-		this.rateSpatialNode(nodeId, 3);
+		// Study: one rating at a time — the open bubble must be answered first
+		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
 
-		return true; // consumed the click
+		this.spatialRevealed.add(key);
+		if (this.spatialMode === "study") {
+			this.spatialPendingRating = key;
+			this.spatialPendingNodeId = nodeId;
+			// Keys 1–4 rate via the container's keydown handler
+			this.contentEl.focus();
+		}
+		// Re-apply instead of touching only the clicked node: a note
+		// transcluded twice shares one card key across two nodes, and both
+		// must reveal together (once the answer is visible anywhere, keeping
+		// the twin hidden would be a fake test). Also creates the bubble.
+		this.applySpatialState();
+		return true;
 	}
 
-	/** Show front + occluded back (░░░░░░) for an osmosis fence node. */
-	private showFenceFrontOnly(nodeId: string, front: string): void {
+	/** Rating bubble (Again/Hard/Good/Easy) anchored below the node. */
+	private ensureRatingBubble(nodeId: string, node: LayoutNode): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-		// Stash original child nodes so we can restore later
-		const stash = document.createDocumentFragment();
-		while (wrapper.firstChild) stash.appendChild(wrapper.firstChild);
-		(wrapper as unknown as { _originalStash: DocumentFragment })._originalStash = stash;
-		wrapper.classList.add("osmosis-fence-front-only");
+		if (!group || group.querySelector(".osmosis-spatial-rating-fo")) return;
 
-		// Rendered front
-		const frontEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		frontEl.setAttribute("xmlns", XHTML_NS);
-		frontEl.className = "osmosis-contextual-front";
-		if (this.renderComponent) {
-			void MarkdownRenderer.render(
-				this.app,
-				front,
-				frontEl,
-				this.currentFile?.path ?? "",
-				this.renderComponent,
-			);
-		}
-		wrapper.appendChild(frontEl);
+		// Wide enough for the four buttons even under narrow nodes
+		const width = Math.max(node.rect.width, 240);
+		const fo = document.createElementNS(SVG_NS, "foreignObject");
+		fo.classList.add("osmosis-spatial-rating-fo");
+		fo.setAttribute("x", String(node.rect.x + this.getOffsetX() + (node.rect.width - width) / 2));
+		fo.setAttribute("y", String(node.rect.y + node.rect.height + this.getOffsetY() + 6));
+		fo.setAttribute("width", String(width));
+		fo.setAttribute("height", "40");
 
-		// Divider
-		const divider = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		divider.setAttribute("xmlns", XHTML_NS);
-		divider.className = "osmosis-study-divider";
-		wrapper.appendChild(divider);
+		const bubble = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		bubble.setAttribute("xmlns", XHTML_NS);
+		bubble.className = "osmosis-spatial-rating osmosis-contextual-rating";
 
-		// Occluded back placeholder
-		const hiddenEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-		hiddenEl.setAttribute("xmlns", XHTML_NS);
-		hiddenEl.className = "osmosis-contextual-hidden";
-		hiddenEl.textContent = "░░░░░░";
-		wrapper.appendChild(hiddenEl);
-
-		group.classList.add("osmosis-spatial-revealed");
-	}
-
-	/** Reveal the back answer below the front (front stays visible). */
-	private restoreFenceFullContent(nodeId: string): void {
-		if (!this.svg) return;
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-
-		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		wrapper.classList.remove("osmosis-fence-front-only");
-
-		// Remove the occluded placeholder and replace with rendered back
-		const hiddenEl = wrapper.querySelector(".osmosis-contextual-hidden");
-		if (hiddenEl) hiddenEl.remove();
-
-		const node = this.nodeMap.get(nodeId);
-		if (node && this.renderComponent) {
-			const fence = this.parseOsmosisFence(node.source.content)
-				?? this.parseOsmosisCodeCloze(node.source.content)
-				?? this.parseOsmosisCloze(node.source.content);
-			if (fence) {
-				const backEl = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
-				backEl.setAttribute("xmlns", XHTML_NS);
-				backEl.className = "osmosis-contextual-revealed";
-				void MarkdownRenderer.render(
-					this.app,
-					fence.back,
-					backEl,
-					this.currentFile?.path ?? "",
-					this.renderComponent,
-				);
-				wrapper.appendChild(backEl);
-				return;
-			}
-		}
-
-		// Fallback: restore stash as-is
-		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		if (stash) wrapper.replaceChildren(stash);
-	}
-
-	/** Restore original node content when exiting study mode. */
-	private restoreOriginalFenceContent(nodeId: string): void {
-		if (!this.svg) return;
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-		const wrapper = group.querySelector<HTMLElement>(".osmosis-node-content");
-		if (!wrapper) return;
-		const stash = (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		if (!stash) return;
-
-		delete (wrapper as unknown as { _originalStash?: DocumentFragment })._originalStash;
-		wrapper.classList.remove("osmosis-fence-front-only");
-		wrapper.replaceChildren(stash);
-	}
-
-	private rateSpatialNode(nodeId: string, rating: 1 | 2 | 3 | 4): void {
-		// Record the review via plugin's study session
-		const node = this.nodeMap.get(nodeId);
-		if (node) {
-			void this.recordSpatialReview(node.source.id, rating).then(() => {
-				this.plugin.refreshDashboard();
+		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
+			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
+			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
+			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
+			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
+		];
+		for (const { label, rating, cls } of ratings) {
+			const btn = document.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
+			btn.setAttribute("xmlns", XHTML_NS);
+			btn.textContent = label;
+			btn.className = cls;
+			btn.addEventListener("click", (e) => {
+				e.stopPropagation();
+				void this.rateSpatialCard(rating);
 			});
+			bubble.appendChild(btn);
 		}
-		// Check if all nodes fully revealed (hidden + front-only both empty)
-		if (this.spatialHiddenIds.size === 0 && this.spatialFrontRevealedIds.size === 0) {
-			new Notice("All nodes revealed! Study session complete.");
-			this.exitSpatialStudy();
+		fo.appendChild(bubble);
+		group.appendChild(fo);
+
+		// SVG paints in document order — re-append the group so the bubble
+		// (and its node) draw above later-drawn siblings that overlap it
+		group.parentNode?.appendChild(group);
+	}
+
+	/** Rate the pending card: record via FSRS, advance progress, maybe finish. */
+	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
+		const cardId = this.spatialPendingRating;
+		if (this.spatialMode !== "study" || cardId === null) return;
+		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
+		this.spatialRated.add(cardId);
+		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
+
+		// The card key is the card's ID; the card's own notePath routes the
+		// schedule write — to the source note for transcluded lines (plan §11)
+		if (this.plugin.cardStore.getCard(cardId)) {
+			this.spatialSessionManager ??= this.plugin.createSessionManager();
+			await this.spatialSessionManager.recordReview(cardId, rating);
+			this.plugin.refreshDashboard();
+		}
+
+		if (this.spatialRated.size >= this.spatialTargets.size) {
+			const total = this.spatialTargets.size;
+			this.exitSpatialMode(); // flushes schedule writes; map stays open
+			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
+		} else {
+			this.ensureSpatialBanner();
 		}
 	}
 
-	private async recordSpatialReview(nodeId: string, rating: 1 | 2 | 3 | 4): Promise<void> {
-		try {
-			const notePath = this.currentFile?.path ?? "";
-			const cards = this.plugin.cardStore.getCardsByNote(notePath);
-			const card = cards.find((c) => c.id === nodeId || c.front.includes(nodeId));
-			if (card) {
-				const sessionManager = this.plugin.createSessionManager();
-				await sessionManager.recordReview(card.id, rating);
-			}
-		} catch {
-			// Silently fail if no card found for this node
+	/** Floating "x/N due reviewed" pill + Stop. Recreated after re-renders. */
+	private ensureSpatialBanner(): void {
+		if (this.spatialMode !== "study") return;
+		let banner = this.spatialBanner;
+		if (!banner || !banner.isConnected) {
+			banner = this.contentEl.createDiv({ cls: "osmosis-reveal-banner osmosis-spatial-banner" });
+			// Keep pill interactions away from the map's pan/select handlers
+			banner.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
+			banner.addEventListener("click", (e) => { e.stopPropagation(); });
+			this.spatialBanner = banner;
 		}
+		banner.empty();
+		banner.createSpan({
+			cls: "osmosis-reveal-progress",
+			text: `${String(this.spatialRated.size)}/${String(this.spatialTargets.size)} due reviewed`,
+		});
+		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
+		stopBtn.addEventListener("click", () => {
+			this.exitSpatialMode();
+		});
 	}
 
 
@@ -758,11 +1037,11 @@ export class MindMapView extends ItemView {
 			container,
 			"touchstart",
 			this.handleTouchCapture,
-			{ passive: false } as AddEventListenerOptions,
+			{ passive: false },
 		);
 		this.registerDomEvent(container, "touchmove", this.handleTouchCapture, {
 			passive: false,
-		} as AddEventListenerOptions);
+		});
 		this.registerDomEvent(
 			container,
 			"touchend",
@@ -832,6 +1111,11 @@ export class MindMapView extends ItemView {
 			},
 		});
 
+		// Reading/editing mode toggle (icon shows the mode you'd switch to)
+		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
+			this.toggleReadingMode();
+		});
+
 		// Open properties sidebar action (useful on mobile)
 		this.addAction("paintbrush", "Open style sidebar", () => {
 			void this.plugin.activatePropertiesSidebar();
@@ -858,6 +1142,20 @@ export class MindMapView extends ItemView {
 			this.toggleSpatialStudy();
 		});
 
+		// Spatial peek mode toggle (same icon/fallback as the reading view)
+		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
+			this.toggleSpatialPeek();
+		});
+
+		// Apply the global default mode; persisted per-leaf state (setState)
+		// arrives afterwards and overrides it.
+		this.setReadingMode(
+			resolveDefaultReadingMode(
+				this.plugin.settings.mindMapDefaultMode,
+				Platform.isMobile,
+			),
+		);
+
 		await this.loadActiveFile();
 
 		this.registerEvent(
@@ -872,10 +1170,24 @@ export class MindMapView extends ItemView {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (file instanceof TFile && file === this.currentFile) {
+					if (this.liveEditActive) {
+						// A live-edit session (color-picker drag) drives rendering
+						// directly via applyMapSettings/render; ignore our own writes
+						// so a stray reload can't tear down the open picker mid-drag.
+						// suppressNextReload is a single boolean and can't cover the
+						// burst of writes a drag produces, so gate on the session.
+						this.suppressNextReload = false;
+						return;
+					}
 					if (this.suppressNextReload) {
 						this.suppressNextReload = false;
 						return;
 					}
+					// Our own schedule flush only touches frontmatter, which
+					// the map doesn't render — skip the reload so a debounced
+					// mid-session write can't flicker or reset study state
+					// (same pattern as CardSyncService with FenceWriter).
+					if (this.plugin.scheduleStore.isWriting(file.path)) return;
 					void this.loadFile(file);
 				}
 			}),
@@ -931,9 +1243,14 @@ export class MindMapView extends ItemView {
 			this.cullRafId = null;
 		}
 
-		this.spatialHiddenIds.clear();
-		this.spatialFrontRevealedIds.clear();
-		this.isSpatialStudy = false;
+		this.spatialMode = "off";
+		this.spatialTargets.clear();
+		this.spatialRevealed.clear();
+		this.spatialRated.clear();
+		this.spatialPendingRating = null;
+		this.spatialPendingNodeId = null;
+		this.spatialBanner = null;
+		this.spatialSessionManager = null;
 		this.contentEl.empty();
 		this.currentFile = null;
 		this.currentTree = null;
@@ -944,7 +1261,7 @@ export class MindMapView extends ItemView {
 		this.rubberBandRect?.remove();
 		this.rubberBandRect = null;
 		if (this.cursorSyncTimer) {
-			clearTimeout(this.cursorSyncTimer);
+			window.clearTimeout(this.cursorSyncTimer);
 			this.cursorSyncTimer = null;
 		}
 		this.cleanupDrag();
@@ -964,10 +1281,18 @@ export class MindMapView extends ItemView {
 		// would destroy the SVG mid-edit.
 		if (this.editingNodeId) return;
 
-		// Clear caches when switching to a different file
+		// A peek/study session is bound to one note — end it (and flush any
+		// ratings) before the map switches to another file.
+		if (this.spatialMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
+			this.exitSpatialMode();
+		}
+
+		// Clear caches and undo history when switching to a different file
 		if (file !== this.currentFile) {
 			this.nodeSizeCache.clear();
 			this.nodeHtmlCache.clear();
+			this.undoStack.length = 0;
+			this.redoStack.length = 0;
 		}
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
@@ -975,14 +1300,18 @@ export class MindMapView extends ItemView {
 		this.loadMapSettings();
 		this.currentTree = this.cache.get(file.path, content);
 
-		// Lazy loading: auto-collapse transclusion nodes so they're deferred
+		// Lazy loading (opt-in via the "Expand transclusions" setting):
+		// auto-collapse transclusion nodes so they're deferred until first
+		// expand. Default is eager — embedded branches load expanded.
 		this.lazyTransclusionIds.clear();
-		this.collectTransclusionIds(
-			this.currentTree.root,
-			this.lazyTransclusionIds,
-		);
-		for (const id of this.lazyTransclusionIds) {
-			this.collapsedIds.add(id);
+		if (!this.plugin.settings.expandTransclusions) {
+			this.collectTransclusionIds(
+				this.currentTree.root,
+				this.lazyTransclusionIds,
+			);
+			for (const id of this.lazyTransclusionIds) {
+				this.collapsedIds.add(id);
+			}
 		}
 
 		// Resolve and expand transclusion links (skip lazy/collapsed ones)
@@ -1112,13 +1441,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				if (variantName) {
@@ -1127,7 +1453,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1160,13 +1485,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1204,13 +1526,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1241,11 +1560,9 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1280,11 +1597,9 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1297,7 +1612,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1332,13 +1646,10 @@ export class MindMapView extends ItemView {
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1347,8 +1658,17 @@ export class MindMapView extends ItemView {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
 
-					const selector = buildStableIdSelector(layoutNode.source);
-					const existing = styles[selector] ?? {};
+					const selector = buildPreferredSelector(layoutNode.source);
+					let existing = styles[selector] ?? {};
+
+					// If the node gained a block ID after an override was written
+					// under its stable-ID selector, migrate that entry to the
+					// block-ID key so the override lives under a single selector.
+					const legacySelector = buildStableIdSelector(layoutNode.source);
+					if (selector !== legacySelector && styles[legacySelector]) {
+						existing = { ...styles[legacySelector], ...existing };
+						delete styles[legacySelector];
+					}
 
 					// Merge new properties into existing override.
 					// Use `"key" in style` so explicit `undefined` deletes the key.
@@ -1397,7 +1717,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1438,13 +1757,10 @@ export class MindMapView extends ItemView {
 
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1452,20 +1768,27 @@ export class MindMapView extends ItemView {
 				for (const nodeId of nodeIds) {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
-					const selector = buildStableIdSelector(layoutNode.source);
-					if (!styles[selector]) continue;
+					// A node's override may live under its block-ID selector,
+					// its stable-ID selector, or both (legacy) — clear all.
+					const selectors = [
+						buildBlockIdSelector(layoutNode.source),
+						buildStableIdSelector(layoutNode.source),
+					];
+					for (const selector of selectors) {
+						if (selector === undefined || !styles[selector]) continue;
 
-					if (!keys) {
-						// Clear all: remove the entire entry
-						delete styles[selector];
-					} else {
-						// Clear specific keys
-						for (const key of keys) {
-							delete styles[selector][key];
-						}
-						// Remove entry if empty
-						if (Object.keys(styles[selector]).length === 0) {
+						if (!keys) {
+							// Clear all: remove the entire entry
 							delete styles[selector];
+						} else {
+							// Clear specific keys
+							for (const key of keys) {
+								delete styles[selector][key];
+							}
+							// Remove entry if empty
+							if (Object.keys(styles[selector]).length === 0) {
+								delete styles[selector];
+							}
 						}
 					}
 				}
@@ -1475,7 +1798,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1505,13 +1827,10 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
 				osmosis["classes"] = classes;
@@ -1548,13 +1867,10 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Remove the class definition
@@ -1583,7 +1899,6 @@ export class MindMapView extends ItemView {
 					writtenStyles = { ...styles };
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1617,13 +1932,10 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Rename the class definition
@@ -1681,11 +1993,9 @@ export class MindMapView extends ItemView {
 		// Also clear assignments in the current note's frontmatter
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -1699,7 +2009,6 @@ export class MindMapView extends ItemView {
 						}
 					}
 					if (Object.keys(styles).length === 0) delete osmosis["styles"];
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 					if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 				},
 			);
@@ -1737,11 +2046,9 @@ export class MindMapView extends ItemView {
 		// Update node references in the current note
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -1813,11 +2120,9 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
@@ -1828,7 +2133,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenClasses = { ...classes };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1865,6 +2169,7 @@ export class MindMapView extends ItemView {
 	 *  Replaces target overrides entirely: keys absent from the clipboard
 	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
 	private async pasteNodeStyle(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.clipboardNodeStyle) {
 			new Notice("No style to paste");
 			return;
@@ -1917,7 +2222,7 @@ export class MindMapView extends ItemView {
 		}
 		const cache = this.app.metadataCache.getFileCache(this.currentFile);
 		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
-			cache?.frontmatter as Record<string, unknown> | undefined,
+			cache?.frontmatter,
 		);
 	}
 
@@ -1930,8 +2235,7 @@ export class MindMapView extends ItemView {
 			return;
 		}
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-			const parsed = parseYaml(match[1]);
+			const parsed: unknown = parseYaml(match[1]);
 			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
 				parsed as Record<string, unknown> | undefined,
 			);
@@ -1955,6 +2259,7 @@ export class MindMapView extends ItemView {
 			hasSelection: this.selectedNodeId !== null,
 			isEditing: this.editingNodeId !== null,
 			hasFile: this.currentFile !== null,
+			isReadingMode: this.isReadingMode,
 		});
 	}
 
@@ -2104,7 +2409,7 @@ export class MindMapView extends ItemView {
 	/** Schedule a viewport cull update on the next animation frame */
 	private scheduleCullUpdate(): void {
 		if (this.cullRafId !== null) return;
-		this.cullRafId = requestAnimationFrame(() => {
+		this.cullRafId = window.requestAnimationFrame(() => {
 			this.cullRafId = null;
 			void this.updateVisibleNodes();
 		});
@@ -2177,17 +2482,7 @@ export class MindMapView extends ItemView {
 		await Promise.all(renderPromises);
 
 		// Re-apply spatial study state to newly rendered nodes
-		if (this.isSpatialStudy) {
-			for (const node of nodes) {
-				if (node.source.type === "root") continue;
-				const id = node.source.id;
-				if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
-					if (this.spatialHiddenIds.has(id)) {
-						this.applySpatialHidden(id, true);
-					}
-				}
-			}
-		}
+		this.applySpatialState();
 
 		this.renderedNodeIds = nowVisible;
 	}
@@ -2248,8 +2543,9 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		// Resize handle: start drag-to-resize
-		if (e.button === 0 && !this.editingNodeId) {
+		// Resize handle: start drag-to-resize (handles are hidden by CSS in
+		// reading mode, but guard anyway)
+		if (e.button === 0 && !this.editingNodeId && !this.isReadingMode) {
 			const target = e.target as Element;
 			if (target.closest(".osmosis-resize-handle")) {
 				const handleNodeId = target.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
@@ -2276,7 +2572,7 @@ export class MindMapView extends ItemView {
 			// Touch: start long-press timer for selection mode + potential drag
 			if (e.pointerType === "touch") {
 				this.longPressTriggered = false;
-				this.longPressTimer = setTimeout(() => {
+				this.longPressTimer = window.setTimeout(() => {
 					this.longPressTriggered = true;
 					// Enter touch selection mode and select this node
 					this.touchSelectionMode = true;
@@ -2357,7 +2653,9 @@ export class MindMapView extends ItemView {
 				// Movement cancels long-press; if not triggered, convert to pan
 				if (dist >= DRAG_THRESHOLD) {
 					this.cancelLongPress();
-					if (!this.longPressTriggered) {
+					if (!this.longPressTriggered || this.isReadingMode) {
+						// Reading mode: node drags always pan — a stray
+						// tap-drag can never restructure the map.
 						this.dragNodeId = null;
 						this.isPanning = true;
 						this.panStart = { x: e.clientX, y: e.clientY };
@@ -2369,7 +2667,14 @@ export class MindMapView extends ItemView {
 				}
 			} else {
 				if (dist >= DRAG_THRESHOLD) {
-					this.startDrag(this.dragNodeId);
+					if (this.isReadingMode) {
+						// Reading mode: dragging a node pans the viewport
+						this.dragNodeId = null;
+						this.isPanning = true;
+						this.panStart = { x: e.clientX, y: e.clientY };
+					} else {
+						this.startDrag(this.dragNodeId);
+					}
 				}
 			}
 		}
@@ -2494,7 +2799,7 @@ export class MindMapView extends ItemView {
 		}
 
 		// Spatial study mode: reveal hidden nodes on tap
-		if (this.handleSpatialStudyClick(nodeId)) return;
+		if (this.handleSpatialClick(nodeId)) return;
 
 		// In touch selection mode, taps toggle selection (like shift+click)
 		if (this.touchSelectionMode) {
@@ -2615,7 +2920,7 @@ export class MindMapView extends ItemView {
 
 	private cancelLongPress(): void {
 		if (this.longPressTimer !== null) {
-			clearTimeout(this.longPressTimer);
+			window.clearTimeout(this.longPressTimer);
 			this.longPressTimer = null;
 		}
 	}
@@ -2709,7 +3014,7 @@ export class MindMapView extends ItemView {
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
 			// Spatial study mode: reveal hidden nodes on click
-			if (this.handleSpatialStudyClick(nodeId)) return;
+			if (this.handleSpatialClick(nodeId)) return;
 
 			if (e.shiftKey) {
 				this.toggleNodeInSelection(nodeId);
@@ -2749,46 +3054,56 @@ export class MindMapView extends ItemView {
 
 		if (nodeId) {
 			const node = this.nodeMap.get(nodeId);
-			// ── Structure ──
-			menu.addItem((item) =>
-				item.setTitle("Add child").setIcon("arrow-right-from-line")
-					.onClick(() => { if (node) void this.addChildNode(node); }),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Add sibling").setIcon("arrow-down-from-line")
-					.onClick(() => { if (node) void this.addSiblingNode(node); }),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Insert parent").setIcon("arrow-right-to-line")
-					.onClick(() => { if (node) void this.insertParentNode(node); }),
-			);
-			menu.addSeparator();
+			// Reading mode keeps navigation, fold, copy, and study items —
+			// structural, clipboard-mutating, style, and delete items go.
+			if (!this.isReadingMode) {
+				// ── Structure ──
+				menu.addItem((item) =>
+					item.setTitle("Add child").setIcon("arrow-right-from-line")
+						.onClick(() => { if (node) void this.addChildNode(node); }),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Add sibling").setIcon("arrow-down-from-line")
+						.onClick(() => { if (node) void this.addSiblingNode(node); }),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Insert parent").setIcon("arrow-right-to-line")
+						.onClick(() => { if (node) void this.insertParentNode(node); }),
+				);
+				menu.addSeparator();
+			}
 
 			// ── Clipboard ──
-			menu.addItem((item) =>
-				item.setTitle("Cut").setIcon("scissors")
-					.onClick(() => void this.copySelectedNodes(true)),
-			);
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Cut").setIcon("scissors")
+						.onClick(() => void this.copySelectedNodes(true)),
+				);
+			}
 			menu.addItem((item) =>
 				item.setTitle("Copy").setIcon("copy")
 					.onClick(() => void this.copySelectedNodes(false)),
 			);
-			menu.addItem((item) =>
-				item.setTitle("Paste").setIcon("clipboard-paste")
-					.onClick(() => void this.pasteNodes()),
-			);
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Paste").setIcon("clipboard-paste")
+						.onClick(() => void this.pasteNodes()),
+				);
+			}
 			menu.addSeparator();
 
 			// ── Style ──
-			menu.addItem((item) =>
-				item.setTitle("Copy style").setIcon("pipette")
-					.onClick(() => this.copyNodeStyle()),
-			);
-			menu.addItem((item) =>
-				item.setTitle("Paste style").setIcon("paint-bucket")
-					.onClick(() => void this.pasteNodeStyle()),
-			);
-			menu.addSeparator();
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Copy style").setIcon("pipette")
+						.onClick(() => this.copyNodeStyle()),
+				);
+				menu.addItem((item) =>
+					item.setTitle("Paste style").setIcon("paint-bucket")
+						.onClick(() => void this.pasteNodeStyle()),
+				);
+				menu.addSeparator();
+			}
 
 			// ── Fold ──
 			menu.addItem((item) =>
@@ -2801,18 +3116,29 @@ export class MindMapView extends ItemView {
 			);
 			menu.addSeparator();
 
-			// ── Delete ──
+			// ── Study ──
 			menu.addItem((item) =>
-				item.setTitle("Delete").setIcon("trash-2")
-					.setWarning(true)
-					.onClick(() => {
-						if (this.selectedNodeIds.size > 1) {
-							void this.deleteSelectedNodes();
-						} else if (node) {
-							void this.deleteNode(node);
-						}
-					}),
+				item.setTitle("Study this branch").setIcon("graduation-cap")
+					.onClick(() => { if (node) this.enterSpatialStudy(node); }),
 			);
+
+			// ── Line card (add / remove / exclude) ──
+			if (node) this.addNodeCardMenuItems(menu, node);
+			// ── Delete ──
+			if (!this.isReadingMode) {
+				menu.addSeparator();
+				menu.addItem((item) =>
+					item.setTitle("Delete").setIcon("trash-2")
+						.setWarning(true)
+						.onClick(() => {
+							if (this.selectedNodeIds.size > 1) {
+								void this.deleteSelectedNodes();
+							} else if (node) {
+								void this.deleteNode(node);
+							}
+						}),
+				);
+			}
 		} else {
 			// ── Canvas (no node) context menu ──
 			menu.addItem((item) =>
@@ -2825,11 +3151,13 @@ export class MindMapView extends ItemView {
 			);
 			menu.addSeparator();
 
-			menu.addItem((item) =>
-				item.setTitle("Paste").setIcon("clipboard-paste")
-					.onClick(() => void this.pasteNodes()),
-			);
-			menu.addSeparator();
+			if (!this.isReadingMode) {
+				menu.addItem((item) =>
+					item.setTitle("Paste").setIcon("clipboard-paste")
+						.onClick(() => void this.pasteNodes()),
+				);
+				menu.addSeparator();
+			}
 
 			menu.addItem((item) =>
 				item.setTitle("Collapse all").setIcon("chevrons-down-up")
@@ -2947,7 +3275,7 @@ export class MindMapView extends ItemView {
 		// Add animation class to SVG for CSS-driven transition
 		if (this.svg) {
 			this.svg.addClass("osmosis-animating");
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.svg?.removeClass("osmosis-animating");
 			}, COLLAPSE_ANIMATION_MS);
 		}
@@ -3095,21 +3423,31 @@ export class MindMapView extends ItemView {
 	 * Processes nodes from end-of-document to start to preserve offsets.
 	 */
 	private async deleteSelectedNodes(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
 
-		// Collect ranges sorted by position (descending) to process from end
-		const ranges: { start: number; end: number }[] = [];
+		// Collect the selected nodes, then their ranges (descending, to process
+		// from end so earlier offsets stay valid).
+		const selectedSrcs: OsmosisNode[] = [];
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (!node) continue;
-			ranges.push({
-				start: node.source.range.start,
-				end: this.subtreeEnd(node.source),
-			});
+			if (node) selectedSrcs.push(node.source);
 		}
-		ranges.sort((a, b) => b.start - a.start);
+		if (selectedSrcs.length === 0) return;
 
-		let content = await this.app.vault.read(this.currentFile);
+		// All ranges are spliced out of one file; refuse a mixed-file selection.
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
+		const file = this.getNodeFile(selectedSrcs[0]!);
+		if (!file) return;
+
+		const ranges = selectedSrcs
+			.map((src) => ({
+				start: src.range.start,
+				end: this.subtreeEnd(src),
+			}))
+			.sort((a, b) => b.start - a.start);
+
+		let content = await this.app.vault.read(file);
 
 		for (const range of ranges) {
 			let deleteStart = range.start;
@@ -3129,7 +3467,7 @@ export class MindMapView extends ItemView {
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeMarkdown(this.renumberOrderedLists(content));
+		await this.writeNodeFile(selectedSrcs[0]!, content);
 		this.selectFirstNode();
 	}
 
@@ -3138,6 +3476,7 @@ export class MindMapView extends ItemView {
 	 * direction: -1 = up, 1 = down.
 	 */
 	private async moveNodeUpDown(direction: number): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3164,10 +3503,11 @@ export class MindMapView extends ItemView {
 		const swapSrc = siblings[swapIdx];
 		if (!swapSrc) return;
 
-		const content = await this.app.vault.read(file);
-
 		// Collect all selected subtree texts in order
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit([...selectedSrcs, swapSrc])) return;
+
+		const content = await this.app.vault.read(file);
 		const blockStart = selectedSrcs[0]!.range.start;
 		const blockEnd = this.subtreeEnd(
 			selectedSrcs[selectedSrcs.length - 1]!,
@@ -3257,6 +3597,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings become children of the previous sibling.
 	 */
 	private async indentNode(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3276,6 +3617,14 @@ export class MindMapView extends ItemView {
 		const firstSrc = siblings[firstIdx]!;
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
+
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				prevSibling,
+			])
+		)
+			return;
 
 		const content = await this.app.vault.read(file);
 
@@ -3329,6 +3678,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings promote together.
 	 */
 	private async outdentNode(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3402,6 +3752,16 @@ export class MindMapView extends ItemView {
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
 
+		// Outdenting inserts the block relative to the parent's subtree, so the
+		// parent must live in the same file as the moved nodes.
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				parentNode.source,
+			])
+		)
+			return;
+
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
 		const blockEnd = this.subtreeEnd(lastSrc);
@@ -3474,6 +3834,7 @@ export class MindMapView extends ItemView {
 	 * Copy (or cut) selected node subtrees to the internal clipboard.
 	 */
 	private async copySelectedNodes(isCut: boolean): Promise<void> {
+		if (isCut && !this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -3490,6 +3851,10 @@ export class MindMapView extends ItemView {
 			.map((id) => this.nodeMap.get(id))
 			.filter((n): n is LayoutNode => n !== undefined)
 			.sort((a, b) => a.source.range.start - b.source.range.start);
+
+		// Every selected subtree is sliced from `file`; a mixed-file selection
+		// would slice one file's bytes at another's offsets.
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
 
 		const texts: string[] = [];
 		for (const sel of selected) {
@@ -3521,6 +3886,7 @@ export class MindMapView extends ItemView {
 	 * Paste clipboard content as sibling(s) below the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
 			return;
 
@@ -3557,85 +3923,14 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Skips content lines inside code fences (only adjusts fence line indentation).
+	 * Delegates to the tested pure transform in `mindmap-edit`.
 	 */
 	private adjustPasteDepth(
 		text: string,
 		sourceType: OsmosisNode["type"],
 		depthDelta: number,
 	): string {
-		const lines = text.split("\n");
-		const result: string[] = [];
-		let inCodeBlock = false;
-		let codeFenceChar = "";
-		let codeFenceLen = 0;
-
-		for (const line of lines) {
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-
-			// Code block: leave all lines (fences + content) untouched
-			if (inCodeBlock) {
-				if (
-					fenceMatch?.[1] &&
-					fenceMatch[1].charAt(0) === codeFenceChar &&
-					fenceMatch[1].length >= codeFenceLen &&
-					(fenceMatch[2] ?? "").trim() === ""
-				) {
-					inCodeBlock = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fenceMatch?.[1]) {
-				inCodeBlock = true;
-				codeFenceChar = fenceMatch[1].charAt(0);
-				codeFenceLen = fenceMatch[1].length;
-				result.push(line);
-				continue;
-			}
-
-			// Table lines (pipe-prefixed): leave untouched
-			if (/^\s*\|/.test(line)) {
-				result.push(line);
-				continue;
-			}
-
-			// Handle heading lines
-			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-				const oldLevel = headingMatch[1].length;
-				const newLevel = Math.max(
-					1,
-					Math.min(6, oldLevel + depthDelta),
-				);
-				result.push("#".repeat(newLevel) + " " + headingMatch[2]);
-				continue;
-			}
-
-			// Handle list lines (tab or space indented)
-			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
-			if (listMatch?.[3] !== undefined) {
-				const currentTabs = listMatch[1]?.length ?? 0;
-				const currentSpaces = listMatch[2]?.length ?? 0;
-				const currentDepth =
-					currentTabs + Math.floor(currentSpaces / 2);
-				const newDepth = Math.max(0, currentDepth + depthDelta);
-				result.push(
-					"\t".repeat(newDepth) +
-					listMatch[3].replace(/^[ \t]*/, ""),
-				);
-				continue;
-			}
-
-			result.push(line);
-		}
-
-		return result.join("\n");
+		return edit.adjustPasteDepth(text, sourceType, depthDelta);
 	}
 
 	/**
@@ -3644,6 +3939,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings get parented under the new node.
 	 */
 	private async insertParentNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 
 		const src = node.source;
@@ -3665,6 +3961,12 @@ export class MindMapView extends ItemView {
 			const firstSrc = siblings[selectedIndices[0]!]!;
 			const lastSrc =
 				siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			if (
+				!this.ensureSameFileEdit(
+					selectedIndices.map((i) => siblings[i]!),
+				)
+			)
+				return;
 			blockStart = firstSrc.range.start;
 			blockEnd = this.subtreeEnd(lastSrc);
 		} else {
@@ -3722,6 +4024,7 @@ export class MindMapView extends ItemView {
 	 * Duplicate the selected node(s) (and their subtrees) as siblings below.
 	 */
 	private async duplicateNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -3736,6 +4039,7 @@ export class MindMapView extends ItemView {
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
 		if (selected.length === 0) return;
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
 
 		// Find the block range covering all selected subtrees
 		const blockStart = selected[0]!.source.range.start;
@@ -4163,6 +4467,10 @@ export class MindMapView extends ItemView {
 	}
 
 	private async finishResize(): Promise<void> {
+		if (this.isReadingMode) {
+			this.resizingNodeId = null;
+			return;
+		}
 		if (!this.resizingNodeId) return;
 		const nodeId = this.resizingNodeId;
 		this.resizingNodeId = null;
@@ -4193,6 +4501,7 @@ export class MindMapView extends ItemView {
 	// ─── Drag-and-Drop ──────────────────────────────────────
 
 	private startDrag(nodeId: string): void {
+		if (this.isReadingMode) return;
 		if (!this.svg) return;
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
@@ -4428,14 +4737,27 @@ export class MindMapView extends ItemView {
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
 
-		const content = await this.app.vault.read(this.currentFile);
-
 		// Find the target parent and insertion point
 		const targetParent = this.findNodeById(
 			this.currentTree.root,
 			dropTarget.parentId,
 		);
 		if (!targetParent) return;
+
+		// Refuse drops that cross a file boundary (e.g. an embedded node onto a
+		// local parent, or between two different embeds). Node ranges are
+		// per-file, so slicing/splicing across files corrupts the destination —
+		// most visibly the `![[embed]]` line itself.
+		if (!edit.sameEditTarget(dragNode.source, targetParent)) {
+			new Notice("Osmosis: can't move a node across an embed boundary");
+			return;
+		}
+
+		// Read (and later write) the file the dragged node actually lives in —
+		// the parent note for local nodes, the source note for embedded ones.
+		const file = this.getNodeFile(dragNode.source);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
 		const parentSrc = dragNode.parent.source;
@@ -4482,7 +4804,10 @@ export class MindMapView extends ItemView {
 		}
 		let dragText = reindentedParts.join("\n");
 
-		// Determine insertion offset in the markdown
+		// Determine insertion offset in the markdown. Use host-file offsets: a
+		// reference child may be transcluded content (its own `range` indexes
+		// the source note), so an embed collapses to its `![[…]]` line's host
+		// span rather than splicing a source offset into this file.
 		let insertOffset: number;
 		if (dropTarget.index >= targetParent.children.length) {
 			// Append after last child's subtree
@@ -4490,7 +4815,7 @@ export class MindMapView extends ItemView {
 				const lastChild =
 					targetParent.children[targetParent.children.length - 1];
 				if (lastChild) {
-					insertOffset = this.subtreeEnd(lastChild);
+					insertOffset = this.subtreeHostEnd(lastChild);
 				} else {
 					insertOffset = this.subtreeEnd(targetParent);
 				}
@@ -4501,7 +4826,7 @@ export class MindMapView extends ItemView {
 			// Insert before the child at dropTarget.index
 			const targetChild = targetParent.children[dropTarget.index];
 			if (targetChild) {
-				insertOffset = targetChild.range.start;
+				insertOffset = this.nodeHostStart(targetChild);
 			} else {
 				insertOffset = this.subtreeEnd(targetParent);
 			}
@@ -4570,7 +4895,9 @@ export class MindMapView extends ItemView {
 		}
 
 		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeMarkdown(this.renumberOrderedLists(updated));
+		// writeNodeFile renumbers and routes to the correct file (parent note
+		// or embedded source) based on the dragged node.
+		await this.writeNodeFile(dragNode.source, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -4706,9 +5033,9 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Re-indent a subtree's text to match a new type/depth.
-	 * Adjusts the first line and all descendant lines proportionally.
-	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
+	 * Re-indent a subtree's text to match a new type/depth. Delegates to the
+	 * tested pure transform in `mindmap-edit` (preserves the first line's
+	 * block ID, which `content` has stripped).
 	 */
 	private reindentSubtree(
 		text: string,
@@ -4716,98 +5043,7 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		// Code blocks and tables are atomic — never re-indent their contents
-		if (originalNode.type === "codeblock" || originalNode.type === "table") return text;
-
-		// When converting heading → list type, strip internal blank lines
-		// that were added by normalizeHeadingSpacing — they break list nesting.
-		const crossingToList =
-			originalNode.type === "heading" && newType !== "heading";
-		const rawLines = text.split("\n");
-		const lines = crossingToList
-			? rawLines.filter((l) => l.trim() !== "")
-			: rawLines;
-		const result: string[] = [];
-
-		// Calculate child depth delta — depends on whether we're crossing type boundaries.
-		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
-		const oldChildBase =
-			originalNode.type === "heading" || originalNode.type === "root" || originalNode.type === "paragraph"
-				? 0
-				: originalNode.depth + 1;
-		const newChildBase =
-			newType === "heading" || newType === "root" || newType === "paragraph" ? 0 : newDepth + 1;
-		const childDepthDelta = newChildBase - oldChildBase;
-
-		let inFence = false;
-		let fenceChar = "";
-		let fenceLen = 0;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (line === undefined) continue;
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			// Code block: leave all lines (fences + content) untouched
-			const trimmed = line.trimStart();
-			const fm = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-			if (inFence) {
-				if (
-					fm?.[1] &&
-					fm[1].charAt(0) === fenceChar &&
-					fm[1].length >= fenceLen &&
-					(fm[2] ?? "").trim() === ""
-				) {
-					inFence = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fm?.[1]) {
-				inFence = true;
-				fenceChar = fm[1].charAt(0);
-				fenceLen = fm[1].length;
-				result.push(line);
-				continue;
-			}
-
-			if (i === 0) {
-				// First line: serialize with new type and depth
-				result.push(
-					this.serializeLine(newType, newDepth, originalNode.content),
-				);
-			} else {
-				// Descendant lines: check if heading or list
-				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-				if (headingMatch?.[1]) {
-					// Heading descendant: adjust heading level
-					const oldLevel = headingMatch[1].length;
-					const newLevel = Math.max(
-						1,
-						Math.min(6, oldLevel + childDepthDelta),
-					);
-					result.push(
-						"#".repeat(newLevel) + " " + (headingMatch[2] ?? ""),
-					);
-				} else {
-					// List/other descendant: adjust tab indentation
-					const match = line.match(/^(\t*)([ ]*)/);
-					const currentTabs = match?.[1]?.length ?? 0;
-					const currentSpaces = match?.[2]?.length ?? 0;
-					const currentDepth =
-						currentTabs + Math.floor(currentSpaces / 2);
-					const newTabDepth = Math.max(
-						0,
-						currentDepth + childDepthDelta,
-					);
-					result.push("\t".repeat(newTabDepth) + line.trimStart());
-				}
-			}
-		}
-
-		return result.join("\n");
+		return edit.reindentSubtree(text, originalNode, newType, newDepth);
 	}
 
 	// ─── Keyboard ────────────────────────────────────────────
@@ -4881,6 +5117,18 @@ export class MindMapView extends ItemView {
 				this.stopEditing(false);
 				e.preventDefault();
 			}
+			return;
+		}
+
+		// Spatial study: 1–4 rate the card awaiting a rating
+		if (
+			this.spatialMode === "study" &&
+			this.spatialPendingRating !== null &&
+			!e.ctrlKey && !e.metaKey && !e.altKey &&
+			(e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4")
+		) {
+			e.preventDefault();
+			void this.rateSpatialCard(Number(e.key) as FSRSRating);
 			return;
 		}
 
@@ -5316,6 +5564,7 @@ export class MindMapView extends ItemView {
 	// ─── Inline Editing ──────────────────────────────────────
 
 	private startEditing(nodeId: string): void {
+		if (!this.assertEditable()) return;
 		const node = this.nodeMap.get(nodeId);
 		if (!node || !this.svg) return;
 
@@ -5363,7 +5612,7 @@ export class MindMapView extends ItemView {
 		const isMobile = Platform.isMobile;
 
 		// Create container div for the embedded editor
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
@@ -5419,7 +5668,7 @@ export class MindMapView extends ItemView {
 		this.editContainer = container;
 
 		// Add save/cancel buttons floating above the editor
-		const cancelBtn = document.createElement("button");
+		const cancelBtn = createEl("button");
 		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
 		cancelBtn.setAttribute("aria-label", "Cancel editing");
 		cancelBtn.textContent = "Cancel";
@@ -5428,7 +5677,7 @@ export class MindMapView extends ItemView {
 			e.stopPropagation();
 			this.stopEditing(false);
 		});
-		const saveBtn = document.createElement("button");
+		const saveBtn = createEl("button");
 		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
 		saveBtn.setAttribute("aria-label", "Save changes");
 		saveBtn.textContent = "Save";
@@ -5474,7 +5723,7 @@ export class MindMapView extends ItemView {
 				},
 				onBlur: () => {
 					// Small delay to allow click events to process first
-					setTimeout(() => {
+					window.setTimeout(() => {
 						if (this.editingNodeId === nodeId) {
 							this.stopEditing(true);
 						}
@@ -5605,10 +5854,10 @@ export class MindMapView extends ItemView {
 		scaledFontSize: number,
 		isMobile: boolean,
 	): void {
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
-		const input = document.createElement("textarea");
+		const input = createEl("textarea");
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
 		input.value = node.source.content;
 		input.rows = 1;
@@ -5657,7 +5906,7 @@ export class MindMapView extends ItemView {
 		});
 
 		input.addEventListener("blur", () => {
-			setTimeout(() => {
+			window.setTimeout(() => {
 				if (this.editingNodeId === nodeId) {
 					this.stopEditing(true);
 				}
@@ -5748,151 +5997,221 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Ensure exactly one blank line before and after headings, top-level
-	 * code fences, tables, and standalone paragraphs.
+	 * code fences, tables, and standalone paragraphs. Delegates to the shared
+	 * `normalizeBlockSpacing` so the map and the line-card generator apply the
+	 * same "one line = one block" convention.
 	 */
 	private normalizeHeadingSpacing(content: string): string {
-		// First: collapse runs of 2+ blank lines into exactly one blank line
-		const collapsed = content.replace(/\n{3,}/g, "\n\n");
-		const lines = collapsed.split("\n");
-		const result: string[] = [];
-		let inCodeBlock = false;
-		let inTable = false;
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i] ?? "";
-			const isHeading = /^#{1,6}\s/.test(line);
-			// Only add spacing around top-level code fences (not indented ones inside lists)
-			const isFence = /^(`{3,}|~{3,})/.test(line.trim());
-			const isTopLevelFence = isFence && /^(`{3,}|~{3,})/.test(line);
-			const isTableLine = /^\s*\|/.test(line);
-			// Detect table start (first pipe line after non-pipe)
-			const isTableStart = isTableLine && !inTable;
-			// Detect paragraph: non-blank, non-list, non-heading, non-fence, non-table,
-			// not indented (top-level), not inside code block
-			const isTopLevelParagraph = !isHeading && !isFence && !isTableLine
-				&& line.trim() !== "" && !/^(\t| {2,})/.test(line)
-				&& !/^[-*]\s/.test(line) && !/^\d+\.\s/.test(line)
-				&& !inCodeBlock;
-
-			if (isFence) inCodeBlock = !inCodeBlock;
-			if (isTableStart) inTable = true;
-			if (inTable && !isTableLine) inTable = false;
-
-			const prevLine = result[result.length - 1];
-			const needsBlankBefore =
-				isHeading
-				|| (isTopLevelFence && inCodeBlock)
-				|| isTableStart
-				|| (isTopLevelParagraph && prevLine !== undefined && prevLine.trim() !== ""
-					&& !/^#{1,6}\s/.test(prevLine));
-
-			if (
-				needsBlankBefore &&
-				result.length > 0 &&
-				prevLine !== undefined &&
-				prevLine.trim() !== ""
-			) {
-				result.push("");
-			}
-			result.push(line);
-
-			const nextLine = lines[i + 1];
-			// Detect table end (current is table, next is not)
-			const isTableEnd = isTableLine && (nextLine === undefined || !/^\s*\|/.test(nextLine));
-			const needsBlankAfter =
-				isHeading
-				|| (isTopLevelFence && !inCodeBlock)
-				|| isTableEnd
-				|| (isTopLevelParagraph && nextLine !== undefined && nextLine.trim() !== ""
-					&& !/^#{1,6}\s/.test(nextLine));
-
-			if (needsBlankAfter) {
-				if (nextLine !== undefined && nextLine.trim() !== "") {
-					result.push("");
-				}
-			}
-		}
-		return result.join("\n");
+		return normalizeBlockSpacing(content).content;
 	}
 
 	/**
-	 * Serialize a node type/depth/content back to a markdown line.
+	 * Serialize a node type/depth/content back to a markdown line. Delegates to
+	 * the tested pure transform in `mindmap-edit`; pass `blockId` to preserve a
+	 * trailing `^id` (the parser strips it out of `content`).
 	 */
 	private serializeLine(
 		type: OsmosisNode["type"],
 		depth: number,
 		content: string,
+		blockId?: string,
 	): string {
-		switch (type) {
-			case "heading":
-				return `${"#".repeat(depth)} ${content}`;
-			case "bullet":
-				return `${"\t".repeat(depth)}- ${content}`;
-			case "ordered":
-				return `${"\t".repeat(depth)}1. ${content}`;
-			case "paragraph":
-				return content;
-			case "table":
-				return content;
-			case "transclusion":
-				return `![[${content}]]`;
-			default:
-				return content;
-		}
+		return edit.serializeLine(type, depth, content, blockId);
 	}
 
 	/**
-	 * Find the end of a node's entire subtree (the max range.end of all descendants).
+	 * Find the end of a node's entire subtree. Delegates to the tested pure
+	 * transform in `mindmap-edit` (includes any trailing `^id` line).
 	 */
 	private subtreeEnd(node: OsmosisNode): number {
-		let end = node.range.end;
-		for (const child of node.children) {
-			end = Math.max(end, this.subtreeEnd(child));
-		}
-		return end;
+		return edit.subtreeEnd(node);
 	}
 
 	/**
-	 * Forward undo/redo to the markdown editor for the current file.
+	 * Start / end of a node in the file being spliced, folding an embed
+	 * expansion to its `![[…]]` line's host span. Used for drop insert offsets,
+	 * which may reference transcluded content whose own `range` indexes a
+	 * different (source) file. Delegates to `mindmap-edit`.
+	 */
+	private nodeHostStart(node: OsmosisNode): number {
+		return edit.nodeHostStart(node);
+	}
+	private subtreeHostEnd(node: OsmosisNode): number {
+		return edit.subtreeHostEnd(node);
+	}
+
+	/**
+	 * Undo or redo the last map edit from the view's own snapshot history.
+	 *
+	 * Map edits write to disk via vault.modify / processFrontMatter, bypassing
+	 * CodeMirror, so there is no editor undo stack to forward to — this restores
+	 * the recorded before/after content instead. Self-contained: it does not see
+	 * edits made in a separate Markdown editor, and no-ops when the relevant stack
+	 * is empty.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
-		if (!this.currentFile) return;
-		// Find an editor that has the same file open
-		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-			const view = leaf.view;
-			if (
-				view instanceof MarkdownView &&
-				view.file === this.currentFile
-			) {
-				// Suppress the vault modify event so we skip the full loadFile()
-				// cycle (async file read + transclusion expansion). Instead, read
-				// the new content directly from the editor (in-memory, instant).
-				this.suppressNextReload = true;
-				if (isRedo) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).redo();
-				} else {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).undo();
-				}
-				const newContent = view.editor.getValue();
-				this.cache.invalidate(this.currentFile.path);
-				this.currentTree = this.cache.get(
-					this.currentFile.path,
-					newContent,
-				);
-				// Re-parse frontmatter from the editor content so style
-				// changes are reflected immediately (metadataCache is async).
-				this.reloadFrontmatterFromContent(newContent);
-				this.nodeSizeCache.clear();
-				void this.render();
-				return;
+		if (!this.assertEditable()) return;
+		const source = isRedo ? this.redoStack : this.undoStack;
+		const edit = source.pop();
+		if (!edit) return;
+		(isRedo ? this.undoStack : this.redoStack).push(edit);
+		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
+	}
+
+	/** Undo the last map edit. Public entry point for the properties sidebar,
+	 *  which forwards Ctrl+Z/Y while it (not the map) holds keyboard focus. */
+	undo(): void {
+		this.forwardUndoRedo(false);
+	}
+
+	/** Redo the last undone map edit (see {@link undo}). */
+	redo(): void {
+		this.forwardUndoRedo(true);
+	}
+
+	/**
+	 * Begin a live-edit session — a burst of rapid writes from one interaction
+	 * (a color-picker drag) that should read as a single undoable change. Suspends
+	 * reload-on-modify (see the vault "modify" handler) and coalesces snapshots
+	 * until {@link endLiveEdit}.
+	 */
+	beginLiveEdit(): void {
+		this.liveEditActive = true;
+		this.liveEditSnapshot = null;
+	}
+
+	/** End a live-edit session, recording one snapshot for the whole burst. */
+	endLiveEdit(): void {
+		if (!this.liveEditActive) return;
+		this.liveEditActive = false;
+		const snap = this.liveEditSnapshot;
+		this.liveEditSnapshot = null;
+		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
+	}
+
+	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
+	private recordEdit(path: string, before: string, after: string): void {
+		if (before === after) return;
+		if (this.liveEditActive) {
+			// Coalescing: keep the pre-session content as the baseline and track
+			// the latest result; endLiveEdit records the single net change.
+			if (!this.liveEditSnapshot) {
+				this.liveEditSnapshot = { path, before, after };
+			} else if (this.liveEditSnapshot.path === path) {
+				this.liveEditSnapshot.after = after;
 			}
+			return;
 		}
-		// Fallback: execute Obsidian's built-in commands
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-		(this.app as any).commands?.executeCommandById?.(
-			isRedo ? "editor:redo" : "editor:undo",
+		this.undoStack.push({ path, before, after });
+		this.enforceUndoLimits();
+		// A fresh edit invalidates any redo history.
+		this.redoStack.length = 0;
+	}
+
+	/** In-memory byte estimate for one snapshot (UTF-16; path length negligible). */
+	private static snapshotBytes(snap: MapEditSnapshot): number {
+		return (snap.before.length + snap.after.length) * 2;
+	}
+
+	/**
+	 * Trim undo history to the configured step and memory limits, oldest first,
+	 * applying whichever is reached first. Only the growing undoStack is capped
+	 * (redoStack is transient — cleared on any fresh edit). At least the most
+	 * recent entry is always kept so a just-made edit stays undoable.
+	 */
+	private enforceUndoLimits(): void {
+		const maxSteps = Math.max(1, this.plugin.settings.undoMaxSteps);
+		while (this.undoStack.length > maxSteps) this.undoStack.shift();
+
+		const maxBytes = Math.max(1, this.plugin.settings.undoMaxMemoryMB) * 1024 * 1024;
+		let total = 0;
+		for (const snap of this.undoStack) total += MindMapView.snapshotBytes(snap);
+		while (this.undoStack.length > 1 && total > maxBytes) {
+			const removed = this.undoStack.shift();
+			if (removed) total -= MindMapView.snapshotBytes(removed);
+		}
+	}
+
+	/**
+	 * Frontmatter write that also records an undo snapshot. Every map style write
+	 * goes through this instead of `app.fileManager.processFrontMatter` directly,
+	 * so color/shape/variant changes are undoable alongside text edits. The
+	 * properties sidebar's map-level writes (theme/layout/background/reset/…) also
+	 * route here so they share one undo stack and snapshot path.
+	 */
+	async processFrontMatterTracked(
+		file: TFile,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		const before = await this.app.vault.read(file);
+		await this.app.fileManager.processFrontMatter(file, fn);
+		const after = await this.app.vault.read(file);
+		this.recordEdit(file.path, before, after);
+
+		// processFrontMatter inserts or grows the frontmatter block, shifting
+		// every body offset. Rebuild currentTree from the new content so a
+		// subsequent range-based structural edit (rename, move, drag, …) does
+		// not splice using stale (pre-write) offsets — which otherwise corrupts
+		// the file. Callers re-render afterward, repopulating nodeMap from this
+		// refreshed tree. (Reloads are suppressed, so nothing else re-parses.)
+		if (!this.currentFile) return;
+		this.cache.invalidate(file.path);
+		const currentPath = this.currentFile.path;
+		if (file.path === currentPath) {
+			this.currentTree = this.cache.get(currentPath, after);
+		} else {
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(currentPath);
+			this.currentTree = this.cache.get(currentPath, parentContent);
+		}
+		// Re-expand transclusions so embedded content (a no-op when the file has
+		// none) survives the tree rebuild instead of collapsing.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
 		);
+	}
+
+	/**
+	 * Restore a file to a snapshot's content (undo/redo target). Re-renders from
+	 * the restored content — reloading frontmatter and clearing the size cache so
+	 * both text and style changes are reflected. Handles the current file and a
+	 * transcluded source file, mirroring the two write paths.
+	 */
+	private async applySnapshot(path: string, content: string): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		this.suppressNextReload = true;
+		this.cache.invalidate(path);
+		await this.app.vault.modify(file, content);
+
+		if (this.currentFile && path === this.currentFile.path) {
+			this.currentTree = this.cache.get(path, content);
+			this.reloadFrontmatterFromContent(content);
+			// Recompute derived map settings (theme/layout/background/branch line/…)
+			// from the restored frontmatter, mirroring the load flow — otherwise a
+			// map-level style undo/redo restores the file but not the live layout.
+			this.loadMapSettings();
+			this.nodeSizeCache.clear();
+			// Re-expand transclusions so an undo/redo of a local edit that
+			// carried an embed keeps it rendered, not collapsed to a bare
+			// `![[…]]` placeholder (mirrors writeMarkdown / the source branch).
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
+			await this.render();
+		} else if (this.currentFile) {
+			// Restored a transcluded source; re-read and re-expand the parent.
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(this.currentFile.path);
+			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
+			await this.render();
+		}
 	}
 
 	/**
@@ -5901,12 +6220,23 @@ export class MindMapView extends ItemView {
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(this.currentFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(this.currentFile.path);
 		await this.app.vault.modify(this.currentFile, newContent);
+		this.recordEdit(this.currentFile.path, before, newContent);
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
+		// Re-expand transclusions so an embed the edit carried along (e.g. moving
+		// a local heading that contains an `![[embed]]`) renders expanded again
+		// instead of collapsing to a bare `![[…]]` placeholder. Mirrors
+		// writeTranscludedMarkdown / processFrontMatterTracked; a no-op when the
+		// file has no embeds.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 		await this.render();
 	}
 
@@ -5923,9 +6253,11 @@ export class MindMapView extends ItemView {
 		if (!(sourceFile instanceof TFile)) return;
 
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(sourceFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(sourceFilePath);
 		await this.app.vault.modify(sourceFile, newContent);
+		this.recordEdit(sourceFilePath, before, newContent);
 
 		// Re-read and re-expand the current (parent) file to pick up the change
 		const parentContent = await this.app.vault.read(this.currentFile);
@@ -5952,7 +6284,14 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const newLine = this.serializeLine(src.type, src.depth, newContent);
+		// Preserve the trailing block ID (line-card identity / style anchor) —
+		// `content`/`newContent` have it stripped, so it must be re-threaded.
+		const newLine = this.serializeLine(
+			src.type,
+			src.depth,
+			newContent,
+			src.blockId,
+		);
 		const updated =
 			content.slice(0, src.range.start) +
 			newLine +
@@ -5972,63 +6311,28 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Guard for structural edits that splice one file: every node involved must
+	 * share an edit target. A block span or insert offset from one file applied
+	 * to another's bytes corrupts the destination (most visibly the `![[embed]]`
+	 * line), so a move/reorder/indent/copy/delete that crosses a file boundary
+	 * (local ↔ embedded, or between two embeds) is refused with a notice.
+	 * Returns true when the edit is safe to proceed.
+	 */
+	private ensureSameFileEdit(nodes: OsmosisNode[]): boolean {
+		const first = nodes[0];
+		if (!first) return true;
+		if (nodes.every((n) => edit.sameEditTarget(first, n))) return true;
+		new Notice("Osmosis: can't move a node across an embed boundary");
+		return false;
+	}
+
+	/**
 	 * Renumber ordered list items so consecutive siblings at the same depth
-	 * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.
+	 * are numbered sequentially (1, 2, 3, ...). Delegates to the tested pure
+	 * transform in `mindmap-edit`.
 	 */
 	private renumberOrderedLists(text: string): string {
-		const lines = text.split("\n");
-		let inCodeBlock = false;
-		// Track the last ordered-list depth and per-depth counters.
-		// A blank line or non-ordered-list line resets the counter for that depth.
-		const counters = new Map<number, number>();
-		let prevWasOrdered = false;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]!;
-
-			// Track code fences
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
-			if (fenceMatch) {
-				inCodeBlock = !inCodeBlock;
-				continue;
-			}
-			if (inCodeBlock) continue;
-
-			// Match ordered list lines: optional tabs/spaces, then digit(s), dot, space
-			const match = /^(\t*)([ ]*)(\d+)\.\s+(.*)$/.exec(line);
-			if (match?.[3] !== undefined && match[4] !== undefined) {
-				const tabs = match[1]?.length ?? 0;
-				const spaces = match[2]?.length ?? 0;
-				const depth = tabs + Math.floor(spaces / 2);
-
-				if (!prevWasOrdered) {
-					// Start of a new ordered list group: reset all counters
-					counters.clear();
-				}
-
-				const current = (counters.get(depth) ?? 0) + 1;
-				counters.set(depth, current);
-				// Clear counters for deeper levels (they restart if we come back)
-				for (const [d] of counters) {
-					if (d > depth) counters.delete(d);
-				}
-				prevWasOrdered = true;
-
-				const indent = (match[1] ?? "") + (match[2] ?? "");
-				lines[i] = `${indent}${String(current)}. ${match[4]}`;
-			} else if (line.trim() === "") {
-				// Blank line resets
-				counters.clear();
-				prevWasOrdered = false;
-			} else {
-				// Non-ordered content (bullet, heading, paragraph) — reset
-				counters.clear();
-				prevWasOrdered = false;
-			}
-		}
-
-		return lines.join("\n");
+		return edit.renumberOrderedLists(text);
 	}
 
 	/**
@@ -6071,6 +6375,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = parentNode.source;
 		const file = this.getNodeFile(src);
@@ -6119,6 +6424,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, writes to the source file.
 	 */
 	private async addSiblingNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -6130,8 +6436,13 @@ export class MindMapView extends ItemView {
 		const insertPos = this.subtreeEnd(src);
 
 		let insertText: string;
-		if (src.type === "paragraph" || src.type === "codeblock" || src.type === "table") {
-			// Paragraphs, code blocks, and tables need a blank line separator
+		if (
+			src.type === "paragraph" ||
+			src.type === "codeblock" ||
+			src.type === "table" ||
+			src.type === "blockquote"
+		) {
+			// Paragraphs, code blocks, tables, and blockquotes need a blank line separator
 			// Use a zero-width space as placeholder (not stripped by trim())
 			insertText = "\n\n\u200B";
 		} else {
@@ -6156,6 +6467,7 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, deletes from the source file.
 	 */
 	private async deleteNode(node: LayoutNode): Promise<void> {
+		if (!this.assertEditable()) return;
 		if (!this.currentFile) return;
 		const src = node.source;
 		const file = this.getNodeFile(src);
@@ -6310,14 +6622,9 @@ export class MindMapView extends ItemView {
 			this.fitToView();
 		}
 
-		// Re-apply spatial study hidden state after re-render (render wipes the DOM)
-		if (this.isSpatialStudy) {
-			for (const id of this.renderedNodeIds) {
-				if (this.spatialHiddenIds.has(id)) {
-					this.applySpatialHidden(id, true);
-				}
-			}
-		}
+		// Re-apply spatial study state after re-render (render wipes the DOM,
+		// including a mid-rating bubble and the progress pill)
+		this.applySpatialState();
 
 		// After a save-edit re-render, re-select the node at the stored position
 		if (this.pendingSelectionRangeStart !== null) {
@@ -6379,7 +6686,7 @@ export class MindMapView extends ItemView {
 			const displayContent = this.getNodeDisplayContent(node);
 			// Include per-node text style, shape, and custom width in cache key so changes invalidate
 			const localStyle = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			const textStyleKey = localStyle?.text
 				? JSON.stringify(localStyle.text)
@@ -6402,7 +6709,7 @@ export class MindMapView extends ItemView {
 
 		// Only create the measurer if there are uncached nodes
 		if (toMeasure.length > 0) {
-			const measurer = document.createElement("div");
+			const measurer = createDiv();
 			measurer.style.cssText = `
 				position: absolute; left: -9999px; top: -9999px;
 				visibility: hidden; pointer-events: none;
@@ -6412,7 +6719,7 @@ export class MindMapView extends ItemView {
 			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
-				const cell = document.createElement("div");
+				const cell = createDiv();
 				cell.className = "osmosis-node-content osmosis-measure-cell markdown-rendered";
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
@@ -6420,7 +6727,7 @@ export class MindMapView extends ItemView {
 				// Apply theme + per-node text styles for accurate measurement
 				const nodeDepth = node.type === "heading" ? node.depth : 0;
 				const nodeLocalStyle = lookupNodeStyleByPath(
-					this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+					this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 				);
 				const nodeClassStyle = lookupClassStyle(this.osmosisStyleFrontmatter, nodeLocalStyle?.class, this.getGlobalClasses());
 				const nodeVariantStyle = activeVariantDef?.[`_n:${node.id}`] ?? activeVariantDef?.[node.content] ?? activeVariantDef?.["*"];
@@ -6453,7 +6760,7 @@ export class MindMapView extends ItemView {
 
 				// Inject checkbox for task-list items (affects size measurement)
 				if (node.metadata?.checkbox) {
-					const cb = document.createElement("input");
+					const cb = createEl("input");
 					cb.type = "checkbox";
 					cb.className = "task-list-item-checkbox";
 					if (node.metadata.checked) {
@@ -6538,7 +6845,7 @@ export class MindMapView extends ItemView {
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const style = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			if (!style) continue;
 			if (style.shape) {
@@ -6565,7 +6872,7 @@ export class MindMapView extends ItemView {
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const style = lookupNodeStyleByPath(
-				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id),
+				this.osmosisStyleFrontmatter, node.id, treePathMap.get(node.id), node.blockId,
 			);
 			if (style?.side) {
 				sides.set(node.id, style.side);
@@ -6586,10 +6893,10 @@ export class MindMapView extends ItemView {
 	private getNodeDisplayContent(node: OsmosisNode): string {
 		if (
 			node.type === "ordered" &&
-			node.metadata?.listNumber !== undefined
+			typeof node.metadata?.listNumber === "number"
 		) {
 			// Escape the dot so MarkdownRenderer renders as plain text, not <ol>
-			return `${String(node.metadata.listNumber as number)}\\. ${node.content}`;
+			return `${node.metadata.listNumber}\\. ${node.content}`;
 		}
 		if (node.type === "bullet") {
 			if (node.metadata?.checkbox) {
@@ -6641,7 +6948,7 @@ export class MindMapView extends ItemView {
 				if (match) {
 					const iframe = ns
 						? (document.createElementNS(ns, "iframe") as HTMLIFrameElement)
-						: document.createElement("iframe");
+						: createEl("iframe");
 					if (ns) iframe.setAttribute("xmlns", ns);
 					iframe.setAttribute("src", toEmbed(match));
 					iframe.setAttribute("frameborder", "0");
@@ -6886,7 +7193,7 @@ export class MindMapView extends ItemView {
 			const cycleLabel = document.createElementNS(
 				XHTML_NS,
 				"span",
-			) as HTMLSpanElement;
+			);
 			cycleLabel.setAttribute("xmlns", XHTML_NS);
 			cycleLabel.className = "osmosis-cycle-indicator";
 			cycleLabel.textContent = `\u21BB ${node.source.content}`;
@@ -6939,7 +7246,7 @@ export class MindMapView extends ItemView {
 						const label = document.createElementNS(
 							XHTML_NS,
 							"span",
-						) as HTMLSpanElement;
+						);
 						label.setAttribute("xmlns", XHTML_NS);
 						label.className = "osmosis-code-lang-label";
 						label.textContent = lang;

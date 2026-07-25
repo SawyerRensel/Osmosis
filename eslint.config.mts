@@ -12,7 +12,7 @@ export default tseslint.config(
 			parserOptions: {
 				projectService: {
 					allowDefaultProject: [
-						"eslint.config.js",
+						"eslint.config.mts",
 						"manifest.json",
 					],
 				},
@@ -34,7 +34,8 @@ export default tseslint.config(
 		"ref",
 		"vitest.config.ts",
 		"e2e",
-		"e2e-vault",
 		"playwright.config.ts",
+		".venv",
+		"site",
 	]),
 );

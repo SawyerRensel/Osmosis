@@ -149,6 +149,8 @@ export interface ColorPickerOptions {
 	initialColor: string;
 	themeColors: string[];
 	onChange: (color: string) => void;
+	/** Called once when an open popover is dismissed (outside click or close()). */
+	onClose?: () => void;
 }
 
 export class ColorPicker {
@@ -223,19 +225,23 @@ export class ColorPicker {
 				this.close();
 			}
 		};
-		setTimeout(() => {
+		window.setTimeout(() => {
 			document.addEventListener("mousedown", this.outsideClickHandler!);
 		}, 0);
 	}
 
 	/** Close the popover. */
 	close(): void {
+		const wasOpen = this.popoverEl !== null;
 		if (this.outsideClickHandler) {
 			document.removeEventListener("mousedown", this.outsideClickHandler);
 			this.outsideClickHandler = null;
 		}
 		this.popoverEl?.remove();
 		this.popoverEl = null;
+		// Only after an actual dismissal — open() calls close() first on a fresh
+		// picker (popoverEl null), which must not fire onClose.
+		if (wasOpen) this.options.onClose?.();
 	}
 
 	private renderSection(

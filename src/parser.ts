@@ -1,4 +1,5 @@
 import { OsmosisNode, OsmosisTree, NodeType, Range } from "./types";
+import { extractTrailingBlockId } from "./block-id";
 
 /**
  * Incremental markdown parser for Osmosis.
@@ -55,6 +56,40 @@ export class OsmosisParser {
 		let tableStart = 0;
 		let tableEnd = 0;
 
+		// Blockquote / callout accumulator. Consecutive lines starting with `>`
+		// (callout title + body, multi-paragraph quotes, nested content) form a
+		// single node so the whole callout is one mind-map node / one line card.
+		let inBlockquote = false;
+		let quoteLines: string[] = [];
+		let quoteStart = 0;
+		let quoteEnd = 0;
+
+		// Most recent multi-line block (code block / table / blockquote), target
+		// for a standalone block-ID line following it. Cleared when any regular
+		// node is created; blank lines do not clear it.
+		let lastMultilineNode: OsmosisNode | null = null;
+
+		// Flush the accumulated blockquote lines as a single node. Treated like
+		// code blocks / tables: child of the current heading, resets list
+		// context, and becomes the target for a trailing standalone `^id`.
+		const flushBlockquote = (): void => {
+			if (quoteLines.length === 0) {
+				inBlockquote = false;
+				return;
+			}
+			const content = quoteLines.join("\n");
+			const node = this.createNode("blockquote", 0, content, {
+				start: quoteStart,
+				end: quoteEnd,
+			});
+			listStack = [];
+			const parent = headingStack[headingStack.length - 1] ?? root;
+			parent.children.push(node);
+			lastMultilineNode = node;
+			inBlockquote = false;
+			quoteLines = [];
+		};
+
 		// Skip YAML frontmatter (--- delimited block at the start of the file)
 		let lineIdx = 0;
 		if (lines.length > 0 && lines[0]!.text.trim() === "---") {
@@ -85,6 +120,7 @@ export class OsmosisParser {
 					listStack = [];
 					const parent = headingStack[headingStack.length - 1] ?? root;
 					parent.children.push(node);
+					lastMultilineNode = node;
 					inCodeBlock = false;
 					codeLines = [];
 					continue;
@@ -118,6 +154,7 @@ export class OsmosisParser {
 					listStack = [];
 					const parent = headingStack[headingStack.length - 1] ?? root;
 					parent.children.push(node);
+					lastMultilineNode = node;
 					inTable = false;
 					tableLines = [];
 					// Fall through to process current line normally
@@ -135,6 +172,45 @@ export class OsmosisParser {
 				}
 			}
 
+			// Blockquote / callout accumulation: consecutive `>`-prefixed lines
+			// (including `>` empty lines inside a callout) coalesce into one
+			// node. A blank or non-`>` line ends the block — standard markdown
+			// boundary — so stacked callouts stay separate nodes.
+			const isQuoteLine = /^\s*>/.test(line.text);
+			if (inBlockquote) {
+				if (isQuoteLine) {
+					quoteLines.push(line.text);
+					quoteEnd = line.end;
+					continue;
+				}
+				// End of blockquote: flush, then process the current line below
+				// (it may be a standalone `^id` that attaches to the block).
+				flushBlockquote();
+			}
+			if (!inBlockquote && isQuoteLine) {
+				inBlockquote = true;
+				quoteLines = [line.text];
+				quoteStart = line.start;
+				quoteEnd = line.end;
+				continue;
+			}
+
+			// Standalone block-ID line (e.g. "^os-a1b2c3") — Obsidian's way to
+			// block-reference a multi-line block. Attach the ID to the
+			// preceding code block / table / blockquote instead of a paragraph.
+			// The node's range deliberately excludes the ID line so content
+			// edits through the mind map cannot wipe the identity.
+			const standaloneId = /^\^([a-zA-Z0-9-]+)$/.exec(line.text.trim());
+			if (standaloneId?.[1] !== undefined && lastMultilineNode !== null) {
+				if (lastMultilineNode.blockId === undefined) {
+					lastMultilineNode.blockId = standaloneId[1];
+					// Record where the `^id` line ends so structural moves carry
+					// it with the block. `range` stays content-only (see types).
+					lastMultilineNode.blockIdLineEnd = line.end;
+				}
+				continue;
+			}
+
 			const parsed = this.parseLine(line);
 			if (parsed === null) {
 				// Blank line: reset list context
@@ -146,6 +222,7 @@ export class OsmosisParser {
 				start: line.start,
 				end: line.end,
 			});
+			lastMultilineNode = null;
 
 			// Store ordered list number in metadata
 			if (parsed.listNumber !== undefined) {
@@ -155,6 +232,11 @@ export class OsmosisParser {
 			// Store checkbox state in metadata
 			if (parsed.checkbox) {
 				node.metadata = { ...node.metadata, checkbox: true, checked: parsed.checked };
+			}
+
+			// Attach trailing block ID (line-card identity / style anchor)
+			if (parsed.blockId !== undefined) {
+				node.blockId = parsed.blockId;
 			}
 
 			if (parsed.type === "heading") {
@@ -231,6 +313,9 @@ export class OsmosisParser {
 			const parent = headingStack[headingStack.length - 1] ?? root;
 			parent.children.push(node);
 		}
+
+		// Flush any pending blockquote at end of document
+		flushBlockquote();
 	}
 
 	/**
@@ -238,13 +323,26 @@ export class OsmosisParser {
 	 * Returns null for blank/empty lines.
 	 */
 	private parseLine(line: LineInfo): ParsedLine | null {
-		const text = line.text;
+		const raw = line.text;
 
 		// Blank line
-		if (text.trim() === "") {
+		if (raw.trim() === "") {
 			return null;
 		}
 
+		// A trailing block ID (e.g. "- item ^os-a1b2c3") is identity metadata,
+		// not content — strip it before structural matching so it never
+		// appears in node labels or card text.
+		const extracted = extractTrailingBlockId(raw);
+		const parsed = this.parseLineContent(extracted?.stripped ?? raw);
+		if (parsed !== null && extracted) {
+			parsed.blockId = extracted.id;
+		}
+		return parsed;
+	}
+
+	/** Structural matching for a line whose trailing block ID (if any) is already stripped. */
+	private parseLineContent(text: string): ParsedLine | null {
 		// Heading: # through ######
 		const headingMatch = /^(#{1,6})\s+(.*)$/.exec(text);
 		if (headingMatch?.[1] !== undefined && headingMatch[2] !== undefined) {
@@ -517,4 +615,6 @@ interface ParsedLine {
 	checkbox?: boolean;
 	/** Whether the checkbox is checked. */
 	checked?: boolean;
+	/** Trailing Obsidian block ID (without caret), stripped from content. */
+	blockId?: string;
 }

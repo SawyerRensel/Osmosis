@@ -361,6 +361,35 @@ describe("computeLayout", () => {
 		assertNoOverlap(result.nodes);
 	});
 
+	it("both-sides: primary and secondary sides are equidistant from the pivot", () => {
+		// Regression: reflecting the secondary group about x=0 (the pivot's
+		// left edge) instead of the pivot's center left an extra pivotWidth
+		// gap on the secondary (left) side.
+		const root = makeNode("r", "root", "", 0, [
+			makeNode("h1", "heading", "My Note", 1, [
+				makeNode("a", "heading", "Section A", 2),
+				makeNode("b", "heading", "Section B", 2),
+				makeNode("c", "heading", "Section C", 2),
+				makeNode("d", "heading", "Section D", 2),
+			]),
+		]);
+		const result = computeLayout(makeTree(root), { balance: "both-sides" });
+		const h1 = result.nodes.find((n) => n.source.id === "h1")!;
+		const h2s = result.nodes.filter((n) => n.depth === 2);
+		const primary = h2s.filter((n) => n.side === "primary");
+		const secondary = h2s.filter((n) => n.side === "secondary");
+
+		// Gap from the pivot's right edge to the nearest primary child.
+		const h1Right = h1.rect.x + h1.rect.width;
+		const primaryGap = Math.min(...primary.map((n) => n.rect.x - h1Right));
+		// Gap from the pivot's left edge to the nearest secondary child.
+		const secondaryGap = Math.min(
+			...secondary.map((n) => h1.rect.x - (n.rect.x + n.rect.width)),
+		);
+
+		expect(primaryGap).toBeCloseTo(secondaryGap, 5);
+	});
+
 	it("alternating works with root → H1 → H2s structure", () => {
 		const root = makeNode("r", "root", "", 0, [
 			makeNode("h1", "heading", "My Note", 1, [
