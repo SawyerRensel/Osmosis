@@ -1,106 +1,190 @@
 ---
+title: Osmosis
+description: Map your mind. Build your memory. Absorb information faster and longer with unified notes, flashcards, and mind maps.
 hide:
   - navigation
   - toc
 ---
 
-# Osmosis
+<div class="osmosis-home">
 
-**Absorb information faster and longer with unified notes, flashcards, and mind mapping.**
+<!-- ===================== Hero ===================== -->
+<section class="osmosis-hero">
+  <h1>Map your mind. Build your memory.</h1>
+  <p class="osmosis-hero__sub">
+    Absorb information faster and longer with unified notes, flashcards, and mind maps.
+  </p>
+  <div class="osmosis-hero__actions">
+    <a class="osmosis-btn osmosis-btn--primary" href="getting-started/installation/">Install Osmosis</a>
+    <a class="osmosis-btn osmosis-btn--ghost" href="getting-started/quick-start/">Quick start &rarr;</a>
+  </div>
+  <p class="osmosis-hero__note">Free and open source &middot; GPL-3.0 &middot; Requires Obsidian 1.13+</p>
+  <div class="osmosis-hero__media">
+    <!-- MEDIA SWAP: replace with video V1 (note ↔ map two-way edit loop) -->
+    <img class="osmosis-media"
+         src="assets/media/osmosis_note_mind_map_split_view_zoomed.png"
+         alt="An Obsidian note and its Osmosis mind map side by side">
+  </div>
+</section>
 
-Osmosis turns your markdown notes into interactive mind maps and study material. Write once, study in multiple modes. No duplicate content, no external tools, no proprietary formats.
+<!-- ===================== Story 1 — mind maps ===================== -->
+<section class="osmosis-story">
+  <div class="osmosis-story__copy">
+    <p class="osmosis-home__eyebrow">Mind maps</p>
+    <h2>Your notes, as a map you can edit.</h2>
+    <p class="osmosis-story__body">
+      Headings become branches. Lists become nodes. Drag a branch somewhere new
+      and your Markdown updates immediately — edit the Markdown and the map
+      follows.
+    </p>
+    <p class="osmosis-story__body">
+      Other tools render Markdown into a mind map and stop there. Osmosis
+      writes back.
+    </p>
+    <a class="osmosis-story__link" href="mind-mapping/">Explore mind mapping &rarr;</a>
+  </div>
+  <div class="osmosis-story__media">
+    <!-- MEDIA SWAP: replace with video V2 (add node, drag branch, fold subtree) -->
+    <img class="osmosis-media"
+         src="assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png"
+         alt="Dragging a node to a new parent in an Osmosis mind map">
+  </div>
+</section>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.13.0+-purple)](https://obsidian.md)
+<!-- ===================== Story 2 — flashcards ===================== -->
+<section class="osmosis-story osmosis-story--reverse">
+  <div class="osmosis-story__copy">
+    <p class="osmosis-home__eyebrow">Flashcards</p>
+    <h2>Cards that live in your notes.</h2>
+    <p class="osmosis-story__body">
+      Write a card in an <code>osmosis</code> fence wherever the idea comes up.
+      Basic, bidirectional, type-in, cloze, and code cloze — one syntax, five
+      card types, no separate app.
+    </p>
+    <p class="osmosis-story__body">
+      Or turn every line of a note into its own scheduled card with a single
+      command, anchored by native block IDs. Nothing gets authored twice.
+    </p>
+    <a class="osmosis-story__link" href="flashcards/card-types/">See the card types &rarr;</a>
+  </div>
+  <div class="osmosis-story__media">
+    <!-- MEDIA SWAP: replace with video V3 (fence → review → flip → grade) -->
+    <img class="osmosis-media"
+         src="assets/media/osmosis_sequential_study_flashcard_answer_frontback.png"
+         alt="An Osmosis flashcard showing its answer during review">
+  </div>
+</section>
 
-![Osmosis — notes and mind map side by side](assets/media/osmosis_note_mind_map_split_view_zoomed.png)
+<!-- ===================== Story 3 — study modes ===================== -->
+<section class="osmosis-story">
+  <div class="osmosis-story__copy">
+    <p class="osmosis-home__eyebrow">Study modes</p>
+    <h2>Study where the knowledge lives.</h2>
+    <p class="osmosis-story__body">
+      Sequential review when you want classic drilling. Contextual review to
+      study inline, surrounded by your own explanations and examples.
+    </p>
+    <p class="osmosis-story__body">
+      And spatial review — answer cards on the mind map itself, so you see how
+      each fact connects to everything around it while you recall it.
+    </p>
+    <a class="osmosis-story__link" href="studying/study-modes/">Compare study modes &rarr;</a>
+  </div>
+  <div class="osmosis-story__media">
+    <!-- MEDIA SWAP: replace with video V4 (spatial study: reveal + grade) -->
+    <img class="osmosis-media"
+         src="assets/media/osmosis_spatial_study_mode_revealed.png"
+         alt="Spatial study mode revealing a card answer on the mind map">
+  </div>
+</section>
 
+<!-- ===================== Story 4 — plain Markdown ===================== -->
+<section class="osmosis-story osmosis-story--reverse">
+  <div class="osmosis-story__copy">
+    <p class="osmosis-home__eyebrow">Your data</p>
+    <h2>Plain Markdown. Forever.</h2>
+    <p class="osmosis-story__body">
+      Cards, scheduling state, and map styling all live in the note — in the
+      fence and the frontmatter. No database, no account, no proprietary file
+      format.
+    </p>
+    <p class="osmosis-story__body">
+      Your vault syncs the way it always has. And because it is only ever text,
+      an AI assistant can read and write your study material natively.
+    </p>
+    <a class="osmosis-story__link" href="flashcards/">How cards are stored &rarr;</a>
+  </div>
+  <div class="osmosis-story__media">
 
-## Features
+````markdown
+## Ownership and borrowing
 
-- **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
-- **Five Card Types** — Basic Q&A, bidirectional, type-in, cloze deletion, and code cloze — all defined with a simple code fence syntax
-- **Notes as Flashcards** — One command turns every line of a note into its own scheduled card, anchored by native block IDs — no duplicate authoring
-- **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
-- **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
-- **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences and note frontmatter — no external databases, no sync issues
-- **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
-- **Reading Mode for Maps** — Flip a map into a read-only surface where nothing can be edited by accident, but pan, zoom, fold, and study all still work
-- **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
-- **Dashboard** — See all your decks, due card counts, and study statistics at a glance
+- Each value has exactly one owner ^b3f1a2
 
-## Why Osmosis?
+```osmosis
+type: basic
+Q: What happens when an owner goes out of scope?
+A: The value is dropped and its memory freed.
+due: 2026-08-02
+stability: 12.4
+```
+````
 
-Most mind mapping and flashcard tools force you to choose: either your notes are the source of truth, or the tool is. Osmosis refuses that tradeoff.
+  </div>
+</section>
 
-🗺️ **Not just a viewer — a full editor.** Tools like [Markmap](https://markmap.js.org/) render beautiful mind maps from Markdown, but they're read-only. Osmosis mind maps are fully interactive — add nodes, edit text, rearrange branches — and every change writes back to your Markdown instantly.
+<!-- ===================== Feature grid ===================== -->
+<section class="osmosis-features">
+  <div class="osmosis-home__inner">
+    <h2>Discover more</h2>
+    <ul class="osmosis-features__grid">
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+        <h3>FSRS scheduling</h3>
+        <p>The algorithm behind modern Anki, scheduling every card in your vault.</p>
+      </li>
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2a10 10 0 0 0 0 20 2 2 0 0 0 2-2v-1a2 2 0 0 1 2-2h2a4 4 0 0 0 4-4 10 10 0 0 0-10-9z"/></svg>
+        <h3>Themes and styling</h3>
+        <p>Built-in map themes plus per-node colors, shapes, and layout controls.</p>
+      </li>
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+        <h3>Reading mode</h3>
+        <p>Flip a map read-only. Pan, zoom, fold, and study still work; nothing moves by accident.</p>
+      </li>
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.001"/><path d="M10 8h.001"/><path d="M14 8h.001"/><path d="M18 8h.001"/><path d="M6 12h.001"/><path d="M18 12h.001"/><path d="M10 12h4"/><path d="M7 16h10"/></svg>
+        <h3>Keyboard navigation</h3>
+        <p>Full keyboard control for map editing and for working through a review session.</p>
+      </li>
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        <h3>Study dashboard</h3>
+        <p>Every deck, due count, and study statistic in a single panel.</p>
+      </li>
+      <li>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        <h3>Map transclusion</h3>
+        <p>Embed one map inside another and build a master map of an entire subject.</p>
+      </li>
+    </ul>
+  </div>
+</section>
 
-🔓 **Not proprietary — plain Markdown.** Tools like [Xmind](https://xmind.com/) are powerful mind mappers, but your data lives in a proprietary format. With Osmosis, Markdown *is* the format. Your notes work everywhere, with every tool, forever.
+<!-- ===================== Closing CTA ===================== -->
+<section class="osmosis-cta">
+  <div class="osmosis-home__inner">
+    <h2>Start with one note.</h2>
+    <p>
+      Open any Markdown file you already have, press the mind map button, and
+      look at your own structure. Nothing to import, nothing to convert.
+    </p>
+    <div class="osmosis-cta__actions">
+      <a class="osmosis-btn osmosis-btn--primary" href="getting-started/installation/">Install Osmosis</a>
+      <a class="osmosis-btn osmosis-btn--ghost" href="use-cases/">See how others use it &rarr;</a>
+    </div>
+  </div>
+</section>
 
-🤖 **AI-native by design.** Plain Markdown means AI assistants can read, generate, and edit your content natively — flashcards, mind maps, study material — no export, no conversion, no friction.
-
-🧩 **Notes + mind maps + flashcards in one file.** Other tools force you to maintain these in separate apps. Osmosis unifies all three in a single Markdown file. Your headings become mind map branches. Your `osmosis` code fences become flashcards. One file, three views, zero duplication.
-
-🧭 **Spatial study mode.** Study your flashcards *on* the mind map. Cards appear right where they belong in your knowledge structure — no other tool lets you see how each fact connects to the bigger picture while you review.
-
-📝 **Contextual study mode.** Study cards inline in your notes, right where you wrote them. Review surrounded by your own explanations and examples instead of being yanked into a separate flashcard app.
-
-🔗 **Mind map transclusion.** Embed one mind map inside another with `![[note]]`. Build a master map of an entire subject by transcluding individual topic maps — zoom from the 30,000-foot view down to granular detail.
-
-## Who It's For
-
-**The Med Student** — You're drowning in anatomy, pharmacology, and pathology. You already use Anki, but maintaining two separate systems — notes and flashcards — is killing your workflow. Osmosis lets you define flashcards right inside your lecture notes, so your study material lives where you take notes. Mind maps help you see how body systems connect. FSRS keeps you on schedule.
-
-**The Self-Taught Developer** — You're learning a new language, framework, or codebase on your own. Code cloze cards let you drill syntax and API patterns. Mind maps give you the big-picture architecture view. Everything stays in the same Markdown files you already take notes in.
-
-**The Lifelong Learner** — You read books, watch lectures, and take notes — but forget most of it within weeks. Spaced repetition fixes that. Osmosis lets you embed flashcards right where you take notes, so you actually retain what you learn. No separate app, no export step.
-
-**The Obsidian Power User** — You've built your second brain in Obsidian and you want mind mapping and spaced repetition without leaving the ecosystem. No proprietary formats, no external accounts, no sync issues. Plain Markdown, full ownership.
-
-**The Visual Thinker** — Outlines and bullet points don't click for you. You need to see the structure. Osmosis turns any Markdown file into an interactive mind map you can edit, rearrange, and study from — bridging the gap between linear notes and spatial understanding.
-
-## Views
-
-### Mind Map View
-
-![Mind Map View](assets/media/osmosis_mind_map_default_theme.png){width=65%}
-
-Your Markdown rendered as a fully interactive mind map:
-
-- Headings become branches, lists become child nodes
-- Click any node to edit — changes sync back to the Markdown instantly
-- Pan, zoom, and navigate with keyboard shortcuts
-- Multiple themes and color schemes
-- Viewport culling for large documents (1000+ nodes)
-
-### Flashcard View
-
-![Flashcard Answer](assets/media/osmosis_sequential_study_flashcard_answer_frontback.png){width=45%}
-
-Cards defined with a simple `osmosis` code fence:
-
-- **Basic** — Question and answer
-- **Bidirectional** — Study in both directions
-- **Type-in** — Type your answer before revealing
-- **Cloze** — Fill-in-the-blank with `==highlighted==` or `**bold**` markers
-- **Code Cloze** — Cloze deletions inside code blocks
-
-### Study Dashboard
-
-![Study Dashboard](assets/media/osmosis_flashcard_dashboard.png){width=25%}
-
-Central hub for all your study sessions:
-
-- Deck overview with due card counts
-- Study statistics and progress tracking
-- One-click access to sequential, contextual, or spatial study modes
-
-## How It Works
-
-Osmosis gives you three views of the same markdown content:
-
-1. **Mind Map View** — Your headings and lists rendered as an interactive, editable mind map with themes, styling, and keyboard shortcuts
-2. **Flashcard View** — Cards defined with a simple fence syntax, scheduled by the FSRS algorithm
-3. **Study Modes** — Sequential (classic Anki-style), contextual (inline in your notes), and spatial (on the mind map)
-
-Everything lives in your markdown files. Card scheduling data is stored in the fences and note frontmatter — no external databases, no sync issues. Any file sync service works automatically.
+</div>
