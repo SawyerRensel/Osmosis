@@ -6,9 +6,6 @@ icon: lucide/download
 
 ## From Community Plugins
 
-!!! note "Coming soon"
-    Osmosis will be available in the Obsidian Community Plugins directory once it reaches stable release.
-
 1. Open **Settings > Community Plugins > Browse**
 2. Search for "Osmosis"
 3. Click **Install**, then **Enable**

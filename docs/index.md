@@ -122,11 +122,19 @@ hide:
 - Each value has exactly one owner ^b3f1a2
 
 ```osmosis
-type: basic
-Q: What happens when an owner goes out of scope?
-A: The value is dropped and its memory freed.
-due: 2026-08-02
-stability: 12.4
+id: os-3jds9x
+due: 2026-05-02T19:52:12.592Z
+stability: 2.0215
+difficulty: 6.3909
+reps: 3
+lapses: 0
+state: review
+last-review: 2026-04-30T19:52:12.592Z
+learning-steps: 0
+
+What happens when an owner goes out of scope?
+***
+The value is dropped and its memory freed.
 ```
 ````
 
