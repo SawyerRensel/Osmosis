@@ -65,7 +65,7 @@ export class ContextualStudyProcessor {
 			"osmosis",
 			(source: string, el: HTMLElement, ctx) => {
 				// Defer so the element is attached to the DOM before we check context
-				requestAnimationFrame(() => {
+				window.requestAnimationFrame(() => {
 					const inLivePreview = el.closest(".is-live-preview") !== null;
 
 					if (inLivePreview) {

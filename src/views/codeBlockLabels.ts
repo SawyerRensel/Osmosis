@@ -19,9 +19,6 @@ export function addCodeBlockLanguageLabels(root: HTMLElement): void {
 		if (!lang || lang.startsWith("ad-")) continue;
 
 		pre.classList.add("osmosis-code-block");
-		const label = pre.ownerDocument.createElement("span");
-		label.className = "osmosis-code-lang-label";
-		label.textContent = lang;
-		pre.appendChild(label);
+		pre.createSpan({ cls: "osmosis-code-lang-label", text: lang });
 	}
 }

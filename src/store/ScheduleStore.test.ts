@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+// ScheduleStore debounces via window.setTimeout (Obsidian runs in a browser
+// context and popout windows need the window-scoped timer).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TFile } from "obsidian";
 import type { ScheduleData } from "../database/types";
@@ -317,8 +320,8 @@ describe("ScheduleStore", () => {
 			(notePath: string) =>
 				options?.missingPaths?.has(notePath)
 					? null
-					: // eslint-disable-next-line obsidianmd/no-tfile-tfolder-cast -- test double, no real vault
-						({ path: notePath } as TFile),
+					: // Test double — ScheduleStore only ever reads `.path`.
+						({ path: notePath } as never),
 		);
 
 		return { store, frontmatters, writeCounts, processFrontMatter };

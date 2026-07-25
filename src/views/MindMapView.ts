@@ -17,6 +17,7 @@ import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
+import * as edit from "../mindmap-edit";
 import {
 	computeLayout,
 	LayoutNode,
@@ -36,7 +37,7 @@ import {
 	EmbeddableMarkdownEditor,
 	autoResizeExtension,
 } from "../editor/EmbeddableMarkdownEditor";
-// eslint-disable-next-line import/no-extraneous-dependencies
+/* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
@@ -73,6 +74,13 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
+/** A single reversible map edit: a file's content before and after the change. */
+interface MapEditSnapshot {
+	path: string;
+	before: string;
+	after: string;
+}
+
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
@@ -100,6 +108,21 @@ export class MindMapView extends ItemView {
 	/** Transclusion nodes deferred for lazy loading (not yet parsed/expanded). */
 	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
+
+	// Undo/redo history. Map edits write to disk directly (vault.modify /
+	// processFrontMatter), bypassing CodeMirror, so there is no editor history to
+	// forward to — the map keeps its own snapshot stack of file content before
+	// and after each edit, covering both text/structure and style writes. Cleared
+	// when the map switches to a different file.
+	private readonly undoStack: MapEditSnapshot[] = [];
+	private readonly redoStack: MapEditSnapshot[] = [];
+
+	// Live-edit session (e.g. a color-picker drag). While active, self-writes
+	// neither trigger a reload — which would tear down an open picker mid-drag —
+	// nor push individual undo entries; instead the whole session collapses into
+	// one before→after snapshot recorded when it ends.
+	private liveEditActive = false;
+	private liveEditSnapshot: MapEditSnapshot | null = null;
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -147,7 +170,7 @@ export class MindMapView extends ItemView {
 	// Cursor sync state
 	private parser = new OsmosisParser();
 	private cursorSyncNodeId: string | null = null;
-	private cursorSyncTimer: ReturnType<typeof setTimeout> | null = null;
+	private cursorSyncTimer: number | null = null;
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
@@ -167,7 +190,7 @@ export class MindMapView extends ItemView {
 
 	// Touch/pointer state
 	private activePointers = new Map<number, { x: number; y: number }>();
-	private longPressTimer: ReturnType<typeof setTimeout> | null = null;
+	private longPressTimer: number | null = null;
 	private longPressTriggered = false;
 	private lastTapTime = 0;
 	private lastTapPosition = { x: 0, y: 0 };
@@ -535,14 +558,14 @@ export class MindMapView extends ItemView {
 		sourcePath: string,
 		ns?: string,
 	): Promise<void> {
-		const createElement = (tag: string, cls: string): HTMLElement => {
+		const createElement = (tag: keyof HTMLElementTagNameMap, cls: string): HTMLElement => {
 			if (ns) {
 				const el = document.createElementNS(ns, tag) as HTMLElement;
 				el.setAttribute("xmlns", ns);
 				el.className = cls;
 				return el;
 			}
-			const el = document.createElement(tag);
+			const el = createEl(tag);
 			el.className = cls;
 			return el;
 		};
@@ -1147,6 +1170,15 @@ export class MindMapView extends ItemView {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (file instanceof TFile && file === this.currentFile) {
+					if (this.liveEditActive) {
+						// A live-edit session (color-picker drag) drives rendering
+						// directly via applyMapSettings/render; ignore our own writes
+						// so a stray reload can't tear down the open picker mid-drag.
+						// suppressNextReload is a single boolean and can't cover the
+						// burst of writes a drag produces, so gate on the session.
+						this.suppressNextReload = false;
+						return;
+					}
 					if (this.suppressNextReload) {
 						this.suppressNextReload = false;
 						return;
@@ -1229,7 +1261,7 @@ export class MindMapView extends ItemView {
 		this.rubberBandRect?.remove();
 		this.rubberBandRect = null;
 		if (this.cursorSyncTimer) {
-			clearTimeout(this.cursorSyncTimer);
+			window.clearTimeout(this.cursorSyncTimer);
 			this.cursorSyncTimer = null;
 		}
 		this.cleanupDrag();
@@ -1255,10 +1287,12 @@ export class MindMapView extends ItemView {
 			this.exitSpatialMode();
 		}
 
-		// Clear caches when switching to a different file
+		// Clear caches and undo history when switching to a different file
 		if (file !== this.currentFile) {
 			this.nodeSizeCache.clear();
 			this.nodeHtmlCache.clear();
+			this.undoStack.length = 0;
+			this.redoStack.length = 0;
 		}
 		this.currentFile = file;
 		const content = await this.app.vault.read(file);
@@ -1407,13 +1441,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				if (variantName) {
@@ -1422,7 +1453,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1455,13 +1485,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1499,13 +1526,10 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
@@ -1536,11 +1560,9 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1575,11 +1597,9 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
@@ -1592,7 +1612,6 @@ export class MindMapView extends ItemView {
 					delete osmosis["activeVariant"];
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1627,13 +1646,10 @@ export class MindMapView extends ItemView {
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1701,7 +1717,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1742,13 +1757,10 @@ export class MindMapView extends ItemView {
 
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
@@ -1786,7 +1798,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenStyles = { ...styles };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1816,13 +1827,10 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
 				osmosis["classes"] = classes;
@@ -1859,13 +1867,10 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Remove the class definition
@@ -1894,7 +1899,6 @@ export class MindMapView extends ItemView {
 					writtenStyles = { ...styles };
 				}
 
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -1928,13 +1932,10 @@ export class MindMapView extends ItemView {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				fm["osmosis-styles"] = osmosis;
 
 				// Rename the class definition
@@ -1992,11 +1993,9 @@ export class MindMapView extends ItemView {
 		// Also clear assignments in the current note's frontmatter
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -2010,7 +2009,6 @@ export class MindMapView extends ItemView {
 						}
 					}
 					if (Object.keys(styles).length === 0) delete osmosis["styles"];
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 					if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 				},
 			);
@@ -2048,11 +2046,9 @@ export class MindMapView extends ItemView {
 		// Update node references in the current note
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.app.fileManager.processFrontMatter(
+			await this.processFrontMatterTracked(
 				this.currentFile,
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				(fm: any) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+				(fm: Record<string, unknown>) => {
 					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
@@ -2124,11 +2120,9 @@ export class MindMapView extends ItemView {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.processFrontMatterTracked(
 			this.currentFile,
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			(fm: any) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
 				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
@@ -2139,7 +2133,6 @@ export class MindMapView extends ItemView {
 				} else {
 					writtenClasses = { ...classes };
 				}
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
 		);
@@ -2242,8 +2235,7 @@ export class MindMapView extends ItemView {
 			return;
 		}
 		try {
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-			const parsed = parseYaml(match[1]);
+			const parsed: unknown = parseYaml(match[1]);
 			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
 				parsed as Record<string, unknown> | undefined,
 			);
@@ -2417,7 +2409,7 @@ export class MindMapView extends ItemView {
 	/** Schedule a viewport cull update on the next animation frame */
 	private scheduleCullUpdate(): void {
 		if (this.cullRafId !== null) return;
-		this.cullRafId = requestAnimationFrame(() => {
+		this.cullRafId = window.requestAnimationFrame(() => {
 			this.cullRafId = null;
 			void this.updateVisibleNodes();
 		});
@@ -2580,7 +2572,7 @@ export class MindMapView extends ItemView {
 			// Touch: start long-press timer for selection mode + potential drag
 			if (e.pointerType === "touch") {
 				this.longPressTriggered = false;
-				this.longPressTimer = setTimeout(() => {
+				this.longPressTimer = window.setTimeout(() => {
 					this.longPressTriggered = true;
 					// Enter touch selection mode and select this node
 					this.touchSelectionMode = true;
@@ -2928,7 +2920,7 @@ export class MindMapView extends ItemView {
 
 	private cancelLongPress(): void {
 		if (this.longPressTimer !== null) {
-			clearTimeout(this.longPressTimer);
+			window.clearTimeout(this.longPressTimer);
 			this.longPressTimer = null;
 		}
 	}
@@ -3283,7 +3275,7 @@ export class MindMapView extends ItemView {
 		// Add animation class to SVG for CSS-driven transition
 		if (this.svg) {
 			this.svg.addClass("osmosis-animating");
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.svg?.removeClass("osmosis-animating");
 			}, COLLAPSE_ANIMATION_MS);
 		}
@@ -3434,19 +3426,28 @@ export class MindMapView extends ItemView {
 		if (!this.assertEditable()) return;
 		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
 
-		// Collect ranges sorted by position (descending) to process from end
-		const ranges: { start: number; end: number }[] = [];
+		// Collect the selected nodes, then their ranges (descending, to process
+		// from end so earlier offsets stay valid).
+		const selectedSrcs: OsmosisNode[] = [];
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (!node) continue;
-			ranges.push({
-				start: node.source.range.start,
-				end: this.subtreeEnd(node.source),
-			});
+			if (node) selectedSrcs.push(node.source);
 		}
-		ranges.sort((a, b) => b.start - a.start);
+		if (selectedSrcs.length === 0) return;
 
-		let content = await this.app.vault.read(this.currentFile);
+		// All ranges are spliced out of one file; refuse a mixed-file selection.
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
+		const file = this.getNodeFile(selectedSrcs[0]!);
+		if (!file) return;
+
+		const ranges = selectedSrcs
+			.map((src) => ({
+				start: src.range.start,
+				end: this.subtreeEnd(src),
+			}))
+			.sort((a, b) => b.start - a.start);
+
+		let content = await this.app.vault.read(file);
 
 		for (const range of ranges) {
 			let deleteStart = range.start;
@@ -3466,7 +3467,7 @@ export class MindMapView extends ItemView {
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeMarkdown(this.renumberOrderedLists(content));
+		await this.writeNodeFile(selectedSrcs[0]!, content);
 		this.selectFirstNode();
 	}
 
@@ -3502,10 +3503,11 @@ export class MindMapView extends ItemView {
 		const swapSrc = siblings[swapIdx];
 		if (!swapSrc) return;
 
-		const content = await this.app.vault.read(file);
-
 		// Collect all selected subtree texts in order
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit([...selectedSrcs, swapSrc])) return;
+
+		const content = await this.app.vault.read(file);
 		const blockStart = selectedSrcs[0]!.range.start;
 		const blockEnd = this.subtreeEnd(
 			selectedSrcs[selectedSrcs.length - 1]!,
@@ -3615,6 +3617,14 @@ export class MindMapView extends ItemView {
 		const firstSrc = siblings[firstIdx]!;
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
+
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				prevSibling,
+			])
+		)
+			return;
 
 		const content = await this.app.vault.read(file);
 
@@ -3742,6 +3752,16 @@ export class MindMapView extends ItemView {
 		const file = this.getNodeFile(firstSrc);
 		if (!file) return;
 
+		// Outdenting inserts the block relative to the parent's subtree, so the
+		// parent must live in the same file as the moved nodes.
+		if (
+			!this.ensureSameFileEdit([
+				...selectedIndices.map((i) => siblings[i]!),
+				parentNode.source,
+			])
+		)
+			return;
+
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
 		const blockEnd = this.subtreeEnd(lastSrc);
@@ -3832,6 +3852,10 @@ export class MindMapView extends ItemView {
 			.filter((n): n is LayoutNode => n !== undefined)
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
+		// Every selected subtree is sliced from `file`; a mixed-file selection
+		// would slice one file's bytes at another's offsets.
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
+
 		const texts: string[] = [];
 		for (const sel of selected) {
 			const start = sel.source.range.start;
@@ -3899,85 +3923,14 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Skips content lines inside code fences (only adjusts fence line indentation).
+	 * Delegates to the tested pure transform in `mindmap-edit`.
 	 */
 	private adjustPasteDepth(
 		text: string,
 		sourceType: OsmosisNode["type"],
 		depthDelta: number,
 	): string {
-		const lines = text.split("\n");
-		const result: string[] = [];
-		let inCodeBlock = false;
-		let codeFenceChar = "";
-		let codeFenceLen = 0;
-
-		for (const line of lines) {
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-
-			// Code block: leave all lines (fences + content) untouched
-			if (inCodeBlock) {
-				if (
-					fenceMatch?.[1] &&
-					fenceMatch[1].charAt(0) === codeFenceChar &&
-					fenceMatch[1].length >= codeFenceLen &&
-					(fenceMatch[2] ?? "").trim() === ""
-				) {
-					inCodeBlock = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fenceMatch?.[1]) {
-				inCodeBlock = true;
-				codeFenceChar = fenceMatch[1].charAt(0);
-				codeFenceLen = fenceMatch[1].length;
-				result.push(line);
-				continue;
-			}
-
-			// Table lines (pipe-prefixed): leave untouched
-			if (/^\s*\|/.test(line)) {
-				result.push(line);
-				continue;
-			}
-
-			// Handle heading lines
-			const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-			if (headingMatch?.[1] && headingMatch[2] !== undefined) {
-				const oldLevel = headingMatch[1].length;
-				const newLevel = Math.max(
-					1,
-					Math.min(6, oldLevel + depthDelta),
-				);
-				result.push("#".repeat(newLevel) + " " + headingMatch[2]);
-				continue;
-			}
-
-			// Handle list lines (tab or space indented)
-			const listMatch = line.match(/^(\t*)([ ]*)(.*)$/);
-			if (listMatch?.[3] !== undefined) {
-				const currentTabs = listMatch[1]?.length ?? 0;
-				const currentSpaces = listMatch[2]?.length ?? 0;
-				const currentDepth =
-					currentTabs + Math.floor(currentSpaces / 2);
-				const newDepth = Math.max(0, currentDepth + depthDelta);
-				result.push(
-					"\t".repeat(newDepth) +
-					listMatch[3].replace(/^[ \t]*/, ""),
-				);
-				continue;
-			}
-
-			result.push(line);
-		}
-
-		return result.join("\n");
+		return edit.adjustPasteDepth(text, sourceType, depthDelta);
 	}
 
 	/**
@@ -4008,6 +3961,12 @@ export class MindMapView extends ItemView {
 			const firstSrc = siblings[selectedIndices[0]!]!;
 			const lastSrc =
 				siblings[selectedIndices[selectedIndices.length - 1]!]!;
+			if (
+				!this.ensureSameFileEdit(
+					selectedIndices.map((i) => siblings[i]!),
+				)
+			)
+				return;
 			blockStart = firstSrc.range.start;
 			blockEnd = this.subtreeEnd(lastSrc);
 		} else {
@@ -4080,6 +4039,7 @@ export class MindMapView extends ItemView {
 			.sort((a, b) => a.source.range.start - b.source.range.start);
 
 		if (selected.length === 0) return;
+		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
 
 		// Find the block range covering all selected subtrees
 		const blockStart = selected[0]!.source.range.start;
@@ -4777,14 +4737,27 @@ export class MindMapView extends ItemView {
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
 
-		const content = await this.app.vault.read(this.currentFile);
-
 		// Find the target parent and insertion point
 		const targetParent = this.findNodeById(
 			this.currentTree.root,
 			dropTarget.parentId,
 		);
 		if (!targetParent) return;
+
+		// Refuse drops that cross a file boundary (e.g. an embedded node onto a
+		// local parent, or between two different embeds). Node ranges are
+		// per-file, so slicing/splicing across files corrupts the destination —
+		// most visibly the `![[embed]]` line itself.
+		if (!edit.sameEditTarget(dragNode.source, targetParent)) {
+			new Notice("Osmosis: can't move a node across an embed boundary");
+			return;
+		}
+
+		// Read (and later write) the file the dragged node actually lives in —
+		// the parent note for local nodes, the source note for embedded ones.
+		const file = this.getNodeFile(dragNode.source);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
 		const parentSrc = dragNode.parent.source;
@@ -4831,7 +4804,10 @@ export class MindMapView extends ItemView {
 		}
 		let dragText = reindentedParts.join("\n");
 
-		// Determine insertion offset in the markdown
+		// Determine insertion offset in the markdown. Use host-file offsets: a
+		// reference child may be transcluded content (its own `range` indexes
+		// the source note), so an embed collapses to its `![[…]]` line's host
+		// span rather than splicing a source offset into this file.
 		let insertOffset: number;
 		if (dropTarget.index >= targetParent.children.length) {
 			// Append after last child's subtree
@@ -4839,7 +4815,7 @@ export class MindMapView extends ItemView {
 				const lastChild =
 					targetParent.children[targetParent.children.length - 1];
 				if (lastChild) {
-					insertOffset = this.subtreeEnd(lastChild);
+					insertOffset = this.subtreeHostEnd(lastChild);
 				} else {
 					insertOffset = this.subtreeEnd(targetParent);
 				}
@@ -4850,7 +4826,7 @@ export class MindMapView extends ItemView {
 			// Insert before the child at dropTarget.index
 			const targetChild = targetParent.children[dropTarget.index];
 			if (targetChild) {
-				insertOffset = targetChild.range.start;
+				insertOffset = this.nodeHostStart(targetChild);
 			} else {
 				insertOffset = this.subtreeEnd(targetParent);
 			}
@@ -4919,7 +4895,9 @@ export class MindMapView extends ItemView {
 		}
 
 		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeMarkdown(this.renumberOrderedLists(updated));
+		// writeNodeFile renumbers and routes to the correct file (parent note
+		// or embedded source) based on the dragged node.
+		await this.writeNodeFile(dragNode.source, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -5055,9 +5033,9 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Re-indent a subtree's text to match a new type/depth.
-	 * Adjusts the first line and all descendant lines proportionally.
-	 * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
+	 * Re-indent a subtree's text to match a new type/depth. Delegates to the
+	 * tested pure transform in `mindmap-edit` (preserves the first line's
+	 * block ID, which `content` has stripped).
 	 */
 	private reindentSubtree(
 		text: string,
@@ -5065,104 +5043,7 @@ export class MindMapView extends ItemView {
 		newType: OsmosisNode["type"],
 		newDepth: number,
 	): string {
-		// Code blocks, tables, and blockquotes are atomic — never re-indent
-		// their contents (blockquote `>` markers must stay intact).
-		if (
-			originalNode.type === "codeblock" ||
-			originalNode.type === "table" ||
-			originalNode.type === "blockquote"
-		)
-			return text;
-
-		// When converting heading → list type, strip internal blank lines
-		// that were added by normalizeHeadingSpacing — they break list nesting.
-		const crossingToList =
-			originalNode.type === "heading" && newType !== "heading";
-		const rawLines = text.split("\n");
-		const lines = crossingToList
-			? rawLines.filter((l) => l.trim() !== "")
-			: rawLines;
-		const result: string[] = [];
-
-		// Calculate child depth delta — depends on whether we're crossing type boundaries.
-		// Heading children start at bullet depth 0; bullet children are at parent depth + 1.
-		const oldChildBase =
-			originalNode.type === "heading" || originalNode.type === "root" || originalNode.type === "paragraph"
-				? 0
-				: originalNode.depth + 1;
-		const newChildBase =
-			newType === "heading" || newType === "root" || newType === "paragraph" ? 0 : newDepth + 1;
-		const childDepthDelta = newChildBase - oldChildBase;
-
-		let inFence = false;
-		let fenceChar = "";
-		let fenceLen = 0;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (line === undefined) continue;
-			if (line.trim() === "") {
-				result.push(line);
-				continue;
-			}
-
-			// Code block: leave all lines (fences + content) untouched
-			const trimmed = line.trimStart();
-			const fm = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
-			if (inFence) {
-				if (
-					fm?.[1] &&
-					fm[1].charAt(0) === fenceChar &&
-					fm[1].length >= fenceLen &&
-					(fm[2] ?? "").trim() === ""
-				) {
-					inFence = false;
-				}
-				result.push(line);
-				continue;
-			} else if (fm?.[1]) {
-				inFence = true;
-				fenceChar = fm[1].charAt(0);
-				fenceLen = fm[1].length;
-				result.push(line);
-				continue;
-			}
-
-			if (i === 0) {
-				// First line: serialize with new type and depth
-				result.push(
-					this.serializeLine(newType, newDepth, originalNode.content),
-				);
-			} else {
-				// Descendant lines: check if heading or list
-				const headingMatch = line.match(/^(#{1,6})\s+(.*)/);
-				if (headingMatch?.[1]) {
-					// Heading descendant: adjust heading level
-					const oldLevel = headingMatch[1].length;
-					const newLevel = Math.max(
-						1,
-						Math.min(6, oldLevel + childDepthDelta),
-					);
-					result.push(
-						"#".repeat(newLevel) + " " + (headingMatch[2] ?? ""),
-					);
-				} else {
-					// List/other descendant: adjust tab indentation
-					const match = line.match(/^(\t*)([ ]*)/);
-					const currentTabs = match?.[1]?.length ?? 0;
-					const currentSpaces = match?.[2]?.length ?? 0;
-					const currentDepth =
-						currentTabs + Math.floor(currentSpaces / 2);
-					const newTabDepth = Math.max(
-						0,
-						currentDepth + childDepthDelta,
-					);
-					result.push("\t".repeat(newTabDepth) + line.trimStart());
-				}
-			}
-		}
-
-		return result.join("\n");
+		return edit.reindentSubtree(text, originalNode, newType, newDepth);
 	}
 
 	// ─── Keyboard ────────────────────────────────────────────
@@ -5731,7 +5612,7 @@ export class MindMapView extends ItemView {
 		const isMobile = Platform.isMobile;
 
 		// Create container div for the embedded editor
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
@@ -5787,7 +5668,7 @@ export class MindMapView extends ItemView {
 		this.editContainer = container;
 
 		// Add save/cancel buttons floating above the editor
-		const cancelBtn = document.createElement("button");
+		const cancelBtn = createEl("button");
 		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
 		cancelBtn.setAttribute("aria-label", "Cancel editing");
 		cancelBtn.textContent = "Cancel";
@@ -5796,7 +5677,7 @@ export class MindMapView extends ItemView {
 			e.stopPropagation();
 			this.stopEditing(false);
 		});
-		const saveBtn = document.createElement("button");
+		const saveBtn = createEl("button");
 		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
 		saveBtn.setAttribute("aria-label", "Save changes");
 		saveBtn.textContent = "Save";
@@ -5842,7 +5723,7 @@ export class MindMapView extends ItemView {
 				},
 				onBlur: () => {
 					// Small delay to allow click events to process first
-					setTimeout(() => {
+					window.setTimeout(() => {
 						if (this.editingNodeId === nodeId) {
 							this.stopEditing(true);
 						}
@@ -5973,10 +5854,10 @@ export class MindMapView extends ItemView {
 		scaledFontSize: number,
 		isMobile: boolean,
 	): void {
-		const container = document.createElement("div");
+		const container = createDiv();
 		container.className = "osmosis-edit-overlay";
 
-		const input = document.createElement("textarea");
+		const input = createEl("textarea");
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
 		input.value = node.source.content;
 		input.rows = 1;
@@ -6025,7 +5906,7 @@ export class MindMapView extends ItemView {
 		});
 
 		input.addEventListener("blur", () => {
-			setTimeout(() => {
+			window.setTimeout(() => {
 				if (this.editingNodeId === nodeId) {
 					this.stopEditing(true);
 				}
@@ -6125,88 +6006,212 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Serialize a node type/depth/content back to a markdown line.
+	 * Serialize a node type/depth/content back to a markdown line. Delegates to
+	 * the tested pure transform in `mindmap-edit`; pass `blockId` to preserve a
+	 * trailing `^id` (the parser strips it out of `content`).
 	 */
 	private serializeLine(
 		type: OsmosisNode["type"],
 		depth: number,
 		content: string,
+		blockId?: string,
 	): string {
-		switch (type) {
-			case "heading":
-				return `${"#".repeat(depth)} ${content}`;
-			case "bullet":
-				return `${"\t".repeat(depth)}- ${content}`;
-			case "ordered":
-				return `${"\t".repeat(depth)}1. ${content}`;
-			case "paragraph":
-				return content;
-			case "table":
-				return content;
-			case "blockquote":
-				// Content already carries its `>` markers verbatim.
-				return content;
-			case "transclusion":
-				return `![[${content}]]`;
-			default:
-				return content;
-		}
+		return edit.serializeLine(type, depth, content, blockId);
 	}
 
 	/**
-	 * Find the end of a node's entire subtree (the max range.end of all descendants).
+	 * Find the end of a node's entire subtree. Delegates to the tested pure
+	 * transform in `mindmap-edit` (includes any trailing `^id` line).
 	 */
 	private subtreeEnd(node: OsmosisNode): number {
-		let end = node.range.end;
-		for (const child of node.children) {
-			end = Math.max(end, this.subtreeEnd(child));
-		}
-		return end;
+		return edit.subtreeEnd(node);
 	}
 
 	/**
-	 * Forward undo/redo to the markdown editor for the current file.
+	 * Start / end of a node in the file being spliced, folding an embed
+	 * expansion to its `![[…]]` line's host span. Used for drop insert offsets,
+	 * which may reference transcluded content whose own `range` indexes a
+	 * different (source) file. Delegates to `mindmap-edit`.
+	 */
+	private nodeHostStart(node: OsmosisNode): number {
+		return edit.nodeHostStart(node);
+	}
+	private subtreeHostEnd(node: OsmosisNode): number {
+		return edit.subtreeHostEnd(node);
+	}
+
+	/**
+	 * Undo or redo the last map edit from the view's own snapshot history.
+	 *
+	 * Map edits write to disk via vault.modify / processFrontMatter, bypassing
+	 * CodeMirror, so there is no editor undo stack to forward to — this restores
+	 * the recorded before/after content instead. Self-contained: it does not see
+	 * edits made in a separate Markdown editor, and no-ops when the relevant stack
+	 * is empty.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
-		if (!this.currentFile) return;
-		// Find an editor that has the same file open
-		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-			const view = leaf.view;
-			if (
-				view instanceof MarkdownView &&
-				view.file === this.currentFile
-			) {
-				// Suppress the vault modify event so we skip the full loadFile()
-				// cycle (async file read + transclusion expansion). Instead, read
-				// the new content directly from the editor (in-memory, instant).
-				this.suppressNextReload = true;
-				if (isRedo) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).redo();
-				} else {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-					(view.editor as any).undo();
-				}
-				const newContent = view.editor.getValue();
-				this.cache.invalidate(this.currentFile.path);
-				this.currentTree = this.cache.get(
-					this.currentFile.path,
-					newContent,
-				);
-				// Re-parse frontmatter from the editor content so style
-				// changes are reflected immediately (metadataCache is async).
-				this.reloadFrontmatterFromContent(newContent);
-				this.nodeSizeCache.clear();
-				void this.render();
-				return;
+		const source = isRedo ? this.redoStack : this.undoStack;
+		const edit = source.pop();
+		if (!edit) return;
+		(isRedo ? this.undoStack : this.redoStack).push(edit);
+		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
+	}
+
+	/** Undo the last map edit. Public entry point for the properties sidebar,
+	 *  which forwards Ctrl+Z/Y while it (not the map) holds keyboard focus. */
+	undo(): void {
+		this.forwardUndoRedo(false);
+	}
+
+	/** Redo the last undone map edit (see {@link undo}). */
+	redo(): void {
+		this.forwardUndoRedo(true);
+	}
+
+	/**
+	 * Begin a live-edit session — a burst of rapid writes from one interaction
+	 * (a color-picker drag) that should read as a single undoable change. Suspends
+	 * reload-on-modify (see the vault "modify" handler) and coalesces snapshots
+	 * until {@link endLiveEdit}.
+	 */
+	beginLiveEdit(): void {
+		this.liveEditActive = true;
+		this.liveEditSnapshot = null;
+	}
+
+	/** End a live-edit session, recording one snapshot for the whole burst. */
+	endLiveEdit(): void {
+		if (!this.liveEditActive) return;
+		this.liveEditActive = false;
+		const snap = this.liveEditSnapshot;
+		this.liveEditSnapshot = null;
+		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
+	}
+
+	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
+	private recordEdit(path: string, before: string, after: string): void {
+		if (before === after) return;
+		if (this.liveEditActive) {
+			// Coalescing: keep the pre-session content as the baseline and track
+			// the latest result; endLiveEdit records the single net change.
+			if (!this.liveEditSnapshot) {
+				this.liveEditSnapshot = { path, before, after };
+			} else if (this.liveEditSnapshot.path === path) {
+				this.liveEditSnapshot.after = after;
 			}
+			return;
 		}
-		// Fallback: execute Obsidian's built-in commands
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-		(this.app as any).commands?.executeCommandById?.(
-			isRedo ? "editor:redo" : "editor:undo",
+		this.undoStack.push({ path, before, after });
+		this.enforceUndoLimits();
+		// A fresh edit invalidates any redo history.
+		this.redoStack.length = 0;
+	}
+
+	/** In-memory byte estimate for one snapshot (UTF-16; path length negligible). */
+	private static snapshotBytes(snap: MapEditSnapshot): number {
+		return (snap.before.length + snap.after.length) * 2;
+	}
+
+	/**
+	 * Trim undo history to the configured step and memory limits, oldest first,
+	 * applying whichever is reached first. Only the growing undoStack is capped
+	 * (redoStack is transient — cleared on any fresh edit). At least the most
+	 * recent entry is always kept so a just-made edit stays undoable.
+	 */
+	private enforceUndoLimits(): void {
+		const maxSteps = Math.max(1, this.plugin.settings.undoMaxSteps);
+		while (this.undoStack.length > maxSteps) this.undoStack.shift();
+
+		const maxBytes = Math.max(1, this.plugin.settings.undoMaxMemoryMB) * 1024 * 1024;
+		let total = 0;
+		for (const snap of this.undoStack) total += MindMapView.snapshotBytes(snap);
+		while (this.undoStack.length > 1 && total > maxBytes) {
+			const removed = this.undoStack.shift();
+			if (removed) total -= MindMapView.snapshotBytes(removed);
+		}
+	}
+
+	/**
+	 * Frontmatter write that also records an undo snapshot. Every map style write
+	 * goes through this instead of `app.fileManager.processFrontMatter` directly,
+	 * so color/shape/variant changes are undoable alongside text edits. The
+	 * properties sidebar's map-level writes (theme/layout/background/reset/…) also
+	 * route here so they share one undo stack and snapshot path.
+	 */
+	async processFrontMatterTracked(
+		file: TFile,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		const before = await this.app.vault.read(file);
+		await this.app.fileManager.processFrontMatter(file, fn);
+		const after = await this.app.vault.read(file);
+		this.recordEdit(file.path, before, after);
+
+		// processFrontMatter inserts or grows the frontmatter block, shifting
+		// every body offset. Rebuild currentTree from the new content so a
+		// subsequent range-based structural edit (rename, move, drag, …) does
+		// not splice using stale (pre-write) offsets — which otherwise corrupts
+		// the file. Callers re-render afterward, repopulating nodeMap from this
+		// refreshed tree. (Reloads are suppressed, so nothing else re-parses.)
+		if (!this.currentFile) return;
+		this.cache.invalidate(file.path);
+		const currentPath = this.currentFile.path;
+		if (file.path === currentPath) {
+			this.currentTree = this.cache.get(currentPath, after);
+		} else {
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(currentPath);
+			this.currentTree = this.cache.get(currentPath, parentContent);
+		}
+		// Re-expand transclusions so embedded content (a no-op when the file has
+		// none) survives the tree rebuild instead of collapsing.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
 		);
+	}
+
+	/**
+	 * Restore a file to a snapshot's content (undo/redo target). Re-renders from
+	 * the restored content — reloading frontmatter and clearing the size cache so
+	 * both text and style changes are reflected. Handles the current file and a
+	 * transcluded source file, mirroring the two write paths.
+	 */
+	private async applySnapshot(path: string, content: string): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		if (!(file instanceof TFile)) return;
+		this.suppressNextReload = true;
+		this.cache.invalidate(path);
+		await this.app.vault.modify(file, content);
+
+		if (this.currentFile && path === this.currentFile.path) {
+			this.currentTree = this.cache.get(path, content);
+			this.reloadFrontmatterFromContent(content);
+			// Recompute derived map settings (theme/layout/background/branch line/…)
+			// from the restored frontmatter, mirroring the load flow — otherwise a
+			// map-level style undo/redo restores the file but not the live layout.
+			this.loadMapSettings();
+			this.nodeSizeCache.clear();
+			// Re-expand transclusions so an undo/redo of a local edit that
+			// carried an embed keeps it rendered, not collapsed to a bare
+			// `![[…]]` placeholder (mirrors writeMarkdown / the source branch).
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
+			await this.render();
+		} else if (this.currentFile) {
+			// Restored a transcluded source; re-read and re-expand the parent.
+			const parentContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(this.currentFile.path);
+			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
+			await this.transclusionResolver.expandTree(
+				this.currentTree,
+				this.lazyTransclusionIds,
+			);
+			await this.render();
+		}
 	}
 
 	/**
@@ -6215,12 +6220,23 @@ export class MindMapView extends ItemView {
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(this.currentFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(this.currentFile.path);
 		await this.app.vault.modify(this.currentFile, newContent);
+		this.recordEdit(this.currentFile.path, before, newContent);
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
+		// Re-expand transclusions so an embed the edit carried along (e.g. moving
+		// a local heading that contains an `![[embed]]`) renders expanded again
+		// instead of collapsing to a bare `![[…]]` placeholder. Mirrors
+		// writeTranscludedMarkdown / processFrontMatterTracked; a no-op when the
+		// file has no embeds.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
 		await this.render();
 	}
 
@@ -6237,9 +6253,11 @@ export class MindMapView extends ItemView {
 		if (!(sourceFile instanceof TFile)) return;
 
 		newContent = this.normalizeHeadingSpacing(newContent);
+		const before = await this.app.vault.read(sourceFile);
 		this.suppressNextReload = true;
 		this.cache.invalidate(sourceFilePath);
 		await this.app.vault.modify(sourceFile, newContent);
+		this.recordEdit(sourceFilePath, before, newContent);
 
 		// Re-read and re-expand the current (parent) file to pick up the change
 		const parentContent = await this.app.vault.read(this.currentFile);
@@ -6266,7 +6284,14 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const newLine = this.serializeLine(src.type, src.depth, newContent);
+		// Preserve the trailing block ID (line-card identity / style anchor) —
+		// `content`/`newContent` have it stripped, so it must be re-threaded.
+		const newLine = this.serializeLine(
+			src.type,
+			src.depth,
+			newContent,
+			src.blockId,
+		);
 		const updated =
 			content.slice(0, src.range.start) +
 			newLine +
@@ -6286,63 +6311,28 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Guard for structural edits that splice one file: every node involved must
+	 * share an edit target. A block span or insert offset from one file applied
+	 * to another's bytes corrupts the destination (most visibly the `![[embed]]`
+	 * line), so a move/reorder/indent/copy/delete that crosses a file boundary
+	 * (local ↔ embedded, or between two embeds) is refused with a notice.
+	 * Returns true when the edit is safe to proceed.
+	 */
+	private ensureSameFileEdit(nodes: OsmosisNode[]): boolean {
+		const first = nodes[0];
+		if (!first) return true;
+		if (nodes.every((n) => edit.sameEditTarget(first, n))) return true;
+		new Notice("Osmosis: can't move a node across an embed boundary");
+		return false;
+	}
+
+	/**
 	 * Renumber ordered list items so consecutive siblings at the same depth
-	 * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.
+	 * are numbered sequentially (1, 2, 3, ...). Delegates to the tested pure
+	 * transform in `mindmap-edit`.
 	 */
 	private renumberOrderedLists(text: string): string {
-		const lines = text.split("\n");
-		let inCodeBlock = false;
-		// Track the last ordered-list depth and per-depth counters.
-		// A blank line or non-ordered-list line resets the counter for that depth.
-		const counters = new Map<number, number>();
-		let prevWasOrdered = false;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]!;
-
-			// Track code fences
-			const trimmed = line.trimStart();
-			const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
-			if (fenceMatch) {
-				inCodeBlock = !inCodeBlock;
-				continue;
-			}
-			if (inCodeBlock) continue;
-
-			// Match ordered list lines: optional tabs/spaces, then digit(s), dot, space
-			const match = /^(\t*)([ ]*)(\d+)\.\s+(.*)$/.exec(line);
-			if (match?.[3] !== undefined && match[4] !== undefined) {
-				const tabs = match[1]?.length ?? 0;
-				const spaces = match[2]?.length ?? 0;
-				const depth = tabs + Math.floor(spaces / 2);
-
-				if (!prevWasOrdered) {
-					// Start of a new ordered list group: reset all counters
-					counters.clear();
-				}
-
-				const current = (counters.get(depth) ?? 0) + 1;
-				counters.set(depth, current);
-				// Clear counters for deeper levels (they restart if we come back)
-				for (const [d] of counters) {
-					if (d > depth) counters.delete(d);
-				}
-				prevWasOrdered = true;
-
-				const indent = (match[1] ?? "") + (match[2] ?? "");
-				lines[i] = `${indent}${String(current)}. ${match[4]}`;
-			} else if (line.trim() === "") {
-				// Blank line resets
-				counters.clear();
-				prevWasOrdered = false;
-			} else {
-				// Non-ordered content (bullet, heading, paragraph) — reset
-				counters.clear();
-				prevWasOrdered = false;
-			}
-		}
-
-		return lines.join("\n");
+		return edit.renumberOrderedLists(text);
 	}
 
 	/**
@@ -6719,7 +6709,7 @@ export class MindMapView extends ItemView {
 
 		// Only create the measurer if there are uncached nodes
 		if (toMeasure.length > 0) {
-			const measurer = document.createElement("div");
+			const measurer = createDiv();
 			measurer.style.cssText = `
 				position: absolute; left: -9999px; top: -9999px;
 				visibility: hidden; pointer-events: none;
@@ -6729,7 +6719,7 @@ export class MindMapView extends ItemView {
 			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
-				const cell = document.createElement("div");
+				const cell = createDiv();
 				cell.className = "osmosis-node-content osmosis-measure-cell markdown-rendered";
 				if (node.type === "heading") {
 					cell.setAttribute("data-depth", String(node.depth));
@@ -6770,7 +6760,7 @@ export class MindMapView extends ItemView {
 
 				// Inject checkbox for task-list items (affects size measurement)
 				if (node.metadata?.checkbox) {
-					const cb = document.createElement("input");
+					const cb = createEl("input");
 					cb.type = "checkbox";
 					cb.className = "task-list-item-checkbox";
 					if (node.metadata.checked) {
@@ -6958,7 +6948,7 @@ export class MindMapView extends ItemView {
 				if (match) {
 					const iframe = ns
 						? (document.createElementNS(ns, "iframe") as HTMLIFrameElement)
-						: document.createElement("iframe");
+						: createEl("iframe");
 					if (ns) iframe.setAttribute("xmlns", ns);
 					iframe.setAttribute("src", toEmbed(match));
 					iframe.setAttribute("frameborder", "0");

@@ -309,7 +309,7 @@ export class FontPicker {
 				this.closePopover();
 			}
 		};
-		setTimeout(() => {
+		window.setTimeout(() => {
 			document.addEventListener("mousedown", this.outsideClickHandler!);
 		}, 0);
 	}
