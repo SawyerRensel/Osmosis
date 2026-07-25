@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope } from "obsidian";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "../settings";
@@ -133,6 +133,41 @@ export class PropertiesSidebarView extends ItemView {
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.plugin = this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
+
+		// Forward undo/redo to the active mind map while the sidebar holds focus.
+		// The map's own keymap is inactive after a control here is used, so
+		// without this Ctrl+Z does nothing until the user clicks back into the map.
+		this.scope = new Scope(this.app.scope);
+		this.scope.register(["Mod"], "z", (e: KeyboardEvent) =>
+			this.forwardUndoToMap(e.shiftKey),
+		);
+		this.scope.register(["Mod", "Shift"], "z", () =>
+			this.forwardUndoToMap(true),
+		);
+		this.scope.register(["Mod"], "y", () => this.forwardUndoToMap(true));
+	}
+
+	/** Route an undo/redo keystroke to the active mind map. Returns false (handled,
+	 *  stop default) when forwarded, otherwise lets the key propagate. */
+	private forwardUndoToMap(isRedo: boolean): false | undefined {
+		// Preserve native undo/redo inside text-entry fields (the hex and
+		// default-width inputs); sliders/dropdowns have none, so forward those.
+		const active = document.activeElement;
+		if (
+			active instanceof HTMLTextAreaElement ||
+			(active instanceof HTMLElement && active.isContentEditable) ||
+			(active instanceof HTMLInputElement &&
+				["text", "number", "search", "url", "email", "tel", "password"].includes(
+					active.type,
+				))
+		) {
+			return undefined;
+		}
+		const mindMap = this.getActiveMindMap();
+		if (!mindMap) return undefined;
+		if (isRedo) mindMap.redo();
+		else mindMap.undo();
+		return false;
 	}
 
 	getViewType(): string {
@@ -218,6 +253,24 @@ export class PropertiesSidebarView extends ItemView {
 		return { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
+	/**
+	 * Write map-level frontmatter, recording an undo snapshot on the active map so
+	 * the change is undoable/redoable (map-style writes bypass CodeMirror, like the
+	 * mind map's own style writes). Falls back to a plain untracked write when no
+	 * map view is active — there is nothing to record onto.
+	 */
+	private async writeMapFrontMatter(
+		file: TFile,
+		mindMap: MindMapView | null,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		if (mindMap) {
+			await mindMap.processFrontMatterTracked(file, fn);
+		} else {
+			await this.app.fileManager.processFrontMatter(file, fn);
+		}
+	}
+
 	/** Save a per-map setting to frontmatter and notify the mind map view. */
 	private async saveSetting<K extends keyof MapSettings>(
 		key: K,
@@ -230,8 +283,9 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		if (mindMap) mindMap.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.writeMapFrontMatter(
 			file,
+			mindMap,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				fm["osmosis-styles"] = osmosis;
@@ -425,8 +479,9 @@ export class PropertiesSidebarView extends ItemView {
 
 						const theme = getTheme(value, this.plugin.settings.customThemes);
 
-						await this.app.fileManager.processFrontMatter(
+						await this.writeMapFrontMatter(
 							file,
+							mindMap,
 							(fm: Record<string, unknown>) => {
 								const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 								fm["osmosis-styles"] = osmosis;
@@ -1467,8 +1522,9 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		if (mindMap) mindMap.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.writeMapFrontMatter(
 			file,
+			mindMap,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				fm["osmosis-styles"] = osmosis;
@@ -1498,8 +1554,9 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		if (mindMap) mindMap.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.writeMapFrontMatter(
 			file,
+			mindMap,
 			(fm: Record<string, unknown>) => {
 				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 				if (!osmosis) return;
@@ -1620,8 +1677,9 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		if (mindMap) mindMap.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.writeMapFrontMatter(
 			file,
+			mindMap,
 			(fm: Record<string, unknown>) => {
 				delete fm["osmosis-styles"];
 			},
@@ -1841,8 +1899,9 @@ export class PropertiesSidebarView extends ItemView {
 						if (!(file instanceof TFile)) return;
 						const mindMap = this.getActiveMindMap();
 						if (mindMap) mindMap.suppressNextReload = true;
-						void this.app.fileManager.processFrontMatter(
+						void this.writeMapFrontMatter(
 							file,
+							mindMap,
 							(fm: Record<string, unknown>) => {
 								const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
 								if (!osmosis) return;
@@ -2122,8 +2181,9 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		if (mindMap) mindMap.suppressNextReload = true;
 
-		await this.app.fileManager.processFrontMatter(
+		await this.writeMapFrontMatter(
 			file,
+			mindMap,
 			(fm: Record<string, unknown>) => {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				fm["osmosis-styles"] = osmosis;
@@ -2893,12 +2953,17 @@ export class PropertiesSidebarView extends ItemView {
 		const mindMap = this.getActiveMindMap();
 		const themeColors = extractThemeColors(mindMap?.getActiveTheme());
 
+		// Bracket the picker's lifetime as one live-edit session so the whole
+		// drag persists as a single undo step and can't reload the map mid-drag.
+		mindMap?.beginLiveEdit();
+
 		const picker = new ColorPicker({
 			app: this.app,
 			plugin: this.plugin,
 			initialColor,
 			themeColors,
 			onChange,
+			onClose: () => mindMap?.endLiveEdit(),
 		});
 		this.activePickers.push(picker);
 		picker.open(anchor);

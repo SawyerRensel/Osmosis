@@ -118,6 +118,13 @@ export class MindMapView extends ItemView {
 	private readonly redoStack: MapEditSnapshot[] = [];
 	private static readonly MAX_UNDO_HISTORY = 50;
 
+	// Live-edit session (e.g. a color-picker drag). While active, self-writes
+	// neither trigger a reload — which would tear down an open picker mid-drag —
+	// nor push individual undo entries; instead the whole session collapses into
+	// one before→after snapshot recorded when it ends.
+	private liveEditActive = false;
+	private liveEditSnapshot: MapEditSnapshot | null = null;
+
 	// Selection state
 	private selectedNodeId: string | null = null;
 	private selectedNodeIds = new Set<string>();
@@ -1164,6 +1171,15 @@ export class MindMapView extends ItemView {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (file instanceof TFile && file === this.currentFile) {
+					if (this.liveEditActive) {
+						// A live-edit session (color-picker drag) drives rendering
+						// directly via applyMapSettings/render; ignore our own writes
+						// so a stray reload can't tear down the open picker mid-drag.
+						// suppressNextReload is a single boolean and can't cover the
+						// burst of writes a drag produces, so gate on the session.
+						this.suppressNextReload = false;
+						return;
+					}
 					if (this.suppressNextReload) {
 						this.suppressNextReload = false;
 						return;
@@ -6043,9 +6059,50 @@ export class MindMapView extends ItemView {
 		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
 	}
 
+	/** Undo the last map edit. Public entry point for the properties sidebar,
+	 *  which forwards Ctrl+Z/Y while it (not the map) holds keyboard focus. */
+	undo(): void {
+		this.forwardUndoRedo(false);
+	}
+
+	/** Redo the last undone map edit (see {@link undo}). */
+	redo(): void {
+		this.forwardUndoRedo(true);
+	}
+
+	/**
+	 * Begin a live-edit session — a burst of rapid writes from one interaction
+	 * (a color-picker drag) that should read as a single undoable change. Suspends
+	 * reload-on-modify (see the vault "modify" handler) and coalesces snapshots
+	 * until {@link endLiveEdit}.
+	 */
+	beginLiveEdit(): void {
+		this.liveEditActive = true;
+		this.liveEditSnapshot = null;
+	}
+
+	/** End a live-edit session, recording one snapshot for the whole burst. */
+	endLiveEdit(): void {
+		if (!this.liveEditActive) return;
+		this.liveEditActive = false;
+		const snap = this.liveEditSnapshot;
+		this.liveEditSnapshot = null;
+		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
+	}
+
 	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
 	private recordEdit(path: string, before: string, after: string): void {
 		if (before === after) return;
+		if (this.liveEditActive) {
+			// Coalescing: keep the pre-session content as the baseline and track
+			// the latest result; endLiveEdit records the single net change.
+			if (!this.liveEditSnapshot) {
+				this.liveEditSnapshot = { path, before, after };
+			} else if (this.liveEditSnapshot.path === path) {
+				this.liveEditSnapshot.after = after;
+			}
+			return;
+		}
 		this.undoStack.push({ path, before, after });
 		if (this.undoStack.length > MindMapView.MAX_UNDO_HISTORY) {
 			this.undoStack.shift();
@@ -6057,9 +6114,11 @@ export class MindMapView extends ItemView {
 	/**
 	 * Frontmatter write that also records an undo snapshot. Every map style write
 	 * goes through this instead of `app.fileManager.processFrontMatter` directly,
-	 * so color/shape/variant changes are undoable alongside text edits.
+	 * so color/shape/variant changes are undoable alongside text edits. The
+	 * properties sidebar's map-level writes (theme/layout/background/reset/…) also
+	 * route here so they share one undo stack and snapshot path.
 	 */
-	private async processFrontMatterTracked(
+	async processFrontMatterTracked(
 		file: TFile,
 		fn: (fm: Record<string, unknown>) => void,
 	): Promise<void> {
@@ -6108,6 +6167,10 @@ export class MindMapView extends ItemView {
 		if (this.currentFile && path === this.currentFile.path) {
 			this.currentTree = this.cache.get(path, content);
 			this.reloadFrontmatterFromContent(content);
+			// Recompute derived map settings (theme/layout/background/branch line/…)
+			// from the restored frontmatter, mirroring the load flow — otherwise a
+			// map-level style undo/redo restores the file but not the live layout.
+			this.loadMapSettings();
 			this.nodeSizeCache.clear();
 			// Re-expand transclusions so an undo/redo of a local edit that
 			// carried an embed keeps it rendered, not collapsed to a bare
