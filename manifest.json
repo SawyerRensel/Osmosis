@@ -3,7 +3,7 @@
 	"name": "Osmosis",
 	"version": "0.0.2",
 	"minAppVersion": "1.13.0",
-	"description": "Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.",
+	"description": "Map your mind. Build your memory. Absorb information faster with unified notes, flashcards, and mind maps.",
 	"author": "Sawyer Rensel",
 	"authorUrl": "https://github.com/SawyerRensel",
 	"isDesktopOnly": false

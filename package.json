@@ -1,7 +1,7 @@
 {
 	"name": "osmosis",
 	"version": "0.0.2",
-	"description": "Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.",
+	"description": "Map your mind. Build your memory. Absorb information faster with unified notes, flashcards, and mind maps.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
