@@ -1,6 +1,6 @@
 ---
 title: Osmosis
-description: Map your mind. Build your memory. Absorb information faster and longer with unified notes, flashcards, and mind maps.
+description: Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.
 hide:
   - navigation
   - toc
@@ -12,7 +12,7 @@ hide:
 <section class="osmosis-hero">
   <h1>Map your mind. Build your memory.</h1>
   <p class="osmosis-hero__sub">
-    Absorb information faster and longer with unified notes, flashcards, and mind maps.
+    An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.
   </p>
   <div class="osmosis-hero__actions">
     <a class="osmosis-btn osmosis-btn--primary" href="getting-started/installation/">Install Osmosis</a>

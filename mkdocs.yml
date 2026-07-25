@@ -1,7 +1,7 @@
 # Project information
 site_name: Osmosis
 site_url: https://sawyerrensel.github.io/osmosis
-site_description: Map your mind. Build your memory. Absorb information faster and longer with unified notes, flashcards, and mind maps.
+site_description: Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.
 
 # Repository
 repo_name: SawyerRensel/Osmosis

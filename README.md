@@ -1,6 +1,6 @@
 # Osmosis
 
-**Absorb information faster and longer with unified notes, flashcards, and mind mapping.**
+**Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps**
 
 Osmosis turns your markdown notes into interactive mind maps and study material. Write once, study in multiple modes. No duplicate content, no external tools, no proprietary formats.
 
