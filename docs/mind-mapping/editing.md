@@ -6,6 +6,9 @@ icon: lucide/pencil
 
 Double-click a node (or press ++f2++) to enter edit mode. Press ++escape++ to cancel.
 
+!!! note "Editing mode required"
+    Everything on this page needs the map to be in **editing** mode. If nodes won't move or edit, the map is probably in [reading mode](index.md#reading-mode) — press ++ctrl+e++ or click the :lucide-book-open: header icon to switch back.
+
 ![Drag and drop node repositioning](../assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png)
 
 ## Toolbar
@@ -74,6 +77,30 @@ Copy and paste preserve the full subtree structure. You can also copy and paste 
 |--------|----------|
 | Undo | ++ctrl+z++ |
 | Redo | ++ctrl+shift+z++ or ++ctrl+y++ |
+
+The mind map keeps its **own** undo history, independent of the Markdown editor's. Each map operation is one undo step — a move, a paste, a delete, a style change, or a map-level change like switching theme or layout. Undo works whether focus is on the map or on the properties sidebar, and a color-picker drag collapses into a single step rather than one per shade you passed through.
+
+Two consequences worth knowing:
+
+- History is **per map** and lives in memory. It clears when you switch files, and it doesn't survive a restart.
+- The map is deliberately blind to edits you make in a separate Markdown pane. Undo in the map undoes *map* operations; use the editor's own undo for edits typed there.
+
+### History Limits
+
+Under **Settings > Osmosis > Undo history**:
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| Undo steps | 50 | Maximum operations kept per map |
+| Undo memory cap (MB) | 20 | Ceiling on memory used by that history |
+
+Whichever limit is hit first drops the oldest edits; the most recent edit is always kept. Changes take effect on the next edit — no reload needed. Raise the memory cap if you work with very large maps and want deeper history.
+
+## Multi-Line Blocks
+
+Code blocks, tables, and callouts/blockquotes are **atomic** — each is one node, and structure operations treat it as a single unit. Moving, indenting, or copying such a node carries the whole block, including its trailing block ID line, so [line card](../flashcards/line-cards.md) history follows it.
+
+The same applies across a transclusion boundary: a node containing an `![[embed]]` moves, copies, and deletes as one unit, and the embedded content re-renders in place after the edit (or after undo).
 
 ## Context Menus
 

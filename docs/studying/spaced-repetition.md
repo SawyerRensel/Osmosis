@@ -26,6 +26,24 @@ After revealing a card's answer, rate your recall:
 | **Review** | In long-term rotation, intervals growing |
 | **Relearning** | Previously known but forgotten, back to short intervals |
 
+## Learning Steps
+
+New and lapsed cards don't leave the session after one look. A card rated **Again**, or one still working through its learning steps, comes back **within the same study session** after a short delay — the same behavior as Anki.
+
+Configure the delays in **Settings > Osmosis**:
+
+| Setting | Default | Applies to |
+|---------|---------|------------|
+| Learning steps | `1m, 10m` | New cards working toward their first real interval |
+| Relearning steps | `10m` | Review cards you rated *Again* |
+
+Enter a comma-separated list of intervals (`m` for minutes, `h` for hours). A card advances one step each time you rate it **Good** or better, and graduates to a normal FSRS interval after the last step. Rating **Again** sends it back to the first step.
+
+If every remaining card is waiting on a timer, the study modal shows a **"Waiting for next card"** countdown rather than ending the session. A card's position in the steps is saved with its schedule, so closing the modal mid-session doesn't lose progress.
+
+!!! tip
+    Leave the steps short. They exist to give a card a second look while it's still fresh — long steps just stall the session behind a countdown.
+
 ## Daily Limits
 
 Configure in **Settings > Osmosis**:

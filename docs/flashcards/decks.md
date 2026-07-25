@@ -37,7 +37,9 @@ osmosis-deck: languages/french
 
 ### By Folder
 
-A note at `Vault/Languages/French/greetings.md` automatically belongs to the `Languages/French` deck.
+A note at `Vault/Languages/French/greetings.md` automatically belongs to the `Languages/French` deck — the **full** folder path, not just the parent folder.
+
+On the Dashboard these nest and indent to match your vault's folder structure. Intermediate folders that hold no cards of their own are pruned away, so you only see levels that mean something. Decks you assign explicitly (via `deck:` or `osmosis-deck:`) always keep their full slash-separated hierarchy, pruning or not.
 
 ### Line Cards
 

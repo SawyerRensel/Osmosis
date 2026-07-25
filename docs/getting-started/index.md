@@ -8,7 +8,7 @@ Get Osmosis installed and learn the basics in under five minutes.
 
 ## What You'll Need
 
-- [Obsidian](https://obsidian.md/) v1.10 or later (desktop or mobile)
+- [Obsidian](https://obsidian.md/) v1.13 or later (desktop or mobile)
 
 ## Next Steps
 

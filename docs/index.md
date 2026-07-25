@@ -11,7 +11,7 @@ hide:
 Osmosis turns your markdown notes into interactive mind maps and study material. Write once, study in multiple modes. No duplicate content, no external tools, no proprietary formats.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.10.0+-purple)](https://obsidian.md)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.13.0+-purple)](https://obsidian.md)
 
 ![Osmosis — notes and mind map side by side](assets/media/osmosis_note_mind_map_split_view_zoomed.png)
 
@@ -25,6 +25,7 @@ Osmosis turns your markdown notes into interactive mind maps and study material.
 - **Three Study Modes** — Sequential (classic card review), contextual (study inline in your notes), and spatial (study on the mind map itself)
 - **Plain Markdown** — Everything lives in your files. Card scheduling data is stored in the fences and note frontmatter — no external databases, no sync issues
 - **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
+- **Reading Mode for Maps** — Flip a map into a read-only surface where nothing can be edited by accident, but pan, zoom, fold, and study all still work
 - **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
 - **Dashboard** — See all your decks, due card counts, and study statistics at a glance
 

@@ -35,10 +35,65 @@ If a line already carries a block ID you added yourself, Osmosis reuses it inste
 
 ### Multi-Line Blocks
 
-Code blocks and tables are single units, so they get a single identity:
+Code blocks, tables, and callouts/blockquotes are single units, so they get a single identity:
 
 - **`osmosis` fences** use their existing `id:` metadata key (added if missing).
-- **Generic code blocks and tables** get a standalone `^os-xxxxxx` line immediately after the block — Obsidian's native way to block-reference multi-line content.
+- **Generic code blocks, tables, and callouts/blockquotes** get a standalone `^os-xxxxxx` line immediately after the block — Obsidian's native way to block-reference multi-line content.
+
+A **callout or blockquote** is one card, not one card per line. A run of consecutive `>`-prefixed lines — title, body, and any nested list — is a single block:
+
+```markdown
+> [!tip] Bloom the grounds
+> Pour twice the coffee's weight in water and wait 30 seconds
+> before the main pour.
+^os-a1b2c3
+```
+
+A blank or non-`>` line ends the run, so two callouts back to back stay two separate cards. The generation modal labels these **Callout / quote**.
+
+## Per-Node and Per-Selection Control
+
+**Generate flashcards from note** is the bulk, all-or-nothing pass. Once a note has line cards, you can adjust individual lines without re-running it.
+
+### Add and Remove
+
+| Where | How |
+|-------|-----|
+| Editor | Select one or more lines, then run **Add line cards from selection** / **Remove line cards from selection** from the command palette |
+| Editor | Select lines, right-click > **Add line cards** / **Remove line cards** |
+| Mind map | Right-click a node > **Add line card** / **Remove line card** |
+
+**Add** tags the selected lines with `^os-` block IDs, exactly as bulk generation would. **Remove** deletes the block ID, which removes the card.
+
+!!! warning "Removing IDs you wrote yourself"
+    Remove also deletes block IDs you authored (`^my-anchor`), not just Osmosis's `^os-` ones. Because other notes may link to them, Osmosis confirms first and tells you which links would break.
+
+Selecting a run of plain prose and adding line cards splits it into one block — and one card — per line, inserting the blank lines that make each line its own block. This matches how the mind map saves, so the two views agree.
+
+### Exclude from Study
+
+Sometimes a line shouldn't be studied right now, but you don't want to lose its history. **Exclude** pauses the card:
+
+| Where | How |
+|-------|-----|
+| Editor | **Exclude line cards in selection from study** / **Include line cards in selection in study** |
+| Mind map | Right-click a node > **Exclude from study** / **Include in study** (:lucide-eye-off: / :lucide-eye:) |
+| Sequential study | The exclude button on the study modal |
+
+An excluded card is out of study everywhere — it isn't hidden in peek or study on either surface, it's skipped by the sequential queue, and it's dropped from dashboard counts. Its FSRS history is preserved, so including it again resumes where it left off.
+
+Exclusion is stored as `disabled: true` on the card's `osmosis-schedule` entry:
+
+```yaml
+osmosis-schedule:
+  os-a1b2c3:
+    disabled: true
+```
+
+Schedule and exclusion are tracked independently: rating a card never clears the flag, and including a card never wipes its schedule. A line you've excluded but never studied gets a schedule-less stub entry.
+
+!!! tip "Exclude vs. remove vs. opt out of decks"
+    **Exclude** pauses one card but keeps its history. **Remove** deletes the block ID, and with it the card. **`osmosis-line-cards: false`** keeps a note's cards out of decks and sequential study while leaving them studiable in place.
 
 ## Card Anatomy
 
