@@ -6,6 +6,7 @@ ref
 
 # Scratch notes
 scratchpad.md
+prompts/
 
 # Dolt server runtime files (not the Beads database, which is managed by .beads/.gitignore)
 .dolt/
