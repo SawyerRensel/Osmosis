@@ -116,7 +116,6 @@ export class MindMapView extends ItemView {
 	// when the map switches to a different file.
 	private readonly undoStack: MapEditSnapshot[] = [];
 	private readonly redoStack: MapEditSnapshot[] = [];
-	private static readonly MAX_UNDO_HISTORY = 50;
 
 	// Live-edit session (e.g. a color-picker drag). While active, self-writes
 	// neither trigger a reload — which would tear down an open picker mid-drag —
@@ -6104,11 +6103,33 @@ export class MindMapView extends ItemView {
 			return;
 		}
 		this.undoStack.push({ path, before, after });
-		if (this.undoStack.length > MindMapView.MAX_UNDO_HISTORY) {
-			this.undoStack.shift();
-		}
+		this.enforceUndoLimits();
 		// A fresh edit invalidates any redo history.
 		this.redoStack.length = 0;
+	}
+
+	/** In-memory byte estimate for one snapshot (UTF-16; path length negligible). */
+	private static snapshotBytes(snap: MapEditSnapshot): number {
+		return (snap.before.length + snap.after.length) * 2;
+	}
+
+	/**
+	 * Trim undo history to the configured step and memory limits, oldest first,
+	 * applying whichever is reached first. Only the growing undoStack is capped
+	 * (redoStack is transient — cleared on any fresh edit). At least the most
+	 * recent entry is always kept so a just-made edit stays undoable.
+	 */
+	private enforceUndoLimits(): void {
+		const maxSteps = Math.max(1, this.plugin.settings.undoMaxSteps);
+		while (this.undoStack.length > maxSteps) this.undoStack.shift();
+
+		const maxBytes = Math.max(1, this.plugin.settings.undoMaxMemoryMB) * 1024 * 1024;
+		let total = 0;
+		for (const snap of this.undoStack) total += MindMapView.snapshotBytes(snap);
+		while (this.undoStack.length > 1 && total > maxBytes) {
+			const removed = this.undoStack.shift();
+			if (removed) total -= MindMapView.snapshotBytes(removed);
+		}
 	}
 
 	/**

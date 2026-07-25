@@ -100,6 +100,13 @@ export interface OsmosisSettings {
 	showStudyBreadcrumb: boolean;
 	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
 	sequentialContextLines: number;
+
+	// ── Mind Map Editing ────────────────────────────────────
+	/** Maximum undo/redo history entries kept per mind map (default: 50). */
+	undoMaxSteps: number;
+	/** Hard ceiling on undo/redo history memory per mind map, in MB; the oldest
+	 *  edits drop when either this or undoMaxSteps is reached first (default: 20). */
+	undoMaxMemoryMB: number;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -129,12 +136,23 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	contextualInlineCloze: false,
 	showStudyBreadcrumb: false,
 	sequentialContextLines: 2,
+
+	// Mind map editing defaults
+	undoMaxSteps: 50,
+	undoMaxMemoryMB: 20,
 };
 
 /** Reject non-integer or negative daily card limits with an inline message. */
 function validateCardLimit(value: number): string | void {
 	if (!Number.isInteger(value) || value < 0) {
 		return "Enter a whole number of 0 or more.";
+	}
+}
+
+/** Reject non-integer or below-one values (undo limits) with an inline message. */
+function validatePositiveInt(value: number): string | void {
+	if (!Number.isInteger(value) || value < 1) {
+		return "Enter a whole number of 1 or more.";
 	}
 }
 
@@ -199,6 +217,34 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				name: "Cursor sync",
 				desc: "Sync cursor position between the Markdown editor and mind map.",
 				control: { type: "toggle", key: "cursorSync" },
+			},
+			{
+				type: "group",
+				heading: "Undo history",
+				items: [
+					{
+						name: "Undo steps",
+						desc: "Maximum undo/redo history kept per mind map. Older edits drop once this many are stored.",
+						control: {
+							type: "number",
+							key: "undoMaxSteps",
+							min: 1,
+							step: 1,
+							validate: validatePositiveInt,
+						},
+					},
+					{
+						name: "Undo memory cap (MB)",
+						desc: "Hard ceiling on undo history memory per mind map. Whichever limit — steps or memory — is reached first drops the oldest edits.",
+						control: {
+							type: "number",
+							key: "undoMaxMemoryMB",
+							min: 1,
+							step: 1,
+							validate: validatePositiveInt,
+						},
+					},
+				],
 			},
 			{
 				type: "group",
