@@ -4,7 +4,6 @@ import {
 	State,
 	type FSRS,
 	type Card as TsFsrsCard,
-	type Grade,
 	type RecordLogItem,
 	type StepUnit,
 } from "ts-fsrs";
@@ -92,7 +91,7 @@ export class FSRSScheduler {
 		const result: RecordLogItem = this.f.next(
 			fsrsCard,
 			nowDate,
-			rating as Grade,
+			rating,
 		);
 
 		const newCard = result.card;

@@ -1037,11 +1037,11 @@ export class MindMapView extends ItemView {
 			container,
 			"touchstart",
 			this.handleTouchCapture,
-			{ passive: false } as AddEventListenerOptions,
+			{ passive: false },
 		);
 		this.registerDomEvent(container, "touchmove", this.handleTouchCapture, {
 			passive: false,
-		} as AddEventListenerOptions);
+		});
 		this.registerDomEvent(
 			container,
 			"touchend",
@@ -2222,7 +2222,7 @@ export class MindMapView extends ItemView {
 		}
 		const cache = this.app.metadataCache.getFileCache(this.currentFile);
 		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
-			cache?.frontmatter as Record<string, unknown> | undefined,
+			cache?.frontmatter,
 		);
 	}
 
@@ -6893,10 +6893,10 @@ export class MindMapView extends ItemView {
 	private getNodeDisplayContent(node: OsmosisNode): string {
 		if (
 			node.type === "ordered" &&
-			node.metadata?.listNumber !== undefined
+			typeof node.metadata?.listNumber === "number"
 		) {
 			// Escape the dot so MarkdownRenderer renders as plain text, not <ol>
-			return `${String(node.metadata.listNumber as number)}\\. ${node.content}`;
+			return `${node.metadata.listNumber}\\. ${node.content}`;
 		}
 		if (node.type === "bullet") {
 			if (node.metadata?.checkbox) {
@@ -7193,7 +7193,7 @@ export class MindMapView extends ItemView {
 			const cycleLabel = document.createElementNS(
 				XHTML_NS,
 				"span",
-			) as HTMLSpanElement;
+			);
 			cycleLabel.setAttribute("xmlns", XHTML_NS);
 			cycleLabel.className = "osmosis-cycle-indicator";
 			cycleLabel.textContent = `\u21BB ${node.source.content}`;
@@ -7246,7 +7246,7 @@ export class MindMapView extends ItemView {
 						const label = document.createElementNS(
 							XHTML_NS,
 							"span",
-						) as HTMLSpanElement;
+						);
 						label.setAttribute("xmlns", XHTML_NS);
 						label.className = "osmosis-code-lang-label";
 						label.textContent = lang;

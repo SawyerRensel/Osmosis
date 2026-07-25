@@ -223,7 +223,7 @@ function copyMapSetting<K extends keyof OsmosisStyleFrontmatter & keyof MapSetti
 ): void {
 	const value = fm[key];
 	if (value !== undefined) {
-		result[key] = value as MapSettings[K];
+		result[key] = value;
 	}
 }
 
@@ -602,7 +602,7 @@ export function parseOsmosisStyleFrontmatter(
 	if (typeof obj["branchLinePattern"] === "string") result.branchLinePattern = obj["branchLinePattern"] as BranchLinePattern;
 	if (typeof obj["branchLineTaper"] === "string") result.branchLineTaper = obj["branchLineTaper"] as BranchLineTaper;
 	if (obj["baseStyle"] && typeof obj["baseStyle"] === "object") {
-		result.baseStyle = obj["baseStyle"] as NodeStyle;
+		result.baseStyle = obj["baseStyle"];
 	}
 	if (typeof obj["mapLayout"] === "string") result.mapLayout = obj["mapLayout"] as MapLayout;
 	if (typeof obj["balance"] === "string") result.balance = obj["balance"] as BalanceMode;

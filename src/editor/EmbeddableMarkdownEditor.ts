@@ -80,7 +80,7 @@ function getEditorBase(): Constructor<ScrollableMarkdownEditor> {
 				this.app = a;
 				this.containerEl = container;
 			}
-		} as unknown as Constructor<ScrollableMarkdownEditor>;
+		};
 	}
 	return resolveEditorPrototype(app);
 }

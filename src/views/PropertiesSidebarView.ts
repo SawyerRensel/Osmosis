@@ -1529,7 +1529,7 @@ export class PropertiesSidebarView extends ItemView {
 				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
 				fm["osmosis-styles"] = osmosis;
 				const base: NodeStyle = (osmosis["baseStyle"] as NodeStyle) ?? {};
-				mergeNodeStyle(base, update as NodeStyle);
+				mergeNodeStyle(base, update);
 				osmosis["baseStyle"] = base;
 				if (Object.keys(osmosis).length === 0) delete fm["osmosis-styles"];
 			},
@@ -1539,7 +1539,7 @@ export class PropertiesSidebarView extends ItemView {
 		if (mindMap) {
 			const fmCache = mindMap.getOsmosisStyleFrontmatter() ?? {};
 			const base: NodeStyle = fmCache.baseStyle ?? {};
-			mergeNodeStyle(base, update as NodeStyle);
+			mergeNodeStyle(base, update);
 			fmCache.baseStyle = base;
 			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
 		}
@@ -1830,7 +1830,7 @@ export class PropertiesSidebarView extends ItemView {
 		// Reset to default side for this direction
 		const defaultSide = direction === "top-down" ? "down" : "right";
 		this.mapSideDropdown.value = defaultSide;
-		void this.saveSetting("layoutSide", defaultSide as LayoutSide);
+		void this.saveSetting("layoutSide", defaultSide);
 	}
 
 	/** Populate a Side dropdown with options appropriate for the given direction. */
