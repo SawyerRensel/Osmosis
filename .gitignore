@@ -33,3 +33,9 @@ site/
 
 # OS files
 .DS_Store
+
+# Playwright
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

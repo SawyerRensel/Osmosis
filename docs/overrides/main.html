@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{#- The section nav is rendered inline in the header (see partials/header.html),
+    so the standalone tabs bar below the header is dropped. -#}
+{% block tabs %}{% endblock %}
 {% block extrahead %}
   <meta property="og:type" content="website">
   <meta property="og:title" content="Osmosis">

@@ -1,0 +1,183 @@
+/* ==========================================================================
+   Osmosis site chrome — header nav and footer site map
+
+   Pairs with docs/overrides/partials/{header,footer}.html. 76.25em is the
+   theme's own desktop breakpoint: below it the drawer button appears and the
+   tabs bar is hidden, so the inline header nav follows the same threshold.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Header: brand
+   -------------------------------------------------------------------------- */
+
+.osmosis-header-home {
+  color: inherit;
+  text-decoration: none;
+}
+
+@media screen and (min-width: 76.25em) {
+  /* The title normally grows to fill the row and swaps in the current page
+     title on scroll. Both have to go: the nav needs that space, and a page
+     title expanding next to the nav would shove it around mid-scroll. With the
+     second topic gone the first can leave its absolute positioning, which lets
+     the title size itself to the site name instead of collapsing to nothing. */
+  .md-header__title {
+    flex-grow: 0;
+    width: max-content;
+  }
+
+  .md-header__title > .md-header__ellipsis {
+    width: auto;
+  }
+
+  .md-header__topic {
+    position: static;
+  }
+
+  .md-header__topic + .md-header__topic {
+    display: none;
+  }
+
+  /* The theme fades the site name out when it adds --active on scroll; with
+     nothing left to swap to, that would just blank the brand. */
+  .md-header__title--active .md-header__topic {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+    z-index: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Header: inline section nav
+
+   Reuses the theme's `md-tabs__*` item classes for typography and hover, but
+   not the `.md-tabs` wrapper — that one is display:none on small screens and
+   carries the bar's own shadow and height.
+   -------------------------------------------------------------------------- */
+
+.osmosis-header-nav {
+  display: none;
+}
+
+@media screen and (min-width: 76.25em) {
+  .osmosis-header-nav {
+    display: block;
+    flex: 1 1 auto;
+    /* Without this the flex item refuses to shrink below its content width and
+       pushes the search box off the row on narrower desktops. */
+    min-width: 0;
+  }
+}
+
+.osmosis-header-nav .md-tabs__list {
+  margin-left: 0.8rem;
+}
+
+.osmosis-header-nav .md-tabs__item {
+  height: auto;
+}
+
+.osmosis-header-nav .md-tabs__link {
+  margin-top: 0;
+}
+
+/* The bar's active state is an underline sitting on the bar's bottom edge,
+   which has no edge to sit on inside the header row. */
+.osmosis-header-nav .md-tabs__item--active {
+  border-bottom: none;
+}
+
+.osmosis-header-nav .md-tabs__item--active .md-tabs__link {
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   Footer site map
+   -------------------------------------------------------------------------- */
+
+.osmosis-footer {
+  border-top: 0.05rem solid var(--md-default-fg-color--lightest);
+}
+
+.osmosis-footer__inner {
+  display: grid;
+  gap: 2rem clamp(1.5rem, 5vw, 4rem);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  padding: 2.4rem 0.8rem;
+}
+
+.osmosis-footer__logo {
+  align-items: center;
+  color: inherit;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 0.4rem;
+  letter-spacing: -0.025em;
+  text-decoration: none;
+}
+
+.osmosis-footer__logo svg {
+  fill: currentcolor;
+  height: 1.1rem;
+  width: auto;
+}
+
+/* The theme's lucide icons are stroked outlines, not filled shapes. */
+.osmosis-footer__logo svg.lucide {
+  fill: #0000;
+  stroke: currentcolor;
+}
+
+.osmosis-footer__tagline {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.64rem;
+  margin: 0.6rem 0 0;
+}
+
+.osmosis-footer__groups {
+  display: grid;
+  gap: 2rem clamp(1.5rem, 4vw, 3rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.osmosis-footer__heading {
+  color: var(--md-default-fg-color--light);
+  font-size: 0.64rem;
+  font-weight: 400;
+  margin: 0 0 0.8rem;
+}
+
+.osmosis-footer__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.osmosis-footer__list li + li {
+  margin-top: 0.5rem;
+}
+
+.osmosis-footer__list a {
+  color: inherit;
+  font-size: 0.7rem;
+  text-decoration: none;
+  transition: color 125ms;
+}
+
+.osmosis-footer__list a:hover {
+  color: var(--md-accent-fg-color);
+}
+
+@media screen and (max-width: 59.9375em) {
+  .osmosis-footer__inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media screen and (max-width: 29.9375em) {
+  .osmosis-footer__groups {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
