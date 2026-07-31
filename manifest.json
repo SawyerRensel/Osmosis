@@ -3,7 +3,7 @@
 	"name": "Osmosis",
 	"version": "0.0.3",
 	"minAppVersion": "1.13.0",
-	"description": "Map your mind. Build your memory. Absorb information faster with unified notes, flashcards, and mind maps.",
+	"description": "Absorb knowledge faster. Turn your notes into interactive mind maps you study with spaced repetition.",
 	"author": "Sawyer Rensel",
 	"authorUrl": "https://github.com/SawyerRensel",
 	"isDesktopOnly": false
