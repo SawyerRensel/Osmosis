@@ -1,6 +1,6 @@
 ---
 title: Osmosis
-description: Map your mind. Build your memory. An Obsidian plugin for absorbing information faster with unified notes, flashcards, and mind maps.
+description: Absorb knowledge faster. An Obsidian plugin that turns your notes into interactive mind maps you study with spaced repetition.
 hide:
   - navigation
   - toc
@@ -17,7 +17,7 @@ hide:
         An Obsidian plugin that turns your notes into interactive mind maps you study with spaced repetition.
       </p>
       <div class="osmosis-hero__actions">
-        <a class="osmosis-btn osmosis-btn--primary" href="getting-started/installation/">Install Osmosis</a>
+        <a class="osmosis-btn osmosis-btn--primary" href="obsidian://show-plugin?id=osmosis">Install Osmosis</a>
         <a class="osmosis-btn osmosis-btn--ghost" href="getting-started/quick-start/">Quick start &rarr;</a>
       </div>
       <p class="osmosis-hero__note">Free and open source &middot; GPL-3.0 &middot; Requires Obsidian 1.13+</p>
@@ -193,7 +193,7 @@ The value is dropped and its memory freed.
       look at your own structure. Nothing to import, nothing to convert.
     </p>
     <div class="osmosis-cta__actions">
-      <a class="osmosis-btn osmosis-btn--primary" href="getting-started/installation/">Install Osmosis</a>
+      <a class="osmosis-btn osmosis-btn--primary" href="obsidian://show-plugin?id=osmosis">Install Osmosis</a>
       <a class="osmosis-btn osmosis-btn--ghost" href="use-cases/">See how others use it &rarr;</a>
     </div>
   </div>

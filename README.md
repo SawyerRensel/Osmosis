@@ -1,6 +1,6 @@
 # Osmosis
 
-**Map your mind. Build your memory. An Obsidian plugin that turns your notes into interactive mind maps you study with spaced repetition**
+**Absorb knowledge faster. An Obsidian plugin that turns your notes into interactive mind maps you study with spaced repetition.**
 
 Osmosis turns your Markdown notes into interactive mind maps — and then makes the map itself the thing you study. Every line of a note can become a scheduled flashcard, so nodes on the map hide behind `?`, you tap to recall, and you rate with FSRS right where each fact sits in your knowledge structure. No duplicate content, no external tools, no proprietary formats.
 
