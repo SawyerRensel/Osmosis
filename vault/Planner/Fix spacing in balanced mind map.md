@@ -4,17 +4,17 @@ summary: Right now there's greater space on the left side vs. the right side.
 tags:
   - task
 calendar:
-  - Bugfix
+  - Bug
 context:
 people:
 location:
 related:
-status: To-Do
+status: Done
 priority:
 progress_current:
 progress_total:
-date_created: "2026-04-03T21:50:34.330Z"
-date_modified: "2026-04-03T21:50:46.885Z"
+date_created: 2026-04-03T21:50:34.330Z
+date_modified: 2026-08-01T01:45:52.594Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

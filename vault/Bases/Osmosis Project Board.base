@@ -1,7 +1,7 @@
 source: Bases/
 filters:
   and:
-    - file.inFolder("Planner")
+    - file.inFolder("Osmosis/vault/Planner")
     - file.ext == "md"
 properties:
   note.title:
@@ -50,9 +50,11 @@ views:
     sort:
       - property: date_end_scheduled
         direction: DESC
+      - property: date_modified
+        direction: DESC
     colorBy: note.calendar
     borderStyle: left-accent
     badgePlacement: properties-section
-    columnOrder: '["Triage","Backlog","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
+    columnOrder: '["Ideas","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
   - type: table
     name: Table
