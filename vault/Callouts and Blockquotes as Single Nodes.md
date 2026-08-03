@@ -3,11 +3,11 @@ osmosis: true
 osmosis-cards: true
 osmosis-schedule:
   os-wyu7ep:
-    due: 2026-07-16T07:32:57
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-16T07:31:57
-    reps: 1
+    due: 2026-08-03T13:04:21
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-03T13:03:21
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0

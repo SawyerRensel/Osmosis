@@ -4,7 +4,7 @@ This file guides Claude through Osmosis development, from planning through refin
 
 ---
 
-## Behavrioal Guidelines
+## Behavioral Guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
@@ -89,7 +89,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 Osmosis/
 ├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
-├── vault/                         # Dev + E2E vault (build output goes here, gitignored)
+├── vault/                             # Dev + E2E vault (build output goes here)
+│   ├── Planner/                       # Project & task management — one note per task (source of truth for task state)
+│   ├── templates/                     # Planner note templates (Bug Report / Feature / Optimization / Research)
+│   ├── Bases/                         # Obsidian Bases views over the Planner notes
+│   └── tests/                         # Manual-test fixtures, copied from e2e/fixtures/
 ├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
 ├── ref/                               # Example plugins and other references
@@ -112,7 +116,7 @@ Osmosis/
 ├── e2e-launch.sh                      # Opens Obsidian with vault for manual debugging
 ├── playwright.config.ts               # Playwright configuration
 │
-└── notes/                             # All project planning & tracking
+└── notes/                             # Design & reference docs (PRD, architecture, plans). Task *state* lives in vault/Planner/
     ├── GETTING_STARTED.md             # Phase overview & workflow
     ├── OPTIMIZATION_GUIDE.md          # How to optimize for Claude
     ├── CLAUDE_CONVERSATIONS.md        # Index of important Claude chats
@@ -151,7 +155,7 @@ Before helping with code, Claude should:
 
 1. **For Architecture Questions**: Read `notes/02_planning/implementation_plan.md`
 2. **For Feature Questions**: Read `notes/01_requirements/prd.md`
-3. **For Context on What's Done**: Run `bd ready` and `bd list --status=in_progress` (Beads is the source of truth for task state)
+3. **For Context on What's Done**: Read the task notes in `vault/Planner/` (Planner is the source of truth for task state) — check their `status` frontmatter
 4. **For Testing/Quality Standards**: Read `notes/04_refinement/testing_checklist.md`
 
 ### Key References
@@ -497,22 +501,16 @@ After completing each subtask:
   - What the expected result should be
   - What to check to confirm it works (e.g., "the source file should now contain X")
 
-**IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT close beads issues or commit code until the user has validated the changes work.
+**IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT update the task note's status or commit code until the user has validated the changes work.
 
-### Step 5: Update Beads (After User Confirms Testing)
+### Step 5: Update the Planner Note (After User Confirms Testing)
 
 Only proceed to this step after the user has confirmed that manual testing passes.
 
-```bash
-bd close <id>                        # Mark issue complete
-bd close <id> --reason="explanation" # Close with context
-```
-
-For follow-up tasks discovered during implementation, create new issues before closing the current one:
-```bash
-bd create --title="Follow-up task" --type=task --priority=2
-bd dep add <new-id> <blocking-id>    # If there are dependencies
-```
+Set the task note's `status` to `Done` in `vault/Planner/`, and fill
+`date_end_actual`. For follow-up work discovered during implementation, create a
+new task note from the matching template in `vault/templates/` and link it via
+`related` (or `blocked_by` when it genuinely blocks).
 
 ---
 
@@ -688,10 +686,7 @@ npm run build                             # Build the plugin
 # Provide manual test instructions to the user
 ```
 
-**Step 6**: Close the Beads issue
-```bash
-bd close <id> --reason="Acceptance criteria met: X, Y, Z"
-```
+**Step 6**: Mark the task note `Done` in `vault/Planner/`
 
 ---
 
@@ -719,44 +714,58 @@ Always include:
 
 ---
 
-## Task Tracking with Beads
+## Task Tracking with Planner
 
-Beads (`bd`) is the source of truth for all task state. **Do not use TodoWrite or markdown files for task tracking.**
+Project and task management lives in **`vault/Planner/`**, one markdown note per
+task, managed by Sawyer's [Planner](https://github.com/SawyerRensel/Planner)
+plugin. It is the source of truth for task state. **Do not use TodoWrite, and do
+not track tasks in `notes/` or ad-hoc markdown files.**
 
-### Claude's Workflow with Beads
+Beads (`bd`) is **not installed** — ignore any Beads instructions you find in
+older docs or prompts.
 
-```bash
-bd ready                              # Check what's available at session start
-bd list --status=in_progress          # See what's already claimed
-bd show <id>                          # Review issue details before starting
-bd update <id> --status=in_progress   # Claim an issue before working on it
-bd close <id>                         # Mark complete when done
-```
+### Claude's Workflow with Planner
 
-### Creating Issues
+1. **At session start**: read `vault/Planner/` — the notes' `status` frontmatter
+   tells you what is in flight. A task note usually *is* the prompt for its work.
+2. **Before starting**: set the note's `status` to `In-Progress`.
+3. **When done** (after the user confirms manual testing): set `status` to `Done`.
 
-```bash
-bd create --title="Summary" --description="Why this exists and what to do" --type=task --priority=2
-```
+### Creating a Task Note
 
-Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+Copy the matching template from `vault/templates/`:
 
-### Dependencies
+| Template | Use for |
+|---|---|
+| `Bug Report Template.md` | Something is broken |
+| `Feature Template.md` | New capability |
+| `Optimization Template.md` | Existing tool/workflow needs improving |
+| `Research Template.md` | Investigation before committing to a build |
 
-```bash
-bd dep add <child-id> <parent-id>   # child depends on parent (parent blocks child)
-bd blocked                           # See all blocked issues
-```
+Fill in `title`, `summary`, and `calendar` (a **string array** — e.g.
+`- Feature`), then write the body. A task note aimed at a future Claude session
+should be a complete, self-contained prompt: state of the tree, the design, open
+questions, the surface map, test plan, and conventions.
+
+Key frontmatter (full reference:
+[docs/reference/properties.md](https://github.com/SawyerRensel/Planner/tree/release/0.2.0/docs)):
+
+- `status` — free string; this vault uses `Ideas`, `To-Do`, `In-Progress`,
+  `In-Review`, `Done`
+- `calendar`, `context`, `tags` — string arrays
+- `progress` — number, 0–100
+- `related`, `parent`, `children`, `blocked_by`, `people` — wikilink arrays,
+  quoted: `- "[[Other Task]]"`
+- `date_created` / `date_modified` — ISO datetimes
 
 ### Session End
 
-**Always prompt the user for manual testing before closing issues or committing.**
+**Always prompt the user for manual testing before updating a task's status or
+committing.**
 
-```bash
-# After user confirms testing passes:
-bd close <id1> <id2> ...            # Close completed issues
-git add <files> && git commit -m "..." && git push
-```
+After the user confirms testing passes, update the task note, then commit **code
+by explicit path**. Task notes are the user's working documents — do not stage
+`vault/Planner/` changes alongside a code commit unless asked.
 
 ---
 
@@ -768,7 +777,7 @@ Commit when:
 - Acceptance criteria are met
 - **The user has manually tested and confirmed the changes work**
 
-**IMPORTANT**: Do NOT commit or close beads issues until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
+**IMPORTANT**: Do NOT commit or mark a task note `Done` until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
 
 Example commit messages:
 ```
@@ -797,10 +806,10 @@ Before asking Claude for help on any code task:
 
 - **About the project**: Check `notes/01_requirements/prd.md` (what we're building)
 - **About architecture**: Check `notes/02_planning/technical_decisions.md` (why we chose this tech)
-- **About what's done**: Run `bd list --status=in_progress` and `bd ready`
+- **About what's done**: Read the task notes in `vault/Planner/` and check their `status`
 - **About quality standards**: Check `notes/04_refinement/testing_checklist.md`
 
 ---
 
-**Last Updated**: 2026-03-02
+**Last Updated**: 2026-08-03
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.

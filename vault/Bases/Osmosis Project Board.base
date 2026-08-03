@@ -1,8 +1,9 @@
 source: Bases/
 filters:
   and:
-    - file.inFolder("Osmosis/vault/Planner")
     - file.ext == "md"
+    - calendar.containsAny("Bug", "Feature", "Optimization", "Research")
+    - '!file.name.contains("Template")'
 properties:
   note.title:
     width: 200
