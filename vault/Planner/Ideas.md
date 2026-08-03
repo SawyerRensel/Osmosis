@@ -1,9 +1,37 @@
 ---
-
-osmosis-styles:
-
-  theme: Default
-
+title: Ideas Scratchpad
+summary: A running list of ideas when inspo hits
+tags:
+  - task
+calendar: Feature
+context:
+people:
+location:
+related:
+status: Ideas
+priority:
+date_created:
+date_modified: "2026-07-31T21:47:34.406Z"
+date_start_scheduled:
+date_start_actual:
+date_end_scheduled:
+date_end_actual:
+all_day: false
+repeat_frequency:
+repeat_interval:
+repeat_until:
+repeat_count:
+repeat_byday:
+repeat_bymonth:
+repeat_bymonthday:
+repeat_bysetpos:
+repeat_completed_dates:
+parent:
+children:
+blocked_by:
+cover:
+color:
+progress:
 ---
 
 ## ideas

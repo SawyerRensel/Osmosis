@@ -164,6 +164,31 @@ export class CardSyncService {
 	}
 
 	/**
+	 * Handle lines moving from one note to another — a mind map move across an
+	 * embed boundary, or a cut/paste across files. Re-keys just those cards to
+	 * the destination note, leaving the rest of both notes alone.
+	 *
+	 * Line-card IDs embed the note path, so the card is removed and re-added
+	 * under its new id with every other field (FSRS state included) intact.
+	 * Mirrors {@link handleRename}, scoped to a set of block IDs instead of a
+	 * whole note, and keeps the dashboard from flickering the card out of
+	 * existence until the debounced sync catches up.
+	 */
+	handleBlockMove(oldPath: string, newPath: string, blockIds: ReadonlySet<string>): void {
+		if (oldPath === newPath) return;
+		for (const blockId of blockIds) {
+			const card = this.store.getCard(lineCardId(oldPath, blockId));
+			if (!card) continue;
+			this.store.removeCard(card.id);
+			this.store.addCard({
+				...card,
+				id: lineCardId(newPath, blockId),
+				notePath: newPath,
+			});
+		}
+	}
+
+	/**
 	 * Remove cards whose notePath doesn't exist in activePaths.
 	 */
 	private cleanOrphans(activePaths: Set<string>): void {

@@ -1,8 +1,9 @@
 source: Bases/
 filters:
   and:
-    - file.inFolder("Planner")
     - file.ext == "md"
+    - calendar.containsAny("Bug", "Feature", "Optimization", "Research")
+    - '!file.name.contains("Template")'
 properties:
   note.title:
     width: 200
@@ -50,9 +51,11 @@ views:
     sort:
       - property: date_end_scheduled
         direction: DESC
+      - property: date_modified
+        direction: DESC
     colorBy: note.calendar
     borderStyle: left-accent
     badgePlacement: properties-section
-    columnOrder: '["Triage","Backlog","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
+    columnOrder: '["Ideas","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
   - type: table
     name: Table

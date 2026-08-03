@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Backlog
+status: Ideas
 priority:
 progress_current:
 progress_total:
 date_created: "2026-04-03T21:45:53.206Z"
-date_modified: "2026-04-03T21:45:53.206Z"
+date_modified: "2026-07-31T21:05:32.957Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -39,6 +39,7 @@ about: Suggest a feature or optimization
 labels: feature, optimization
 assignees:
 ---
+
 ### 💡 Summary
 A short, clear description of the feature or optimization.  
 

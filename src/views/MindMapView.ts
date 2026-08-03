@@ -41,6 +41,7 @@ import {
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
+import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
 import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
 import type { Card } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
@@ -74,11 +75,51 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
-/** A single reversible map edit: a file's content before and after the change. */
+// Identity migration constants
+const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Read one key out of a file's YAML frontmatter block, straight from its raw
+ * markdown. Used where the metadata cache can't be trusted — right after our
+ * own write, it still holds the pre-write frontmatter.
+ */
+function frontmatterValue(content: string, key: string): unknown {
+	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+	if (!match?.[1]) return undefined;
+	try {
+		const parsed: unknown = parseYaml(match[1]);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return undefined;
+		}
+		return (parsed as Record<string, unknown>)[key];
+	} catch {
+		return undefined;
+	}
+}
+
+type FileEdit = edit.FileEdit;
+
+/**
+ * A single reversible map edit. Usually one file, but a move across an embed
+ * boundary rewrites both the origin and the destination note, and those must
+ * undo together as one step rather than leaving the content duplicated after a
+ * single Ctrl+Z.
+ */
 interface MapEditSnapshot {
-	path: string;
-	before: string;
-	after: string;
+	edits: FileEdit[];
+}
+
+/**
+ * One copied subtree: its source text, plus enough of the original node for
+ * `reindentSubtree` to re-serialize the first line at a new type/depth. The
+ * node itself is not kept — after a *cut* it no longer exists by paste time.
+ */
+interface ClipboardItem {
+	type: OsmosisNode["type"];
+	depth: number;
+	content: string;
+	blockId?: string;
+	text: string;
 }
 
 export class MindMapView extends ItemView {
@@ -122,7 +163,13 @@ export class MindMapView extends ItemView {
 	// nor push individual undo entries; instead the whole session collapses into
 	// one before→after snapshot recorded when it ends.
 	private liveEditActive = false;
-	private liveEditSnapshot: MapEditSnapshot | null = null;
+	private liveEditSnapshot: FileEdit | null = null;
+
+	// Edit group: a multi-file gesture (a move across an embed boundary, with the
+	// identity migration that follows it) whose writes collapse into one undo
+	// step. Also gates reload-on-modify for its duration — `suppressNextReload`
+	// covers a single write, and a group can write the host more than once.
+	private editGroup: Map<string, FileEdit> | null = null;
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -147,10 +194,30 @@ export class MindMapView extends ItemView {
 
 	// Clipboard state for copy/cut/paste
 	private clipboardText: string | null = null;
-	private clipboardNodeType: OsmosisNode["type"] | null = null;
-	private clipboardNodeDepth: number | null = null;
+	/**
+	 * One record per copied subtree. Paste promotes each *top-level* item to a
+	 * direct child of the target on its own terms — a single type/depth for the
+	 * whole clipboard re-levels a heading and a bullet by the same delta, and
+	 * lands one of them wrong.
+	 */
+	private clipboardItems: ClipboardItem[] = [];
 	private clipboardIsCut = false;
 	private clipboardSourceIds: Set<string> = new Set();
+	/**
+	 * Containing file of the copied nodes — null when the selection spanned more
+	 * than one, where there is no single origin for identity to move from. Also
+	 * marks the clipboard as Osmosis' own rather than an external app's.
+	 */
+	private clipboardSourcePath: string | null = null;
+	/** Block IDs carried by {@link clipboardText}. */
+	private clipboardBlockIds: Set<string> = new Set();
+	/**
+	 * The origin's `osmosis-schedule` entries for those block IDs, captured at
+	 * cut time. A cut deletes immediately, so by the time the user pastes the
+	 * line is gone from the origin and its frontmatter may have been rewritten —
+	 * capture on cut, replay on paste.
+	 */
+	private clipboardSchedules: Record<string, unknown> = {};
 
 	// Clipboard state for copy/paste style
 	private clipboardNodeStyle: NodeStyle | null = null;
@@ -162,7 +229,15 @@ export class MindMapView extends ItemView {
 	private isDragging = false;
 	private dragGhost: SVGGElement | null = null;
 	private dropIndicator: SVGLineElement | null = null;
+	/** Destination-note label shown beside the indicator on a cross-note drop. */
+	private dropIndicatorLabel: SVGTextElement | null = null;
 	private dropTarget: { parentId: string; index: number } | null = null;
+	/**
+	 * Containing-file lookup captured for the duration of a drag. Resolved once
+	 * at drag start rather than per mousemove — it walks the whole tree, and the
+	 * tree cannot change while a drag is in flight.
+	 */
+	private dragFileOf: edit.FileOf | null = null;
 
 	// Pending selection: after a save-edit re-render, re-select the node at this position
 	private pendingSelectionRangeStart: number | null = null;
@@ -1169,7 +1244,8 @@ export class MindMapView extends ItemView {
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (file instanceof TFile && file === this.currentFile) {
+				if (!(file instanceof TFile)) return;
+				if (file === this.currentFile) {
 					if (this.liveEditActive) {
 						// A live-edit session (color-picker drag) drives rendering
 						// directly via applyMapSettings/render; ignore our own writes
@@ -1179,17 +1255,46 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
+					if (this.editGroup) {
+						// Same reasoning as a live edit: a grouped gesture can
+						// write this file more than once (content splice, then
+						// the frontmatter that carries card identity across),
+						// and one boolean can't cover both.
+						this.suppressNextReload = false;
+						return;
+					}
 					if (this.suppressNextReload) {
 						this.suppressNextReload = false;
 						return;
 					}
-					// Our own schedule flush only touches frontmatter, which
-					// the map doesn't render — skip the reload so a debounced
-					// mid-session write can't flicker or reset study state
-					// (same pattern as CardSyncService with FenceWriter).
-					if (this.plugin.scheduleStore.isWriting(file.path)) return;
+					// Our own schedule flush only touches frontmatter, which the
+					// map doesn't render — so re-sync rather than reload, keeping
+					// study state and undo history instead of tearing them down
+					// mid-session. Re-sync it must: the frontmatter it grows
+					// shifts every body offset, and the tree's ranges are what
+					// structural edits splice with.
+					if (this.plugin.scheduleStore.isWriting(file.path)) {
+						void this.resyncFromParent();
+						return;
+					}
 					void this.loadFile(file);
+					return;
 				}
+
+				// A note this map transcludes changed underneath it. Nothing
+				// re-parses it otherwise, so its nodes keep the offsets they had
+				// before the write — and the next edit that splices by those
+				// offsets writes into the wrong bytes. A debounced schedule flush
+				// is the common case: it renders identically and still moves every
+				// line in the file.
+				if (this.liveEditActive || this.editGroup || this.editingNodeId) return;
+				if (this.suppressNextReload) {
+					this.suppressNextReload = false;
+					return;
+				}
+				if (!this.transcludedPaths().has(file.path)) return;
+				this.cache.invalidate(file.path);
+				void this.resyncFromParent();
 			}),
 		);
 
@@ -3435,39 +3540,59 @@ export class MindMapView extends ItemView {
 		}
 		if (selectedSrcs.length === 0) return;
 
-		// All ranges are spliced out of one file; refuse a mixed-file selection.
-		if (!this.ensureSameFileEdit(selectedSrcs)) return;
-		const file = this.getNodeFile(selectedSrcs[0]!);
-		if (!file) return;
-
-		const ranges = selectedSrcs
-			.map((src) => ({
-				start: src.range.start,
-				end: this.subtreeEnd(src),
-			}))
-			.sort((a, b) => b.start - a.start);
-
-		let content = await this.app.vault.read(file);
-
-		for (const range of ranges) {
-			let deleteStart = range.start;
-			let deleteEnd = range.end;
-
-			if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
-				deleteStart--;
-			} else if (
-				deleteEnd < content.length &&
-				content[deleteEnd] === "\n"
-			) {
-				deleteEnd++;
-			}
-
-			content = content.slice(0, deleteStart) + content.slice(deleteEnd);
+		// A mixed host+embedded selection is allowed (design decision O4): each
+		// file gets its own splice, and the whole thing is one undo step. Ranges
+		// only make sense against their own file's bytes, so group before
+		// splicing rather than refusing the selection.
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const byPath = new Map<string, OsmosisNode[]>();
+		for (const src of selectedSrcs) {
+			const path = fileOf(src);
+			const group = byPath.get(path);
+			if (group) group.push(src);
+			else byPath.set(path, [src]);
 		}
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeNodeFile(selectedSrcs[0]!, content);
+
+		this.beginEditGroup();
+		try {
+			for (const [path, nodes] of byPath) {
+				const file = this.fileAtPath(path);
+				if (!file) continue;
+
+				// Descending order so each splice leaves the earlier offsets valid.
+				const ranges = nodes
+					.map((src) => ({
+						start: src.range.start,
+						end: this.subtreeEnd(src),
+					}))
+					.sort((a, b) => b.start - a.start);
+
+				let content = await this.app.vault.read(file);
+				for (const range of ranges) {
+					let deleteStart = range.start;
+					let deleteEnd = range.end;
+
+					if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
+						deleteStart--;
+					} else if (
+						deleteEnd < content.length &&
+						content[deleteEnd] === "\n"
+					) {
+						deleteEnd++;
+					}
+
+					content = content.slice(0, deleteStart) + content.slice(deleteEnd);
+				}
+				await this.writeFileTracked(file, content);
+			}
+		} finally {
+			this.endEditGroup();
+			await this.resyncFromParent();
+		}
 		this.selectFirstNode();
 	}
 
@@ -3481,10 +3606,6 @@ export class MindMapView extends ItemView {
 
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node?.parent) return;
-
-		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
 
 		const parentSrc = node.parent.source;
 		const siblings = parentSrc.children;
@@ -3505,8 +3626,45 @@ export class MindMapView extends ItemView {
 
 		// Collect all selected subtree texts in order
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
-		if (!this.ensureSameFileEdit([...selectedSrcs, swapSrc])) return;
+		// The selection is spliced out of one file; a selection that itself spans
+		// the seam has no single origin. (The *neighbor* may now live elsewhere.)
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(selectedSrcs[0]!);
+		const swapPath = fileOf(swapSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+
+		if (swapPath !== originPath) {
+			// At a seam the swap degrades to a move-past: the selection relocates
+			// into the neighbor's note and the neighbor stays put. A true swap
+			// would drag the neighbor across the boundary as well — two moves in
+			// opposite directions from one keypress, one of them pulling a line
+			// out of a note the user never selected.
+			//
+			// The destination is the neighbor's own file, so the offsets are its
+			// own coordinates (`range.start` / `subtreeEnd`) — never the
+			// host-folded `nodeHostStart` / `subtreeHostEnd`, which would answer
+			// in the file that *contains* the embed instead.
+			const site: edit.InsertSite = {
+				path: swapPath,
+				offset:
+					direction < 0 ? swapSrc.range.start : this.subtreeEnd(swapSrc),
+				neighbor: swapSrc,
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				() => ({ type: swapSrc.type, depth: swapSrc.depth }),
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
+			return;
+		}
+
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 		const content = await this.app.vault.read(file);
 		const blockStart = selectedSrcs[0]!.range.start;
 		const blockEnd = this.subtreeEnd(
@@ -3521,7 +3679,7 @@ export class MindMapView extends ItemView {
 		// Swap block with target.
 		// Replace the entire range spanning both nodes (including any gap
 		// and surrounding blank lines) with the swapped texts joined by "\n".
-		// normalizeHeadingSpacing (called by writeNodeFile) will re-add proper
+		// normalizeHeadingSpacing (called by the write) will re-add proper
 		// blank lines around headings and top-level code fences.
 		const rangeStart = Math.min(blockStart, swapStart);
 		const rangeEnd = Math.max(blockEnd, swapEnd);
@@ -3550,11 +3708,23 @@ export class MindMapView extends ItemView {
 			updated = head + blockText + "\n" + swapText + tail;
 		}
 
-		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeNodeFile(src, updated);
+		await this.writeFileAtPath(originPath, updated);
 
 		// Re-select all moved nodes
 		this.reselectMultiAfterMove(movedContents);
+	}
+
+	/** Pre-order position of every node in the current tree (its rendered order). */
+	private treeOrderIndex(): Map<string, number> {
+		const order = new Map<string, number>();
+		if (!this.currentTree) return order;
+		let next = 0;
+		const walk = (n: OsmosisNode): void => {
+			order.set(n.id, next++);
+			for (const child of n.children) walk(child);
+		};
+		walk(this.currentTree.root);
+		return order;
 	}
 
 	/**
@@ -3615,17 +3785,44 @@ export class MindMapView extends ItemView {
 		if (!prevSibling) return;
 
 		const firstSrc = siblings[firstIdx]!;
-		const file = this.getNodeFile(firstSrc);
-		if (!file) return;
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
-		if (
-			!this.ensureSameFileEdit([
-				...selectedIndices.map((i) => siblings[i]!),
-				prevSibling,
-			])
-		)
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(firstSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const indentContext = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => ({
+			type: this.inferIndentType(prevSibling, nodeSrc),
+			depth: this.inferIndentDepth(prevSibling, nodeSrc),
+		});
+
+		if (fileOf(prevSibling) !== originPath) {
+			// Indenting under a sibling that lives in another note — the last
+			// expanded child of an embed — moves the block into that note,
+			// appended after the sibling's subtree. No neighbor is needed: the
+			// site is "child of prevSibling", and inferIndentDepth already reads
+			// the destination's coordinates off prevSibling itself (its own
+			// source depth + 1), not off the host.
+			const site: edit.InsertSite = {
+				path: fileOf(prevSibling),
+				offset: this.subtreeEnd(prevSibling),
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				indentContext,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
 			return;
+		}
 
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 		const content = await this.app.vault.read(file);
 
 		// Collect block of selected subtrees
@@ -3635,16 +3832,14 @@ export class MindMapView extends ItemView {
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
-		for (const idx of selectedIndices) {
-			const nodeSrc = siblings[idx]!;
+		for (const nodeSrc of selectedSrcs) {
 			const nodeText = content.slice(
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			const newType = this.inferIndentType(prevSibling, nodeSrc);
-			const newDepth = this.inferIndentDepth(prevSibling, nodeSrc);
+			const context = indentContext(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
 			);
 		}
 		const reindented = reindentedParts.join("\n");
@@ -3668,8 +3863,7 @@ export class MindMapView extends ItemView {
 			reindented +
 			withoutBlock.slice(insertPos);
 
-		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
-		await this.writeNodeFile(firstSrc, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -3748,19 +3942,41 @@ export class MindMapView extends ItemView {
 
 		const firstSrc = siblings[selectedIndices[0]!]!;
 		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+		const parentSrc = parentNode.source;
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
-		const file = this.getNodeFile(firstSrc);
-		if (!file) return;
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(firstSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const context = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => this.outdentContext(nodeSrc, parentSrc);
 
-		// Outdenting inserts the block relative to the parent's subtree, so the
-		// parent must live in the same file as the moved nodes.
-		if (
-			!this.ensureSameFileEdit([
-				...selectedIndices.map((i) => siblings[i]!),
-				parentNode.source,
-			])
-		)
+		if (fileOf(parentSrc) !== originPath) {
+			// A top-level expanded child's tree parent is the local node that held
+			// the `![[…]]`, so outdenting is a true move out of the source note and
+			// into the host, just past that parent's subtree. The offset is in the
+			// parent's *own* file — `subtreeEnd`, which already folds any embed the
+			// parent contains back to that file's `![[…]]` line.
+			const site: edit.InsertSite = {
+				path: fileOf(parentSrc),
+				offset: this.subtreeEnd(parentSrc),
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				context,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
 			return;
+		}
+
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
@@ -3768,34 +3984,14 @@ export class MindMapView extends ItemView {
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
-		for (const idx of selectedIndices) {
-			const nodeSrc = siblings[idx]!;
+		for (const nodeSrc of selectedSrcs) {
 			const nodeText = content.slice(
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			// Becoming a sibling of parent — preserve node's own list type
-			// Only switch type for heading transitions
-			let newType: OsmosisNode["type"];
-			if (nodeSrc.type === "heading" && parentNode.source.type === "heading") {
-				newType = "heading";
-			} else if (
-				(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
-				nodeSrc.depth === 0 &&
-				parentNode.source.type === "heading"
-			) {
-				// Depth-0 list item directly under a heading: promote to paragraph
-				// (progressive: bullet → paragraph → heading on successive outdents)
-				newType = "paragraph";
-			} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
-				// Nested list items keep their own type when outdenting
-				newType = nodeSrc.type;
-			} else {
-				newType = parentNode.source.type;
-			}
-			const newDepth = parentNode.source.depth;
+			const { type, depth } = context(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, type, depth),
 			);
 		}
 		const reindented = reindentedParts.join("\n");
@@ -3807,7 +4003,7 @@ export class MindMapView extends ItemView {
 		}
 
 		// Insert after parent's subtree
-		const parentEnd = this.subtreeEnd(parentNode.source);
+		const parentEnd = this.subtreeEnd(parentSrc);
 
 		const withoutBlock =
 			content.slice(0, removeStart) + content.slice(blockEnd);
@@ -3825,9 +4021,40 @@ export class MindMapView extends ItemView {
 			reindented +
 			withoutBlock.slice(adjustedParentEnd);
 
-		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
-		await this.writeNodeFile(firstSrc, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
+	}
+
+	/**
+	 * Type and depth a node takes on when outdented to become its parent's
+	 * sibling. Shared by the same-file splice and the cross-file move so a node
+	 * promoted *out* of an embed lands at the level it would have landed at had
+	 * both lines lived in one file.
+	 */
+	private outdentContext(
+		nodeSrc: OsmosisNode,
+		parentSrc: OsmosisNode,
+	): { type: OsmosisNode["type"]; depth: number } {
+		// Becoming a sibling of parent — preserve node's own list type.
+		// Only switch type for heading transitions.
+		let type: OsmosisNode["type"];
+		if (nodeSrc.type === "heading" && parentSrc.type === "heading") {
+			type = "heading";
+		} else if (
+			(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
+			nodeSrc.depth === 0 &&
+			parentSrc.type === "heading"
+		) {
+			// Depth-0 list item directly under a heading: promote to paragraph
+			// (progressive: bullet → paragraph → heading on successive outdents)
+			type = "paragraph";
+		} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
+			// Nested list items keep their own type when outdenting
+			type = nodeSrc.type;
+		} else {
+			type = parentSrc.type;
+		}
+		return { type, depth: parentSrc.depth };
 	}
 
 	/**
@@ -3840,34 +4067,57 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
 
-		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
 
-		const content = await this.app.vault.read(file);
-
-		// Collect subtree texts for all selected nodes, sorted by document position
+		// Copying is read-only, so a mixed host+embedded selection just means
+		// reading more than one file. Order by the map's own document order —
+		// within a file that is document order, and across the seam it is the
+		// order the lines are rendered in.
+		const order = this.treeOrderIndex();
 		const selected = [...this.selectedNodeIds]
 			.map((id) => this.nodeMap.get(id))
 			.filter((n): n is LayoutNode => n !== undefined)
-			.sort((a, b) => a.source.range.start - b.source.range.start);
+			.sort(
+				(a, b) =>
+					(order.get(a.source.id) ?? 0) - (order.get(b.source.id) ?? 0),
+			);
 
-		// Every selected subtree is sliced from `file`; a mixed-file selection
-		// would slice one file's bytes at another's offsets.
-		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
-
-		const texts: string[] = [];
+		const contents = new Map<string, string>();
+		const items: ClipboardItem[] = [];
 		for (const sel of selected) {
+			const path = fileOf(sel.source);
+			let content = contents.get(path);
+			if (content === undefined) {
+				const file = this.fileAtPath(path);
+				if (!file) continue;
+				content = await this.app.vault.read(file);
+				contents.set(path, content);
+			}
 			const start = sel.source.range.start;
 			const end = this.subtreeEnd(sel.source);
-			texts.push(content.slice(start, end));
+			// Record each item's own shape while the live nodes are still in
+			// hand — a cut deletes them before the paste needs them.
+			items.push({
+				type: sel.source.type,
+				depth: sel.source.depth,
+				content: sel.source.content,
+				blockId: sel.source.blockId,
+				text: content.slice(start, end),
+			});
 		}
 
-		this.clipboardText = texts.join("\n");
-		this.clipboardNodeType = src.type;
-		this.clipboardNodeDepth = src.depth;
+		this.clipboardItems = items;
+		this.clipboardText = items.map((item) => item.text).join("\n");
 		this.clipboardIsCut = isCut;
 		this.clipboardSourceIds = new Set(this.selectedNodeIds);
+
+		// Identity travels with the clipboard. A mixed host+embedded selection has
+		// no single origin to migrate from, so it pastes as plain text.
+		const paths = new Set(selected.map((sel) => fileOf(sel.source)));
+		this.clipboardSourcePath = paths.size === 1 ? [...paths][0]! : null;
+		this.clipboardBlockIds = edit.collectBlockIds(this.clipboardText);
+		this.clipboardSchedules = {};
 
 		// Also put plain text on system clipboard for external paste
 		await navigator.clipboard.writeText(this.clipboardText);
@@ -3879,58 +4129,107 @@ export class MindMapView extends ItemView {
 			} else {
 				await this.deleteNode(node);
 			}
+
+			// Capture the schedule *after* the delete: reading it flushes pending
+			// ratings, which rewrites the frontmatter and would have shifted the
+			// offsets the splice above depends on.
+			if (this.clipboardSourcePath) {
+				this.clipboardSchedules = await this.readMovedScheduleEntries(
+					this.clipboardSourcePath,
+					this.clipboardBlockIds,
+				);
+			}
 		}
 	}
 
 	/**
-	 * Paste clipboard content as sibling(s) below the selected node.
+	 * Paste clipboard content as a direct child of the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!this.assertEditable()) return;
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
+		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
 			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
 
 		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
+		// Routed by containing file, not `getNodeFile`: on an unexpanded embed the
+		// latter names the embed's target while `src.range` still indexes the host.
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const destPath = fileOf(src);
+		const destFile = this.fileAtPath(destPath);
+		if (!destFile) return;
 
-		const content = await this.app.vault.read(file);
-		const insertPos = this.subtreeEnd(src);
+		const content = await this.app.vault.read(destFile);
+		// Not `subtreeEnd`: for a heading that is the end of its *last
+		// sub-heading's* content, which markdown reads as a child of that
+		// sub-heading rather than of the node the user selected.
+		const insertPos = edit.childInsertOffset(src);
 
-		// Adjust pasted text depth if target differs from source
-		let pasteText = this.clipboardText;
-		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
-			const depthDelta = src.depth - this.clipboardNodeDepth;
-			if (depthDelta !== 0 || this.clipboardNodeType !== src.type) {
-				pasteText = this.adjustPasteDepth(
-					pasteText,
-					this.clipboardNodeType,
-					depthDelta,
+		// Re-level each copied item *independently* against the target. Taking
+		// the delta from the target's own depth is one trap — pasting a bullet
+		// onto `## Heading` would indent it to the heading's level and bury it
+		// inside whatever list came before. Shifting a mixed clipboard by a
+		// single delta is the other: a heading and a bullet copied together need
+		// different treatment, and one of them lands wrong. `reindentSubtree`
+		// returns code blocks, tables, and blockquotes unchanged, so an atomic
+		// block's bytes are never reshaped.
+		let pasteText = this.clipboardItems
+			.map((item) => {
+				const context = edit.inferChildContext(src, item);
+				return edit.reindentSubtree(
+					item.text,
+					item,
+					context.type,
+					context.depth,
 				);
-			}
+			})
+			.join("\n");
+
+		const originPath = this.clipboardSourcePath;
+		// A cut moves identity; a copy duplicates a line, and a duplicated line is
+		// a new line — strip its block IDs so it doesn't inherit the original's
+		// card, and let Osmosis mint a fresh ID on demand. Text from outside
+		// Osmosis (no source path) pastes exactly as before.
+		if (originPath !== null && !this.clipboardIsCut) {
+			pasteText = edit.stripBlockIds(pasteText);
 		}
 
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			pasteText +
-			content.slice(insertPos);
-		await this.writeNodeFile(src, updated);
-	}
+		// Separator-aware: the offset can now sit *before* a heading line, where
+		// the newline the old formula appended belongs on the other side.
+		const updated = edit.insertAt(content, insertPos, pasteText).text;
 
-	/**
-	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Delegates to the tested pure transform in `mindmap-edit`.
-	 */
-	private adjustPasteDepth(
-		text: string,
-		sourceType: OsmosisNode["type"],
-		depthDelta: number,
-	): string {
-		return edit.adjustPasteDepth(text, sourceType, depthDelta);
+		const migrates =
+			originPath !== null &&
+			this.clipboardIsCut &&
+			originPath !== destPath &&
+			this.clipboardBlockIds.size > 0;
+		if (migrates) {
+			// Cut across the seam: the write and the schedule migration are one
+			// gesture, so they undo as one step (see `moveAcrossFiles`).
+			this.beginEditGroup();
+			try {
+				await this.writeFileTracked(destFile, updated);
+				await this.migrateBlockIdentity(
+					originPath,
+					destPath,
+					this.clipboardBlockIds,
+					this.clipboardSchedules,
+				);
+			} finally {
+				this.endEditGroup();
+				await this.resyncFromParent();
+			}
+		} else {
+			await this.writeFileAtPath(destPath, updated);
+		}
+
+		// A cut's identity lands exactly once: pasting the same clipboard again
+		// duplicates the line, so it takes the copy path and gets fresh IDs.
+		this.clipboardIsCut = false;
+		this.clipboardSchedules = {};
 	}
 
 	/**
@@ -4555,6 +4854,17 @@ export class MindMapView extends ItemView {
 		indicator.setAttribute("display", "none");
 		this.svg.appendChild(indicator);
 		this.dropIndicator = indicator;
+
+		// …and the label naming the destination note when the drop would write to
+		// a different one. Decisions #1/#2 rule out a modal, so naming the file
+		// mid-drag is the only warning before a line leaves the note it lives in.
+		const label = document.createElementNS(SVG_NS, "text");
+		label.setAttribute("class", "osmosis-drop-indicator-label");
+		label.setAttribute("display", "none");
+		this.svg.appendChild(label);
+		this.dropIndicatorLabel = label;
+
+		this.dragFileOf = this.containingFileOf();
 	}
 
 	private updateDrag(e: MouseEvent): void {
@@ -4694,6 +5004,65 @@ export class MindMapView extends ItemView {
 				this.dropIndicator.setAttribute("display", "none");
 			}
 		}
+		this.updateCrossNoteCue(
+			bestTarget,
+			dragNode.source,
+			indicatorX2,
+			indicatorY,
+		);
+	}
+
+	/**
+	 * Mark the drop indicator when the resolved destination is a *different* note
+	 * than the dragged node lives in, and name that note beside it.
+	 *
+	 * A cross-boundary move edits a file the user is not looking at, and moving
+	 * content *out* of a source note removes it from every place that note is
+	 * embedded. Neither gets a confirmation, by design — so the label is the one
+	 * chance to see where the bytes are about to land before committing.
+	 */
+	private updateCrossNoteCue(
+		target: { parentId: string; index: number } | null,
+		dragSrc: OsmosisNode,
+		x: number,
+		y: number,
+	): void {
+		const label = this.dropIndicatorLabel;
+		let destPath: string | null = null;
+
+		if (target && this.dragFileOf && this.currentTree) {
+			const targetParent = this.findNodeById(
+				this.currentTree.root,
+				target.parentId,
+			);
+			if (targetParent) {
+				const site = edit.resolveInsertSite(
+					targetParent,
+					target.index,
+					this.dragFileOf,
+				);
+				if (site.path !== this.dragFileOf(dragSrc)) destPath = site.path;
+			}
+		}
+
+		this.dropIndicator?.toggleClass(
+			"osmosis-drop-indicator--cross-note",
+			destPath !== null,
+		);
+		if (!label) return;
+		if (!destPath) {
+			label.setAttribute("display", "none");
+			return;
+		}
+		const destFile = this.app.vault.getFileByPath(destPath);
+		const name =
+			destFile instanceof TFile
+				? destFile.basename
+				: (destPath.split("/").pop() ?? destPath).replace(/\.md$/, "");
+		label.textContent = `→ ${name}`;
+		label.setAttribute("x", String(x + 8));
+		label.setAttribute("y", String(y - 4));
+		label.removeAttribute("display");
 	}
 
 	private isDescendant(ancestor: LayoutNode, node: LayoutNode): boolean {
@@ -4744,21 +5113,6 @@ export class MindMapView extends ItemView {
 		);
 		if (!targetParent) return;
 
-		// Refuse drops that cross a file boundary (e.g. an embedded node onto a
-		// local parent, or between two different embeds). Node ranges are
-		// per-file, so slicing/splicing across files corrupts the destination —
-		// most visibly the `![[embed]]` line itself.
-		if (!edit.sameEditTarget(dragNode.source, targetParent)) {
-			new Notice("Osmosis: can't move a node across an embed boundary");
-			return;
-		}
-
-		// Read (and later write) the file the dragged node actually lives in —
-		// the parent note for local nodes, the source note for embedded ones.
-		const file = this.getNodeFile(dragNode.source);
-		if (!file) return;
-		const content = await this.app.vault.read(file);
-
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
 		const parentSrc = dragNode.parent.source;
 		const siblings = parentSrc.children;
@@ -4778,12 +5132,48 @@ export class MindMapView extends ItemView {
 			else return;
 		}
 
-		// Collect block range spanning all selected subtrees
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
-		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(
-			selectedSrcs[selectedSrcs.length - 1]!,
-		);
+
+		// The whole selection is sliced out of one file's bytes. A multi-select
+		// that itself spans the seam has no single origin to splice, so it stays
+		// refused even though a single-origin move across the seam now works.
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
+
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+
+		// Where the drop actually writes — which may be a different note than the
+		// one the dragged node lives in.
+		const site = edit.resolveInsertSite(targetParent, dropTarget.index, fileOf);
+		const originPath = fileOf(selectedSrcs[0]!);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const dropContext = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => {
+			const type = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
+			return {
+				type,
+				depth: this.inferDropDepth(targetParent, dropTarget.index, type),
+			};
+		};
+
+		if (site.path !== originPath) {
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				dropContext,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
+			return;
+		}
+
+		// Same-file move: one splice, so the removal shifts the insert offset and
+		// the two orders below keep that arithmetic straight.
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
@@ -4792,112 +5182,31 @@ export class MindMapView extends ItemView {
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			const newType = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
-			const newDepth = this.inferDropDepth(
-				targetParent,
-				dropTarget.index,
-				newType,
-			);
+			const context = dropContext(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
 			);
 		}
-		let dragText = reindentedParts.join("\n");
+		const dragText = reindentedParts.join("\n");
 
-		// Determine insertion offset in the markdown. Use host-file offsets: a
-		// reference child may be transcluded content (its own `range` indexes
-		// the source note), so an embed collapses to its `![[…]]` line's host
-		// span rather than splicing a source offset into this file.
-		let insertOffset: number;
-		if (dropTarget.index >= targetParent.children.length) {
-			// Append after last child's subtree
-			if (targetParent.children.length > 0) {
-				const lastChild =
-					targetParent.children[targetParent.children.length - 1];
-				if (lastChild) {
-					insertOffset = this.subtreeHostEnd(lastChild);
-				} else {
-					insertOffset = this.subtreeEnd(targetParent);
-				}
-			} else {
-				insertOffset = targetParent.range.end;
-			}
-		} else {
-			// Insert before the child at dropTarget.index
-			const targetChild = targetParent.children[dropTarget.index];
-			if (targetChild) {
-				insertOffset = this.nodeHostStart(targetChild);
-			} else {
-				insertOffset = this.subtreeEnd(targetParent);
-			}
-		}
-
-		// Build new content: remove old, insert at new position
-		// Must handle the case where removal shifts the insert position
-		let removeStart = blockStart;
-		let removeEnd = blockEnd;
-
-		// Consume all surrounding blank lines at the removal site so they
-		// don't accumulate on repeated moves. normalizeHeadingSpacing will
-		// re-add proper spacing around headings and top-level code fences.
-		while (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-		while (removeEnd < content.length && content[removeEnd] === "\n") {
-			removeEnd++;
-		}
-		// Re-add exactly one \n as separator between surrounding content
-		if (removeStart > 0 && removeEnd < content.length) {
-			removeStart++; // preserve one \n from the leading newlines
-		}
+		const span = edit.widenRemoval(content, edit.subtreeSpan(selectedSrcs));
 
 		let updated: string;
-		if (removeStart < insertOffset) {
-			// Dragging forward: remove first, then adjust insert position
-			const afterRemove =
-				content.slice(0, removeStart) + content.slice(removeEnd);
-			const adjustedInsert = insertOffset - (removeEnd - removeStart);
-			const prefix =
-				adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n"
-					? "\n"
-					: "";
-			const suffix =
-				adjustedInsert < afterRemove.length &&
-				afterRemove[adjustedInsert] !== "\n"
-					? "\n"
-					: "";
-			updated =
-				afterRemove.slice(0, adjustedInsert) +
-				prefix +
-				dragText +
-				suffix +
-				afterRemove.slice(adjustedInsert);
+		if (span.start < site.offset) {
+			// Dragging forward: remove first, then adjust the insert offset.
+			const afterRemove = edit.removeSpan(content, span);
+			const adjusted = site.offset - (span.end - span.start);
+			updated = edit.insertAt(afterRemove, adjusted, dragText).text;
 		} else {
-			// Dragging backward: insert first, then remove (with adjusted position)
-			const prefix =
-				insertOffset > 0 && content[insertOffset - 1] !== "\n"
-					? "\n"
-					: "";
-			const suffix =
-				insertOffset < content.length && content[insertOffset] !== "\n"
-					? "\n"
-					: "";
-			const afterInsert =
-				content.slice(0, insertOffset) +
-				prefix +
-				dragText +
-				suffix +
-				content.slice(insertOffset);
-			const shift = prefix.length + dragText.length + suffix.length;
-			updated =
-				afterInsert.slice(0, removeStart + shift) +
-				afterInsert.slice(removeEnd + shift);
+			// Dragging backward: insert first, then remove at the shifted span.
+			const inserted = edit.insertAt(content, site.offset, dragText);
+			updated = edit.removeSpan(inserted.text, {
+				start: span.start + inserted.shift,
+				end: span.end + inserted.shift,
+			});
 		}
 
-		const movedContents = selectedSrcs.map((s) => s.content);
-		// writeNodeFile renumbers and routes to the correct file (parent note
-		// or embedded source) based on the dragged node.
-		await this.writeNodeFile(dragNode.source, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -4905,6 +5214,7 @@ export class MindMapView extends ItemView {
 		this.isDragging = false;
 		this.dragNodeId = null;
 		this.dropTarget = null;
+		this.dragFileOf = null;
 		this.contentEl.removeClass("osmosis-dragging");
 
 		if (this.dragGhost) {
@@ -4914,6 +5224,10 @@ export class MindMapView extends ItemView {
 		if (this.dropIndicator) {
 			this.dropIndicator.remove();
 			this.dropIndicator = null;
+		}
+		if (this.dropIndicatorLabel) {
+			this.dropIndicatorLabel.remove();
+			this.dropIndicatorLabel = null;
 		}
 	}
 
@@ -6052,10 +6366,10 @@ export class MindMapView extends ItemView {
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
 		const source = isRedo ? this.redoStack : this.undoStack;
-		const edit = source.pop();
-		if (!edit) return;
-		(isRedo ? this.undoStack : this.redoStack).push(edit);
-		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
+		const snapshot = source.pop();
+		if (!snapshot) return;
+		(isRedo ? this.undoStack : this.redoStack).push(snapshot);
+		void this.applySnapshot(snapshot.edits, isRedo);
 	}
 
 	/** Undo the last map edit. Public entry point for the properties sidebar,
@@ -6089,6 +6403,28 @@ export class MindMapView extends ItemView {
 		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
 	}
 
+	/**
+	 * Open an edit group: every {@link recordEdit} until {@link endEditGroup}
+	 * accumulates into one undo step instead of pushing its own. Files may be
+	 * written more than once inside a group; the group keeps the first `before`
+	 * and the last `after` for each path, so the net change is what gets undone.
+	 */
+	private beginEditGroup(): void {
+		this.editGroup = new Map();
+	}
+
+	/** Close an edit group, pushing its accumulated writes as one undo step. */
+	private endEditGroup(): void {
+		const group = this.editGroup;
+		this.editGroup = null;
+		if (!group) return;
+		const edits = edit.collapseEditGroup(group);
+		if (edits.length === 0) return;
+		this.undoStack.push({ edits });
+		this.enforceUndoLimits();
+		this.redoStack.length = 0;
+	}
+
 	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
 	private recordEdit(path: string, before: string, after: string): void {
 		if (before === after) return;
@@ -6102,15 +6438,19 @@ export class MindMapView extends ItemView {
 			}
 			return;
 		}
-		this.undoStack.push({ path, before, after });
+		if (this.editGroup) {
+			edit.mergeEdit(this.editGroup, { path, before, after });
+			return;
+		}
+		this.undoStack.push({ edits: [{ path, before, after }] });
 		this.enforceUndoLimits();
 		// A fresh edit invalidates any redo history.
 		this.redoStack.length = 0;
 	}
 
-	/** In-memory byte estimate for one snapshot (UTF-16; path length negligible). */
+	/** In-memory byte estimate for one snapshot (summed across its files). */
 	private static snapshotBytes(snap: MapEditSnapshot): number {
-		return (snap.before.length + snap.after.length) * 2;
+		return edit.editBytes(snap.edits);
 	}
 
 	/**
@@ -6173,45 +6513,55 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Restore a file to a snapshot's content (undo/redo target). Re-renders from
-	 * the restored content — reloading frontmatter and clearing the size cache so
-	 * both text and style changes are reflected. Handles the current file and a
-	 * transcluded source file, mirroring the two write paths.
+	 * Restore every file in a snapshot (undo/redo target). Re-renders from the
+	 * restored content — reloading frontmatter and clearing the size cache so both
+	 * text and style changes are reflected. Handles the current file and
+	 * transcluded source files, mirroring the write paths.
+	 *
+	 * A multi-file group is applied in reverse order when undoing, forward when
+	 * redoing — the same reasoning as the move itself (see `moveAcrossFiles`):
+	 * the file that *gains* content is written before the one that loses it, so a
+	 * failure partway leaves the content duplicated rather than gone.
 	 */
-	private async applySnapshot(path: string, content: string): Promise<void> {
-		const file = this.app.vault.getFileByPath(path);
-		if (!(file instanceof TFile)) return;
-		this.suppressNextReload = true;
-		this.cache.invalidate(path);
-		await this.app.vault.modify(file, content);
+	private async applySnapshot(edits: FileEdit[], isRedo: boolean): Promise<void> {
+		const ordered = isRedo ? edits : [...edits].reverse();
+		let restoredCurrent: string | null = null;
 
-		if (this.currentFile && path === this.currentFile.path) {
-			this.currentTree = this.cache.get(path, content);
-			this.reloadFrontmatterFromContent(content);
+		for (const fileEdit of ordered) {
+			const file = this.app.vault.getFileByPath(fileEdit.path);
+			if (!(file instanceof TFile)) continue;
+			const content = isRedo ? fileEdit.after : fileEdit.before;
+			this.suppressNextReload = true;
+			this.cache.invalidate(fileEdit.path);
+			await this.app.vault.modify(file, content);
+			if (fileEdit.path === this.currentFile?.path) restoredCurrent = content;
+		}
+
+		if (!this.currentFile) return;
+
+		if (restoredCurrent !== null) {
+			this.currentTree = this.cache.get(this.currentFile.path, restoredCurrent);
+			this.reloadFrontmatterFromContent(restoredCurrent);
 			// Recompute derived map settings (theme/layout/background/branch line/…)
 			// from the restored frontmatter, mirroring the load flow — otherwise a
 			// map-level style undo/redo restores the file but not the live layout.
 			this.loadMapSettings();
 			this.nodeSizeCache.clear();
-			// Re-expand transclusions so an undo/redo of a local edit that
-			// carried an embed keeps it rendered, not collapsed to a bare
-			// `![[…]]` placeholder (mirrors writeMarkdown / the source branch).
-			await this.transclusionResolver.expandTree(
-				this.currentTree,
-				this.lazyTransclusionIds,
-			);
-			await this.render();
-		} else if (this.currentFile) {
-			// Restored a transcluded source; re-read and re-expand the parent.
+		} else {
+			// Only transcluded sources changed; re-read the parent so the
+			// re-expansion below picks them up.
 			const parentContent = await this.app.vault.read(this.currentFile);
 			this.cache.invalidate(this.currentFile.path);
 			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
-			await this.transclusionResolver.expandTree(
-				this.currentTree,
-				this.lazyTransclusionIds,
-			);
-			await this.render();
 		}
+
+		// Re-expand transclusions so an undo/redo that carried an embed keeps it
+		// rendered, not collapsed to a bare `![[…]]` placeholder.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
+		await this.render();
 	}
 
 	/**
@@ -6259,7 +6609,18 @@ export class MindMapView extends ItemView {
 		await this.app.vault.modify(sourceFile, newContent);
 		this.recordEdit(sourceFilePath, before, newContent);
 
-		// Re-read and re-expand the current (parent) file to pick up the change
+		await this.resyncFromParent();
+	}
+
+	/**
+	 * Rebuild the map from the current (parent) file on disk and re-render.
+	 *
+	 * The tail every write to a *different* file than the map's own shares: the
+	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
+	 * has to be re-read and re-expanded for the change to appear.
+	 */
+	private async resyncFromParent(): Promise<void> {
+		if (!this.currentFile) return;
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
 		this.currentTree = this.cache.get(this.currentFile.path, parentContent);
@@ -6268,6 +6629,286 @@ export class MindMapView extends ItemView {
 			this.lazyTransclusionIds,
 		);
 		await this.render();
+	}
+
+	/**
+	 * Write one file as part of a multi-file gesture: normalize, record the undo
+	 * entry, and stop. Unlike {@link writeMarkdown} / {@link writeTranscludedMarkdown}
+	 * it does **not** rebuild or render — a grouped gesture writes several files
+	 * and re-syncs once at the end (see {@link moveAcrossFiles}), so rendering per
+	 * write would flash the half-applied state through the map.
+	 *
+	 * Normalization mirrors `writeNodeFile` → `writeMarkdown`: renumber ordered
+	 * lists, then normalize heading spacing, so a cross-file move produces the
+	 * same spacing and numbering a same-file move would.
+	 */
+	private async writeFileTracked(file: TFile, content: string): Promise<void> {
+		const normalized = this.normalizeHeadingSpacing(
+			this.renumberOrderedLists(content),
+		);
+		const before = await this.app.vault.read(file);
+		this.suppressNextReload = true;
+		this.cache.invalidate(file.path);
+		await this.app.vault.modify(file, normalized);
+		this.recordEdit(file.path, before, normalized);
+	}
+
+	/**
+	 * Move a contiguous run of siblings out of one note and into another — the
+	 * primitive behind every gesture that crosses an embed boundary.
+	 *
+	 * **Write order is a safety property, not a preference.** The destination is
+	 * written first: if that fails, the origin still holds the content and the
+	 * vault is exactly as it was. Only once the bytes exist in the destination is
+	 * the origin spliced, so the worst failure duplicates the content instead of
+	 * destroying it — and the duplicate is already inside the undo group, so one
+	 * Ctrl+Z reverts it.
+	 *
+	 * The subtree text is sliced **verbatim** so `^os-…` block IDs survive, then
+	 * re-indented into the destination's own coordinates. When the insert lands
+	 * beside an existing line, that neighbor supplies type and depth: the drop's
+	 * tree parent is expressed in the *origin's* file, and feeding host depth into
+	 * a source note indents the line wrongly. `fallbackContext` covers the sites
+	 * with no neighbor (appending inside an embed, reparenting onto one), where
+	 * the target parent does live in the destination file and its own child rules
+	 * already apply.
+	 *
+	 * @returns true when the move landed; false after a bail (with a notice shown).
+	 */
+	private async moveAcrossFiles(
+		originNodes: OsmosisNode[],
+		site: edit.InsertSite,
+		originPath: string,
+		fallbackContext: (src: OsmosisNode) => {
+			type: OsmosisNode["type"];
+			depth: number;
+		},
+	): Promise<boolean> {
+		const originFile = this.app.vault.getFileByPath(originPath);
+		const destFile = this.app.vault.getFileByPath(site.path);
+		if (!(originFile instanceof TFile) || !(destFile instanceof TFile)) {
+			new Notice("Osmosis: the destination note is no longer available");
+			return false;
+		}
+
+		this.beginEditGroup();
+		try {
+			let originText: string;
+			let destText: string;
+			try {
+				originText = await this.app.vault.read(originFile);
+				destText = await this.app.vault.read(destFile);
+			} catch {
+				new Notice("Osmosis: the destination note is no longer available");
+				return false;
+			}
+
+			// Extract verbatim (block IDs intact), then re-indent for the destination.
+			const parts: string[] = [];
+			for (const src of originNodes) {
+				const text = originText.slice(
+					src.range.start,
+					this.subtreeEnd(src),
+				);
+				const context = site.neighbor
+					? edit.inferSiblingContext(site.neighbor, src)
+					: fallbackContext(src);
+				parts.push(
+					this.reindentSubtree(text, src, context.type, context.depth),
+				);
+			}
+			const block = parts.join("\n");
+
+			try {
+				await this.writeFileTracked(
+					destFile,
+					edit.insertAt(destText, site.offset, block).text,
+				);
+			} catch {
+				new Notice(
+					`Osmosis: couldn't write ${destFile.basename} — move cancelled`,
+				);
+				return false;
+			}
+
+			try {
+				const span = edit.subtreeSpan(originNodes);
+				await this.writeFileTracked(
+					originFile,
+					edit.removeSpan(originText, edit.widenRemoval(originText, span)),
+				);
+			} catch {
+				new Notice(
+					`Osmosis: moved into ${destFile.basename} but couldn't update ${originFile.basename} — undo to revert`,
+				);
+				return false;
+			}
+
+			// Identity follows the bytes (design decision #3): the block IDs now
+			// living in the destination take their schedule with them, inside this
+			// same group so one Ctrl+Z restores both. The IDs are read from the
+			// moved text rather than the tree — a subtree carrying an embed folds
+			// to its `![[…]]` line, and the transcluded IDs behind it stay in
+			// their own note.
+			const movedIds = edit.collectBlockIds(block);
+			const entries = await this.readMovedScheduleEntries(
+				originPath,
+				movedIds,
+			);
+			await this.migrateBlockIdentity(
+				originPath,
+				site.path,
+				movedIds,
+				entries,
+			);
+			return true;
+		} finally {
+			this.endEditGroup();
+			// Re-sync even after a bail: the view must reflect what is actually on
+			// disk, which after a partial write is not what it showed before.
+			await this.resyncFromParent();
+		}
+	}
+
+	/**
+	 * The `osmosis-schedule` entries a note holds for `blockIds`, read straight
+	 * from its own bytes rather than the metadata cache — which lags our own
+	 * writes by an event loop.
+	 *
+	 * Pending ratings are flushed first, so a card rated seconds ago migrates
+	 * with its newest schedule and leaves nothing staged to be re-written into
+	 * the note it just left. That flush rewrites the frontmatter and shifts
+	 * every body offset with it, so this must only be called once no further
+	 * offset-based splice into `path` is pending.
+	 */
+	private async readMovedScheduleEntries(
+		path: string,
+		blockIds: ReadonlySet<string>,
+	): Promise<Record<string, unknown>> {
+		if (blockIds.size === 0) return {};
+		const file = this.fileAtPath(path);
+		if (!file) return {};
+
+		await this.plugin.scheduleStore.flushPath(path);
+		const content = await this.app.vault.read(file);
+		return edit.partitionScheduleEntries(
+			frontmatterValue(content, SCHEDULE_FRONTMATTER_KEY),
+			blockIds,
+		).moved;
+	}
+
+	/**
+	 * Carry line-card identity across a note boundary: write the moved lines'
+	 * schedule entries into the destination's frontmatter, drop them from the
+	 * origin's, and re-key the in-memory cards. Without it the debounced sync
+	 * orphans the origin's card two seconds later and mints the destination's
+	 * as brand new, with no review history.
+	 *
+	 * Called from inside an open edit group *after* the content writes land, so
+	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
+	 * and schedule together. {@link processFrontMatterTracked} is what makes
+	 * that true; `ScheduleStore` writes on its own debounce and bypasses
+	 * `recordEdit`, so its writes would fall outside the group.
+	 *
+	 * Best-effort by design: the bytes have already moved, so a frontmatter
+	 * failure is reported and left for the debounced sync to re-derive rather
+	 * than rolled back (undo still reverts the whole gesture).
+	 */
+	private async migrateBlockIdentity(
+		originPath: string,
+		destPath: string,
+		blockIds: ReadonlySet<string>,
+		entries: Record<string, unknown>,
+	): Promise<void> {
+		if (blockIds.size === 0 || originPath === destPath) return;
+
+		if (Object.keys(entries).length > 0) {
+			const originFile = this.fileAtPath(originPath);
+			const destFile = this.fileAtPath(destPath);
+			try {
+				if (destFile) {
+					await this.processFrontMatterTracked(destFile, (fm) => {
+						const { retained: existing } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							EMPTY_BLOCK_IDS,
+						);
+						fm[SCHEDULE_FRONTMATTER_KEY] = { ...existing, ...entries };
+					});
+				}
+				if (originFile) {
+					await this.processFrontMatterTracked(originFile, (fm) => {
+						const { retained } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							blockIds,
+						);
+						if (Object.keys(retained).length > 0) {
+							fm[SCHEDULE_FRONTMATTER_KEY] = retained;
+						} else {
+							delete fm[SCHEDULE_FRONTMATTER_KEY];
+						}
+					});
+				}
+			} catch (error) {
+				console.error("Osmosis: failed to migrate schedule frontmatter", error);
+				new Notice(
+					"Osmosis: the lines moved, but their review history couldn't follow",
+				);
+			}
+		}
+
+		this.plugin.cardSync.handleBlockMove(originPath, destPath, blockIds);
+		this.plugin.refreshDashboard();
+	}
+
+	/**
+	 * Every note the current tree draws bytes from, besides the map's own — the
+	 * files whose changes invalidate the offsets this map's nodes carry.
+	 */
+	private transcludedPaths(): Set<string> {
+		const paths = new Set<string>();
+		if (!this.currentTree) return paths;
+		const visit = (node: OsmosisNode): void => {
+			if (node.sourceFile !== undefined) paths.add(node.sourceFile);
+			for (const child of node.children) visit(child);
+		};
+		visit(this.currentTree.root);
+		return paths;
+	}
+
+	/**
+	 * A {@link edit.FileOf} over the currently rendered tree: which file each
+	 * node's `range` indexes. Null when there is nothing loaded.
+	 */
+	private containingFileOf(): edit.FileOf | null {
+		if (!this.currentTree || !this.currentFile) return null;
+		const hostPath = this.currentFile.path;
+		const map = edit.buildContainingFileMap(this.currentTree.root, hostPath);
+		return (n) => map.get(n.id) ?? hostPath;
+	}
+
+	/**
+	 * Resolve a containing-file path to the `TFile` whose bytes an edit reads and
+	 * writes.
+	 *
+	 * Prefer this over {@link getNodeFile} wherever a node's `range` is about to
+	 * be sliced or spliced. `getNodeFile` keys off `sourceFile`, which on an
+	 * *unexpanded* embed — lazy-loaded or cyclic — names the embed's target while
+	 * the node's own range still indexes the file holding the `![[…]]` line.
+	 * Routing such a node by `sourceFile` splices host offsets into the target.
+	 */
+	private fileAtPath(path: string): TFile | null {
+		const file = this.app.vault.getFileByPath(path);
+		return file instanceof TFile ? file : null;
+	}
+
+	/** Write a whole file identified by path, then rebuild and re-render. */
+	private async writeFileAtPath(path: string, updated: string): Promise<void> {
+		const renumbered = this.renumberOrderedLists(updated);
+		if (path === this.currentFile?.path) {
+			await this.writeMarkdown(renumbered);
+		} else {
+			await this.writeTranscludedMarkdown(path, renumbered);
+		}
 	}
 
 	/**
@@ -6371,7 +7012,9 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Add a child node under the given parent.
-	 * Inserts a new line after the parent's subtree.
+	 * Inserts a new line at the parent's child boundary — for a heading, before
+	 * its first sub-heading, since anything past that reads as the sub-heading's
+	 * content rather than the selected node's.
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
@@ -6382,34 +7025,11 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// Determine child type and depth
-		let childType: OsmosisNode["type"];
-		let childDepth: number;
-
-		if (src.type === "heading") {
-			// Child of heading: bullet at depth 0
-			childType = "bullet";
-			childDepth = 0;
-		} else if (src.type === "bullet") {
-			childType = "bullet";
-			childDepth = src.depth + 1;
-		} else if (src.type === "ordered") {
-			childType = "ordered";
-			childDepth = src.depth + 1;
-		} else {
-			childType = "bullet";
-			childDepth = 0;
-		}
-
+		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
 		const newLine = this.serializeLine(childType, childDepth, "");
-		const insertPos = this.subtreeEnd(src);
+		const insertPos = edit.childInsertOffset(src);
 
-		// Insert after the subtree with a newline
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			newLine +
-			content.slice(insertPos);
+		const updated = edit.insertAt(content, insertPos, newLine).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);

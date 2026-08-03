@@ -253,6 +253,19 @@ pre.osmosis-code-block {
 	pointer-events: none;
 }
 
+/* Drop lands in a different note: solid line plus the destination's name. */
+.osmosis-drop-indicator--cross-note {
+	stroke: var(--text-accent);
+	stroke-dasharray: none;
+}
+
+.osmosis-drop-indicator-label {
+	fill: var(--text-accent);
+	font-size: 12px;
+	font-weight: 600;
+	pointer-events: none;
+}
+
 /* Resize handle (circle dot on right edge) */
 .osmosis-resize-handle {
 	cursor: ew-resize;

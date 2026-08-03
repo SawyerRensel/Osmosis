@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { injectFenceIdsIntoContent } from "./CardSyncService";
+import { CardSyncService, injectFenceIdsIntoContent } from "./CardSyncService";
+import { CardStore } from "../store/CardStore";
+import { lineCardId } from "./line-cards";
+import type { Card } from "../database/types";
 import type { GeneratedCard } from "./types";
 
 function card(partial: Partial<GeneratedCard> & Pick<GeneratedCard, "id" | "sourceLine">): GeneratedCard {
@@ -199,5 +202,85 @@ describe("injectFenceIdsIntoContent", () => {
 		];
 
 		expect(injectFenceIdsIntoContent(content, cards)).toBe(content);
+	});
+});
+
+/** A CardSyncService wired to a real CardStore; the vault is never touched. */
+function syncService(): { sync: CardSyncService; store: CardStore } {
+	const store = new CardStore();
+	const sync = new CardSyncService(
+		{} as never,
+		store,
+		{ isWriting: () => false } as never,
+		() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+	);
+	return { sync, store };
+}
+
+function lineCard(notePath: string, blockId: string, overrides: Partial<Card> = {}): Card {
+	return {
+		id: lineCardId(notePath, blockId),
+		notePath,
+		blockId,
+		deck: "Transit",
+		cardType: "line",
+		front: "Network gaps",
+		back: "",
+		typeIn: false,
+		sourceLine: 3,
+		reps: 4,
+		lapses: 1,
+		due: 1_700_000_000_000,
+		state: "review",
+		...overrides,
+	};
+}
+
+describe("CardSyncService.handleBlockMove", () => {
+	it("re-keys a moved line card to the destination note, history intact", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeUndefined();
+		const moved = store.getCard("transit-map.md#^os-seamgap1");
+		expect(moved?.notePath).toBe("transit-map.md");
+		expect(moved?.blockId).toBe("os-seamgap1");
+		expect(moved?.reps).toBe(4);
+		expect(moved?.due).toBe(1_700_000_000_000);
+		expect(store.getCardsByNote("bike-lanes.md")).toHaveLength(0);
+	});
+
+	it("leaves the origin's other cards alone", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+		store.addCard(lineCard("bike-lanes.md", "os-stay001"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCardsByNote("bike-lanes.md").map((c) => c.blockId)).toEqual([
+			"os-stay001",
+		]);
+	});
+
+	it("carries the disabled flag across, so an excluded card stays excluded", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1", { disabled: true }));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCard("transit-map.md#^os-seamgap1")?.disabled).toBe(true);
+	});
+
+	it("ignores block IDs with no card and same-file moves", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-absent"]));
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeDefined();
+
+		sync.handleBlockMove("bike-lanes.md", "bike-lanes.md", new Set(["os-seamgap1"]));
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeDefined();
 	});
 });
