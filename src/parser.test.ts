@@ -132,6 +132,45 @@ describe("OsmosisParser", () => {
 			expect(h1?.children[0]?.type).toBe("transclusion");
 		});
 
+		it("nests an indented transclusion under the list item enclosing it", () => {
+			// An unindented embed belongs to the heading, but an indented one is
+			// nested content of its list item — and must not end the list, or
+			// every item after it detaches too. Pasting a heading whose subtree
+			// contains an embed onto a bullet produces exactly this shape.
+			const md = [
+				"## Edge Cases",
+				"- Network gaps",
+				"\t- Bike Network",
+				"\t\t![[bike-lanes]]",
+				"\t\t- Fare integration study",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const edgeCases = tree.root.children[0];
+			expect(edgeCases?.children).toHaveLength(1);
+
+			const bikeNetwork = edgeCases?.children[0]?.children[0];
+			expect(bikeNetwork?.content).toBe("Bike Network");
+			expect(bikeNetwork?.children.map((c) => c.type)).toEqual([
+				"transclusion",
+				"bullet",
+			]);
+		});
+
+		it("keeps an unindented transclusion on the heading, ending the list", () => {
+			const md = [
+				"## Edge Cases",
+				"- Network gaps",
+				"\t- Bike Network",
+				"![[bike-lanes]]",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const edgeCases = tree.root.children[0];
+			expect(edgeCases?.children.map((c) => c.type)).toEqual([
+				"bullet",
+				"transclusion",
+			]);
+		});
+
 		it("treats wiki-link image embeds as paragraphs", () => {
 			const md = "![[photo.png]]";
 			const tree = parser.parse(md, "test.md");

@@ -285,10 +285,25 @@ export class OsmosisParser {
 
 				listStack.push(node);
 			} else if (parsed.type === "transclusion") {
-				// Transclusion nodes are children of the current heading context
-				listStack = [];
-				const parent = headingStack[headingStack.length - 1] ?? root;
-				parent.children.push(node);
+				// An unindented embed ends the list and belongs to the heading;
+				// an indented one is nested content of the list item enclosing
+				// it. Clearing the stack unconditionally detached not just the
+				// embed but every list item after it, which is how a pasted
+				// subtree containing an embed lost its whole tree.
+				while (listStack.length > 0) {
+					const top = listStack[listStack.length - 1];
+					if (top !== undefined && top.depth >= parsed.depth) {
+						listStack.pop();
+					} else {
+						break;
+					}
+				}
+
+				const parent =
+					listStack.length > 0
+						? listStack[listStack.length - 1]
+						: (headingStack[headingStack.length - 1] ?? root);
+				parent?.children.push(node);
 			} else {
 				// Paragraph: child of current list item if in a list, else heading
 				if (listStack.length > 0) {
