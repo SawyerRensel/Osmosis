@@ -1452,6 +1452,13 @@ export class MindMapView extends ItemView {
 		void this.render();
 	}
 
+	/** Re-measure every node and re-render, for changes outside MapSettings
+	 *  (e.g. the global max node width setting). */
+	remeasureAndRender(): void {
+		this.nodeSizeCache.clear();
+		void this.render();
+	}
+
 	/** Get info about the current node selection, used by the Format tab. */
 	getSelectedNodeInfo(): { nodeIds: string[]; primaryId: string | null } {
 		return {
@@ -7278,7 +7285,8 @@ export class MindMapView extends ItemView {
 	): Promise<Map<string, { width: number; height: number }>> {
 		const sizes = new Map<string, { width: number; height: number }>();
 		const cfg = DEFAULT_LAYOUT_CONFIG;
-		const effectiveMaxNodeWidth = this.mapSettings.maxNodeWidth ?? cfg.maxNodeWidth;
+		const effectiveMaxNodeWidth =
+			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
 		// Reduce max content width for shapes with insets so text wraps before
 		// the shape boundary clips it.
 		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";

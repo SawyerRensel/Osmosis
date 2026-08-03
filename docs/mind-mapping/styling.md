@@ -98,7 +98,7 @@ osmosis-styles:
 | `collapseDepth` | `0` (none) through `6` | `0` |
 | `horizontalSpacing` | Pixels | `80` |
 | `verticalSpacing` | Pixels | `8` |
-| `maxNodeWidth` | Pixels | — |
+| `maxNodeWidth` | Pixels | **Settings > Osmosis > Max node width** (`230`) |
 
 ## Per-Node Style Selectors
 

@@ -302,6 +302,14 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
+	/** Re-measure and re-render every open mind map, after a global setting
+	 *  that affects node sizing changes. */
+	remeasureOpenMindMaps(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP)) {
+			if (leaf.view instanceof MindMapView) leaf.view.remeasureAndRender();
+		}
+	}
+
 	private async activateMindMapView(): Promise<void> {
 		const { workspace } = this.app;
 

@@ -101,6 +101,10 @@ export interface OsmosisSettings {
 	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
 	sequentialContextLines: number;
 
+	/** Default maximum node width before text wraps, in px. Per-map "Max width"
+	 *  in the properties sidebar overrides this (default: 230). */
+	defaultMaxNodeWidth: number;
+
 	// ── Mind Map Editing ────────────────────────────────────
 	/** Maximum undo/redo history entries kept per mind map (default: 50). */
 	undoMaxSteps: number;
@@ -115,6 +119,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	showTransclusionStyle: false,
 	expandTransclusions: true,
 	mindMapDefaultMode: "editing",
+	defaultMaxNodeWidth: 230,
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
@@ -172,6 +177,9 @@ export class OsmosisSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		Object.assign(this.plugin.settings, { [key]: value });
 		await this.plugin.saveSettings();
+		if (key === "defaultMaxNodeWidth") {
+			this.plugin.remeasureOpenMindMaps();
+		}
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem<keyof OsmosisSettings>[] {
@@ -188,6 +196,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						angular: "Angular",
 						"rounded-elbow": "Rounded elbow",
 					},
+				},
+			},
+			{
+				name: "Max node width",
+				desc: "Default maximum width before node text wraps. Individual maps can override this from the properties sidebar.",
+				control: {
+					type: "slider",
+					key: "defaultMaxNodeWidth",
+					min: 100,
+					max: 800,
+					step: 10,
+					displayFormat: (value: number) => `${String(value)} px`,
 				},
 			},
 			{

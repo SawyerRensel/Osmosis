@@ -1940,9 +1940,10 @@ export class PropertiesSidebarView extends ItemView {
 				this.mapMaxNodeWidthSlider = slider.sliderEl;
 				slider
 					.setLimits(100, 800, 10)
-					.setValue(settings.maxNodeWidth ?? 300)
+					.setValue(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth)
 					.onChange(async (value) => {
-						await this.saveSetting("maxNodeWidth", value === 300 ? undefined : value);
+						const isDefault = value === this.plugin.settings.defaultMaxNodeWidth;
+						await this.saveSetting("maxNodeWidth", isDefault ? undefined : value);
 					});
 			});
 	}
@@ -2307,7 +2308,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.mapNodeWidthInput.value = base.width != null ? String(base.width) : "";
 		}
 		if (this.mapMaxNodeWidthSlider) {
-			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? 300);
+			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth);
 		}
 	}
 
