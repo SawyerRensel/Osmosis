@@ -40,38 +40,26 @@ labels: feature, optimization
 assignees:
 ---
 
-### 💡 Summary
-A short, clear description of the feature or optimization.  
+# Feature Request
+
+## What do you need built?
+
+*Describe the new tool, script, or capability you're requesting.*
 
 
 
-***
+## What problem does this solve?
 
-### 🤔 What Problem Does This Solve?
-Describe the issue or workflow friction this feature would address.  
-
-
-
-***
-
-### 🧩 Proposed Solution / Idea
-Explain how you'd like the feature to work or what it would look like.  
+*Describe the problem or need. What are you trying to accomplish?*
 
 
 
-***
+## What's your current workaround?
 
-
-### 🔄 Alternatives Considered
-Have you tried or considered other ways to solve this problem?  
-
-
-
-***
-
-### 📎 Additional Context
-Add any other context, screenshots, or mockups that might help explain your request.  
+*How do you currently handle this? Describe any manual steps or workarounds.*
 
 
 
-***
+## Reference Attachments/Screenshots
+
+*Attach any reference files, screenshots, sketches, or examples.*

@@ -2,7 +2,7 @@ source: Bases/
 filters:
   and:
     - file.ext == "md"
-    - calendar.containsAny("Bug", "Feature", "Optimization", "Research")
+    - calendar.containsAny("Bug", "Feature", "Optimization", "Research", "Documentation")
     - '!file.name.contains("Template")'
 properties:
   note.title:
@@ -49,7 +49,7 @@ views:
       - summary
       - date_end_scheduled
     sort:
-      - property: date_end_scheduled
+      - property: file.ctime
         direction: DESC
       - property: date_modified
         direction: DESC

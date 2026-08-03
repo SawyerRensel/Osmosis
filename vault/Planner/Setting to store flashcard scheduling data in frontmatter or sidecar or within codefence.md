@@ -1,6 +1,6 @@
 ---
-title: Format button should toggle panel visibility
-summary:
+title: Setting to store flashcard scheduling data in frontmatter or sidecar or within codefence
+summary: Right now scheduling data is stored strictly in Osmosis codefence
 tags:
   - task
 calendar:
@@ -13,13 +13,13 @@ status: Ideas
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-03T15:23:44.778Z
-date_modified: 2026-08-03T19:26:25.309Z
+date_created: "2026-08-03T17:54:41.551Z"
+date_modified: "2026-08-03T17:54:41.551Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
-all_day: true
+all_day: false
 repeat_frequency:
 repeat_interval:
 repeat_until:
@@ -35,7 +35,6 @@ blocked_by:
 cover:
 color:
 ---
-
 # Optimization 
 
 ## What tool or process needs improvement?
@@ -53,4 +52,3 @@ color:
 ## What would "better" look like?
 
 *Describe your ideal outcome. How should it work differently?*
-

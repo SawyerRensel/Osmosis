@@ -35,3 +35,27 @@ blocked_by:
 cover:
 color:
 ---
+
+# Feature Request
+
+## What do you need built?
+
+*Describe the new tool, script, or capability you're requesting.*
+
+
+
+## What problem does this solve?
+
+*Describe the problem or need. What are you trying to accomplish?*
+
+
+
+## What's your current workaround?
+
+*How do you currently handle this? Describe any manual steps or workarounds.*
+
+
+
+## Reference Attachments/Screenshots
+
+*Attach any reference files, screenshots, sketches, or examples.*

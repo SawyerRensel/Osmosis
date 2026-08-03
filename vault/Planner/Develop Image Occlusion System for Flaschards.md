@@ -1,6 +1,6 @@
 ---
-title: Setting to show card stats in note edit mode
-summary: When will I see this card next?  How hard was/is it?
+title: Develop Image Occlusion System for Flaschards
+summary: Hide image content as flashcards
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-04-03T21:47:12.978Z"
-date_modified: "2026-07-31T21:05:35.926Z"
+date_created: "2026-08-03T15:38:04.268Z"
+date_modified: "2026-08-03T17:56:22.696Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -34,10 +34,6 @@ children:
 blocked_by:
 cover:
 color:
-name: Idea
-about: Suggest a feature or optimization
-labels: feature, optimization
-assignees:
 ---
 
 # Feature Request

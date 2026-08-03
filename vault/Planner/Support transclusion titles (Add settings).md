@@ -35,6 +35,25 @@ blocked_by:
 cover:
 color:
 ---
+
+# Optimization 
+
+## What tool or process needs improvement?
+
+*Which existing tool, script, or workflow are you referring to? Include the name if you know it.*
+
+
+
+## What's slow or frustrating about it?
+
+*What specifically takes too long or feels clunky?*
+
+
+
+## What would "better" look like?
+
+*Describe your ideal outcome. How should it work differently?*
+
 - [ ] Fileneame as h1 branch node* 
 - [ ] *`title` frontmatter fields as h1 branch node*
 - [ ] *Add option to ignore h1 headings if picking either of these two*

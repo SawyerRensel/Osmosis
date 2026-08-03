@@ -40,40 +40,26 @@ labels: feature, optimization
 assignees:
 ---
 
-### 💡 Summary
-A short, clear description of the feature or optimization.  
+# Feature Request
 
-- [ ] Filename as h1 branch node
-- [ ] `title` frontmatter fields as h1 branch node
-- [ ] Add option to ignore h1 headings if picking either of these two
+## What do you need built?
 
-***
-
-### 🤔 What Problem Does This Solve?
-Describe the issue or workflow friction this feature would address.  
+*Describe the new tool, script, or capability you're requesting.*
 
 
 
-***
+## What problem does this solve?
 
-### 🧩 Proposed Solution / Idea
-Explain how you'd like the feature to work or what it would look like.  
-
-
-
-***
-
-
-### 🔄 Alternatives Considered
-Have you tried or considered other ways to solve this problem?  
+*Describe the problem or need. What are you trying to accomplish?*
 
 
 
-***
+## What's your current workaround?
 
-### 📎 Additional Context
-Add any other context, screenshots, or mockups that might help explain your request.  
-
+*How do you currently handle this? Describe any manual steps or workarounds.*
 
 
-***
+
+## Reference Attachments/Screenshots
+
+*Attach any reference files, screenshots, sketches, or examples.*

@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-03T15:31:57.214Z"
-date_modified: "2026-08-03T15:31:57.214Z"
+date_created: 2026-08-03T15:31:57.214Z
+date_modified: 2026-08-03T22:19:18.400Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

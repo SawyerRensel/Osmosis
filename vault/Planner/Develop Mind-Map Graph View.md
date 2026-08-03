@@ -1,6 +1,6 @@
 ---
-title: Setting to show card stats in note edit mode
-summary: When will I see this card next?  How hard was/is it?
+title: Develop Mind-Map Graph View
+summary: What if we combined Mind Mapping with Obsidian's Graph View?
 tags:
   - task
 calendar:
@@ -13,9 +13,9 @@ status: Ideas
 priority:
 progress_current:
 progress_total:
-date_created: "2026-04-03T21:47:12.978Z"
-date_modified: "2026-07-31T21:05:35.926Z"
-date_start_scheduled:
+date_created: "2026-08-03T17:30:27.346Z"
+date_modified: "2026-08-03T17:31:11.530Z"
+date_start_scheduled: "2026-08-06T21:29:43.106Z"
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
@@ -34,10 +34,6 @@ children:
 blocked_by:
 cover:
 color:
-name: Idea
-about: Suggest a feature or optimization
-labels: feature, optimization
-assignees:
 ---
 
 # Feature Request
@@ -46,7 +42,7 @@ assignees:
 
 *Describe the new tool, script, or capability you're requesting.*
 
-
+Now, kind of the marriage between the graph view and a mind map, where the mainly the graph these structure, so it doesn't just reveal around so that every time you open it, you see the same thing.  But make it three. So we can actually see the molecules above clock. Right. So next?  Yeah, it's got to figure out how to do that optimally
 
 ## What problem does this solve?
 
