@@ -41,6 +41,7 @@ import {
 import { EditorSelection } from "@codemirror/state";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
+import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
 import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
 import type { Card } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
@@ -73,6 +74,28 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
+
+// Identity migration constants
+const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Read one key out of a file's YAML frontmatter block, straight from its raw
+ * markdown. Used where the metadata cache can't be trusted — right after our
+ * own write, it still holds the pre-write frontmatter.
+ */
+function frontmatterValue(content: string, key: string): unknown {
+	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+	if (!match?.[1]) return undefined;
+	try {
+		const parsed: unknown = parseYaml(match[1]);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return undefined;
+		}
+		return (parsed as Record<string, unknown>)[key];
+	} catch {
+		return undefined;
+	}
+}
 
 type FileEdit = edit.FileEdit;
 
@@ -162,6 +185,21 @@ export class MindMapView extends ItemView {
 	private clipboardNodeDepth: number | null = null;
 	private clipboardIsCut = false;
 	private clipboardSourceIds: Set<string> = new Set();
+	/**
+	 * Containing file of the copied nodes — null when the selection spanned more
+	 * than one, where there is no single origin for identity to move from. Also
+	 * marks the clipboard as Osmosis' own rather than an external app's.
+	 */
+	private clipboardSourcePath: string | null = null;
+	/** Block IDs carried by {@link clipboardText}. */
+	private clipboardBlockIds: Set<string> = new Set();
+	/**
+	 * The origin's `osmosis-schedule` entries for those block IDs, captured at
+	 * cut time. A cut deletes immediately, so by the time the user pastes the
+	 * line is gone from the origin and its frontmatter may have been rewritten —
+	 * capture on cut, replay on paste.
+	 */
+	private clipboardSchedules: Record<string, unknown> = {};
 
 	// Clipboard state for copy/paste style
 	private clipboardNodeStyle: NodeStyle | null = null;
@@ -1188,7 +1226,8 @@ export class MindMapView extends ItemView {
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (file instanceof TFile && file === this.currentFile) {
+				if (!(file instanceof TFile)) return;
+				if (file === this.currentFile) {
 					if (this.liveEditActive) {
 						// A live-edit session (color-picker drag) drives rendering
 						// directly via applyMapSettings/render; ignore our own writes
@@ -1210,13 +1249,34 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
-					// Our own schedule flush only touches frontmatter, which
-					// the map doesn't render — skip the reload so a debounced
-					// mid-session write can't flicker or reset study state
-					// (same pattern as CardSyncService with FenceWriter).
-					if (this.plugin.scheduleStore.isWriting(file.path)) return;
+					// Our own schedule flush only touches frontmatter, which the
+					// map doesn't render — so re-sync rather than reload, keeping
+					// study state and undo history instead of tearing them down
+					// mid-session. Re-sync it must: the frontmatter it grows
+					// shifts every body offset, and the tree's ranges are what
+					// structural edits splice with.
+					if (this.plugin.scheduleStore.isWriting(file.path)) {
+						void this.resyncFromParent();
+						return;
+					}
 					void this.loadFile(file);
+					return;
 				}
+
+				// A note this map transcludes changed underneath it. Nothing
+				// re-parses it otherwise, so its nodes keep the offsets they had
+				// before the write — and the next edit that splices by those
+				// offsets writes into the wrong bytes. A debounced schedule flush
+				// is the common case: it renders identically and still moves every
+				// line in the file.
+				if (this.liveEditActive || this.editGroup || this.editingNodeId) return;
+				if (this.suppressNextReload) {
+					this.suppressNextReload = false;
+					return;
+				}
+				if (!this.transcludedPaths().has(file.path)) return;
+				this.cache.invalidate(file.path);
+				void this.resyncFromParent();
 			}),
 		);
 
@@ -4028,6 +4088,13 @@ export class MindMapView extends ItemView {
 		this.clipboardIsCut = isCut;
 		this.clipboardSourceIds = new Set(this.selectedNodeIds);
 
+		// Identity travels with the clipboard. A mixed host+embedded selection has
+		// no single origin to migrate from, so it pastes as plain text.
+		const paths = new Set(selected.map((sel) => fileOf(sel.source)));
+		this.clipboardSourcePath = paths.size === 1 ? [...paths][0]! : null;
+		this.clipboardBlockIds = edit.collectBlockIds(this.clipboardText);
+		this.clipboardSchedules = {};
+
 		// Also put plain text on system clipboard for external paste
 		await navigator.clipboard.writeText(this.clipboardText);
 
@@ -4038,11 +4105,21 @@ export class MindMapView extends ItemView {
 			} else {
 				await this.deleteNode(node);
 			}
+
+			// Capture the schedule *after* the delete: reading it flushes pending
+			// ratings, which rewrites the frontmatter and would have shifted the
+			// offsets the splice above depends on.
+			if (this.clipboardSourcePath) {
+				this.clipboardSchedules = await this.readMovedScheduleEntries(
+					this.clipboardSourcePath,
+					this.clipboardBlockIds,
+				);
+			}
 		}
 	}
 
 	/**
-	 * Paste clipboard content as sibling(s) below the selected node.
+	 * Paste clipboard content as the last child of the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!this.assertEditable()) return;
@@ -4053,17 +4130,26 @@ export class MindMapView extends ItemView {
 		if (!node) return;
 
 		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
+		// Routed by containing file, not `getNodeFile`: on an unexpanded embed the
+		// latter names the embed's target while `src.range` still indexes the host.
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const destPath = fileOf(src);
+		const destFile = this.fileAtPath(destPath);
+		if (!destFile) return;
 
-		const content = await this.app.vault.read(file);
+		const content = await this.app.vault.read(destFile);
 		const insertPos = this.subtreeEnd(src);
 
-		// Adjust pasted text depth if target differs from source
+		// Re-indent to sit *under* the selected node. Taking the delta from the
+		// target's own depth is the trap: pasting a bullet onto `## Heading`
+		// would indent it to the heading's level and bury it inside whatever
+		// list came before. A child's depth is its parent's child rule.
 		let pasteText = this.clipboardText;
+		const context = edit.inferChildContext(src);
 		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
-			const depthDelta = src.depth - this.clipboardNodeDepth;
-			if (depthDelta !== 0 || this.clipboardNodeType !== src.type) {
+			const depthDelta = context.depth - this.clipboardNodeDepth;
+			if (depthDelta !== 0 || this.clipboardNodeType !== context.type) {
 				pasteText = this.adjustPasteDepth(
 					pasteText,
 					this.clipboardNodeType,
@@ -4072,12 +4158,50 @@ export class MindMapView extends ItemView {
 			}
 		}
 
+		const originPath = this.clipboardSourcePath;
+		// A cut moves identity; a copy duplicates a line, and a duplicated line is
+		// a new line — strip its block IDs so it doesn't inherit the original's
+		// card, and let Osmosis mint a fresh ID on demand. Text from outside
+		// Osmosis (no source path) pastes exactly as before.
+		if (originPath !== null && !this.clipboardIsCut) {
+			pasteText = edit.stripBlockIds(pasteText);
+		}
+
 		const updated =
 			content.slice(0, insertPos) +
 			"\n" +
 			pasteText +
 			content.slice(insertPos);
-		await this.writeNodeFile(src, updated);
+
+		const migrates =
+			originPath !== null &&
+			this.clipboardIsCut &&
+			originPath !== destPath &&
+			this.clipboardBlockIds.size > 0;
+		if (migrates) {
+			// Cut across the seam: the write and the schedule migration are one
+			// gesture, so they undo as one step (see `moveAcrossFiles`).
+			this.beginEditGroup();
+			try {
+				await this.writeFileTracked(destFile, updated);
+				await this.migrateBlockIdentity(
+					originPath,
+					destPath,
+					this.clipboardBlockIds,
+					this.clipboardSchedules,
+				);
+			} finally {
+				this.endEditGroup();
+				await this.resyncFromParent();
+			}
+		} else {
+			await this.writeFileAtPath(destPath, updated);
+		}
+
+		// A cut's identity lands exactly once: pasting the same clipboard again
+		// duplicates the line, so it takes the copy path and gets fresh IDs.
+		this.clipboardIsCut = false;
+		this.clipboardSchedules = {};
 	}
 
 	/**
@@ -6603,6 +6727,24 @@ export class MindMapView extends ItemView {
 				);
 				return false;
 			}
+
+			// Identity follows the bytes (design decision #3): the block IDs now
+			// living in the destination take their schedule with them, inside this
+			// same group so one Ctrl+Z restores both. The IDs are read from the
+			// moved text rather than the tree — a subtree carrying an embed folds
+			// to its `![[…]]` line, and the transcluded IDs behind it stay in
+			// their own note.
+			const movedIds = edit.collectBlockIds(block);
+			const entries = await this.readMovedScheduleEntries(
+				originPath,
+				movedIds,
+			);
+			await this.migrateBlockIdentity(
+				originPath,
+				site.path,
+				movedIds,
+				entries,
+			);
 			return true;
 		} finally {
 			this.endEditGroup();
@@ -6610,6 +6752,111 @@ export class MindMapView extends ItemView {
 			// disk, which after a partial write is not what it showed before.
 			await this.resyncFromParent();
 		}
+	}
+
+	/**
+	 * The `osmosis-schedule` entries a note holds for `blockIds`, read straight
+	 * from its own bytes rather than the metadata cache — which lags our own
+	 * writes by an event loop.
+	 *
+	 * Pending ratings are flushed first, so a card rated seconds ago migrates
+	 * with its newest schedule and leaves nothing staged to be re-written into
+	 * the note it just left. That flush rewrites the frontmatter and shifts
+	 * every body offset with it, so this must only be called once no further
+	 * offset-based splice into `path` is pending.
+	 */
+	private async readMovedScheduleEntries(
+		path: string,
+		blockIds: ReadonlySet<string>,
+	): Promise<Record<string, unknown>> {
+		if (blockIds.size === 0) return {};
+		const file = this.fileAtPath(path);
+		if (!file) return {};
+
+		await this.plugin.scheduleStore.flushPath(path);
+		const content = await this.app.vault.read(file);
+		return edit.partitionScheduleEntries(
+			frontmatterValue(content, SCHEDULE_FRONTMATTER_KEY),
+			blockIds,
+		).moved;
+	}
+
+	/**
+	 * Carry line-card identity across a note boundary: write the moved lines'
+	 * schedule entries into the destination's frontmatter, drop them from the
+	 * origin's, and re-key the in-memory cards. Without it the debounced sync
+	 * orphans the origin's card two seconds later and mints the destination's
+	 * as brand new, with no review history.
+	 *
+	 * Called from inside an open edit group *after* the content writes land, so
+	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
+	 * and schedule together. {@link processFrontMatterTracked} is what makes
+	 * that true; `ScheduleStore` writes on its own debounce and bypasses
+	 * `recordEdit`, so its writes would fall outside the group.
+	 *
+	 * Best-effort by design: the bytes have already moved, so a frontmatter
+	 * failure is reported and left for the debounced sync to re-derive rather
+	 * than rolled back (undo still reverts the whole gesture).
+	 */
+	private async migrateBlockIdentity(
+		originPath: string,
+		destPath: string,
+		blockIds: ReadonlySet<string>,
+		entries: Record<string, unknown>,
+	): Promise<void> {
+		if (blockIds.size === 0 || originPath === destPath) return;
+
+		if (Object.keys(entries).length > 0) {
+			const originFile = this.fileAtPath(originPath);
+			const destFile = this.fileAtPath(destPath);
+			try {
+				if (destFile) {
+					await this.processFrontMatterTracked(destFile, (fm) => {
+						const { retained: existing } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							EMPTY_BLOCK_IDS,
+						);
+						fm[SCHEDULE_FRONTMATTER_KEY] = { ...existing, ...entries };
+					});
+				}
+				if (originFile) {
+					await this.processFrontMatterTracked(originFile, (fm) => {
+						const { retained } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							blockIds,
+						);
+						if (Object.keys(retained).length > 0) {
+							fm[SCHEDULE_FRONTMATTER_KEY] = retained;
+						} else {
+							delete fm[SCHEDULE_FRONTMATTER_KEY];
+						}
+					});
+				}
+			} catch (error) {
+				console.error("Osmosis: failed to migrate schedule frontmatter", error);
+				new Notice(
+					"Osmosis: the lines moved, but their review history couldn't follow",
+				);
+			}
+		}
+
+		this.plugin.cardSync.handleBlockMove(originPath, destPath, blockIds);
+		this.plugin.refreshDashboard();
+	}
+
+	/**
+	 * Every note the current tree draws bytes from, besides the map's own — the
+	 * files whose changes invalidate the offsets this map's nodes carry.
+	 */
+	private transcludedPaths(): Set<string> {
+		const paths = new Set<string>();
+		if (!this.currentTree) return paths;
+		const visit = (node: OsmosisNode): void => {
+			if (node.sourceFile !== undefined) paths.add(node.sourceFile);
+			for (const child of node.children) visit(child);
+		};
+		visit(this.currentTree.root);
+		return paths;
 	}
 
 	/**
@@ -6760,25 +7007,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// Determine child type and depth
-		let childType: OsmosisNode["type"];
-		let childDepth: number;
-
-		if (src.type === "heading") {
-			// Child of heading: bullet at depth 0
-			childType = "bullet";
-			childDepth = 0;
-		} else if (src.type === "bullet") {
-			childType = "bullet";
-			childDepth = src.depth + 1;
-		} else if (src.type === "ordered") {
-			childType = "ordered";
-			childDepth = src.depth + 1;
-		} else {
-			childType = "bullet";
-			childDepth = 0;
-		}
-
+		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
 		const newLine = this.serializeLine(childType, childDepth, "");
 		const insertPos = this.subtreeEnd(src);
 

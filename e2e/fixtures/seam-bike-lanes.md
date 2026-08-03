@@ -1,3 +1,7 @@
+---
+osmosis-cards: true
+---
+
 - Protected lane standards
 	- Curb separation
 	- Bollard spacing

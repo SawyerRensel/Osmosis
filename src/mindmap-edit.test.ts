@@ -15,6 +15,7 @@ import {
 	buildContainingFileMap,
 	resolveInsertSite,
 	inferSiblingContext,
+	inferChildContext,
 	subtreeSpan,
 	widenRemoval,
 	removeSpan,
@@ -22,6 +23,9 @@ import {
 	mergeEdit,
 	collapseEditGroup,
 	editBytes,
+	collectBlockIds,
+	stripBlockIds,
+	partitionScheduleEntries,
 } from "./mindmap-edit";
 import type { FileEdit } from "./mindmap-edit";
 
@@ -989,5 +993,197 @@ describe("cross-boundary extraction + reindent", () => {
 		expect(
 			removeSpan(BIKE_LANES_NESTED, widenRemoval(BIKE_LANES_NESTED, span)),
 		).not.toContain("![[bike-parking]]");
+	});
+});
+
+// ── Clipboard / schedule identity (Phase 6 + Phase 5) ────────────────────────
+describe("collectBlockIds", () => {
+	it("finds inline trailing IDs and standalone `^id` lines", () => {
+		const text = [
+			"- Network gaps ^os-seamgap1",
+			"\t- Curb separation",
+			"| Corridor | Status |",
+			"| --- | --- |",
+			"| 3rd Ave | Funded |",
+			"^os-tab001",
+		].join("\n");
+
+		expect(collectBlockIds(text)).toEqual(
+			new Set(["os-seamgap1", "os-tab001"]),
+		);
+	});
+
+	it("ignores carets inside a fenced code block", () => {
+		const text = [
+			"- Signal timing ^os-sig001",
+			"```",
+			"const exp = base ^os-notanid;",
+			"^os-alsonot",
+			"```",
+			"^os-code01",
+		].join("\n");
+
+		expect(collectBlockIds(text)).toEqual(new Set(["os-sig001", "os-code01"]));
+	});
+
+	it("returns an empty set when nothing carries an ID", () => {
+		expect(collectBlockIds("- Rack placement\n- Signage")).toEqual(new Set());
+	});
+
+	it("reads the IDs a real subtree's bytes carry, not its transcluded ones", async () => {
+		const lanes = [
+			"# Bike Lanes",
+			"",
+			"## Parking ^os-park01",
+			"",
+			"![[bike-parking]]",
+			"",
+			"- Signage ^os-sign01",
+			"",
+		].join("\n");
+		const parking = ["- Rack standards ^os-rack01", ""].join("\n");
+
+		const tree = await parseVault(NESTED_HOST, {
+			"bike-lanes-nested.md": lanes,
+			"bike-parking.md": parking,
+		});
+		const holder = findByContent(tree.root, "Parking");
+		const span = subtreeSpan([holder]);
+		const moved = lanes.slice(span.start, span.end);
+
+		// The embed folds to its `![[…]]` line, so bike-parking's own ID stays
+		// behind with the file that still physically holds it.
+		expect(moved).toContain("![[bike-parking]]");
+		expect(collectBlockIds(moved)).toEqual(
+			new Set(["os-park01", "os-sign01"]),
+		);
+	});
+});
+
+describe("stripBlockIds", () => {
+	it("removes inline IDs and drops standalone `^id` lines", () => {
+		const text = [
+			"- Network gaps ^os-seamgap1",
+			"\t- Curb separation ^os-curb01",
+			"^os-tab001",
+			"- Signage standards",
+		].join("\n");
+
+		expect(stripBlockIds(text)).toBe(
+			["- Network gaps", "\t- Curb separation", "- Signage standards"].join(
+				"\n",
+			),
+		);
+	});
+
+	it("preserves indentation, table pipes, and fenced code contents", () => {
+		const text = [
+			"\t\t- Covered shelter siting ^os-shel01",
+			"| Corridor | Status |",
+			"| 3rd Ave | Funded |",
+			"```",
+			"value ^os-notanid",
+			"```",
+			"^os-code01",
+		].join("\n");
+
+		expect(stripBlockIds(text)).toBe(
+			[
+				"\t\t- Covered shelter siting",
+				"| Corridor | Status |",
+				"| 3rd Ave | Funded |",
+				"```",
+				"value ^os-notanid",
+				"```",
+			].join("\n"),
+		);
+	});
+
+	it("leaves text with no block IDs byte-for-byte alone", () => {
+		const text = "## Parking\n\n- Rack placement rules\n\t- Bollard spacing\n";
+		expect(stripBlockIds(text)).toBe(text);
+	});
+});
+
+describe("partitionScheduleEntries", () => {
+	const raw = {
+		"os-seamgap1": { due: "2026-08-01T09:00:00", reps: 4, state: "review" },
+		"os-stay001": { due: "2026-08-05T09:00:00", reps: 1, state: "review" },
+	};
+
+	it("splits entries by the moving block IDs", () => {
+		const { moved, retained } = partitionScheduleEntries(
+			raw,
+			new Set(["os-seamgap1"]),
+		);
+
+		expect(Object.keys(moved)).toEqual(["os-seamgap1"]);
+		expect(Object.keys(retained)).toEqual(["os-stay001"]);
+	});
+
+	it("carries entries verbatim, including `disabled` and hand-added keys", () => {
+		const entry = {
+			due: "2026-08-01T09:00:00",
+			reps: 4,
+			disabled: true,
+			note: "hand-added",
+		};
+		const { moved } = partitionScheduleEntries(
+			{ "os-seamgap1": entry },
+			new Set(["os-seamgap1"]),
+		);
+
+		expect(moved["os-seamgap1"]).toBe(entry);
+	});
+
+	it("treats a block ID with no entry as a no-op", () => {
+		const { moved, retained } = partitionScheduleEntries(
+			raw,
+			new Set(["os-absent"]),
+		);
+
+		expect(moved).toEqual({});
+		expect(Object.keys(retained)).toEqual(["os-seamgap1", "os-stay001"]);
+	});
+
+	it("returns empty halves for a missing or malformed frontmatter value", () => {
+		for (const value of [undefined, null, "not a map", ["os-x"]]) {
+			expect(partitionScheduleEntries(value, new Set(["os-x"]))).toEqual({
+				moved: {},
+				retained: {},
+			});
+		}
+	});
+});
+
+// ── inferChildContext: what "under this node" means ──────────────────────────
+describe("inferChildContext", () => {
+	it("starts a heading's children at the top of a fresh list", () => {
+		// The reported bug: a heading's depth is a heading level, not a list
+		// depth, so reusing it indents the child into the preceding list item.
+		expect(inferChildContext(node({ type: "heading", depth: 2 }))).toEqual({
+			type: "bullet",
+			depth: 0,
+		});
+	});
+
+	it("nests one level under a bullet or ordered item, keeping its type", () => {
+		expect(inferChildContext(node({ type: "bullet", depth: 0 }))).toEqual({
+			type: "bullet",
+			depth: 1,
+		});
+		expect(inferChildContext(node({ type: "ordered", depth: 2 }))).toEqual({
+			type: "ordered",
+			depth: 3,
+		});
+	});
+
+	it("falls back to a top-level bullet under types that cannot nest a list", () => {
+		for (const type of ["codeblock", "table", "blockquote", "paragraph"] as const) {
+			expect(inferChildContext(node({ type, depth: 0 }))).toEqual({
+				type: "bullet",
+				depth: 0,
+			});
+		}
 	});
 });

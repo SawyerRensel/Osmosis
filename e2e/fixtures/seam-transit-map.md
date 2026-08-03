@@ -1,3 +1,7 @@
+---
+osmosis-cards: true
+---
+
 # City Transit Plan
 
 ## Bike Network
