@@ -109,6 +109,19 @@ interface MapEditSnapshot {
 	edits: FileEdit[];
 }
 
+/**
+ * One copied subtree: its source text, plus enough of the original node for
+ * `reindentSubtree` to re-serialize the first line at a new type/depth. The
+ * node itself is not kept — after a *cut* it no longer exists by paste time.
+ */
+interface ClipboardItem {
+	type: OsmosisNode["type"];
+	depth: number;
+	content: string;
+	blockId?: string;
+	text: string;
+}
+
 export class MindMapView extends ItemView {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
@@ -181,8 +194,13 @@ export class MindMapView extends ItemView {
 
 	// Clipboard state for copy/cut/paste
 	private clipboardText: string | null = null;
-	private clipboardNodeType: OsmosisNode["type"] | null = null;
-	private clipboardNodeDepth: number | null = null;
+	/**
+	 * One record per copied subtree. Paste promotes each *top-level* item to a
+	 * direct child of the target on its own terms — a single type/depth for the
+	 * whole clipboard re-levels a heading and a bullet by the same delta, and
+	 * lands one of them wrong.
+	 */
+	private clipboardItems: ClipboardItem[] = [];
 	private clipboardIsCut = false;
 	private clipboardSourceIds: Set<string> = new Set();
 	/**
@@ -4049,7 +4067,6 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
 
-		const src = node.source;
 		const fileOf = this.containingFileOf();
 		if (!fileOf) return;
 
@@ -4067,7 +4084,7 @@ export class MindMapView extends ItemView {
 			);
 
 		const contents = new Map<string, string>();
-		const texts: string[] = [];
+		const items: ClipboardItem[] = [];
 		for (const sel of selected) {
 			const path = fileOf(sel.source);
 			let content = contents.get(path);
@@ -4079,12 +4096,19 @@ export class MindMapView extends ItemView {
 			}
 			const start = sel.source.range.start;
 			const end = this.subtreeEnd(sel.source);
-			texts.push(content.slice(start, end));
+			// Record each item's own shape while the live nodes are still in
+			// hand — a cut deletes them before the paste needs them.
+			items.push({
+				type: sel.source.type,
+				depth: sel.source.depth,
+				content: sel.source.content,
+				blockId: sel.source.blockId,
+				text: content.slice(start, end),
+			});
 		}
 
-		this.clipboardText = texts.join("\n");
-		this.clipboardNodeType = src.type;
-		this.clipboardNodeDepth = src.depth;
+		this.clipboardItems = items;
+		this.clipboardText = items.map((item) => item.text).join("\n");
 		this.clipboardIsCut = isCut;
 		this.clipboardSourceIds = new Set(this.selectedNodeIds);
 
@@ -4119,11 +4143,11 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Paste clipboard content as the last child of the selected node.
+	 * Paste clipboard content as a direct child of the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!this.assertEditable()) return;
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
+		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
 			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -4139,24 +4163,30 @@ export class MindMapView extends ItemView {
 		if (!destFile) return;
 
 		const content = await this.app.vault.read(destFile);
-		const insertPos = this.subtreeEnd(src);
+		// Not `subtreeEnd`: for a heading that is the end of its *last
+		// sub-heading's* content, which markdown reads as a child of that
+		// sub-heading rather than of the node the user selected.
+		const insertPos = edit.childInsertOffset(src);
 
-		// Re-indent to sit *under* the selected node. Taking the delta from the
-		// target's own depth is the trap: pasting a bullet onto `## Heading`
-		// would indent it to the heading's level and bury it inside whatever
-		// list came before. A child's depth is its parent's child rule.
-		let pasteText = this.clipboardText;
-		const context = edit.inferChildContext(src);
-		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
-			const depthDelta = context.depth - this.clipboardNodeDepth;
-			if (depthDelta !== 0 || this.clipboardNodeType !== context.type) {
-				pasteText = this.adjustPasteDepth(
-					pasteText,
-					this.clipboardNodeType,
-					depthDelta,
+		// Re-level each copied item *independently* against the target. Taking
+		// the delta from the target's own depth is one trap — pasting a bullet
+		// onto `## Heading` would indent it to the heading's level and bury it
+		// inside whatever list came before. Shifting a mixed clipboard by a
+		// single delta is the other: a heading and a bullet copied together need
+		// different treatment, and one of them lands wrong. `reindentSubtree`
+		// returns code blocks, tables, and blockquotes unchanged, so an atomic
+		// block's bytes are never reshaped.
+		let pasteText = this.clipboardItems
+			.map((item) => {
+				const context = edit.inferChildContext(src, item);
+				return edit.reindentSubtree(
+					item.text,
+					item,
+					context.type,
+					context.depth,
 				);
-			}
-		}
+			})
+			.join("\n");
 
 		const originPath = this.clipboardSourcePath;
 		// A cut moves identity; a copy duplicates a line, and a duplicated line is
@@ -4167,11 +4197,9 @@ export class MindMapView extends ItemView {
 			pasteText = edit.stripBlockIds(pasteText);
 		}
 
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			pasteText +
-			content.slice(insertPos);
+		// Separator-aware: the offset can now sit *before* a heading line, where
+		// the newline the old formula appended belongs on the other side.
+		const updated = edit.insertAt(content, insertPos, pasteText).text;
 
 		const migrates =
 			originPath !== null &&
@@ -4202,18 +4230,6 @@ export class MindMapView extends ItemView {
 		// duplicates the line, so it takes the copy path and gets fresh IDs.
 		this.clipboardIsCut = false;
 		this.clipboardSchedules = {};
-	}
-
-	/**
-	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Delegates to the tested pure transform in `mindmap-edit`.
-	 */
-	private adjustPasteDepth(
-		text: string,
-		sourceType: OsmosisNode["type"],
-		depthDelta: number,
-	): string {
-		return edit.adjustPasteDepth(text, sourceType, depthDelta);
 	}
 
 	/**
@@ -6996,7 +7012,9 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Add a child node under the given parent.
-	 * Inserts a new line after the parent's subtree.
+	 * Inserts a new line at the parent's child boundary — for a heading, before
+	 * its first sub-heading, since anything past that reads as the sub-heading's
+	 * content rather than the selected node's.
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
@@ -7009,14 +7027,9 @@ export class MindMapView extends ItemView {
 
 		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
 		const newLine = this.serializeLine(childType, childDepth, "");
-		const insertPos = this.subtreeEnd(src);
+		const insertPos = edit.childInsertOffset(src);
 
-		// Insert after the subtree with a newline
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			newLine +
-			content.slice(insertPos);
+		const updated = edit.insertAt(content, insertPos, newLine).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);

@@ -10,12 +10,12 @@ import {
 	nodeHostStart,
 	sameEditTarget,
 	reindentSubtree,
-	adjustPasteDepth,
 	renumberOrderedLists,
 	buildContainingFileMap,
 	resolveInsertSite,
 	inferSiblingContext,
 	inferChildContext,
+	childInsertOffset,
 	subtreeSpan,
 	widenRemoval,
 	removeSpan,
@@ -252,20 +252,25 @@ describe("sameEditTarget guards cross-file edits", () => {
 	});
 });
 
-// ── adjustPasteDepth / renumberOrderedLists: behavior lock-in ─────────────────
-describe("adjustPasteDepth", () => {
+// ── reindentSubtree: the one converter both drag and paste re-level through ──
+// These four cases were `adjustPasteDepth`'s; paste now shares drag's converter,
+// so the behaviors move here rather than disappearing with the old function.
+describe("reindentSubtree re-levels a pasted subtree", () => {
 	it("shifts list and heading depth without touching content", () => {
 		const text = ["- a", "\t- b"].join("\n");
-		expect(adjustPasteDepth(text, "bullet", 1)).toBe(
+		const bullet = node({ type: "bullet", depth: 0, content: "a" });
+		expect(reindentSubtree(text, bullet, "bullet", 1)).toBe(
 			["\t- a", "\t\t- b"].join("\n"),
 		);
-		expect(adjustPasteDepth("## Head", "heading", 1)).toBe("### Head");
+		const heading = node({ type: "heading", depth: 2, content: "Head" });
+		expect(reindentSubtree("## Head", heading, "heading", 3)).toBe("### Head");
 	});
 
 	it("leaves code fence lines and their contents untouched", () => {
 		// Only the surrounding list shifts; fence markers and body are verbatim.
 		const text = ["- a", "\t```", "\tnot-a-list", "\t```"].join("\n");
-		expect(adjustPasteDepth(text, "bullet", 1)).toBe(
+		const bullet = node({ type: "bullet", depth: 0, content: "a" });
+		expect(reindentSubtree(text, bullet, "bullet", 1)).toBe(
 			["\t- a", "\t```", "\tnot-a-list", "\t```"].join("\n"),
 		);
 	});
@@ -275,7 +280,63 @@ describe("adjustPasteDepth", () => {
 		// the atomic block AND its ID line must stay put — indenting the `^id`
 		// line detaches the block ID (line-card identity / style anchor).
 		const text = ["```", "code stuff", "```", "^os-codeblock"].join("\n");
-		expect(adjustPasteDepth(text, "codeblock", 2)).toBe(text);
+		const code = node({ type: "codeblock", depth: 0, content: text });
+		expect(reindentSubtree(text, code, "bullet", 2)).toBe(text);
+	});
+
+	it("keeps blank lines inside a fence when a heading becomes a list item", () => {
+		// A heading→list conversion drops the blank lines that separate its
+		// children, which would otherwise break list nesting — but a blank line
+		// between two statements is part of the code, not list spacing.
+		const text = [
+			"## Route Metrics",
+			"",
+			"```js",
+			"const headway = 8;",
+			"",
+			"const stops = 12;",
+			"```",
+			"",
+			"- Peak service",
+		].join("\n");
+		const heading = node({ type: "heading", depth: 2, content: "Route Metrics" });
+		expect(reindentSubtree(text, heading, "bullet", 1)).toBe(
+			[
+				"\t- Route Metrics",
+				"```js",
+				"const headway = 8;",
+				"",
+				"const stops = 12;",
+				"```",
+				"\t\t- Peak service",
+			].join("\n"),
+		);
+	});
+
+	it("leaves a descendant table's rows and `^id` line at column zero", () => {
+		// The atomic-block invariant applies to descendants too, not just to a
+		// subtree whose *root* is the table: indenting a row breaks the table,
+		// and indenting the ID line detaches it from the block it names.
+		const text = [
+			"- Routes",
+			"| Line | Stops |",
+			"| --- | --- |",
+			"| A | 12 |",
+			"^os-routes",
+			"\t- Frequency",
+		].join("\n");
+		const bullet = node({ type: "bullet", depth: 0, content: "Routes" });
+		expect(reindentSubtree(text, bullet, "bullet", 1)).toBe(
+			[
+				"\t- Routes",
+				"| Line | Stops |",
+				"| --- | --- |",
+				"| A | 12 |",
+				"^os-routes",
+				// ...while an ordinary list descendant still shifts.
+				"\t\t- Frequency",
+			].join("\n"),
+		);
 	});
 });
 
@@ -1185,5 +1246,143 @@ describe("inferChildContext", () => {
 				depth: 0,
 			});
 		}
+	});
+
+	it("keeps a list child's own bullet/ordered flavor", () => {
+		expect(
+			inferChildContext(node({ type: "bullet", depth: 1 }), node({ type: "ordered" })),
+		).toEqual({ type: "ordered", depth: 2 });
+		expect(
+			inferChildContext(node({ type: "ordered", depth: 0 }), node({ type: "bullet" })),
+		).toEqual({ type: "bullet", depth: 1 });
+		expect(
+			inferChildContext(node({ type: "heading", depth: 2 }), node({ type: "ordered" })),
+		).toEqual({ type: "ordered", depth: 0 });
+	});
+
+	it("turns a heading dropped onto a list item into a list item", () => {
+		// No heading can live inside a list — left as a heading it breaks out of
+		// the list entirely instead of becoming the child the user asked for.
+		expect(
+			inferChildContext(node({ type: "bullet", depth: 1 }), node({ type: "heading" })),
+		).toEqual({ type: "bullet", depth: 2 });
+		expect(
+			inferChildContext(node({ type: "ordered", depth: 0 }), node({ type: "heading" })),
+		).toEqual({ type: "ordered", depth: 1 });
+	});
+
+	it("nests a heading under a heading by level, clamped at six", () => {
+		expect(
+			inferChildContext(node({ type: "heading", depth: 2 }), node({ type: "heading" })),
+		).toEqual({ type: "heading", depth: 3 });
+		// `#######` is not a heading in markdown — a child of `######` stays at 6.
+		expect(
+			inferChildContext(node({ type: "heading", depth: 6 }), node({ type: "heading" })),
+		).toEqual({ type: "heading", depth: 6 });
+	});
+
+	it("starts a fresh top-level list under a type that nests nothing", () => {
+		for (const type of ["codeblock", "table", "blockquote", "paragraph"] as const) {
+			expect(
+				inferChildContext(node({ type, depth: 0 }), node({ type: "heading" })),
+			).toEqual({ type: "bullet", depth: 0 });
+		}
+	});
+});
+
+// ── childInsertOffset: where a *direct child* of a heading actually goes ──────
+describe("childInsertOffset", () => {
+	it("puts a heading's new child before its first sub-heading", () => {
+		// The reported bug: appending at subtreeEnd writes past `## Edge Cases`,
+		// and markdown then reads the line as that sub-heading's child — several
+		// screens from the node the user selected.
+		const md = [
+			"# City Transit Plan",
+			"- Frequency targets",
+			"## Bike Network",
+			"- Lane audit",
+			"## Edge Cases",
+		].join("\n");
+		const tree = parser.parse(md, "f.md");
+		const plan = findByContent(tree.root, "City Transit Plan");
+		expect(childInsertOffset(plan)).toBe(md.indexOf("## Bike Network"));
+		expect(childInsertOffset(plan)).not.toBe(subtreeEnd(plan));
+	});
+
+	it("falls back to subtreeEnd for a heading with only list children", () => {
+		const md = ["## Bus Network", "- Route 12", "\t- Stop list"].join("\n");
+		const tree = parser.parse(md, "f.md");
+		const bus = findByContent(tree.root, "Bus Network");
+		expect(childInsertOffset(bus)).toBe(subtreeEnd(bus));
+	});
+
+	it("is unchanged for a list parent, whose subtree end really is its last child", () => {
+		const md = ["- Route 12", "\t- Stop list"].join("\n");
+		const tree = parser.parse(md, "f.md");
+		const route = findByContent(tree.root, "Route 12");
+		expect(childInsertOffset(route)).toBe(subtreeEnd(route));
+	});
+
+	it("ignores a transcluded heading child, whose start indexes another file", async () => {
+		// An embed is one `![[…]]` line *here*: a heading inside it splits the
+		// source note's bytes, not the host's. Honoring it would splice the host
+		// file at a source-file offset — near the top of the wrong file.
+		const host = [
+			"# City Transit Plan",
+			"- Frequency targets",
+			"![[bike-network]]",
+		].join("\n");
+		const tree = await parseVault(host, {
+			"bike-network.md": ["# Bike Network", "- Lane audit"].join("\n"),
+		});
+		const plan = findByContent(tree.root, "City Transit Plan");
+		const embedded = findByContent(tree.root, "Bike Network");
+		expect(embedded.type).toBe("heading");
+		expect(embedded.embedHostRange).toBeDefined();
+		// Not `embedded.range.start` (0, in bike-network.md's coordinates).
+		expect(childInsertOffset(plan)).toBe(subtreeEnd(plan));
+		expect(childInsertOffset(plan)).toBe(host.length);
+	});
+});
+
+// ── Paste composition: one target context and one re-level per clipboard item ─
+describe("multi-item paste promotes each item on its own terms", () => {
+	const md = ["- Lane audit", "## Bike Network"].join("\n");
+
+	/** What `pasteNodes` does per clipboard record. */
+	function promote(parent: OsmosisNode, items: readonly OsmosisNode[]): string[] {
+		return items.map((item) => {
+			const text = md.slice(item.range.start, subtreeEnd(item));
+			const ctx = inferChildContext(parent, item);
+			return reindentSubtree(text, item, ctx.type, ctx.depth);
+		});
+	}
+
+	/** The two copied subtrees, as separate top-level clipboard items. */
+	function copied(): OsmosisNode[] {
+		const tree = parser.parse(md, "src.md");
+		return [
+			findByContent(tree.root, "Lane audit"),
+			findByContent(tree.root, "Bike Network"),
+		];
+	}
+
+	it("lands a heading and a bullet from one clipboard at their own levels", () => {
+		const items = copied();
+		// Onto `## Bus Network`: the bullet starts a fresh list, the heading nests
+		// a level deeper. The old single delta came from the *first* item only —
+		// zero, for the bullet — leaving `## Bike Network` a sibling of the
+		// target rather than a child of it.
+		const bus = node({ type: "heading", depth: 2, content: "Bus Network" });
+		expect(promote(bus, items)).toEqual(["- Lane audit", "### Bike Network"]);
+	});
+
+	it("converts both to list items when the target is a list item", () => {
+		const items = copied();
+		const route = node({ type: "bullet", depth: 1, content: "Route 12" });
+		expect(promote(route, items)).toEqual([
+			"\t\t- Lane audit",
+			"\t\t- Bike Network",
+		]);
 	});
 });
