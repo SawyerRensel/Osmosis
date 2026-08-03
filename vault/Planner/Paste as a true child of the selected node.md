@@ -10,10 +10,10 @@ people:
 location:
 related:
   - "[[Mind Map Permeable Embed Boundaries]]"
-status: In-Review
+status: Done
 priority:
 date_created: 2026-08-03T18:15:06.944Z
-date_modified: 2026-08-03T15:00:00.313Z
+date_modified: 2026-08-03T19:19:33.300Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

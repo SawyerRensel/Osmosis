@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-07-31T22:38:30.824Z
-date_modified: 2026-08-03T18:31:25.083Z
+date_modified: 2026-08-03T19:19:35.061Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
