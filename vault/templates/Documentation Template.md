@@ -32,6 +32,7 @@ children:
 blocked_by:
 cover:
 color:
+pull_request:
 ---
 
 ## Description of the Documentation Request

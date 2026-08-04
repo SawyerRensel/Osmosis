@@ -503,14 +503,26 @@ After completing each subtask:
 
 **IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT update the task note's status or commit code until the user has validated the changes work.
 
-### Step 5: Update the Planner Note (After User Confirms Testing)
+### Step 5: Ship It and Close Out the Task (After User Confirms Testing)
 
 Only proceed to this step after the user has confirmed that manual testing passes.
 
-Set the task note's `status` to `Done` in `vault/Planner/`, and fill
-`date_end_actual`. For follow-up work discovered during implementation, create a
-new task note from the matching template in `vault/templates/` and link it via
-`related` (or `blocked_by` when it genuinely blocks).
+1. **Branch** — task work belongs on a `feature/…` (or `fix/…`) branch cut from
+   the current release branch, not on the release branch itself. Create it at the
+   start of the task if you can; at the latest, before the first commit.
+2. **Commit** code **by explicit path** (never `git add .` — task notes and
+   template edits are the user's working documents and must not ride along).
+3. **PR** — push, then open a PR against the release branch the task belongs to.
+   Confirm the base branch actually exists rather than assuming a version number.
+4. **Merge** — only when the user asks for it.
+5. **Document the task note** — see
+   [Documenting a Completed Task](#documenting-a-completed-task). Set `status` to
+   `Done`, fill `date_end_actual` and `pull_request`, and write the "What was
+   implemented" section into the body.
+
+For follow-up work discovered during implementation, create a new task note from
+the matching template in `vault/templates/` and link it via `related` (or
+`blocked_by` when it genuinely blocks).
 
 ---
 
@@ -686,7 +698,9 @@ npm run build                             # Build the plugin
 # Provide manual test instructions to the user
 ```
 
-**Step 6**: Mark the task note `Done` in `vault/Planner/`
+**Step 6**: Ship and close out — branch, commit by path, PR, merge, then mark the
+task note `Done` with its `pull_request` link and a "What was implemented"
+write-up (see [Documenting a Completed Task](#documenting-a-completed-task))
 
 ---
 
@@ -729,7 +743,9 @@ older docs or prompts.
 1. **At session start**: read `vault/Planner/` — the notes' `status` frontmatter
    tells you what is in flight. A task note usually *is* the prompt for its work.
 2. **Before starting**: set the note's `status` to `In-Progress`.
-3. **When done** (after the user confirms manual testing): set `status` to `Done`.
+3. **When done** (after the user confirms manual testing): set `status` to
+   `Done`, fill `date_end_actual` and `pull_request`, and write the note's
+   "What was implemented" section.
 
 ### Creating a Task Note
 
@@ -757,14 +773,40 @@ Key frontmatter (full reference:
 - `related`, `parent`, `children`, `blocked_by`, `people` — wikilink arrays,
   quoted: `- "[[Other Task]]"`
 - `date_created` / `date_modified` — ISO datetimes
+- `pull_request` — URL of the PR that shipped the task, filled at close-out
+- `date_end_actual` — ISO datetime, set when the task is marked `Done`
+
+### Documenting a Completed Task
+
+A closed task note is the project's record of *why* the code looks the way it
+does — it outlives the branch, the PR description, and this conversation. So
+after the work merges, write a **"What was implemented"** section into the note
+body. Not a changelog of commits; an explanation a future session can act on:
+
+- **Where it shipped** — link the PR and name the branch it merged into.
+- **The cause** — why the code behaved the way it did. This is the most valuable
+  part and the part a diff cannot show. ("The editor opened on `content`, which
+  the parser had already stripped the markers out of.")
+- **The fix** — the shape of the solution, not a line-by-line restatement.
+- **Decisions worth remembering** — the judgment calls, each with its reason.
+  Anything a future session might otherwise "helpfully" undo belongs here.
+- **Surface map** — a `File | Change` table of everything touched.
+- **Test fixture** — its path and what it covers.
+- **Follow-ups** — wikilinks to the task notes for what was deliberately left.
+
+Keep it honest about what was *not* done and why. See
+`vault/Planner/Expose all Markdown elements in Mind Map Edit Mode.md` for a
+worked example.
 
 ### Session End
 
 **Always prompt the user for manual testing before updating a task's status or
 committing.**
 
-After the user confirms testing passes, update the task note, then commit **code
-by explicit path**. Task notes are the user's working documents — do not stage
+After the user confirms testing passes, follow
+[Step 5](#step-5-ship-it-and-close-out-the-task-after-user-confirms-testing):
+branch → commit **code by explicit path** → PR → merge (when asked) → document
+the task note. Task notes are the user's working documents — do not stage
 `vault/Planner/` changes alongside a code commit unless asked.
 
 ---
@@ -778,6 +820,12 @@ Commit when:
 - **The user has manually tested and confirmed the changes work**
 
 **IMPORTANT**: Do NOT commit or mark a task note `Done` until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
+
+**Branches and PRs**: task work goes on a `feature/…` (or `fix/…`) branch cut
+from the current release branch; it reaches the release branch through a PR, and
+merges only when the user asks. Record the PR URL in the task note's
+`pull_request` field. Stage code **by explicit path** so `vault/Planner/` and
+`vault/templates/` edits never ride along with a code commit.
 
 Example commit messages:
 ```
@@ -811,5 +859,5 @@ Before asking Claude for help on any code task:
 
 ---
 
-**Last Updated**: 2026-08-03
+**Last Updated**: 2026-08-04
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.

@@ -1,18 +1,20 @@
 ---
-title:
-summary:
+title: Fix Mind Map Editing box
+summary: Scale it according to the current zoom level.  Auto-wrap the node as you type.  Unfreeze edit box when zooming or panning when editing a node
 tags:
   - task
-calendar: Bug
+calendar:
+  - Bug
 context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
-progress:
-date_created:
-date_modified:
+progress_current:
+progress_total:
+date_created: 2026-08-04T06:44:02.791Z
+date_modified: 2026-08-04T13:13:02.419Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -32,7 +34,6 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
 ---
 
 # Bug Report

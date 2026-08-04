@@ -1,18 +1,20 @@
 ---
-title:
-summary:
+title: Branches are disappearing when zooming or panning beyond parent node
+summary: A branch should always be visible when it's in the viewport bounds
 tags:
   - task
-calendar: Bug
+calendar:
+  - Bug
 context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
-progress:
-date_created:
-date_modified:
+progress_current:
+progress_total:
+date_created: 2026-08-04T13:09:54.437Z
+date_modified: 2026-08-04T17:09:59.003Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -32,9 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
 ---
-
 # Bug Report
 
 ## Environment
