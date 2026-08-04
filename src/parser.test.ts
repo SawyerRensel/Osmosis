@@ -278,6 +278,62 @@ describe("OsmosisParser", () => {
 		});
 	});
 
+	describe("raw source text", () => {
+		/**
+		 * `raw` is what the mind map's inline editor opens on, so the guarantee
+		 * that matters is byte-exactness: slicing `range` out of the source must
+		 * give back `raw`, plus the block ID it deliberately withholds.
+		 */
+		const rawsOf = (md: string): string[] => {
+			const out: string[] = [];
+			const walk = (n: { raw?: string; children: unknown[] }): void => {
+				out.push(n.raw ?? "<missing>");
+				for (const c of n.children) walk(c as never);
+			};
+			for (const child of parser.parse(md, "test.md").root.children) walk(child);
+			return out;
+		};
+
+		it("keeps every structural marker `content` drops", () => {
+			const md = "## Title\n\n- Alpha\n\t- [x] Beta\n3. Gamma\n\n![[Other Note]]";
+			expect(rawsOf(md)).toEqual([
+				"## Title",
+				"- Alpha",
+				"\t- [x] Beta",
+				"3. Gamma",
+				"![[Other Note]]",
+			]);
+		});
+
+		it("preserves space indentation and `*` bullets verbatim", () => {
+			// Both normalize to tabs and `-` when re-serialized from type/depth;
+			// `raw` is the user's own bytes.
+			expect(rawsOf("* Alpha\n  * Beta")).toEqual(["* Alpha", "  * Beta"]);
+		});
+
+		it("is the node's range minus its trailing block ID", () => {
+			const md = "- Alpha ^os-abc123";
+			const tree = parser.parse(md, "test.md");
+			const n = tree.root.children[0];
+			expect(md.slice(n?.range.start, n?.range.end)).toBe("- Alpha ^os-abc123");
+			expect(n?.raw).toBe("- Alpha");
+			expect(n?.blockId).toBe("os-abc123");
+		});
+
+		it("equals content for multiline blocks, which are already verbatim", () => {
+			const md = "> [!note] Title\n> Body\n\n| a | b |\n| - | - |\n\n```js\nx\n```";
+			const tree = parser.parse(md, "test.md");
+			for (const n of tree.root.children) {
+				expect(n.raw).toBe(n.content);
+			}
+			expect(tree.root.children.map((n) => n.type)).toEqual([
+				"blockquote",
+				"table",
+				"codeblock",
+			]);
+		});
+	});
+
 	describe("content hash", () => {
 		it("produces consistent hashes for same content", () => {
 			const t1 = parser.parse("# Test", "a.md");
