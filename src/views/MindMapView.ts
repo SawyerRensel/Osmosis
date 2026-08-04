@@ -6019,11 +6019,12 @@ export class MindMapView extends ItemView {
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
 
-		// For checkbox nodes, strip the [ ]/[x] prefix for editing
-		let editValue = node.source.content;
-		if (node.source.metadata?.checkbox) {
-			editValue = editValue.replace(/^\[[ xX]\]\s*/, "");
-		}
+		// Edit the node's source line — bullet/heading/checkbox markers and all
+		// — so every markdown element is reachable from the map. Its leading
+		// indentation and trailing block ID stay hidden; both are restored on
+		// save (see `nodeEditText` / `restoreEditedLine`).
+		const editValue = edit.nodeEditText(node.source);
+		const selStart = edit.editSelectionStart(editValue, node.source.content);
 
 		// Try to instantiate the embedded Obsidian editor; fall back to textarea
 		try {
@@ -6057,11 +6058,13 @@ export class MindMapView extends ItemView {
 
 			this.editEditor = editor;
 
-			// Focus the CM6 editor and select all text
+			// Focus the CM6 editor and select the node's text, leaving the
+			// structural prefix in place so typing over it doesn't strip the
+			// bullet / heading marker the line is made of.
 			editor.editor.cm.focus();
 			const doc = editor.editor.cm.state.doc;
 			editor.editor.cm.dispatch({
-				selection: EditorSelection.range(0, doc.length),
+				selection: EditorSelection.range(selStart, doc.length),
 			});
 		} catch (err) {
 			console.warn(
@@ -6071,7 +6074,8 @@ export class MindMapView extends ItemView {
 			container.remove();
 			this.editContainer = null;
 			this.createFallbackTextarea(
-				node,
+				editValue,
+				selStart,
 				nodeId,
 				screenRect,
 				scaledFontSize,
@@ -6169,7 +6173,8 @@ export class MindMapView extends ItemView {
 
 	/** Fallback: create a plain textarea if the embedded editor fails */
 	private createFallbackTextarea(
-		node: LayoutNode,
+		editValue: string,
+		selStart: number,
 		nodeId: string,
 		screenRect: DOMRect,
 		scaledFontSize: number,
@@ -6180,7 +6185,7 @@ export class MindMapView extends ItemView {
 
 		const input = createEl("textarea");
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
-		input.value = node.source.content;
+		input.value = editValue;
 		input.rows = 1;
 		input.setCssStyles({
 			width: "100%",
@@ -6237,20 +6242,22 @@ export class MindMapView extends ItemView {
 		this.editContainer = container;
 
 		input.focus({ preventScroll: true });
-		input.select();
+		input.setSelectionRange(selStart, editValue.length);
 	}
 
 	private stopEditing(save: boolean): void {
 		if (!this.editingNodeId || !this.svg) return;
 
 		const nodeId = this.editingNodeId;
-		// Get content from embedded editor or fallback textarea
-		let newContent = "";
+		// Get the edited line from the embedded editor or fallback textarea.
+		// This is the node's whole source line — markers included, block ID
+		// excluded (see `nodeEditText`) — not just its label text.
+		let newLine = "";
 		if (this.editEditor) {
-			newContent = this.editEditor.value;
+			newLine = this.editEditor.value;
 		} else if (this.editContainer) {
 			const textarea = this.editContainer.querySelector("textarea");
-			newContent = textarea?.value ?? "";
+			newLine = textarea?.value ?? "";
 		}
 		this.editingNodeId = null;
 
@@ -6293,18 +6300,12 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
 
-		// Re-add checkbox prefix if this was a checkbox node
-		if (save && node.source.metadata?.checkbox) {
-			const prefix = (node.source.metadata.checked as boolean) ? "[x] " : "[ ] ";
-			newContent = prefix + newContent;
-		}
-
-		if (save && newContent !== node.source.content) {
+		if (save && newLine !== edit.nodeEditText(node.source)) {
 			// Store range.start so render() can re-select the node after
 			// the SVG is rebuilt (node IDs change when content changes).
 			this.pendingSelectionRangeStart = node.source.range.start;
 			// Write change back to markdown (triggers re-render)
-			void this.renameNode(node, newContent);
+			void this.renameNode(node, newLine);
 		}
 
 		// Clear cursor-sync highlight to avoid stale dashed outline
@@ -6919,12 +6920,19 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Rename a node: replace the line in markdown with updated content.
+	 * Rename a node: replace its line in markdown with the edited line.
 	 * For transcluded nodes, writes to the source file (not the parent note).
+	 *
+	 * `newLine` is the source line as the user edited it, structural markers and
+	 * all, so changing `- item` to `## item` (or dropping the marker entirely)
+	 * is just a rename — no re-serialization from type/depth, which is what used
+	 * to pin a node to the kind it was parsed as. The write path re-normalizes
+	 * heading spacing and ordered-list numbering, so a line that changes kind
+	 * still lands as well-formed markdown.
 	 */
 	private async renameNode(
 		node: LayoutNode,
-		newContent: string,
+		newLine: string,
 	): Promise<void> {
 		if (!this.currentFile) return;
 		const src = node.source;
@@ -6932,17 +6940,12 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		// Preserve the trailing block ID (line-card identity / style anchor) —
-		// `content`/`newContent` have it stripped, so it must be re-threaded.
-		const newLine = this.serializeLine(
-			src.type,
-			src.depth,
-			newContent,
-			src.blockId,
-		);
+		// Restore what the edit box withheld: the node's indentation and its
+		// trailing block ID (line-card identity / style anchor).
+		const line = edit.restoreEditedLine(src, newLine);
 		const updated =
 			content.slice(0, src.range.start) +
-			newLine +
+			line +
 			content.slice(src.range.end);
 		await this.writeNodeFile(src, updated);
 	}

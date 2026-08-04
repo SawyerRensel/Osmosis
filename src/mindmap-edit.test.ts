@@ -26,6 +26,11 @@ import {
 	collectBlockIds,
 	stripBlockIds,
 	partitionScheduleEntries,
+	nodeEditText,
+	restoreEditedLine,
+	nodeIndent,
+	reattachBlockId,
+	editSelectionStart,
 } from "./mindmap-edit";
 import type { FileEdit } from "./mindmap-edit";
 
@@ -163,6 +168,160 @@ describe("serializeLine preserves the trailing block ID", () => {
 		expect(serializeLine(n.type, n.depth, n.content, n.blockId)).toBe(
 			"- Alpha ^os-abc123",
 		);
+	});
+});
+
+// ── inline editing shows the whole source line, markers and all ──────────────
+describe("nodeEditText exposes every markdown element", () => {
+	/** The line the edit box opens on, for a node parsed out of `md`. */
+	const editTextFor = (md: string, content: string): string =>
+		nodeEditText(findByContent(parser.parse(md, "f.md").root, content));
+
+	it("keeps the bullet marker but not the indentation the map already draws", () => {
+		// A tab-indented line reads as an indented code block in the editor,
+		// which is what dropped the whole node into source styling.
+		expect(editTextFor("- Alpha\n\t- Beta", "Alpha")).toBe("- Alpha");
+		expect(editTextFor("- Alpha\n\t- Beta", "Beta")).toBe("- Beta");
+		expect(editTextFor("- Alpha\n  - Beta", "Beta")).toBe("- Beta");
+	});
+
+	it("keeps heading hashes, ordered numbers, and the embed wrapper", () => {
+		expect(editTextFor("## Alpha", "Alpha")).toBe("## Alpha");
+		expect(editTextFor("3. Alpha", "Alpha")).toBe("3. Alpha");
+		expect(editTextFor("![[Other Note]]", "Other Note")).toBe("![[Other Note]]");
+	});
+
+	it("keeps the checkbox marker the old editor stripped", () => {
+		expect(editTextFor("- [x] Alpha", "[x] Alpha")).toBe("- [x] Alpha");
+		expect(editTextFor("- [ ] Alpha", "[ ] Alpha")).toBe("- [ ] Alpha");
+	});
+
+	it("hides the trailing block ID — identity, not text", () => {
+		expect(editTextFor("- Alpha ^os-abc123", "Alpha")).toBe("- Alpha");
+		expect(editTextFor("## Alpha ^os-abc123", "Alpha")).toBe("## Alpha");
+	});
+
+	it("shows a multiline block verbatim", () => {
+		const md = "> [!note] Title\n> Body\n^os-q1";
+		expect(editTextFor(md, "> [!note] Title\n> Body")).toBe(
+			"> [!note] Title\n> Body",
+		);
+	});
+
+	it("falls back to a re-serialized line when a node has no raw", () => {
+		expect(nodeEditText(node({ type: "bullet", depth: 1, content: "Alpha" }))).toBe(
+			"- Alpha",
+		);
+	});
+});
+
+describe("nodeIndent", () => {
+	it("reports a single-line node's leading whitespace", () => {
+		expect(nodeIndent("bullet", "\t\t- Alpha")).toBe("\t\t");
+		expect(nodeIndent("bullet", "  - Alpha")).toBe("  ");
+		expect(nodeIndent("heading", "## Alpha")).toBe("");
+	});
+
+	it("claims none of a multiline block's bytes", () => {
+		// `>` and fence alignment are content, not depth.
+		expect(nodeIndent("blockquote", "> quote")).toBe("");
+		expect(nodeIndent("codeblock", "\t```\n\tx\n\t```")).toBe("");
+		expect(nodeIndent("table", "  | a |")).toBe("");
+	});
+});
+
+describe("restoreEditedLine inverts nodeEditText", () => {
+	/** Every node in `md`, so a round-trip can be asserted over all of them. */
+	const nodesOf = (md: string): OsmosisNode[] => {
+		const out: OsmosisNode[] = [];
+		const walk = (n: OsmosisNode): void => {
+			out.push(n);
+			n.children.forEach(walk);
+		};
+		parser.parse(md, "f.md").root.children.forEach(walk);
+		return out;
+	};
+
+	it("round-trips an unchanged edit to the original bytes", () => {
+		const md = [
+			"## Title",
+			"",
+			"- Alpha ^os-a1",
+			"\t- [x] Beta",
+			"\t\t3. Gamma ^os-g1",
+			"  * Space indented",
+			"",
+			"> [!note] Callout",
+			"> Body",
+			"",
+			"| a | b |",
+			"| - | - |",
+		].join("\n");
+		for (const n of nodesOf(md)) {
+			const line = restoreEditedLine(n, nodeEditText(n));
+			expect(line).toBe(md.slice(n.range.start, n.range.end));
+		}
+	});
+
+	it("restores the node's own indentation, not the map's idea of depth", () => {
+		const n = findByContent(parser.parse("- Alpha\n  - Beta", "f.md").root, "Beta");
+		// Two spaces in, two spaces out — the file's convention survives.
+		expect(restoreEditedLine(n, "- Renamed")).toBe("  - Renamed");
+	});
+
+	it("keeps indentation when the line changes kind", () => {
+		const n = findByContent(parser.parse("- Alpha\n\t- Beta ^os-b1", "f.md").root, "Beta");
+		expect(restoreEditedLine(n, "Beta")).toBe("\tBeta ^os-b1");
+	});
+});
+
+describe("reattachBlockId", () => {
+	it("re-appends the ID an inline edit never saw", () => {
+		expect(reattachBlockId("bullet", "- Alpha", "os-abc")).toBe("- Alpha ^os-abc");
+		expect(reattachBlockId("heading", "## Alpha", "os-abc")).toBe("## Alpha ^os-abc");
+	});
+
+	it("survives a line that changed kind during the edit", () => {
+		// `- Alpha ^os-abc` retyped as a heading keeps its card identity.
+		expect(reattachBlockId("bullet", "## Alpha", "os-abc")).toBe("## Alpha ^os-abc");
+	});
+
+	it("leaves multiline blocks alone — their ID is on its own line", () => {
+		expect(reattachBlockId("blockquote", "> quote", "os-x")).toBe("> quote");
+		expect(reattachBlockId("table", "| a |", "os-x")).toBe("| a |");
+		expect(reattachBlockId("codeblock", "```\nx\n```", "os-x")).toBe("```\nx\n```");
+	});
+
+	it("does not double an ID the user typed themselves", () => {
+		expect(reattachBlockId("bullet", "- Alpha ^os-typed", "os-abc")).toBe(
+			"- Alpha ^os-typed",
+		);
+	});
+
+	it("is a no-op when the node has no ID", () => {
+		expect(reattachBlockId("bullet", "- Alpha")).toBe("- Alpha");
+	});
+});
+
+describe("editSelectionStart", () => {
+	it("selects the label, not the marker that makes the line what it is", () => {
+		expect(editSelectionStart("- Alpha", "Alpha")).toBe(2);
+		expect(editSelectionStart("## Alpha", "Alpha")).toBe(3);
+		expect(editSelectionStart("1. Alpha", "Alpha")).toBe(3);
+		expect(editSelectionStart("- [x] Alpha", "[x] Alpha")).toBe(2);
+	});
+
+	it("puts the caret past the marker of a freshly added empty node", () => {
+		// Otherwise "add child, start typing" would overwrite the `- `.
+		expect(editSelectionStart("- ", "")).toBe(2);
+	});
+
+	it("finds content inside a wrapper", () => {
+		expect(editSelectionStart("![[Other Note]]", "Other Note")).toBe(3);
+	});
+
+	it("selects the whole line when content is not a substring of it", () => {
+		expect(editSelectionStart("> quote", "unrelated")).toBe(0);
 	});
 });
 

@@ -41,6 +41,20 @@ export interface OsmosisNode {
 	/** Raw markdown content of this node (without structural prefix like `- ` or `## `). */
 	content: string;
 
+	/**
+	 * The node's source text exactly as it appears in the file, minus a trailing
+	 * inline block ID — `range`'s bytes with only the card identity removed.
+	 *
+	 * Where `content` drops every structural marker, this keeps them:
+	 * indentation, `- ` / `1. `, `#`s, `[x] `, the `![[…]]` wrapper. Mind-map
+	 * inline editing works from *these* bytes (all but the indentation, which
+	 * the map itself draws), so any markdown element can be changed from the map
+	 * without switching to the note editor.
+	 * Multiline nodes (code block / table / blockquote) carry their ID on a
+	 * separate `^id` line outside `range`, so for them `raw === content`.
+	 */
+	raw?: string;
+
 	/** Child nodes in document order. */
 	children: OsmosisNode[];
 
