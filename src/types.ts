@@ -47,8 +47,9 @@ export interface OsmosisNode {
 	 *
 	 * Where `content` drops every structural marker, this keeps them:
 	 * indentation, `- ` / `1. `, `#`s, `[x] `, the `![[…]]` wrapper. Mind-map
-	 * inline editing shows and writes back *these* bytes, so any markdown
-	 * element can be changed from the map without switching to the note editor.
+	 * inline editing works from *these* bytes (all but the indentation, which
+	 * the map itself draws), so any markdown element can be changed from the map
+	 * without switching to the note editor.
 	 * Multiline nodes (code block / table / blockquote) carry their ID on a
 	 * separate `^id` line outside `range`, so for them `raw === content`.
 	 */

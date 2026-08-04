@@ -6019,9 +6019,10 @@ export class MindMapView extends ItemView {
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
 
-		// Edit the node's source line verbatim — bullet/heading/checkbox markers
-		// and all — so every markdown element is reachable from the map. Only
-		// the trailing block ID stays hidden; it is re-attached on save.
+		// Edit the node's source line — bullet/heading/checkbox markers and all
+		// — so every markdown element is reachable from the map. Its leading
+		// indentation and trailing block ID stay hidden; both are restored on
+		// save (see `nodeEditText` / `restoreEditedLine`).
 		const editValue = edit.nodeEditText(node.source);
 		const selStart = edit.editSelectionStart(editValue, node.source.content);
 
@@ -6922,12 +6923,12 @@ export class MindMapView extends ItemView {
 	 * Rename a node: replace its line in markdown with the edited line.
 	 * For transcluded nodes, writes to the source file (not the parent note).
 	 *
-	 * `newLine` is the whole source line as the user edited it, structural
-	 * markers and all, so changing `- item` to `## item` (or dropping the
-	 * marker entirely) is just a rename — no re-serialization from type/depth,
-	 * which is what used to pin a node to the kind it was parsed as. The write
-	 * path re-normalizes heading spacing and ordered-list numbering, so a line
-	 * that changes kind still lands as well-formed markdown.
+	 * `newLine` is the source line as the user edited it, structural markers and
+	 * all, so changing `- item` to `## item` (or dropping the marker entirely)
+	 * is just a rename — no re-serialization from type/depth, which is what used
+	 * to pin a node to the kind it was parsed as. The write path re-normalizes
+	 * heading spacing and ordered-list numbering, so a line that changes kind
+	 * still lands as well-formed markdown.
 	 */
 	private async renameNode(
 		node: LayoutNode,
@@ -6939,9 +6940,9 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		// Preserve the trailing block ID (line-card identity / style anchor) —
-		// the edit box hides it, so it must be re-threaded.
-		const line = edit.reattachBlockId(src.type, newLine, src.blockId);
+		// Restore what the edit box withheld: the node's indentation and its
+		// trailing block ID (line-card identity / style anchor).
+		const line = edit.restoreEditedLine(src, newLine);
 		const updated =
 			content.slice(0, src.range.start) +
 			line +

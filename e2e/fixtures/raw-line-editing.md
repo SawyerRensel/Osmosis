@@ -4,6 +4,8 @@
 
 - Plain bullet
 	- Nested bullet
+		- Twice nested bullet
+  - Space indented bullet
 - [ ] Unchecked task
 - [x] Checked task
 

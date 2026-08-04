@@ -27,6 +27,8 @@ import {
 	stripBlockIds,
 	partitionScheduleEntries,
 	nodeEditText,
+	restoreEditedLine,
+	nodeIndent,
 	reattachBlockId,
 	editSelectionStart,
 } from "./mindmap-edit";
@@ -175,9 +177,12 @@ describe("nodeEditText exposes every markdown element", () => {
 	const editTextFor = (md: string, content: string): string =>
 		nodeEditText(findByContent(parser.parse(md, "f.md").root, content));
 
-	it("keeps the bullet marker and its indentation", () => {
+	it("keeps the bullet marker but not the indentation the map already draws", () => {
+		// A tab-indented line reads as an indented code block in the editor,
+		// which is what dropped the whole node into source styling.
 		expect(editTextFor("- Alpha\n\t- Beta", "Alpha")).toBe("- Alpha");
-		expect(editTextFor("- Alpha\n\t- Beta", "Beta")).toBe("\t- Beta");
+		expect(editTextFor("- Alpha\n\t- Beta", "Beta")).toBe("- Beta");
+		expect(editTextFor("- Alpha\n  - Beta", "Beta")).toBe("- Beta");
 	});
 
 	it("keeps heading hashes, ordered numbers, and the embed wrapper", () => {
@@ -205,8 +210,68 @@ describe("nodeEditText exposes every markdown element", () => {
 
 	it("falls back to a re-serialized line when a node has no raw", () => {
 		expect(nodeEditText(node({ type: "bullet", depth: 1, content: "Alpha" }))).toBe(
-			"\t- Alpha",
+			"- Alpha",
 		);
+	});
+});
+
+describe("nodeIndent", () => {
+	it("reports a single-line node's leading whitespace", () => {
+		expect(nodeIndent("bullet", "\t\t- Alpha")).toBe("\t\t");
+		expect(nodeIndent("bullet", "  - Alpha")).toBe("  ");
+		expect(nodeIndent("heading", "## Alpha")).toBe("");
+	});
+
+	it("claims none of a multiline block's bytes", () => {
+		// `>` and fence alignment are content, not depth.
+		expect(nodeIndent("blockquote", "> quote")).toBe("");
+		expect(nodeIndent("codeblock", "\t```\n\tx\n\t```")).toBe("");
+		expect(nodeIndent("table", "  | a |")).toBe("");
+	});
+});
+
+describe("restoreEditedLine inverts nodeEditText", () => {
+	/** Every node in `md`, so a round-trip can be asserted over all of them. */
+	const nodesOf = (md: string): OsmosisNode[] => {
+		const out: OsmosisNode[] = [];
+		const walk = (n: OsmosisNode): void => {
+			out.push(n);
+			n.children.forEach(walk);
+		};
+		parser.parse(md, "f.md").root.children.forEach(walk);
+		return out;
+	};
+
+	it("round-trips an unchanged edit to the original bytes", () => {
+		const md = [
+			"## Title",
+			"",
+			"- Alpha ^os-a1",
+			"\t- [x] Beta",
+			"\t\t3. Gamma ^os-g1",
+			"  * Space indented",
+			"",
+			"> [!note] Callout",
+			"> Body",
+			"",
+			"| a | b |",
+			"| - | - |",
+		].join("\n");
+		for (const n of nodesOf(md)) {
+			const line = restoreEditedLine(n, nodeEditText(n));
+			expect(line).toBe(md.slice(n.range.start, n.range.end));
+		}
+	});
+
+	it("restores the node's own indentation, not the map's idea of depth", () => {
+		const n = findByContent(parser.parse("- Alpha\n  - Beta", "f.md").root, "Beta");
+		// Two spaces in, two spaces out — the file's convention survives.
+		expect(restoreEditedLine(n, "- Renamed")).toBe("  - Renamed");
+	});
+
+	it("keeps indentation when the line changes kind", () => {
+		const n = findByContent(parser.parse("- Alpha\n\t- Beta ^os-b1", "f.md").root, "Beta");
+		expect(restoreEditedLine(n, "Beta")).toBe("\tBeta ^os-b1");
 	});
 });
 
@@ -241,7 +306,6 @@ describe("reattachBlockId", () => {
 describe("editSelectionStart", () => {
 	it("selects the label, not the marker that makes the line what it is", () => {
 		expect(editSelectionStart("- Alpha", "Alpha")).toBe(2);
-		expect(editSelectionStart("\t\t- Alpha", "Alpha")).toBe(4);
 		expect(editSelectionStart("## Alpha", "Alpha")).toBe(3);
 		expect(editSelectionStart("1. Alpha", "Alpha")).toBe(3);
 		expect(editSelectionStart("- [x] Alpha", "[x] Alpha")).toBe(2);
@@ -250,7 +314,6 @@ describe("editSelectionStart", () => {
 	it("puts the caret past the marker of a freshly added empty node", () => {
 		// Otherwise "add child, start typing" would overwrite the `- `.
 		expect(editSelectionStart("- ", "")).toBe(2);
-		expect(editSelectionStart("\t- ", "")).toBe(3);
 	});
 
 	it("finds content inside a wrapper", () => {
