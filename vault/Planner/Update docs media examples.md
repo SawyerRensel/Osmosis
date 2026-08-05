@@ -58,6 +58,7 @@ color:
 
 *If you have ideas on what the new structure should look like, sketch out a brief outline or bullet points here.* 
 
+
 ## Media to capture
 
 **Rules for all of them:**
@@ -65,6 +66,11 @@ color:
 - **Close the Map settings sidebar.** It's open in nearly every current screenshot and eats ~30% of the frame.
 - **Use real content.** Every existing asset is the `mixed-content` test fixture — "First bullet point", "Animals → Mammals → Dogs". That's the bigger marketing problem, more than the layout was. Your `..._rust_crate_ecosystem.png` is the right instinct. Neutral domains: software architecture, music theory, history, statistics, language learning.
 - One Obsidian theme + one map theme throughout (except V5). 1600×1000 logical, 2× DPI. Collapse the left ribbon.
+
+
+> [!important] Colorful
+> Let's make this examples colorful.  People mind map for style and color. 
+
 
 **Videos** — MP4 (H.264 `yuv420p`) _and_ WebM (VP9), silent. Start and end on the same frame so the loop is seamless; move the cursor slowly. Export frame 1 of each as a PNG poster.
 
