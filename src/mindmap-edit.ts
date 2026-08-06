@@ -814,3 +814,71 @@ export function partitionScheduleEntries(
 	}
 	return { moved, retained };
 }
+
+/**
+ * Where the inline edit overlay goes and how big its text is, in viewport
+ * pixels, for the current zoom.
+ *
+ * The overlay is a plain DOM box laid over an SVG node, so none of it scales
+ * with the map's viewBox the way the node's own content does — every
+ * dimension has to be multiplied by the zoom by hand. Keeping that arithmetic
+ * here makes the two rules it encodes testable: the overlay's text is sized
+ * exactly like the node's rendered text, and the overlay stops widening where
+ * the node itself would stop, so typing wraps instead of running the box off
+ * toward the viewport edge.
+ */
+export interface EditOverlayInput {
+	/** The node's current on-screen rect (already zoomed), viewport coords. */
+	nodeRect: { left: number; top: number; width: number; height: number };
+	/** Bounds the overlay must stay inside, viewport coords, margins applied. */
+	viewport: { left: number; top: number; right: number; bottom: number };
+	/** Current map zoom factor. */
+	zoom: number;
+	/** The node's text metrics as rendered in the map, at zoom 1. */
+	fontSize: number;
+	lineHeight: number;
+	/** Node content padding, at zoom 1. */
+	paddingX: number;
+	paddingY: number;
+	/** The widest this node may grow before it wraps, at zoom 1. */
+	maxNodeWidth: number;
+}
+
+export interface EditOverlayGeometry {
+	left: number;
+	top: number;
+	minWidth: number;
+	minHeight: number;
+	maxWidth: number;
+	maxHeight: number;
+	fontSize: number;
+	lineHeight: number;
+	paddingX: number;
+	paddingY: number;
+}
+
+export function editOverlayGeometry(input: EditOverlayInput): EditOverlayGeometry {
+	const { nodeRect, viewport, zoom } = input;
+
+	// The box may never be narrower than the node it covers, and never wider
+	// than either the node's own wrap width or the room left on screen.
+	const room = Math.max(viewport.right - nodeRect.left, 0);
+	const maxWidth = Math.max(
+		nodeRect.width,
+		Math.min(input.maxNodeWidth * zoom, room),
+	);
+	const maxHeight = Math.max(nodeRect.height, viewport.bottom - nodeRect.top);
+
+	return {
+		left: nodeRect.left,
+		top: nodeRect.top,
+		minWidth: nodeRect.width,
+		minHeight: nodeRect.height,
+		maxWidth,
+		maxHeight,
+		fontSize: input.fontSize * zoom,
+		lineHeight: input.lineHeight * zoom,
+		paddingX: input.paddingX * zoom,
+		paddingY: input.paddingY * zoom,
+	};
+}

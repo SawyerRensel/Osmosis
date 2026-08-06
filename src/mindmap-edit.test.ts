@@ -4,6 +4,7 @@ import { TransclusionResolver, TransclusionApp } from "./transclusion";
 import { ParseCache } from "./cache";
 import type { OsmosisNode, OsmosisTree } from "./types";
 import {
+	editOverlayGeometry,
 	serializeLine,
 	subtreeEnd,
 	subtreeHostEnd,
@@ -1543,5 +1544,59 @@ describe("multi-item paste promotes each item on its own terms", () => {
 			"\t\t- Lane audit",
 			"\t\t- Bike Network",
 		]);
+	});
+});
+
+describe("editOverlayGeometry", () => {
+	// A 200×40 node sitting at map origin, drawn at half zoom, inside a
+	// 1000×600 view. Its text is 13px/17px in map units.
+	function geom(overrides: Partial<Parameters<typeof editOverlayGeometry>[0]> = {}) {
+		return editOverlayGeometry({
+			nodeRect: { left: 100, top: 50, width: 100, height: 20 },
+			viewport: { left: 0, top: 0, right: 1000, bottom: 600 },
+			zoom: 0.5,
+			fontSize: 13,
+			lineHeight: 17,
+			paddingX: 8,
+			paddingY: 4,
+			maxNodeWidth: 230,
+			...overrides,
+		});
+	}
+
+	it("scales text and padding by the zoom so the overlay matches the map", () => {
+		const g = geom();
+		expect(g.fontSize).toBe(6.5);
+		expect(g.lineHeight).toBe(8.5);
+		expect(g.paddingX).toBe(4);
+		expect(g.paddingY).toBe(2);
+	});
+
+	it("sits on the node and never shrinks below it", () => {
+		const g = geom();
+		expect([g.left, g.top]).toEqual([100, 50]);
+		expect([g.minWidth, g.minHeight]).toEqual([100, 20]);
+	});
+
+	it("stops widening where the node itself would wrap", () => {
+		// 230 map units at half zoom — not the 900px of room on screen.
+		expect(geom().maxWidth).toBe(115);
+	});
+
+	it("keeps the wrap width in step with the zoom", () => {
+		expect(geom({ zoom: 2, nodeRect: { left: 100, top: 50, width: 400, height: 80 } }).maxWidth).toBe(460);
+	});
+
+	it("gives up the node's wrap width rather than run off screen", () => {
+		// Node near the right edge: only 60px of room, less than 230 × 0.5.
+		const g = geom({ nodeRect: { left: 940, top: 50, width: 40, height: 20 } });
+		expect(g.maxWidth).toBe(60);
+	});
+
+	it("never reports a max narrower than the node it covers", () => {
+		// A node wider than the room left on screen (map panned past the edge).
+		const g = geom({ nodeRect: { left: 960, top: 50, width: 200, height: 20 } });
+		expect(g.maxWidth).toBe(200);
+		expect(g.maxHeight).toBeGreaterThanOrEqual(g.minHeight);
 	});
 });
