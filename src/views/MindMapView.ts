@@ -39,6 +39,8 @@ import {
 } from "../editor/EmbeddableMarkdownEditor";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
 import { EditorSelection } from "@codemirror/state";
+/* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
+import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import { lineCardId } from "../card-gen/line-cards";
 import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
@@ -60,6 +62,10 @@ const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.002;
 const SCROLL_SENSITIVITY = 1;
 const LAYOUT_PADDING = 50;
+
+// Inline editing constants
+const EDIT_OVERLAY_MARGIN = 8; // px kept between the edit overlay and the viewport edge
+const EDIT_BUTTONS_MIN_WIDTH = 72; // px the overlay needs to hold both icon buttons side by side
 
 // Animation constants
 const COLLAPSE_ANIMATION_MS = 80;
@@ -188,6 +194,16 @@ export class MindMapView extends ItemView {
 	private editContainer: HTMLDivElement | null = null;
 	private editEditor: EmbeddableMarkdownEditor | null = null;
 	private editCleanup: (() => void) | null = null;
+	/**
+	 * The node being edited, measured at zoom 1: its rendered text metrics and
+	 * the width it wraps at. Read once when editing starts, then re-scaled by
+	 * `positionEditOverlay` on every pan and zoom.
+	 */
+	private editMetrics: {
+		fontSize: number;
+		lineHeight: number;
+		maxNodeWidth: number;
+	} | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
@@ -2362,6 +2378,9 @@ export class MindMapView extends ItemView {
 		if (!this.svg) return;
 		const { x, y, w, h } = this.viewBox;
 		this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		// The edit overlay lives outside the SVG, so the viewBox does not carry
+		// it along — re-place it or it freezes where the node used to be.
+		if (this.editingNodeId) this.positionEditOverlay();
 		this.scheduleCullUpdate();
 	}
 
@@ -5905,8 +5924,13 @@ export class MindMapView extends ItemView {
 		this.editingNodeId = nodeId;
 		this.selectNode(nodeId);
 
-		// Get the node's screen position from the shape element
-		const screenRect = shapeEl.getBoundingClientRect();
+		// Measure the node before hiding it: the overlay is sized from the
+		// node's own rendered text, so it inherits the depth-based typography
+		// and any per-node style override rather than Obsidian's editor font.
+		this.editMetrics = {
+			...this.nodeTextMetrics(group),
+			maxNodeWidth: this.nodeWrapWidth(node),
+		};
 
 		// Hide the in-SVG content while the overlay is active
 		const fo = group.querySelector("foreignObject");
@@ -5924,11 +5948,6 @@ export class MindMapView extends ItemView {
 				? (navigator as unknown as { virtualKeyboard: { overlaysContent: boolean; addEventListener: (type: string, fn: () => void) => void; removeEventListener: (type: string, fn: () => void) => void } }).virtualKeyboard
 				: null;
 		if (vk) vk.overlaysContent = true;
-
-		// Scale font size to match the current zoom level so text appears
-		// the same size as the rendered node content
-		const baseFontSize = 13;
-		const scaledFontSize = baseFontSize * this.zoom;
 
 		const isMobile = Platform.isMobile;
 
@@ -5951,48 +5970,22 @@ export class MindMapView extends ItemView {
 				s.zIndex = "9998";
 			}
 
-			const availableH =
-				window.visualViewport?.height ?? window.innerHeight;
-
 			// Mobile: use fixed positioning on document.body to escape
 			// Obsidian's layout resize when the keyboard opens.
-			container.setCssStyles({
-				position: "fixed",
-				left: `${screenRect.left}px`,
-				top: `${screenRect.top}px`,
-				minWidth: `${screenRect.width}px`,
-				minHeight: `${screenRect.height}px`,
-				maxWidth: `${window.innerWidth - screenRect.left - 8}px`,
-				maxHeight: `${availableH - 10}px`,
-				fontSize: `${scaledFontSize}px`,
-				zIndex: "10000",
-			});
 			document.body.appendChild(container);
 		} else {
 			// Desktop: absolute positioning inside container
-			const containerRect = this.contentEl.getBoundingClientRect();
-			const availableWidth = containerRect.right - screenRect.left - 16;
-			container.setCssStyles({
-				position: "absolute",
-				left: `${screenRect.left - containerRect.left}px`,
-				top: `${screenRect.top - containerRect.top}px`,
-				minWidth: `${screenRect.width}px`,
-				minHeight: `${screenRect.height}px`,
-				maxWidth: `${availableWidth}px`,
-				maxHeight: `${containerRect.height}px`,
-				fontSize: `${scaledFontSize}px`,
-				zIndex: "1000",
-			});
 			this.contentEl.appendChild(container);
 		}
 
 		this.editContainer = container;
+		this.positionEditOverlay();
 
 		// Add save/cancel buttons floating above the editor
 		const cancelBtn = createEl("button");
 		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
 		cancelBtn.setAttribute("aria-label", "Cancel editing");
-		cancelBtn.textContent = "Cancel";
+		setIcon(cancelBtn, "x");
 		cancelBtn.addEventListener("pointerdown", (e) => {
 			e.preventDefault(); // Prevent blur
 			e.stopPropagation();
@@ -6001,7 +5994,7 @@ export class MindMapView extends ItemView {
 		const saveBtn = createEl("button");
 		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
 		saveBtn.setAttribute("aria-label", "Save changes");
-		saveBtn.textContent = "Save";
+		setIcon(saveBtn, "check");
 		saveBtn.addEventListener("pointerdown", (e) => {
 			e.preventDefault(); // Prevent blur
 			e.stopPropagation();
@@ -6009,11 +6002,6 @@ export class MindMapView extends ItemView {
 		});
 		container.appendChild(cancelBtn);
 		container.appendChild(saveBtn);
-
-		// Stack buttons vertically when container is too narrow for side-by-side
-		if (screenRect.width < 160) {
-			container.classList.add("osmosis-edit-narrow");
-		}
 
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -6053,6 +6041,9 @@ export class MindMapView extends ItemView {
 				},
 				extensions: [
 					autoResizeExtension(() => this.resizeEditContainer()),
+					// The overlay stops widening at the node's wrap width, so
+					// long lines have to wrap here exactly as they do in the node.
+					EditorView.lineWrapping,
 				],
 			});
 
@@ -6073,28 +6064,14 @@ export class MindMapView extends ItemView {
 			);
 			container.remove();
 			this.editContainer = null;
-			this.createFallbackTextarea(
-				editValue,
-				selStart,
-				nodeId,
-				screenRect,
-				scaledFontSize,
-				isMobile,
-			);
+			this.createFallbackTextarea(editValue, selStart, nodeId, isMobile);
 		}
 
 		// On mobile, reposition editor above keyboard if it would be hidden
 		const cleanups: Array<() => void> = [];
 		if (isMobile) {
-			const repositionAboveKeyboard = () => {
-				if (!this.editContainer) return;
-				const availableH =
-					window.visualViewport?.height ?? window.innerHeight;
-				const elRect = this.editContainer.getBoundingClientRect();
-				if (elRect.bottom > availableH - 10) {
-					this.editContainer.style.top = `${availableH - elRect.height - 10}px`;
-				}
-			};
+			const repositionAboveKeyboard = () =>
+				this.clampOverlayAboveKeyboard();
 			if (vk) {
 				vk.addEventListener("geometrychange", repositionAboveKeyboard);
 				cleanups.push(() =>
@@ -6140,6 +6117,145 @@ export class MindMapView extends ItemView {
 		lockScroll();
 	}
 
+	/**
+	 * Font size and line height of a node's rendered content, in map units.
+	 * Read off the live element so depth-based typography and per-node style
+	 * overrides come along for free.
+	 */
+	private nodeTextMetrics(group: Element): {
+		fontSize: number;
+		lineHeight: number;
+	} {
+		const wrapper = group.querySelector(".osmosis-node-content");
+		const fallback = { fontSize: 13, lineHeight: 13 * 1.3 };
+		if (!(wrapper instanceof HTMLElement)) return fallback;
+
+		const computed = window.getComputedStyle(wrapper);
+		const fontSize = parseFloat(computed.fontSize);
+		if (!Number.isFinite(fontSize)) return fallback;
+		// `line-height: normal` parses as NaN — fall back to the CSS ratio.
+		const lineHeight = parseFloat(computed.lineHeight);
+		return {
+			fontSize,
+			lineHeight: Number.isFinite(lineHeight) ? lineHeight : fontSize * 1.3,
+		};
+	}
+
+	/** The width a node's text wraps at, in map units. */
+	private nodeWrapWidth(node: LayoutNode): number {
+		// A node with an explicit width wraps at that width; everything else
+		// grows until it hits the map's max node width.
+		const customWidth =
+			lookupNodeStyle(this.osmosisStyleFrontmatter, node)?.width ??
+			this.mapSettings.baseStyle?.width;
+		if (customWidth !== undefined) return node.rect.width;
+		return (
+			this.mapSettings.maxNodeWidth ??
+			this.plugin.settings.defaultMaxNodeWidth
+		);
+	}
+
+	/**
+	 * Place the edit overlay over its node and size its text for the current
+	 * zoom. Called when editing starts and again from `updateViewBox`, so the
+	 * overlay tracks the node through pans and zooms rather than staying
+	 * pinned where the node was when editing began.
+	 */
+	private positionEditOverlay(): void {
+		const container = this.editContainer;
+		const metrics = this.editMetrics;
+		if (!container || !metrics || !this.editingNodeId || !this.svg) return;
+
+		const group = this.svg.querySelector(
+			`[data-node-id="${this.editingNodeId}"]`,
+		);
+		const shapeEl = group?.querySelector(".osmosis-node");
+		if (!shapeEl) return;
+		const nodeRect = shapeEl.getBoundingClientRect();
+
+		// Mobile positions against the visual viewport (the overlay is fixed on
+		// document.body); desktop against the view's own content box.
+		const isMobile = Platform.isMobile;
+		const hostRect = this.contentEl.getBoundingClientRect();
+		const host = isMobile
+			? {
+					left: 0,
+					top: 0,
+					right: window.innerWidth,
+					bottom: window.visualViewport?.height ?? window.innerHeight,
+				}
+			: hostRect;
+
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const geom = edit.editOverlayGeometry({
+			nodeRect: {
+				left: nodeRect.left,
+				top: nodeRect.top,
+				width: nodeRect.width,
+				height: nodeRect.height,
+			},
+			viewport: {
+				left: host.left,
+				top: host.top,
+				right: host.right - EDIT_OVERLAY_MARGIN,
+				bottom: host.bottom - EDIT_OVERLAY_MARGIN,
+			},
+			zoom: this.zoom,
+			fontSize: metrics.fontSize,
+			lineHeight: metrics.lineHeight,
+			paddingX: cfg.nodePaddingX,
+			paddingY: cfg.nodePaddingY,
+			maxNodeWidth: metrics.maxNodeWidth,
+		});
+
+		const originX = isMobile ? 0 : hostRect.left;
+		const originY = isMobile ? 0 : hostRect.top;
+		container.setCssStyles({
+			position: isMobile ? "fixed" : "absolute",
+			left: `${geom.left - originX}px`,
+			top: `${geom.top - originY}px`,
+			minWidth: `${geom.minWidth}px`,
+			minHeight: `${geom.minHeight}px`,
+			maxWidth: `${geom.maxWidth}px`,
+			maxHeight: `${geom.maxHeight}px`,
+			zIndex: isMobile ? "10000" : "1000",
+		});
+		// Typography is applied as custom properties so the CSS can force it
+		// onto CodeMirror's own elements (see styles.css).
+		container.style.setProperty(
+			"--osmosis-edit-font-size",
+			`${geom.fontSize}px`,
+		);
+		container.style.setProperty(
+			"--osmosis-edit-line-height",
+			`${geom.lineHeight}px`,
+		);
+		container.style.setProperty(
+			"--osmosis-edit-padding",
+			`${geom.paddingY}px ${geom.paddingX}px`,
+		);
+
+		// The last auto-resize froze an explicit width for the *previous* zoom;
+		// drop it and let the editor re-derive one at the new text size.
+		container.style.removeProperty("width");
+		container.classList.toggle(
+			"osmosis-edit-narrow",
+			geom.minWidth < EDIT_BUTTONS_MIN_WIDTH,
+		);
+		this.resizeEditContainer();
+		if (isMobile) this.clampOverlayAboveKeyboard();
+	}
+
+	/** Keep the overlay above the mobile virtual keyboard. */
+	private clampOverlayAboveKeyboard(): void {
+		if (!this.editContainer) return;
+		const availableH = window.visualViewport?.height ?? window.innerHeight;
+		const elRect = this.editContainer.getBoundingClientRect();
+		if (elRect.bottom > availableH - EDIT_OVERLAY_MARGIN) {
+			this.editContainer.style.top = `${availableH - elRect.height - EDIT_OVERLAY_MARGIN}px`;
+		}
+	}
+
 	/** Auto-resize the edit container to fit the editor's content.
 	 *  Called via the autoResizeExtension on doc changes. We use
 	 *  requestMeasure to avoid layout thrash — just request CM6 to
@@ -6156,8 +6272,12 @@ export class MindMapView extends ItemView {
 		for (let i = 1; i <= doc.lines; i++) {
 			maxChars = Math.max(maxChars, doc.line(i).length);
 		}
-		// Content width = longest line + padding (8px each side + 4px buffer + border)
-		const contentWidth = maxChars * charWidth + 24;
+		// Content width = longest line + the node's padding at the current zoom
+		// (+ 4px buffer + 2px border each side)
+		const contentWidth =
+			maxChars * charWidth +
+			DEFAULT_LAYOUT_CONFIG.nodePaddingX * 2 * this.zoom +
+			8;
 
 		const minWidth = parseFloat(this.editContainer.style.minWidth) || 0;
 		const maxWidth =
@@ -6166,7 +6286,10 @@ export class MindMapView extends ItemView {
 		this.editContainer.style.width = `${newWidth}px`;
 
 		// Toggle stacked button layout when container is narrow
-		this.editContainer.classList.toggle("osmosis-edit-narrow", newWidth < 160);
+		this.editContainer.classList.toggle(
+			"osmosis-edit-narrow",
+			newWidth < EDIT_BUTTONS_MIN_WIDTH,
+		);
 
 		cm.requestMeasure();
 	}
@@ -6176,8 +6299,6 @@ export class MindMapView extends ItemView {
 		editValue: string,
 		selStart: number,
 		nodeId: string,
-		screenRect: DOMRect,
-		scaledFontSize: number,
 		isMobile: boolean,
 	): void {
 		const container = createDiv();
@@ -6187,35 +6308,11 @@ export class MindMapView extends ItemView {
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
 		input.value = editValue;
 		input.rows = 1;
-		input.setCssStyles({
-			width: "100%",
-			height: "100%",
-			fontSize: `${scaledFontSize}px`,
-		});
+		input.setCssStyles({ width: "100%", height: "100%" });
 		container.appendChild(input);
 
-		if (isMobile) {
-			container.setCssStyles({
-				position: "fixed",
-				left: `${screenRect.left}px`,
-				top: `${screenRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
-				zIndex: "10000",
-			});
-			document.body.appendChild(container);
-		} else {
-			const containerRect = this.contentEl.getBoundingClientRect();
-			container.setCssStyles({
-				position: "absolute",
-				left: `${screenRect.left - containerRect.left}px`,
-				top: `${screenRect.top - containerRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
-				zIndex: "1000",
-			});
-			this.contentEl.appendChild(container);
-		}
+		if (isMobile) document.body.appendChild(container);
+		else this.contentEl.appendChild(container);
 
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -6240,6 +6337,7 @@ export class MindMapView extends ItemView {
 		});
 
 		this.editContainer = container;
+		this.positionEditOverlay();
 
 		input.focus({ preventScroll: true });
 		input.setSelectionRange(selStart, editValue.length);
@@ -6278,6 +6376,7 @@ export class MindMapView extends ItemView {
 			this.editContainer.remove();
 			this.editContainer = null;
 		}
+		this.editMetrics = null;
 
 		// Restore SVG from fixed positioning used during mobile editing
 		if (this.svg) {
