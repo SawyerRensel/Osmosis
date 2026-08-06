@@ -28,6 +28,10 @@ In **Settings > Osmosis > Include folders**, add folder paths. All notes in thos
 
 In **Settings > Osmosis > Include tags**, add tags. All notes with those tags will generate cards automatically.
 
+### Opting Back Out
+
+**Exclude folders** and **Exclude tags** in the same settings screen block card generation outright — a note in an excluded folder or carrying an excluded tag generates no cards even if it opted in through any of the three ways above. See [Decks](decks.md) for details.
+
 ## Your First Card
 
 Add an `osmosis` code fence to any opted-in note:
