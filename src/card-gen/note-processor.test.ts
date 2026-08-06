@@ -271,6 +271,110 @@ describe("processNote", () => {
 		});
 	});
 
+	describe("folder and tag exclusion", () => {
+		const optedIn = [
+			"---",
+			"osmosis-cards: true",
+			"---",
+			"```osmosis",
+			"Front",
+			"***",
+			"Back",
+			"```",
+		].join("\n");
+
+		it("disables an opted-in note inside an excluded folder", () => {
+			const result = processNote(optedIn, "Inner Vault/note.md", {
+				...defaultOptions,
+				excludeFolders: ["Inner Vault"],
+			});
+			expect(result.enabled).toBe(false);
+			expect(result.cards).toHaveLength(0);
+		});
+
+		it("disables an opted-in note in a nested excluded folder", () => {
+			const result = processNote(optedIn, "Inner Vault/Archive/note.md", {
+				...defaultOptions,
+				excludeFolders: ["Inner Vault"],
+			});
+			expect(result.enabled).toBe(false);
+		});
+
+		it("does not match partial folder name", () => {
+			const result = processNote(optedIn, "Inner Vaults/note.md", {
+				...defaultOptions,
+				excludeFolders: ["Inner Vault"],
+			});
+			expect(result.enabled).toBe(true);
+		});
+
+		it("disables an opted-in note carrying an excluded tag", () => {
+			const result = processNote(optedIn, "note.md", {
+				...defaultOptions,
+				excludeTags: ["archive"],
+			}, ["archive"]);
+			expect(result.enabled).toBe(false);
+		});
+
+		it("matches tag hierarchy (child matches excluded parent)", () => {
+			const result = processNote(optedIn, "note.md", {
+				...defaultOptions,
+				excludeTags: ["archive"],
+			}, ["archive/2024"]);
+			expect(result.enabled).toBe(false);
+		});
+
+		it("does not exclude parent when child tag is excluded", () => {
+			const result = processNote(optedIn, "note.md", {
+				...defaultOptions,
+				excludeTags: ["archive/2024"],
+			}, ["archive"]);
+			expect(result.enabled).toBe(true);
+		});
+
+		it("overrides an includeFolders match", () => {
+			const md = [
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const result = processNote(md, "Study/Inner Vault/note.md", {
+				...defaultOptions,
+				includeFolders: ["Study"],
+				excludeFolders: ["Study/Inner Vault"],
+			});
+			expect(result.enabled).toBe(false);
+		});
+
+		it("overrides an includeTags match", () => {
+			const md = [
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const result = processNote(md, "note.md", {
+				...defaultOptions,
+				includeTags: ["study"],
+				excludeTags: ["archive"],
+			}, ["study", "archive"]);
+			expect(result.enabled).toBe(false);
+		});
+
+		it("leaves notes outside the excluded folder and tag enabled", () => {
+			const result = processNote(optedIn, "Other/note.md", {
+				...defaultOptions,
+				excludeFolders: ["Inner Vault"],
+				excludeTags: ["archive"],
+			}, ["study"]);
+			expect(result.enabled).toBe(true);
+			expect(result.cards.length).toBeGreaterThan(0);
+		});
+	});
+
 	describe("combined inclusion (frontmatter OR folder OR tag)", () => {
 		it("frontmatter opt-in works without folder/tag settings", () => {
 			const md = [

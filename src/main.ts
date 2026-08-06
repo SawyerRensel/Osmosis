@@ -49,6 +49,8 @@ export default class OsmosisPlugin extends Plugin {
 			() => ({
 				includeFolders: this.settings.includeFolders,
 				includeTags: this.settings.includeTags,
+				excludeFolders: this.settings.excludeFolders,
+				excludeTags: this.settings.excludeTags,
 				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
 			(file: TFile) => {
