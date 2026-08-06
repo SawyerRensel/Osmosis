@@ -33,3 +33,6 @@ site/
 
 # OS files
 .DS_Store
+
+# Planner task media
+vault/media
