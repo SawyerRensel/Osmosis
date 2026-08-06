@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Progress
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-03T15:38:04.268Z"
-date_modified: "2026-08-03T17:56:22.696Z"
+date_created: 2026-08-03T15:38:04.268Z
+date_modified: 2026-08-06T20:18:35.185Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -42,7 +42,7 @@ color:
 
 *Describe the new tool, script, or capability you're requesting.*
 
-
+A system for creating image occlusion flashcards and studying them in sequential, contextual, or spatial study modes.  
 
 ## What problem does this solve?
 
@@ -59,3 +59,7 @@ color:
 ## Reference Attachments/Screenshots
 
 *Attach any reference files, screenshots, sketches, or examples.*
+
+Anki's built-in [Image Occlusion Editor](https://docs.ankiweb.net/editing.html#image-occlusion)
+
+![](Pasted%20image%2020260806161855.png)

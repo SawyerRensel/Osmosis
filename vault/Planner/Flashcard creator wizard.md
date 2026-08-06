@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: Cancelled
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-04T16:03:33.922Z"
-date_modified: "2026-08-04T16:03:33.922Z"
+date_created: 2026-08-04T16:03:33.922Z
+date_modified: 2026-08-06T21:12:13.409Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -30,18 +30,23 @@ repeat_bymonthday:
 repeat_bysetpos:
 repeat_completed_dates:
 parent:
-children:
+children: "[[Develop Image Occlusion System for Flaschards]]"
 blocked_by:
 cover:
 color:
 ---
+
+> [!NOTE] Cancelled
+> This feature is redundant because Obsidian itself *is* the card editing experience.  Creating a wizard would end up replicating the functionality already built into Obsidian itself.  This task was initially inspired to provide scaffolding for the [Develop Image Occlusion System for Flaschards](Develop%20Image%20Occlusion%20System%20for%20Flaschards.md) task.  But the UX for launching the image occlusion wizard can bypass the need for a card creator wizard via the context menu what activated from right clicking on an image.
+
+
 # Feature Request
 
 ## What do you need built?
 
 *Describe the new tool, script, or capability you're requesting.*
 
-
+A system for creating flashcards.  
 
 ## What problem does this solve?
 

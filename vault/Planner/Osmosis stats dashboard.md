@@ -1,6 +1,6 @@
 ---
-title: Flashcard heatmap
-summary: Show heatmap of study session and/or when next cards will become due.
+title: Osmosis stats dashboard
+summary: A dashboard including a heatmap, statistics, and graphs of study sessions
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: In-Progress
 priority:
 progress_current:
 progress_total:
-date_created: "2026-04-03T21:48:11.516Z"
-date_modified: "2026-07-31T21:05:25.652Z"
+date_created: 2026-04-03T21:48:11.516Z
+date_modified: 2026-08-06T17:21:05.784Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -46,19 +46,21 @@ assignees:
 
 *Describe the new tool, script, or capability you're requesting.*
 
+A dashboard including stats, graphs, and a heatmap of studying info, inspired by [Anki's Stats Dashboard](https://docs.ankiweb.net/stats.html#statistics)
 
+![](Pasted%20image%2020260806172808.png)
 
 ## What problem does this solve?
 
 *Describe the problem or need. What are you trying to accomplish?*
 
-
+There's currently no way to see your progress of learning.  How can you make decisions about how to study without aggregating the stats about your behavior?
 
 ## What's your current workaround?
 
 *How do you currently handle this? Describe any manual steps or workarounds.*
 
-
+Studying individual card scheduling data one at a time.  There's currently no way to aggregate nor visualize
 
 ## Reference Attachments/Screenshots
 
