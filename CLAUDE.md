@@ -510,15 +510,26 @@ Only proceed to this step after the user has confirmed that manual testing passe
 1. **Branch** — task work belongs on a `feature/…` (or `fix/…`) branch cut from
    the current release branch, not on the release branch itself. Create it at the
    start of the task if you can; at the latest, before the first commit.
-2. **Commit** code **by explicit path** (never `git add .` — task notes and
-   template edits are the user's working documents and must not ride along).
+2. **Commit** code **by explicit path** (never `git add .` — task-note and
+   template edits are the user's working documents and must not ride along in a
+   code commit).
 3. **PR** — push, then open a PR against the release branch the task belongs to.
    Confirm the base branch actually exists rather than assuming a version number.
-4. **Merge** — only when the user asks for it.
-5. **Document the task note** — see
+4. **Document the task note, then commit it to the same branch** — see
    [Documenting a Completed Task](#documenting-a-completed-task). Set `status` to
-   `Done`, fill `date_end_actual` and `pull_request`, and write the "What was
-   implemented" section into the body.
+   `Done`, fill `date_end_actual` and `pull_request` (the URL from step 3), fill
+   `date_end_scheduled` if it is blank, and write the "What was implemented"
+   section into the body. Then commit **that
+   note by path** as its own commit — `docs: Close out [Task Name]` — and push,
+   so the note rides into the release branch through the PR instead of being left
+   uncommitted for the user to clean up afterward.
+5. **Merge** — only when the user asks for it.
+
+The note is therefore written while the PR is still open. That's fine: the PR
+number and base branch are known once step 3 finishes, so write the "Where it
+shipped" line as if it has landed. `date_end_actual` is the close-out time, not
+the merge timestamp. If review changes the code afterward, amend the note in a
+follow-up commit on the same branch rather than after the merge.
 
 For follow-up work discovered during implementation, create a new task note from
 the matching template in `vault/templates/` and link it via `related` (or
@@ -698,9 +709,10 @@ npm run build                             # Build the plugin
 # Provide manual test instructions to the user
 ```
 
-**Step 6**: Ship and close out — branch, commit by path, PR, merge, then mark the
+**Step 6**: Ship and close out — branch, commit code by path, PR, then mark the
 task note `Done` with its `pull_request` link and a "What was implemented"
-write-up (see [Documenting a Completed Task](#documenting-a-completed-task))
+write-up and commit that note to the same branch, then merge (see
+[Documenting a Completed Task](#documenting-a-completed-task))
 
 ---
 
@@ -742,10 +754,14 @@ older docs or prompts.
 
 1. **At session start**: read `vault/Planner/` — the notes' `status` frontmatter
    tells you what is in flight. A task note usually *is* the prompt for its work.
-2. **Before starting**: set the note's `status` to `In-Progress`.
-3. **When done** (after the user confirms manual testing): set `status` to
-   `Done`, fill `date_end_actual` and `pull_request`, and write the note's
-   "What was implemented" section.
+2. **Before starting**: set the note's `status` to `In-Progress`, set
+   `date_start_actual` to now, and set `date_start_scheduled` to now **only if it
+   is blank** — a date the user already planned is theirs, never overwrite it.
+3. **When done** (after the user confirms manual testing, and after the PR is
+   open): set `status` to `Done`, fill `date_end_actual` and `pull_request`, fill
+   `date_end_scheduled` **only if it is blank**, write the note's "What was
+   implemented" section, and commit the note to the PR branch so it merges along
+   with the code.
 
 ### Creating a Task Note
 
@@ -774,7 +790,14 @@ Key frontmatter (full reference:
   quoted: `- "[[Other Task]]"`
 - `date_created` / `date_modified` — ISO datetimes
 - `pull_request` — URL of the PR that shipped the task, filled at close-out
+- `date_start_actual` — ISO datetime, set when work begins (`status` →
+  `In-Progress`)
 - `date_end_actual` — ISO datetime, set when the task is marked `Done`
+- `date_start_scheduled` / `date_end_scheduled` — ISO datetimes, the plan rather
+  than the record. Backfill them from the actuals **only when blank**, so a note
+  that was never explicitly scheduled still lands on the calendar. If the user
+  set either one, leave it alone — the gap between planned and actual is the
+  point.
 
 ### Documenting a Completed Task
 
@@ -805,9 +828,11 @@ committing.**
 
 After the user confirms testing passes, follow
 [Step 5](#step-5-ship-it-and-close-out-the-task-after-user-confirms-testing):
-branch → commit **code by explicit path** → PR → merge (when asked) → document
-the task note. Task notes are the user's working documents — do not stage
-`vault/Planner/` changes alongside a code commit unless asked.
+branch → commit **code by explicit path** → PR → document the task note and
+commit it **by path** as its own commit on the same branch → merge (when asked).
+Task notes are the user's working documents: they get their own commit and never
+ride along inside a code commit. Leave the working tree clean at session end —
+no uncommitted `vault/Planner/` edits for the user to deal with.
 
 ---
 
@@ -825,13 +850,16 @@ Commit when:
 from the current release branch; it reaches the release branch through a PR, and
 merges only when the user asks. Record the PR URL in the task note's
 `pull_request` field. Stage code **by explicit path** so `vault/Planner/` and
-`vault/templates/` edits never ride along with a code commit.
+`vault/templates/` edits never ride along with a code commit — the closed-out
+task note gets its own commit on the branch after the PR is open, so it merges
+with the code rather than being left uncommitted.
 
 Example commit messages:
 ```
 feat: Implement [Feature Name], meets acceptance criteria X, Y, Z
 fix: Handle edge case in [Feature Name]
 refactor: Simplify [Component], no behavior change
+docs: Close out [Task Name] task note
 docs: Update progress log, [Feature] complete
 ```
 
@@ -859,5 +887,5 @@ Before asking Claude for help on any code task:
 
 ---
 
-**Last Updated**: 2026-08-04
+**Last Updated**: 2026-08-06
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.
