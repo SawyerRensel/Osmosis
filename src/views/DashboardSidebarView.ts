@@ -152,7 +152,7 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	private openStudy(scope: DeckScope): void {
-		const sessionManager = this.plugin.createSessionManager();
+		const sessionManager = this.plugin.createSessionManager("sequential");
 		const modal = new SequentialStudyModal(
 			this.app,
 			sessionManager,
@@ -171,6 +171,7 @@ export class DashboardSidebarView extends ItemView {
 				// callback — overriding modal.onClose here would replace the
 				// modal's own cleanup (learning timers, render component).
 				void this.plugin.scheduleStore.flush();
+				void this.plugin.reviewLog.flush();
 				void this.render();
 			},
 		);

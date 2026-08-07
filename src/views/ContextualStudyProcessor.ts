@@ -239,6 +239,10 @@ export class ContextualStudyProcessor {
 
 	private showRating(container: HTMLElement, cardId: string, sourcePath: string): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
+		// The answer just went on screen. A contextual card has no separate
+		// "question shown" moment — it lives inline in the note — so the reveal
+		// is the anchor for the review log's elapsed time.
+		const revealedAt = Date.now();
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -272,7 +276,7 @@ export class ContextualStudyProcessor {
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
-				void this.recordRating(cardId, rating);
+				void this.recordRating(cardId, rating, Date.now() - revealedAt);
 
 				this.undoStack.push({
 					type: "rate",
@@ -285,7 +289,7 @@ export class ContextualStudyProcessor {
 		}
 	}
 
-	private async recordRating(cardId: string, rating: FSRSRating): Promise<void> {
+	private async recordRating(cardId: string, rating: FSRSRating, elapsedMs: number): Promise<void> {
 		// Ensure the card exists in the store (contextual cards use hash-based IDs)
 		if (!this.plugin.cardStore.getCard(cardId)) {
 			// Card not in store — skip rating (card was generated inline, not from sync)
@@ -293,9 +297,9 @@ export class ContextualStudyProcessor {
 		}
 
 		if (!this.sessionManager) {
-			this.sessionManager = this.plugin.createSessionManager();
+			this.sessionManager = this.plugin.createSessionManager("contextual");
 		}
-		await this.sessionManager.recordReview(cardId, rating);
+		await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
 		this.plugin.refreshDashboard();
 	}
 
@@ -327,7 +331,7 @@ export class ContextualStudyProcessor {
 		} else {
 			// Undo rating: revert schedule
 			if (!this.sessionManager) {
-				this.sessionManager = this.plugin.createSessionManager();
+				this.sessionManager = this.plugin.createSessionManager("contextual");
 			}
 
 			const card = this.plugin.cardStore.getCard(entry.cardId);

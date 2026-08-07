@@ -2030,3 +2030,15 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 .osmosis-toolbar-btn-hidden {
 	display: none;
 }
+
+/* ── Review history settings ──────────────────────────────── */
+/* Sync notice: shown while Obsidian Sync is running, until dismissed. An
+   advisory rather than a detected fault, so accent rather than warning */
+.osmosis-settings-notice {
+	border-left: 3px solid var(--text-accent);
+	padding-left: var(--size-4-3);
+}
+
+.osmosis-settings-notice .setting-item-name {
+	color: var(--text-accent);
+}
