@@ -3,6 +3,8 @@ import type OsmosisPlugin from "../main";
 import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import { SequentialStudyModal } from "./SequentialStudyModal";
+import { VIEW_TYPE_CARD_BROWSER } from "./CardBrowserView";
+import { VIEW_TYPE_STATS } from "./StatsView";
 
 export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
 
@@ -27,7 +29,7 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	getIcon(): string {
-		return "graduation-cap";
+		return "brain-circuit";
 	}
 
 	async onOpen(): Promise<void> {
@@ -79,6 +81,19 @@ export class DashboardSidebarView extends ItemView {
 			totalDue += node.dueCount;
 		}
 
+		// Operator bar — the wide surfaces open in the main area, not here
+		const operators = contentEl.createDiv({ cls: "osmosis-dash-operators" });
+		this.renderOperator(operators, "Browse", "search", VIEW_TYPE_CARD_BROWSER);
+		this.renderOperator(operators, "Stats", "bar-chart", VIEW_TYPE_STATS);
+
+		// Column headers — placed above "Study all" so they label its counts as
+		// well as the tree's. Every count group is right-aligned to the same
+		// edge, so the columns line up whatever a row's indent or name length.
+		const colHeaders = contentEl.createDiv({ cls: "osmosis-dash-col-headers" });
+		for (const label of ["New", "Learn", "Due", "Total"]) {
+			colHeaders.createSpan({ cls: "osmosis-dash-col-header", text: label });
+		}
+
 		// Study All button
 		const header = contentEl.createDiv({ cls: "osmosis-dash-header" });
 		const studyAllBtn = header.createEl("button", {
@@ -98,6 +113,15 @@ export class DashboardSidebarView extends ItemView {
 			const treeEl = contentEl.createDiv({ cls: "osmosis-dash-tree" });
 			this.renderDeckTree(treeEl, tree, 0);
 		}
+	}
+
+	private renderOperator(container: HTMLElement, label: string, icon: string, viewType: string): void {
+		const btn = container.createEl("button", { cls: "osmosis-dash-operator" });
+		setIcon(btn.createSpan({ cls: "osmosis-dash-operator-icon" }), icon);
+		btn.createSpan({ text: label });
+		btn.addEventListener("click", () => {
+			void this.plugin.activateMainView(viewType);
+		});
 	}
 
 	private renderDeckTree(container: HTMLElement, nodes: DeckNode[], depth: number): void {
@@ -146,9 +170,14 @@ export class DashboardSidebarView extends ItemView {
 	}
 
 	private renderCounts(el: HTMLElement, newCount: number, learnCount: number, dueCount: number): void {
+		// Total is the sum of the three columns: cards waiting right now. Cards
+		// scheduled for a future day are in none of them, so this is not the
+		// deck's card count.
+		const total = newCount + learnCount + dueCount;
 		el.createSpan({ cls: `osmosis-dash-new${newCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(newCount) });
 		el.createSpan({ cls: `osmosis-dash-learn${learnCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(learnCount) });
 		el.createSpan({ cls: `osmosis-dash-due${dueCount === 0 ? " osmosis-dash-zero" : ""}`, text: String(dueCount) });
+		el.createSpan({ cls: `osmosis-dash-total${total === 0 ? " osmosis-dash-zero" : ""}`, text: String(total) });
 	}
 
 	private openStudy(scope: DeckScope): void {

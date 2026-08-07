@@ -11,6 +11,8 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
+import { CardBrowserView, VIEW_TYPE_CARD_BROWSER } from "./views/CardBrowserView";
+import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
@@ -116,12 +118,13 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_MINDMAP, (leaf: WorkspaceLeaf) => new MindMapView(leaf));
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
+		this.registerView(VIEW_TYPE_CARD_BROWSER, (leaf: WorkspaceLeaf) => new CardBrowserView(leaf));
+		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
 
-		this.addRibbonIcon("brain-circuit", "Open mind map", () => {
-			void this.activateMindMapView();
-		});
-
-		this.addRibbonIcon("graduation-cap", "Osmosis dashboard", () => {
+		// The dashboard is the plugin's only ribbon entry. A mind map is opened
+		// from a note's header action, file menu, or the command below — all of
+		// which know which note to map, which the ribbon never did.
+		this.addRibbonIcon("brain-circuit", "Osmosis dashboard", () => {
 			void this.activateDashboard();
 		});
 
@@ -157,6 +160,22 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Open dashboard",
 			callback: () => {
 				void this.activateDashboard();
+			},
+		});
+
+		this.addCommand({
+			id: "open-card-browser",
+			name: "Open card browser",
+			callback: () => {
+				void this.activateMainView(VIEW_TYPE_CARD_BROWSER);
+			},
+		});
+
+		this.addCommand({
+			id: "open-stats",
+			name: "Open statistics",
+			callback: () => {
+				void this.activateMainView(VIEW_TYPE_STATS);
 			},
 		});
 
@@ -486,6 +505,24 @@ export default class OsmosisPlugin extends Plugin {
 			type: VIEW_TYPE_DASHBOARD,
 			active: true,
 		});
+		void workspace.revealLeaf(leaf);
+	}
+
+	/**
+	 * Reveal a main-area operator view (browse, stats), reusing its existing
+	 * leaf if one is open rather than stacking duplicate tabs.
+	 */
+	async activateMainView(viewType: string): Promise<void> {
+		const { workspace } = this.app;
+
+		const existing = workspace.getLeavesOfType(viewType);
+		if (existing.length > 0 && existing[0]) {
+			void workspace.revealLeaf(existing[0]);
+			return;
+		}
+
+		const leaf = workspace.getLeaf("tab");
+		await leaf.setViewState({ type: viewType, active: true });
 		void workspace.revealLeaf(leaf);
 	}
 
