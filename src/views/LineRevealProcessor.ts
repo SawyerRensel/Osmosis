@@ -41,6 +41,13 @@ interface NoteRevealState {
 	studyTargets: Set<string> | null;
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
+	/**
+	 * When `pendingRating` was revealed, for the review log's elapsed time.
+	 * A line card sits in the note among ordinary content, so there is no
+	 * "question shown" moment to measure from — the reveal is the only
+	 * defensible anchor.
+	 */
+	pendingRatingAt: number;
 	/** Rendered elements by block ID — refreshed on every (re-)render. */
 	lines: Map<string, TrackedLine>;
 }
@@ -312,6 +319,7 @@ export class LineRevealProcessor {
 			if (blockId !== nextToReveal(order, state.revealed)) return;
 			state.revealed.add(blockId);
 			state.pendingRating = blockId;
+			state.pendingRatingAt = Date.now();
 		} else {
 			// Peek — any order, nothing recorded
 			state.revealed.add(blockId);
@@ -352,8 +360,10 @@ export class LineRevealProcessor {
 
 		const cardId = lineCardId(notePath, blockId);
 		if (this.plugin.cardStore.getCard(cardId)) {
-			this.sessionManager ??= this.plugin.createSessionManager();
-			await this.sessionManager.recordReview(cardId, rating);
+			this.sessionManager ??= this.plugin.createSessionManager("contextual");
+			await this.sessionManager.recordReview(cardId, rating, {
+				elapsedMs: Date.now() - state.pendingRatingAt,
+			});
 			this.plugin.refreshDashboard();
 		}
 
@@ -418,6 +428,7 @@ export class LineRevealProcessor {
 		state.pendingRating = null;
 		state.revealed.clear();
 		void this.plugin.scheduleStore.flush();
+		void this.plugin.reviewLog.flush();
 	}
 
 	// ── Header actions (peek + study) ─────────────────────────
@@ -588,6 +599,7 @@ export class LineRevealProcessor {
 				rated: new Set(),
 				studyTargets: null,
 				pendingRating: null,
+				pendingRatingAt: 0,
 				lines: new Map(),
 			};
 			this.states.set(notePath, state);

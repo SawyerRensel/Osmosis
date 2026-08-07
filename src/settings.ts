@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting, SettingDefinitionItem, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
+import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
@@ -85,6 +86,26 @@ export interface OsmosisSettings {
 	/** Whether line cards count in deck totals and sequential study (default: true). */
 	includeLineCardsInDecks: boolean;
 
+	// ── Review Log ──────────────────────────────────────────
+	/** Vault folder holding the append-only review-history shards. */
+	reviewLogFolder: string;
+	/**
+	 * Overrides the auto-detected device label in shard filenames. Empty means
+	 * detect (Obsidian Sync's device name, else the platform).
+	 */
+	reviewLogDeviceLabel: string;
+	/**
+	 * Random ID identifying this install in shard headers, so two devices that
+	 * slug to the same label can be told apart. Generated on first load.
+	 */
+	installId: string;
+	/**
+	 * Whether the user has dismissed the Obsidian Sync notice. The notice
+	 * informs rather than detects — Sync's "all other types" toggle is not
+	 * readable from the plugin — so it needs a way to be closed.
+	 */
+	reviewLogSyncNoticeDismissed: boolean;
+
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
 	includeFolders: string[];
@@ -135,6 +156,12 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	learningSteps: "1m, 10m",
 	relearningSteps: "10m",
 	includeLineCardsInDecks: true,
+
+	// Review log defaults
+	reviewLogFolder: "Osmosis/Reviews",
+	reviewLogDeviceLabel: "",
+	installId: "",
+	reviewLogSyncNoticeDismissed: false,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -317,6 +344,65 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
+				heading: "Review history",
+				items: [
+					{
+						name: "Check that Obsidian Sync carries review history",
+						desc:
+							"Sync only carries .jsonl files when \"Sync all other types\" is on in Settings → Sync, and it is off by default. "
+							+ "Sync settings do not propagate, so it has to be enabled on every device separately. "
+							+ "Reviews recorded while it is off stay on this device. "
+							+ "Osmosis cannot read that setting, so it cannot confirm this for you.",
+						// Shown whenever Sync is running, until dismissed. It
+						// deliberately does not claim the toggle is off —
+						// that state is not reachable from the Sync instance.
+						visible: () => this.plugin.shouldShowSyncNotice(),
+						render: (setting) => {
+							setting.setClass("osmosis-settings-notice");
+							setting.addButton((btn) => {
+								btn.setButtonText("Dismiss").onClick(() => {
+									void this.plugin.dismissSyncNotice().then(() => {
+										// update(), not display(): on Obsidian
+										// 1.13+ only update() re-evaluates the
+										// declarative definitions, including
+										// this row's `visible` predicate.
+										this.update();
+									});
+								});
+							});
+						},
+					},
+					{
+						name: "Review log folder",
+						desc: "Where per-review history is stored. Changing this moves the existing files.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.reviewLogFolder,
+								placeholder: DEFAULT_SETTINGS.reviewLogFolder,
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => normalizeLogFolder(raw, DEFAULT_SETTINGS.reviewLogFolder),
+								onCommit: (folder) => this.plugin.changeReviewLogFolder(folder),
+							});
+						},
+					},
+					{
+						name: "Device name",
+						desc: "Labels this device's review-history files, keeping them separate from your other devices' so no file ever has two writers. Leave empty to detect automatically.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.reviewLogDeviceLabel,
+								// Shows what detection picked, so an empty
+								// field reads as "automatic", not "unset"
+								placeholder: this.plugin.resolveDeviceLabel(),
+								normalize: (raw) => raw.trim(),
+								onCommit: (label) => this.plugin.setReviewLogDeviceLabel(label),
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
 				heading: "Study mode",
 				items: [
 					{
@@ -394,6 +480,53 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				],
 			},
 		];
+	}
+
+	/**
+	 * Attach a single-value text input, optionally with auto-suggest.
+	 *
+	 * Commits on blur or Enter rather than per keystroke: these settings have
+	 * side effects (the folder one moves files), and firing them on every
+	 * character typed would move the log once per letter.
+	 */
+	private buildPathInput(
+		setting: Setting,
+		opts: {
+			value: string;
+			placeholder: string;
+			createSuggest?: (input: HTMLInputElement) => AbstractInputSuggest<string>;
+			normalize: (raw: string) => string;
+			onCommit: (value: string) => Promise<void>;
+		},
+	): void {
+		setting.addText((text) => {
+			text.setPlaceholder(opts.placeholder).setValue(opts.value);
+
+			let committed = opts.value;
+			const commit = (raw: string): void => {
+				const next = opts.normalize(raw);
+				text.setValue(next);
+				if (next === committed) return;
+				committed = next;
+				void opts.onCommit(next);
+			};
+
+			if (opts.createSuggest) {
+				opts.createSuggest(text.inputEl).onSelect((value: string) => {
+					commit(value);
+				});
+			}
+
+			text.inputEl.addEventListener("blur", () => {
+				commit(text.getValue());
+			});
+			text.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					text.inputEl.blur();
+				}
+			});
+		});
 	}
 
 	/** Attach a chip-list control with auto-suggest input to an existing row. */

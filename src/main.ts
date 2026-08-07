@@ -1,4 +1,4 @@
-import { Notice, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -6,6 +6,7 @@ import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter } from "./store/ScheduleStore";
+import { ReviewLog, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -15,14 +16,18 @@ import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
-import type { Card } from "./database/types";
+import type { Card, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
+
+/** localStorage key for the review log's rollup cache (per vault, per device). */
+const REVIEW_ROLLUP_CACHE_KEY = "osmosis-review-rollup";
 
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
 	scheduleStore!: ScheduleStore;
+	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
 
@@ -39,6 +44,27 @@ export default class OsmosisPlugin extends Plugin {
 		this.scheduleStore = new ScheduleStore(
 			this.app.fileManager,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
+
+		// Review log — append-only review history in the vault, sharded by
+		// month and device. The rollup cache rides in vault-local storage, not
+		// in a file: if every device wrote it, it would become a shared-write
+		// file and reintroduce exactly the conflict sharding removes.
+		this.reviewLog = new ReviewLog(
+			this.app.vault.adapter,
+			() => ({
+				folder: this.settings.reviewLogFolder,
+				deviceLabel: this.resolveDeviceLabel(),
+				installId: this.settings.installId,
+			}),
+			{
+				// `loadLocalStorage` is typed `any`; the cache validates its own
+				// shape, so hand it over as unknown rather than trusting it.
+				load: (): unknown => this.app.loadLocalStorage(REVIEW_ROLLUP_CACHE_KEY) as unknown,
+				save: (cache: ReviewLogCache) => {
+					this.app.saveLocalStorage(REVIEW_ROLLUP_CACHE_KEY, cache);
+				},
+			},
 		);
 
 		// Card sync service — connects note processor to card store
@@ -271,6 +297,89 @@ export default class OsmosisPlugin extends Plugin {
 	onunload() {
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
+		// ...and any buffered review-log entries, so closing Obsidian mid-session
+		// does not lose the reviews it holds
+		void this.reviewLog.flush();
+	}
+
+	/**
+	 * This device's shard label. A user override wins; otherwise Obsidian
+	 * Sync's device name, which the user already chose and will recognise in a
+	 * filename; otherwise the platform.
+	 *
+	 * `deviceName` is not in the public API, so it is read through the
+	 * declaration in `obsidian-internals.d.ts` and guarded — it only exists for
+	 * Sync users at all.
+	 */
+	resolveDeviceLabel(): string {
+		const override = this.settings.reviewLogDeviceLabel.trim();
+		if (override !== "") return slugifyDeviceLabel(override);
+
+		const syncName = this.app.internalPlugins.plugins.sync?.instance?.deviceName;
+		if (typeof syncName === "string" && syncName.trim() !== "") {
+			return slugifyDeviceLabel(syncName);
+		}
+
+		return platformDeviceLabel(Platform);
+	}
+
+	/**
+	 * Whether to show the Sync notice in settings: Obsidian Sync is running
+	 * and the user has not dismissed it.
+	 *
+	 * Worth surfacing because the failure it describes is invisible — reviews
+	 * keep recording normally, they just never reach the other devices, and
+	 * the toggle is per-device so enabling it once is not enough.
+	 *
+	 * Note this does *not* check whether the toggle is actually off. That
+	 * state is not reachable from the Sync instance (see
+	 * `obsidian-internals.d.ts` for what was tried), so the notice informs
+	 * rather than detects, and carries a Dismiss instead. Two guesses at the
+	 * internal shape both produced a notice that lied about the user's
+	 * configuration; saying something true and letting the user close it beats
+	 * a third guess.
+	 */
+	shouldShowSyncNotice(): boolean {
+		if (this.settings.reviewLogSyncNoticeDismissed) return false;
+		return this.app.internalPlugins.plugins.sync?.enabled === true;
+	}
+
+	/** Hide the Sync notice for good. */
+	async dismissSyncNotice(): Promise<void> {
+		this.settings.reviewLogSyncNoticeDismissed = true;
+		await this.saveData(this.settings);
+	}
+
+	/**
+	 * Point the review log at a different folder, moving existing shards.
+	 *
+	 * The order matters. Buffered entries drain into the folder they were
+	 * recorded against *before* the setting changes, so a flush cannot create a
+	 * shard in the destination that the move then collides with.
+	 */
+	async changeReviewLogFolder(folder: string): Promise<void> {
+		const previous = this.settings.reviewLogFolder;
+		if (folder === previous) return;
+
+		await this.reviewLog.flush();
+		this.settings.reviewLogFolder = folder;
+		// saveData rather than saveSettings: the log folder has no bearing on
+		// card generation, so the full re-sync would be wasted work.
+		await this.saveData(this.settings);
+		await this.reviewLog.moveFolder(previous, folder);
+
+		new Notice(`Review log moved to "${folder}".`);
+	}
+
+	/**
+	 * Override the device label in shard filenames. Existing shards keep their
+	 * old names and are still read — the union spans every shard in the folder,
+	 * whatever it is called.
+	 */
+	async setReviewLogDeviceLabel(label: string): Promise<void> {
+		if (label === this.settings.reviewLogDeviceLabel) return;
+		this.settings.reviewLogDeviceLabel = label;
+		await this.saveData(this.settings);
 	}
 
 	private addMindMapActionToMarkdownLeaves(): void {
@@ -381,7 +490,7 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	async openStudySession(scope: DeckScope): Promise<void> {
-		const sessionManager = this.createSessionManager();
+		const sessionManager = this.createSessionManager("sequential");
 		const modal = new SequentialStudyModal(
 			this.app,
 			sessionManager,
@@ -396,7 +505,9 @@ export default class OsmosisPlugin extends Plugin {
 			this.settings.sequentialContextLines,
 			() => {
 				// Session end: force pending line-card schedule writes to disk
+				// and buffered review-log entries
 				void this.scheduleStore.flush();
+				void this.reviewLog.flush();
 			},
 		);
 		modal.open();
@@ -438,8 +549,12 @@ export default class OsmosisPlugin extends Plugin {
 		}).open();
 	}
 
-	/** Create a StudySessionManager wired to the plugin's store and writer. */
-	createSessionManager(): StudySessionManager {
+	/**
+	 * Create a StudySessionManager wired to the plugin's store and writer.
+	 * `mode` is the study surface its answers are attributed to in the review
+	 * log — required so a new surface cannot log unattributed reviews.
+	 */
+	createSessionManager(mode: StudyMode): StudySessionManager {
 		return new StudySessionManager(
 			this.cardStore,
 			new FSRSScheduler({
@@ -448,7 +563,9 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 			this.fenceWriter,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+			mode,
 			this.scheduleStore,
+			this.reviewLog,
 		);
 	}
 
@@ -684,6 +801,14 @@ export default class OsmosisPlugin extends Plugin {
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
+
+		// Identifies this install in review-log shard headers, so two devices
+		// that slug to the same label are still distinguishable. Generated once
+		// and never shown to the user.
+		if (this.settings.installId === "") {
+			this.settings.installId = generateInstallId();
+			await this.saveData(this.settings);
+		}
 	}
 
 	async saveSettings() {
@@ -730,4 +855,11 @@ export default class OsmosisPlugin extends Plugin {
 		await this.saveData(this.settings);
 		console.debug(`Osmosis: migrated map settings for ${entries.length} note(s) to frontmatter`);
 	}
+}
+
+/** Random 8-hex-character ID identifying this install in shard headers. */
+function generateInstallId(): string {
+	const bytes = new Uint8Array(4);
+	crypto.getRandomValues(bytes);
+	return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

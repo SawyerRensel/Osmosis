@@ -49,6 +49,13 @@ export class SequentialStudyModal extends Modal {
 	/** Stack of undoable actions (ratings and excludes). */
 	private undoStack: UndoEntry[] = [];
 
+	/**
+	 * When the current card's question went on screen, for the review log's
+	 * elapsed time. Anchored at the question rather than the flip, matching
+	 * what Anki records as time taken.
+	 */
+	private cardShownAt = Date.now();
+
 	// DOM elements
 	private progressEl!: HTMLElement;
 	private progressFill!: HTMLElement;
@@ -213,6 +220,7 @@ export class SequentialStudyModal extends Modal {
 		}
 
 		this.isFlipped = false;
+		this.cardShownAt = Date.now();
 
 		// Rebuild card area if it was replaced by waiting/complete screen
 		this.rebuildCardArea();
@@ -456,6 +464,7 @@ export class SequentialStudyModal extends Modal {
 
 		const updatedSchedule = await this.sessionManager.recordReview(
 			studyCard.card.id, rating,
+			{ elapsedMs: Date.now() - this.cardShownAt },
 		);
 
 		const undoEntry: UndoEntry = {

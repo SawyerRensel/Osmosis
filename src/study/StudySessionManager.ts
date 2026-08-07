@@ -1,8 +1,9 @@
 import type { TFile } from "obsidian";
 import type { FSRSScheduler, FSRSRating } from "../database/FSRSScheduler";
-import type { Card, ScheduleData } from "../database/types";
+import type { Card, ScheduleData, StudyMode } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
+import type { ReviewLogEntry } from "../store/ReviewLog";
 import type { DeckScope, StudyCard, DeckCounts } from "./types";
 
 /** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
@@ -10,6 +11,20 @@ export interface LineScheduleWriter {
 	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void;
 	removeSchedule(notePath: string, blockId: string): void;
 	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
+}
+
+/** Destination for review-history entries (the append-only review log). */
+export interface ReviewLogWriter {
+	record(entry: ReviewLogEntry): void;
+	discardBuffered(cardId: string): boolean;
+}
+
+/** Per-answer detail only the calling study surface can supply. */
+export interface ReviewContext {
+	/** Answer time, epoch ms. Defaults to now. */
+	now?: number;
+	/** How long the card was on screen before being answered, ms. */
+	elapsedMs?: number;
 }
 
 /**
@@ -22,7 +37,15 @@ export class StudySessionManager {
 		private readonly scheduler: FSRSScheduler,
 		private readonly fenceWriter: FenceWriter,
 		private readonly resolveFile: (notePath: string) => TFile | null,
+		/**
+		 * Study surface every answer through this manager is attributed to in
+		 * the review log. Fixed per instance rather than passed per call: each
+		 * surface builds its own manager and has exactly one mode, so this is
+		 * one less thing a new call site can forget.
+		 */
+		private readonly mode: StudyMode,
 		private readonly scheduleStore?: LineScheduleWriter,
+		private readonly reviewLog?: ReviewLogWriter,
 	) {}
 
 	/**
@@ -72,9 +95,9 @@ export class StudySessionManager {
 	async recordReview(
 		cardId: string,
 		rating: FSRSRating,
-		now?: number,
+		context?: ReviewContext,
 	): Promise<ScheduleData> {
-		const ts = now ?? Date.now();
+		const ts = context?.now ?? Date.now();
 		const card = this.store.getCard(cardId);
 
 		// Build current schedule from card data
@@ -131,6 +154,22 @@ export class StudySessionManager {
 			}
 		}
 
+		// Review *history*, separate from the state above. Everything written so
+		// far is a snapshot this answer overwrote; the log is the only place the
+		// fact that a review happened at this moment survives, and it cannot be
+		// reconstructed later from reps or lastReview.
+		this.reviewLog?.record({
+			t: ts,
+			c: cardId,
+			r: rating,
+			s: update.schedule.state,
+			iv: Math.max(0, Math.round((update.schedule.due - ts) / 1000)),
+			st: update.schedule.stability,
+			d: update.schedule.difficulty,
+			e: Math.max(0, Math.round(context?.elapsedMs ?? 0)),
+			m: this.mode,
+		});
+
 		return update.schedule;
 	}
 
@@ -142,6 +181,11 @@ export class StudySessionManager {
 		cardId: string,
 		previousSchedule: ScheduleData | null,
 	): Promise<void> {
+		// An undo that arrives before the log buffer flushed takes the entry
+		// back out. Once it has reached a shard it stays: the shard is
+		// append-only, and a review that got that far did happen.
+		this.reviewLog?.discardBuffered(cardId);
+
 		const card = this.store.getCard(cardId);
 
 		if (previousSchedule) {

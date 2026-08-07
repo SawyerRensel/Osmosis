@@ -12,16 +12,16 @@ related:
   - "[[Setting to store flashcard scheduling data in frontmatter or sidecar or within codefence]]"
   - "[[Sidecar files for flashcard data]]"
   - "[[Review FSRS implementation]]"
-status: To-Do
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-07T00:00:00.000Z
-date_modified: 2026-08-07T00:00:00.000Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_modified: 2026-08-07T22:12:12.000Z
+date_start_scheduled: 2026-08-07T19:21:05.000Z
+date_start_actual: 2026-08-07T19:21:05.000Z
+date_end_scheduled: 2026-08-07T22:12:12.000Z
+date_end_actual: 2026-08-07T22:12:12.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/15
 ---
 
 # Feature Request
@@ -269,3 +269,148 @@ install ID and confirm stats read both and the label bumps.
 - Optional archive setting: roll shards older than N years into a compacted
   daily aggregate. Deliberately not in v1 — retention is unconditional for now,
   and this only becomes worth building if a real user's log gets unwieldy.
+
+---
+
+# What was implemented
+
+## Where it shipped
+
+PR [#15](https://github.com/SawyerRensel/Osmosis/pull/15), branch
+`feature/review-log-storage` → `release/0.0.4`. The log begins at this install;
+everything before it is gone, as expected.
+
+## The cause
+
+Not a bug — an absence. `ScheduleData` is a *snapshot*: stability, difficulty,
+due, lastReview, reps, lapses, state. Every answer overwrites it. `reps: 40`
+says forty reviews happened and nothing about *when*, so half the dashboard was
+unbuildable and no amount of later work could recover the missing days. That is
+why this shipped first in the milestone.
+
+## The fix
+
+Every answer appends one JSONL line to a shard in the vault, named by month
+**and device** — `Osmosis/Reviews/2026-08.pixel-10a.jsonl`. Per-device shards
+mean no file ever has two writers, so Sync has nothing to reconcile; readers
+take the union of every shard. Writes are appends, never whole-file rewrites.
+
+## Decisions worth remembering
+
+**Volume aggregation never looks a card up.** `aggregateRollup` takes entries
+and nothing else — no `CardStore`, no resolver. That is what makes a deleted
+deck unable to retroactively empty the heatmap: true by construction, not by
+remembering to handle it. `aggregateAnswerButtons` *does* need the card
+(maturity is a property of the current schedule), so unresolvable IDs land in
+its `excluded` count. Do not "tidy" these into one function with an optional
+resolver; the asymmetry is the design.
+
+**Study mode is a constructor argument** on `StudySessionManager`, not a
+per-call one. Each surface builds its own manager and has exactly one mode, so
+`createSessionManager(mode)` makes it impossible for a new study surface to log
+unattributed reviews. A fifth call site cannot forget.
+
+**`deviceLabelCandidate(label, attempt)` takes the attempt number** rather than
+parsing a trailing number off the label. Parsing would bump a device
+legitimately named `nexus-5` to `nexus-6`, silently renaming its shard.
+
+**The slug deviates from the PRD's example.** `Sawyer's MacBook Pro` →
+`sawyers-macbook-pro`, not the note's illustrative `sawyers-macbook`. The
+stated *rule* (lowercase, non-alphanumerics to `-`, cap ~32) is normative and
+19 chars is well under the cap; the arrow example was inexact. Apostrophes are
+stripped rather than hyphenated, which is what the example does show.
+
+**`foldIntoCache` only folds when the cache provably held the shard's whole
+contents before the append**, comparing a pre-append stat against the cached
+fingerprint. Otherwise it deletes the cache entry so the next `getRollup()`
+rebuilds from the file. Without that check, appending to a shard the cache
+had never seen would stamp a current fingerprint over a partial rollup and hide
+the earlier reviews forever.
+
+**Undo drops an entry only while it is still buffered.** Rewriting a shard to
+delete a line would break the append-only property that makes concurrent
+devices safe, and a review that reached disk did happen.
+
+**Elapsed time anchors differ by surface, deliberately.** Sequential measures
+from question render (Anki's semantics). The three in-place surfaces have no
+"question shown" moment — the card sits inline among ordinary content — so they
+measure from reveal. Slightly undercounts there; the alternative is a
+fabricated number.
+
+**The rollup cache is in `app.saveLocalStorage`** (key `osmosis-review-rollup`),
+not a file. Vault-local, per-device, cannot sync by construction rather than by
+convention.
+
+## A note rename orphans that note's line-card history
+
+Line-card IDs embed the note path (`notes/bridges.md#^os-rlbul1`).
+`CardSyncService.handleRename` re-keys cards in the store, but entries already
+on disk keep the old ID. Volume graphs are unaffected — they never join — so
+the heatmap stays correct; maturity-split graphs lose those reviews to
+`excluded`. This is the PRD's "or its ID is regenerated" case working as
+specified.
+
+**Do not "fix" this by rewriting shards on rename.** That would destroy the
+append-only property the whole cross-device design rests on. If it ever needs
+addressing, the answer is an ID-alias map, not a rewrite.
+
+## Obsidian Sync's "all other types" toggle is not readable — notice, not detection
+
+The PRD asks for a callout when Sync is detected *and* the toggle is off.
+**That state is not reachable from the plugin.** Checked against Sync internal
+version 5280:
+
+| Probe | Result |
+|---|---|
+| `instance.allowTypes` | does not exist |
+| `instance.filter.allowTypes` | `{}` with the toggle both on and off |
+| `instance.canSyncPath(path)` | `true` for `.jsonl` *and* `.png` in both states — it tests path filters only |
+
+Two attempts at inferring it each shipped a notice that contradicted the user's
+real configuration. It therefore informs rather than detects: shown whenever
+Sync is enabled, worded so it does not claim to know the setting, with a
+Dismiss button (`reviewLogSyncNoticeDismissed`).
+
+**Do not add a third guess.** The one lead not yet followed is
+`instance.loadData()` — the Sync plugin's own persisted config, which is where
+per-device type toggles would have to live. If that pans out, replace the
+notice with a real conditional and drop the Dismiss.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/store/ReviewLog.ts` | New — serialisation, shard naming, collision guard, union reads, rollups, the local cache |
+| `src/store/ReviewLog.test.ts` | New — 127 tests, incl. an in-memory `FakeFs` |
+| `src/study/StudySessionManager.ts` | `mode` + `reviewLog` constructor args; logs in `recordReview`, discards in `revertReview`; `now`/`elapsedMs` moved into a `ReviewContext` |
+| `src/main.ts` | Constructs the log; `resolveDeviceLabel`, `generateInstallId`, `changeReviewLogFolder`, `setReviewLogDeviceLabel`, `shouldShowSyncNotice`, `dismissSyncNotice`; flushes on unload |
+| `src/settings.ts` | "Review history" group: folder, device name, Sync notice; `buildPathInput` (commits on blur/Enter, not per keystroke) |
+| `src/obsidian-internals.d.ts` | `internalPlugins.plugins.sync`, and a record of what was ruled out |
+| `src/views/SequentialStudyModal.ts` | `cardShownAt` at question render |
+| `src/views/LineRevealProcessor.ts` | `pendingRatingAt`; contextual mode; flush on session end |
+| `src/views/ContextualStudyProcessor.ts` | `revealedAt`; contextual mode |
+| `src/views/MindMapView.ts` | `spatialPendingRatingAt`; spatial mode; flush on session end |
+| `src/views/DashboardSidebarView.ts` | Sequential mode; flush on session end |
+| `styles.css` | `.osmosis-settings-notice` |
+| `.gitignore` | `vault/**/*.jsonl` — shards are generated and would churn every session |
+
+## Test fixture
+
+`e2e/fixtures/review-log-test.md` → `vault/tests/flashcard/`. Bridge types
+(neutral domain): 4 due line cards, 2 new, 1 fence card, deck
+`tests/review-log`. Enough to exercise all three study surfaces in one note.
+
+Manual verification went further than the checklist: the resulting shard was
+round-tripped back through the production reader, and its `iv` values
+independently cross-check against FSRS stability (72.03→72d, 16.78→17d,
+227.88→228d) with learning cards following the configured steps.
+
+## What was deliberately not done
+
+- No archive/compaction (see Follow-ups) — retention is unconditional.
+- No stats UI. `getRollup()` and `readAll()` exist for
+  [[Osmosis stats dashboard]] to consume; nothing reads them yet.
+- No dedup of a hand-duplicated shard *file* in the rollup path. `readAll()`
+  dedups on `t|c|r`, but per-shard cached rollups would double-count a file
+  copied under a new name. Single-writer shards make this unreachable without
+  the user manually copying files.

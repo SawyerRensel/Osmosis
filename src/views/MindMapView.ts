@@ -324,6 +324,12 @@ export class MindMapView extends ItemView {
 	 * the user actually clicked. Re-picked if a reload dropped the node.
 	 */
 	private spatialPendingNodeId: string | null = null;
+	/**
+	 * When the pending card was revealed, for the review log's elapsed time.
+	 * A node sits on the map alongside everything else, so there is no separate
+	 * "question shown" moment — the reveal is the only defensible anchor.
+	 */
+	private spatialPendingRatingAt = 0;
 	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
 	private spatialBanner: HTMLElement | null = null;
 	private spatialSessionManager: StudySessionManager | null = null;
@@ -903,9 +909,13 @@ export class MindMapView extends ItemView {
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 
-		// Study session end: push debounced schedule writes out now (plan §3).
-		// Peek records nothing, so there is nothing to flush.
-		if (wasStudy) void this.plugin.scheduleStore.flush();
+		// Study session end: push debounced schedule writes and buffered
+		// review-log entries out now (plan §3). Peek records nothing, so there
+		// is nothing to flush.
+		if (wasStudy) {
+			void this.plugin.scheduleStore.flush();
+			void this.plugin.reviewLog.flush();
+		}
 	}
 
 	/**
@@ -987,6 +997,7 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode === "study") {
 			this.spatialPendingRating = key;
 			this.spatialPendingNodeId = nodeId;
+			this.spatialPendingRatingAt = Date.now();
 			// Keys 1–4 rate via the container's keydown handler
 			this.contentEl.focus();
 		}
@@ -1046,6 +1057,7 @@ export class MindMapView extends ItemView {
 	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
 		const cardId = this.spatialPendingRating;
 		if (this.spatialMode !== "study" || cardId === null) return;
+		const elapsedMs = Date.now() - this.spatialPendingRatingAt;
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 		this.spatialRated.add(cardId);
@@ -1054,8 +1066,8 @@ export class MindMapView extends ItemView {
 		// The card key is the card's ID; the card's own notePath routes the
 		// schedule write — to the source note for transcluded lines (plan §11)
 		if (this.plugin.cardStore.getCard(cardId)) {
-			this.spatialSessionManager ??= this.plugin.createSessionManager();
-			await this.spatialSessionManager.recordReview(cardId, rating);
+			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
+			await this.spatialSessionManager.recordReview(cardId, rating, { elapsedMs });
 			this.plugin.refreshDashboard();
 		}
 
