@@ -34,6 +34,7 @@ children:
   - "[[Create Card Browser - Editor]]"
   - "[[Develop Image Occlusion System for Flaschards]]"
   - "[[Osmosis stats dashboard]]"
+  - "[[Review log storage]]"
 blocked_by:
 cover:
 color:
@@ -71,3 +72,92 @@ The current Osmosis dashboard shows a list of decks, but there's currently no wa
 ## Reference Attachments/Screenshots
 
 *Attach any reference files, screenshots, sketches, or examples.*
+
+---
+
+# PRD
+
+## Scope of *this* note
+
+The milestone's shared shell only. The operators themselves are children:
+[[Create Card Browser - Editor]], [[Osmosis stats dashboard]],
+[[Develop Image Occlusion System for Flaschards]], plus the infrastructure they
+rest on, [[Review log storage]].
+
+## 'Add' is dropped — two operators, not three
+
+Anki's fourth button has no counterpart here. [[Flashcard creator wizard]] was
+cancelled because Obsidian *is* the card editing experience, and rebuilding an
+authoring dialog would duplicate it. Image occlusion — the one card type
+Obsidian genuinely cannot author — gets its own entry point via right-clicking
+an image, so it needs no hub button either.
+
+Ship **Browse** and **Stats**. `Sync` was already out of scope (cards sync
+through Obsidian Sync or the user's own drive setup).
+
+## Layout: sidebar keeps Decks, operators open in the main area
+
+The existing `DashboardSidebarView` stays a narrow left-panel launcher. Browse
+and Stats are wide, tabular surfaces that would be unusable at ~300px, so each
+becomes its own main-area view type.
+
+```
+LEFT SIDEBAR (existing)      MAIN AREA (new view types)
+┌──────────────────┐  ┌──────────────────────────────┐
+│ [⌕ Browse] [▤ Stats]│  │ Osmosis Browse       ✕      │
+│──────────────────│  │──────────────────────────────│
+│ Study all  3 5 42│  │ filter │ deck │ state │ due  │
+│                  │  │──────────────────────────────│
+│ ▾ Geography 20 0 │  │ ▸ card row                   │
+│ ▾ Languages  6 19│  │ ▸ card row                   │
+│    Spanish   3  3│  │ ▸ card row                   │
+└──────────────────┘  └──────────────────────────────┘
+```
+
+Each operator gets its own tab, history, and can be pinned or split — which is
+what Obsidian users expect of wide surfaces, and what the Anki screenshot's
+single-window model cannot offer.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/views/DashboardSidebarView.ts` | Operator bar above "Study all"; buttons activate the new views |
+| `src/main.ts` | Register the two new view types; remove the mind map ribbon icon; change the dashboard ribbon icon; add commands for both operators |
+| `src/views/CardBrowserView.ts` | New — see [[Create Card Browser - Editor]] |
+| `src/views/StatsView.ts` | New — see [[Osmosis stats dashboard]] |
+| `src/styles.ts` | Operator bar styling |
+
+## Ribbon changes
+
+1. **Remove** the "Open mind map" ribbon icon (`src/main.ts:94`). It is
+   redundant — a mind map is reachable from the top-right of any note, which is
+   both more convenient and more contextual.
+   **Keep** the `open-mind-map` *command* and the file-menu item; only the
+   ribbon button goes.
+2. **Change** the dashboard ribbon icon (`src/main.ts:98`) from `graduation-cap`
+   to `brain-circuit`. It opens the hub in the left panel, unchanged.
+
+**Open decision — view icon.** `DashboardSidebarView.getIcon()` returns
+`graduation-cap` and `MindMapView.icon` is already `brain-circuit`. Changing the
+dashboard *view* icon too would put identical icons on the mind map tab and the
+dashboard tab. Recommendation: **change the ribbon only, leave
+`getIcon()` as `graduation-cap`**, since the tab icon is what distinguishes the
+two panels once they are open. Revisit if the collision is acceptable.
+
+## Acceptance criteria
+
+- [ ] Sidebar shows a Browse and a Stats button; no Add button
+- [ ] Each opens its view in the main area, reusing an existing leaf if present
+- [ ] Both are reachable from the command palette
+- [ ] Mind map ribbon icon is gone; the command and file-menu item still work
+- [ ] Dashboard ribbon icon is `brain-circuit` and opens the left panel
+- [ ] Deck tree, counts, and "Study all" behave exactly as before
+- [ ] `npm run lint` and `npm test` clean
+
+## Manual test
+
+Reload the plugin. Confirm one Osmosis ribbon icon remains, showing
+`brain-circuit`, and that it opens the sidebar. Confirm Browse and Stats each
+open a main-area tab. Confirm `Ctrl+P → "Open mind map view"` still works and
+that right-clicking a note still offers "Mind map view".
