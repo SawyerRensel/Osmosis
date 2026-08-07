@@ -1581,6 +1581,33 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	padding: 8px;
 }
 
+.osmosis-dash-operators {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.osmosis-dash-operator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	flex: 1;
+	padding: 6px 8px;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-dash-operator-icon {
+	display: flex;
+	align-items: center;
+}
+
+.osmosis-dash-operator-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
 .osmosis-dash-header {
 	margin-bottom: 12px;
 }
@@ -1590,7 +1617,9 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	align-items: center;
 	justify-content: space-between;
 	width: 100%;
-	padding: 8px 12px;
+	/* Right padding matches the deck rows' so this button's counts land in the
+	   same columns as the tree's. */
+	padding: 8px 8px 8px 12px;
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 	border: none;
@@ -1655,21 +1684,43 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	white-space: nowrap;
 }
 
+.osmosis-dash-col-headers {
+	display: flex;
+	justify-content: flex-end;
+	gap: 4px;
+	padding: 0 8px;
+	margin-bottom: 4px;
+}
+
+.osmosis-dash-col-header {
+	width: 24px;
+	text-align: center;
+	font-size: 9px;
+	font-weight: 600;
+	color: var(--text-faint);
+}
+
 .osmosis-dash-counts {
 	display: flex;
-	gap: 6px;
+	gap: 4px;
 	margin-left: auto;
 	flex-shrink: 0;
 }
 
+/* Fixed width, not min-width: the columns only line up across rows if a
+   three-digit count occupies the same box as a one-digit one. Kept as narrow
+   as three digits allow — every pixel here comes out of the deck name, which
+   is what actually has to be readable in a phone-width sidebar. */
 .osmosis-dash-new,
 .osmosis-dash-learn,
-.osmosis-dash-due {
-	font-size: 11px;
+.osmosis-dash-due,
+.osmosis-dash-total {
+	font-size: 10px;
 	font-weight: 600;
-	padding: 1px 5px;
+	padding: 1px 2px;
 	border-radius: 3px;
-	min-width: 16px;
+	width: 24px;
+	box-sizing: border-box;
 	text-align: center;
 }
 
@@ -1686,6 +1737,18 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 .osmosis-dash-due {
 	color: hsl(140, 50%, 42%);
 	background: hsla(140, 50%, 42%, 0.12);
+}
+
+.osmosis-dash-total {
+	color: var(--text-muted);
+	background: var(--background-modifier-border);
+}
+
+/* The border-grey total pill disappears against the accent-filled "Study all"
+   button, so it gets a translucent treatment there instead. */
+.osmosis-dash-btn .osmosis-dash-total {
+	color: var(--text-on-accent);
+	background: rgba(255, 255, 255, 0.2);
 }
 
 .osmosis-dash-zero {
@@ -2041,4 +2104,17 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-settings-notice .setting-item-name {
 	color: var(--text-accent);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Operator views (browse, stats)
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-operator-view {
+	padding: var(--size-4-4);
+}
+
+.osmosis-operator-placeholder {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
 }
