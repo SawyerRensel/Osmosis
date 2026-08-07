@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Progress
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-06T16:49:38.893Z
 date_modified: 2026-08-06T20:49:44.234Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_start_scheduled: 2026-08-07T22:20:25.000Z
+date_start_actual: 2026-08-07T22:20:25.000Z
+date_end_scheduled: 2026-08-07T22:49:47.000Z
+date_end_actual: 2026-08-07T22:49:47.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -38,6 +38,7 @@ children:
 blocked_by:
 cover:
 color:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/16
 ---
 # Feature Request
 
@@ -170,3 +171,110 @@ Reload the plugin. Confirm one Osmosis ribbon icon remains, showing
 `brain-circuit`, and that it opens the sidebar. Confirm Browse and Stats each
 open a main-area tab. Confirm `Ctrl+P → "Open mind map view"` still works and
 that right-clicking a note still offers "Mind map view".
+
+---
+
+# What was implemented
+
+## Where it shipped
+
+PR [#16](https://github.com/SawyerRensel/Osmosis/pull/16), branch
+`feature/osmosis-dashboard-shell` → `release/0.0.4`. Second of the milestone's
+five tasks, after [[Review log storage]].
+
+## Why the shells are nearly empty
+
+The judgement call this task turned on was *how much shell is enough*. The
+answer is: registration and almost nothing else. `CardBrowserView` and
+`StatsView` are ~25 lines apiece — view type, title, icon, a heading, a
+placeholder line.
+
+Everything the note promised of these surfaces (own tab, history, pinnable,
+splittable, restored across restarts) is a property of being a **registered
+main-area view type**. None of it needed code. So a scaffold — a toolbar, an
+empty state, a filter row — would have bought nothing structural, and both
+children have already specified layouts that a generic scaffold would fight:
+[[Create Card Browser - Editor]] is a Bases-backed table, [[Osmosis stats
+dashboard]] is a heatmap and graphs. Anything built here would be deleted
+there.
+
+A future session filling these in should expect to keep only the class
+declaration.
+
+## The operator bar and its single activation path
+
+`activateMainView(viewType)` is public on the plugin and shared by all four
+callers (two sidebar buttons, two commands). It reveals an existing leaf when
+one is open rather than opening a second tab.
+
+This replaced a planned pair of `activateCardBrowser()` / `activateStats()`
+wrappers over a private helper — identical behaviour, two fewer methods. When
+task 3 or 4 needs to *pass state* into a view (a preselected deck, a date
+range), that is the function to extend, not fork.
+
+## Ribbon
+
+The mind map ribbon button is gone. Its three other entry points survive
+untouched — the note header action, the file menu item, and the
+`open-mind-map` command — and all three know which note to map, which the
+ribbon button never did; it opened a split and guessed.
+
+## Decisions worth remembering
+
+- **The dashboard and mind map tabs share `brain-circuit`.** Weighed and
+  accepted, twice: matching the ribbon button to the panel it opens matters
+  more than separating two tabs that are already distinguished by title and by
+  which panel they live in. **Do not "fix" this by reverting the dashboard
+  icon.**
+- **`graduation-cap` still means *study*, not *dashboard*.** It stays on
+  `LineRevealProcessor`'s study action and `MindMapView`'s study-mode and
+  study-this-branch items. Untouched here on purpose.
+- **No Add operator.** Anki's fourth button has no counterpart: Obsidian *is*
+  the card editor ([[Flashcard creator wizard]] was cancelled for this reason),
+  and image occlusion enters from an image's context menu.
+- **Total = New + Learn + Due.** Cards waiting *now*, not the deck's card
+  count — cards scheduled for a future day are in none of the three columns, so
+  they are in no total either. A true per-deck card count would need a new
+  `CardStore` count.
+- **Count pills are fixed-width, not `min-width`.** This is the whole alignment
+  mechanism: under `min-width`, a three-digit count made a wider box than a
+  one-digit one and no two rows lined up. Widths are then as narrow as three
+  digits allow (24px), and headers are sentence case because `LEARN`/`TOTAL` in
+  caps were themselves wider than the column. Every pixel here comes out of the
+  deck name, which has to stay readable in a phone-width sidebar. A four-digit
+  count will overflow its pill slightly.
+- **`.osmosis-dash-btn` right padding is 8px, not 12px,** solely so "Study all"
+  lands in the same columns as the tree.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/views/CardBrowserView.ts` | New — `osmosis-card-browser` shell view |
+| `src/views/StatsView.ts` | New — `osmosis-stats` shell view |
+| `src/main.ts` | Register both views; drop the mind map ribbon icon; dashboard ribbon → `brain-circuit`; `open-card-browser` and `open-stats` commands; `activateMainView()` |
+| `src/views/DashboardSidebarView.ts` | `getIcon()` → `brain-circuit`; operator bar; column headers; Total pill |
+| `styles.css` | Operator bar, column headers, fixed-width count pills, operator-view padding |
+
+Note the original surface map above named `src/styles.ts` for the operator bar
+styling. That was wrong — `src/styles.ts` is mind-map *node* styling. Plugin CSS
+is the top-level `styles.css`, which esbuild copies into the vault.
+
+## Test fixture
+
+None. This task is entirely Obsidian DOM and view registration with no pure
+logic, so it has no unit tests either — the two-layer strategy puts it in the
+manual column, and it was verified against the existing dev vault: ribbon,
+operator bar, tab pinning and splitting, command palette, the surviving
+mind-map entry points, and column alignment at depth.
+
+## Follow-ups
+
+- [[Osmosis stats dashboard]] and [[Create Card Browser - Editor]] fill the two
+  shells; [[Develop Image Occlusion System for Flaschards]] remains.
+- A nameless deck row (counts, no label) appears between "Study all" and the
+  first deck — cards landing in a deck with an empty name. Pre-existing, seen
+  while testing, deliberately not chased here. Needs its own bug note.
+- One test run reported `1 failed | 879 passed` during this task; the failure
+  did not recur across 17 subsequent runs and the run's output did not name it.
+  Nothing here touches the tested code. Recorded in case it resurfaces.
