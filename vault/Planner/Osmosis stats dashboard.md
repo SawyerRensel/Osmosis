@@ -112,9 +112,22 @@ Young vs mature threshold is Anki's: interval ≥ 21 days is mature.
 
 ## Scope controls
 
-Mirror the reference screenshot's header: deck / collection toggle with a deck
-picker, and last 12 months / all history. Per Anki, **Today ignores the history
-scope** and always means today.
+**Deck scope** is a hierarchical picker reusing `buildDeckTree()` from
+`src/study/DeckTreeBuilder.ts` — the same tree the sidebar already renders —
+plus a "Whole collection" entry. Selecting a parent deck includes its children,
+which `DeckScope` already models with its `parent` / `single` distinction, so
+scoping needs no new concepts.
+
+Deliberately **not** Anki's free-text `deck:current` search box: Osmosis has no
+query syntax anywhere else, and introducing one here would mean designing and
+parsing a language as a side effect of a stats task.
+
+**History scope** is last 12 months / all history. Per Anki, **Today ignores the
+history scope** and always means today.
+
+Both graphs and scope apply to whatever the log holds — see
+[[Review log storage]] for why history begins at install rather than being
+backfilled, and why a blank early stretch is expected.
 
 ## Data access
 
@@ -145,8 +158,10 @@ half-window width since it lives in a main-area tab that can be split.
 ## Acceptance criteria
 
 - [ ] All 14 graphs render; Card Ease is absent
+- [ ] Deck scope uses the hierarchical picker; a parent deck includes its children
 - [ ] Deck / collection scope filters every graph
 - [ ] 12-month / all-history scope applies everywhere except Today
+- [ ] Reviews of since-deleted cards still count in volume graphs
 - [ ] Today reflects reviews from today only, regardless of scope
 - [ ] Calendar heatmap shows per-day counts with hover detail and a year stepper
 - [ ] True Retention counts mature cards only, first review per day
@@ -169,7 +184,9 @@ what was just done and the Study Mode graph attributes them correctly.
 
 ## Follow-ups
 
-- Save PDF / export, as in Anki's footer
+- **Export — explicitly out of scope here.** Anki's Save PDF needs its own
+  SVG→PDF or print-stylesheet path, and it is independently useful, so it gets
+  its own task rather than riding along on a task already carrying 14 graphs.
 - FSRS parameter optimisation from logged history — see
   [[Review FSRS implementation]]
 - Per-note or per-folder breakdown, which Osmosis could offer and Anki cannot

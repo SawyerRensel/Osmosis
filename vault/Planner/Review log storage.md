@@ -191,6 +191,42 @@ local — plugin data or a local cache file — recomputed from whatever shards 
 device holds. Raw shards are read lazily, only for graphs that need them
 (Hourly Breakdown, Answer Buttons, True Retention, FSRS optimisation).
 
+## Lifecycle: keep everything, forever
+
+**Never prune, never purge.** Entries are retained even when their card is
+deleted, its note is deleted, or its ID is regenerated. A review that happened
+is a fact, and Anki treats its `revlog` the same way.
+
+Orphaned entries — those whose card ID no longer resolves — are handled by graph
+class, not by deletion:
+
+| Graph class | Orphan handling |
+|---|---|
+| Volume (Today, Calendar, Reviews, Review Time, Hourly) | **Included.** You studied that day; the heatmap must not retroactively empty when a deck is deleted. |
+| Maturity-split or state-joined (Answer Buttons by maturity, True Retention) | **Excluded.** Maturity cannot be determined without card state. |
+
+Aggregation code must therefore treat "card not found" as a normal case, not an
+error. This is the single easiest thing to get wrong here: a naive join against
+`CardStore` would silently drop history for every deleted card.
+
+The same rule settles [[Reset card scheduling data]]: resetting a card clears its
+FSRS state but **leaves its log entries untouched**. The card starts over; the
+history of having studied it does not.
+
+## Day one: start empty
+
+**Do not backfill or synthesize.** Existing cards carry `reps`, `lapses`, and
+`lastReview`, which is tempting to seed from — but a card with `reps: 40` yields
+exactly one timestamp, which would render as one busy day preceded by months of
+false inactivity. Invented data is worse than absent data.
+
+The log begins at install. Every entry corresponds to an observed review.
+
+This is survivable because the state-derived graphs — Card Counts, Future Due,
+Review Intervals, Card Stability, Card Difficulty, Card Retrievability — are
+fully populated from day one. The dashboard is not empty on arrival; only the
+history-backed graphs start bare and fill in.
+
 ## Write path
 
 Reviews buffer in memory during a session and flush on session end, mirroring
@@ -209,13 +245,18 @@ whole-file rewrite of the collection.
 - [ ] Settings callout appears when Sync is detected and "all other types" is off
 - [ ] Changing the folder in settings moves existing shards
 - [ ] Plugin start does not parse raw shards; only the rollup loads eagerly
+- [ ] Deleting a card leaves its entries intact and still counted in volume graphs
+- [ ] Aggregation treats an unresolvable card ID as normal, never as an error
+- [ ] No backfill runs on first install; the log starts empty
 - [ ] `npm run lint` and `npm test` clean
 
 ## Test plan
 
 Unit (`src/store/ReviewLog.test.ts`): entry serialisation round-trip, shard
 filename slugging, collision-guard bump, union-and-sort across shards, rollup
-aggregation, dedup on replayed entries.
+aggregation, dedup on replayed entries, and orphan handling — entries whose card
+ID is absent from `CardStore` must survive volume aggregation and drop out of
+maturity-split aggregation.
 
 Manual: review cards on desktop, confirm the shard file appears with correct
 name and lines. Simulate a second device by hand-adding a shard with a different
@@ -225,5 +266,6 @@ install ID and confirm stats read both and the label bumps.
 
 - FSRS parameter optimisation from logged history — new task, see
   [[Review FSRS implementation]]
-- Log-aware [[Reset card scheduling data]]: decide whether resetting a card
-  tombstones its history or leaves it intact
+- Optional archive setting: roll shards older than N years into a compacted
+  daily aggregate. Deliberately not in v1 — retention is unconditional for now,
+  and this only becomes worth building if a real user's log gets unwieldy.

@@ -133,14 +133,26 @@ Content editing stays in Obsidian — the same reasoning that cancelled
 
 - **Click a row** → open the source note at that card's line. `Card.sourceLine`
   already exists.
-- **Suspend / unsuspend** → `CardStore.setDisabled()`, already implemented
-- **Reset scheduling** → `CardStore.clearSchedule()`, already implemented. See
-  [[Reset card scheduling data]]
+
+Three distinct mutations, deliberately kept separate rather than collapsed —
+they have very different consequences and must not be confusable:
+
+| Operation | Effect | Reversible? | Touches note content? |
+|---|---|---|---|
+| **Suspend / unsuspend** | Out of study; FSRS state preserved | Yes, fully | No |
+| **Reset scheduling** | Card returns to new; FSRS state cleared | No — but review log survives | No |
+| **Delete card** | Card ceases to exist | No | **Yes** |
+
+- **Suspend** → `CardStore.setDisabled()`, already implemented
+- **Reset** → `CardStore.clearSchedule()`, already implemented. Log entries are
+  retained; see [[Review log storage]] and [[Reset card scheduling data]]
+- **Delete** → removes the source line or fence from the note. This is the only
+  one that edits user content, so it goes through `ConfirmModal` naming every
+  affected file, and it must be visually separated from the other two in the
+  toolbar.
 - **Change deck** → ⚠️ per-*note* only. Line cards inherit their deck from
   `osmosis-deck` frontmatter or the folder, so there is no per-card deck to set.
   The UI must reflect this: offer it on the note row, disable it on card rows.
-- **Delete** → removes the source line or fence from the note. This edits user
-  content, so it goes through `ConfirmModal` and names the affected files.
 
 Multi-select with checkboxes; operations apply to the selection.
 
@@ -169,9 +181,11 @@ view to any `.base` of their own.
 - [ ] All three layouts render; the choice persists in the `.base` file
 - [ ] Every per-card option persists in the `.base` file and survives reopening
 - [ ] Clicking a row opens the note scrolled to that card's line
-- [ ] Suspend, reset, and delete apply to a multi-selection
+- [ ] Suspend, reset, and delete are three separate actions and apply to a multi-selection
+- [ ] Suspend is reversible and preserves FSRS state
+- [ ] Reset clears FSRS state but leaves review log entries intact
+- [ ] Delete confirms first, names affected files, and is visually separated from the other two
 - [ ] Change deck is offered on note rows and disabled on card rows
-- [ ] Delete confirms first and names affected files
 - [ ] Deck counts in the sidebar update after a mutation
 - [ ] `npm run lint` and `npm test` clean
 

@@ -122,6 +122,19 @@ duplicate images; positional binding breaks silently when embeds are reordered.
 An explicit label survives both. `c1` above has two shapes and is therefore
 **one** card.
 
+### ⚠️ The label must be stripped before rendering
+
+Fence content is rendered through `MarkdownRenderer`, so a raw `{a}` would
+appear as literal stray text beside the image in every study surface. It must be
+stripped at render time, exactly as `stripInlineClozeMarkers()` in
+`src/card-gen/explicit.ts` already strips `:::` markers.
+
+This means **every** render path strips it — sequential, contextual, and
+spatial. A path that forgets shows users a `{a}` next to their diagram. Pin it
+with a test per surface, not just one.
+
+The label stays in the source file; only the rendered output is cleaned.
+
 ### Line card
 
 No `image:` field and no label — the block ID already identifies the line, and
@@ -208,7 +221,7 @@ image), Back Extra (below, answer side), and Comments (never shown).
 | File | Change |
 |---|---|
 | `src/card-gen/occlusion.ts` | New — parse shape sets, derive one card per group |
-| `src/card-gen/explicit.ts` | Recognise `occlude-*` keys and `{label}` embed markers |
+| `src/card-gen/explicit.ts` | Recognise `occlude-*` keys and `{label}` embed markers; strip labels alongside cloze markers |
 | `src/store/ScheduleStore.ts` | Nested per-group schedules under a block ID |
 | `src/store/FenceWriter.ts` | Write per-group schedules to `occlude-*` fences |
 | `src/views/OcclusionEditorModal.ts` | New — the canvas editor |
@@ -227,6 +240,8 @@ image), Back Extra (below, answer side), and Comments (never shown).
 - [ ] Both modes render correctly on front and back
 - [ ] One fence with two labelled embeds keeps its shape sets distinct
 - [ ] Reordering embeds within a fence does not move masks between images
+- [ ] The `{a}` label never appears as text in sequential, contextual, or spatial study
+- [ ] The label is preserved in the source file after any render or write cycle
 - [ ] Occlusion cards study correctly in all three modes
 - [ ] Header, Back Extra, and Comments behave as in Anki
 - [ ] Renaming an occluded image rewrites the fence; line cards are handled by Obsidian

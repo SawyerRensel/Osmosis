@@ -138,12 +138,20 @@ single-window model cannot offer.
 2. **Change** the dashboard ribbon icon (`src/main.ts:98`) from `graduation-cap`
    to `brain-circuit`. It opens the hub in the left panel, unchanged.
 
-**Open decision — view icon.** `DashboardSidebarView.getIcon()` returns
-`graduation-cap` and `MindMapView.icon` is already `brain-circuit`. Changing the
-dashboard *view* icon too would put identical icons on the mind map tab and the
-dashboard tab. Recommendation: **change the ribbon only, leave
-`getIcon()` as `graduation-cap`**, since the tab icon is what distinguishes the
-two panels once they are open. Revisit if the collision is acceptable.
+3. **Change** `DashboardSidebarView.getIcon()` from `graduation-cap` to
+   `brain-circuit` as well, so the ribbon button and the panel it opens match.
+
+**Accepted consequence.** `MindMapView.icon` is already `brain-circuit`, so the
+mind map tab and the dashboard tab will share an icon. This was weighed and
+accepted: consistency between the ribbon button and the panel it opens matters
+more than distinguishing the two tabs, which are also distinguished by title and
+by which panel they live in. Do not "fix" this later by reverting the dashboard
+icon.
+
+Note `graduation-cap` stays in use elsewhere as the *study* icon —
+`LineRevealProcessor` (study-this-note action), `MindMapView` (study mode
+action, study-this-branch menu item). Leave those alone; they mean study, not
+dashboard.
 
 ## Acceptance criteria
 
@@ -152,6 +160,7 @@ two panels once they are open. Revisit if the collision is acceptable.
 - [ ] Both are reachable from the command palette
 - [ ] Mind map ribbon icon is gone; the command and file-menu item still work
 - [ ] Dashboard ribbon icon is `brain-circuit` and opens the left panel
+- [ ] Dashboard *view* icon is `brain-circuit`; study-action icons are untouched
 - [ ] Deck tree, counts, and "Study all" behave exactly as before
 - [ ] `npm run lint` and `npm test` clean
 
