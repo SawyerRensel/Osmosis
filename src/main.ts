@@ -11,7 +11,7 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
-import { CardBrowserView, VIEW_TYPE_CARD_BROWSER } from "./views/CardBrowserView";
+import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
@@ -24,8 +24,36 @@ import type { DeckScope } from "./study/types";
 /** localStorage key for the review log's rollup cache (per vault, per device). */
 const REVIEW_ROLLUP_CACHE_KEY = "osmosis-review-rollup";
 
+/** The base file the Browse entry points open, created on first use. */
+const CARD_BROWSER_BASE_PATH = "Osmosis/Cards.base";
+
+/**
+ * The starting base: every markdown note, with the card filtering left to the
+ * view's own options.
+ *
+ * The filter deliberately does *not* narrow to `osmosis-cards` notes. That
+ * property opts a note into *line* cards; a note holding only ```osmosis fences
+ * needs no property and would vanish from a base that required one. Notes with
+ * no cards cost nothing here — the view drops them.
+ */
+const CARD_BROWSER_BASE_CONTENT = `filters:
+  and:
+    - file.ext == "md"
+views:
+  - type: ${BASES_CARD_BROWSER_VIEW_ID}
+    name: Cards
+    layout: table
+    cardState: all
+    dueWindow: any
+    cardType: all
+    sortBy: due
+    showDisabled: false
+`;
+
 export default class OsmosisPlugin extends Plugin {
 	settings!: OsmosisSettings;
+	/** Whether the Bases core plugin accepted our view registration. */
+	basesAvailable = false;
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
 	scheduleStore!: ScheduleStore;
@@ -118,8 +146,17 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_MINDMAP, (leaf: WorkspaceLeaf) => new MindMapView(leaf));
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
-		this.registerView(VIEW_TYPE_CARD_BROWSER, (leaf: WorkspaceLeaf) => new CardBrowserView(leaf));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
+
+		// Browse is a Bases view, not a view type of our own: Bases already owns
+		// note-level querying, sorting and `.base` persistence, and a second
+		// browser would only reimplement them. Registration fails when the Bases
+		// core plugin is disabled, which is a state the Browse entry points have
+		// to explain rather than fail silently in.
+		this.basesAvailable = this.registerBasesView(
+			BASES_CARD_BROWSER_VIEW_ID,
+			createCardBrowserRegistration(this),
+		);
 
 		// The dashboard is the plugin's only ribbon entry. A mind map is opened
 		// from a note's header action, file menu, or the command below — all of
@@ -167,7 +204,7 @@ export default class OsmosisPlugin extends Plugin {
 			id: "open-card-browser",
 			name: "Open card browser",
 			callback: () => {
-				void this.activateMainView(VIEW_TYPE_CARD_BROWSER);
+				void this.openCardBrowser();
 			},
 		});
 
@@ -524,6 +561,41 @@ export default class OsmosisPlugin extends Plugin {
 		const leaf = workspace.getLeaf("tab");
 		await leaf.setViewState({ type: viewType, active: true });
 		void workspace.revealLeaf(leaf);
+	}
+
+	/**
+	 * Open the card browser, which is a `.base` file rather than a view of our
+	 * own — creating it, preconfigured with the Osmosis Cards view, if it is
+	 * absent.
+	 *
+	 * This is deliberately a shortcut to a file and not a second browser: the
+	 * user can then edit it like any base, or add the Osmosis Cards view to a
+	 * base of their own, and there is only one implementation either way.
+	 */
+	async openCardBrowser(): Promise<void> {
+		if (!this.basesAvailable) {
+			new Notice("Bases must be enabled to browse cards. Turn it on under core plugins in settings.");
+			return;
+		}
+
+		let file = this.app.vault.getFileByPath(CARD_BROWSER_BASE_PATH);
+		if (!file) {
+			try {
+				const folder = CARD_BROWSER_BASE_PATH.split("/").slice(0, -1).join("/");
+				if (folder !== "" && !this.app.vault.getFolderByPath(folder)) {
+					await this.app.vault.createFolder(folder);
+				}
+				file = await this.app.vault.create(CARD_BROWSER_BASE_PATH, CARD_BROWSER_BASE_CONTENT);
+			} catch (error) {
+				// Most likely a name collision with something that is not a file
+				// we can open — worth saying so rather than opening nothing.
+				console.error("Osmosis: could not create the card browser base", error);
+				new Notice(`Osmosis: could not create "${CARD_BROWSER_BASE_PATH}".`);
+				return;
+			}
+		}
+
+		await this.app.workspace.getLeaf("tab").openFile(file);
 	}
 
 	async openStudySession(scope: DeckScope): Promise<void> {

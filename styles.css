@@ -2110,13 +2110,228 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    Operator views (browse, stats)
    ═══════════════════════════════════════════════════════════ */
 
-.osmosis-operator-view {
-	padding: var(--size-4-4);
+/* ═══════════════════════════════════════════════════════════
+   Card browser (Bases view)
+   ═══════════════════════════════════════════════════════════ */
+
+.osmosis-browse {
+	height: 100%;
+	overflow: hidden;
 }
 
-.osmosis-operator-placeholder {
+/* The scroll container is the view, not the page: a base sits inside Bases'
+   own chrome, so the table has to scroll under a fixed toolbar rather than
+   growing the leaf. */
+.osmosis-browse-scroll {
+	height: 100%;
+	overflow: auto;
+	padding: var(--size-4-2) var(--size-4-3);
+}
+
+.osmosis-browse-empty {
+	padding: var(--size-4-4);
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
+}
+
+/* ── Table layout ──────────────────────────────────────────── */
+
+.osmosis-browse-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-browse-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-1) var(--size-4-2);
+	text-align: left;
+	font-weight: var(--font-medium);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.osmosis-browse-table td {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+	white-space: nowrap;
+}
+
+/* The card's own text is the one column allowed to take the leftover width;
+   every other column is sized by its content. Without this the numeric
+   columns stretch and the text a row exists to show gets squeezed. */
+.osmosis-browse-cell-front {
+	width: 100%;
+	max-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.osmosis-browse-cell-stability,
+.osmosis-browse-cell-difficulty,
+.osmosis-browse-cell-reps,
+.osmosis-browse-cell-lapses {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-cell-id,
+.osmosis-browse-cell-note,
+.osmosis-browse-cell-deck {
+	color: var(--text-muted);
+}
+
+.osmosis-browse-row {
+	cursor: pointer;
+}
+
+.osmosis-browse-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* ── Grouped layouts (list, cards) ─────────────────────────── */
+
+.osmosis-browse-group {
+	margin-bottom: var(--size-4-4);
+}
+
+.osmosis-browse-group-header {
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-browse-group-title {
+	font-weight: var(--font-medium);
+	cursor: pointer;
+}
+
+.osmosis-browse-group-title:hover {
+	color: var(--text-accent);
+}
+
+.osmosis-browse-group-decks {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Pushed to the far edge so the count lands in the same place on every group
+   header, whatever the note is called. */
+.osmosis-browse-group-count {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-line {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 3px var(--size-4-2);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+
+.osmosis-browse-line:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-browse-line-front {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-browse-line-due {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.osmosis-browse-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--size-4-2);
+}
+
+.osmosis-browse-tile {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	padding: var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	cursor: pointer;
+}
+
+.osmosis-browse-tile:hover {
+	border-color: var(--background-modifier-border-hover);
+}
+
+/* Three lines of front text, then ellipsis — enough to recognise a card by,
+   short enough that tiles stay a uniform height in the grid. */
+.osmosis-browse-tile-front {
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-browse-tile-meta {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin-top: auto;
+}
+
+.osmosis-browse-tile-due {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Badges and card state ─────────────────────────────────── */
+
+.osmosis-browse-badge {
+	padding: 0 6px;
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+/* State colours follow the dashboard's count columns — new is the accent,
+   learning and relearning are the warning tone, review recedes. */
+.osmosis-browse-state-new {
+	color: var(--text-accent);
+}
+
+.osmosis-browse-state-learning,
+.osmosis-browse-state-relearning {
+	color: var(--text-warning);
+}
+
+/* Suspended cards stay legible rather than being hidden — the browser is the
+   one surface that lists them, and it is where they get unsuspended. */
+.osmosis-browse-suspended {
+	opacity: 0.55;
+	font-style: italic;
 }
 
 /* ═══════════════════════════════════════════════════════════

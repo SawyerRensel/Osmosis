@@ -18,6 +18,12 @@ export interface GeneratedCard {
 	/** Excluded from deck totals and sequential study (line-card opt-out). */
 	excludeFromDecks?: boolean;
 	/**
+	 * Suspended: fully out of study, FSRS state preserved. Set by `exclude: true`
+	 * in fence metadata. Line cards carry the same flag, but source it from
+	 * osmosis-schedule frontmatter rather than from the markdown.
+	 */
+	disabled?: boolean;
+	/**
 	 * Line cards: contents of up to MAX_CONTEXT_LINES immediately preceding
 	 * sibling lines (document order), shown as front context in sequential study.
 	 */

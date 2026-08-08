@@ -88,9 +88,11 @@ export class CardSyncService {
 				const lineSchedule = genCard.blockId !== undefined
 					? lineSchedules?.get(genCard.blockId)
 					: undefined;
+				// Line cards source `disabled` from osmosis-schedule frontmatter;
+				// fence cards carry it in the markdown as `exclude: true`.
 				const isDisabled = genCard.blockId !== undefined
 					? lineDisabled?.has(genCard.blockId) ?? false
-					: false;
+					: genCard.disabled === true;
 
 				const card: Card = {
 					id: genCard.id,

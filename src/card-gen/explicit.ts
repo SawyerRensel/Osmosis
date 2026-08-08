@@ -620,7 +620,16 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 
 		if (i < lines.length) i++; // skip closing fence
 
-		if (metadata.exclude) continue;
+		// An excluded fence still generates its cards — carrying `disabled`, the
+		// same flag a suspended line card carries — rather than being skipped.
+		//
+		// Skipping made a suspended fence card vanish from the store, and with it
+		// from the card browser, so nothing could unsuspend it. Every store query
+		// that decides study and deck counts already skips disabled cards, so
+		// emitting one is behaviour-preserving; and reading view never consulted
+		// the store for this — ContextualStudyProcessor reads `exclude` straight
+		// out of the fence text.
+		const suspension = metadata.exclude ? { disabled: true } : {};
 
 		const fenceId = metadata.id
 			|| idsByLine.get(fenceStartLine)
@@ -660,6 +669,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					deck: metadata.deck,
 					sourceLine: fenceStartLine,
 					typeIn: metadata.typeIn,
+					...suspension,
 					...spreadSchedule(derivedSched),
 				});
 			}
@@ -687,6 +697,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
 				typeIn: metadata.typeIn,
+				...suspension,
 				...spreadSchedule(metadata),
 			});
 
@@ -702,6 +713,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
 				typeIn: metadata.typeIn,
+				...suspension,
 				...spreadSchedule(reverseSched),
 			});
 		} else {
@@ -713,6 +725,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
 				typeIn: metadata.typeIn,
+				...suspension,
 				...spreadSchedule(metadata),
 			});
 		}

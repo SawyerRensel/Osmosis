@@ -89,7 +89,7 @@ describe("processNote", () => {
 	});
 
 	describe("exclude: true metadata", () => {
-		it("excludes fence with exclude: true", () => {
+		it("carries the suspension through to the processed note", () => {
 			const md = [
 				"---",
 				"osmosis-cards: true",
@@ -108,11 +108,14 @@ describe("processNote", () => {
 				"```",
 			].join("\n");
 			const result = processNote(md, "note.md", defaultOptions);
-			expect(result.cards).toHaveLength(1);
+			expect(result.cards).toHaveLength(2);
 			expect(result.cards[0]!.front).toBe("Keep this");
+			expect(result.cards[0]!.disabled).toBeUndefined();
+			expect(result.cards[1]!.front).toBe("Skip this");
+			expect(result.cards[1]!.disabled).toBe(true);
 		});
 
-		it("only excludes the fence with exclude: true", () => {
+		it("marks the excluded fence disabled rather than dropping it", () => {
 			const md = [
 				"---",
 				"osmosis-cards: true",
@@ -126,7 +129,8 @@ describe("processNote", () => {
 				"```",
 			].join("\n");
 			const result = processNote(md, "note.md", defaultOptions);
-			expect(result.cards).toHaveLength(0);
+			expect(result.cards).toHaveLength(1);
+			expect(result.cards[0]!.disabled).toBe(true);
 		});
 	});
 
