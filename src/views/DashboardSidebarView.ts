@@ -3,7 +3,6 @@ import type OsmosisPlugin from "../main";
 import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import { SequentialStudyModal } from "./SequentialStudyModal";
-import { VIEW_TYPE_CARD_BROWSER } from "./CardBrowserView";
 import { VIEW_TYPE_STATS } from "./StatsView";
 
 export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
@@ -83,8 +82,10 @@ export class DashboardSidebarView extends ItemView {
 
 		// Operator bar — the wide surfaces open in the main area, not here
 		const operators = contentEl.createDiv({ cls: "osmosis-dash-operators" });
-		this.renderOperator(operators, "Browse", "search", VIEW_TYPE_CARD_BROWSER);
-		this.renderOperator(operators, "Stats", "bar-chart", VIEW_TYPE_STATS);
+		// Browse opens a `.base` file rather than a view type of its own — the
+		// browser is a Bases view, so the button is a shortcut to the base.
+		this.renderOperator(operators, "Browse", "search", () => this.plugin.openCardBrowser());
+		this.renderOperator(operators, "Stats", "bar-chart", () => this.plugin.activateMainView(VIEW_TYPE_STATS));
 
 		// Column headers — placed above "Study all" so they label its counts as
 		// well as the tree's. Every count group is right-aligned to the same
@@ -115,12 +116,17 @@ export class DashboardSidebarView extends ItemView {
 		}
 	}
 
-	private renderOperator(container: HTMLElement, label: string, icon: string, viewType: string): void {
+	private renderOperator(
+		container: HTMLElement,
+		label: string,
+		icon: string,
+		open: () => Promise<void>,
+	): void {
 		const btn = container.createEl("button", { cls: "osmosis-dash-operator" });
 		setIcon(btn.createSpan({ cls: "osmosis-dash-operator-icon" }), icon);
 		btn.createSpan({ text: label });
 		btn.addEventListener("click", () => {
-			void this.plugin.activateMainView(viewType);
+			void open();
 		});
 	}
 

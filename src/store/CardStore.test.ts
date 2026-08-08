@@ -173,4 +173,63 @@ describe("CardStore", () => {
 			expect(store.getAllDecks()).toEqual([]);
 		});
 	});
+
+	/**
+	 * Suspended cards are held but never studied. The card browser leans on
+	 * exactly this split — it lists them so they can be unsuspended, while every
+	 * count and queue behaves as though they were not there.
+	 */
+	describe("suspended (disabled) cards", () => {
+		const NOW = 1_000_000;
+
+		beforeEach(() => {
+			store.addCard(makeCard({ id: "live-new", deck: "geography" }));
+			store.addCard(makeCard({
+				id: "live-due", deck: "geography", due: NOW - 1, state: "review",
+			}));
+			store.addCard(makeCard({ id: "off-new", deck: "architecture", disabled: true }));
+			store.addCard(makeCard({
+				id: "off-due", deck: "architecture", due: NOW - 1, state: "review", disabled: true,
+			}));
+		});
+
+		it("keeps them in getAllCards, which is what the browser lists", () => {
+			expect(store.getAllCards()).toHaveLength(4);
+			expect(store.getCard("off-due")).toBeDefined();
+			expect(store.getCardsByNote("test.md")).toHaveLength(4);
+		});
+
+		it("drops them from the study queues", () => {
+			expect(store.getDueCards(NOW).map((c) => c.id)).toEqual(["live-due"]);
+			expect(store.getNewCards().map((c) => c.id)).toEqual(["live-new"]);
+			expect(store.getDueCardsByDeckPrefix(NOW, "architecture")).toEqual([]);
+			expect(store.getNewCardsByDeckPrefix("architecture")).toEqual([]);
+		});
+
+		it("drops them from deck counts and deck lists", () => {
+			const counts = store.getCardCountsByDeck(NOW);
+			expect(counts.get("geography")).toEqual({ new: 1, learn: 0, due: 1 });
+			expect(counts.has("architecture")).toBe(false);
+			expect(store.getAllDecks()).toEqual(["geography"]);
+		});
+
+		it("restores a card to every queue when unsuspended", () => {
+			store.setDisabled("off-due", false);
+			expect(store.getDueCards(NOW).map((c) => c.id).sort()).toEqual(["live-due", "off-due"]);
+			expect(store.getAllDecks()).toEqual(["architecture", "geography"]);
+		});
+
+		it("preserves FSRS state across a suspend and unsuspend", () => {
+			store.updateSchedule("live-due", {
+				stability: 12, difficulty: 5, due: NOW + 500,
+				lastReview: NOW, reps: 4, lapses: 1, state: "review", learningSteps: 0,
+			});
+			store.setDisabled("live-due", true);
+			store.setDisabled("live-due", false);
+
+			expect(store.getCard("live-due")).toMatchObject({
+				stability: 12, difficulty: 5, reps: 4, lapses: 1, state: "review",
+			});
+		});
+	});
 });

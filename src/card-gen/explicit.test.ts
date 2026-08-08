@@ -660,7 +660,7 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.front).toContain("```python");
 		});
 
-		it("skips excluded code cloze fence", () => {
+		it("suspends an excluded code cloze fence rather than dropping it", () => {
 			const md = [
 				"````osmosis",
 				"exclude: true",
@@ -671,7 +671,8 @@ describe("generateExplicitCards", () => {
 				"````",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
 		});
 	});
 
@@ -957,18 +958,38 @@ describe("generateExplicitCards", () => {
 	});
 
 	describe("exclude metadata", () => {
-		it("skips fence with exclude: true", () => {
+		// `exclude: true` suspends a card, it does not delete one. The card is
+		// still generated, carrying `disabled` — that is what keeps it visible
+		// and unsuspendable in the card browser. Every store query that decides
+		// study and deck counts skips disabled cards, so it stays out of study.
+		it("suspends a fence with exclude: true, preserving its schedule", () => {
 			const md = [
 				"```osmosis",
 				"exclude: true",
+				"due: 2026-08-12T10:00:00.000Z",
+				"reps: 7",
 				"",
-				"This should NOT generate a card",
+				"This should generate a suspended card",
 				"***",
-				"Because it is excluded",
+				"Because exclude means suspended",
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
+			expect(cards[0]!.reps).toBe(7);
+			expect(cards[0]!.due).toBe(Date.parse("2026-08-12T10:00:00.000Z"));
+		});
+
+		it("leaves disabled unset when exclude is not set", () => {
+			const md = [
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			expect(generateExplicitCards(md)[0]!.disabled).toBeUndefined();
 		});
 
 		it("generates card when exclude is not set", () => {
@@ -983,7 +1004,7 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 		});
 
-		it("excludes only the fence with exclude: true", () => {
+		it("suspends only the fence with exclude: true, leaving its neighbours alone", () => {
 			const md = [
 				"```osmosis",
 				"Keep this",
@@ -1006,21 +1027,38 @@ describe("generateExplicitCards", () => {
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(2);
-			expect(cards[0]!.front).toBe("Keep this");
-			expect(cards[1]!.front).toBe("Also keep");
+			expect(cards).toHaveLength(3);
+			expect(cards.map((c) => c.front)).toEqual(["Keep this", "Skip this", "Also keep"]);
+			expect(cards.map((c) => c.disabled)).toEqual([undefined, true, undefined]);
 		});
 
-		it("excludes cloze fence with exclude: true", () => {
+		it("suspends a cloze fence with exclude: true", () => {
 			const md = [
 				"```osmosis",
 				"exclude: true",
 				"",
-				"The ==mitochondria== is important.",
+				"The ==Danube== flows through ten countries.",
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
+		});
+
+		it("suspends both halves of an excluded bidirectional fence", () => {
+			const md = [
+				"```osmosis",
+				"exclude: true",
+				"bidi: true",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards.every((c) => c.disabled === true)).toBe(true);
 		});
 	});
 

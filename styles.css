@@ -2110,13 +2110,417 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    Operator views (browse, stats)
    ═══════════════════════════════════════════════════════════ */
 
-.osmosis-operator-view {
-	padding: var(--size-4-4);
+/* ═══════════════════════════════════════════════════════════
+   Card browser (Bases view)
+   ═══════════════════════════════════════════════════════════ */
+
+/* A flex column rather than `height: 100%` on both levels: the scroller has to
+   take exactly the height left over, and a percentage of a container Bases
+   sizes itself leaves a dead band at the bottom of the leaf. */
+.osmosis-browse {
+	/* Shared by the sticky group header and the table header that clears it. */
+	--osmosis-browse-group-header-h: 30px;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
 }
 
-.osmosis-operator-placeholder {
+/* The scroll container is the view, not the page: a base sits inside Bases'
+   own chrome, so the table has to scroll under a fixed toolbar rather than
+   growing the leaf. */
+.osmosis-browse-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: var(--size-4-2) var(--size-4-3);
+}
+
+.osmosis-browse-empty {
+	padding: var(--size-4-4);
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
+}
+
+/* ── Bases groupBy, rendered as an outer level ─────────────── */
+
+.osmosis-browse-basegroup {
+	margin-bottom: var(--size-4-5);
+}
+
+/* Fixed height, because the table header below it sticks to exactly this
+   offset — the two are a stack, and a group header that grew would sit on top
+   of the column labels instead of above them. */
+.osmosis-browse-basegroup-header {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	height: var(--osmosis-browse-group-header-h);
+	background: var(--background-primary);
+	border-bottom: 2px solid var(--background-modifier-border);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+/* Only inside a Bases group does the table header need to clear anything.
+   Ungrouped, there is no group header and it sticks to the top as usual. */
+.osmosis-browse-basegroup .osmosis-browse-table th {
+	top: var(--osmosis-browse-group-header-h);
+}
+
+/* ── Table layout ──────────────────────────────────────────── */
+
+/* Fixed layout is what lets Front and Back absorb the leftover width and
+   ellipsize; under `auto` the numeric columns win and squeeze them to nothing.
+   `min-width` is the other half of that: once the pane is narrower than the
+   fixed columns plus a readable Front and Back, the table scrolls sideways
+   rather than crushing the two columns the view exists to show. That is what
+   happens in a split pane or with both side panels open. */
+.osmosis-browse-table {
+	width: 100%;
+	min-width: 1240px;
+	table-layout: fixed;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-browse-col-index { width: 44px; }
+.osmosis-browse-col-type { width: 96px; }
+.osmosis-browse-col-deck { width: 120px; }
+.osmosis-browse-col-state { width: 88px; }
+.osmosis-browse-col-due { width: 96px; }
+.osmosis-browse-col-stability { width: 68px; }
+.osmosis-browse-col-difficulty { width: 74px; }
+.osmosis-browse-col-reps { width: 56px; }
+.osmosis-browse-col-lapses { width: 62px; }
+.osmosis-browse-col-note { width: 120px; }
+.osmosis-browse-col-id { width: 110px; }
+
+.osmosis-browse-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-1) var(--size-4-2);
+	text-align: left;
+	font-weight: var(--font-medium);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* `overflow: hidden` is not optional here. Under fixed layout a cell whose
+   content exceeds its column paints straight over the next one — which is how
+   a long deck path came to sit on top of the State badge. */
+.osmosis-browse-table td {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.osmosis-browse-table th {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Row numbers are for counting and referring to, so they line up as digits and
+   recede — they are not data about the card. */
+.osmosis-browse-cell-index {
+	text-align: right;
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-cell-stability,
+.osmosis-browse-cell-difficulty,
+.osmosis-browse-cell-reps,
+.osmosis-browse-cell-lapses {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-cell-id,
+.osmosis-browse-cell-note,
+.osmosis-browse-cell-deck {
+	color: var(--text-muted);
+}
+
+.osmosis-browse-row {
+	cursor: pointer;
+}
+
+.osmosis-browse-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* ── Grouped layouts (list, cards) ─────────────────────────── */
+
+.osmosis-browse-group {
+	margin-bottom: var(--size-4-4);
+}
+
+.osmosis-browse-group-header {
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-browse-group-title {
+	font-weight: var(--font-medium);
+	cursor: pointer;
+}
+
+.osmosis-browse-group-title:hover {
+	color: var(--text-accent);
+}
+
+.osmosis-browse-group-decks {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Pushed to the far edge so the count lands in the same place on every group
+   header, whatever the note is called. */
+.osmosis-browse-group-count {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-line {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 3px var(--size-4-2);
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+
+.osmosis-browse-line:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-browse-line-index {
+	width: 32px;
+	flex-shrink: 0;
+	text-align: right;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Front and back share one flexible column, so the badges past them line up
+   down the list however long either half runs. */
+.osmosis-browse-line-content {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-1);
+	overflow: hidden;
+}
+
+.osmosis-browse-line-front {
+	flex: 0 1 auto;
+	min-width: 0;
+}
+
+/* The back is the answer, so it recedes — present for scanning and searching,
+   not competing with the question. */
+.osmosis-browse-line-back {
+	flex: 0 1 auto;
+	min-width: 0;
+	color: var(--text-muted);
+}
+
+.osmosis-browse-line-sep {
+	flex: none;
+	color: var(--text-faint);
+}
+
+.osmosis-browse-line-due {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.osmosis-browse-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--size-4-2);
+}
+
+/* Height comes from the view's slider. Tiles are a uniform height so the grid
+   stays a grid — a card with an image and one with a word have to occupy the
+   same box or the rows stagger. */
+.osmosis-browse-tile {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	height: var(--osmosis-tile-height, 200px);
+	padding: var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	cursor: pointer;
+	overflow: hidden;
+}
+
+.osmosis-browse-tile:hover {
+	border-color: var(--background-modifier-border-hover);
+}
+
+/* Takes the tile's leftover height and clips, so the meta row stays pinned to
+   the bottom whatever the content does. */
+.osmosis-browse-tile-body {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	font-size: var(--font-ui-small);
+}
+
+/* The same front-rule-back shape the card has in study, so a tile is
+   recognisable as the card it is. */
+.osmosis-browse-tile-divider {
+	height: 1px;
+	margin: var(--size-4-2) 0;
+	background: var(--background-modifier-border);
+}
+
+.osmosis-browse-tile-back {
+	color: var(--text-muted);
+}
+
+.osmosis-browse-tile-meta {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin-top: auto;
+}
+
+.osmosis-browse-tile-due {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Rendered markdown ─────────────────────────────────────── */
+
+/* Card content is rendered markdown, not text, so it arrives with block
+   spacing meant for a note. Strip the outer margins so a card's first line
+   sits where the row expects it. */
+.osmosis-browse-md > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-browse-md > :last-child {
+	margin-bottom: 0;
+}
+
+/* Media scales to its container rather than its intrinsic size — a full-width
+   screenshot inside a 220px tile would otherwise define the grid. */
+.osmosis-browse-md img,
+.osmosis-browse-md video,
+.osmosis-browse-md .internal-embed {
+	max-width: 100%;
+	height: auto;
+}
+
+/* The single-line variant, for table cells and list rows: markdown still
+   renders (so cloze highlights and emphasis read correctly) but it is forced
+   onto one line and clipped, rather than growing the row. */
+.osmosis-browse-md-inline {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-browse-md-inline p,
+.osmosis-browse-md-inline ul,
+.osmosis-browse-md-inline ol,
+.osmosis-browse-md-inline li,
+.osmosis-browse-md-inline h1,
+.osmosis-browse-md-inline h2,
+.osmosis-browse-md-inline h3,
+.osmosis-browse-md-inline h4,
+.osmosis-browse-md-inline h5,
+.osmosis-browse-md-inline h6,
+.osmosis-browse-md-inline blockquote {
+	display: inline;
+	margin: 0;
+	padding: 0;
+	border: none;
+	font-size: inherit;
+	font-weight: inherit;
+	line-height: inherit;
+}
+
+.osmosis-browse-md-inline pre,
+.osmosis-browse-md-inline code {
+	display: inline;
+	margin: 0;
+	padding: 0 4px;
+	white-space: nowrap;
+	font-size: var(--font-ui-smaller);
+}
+
+/* An image in a one-line row is an icon, whatever its real size. */
+.osmosis-browse-md-inline img {
+	max-height: 1.4em;
+	vertical-align: text-bottom;
+}
+
+/* ── Badges and card state ─────────────────────────────────── */
+
+.osmosis-browse-badge,
+.osmosis-browse-state {
+	padding: 0 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+.osmosis-browse-badge {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+/* State colours are the dashboard's deck-count palette exactly, so a card
+   reading "learning" here is the same orange as the Learn column there.
+   Changing one of these means changing both. */
+.osmosis-browse-state-new {
+	color: var(--interactive-accent);
+	background: rgba(var(--interactive-accent-rgb, 99, 135, 255), 0.12);
+}
+
+.osmosis-browse-state-learning,
+.osmosis-browse-state-relearning {
+	color: hsl(30, 75%, 50%);
+	background: hsla(30, 75%, 50%, 0.12);
+}
+
+.osmosis-browse-state-review {
+	color: hsl(140, 50%, 42%);
+	background: hsla(140, 50%, 42%, 0.12);
+}
+
+/* Suspended cards stay legible rather than being hidden — the browser is the
+   one surface that lists them, and it is where they get unsuspended. */
+.osmosis-browse-suspended {
+	opacity: 0.55;
+	font-style: italic;
 }
 
 /* ═══════════════════════════════════════════════════════════

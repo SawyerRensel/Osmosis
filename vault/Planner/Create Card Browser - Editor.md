@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Progress
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-03T18:15:16.185Z
 date_modified: 2026-08-06T21:01:49.772Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_start_scheduled: 2026-08-08T15:01:06.000Z
+date_start_actual: 2026-08-08T15:01:06.000Z
+date_end_scheduled: 2026-08-08T17:16:01.000Z
+date_end_actual: 2026-08-08T17:16:01.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,6 +34,7 @@ children:
 blocked_by:
 cover:
 color:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/18
 ---
 # Feature Request
 
@@ -205,3 +206,164 @@ Plus a second note in another deck to exercise grouping.
   frontmatter, which would let users build genuine note-level Bases filters
   without the custom view — separate task if wanted
 - Inline front/back editing, deliberately excluded here
+
+---
+
+# What was implemented
+
+## Where it shipped
+
+PR [#18](https://github.com/SawyerRensel/Osmosis/pull/18), branch
+`feature/card-browser-editor` → `release/0.0.4`. Fourth of the milestone's five
+tasks, after [[Review log storage]], [[Osmosis Dashboard]] and [[Osmosis stats
+dashboard]].
+
+**The four mutations did not ship.** Suspend/unsuspend, reset, delete and change
+deck, plus multi-select and the sidebar count refresh, are all deferred. The
+browsing surface turned out to be the whole of a task on its own. See Follow-ups.
+
+## The premise held, and its second half was the surprise
+
+The PRD's constraint — Bases rows are files, so one row per card is unreachable
+— was re-verified and is still true. What the PRD did not anticipate is how far
+that constraint reaches: **it also rules out the toolbar.**
+
+Sort, Filter, Properties and Search all operate on `BasesPropertyId` values, and
+Bases applies the resulting config to *entries* before `onDataUpdated` fires. By
+the time the view has `data`, filtering and sorting have already happened at note
+level. `BasesPropertyType` is a closed union (`'note' | 'formula' | 'file'`),
+there is no property-registration API, and `registerBasesView` is the only Bases
+method on `Plugin`. So there is nowhere to inject a card, and no amount of
+effort makes "filter to cards due today" a toolbar operation.
+
+This is the single most useful thing to know before touching this view again.
+The answer is not to keep looking for the hook — it is that **every card-level
+control belongs in `BasesViewRegistration.options`**, which Bases still persists
+into the `.base` file. That is where search, the type toggles, the sort key and
+the height slider all live.
+
+What the toolbar *can* still do, the view honours: `groupedData` renders as an
+outer level above the note grouping, and the `base` sort value defers to the
+note ordering Bases produced instead of overwriting it. Both were bugs first —
+the view read `data` and ignored `groupedData`, and the table re-sorted globally
+over the top of Bases' order, so both menus looked broken.
+
+## The parser change, which was not in the plan
+
+`exclude: true` on a fence used to `continue` at generation, so the card was
+never created. That made "suspend" unreachable for fence cards: the card left
+the store, and the browser cannot list what does not exist, so nothing could
+unsuspend it. Line cards did not have this problem — their `disabled` flag lives
+in `osmosis-schedule` frontmatter and the card stays in the store.
+
+Fixed by generating the card and carrying `disabled` onto it. This is
+behaviour-preserving everywhere outside the browser, and the reason is worth
+recording because it is what made the change safe to make:
+
+- Every store query that decides study or counts already skips disabled cards —
+  `getDueCards`, `getNewCards`, both deck-prefix queries,
+  `getCardCountsByDeck`, `getAllDecks`. A disabled card and an absent one are
+  already indistinguishable to all of them.
+- Reading view never consulted the store for this. `ContextualStudyProcessor`
+  reads `exclude` straight out of the fence text and renders the greyed card
+  with its eye-off toggle, so an excluded fence looked the same before and after.
+
+`CardStore` had **no test coverage of `disabled` at all**, which is why that
+argument was unverified when it was made. It has five tests now.
+
+## Decisions worth remembering
+
+- **Task 2's `ItemView` was deleted, partially reversing PR #16.** A `BasesView`
+  is built by Bases through a `QueryController` a plugin cannot fabricate, so an
+  `ItemView` cannot host one — keeping both meant two browsers. What survived is
+  both *entry points*, repointed at the `.base` file: the `open-card-browser`
+  command kept its id so bound hotkeys still work, and the sidebar button kept
+  its place. PR #16's criteria "sidebar shows a Browse button" and "reachable
+  from the command palette" both still hold. A saved workspace holding an
+  `osmosis-card-browser` leaf shows Obsidian's "no view of type" placeholder
+  once.
+- **Delete a line card by stripping its block ID, not its line.** The PRD said
+  "removes the source line or fence". For a fence that is right — the fence *is*
+  the card. For a line card it would destroy the user's prose, which contradicts
+  the PRD's own governing principle that the browser mutates scheduling, not
+  content. Decided before the mutations were deferred; it still stands for
+  whoever builds them.
+- **Change deck writes `osmosis-deck` and warns rather than rewriting fences.**
+  Fence cards can carry their own `deck:` key, which the PRD's "per-note only"
+  design missed. Stripping those would edit fence bodies — user content — and
+  discard a per-card choice made deliberately. Also decided ahead of the
+  deferral.
+- **`occlusion` is absent from the type filter.** A filter value that can never
+  match reads as a broken control. It arrives with the card type in
+  [[Develop Image Occlusion System for Flaschards]].
+- **An empty card-type selection means "no constraint", not "nothing".**
+  Unchecking all five toggles shows everything rather than a blank panel, which
+  would read as a bug. Absent keys count as on, so a base file written before a
+  card type existed does not hide it.
+- **Card columns are fixed, not `config.getOrder()`.** That order lists *note*
+  properties; the view's columns are card fields. Same reason Bases' Properties
+  menu does nothing here.
+- **Markdown rendering is deferred, not eager.** `MarkdownRenderer.render` with
+  `sourcePath` set to the card's own note, so relative images and embeds resolve
+  as they do in the note. An `IntersectionObserver` with 200px of lead-in
+  renders each element once; the plain-text preview goes in first so rows have
+  their height before the render lands.
+- **The table needs both `table-layout: fixed` *and* `min-width`.** Fixed layout
+  is what lets Front and Back absorb leftover width, but below the sum of the
+  fixed columns those two collapse to zero — which is exactly what a split pane
+  or two open side panels does. `min-width: 1240px` makes it scroll sideways
+  instead. Cells also need `overflow: hidden`; without it a long deck path
+  paints straight over the State badge.
+- **Card state colours are the dashboard's deck-count palette, duplicated
+  deliberately.** New is `--interactive-accent`, learning and relearning are
+  `hsl(30, 75%, 50%)`, review is `hsl(140, 50%, 42%)`, each on a 12% tint.
+  Changing one means changing both; both sides carry a comment saying so.
+- **The sticky group header's 30px height is a shared CSS variable.** The table
+  header sticks to exactly that offset, and only inside a Bases group — ungrouped
+  there is no group header and it sticks to the top. If a theme reflows that
+  header the two will misalign; that is the place to look.
+- **The generated base is gitignored** (`vault/Osmosis/`). It is created on first
+  Browse and then edited by whoever uses the vault, so it churns on every layout
+  or filter change.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/browse/cards.ts` | New — all pure logic: option narrowing, filter predicates, search, sort comparators, note grouping, row projection |
+| `src/browse/cards.test.ts` | New — 68 tests, the bulk of the task's coverage |
+| `src/views/CardBrowserView.ts` | Rewritten from `ItemView` to `BasesView`; three layouts, deferred markdown, `createCardBrowserRegistration` |
+| `src/main.ts` | `registerBasesView`; dropped `registerView(VIEW_TYPE_CARD_BROWSER)`; `openCardBrowser()` creates/opens the base; command repointed; `basesAvailable` |
+| `src/views/DashboardSidebarView.ts` | `renderOperator` takes a callback instead of a view type; Browse opens the base |
+| `src/card-gen/explicit.ts` | `exclude: true` generates a `disabled` card instead of skipping |
+| `src/card-gen/types.ts` | `GeneratedCard.disabled` |
+| `src/card-gen/CardSyncService.ts` | Fence cards source `disabled` from the generated card |
+| `src/card-gen/explicit.test.ts`, `note-processor.test.ts` | Six tests rewritten from the old skip contract, plus bidi and schedule-preservation cases |
+| `src/store/CardStore.test.ts` | Five tests covering `disabled`, previously uncovered |
+| `styles.css` | New "Card browser" section; removed `.osmosis-operator-view` / `-placeholder`, orphaned by the `ItemView` deletion |
+| `.gitignore` | `vault/Osmosis/` |
+
+## Test fixtures
+
+`e2e/fixtures/browser-mixed.md` — one note holding a basic card, a bidi card, a
+two-group cloze, a code cloze, a suspended fence and four line cards, so one
+note demonstrably expands into ten rows. `e2e/fixtures/browser-second-deck.md`
+adds a second deck and a fence carrying its own `deck:`, for the change-deck
+case. Both copied to `vault/tests/flashcard/`.
+
+No jsdom smoke test. The view renders no SVG, so the `charts.dom.test.ts`
+polyfill has nothing to catch here, and every branch worth testing was extracted
+into `browse/cards.ts` as a pure function instead.
+
+## Follow-ups
+
+- **The four mutations** — suspend/unsuspend, reset, delete, change deck — with
+  multi-select checkboxes, a `ConfirmModal` for delete naming affected files,
+  and `plugin.refreshDashboard()` after each. The two design decisions above
+  (block-ID delete, deck-change warning) are already settled.
+- [[Clicking dashboard graph opens filtered card browser]]
+- [[Develop Image Occlusion System for Flaschards]] adds `occlusion` to the card
+  type toggles.
+- Bases' Properties menu is inert in this view. Note-level rollup properties
+  (card count, due count, next due) written to frontmatter would give it
+  something real to act on — see the PRD's follow-up above.
