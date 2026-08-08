@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, setIcon, WorkspaceLeaf } from "obsidian";
 import type OsmosisPlugin from "../main";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type { Card, CardType, StudyMode } from "../database/types";
@@ -59,6 +59,7 @@ import {
 	type PieSlice,
 	type Series,
 } from "../stats/charts";
+import { orderPanels } from "../stats/panelOrder";
 
 export const VIEW_TYPE_STATS = "osmosis-stats";
 
@@ -135,6 +136,28 @@ const WEAKEST_NOTE_LIMIT = 10;
 const CHART_HEIGHT = 200;
 const HEATMAP_CELL = 13;
 
+/** Hold before a touch on a grip arms a drag, and the slop that cancels it. */
+const HOLD_MS = 200;
+const TOUCH_SLOP = 10;
+/** How near the view's edge a drag scrolls it, and how fast. */
+const EDGE_ZONE = 60;
+const EDGE_SPEED = 15;
+const EDGE_INTERVAL_MS = 16;
+/** Where the finger holds the drag clone. */
+const CLONE_GRAB = { x: 40, y: 24 } as const;
+
+/**
+ * One panel of the dashboard: its builder, plus the ID the saved order is
+ * written in terms of.
+ *
+ * The IDs are persisted in `statsPanelOrder`, so they are saved data — renaming
+ * one resets that panel to the bottom of every reader's arrangement.
+ */
+interface PanelBuilder {
+	id: string;
+	build: (grid: HTMLElement, draws: (() => void)[]) => void;
+}
+
 /**
  * Main-area view for study statistics.
  *
@@ -176,6 +199,23 @@ export class StatsView extends ItemView {
 	/** Watches the detail panels for their first scroll into view. */
 	private detailObserver: IntersectionObserver | null = null;
 	private lastWidth = 0;
+	/** The panel currently being dragged, on either path. */
+	private dragging: HTMLElement | null = null;
+	/** Touch drag: the clone under the finger, and where the finger has been. */
+	private touchClone: HTMLElement | null = null;
+	private touchStart: { x: number; y: number } | null = null;
+	private lastTouch: { x: number; y: number } | null = null;
+	/** Touch drag: the hold that arms it. */
+	private holdTimer: number | null = null;
+	private holdPanel: HTMLElement | null = null;
+	private holdReady = false;
+	private scrollTimer: number | null = null;
+	private scrollStep = 0;
+	/** A touch hold is also the context-menu gesture; suppressed while dragging. */
+	private readonly blockContextMenu = (event: Event): void => {
+		event.preventDefault();
+		event.stopPropagation();
+	};
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -222,6 +262,8 @@ export class StatsView extends ItemView {
 		this.resizeObserver = null;
 		this.detailObserver?.disconnect();
 		this.detailObserver = null;
+		this.cancelHold();
+		this.endTouchDrag();
 		this.contentEl.empty();
 	}
 
@@ -312,6 +354,12 @@ export class StatsView extends ItemView {
 		// The panels it was watching are about to be destroyed.
 		this.detailObserver?.disconnect();
 
+		// So is anything a drag was holding. A reorder redraws from inside the
+		// drop, and a rollup refresh or a resize can land mid-gesture — either
+		// way the grip whose `dragend` would have cleaned up is about to go.
+		this.cancelHold();
+		this.endTouchDrag();
+
 		contentEl.empty();
 		contentEl.addClass("osmosis-stats-view");
 
@@ -323,23 +371,13 @@ export class StatsView extends ItemView {
 		// measured width, and the grid has not laid out until the DOM exists.
 		const draws: (() => void)[] = [];
 
-		this.buildToday(grid, draws);
-		this.buildFutureDue(grid, draws);
-		this.buildCalendar(grid, draws);
-		this.buildReviews(grid, draws);
-		this.buildCardCounts(grid, draws);
-		this.buildReviewTime(grid, draws);
-		this.buildIntervals(grid, draws);
-		this.buildStability(grid, draws);
-		this.buildDifficulty(grid, draws);
-		this.buildRetrievability(grid, draws);
-		this.buildStudyMode(grid, draws);
-		this.buildHourly(grid, draws);
-		this.buildAnswerButtons(grid, draws);
-		this.buildTrueRetention(grid, draws);
-		this.buildModeRecall(grid, draws);
-		this.buildTypeRecall(grid, draws);
-		this.buildWeakestNotes(grid, draws);
+		for (const panel of orderPanels(this.panelBuilders(), this.plugin.settings.statsPanelOrder)) {
+			panel.build(grid, draws);
+			// Each builder appends exactly one panel, so the grid's last child is
+			// the one it just made — the only handle on it a builder gives us.
+			const el = grid.lastElementChild;
+			if (el !== null && el.instanceOf(HTMLElement)) this.addDragHandle(el, panel.id);
+		}
 
 		// Each panel is drawn inside its own guard. They share one loop, so an
 		// unguarded throw in any one of them blanks every panel after it — and
@@ -364,6 +402,348 @@ export class StatsView extends ItemView {
 		contentEl.scrollTop = scrollTop;
 
 		if (this.needsEntries() && this.entries === null) void this.loadEntries();
+	}
+
+	/** Every panel, in the order a fresh install shows them. */
+	private panelBuilders(): PanelBuilder[] {
+		return [
+			{ id: "today", build: (g, d) => { this.buildToday(g, d); } },
+			{ id: "future-due", build: (g, d) => { this.buildFutureDue(g, d); } },
+			{ id: "calendar", build: (g, d) => { this.buildCalendar(g, d); } },
+			{ id: "reviews", build: (g, d) => { this.buildReviews(g, d); } },
+			{ id: "card-counts", build: (g, d) => { this.buildCardCounts(g, d); } },
+			{ id: "review-time", build: (g, d) => { this.buildReviewTime(g, d); } },
+			{ id: "intervals", build: (g, d) => { this.buildIntervals(g, d); } },
+			{ id: "stability", build: (g, d) => { this.buildStability(g, d); } },
+			{ id: "difficulty", build: (g, d) => { this.buildDifficulty(g, d); } },
+			{ id: "retrievability", build: (g, d) => { this.buildRetrievability(g, d); } },
+			{ id: "study-mode", build: (g, d) => { this.buildStudyMode(g, d); } },
+			{ id: "hourly", build: (g, d) => { this.buildHourly(g, d); } },
+			{ id: "answer-buttons", build: (g, d) => { this.buildAnswerButtons(g, d); } },
+			{ id: "true-retention", build: (g, d) => { this.buildTrueRetention(g, d); } },
+			{ id: "mode-recall", build: (g, d) => { this.buildModeRecall(g, d); } },
+			{ id: "type-recall", build: (g, d) => { this.buildTypeRecall(g, d); } },
+			{ id: "weakest-notes", build: (g, d) => { this.buildWeakestNotes(g, d); } },
+		];
+	}
+
+	// ── Reordering ────────────────────────────────────────────
+
+	/**
+	 * The grip that reorders a panel.
+	 *
+	 * Modelled on the kanban board in Planner, which solves the same problem in
+	 * the same environment, and the two things it gets right are the two things
+	 * that are not obvious:
+	 *
+	 *   - **Two paths.** HTML5 drag-and-drop for the mouse, touch events with a
+	 *     floating clone for mobile. `dragstart` never fires from touch in the
+	 *     mobile webview, and pointer events are not a substitute: the grip is
+	 *     inside the panel, so capture dies the moment the panel moves.
+	 *   - **Nothing moves until the drop.** A drop edge is marked on the panel
+	 *     under the pointer and the order is rewritten on release. Reparenting
+	 *     the dragged element mid-gesture aborts the drag outright.
+	 *
+	 * Only the grip is a drag surface, never the panel itself: a panel is full
+	 * of hoverable bars, range pickers and checkboxes, and taking the gesture
+	 * across the whole card would break all of them.
+	 */
+	private addDragHandle(panel: HTMLElement, id: string): void {
+		panel.dataset.panelId = id;
+
+		const handle = panel.createDiv({ cls: "osmosis-stats-drag" });
+		setIcon(handle, "grip-horizontal");
+		handle.setAttribute("aria-label", "Drag to reorder");
+		handle.setAttribute("draggable", "true");
+
+		this.wireMouseDrag(handle, panel);
+		this.wireTouchDrag(handle, panel);
+		this.wireDropTarget(panel);
+	}
+
+	private wireMouseDrag(handle: HTMLElement, panel: HTMLElement): void {
+		handle.addEventListener("dragstart", (event) => {
+			this.dragging = panel;
+			panel.addClass("osmosis-stats-panel-dragging");
+			if (event.dataTransfer === null) return;
+			// Carrying no payload at all makes some targets refuse the drag.
+			event.dataTransfer.setData("text/plain", panel.dataset.panelId ?? "");
+			event.dataTransfer.effectAllowed = "move";
+			// Drag a ghost of the panel, not of the grip.
+			event.dataTransfer.setDragImage(panel, 24, 24);
+		});
+
+		handle.addEventListener("drag", (event) => {
+			// The last event of a drag reports 0,0; it is not a position.
+			if (event.clientY === 0) return;
+			this.edgeScroll(event.clientY);
+		});
+
+		handle.addEventListener("dragend", () => {
+			this.endDrag();
+		});
+	}
+
+	/** Every panel is a drop target for every other one. */
+	private wireDropTarget(panel: HTMLElement): void {
+		panel.addEventListener("dragover", (event) => {
+			if (this.dragging === null || this.dragging === panel) return;
+			// Marks the panel as a valid drop target; without it, no drop fires.
+			event.preventDefault();
+			if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
+			this.markDropEdge(panel, event.clientY);
+		});
+
+		panel.addEventListener("dragleave", () => {
+			panel.removeClasses(["osmosis-stats-drop-above", "osmosis-stats-drop-below"]);
+		});
+
+		panel.addEventListener("drop", (event) => {
+			const dragged = this.dragging;
+			if (dragged === null || dragged === panel) return;
+			event.preventDefault();
+			void this.applyReorder(dragged, panel, dropsAbove(panel, event.clientY));
+		});
+	}
+
+	/**
+	 * Touch: hold the grip, then drag.
+	 *
+	 * The hold is what separates a reorder from a scroll — the grip is small and
+	 * there is no hover on touch to warn it is even there, so lifting on contact
+	 * would turn a mistimed tap into a reorder.
+	 */
+	private wireTouchDrag(handle: HTMLElement, panel: HTMLElement): void {
+		handle.addEventListener(
+			"touchstart",
+			(event) => {
+				this.cancelHold();
+				const touch = event.touches.item(0);
+				if (touch === null) return;
+				this.touchStart = { x: touch.clientX, y: touch.clientY };
+				this.holdPanel = panel;
+				this.holdReady = false;
+				this.holdTimer = window.setTimeout(() => {
+					this.holdReady = true;
+					panel.addClass("osmosis-stats-panel-held");
+					if (navigator.vibrate) navigator.vibrate(50);
+				}, HOLD_MS);
+			},
+			{ passive: true },
+		);
+
+		handle.addEventListener(
+			"touchmove",
+			(event) => {
+				const start = this.touchStart;
+				const touch = event.touches.item(0);
+				if (start === null || touch === null) return;
+				const moved =
+					Math.abs(touch.clientX - start.x) > TOUCH_SLOP ||
+					Math.abs(touch.clientY - start.y) > TOUCH_SLOP;
+
+				if (!this.holdReady) {
+					// Moving before the hold completes is someone scrolling.
+					if (moved) this.cancelHold();
+					return;
+				}
+				// Held: the gesture is ours. This has to run on every move, not
+				// just the one that starts the drag — iOS hands the touch to the
+				// scroller the moment one goes unclaimed.
+				event.preventDefault();
+
+				if (this.touchClone === null) {
+					if (!moved) return;
+					this.startTouchDrag(panel);
+				}
+				this.updateTouchDrag(touch.clientX, touch.clientY);
+			},
+			{ passive: false },
+		);
+
+		handle.addEventListener("touchend", (event) => {
+			this.cancelHold();
+			if (this.touchClone === null) {
+				this.endDrag();
+				return;
+			}
+			const touch = event.changedTouches.item(0);
+			if (touch === null) {
+				this.endTouchDrag();
+				return;
+			}
+			this.finishTouchDrag(touch.clientX, touch.clientY);
+		});
+
+		handle.addEventListener("touchcancel", () => {
+			this.cancelHold();
+			this.endTouchDrag();
+		});
+	}
+
+	private startTouchDrag(panel: HTMLElement): void {
+		const doc = this.contentEl.ownerDocument;
+		this.dragging = panel;
+		panel.removeClass("osmosis-stats-panel-held");
+		panel.addClass("osmosis-stats-panel-dragging");
+
+		// A hold on touch is also how the context menu is summoned.
+		doc.addEventListener("contextmenu", this.blockContextMenu, true);
+
+		// Touch has no drag ghost of its own, so the clone is the only thing
+		// under the finger. It is transparent to hit testing, so the panel
+		// beneath it can still be found.
+		const clone = panel.cloneNode(true) as HTMLElement;
+		clone.className = "osmosis-stats-drag-clone";
+		clone.style.width = `${String(panel.offsetWidth)}px`;
+		doc.body.appendChild(clone);
+		this.touchClone = clone;
+	}
+
+	private updateTouchDrag(x: number, y: number): void {
+		const clone = this.touchClone;
+		if (clone === null) return;
+
+		clone.style.transform = `translate(${String(x - CLONE_GRAB.x)}px, ${String(y - CLONE_GRAB.y)}px)`;
+		// iOS reports unreliable coordinates on `touchend`, so the drop falls
+		// back to the last position the drag actually saw.
+		this.lastTouch = { x, y };
+
+		this.edgeScroll(y);
+
+		const target = this.panelAt(x, y);
+		this.clearDropEdges();
+		if (target !== null && target !== this.dragging) this.markDropEdge(target, y);
+	}
+
+	private finishTouchDrag(x: number, y: number): void {
+		const dragged = this.dragging;
+		// Resolved before the clone is removed: the clone does not block the hit
+		// test, but tearing down first would mean testing against a repainted page.
+		// iOS reports unreliable `touchend` coordinates, so a point that hits
+		// nothing falls back to the last one the drag actually saw.
+		const at = this.panelAt(x, y) !== null ? { x, y } : this.lastTouch;
+		const target = at === null ? null : this.panelAt(at.x, at.y);
+		const above = target !== null && at !== null && dropsAbove(target, at.y);
+
+		this.endTouchDrag();
+		if (dragged !== null && target !== null && target !== dragged) {
+			void this.applyReorder(dragged, target, above);
+		}
+	}
+
+	/** Tears the touch drag down without applying it. */
+	private endTouchDrag(): void {
+		this.contentEl.ownerDocument.removeEventListener("contextmenu", this.blockContextMenu, true);
+		this.touchClone?.remove();
+		this.touchClone = null;
+		this.lastTouch = null;
+		this.touchStart = null;
+		this.endDrag();
+	}
+
+	/** Drops the pending hold, whether or not it ever armed. */
+	private cancelHold(): void {
+		if (this.holdTimer !== null) {
+			window.clearTimeout(this.holdTimer);
+			this.holdTimer = null;
+		}
+		this.holdPanel?.removeClass("osmosis-stats-panel-held");
+		this.holdPanel = null;
+		this.holdReady = false;
+		this.touchStart = null;
+	}
+
+	/** Common end of both paths: the drag is over, whatever came of it. */
+	private endDrag(): void {
+		this.dragging?.removeClass("osmosis-stats-panel-dragging");
+		this.dragging = null;
+		this.clearDropEdges();
+		this.stopEdgeScroll();
+	}
+
+	private panelAt(x: number, y: number): HTMLElement | null {
+		const under = this.contentEl.ownerDocument.elementFromPoint(x, y);
+		return under === null ? null : under.closest<HTMLElement>(".osmosis-stats-panel");
+	}
+
+	private markDropEdge(panel: HTMLElement, y: number): void {
+		const above = dropsAbove(panel, y);
+		panel.toggleClass("osmosis-stats-drop-above", above);
+		panel.toggleClass("osmosis-stats-drop-below", !above);
+	}
+
+	private clearDropEdges(): void {
+		for (const el of Array.from(
+			this.contentEl.querySelectorAll(".osmosis-stats-drop-above, .osmosis-stats-drop-below"),
+		)) {
+			el.removeClasses(["osmosis-stats-drop-above", "osmosis-stats-drop-below"]);
+		}
+	}
+
+	/**
+	 * Scrolls the view while a drag hovers near its top or bottom edge.
+	 *
+	 * Without it a drag reaches only what is already on screen — on a phone,
+	 * about one panel — so a graph could never be moved to the top of a
+	 * dashboard seventeen panels long.
+	 */
+	private edgeScroll(y: number): void {
+		const box = this.contentEl.getBoundingClientRect();
+		const step =
+			y < box.top + EDGE_ZONE ? -EDGE_SPEED : y > box.bottom - EDGE_ZONE ? EDGE_SPEED : 0;
+
+		if (step === 0) {
+			this.stopEdgeScroll();
+			return;
+		}
+		if (step === this.scrollStep && this.scrollTimer !== null) return;
+
+		// On its own clock: a finger held still at the edge sends no more events.
+		this.stopEdgeScroll();
+		this.scrollStep = step;
+		this.scrollTimer = window.setInterval(() => {
+			this.contentEl.scrollTop += step;
+		}, EDGE_INTERVAL_MS);
+	}
+
+	private stopEdgeScroll(): void {
+		this.scrollStep = 0;
+		if (this.scrollTimer !== null) {
+			window.clearInterval(this.scrollTimer);
+			this.scrollTimer = null;
+		}
+	}
+
+	/**
+	 * Rewrites the saved order, then redraws from it.
+	 *
+	 * The DOM order of the panels is the current order, so the new one is that
+	 * list with the dragged ID lifted out and reinserted at the target.
+	 */
+	private async applyReorder(
+		dragged: HTMLElement,
+		target: HTMLElement,
+		above: boolean,
+	): Promise<void> {
+		const grid = dragged.parentElement;
+		const draggedId = dragged.dataset.panelId;
+		const targetId = target.dataset.panelId;
+		if (grid === null || draggedId === undefined || targetId === undefined) return;
+
+		const order = Array.from(grid.children)
+			.map((child) => (child.instanceOf(HTMLElement) ? child.dataset.panelId : undefined))
+			.filter((id): id is string => id !== undefined && id !== draggedId);
+
+		const at = order.indexOf(targetId);
+		if (at === -1) return;
+		order.splice(above ? at : at + 1, 0, draggedId);
+
+		this.plugin.settings.statsPanelOrder = order;
+		this.render();
+		// saveData rather than saveSettings: panel order has no bearing on card
+		// generation, so the full re-sync would be wasted work.
+		await this.plugin.saveData(this.plugin.settings);
 	}
 
 	private renderScopeBar(parent: HTMLElement): void {
@@ -1390,6 +1770,12 @@ export class StatsView extends ItemView {
 }
 
 // ── Private helpers ───────────────────────────────────────────
+
+/** Which side of a panel a drop at `y` lands on. */
+function dropsAbove(panel: HTMLElement, y: number): boolean {
+	const box = panel.getBoundingClientRect();
+	return y < box.top + box.height / 2;
+}
 
 function scopeToValue(scope: DeckScope): string {
 	return scope.type === "all" ? "all" : `${scope.type}:${scope.deck}`;

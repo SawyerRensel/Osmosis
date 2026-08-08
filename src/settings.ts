@@ -130,6 +130,15 @@ export interface OsmosisSettings {
 	 *  in the properties sidebar overrides this (default: 230). */
 	defaultMaxNodeWidth: number;
 
+	// ── Stats Dashboard ─────────────────────────────────────
+	/**
+	 * Panel IDs in the order the stats dashboard shows them, written when a
+	 * reader drags a panel by its handle. Empty means the default order; IDs are
+	 * reconciled against the panels that actually exist on every render, so a
+	 * stale entry is harmless.
+	 */
+	statsPanelOrder: string[];
+
 	// ── Mind Map Editing ────────────────────────────────────
 	/** Maximum undo/redo history entries kept per mind map (default: 50). */
 	undoMaxSteps: number;
@@ -174,6 +183,9 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	contextualInlineCloze: false,
 	showStudyBreadcrumb: false,
 	sequentialContextLines: 2,
+
+	// Stats dashboard defaults
+	statsPanelOrder: [],
 
 	// Mind map editing defaults
 	undoMaxSteps: 50,
