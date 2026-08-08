@@ -25,7 +25,7 @@ import type { DeckScope } from "./study/types";
 const REVIEW_ROLLUP_CACHE_KEY = "osmosis-review-rollup";
 
 /** The base file the Browse entry points open, created on first use. */
-const CARD_BROWSER_BASE_PATH = "Osmosis/Cards.base";
+const CARD_BROWSER_BASE_PATH = "Osmosis/Osmosis Browser.base";
 
 /**
  * The starting base: every markdown note, with the card filtering left to the
@@ -41,7 +41,7 @@ const CARD_BROWSER_BASE_CONTENT = `filters:
     - file.ext == "md"
 views:
   - type: ${BASES_CARD_BROWSER_VIEW_ID}
-    name: Cards
+    name: Browser
     layout: table
     cardState: all
     dueWindow: any

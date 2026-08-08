@@ -29,13 +29,12 @@ export type CardStateFilter = "all" | CardState;
 export type DueWindow = "any" | "overdue" | "today" | "7d" | "30d";
 
 /**
- * `occlusion` is deliberately absent: image occlusion is a later task and a
- * filter value that can never match anything reads as a broken control. It
- * arrives with the card type.
+ * `base` defers to the order Bases produced, which is the only way the toolbar's
+ * Sort menu can reach a flat card table — our own sort would otherwise overwrite
+ * it. Every other value sorts cards by a field Bases cannot see.
  */
-export type CardTypeFilter = "all" | CardType;
-
 export type SortBy =
+	| "base"
 	| "due"
 	| "state"
 	| "stability"
@@ -45,12 +44,29 @@ export type SortBy =
 	| "note"
 	| "deck";
 
-/** The six options Bases persists into the `.base` file. */
+/**
+ * Every card type the browser can filter to.
+ *
+ * `occlusion` is deliberately absent: image occlusion is a later task and a
+ * filter value that can never match anything reads as a broken control. It
+ * arrives with the card type.
+ */
+export const FILTERABLE_CARD_TYPES: readonly CardType[] = [
+	"explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "line",
+];
+
+/** The options Bases persists into the `.base` file. */
 export interface BrowseOptions {
 	layout: Layout;
 	cardState: CardStateFilter;
 	dueWindow: DueWindow;
-	cardType: CardTypeFilter;
+	/**
+	 * The card types to show. Multi-select, because "Basic and code cloze" is a
+	 * real question a dropdown cannot ask. Empty means no constraint rather than
+	 * "show nothing", so unchecking every box degrades to showing everything
+	 * instead of to a blank panel.
+	 */
+	cardTypes: ReadonlySet<CardType>;
 	sortBy: SortBy;
 	/**
 	 * Include suspended cards. Note this means `disabled` (fully out of study,
@@ -58,48 +74,74 @@ export interface BrowseOptions {
 	 * is still studied in place, so those cards are never hidden here.
 	 */
 	showDisabled: boolean;
+	/** Free-text query over card content. Empty matches everything. */
+	search: string;
+	/** Tile height in pixels, for the cards layout only. */
+	tileHeight: number;
 }
+
+/** Slider bounds for `tileHeight`. */
+export const TILE_HEIGHT = { min: 120, max: 480, step: 20, default: 200 } as const;
 
 export const DEFAULT_BROWSE_OPTIONS: BrowseOptions = {
 	layout: "table",
 	cardState: "all",
 	dueWindow: "any",
-	cardType: "all",
+	cardTypes: new Set(FILTERABLE_CARD_TYPES),
 	sortBy: "due",
 	showDisabled: false,
+	search: "",
+	tileHeight: TILE_HEIGHT.default,
 };
+
+/** The option key holding the toggle for one card type. */
+export function cardTypeOptionKey(cardType: CardType): string {
+	return `type_${cardType}`;
+}
 
 const LAYOUTS: readonly Layout[] = ["table", "list", "cards"];
 const CARD_STATES: readonly CardStateFilter[] = ["all", "new", "learning", "review", "relearning"];
 const DUE_WINDOWS: readonly DueWindow[] = ["any", "overdue", "today", "7d", "30d"];
-const CARD_TYPES: readonly CardTypeFilter[] = [
-	"all", "explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "line",
-];
 const SORT_KEYS: readonly SortBy[] = [
-	"due", "state", "stability", "difficulty", "reps", "lapses", "note", "deck",
+	"base", "due", "state", "stability", "difficulty", "reps", "lapses", "note", "deck",
 ];
 
 /**
- * Narrow the six options out of a Bases config.
+ * Narrow the options out of a Bases config.
  *
  * `BasesViewConfig.get()` returns `unknown` — the values come from a `.base`
- * file the user can hand-edit, so an unrecognised string is expected rather
- * than exceptional and falls back to the default instead of throwing.
+ * file the user can hand-edit, so an unrecognised value is expected rather than
+ * exceptional and falls back to the default instead of throwing.
  */
 export function readBrowseOptions(get: (key: string) => unknown): BrowseOptions {
+	const cardTypes = new Set<CardType>();
+	for (const cardType of FILTERABLE_CARD_TYPES) {
+		// Absent means on: a base file written before a card type existed should
+		// show it, not hide it.
+		if (get(cardTypeOptionKey(cardType)) !== false) cardTypes.add(cardType);
+	}
+
 	return {
 		layout: oneOf(get("layout"), LAYOUTS, DEFAULT_BROWSE_OPTIONS.layout),
 		cardState: oneOf(get("cardState"), CARD_STATES, DEFAULT_BROWSE_OPTIONS.cardState),
 		dueWindow: oneOf(get("dueWindow"), DUE_WINDOWS, DEFAULT_BROWSE_OPTIONS.dueWindow),
-		cardType: oneOf(get("cardType"), CARD_TYPES, DEFAULT_BROWSE_OPTIONS.cardType),
+		cardTypes,
 		sortBy: oneOf(get("sortBy"), SORT_KEYS, DEFAULT_BROWSE_OPTIONS.sortBy),
 		showDisabled: get("showDisabled") === true,
+		search: typeof get("search") === "string" ? (get("search") as string).trim() : "",
+		tileHeight: clampTileHeight(get("tileHeight")),
 	};
 }
 
 function oneOf<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
 	if (typeof raw !== "string") return fallback;
 	return (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+function clampTileHeight(raw: unknown): number {
+	const value = typeof raw === "number" ? raw : Number(raw);
+	if (!Number.isFinite(value)) return TILE_HEIGHT.default;
+	return Math.min(TILE_HEIGHT.max, Math.max(TILE_HEIGHT.min, Math.round(value)));
 }
 
 // ── Predicates ────────────────────────────────────────────────
@@ -121,8 +163,26 @@ export function matchesState(card: Card, filter: CardStateFilter): boolean {
 	return filter === "all" || effectiveState(card) === filter;
 }
 
-export function matchesType(card: Card, filter: CardTypeFilter): boolean {
-	return filter === "all" || card.cardType === filter;
+/** An empty selection means "no constraint" rather than "nothing". */
+export function matchesTypes(card: Card, types: ReadonlySet<CardType>): boolean {
+	return types.size === 0 || types.has(card.cardType);
+}
+
+/**
+ * Free-text match over a card's own content.
+ *
+ * This is the search Bases cannot run: its search box matches note text, and a
+ * note holding forty cards either matches for all of them or none. Deck and ID
+ * are included because both are things you already have in hand when you go
+ * looking for one specific card.
+ */
+export function matchesSearch(card: Card, query: string): boolean {
+	if (query === "") return true;
+	const needle = query.toLowerCase();
+	return card.front.toLowerCase().includes(needle)
+		|| card.back.toLowerCase().includes(needle)
+		|| card.deck.toLowerCase().includes(needle)
+		|| card.id.toLowerCase().includes(needle);
 }
 
 /**
@@ -168,8 +228,9 @@ export function filterCards(
 	return cards.filter((card) => {
 		if (card.disabled && !options.showDisabled) return false;
 		return matchesState(card, options.cardState)
-			&& matchesType(card, options.cardType)
-			&& matchesDueWindow(card, options.dueWindow, now);
+			&& matchesTypes(card, options.cardTypes)
+			&& matchesDueWindow(card, options.dueWindow, now)
+			&& matchesSearch(card, options.search);
 	});
 }
 
@@ -197,6 +258,13 @@ const STATE_ORDER: Record<CardState, number> = {
  * total and stable across renders.
  */
 export function sortCards(cards: readonly Card[], sortBy: SortBy): Card[] {
+	// "Base order" means the caller's order is already the answer — Bases sorted
+	// the notes, and within a note document order is the only meaningful
+	// sequence. Sorting here would be exactly what destroys it.
+	if (sortBy === "base") {
+		return [...cards].sort((a, b) => a.sourceLine - b.sourceLine || a.id.localeCompare(b.id));
+	}
+
 	const sorted = [...cards];
 	sorted.sort((a, b) => compare(a, b, sortBy) || tieBreak(a, b));
 	return sorted;
@@ -204,6 +272,7 @@ export function sortCards(cards: readonly Card[], sortBy: SortBy): Card[] {
 
 function compare(a: Card, b: Card, sortBy: SortBy): number {
 	switch (sortBy) {
+		case "base": return 0;
 		case "due": return numeric(a.due, b.due, "asc");
 		case "state": return STATE_ORDER[effectiveState(a)] - STATE_ORDER[effectiveState(b)];
 		case "stability": return numeric(a.stability, b.stability, "asc");
@@ -279,6 +348,18 @@ export function buildFlat(
 	options: BrowseOptions,
 	now: number,
 ): Card[] {
+	// Under "base order" the flat list is built note by note, so the sequence
+	// Bases sorted survives. Sorting the merged list instead would interleave
+	// notes and throw that order away — which is what made the toolbar's Sort
+	// menu look broken in the table.
+	if (options.sortBy === "base") {
+		const ordered: Card[] = [];
+		for (const notePath of notePaths) {
+			ordered.push(...sortCards(filterCards(cardsByNote(notePath), options, now), "base"));
+		}
+		return ordered;
+	}
+
 	const all: Card[] = [];
 	for (const notePath of notePaths) {
 		all.push(...cardsByNote(notePath));
@@ -300,6 +381,7 @@ export interface CardRow {
 	reps: string;
 	lapses: string;
 	front: string;
+	back: string;
 	suspended: boolean;
 }
 
@@ -330,6 +412,7 @@ export function toRow(card: Card, now: number): CardRow {
 		reps: formatNumber(card.reps, 0),
 		lapses: formatNumber(card.lapses, 0),
 		front: previewText(card.front),
+		back: previewText(card.back),
 		suspended: card.disabled === true,
 	};
 }

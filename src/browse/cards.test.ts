@@ -2,15 +2,19 @@ import { describe, it, expect } from "vitest";
 import type { Card, CardType } from "../database/types";
 import {
 	DEFAULT_BROWSE_OPTIONS,
+	FILTERABLE_CARD_TYPES,
+	TILE_HEIGHT,
 	buildFlat,
 	buildGroups,
+	cardTypeOptionKey,
 	dayOffset,
 	effectiveState,
 	filterCards,
 	formatDue,
 	matchesDueWindow,
+	matchesSearch,
 	matchesState,
-	matchesType,
+	matchesTypes,
 	previewText,
 	readBrowseOptions,
 	sortCards,
@@ -71,17 +75,19 @@ describe("readBrowseOptions", () => {
 			layout: "cards",
 			cardState: "learning",
 			dueWindow: "30d",
-			cardType: "explicit_cloze",
 			sortBy: "lapses",
 			showDisabled: true,
+			search: "danube",
+			tileHeight: 320,
 		};
-		expect(readBrowseOptions((key) => stored[key])).toEqual({
+		expect(readBrowseOptions((key) => stored[key])).toMatchObject({
 			layout: "cards",
 			cardState: "learning",
 			dueWindow: "30d",
-			cardType: "explicit_cloze",
 			sortBy: "lapses",
 			showDisabled: true,
+			search: "danube",
+			tileHeight: 320,
 		});
 	});
 
@@ -94,6 +100,40 @@ describe("readBrowseOptions", () => {
 
 	it("treats any non-true showDisabled as false", () => {
 		expect(readBrowseOptions(() => "true").showDisabled).toBe(false);
+	});
+
+	it("trims the search query", () => {
+		expect(readBrowseOptions(() => "  danube  ").search).toBe("danube");
+	});
+
+	it("clamps the tile height into the slider's range", () => {
+		expect(readBrowseOptions(() => 10_000).tileHeight).toBe(TILE_HEIGHT.max);
+		expect(readBrowseOptions(() => 1).tileHeight).toBe(TILE_HEIGHT.min);
+		expect(readBrowseOptions(() => "not a number").tileHeight).toBe(TILE_HEIGHT.default);
+	});
+
+	describe("card type toggles", () => {
+		it("shows every type when nothing is stored", () => {
+			expect(readBrowseOptions(() => undefined).cardTypes)
+				.toEqual(new Set(FILTERABLE_CARD_TYPES));
+		});
+
+		it("treats a missing type as on, so a new card type is not hidden by an old base", () => {
+			const stored: Record<string, unknown> = { [cardTypeOptionKey("line")]: false };
+			const types = readBrowseOptions((key) => stored[key]).cardTypes;
+			expect(types.has("line")).toBe(false);
+			expect(types.has("explicit")).toBe(true);
+		});
+
+		it("keeps a multi-selection of types", () => {
+			const stored: Record<string, unknown> = {
+				[cardTypeOptionKey("explicit_bidi")]: false,
+				[cardTypeOptionKey("explicit_cloze")]: false,
+				[cardTypeOptionKey("line")]: false,
+			};
+			expect(readBrowseOptions((key) => stored[key]).cardTypes)
+				.toEqual(new Set<CardType>(["explicit", "code_cloze"]));
+		});
 	});
 });
 
@@ -124,15 +164,49 @@ describe("matchesState", () => {
 	});
 });
 
-describe("matchesType", () => {
-	it("matches everything under 'all'", () => {
-		expect(matchesType(card({ id: "a", cardType: "code_cloze" }), "all")).toBe(true);
+describe("matchesTypes", () => {
+	const bidi = card({ id: "a", cardType: "explicit_bidi" });
+
+	it("treats an empty selection as no constraint, not as nothing", () => {
+		expect(matchesTypes(bidi, new Set())).toBe(true);
 	});
 
-	it("selects one card type", () => {
-		const bidi = card({ id: "a", cardType: "explicit_bidi" });
-		expect(matchesType(bidi, "explicit_bidi")).toBe(true);
-		expect(matchesType(bidi, "explicit")).toBe(false);
+	it("selects several types at once", () => {
+		const pair = new Set<CardType>(["explicit", "code_cloze"]);
+		expect(matchesTypes(card({ id: "b", cardType: "explicit" }), pair)).toBe(true);
+		expect(matchesTypes(card({ id: "c", cardType: "code_cloze" }), pair)).toBe(true);
+		expect(matchesTypes(bidi, pair)).toBe(false);
+	});
+});
+
+describe("matchesSearch", () => {
+	const subject = card({
+		id: "brw-susp01",
+		deck: "geography",
+		front: "Which strait separates Europe from Asia?",
+		back: "The Bosphorus",
+	});
+
+	it("matches everything on an empty query", () => {
+		expect(matchesSearch(subject, "")).toBe(true);
+	});
+
+	it("finds a card by its answer, which is the half the list does not show", () => {
+		expect(matchesSearch(subject, "Bosphorus")).toBe(true);
+	});
+
+	it("ignores case", () => {
+		expect(matchesSearch(subject, "bOsPhOrUs")).toBe(true);
+	});
+
+	it("matches the question, deck and id too", () => {
+		expect(matchesSearch(subject, "strait")).toBe(true);
+		expect(matchesSearch(subject, "geography")).toBe(true);
+		expect(matchesSearch(subject, "susp01")).toBe(true);
+	});
+
+	it("rejects a miss", () => {
+		expect(matchesSearch(subject, "danube")).toBe(false);
 	});
 });
 
@@ -206,16 +280,22 @@ describe("filterCards", () => {
 		expect(filterCards(cards, options(), NOW).map((c) => c.id)).toEqual(["a"]);
 	});
 
-	it("applies state, type and due filters together", () => {
+	it("applies state, type, due and search filters together", () => {
 		const cards = [
-			reviewed({ id: "match", cardType: "explicit", state: "review", due: daysFromNow(2) }),
-			reviewed({ id: "wrong-type", cardType: "line", state: "review", due: daysFromNow(2) }),
-			reviewed({ id: "wrong-state", cardType: "explicit", state: "learning", due: daysFromNow(2) }),
-			reviewed({ id: "too-far", cardType: "explicit", state: "review", due: daysFromNow(40) }),
+			reviewed({ id: "match", cardType: "explicit", state: "review", due: daysFromNow(2), front: "Danube" }),
+			reviewed({ id: "wrong-type", cardType: "line", state: "review", due: daysFromNow(2), front: "Danube" }),
+			reviewed({ id: "wrong-state", cardType: "explicit", state: "learning", due: daysFromNow(2), front: "Danube" }),
+			reviewed({ id: "too-far", cardType: "explicit", state: "review", due: daysFromNow(40), front: "Danube" }),
+			reviewed({ id: "wrong-text", cardType: "explicit", state: "review", due: daysFromNow(2), front: "Nile" }),
 		];
 		const result = filterCards(
 			cards,
-			options({ cardState: "review", cardType: "explicit", dueWindow: "7d" }),
+			options({
+				cardState: "review",
+				cardTypes: new Set(["explicit"]),
+				dueWindow: "7d",
+				search: "danube",
+			}),
 			NOW,
 		);
 		expect(result.map((c) => c.id)).toEqual(["match"]);
@@ -287,6 +367,14 @@ describe("sortCards", () => {
 			card({ id: "b", notePath: "B.md", sourceLine: 0 }),
 		];
 		expect(sortCards(cards, "due").map((c) => c.id)).toEqual(["m", "a", "z", "b"]);
+	});
+
+	it("orders by document position under 'base', not by any card field", () => {
+		const cards = [
+			reviewed({ id: "late-line", sourceLine: 90, due: daysFromNow(1) }),
+			reviewed({ id: "early-line", sourceLine: 2, due: daysFromNow(99) }),
+		];
+		expect(sortCards(cards, "base").map((c) => c.id)).toEqual(["early-line", "late-line"]);
 	});
 
 	it("returns a new array rather than sorting in place", () => {
@@ -367,6 +455,31 @@ describe("buildFlat", () => {
 		);
 		expect(flat.map((c) => c.id)).toEqual(["a"]);
 	});
+
+	/**
+	 * The reason "base" is a sort value at all: under any other value the merged
+	 * list is sorted as a whole, which interleaves notes and discards the order
+	 * Bases produced.
+	 */
+	it("keeps the base's note order under 'base', rather than interleaving notes", () => {
+		const byNote = new Map<string, Card[]>([
+			["Second.md", [
+				reviewed({ id: "s2", notePath: "Second.md", sourceLine: 9, due: daysFromNow(1) }),
+				reviewed({ id: "s1", notePath: "Second.md", sourceLine: 1, due: daysFromNow(8) }),
+			]],
+			["First.md", [
+				reviewed({ id: "f1", notePath: "First.md", sourceLine: 3, due: daysFromNow(4) }),
+			]],
+		]);
+		const lookup = (path: string): Card[] => byNote.get(path) ?? [];
+
+		expect(buildFlat(["Second.md", "First.md"], lookup, options({ sortBy: "base" }), NOW)
+			.map((c) => c.id)).toEqual(["s1", "s2", "f1"]);
+
+		// ...whereas a card-field sort deliberately ignores which note is which.
+		expect(buildFlat(["Second.md", "First.md"], lookup, options({ sortBy: "due" }), NOW)
+			.map((c) => c.id)).toEqual(["s2", "f1", "s1"]);
+	});
 });
 
 describe("typeLabel", () => {
@@ -423,7 +536,10 @@ describe("previewText", () => {
 describe("toRow", () => {
 	it("projects a reviewed card into display strings", () => {
 		const row = toRow(
-			reviewed({ id: "a", deck: "geography", stability: 12.34, difficulty: 5.67, reps: 4, lapses: 1 }),
+			reviewed({
+				id: "a", deck: "geography", front: "Longest river in Africa", back: "The Nile",
+				stability: 12.34, difficulty: 5.67, reps: 4, lapses: 1,
+			}),
 			NOW,
 		);
 		expect(row).toMatchObject({
@@ -435,8 +551,15 @@ describe("toRow", () => {
 			difficulty: "5.7",
 			reps: "4",
 			lapses: "1",
+			front: "Longest river in Africa",
+			back: "The Nile",
 			suspended: false,
 		});
+	});
+
+	it("previews the back the same way as the front", () => {
+		const row = toRow(card({ id: "a", back: "first\n\n   second  " }), NOW);
+		expect(row.back).toBe("first second");
 	});
 
 	it("dashes every schedule field of a new card", () => {
