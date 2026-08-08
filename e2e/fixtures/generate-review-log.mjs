@@ -17,8 +17,16 @@
  * deck-scoped view correctly shows nothing for them.
  */
 
-import { mkdirSync, writeFileSync, readdirSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+	mkdirSync,
+	writeFileSync,
+	readdirSync,
+	rmSync,
+	existsSync,
+	readFileSync,
+	statSync,
+} from "node:fs";
+import { join, relative, sep } from "node:path";
 
 /**
  * The log folder is a setting, so read it rather than assuming the default —
@@ -64,6 +72,57 @@ if (!Number.isFinite(totalDays) || totalDays <= 0) {
 	process.exit(1);
 }
 
+/**
+ * Harvest the vault's real card IDs.
+ *
+ * Synthetic IDs would leave every card-joined graph empty — Answer buttons,
+ * Recall by card type, Weakest notes all resolve a review back to its card, and
+ * an ID that matches nothing resolves to nothing. Borrowing the vault's own IDs
+ * is what makes those panels testable.
+ *
+ *   line cards:  `<notePath>#^<blockId>`, from a trailing `^os-…` marker
+ *   fence cards: the fence's own `id:`, plus `-r` for a bidirectional reverse
+ */
+function harvestCardIds(root) {
+	const ids = [];
+
+	const walk = (dir) => {
+		for (const name of readdirSync(dir)) {
+			if (name.startsWith(".")) continue;
+			const path = join(dir, name);
+			if (statSync(path).isDirectory()) {
+				walk(path);
+				continue;
+			}
+			if (!name.endsWith(".md")) continue;
+
+			const notePath = relative(root, path).split(sep).join("/");
+			const text = readFileSync(path, "utf8");
+
+			for (const match of text.matchAll(/^.*?\s\^(os-[a-z0-9]+)\s*$/gm)) {
+				ids.push(`${notePath}#^${match[1]}`);
+			}
+
+			let inFence = false;
+			for (const line of text.split("\n")) {
+				if (line.startsWith("```osmosis")) inFence = true;
+				else if (inFence && line.startsWith("```")) inFence = false;
+				else if (inFence) {
+					const match = /^id:\s*([A-Za-z0-9_-]+)\s*$/.exec(line);
+					if (match) ids.push(match[1]);
+				}
+			}
+		}
+	};
+
+	try {
+		walk(root);
+	} catch {
+		// An unreadable vault just means synthetic IDs below.
+	}
+	return [...new Set(ids)];
+}
+
 /** Deterministic PRNG, so two runs produce the same log and bugs reproduce. */
 let seed = 20260807;
 function random() {
@@ -73,6 +132,17 @@ function random() {
 
 const MODES = ["sequential", "contextual", "spatial"];
 const shards = new Map();
+
+const realIds = harvestCardIds("vault");
+/**
+ * A tail of unresolvable IDs is deliberate: reviews of deleted cards must still
+ * count in the volume graphs, and the card-joined graphs must say how many they
+ * had to leave out. Keeping a few makes both behaviours visible.
+ */
+const cardIds =
+	realIds.length === 0
+		? Array.from({ length: 400 }, (_, i) => `os-fx${String(i).padStart(4, "0")}`)
+		: [...realIds, ...Array.from({ length: 20 }, (_, i) => `os-deleted-${String(i)}`)];
 
 /** Cards accumulate an interval over time, so maturity actually develops. */
 const cards = new Map();
@@ -97,7 +167,7 @@ for (let dayOffset = totalDays - 1; dayOffset >= 0; dayOffset--) {
 		const t = new Date(day);
 		t.setHours(hour, Math.floor(random() * 60), Math.floor(random() * 60), 0);
 
-		const cardId = `os-fx${String(Math.floor(random() * 400)).padStart(4, "0")}`;
+		const cardId = cardIds[Math.floor(random() * cardIds.length)];
 		const previous = cards.get(cardId) ?? { iv: 0 };
 
 		const rating = pickRating(previous.iv);
@@ -165,6 +235,7 @@ for (const [month, lines] of shards) {
 }
 
 console.log(
-	`Wrote ${written} reviews across ${shards.size} shards into ${LOG_FOLDER}.\n` +
+	`Wrote ${written} reviews across ${shards.size} shards into ${LOG_FOLDER},\n` +
+		`drawn from ${realIds.length} real card IDs harvested from the vault.\n` +
 		"Reload Obsidian (or the plugin) so the rollup cache picks them up.",
 );

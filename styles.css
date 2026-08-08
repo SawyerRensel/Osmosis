@@ -2196,15 +2196,24 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 /* ── Panels ────────────────────────────────────────────────── */
 
-/* Half a window is the design target — these live in a splittable tab, so the
-   grid collapses to one column well before the charts would be squeezed. */
+/* Vertical masonry, via multi-column rather than grid.
+   CSS grid cannot do this: row height is set by the tallest item in the row, so
+   a short panel beside a tall chart leaves dead space no alignment property can
+   reclaim — `align-items: start` shrinks the panel but not the row. Multi-column
+   flows panels down each column and packs them tight, at the cost of reading
+   order becoming down-then-across.
+   `columns` takes a width, not a count, so the column count still adapts: half a
+   window is the design target, since these live in a splittable tab. */
 .osmosis-stats-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-	gap: var(--size-4-4);
+	columns: 340px;
+	column-gap: var(--size-4-4);
 }
 
 .osmosis-stats-panel {
+	/* Never let a panel be split across a column break. */
+	break-inside: avoid;
+	/* Multi-column ignores margin collapse, so this is the only vertical gap. */
+	margin-bottom: var(--size-4-4);
 	min-width: 0;
 	padding: var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
@@ -2435,4 +2444,85 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	cursor: pointer;
+}
+
+.osmosis-stats-panel {
+	position: relative;
+}
+
+/* ── Breakdown table ───────────────────────────────────────── */
+
+.osmosis-stats-table {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-row {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: baseline;
+	gap: var(--size-4-3);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-row-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-row-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-row-sub {
+	min-width: 5.5em;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+/* ── Recall comparison rows ────────────────────────────────── */
+
+.osmosis-stats-recall-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 60px auto auto;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-recall-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-recall-row .osmosis-stats-row-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The unfilled track is a recessive step of the surface, so the fill reads as
+   magnitude across the whole row rather than as a floating block. */
+.osmosis-stats-meter {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.osmosis-stats-meter-fill {
+	height: 100%;
+	border-radius: 3px;
 }

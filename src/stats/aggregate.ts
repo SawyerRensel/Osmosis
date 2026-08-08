@@ -181,6 +181,94 @@ export function dailySeries(rollup: Rollup, from: number, to: number): DayPoint[
 	});
 }
 
+/** How finely the volume graphs bucket their range. */
+export type Granularity = "day" | "week" | "month";
+
+/** One column of a bucketed volume graph. */
+export interface SeriesBucket {
+	/** Day key of the bucket's first day. */
+	key: string;
+	/** Days the bucket spans — 1, 7, or a calendar month. */
+	span: number;
+	reviews: number;
+	timeMs: number;
+	byClass: Record<ReviewClass, number>;
+	timeByClass: Record<ReviewClass, number>;
+	/** True when this bucket opens a calendar month, which anchors its label. */
+	startsMonth: boolean;
+}
+
+/**
+ * Roll daily points up into wider columns.
+ *
+ * A year of one-bar-per-day is 365 columns in a few hundred pixels, which draws
+ * a 1px sliver per day and reads as noise rather than as a trend. Bucketing
+ * trades the individual day — which the Calendar already shows one square at a
+ * time — for a column wide enough to see the maturity split inside it.
+ *
+ * Weeks start on Sunday, matching the heatmap's rows, so the two graphs cut the
+ * calendar the same way.
+ */
+export function bucketPoints(
+	points: readonly DayPoint[],
+	granularity: Granularity,
+): SeriesBucket[] {
+	const buckets: SeriesBucket[] = [];
+	let current: SeriesBucket | null = null;
+	let currentKey = "";
+
+	for (const point of points) {
+		const groupKey = bucketKeyFor(point.day, granularity);
+		if (current === null || groupKey !== currentKey) {
+			current = {
+				key: point.day,
+				span: 0,
+				reviews: 0,
+				timeMs: 0,
+				byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
+				timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
+				startsMonth: false,
+			};
+			buckets.push(current);
+			currentKey = groupKey;
+		}
+
+		current.span += 1;
+		current.reviews += point.reviews;
+		current.timeMs += point.timeMs;
+		for (const key of Object.keys(current.byClass) as ReviewClass[]) {
+			current.byClass[key] += point.byClass[key];
+			current.timeByClass[key] += point.timeByClass[key];
+		}
+	}
+
+	// A bucket anchors a label when it opens a month the previous one wasn't in.
+	// The first bucket always anchors, so a range never starts unlabelled.
+	buckets.forEach((bucket, index) => {
+		const previous = buckets[index - 1];
+		bucket.startsMonth =
+			previous === undefined || bucket.key.slice(0, 7) !== previous.key.slice(0, 7);
+	});
+
+	return buckets;
+}
+
+function bucketKeyFor(day: string, granularity: Granularity): string {
+	if (granularity === "day") return day;
+	if (granularity === "month") return day.slice(0, 7);
+
+	// Week: the Sunday on or before this day.
+	const date = dayKeyToDate(day);
+	date.setDate(date.getDate() - date.getDay());
+	return dayKey(date.getTime());
+}
+
+/** A `YYYY-MM-DD` key back to a local midday Date, safe across DST. */
+export function dayKeyToDate(day: string): Date {
+	const [year, month, date] = day.split("-").map(Number);
+	return new Date(year ?? 1970, (month ?? 1) - 1, date ?? 1, 12, 0, 0, 0);
+}
+
 // ── Calendar heatmap ──────────────────────────────────────────
 
 /** One square of the year heatmap. */
@@ -621,6 +709,208 @@ export function trueRetention(entries: readonly ReviewLogEntry[]): RetentionStat
 		rate: reviewed === 0 ? 0 : passed / reviewed,
 		unknownInterval,
 	};
+}
+
+/** One row of the True retention breakdown. */
+export interface RetentionPeriod {
+	label: string;
+	/** Days back the row covers; null is all history. */
+	days: number | null;
+	stats: RetentionStats;
+}
+
+const RETENTION_PERIODS: readonly { label: string; days: number | null }[] = [
+	{ label: "Today", days: 1 },
+	{ label: "Week", days: 7 },
+	{ label: "Month", days: 30 },
+	{ label: "Year", days: 365 },
+	{ label: "All", days: null },
+];
+
+/**
+ * Retention over several windows at once.
+ *
+ * The windows are computed from one annotated pass rather than by calling
+ * `trueRetention` per window, because the prior interval a review was answered
+ * at can only be read from the entry *before* it — which may fall outside the
+ * window. Filtering first would strip that predecessor and silently reclassify
+ * the oldest review in every window.
+ */
+export function retentionByPeriod(
+	entries: readonly ReviewLogEntry[],
+	now: number,
+): RetentionPeriod[] {
+	const annotated = withPriorIntervals(entries);
+
+	return RETENTION_PERIODS.map(({ label, days }) => {
+		const since = days === null ? null : startOfDay(daysBefore(now, days - 1));
+		const seen = new Set<string>();
+		let reviewed = 0;
+		let passed = 0;
+		let unknownInterval = 0;
+
+		for (const { entry, priorIv } of annotated) {
+			if (since !== null && entry.t < since) continue;
+			if (priorIv === null) {
+				if (entry.iv >= MATURE_INTERVAL_SECONDS) unknownInterval += 1;
+				continue;
+			}
+			if (priorIv < MATURE_INTERVAL_SECONDS) continue;
+
+			const key = `${entry.c}|${dayKey(entry.t)}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+
+			reviewed += 1;
+			if (entry.r > 1) passed += 1;
+		}
+
+		return {
+			label,
+			days,
+			stats: {
+				reviewed,
+				passed,
+				rate: reviewed === 0 ? 0 : passed / reviewed,
+				unknownInterval,
+			},
+		};
+	});
+}
+
+// ── Comparative recall ────────────────────────────────────────
+
+/**
+ * Interval at or above which a card counts as graduated — past its learning
+ * steps and genuinely being remembered rather than drilled.
+ *
+ * The comparative graphs below use this rather than the 21-day maturity bar
+ * that True Retention uses. Maturity is the right bar for one headline number,
+ * but slicing it three or four ways leaves samples too thin to compare: a mode
+ * or card type with nine mature reviews tells you nothing. One day is the
+ * lowest threshold that still excludes same-session learning-step answers,
+ * which would otherwise swamp every bucket with reviews that say nothing about
+ * memory.
+ */
+export const GRADUATED_INTERVAL_SECONDS = 86_400;
+
+/** Recall performance for one slice of the log. */
+export interface RecallStats {
+	reviewed: number;
+	passed: number;
+	/** Share answered Hard or better, 0–1. Zero when nothing qualified. */
+	rate: number;
+	/** Mean time on screen per counted review, ms. */
+	meanMs: number;
+}
+
+/**
+ * Recall rate grouped by whatever `keyOf` returns.
+ *
+ * One function behind three graphs — by study mode, by card type, by note —
+ * because the only thing that differs between those questions is the grouping
+ * key. The filtering underneath (graduated only, first review per card per day,
+ * maturity from the *previous* entry's interval) is subtle enough that three
+ * copies of it would be three chances to get it subtly different.
+ *
+ * A null key drops the entry: it is how "this card no longer resolves" is
+ * expressed, and an unresolvable card belongs to no note and no type.
+ */
+export function recallBy<K extends string>(
+	entries: readonly ReviewLogEntry[],
+	keyOf: (entry: ReviewLogEntry) => K | null,
+): Map<K, RecallStats> {
+	const totals = new Map<K, { reviewed: number; passed: number; totalMs: number }>();
+	const seen = new Set<string>();
+
+	for (const { entry, priorIv } of withPriorIntervals(entries)) {
+		if (priorIv === null || priorIv < GRADUATED_INTERVAL_SECONDS) continue;
+
+		const key = keyOf(entry);
+		if (key === null) continue;
+
+		const dedupeKey = `${entry.c}|${dayKey(entry.t)}`;
+		if (seen.has(dedupeKey)) continue;
+		seen.add(dedupeKey);
+
+		const bucket = totals.get(key) ?? { reviewed: 0, passed: 0, totalMs: 0 };
+		bucket.reviewed += 1;
+		if (entry.r > 1) bucket.passed += 1;
+		bucket.totalMs += entry.e;
+		totals.set(key, bucket);
+	}
+
+	const result = new Map<K, RecallStats>();
+	for (const [key, bucket] of totals) {
+		result.set(key, {
+			reviewed: bucket.reviewed,
+			passed: bucket.passed,
+			rate: bucket.reviewed === 0 ? 0 : bucket.passed / bucket.reviewed,
+			meanMs: bucket.reviewed === 0 ? 0 : bucket.totalMs / bucket.reviewed,
+		});
+	}
+	return result;
+}
+
+/** One row of a ranked recall breakdown. */
+export interface RecallRow<K extends string> {
+	key: K;
+	stats: RecallStats;
+}
+
+/**
+ * Recall by group, worst first, keeping only groups with enough reviews to
+ * mean anything.
+ *
+ * The threshold is the whole point of the ranking: without it the top of a
+ * "weakest notes" list is every note with exactly one review that happened to
+ * be a lapse, which is noise wearing the costume of a finding.
+ */
+export function rankByRecall<K extends string>(
+	byKey: ReadonlyMap<K, RecallStats>,
+	minReviews: number,
+): RecallRow<K>[] {
+	const rows: RecallRow<K>[] = [];
+	for (const [key, stats] of byKey) {
+		if (stats.reviewed < minReviews) continue;
+		rows.push({ key, stats });
+	}
+	// Worst first; ties broken by volume, so the more-evidenced group leads.
+	rows.sort((a, b) => a.stats.rate - b.stats.rate || b.stats.reviewed - a.stats.reviewed);
+	return rows;
+}
+
+// ── Study-mode filtering ──────────────────────────────────────
+
+/** The mode filter: a single study surface, or every one. */
+export type ModeFilter = StudyMode | "all";
+
+/** Entries answered on one study surface. */
+export function entriesInMode(
+	entries: readonly ReviewLogEntry[],
+	mode: ModeFilter,
+): ReviewLogEntry[] {
+	if (mode === "all") return [...entries];
+	return entries.filter((entry) => entry.m === mode);
+}
+
+/**
+ * IDs of cards ever answered on a given surface.
+ *
+ * This is what lets the card-state graphs honour the mode filter at all: a
+ * *card* has no mode — only a review does — so "cards studied contextually"
+ * has to be reconstructed from the log. A card never reviewed appears in no
+ * mode, which is why new cards drop out of the state graphs under any filter.
+ */
+export function cardsReviewedInMode(
+	entries: readonly ReviewLogEntry[],
+	mode: ModeFilter,
+): Set<string> {
+	const ids = new Set<string>();
+	for (const entry of entries) {
+		if (mode === "all" || entry.m === mode) ids.add(entry.c);
+	}
+	return ids;
 }
 
 // ── Formatting ────────────────────────────────────────────────

@@ -88,24 +88,32 @@ export function renderEmpty(parent: HTMLElement, message: string): void {
 /**
  * Attach a hover tooltip to a chart.
  *
- * One tooltip element per plot, positioned against the plot box, rather than
- * one per mark: a year heatmap has 365 targets and would otherwise build 365
- * detached nodes that mostly never show.
+ * One tooltip element per plot, rather than one per mark: a year heatmap has 365
+ * targets and would otherwise build 365 detached nodes that mostly never show.
+ *
+ * The tip is parented to the *panel*, not the plot, and positioned against the
+ * panel's box. The plot is the scroll container for wide charts — the heatmap is
+ * 53 columns whatever the pane width — so a tip inside it is clipped at the
+ * container's edge and its offset drifts by `scrollLeft` once scrolled. Hanging
+ * it off the non-scrolling ancestor removes both faults at once.
  */
 function attachTooltip(plot: HTMLElement): (target: Element, text: string) => void {
-	const tip = plot.createDiv({ cls: "osmosis-stats-tooltip" });
+	const host = plot.closest<HTMLElement>(".osmosis-stats-panel") ?? plot;
+	const tip = host.createDiv({ cls: "osmosis-stats-tooltip" });
 	tip.hide();
 
 	return (target: Element, text: string) => {
 		target.addEventListener("mouseenter", (event: Event) => {
-			const rect = plot.getBoundingClientRect();
+			const rect = host.getBoundingClientRect();
 			const mouse = event as MouseEvent;
 			tip.setText(text);
 			tip.show();
-			// Clamp inside the plot so a tooltip near the right edge of a split
-			// pane doesn't render off-screen.
-			const x = Math.min(Math.max(mouse.clientX - rect.left, 0), rect.width - tip.offsetWidth);
-			tip.style.left = `${String(Math.max(0, x))}px`;
+			// Clamp inside the host so a tip near either edge of a split pane
+			// stays whole. Measured after `show()`, since a hidden element has
+			// no width to clamp against.
+			const maxX = Math.max(0, rect.width - tip.offsetWidth);
+			const x = Math.min(Math.max(mouse.clientX - rect.left, 0), maxX);
+			tip.style.left = `${String(x)}px`;
 			tip.style.top = `${String(Math.max(0, mouse.clientY - rect.top - tip.offsetHeight - 8))}px`;
 		});
 		target.addEventListener("mouseleave", () => {
@@ -230,7 +238,9 @@ export function barChart(plot: HTMLElement, options: BarChartOptions): void {
 			});
 		}
 
-		if (index % labelEvery === 0) {
+		// An empty label is a deliberate gap, not a missing value: bucketed
+		// ranges label only the column that opens a month.
+		if (datum.label !== "" && index % labelEvery === 0) {
 			drawXLabel(svg, centre, height, datum.label);
 		}
 	});

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type OsmosisPlugin from "../main";
 import { FSRSScheduler } from "../database/FSRSScheduler";
-import type { Card } from "../database/types";
+import type { Card, CardType, StudyMode } from "../database/types";
 import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
 import {
@@ -11,12 +11,15 @@ import {
 	type Rollup,
 } from "../store/ReviewLog";
 import {
+	bucketPoints,
 	calendarYear,
+	cardsReviewedInMode,
 	cardCounts,
 	cardsInScope,
 	dailySeries,
 	daysBefore,
 	difficulties,
+	entriesInMode,
 	entriesInScope,
 	entriesSince,
 	formatDays,
@@ -27,6 +30,9 @@ import {
 	hourlyBreakdown,
 	intervalDays,
 	percentile,
+	rankByRecall,
+	recallBy,
+	retentionByPeriod,
 	retrievability,
 	stabilityDays,
 	studyModeFromEntries,
@@ -35,7 +41,11 @@ import {
 	trueRetention,
 	yearsWithActivity,
 	type DayPoint,
+	type Granularity,
 	type HistoryScope,
+	type ModeFilter,
+	type RecallStats,
+	type SeriesBucket,
 } from "../stats/aggregate";
 import {
 	barChart,
@@ -95,6 +105,33 @@ const RANGES = { month: 30, quarter: 90, year: 365 } as const;
 type RangeKey = keyof typeof RANGES | "all";
 type IntervalRange = "month" | "p50" | "p95" | "all";
 
+/**
+ * Card types in reading order, with the labels the dashboard shows.
+ *
+ * "Basic" rather than the internal `explicit`: the union is named for how the
+ * parser sees a fence, but a reader is choosing between ways of writing a card.
+ */
+const CARD_TYPE_LABELS: Record<CardType, string> = {
+	explicit: "Basic",
+	explicit_bidi: "Bidirectional",
+	explicit_cloze: "Cloze",
+	code_cloze: "Code cloze",
+	line: "Line",
+};
+
+const CARD_TYPE_ORDER: readonly CardType[] = [
+	"explicit",
+	"explicit_bidi",
+	"explicit_cloze",
+	"code_cloze",
+	"line",
+];
+
+/** Below this, a note's recall rate is noise rather than a finding. */
+const MIN_NOTE_REVIEWS = 5;
+/** A worklist, not a census. */
+const WEAKEST_NOTE_LIMIT = 10;
+
 const CHART_HEIGHT = 200;
 const HEATMAP_CELL = 13;
 
@@ -120,6 +157,7 @@ export class StatsView extends ItemView {
 	private scheduler!: FSRSScheduler;
 
 	private deckScope: DeckScope = { type: "all" };
+	private modeFilter: ModeFilter = "all";
 	private history: HistoryScope = "12m";
 	private reviewRange: RangeKey = "month";
 	private timeRange: RangeKey = "month";
@@ -222,7 +260,8 @@ export class StatsView extends ItemView {
 		const byDeck = entriesInScope(this.entries, this.deckScope, (id) =>
 			this.plugin.cardStore.getCard(id),
 		);
-		return entriesSince(byDeck, historyStartDay(Date.now(), this.history));
+		const byMode = entriesInMode(byDeck, this.modeFilter);
+		return entriesSince(byMode, historyStartDay(Date.now(), this.history));
 	}
 
 	/**
@@ -234,18 +273,33 @@ export class StatsView extends ItemView {
 	 * and none of them needs to know which path it got.
 	 */
 	private scopedRollup(): Rollup | null {
-		if (this.deckScope.type === "all") return this.rollup;
+		if (!this.needsEntries()) return this.rollup;
 		const entries = this.scopedEntries();
 		return entries === null ? null : aggregateRollup(entries);
 	}
 
+	/**
+	 * The cards in scope.
+	 *
+	 * Under a mode filter this narrows to cards with at least one review on that
+	 * surface, reconstructed from the log — a card carries no mode of its own.
+	 * Never-reviewed cards therefore drop out entirely, which is correct (an
+	 * unstudied card was not studied contextually) but does mean the New slice
+	 * of Card counts disappears under any mode filter.
+	 */
 	private scopedCards(): Card[] {
-		return cardsInScope(this.plugin.cardStore.getAllCards(), this.deckScope);
+		const byDeck = cardsInScope(this.plugin.cardStore.getAllCards(), this.deckScope);
+		if (this.modeFilter === "all") return byDeck;
+
+		const entries = this.scopedEntries();
+		if (entries === null) return [];
+		const studied = cardsReviewedInMode(entries, this.modeFilter);
+		return byDeck.filter((card) => studied.has(card.id));
 	}
 
 	/** True when the current scope cannot be answered without a shard parse. */
 	private needsEntries(): boolean {
-		return this.deckScope.type !== "all";
+		return this.deckScope.type !== "all" || this.modeFilter !== "all";
 	}
 
 	// ── Render ────────────────────────────────────────────────
@@ -283,6 +337,9 @@ export class StatsView extends ItemView {
 		this.buildHourly(grid, draws);
 		this.buildAnswerButtons(grid, draws);
 		this.buildTrueRetention(grid, draws);
+		this.buildModeRecall(grid, draws);
+		this.buildTypeRecall(grid, draws);
+		this.buildWeakestNotes(grid, draws);
 
 		// Each panel is drawn inside its own guard. They share one loop, so an
 		// unguarded throw in any one of them blanks every panel after it — and
@@ -324,6 +381,23 @@ export class StatsView extends ItemView {
 			this.deckScope = valueToScope(select.value);
 			this.render();
 		});
+
+		const modeWrap = bar.createDiv({ cls: "osmosis-stats-scope-field" });
+		modeWrap.createSpan({ cls: "osmosis-stats-scope-label", text: "Mode" });
+		this.segmented(
+			modeWrap,
+			[
+				{ key: "all", label: "All" },
+				{ key: "sequential", label: "Sequential" },
+				{ key: "contextual", label: "Contextual" },
+				{ key: "spatial", label: "Spatial" },
+			],
+			this.modeFilter,
+			(key) => {
+				this.modeFilter = key as ModeFilter;
+				this.render();
+			},
+		);
 
 		const historyWrap = bar.createDiv({ cls: "osmosis-stats-scope-field" });
 		historyWrap.createSpan({ cls: "osmosis-stats-scope-label", text: "History" });
@@ -409,12 +483,40 @@ export class StatsView extends ItemView {
 					? "—"
 					: `${String(Math.round((today.againCount / today.reviews) * 100))}%`,
 			);
+			this.tile(
+				tiles,
+				"Per card",
+				today.reviews === 0
+					? "—"
+					: `${String(Math.round(today.timeMs / today.reviews / 1000))}s`,
+			);
 
 			if (today.reviews === 0) {
 				renderEmpty(plot, "Nothing studied yet today.");
 				return;
 			}
 			renderLegend(plot, CLASS_SERIES, today.byClass);
+
+			// The fortnight behind today, so the number above has somewhere to
+			// sit. Today is the last column, and the panel is about today.
+			const trail = bucketPoints(
+				dailySeries(rollup, daysBefore(Date.now(), 13), Date.now()),
+				"day",
+			);
+			plot.createDiv({ cls: "osmosis-stats-subtitle", text: "Last 14 days" });
+			barChart(plot, {
+				width: this.plotWidth(plot),
+				height: 110,
+				data: trail.map((bucket) => ({
+					label: bucket.startsMonth ? monthLabel(bucket.key) : "",
+					values: bucket.byClass,
+					tooltip: `${bucketTitle(bucket, "day")}: ${bucket.reviews.toLocaleString()} reviews`,
+				})),
+				series: CLASS_SERIES,
+				mode: "stacked",
+				formatValue: (v) => Math.round(v).toLocaleString(),
+				labelEvery: 1,
+			});
 		});
 	}
 
@@ -535,8 +637,8 @@ export class StatsView extends ItemView {
 				renderEmpty(plot, "Reading review log…");
 				return;
 			}
-			const points = this.seriesForRange(rollup, this.reviewRange);
-			const totals = sumByClass(points, "byClass");
+			const { buckets, granularity, labelEvery } = this.volumeColumns(rollup, this.reviewRange);
+			const totals = sumByClass(buckets, "byClass");
 
 			if (sumValues(totals) === 0) {
 				renderEmpty(plot, "No reviews in this range yet.");
@@ -546,14 +648,15 @@ export class StatsView extends ItemView {
 			barChart(plot, {
 				width: this.plotWidth(plot),
 				height: CHART_HEIGHT,
-				data: points.map((point) => ({
-					label: shortDay(point.day),
-					values: point.byClass,
-					tooltip: `${point.day}: ${point.reviews.toLocaleString()} reviews`,
+				data: buckets.map((bucket) => ({
+					label: columnLabel(bucket, granularity),
+					values: bucket.byClass,
+					tooltip: `${bucketTitle(bucket, granularity)}: ${bucket.reviews.toLocaleString()} reviews`,
 				})),
 				series: CLASS_SERIES,
 				mode: "stacked",
 				formatValue: (v) => Math.round(v).toLocaleString(),
+				labelEvery,
 			});
 			renderLegend(plot, CLASS_SERIES, totals);
 		});
@@ -572,8 +675,8 @@ export class StatsView extends ItemView {
 				renderEmpty(plot, "Reading review log…");
 				return;
 			}
-			const points = this.seriesForRange(rollup, this.timeRange);
-			const totals = sumByClass(points, "timeByClass");
+			const { buckets, granularity, labelEvery } = this.volumeColumns(rollup, this.timeRange);
+			const totals = sumByClass(buckets, "timeByClass");
 
 			if (sumValues(totals) === 0) {
 				renderEmpty(plot, "No reviews in this range yet.");
@@ -585,14 +688,15 @@ export class StatsView extends ItemView {
 			barChart(plot, {
 				width: this.plotWidth(plot),
 				height: CHART_HEIGHT,
-				data: points.map((point) => ({
-					label: shortDay(point.day),
-					values: mapValues(point.timeByClass, (ms) => ms / 60_000),
-					tooltip: `${point.day}: ${formatDuration(point.timeMs)}`,
+				data: buckets.map((bucket) => ({
+					label: columnLabel(bucket, granularity),
+					values: mapValues(bucket.timeByClass, (ms) => ms / 60_000),
+					tooltip: `${bucketTitle(bucket, granularity)}: ${formatDuration(bucket.timeMs)}`,
 				})),
 				series: CLASS_SERIES,
 				mode: "stacked",
 				formatValue: (v) => `${String(Math.round(v))}m`,
+				labelEvery,
 			});
 			renderLegend(plot, CLASS_SERIES, totals, formatDuration);
 		});
@@ -965,6 +1069,26 @@ export class StatsView extends ItemView {
 
 			if (stats.reviewed === 0) {
 				renderEmpty(plot, "No mature reviews in this range yet.");
+			} else {
+				// One number over all history hides the trend that matters —
+				// whether retention is holding up lately — so the same figure is
+				// also broken out by window.
+				const table = plot.createDiv({ cls: "osmosis-stats-table" });
+				for (const period of retentionByPeriod(entries, Date.now())) {
+					const row = table.createDiv({ cls: "osmosis-stats-row" });
+					row.createSpan({ cls: "osmosis-stats-row-label", text: period.label });
+					row.createSpan({
+						cls: "osmosis-stats-row-value",
+						text:
+							period.stats.reviewed === 0
+								? "—"
+								: `${String(Math.round(period.stats.rate * 100))}%`,
+					});
+					row.createSpan({
+						cls: "osmosis-stats-row-sub",
+						text: `${period.stats.passed.toLocaleString()} / ${period.stats.reviewed.toLocaleString()}`,
+					});
+				}
 			}
 
 			if (stats.unknownInterval > 0) {
@@ -976,6 +1100,187 @@ export class StatsView extends ItemView {
 				});
 			}
 		});
+	}
+
+	/**
+	 * Recall by study surface — the graph Anki has no way to draw, because it
+	 * has one way to study.
+	 *
+	 * This is the question the plugin exists to answer: does meeting a card in
+	 * the note that taught it retain better than drilling it out of context? A
+	 * flat result is a real answer too.
+	 */
+	private buildModeRecall(parent: HTMLElement, draws: (() => void)[]): void {
+		const plot = chartPanel(
+			parent,
+			"Recall by study mode",
+			"Graduated cards only (interval ≥ 1 day), first review of each card per day.",
+		);
+
+		draws.push(() => {
+			const entries = this.requireEntries(plot);
+			if (entries === null) return;
+
+			const byMode = recallBy(entries, (entry) => entry.m);
+			if (byMode.size === 0) {
+				renderEmpty(plot, "No graduated reviews yet.");
+				return;
+			}
+
+			this.recallTable(
+				plot,
+				MODE_SERIES.map((series) => ({
+					label: series.label,
+					color: series.color,
+					stats: byMode.get(series.key as StudyMode),
+				})),
+				true,
+			);
+		});
+	}
+
+	/**
+	 * Recall by card type — which *authoring style* is working.
+	 *
+	 * Anki's nearest equivalent groups by note type, which is a schema. These
+	 * are ways of writing a note, so a weak row is a prompt to write differently
+	 * rather than to re-model anything.
+	 */
+	private buildTypeRecall(parent: HTMLElement, draws: (() => void)[]): void {
+		const plot = chartPanel(
+			parent,
+			"Recall by card type",
+			"How each way of writing a card performs, on the same basis as above.",
+		);
+
+		draws.push(() => {
+			const entries = this.requireEntries(plot);
+			if (entries === null) return;
+
+			const byType = recallBy(
+				entries,
+				(entry) => this.plugin.cardStore.getCard(entry.c)?.cardType ?? null,
+			);
+			if (byType.size === 0) {
+				renderEmpty(plot, "No graduated reviews of resolvable cards yet.");
+				return;
+			}
+
+			this.recallTable(
+				plot,
+				CARD_TYPE_ORDER.filter((type) => byType.has(type)).map((type) => ({
+					label: CARD_TYPE_LABELS[type],
+					color: COLOR.new,
+					stats: byType.get(type),
+				})),
+				false,
+			);
+		});
+	}
+
+	/**
+	 * The notes costing the most reviews.
+	 *
+	 * Cards carry a `notePath`, so a weak card points at a document you can go
+	 * and edit — which is what makes this different from a deck breakdown. A
+	 * high lapse rate here usually means the note never actually explained the
+	 * thing, or the card is ambiguous; either way the fix is writing, not
+	 * scheduling.
+	 */
+	private buildWeakestNotes(parent: HTMLElement, draws: (() => void)[]): void {
+		const plot = chartPanel(
+			parent,
+			"Weakest notes",
+			`Worst recall first, among notes with at least ${String(MIN_NOTE_REVIEWS)} graduated reviews.`,
+		);
+
+		draws.push(() => {
+			const entries = this.requireEntries(plot);
+			if (entries === null) return;
+
+			const byNote = recallBy(
+				entries,
+				(entry) => this.plugin.cardStore.getCard(entry.c)?.notePath ?? null,
+			);
+			const ranked = rankByRecall(byNote, MIN_NOTE_REVIEWS).slice(0, WEAKEST_NOTE_LIMIT);
+
+			if (ranked.length === 0) {
+				renderEmpty(
+					plot,
+					byNote.size === 0
+						? "No graduated reviews of resolvable cards yet."
+						: `No note has ${String(MIN_NOTE_REVIEWS)} graduated reviews yet.`,
+				);
+				return;
+			}
+
+			this.recallTable(
+				plot,
+				ranked.map((row) => ({
+					label: noteName(row.key),
+					color: COLOR.relearning,
+					stats: row.stats,
+					title: row.key,
+				})),
+				false,
+			);
+		});
+	}
+
+	/**
+	 * A recall comparison as rows of label, meter, rate, and sample size.
+	 *
+	 * The meter is what makes the comparison readable: recall rates cluster in
+	 * the eighties and nineties, so a 0–100 axis flattens every difference worth
+	 * seeing. The bar is scaled to the rows on screen instead, and the exact
+	 * figure sits beside it.
+	 */
+	private recallTable(
+		parent: HTMLElement,
+		rows: readonly {
+			label: string;
+			color: string;
+			stats: RecallStats | undefined;
+			title?: string;
+		}[],
+		showPace: boolean,
+	): void {
+		const rates = rows.map((row) => row.stats?.rate ?? 0).filter((rate) => rate > 0);
+		const floor = rates.length === 0 ? 0 : Math.min(...rates);
+		// Anchor the meter a little below the worst row so the weakest is a
+		// short bar rather than an empty one.
+		const base = Math.max(0, floor - 0.05);
+
+		const table = parent.createDiv({ cls: "osmosis-stats-table" });
+		for (const row of rows) {
+			const el = table.createDiv({ cls: "osmosis-stats-recall-row" });
+			if (row.title !== undefined) el.setAttribute("title", row.title);
+
+			el.createSpan({ cls: "osmosis-stats-row-label", text: row.label });
+
+			const track = el.createDiv({ cls: "osmosis-stats-meter" });
+			const fill = track.createDiv({ cls: "osmosis-stats-meter-fill" });
+			const rate = row.stats?.rate ?? 0;
+			const width = base >= 1 ? 100 : ((rate - base) / (1 - base)) * 100;
+			fill.style.width = `${String(Math.max(0, Math.min(100, width)))}%`;
+			fill.style.backgroundColor = row.color;
+
+			el.createSpan({
+				cls: "osmosis-stats-row-value",
+				text: row.stats === undefined ? "—" : `${String(Math.round(rate * 100))}%`,
+			});
+			el.createSpan({
+				cls: "osmosis-stats-row-sub",
+				text:
+					row.stats === undefined
+						? "0"
+						: showPace
+							? `${row.stats.reviewed.toLocaleString()} · ${String(
+									Math.round(row.stats.meanMs / 1000),
+								)}s`
+							: row.stats.reviewed.toLocaleString(),
+			});
+		}
 	}
 
 	// ── Small pieces ──────────────────────────────────────────
@@ -1057,6 +1362,27 @@ export class StatsView extends ItemView {
 		return dailySeries(rollup, daysBefore(now, days - 1), now);
 	}
 
+	/**
+	 * Columns and labels for a volume graph.
+	 *
+	 * A month stays one bar per day; longer ranges bucket, because 365 columns
+	 * across a few hundred pixels is a 1px sliver per day. Bucketed ranges label
+	 * only the column that opens a month — a date on every column is both
+	 * unreadable and less meaningful than the month it sits in.
+	 */
+	private volumeColumns(
+		rollup: Rollup,
+		range: RangeKey,
+	): { buckets: SeriesBucket[]; granularity: Granularity; labelEvery?: number } {
+		const granularity: Granularity =
+			range === "month" ? "day" : range === "quarter" ? "week" : "month";
+		return {
+			buckets: bucketPoints(this.seriesForRange(rollup, range), granularity),
+			granularity,
+			labelEvery: granularity === "day" ? undefined : 1,
+		};
+	}
+
 	/** The pixel width a chart should draw at, floored so it never collapses. */
 	private plotWidth(plot: HTMLElement): number {
 		return Math.max(280, plot.clientWidth);
@@ -1081,8 +1407,14 @@ function sumValues(counts: Readonly<Record<string, number>>): number {
 	return Object.values(counts).reduce((sum, value) => sum + value, 0);
 }
 
+/** Structural, so it sums daily points and bucketed columns alike. */
+interface ClassSplit {
+	byClass: Readonly<Record<string, number>>;
+	timeByClass: Readonly<Record<string, number>>;
+}
+
 function sumByClass(
-	points: readonly DayPoint[],
+	points: readonly ClassSplit[],
 	field: "byClass" | "timeByClass",
 ): Record<string, number> {
 	const totals: Record<string, number> = {
@@ -1108,10 +1440,41 @@ function mapValues(
 	);
 }
 
+const MONTHS = [
+	"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+	"Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** A day key's month as an axis label ("Aug"). */
+function monthLabel(day: string): string {
+	return MONTHS[Number(day.slice(5, 7)) - 1] ?? "";
+}
+
+/** A note path as its display name — basename, no extension. */
+function noteName(path: string): string {
+	const base = path.slice(path.lastIndexOf("/") + 1);
+	return base.endsWith(".md") ? base.slice(0, -3) : base;
+}
+
 /** A day key as a compact axis label ("7 Aug"). */
 function shortDay(day: string): string {
-	const [, month, date] = day.split("-");
-	const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-	const index = Number(month) - 1;
-	return `${String(Number(date))} ${months[index] ?? ""}`;
+	return `${String(Number(day.slice(8, 10)))} ${monthLabel(day)}`;
+}
+
+/**
+ * A column's axis label. Daily columns carry their date; bucketed columns are
+ * labelled only where a month opens, so the axis reads as months rather than as
+ * a wall of dates.
+ */
+function columnLabel(bucket: SeriesBucket, granularity: Granularity): string {
+	if (granularity === "day") return shortDay(bucket.key);
+	return bucket.startsMonth ? monthLabel(bucket.key) : "";
+}
+
+/** What a column's tooltip calls it — the span, not just its first day. */
+function bucketTitle(bucket: SeriesBucket, granularity: Granularity): string {
+	const year = bucket.key.slice(0, 4);
+	if (granularity === "day") return `${shortDay(bucket.key)} ${year}`;
+	if (granularity === "month") return `${monthLabel(bucket.key)} ${year}`;
+	return `Week of ${shortDay(bucket.key)}`;
 }

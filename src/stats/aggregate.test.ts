@@ -6,13 +6,18 @@ import {
 } from "../store/ReviewLog";
 import type { Card } from "../database/types";
 import {
+	GRADUATED_INTERVAL_SECONDS,
+	bucketPoints,
 	calendarYear,
+	cardsReviewedInMode,
 	cardCounts,
 	cardsInScope,
 	dailySeries,
+	dayKeyToDate,
 	dayKeysInRange,
 	deckInScope,
 	difficulties,
+	entriesInMode,
 	entriesInScope,
 	entriesSince,
 	formatDays,
@@ -23,6 +28,9 @@ import {
 	hourlyBreakdown,
 	intervalDays,
 	percentile,
+	rankByRecall,
+	recallBy,
+	retentionByPeriod,
 	retrievability,
 	stabilityDays,
 	studyModeFromEntries,
@@ -31,6 +39,7 @@ import {
 	trueRetention,
 	withPriorIntervals,
 	yearsWithActivity,
+	type DayPoint,
 } from "./aggregate";
 
 const DAY_SECONDS = 86_400;
@@ -276,6 +285,108 @@ describe("dailySeries", () => {
 		const points = dailySeries({}, new Date(2026, 7, 5).getTime(), new Date(2026, 7, 7).getTime());
 		expect(points).toHaveLength(3);
 		expect(points.every((p) => p.reviews === 0 && p.timeMs === 0)).toBe(true);
+	});
+});
+
+// ── Bucketing ─────────────────────────────────────────────────
+
+describe("bucketPoints", () => {
+	/** A fortnight from Sunday 2 August 2026, one review per day. */
+	function fortnight(): DayPoint[] {
+		const rollup = aggregateRollup(
+			Array.from({ length: 14 }, (_, i) =>
+				entry({ t: new Date(2026, 7, 2 + i, 9, 0).getTime(), e: 1000 }),
+			),
+		);
+		return dailySeries(
+			rollup,
+			new Date(2026, 7, 2, 9, 0).getTime(),
+			new Date(2026, 7, 15, 9, 0).getTime(),
+		);
+	}
+
+	it("leaves daily granularity one column per day", () => {
+		const buckets = bucketPoints(fortnight(), "day");
+		expect(buckets).toHaveLength(14);
+		expect(buckets.every((b) => b.span === 1)).toBe(true);
+	});
+
+	it("groups weeks from Sunday, matching the heatmap's rows", () => {
+		const buckets = bucketPoints(fortnight(), "week");
+		expect(buckets).toHaveLength(2);
+		expect(buckets[0]?.key).toBe("2026-08-02");
+		expect(buckets[1]?.key).toBe("2026-08-09");
+		expect(buckets.every((b) => b.span === 7)).toBe(true);
+	});
+
+	it("starts a new week bucket mid-range when the range does not start on Sunday", () => {
+		const rollup = aggregateRollup([entry({ t: new Date(2026, 7, 5, 9, 0).getTime() })]);
+		// Wednesday 5 Aug to Monday 10 Aug crosses one Sunday.
+		const points = dailySeries(
+			rollup,
+			new Date(2026, 7, 5, 9, 0).getTime(),
+			new Date(2026, 7, 10, 9, 0).getTime(),
+		);
+		const buckets = bucketPoints(points, "week");
+		expect(buckets).toHaveLength(2);
+		expect(buckets[0]?.span).toBe(4);
+		expect(buckets[1]?.span).toBe(2);
+	});
+
+	it("groups months and sums every measure across them", () => {
+		const rollup = aggregateRollup([
+			entry({ t: new Date(2026, 6, 30, 9, 0).getTime(), e: 1000, s: "review", iv: 86_400 }),
+			entry({ t: new Date(2026, 6, 31, 9, 0).getTime(), e: 2000, s: "review", iv: 86_400 }),
+			entry({ t: new Date(2026, 7, 1, 9, 0).getTime(), e: 4000, s: "learning" }),
+		]);
+		const points = dailySeries(
+			rollup,
+			new Date(2026, 6, 30, 9, 0).getTime(),
+			new Date(2026, 7, 1, 9, 0).getTime(),
+		);
+
+		const buckets = bucketPoints(points, "month");
+		expect(buckets).toHaveLength(2);
+		expect(buckets[0]).toMatchObject({ key: "2026-07-30", reviews: 2, timeMs: 3000 });
+		expect(buckets[0]?.byClass.young).toBe(2);
+		expect(buckets[1]).toMatchObject({ key: "2026-08-01", reviews: 1, timeMs: 4000 });
+		expect(buckets[1]?.byClass.learning).toBe(1);
+	});
+
+	it("preserves the total across every granularity", () => {
+		const points = fortnight();
+		for (const granularity of ["day", "week", "month"] as const) {
+			const total = bucketPoints(points, granularity).reduce((sum, b) => sum + b.reviews, 0);
+			expect(total).toBe(14);
+		}
+	});
+
+	it("anchors a label on the first column and wherever a month opens", () => {
+		const rollup = aggregateRollup([]);
+		const points = dailySeries(
+			rollup,
+			new Date(2026, 6, 30, 9, 0).getTime(),
+			new Date(2026, 7, 2, 9, 0).getTime(),
+		);
+		const buckets = bucketPoints(points, "day");
+		expect(buckets.map((b) => b.startsMonth)).toEqual([true, false, true, false]);
+	});
+
+	it("returns nothing for no points", () => {
+		expect(bucketPoints([], "month")).toEqual([]);
+	});
+});
+
+describe("dayKeyToDate", () => {
+	it("round-trips a day key", () => {
+		const date = dayKeyToDate("2026-08-07");
+		expect(date.getFullYear()).toBe(2026);
+		expect(date.getMonth()).toBe(7);
+		expect(date.getDate()).toBe(7);
+	});
+
+	it("lands at midday, so a DST shift cannot move the date", () => {
+		expect(dayKeyToDate("2026-11-01").getHours()).toBe(12);
 	});
 });
 
@@ -816,6 +927,259 @@ describe("trueRetention", () => {
 			rate: 0,
 			unknownInterval: 0,
 		});
+	});
+});
+
+describe("retentionByPeriod", () => {
+	const MATURE = MATURE_INTERVAL_SECONDS;
+	const now = new Date(2026, 7, 8, 14, 0).getTime();
+	const daysAgo = (days: number, hour = 9) =>
+		new Date(2026, 7, 8 - days, hour).getTime();
+
+	it("returns a row per window, widest last", () => {
+		const rows = retentionByPeriod([], now);
+		expect(rows.map((row) => row.label)).toEqual(["Today", "Week", "Month", "Year", "All"]);
+		expect(rows[4]?.days).toBeNull();
+	});
+
+	it("narrows to the window", () => {
+		const entries = [
+			entry({ c: "a", t: daysAgo(200), iv: MATURE * 2 }),
+			entry({ c: "a", t: daysAgo(100), iv: MATURE * 2, r: 3 }),
+			entry({ c: "a", t: daysAgo(0), iv: MATURE * 2, r: 3 }),
+		];
+		const rows = retentionByPeriod(entries, now);
+		const by = Object.fromEntries(rows.map((row) => [row.label, row.stats.reviewed]));
+
+		expect(by["Today"]).toBe(1);
+		expect(by["Week"]).toBe(1);
+		expect(by["Year"]).toBe(2);
+		expect(by["All"]).toBe(2);
+	});
+
+	it("reads the prior interval from outside the window", () => {
+		// The review that established maturity is a year old; the review being
+		// judged is today. Filtering before annotating would lose the former and
+		// silently drop the latter as "unknown interval".
+		const entries = [
+			entry({ c: "a", t: daysAgo(300), iv: MATURE * 2 }),
+			entry({ c: "a", t: daysAgo(0), iv: MATURE * 3, r: 3 }),
+		];
+		const today = retentionByPeriod(entries, now).find((row) => row.label === "Today");
+
+		expect(today?.stats.reviewed).toBe(1);
+		expect(today?.stats.passed).toBe(1);
+		expect(today?.stats.unknownInterval).toBe(0);
+	});
+
+	it("agrees with trueRetention over all history", () => {
+		const entries = [
+			entry({ c: "a", t: daysAgo(40), iv: MATURE * 2 }),
+			entry({ c: "a", t: daysAgo(20), iv: MATURE * 2, r: 3 }),
+			entry({ c: "b", t: daysAgo(30), iv: MATURE * 2 }),
+			entry({ c: "b", t: daysAgo(10), iv: 600, r: 1 }),
+		];
+		const all = retentionByPeriod(entries, now).find((row) => row.label === "All");
+		expect(all?.stats).toEqual(trueRetention(entries));
+	});
+
+	it("counts today from local midnight, not twenty-four hours back", () => {
+		const entries = [
+			entry({ c: "a", t: daysAgo(2), iv: MATURE * 2 }),
+			// Yesterday evening — inside 24h of `now`, but not today.
+			entry({ c: "a", t: daysAgo(1, 23), iv: MATURE * 2, r: 3 }),
+		];
+		const today = retentionByPeriod(entries, now).find((row) => row.label === "Today");
+		expect(today?.stats.reviewed).toBe(0);
+	});
+
+	it("does not divide by zero on an empty log", () => {
+		for (const row of retentionByPeriod([], now)) {
+			expect(row.stats).toEqual({ reviewed: 0, passed: 0, rate: 0, unknownInterval: 0 });
+		}
+	});
+});
+
+// ── Comparative recall ────────────────────────────────────────
+
+describe("recallBy", () => {
+	const GRAD = GRADUATED_INTERVAL_SECONDS;
+	const at = (day: number, hour = 9) => new Date(2026, 7, day, hour).getTime();
+
+	it("groups by whatever the key function returns", () => {
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: GRAD * 5, m: "contextual" }),
+				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3, m: "contextual" }),
+				entry({ c: "b", t: at(1), iv: GRAD * 5, m: "spatial" }),
+				entry({ c: "b", t: at(3), iv: GRAD * 5, r: 1, m: "spatial" }),
+			],
+			(e) => e.m,
+		);
+
+		expect(stats.get("contextual")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
+		expect(stats.get("spatial")).toMatchObject({ reviewed: 1, passed: 0, rate: 0 });
+		expect(stats.has("sequential")).toBe(false);
+	});
+
+	it("ignores reviews the card had not graduated into", () => {
+		// A learning-step answer minutes after the last one says nothing about
+		// memory, and there are far more of them than real reviews.
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: 600 }),
+				entry({ c: "a", t: at(1, 10), iv: 600, r: 3 }),
+			],
+			(e) => e.m,
+		);
+		expect(stats.size).toBe(0);
+	});
+
+	it("splits exactly at the one-day line", () => {
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: GRAD - 1 }),
+				entry({ c: "a", t: at(2), r: 3 }),
+				entry({ c: "b", t: at(1), iv: GRAD }),
+				entry({ c: "b", t: at(2), r: 3 }),
+			],
+			() => "x" as const,
+		);
+		expect(stats.get("x")?.reviewed).toBe(1);
+	});
+
+	it("takes only the first review of a card each day", () => {
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: GRAD * 5 }),
+				entry({ c: "a", t: at(5, 9), iv: 600, r: 1 }),
+				entry({ c: "a", t: at(5, 10), iv: 600, r: 3 }),
+			],
+			() => "x" as const,
+		);
+		expect(stats.get("x")).toMatchObject({ reviewed: 1, passed: 0 });
+	});
+
+	it("drops entries whose key cannot be determined", () => {
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: GRAD * 5 }),
+				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3 }),
+			],
+			() => null,
+		);
+		expect(stats.size).toBe(0);
+	});
+
+	it("averages time on screen across counted reviews only", () => {
+		const stats = recallBy(
+			[
+				entry({ c: "a", t: at(1), iv: GRAD * 5, e: 99_999 }),
+				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3, e: 2000 }),
+				entry({ c: "b", t: at(1), iv: GRAD * 5, e: 99_999 }),
+				entry({ c: "b", t: at(3), iv: GRAD * 5, r: 3, e: 4000 }),
+			],
+			() => "x" as const,
+		);
+		// The two seeding reviews are uncounted (no prior interval), so the mean
+		// is over the two that qualified.
+		expect(stats.get("x")?.meanMs).toBe(3000);
+	});
+
+	it("returns nothing for an empty log", () => {
+		expect(recallBy([], (e) => e.m).size).toBe(0);
+	});
+});
+
+describe("rankByRecall", () => {
+	const stats = (reviewed: number, passed: number) => ({
+		reviewed,
+		passed,
+		rate: passed / reviewed,
+		meanMs: 1000,
+	});
+
+	it("puts the worst group first", () => {
+		const ranked = rankByRecall(
+			new Map([
+				["good", stats(20, 19)],
+				["bad", stats(20, 10)],
+				["middling", stats(20, 15)],
+			]),
+			5,
+		);
+		expect(ranked.map((row) => row.key)).toEqual(["bad", "middling", "good"]);
+	});
+
+	it("drops groups with too few reviews to mean anything", () => {
+		// One review that happened to be a lapse is not the weakest note in the
+		// vault; without the threshold it would top every ranking.
+		const ranked = rankByRecall(
+			new Map([
+				["noise", stats(1, 0)],
+				["real", stats(20, 18)],
+			]),
+			5,
+		);
+		expect(ranked.map((row) => row.key)).toEqual(["real"]);
+	});
+
+	it("breaks ties towards the better-evidenced group", () => {
+		const ranked = rankByRecall(
+			new Map([
+				["thin", stats(6, 3)],
+				["thick", stats(40, 20)],
+			]),
+			5,
+		);
+		expect(ranked[0]?.key).toBe("thick");
+	});
+
+	it("returns nothing when no group qualifies", () => {
+		expect(rankByRecall(new Map([["a", stats(2, 1)]]), 5)).toEqual([]);
+	});
+});
+
+// ── Study-mode filtering ──────────────────────────────────────
+
+describe("entriesInMode", () => {
+	it("keeps everything under all", () => {
+		const entries = [entry({ m: "spatial" }), entry({ m: "sequential" })];
+		expect(entriesInMode(entries, "all")).toHaveLength(2);
+	});
+
+	it("narrows to one surface", () => {
+		const entries = [
+			entry({ c: "a", m: "spatial" }),
+			entry({ c: "b", m: "sequential" }),
+			entry({ c: "c", m: "spatial" }),
+		];
+		expect(entriesInMode(entries, "spatial").map((e) => e.c)).toEqual(["a", "c"]);
+	});
+});
+
+describe("cardsReviewedInMode", () => {
+	const entries = [
+		entry({ c: "a", m: "contextual" }),
+		entry({ c: "b", m: "sequential" }),
+		entry({ c: "a", m: "sequential" }),
+	];
+
+	it("collects every card under all", () => {
+		expect([...cardsReviewedInMode(entries, "all")].sort()).toEqual(["a", "b"]);
+	});
+
+	it("collects cards ever answered on that surface", () => {
+		expect([...cardsReviewedInMode(entries, "contextual")]).toEqual(["a"]);
+	});
+
+	it("counts a card studied on two surfaces under both", () => {
+		expect(cardsReviewedInMode(entries, "sequential").has("a")).toBe(true);
+		expect(cardsReviewedInMode(entries, "contextual").has("a")).toBe(true);
+	});
+
+	it("is empty for a surface never used", () => {
+		expect(cardsReviewedInMode(entries, "spatial").size).toBe(0);
 	});
 });
 
