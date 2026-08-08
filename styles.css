@@ -2118,3 +2118,321 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Stats dashboard
+   ═══════════════════════════════════════════════════════════ */
+
+/* Categorical series palette.
+   These are literal hexes rather than Obsidian's --color-* variables on
+   purpose: the slot ORDER is the colour-vision-safety mechanism, and it was
+   validated pair by pair against both surfaces. Obsidian's palette shifts with
+   every community theme, which would silently invalidate that. Chart chrome
+   (grid, ink, surface) still uses theme variables, so the charts sit correctly
+   on any theme — only the data hues are pinned.
+   Worst adjacent CVD dE: 9.1 light / 8.4 dark. Worst normal-vision: 19.6 / 19.3. */
+.osmosis-stats-view {
+	--osmosis-series-new: #2a78d6;
+	--osmosis-series-learning: #eb6834;
+	--osmosis-series-young: #1baf7a;
+	--osmosis-series-mature: #eda100;
+	--osmosis-series-relearning: #e87ba4;
+	--osmosis-series-excluded: var(--background-modifier-border);
+
+	/* Sequential ramp for the calendar heatmap: one hue, light to dark.
+	   Step 0 is a surface tone, so an empty year reads as empty. */
+	--osmosis-heat-0: var(--background-modifier-border);
+	--osmosis-heat-1: #b7d3f6;
+	--osmosis-heat-2: #6da7ec;
+	--osmosis-heat-3: #2a78d6;
+	--osmosis-heat-4: #184f95;
+
+	padding: var(--size-4-4);
+	overflow-y: auto;
+}
+
+.theme-dark .osmosis-stats-view {
+	--osmosis-series-new: #3987e5;
+	--osmosis-series-learning: #d95926;
+	--osmosis-series-young: #199e70;
+	--osmosis-series-mature: #c98500;
+	--osmosis-series-relearning: #d55181;
+
+	--osmosis-heat-1: #184f95;
+	--osmosis-heat-2: #256abf;
+	--osmosis-heat-3: #3987e5;
+	--osmosis-heat-4: #86b6ef;
+}
+
+/* ── Scope bar ─────────────────────────────────────────────── */
+
+.osmosis-stats-scopebar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-4);
+	margin-bottom: var(--size-4-4);
+	padding-bottom: var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-stats-scope-field {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.osmosis-stats-scope-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.osmosis-stats-loading {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* ── Panels ────────────────────────────────────────────────── */
+
+/* Half a window is the design target — these live in a splittable tab, so the
+   grid collapses to one column well before the charts would be squeezed. */
+.osmosis-stats-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+	gap: var(--size-4-4);
+}
+
+.osmosis-stats-panel {
+	min-width: 0;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+}
+
+.osmosis-stats-panel-title {
+	margin: 0 0 2px;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-panel-caption,
+.osmosis-stats-subtitle,
+.osmosis-stats-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-panel-caption {
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-subtitle {
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-note {
+	margin-top: var(--size-4-2);
+	font-style: italic;
+}
+
+.osmosis-stats-summary {
+	margin: var(--size-4-1) 0 var(--size-4-2);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+/* Anchors the hover tooltip, which is positioned against this box. */
+.osmosis-stats-plot {
+	position: relative;
+	min-width: 0;
+}
+
+.osmosis-stats-empty {
+	padding: var(--size-4-3) 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* ── Charts ────────────────────────────────────────────────── */
+
+.osmosis-stats-svg {
+	display: block;
+	max-width: 100%;
+	overflow: visible;
+}
+
+/* The heatmap is the one chart that cannot reflow — a year is 53 columns wide
+   whatever the pane is — so it scrolls inside its own box. */
+.osmosis-stats-heatmap {
+	max-width: none;
+}
+
+.osmosis-stats-plot:has(.osmosis-stats-heatmap) {
+	overflow-x: auto;
+}
+
+.osmosis-stats-axis-label {
+	fill: var(--text-faint);
+	font-size: 10px;
+	font-family: var(--font-interface);
+}
+
+/* Hairline, solid, one step off the surface — recessive by construction.
+   Named `gridline`, not `grid`: `.osmosis-stats-grid` is the panel container
+   above, and a `display: grid` landing on an SVG <line> stops it drawing. */
+.osmosis-stats-gridline {
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.osmosis-stats-baseline {
+	stroke: var(--background-modifier-border-hover);
+	stroke-width: 1;
+}
+
+.osmosis-stats-cumulative {
+	fill: none;
+	stroke: var(--text-faint);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Slices are separated by a surface-coloured stroke, the pie's version of the
+   stacked bar's 2px gap. Never a border — that would be ink that isn't data. */
+.osmosis-stats-slice {
+	stroke: var(--background-primary);
+	stroke-width: 2;
+}
+
+.osmosis-stats-hit {
+	fill: transparent;
+}
+
+.osmosis-stats-bar,
+.osmosis-stats-cell,
+.osmosis-stats-slice {
+	cursor: default;
+}
+
+.osmosis-stats-bar:hover,
+.osmosis-stats-cell:hover,
+.osmosis-stats-slice:hover {
+	opacity: 0.82;
+}
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+
+.osmosis-stats-tooltip {
+	position: absolute;
+	z-index: var(--layer-tooltip);
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* ── Legend ────────────────────────────────────────────────── */
+
+/* Every legend row carries its value. That is the identity channel for
+   colour-blind readers and the relief for the lighter hues, which sit below
+   3:1 against a light surface. */
+.osmosis-stats-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1) var(--size-4-3);
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+	flex-shrink: 0;
+}
+
+.osmosis-stats-legend-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-legend-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Stat tiles ────────────────────────────────────────────── */
+
+.osmosis-stats-tiles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-4);
+	margin: var(--size-4-2) 0;
+}
+
+.osmosis-stats-tile-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Proportional figures, not tabular: these are standalone display numbers,
+   and tabular digits read loose at this size. */
+.osmosis-stats-tile-value {
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-semibold);
+	line-height: 1.2;
+}
+
+/* ── Controls ──────────────────────────────────────────────── */
+
+.osmosis-stats-segmented,
+.osmosis-stats-stepper {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-seg {
+	padding: 2px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.osmosis-stats-seg:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-seg-active {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.osmosis-stats-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: var(--size-4-2);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
