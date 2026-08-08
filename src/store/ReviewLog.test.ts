@@ -4,11 +4,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
 	MATURE_INTERVAL_DAYS,
+	MATURE_INTERVAL_SECONDS,
 	SHARD_FORMAT_VERSION,
 	ReviewLog,
 	aggregateAnswerButtons,
 	aggregateRollup,
 	cardIntervalDays,
+	classifyReview,
 	dayKey,
 	deviceLabelCandidate,
 	mergeRollups,
@@ -394,6 +396,36 @@ describe("aggregateRollup", () => {
 		expect(bucket?.byMode).toEqual({ sequential: 1, contextual: 1, spatial: 2 });
 	});
 
+	it("splits counts and time by review class", () => {
+		const rollup = aggregateRollup([
+			entry({ t: day(9), s: "learning", iv: 600, e: 3000 }),
+			entry({ t: day(10), s: "review", iv: MATURE_INTERVAL_SECONDS - 1, e: 5000 }),
+			entry({ t: day(11), s: "review", iv: MATURE_INTERVAL_SECONDS, e: 1000 }),
+			entry({ t: day(12), s: "relearning", iv: 600, e: 7000 }),
+		]);
+
+		const bucket = rollup["2026-08-07"];
+		expect(bucket?.byClass).toEqual({ learning: 1, young: 1, mature: 1, relearning: 1 });
+		expect(bucket?.timeByClass).toEqual({
+			learning: 3000,
+			young: 5000,
+			mature: 1000,
+			relearning: 7000,
+		});
+	});
+
+	it("keeps byClass totals equal to the day's review count", () => {
+		const rollup = aggregateRollup([
+			entry({ t: day(9), s: "learning" }),
+			entry({ t: day(10), s: "review", iv: MATURE_INTERVAL_SECONDS * 4 }),
+			entry({ t: day(11), s: "new" }),
+		]);
+
+		const bucket = rollup["2026-08-07"];
+		const classTotal = Object.values(bucket?.byClass ?? {}).reduce((a, b) => a + b, 0);
+		expect(classTotal).toBe(bucket?.reviews);
+	});
+
 	it("crosses a month boundary into separate day buckets", () => {
 		const rollup = aggregateRollup([
 			entry({ t: new Date(2026, 6, 31, 23, 0).getTime() }),
@@ -430,6 +462,34 @@ describe("mergeRollups", () => {
 		expect(merged["2026-08-07"]?.byMode).toEqual({ sequential: 1, contextual: 0, spatial: 1 });
 	});
 
+	it("sums the review-class split across shards", () => {
+		const desktop = aggregateRollup([
+			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), s: "review", iv: 86_400, e: 1000 }),
+		]);
+		const phone = aggregateRollup([
+			entry({
+				t: new Date(2026, 7, 7, 20, 0).getTime(),
+				s: "review",
+				iv: MATURE_INTERVAL_SECONDS,
+				e: 500,
+			}),
+		]);
+
+		const merged = mergeRollups([desktop, phone]);
+		expect(merged["2026-08-07"]?.byClass).toEqual({
+			learning: 0,
+			young: 1,
+			mature: 1,
+			relearning: 0,
+		});
+		expect(merged["2026-08-07"]?.timeByClass).toEqual({
+			learning: 0,
+			young: 1000,
+			mature: 500,
+			relearning: 0,
+		});
+	});
+
 	it("keeps days that only one shard saw", () => {
 		const merged = mergeRollups([
 			aggregateRollup([entry({ t: new Date(2026, 7, 7, 9, 0).getTime() })]),
@@ -447,6 +507,27 @@ describe("mergeRollups", () => {
 	it("handles no rollups and empty rollups", () => {
 		expect(mergeRollups([])).toEqual({});
 		expect(mergeRollups([{}, {}])).toEqual({});
+	});
+});
+
+describe("classifyReview", () => {
+	it("puts a review-state card either side of the 21-day line", () => {
+		expect(classifyReview(entry({ s: "review", iv: MATURE_INTERVAL_SECONDS - 1 }))).toBe("young");
+		expect(classifyReview(entry({ s: "review", iv: MATURE_INTERVAL_SECONDS }))).toBe("mature");
+	});
+
+	it("classifies by state before interval for the learning states", () => {
+		// A relearning card can carry a long interval; it is still relearning.
+		expect(classifyReview(entry({ s: "relearning", iv: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
+			"relearning",
+		);
+		expect(classifyReview(entry({ s: "learning", iv: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
+			"learning",
+		);
+	});
+
+	it("folds a hand-edited `new` post-state into learning", () => {
+		expect(classifyReview(entry({ s: "new", iv: 0 }))).toBe("learning");
 	});
 });
 
@@ -1218,7 +1299,7 @@ describe("ReviewLog.moveFolder", () => {
 describe("normalizeCache", () => {
 	it("accepts a cache it wrote itself", () => {
 		const cache: ReviewLogCache = {
-			v: 1,
+			v: 2,
 			shards: {
 				"2026-08.pixel-10a.jsonl": {
 					mtime: 5000,
@@ -1232,20 +1313,30 @@ describe("normalizeCache", () => {
 
 	it("discards a cache from an unknown version", () => {
 		expect(normalizeCache({ v: 99, shards: { "2026-08.pixel-10a.jsonl": {} } })).toEqual({
-			v: 1,
+			v: 2,
+			shards: {},
+		});
+	});
+
+	// A v1 cache predates `byClass`, so its day buckets cannot be told apart
+	// from genuinely empty days. Discarding costs one re-parse; migrating would
+	// flatten the Reviews graph across all pre-upgrade history.
+	it("discards a cache from the previous version", () => {
+		expect(normalizeCache({ v: 1, shards: { "2026-08.pixel-10a.jsonl": {} } })).toEqual({
+			v: 2,
 			shards: {},
 		});
 	});
 
 	it("discards anything that is not a cache", () => {
 		for (const junk of [null, undefined, "", 42, [], "{}"]) {
-			expect(normalizeCache(junk)).toEqual({ v: 1, shards: {} });
+			expect(normalizeCache(junk)).toEqual({ v: 2, shards: {} });
 		}
 	});
 
 	it("drops entries keyed by something that is not a shard name", () => {
 		const result = normalizeCache({
-			v: 1,
+			v: 2,
 			shards: { "notes.md": { mtime: 1, size: 1, days: {} } },
 		});
 		expect(result.shards).toEqual({});
@@ -1253,7 +1344,7 @@ describe("normalizeCache", () => {
 
 	it("drops shards with an unusable fingerprint", () => {
 		const result = normalizeCache({
-			v: 1,
+			v: 2,
 			shards: { "2026-08.pixel-10a.jsonl": { mtime: "soon", size: 1, days: {} } },
 		});
 		expect(result.shards).toEqual({});
@@ -1261,7 +1352,7 @@ describe("normalizeCache", () => {
 
 	it("coerces missing and nonsense counts to zero", () => {
 		const result = normalizeCache({
-			v: 1,
+			v: 2,
 			shards: {
 				"2026-08.pixel-10a.jsonl": {
 					mtime: 1,
@@ -1284,6 +1375,8 @@ describe("normalizeCache", () => {
 			byRating: { 1: 2, 2: 0, 3: 0, 4: 0 },
 			byState: { new: 0, learning: 0, review: 0, relearning: 0 },
 			byMode: { sequential: 0, contextual: 0, spatial: 0 },
+			byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
+			timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 		});
 	});
 });

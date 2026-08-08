@@ -24,6 +24,9 @@ export const SHARD_EXTENSION = ".jsonl";
 /** Interval at or above which a card counts as mature. Anki's threshold. */
 export const MATURE_INTERVAL_DAYS = 21;
 
+/** The same threshold in seconds, the unit an entry's `iv` is stored in. */
+export const MATURE_INTERVAL_SECONDS = MATURE_INTERVAL_DAYS * 86_400;
+
 /** Maximum length of a slugged device label. */
 const MAX_DEVICE_LABEL_LENGTH = 32;
 
@@ -325,6 +328,18 @@ export function dayKey(epochMs: number): string {
 /** Counts indexed by FSRS rating. */
 export type RatingCounts = Record<FSRSRating, number>;
 
+/**
+ * How a review stacks in the volume graphs — Anki's Reviews legend.
+ *
+ * Distinct from `CardState` because the interesting split is not four states
+ * but four *bars*: the two learning states stay as they are, and the single
+ * `review` state divides at the maturity line into young and mature. That
+ * division is the whole signal of the graph — it shows whether the review load
+ * is maturing or churning — and no combination of `CardState` alone expresses
+ * it.
+ */
+export type ReviewClass = "learning" | "young" | "mature" | "relearning";
+
 /** One day's aggregate — everything the day-bucketed graphs need. */
 export interface DayRollup {
 	reviews: number;
@@ -333,6 +348,10 @@ export interface DayRollup {
 	byRating: RatingCounts;
 	byState: Record<CardState, number>;
 	byMode: Record<StudyMode, number>;
+	/** Review counts split for the Reviews graph. */
+	byClass: Record<ReviewClass, number>;
+	/** Time on screen, ms, split the same way — the Review Time graph. */
+	timeByClass: Record<ReviewClass, number>;
 }
 
 /** Day-bucketed aggregates, keyed by local `YYYY-MM-DD`. */
@@ -341,6 +360,7 @@ export type Rollup = Record<string, DayRollup>;
 const RATINGS: readonly FSRSRating[] = [1, 2, 3, 4];
 const CARD_STATES: readonly CardState[] = ["new", "learning", "review", "relearning"];
 const STUDY_MODES: readonly StudyMode[] = ["sequential", "contextual", "spatial"];
+const REVIEW_CLASSES: readonly ReviewClass[] = ["learning", "young", "mature", "relearning"];
 
 /** A zeroed day bucket. */
 export function emptyDayRollup(): DayRollup {
@@ -350,7 +370,31 @@ export function emptyDayRollup(): DayRollup {
 		byRating: { 1: 0, 2: 0, 3: 0, 4: 0 },
 		byState: { new: 0, learning: 0, review: 0, relearning: 0 },
 		byMode: { sequential: 0, contextual: 0, spatial: 0 },
+		byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
+		timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 	};
+}
+
+/**
+ * Which bar a review stacks into, from the state and interval the answer
+ * *produced*.
+ *
+ * Anki classifies on the interval the card had going *in*; this classifies on
+ * the interval it came out with, because that is what the log records. The two
+ * differ only on the single review that carries a card across the 21-day line,
+ * which Osmosis calls mature one review earlier than Anki would. Storing the
+ * prior interval to close that gap would mean changing the shard format, which
+ * is append-only and cannot be backfilled — a permanent cost for a one-review
+ * boundary difference.
+ *
+ * A post-answer state of `new` is not something Osmosis writes (answering a new
+ * card moves it to learning), so it can only arrive from a hand-edited line. It
+ * folds into learning rather than getting a bar of its own.
+ */
+export function classifyReview(entry: ReviewLogEntry): ReviewClass {
+	if (entry.s === "relearning") return "relearning";
+	if (entry.s !== "review") return "learning";
+	return entry.iv >= MATURE_INTERVAL_SECONDS ? "mature" : "young";
 }
 
 /**
@@ -372,6 +416,10 @@ export function aggregateRollup(entries: readonly ReviewLogEntry[]): Rollup {
 		day.byRating[entry.r] += 1;
 		day.byState[entry.s] += 1;
 		day.byMode[entry.m] += 1;
+
+		const reviewClass = classifyReview(entry);
+		day.byClass[reviewClass] += 1;
+		day.timeByClass[reviewClass] += entry.e;
 	}
 
 	return rollup;
@@ -392,6 +440,10 @@ export function mergeRollups(rollups: readonly Rollup[]): Rollup {
 			for (const r of RATINGS) target.byRating[r] += day.byRating[r];
 			for (const s of CARD_STATES) target.byState[s] += day.byState[s];
 			for (const m of STUDY_MODES) target.byMode[m] += day.byMode[m];
+			for (const c of REVIEW_CLASSES) {
+				target.byClass[c] += day.byClass[c];
+				target.timeByClass[c] += day.timeByClass[c];
+			}
 		}
 	}
 
@@ -492,8 +544,16 @@ export interface ReviewLogConfig {
 	installId: string;
 }
 
-/** Cache format version. A bump discards old caches rather than migrating. */
-const CACHE_VERSION = 1;
+/**
+ * Cache format version. A bump discards old caches rather than migrating.
+ *
+ * v2 added `byClass` / `timeByClass` to each day bucket. Discarding is the
+ * right move rather than backfilling zeroes: a zeroed split is indistinguishable
+ * from a genuinely empty day, so the Reviews graph would silently show flat bars
+ * for all history predating the upgrade. One re-parse of the shards rebuilds it
+ * exactly, which is the property this cache was designed around.
+ */
+const CACHE_VERSION = 2;
 
 /** How many `-2`, `-3`, … labels the collision guard will try. */
 const MAX_LABEL_ATTEMPTS = 50;
@@ -909,6 +969,14 @@ function normalizeRollup(raw: unknown): Rollup {
 		const byMode = value["byMode"];
 		if (isPlainObject(byMode)) {
 			for (const m of STUDY_MODES) bucket.byMode[m] = toCount(byMode[m]);
+		}
+		const byClass = value["byClass"];
+		if (isPlainObject(byClass)) {
+			for (const c of REVIEW_CLASSES) bucket.byClass[c] = toCount(byClass[c]);
+		}
+		const timeByClass = value["timeByClass"];
+		if (isPlainObject(timeByClass)) {
+			for (const c of REVIEW_CLASSES) bucket.timeByClass[c] = toCount(timeByClass[c]);
 		}
 
 		rollup[day] = bucket;

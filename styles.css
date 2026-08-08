@@ -2118,3 +2118,514 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Stats dashboard
+   ═══════════════════════════════════════════════════════════ */
+
+/* Categorical series palette.
+   These are literal hexes rather than Obsidian's --color-* variables on
+   purpose: the slot ORDER is the colour-vision-safety mechanism, and it was
+   validated pair by pair against both surfaces. Obsidian's palette shifts with
+   every community theme, which would silently invalidate that. Chart chrome
+   (grid, ink, surface) still uses theme variables, so the charts sit correctly
+   on any theme — only the data hues are pinned.
+   Worst adjacent CVD dE: 9.1 light / 8.4 dark. Worst normal-vision: 19.6 / 19.3. */
+.osmosis-stats-view {
+	--osmosis-series-new: #2a78d6;
+	--osmosis-series-learning: #eb6834;
+	--osmosis-series-young: #1baf7a;
+	--osmosis-series-mature: #eda100;
+	--osmosis-series-relearning: #e87ba4;
+	--osmosis-series-excluded: var(--background-modifier-border);
+
+	/* Sequential ramp for the calendar heatmap: one hue, light to dark.
+	   Step 0 is a surface tone, so an empty year reads as empty. */
+	--osmosis-heat-0: var(--background-modifier-border);
+	--osmosis-heat-1: #b7d3f6;
+	--osmosis-heat-2: #6da7ec;
+	--osmosis-heat-3: #2a78d6;
+	--osmosis-heat-4: #184f95;
+
+	padding: var(--size-4-4);
+	overflow-y: auto;
+}
+
+.theme-dark .osmosis-stats-view {
+	--osmosis-series-new: #3987e5;
+	--osmosis-series-learning: #d95926;
+	--osmosis-series-young: #199e70;
+	--osmosis-series-mature: #c98500;
+	--osmosis-series-relearning: #d55181;
+
+	--osmosis-heat-1: #184f95;
+	--osmosis-heat-2: #256abf;
+	--osmosis-heat-3: #3987e5;
+	--osmosis-heat-4: #86b6ef;
+}
+
+/* ── Scope bar ─────────────────────────────────────────────── */
+
+.osmosis-stats-scopebar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-4);
+	margin-bottom: var(--size-4-4);
+	padding-bottom: var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-stats-scope-field {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+/* The in-panel segmented control carries a bottom margin. `align-items: center`
+   centres the margin box, so in the scope bar that margin lifts the buttons
+   half its height above the deck dropdown beside them. */
+.osmosis-stats-scopebar .osmosis-stats-segmented {
+	margin-bottom: 0;
+}
+
+.osmosis-stats-scope-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.osmosis-stats-loading {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* ── Panels ────────────────────────────────────────────────── */
+
+/* Vertical masonry, via multi-column rather than grid.
+   CSS grid cannot do this: row height is set by the tallest item in the row, so
+   a short panel beside a tall chart leaves dead space no alignment property can
+   reclaim — `align-items: start` shrinks the panel but not the row. Multi-column
+   flows panels down each column and packs them tight, at the cost of reading
+   order becoming down-then-across.
+   `columns` takes a width, not a count, so the column count still adapts: half a
+   window is the design target, since these live in a splittable tab. */
+.osmosis-stats-grid {
+	columns: 340px;
+	column-gap: var(--size-4-4);
+}
+
+.osmosis-stats-panel {
+	/* Never let a panel be split across a column break. */
+	break-inside: avoid;
+	/* Multi-column ignores margin collapse, so this is the only vertical gap. */
+	margin-bottom: var(--size-4-4);
+	min-width: 0;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+}
+
+.osmosis-stats-panel-title {
+	margin: 0 0 2px;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-panel-caption,
+.osmosis-stats-subtitle,
+.osmosis-stats-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-panel-caption {
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-subtitle {
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-note {
+	margin-top: var(--size-4-2);
+	font-style: italic;
+}
+
+.osmosis-stats-summary {
+	margin: var(--size-4-1) 0 var(--size-4-2);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+/* Anchors the hover tooltip, which is positioned against this box. */
+.osmosis-stats-plot {
+	position: relative;
+	min-width: 0;
+}
+
+.osmosis-stats-empty {
+	padding: var(--size-4-3) 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* ── Charts ────────────────────────────────────────────────── */
+
+.osmosis-stats-svg {
+	display: block;
+	max-width: 100%;
+	overflow: visible;
+}
+
+/* The heatmap is the one chart that cannot reflow — a year is 53 columns wide
+   whatever the pane is — so it scrolls inside its own box. */
+.osmosis-stats-heatmap {
+	max-width: none;
+}
+
+.osmosis-stats-plot:has(.osmosis-stats-heatmap) {
+	overflow-x: auto;
+}
+
+.osmosis-stats-axis-label {
+	fill: var(--text-faint);
+	font-size: 10px;
+	font-family: var(--font-interface);
+}
+
+/* Hairline, solid, one step off the surface — recessive by construction.
+   Named `gridline`, not `grid`: `.osmosis-stats-grid` is the panel container
+   above, and a `display: grid` landing on an SVG <line> stops it drawing. */
+.osmosis-stats-gridline {
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.osmosis-stats-baseline {
+	stroke: var(--background-modifier-border-hover);
+	stroke-width: 1;
+}
+
+.osmosis-stats-cumulative {
+	fill: none;
+	stroke: var(--text-faint);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Slices are separated by a surface-coloured stroke, the pie's version of the
+   stacked bar's 2px gap. Never a border — that would be ink that isn't data. */
+.osmosis-stats-slice {
+	stroke: var(--background-primary);
+	stroke-width: 2;
+}
+
+.osmosis-stats-hit {
+	fill: transparent;
+}
+
+.osmosis-stats-bar,
+.osmosis-stats-cell,
+.osmosis-stats-slice {
+	cursor: default;
+}
+
+.osmosis-stats-bar:hover,
+.osmosis-stats-cell:hover,
+.osmosis-stats-slice:hover {
+	opacity: 0.82;
+}
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+
+.osmosis-stats-tooltip {
+	position: absolute;
+	z-index: var(--layer-tooltip);
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* ── Legend ────────────────────────────────────────────────── */
+
+/* Every legend row carries its value. That is the identity channel for
+   colour-blind readers and the relief for the lighter hues, which sit below
+   3:1 against a light surface. */
+.osmosis-stats-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1) var(--size-4-3);
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+	flex-shrink: 0;
+}
+
+.osmosis-stats-legend-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-legend-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Stat tiles ────────────────────────────────────────────── */
+
+.osmosis-stats-tiles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-4);
+	margin: var(--size-4-2) 0;
+}
+
+.osmosis-stats-tile-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Proportional figures, not tabular: these are standalone display numbers,
+   and tabular digits read loose at this size. */
+.osmosis-stats-tile-value {
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-semibold);
+	line-height: 1.2;
+}
+
+/* ── Controls ──────────────────────────────────────────────── */
+
+.osmosis-stats-segmented,
+.osmosis-stats-stepper {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-seg {
+	padding: 2px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.osmosis-stats-seg:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-seg-active {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.osmosis-stats-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: var(--size-4-2);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.osmosis-stats-panel {
+	position: relative;
+}
+
+/* ── Drag handle ───────────────────────────────────────────── */
+
+/* Quiet until the panel is hovered: seventeen permanent grips would read as
+   chrome on what is meant to be a page of graphs. */
+.osmosis-stats-drag {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1px;
+	border-radius: var(--radius-s);
+	color: var(--text-faint);
+	opacity: 0;
+	cursor: grab;
+	transition: opacity 100ms ease-in-out;
+	/* The grip owns its pointer for the whole gesture; without this the page
+	   scrolls out from under a touch drag. */
+	touch-action: none;
+}
+
+.osmosis-stats-panel:hover .osmosis-stats-drag,
+.osmosis-stats-drag:focus-visible {
+	opacity: 1;
+}
+
+/* No hover to reveal them, so the grips are always visible — and big enough to
+   hit with a fingertip. */
+@media (hover: none) {
+	.osmosis-stats-drag {
+		padding: 5px;
+		opacity: 1;
+	}
+}
+
+.osmosis-stats-drag:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+}
+
+.osmosis-stats-drag:active {
+	cursor: grabbing;
+}
+
+.osmosis-stats-drag .svg-icon {
+	width: 16px;
+	height: 16px;
+}
+
+/* Keeps a long title clear of the grip. */
+.osmosis-stats-panel-title {
+	padding-right: var(--size-4-6);
+}
+
+/* The panel a drag left behind. What follows the pointer is the browser's drag
+   ghost on desktop, and the clone below on touch. */
+.osmosis-stats-panel-dragging {
+	opacity: 0.4;
+}
+
+/* Touch only: the hold has armed, and moving now drags. */
+.osmosis-stats-panel-held {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 2px 8px var(--background-modifier-box-shadow);
+}
+
+/* Where the panel will land. Nothing moves until the drop, so this line is the
+   only prediction the reader gets — the multi-column repack cannot be previewed
+   without reparenting the panel, which aborts the drag. */
+.osmosis-stats-drop-above {
+	box-shadow: inset 0 3px 0 0 var(--interactive-accent);
+}
+
+.osmosis-stats-drop-below {
+	box-shadow: inset 0 -3px 0 0 var(--interactive-accent);
+}
+
+/* The panel that follows a finger. Transparent to hit testing, so the panel
+   underneath can still be found. */
+.osmosis-stats-drag-clone {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: var(--layer-popover);
+	max-height: 220px;
+	padding: var(--size-4-3);
+	overflow: hidden;
+	border: 1px solid var(--interactive-accent);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+	box-shadow: 0 4px 12px var(--background-modifier-box-shadow);
+	opacity: 0.9;
+	pointer-events: none;
+}
+
+/* ── Breakdown table ───────────────────────────────────────── */
+
+.osmosis-stats-table {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-row {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: baseline;
+	gap: var(--size-4-3);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-row-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-row-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-row-sub {
+	min-width: 5.5em;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+/* ── Recall comparison rows ────────────────────────────────── */
+
+.osmosis-stats-recall-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 60px auto auto;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-recall-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-recall-row .osmosis-stats-row-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The unfilled track is a recessive step of the surface, so the fill reads as
+   magnitude across the whole row rather than as a floating block. */
+.osmosis-stats-meter {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.osmosis-stats-meter-fill {
+	height: 100%;
+	border-radius: 3px;
+}

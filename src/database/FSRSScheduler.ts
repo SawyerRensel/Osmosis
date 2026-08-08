@@ -111,6 +111,19 @@ export class FSRSScheduler {
 	}
 
 	/**
+	 * Probability of recalling a card right now, 0–1, or null when the card has
+	 * never been reviewed and so has no forgetting curve to sit on.
+	 *
+	 * Delegates to ts-fsrs rather than reimplementing the curve, so it stays
+	 * consistent with the parameters this scheduler was constructed with.
+	 */
+	retrievability(schedule: ScheduleData, now?: number): number | null {
+		if (schedule.lastReview === null || schedule.stability <= 0) return null;
+		const card = this.scheduleToFSRSCard(schedule);
+		return this.f.get_retrievability(card, new Date(now ?? Date.now()), false);
+	}
+
+	/**
 	 * Convert our ScheduleData (epoch-ms, string state) to a ts-fsrs Card (Date, enum state).
 	 */
 	private scheduleToFSRSCard(schedule: ScheduleData): TsFsrsCard {
