@@ -511,11 +511,15 @@ using them as a baseline again.
 
 ## Verification
 
-`npm run lint` clean, 1198 unit tests passing, build clean. Manually confirmed by
-the user: the four mutations, undo/redo, click selection in all three layouts,
-the icon toolbar, and column resizing. Shipped on lint, tests and build alone,
-without a manual pass: the search-focus fix and its clear button, column sorting,
-touch multi-select, and the bottom-of-leaf spacing fix.
+`npm run lint` clean, 1198 unit tests passing, build clean, and every acceptance
+criterion above manually confirmed by the user in Obsidian across all three
+layouts — the four mutations, undo/redo, click and touch selection, the icon
+toolbar, search, column resizing and column sorting.
+
+The touch gestures are the part to re-check by hand after any change here. They
+have no automated coverage and are impractical to give any: they depend on real
+pointer events, a live scroller with `elementFromPoint` under it, and the timing
+of a press against a scroll the browser has already begun.
 
 ## Deliberately not done
 
