@@ -129,7 +129,7 @@ export function updateFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (isRecognizedMetadataLine(line)) {
+		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -252,7 +252,7 @@ function findFenceForId(lines: string[], targetId: string): number {
 			}
 
 			// Stop if we hit a non-metadata line
-			if (!isRecognizedMetadataLine(line)) break;
+			if (!isOccludeBlockLine(lines[j]!) && !isRecognizedMetadataLine(line)) break;
 		}
 	}
 
@@ -289,7 +289,7 @@ export function updateFenceExclude(
 			metaEnd = i;
 			break;
 		}
-		if (isRecognizedMetadataLine(line)) {
+		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -386,6 +386,22 @@ function isRecognizedMetadataLine(line: string): boolean {
 }
 
 /**
+ * An `occlude[-label]:` header key, which opens a block instead of carrying a
+ * value, or one of that block's indented body lines.
+ *
+ * Every metadata scan below walks until it meets a line it does not recognize.
+ * Without this, a shape set ends the scan on its own first line, and the blank
+ * line these functions then insert to separate metadata from content lands
+ * *above* the shapes — terminating the metadata block and orphaning every mask
+ * on the image. The header is written once by the editor and read back
+ * verbatim; the writer's only job is to leave it alone.
+ */
+function isOccludeBlockLine(rawLine: string): boolean {
+	if (/^\s+\S/.test(rawLine)) return true;
+	return /^occlude(?:-[A-Za-z0-9_-]+)?\s*:\s*$/.test(rawLine.trim());
+}
+
+/**
  * Pure function: remove **one card's** schedule metadata from a fence, returning
  * that card to "new" state. Preserves non-schedule metadata like id and exclude,
  * and preserves the schedule of every other card the fence generates.
@@ -422,7 +438,7 @@ export function removeFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (isRecognizedMetadataLine(line)) {
+		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -490,7 +506,7 @@ function locateFence(content: string, cardId: string): {
 			metaEnd = i;
 			break;
 		}
-		if (isRecognizedMetadataLine(line)) {
+		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}

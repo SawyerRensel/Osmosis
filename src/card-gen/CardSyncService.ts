@@ -1,11 +1,13 @@
 import type { TFile, Vault } from "obsidian";
-import type { Card, ScheduleData } from "../database/types";
+import type { Card, OcclusionSet, ScheduleData } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
+import { scheduleKey } from "../store/ScheduleStore";
 import type { CardGenerationOptions } from "./note-processor";
 import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
 import { lineCardId } from "./line-cards";
+import { occludeLineCard } from "./occlusion";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -35,6 +37,15 @@ export class CardSyncService {
 		 * osmosis-schedule `disabled: true` overlaid with pending changes.
 		 */
 		private readonly getLineDisabled?: (file: TFile) => Set<string>,
+		/**
+		 * Shape sets for occluded line cards in a note, keyed by block ID.
+		 *
+		 * Occlusion is structural rather than schedule data, but it arrives the
+		 * same way: nested in the `osmosis-schedule` frontmatter entry, which
+		 * only the metadata cache has parsed. So it reaches card generation here
+		 * rather than inside `processNote`, which sees only the raw markdown.
+		 */
+		private readonly getLineOcclusions?: (file: TFile) => Map<string, OcclusionSet>,
 	) {}
 
 	/**
@@ -77,7 +88,7 @@ export class CardSyncService {
 			const lineSchedules = this.getLineSchedules?.(file);
 			const lineDisabled = this.getLineDisabled?.(file);
 
-			for (const genCard of result.cards) {
+			for (const genCard of this.occludeLineCards(file, result.cards)) {
 				generatedIds.add(genCard.id);
 
 				// Preserve existing schedule data if the card already exists in the store
@@ -85,13 +96,14 @@ export class CardSyncService {
 
 				// Line cards read their schedule from osmosis-schedule frontmatter;
 				// fence cards carry it in fence metadata (genCard fields).
-				const lineSchedule = genCard.blockId !== undefined
-					? lineSchedules?.get(genCard.blockId)
+				const key = genCard.blockId !== undefined
+					? scheduleKey(genCard.blockId, genCard.occlusionGroup)
 					: undefined;
+				const lineSchedule = key !== undefined ? lineSchedules?.get(key) : undefined;
 				// Line cards source `disabled` from osmosis-schedule frontmatter;
 				// fence cards carry it in the markdown as `exclude: true`.
-				const isDisabled = genCard.blockId !== undefined
-					? lineDisabled?.has(genCard.blockId) ?? false
+				const isDisabled = key !== undefined
+					? lineDisabled?.has(key) ?? false
 					: genCard.disabled === true;
 
 				const card: Card = {
@@ -107,6 +119,8 @@ export class CardSyncService {
 					excludeFromDecks: genCard.excludeFromDecks,
 					...(isDisabled ? { disabled: true } : {}),
 					contextBefore: genCard.contextBefore,
+					occlusion: genCard.occlusion,
+					occlusionGroup: genCard.occlusionGroup,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
 					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
 					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
@@ -188,6 +202,21 @@ export class CardSyncService {
 				notePath: newPath,
 			});
 		}
+	}
+
+	/**
+	 * Replace each line card whose block ID carries a shape set with one
+	 * occlusion card per group. Fence cards and unoccluded line cards pass
+	 * through untouched.
+	 */
+	private occludeLineCards(file: TFile, cards: GeneratedCard[]): GeneratedCard[] {
+		const occlusions = this.getLineOcclusions?.(file);
+		if (!occlusions || occlusions.size === 0) return cards;
+
+		return cards.flatMap((card) => {
+			const set = card.blockId !== undefined ? occlusions.get(card.blockId) : undefined;
+			return set ? occludeLineCard(card, set) : [card];
+		});
 	}
 
 	/**

@@ -117,6 +117,7 @@ const CARD_TYPE_LABELS: Record<CardType, string> = {
 	explicit_bidi: "Bidirectional",
 	explicit_cloze: "Cloze",
 	code_cloze: "Code cloze",
+	occlusion: "Image occlusion",
 	line: "Line",
 };
 
@@ -125,6 +126,7 @@ const CARD_TYPE_ORDER: readonly CardType[] = [
 	"explicit_bidi",
 	"explicit_cloze",
 	"code_cloze",
+	"occlusion",
 	"line",
 ];
 

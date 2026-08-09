@@ -4,7 +4,43 @@ export type CardType =
 	| "explicit_bidi"
 	| "explicit_cloze"
 	| "code_cloze"
+	| "occlusion"
 	| "line";
+
+/** Which masks an occlusion card paints on its front. */
+export type OcclusionMode = "hide-all-guess-one" | "hide-one-guess-one";
+
+/**
+ * One mask on an occluded image.
+ *
+ * Coordinates are normalised 0–1 against the image's own dimensions rather
+ * than stored in pixels, so a mask stays put when the image is resized, swapped
+ * for a retina variant, or given a `|300` sizing suffix.
+ */
+export type OcclusionShape =
+	| { group: string; kind: "rect"; x: number; y: number; w: number; h: number }
+	| { group: string; kind: "ellipse"; x: number; y: number; rx: number; ry: number }
+	| { group: string; kind: "poly"; points: [number, number][] };
+
+/** The set of masks bound to one image embed. */
+export interface OcclusionSet {
+	mode: OcclusionMode;
+	shapes: OcclusionShape[];
+}
+
+/**
+ * What the mask renderer needs to draw one occlusion card: the image, every
+ * mask on it (other groups' included — both modes need to know about them),
+ * and which group this card is asking about.
+ */
+export interface CardOcclusion {
+	/** Embed target exactly as written in source, e.g. "diagrams/bridge.png". */
+	image: string;
+	mode: OcclusionMode;
+	shapes: OcclusionShape[];
+	/** The group this card asks the user to recall, e.g. "c1". */
+	target: string;
+}
 
 /** FSRS card states. */
 export type CardState = "new" | "learning" | "review" | "relearning";
@@ -41,6 +77,14 @@ export interface Card {
 	 * (document order), rendered as front context in sequential study.
 	 */
 	contextBefore?: string[];
+	/** Occlusion cards: the image, its masks, and the group being asked. */
+	occlusion?: CardOcclusion;
+	/**
+	 * Occluded *line* cards: the shape group this card asks about. Routes the
+	 * card's schedule to a per-group entry nested under its block ID, since one
+	 * block ID now backs several cards.
+	 */
+	occlusionGroup?: string;
 
 	// Schedule fields (all optional — absent means new/unreviewed card)
 	stability?: number;

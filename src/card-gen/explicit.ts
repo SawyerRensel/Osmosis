@@ -1,5 +1,15 @@
 import { generateCardId, extractCardIds } from "../card-id";
-import type { CardState } from "../database/types";
+import type { CardState, OcclusionSet } from "../database/types";
+import {
+	cardOcclusion,
+	findFirstEmbed,
+	findLabeledEmbeds,
+	groupNumber,
+	isolateEmbed,
+	occlusionGroups,
+	parseOccludeBlock,
+	stripEmbedLabels,
+} from "./occlusion";
 import type { GeneratedCard, FenceMetadata, DerivedSchedule } from "./types";
 
 /** Match an osmosis code fence block (3+ backticks). */
@@ -166,8 +176,17 @@ function findInnerCodeFence(contentLines: string[]): { start: number; end: numbe
  * Collect every cloze occurrence in the fence content, grouped by user-authored
  * cN label. Anonymous occurrences each become their own group, numbered strictly
  * above the largest labeled group.
+ *
+ * `reserved` holds group numbers already claimed by the fence's shape sets.
+ * Cloze groups and shape groups share one `cN` namespace per fence because both
+ * derive `<fenceId>-cN`, so without this a caption cloze labelled `c1` beside an
+ * occluded diagram whose masks are also `c1` would emit two cards under one ID
+ * and the second would silently overwrite the first in the store.
  */
-function collectClozeGroups(contentLines: string[]): ClozeGroup[] {
+function collectClozeGroups(
+	contentLines: string[],
+	reserved: ReadonlySet<number> = new Set(),
+): ClozeGroup[] {
 	const innerFence = findInnerCodeFence(contentLines);
 	const inCodeFence = (i: number): boolean =>
 		innerFence !== null && i > innerFence.start && i < innerFence.end;
@@ -304,11 +323,17 @@ function collectClozeGroups(contentLines: string[]): ClozeGroup[] {
 
 	const groups: ClozeGroup[] = [];
 	for (const [num, occs] of labeled) {
+		// A shape set already owns this number — the occlusion card wins, since
+		// its geometry cannot be re-labelled without reopening the editor.
+		if (reserved.has(num)) continue;
 		groups.push({ suffix: num, firstLineIdx: firstLineOf(occs), occurrences: occs });
 	}
 
 	let nextAnon = 1;
 	for (const num of labeled.keys()) {
+		if (num >= nextAnon) nextAnon = num + 1;
+	}
+	for (const num of reserved) {
 		if (num >= nextAnon) nextAnon = num + 1;
 	}
 	// Anonymous groups are emitted in source order so the first anonymous
@@ -479,6 +504,55 @@ function renderClozeCard(
 }
 
 /**
+ * Split a fence's header from its content, reading the two header facts
+ * reading view needs: whether the card is excluded, and whether it declares
+ * image occlusion.
+ *
+ * Pulled out of `parseFenceContent` so it can be tested without a plugin
+ * instance. The occlusion case is the reason it is worth testing: an
+ * `occlude[-label]:` key carries no value and opens an indented block, so the
+ * single-line `key: value` test rejects it and the scan would end *on top of*
+ * the shapes — spilling the whole shape set into the rendered content.
+ */
+export function splitFenceHeader(lines: readonly string[]): {
+	contentStart: number;
+	exclude: boolean;
+	hasOcclusion: boolean;
+} {
+	let contentStart = 0;
+	let exclude = false;
+	let hasOcclusion = false;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		if (line === "") {
+			contentStart = i + 1;
+			break;
+		}
+
+		const occlude = parseOccludeBlock(lines, i);
+		if (occlude) {
+			hasOcclusion = true;
+			contentStart = occlude.nextIdx;
+			i = occlude.nextIdx - 1; // the loop's own i++ lands on nextIdx
+			continue;
+		}
+
+		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+			const excludeMatch = line.match(/^exclude\s*:\s*(.+)$/i);
+			if (excludeMatch) exclude = excludeMatch[1]!.trim() === "true";
+			contentStart = i + 1;
+			continue;
+		}
+
+		contentStart = i;
+		break;
+	}
+
+	return { contentStart, exclude, hasOcclusion };
+}
+
+/**
  * Generate explicit cards from ```osmosis code fences.
  *
  * Fence format:
@@ -545,6 +619,18 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 				if (line === "") {
 					metadataEnded = true;
 					i++;
+					continue;
+				}
+
+				// An `occlude[-label]:` key opens an indented block rather than
+				// carrying a value, so it has to be consumed before the
+				// single-line `key: value` match below rejects it and ends
+				// metadata parsing early.
+				const occlude = parseOccludeBlock(lines, i);
+				if (occlude) {
+					if (!metadata.occlusions) metadata.occlusions = new Map();
+					metadata.occlusions.set(occlude.label, occlude.set);
+					i = occlude.nextIdx;
 					continue;
 				}
 
@@ -640,11 +726,24 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		);
 
 		if (separatorIdx === -1) {
-			// Cloze path — unified across prose and code.
+			// Cloze path — unified across prose and code — plus occlusion, which
+			// is the same model with its geometry lifted into the header.
 			const content = contentLines.join("\n").trim();
 			if (content.length === 0) continue;
 
-			const groups = collectClozeGroups(contentLines);
+			const occlusionCards = buildOcclusionCards(
+				contentLines,
+				metadata,
+				fenceId,
+				fenceStartLine,
+				suspension,
+			);
+			cards.push(...occlusionCards);
+
+			const reserved = new Set(
+				occlusionCards.map((card) => groupNumber(card.occlusion!.target)),
+			);
+			const groups = collectClozeGroups(contentLines, reserved);
 			if (groups.length === 0) continue;
 
 			const hasInlineCode = groups.some((g) =>
@@ -731,7 +830,100 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		}
 	}
 
+	// Belt and braces on the `{label}` markers. `isolateEmbed` already strips
+	// them from occlusion cards, but a fence can mix an occluded diagram with a
+	// caption cloze, and the label would ride through the cloze renderer into
+	// every study surface as literal stray text beside the image. Stripping at
+	// the one point every card leaves this generator means no future card path
+	// can forget. Only the rendered output is cleaned — the source keeps its
+	// labels, which is what binds the shapes to the embed.
+	for (const card of cards) {
+		card.front = stripEmbedLabels(card.front);
+		card.back = stripEmbedLabels(card.back);
+	}
+
 	return cards;
+}
+
+/**
+ * One card per shape group, for every embed the fence binds a shape set to.
+ *
+ * Content is narrowed to the card's own diagram — a fence may carry several
+ * labelled embeds, and a card asking about one of them must not display the
+ * rest. The card keeps *all* of its set's shapes, though, not just the target
+ * group's: hide-all-guess-one paints every mask on the front, so the renderer
+ * needs the siblings even while asking about one.
+ */
+function buildOcclusionCards(
+	contentLines: string[],
+	metadata: FenceMetadata,
+	fenceId: string,
+	fenceStartLine: number,
+	suspension: { disabled?: boolean },
+): GeneratedCard[] {
+	const occlusions = metadata.occlusions;
+	if (!occlusions || occlusions.size === 0) return [];
+
+	const content = contentLines.join("\n");
+	const cards: GeneratedCard[] = [];
+
+	for (const { label, target, body } of bindEmbeds(content, occlusions)) {
+		const set = occlusions.get(label)!;
+		for (const group of occlusionGroups(set)) {
+			const derived = metadata.derivedSchedules?.get(group);
+			cards.push({
+				id: `${fenceId}-${group}`,
+				card_type: "occlusion",
+				front: metadata.hint ? `${body}\n\n_Hint: ${metadata.hint}_` : body,
+				back: body,
+				deck: metadata.deck,
+				sourceLine: fenceStartLine,
+				typeIn: metadata.typeIn,
+				occlusion: cardOcclusion(target, set, group),
+				...suspension,
+				...spreadSchedule(derived),
+			});
+		}
+	}
+
+	return cards;
+}
+
+/**
+ * Pair each declared shape set with the embed it belongs to, and the content
+ * that embed's cards should show.
+ *
+ * A label may only bind once: two embeds carrying `{a}` would otherwise derive
+ * the same `<fenceId>-cN` IDs twice and the later card would overwrite the
+ * earlier one in the store.
+ */
+function bindEmbeds(
+	content: string,
+	occlusions: ReadonlyMap<string, OcclusionSet>,
+): Array<{ label: string; target: string; body: string }> {
+	// Bare `occlude:` — the line-card spelling, also accepted in a fence that
+	// holds a single embed, so the two carriers stay legible the same way.
+	const bare = occlusions.get("");
+	if (bare && occlusions.size === 1) {
+		const target = findFirstEmbed(content);
+		return target === null
+			? []
+			: [{ label: "", target, body: stripEmbedLabels(content) }];
+	}
+
+	const bound: Array<{ label: string; target: string; body: string }> = [];
+	const used = new Set<string>();
+	for (const embed of findLabeledEmbeds(content)) {
+		const set = occlusions.get(embed.label);
+		if (!set || set.shapes.length === 0 || used.has(embed.label)) continue;
+		used.add(embed.label);
+		bound.push({
+			label: embed.label,
+			target: embed.target,
+			body: isolateEmbed(content, embed.label),
+		});
+	}
+	return bound;
 }
 
 /**

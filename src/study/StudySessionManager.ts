@@ -8,9 +8,9 @@ import type { DeckScope, StudyCard, DeckCounts } from "./types";
 
 /** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
 export interface LineScheduleWriter {
-	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void;
-	removeSchedule(notePath: string, blockId: string): void;
-	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
+	setSchedule(notePath: string, blockId: string, schedule: ScheduleData, group?: string): void;
+	removeSchedule(notePath: string, blockId: string, group?: string): void;
+	setDisabled(notePath: string, blockId: string, disabled: boolean, group?: string): void;
 }
 
 /** Destination for review-history entries (the append-only review log). */
@@ -136,7 +136,7 @@ export class StudySessionManager {
 				this.scheduleStore?.setSchedule(card.notePath, card.blockId, {
 					...update.schedule,
 					lastReview: update.schedule.lastReview ?? ts,
-				});
+				}, card.occlusionGroup);
 			} else {
 				const file = this.resolveFile(card.notePath);
 				if (file) {
@@ -203,7 +203,7 @@ export class StudySessionManager {
 
 			if (card) {
 				if (isLineCard(card)) {
-					this.scheduleStore?.setSchedule(card.notePath, card.blockId, previousSchedule);
+					this.scheduleStore?.setSchedule(card.notePath, card.blockId, previousSchedule, card.occlusionGroup);
 				} else {
 					const file = this.resolveFile(card.notePath);
 					if (file) {
@@ -226,7 +226,7 @@ export class StudySessionManager {
 
 			if (card) {
 				if (isLineCard(card)) {
-					this.scheduleStore?.removeSchedule(card.notePath, card.blockId);
+					this.scheduleStore?.removeSchedule(card.notePath, card.blockId, card.occlusionGroup);
 				} else {
 					const file = this.resolveFile(card.notePath);
 					if (file) {
@@ -247,7 +247,7 @@ export class StudySessionManager {
 	setLineCardDisabled(card: Card, disabled: boolean): boolean {
 		if (!isLineCard(card)) return false;
 		this.store.setDisabled(card.id, disabled);
-		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled);
+		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled, card.occlusionGroup);
 		return true;
 	}
 

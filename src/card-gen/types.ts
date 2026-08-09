@@ -1,4 +1,4 @@
-import type { CardState, CardType } from "../database/types";
+import type { CardOcclusion, CardState, CardType, OcclusionSet } from "../database/types";
 
 /** A generated card parsed from an osmosis code fence. */
 export interface GeneratedCard {
@@ -28,6 +28,14 @@ export interface GeneratedCard {
 	 * sibling lines (document order), shown as front context in sequential study.
 	 */
 	contextBefore?: string[];
+	/** Occlusion cards: the image, its masks, and the group being asked. */
+	occlusion?: CardOcclusion;
+	/**
+	 * Occluded *line* cards: the shape group this card asks about. Routes the
+	 * card's schedule to a per-group entry nested under its block ID, since one
+	 * block ID now backs several cards.
+	 */
+	occlusionGroup?: string;
 
 	// Schedule data parsed from fence metadata (optional — absent means new card)
 	stability?: number;
@@ -62,6 +70,13 @@ export interface FenceMetadata {
 	// Schedule fields for derived cards (bidi reverse, cloze deletions)
 	// Keyed by suffix: "r" for reverse, "c1"/"c2"/etc. for cloze
 	derivedSchedules?: Map<string, DerivedSchedule>;
+
+	/**
+	 * Shape sets declared by `occlude-<label>:` header blocks, keyed by the
+	 * `{label}` that binds each to its image embed. The bare `occlude:` form
+	 * uses the empty-string key.
+	 */
+	occlusions?: Map<string, OcclusionSet>;
 }
 
 /** Schedule data for a derived card (bidi reverse or cloze deletion). */

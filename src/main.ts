@@ -5,7 +5,7 @@ import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
-import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter } from "./store/ScheduleStore";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
@@ -18,6 +18,7 @@ import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
+import { rewriteFenceEmbeds } from "./card-gen/occlusion";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
 import type { Card, StudyMode } from "./database/types";
@@ -144,6 +145,13 @@ export default class OsmosisPlugin extends Plugin {
 					else disabled.delete(blockId);
 				}
 				return disabled;
+			},
+			(file: TFile) => {
+				// Shape sets for occluded line cards. No pending overlay: masks
+				// change only when the editor saves them, which rewrites the
+				// frontmatter directly rather than staging through ScheduleStore.
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				return parseOcclusionFrontmatter(raw);
 			},
 		);
 
@@ -390,12 +398,54 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
-				if (file instanceof TFile && file.extension === "md") {
+				if (!(file instanceof TFile)) return;
+				if (file.extension === "md") {
 					this.cardSync.handleRename(oldPath, file.path);
 					this.refreshDashboard();
+					return;
 				}
+				void this.repointFenceEmbeds(oldPath, file);
 			}),
 		);
+	}
+
+	/**
+	 * Repoint osmosis-fence image embeds after the image they point at is renamed.
+	 *
+	 * Obsidian's metadata cache deliberately does not index links inside code
+	 * fences — the reason `[[example]]` in a code block renders as literal text —
+	 * so its own rename handling cannot see these embeds and would leave an
+	 * occluded diagram pointing at a path that no longer exists. Line cards need
+	 * none of this: their embed is ordinary Markdown outside any fence.
+	 *
+	 * Only fences are rewritten, and only in notes whose cached links or embeds
+	 * already mention the image, so the common rename touches a handful of files
+	 * rather than the whole vault.
+	 */
+	private async repointFenceEmbeds(oldPath: string, file: TFile): Promise<void> {
+		const basename = (path: string): string => path.split("/").pop() ?? path;
+		const oldName = basename(oldPath);
+		const newName = basename(file.path);
+
+		// A link is ours to rewrite when it resolved to the renamed file. The
+		// cache can no longer resolve the old path, so match on the text as
+		// written: either the full old path or its basename (the shortest-path
+		// spelling Obsidian writes by default). The replacement keeps whichever
+		// form the author used.
+		const resolve = (target: string): string | null => {
+			if (target === oldPath) return file.path;
+			if (target === oldName) return newName;
+			return null;
+		};
+
+		for (const note of this.app.vault.getMarkdownFiles()) {
+			const content = await this.app.vault.cachedRead(note);
+			if (!content.includes(oldName)) continue;
+			const rewritten = rewriteFenceEmbeds(content, resolve);
+			if (rewritten !== content) {
+				await this.app.vault.modify(note, rewritten);
+			}
+		}
 	}
 
 	onunload() {
@@ -1014,7 +1064,7 @@ export default class OsmosisPlugin extends Plugin {
 
 		for (const card of targets) {
 			this.cardStore.setDisabled(card.id, disabled);
-			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled);
+			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled, card.occlusionGroup);
 		}
 		await this.scheduleStore.flushPath(file.path);
 		this.refreshDashboard();

@@ -1,9 +1,10 @@
 import { Component, MarkdownRenderer, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
+import { stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
-import { CLOZE_BLANK } from "../card-gen/explicit";
+import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /** An undo entry for contextual review. */
@@ -379,26 +380,7 @@ export class ContextualStudyProcessor {
 	 */
 	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean; isCloze: boolean } | null {
 		const lines = source.split("\n");
-
-		// Parse metadata lines (key: value before blank line)
-		let contentStart = 0;
-		let exclude = false;
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]!.trim();
-			if (line === "") {
-				contentStart = i + 1;
-				break;
-			}
-			if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
-				const excludeMatch = line.match(/^exclude\s*:\s*(.+)$/i);
-				if (excludeMatch) exclude = excludeMatch[1]!.trim() === "true";
-				contentStart = i + 1;
-				continue;
-			}
-			contentStart = i;
-			break;
-		}
-
+		const { contentStart, exclude, hasOcclusion } = splitFenceHeader(lines);
 		const contentLines = lines.slice(contentStart);
 		const separatorIdx = contentLines.findIndex((l) => l.trim() === "***");
 
@@ -413,6 +395,21 @@ export class ContextualStudyProcessor {
 		// No separator — check for code cloze markers first, then text cloze
 		const content = contentLines.join("\n").trim();
 		if (!content) return null;
+
+		// Occlusion: the content is a diagram and the blanks live in the header
+		// as geometry rather than inline as markers, so neither the separator
+		// nor the cloze scans can see a card here. Without this the fence falls
+		// through to the raw-source fallback and reading view shows the shape
+		// block as literal text.
+		//
+		// The masks themselves are not painted yet — that is the renderer, and
+		// it lands with the other in-place surfaces. What matters now is that
+		// the diagram renders and the `{label}` markers do not survive into it.
+		if (hasOcclusion) {
+			const body = stripEmbedLabels(content);
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${body}`);
+			return { front: body, back: body, cardId, exclude, isCloze: true };
+		}
 
 		// Check for code cloze (osmosis-cloze inside inner code fences)
 		if (content.includes("osmosis-cloze")) {

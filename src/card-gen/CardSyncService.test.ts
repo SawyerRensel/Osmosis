@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { CardSyncService, injectFenceIdsIntoContent } from "./CardSyncService";
 import { CardStore } from "../store/CardStore";
 import { lineCardId } from "./line-cards";
-import type { Card } from "../database/types";
+import type { Card, OcclusionSet, ScheduleData } from "../database/types";
 import type { GeneratedCard } from "./types";
 
 function card(partial: Partial<GeneratedCard> & Pick<GeneratedCard, "id" | "sourceLine">): GeneratedCard {
@@ -282,5 +282,109 @@ describe("CardSyncService.handleBlockMove", () => {
 
 		sync.handleBlockMove("bike-lanes.md", "bike-lanes.md", new Set(["os-seamgap1"]));
 		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeDefined();
+	});
+});
+
+describe("CardSyncService occlusion", () => {
+	/**
+	 * An occluded line card: the shapes live in the note's `osmosis-schedule`
+	 * frontmatter, which only Obsidian's YAML parser has read — so they reach
+	 * card generation through a callback rather than through `processNote`,
+	 * which sees only the raw markdown.
+	 */
+	const note = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"",
+		"# Rail network",
+		"",
+		"![[network-map.png]] ^os-ek322j",
+		"",
+		"- An ordinary tagged line ^os-plain1",
+	].join("\n");
+
+	const set: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [
+			{ group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 },
+			{ group: "c2", kind: "rect", x: 0.5, y: 0.5, w: 0.1, h: 0.1 },
+		],
+	};
+
+	function occludedSync(options?: {
+		schedules?: Map<string, ScheduleData>;
+		disabled?: Set<string>;
+	}): { sync: CardSyncService; store: CardStore } {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => [],
+			() => options?.schedules ?? new Map(),
+			() => options?.disabled ?? new Set(),
+			() => new Map([["os-ek322j", set]]),
+		);
+		return { sync, store };
+	}
+
+	const file = { path: "Atlas.md", extension: "md" } as never;
+
+	it("fans the occluded line into one card per group, leaving plain lines alone", async () => {
+		const { sync, store } = occludedSync();
+		await sync.syncFile(file);
+
+		const ids = store.getCardsByNote("Atlas.md").map((c) => c.id).sort();
+		expect(ids).toEqual([
+			"Atlas.md#^os-ek322j-c1",
+			"Atlas.md#^os-ek322j-c2",
+			"Atlas.md#^os-plain1",
+		]);
+	});
+
+	it("carries the renderer payload onto each card", async () => {
+		const { sync, store } = occludedSync();
+		await sync.syncFile(file);
+
+		const c1 = store.getCard("Atlas.md#^os-ek322j-c1")!;
+		expect(c1.cardType).toBe("occlusion");
+		expect(c1.occlusionGroup).toBe("c1");
+		expect(c1.blockId).toBe("os-ek322j");
+		expect(c1.occlusion?.image).toBe("network-map.png");
+		expect(c1.occlusion?.shapes).toHaveLength(2);
+	});
+
+	it("routes each group's schedule through its own nested key", async () => {
+		const schedules = new Map<string, ScheduleData>([
+			["os-ek322j/c1", { stability: 9.5, difficulty: 5, due: 1_800_000_000_000, lastReview: null, reps: 6, lapses: 0, state: "review", learningSteps: 0 }],
+		]);
+		const { sync, store } = occludedSync({ schedules });
+		await sync.syncFile(file);
+
+		expect(store.getCard("Atlas.md#^os-ek322j-c1")?.reps).toBe(6);
+		expect(store.getCard("Atlas.md#^os-ek322j-c2")?.reps).toBeUndefined();
+	});
+
+	it("suspends one group without suspending the image's other cards", async () => {
+		const { sync, store } = occludedSync({ disabled: new Set(["os-ek322j/c2"]) });
+		await sync.syncFile(file);
+
+		expect(store.getCard("Atlas.md#^os-ek322j-c2")?.disabled).toBe(true);
+		expect(store.getCard("Atlas.md#^os-ek322j-c1")?.disabled).toBeUndefined();
+	});
+
+	it("leaves every card a plain line card when the note declares no shapes", async () => {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+		);
+		await sync.syncFile(file);
+
+		expect(store.getCardsByNote("Atlas.md").map((c) => c.cardType)).toEqual(["line", "line"]);
 	});
 });

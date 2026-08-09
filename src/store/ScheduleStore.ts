@@ -1,8 +1,38 @@
 import type { FileManager, TFile } from "obsidian";
-import type { CardState, ScheduleData } from "../database/types";
+import type { CardState, OcclusionSet, ScheduleData } from "../database/types";
+import { parseOcclusionSet } from "../card-gen/occlusion";
 
 /** Frontmatter key holding per-card FSRS schedule data for line cards. */
 export const SCHEDULE_FRONTMATTER_KEY = "osmosis-schedule";
+
+/**
+ * The key a line card's schedule is staged and looked up under.
+ *
+ * A plain line card is keyed by its block ID alone. An occluded one generates a
+ * card per shape group, so its groups are keyed `<blockId>/<group>` and stored
+ * nested beneath the block ID in frontmatter. `/` is the separator precisely
+ * because Obsidian block IDs cannot contain one (`[a-zA-Z0-9-]` only) — so a
+ * composite key can never collide with a hand-written block ID like
+ * `^diagram-c1`, which a `-cN` suffix rule would have mis-split.
+ */
+export function scheduleKey(blockId: string, group?: string): string {
+	return group === undefined || group === "" ? blockId : `${blockId}/${group}`;
+}
+
+/** Split a schedule key back into its block ID and optional group. */
+export function splitScheduleKey(key: string): { blockId: string; group?: string } {
+	const slash = key.indexOf("/");
+	return slash === -1
+		? { blockId: key }
+		: { blockId: key.slice(0, slash), group: key.slice(slash + 1) };
+}
+
+/**
+ * Frontmatter key holding an occluded line card's shape set, nested inside that
+ * card's `osmosis-schedule` entry. Its presence is what tells the parser the
+ * entry holds per-group schedules rather than schedule fields of its own.
+ */
+const OCCLUDE_KEY = "occlude";
 
 /**
  * One card's schedule as stored in frontmatter YAML.
@@ -61,14 +91,18 @@ export class ScheduleStore {
 		private readonly flushDelayMs = 2000,
 	) {}
 
-	/** Stage a schedule write for a card, debouncing the frontmatter flush. */
-	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void {
-		this.stageSchedule(notePath, blockId, { ...schedule });
+	/**
+	 * Stage a schedule write for a card, debouncing the frontmatter flush.
+	 * `group` names the shape group for an occluded line card, whose schedules
+	 * nest one level deeper than a plain line card's.
+	 */
+	setSchedule(notePath: string, blockId: string, schedule: ScheduleData, group?: string): void {
+		this.stageSchedule(notePath, scheduleKey(blockId, group), { ...schedule });
 	}
 
 	/** Stage removal of a card's schedule entry (e.g., review revert on a new card). */
-	removeSchedule(notePath: string, blockId: string): void {
-		this.stageSchedule(notePath, blockId, null);
+	removeSchedule(notePath: string, blockId: string, group?: string): void {
+		this.stageSchedule(notePath, scheduleKey(blockId, group), null);
 	}
 
 	/**
@@ -76,13 +110,13 @@ export class ScheduleStore {
 	 * flush. `disabled` merges onto any existing schedule for the block ID —
 	 * it never clears schedule data, so enabling restores full history.
 	 */
-	setDisabled(notePath: string, blockId: string, disabled: boolean): void {
+	setDisabled(notePath: string, blockId: string, disabled: boolean, group?: string): void {
 		let entries = this.pendingDisabled.get(notePath);
 		if (!entries) {
 			entries = new Map();
 			this.pendingDisabled.set(notePath, entries);
 		}
-		entries.set(blockId, disabled);
+		entries.set(scheduleKey(blockId, group), disabled);
 		this.armTimer(notePath);
 	}
 
@@ -227,27 +261,41 @@ export function applyScheduleEntries(
 	const raw = fm[SCHEDULE_FRONTMATTER_KEY];
 	const map: Record<string, unknown> = isPlainObject(raw) ? raw : {};
 
-	const blockIds = new Set([...schedule.keys(), ...disabled.keys()]);
-	for (const blockId of blockIds) {
-		const existing = map[blockId];
-		const entry: Record<string, unknown> = isPlainObject(existing) ? existing : {};
+	for (const key of new Set([...schedule.keys(), ...disabled.keys()])) {
+		const { blockId, group } = splitScheduleKey(key);
+		const block: Record<string, unknown> = isPlainObject(map[blockId]) ? map[blockId] : {};
 
-		if (schedule.has(blockId)) {
-			const value = schedule.get(blockId)!;
-			for (const key of SCHEDULE_FIELD_KEYS) delete entry[key];
+		// A plain line card's fields sit directly on the block entry; an
+		// occluded one's sit on a per-group entry nested inside it, alongside
+		// the `occlude` shape set the groups all share.
+		const entry: Record<string, unknown> =
+			group === undefined
+				? block
+				: isPlainObject(block[group])
+					? block[group]
+					: {};
+
+		if (schedule.has(key)) {
+			const value = schedule.get(key)!;
+			for (const field of SCHEDULE_FIELD_KEYS) delete entry[field];
 			if (value !== null) Object.assign(entry, serializeScheduleEntry(value));
 		}
 
-		if (disabled.has(blockId)) {
-			if (disabled.get(blockId)) entry["disabled"] = true;
+		if (disabled.has(key)) {
+			if (disabled.get(key)) entry["disabled"] = true;
 			else delete entry["disabled"];
 		}
 
-		if (Object.keys(entry).length === 0) {
-			delete map[blockId];
-		} else {
-			map[blockId] = entry;
+		if (group !== undefined) {
+			if (Object.keys(entry).length === 0) delete block[group];
+			else block[group] = entry;
 		}
+
+		// The shape set is the user's drawing, not schedule data — an emptied
+		// group must never take it down with it, or reverting one review would
+		// silently erase every mask on the image.
+		if (Object.keys(block).length === 0) delete map[blockId];
+		else map[blockId] = block;
 	}
 
 	if (Object.keys(map).length === 0) {
@@ -298,17 +346,55 @@ export function parseScheduleEntry(raw: unknown): ScheduleData | null {
 
 /**
  * Parse the whole `osmosis-schedule` frontmatter value into a map of
- * block ID → schedule. Invalid entries are skipped.
+ * schedule key → schedule. Invalid entries are skipped.
+ *
+ * Two entry shapes coexist and are told apart by the presence of `occlude`:
+ * a plain line card carries its schedule fields directly on the block ID,
+ * while an occluded one carries a shape set plus a nested entry per group.
+ * Notes written before occlusion existed have no `occlude` key anywhere and so
+ * take the flat path unchanged.
  */
 export function parseScheduleFrontmatter(raw: unknown): Map<string, ScheduleData> {
 	const result = new Map<string, ScheduleData>();
 	if (!isPlainObject(raw)) return result;
 
 	for (const [blockId, value] of Object.entries(raw)) {
+		if (isOcclusionEntry(value)) {
+			for (const [group, nested] of Object.entries(value)) {
+				if (group === OCCLUDE_KEY) continue;
+				const entry = parseScheduleEntry(nested);
+				if (entry) result.set(scheduleKey(blockId, group), entry);
+			}
+			continue;
+		}
 		const entry = parseScheduleEntry(value);
 		if (entry) result.set(blockId, entry);
 	}
 	return result;
+}
+
+/**
+ * Shape sets for occluded line cards, keyed by block ID.
+ *
+ * Read from Obsidian's parsed frontmatter rather than from the markdown text:
+ * the fence carrier has to hand-parse its header, but this one is real YAML
+ * that Obsidian has already parsed, so it only needs validating.
+ */
+export function parseOcclusionFrontmatter(raw: unknown): Map<string, OcclusionSet> {
+	const result = new Map<string, OcclusionSet>();
+	if (!isPlainObject(raw)) return result;
+
+	for (const [blockId, value] of Object.entries(raw)) {
+		if (!isOcclusionEntry(value)) continue;
+		const set = parseOcclusionSet(value[OCCLUDE_KEY]);
+		if (set) result.set(blockId, set);
+	}
+	return result;
+}
+
+/** An `osmosis-schedule` entry that carries a shape set, and so nests per group. */
+function isOcclusionEntry(value: unknown): value is Record<string, unknown> {
+	return isPlainObject(value) && isPlainObject(value[OCCLUDE_KEY]);
 }
 
 /**
@@ -322,9 +408,19 @@ export function parseDisabledFrontmatter(raw: unknown): Set<string> {
 	if (!isPlainObject(raw)) return result;
 
 	for (const [blockId, value] of Object.entries(raw)) {
-		if (isPlainObject(value) && value["disabled"] === true) {
-			result.add(blockId);
+		if (!isPlainObject(value)) continue;
+		if (isOcclusionEntry(value)) {
+			// Suspension is per card, and an occluded image is one card per
+			// group — so the flag lives on the group, not on the image.
+			for (const [group, nested] of Object.entries(value)) {
+				if (group === OCCLUDE_KEY) continue;
+				if (isPlainObject(nested) && nested["disabled"] === true) {
+					result.add(scheduleKey(blockId, group));
+				}
+			}
+			continue;
 		}
+		if (value["disabled"] === true) result.add(blockId);
 	}
 	return result;
 }

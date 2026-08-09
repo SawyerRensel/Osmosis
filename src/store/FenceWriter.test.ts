@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { generateExplicitCards } from "../card-gen/explicit";
 import {
 	updateFenceSchedule,
 	updateFenceExclude,
@@ -716,5 +717,110 @@ deck: below the waterline
 
 	it("is false when the fence is not found", () => {
 		expect(fenceHasOwnDeck("no fences here", "abc123")).toBe(false);
+	});
+});
+
+describe("occlusion fences", () => {
+	/**
+	 * The shape block opens with a valueless key and continues as indented
+	 * lines — neither of which the metadata scans recognised before. Left
+	 * unhandled, the scan ended at `occlude-a:`, and the schedule keys plus the
+	 * blank line these writers append to separate metadata from content landed
+	 * *inside* the block, cutting the shapes off from their header.
+	 *
+	 * The corruption is invisible in the text (every shape line is still
+	 * present, just below a blank line) and only shows up on the next parse, so
+	 * these assert on what the fence parses back to rather than on how it
+	 * reads.
+	 */
+	const occlusionFence = `\`\`\`osmosis
+id: bridge
+occlude-a:
+  mode: hide-all-guess-one
+  shapes:
+    - { group: c1, kind: rect, x: 0.31, y: 0.22, w: 0.14, h: 0.06 }
+    - { group: c2, kind: ellipse, x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 }
+
+![[bridge-cross-section.png]]{a}
+\`\`\``;
+
+	/** The shapes a fence still yields after a write, by group. */
+	const shapesOf = (content: string): Record<string, number> => {
+		const counts: Record<string, number> = {};
+		const card = generateExplicitCards(content).find((c) => c.occlusion);
+		for (const shape of card?.occlusion?.shapes ?? []) {
+			counts[shape.group] = (counts[shape.group] ?? 0) + 1;
+		}
+		return counts;
+	};
+
+	it("still parses to the same shapes after a schedule write", () => {
+		const result = updateFenceSchedule(occlusionFence, "bridge-c1", baseSchedule);
+
+		expect(shapesOf(result)).toEqual({ c1: 1, c2: 1 });
+		expect(generateExplicitCards(result).map((c) => c.id)).toEqual(["bridge-c1", "bridge-c2"]);
+	});
+
+	it("writes the group's schedule where the parser reads it back", () => {
+		const result = updateFenceSchedule(occlusionFence, "bridge-c1", baseSchedule);
+		const c1 = generateExplicitCards(result).find((c) => c.id === "bridge-c1")!;
+
+		expect(c1.stability).toBeCloseTo(baseSchedule.stability, 4);
+		expect(c1.due).toBe(baseSchedule.due);
+		// ...and leaves its sibling new.
+		expect(generateExplicitCards(result).find((c) => c.id === "bridge-c2")!.stability).toBeUndefined();
+	});
+
+	it("keeps the shape block contiguous, with the embed still in the content", () => {
+		const lines = updateFenceSchedule(occlusionFence, "bridge-c1", baseSchedule).split("\n");
+		const blockStart = lines.indexOf("occlude-a:");
+		const lastShape = lines.findLastIndex((l) => l.trim().startsWith("- { group:"));
+
+		expect(blockStart).toBeGreaterThan(-1);
+		expect(lines.slice(blockStart, lastShape)).not.toContain("");
+		expect(lines.at(-2)).toBe("![[bridge-cross-section.png]]{a}");
+	});
+
+	it("removes one group's schedule and leaves the shapes and its sibling alone", () => {
+		const scheduled = updateFenceSchedule(
+			updateFenceSchedule(occlusionFence, "bridge-c1", baseSchedule),
+			"bridge-c2",
+			baseSchedule,
+		);
+		const result = removeFenceSchedule(scheduled, "bridge-c1");
+
+		expect(shapesOf(result)).toEqual({ c1: 1, c2: 1 });
+		expect(generateExplicitCards(result).find((c) => c.id === "bridge-c1")!.stability).toBeUndefined();
+		expect(generateExplicitCards(result).find((c) => c.id === "bridge-c2")!.stability).toBeCloseTo(4.5, 4);
+	});
+
+	it("suspends the fence without disturbing the shape block", () => {
+		const result = updateFenceExclude(occlusionFence, "bridge-c1", true);
+
+		expect(shapesOf(result)).toEqual({ c1: 1, c2: 1 });
+		expect(generateExplicitCards(result).every((c) => c.disabled === true)).toBe(true);
+	});
+
+	it("finds the fence when the shape block precedes the id line", () => {
+		const idLast = `\`\`\`osmosis
+occlude-a:
+  mode: hide-all-guess-one
+  shapes:
+    - { group: c1, kind: rect, x: 0.31, y: 0.22, w: 0.14, h: 0.06 }
+id: bridge
+
+![[bridge-cross-section.png]]{a}
+\`\`\``;
+		const result = updateFenceSchedule(idLast, "bridge-c1", baseSchedule);
+
+		expect(shapesOf(result)).toEqual({ c1: 1 });
+		expect(generateExplicitCards(result)[0]!.stability).toBeCloseTo(4.5, 4);
+	});
+
+	it("deletes the whole fence, shapes included", () => {
+		const { content, removed } = removeFence(occlusionFence, "bridge-c1");
+		expect(removed).toBe(true);
+		expect(content).not.toContain("occlude-a:");
+		expect(content).not.toContain("group: c1");
 	});
 });
