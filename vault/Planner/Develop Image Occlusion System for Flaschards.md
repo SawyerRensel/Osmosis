@@ -15,8 +15,8 @@ progress_current:
 progress_total:
 date_created: 2026-08-03T15:38:04.268Z
 date_modified: 2026-08-06T20:18:35.185Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-08-09T17:34:17
+date_start_actual: 2026-08-09T17:34:17
 date_end_scheduled:
 date_end_actual:
 all_day: true
@@ -48,13 +48,13 @@ A system for creating image occlusion flashcards and studying them in sequential
 
 *Describe the problem or need. What are you trying to accomplish?*
 
-
+A way to study information that is encoded as pixels. 
 
 ## What's your current workaround?
 
 *How do you currently handle this? Describe any manual steps or workarounds.*
 
-
+There is no current workaround. 
 
 ## Reference Attachments/Screenshots
 
@@ -105,17 +105,31 @@ c2-due: 2026-08-14T09:00:00
 occlude-a:
   mode: hide-all-guess-one
   shapes:
-    - group: c1   kind: rect     x: .31 y: .22 w: .14 h: .06
-    - group: c1   kind: rect     x: .62 y: .30 w: .10 h: .05
-    - group: c2   kind: ellipse  x: .55 y: .40 rx: .08 ry: .05
+    - { group: c1, kind: rect, x: 0.31, y: 0.22, w: 0.14, h: 0.06 }
+    - { group: c1, kind: rect, x: 0.62, y: 0.30, w: 0.10, h: 0.05 }
+    - { group: c2, kind: ellipse, x: 0.55, y: 0.40, rx: 0.08, ry: 0.05 }
 occlude-b:
   mode: hide-one-guess-one
   shapes:
-    - group: c3   kind: poly     points: [[.20,.18],[.42,.18],[.31,.34]]
+    - { group: c3, kind: poly, points: [[0.20, 0.18], [0.42, 0.18], [0.31, 0.34]] }
 
 ![[bridge-cross-section.png]]{a}
 ![[span-elevation.png]]{b}
 ```
+
+### ⚠️ Shape lines are YAML flow mappings, not bare `key: value` runs
+
+This spec originally wrote a shape as
+`- group: c1   kind: rect   x: .31 y: .22 …`. That is **not valid YAML** — a
+plain scalar cannot contain `: `, so `group`'s value swallows `  kind` and then
+chokes on the second colon.
+
+The fence carrier could have survived it, since its header is hand-parsed text.
+The line-card carrier could not: it lives in real frontmatter, so Obsidian's own
+YAML parser reads it, and one malformed shape line would fail the parse of the
+**whole note's** frontmatter — not just the occlusion entry. Rather than run two
+different shape serializations, both carriers use the flow-mapping form above:
+still one line per shape, and valid YAML in both places.
 
 The `{a}` label binds an embed to its shape set. Filename binding breaks on
 duplicate images; positional binding breaks silently when embeds are reordered.
@@ -146,12 +160,17 @@ osmosis-schedule:
     occlude:
       mode: hide-all-guess-one
       shapes:
-        - group: c1   kind: rect  x: .31 y: .22 w: .14 h: .06
+        - { group: c1, kind: rect, x: 0.31, y: 0.22, w: 0.14, h: 0.06 }
     c1:
       due: 2026-08-12T09:00:00
       stability: 4.21
       state: review
 ```
+
+Cards derive `<notePath>#^<blockId>-cN`, but schedules are keyed
+`<blockId>/<group>` internally (`scheduleKey()` in `ScheduleStore.ts`). The
+separator is `/` because a block ID cannot contain one — a `-cN` split rule
+would have mangled a hand-written `^diagram-c1`.
 
 ⚠️ **Compatibility.** Existing entries carry schedule fields directly at the
 block-ID level (`os-ek322j: {due, stability, …}`). An occlusion entry instead
