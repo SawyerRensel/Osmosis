@@ -69,6 +69,13 @@ export interface BrowseOptions {
 	cardTypes: ReadonlySet<CardType>;
 	sortBy: SortBy;
 	/**
+	 * The table's own sort, set by clicking column headers, outermost level
+	 * first. Empty falls back to `sortBy`. Table-only: the other layouts have no
+	 * headers to click, so honouring it there would apply an order the user has
+	 * no way to see or undo from that layout.
+	 */
+	sortColumns: SortColumn[];
+	/**
 	 * Include suspended cards. Note this means `disabled` (fully out of study,
 	 * FSRS state preserved) and *not* `excludeFromDecks` — the line-card opt-out
 	 * is still studied in place, so those cards are never hidden here.
@@ -89,6 +96,7 @@ export const DEFAULT_BROWSE_OPTIONS: BrowseOptions = {
 	dueWindow: "any",
 	cardTypes: new Set(FILTERABLE_CARD_TYPES),
 	sortBy: "due",
+	sortColumns: [],
 	showDisabled: false,
 	search: "",
 	tileHeight: TILE_HEIGHT.default,
@@ -127,10 +135,147 @@ export function readBrowseOptions(get: (key: string) => unknown): BrowseOptions 
 		dueWindow: oneOf(get("dueWindow"), DUE_WINDOWS, DEFAULT_BROWSE_OPTIONS.dueWindow),
 		cardTypes,
 		sortBy: oneOf(get("sortBy"), SORT_KEYS, DEFAULT_BROWSE_OPTIONS.sortBy),
+		sortColumns: readSortColumns(get),
 		showDisabled: get("showDisabled") === true,
 		search: typeof get("search") === "string" ? (get("search") as string).trim() : "",
 		tileHeight: clampTileHeight(get("tileHeight")),
 	};
+}
+
+/** How narrow a resized table column may get before the drag stops following. */
+export const COLUMN_MIN_WIDTH = 40;
+
+// ── Table column sorting ──────────────────────────────────────
+
+export type SortDirection = "asc" | "desc";
+
+/** One level of the table's sort, outermost first. */
+export interface SortColumn {
+	key: string;
+	dir: SortDirection;
+}
+
+/**
+ * The columns a header click can sort by.
+ *
+ * Everything the table shows except the row number, which is a position in the
+ * current order and so cannot be one of its inputs.
+ */
+export const SORTABLE_COLUMNS: readonly string[] = [
+	"front", "back", "type", "deck", "state", "due",
+	"stability", "difficulty", "reps", "lapses", "note", "id",
+];
+
+/**
+ * What clicking a column header does: ascending, then descending, then gone.
+ *
+ * A click on a column that is not yet sorted **appends** rather than replaces,
+ * which is what makes "sort by deck, then by due" reachable by clicking two
+ * headers. The third click on a column removes just that level and leaves the
+ * others in place, so a sort can be unwound one column at a time.
+ */
+export function cycleSortColumns(columns: readonly SortColumn[], key: string): SortColumn[] {
+	const existing = columns.find((column) => column.key === key);
+	if (!existing) return [...columns, { key, dir: "asc" }];
+	if (existing.dir === "asc") {
+		return columns.map((column) => (column.key === key ? { key, dir: "desc" as const } : column));
+	}
+	return columns.filter((column) => column.key !== key);
+}
+
+/** Narrow the persisted table sort out of a Bases config. */
+export function readSortColumns(get: (key: string) => unknown): SortColumn[] {
+	const raw = get("sortColumns");
+	if (!Array.isArray(raw)) return [];
+
+	const columns: SortColumn[] = [];
+	for (const entry of raw as unknown[]) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const { key, dir } = entry as { key?: unknown; dir?: unknown };
+		if (typeof key !== "string" || !SORTABLE_COLUMNS.includes(key)) continue;
+		// A duplicated column would sort by itself twice, and the second pass
+		// could never change anything the first did not.
+		if (columns.some((column) => column.key === key)) continue;
+		columns.push({ key, dir: dir === "desc" ? "desc" : "asc" });
+	}
+	return columns;
+}
+
+/**
+ * Sort by each column in turn, the first disagreement deciding.
+ *
+ * Ascending here means genuinely ascending — smallest, earliest, A first —
+ * unlike the `sortBy` dropdown, whose entries each carry the direction that
+ * makes them useful (most lapses first, hardest first). A column the user
+ * pointed at has to move the way its arrow says it will.
+ */
+export function sortByColumns(cards: readonly Card[], columns: readonly SortColumn[]): Card[] {
+	const sorted = [...cards];
+	sorted.sort((a, b) => {
+		for (const column of columns) {
+			const left = columnValue(a, column.key);
+			const right = columnValue(b, column.key);
+
+			// A new card has no stability to be at either end of. Absence sinks
+			// whichever way the arrow points, so reversing the sort does not fill
+			// the top of the table with cards that have nothing in that column.
+			if (left === undefined && right === undefined) continue;
+			if (left === undefined) return 1;
+			if (right === undefined) return -1;
+
+			const order = typeof left === "string" && typeof right === "string"
+				? left.localeCompare(right)
+				: Number(left) - Number(right);
+			if (order !== 0) return column.dir === "desc" ? -order : order;
+		}
+		return tieBreak(a, b);
+	});
+	return sorted;
+}
+
+/** What a column holds for one card, in a form two of them can be compared in. */
+function columnValue(card: Card, key: string): string | number | undefined {
+	switch (key) {
+		case "front": return card.front;
+		case "back": return card.back;
+		case "type": return typeLabel(card.cardType);
+		case "deck": return card.deck;
+		case "note": return card.notePath;
+		case "id": return card.id;
+		case "state": return STATE_ORDER[effectiveState(card)];
+		case "due": return card.due;
+		case "stability": return card.stability;
+		case "difficulty": return card.difficulty;
+		case "reps": return card.reps;
+		case "lapses": return card.lapses;
+		default: return undefined;
+	}
+}
+
+/**
+ * Narrow the persisted table column widths out of a Bases config.
+ *
+ * Stored as a plain `key → pixels` map under a config key of its own rather than
+ * as view options, because there are twelve of them and they are set by dragging
+ * a header edge, not by opening a menu. Same hand-editable `.base` file as the
+ * options, so the same rule applies: anything unrecognised is dropped rather than
+ * throwing, and a column with no entry keeps its stylesheet default.
+ */
+export function readColumnWidths(get: (key: string) => unknown): Record<string, number> {
+	const raw = get("columnWidths");
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+
+	const widths: Record<string, number> = {};
+	for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+		// A string is accepted because YAML can hand a number back as one, but
+		// nothing else is: `Number(null)` and `Number("")` are both 0, which would
+		// turn a broken entry into a collapsed column rather than dropping it.
+		if (typeof value !== "number" && typeof value !== "string") continue;
+		const width = Number(value);
+		if (!Number.isFinite(width) || (typeof value === "string" && value.trim() === "")) continue;
+		widths[key] = Math.max(COLUMN_MIN_WIDTH, Math.round(width));
+	}
+	return widths;
 }
 
 function oneOf<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
@@ -348,6 +493,16 @@ export function buildFlat(
 	options: BrowseOptions,
 	now: number,
 ): Card[] {
+	// A column sort is the user pointing at this table and saying how it should
+	// read, so it outranks the sort dropdown whenever it is set.
+	if (options.sortColumns.length > 0) {
+		const all: Card[] = [];
+		for (const notePath of notePaths) {
+			all.push(...cardsByNote(notePath));
+		}
+		return sortByColumns(filterCards(all, options, now), options.sortColumns);
+	}
+
 	// Under "base order" the flat list is built note by note, so the sequence
 	// Bases sorted survives. Sorting the merged list instead would interleave
 	// notes and throw that order away — which is what made the toolbar's Sort

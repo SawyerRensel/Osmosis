@@ -17,6 +17,11 @@ import {
 	matchesTypes,
 	previewText,
 	readBrowseOptions,
+	readColumnWidths,
+	readSortColumns,
+	cycleSortColumns,
+	sortByColumns,
+	COLUMN_MIN_WIDTH,
 	sortCards,
 	toRow,
 	typeLabel,
@@ -64,6 +69,143 @@ function reviewed(overrides: Partial<Card> & { id: string }): Card {
 function options(overrides: Partial<BrowseOptions> = {}): BrowseOptions {
 	return { ...DEFAULT_BROWSE_OPTIONS, ...overrides };
 }
+
+describe("readColumnWidths", () => {
+	const read = (columnWidths: unknown): Record<string, number> =>
+		readColumnWidths((key) => (key === "columnWidths" ? columnWidths : undefined));
+
+	it("returns nothing when the base file has never had a column dragged", () => {
+		expect(read(undefined)).toEqual({});
+	});
+
+	it("reads a stored map through, rounded", () => {
+		expect(read({ front: 220, back: 180.4 })).toEqual({ front: 220, back: 180 });
+	});
+
+	it("accepts a numeric string, which is how YAML can come back", () => {
+		expect(read({ front: "220" })).toEqual({ front: 220 });
+	});
+
+	it("drops entries a hand-edited base file got wrong, keeping the rest", () => {
+		expect(read({ front: "wide", back: null, deck: 120 })).toEqual({ deck: 120 });
+	});
+
+	it("clamps a width that would collapse the column", () => {
+		expect(read({ front: 2 }).front).toBe(COLUMN_MIN_WIDTH);
+	});
+
+	it("ignores a value that is not a map", () => {
+		expect(read([220, 180])).toEqual({});
+		expect(read("220")).toEqual({});
+		expect(read(null)).toEqual({});
+	});
+});
+
+describe("cycleSortColumns", () => {
+	it("adds an unsorted column as ascending", () => {
+		expect(cycleSortColumns([], "due")).toEqual([{ key: "due", dir: "asc" }]);
+	});
+
+	it("turns a second click into descending", () => {
+		expect(cycleSortColumns([{ key: "due", dir: "asc" }], "due")).toEqual([{ key: "due", dir: "desc" }]);
+	});
+
+	it("drops the column on a third click", () => {
+		expect(cycleSortColumns([{ key: "due", dir: "desc" }], "due")).toEqual([]);
+	});
+
+	it("appends a second column rather than replacing the first", () => {
+		expect(cycleSortColumns([{ key: "deck", dir: "asc" }], "due")).toEqual([
+			{ key: "deck", dir: "asc" },
+			{ key: "due", dir: "asc" },
+		]);
+	});
+
+	it("unwinds one level at a time, leaving the others in place", () => {
+		const columns = [{ key: "deck", dir: "asc" as const }, { key: "due", dir: "desc" as const }];
+		expect(cycleSortColumns(columns, "due")).toEqual([{ key: "deck", dir: "asc" }]);
+	});
+
+	it("cycles an inner column without disturbing the order of the levels", () => {
+		const columns = [{ key: "deck", dir: "asc" as const }, { key: "due", dir: "asc" as const }];
+		expect(cycleSortColumns(columns, "deck")).toEqual([
+			{ key: "deck", dir: "desc" },
+			{ key: "due", dir: "asc" },
+		]);
+	});
+});
+
+describe("readSortColumns", () => {
+	const read = (sortColumns: unknown): unknown =>
+		readSortColumns((key) => (key === "sortColumns" ? sortColumns : undefined));
+
+	it("returns nothing when the base file has never had a header clicked", () => {
+		expect(read(undefined)).toEqual([]);
+	});
+
+	it("reads a stored sort through in order", () => {
+		expect(read([{ key: "deck", dir: "asc" }, { key: "due", dir: "desc" }])).toEqual([
+			{ key: "deck", dir: "asc" },
+			{ key: "due", dir: "desc" },
+		]);
+	});
+
+	it("drops a column the table cannot sort by", () => {
+		expect(read([{ key: "index", dir: "asc" }, { key: "colour", dir: "asc" }])).toEqual([]);
+	});
+
+	it("keeps only the first mention of a duplicated column", () => {
+		expect(read([{ key: "due", dir: "desc" }, { key: "due", dir: "asc" }])).toEqual([
+			{ key: "due", dir: "desc" },
+		]);
+	});
+
+	it("falls back to ascending for a direction it does not recognise", () => {
+		expect(read([{ key: "due", dir: "sideways" }])).toEqual([{ key: "due", dir: "asc" }]);
+	});
+
+	it("ignores a value that is not a list", () => {
+		expect(read({ key: "due", dir: "asc" })).toEqual([]);
+	});
+});
+
+describe("sortByColumns", () => {
+	const cards = [
+		reviewed({ id: "c", deck: "rivers", lapses: 2, front: "Congo" }),
+		reviewed({ id: "a", deck: "borders", lapses: 5, front: "Aral" }),
+		reviewed({ id: "b", deck: "rivers", lapses: 1, front: "Baikal" }),
+	];
+	const ids = (sorted: readonly Card[]): string[] => sorted.map((c) => c.id);
+
+	it("sorts ascending as the arrow says, not by what is most useful", () => {
+		// The `sortBy` dropdown puts the most lapses first; a column the user
+		// pointed at ascending has to start at the smallest.
+		expect(ids(sortByColumns(cards, [{ key: "lapses", dir: "asc" }]))).toEqual(["b", "c", "a"]);
+	});
+
+	it("reverses on descending", () => {
+		expect(ids(sortByColumns(cards, [{ key: "lapses", dir: "desc" }]))).toEqual(["a", "c", "b"]);
+	});
+
+	it("breaks ties with the next column", () => {
+		const sorted = sortByColumns(cards, [
+			{ key: "deck", dir: "asc" },
+			{ key: "lapses", dir: "desc" },
+		]);
+		expect(ids(sorted)).toEqual(["a", "c", "b"]);
+	});
+
+	it("sinks missing values whichever way the column points", () => {
+		const withGap = [card({ id: "y" }), reviewed({ id: "x", stability: 4 })];
+		expect(ids(sortByColumns(withGap, [{ key: "stability", dir: "asc" }]))).toEqual(["x", "y"]);
+		expect(ids(sortByColumns(withGap, [{ key: "stability", dir: "desc" }]))).toEqual(["x", "y"]);
+	});
+
+	it("leaves the order stable when no column disagrees", () => {
+		const same = [card({ id: "b", sourceLine: 2 }), card({ id: "a", sourceLine: 1 })];
+		expect(ids(sortByColumns(same, [{ key: "deck", dir: "asc" }]))).toEqual(["a", "b"]);
+	});
+});
 
 describe("readBrowseOptions", () => {
 	it("returns defaults when the base file has no values", () => {

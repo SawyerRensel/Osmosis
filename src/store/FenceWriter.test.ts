@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { updateFenceSchedule, updateFenceExclude, type ScheduleFields } from "./FenceWriter";
+import {
+	updateFenceSchedule,
+	updateFenceExclude,
+	removeFenceSchedule,
+	removeFence,
+	fenceHasOwnDeck,
+	type ScheduleFields,
+} from "./FenceWriter";
 
 const baseSchedule: ScheduleFields = {
 	stability: 4.5,
@@ -353,5 +360,361 @@ A
 
 		const result = updateFenceExclude(content, "abc123", true);
 		expect(result).toBe(content);
+	});
+});
+
+describe("removeFenceSchedule", () => {
+	it("removes the fence card's own schedule keys", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+due: 2026-03-15T00:00:00.000Z
+stability: 4.5000
+difficulty: 5.2000
+reps: 3
+lapses: 0
+state: review
+last-review: 2026-03-10T00:00:00.000Z
+learning-steps: 0
+
+Which strait separates Europe from Asia at Istanbul?
+***
+The Bosphorus
+\`\`\``;
+
+		const result = removeFenceSchedule(content, "abc123");
+
+		expect(result).toContain("id: abc123");
+		expect(result).not.toContain("due:");
+		expect(result).not.toContain("stability:");
+		expect(result).not.toContain("state: review");
+		expect(result).toContain("The Bosphorus");
+	});
+
+	it("preserves non-schedule metadata", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+deck: geography
+exclude: true
+hint: a city on two continents
+due: 2026-03-15T00:00:00.000Z
+stability: 4.5000
+
+Q
+***
+A
+\`\`\``;
+
+		const result = removeFenceSchedule(content, "abc123");
+
+		expect(result).toContain("id: abc123");
+		expect(result).toContain("deck: geography");
+		expect(result).toContain("exclude: true");
+		expect(result).toContain("hint: a city on two continents");
+		expect(result).not.toContain("due:");
+		expect(result).not.toContain("stability:");
+	});
+
+	// The sibling cases: one metadata block holds every card the fence generates,
+	// so an unscoped removal is silent, irreversible data loss for the others.
+	it("leaves a bidi reverse card's schedule alone when resetting the forward card", () => {
+		const content = `\`\`\`osmosis
+id: bidi01
+bidi: true
+due: 2026-03-15T00:00:00.000Z
+stability: 4.5000
+state: review
+r-due: 2026-04-01T00:00:00.000Z
+r-stability: 9.1000
+r-state: review
+
+Longest river in Africa
+***
+The Nile
+\`\`\``;
+
+		const result = removeFenceSchedule(content, "bidi01");
+
+		expect(result).not.toContain("\ndue:");
+		expect(result).not.toContain("\nstability:");
+		expect(result).not.toContain("\nstate: review");
+		expect(result).toContain("r-due: 2026-04-01T00:00:00.000Z");
+		expect(result).toContain("r-stability: 9.1000");
+		expect(result).toContain("r-state: review");
+	});
+
+	it("leaves the forward card's schedule alone when resetting the bidi reverse", () => {
+		const content = `\`\`\`osmosis
+id: bidi01
+bidi: true
+due: 2026-03-15T00:00:00.000Z
+stability: 4.5000
+r-due: 2026-04-01T00:00:00.000Z
+r-stability: 9.1000
+
+Longest river in Africa
+***
+The Nile
+\`\`\``;
+
+		const result = removeFenceSchedule(content, "bidi01-r");
+
+		expect(result).toContain("due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("stability: 4.5000");
+		expect(result).not.toContain("r-due:");
+		expect(result).not.toContain("r-stability:");
+	});
+
+	it("resets one cloze group without touching its siblings", () => {
+		const content = `\`\`\`osmosis
+id: cloze1
+c1-due: 2026-03-15T00:00:00.000Z
+c1-stability: 4.5000
+c1-reps: 3
+c2-due: 2026-04-01T00:00:00.000Z
+c2-stability: 9.1000
+c2-reps: 7
+c3-due: 2026-05-01T00:00:00.000Z
+
+The ==Danube== rises in the Black Forest and empties into the ==Black Sea==.
+\`\`\``;
+
+		const result = removeFenceSchedule(content, "cloze1-c2");
+
+		expect(result).toContain("c1-due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("c1-stability: 4.5000");
+		expect(result).toContain("c1-reps: 3");
+		expect(result).not.toContain("c2-due:");
+		expect(result).not.toContain("c2-stability:");
+		expect(result).not.toContain("c2-reps:");
+		expect(result).toContain("c3-due: 2026-05-01T00:00:00.000Z");
+	});
+
+	it("does not mistake c10 for c1", () => {
+		const content = `\`\`\`osmosis
+id: cloze1
+c1-due: 2026-03-15T00:00:00.000Z
+c10-due: 2026-04-01T00:00:00.000Z
+
+The ==first== and the ==tenth==.
+\`\`\``;
+
+		expect(removeFenceSchedule(content, "cloze1-c1")).toContain("c10-due:");
+		expect(removeFenceSchedule(content, "cloze1-c1")).not.toContain("c1-due:");
+		expect(removeFenceSchedule(content, "cloze1-c10")).toContain("c1-due:");
+	});
+
+	it("returns original content if fence not found", () => {
+		const content = `\`\`\`osmosis
+id: other
+due: 2026-03-15T00:00:00.000Z
+
+Q
+***
+A
+\`\`\``;
+
+		expect(removeFenceSchedule(content, "abc123")).toBe(content);
+	});
+});
+
+describe("removeFence", () => {
+	it("removes the whole fence and reports it", () => {
+		const content = `# Rivers
+
+Some prose above.
+
+\`\`\`osmosis
+id: abc123
+
+Which river flows through ten countries?
+***
+The Danube
+\`\`\`
+
+Some prose below.`;
+
+		const result = removeFence(content, "abc123");
+
+		expect(result.removed).toBe(true);
+		expect(result.content).not.toContain("osmosis");
+		expect(result.content).not.toContain("The Danube");
+		expect(result.content).toContain("Some prose above.");
+		expect(result.content).toContain("Some prose below.");
+	});
+
+	it("collapses the blank lines the fence sat between", () => {
+		const content = `Above.
+
+\`\`\`osmosis
+id: abc123
+
+Q
+***
+A
+\`\`\`
+
+Below.`;
+
+		const result = removeFence(content, "abc123");
+
+		expect(result.content).toBe("Above.\n\nBelow.");
+	});
+
+	it("keeps a code cloze's inner fence from ending it early", () => {
+		const content = `Above.
+
+\`\`\`\`osmosis
+id: codeclz
+
+\`\`\`python
+def river_length(name):
+    return LENGTHS[name]  # osmosis-cloze
+\`\`\`
+\`\`\`\`
+
+Below.`;
+
+		const result = removeFence(content, "codeclz-c1");
+
+		expect(result.removed).toBe(true);
+		expect(result.content).toBe("Above.\n\nBelow.");
+		expect(result.content).not.toContain("python");
+	});
+
+	it("removes the fence a derived card came from", () => {
+		const content = `\`\`\`osmosis
+id: bidi01
+bidi: true
+
+Longest river in Africa
+***
+The Nile
+\`\`\``;
+
+		expect(removeFence(content, "bidi01-r").content).toBe("");
+		expect(removeFence(content, "bidi01-c2").content).toBe("");
+	});
+
+	it("leaves other fences in the note untouched", () => {
+		const content = `\`\`\`osmosis
+id: keep01
+
+Kept question
+***
+Kept answer
+\`\`\`
+
+\`\`\`osmosis
+id: drop01
+
+Dropped question
+***
+Dropped answer
+\`\`\``;
+
+		const result = removeFence(content, "drop01");
+
+		expect(result.content).toContain("id: keep01");
+		expect(result.content).toContain("Kept answer");
+		expect(result.content).not.toContain("Dropped question");
+	});
+
+	it("removes an unterminated fence through to the end of the file", () => {
+		const content = `Above.
+
+\`\`\`osmosis
+id: abc123
+
+Q
+***
+A`;
+
+		const result = removeFence(content, "abc123");
+
+		expect(result.removed).toBe(true);
+		expect(result.content).toBe("Above.\n");
+	});
+
+	it("removes a fence at the very start of the note", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+
+Q
+***
+A
+\`\`\`
+
+Below.`;
+
+		expect(removeFence(content, "abc123").content).toBe("Below.");
+	});
+
+	it("reports nothing removed when the fence is not found", () => {
+		const content = `\`\`\`osmosis
+id: other
+
+Q
+***
+A
+\`\`\``;
+
+		const result = removeFence(content, "abc123");
+
+		expect(result.removed).toBe(false);
+		expect(result.content).toBe(content);
+	});
+});
+
+describe("fenceHasOwnDeck", () => {
+	it("is true when the fence declares a deck", () => {
+		const content = `\`\`\`osmosis
+id: arch02
+deck: architecture/gothic
+
+What element carries a Gothic vault's thrust to an outer pier?
+***
+The flying buttress
+\`\`\``;
+
+		expect(fenceHasOwnDeck(content, "arch02")).toBe(true);
+	});
+
+	it("is false when it does not", () => {
+		const content = `\`\`\`osmosis
+id: arch01
+
+Which dome did Brunelleschi raise over Florence Cathedral?
+***
+Santa Maria del Fiore
+\`\`\``;
+
+		expect(fenceHasOwnDeck(content, "arch01")).toBe(false);
+	});
+
+	it("answers for a derived card via its base fence", () => {
+		const content = `\`\`\`osmosis
+id: cloze1
+deck: architecture/gothic
+
+The ==flying buttress== carries thrust to an ==outer pier==.
+\`\`\``;
+
+		expect(fenceHasOwnDeck(content, "cloze1-c2")).toBe(true);
+	});
+
+	it("does not read a deck line out of the card's content", () => {
+		const content = `\`\`\`osmosis
+id: abc123
+
+What does the shipping label read?
+***
+deck: below the waterline
+\`\`\``;
+
+		expect(fenceHasOwnDeck(content, "abc123")).toBe(false);
+	});
+
+	it("is false when the fence is not found", () => {
+		expect(fenceHasOwnDeck("no fences here", "abc123")).toBe(false);
 	});
 });

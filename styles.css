@@ -2125,6 +2125,18 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	height: 100%;
 	min-height: 0;
 	overflow: hidden;
+	/* iOS: a flick that runs out of list should stop, not start scrolling the
+	   pane behind it. */
+	overscroll-behavior: contain;
+}
+
+/* Bases pads its view container and reserves a scrollbar gutter, on the
+   assumption the view inside scrolls the whole container. This one does not —
+   it owns its own scroller — so that padding became a dead band along the
+   bottom of the leaf. Scoped to this view so no other Bases view is touched. */
+.bases-view.osmosis-browse {
+	padding: 0;
+	scrollbar-gutter: auto;
 }
 
 /* The scroll container is the view, not the page: a base sits inside Bases'
@@ -2141,6 +2153,205 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	padding: var(--size-4-4);
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
+}
+
+/* ── Search and action toolbar ─────────────────────────────── */
+
+/* One line, never wrapping: the search box gives up width to the buttons, and
+   past the point where even that runs out the bar scrolls sideways rather than
+   growing a second row and pushing the cards down. */
+.osmosis-browse-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: nowrap;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-2);
+	background: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	overflow-x: auto;
+}
+
+.osmosis-browse-toolbar-actions {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	gap: var(--size-4-1);
+}
+
+/* The search box is the only thing here that can shrink, so it absorbs whatever
+   the buttons need. It keeps a usable minimum and stops there. */
+.osmosis-browse-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 1 1 180px;
+	min-width: 90px;
+	max-width: 320px;
+}
+
+.osmosis-browse-search-icon {
+	position: absolute;
+	left: var(--size-4-1);
+	display: flex;
+	color: var(--text-faint);
+	pointer-events: none;
+}
+
+.osmosis-browse-search-icon .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* Two classes deep to outrank Obsidian's own `input[type="text"]` padding,
+   which is what was letting the icon sit on top of the placeholder. */
+.osmosis-browse-search .osmosis-browse-search-input {
+	width: 100%;
+	height: 28px;
+	padding-left: 26px;
+	padding-right: 26px;
+	font-size: var(--font-ui-smaller);
+}
+
+/* Only once there is something to clear — an X over an empty box is a button
+   that does nothing, and on a phone it is a button in the way. */
+.osmosis-browse-search-clear {
+	position: absolute;
+	right: 2px;
+	display: none;
+	padding: 2px;
+	color: var(--text-muted);
+}
+
+.osmosis-browse-search.has-query .osmosis-browse-search-clear {
+	display: flex;
+}
+
+.osmosis-browse-search-clear .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* The count is a number rather than "3 selected": on a phone the words cost
+   more room than the whole action set does. The tooltip carries the noun. */
+.osmosis-browse-toolbar-count {
+	flex: none;
+	min-width: 20px;
+	padding: 0 var(--size-4-1);
+	border-radius: var(--radius-s);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-medium);
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+/* A flexible gap, not a divider: this is what holds Delete away from the three
+   actions that only touch scheduling, so the one that edits notes is never the
+   button next to the one you meant to press. */
+.osmosis-browse-toolbar-gap {
+	flex: 1;
+	min-width: var(--size-4-3);
+}
+
+.osmosis-browse-toolbar-history {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--size-4-1);
+	margin-left: var(--size-4-1);
+	padding-left: var(--size-4-1);
+	border-left: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-browse-action {
+	flex: none;
+	padding: var(--size-4-1);
+}
+
+/* Dimmed rather than gone. An action that vanishes when it does not apply moves
+   every button beside it and takes with it the only hint that the browser can
+   do the thing at all. */
+.osmosis-browse-action:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.osmosis-browse-action:disabled:hover {
+	background: transparent;
+}
+
+/* Delete is the only action that edits note content, so it carries the warning
+   colour even while dimmed — the gap alone should not be the whole signal.
+   Hover keeps the ordinary surface: a filled red swatch swallowed the icon it
+   was meant to be drawing attention to. */
+.osmosis-browse-action-warning {
+	color: var(--text-error);
+}
+
+.osmosis-browse-action-warning:not(:disabled):hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-error);
+}
+
+/* ── Selected rows ─────────────────────────────────────────── */
+
+/* Click selects and double click opens, so a drag across a row is a selection
+   gesture rather than a text one. Left un-suppressed, Shift+click would paint a
+   text range across every row it spanned on top of the selection it made. */
+.osmosis-browse-row,
+.osmosis-browse-line,
+.osmosis-browse-tile,
+.osmosis-browse-group-header {
+	user-select: none;
+}
+
+/* Selection is carried by the row's background, and hover by a lighter one, so
+   the two read as the same surface at two strengths rather than as two
+   different things happening to the row. */
+.osmosis-browse-row.is-selected,
+.osmosis-browse-row.is-selected:hover,
+.osmosis-browse-line.is-selected,
+.osmosis-browse-line.is-selected:hover {
+	background: var(--text-selection);
+}
+
+/* A tile already has a border and a background of its own, so it takes the
+   accent on the border instead — a filled tile would fight its own content. */
+.osmosis-browse-tile.is-selected,
+.osmosis-browse-tile.is-selected:hover {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+/* The header's own state, so a note whose cards are all selected is legible
+   without counting rows. `is-partial` marks some-but-not-all, which is what the
+   checkbox's indeterminate state used to say.
+
+   Both marks are inset shadows rather than a border, because the header's own
+   rule sets `padding` as a shorthand further down and a real border would move
+   the title sideways as the state changed. */
+.osmosis-browse-group-header {
+	cursor: pointer;
+}
+
+.osmosis-browse-group-header:hover .osmosis-browse-group-title {
+	color: var(--text-accent);
+}
+
+.osmosis-browse-group-header.is-selected {
+	background: var(--text-selection);
+	box-shadow: inset 2px 0 0 var(--interactive-accent);
+}
+
+.osmosis-browse-group-header.is-partial {
+	box-shadow: inset 2px 0 0 var(--background-modifier-border-hover);
+}
+
+/* Deck entry for the browser's Change deck action (PromptModal). */
+.osmosis-prompt-input {
+	width: 100%;
+	margin-bottom: var(--size-4-2);
 }
 
 /* ── Bases groupBy, rendered as an outer level ─────────────── */
@@ -2185,6 +2396,101 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	table-layout: fixed;
 	border-collapse: collapse;
 	font-size: var(--font-ui-small);
+}
+
+/* Once columns have been dragged, their sum *is* the table width, so the
+   default minimum has to get out of the way — otherwise narrowing a column
+   would be undone by the table stretching the rest to make up the difference. */
+.osmosis-browse-table.is-sized {
+	min-width: 0;
+}
+
+/* The whole table takes the resize cursor during a drag, so it does not flicker
+   back to the default the moment the pointer leaves the 6px grip. */
+.osmosis-browse-table.is-resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* ── Sortable headers ──────────────────────────────────────── */
+
+.osmosis-browse-th-sortable {
+	cursor: pointer;
+}
+
+.osmosis-browse-th-sortable:hover {
+	color: var(--text-normal);
+}
+
+/* Pinned to the cell's trailing edge, clear of the resize grip, and carrying the
+   header's own background so a label too long for a narrowed column runs under
+   it rather than through it. In normal flow the header clips its overflow, so
+   the mark would be the first thing to disappear as a column got smaller —
+   exactly backwards, since it is the part that says how the table is ordered. */
+.osmosis-browse-th-sort {
+	position: absolute;
+	top: 0;
+	right: 8px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: 100%;
+	padding-left: 3px;
+	background: var(--background-primary);
+	color: var(--text-accent);
+}
+
+.osmosis-browse-th-sort .svg-icon {
+	width: 13px;
+	height: 13px;
+}
+
+/* The level number only appears past one sort column, where the arrows alone
+   cannot say which column breaks the other's ties. */
+.osmosis-browse-th-level {
+	font-size: 9px;
+	font-weight: var(--font-bold);
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+}
+
+/* ── Column resize grips ───────────────────────────────────── */
+
+/* Kept inside the header cell rather than straddling the boundary, because the
+   cell clips its overflow to ellipsize long labels and would cut off half of an
+   overhanging grip. `touch-action: none` so a drag on a phone resizes the column
+   instead of scrolling the table under it. */
+.osmosis-browse-resize {
+	position: absolute;
+	top: 0;
+	right: 0;
+	z-index: 1;
+	width: 8px;
+	height: 100%;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.osmosis-browse-resize::after {
+	content: "";
+	position: absolute;
+	top: 20%;
+	right: 3px;
+	width: 2px;
+	height: 60%;
+	background: var(--background-modifier-border-hover);
+	opacity: 0;
+	transition: opacity 100ms ease-in-out;
+}
+
+.osmosis-browse-resize:hover::after,
+.osmosis-browse-resize.is-dragging::after {
+	opacity: 1;
+}
+
+.osmosis-browse-resize.is-dragging::after {
+	background: var(--interactive-accent);
 }
 
 .osmosis-browse-col-index { width: 44px; }
@@ -2275,11 +2581,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-browse-group-title {
 	font-weight: var(--font-medium);
-	cursor: pointer;
-}
-
-.osmosis-browse-group-title:hover {
-	color: var(--text-accent);
 }
 
 .osmosis-browse-group-decks {

@@ -11,13 +11,15 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
-import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration } from "./views/CardBrowserView";
+import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
+import { MutationHistory, type HistoryResult } from "./browse/history";
+import type { MutationDeps } from "./browse/mutate";
 import type { Card, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
 
@@ -57,6 +59,10 @@ export default class OsmosisPlugin extends Plugin {
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
 	scheduleStore!: ScheduleStore;
+	/** Explicit deps for the card browser's four mutations. */
+	cardMutations!: MutationDeps;
+	/** Session-only undo stack for those mutations. */
+	mutationHistory!: MutationHistory;
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
@@ -141,6 +147,25 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		);
 
+		// Card-browser mutations. Explicit deps rather than the plugin, so the four
+		// operations and their undo records are testable without Bases or a vault.
+		// `vault.read` rather than `cachedRead`: these snapshots are what undo
+		// compares against before overwriting a note, so they must be the file as it
+		// actually is, not as the cache last saw it.
+		this.cardMutations = {
+			cardStore: this.cardStore,
+			fenceWriter: this.fenceWriter,
+			lineCards: this.scheduleStore,
+			files: {
+				read: (file: TFile) => this.app.vault.read(file),
+				process: (file: TFile, fn: (data: string) => string) => this.app.vault.process(file, fn),
+				processFrontMatter: (file: TFile, fn: (frontmatter: Record<string, unknown>) => void) =>
+					this.app.fileManager.processFrontMatter(file, fn),
+			},
+			resolveFile: (notePath: string) => this.app.vault.getFileByPath(notePath),
+		};
+		this.mutationHistory = new MutationHistory(this.cardMutations);
+
 		this.addSettingTab(new OsmosisSettingTab(this.app, this));
 
 		this.registerView(VIEW_TYPE_MINDMAP, (leaf: WorkspaceLeaf) => new MindMapView(leaf));
@@ -213,6 +238,29 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Open statistics",
 			callback: () => {
 				void this.activateMainView(VIEW_TYPE_STATS);
+			},
+		});
+
+		// Undo/redo for card-browser mutations. Deliberately left without a default
+		// hotkey: Ctrl+Z belongs to the editor, and taking it here would break undo
+		// in every note. Both are also buttons in the browser's own toolbar.
+		this.addCommand({
+			id: "undo-card-mutation",
+			name: "Undo last card mutation",
+			checkCallback: (checking) => {
+				if (this.mutationHistory.undoLabel === null) return false;
+				if (!checking) void this.undoCardMutation();
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "redo-card-mutation",
+			name: "Redo last undone card mutation",
+			checkCallback: (checking) => {
+				if (this.mutationHistory.redoLabel === null) return false;
+				if (!checking) void this.redoCardMutation();
+				return true;
 			},
 		});
 
@@ -510,6 +558,74 @@ export default class OsmosisPlugin extends Plugin {
 			active: true,
 		});
 		void workspace.revealLeaf(leaf);
+	}
+
+	// ── Card-browser mutations ──────────────────────────────────
+
+	/**
+	 * Open card browsers, so a mutation or an undo can re-render them.
+	 *
+	 * A `BasesView` is built by Bases inside a leaf a plugin cannot reach from
+	 * `getLeavesOfType`, so the views register themselves here instead.
+	 */
+	private readonly cardBrowsers = new Set<CardBrowserView>();
+
+	registerCardBrowser(view: CardBrowserView): void {
+		this.cardBrowsers.add(view);
+	}
+
+	unregisterCardBrowser(view: CardBrowserView): void {
+		this.cardBrowsers.delete(view);
+	}
+
+	/** Re-render every open card browser. Guarded per view — one broken render
+	 * must not stop the others, nor take out the undo that triggered it. */
+	refreshCardBrowsers(): void {
+		for (const view of this.cardBrowsers) {
+			try {
+				view.refresh();
+			} catch (error) {
+				console.error("Osmosis: could not refresh a card browser", error);
+			}
+		}
+	}
+
+	async undoCardMutation(): Promise<void> {
+		this.reportHistory(await this.mutationHistory.undo(), "Undid", "undo");
+	}
+
+	async redoCardMutation(): Promise<void> {
+		this.reportHistory(await this.mutationHistory.redo(), "Redid", "redo");
+	}
+
+	/**
+	 * Report an undo or redo, and refresh what it changed.
+	 *
+	 * A refused one is the interesting case. Restoring a note from a snapshot would
+	 * overwrite anything written to it since, so `MutationHistory` checks first and
+	 * refuses rather than winning that race — and the reason has to reach the user,
+	 * because from the outside a silent no-op looks like a broken button.
+	 */
+	private reportHistory(result: HistoryResult, verb: string, noun: string): void {
+		if (result.ok) {
+			new Notice(`Osmosis: ${verb} "${result.label}".`);
+			this.refreshCardBrowsers();
+			this.refreshDashboard();
+			this.lineReveal.refreshChrome();
+			return;
+		}
+
+		switch (result.reason) {
+			case "empty":
+				new Notice(`Osmosis: nothing to ${noun}.`);
+				break;
+			case "missing":
+				new Notice(`Osmosis: "${result.path}" is no longer in the vault, so this cannot be ${verb === "Undid" ? "undone" : "redone"}.`);
+				break;
+			case "conflict":
+				new Notice(`Osmosis: "${result.path}" has changed since. Reversing it would discard that edit, so nothing was written.`);
+				break;
+		}
 	}
 
 	/** Re-render any open dashboard sidebar views. */
