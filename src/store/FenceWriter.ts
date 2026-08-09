@@ -194,7 +194,7 @@ export function updateFenceSchedule(
  *   "abc123-r"  → { baseId: "abc123", prefix: "r-" }
  *   "abc123-c1" → { baseId: "abc123", prefix: "c1-" }
  */
-function parseCardIdParts(cardId: string): { baseId: string; prefix: string } {
+export function parseCardIdParts(cardId: string): { baseId: string; prefix: string } {
 	// Match derived suffixes: -r (bidi reverse) or -cN (cloze group).
 	const match = cardId.match(/^(.+)-(r|c\d+)$/);
 	if (match) {
@@ -357,6 +357,23 @@ function isScheduleKey(key: string): boolean {
 }
 
 /**
+ * True if the key holds schedule data belonging to *one specific* card — the one
+ * whose derived-ID prefix is `prefix` (`""` for the fence's own card, `"r-"` for
+ * a bidi reverse, `"c1-"` for a cloze group).
+ *
+ * A fence carries one metadata block for every card it generates, so
+ * `c1-stability` and `stability` are different cards' data living side by side.
+ * Anything that removes schedule keys has to discriminate between them or it
+ * destroys a sibling's scheduling.
+ */
+function isScheduleKeyForPrefix(key: string, prefix: string): boolean {
+	const lower = key.toLowerCase();
+	if (prefix === "") return SCHEDULE_KEYS.has(lower);
+	if (!lower.startsWith(prefix)) return false;
+	return SCHEDULE_KEYS.has(lower.slice(prefix.length));
+}
+
+/**
  * True if the line looks like a recognized metadata key-value pair.
  * Arbitrary `word: value` lines (e.g., prose content like "The :::mito:::…")
  * are NOT treated as metadata — only keys the parser knows about.
@@ -369,14 +386,24 @@ function isRecognizedMetadataLine(line: string): boolean {
 }
 
 /**
- * Pure function: remove all schedule metadata from a fence, returning the card
- * to "new" state. Preserves non-schedule metadata like id and exclude.
+ * Pure function: remove **one card's** schedule metadata from a fence, returning
+ * that card to "new" state. Preserves non-schedule metadata like id and exclude,
+ * and preserves the schedule of every other card the fence generates.
+ *
+ * The scoping is the whole point. A bidi fence generates `id` and `id-r`, and a
+ * cloze fence one card per group (`id-c1`, `id-c2`, …), but they share a single
+ * metadata block — so `stability` and `c2-stability` are two different cards'
+ * data on adjacent lines. Stripping every schedule key would silently reset the
+ * siblings, which is irreversible and invisible until the next review.
+ *
+ * This mirrors `updateFenceSchedule`, which has always written through the same
+ * prefix; removal was the half that did not.
  */
 export function removeFenceSchedule(
 	content: string,
 	cardId: string,
 ): string {
-	const { baseId } = parseCardIdParts(cardId);
+	const { baseId, prefix } = parseCardIdParts(cardId);
 
 	const lines = content.split("\n");
 	const fenceStart = findFenceForId(lines, baseId);
@@ -408,8 +435,8 @@ export function removeFenceSchedule(
 
 	for (const line of existingMeta) {
 		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
-		if (match && isScheduleKey(match[1]!)) {
-			continue; // drop schedule keys
+		if (match && isScheduleKeyForPrefix(match[1]!, prefix)) {
+			continue; // drop this card's schedule keys, leaving its siblings' alone
 		}
 		updatedMeta.push(line);
 	}
@@ -427,4 +454,115 @@ export function removeFenceSchedule(
 		...updatedMeta,
 		...lines.slice(metaEnd),
 	].join("\n");
+}
+
+/**
+ * The fence generating a card, located by the `id:` in its metadata, along with
+ * the bounds of that metadata region. Returns null when no fence carries the ID.
+ *
+ * (The three functions above each open-code this same scan. They are left as
+ * they are — they persist every review, and a shared helper is not worth
+ * re-testing that path for.)
+ */
+function locateFence(content: string, cardId: string): {
+	lines: string[];
+	fenceStart: number;
+	backtickCount: number;
+	metaStart: number;
+	metaEnd: number;
+} | null {
+	const { baseId } = parseCardIdParts(cardId);
+
+	const lines = content.split("\n");
+	const fenceStart = findFenceForId(lines, baseId);
+	if (fenceStart === -1) return null;
+
+	const openMatch = lines[fenceStart]!.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis/);
+	const backtickCount = openMatch ? openMatch[1]!.length : 3;
+
+	const metaStart = fenceStart + 1;
+	let metaEnd = metaStart;
+
+	for (let i = metaStart; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		const closeMatch = line.match(/^(`{3,})\s*$/);
+		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) {
+			metaEnd = i;
+			break;
+		}
+		if (isRecognizedMetadataLine(line)) {
+			metaEnd = i + 1;
+			continue;
+		}
+		metaEnd = i;
+		break;
+	}
+
+	return { lines, fenceStart, backtickCount, metaStart, metaEnd };
+}
+
+/** Result of removing a whole fence from a note. */
+export interface RemoveFenceResult {
+	/** Markdown with the fence gone, or unchanged when the ID was not found. */
+	content: string;
+	removed: boolean;
+}
+
+/**
+ * Pure function: delete the entire fence that generates a card.
+ *
+ * Deleting a fence card means deleting the fence, because the fence *is* the
+ * card — unlike a line card, where the text is the user's prose and only the
+ * block ID comes out. The consequence callers must surface first: a fence that
+ * generates several cards loses all of them, since there is no way to remove
+ * one cloze group's card without editing the cloze markers in the user's content.
+ */
+export function removeFence(content: string, cardId: string): RemoveFenceResult {
+	const located = locateFence(content, cardId);
+	if (!located) return { content, removed: false };
+
+	const { lines, fenceStart, backtickCount } = located;
+
+	// The closing fence is the first line of *at least* as many backticks. A code
+	// cloze opens with ````osmosis and holds a ```python block inside it, whose
+	// closing ``` must not be mistaken for the end of the outer fence.
+	let fenceEnd = lines.length - 1; // an unterminated fence runs to EOF
+	for (let i = fenceStart + 1; i < lines.length; i++) {
+		const closeMatch = lines[i]!.trim().match(/^(`{3,})\s*$/);
+		if (closeMatch && closeMatch[1]!.length >= backtickCount) {
+			fenceEnd = i;
+			break;
+		}
+	}
+
+	const kept = [...lines.slice(0, fenceStart), ...lines.slice(fenceEnd + 1)];
+
+	// A fence sits in its own paragraph, so lifting it out stacks the blank line
+	// above it against the blank line below into a two-line gap. Close it up.
+	if (fenceStart > 0 && kept[fenceStart - 1]?.trim() === "" && kept[fenceStart]?.trim() === "") {
+		kept.splice(fenceStart, 1);
+	} else if (fenceStart === 0 && kept[0]?.trim() === "") {
+		kept.splice(0, 1);
+	}
+
+	return { content: kept.join("\n"), removed: true };
+}
+
+/**
+ * Whether the fence generating a card declares its own `deck:`.
+ *
+ * Read out of the markdown rather than inferred from the card's resolved deck,
+ * because a fence deck that happens to match what the note would have resolved
+ * to anyway is indistinguishable once resolved — yet it still overrides. A
+ * note-level deck change has to report those cards rather than appear to have
+ * moved them.
+ */
+export function fenceHasOwnDeck(content: string, cardId: string): boolean {
+	const located = locateFence(content, cardId);
+	if (!located) return false;
+
+	const { lines, metaStart, metaEnd } = located;
+	return lines
+		.slice(metaStart, metaEnd)
+		.some((line) => /^deck\s*:\s*\S/i.test(line.trim()));
 }

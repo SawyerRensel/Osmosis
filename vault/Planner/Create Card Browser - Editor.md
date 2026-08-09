@@ -9,6 +9,7 @@ context:
 people:
 location:
 related:
+  - "[[Card browser mutations]]"
 status: Done
 priority:
 progress_current:
@@ -357,10 +358,9 @@ into `browse/cards.ts` as a pure function instead.
 
 ## Follow-ups
 
-- **The four mutations** — suspend/unsuspend, reset, delete, change deck — with
-  multi-select checkboxes, a `ConfirmModal` for delete naming affected files,
-  and `plugin.refreshDashboard()` after each. The two design decisions above
-  (block-ID delete, deck-change warning) are already settled.
+- [[Card browser mutations]] — the four mutations, multi-select and the sidebar
+  refresh, split out of this task. The two design decisions above (block-ID
+  delete, deck-change warning) are already settled and recorded there.
 - [[Clicking dashboard graph opens filtered card browser]]
 - [[Develop Image Occlusion System for Flaschards]] adds `occlusion` to the card
   type toggles.

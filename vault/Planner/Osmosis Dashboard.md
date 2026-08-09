@@ -31,6 +31,7 @@ repeat_bysetpos:
 repeat_completed_dates:
 parent:
 children:
+  - "[[Card browser mutations]]"
   - "[[Create Card Browser - Editor]]"
   - "[[Develop Image Occlusion System for Flaschards]]"
   - "[[Osmosis stats dashboard]]"
