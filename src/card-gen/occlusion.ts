@@ -170,7 +170,8 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 	const shapes: OcclusionShape[] = [];
 	let inShapes = false;
 
-	for (const raw of body) {
+	for (let i = 0; i < body.length; i++) {
+		const raw = body[i]!;
 		const line = raw.trim();
 		if (line === "") continue;
 
@@ -187,7 +188,25 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 		}
 
 		if (inShapes && line.startsWith("-")) {
-			const shape = parseShape(parseFlowValue(line.slice(1).trim()));
+			const rest = line.slice(1).trim();
+
+			// Flow mapping — `- { group: c1, kind: rect, … }`. Every note written
+			// before shapes moved to block mappings uses this spelling, so it
+			// stays readable indefinitely; only the writer changed.
+			if (rest.startsWith("{")) {
+				const shape = parseShape(parseFlowValue(rest));
+				if (shape) shapes.push(shape);
+				continue;
+			}
+
+			// Block mapping — the first key rides the `-`, the rest follow
+			// indented past it.
+			const indent = leadingWhitespace(raw);
+			const entry = [rest];
+			while (i + 1 < body.length && leadingWhitespace(body[i + 1]!) > indent) {
+				entry.push(body[++i]!.trim());
+			}
+			const shape = parseShape(parseBlockMapping(entry));
 			if (shape) shapes.push(shape);
 			continue;
 		}
@@ -197,6 +216,26 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 	}
 
 	return { mode, shapes };
+}
+
+/** Width of a line's leading indent. A blank line counts as zero, ending a block. */
+function leadingWhitespace(line: string): number {
+	return /^[ \t]*/.exec(line)![0].length;
+}
+
+/**
+ * Parse `key: value` lines into the plain object `parseShape` validates —
+ * values through `parseFlowValue`, so a `points:` sequence still reads inline.
+ */
+function parseBlockMapping(entry: readonly string[]): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const line of entry) {
+		const colon = line.indexOf(":");
+		if (colon === -1) continue;
+		const key = line.slice(0, colon).trim();
+		if (key !== "") result[key] = parseFlowValue(line.slice(colon + 1));
+	}
+	return result;
 }
 
 /**
@@ -346,22 +385,31 @@ function splitTopLevel(text: string): string[] {
 // ── Serialization ─────────────────────────────────────────────
 
 /**
- * Render a shape set back to fence-header lines. One shape per line as a YAML
- * flow mapping: compact enough that a six-mask diagram does not bury the
- * embed under forty lines of header, and still valid YAML, which the
- * frontmatter carrier requires.
+ * Render a shape set back to fence-header lines, as the block mappings the
+ * frontmatter carrier already stores. Both carriers then hold one structure,
+ * and the grouping is visible in the text rather than packed into a line.
+ *
+ * Flow mappings are still read — see `parseOccludeBody` — so notes written
+ * before this migrate when their fence is next written, not by a sweep.
  */
 export function serializeOccludeBlock(label: string, set: OcclusionSet): string[] {
 	return [
 		`occlude${label === "" ? "" : `-${label}`}:`,
 		`  mode: ${set.mode}`,
 		"  shapes:",
-		...set.shapes.map((shape) => `    - ${serializeShape(shape)}`),
+		...set.shapes.flatMap((shape) => serializeShape(shape)),
 	];
 }
 
-/** One shape as a YAML flow mapping. Coordinates round to 4dp — sub-pixel on any real image. */
-export function serializeShape(shape: OcclusionShape): string {
+/**
+ * One shape as an indented YAML block mapping: `- ` on the first key, the rest
+ * aligned beneath it. Coordinates round to 4dp — sub-pixel on any real image.
+ *
+ * A poly's `points` stays a flow sequence on its own line. It is the one field
+ * that is a list of lists, and a block sequence of block sequences buys nothing
+ * a reader can use.
+ */
+export function serializeShape(shape: OcclusionShape): string[] {
 	const fields: string[] = [`group: ${shape.group}`, `kind: ${shape.kind}`];
 	switch (shape.kind) {
 		case "rect":
@@ -374,7 +422,7 @@ export function serializeShape(shape: OcclusionShape): string {
 			fields.push(`points: [${shape.points.map(([x, y]) => `[${num(x)}, ${num(y)}]`).join(", ")}]`);
 			break;
 	}
-	return `{ ${fields.join(", ")} }`;
+	return fields.map((field, idx) => (idx === 0 ? `    - ${field}` : `      ${field}`));
 }
 
 /** Serialize a shape set to the plain object the frontmatter carrier stores. */

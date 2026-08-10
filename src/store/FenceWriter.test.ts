@@ -39,7 +39,8 @@ What is 2+2?
 		expect(result).toContain("reps: 3");
 		expect(result).toContain("lapses: 0");
 		expect(result).toContain("state: review");
-		expect(result).toContain("last-review: 2026-03-10T00:00:00.000Z");
+		expect(result).toContain("lastReview: 2026-03-10T00:00:00.000Z");
+		expect(result).toContain("learningSteps: 0");
 		// Content should be preserved
 		expect(result).toContain("What is 2+2?");
 		expect(result).toContain("4");
@@ -71,7 +72,7 @@ What is 2+2?
 		expect(dueCount).toBe(1);
 	});
 
-	it("writes prefixed keys for bidi reverse card", () => {
+	it("nests the schedule under `r:` for a bidi reverse card", () => {
 		const content = `\`\`\`osmosis
 id: abc123
 bidi: true
@@ -83,14 +84,14 @@ Back
 
 		const result = updateFenceSchedule(content, "abc123-r", baseSchedule);
 
-		expect(result).toContain("r-due: 2026-03-15T00:00:00.000Z");
-		expect(result).toContain("r-stability: 4.5000");
-		expect(result).toContain("r-reps: 3");
+		expect(result).toContain("r:\n  due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("  stability: 4.5000");
+		expect(result).toContain("  reps: 3");
 		// Base schedule fields should not be present
 		expect(result).not.toMatch(/^due:/m);
 	});
 
-	it("writes prefixed keys for cloze cards", () => {
+	it("nests the schedule under `cN:` for cloze cards", () => {
 		const content = `\`\`\`osmosis
 id: abc123
 
@@ -99,11 +100,11 @@ The capital of ==France== is ==Paris==
 
 		const result = updateFenceSchedule(content, "abc123-c1", baseSchedule);
 
-		expect(result).toContain("c1-due: 2026-03-15T00:00:00.000Z");
-		expect(result).toContain("c1-stability: 4.5000");
+		expect(result).toContain("c1:\n  due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("  stability: 4.5000");
 	});
 
-	it("writes prefixed keys for inline cloze cards", () => {
+	it("nests the schedule under `cN:` for inline cloze cards", () => {
 		const content = `\`\`\`\`osmosis
 id: test-inline-02
 
@@ -115,8 +116,8 @@ def :::c1:greet:::(:::c2:name:::):
 
 		const result = updateFenceSchedule(content, "test-inline-02-c1", baseSchedule);
 
-		expect(result).toContain("c1-due: 2026-03-15T00:00:00.000Z");
-		expect(result).toContain("c1-stability: 4.5000");
+		expect(result).toContain("c1:\n  due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("  stability: 4.5000");
 	});
 
 	it("returns original content if fence not found", () => {
@@ -234,7 +235,7 @@ A
 
 		// Find the content line and the first schedule line
 		const contentIdx = lines.findIndex((l) => l.includes(":::mitochondria:::"));
-		const scheduleIdx = lines.findIndex((l) => l.startsWith("c1-due:"));
+		const scheduleIdx = lines.findIndex((l) => l.startsWith("c1:"));
 
 		expect(contentIdx).toBeGreaterThan(-1);
 		expect(scheduleIdx).toBeGreaterThan(-1);
@@ -253,8 +254,8 @@ def fib(n):
 
 		const result = updateFenceSchedule(content, "codeclz-c1", baseSchedule);
 
-		expect(result).toContain("c1-due: 2026-03-15T00:00:00.000Z");
-		expect(result).toContain("c1-stability: 4.5000");
+		expect(result).toContain("c1:\n  due: 2026-03-15T00:00:00.000Z");
+		expect(result).toContain("  stability: 4.5000");
 		// Inner ``` should not be treated as fence end
 		expect(result).toContain("```python");
 		expect(result).toContain("def fib(n):");
@@ -822,5 +823,217 @@ id: bridge
 		expect(removed).toBe(true);
 		expect(content).not.toContain("occlude-a:");
 		expect(content).not.toContain("group: c1");
+	});
+});
+
+/**
+ * Migration happens on write: a fence is rewritten only for the card being
+ * reviewed, so a multi-group fence spends time half-converted. These assert on
+ * what the fence *reparses to* rather than on its text — a string assertion
+ * passes straight through the failure mode this format change risks, where the
+ * separator blank line lands inside a block and severs it from its key.
+ */
+describe("schedule format migration", () => {
+	const legacyFence = [
+		"```osmosis",
+		"id: bridge",
+		"deck: Engineering/Bridges",
+		"c1-due: 2026-08-10T11:53:55.956Z",
+		"c1-stability: 0.0349",
+		"c1-difficulty: 9.5929",
+		"c1-reps: 3",
+		"c1-lapses: 0",
+		"c1-state: learning",
+		"c1-last-review: 2026-08-10T11:52:55.956Z",
+		"c1-learning-steps: 0",
+		"c2-due: 2026-08-11T11:53:59.562Z",
+		"c2-stability: 1.2000",
+		"c3-due: 2026-08-12T11:54:03.101Z",
+		"",
+		"The ==Danube== rises in the ==Black Forest== and empties into the ==Black Sea==.",
+		"```",
+	].join("\n");
+
+	/** The card the fence reparses to, by ID. */
+	const reparse = (content: string, cardId: string) =>
+		generateExplicitCards(content).find((card) => card.id === cardId)!;
+
+	it("converts the reviewed group to a nested block and drops its flat keys", () => {
+		const result = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+
+		expect(result).toContain("c1:\n  due: 2026-03-15T00:00:00.000Z");
+		expect(result).not.toMatch(/^c1-/m);
+
+		const c1 = reparse(result, "bridge-c1");
+		expect(c1.due).toBe(baseSchedule.due);
+		expect(c1.stability).toBe(4.5);
+		expect(c1.reps).toBe(3);
+		expect(c1.state).toBe("review");
+		expect(c1.lastReview).toBe(baseSchedule.lastReview);
+	});
+
+	it("leaves the groups that were not reviewed in their flat form, intact", () => {
+		const result = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+
+		expect(result).toContain("c2-due: 2026-08-11T11:53:59.562Z");
+		expect(result).toContain("c3-due: 2026-08-12T11:54:03.101Z");
+
+		expect(reparse(result, "bridge-c2").due).toBe(new Date("2026-08-11T11:53:59.562Z").getTime());
+		expect(reparse(result, "bridge-c2").stability).toBe(1.2);
+		expect(reparse(result, "bridge-c3").due).toBe(new Date("2026-08-12T11:54:03.101Z").getTime());
+	});
+
+	it("keeps the fence's content and other metadata below the migrated block", () => {
+		const result = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+
+		expect(result).toContain("deck: Engineering/Bridges");
+		expect(reparse(result, "bridge-c1").deck).toBe("Engineering/Bridges");
+		expect(reparse(result, "bridge-c1").back)
+			.toContain("The ==Danube== rises in the ==Black Forest== and empties into the ==Black Sea==.");
+	});
+
+	it("updates a nested block in place on the second write, rather than adding another", () => {
+		const once = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+		const twice = updateFenceSchedule(once, "bridge-c1", {
+			...baseSchedule,
+			due: new Date("2026-09-01T00:00:00.000Z").getTime(),
+			reps: 4,
+		});
+
+		expect((twice.match(/^c1:$/gm) ?? []).length).toBe(1);
+		expect(reparse(twice, "bridge-c1").due).toBe(new Date("2026-09-01T00:00:00.000Z").getTime());
+		expect(reparse(twice, "bridge-c1").reps).toBe(4);
+		// The siblings still survive a second pass.
+		expect(reparse(twice, "bridge-c2").stability).toBe(1.2);
+	});
+
+	it("migrates each group independently as it comes up for review", () => {
+		const afterC1 = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+		const afterC2 = updateFenceSchedule(afterC1, "bridge-c2", {
+			...baseSchedule,
+			due: new Date("2026-10-01T00:00:00.000Z").getTime(),
+		});
+
+		expect(afterC2).not.toMatch(/^c2-/m);
+		expect(afterC2).toContain("c3-due: 2026-08-12T11:54:03.101Z");
+		expect(reparse(afterC2, "bridge-c1").due).toBe(baseSchedule.due);
+		expect(reparse(afterC2, "bridge-c2").due).toBe(new Date("2026-10-01T00:00:00.000Z").getTime());
+		expect(reparse(afterC2, "bridge-c3").due).toBe(new Date("2026-08-12T11:54:03.101Z").getTime());
+	});
+
+	it("never lands the metadata/content separator inside a block", () => {
+		const noBlank = [
+			"```osmosis",
+			"id: bridge",
+			"The ==Danube== rises in the Black Forest.",
+			"```",
+		].join("\n");
+		const result = updateFenceSchedule(noBlank, "bridge-c1", baseSchedule);
+		const lines = result.split("\n");
+
+		// Every indented body line must still sit above the first blank line.
+		const blankIdx = lines.findIndex((line) => line.trim() === "");
+		const lastIndented = lines.reduce((acc, line, idx) => (/^\s+\S/.test(line) ? idx : acc), -1);
+		expect(lastIndented).toBeLessThan(blankIdx);
+		expect(reparse(result, "bridge-c1").due).toBe(baseSchedule.due);
+	});
+
+	it("migrates the fence's own card's field names to camelCase", () => {
+		const content = [
+			"```osmosis",
+			"id: plain",
+			"due: 2026-01-01T00:00:00.000Z",
+			"last-review: 2025-12-30T00:00:00.000Z",
+			"learning-steps: 2",
+			"",
+			"Front",
+			"***",
+			"Back",
+			"```",
+		].join("\n");
+		const result = updateFenceSchedule(content, "plain", baseSchedule);
+
+		expect(result).toContain("lastReview: 2026-03-10T00:00:00.000Z");
+		expect(result).not.toContain("last-review:");
+		expect(result).not.toContain("learning-steps:");
+		expect((result.match(/lastReview:/g) ?? []).length).toBe(1);
+		expect(reparse(result, "plain").lastReview).toBe(baseSchedule.lastReview);
+	});
+
+	it("does not reach into a sibling's nested block when writing the fence's own card", () => {
+		const content = [
+			"```osmosis",
+			"id: bidi01",
+			"bidi: true",
+			"r:",
+			"  due: 2026-04-01T00:00:00.000Z",
+			"  stability: 9.1000",
+			"",
+			"Longest river in Africa",
+			"***",
+			"The Nile",
+			"```",
+		].join("\n");
+		const result = updateFenceSchedule(content, "bidi01", baseSchedule);
+
+		expect(reparse(result, "bidi01").due).toBe(baseSchedule.due);
+		expect(reparse(result, "bidi01-r").due).toBe(new Date("2026-04-01T00:00:00.000Z").getTime());
+		expect(reparse(result, "bidi01-r").stability).toBe(9.1);
+	});
+
+	it("removes a whole nested block, not just its key line", () => {
+		const migrated = updateFenceSchedule(legacyFence, "bridge-c1", baseSchedule);
+		const result = removeFenceSchedule(migrated, "bridge-c1");
+
+		expect(result).not.toContain("c1:");
+		expect(result).not.toContain("stability: 4.5000");
+		expect(reparse(result, "bridge-c1").due).toBeUndefined();
+		expect(reparse(result, "bridge-c1").stability).toBeUndefined();
+		// Siblings survive.
+		expect(reparse(result, "bridge-c2").stability).toBe(1.2);
+		expect(reparse(result, "bridge-c3").due).toBe(new Date("2026-08-12T11:54:03.101Z").getTime());
+	});
+
+	it("does not strip a sibling's nested block when resetting the fence's own card", () => {
+		const content = [
+			"```osmosis",
+			"id: bidi01",
+			"bidi: true",
+			"due: 2026-03-15T00:00:00.000Z",
+			"stability: 4.5000",
+			"r:",
+			"  due: 2026-04-01T00:00:00.000Z",
+			"  stability: 9.1000",
+			"",
+			"Longest river in Africa",
+			"***",
+			"The Nile",
+			"```",
+		].join("\n");
+		const result = removeFenceSchedule(content, "bidi01");
+
+		expect(reparse(result, "bidi01").due).toBeUndefined();
+		expect(reparse(result, "bidi01-r").due).toBe(new Date("2026-04-01T00:00:00.000Z").getTime());
+		expect(reparse(result, "bidi01-r").stability).toBe(9.1);
+	});
+
+	it("does not mistake a c10 block for c1", () => {
+		const content = [
+			"```osmosis",
+			"id: cloze1",
+			"c1:",
+			"  due: 2026-03-15T00:00:00.000Z",
+			"c10:",
+			"  due: 2026-04-01T00:00:00.000Z",
+			"",
+			"The ==first== and the ==tenth==.",
+			"```",
+		].join("\n");
+		const result = removeFenceSchedule(content, "cloze1-c1");
+
+		expect(reparse(result, "cloze1-c1").due).toBeUndefined();
+		// c10 has no cloze occurrence here, so it generates no card to reparse —
+		// its block surviving in the text is the whole assertion.
+		expect(result).toContain("c10:\n  due: 2026-04-01T00:00:00.000Z");
 	});
 });

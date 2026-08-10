@@ -182,7 +182,7 @@ describe("round-tripping", () => {
 		expect(parseOcclusionSet(occlusionSetToYamlValue(original))).toEqual(original);
 	});
 
-	it("emits shape lines as YAML flow mappings, which the frontmatter carrier requires", () => {
+	it("emits shape lines as YAML block mappings, matching the frontmatter carrier", () => {
 		const lines = serializeOccludeBlock("a", {
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0.3125, y: 0.22, w: 0.14, h: 0.06 }],
@@ -191,7 +191,48 @@ describe("round-tripping", () => {
 			"occlude-a:",
 			"  mode: hide-all-guess-one",
 			"  shapes:",
-			"    - { group: c1, kind: rect, x: 0.3125, y: 0.22, w: 0.14, h: 0.06 }",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.3125",
+			"      y: 0.22",
+			"      w: 0.14",
+			"      h: 0.06",
+		]);
+	});
+
+	it("still reads the flow mappings every pre-migration note was written with", () => {
+		const lines = [
+			"occlude-a:",
+			"  mode: hide-one-guess-one",
+			"  shapes:",
+			"    - { group: c1, kind: rect, x: 0.1188, y: 0.5225, w: 0.1375, h: 0.08 }",
+			"    - { group: c2, kind: poly, points: [[0.2, 0.18], [0.42, 0.18], [0.31, 0.34]] }",
+		];
+		expect(parseOccludeBlock(lines, 0)!.set).toEqual({
+			mode: "hide-one-guess-one",
+			shapes: [
+				{ group: "c1", kind: "rect", x: 0.1188, y: 0.5225, w: 0.1375, h: 0.08 },
+				{ group: "c2", kind: "poly", points: [[0.2, 0.18], [0.42, 0.18], [0.31, 0.34]] },
+			],
+		});
+	});
+
+	it("reads a fence where one shape migrated to a block mapping and one did not", () => {
+		const lines = [
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.1",
+			"      y: 0.2",
+			"      w: 0.3",
+			"      h: 0.4",
+			"    - { group: c2, kind: ellipse, x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 }",
+		];
+		expect(parseOccludeBlock(lines, 0)!.set.shapes).toEqual([
+			{ group: "c1", kind: "rect", x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+			{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 },
 		]);
 	});
 });
