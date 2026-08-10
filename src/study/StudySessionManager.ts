@@ -297,7 +297,16 @@ export class StudySessionManager {
 	}
 }
 
-/** A line card whose schedule lives in osmosis-schedule frontmatter. */
+/**
+ * A card whose schedule lives in osmosis-schedule frontmatter.
+ *
+ * The block ID is the test, not the card type: an occluded line card fans out
+ * into one card *per shape group* and those carry `cardType: "occlusion"` while
+ * still living on their line. Demanding `cardType === "line"` here sent their
+ * reviews down the fence branch, where `writeSchedule` looked for a fence
+ * called `os-elev001-c2`, found none, and dropped the schedule without a word.
+ * Every other router in the codebase already keys on `blockId` alone.
+ */
 function isLineCard(card: Card): card is Card & { blockId: string } {
-	return card.cardType === "line" && card.blockId !== undefined;
+	return card.blockId !== undefined;
 }

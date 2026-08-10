@@ -1306,6 +1306,83 @@ hr.osmosis-map-style-divider {
 	margin-top: 4px;
 }
 
+/* Image occlusion: the picture with its masks painted over it.
+
+   The wrapper shrinks to fit the image and the mask layer is pinned to the
+   wrapper's edges, so the SVG's 0–1 viewBox always maps onto exactly the
+   rendered image — no measurement, and masks stay put when the image is
+   resized or given a `|300` suffix. */
+.osmosis-occlusion {
+	/* The docs site's button palette: Material "amber" accent for the group
+	   being asked, because gold is the one that grabs the eye, and "deep purple"
+	   primary for its siblings. Same two colours as .osmosis-btn--primary and
+	   its hover state. */
+	--osmosis-occlusion-mask: #7e56c2;
+	--osmosis-occlusion-target: #ffaa00;
+	position: relative;
+	display: inline-block;
+	max-width: 100%;
+	line-height: 0;
+}
+
+/* object-fit is `fill` — not the `contain` that study-card images get — to pair
+   with the overlay's preserveAspectRatio="none". Should anything ever hand the
+   image a box that is not its own aspect ratio, picture and masks then stretch
+   identically instead of the picture letterboxing away from its masks. */
+.osmosis-occlusion .osmosis-occlusion-image {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	object-fit: fill;
+}
+
+.osmosis-occlusion-masks {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+/* Strokes are set non-scaling because the viewBox is stretched to the image's
+   aspect ratio — a plain stroke would come out thicker on one axis. */
+.osmosis-occlusion-mask {
+	fill: var(--osmosis-occlusion-mask);
+	stroke: rgba(0, 0, 0, 0.55);
+	stroke-width: 1.5;
+	vector-effect: non-scaling-stroke;
+}
+
+.osmosis-occlusion-mask.is-target {
+	fill: var(--osmosis-occlusion-target);
+}
+
+/* The answer side: the target's pixels are uncovered, but still ringed so the
+   eye lands on the region that was being asked about. */
+.osmosis-occlusion-mask.is-revealed {
+	fill: none;
+	stroke: var(--osmosis-occlusion-target);
+	stroke-width: 3;
+}
+
+.osmosis-occlusion-prose {
+	line-height: var(--line-height-normal);
+	margin-bottom: 8px;
+}
+
+.osmosis-occlusion-prose > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-occlusion-prose > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-occlusion-missing {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
 .osmosis-study-progress {
 	display: flex;
 	align-items: center;

@@ -115,6 +115,19 @@ export function stripEmbedLabels(content: string): string {
 }
 
 /**
+ * Drop image embeds, leaving whatever prose surrounds them.
+ *
+ * An occlusion card's image is painted by the mask renderer rather than by
+ * `MarkdownRenderer`, so the embed has to come out of the card body before the
+ * body is rendered — otherwise the diagram appears twice, once masked and once
+ * not. A caption, or the fence's hint, is not the renderer's business and
+ * stays.
+ */
+export function stripEmbeds(content: string): string {
+	return content.replace(ANY_EMBED_REGEX, "");
+}
+
+/**
  * Drop whole labelled embeds other than `keepLabel`, and strip the surviving
  * label. A fence can carry several diagrams; a card asking about one of them
  * must not show the others.

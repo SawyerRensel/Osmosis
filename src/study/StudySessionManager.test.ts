@@ -161,7 +161,13 @@ describe("FSRS integration", () => {
 
 describe("StudySessionManager schedule-write routing", () => {
 	interface FenceCall { cardId: string; kind: "write" | "remove" }
-	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" | "disable" | "enable" }
+	/** `group` is recorded only when one was passed, so plain line cards keep asserting flat. */
+	interface LineCall {
+		notePath: string;
+		blockId: string;
+		kind: "set" | "remove" | "disable" | "enable";
+		group?: string;
+	}
 
 	function makeManager() {
 		const fenceCalls: FenceCall[] = [];
@@ -178,14 +184,19 @@ describe("StudySessionManager schedule-write routing", () => {
 			},
 		};
 		const scheduleStore = {
-			setSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "set" });
+			setSchedule: (notePath: string, blockId: string, _schedule: unknown, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "set", ...(group !== undefined && { group }) });
 			},
-			removeSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "remove" });
+			removeSchedule: (notePath: string, blockId: string, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "remove", ...(group !== undefined && { group }) });
 			},
-			setDisabled: (notePath: string, blockId: string, disabled: boolean) => {
-				lineCalls.push({ notePath, blockId, kind: disabled ? "disable" : "enable" });
+			setDisabled: (notePath: string, blockId: string, disabled: boolean, group?: string) => {
+				lineCalls.push({
+					notePath,
+					blockId,
+					kind: disabled ? "disable" : "enable",
+					...(group !== undefined && { group }),
+				});
 			},
 		};
 		const logged: ReviewLogEntry[] = [];
@@ -230,6 +241,45 @@ describe("StudySessionManager schedule-write routing", () => {
 		expect(fenceCalls).toHaveLength(0);
 		expect(lineCalls).toEqual([
 			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
+		]);
+	});
+
+	it("routes an occluded line card's rating to its per-group frontmatter entry", async () => {
+		// It carries cardType "occlusion" but still lives on a line, so the block
+		// ID is what decides the carrier. Routing on the type instead sent it to
+		// the fence writer, which had no fence called `os-elev001-c2` to write to
+		// and silently lost the review.
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		}));
+
+		await manager.recordReview("notes/bridges.md#^os-elev001-c2", 3);
+
+		expect(fenceCalls).toHaveLength(0);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "set", group: "c2" },
+		]);
+	});
+
+	it("excludes an occluded line card through its group entry", async () => {
+		const { manager, lineCalls } = makeManager();
+		const card = makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		});
+		store.addCard(card);
+
+		expect(manager.setLineCardDisabled(card, true)).toBe(true);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "disable", group: "c2" },
 		]);
 	});
 

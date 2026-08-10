@@ -23,11 +23,11 @@ export default tseslint.config(
 	},
 	...obsidianmd.configs.recommended,
 	{
-		// This file polyfills Obsidian's DOM helpers so the charts can be
-		// smoke-tested under jsdom. It has to call the raw DOM API these two
-		// rules exist to steer plugin code away from — it is the thing they
-		// would steer it towards.
-		files: ["src/stats/charts.dom.test.ts"],
+		// These files polyfill Obsidian's DOM helpers so views can be
+		// smoke-tested under jsdom. They have to call the raw DOM API these two
+		// rules exist to steer plugin code away from — they are the thing the
+		// rules would steer it towards.
+		files: ["src/**/*.dom.test.ts"],
 		rules: {
 			"obsidianmd/prefer-create-el": "off",
 			"obsidianmd/no-static-styles-assignment": "off",

@@ -29,9 +29,13 @@ osmosis-schedule:
 
 # Image occlusion fixture
 
-Phase 1 ships the format, parser, and storage — **not** the mask renderer or the
-editor. So nothing is painted over these diagrams yet. What this note checks is
-that the cards come out right, that the two carriers both work, and that a note
+Phase 1 shipped the format, parser, and storage; phase 2 adds the mask renderer
+and wires it into sequential study. So the cards below now paint their masks
+when studied — the editor (phase 3) and the contextual/spatial surfaces
+(phase 5) are still to come.
+
+What this note checks is that the cards come out right, that the two carriers
+both work, that the masks land where the shapes say they do, and that a note
 written before occlusion existed still loads exactly as it did.
 
 ## Fence card — two labelled diagrams, three shape kinds
@@ -44,13 +48,13 @@ id: bridge-parts
 occlude-a:
   mode: hide-all-guess-one
   shapes:
-    - { group: c1, kind: rect, x: 0.2538, y: 0.065, w: 0.2225, h: 0.075 }
-    - { group: c1, kind: rect, x: 0.15, y: 0.37, w: 0.03, h: 0.375 }
-    - { group: c2, kind: ellipse, x: 0.1875, y: 0.5375, rx: 0.075, ry: 0.045 }
+    - { group: c1, kind: rect, x: 0.1188, y: 0.5225, w: 0.1375, h: 0.08 }
+    - { group: c1, kind: rect, x: 0.6675, y: 0.365, w: 0.045, h: 0.385 }
+    - { group: c2, kind: ellipse, x: 0.825, y: 0.56, rx: 0.065, ry: 0.05 }
 occlude-b:
   mode: hide-one-guess-one
   shapes:
-    - { group: c3, kind: poly, points: [[0.395, 0.26], [0.605, 0.26], [0.5, 0.1] ] }
+    - { group: c3, kind: poly, points: [[0.395, 0.505], [0.605, 0.505], [0.5, 0.36]] }
 
 ![[bridge-cross-section.svg]]{a}
 ![[span-elevation.svg]]{b}
@@ -60,6 +64,12 @@ Expected: **three** cards — `bridge-parts-c1`, `bridge-parts-c2`,
 `bridge-parts-c3`. The first two belong to the cross-section, the third to the
 elevation. `c1` has two shapes but is still one card.
 
+In study, `bridge-parts-c1` covers the "Web plate" label *and* the right-hand
+web plate in the question colour, with the "Parapet" ellipse also covered (a
+different colour) because this set is hide-all-guess-one. Flipping lifts both
+`c1` masks and rings them, leaving `c2` covered. `bridge-parts-c3` covers only
+its triangle over the centre arch, because that set is hide-one-guess-one.
+
 ## Line card — occluded, no label needed
 
 The block ID identifies the line and the line holds one embed, so the shape set
@@ -68,7 +78,8 @@ sits in this note's frontmatter under `os-elev001` with no `image:` field.
 ![[span-elevation.svg]] ^os-elev001
 
 Expected: **three** cards from this one line — one per group — with `c1` already
-carrying a review schedule and the other two new.
+carrying a review schedule and the other two new. Each covers exactly one label
+("Pier", "Abutment", "Main span"), since the set is hide-one-guess-one.
 
 ## Line card — plain, written before occlusion existed
 

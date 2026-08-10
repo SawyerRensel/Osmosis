@@ -14,6 +14,7 @@ import {
 	rewriteFenceEmbeds,
 	serializeOccludeBlock,
 	stripEmbedLabels,
+	stripEmbeds,
 } from "./occlusion";
 import type { GeneratedCard } from "./types";
 
@@ -235,6 +236,17 @@ describe("embed labels", () => {
 	it("finds the first embed whether or not it is labelled", () => {
 		expect(findFirstEmbed("text ![[bridge.png|300]] more")).toBe("bridge.png");
 		expect(findFirstEmbed("no images here")).toBeNull();
+	});
+
+	it("strips embeds but keeps the prose around them", () => {
+		expect(stripEmbeds("Deck anatomy\n![[bridge.png|300]]\n![alt](span.png)").trim())
+			.toBe("Deck anatomy");
+	});
+
+	it("leaves a plain link alone when stripping embeds", () => {
+		expect(stripEmbeds("See [[bridge notes]] and ![[bridge.png]]")).toBe(
+			"See [[bridge notes]] and ",
+		);
 	});
 });
 
