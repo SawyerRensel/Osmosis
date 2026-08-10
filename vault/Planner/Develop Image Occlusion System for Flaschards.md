@@ -11,8 +11,8 @@ location:
 related:
 status: In-Progress
 priority:
-progress_current:
-progress_total:
+progress_current: 2
+progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
 date_modified: 2026-08-06T20:18:35.185Z
 date_start_scheduled: 2026-08-09T17:34:17
@@ -234,6 +234,69 @@ image), Back Extra (below, answer side), and Comments (never shown).
 5. **Remaining surfaces.** Contextual and spatial study.
 6. **Touch.** Mobile drawing and handle manipulation — `isDesktopOnly` is
    `false`, so this cannot be skipped, and it is the least predictable phase.
+
+## Progress
+
+Branch `feature/image-occlusion`, cut from `release/0.0.4`. Not pushed, no PR —
+this note closes only when all six phases are done.
+
+| Phase | State | Commits |
+|---|---|---|
+| 1. Format + parser | Done, manually verified | `267e91f`, `237cd3f` |
+| 2. Renderer | Done, manually verified | `d651112` |
+| 3. Editor | Not started | |
+| 4. Full toolset | Not started | |
+| 5. Remaining surfaces | Not started | |
+| 6. Touch | Not started | |
+
+### Phase 2 decisions worth remembering
+
+- **The overlay measures nothing.** The wrapper shrinks to the image and an SVG
+  with `viewBox="0 0 1 1"` and `preserveAspectRatio="none"` is pinned to its
+  edges, so normalised coordinates land on the right pixels at any size with no
+  `ResizeObserver` and no load handler. The image is `object-fit: fill`, not the
+  study card's `contain`: paired with `preserveAspectRatio="none"`, picture and
+  masks then stretch together if anything ever hands the image a box that is not
+  its own aspect ratio. Changing either half alone silently misaligns the masks.
+- **Mask selection is pure and lives outside `src/views/`**
+  (`src/study/occlusion-masks.ts`), because vitest cannot import `obsidian` —
+  same reason `splitFenceHeader` sits in `card-gen/explicit.ts`.
+- **A `|300` sizing suffix is deliberately not honoured in study.** Masks stay
+  aligned regardless, which is what the acceptance criterion asks; but the
+  diagram renders at the card's own fit rather than 300px, as Anki does.
+  Shrinking an occluded diagram to a thumbnail inside the study modal would make
+  it harder to answer. `CardOcclusion` carries no width — add one only if
+  phase 5's in-note rendering needs it.
+- **Colours are the docs site's button palette**, as custom properties on
+  `.osmosis-occlusion`: amber `#ffaa00` (`--md-accent-fg-color`) for the group
+  being asked, deep purple `#7e56c2` (`--md-primary-fg-color`) for its siblings.
+  Gold is the eye-catching one, so it marks the question.
+- **`createSvg` hands `cls` to `classList.add()`**, which throws on a token
+  containing a space. Mask role classes are therefore arrays. The first cut used
+  a string, threw on the very first mask, and took the rest of the card render
+  with it — the card showed an unmasked image that would not flip.
+  `OcclusionRenderer.dom.test.ts` reproduces the strict behaviour rather than
+  stubbing it away.
+
+### Fixed in phase 2, but a phase 1 bug
+
+`StudySessionManager` routed schedule writes on `cardType === "line"`. An
+occluded line card fans out into one card *per shape group* carrying
+`cardType: "occlusion"` while still living on its line, so its reviews took the
+fence branch, where `writeSchedule` looked for a fence called `os-elev001-c2`,
+found none, and dropped the schedule silently; exclude was a no-op for the same
+reason. The block ID is the routing signal — every other router in the codebase
+already had it that way.
+
+### Known consequence, not a defect
+
+`FileManager.processFrontMatter` re-dumps the whole frontmatter block through
+Obsidian's YAML serializer, which does not emit flow style. So the first time an
+occluded *line* card is reviewed, its shapes expand from one-line flow mappings
+to block mappings. Still valid, still parses, but the compact form only survives
+in the fence carrier, which `FenceWriter` edits as text. Not worth trading for
+hand-written frontmatter YAML. [[Improve cloze data storage]] resolves this the
+other way — by making the fence carrier match frontmatter instead.
 
 ## Surface map
 
