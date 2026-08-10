@@ -26,8 +26,10 @@ export class FenceWriter {
 	/**
 	 * Write updated schedule data into the fence for a card.
 	 *
-	 * For derived cards (bidi reverse `-r`, cloze `-c1`), the schedule
-	 * is stored with prefixed keys (e.g., `r-due`, `c1-stability`).
+	 * The fence's own card keeps its fields flat at the top level, mirroring how
+	 * a plain line card sits directly under its block ID in frontmatter. Derived
+	 * cards (bidi reverse `-r`, cloze/occlusion group `-c1`) nest theirs under a
+	 * `r:`/`c1:` block, as the frontmatter carrier does.
 	 */
 	async writeSchedule(
 		file: TFile,
@@ -129,7 +131,7 @@ export function updateFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
+		if (opensIndentedBlock(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -138,34 +140,12 @@ export function updateFenceSchedule(
 		break;
 	}
 
-	// Build the schedule key-value pairs to write
-	const scheduleKVs = buildScheduleKVs(schedule, prefix);
-
 	// Extract existing metadata lines
 	const existingMeta = lines.slice(metaStart, metaEnd);
 
-	// Track which schedule keys we've already updated
-	const scheduleKeysToWrite = new Map(scheduleKVs);
-	const updatedMeta: string[] = [];
-
-	for (const line of existingMeta) {
-		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
-		if (match) {
-			const key = match[1]!.toLowerCase();
-			if (scheduleKeysToWrite.has(key)) {
-				// Replace with new value
-				updatedMeta.push(`${key}: ${scheduleKeysToWrite.get(key)!}`);
-				scheduleKeysToWrite.delete(key);
-				continue;
-			}
-		}
-		updatedMeta.push(line);
-	}
-
-	// Append any schedule keys that weren't already in the metadata
-	for (const [key, value] of scheduleKeysToWrite) {
-		updatedMeta.push(`${key}: ${value}`);
-	}
+	const updatedMeta = prefix === ""
+		? writeFlatSchedule(existingMeta, schedule)
+		: writeNestedSchedule(existingMeta, prefix.slice(0, -1), schedule);
 
 	// Ensure a blank line separates metadata from card content
 	const nextLine = lines[metaEnd]?.trim() ?? "";
@@ -204,25 +184,132 @@ export function parseCardIdParts(cardId: string): { baseId: string; prefix: stri
 }
 
 /**
- * Build key-value pairs for schedule metadata.
- * Applies prefix for derived cards (e.g., "r-due", "c1-stability").
+ * Schedule field names and values, in frontmatter's camelCase — the spelling
+ * both carriers now write.
  */
-function buildScheduleKVs(
+function buildScheduleKVs(schedule: ScheduleFields): Map<string, string> {
+	return new Map([
+		["due", new Date(schedule.due).toISOString()],
+		["stability", schedule.stability.toFixed(4)],
+		["difficulty", schedule.difficulty.toFixed(4)],
+		["reps", String(schedule.reps)],
+		["lapses", String(schedule.lapses)],
+		["state", schedule.state],
+		["lastReview", new Date(schedule.lastReview).toISOString()],
+		["learningSteps", String(schedule.learningSteps)],
+	]);
+}
+
+/**
+ * The canonical *written* key for a schedule field named in either spelling, or
+ * null when the key is not a schedule field. Prefixed keys (`c1-due`) are not
+ * this card's and return null.
+ */
+function canonicalScheduleField(key: string): string | null {
+	const lower = key.toLowerCase();
+	if (lower === "last-review" || lower === "lastreview") return "lastReview";
+	if (lower === "learning-steps" || lower === "learningsteps") return "learningSteps";
+	return SCHEDULE_KEYS.has(lower) ? lower : null;
+}
+
+/** A derived card's schedule as a nested block, matching the frontmatter shape. */
+function serializeDerivedSchedule(suffix: string, schedule: ScheduleFields): string[] {
+	return [
+		`${suffix}:`,
+		...[...buildScheduleKVs(schedule)].map(([key, value]) => `  ${key}: ${value}`),
+	];
+}
+
+/**
+ * Write the fence's own card's schedule, flat at the top level.
+ *
+ * A legacy `last-review:` line is *replaced* by its camelCase spelling rather
+ * than left beside it — two keys naming one field would both read, and the
+ * loser of that merge silently reverts the review that just happened.
+ */
+function writeFlatSchedule(
+	existingMeta: readonly string[],
 	schedule: ScheduleFields,
-	prefix: string,
-): Map<string, string> {
-	const kvs = new Map<string, string>();
+): string[] {
+	const pending = buildScheduleKVs(schedule);
+	const out: string[] = [];
 
-	kvs.set(`${prefix}due`, new Date(schedule.due).toISOString());
-	kvs.set(`${prefix}stability`, schedule.stability.toFixed(4));
-	kvs.set(`${prefix}difficulty`, schedule.difficulty.toFixed(4));
-	kvs.set(`${prefix}reps`, String(schedule.reps));
-	kvs.set(`${prefix}lapses`, String(schedule.lapses));
-	kvs.set(`${prefix}state`, schedule.state);
-	kvs.set(`${prefix}last-review`, new Date(schedule.lastReview).toISOString());
-	kvs.set(`${prefix}learning-steps`, String(schedule.learningSteps));
+	for (let i = 0; i < existingMeta.length; i++) {
+		const line = existingMeta[i]!;
 
-	return kvs;
+		// Other cards' nested blocks pass through whole. Their body lines spell
+		// the same field names this card's flat keys do, so matching line by
+		// line would rewrite `c1:`'s indented `due:` with this card's value.
+		if (indentedBlockKey(line.trim())) {
+			const end = blockEnd(existingMeta, i);
+			out.push(...existingMeta.slice(i, end + 1));
+			i = end;
+			continue;
+		}
+
+		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+		const field = match ? canonicalScheduleField(match[1]!) : null;
+		if (field) {
+			if (pending.has(field)) {
+				out.push(`${field}: ${pending.get(field)!}`);
+				pending.delete(field);
+			}
+			continue;
+		}
+		out.push(line);
+	}
+
+	for (const [key, value] of pending) out.push(`${key}: ${value}`);
+	return out;
+}
+
+/**
+ * Write one derived card's schedule as a nested `c1:`/`r:` block, replacing
+ * whatever form that card's schedule was previously stored in.
+ *
+ * Dropping the pre-migration flat `c1-*` keys in this same edit is the whole
+ * job: left behind, the reader sees the group described twice, and the half
+ * that loses the merge reverts the review being written. The new block lands
+ * where the old form sat, so an untouched sibling group keeps its position.
+ */
+function writeNestedSchedule(
+	existingMeta: readonly string[],
+	suffix: string,
+	schedule: ScheduleFields,
+): string[] {
+	const out: string[] = [];
+	let insertAt = -1;
+
+	for (let i = 0; i < existingMeta.length; i++) {
+		const line = existingMeta[i]!;
+		const blockKey = indentedBlockKey(line.trim());
+
+		if (blockKey) {
+			const end = blockEnd(existingMeta, i);
+			if (blockKey === suffix) {
+				if (insertAt === -1) insertAt = out.length;
+			} else {
+				out.push(...existingMeta.slice(i, end + 1));
+			}
+			i = end;
+			continue;
+		}
+
+		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+		if (match && isScheduleKeyForPrefix(match[1]!, `${suffix}-`)) {
+			if (insertAt === -1) insertAt = out.length;
+			continue;
+		}
+
+		out.push(line);
+	}
+
+	out.splice(
+		insertAt === -1 ? out.length : insertAt,
+		0,
+		...serializeDerivedSchedule(suffix, schedule),
+	);
+	return out;
 }
 
 /**
@@ -252,7 +339,7 @@ function findFenceForId(lines: string[], targetId: string): number {
 			}
 
 			// Stop if we hit a non-metadata line
-			if (!isOccludeBlockLine(lines[j]!) && !isRecognizedMetadataLine(line)) break;
+			if (!opensIndentedBlock(lines[j]!) && !isRecognizedMetadataLine(line)) break;
 		}
 	}
 
@@ -289,7 +376,7 @@ export function updateFenceExclude(
 			metaEnd = i;
 			break;
 		}
-		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
+		if (opensIndentedBlock(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -337,10 +424,16 @@ export function updateFenceExclude(
 	].join("\n");
 }
 
-/** Schedule-related metadata keys (including prefixed variants for derived cards). */
+/**
+ * Schedule-related metadata keys (including prefixed variants for derived
+ * cards), lowercased. Both spellings are listed: the fence wrote `last-review`
+ * and `learning-steps` before it standardised on frontmatter's camelCase, and
+ * those keys have to stay recognizable so migration can replace them.
+ */
 const SCHEDULE_KEYS = new Set([
-	"due", "stability", "difficulty", "reps", "lapses",
-	"state", "last-review", "learning-steps",
+	"due", "stability", "difficulty", "reps", "lapses", "state",
+	"last-review", "learning-steps",
+	"lastreview", "learningsteps",
 ]);
 
 /** Non-schedule metadata keys recognized inside an osmosis fence. */
@@ -386,19 +479,39 @@ function isRecognizedMetadataLine(line: string): boolean {
 }
 
 /**
- * An `occlude[-label]:` header key, which opens a block instead of carrying a
- * value, or one of that block's indented body lines.
+ * The key of a header block — `occlude[-label]:` for a shape set, `c1:`/`r:`
+ * for a derived card's schedule — which opens an indented block instead of
+ * carrying a value. Returns the key, or null when the line is not one.
+ */
+function indentedBlockKey(trimmedLine: string): string | null {
+	const match = trimmedLine.match(/^(occlude(?:-[A-Za-z0-9_-]+)?|r|c\d+)\s*:\s*$/);
+	return match ? match[1]! : null;
+}
+
+/**
+ * A line belonging to an indented header block: either the key that opens one
+ * or one of its body lines.
  *
  * Every metadata scan below walks until it meets a line it does not recognize.
- * Without this, a shape set ends the scan on its own first line, and the blank
- * line these functions then insert to separate metadata from content lands
- * *above* the shapes — terminating the metadata block and orphaning every mask
- * on the image. The header is written once by the editor and read back
- * verbatim; the writer's only job is to leave it alone.
+ * Without this, a block ends the scan on its own first line, and the blank line
+ * these functions then insert to separate metadata from content lands *inside*
+ * the block — severing its body from its key. Nothing in the resulting file
+ * looks wrong; the shapes, or a card's whole schedule, are simply gone at the
+ * next read.
  */
-function isOccludeBlockLine(rawLine: string): boolean {
+function opensIndentedBlock(rawLine: string): boolean {
 	if (/^\s+\S/.test(rawLine)) return true;
-	return /^occlude(?:-[A-Za-z0-9_-]+)?\s*:\s*$/.test(rawLine.trim());
+	return indentedBlockKey(rawLine.trim()) !== null;
+}
+
+/**
+ * Index of the last line of the block opened at `idx` — its key line when the
+ * block has no body.
+ */
+function blockEnd(meta: readonly string[], idx: number): number {
+	let end = idx;
+	while (end + 1 < meta.length && /^\s+\S/.test(meta[end + 1]!)) end++;
+	return end;
 }
 
 /**
@@ -438,7 +551,7 @@ export function removeFenceSchedule(
 			metaEnd = i;
 			break;
 		}
-		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
+		if (opensIndentedBlock(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}
@@ -449,7 +562,24 @@ export function removeFenceSchedule(
 	const existingMeta = lines.slice(metaStart, metaEnd);
 	const updatedMeta: string[] = [];
 
-	for (const line of existingMeta) {
+	for (let i = 0; i < existingMeta.length; i++) {
+		const line = existingMeta[i]!;
+		const blockKey = indentedBlockKey(line.trim());
+
+		// A nested block is dropped or kept *whole*. Its body lines spell the
+		// bare field names (`due:`, `stability:`), so walking into one while
+		// removing the fence's own card — whose prefix is "" and therefore
+		// matches exactly those names — would strip a sibling group's schedule
+		// out from under it.
+		if (blockKey) {
+			const end = blockEnd(existingMeta, i);
+			if (`${blockKey}-` !== prefix) {
+				updatedMeta.push(...existingMeta.slice(i, end + 1));
+			}
+			i = end;
+			continue;
+		}
+
 		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
 		if (match && isScheduleKeyForPrefix(match[1]!, prefix)) {
 			continue; // drop this card's schedule keys, leaving its siblings' alone
@@ -506,7 +636,7 @@ function locateFence(content: string, cardId: string): {
 			metaEnd = i;
 			break;
 		}
-		if (isOccludeBlockLine(lines[i]!) || isRecognizedMetadataLine(line)) {
+		if (opensIndentedBlock(lines[i]!) || isRecognizedMetadataLine(line)) {
 			metaEnd = i + 1;
 			continue;
 		}

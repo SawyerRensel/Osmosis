@@ -40,11 +40,34 @@ function isClosingFence(line: string, backtickCount: number): boolean {
 	return match !== null && match[1]!.length >= backtickCount;
 }
 
-/** Schedule field names for derived card prefix matching. */
+/** Schedule field names, in the canonical spelling `applyScheduleField` switches on. */
 const SCHEDULE_FIELDS = new Set([
 	"stability", "difficulty", "due", "last-review",
 	"reps", "lapses", "state", "learning-steps",
 ]);
+
+/**
+ * A derived card's schedule block key — `c1:`, `r:` — carrying no value and
+ * opening an indented block of fields, the way frontmatter stores the same
+ * data. The flat `c1-due:` spelling it replaced is still read.
+ */
+const DERIVED_SCHEDULE_KEY_REGEX = /^(r|c\d+)\s*:\s*$/;
+
+/**
+ * Canonical field name for a schedule key in either carrier's spelling, or null
+ * when the key is not a schedule field.
+ *
+ * The fence header used to write `last-review`/`learning-steps` while
+ * frontmatter wrote `lastReview`/`learningSteps`. The fence writes camelCase
+ * now, so both have to read. Callers lowercase keys before they arrive here,
+ * which is why the camelCase forms are matched flattened.
+ */
+function normalizeScheduleField(name: string): string | null {
+	const key = name.trim().toLowerCase();
+	if (key === "lastreview") return "last-review";
+	if (key === "learningsteps") return "learning-steps";
+	return SCHEDULE_FIELDS.has(key) ? key : null;
+}
 
 /** Valid card states for validation. */
 const VALID_STATES = new Set<string>(["new", "learning", "review", "relearning"]);
@@ -82,6 +105,35 @@ function applyScheduleField(
 			target.learningSteps = parseInt(value, 10);
 			break;
 	}
+}
+
+/**
+ * Parse a derived card's nested schedule block — a `c1:`/`r:` key plus its
+ * indented fields — starting at `startIdx`. Returns null when `startIdx` is not
+ * such a key.
+ *
+ * Mirrors `parseOccludeBlock`: the block runs to the first line that is blank,
+ * unindented, or the closing fence.
+ */
+function parseDerivedScheduleBlock(
+	lines: readonly string[],
+	startIdx: number,
+): { suffix: string; schedule: DerivedSchedule; nextIdx: number } | null {
+	const keyMatch = lines[startIdx]?.trim().match(DERIVED_SCHEDULE_KEY_REGEX);
+	if (!keyMatch) return null;
+
+	let end = startIdx + 1;
+	while (end < lines.length && /^\s+\S/.test(lines[end]!)) end++;
+
+	const schedule: DerivedSchedule = {};
+	for (const raw of lines.slice(startIdx + 1, end)) {
+		const fieldMatch = raw.trim().match(/^(\w[\w-]*)\s*:\s*(.+)$/);
+		if (!fieldMatch) continue;
+		const field = normalizeScheduleField(fieldMatch[1]!);
+		if (field) applyScheduleField(schedule, field, fieldMatch[2]!.trim());
+	}
+
+	return { suffix: keyMatch[1]!, schedule, nextIdx: end };
 }
 
 /**
@@ -509,10 +561,10 @@ function renderClozeCard(
  * image occlusion.
  *
  * Pulled out of `parseFenceContent` so it can be tested without a plugin
- * instance. The occlusion case is the reason it is worth testing: an
- * `occlude[-label]:` key carries no value and opens an indented block, so the
- * single-line `key: value` test rejects it and the scan would end *on top of*
- * the shapes — spilling the whole shape set into the rendered content.
+ * instance. The indented blocks are the reason it is worth testing: an
+ * `occlude[-label]:` or `c1:` key carries no value, so the single-line
+ * `key: value` test rejects it and the scan would end *on top of* the block —
+ * spilling a shape set, or a derived card's schedule, into the rendered content.
  */
 export function splitFenceHeader(lines: readonly string[]): {
 	contentStart: number;
@@ -535,6 +587,13 @@ export function splitFenceHeader(lines: readonly string[]): {
 			hasOcclusion = true;
 			contentStart = occlude.nextIdx;
 			i = occlude.nextIdx - 1; // the loop's own i++ lands on nextIdx
+			continue;
+		}
+
+		const derived = parseDerivedScheduleBlock(lines, i);
+		if (derived) {
+			contentStart = derived.nextIdx;
+			i = derived.nextIdx - 1;
 			continue;
 		}
 
@@ -566,8 +625,11 @@ export function splitFenceHeader(lines: readonly string[]): {
  * ```
  *
  * Metadata keys: id, exclude, bidi, type-in, deck, hint
- * Schedule keys: stability, difficulty, due, last-review, reps, lapses, state
- * Derived schedule keys: r-due, c1-stability, etc.
+ * Schedule keys: stability, difficulty, due, lastReview, reps, lapses, state,
+ *   learningSteps — the fence's own card, flat at the top level.
+ * Derived cards (bidi reverse, cloze/occlusion groups) nest their schedule
+ *   under a `r:`/`c1:` block. The pre-migration flat spelling (`r-due`,
+ *   `c1-stability`, `c1-last-review`) still reads.
  * bidi: true generates two cards (forward + reverse as explicit_bidi type).
  *
  * If no *** separator, the fence is treated as a cloze card. Any of these
@@ -611,6 +673,11 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			hint: "",
 		};
 
+		// Kept apart so the merge below is decided by format rather than by which
+		// spelling happened to appear first in the header.
+		const flatDerived = new Map<string, DerivedSchedule>();
+		const nestedDerived = new Map<string, DerivedSchedule>();
+
 		let metadataEnded = false;
 		while (i < lines.length && !isClosingFence(lines[i]!, backtickCount)) {
 			const line = lines[i]!.trim();
@@ -634,31 +701,42 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					continue;
 				}
 
+				// A derived card's schedule is a nested block since the format
+				// change. Like `occlude:`, the key carries no value, so it has to
+				// be consumed before the `key: value` match below rejects it.
+				const derivedBlock = parseDerivedScheduleBlock(lines, i);
+				if (derivedBlock) {
+					nestedDerived.set(derivedBlock.suffix, {
+						...nestedDerived.get(derivedBlock.suffix),
+						...derivedBlock.schedule,
+					});
+					i = derivedBlock.nextIdx;
+					continue;
+				}
+
 				const metaMatch = line.match(/^(\w[\w-]*)\s*:\s*(.+)$/);
 				if (metaMatch) {
 					const key = metaMatch[1]!.toLowerCase();
 					const value = metaMatch[2]!.trim();
 
-					// Check for derived schedule prefix (e.g., r-due, c1-stability)
+					// Pre-migration derived schedule keys (e.g., r-due, c1-stability)
 					const prefixMatch = key.match(/^(r|c\d+)-(.+)$/);
-					if (prefixMatch && SCHEDULE_FIELDS.has(prefixMatch[2]!)) {
+					const prefixField = prefixMatch ? normalizeScheduleField(prefixMatch[2]!) : null;
+					if (prefixMatch && prefixField) {
 						const suffix = prefixMatch[1]!;
-						const field = prefixMatch[2]!;
-						if (!metadata.derivedSchedules) {
-							metadata.derivedSchedules = new Map();
-						}
-						let derived = metadata.derivedSchedules.get(suffix);
+						let derived = flatDerived.get(suffix);
 						if (!derived) {
 							derived = {};
-							metadata.derivedSchedules.set(suffix, derived);
+							flatDerived.set(suffix, derived);
 						}
-						applyScheduleField(derived, field, value);
+						applyScheduleField(derived, prefixField, value);
 						i++;
 						continue;
 					}
 
-					if (SCHEDULE_FIELDS.has(key)) {
-						applyScheduleField(metadata, key, value);
+					const field = normalizeScheduleField(key);
+					if (field) {
+						applyScheduleField(metadata, field, value);
 						i++;
 						continue;
 					}
@@ -695,6 +773,19 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			}
 
 			break;
+		}
+
+		// Migration happens on write, one card at a time, so a three-group fence
+		// sits with `c1:` nested and `c2-due:`/`c3-due:` still flat until those
+		// two come up for review. Both forms have to survive that, and a group
+		// described by both resolves field by field with the nested block
+		// winning — it is what the most recent write produced.
+		if (flatDerived.size > 0 || nestedDerived.size > 0) {
+			const merged = new Map<string, DerivedSchedule>();
+			for (const suffix of new Set([...flatDerived.keys(), ...nestedDerived.keys()])) {
+				merged.set(suffix, { ...flatDerived.get(suffix), ...nestedDerived.get(suffix) });
+			}
+			metadata.derivedSchedules = merged;
 		}
 
 		// Collect content lines until closing fence

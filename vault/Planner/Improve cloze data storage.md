@@ -10,16 +10,17 @@ people:
 location:
 related:
   - "[[Develop Image Occlusion System for Flaschards]]"
-status: To-Do
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-10T07:35:03.968Z
-date_modified: 2026-08-10T11:35:11.036Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_modified: 2026-08-10T12:50:00.000Z
+date_start_scheduled: 2026-08-10T12:27:00.000Z
+date_start_actual: 2026-08-10T12:27:00.000Z
+date_end_scheduled: 2026-08-10T12:50:00.000Z
+date_end_actual: 2026-08-10T12:50:00.000Z
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/20
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -307,3 +308,144 @@ lists all three with their schedules intact.
 steps and **stop** for confirmation before committing. Commit code by explicit
 path, never `git add .`. This note gets its own commit, separately, and only
 after the user confirms.
+
+---
+
+# What was implemented
+
+## Where it shipped
+
+[PR #20](https://github.com/SawyerRensel/Osmosis/pull/20), branch
+`feature/cloze-data-storage`, based on **`feature/image-occlusion`** — not on
+`release/0.0.4` as the prompt above specified. See "The branch decision" below;
+that instruction was wrong and the reason is worth keeping.
+
+## The branch decision
+
+The prompt's "Where things stand" said to cut from `release/0.0.4` and explicitly
+not from `feature/image-occlusion`. But the rest of the prompt targets code that
+exists only on the occlusion branch:
+
+| Symbol the prompt directs you to | On `release/0.0.4`? |
+|---|---|
+| `isOccludeBlockLine` (the "trap" section, 5 call sites) | no |
+| `splitFenceHeader`, `fence-header.test.ts` | no |
+| `parseOccludeBlock`, `parseOccludeBody`, `occlusionSetToYamlValue`, all of `occlusion.ts` | no |
+| `e2e/fixtures/occlusion.md` | no |
+| `SCHEDULE_FIELDS`, `derivedSchedules`, `buildScheduleKVs`, `removeSchedule` | yes |
+
+The cited line numbers (`FenceWriter.ts` ~132/255/292/441/509) and the clean
+baseline `8719ab5` are both from the occlusion branch; on release those scans sit
+at 132/255/292/**425/493** with no occlude guard. Sawyer chose full scope on
+`feature/image-occlusion`. **Consequence: this PR cannot reach `release/0.0.4`
+independently — it merges into image occlusion first.**
+
+## The cause
+
+Nothing was broken; the two carriers had simply grown apart. Both store the same
+FSRS fields for the same cards, but the fence header is hand-parsed text while
+frontmatter is real YAML round-tripped through `processFrontMatter`. Each grew
+the spelling its own parser found cheapest — the fence a flat `c1-last-review:`
+namespace it could match with one regex, frontmatter a nested block with
+camelCase keys because that is what Obsidian's YAML dumper emits. A three-group
+cloze fence spent twenty-four lines on schedules whose grouping existed only as a
+string prefix.
+
+## The fix
+
+Derived cards nest under their group key (`c1:`, `r:`) with camelCase fields.
+The fence's *own* card stays flat at the top level, mirroring how a plain line
+card sits directly under its block ID in frontmatter. Occlusion shapes serialize
+as block mappings.
+
+Reading is additive: `parseDerivedScheduleBlock` mirrors `parseOccludeBlock`, and
+`normalizeScheduleField` maps both spellings onto one canonical name. Writing
+splits into `writeFlatSchedule` (the fence's own card) and `writeNestedSchedule`
+(derived), which replaces whatever form the card's schedule was previously in.
+
+## Decisions worth remembering
+
+- **`r` nests too.** The prompt named cloze, code cloze and occlusion, but `r-due`
+  comes out of the same `derivedSchedules` map as `c1-due`. Leaving it flat would
+  have preserved the exact inconsistency this task existed to remove.
+- **camelCase wins**, because frontmatter is the format being standardised on and
+  it is the one a user actually reads in Obsidian's property editor.
+- **The reader merges; it does not let position decide.** Flat and nested
+  accumulate into separate maps and merge field by field with the nested block
+  winning — it is what the most recent write produced. A source-order rule would
+  make the outcome depend on where a sync conflict happened to splice.
+- **Flat keys are dropped in the same edit that nests a group.** Left behind, the
+  reader sees the group twice and whichever half loses the merge silently reverts
+  the review that just happened.
+- **Block mappings are not a reversal of the flow-mapping decision** in
+  [[Develop Image Occlusion System for Flaschards]]. That decision rejected a
+  single line of bare `key: value` runs, which is not valid YAML. A multi-line
+  block mapping is, and satisfies the constraint that decision protected.
+- **`serializeOccludeBlock` emits block mappings but nothing calls it yet.** It is
+  the phase 3 editor's surface. Today a schedule write passes an existing shape
+  block through verbatim, and the reader accepts both spellings. Shapes migrate
+  when that editor lands — do not "fix" the apparent dead code.
+
+## Two latent bugs found on the way
+
+Both are the trap the prompt warned about, in places it did not list:
+
+- **`removeFenceSchedule` and the flat write path walked into a sibling's nested
+  block.** A `c1:` body line reads `  due: …`, which is exactly what the fence's
+  own card's matcher looks for (its prefix is `""`). Resetting or rescheduling the
+  base card would have stripped or overwritten a cloze group's schedule. Nested
+  blocks are now taken or kept *whole*.
+- **`CardSyncService.injectFenceIdsIntoContent` could sever an occlude block.** A
+  fence with shapes but no `id:` yet — plausible, since the editor writes shapes
+  before card-gen assigns an ID — got its injected `id:` plus a separator blank
+  line placed *above* the block, orphaning every mask. `isRecognizedMetadataLine`
+  there is now block-aware.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/card-gen/explicit.ts` | `DERIVED_SCHEDULE_KEY_REGEX`, `normalizeScheduleField`, `parseDerivedScheduleBlock`; flat/nested merge in the metadata loop; `splitFenceHeader` steps over nested blocks |
+| `src/card-gen/occlusion.ts` | `parseOccludeBody` reads block mappings and flow mappings; `serializeShape` returns lines; `leadingWhitespace`, `parseBlockMapping` |
+| `src/store/FenceWriter.ts` | `indentedBlockKey`, `opensIndentedBlock`, `blockEnd`, `canonicalScheduleField`, `serializeDerivedSchedule`, `writeFlatSchedule`, `writeNestedSchedule`; whole-block handling in `removeFenceSchedule`; camelCase `buildScheduleKVs` |
+| `src/card-gen/CardSyncService.ts` | `isBlockLine`; block-aware `isRecognizedMetadataLine` and `fenceHasIdMetadata`; camelCase in `META_KEYS` |
+| `src/card-gen/explicit.test.ts` | `derived schedule storage` — 7 cases covering both forms, mixed state, merge precedence |
+| `src/card-gen/fence-header.test.ts` | 3 cases: nested block, nested/flat mix, nested beside a shape block |
+| `src/card-gen/occlusion.test.ts` | block-mapping emission; flow mappings still parse; a set with one of each |
+| `src/store/FenceWriter.test.ts` | `schedule format migration` — 11 cases asserting by **reparse** |
+
+## Test fixture
+
+`e2e/fixtures/cloze-schedule-migration.md`, copied to
+`vault/tests/flashcard/`. Four fences, all in the old format: a three-group cloze
+fence (schedules are the verbatim capture from the prompt), a bidi fence with
+flat `r-*`, an occlusion fence with flow-mapping shapes over flat `c1-*`, and a
+fence already migrated. Reuses `bridge-cross-section.svg`.
+
+**Keep the committed copy pristine.** It is tracked, and a copy that has been
+studied is already migrated and useless for testing migration.
+
+**Every card must be dated in the past.** The first version failed manual testing
+for a reason that was not a code defect: c2/c3 were dated 2026-08-11/08-12, and
+deck "Total" is `new + learn + due` (`DashboardSidebarView.ts:182`), so
+future-dated `review` cards correctly show as nothing to do and cannot be
+studied.
+
+## Verified unchanged
+
+- `src/browse/mutate.ts` uses `parseCardIdParts` only for `baseId` and delegates
+  every write to `FenceWriter`; its tests pass untouched, so no format knowledge
+  leaked outside the writer.
+- `src/browse/cards.ts` and the dashboard/stats views read the in-memory store.
+  `FILTERABLE_CARD_TYPES` needed nothing — no card type is added.
+- `src/views/ContextualStudyProcessor.ts` reads `exclude:` only through
+  `splitFenceHeader`, which is now block-aware.
+
+## Follow-ups
+
+- Occlusion shapes in *existing* notes migrate only once the phase 3 editor
+  rewrites them — tracked under
+  [[Develop Image Occlusion System for Flaschards]].
+- `vault/tests/flashcard/occlusion.md` was left modified in the working tree by
+  manual testing (study artifacts, and `osmosis-cards: false` toggled by hand).
+  Deliberately not committed here — it belongs to the occlusion task.

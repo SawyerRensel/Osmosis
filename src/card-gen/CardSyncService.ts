@@ -272,11 +272,27 @@ export function injectFenceIdsIntoContent(content: string, cards: GeneratedCard[
 
 const META_KEYS = new Set([
 	"id", "exclude", "bidi", "type-in", "deck", "hint",
-	"due", "stability", "difficulty", "reps", "lapses",
-	"state", "last-review", "learning-steps",
+	"due", "stability", "difficulty", "reps", "lapses", "state",
+	"last-review", "learning-steps", "lastreview", "learningsteps",
 ]);
 
+/**
+ * A line belonging to a header block that opens rather than carries a value —
+ * an `occlude[-label]:` shape set or a derived card's `c1:`/`r:` schedule — or
+ * one of its indented body lines.
+ *
+ * The scans below stop at the first line they do not recognize. A block's key
+ * fails the `key: value` test on its own, so without this an id injected at the
+ * top of the fence brings its separator blank line down *inside* the block,
+ * cutting the body loose from its key.
+ */
+function isBlockLine(rawLine: string): boolean {
+	if (/^\s+\S/.test(rawLine)) return true;
+	return /^(?:occlude(?:-[A-Za-z0-9_-]+)?|r|c\d+)\s*:\s*$/.test(rawLine.trim());
+}
+
 function isRecognizedMetadataLine(line: string): boolean {
+	if (isBlockLine(line)) return true;
 	const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
 	if (!match) return false;
 	const key = match[1]!.toLowerCase();
@@ -294,6 +310,7 @@ function fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
 		const closeMatch = line.match(/^(`{3,})\s*$/);
 		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) break;
 		if (/^id\s*:\s*.+$/i.test(line)) return true;
+		if (isBlockLine(lines[i]!)) continue;
 		if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
 	}
 	return false;
