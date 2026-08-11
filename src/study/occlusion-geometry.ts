@@ -1,4 +1,4 @@
-import type { OcclusionShape } from "../database/types";
+import type { OcclusionAnnotation, OcclusionShape } from "../database/types";
 
 /**
  * The geometry behind the occlusion editor: normalising pointer input, hit
@@ -281,6 +281,247 @@ export function resizeBox(box: Box, handle: HandleId, point: Point): Box {
 	if (touchesLeft || touchesRight) next.w = Math.max(next.w, MIN_SHAPE_SIZE);
 	if (touchesTop || touchesBottom) next.h = Math.max(next.h, MIN_SHAPE_SIZE);
 	return next;
+}
+
+// ── Polygons ──────────────────────────────────────────────────
+
+/**
+ * The fewest vertices a polygon may keep.
+ *
+ * Two points enclose no area, so the mask would be invisible and the card
+ * unanswerable — the same reason `MIN_SHAPE_SIZE` exists for the other kinds.
+ * `parseShape` drops a sub-three-point poly on read, and vertex deletion
+ * refuses to create one.
+ */
+export const MIN_POLY_POINTS = 3;
+
+/** A polygon from the vertices a draft collected, or null when there are too few. */
+export function polyFromPoints(group: string, points: readonly Point[]): OcclusionShape | null {
+	if (points.length < MIN_POLY_POINTS) return null;
+	return { group, kind: "poly", points: points.map((p): [number, number] => [p.x, p.y]) };
+}
+
+/**
+ * Index of the vertex under a point, or null.
+ *
+ * `tolerance` is per-axis for the same reason `handleAt`'s is: the 0–1 space is
+ * stretched to the image's aspect ratio, so one normalised unit is a different
+ * number of pixels on each axis.
+ */
+export function vertexAt(
+	points: readonly [number, number][],
+	point: Point,
+	tolerance: Point,
+): number | null {
+	for (let i = 0; i < points.length; i++) {
+		const [x, y] = points[i]!;
+		if (Math.abs(point.x - x) <= tolerance.x && Math.abs(point.y - y) <= tolerance.y) return i;
+	}
+	return null;
+}
+
+/** The same polygon with one vertex dragged to `point`. Other kinds pass through. */
+export function withVertexMoved(shape: OcclusionShape, index: number, point: Point): OcclusionShape {
+	if (shape.kind !== "poly" || index < 0 || index >= shape.points.length) return shape;
+	const points = shape.points.map((p): [number, number] => [...p]);
+	points[index] = [clamp01(point.x), clamp01(point.y)];
+	return { ...shape, points };
+}
+
+/**
+ * The same polygon without one vertex, or unchanged at the floor.
+ *
+ * Refusing rather than deleting the shape is deliberate: the user asked to drop
+ * a point, not to lose the mask and, with it, a card that may be deep into
+ * review.
+ */
+export function withVertexRemoved(shape: OcclusionShape, index: number): OcclusionShape {
+	if (shape.kind !== "poly" || shape.points.length <= MIN_POLY_POINTS) return shape;
+	if (index < 0 || index >= shape.points.length) return shape;
+	return { ...shape, points: shape.points.filter((_, i) => i !== index) };
+}
+
+/**
+ * The same polygon with a vertex inserted on whichever edge passes closest to
+ * `point`, and the index it landed at.
+ *
+ * Distance is measured in normalised space rather than pixels, so on a very
+ * wide image the comparison leans slightly towards horizontal edges. The point
+ * comes from a click on the outline, where the nearest edge is not in doubt, so
+ * correcting for the aspect ratio would buy nothing.
+ */
+export function withVertexInserted(
+	shape: OcclusionShape,
+	point: Point,
+): { shape: OcclusionShape; index: number } {
+	if (shape.kind !== "poly") return { shape, index: -1 };
+
+	let bestEdge = 0;
+	let bestDistance = Infinity;
+	let bestAt: Point = point;
+	for (let i = 0; i < shape.points.length; i++) {
+		const from = shape.points[i]!;
+		const to = shape.points[(i + 1) % shape.points.length]!;
+		const at = closestPointOnSegment(from, to, point);
+		const distance = Math.hypot(at.x - point.x, at.y - point.y);
+		if (distance < bestDistance) {
+			bestDistance = distance;
+			bestEdge = i;
+			bestAt = at;
+		}
+	}
+
+	const points = shape.points.map((p): [number, number] => [...p]);
+	points.splice(bestEdge + 1, 0, [bestAt.x, bestAt.y]);
+	return { shape: { ...shape, points }, index: bestEdge + 1 };
+}
+
+/** The point on segment `from`–`to` nearest `point`. */
+function closestPointOnSegment(
+	from: readonly [number, number],
+	to: readonly [number, number],
+	point: Point,
+): Point {
+	const dx = to[0] - from[0];
+	const dy = to[1] - from[1];
+	const lengthSq = dx * dx + dy * dy;
+	if (lengthSq === 0) return { x: from[0], y: from[1] };
+	const t = Math.min(1, Math.max(0, ((point.x - from[0]) * dx + (point.y - from[1]) * dy) / lengthSq));
+	return { x: from[0] + t * dx, y: from[1] + t * dy };
+}
+
+// ── Multi-shape operations ────────────────────────────────────
+
+/** Which edge or axis an align operation lines the selection up on. */
+export type Alignment = "left" | "center" | "right" | "top" | "middle" | "bottom";
+
+/** The smallest box containing every one of `boxes`. Empty input gives a zero box. */
+export function unionBox(boxes: readonly Box[]): Box {
+	if (boxes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+	const left = Math.min(...boxes.map((b) => b.x));
+	const top = Math.min(...boxes.map((b) => b.y));
+	const right = Math.max(...boxes.map((b) => b.x + b.w));
+	const bottom = Math.max(...boxes.map((b) => b.y + b.h));
+	return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
+/**
+ * Line the shapes at `indices` up against the selection's own bounding box.
+ *
+ * The reference is the selection rather than the image, matching every drawing
+ * tool: aligning left means "to the leftmost of these", not "to the edge of the
+ * picture", which would stack every mask on the border.
+ *
+ * Sizes never change — only the position along the aligned axis — so a mask
+ * that was drawn to fit a label still fits it afterwards.
+ */
+export function alignShapes(
+	shapes: readonly OcclusionShape[],
+	indices: readonly number[],
+	alignment: Alignment,
+): OcclusionShape[] {
+	const chosen = indices.filter((i) => i >= 0 && i < shapes.length);
+	if (chosen.length < 2) return [...shapes];
+
+	const bounds = unionBox(chosen.map((i) => shapeBox(shapes[i]!)));
+	const next = [...shapes];
+	for (const i of chosen) {
+		const box = shapeBox(shapes[i]!);
+		next[i] = shapeWithBox(shapes[i]!, { ...box, ...alignedOrigin(box, bounds, alignment) });
+	}
+	return next;
+}
+
+/** Where one box's origin moves to under an alignment. */
+function alignedOrigin(box: Box, bounds: Box, alignment: Alignment): Partial<Box> {
+	switch (alignment) {
+		case "left": return { x: bounds.x };
+		case "center": return { x: bounds.x + (bounds.w - box.w) / 2 };
+		case "right": return { x: bounds.x + bounds.w - box.w };
+		case "top": return { y: bounds.y };
+		case "middle": return { y: bounds.y + (bounds.h - box.h) / 2 };
+		case "bottom": return { y: bounds.y + bounds.h - box.h };
+	}
+}
+
+/**
+ * Move the shapes at `indices` together by a normalised delta.
+ *
+ * The *union* box is what gets clamped to the image, not each shape: clamping
+ * individually would let a shape that reaches the edge stop while its
+ * neighbours carried on, quietly deforming a group the user had arranged.
+ */
+export function moveShapes(
+	shapes: readonly OcclusionShape[],
+	indices: readonly number[],
+	dx: number,
+	dy: number,
+): OcclusionShape[] {
+	const chosen = indices.filter((i) => i >= 0 && i < shapes.length);
+	if (chosen.length === 0) return [...shapes];
+
+	const bounds = unionBox(chosen.map((i) => shapeBox(shapes[i]!)));
+	const moved = moveBox(bounds, dx, dy);
+	const actualX = moved.x - bounds.x;
+	const actualY = moved.y - bounds.y;
+
+	const next = [...shapes];
+	for (const i of chosen) {
+		const box = shapeBox(shapes[i]!);
+		next[i] = shapeWithBox(shapes[i]!, { ...box, x: box.x + actualX, y: box.y + actualY });
+	}
+	return next;
+}
+
+/** How far a duplicate is nudged off its original, so the copy is visible. */
+export const DUPLICATE_OFFSET = 0.02;
+
+/** A deep copy of a shape — `points` included, which a spread would share. */
+export function cloneShape(shape: OcclusionShape): OcclusionShape {
+	return shape.kind === "poly"
+		? { ...shape, points: shape.points.map((p): [number, number] => [...p]) }
+		: { ...shape };
+}
+
+/**
+ * A copy of a shape, nudged clear of the original and kept inside the image.
+ *
+ * The copy keeps its source's `group`, so duplicating a mask adds a second
+ * shape to the same card rather than minting a new one. Duplicating is how you
+ * cover a repeated feature that belongs to one answer; a copy that started its
+ * own card would turn one card into two behind the user's back.
+ */
+export function duplicateShape(shape: OcclusionShape, offset = DUPLICATE_OFFSET): OcclusionShape {
+	return shapeWithBox(cloneShape(shape), moveBox(shapeBox(shape), offset, offset));
+}
+
+/** A copy of an annotation, nudged clear of the original. */
+export function duplicateAnnotation(
+	annotation: OcclusionAnnotation,
+	offset = DUPLICATE_OFFSET,
+): OcclusionAnnotation {
+	return {
+		...annotation,
+		x: clamp01(annotation.x + offset),
+		y: clamp01(annotation.y + offset),
+	};
+}
+
+// ── Zoom ──────────────────────────────────────────────────────
+
+/**
+ * Zoom bounds. 1 *is* zoom-to-fit — the canvas at rest already shows the whole
+ * image — so there is nothing below it worth reaching, and clamping there keeps
+ * "zoom out" and "zoom to fit" from disagreeing about where the floor is.
+ */
+export const ZOOM_MIN = 1;
+export const ZOOM_MAX = 6;
+export const ZOOM_STEP = 1.25;
+
+/** The zoom level `factor` steps away from `zoom`, clamped to the usable range. */
+export function zoomBy(zoom: number, factor: number): number {
+	const next = zoom * factor;
+	return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(next * 1000) / 1000));
 }
 
 /**

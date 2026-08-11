@@ -1,32 +1,54 @@
 import { Modal, setIcon, type App } from "obsidian";
-import type { OcclusionMode, OcclusionSet, OcclusionShape } from "../database/types";
+import type {
+	OcclusionAnnotation,
+	OcclusionMode,
+	OcclusionSet,
+	OcclusionShape,
+} from "../database/types";
 import {
+	alignShapes,
 	boxFromDrag,
+	clamp01,
+	cloneShape,
+	containsPoint,
+	duplicateAnnotation,
+	duplicateShape,
 	HANDLE_IDS,
 	handleAt,
 	handlePoint,
 	hitTest,
 	isDegenerate,
-	moveBox,
+	moveShapes,
 	nextGroup,
+	polyFromPoints,
 	resizeBox,
 	shapeBox,
 	shapeFromBox,
 	shapeWithBox,
 	toNormalized,
 	usedGroups,
+	vertexAt,
+	withVertexInserted,
+	withVertexMoved,
+	withVertexRemoved,
+	zoomBy,
+	ZOOM_STEP,
+	type Alignment,
 	type Box,
 	type HandleId,
 	type Point,
 } from "../study/occlusion-geometry";
+import { History } from "../study/occlusion-history";
+import { positionAnnotation } from "./OcclusionRenderer";
 
 /**
- * The canvas editor for image occlusion: draw, move, resize, group, and delete
- * masks over an image.
+ * The canvas editor for image occlusion: draw, move, resize, group, annotate,
+ * align, and delete masks over an image.
  *
  * Deliberately a thin shell. Every piece of arithmetic — normalising pointer
- * input, hit testing, resize handles, group allocation — lives in
- * `study/occlusion-geometry.ts`, because vitest cannot import `obsidian` and
+ * input, hit testing, resize handles, vertex editing, alignment, group
+ * allocation — lives in `study/occlusion-geometry.ts`, and undo/redo in
+ * `study/occlusion-history.ts`, because vitest cannot import `obsidian` and
  * geometry is where this feature's correctness actually is. What is left here
  * is DOM construction and pointer plumbing.
  *
@@ -36,24 +58,50 @@ import {
  * at `object-fit: fill`. That trio is why a shape drawn here lands on the same
  * pixels when the card is studied, at any rendered size, with no measurement
  * and no resize listener. Changing either half alone silently misaligns masks.
+ *
+ * **Zoom therefore scales the image itself, never the SVG's viewBox.** The
+ * overlay is pinned to the wrapper and `getBoundingClientRect()` reports the
+ * truth at any scale, so `toNormalized` needs no zoom term at all. A zoom
+ * implemented as a viewBox change would desync the editor from the study
+ * renderer, which always paints `0 0 1 1`.
  */
 
 /** Which drawing tool the pointer is currently holding. */
-type Tool = "select" | "rect" | "ellipse";
+type Tool = "select" | "rect" | "ellipse" | "poly" | "text";
 
 /** What a pointer drag in progress is doing. */
 type Drag =
 	| { kind: "draw"; from: Point }
-	| { kind: "move"; index: number; start: Box; from: Point }
-	| { kind: "resize"; index: number; handle: HandleId };
+	/** `start` is the shape list as it stood when the drag began, so the delta
+	 *  is always measured from there and a slow drag cannot accumulate drift. */
+	| { kind: "move"; from: Point; start: OcclusionShape[] }
+	| { kind: "resize"; index: number; handle: HandleId }
+	| { kind: "vertex"; index: number; vertex: number }
+	| { kind: "annotation"; index: number; from: Point; origin: Point };
 
-/** How close a pointer must come to a handle to grab it, in image pixels. */
+/** The editable document — what undo and redo restore. */
+interface Snapshot {
+	shapes: OcclusionShape[];
+	annotations: OcclusionAnnotation[];
+}
+
+/** How close a pointer must come to a handle or vertex to grab it, in image pixels. */
 const HANDLE_GRAB_PX = 12;
 
 const MODE_LABELS: Record<OcclusionMode, string> = {
 	"hide-all-guess-one": "Hide All, Guess One",
 	"hide-one-guess-one": "Hide One, Guess One",
 };
+
+/** The align actions, in toolbar order. */
+const ALIGNMENTS: { alignment: Alignment; icon: string; label: string }[] = [
+	{ alignment: "left", icon: "align-start-vertical", label: "Align left" },
+	{ alignment: "center", icon: "align-center-vertical", label: "Align centre" },
+	{ alignment: "right", icon: "align-end-vertical", label: "Align right" },
+	{ alignment: "top", icon: "align-start-horizontal", label: "Align top" },
+	{ alignment: "middle", icon: "align-center-horizontal", label: "Align middle" },
+	{ alignment: "bottom", icon: "align-end-horizontal", label: "Align bottom" },
+];
 
 export interface OcclusionEditorOptions {
 	/** Resolved URL for the image being occluded. */
@@ -76,6 +124,7 @@ export interface OcclusionEditorOptions {
 
 export class OcclusionEditorModal extends Modal {
 	private shapes: OcclusionShape[];
+	private annotations: OcclusionAnnotation[];
 	private mode: OcclusionMode;
 	private tool: Tool = "rect";
 	/**
@@ -84,25 +133,58 @@ export class OcclusionEditorModal extends Modal {
 	 * Drawing a shape drops into Select so it can be nudged or regrouped, but
 	 * the common next action is drawing *another* mask — so an empty-canvas drag
 	 * keeps drawing, in the kind last chosen, instead of doing nothing and
-	 * sending the user back to the toolbar between every shape.
+	 * sending the user back to the toolbar between every shape. Only the two
+	 * drag-drawn kinds qualify: a polygon is built click by click, so there is
+	 * no drag for it to inherit.
 	 */
-	private lastDrawTool: Exclude<Tool, "select"> = "rect";
-	private selected = -1;
+	private lastDrawTool: "rect" | "ellipse" = "rect";
+	/**
+	 * Selected shapes, by index. A list rather than a single index because
+	 * aligning is meaningless below two, and grouping reads far better as
+	 * "select these, put them in one group" than as a per-shape dropdown.
+	 */
+	private selectedShapes: number[] = [];
+	/**
+	 * The selected annotation, or null. Kept apart from `selectedShapes` and
+	 * mutually exclusive with it: the two share no operations beyond delete and
+	 * duplicate, and a single mixed list would make every shape operation start
+	 * by filtering annotations back out.
+	 */
+	private selectedAnnotation: number | null = null;
+	/** Vertices collected so far by an in-progress polygon, or null. */
+	private polyDraft: Point[] | null = null;
+	/** The annotation whose text is being typed, or null. */
+	private editingAnnotation: number | null = null;
 	private drag: Drag | null = null;
+	private zoom = 1;
+	/** Whether masks are drawn solid, previewing what the card will hide. */
+	private opaque = false;
+	private history: History<Snapshot>;
 
 	private image!: HTMLImageElement;
 	private svg!: SVGSVGElement;
+	private stage!: HTMLElement;
+	private canvas!: HTMLElement;
+	private annotationLayer!: HTMLElement;
 	private toolButtons = new Map<Tool, HTMLButtonElement>();
+	private alignButtons: HTMLButtonElement[] = [];
 	private groupSelect!: HTMLSelectElement;
 	private deleteButton!: HTMLButtonElement;
+	private duplicateButton!: HTMLButtonElement;
+	private ungroupButton!: HTMLButtonElement;
+	private undoButton!: HTMLButtonElement;
+	private redoButton!: HTMLButtonElement;
+	private translucencyButton!: HTMLButtonElement;
 	private hint!: HTMLElement;
 
 	constructor(app: App, private readonly options: OcclusionEditorOptions) {
 		super(app);
 		// Copied, so Cancel genuinely discards: the caller's set is the one on
 		// disk and must not be mutated by editing that is never saved.
-		this.shapes = options.set.shapes.map((shape) => ({ ...shape }));
+		this.shapes = options.set.shapes.map((shape) => cloneShape(shape));
+		this.annotations = (options.set.annotations ?? []).map((a) => ({ ...a }));
 		this.mode = options.set.mode;
+		this.history = new History<Snapshot>(this.snapshot());
 	}
 
 	onOpen(): void {
@@ -119,21 +201,56 @@ export class OcclusionEditorModal extends Modal {
 		const buttons = contentEl.createDiv("modal-button-container");
 		const save = buttons.createEl("button", { cls: "mod-cta", text: "Save" });
 		save.addEventListener("click", () => {
+			// A polygon still being drawn is real work; committing it beats
+			// dropping it silently because the user reached for Save first.
+			this.finishPolygon();
 			this.close();
-			this.options.onSave({ mode: this.mode, shapes: this.shapes });
+			this.options.onSave(this.currentSet());
 		});
 		buttons.createEl("button", { text: "Cancel" })
 			.addEventListener("click", () => { this.close(); });
 
-		// Scoped to the modal so it does not fight the note editor underneath.
-		this.scope.register([], "Delete", () => { this.deleteSelected(); return false; });
-		this.scope.register([], "Backspace", () => { this.deleteSelected(); return false; });
-
+		this.registerHotkeys();
 		this.redraw();
 	}
 
 	onClose(): void {
 		this.contentEl.empty();
+	}
+
+	/** The set as it now stands, with `annotations` omitted when there are none. */
+	private currentSet(): OcclusionSet {
+		const set: OcclusionSet = { mode: this.mode, shapes: this.shapes };
+		if (this.annotations.length > 0) set.annotations = this.annotations;
+		return set;
+	}
+
+	/**
+	 * Scoped to the modal so they do not fight the note editor underneath.
+	 *
+	 * Escape is registered but only *claims* the event while a polygon is being
+	 * drawn — abandoning a half-drawn shape is what the key means there. With no
+	 * draft in progress it falls through and Obsidian closes the modal, which is
+	 * what every other modal in the app does.
+	 */
+	private registerHotkeys(): void {
+		this.scope.register([], "Delete", () => { this.deleteSelected(); return false; });
+		this.scope.register([], "Backspace", () => { this.deleteSelected(); return false; });
+		this.scope.register([], "Enter", () => {
+			if (this.polyDraft === null) return;
+			this.finishPolygon();
+			return false;
+		});
+		this.scope.register([], "Escape", () => {
+			if (this.polyDraft === null) return;
+			this.polyDraft = null;
+			this.redraw();
+			return false;
+		});
+		this.scope.register(["Mod"], "z", () => { this.undo(); return false; });
+		this.scope.register(["Mod", "Shift"], "z", () => { this.redo(); return false; });
+		this.scope.register(["Mod"], "y", () => { this.redo(); return false; });
+		this.scope.register(["Mod"], "d", () => { this.duplicateSelected(); return false; });
 	}
 
 	// ── Chrome ────────────────────────────────────────────────────
@@ -145,35 +262,39 @@ export class OcclusionEditorModal extends Modal {
 			{ tool: "select", icon: "mouse-pointer-2", label: "Select" },
 			{ tool: "rect", icon: "square", label: "Rectangle" },
 			{ tool: "ellipse", icon: "circle", label: "Ellipse" },
+			{ tool: "poly", icon: "pentagon", label: "Polygon" },
+			{ tool: "text", icon: "type", label: "Text" },
 		];
 		const group = bar.createDiv("osmosis-occlusion-tools");
 		for (const { tool, icon, label } of tools) {
-			const button = group.createEl("button", { cls: "osmosis-occlusion-tool", attr: { "aria-label": label } });
-			setIcon(button, icon);
-			button.addEventListener("click", () => {
-				this.tool = tool;
-				// Leaving a drawing tool for Select keeps the selection; entering
-				// one drops it, so the handles do not sit under the new shape.
-				if (tool !== "select") {
-					this.lastDrawTool = tool;
-					this.selected = -1;
-				}
-				this.redraw();
-			});
-			this.toolButtons.set(tool, button);
+			this.toolButtons.set(tool, iconButton(group, icon, label, () => { this.chooseTool(tool); }));
 		}
 
-		this.deleteButton = bar.createEl("button", {
-			cls: "osmosis-occlusion-tool",
-			attr: { "aria-label": "Delete shape" },
+		const edit = bar.createDiv("osmosis-occlusion-tools");
+		this.duplicateButton = iconButton(edit, "copy", "Duplicate", () => { this.duplicateSelected(); });
+		this.deleteButton = iconButton(edit, "trash-2", "Delete shape", () => { this.deleteSelected(); });
+		this.undoButton = iconButton(edit, "undo-2", "Undo", () => { this.undo(); });
+		this.redoButton = iconButton(edit, "redo-2", "Redo", () => { this.redo(); });
+
+		const align = bar.createDiv("osmosis-occlusion-tools");
+		for (const { alignment, icon, label } of ALIGNMENTS) {
+			this.alignButtons.push(iconButton(align, icon, label, () => { this.align(alignment); }));
+		}
+
+		const view = bar.createDiv("osmosis-occlusion-tools");
+		iconButton(view, "zoom-out", "Zoom out", () => { this.setZoom(zoomBy(this.zoom, 1 / ZOOM_STEP)); });
+		iconButton(view, "scan", "Zoom to fit", () => { this.setZoom(1); });
+		iconButton(view, "zoom-in", "Zoom in", () => { this.setZoom(zoomBy(this.zoom, ZOOM_STEP)); });
+		this.translucencyButton = iconButton(view, "eye", "Toggle translucency", () => {
+			this.opaque = !this.opaque;
+			this.redraw();
 		});
-		setIcon(this.deleteButton, "trash-2");
-		this.deleteButton.addEventListener("click", () => { this.deleteSelected(); });
 
 		const groupField = bar.createDiv("osmosis-occlusion-field");
 		groupField.createEl("label", { text: "Group" });
 		this.groupSelect = groupField.createEl("select", { cls: "dropdown" });
 		this.groupSelect.addEventListener("change", () => { this.assignGroup(this.groupSelect.value); });
+		this.ungroupButton = iconButton(groupField, "ungroup", "Ungroup", () => { this.ungroupSelected(); });
 
 		const modeField = bar.createDiv("osmosis-occlusion-field");
 		modeField.createEl("label", { text: "Mode" });
@@ -183,38 +304,59 @@ export class OcclusionEditorModal extends Modal {
 		}
 		modeSelect.value = this.mode;
 		modeSelect.addEventListener("change", () => {
+			// Not part of the undo snapshot: it is a two-value dropdown whose
+			// previous value is always visible and one click away.
 			this.mode = modeSelect.value as OcclusionMode;
 		});
 	}
 
 	private buildCanvas(parent: HTMLElement): void {
-		const stage = parent.createDiv("osmosis-occlusion-stage");
+		this.stage = parent.createDiv("osmosis-occlusion-stage");
 		// Same wrapper and image classes the study renderer uses — the layout
 		// contract that makes normalised coordinates land correctly is CSS, so
 		// sharing the classes is what keeps the two surfaces in agreement.
-		const wrapper = stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
-		this.image = wrapper.createEl("img", {
+		this.canvas = this.stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
+		this.image = this.canvas.createEl("img", {
 			cls: "osmosis-occlusion-image",
 			attr: { src: this.options.src, alt: this.options.image, draggable: "false" },
 		});
 
-		this.svg = wrapper.createSvg("svg", { cls: "osmosis-occlusion-editor-layer" });
+		this.svg = this.canvas.createSvg("svg", { cls: "osmosis-occlusion-editor-layer" });
 		this.svg.setAttribute("viewBox", "0 0 1 1");
 		this.svg.setAttribute("preserveAspectRatio", "none");
+
+		// Above the masks, so a label is never buried under one. The layer itself
+		// is transparent to the pointer; only its labels are not, so a drag that
+		// starts on bare image still reaches the SVG underneath.
+		this.annotationLayer = this.canvas.createDiv({
+			cls: ["osmosis-occlusion-annotations", "is-editing"],
+		});
 
 		this.svg.addEventListener("pointerdown", (event) => { this.onPointerDown(event); });
 		this.svg.addEventListener("pointermove", (event) => { this.onPointerMove(event); });
 		this.svg.addEventListener("pointerup", (event) => { this.onPointerUp(event); });
 		this.svg.addEventListener("pointercancel", (event) => { this.onPointerUp(event); });
+		this.svg.addEventListener("dblclick", (event) => { this.onDoubleClick(event); });
 		// The image is a native drag source; without this a drag that starts on
 		// it becomes a file drag and the mask is never drawn.
 		this.svg.addEventListener("dragstart", (event) => { event.preventDefault(); });
 	}
 
+	/** Switch tools, finishing whatever the previous one had in progress. */
+	private chooseTool(tool: Tool): void {
+		this.finishPolygon();
+		this.tool = tool;
+		// Leaving a drawing tool for Select keeps the selection; entering one
+		// drops it, so the handles do not sit under the new shape.
+		if (tool === "rect" || tool === "ellipse") this.lastDrawTool = tool;
+		if (tool !== "select") this.clearSelection();
+		this.redraw();
+	}
+
 	// ── Pointer handling ──────────────────────────────────────────
 
 	/** The pointer position in the image's normalised 0–1 space. */
-	private pointAt(event: PointerEvent): Point {
+	private pointAt(event: { clientX: number; clientY: number }): Point {
 		return toNormalized(event.clientX, event.clientY, this.image.getBoundingClientRect());
 	}
 
@@ -234,36 +376,82 @@ export class OcclusionEditorModal extends Modal {
 		};
 	}
 
+	/**
+	 * Note what is deliberately *not* here: `preventDefault()`.
+	 *
+	 * Cancelling `pointerdown` suppresses the compatibility mouse events, and
+	 * `dblclick` is built out of those — so preventing the default here would
+	 * silently kill both double-click gestures this editor relies on, closing a
+	 * polygon and inserting a vertex. Text selection is held off by
+	 * `user-select: none` on the overlay instead, and a native image drag cannot
+	 * start because the overlay, not the picture, is what the pointer lands on.
+	 */
 	private onPointerDown(event: PointerEvent): void {
 		if (event.button !== 0) return;
-		event.preventDefault();
-		this.svg.setPointerCapture(event.pointerId);
 		const point = this.pointAt(event);
 
-		// A grabbed handle wins over everything, including a shape drawn on top
-		// of it — otherwise a selected shape overlapped by a later one could
-		// never be resized.
-		if (this.selected >= 0) {
-			const handle = handleAt(shapeBox(this.shapes[this.selected]!), point, this.grabTolerance());
+		if (this.tool === "poly") {
+			this.addPolyVertex(point);
+			return;
+		}
+
+		if (this.tool === "text") {
+			this.addAnnotation(point);
+			return;
+		}
+
+		this.svg.setPointerCapture(event.pointerId);
+
+		// A grabbed vertex or handle wins over everything, including a shape
+		// drawn on top of it — otherwise a selected shape overlapped by a later
+		// one could never be reshaped. Vertices are tested first: they sit on the
+		// outline and box handles on the bounding box, and where the two coincide
+		// the vertex is the more precise thing to have meant.
+		const only = this.onlySelectedShape();
+		if (only !== null) {
+			const shape = this.shapes[only]!;
+			const tolerance = this.grabTolerance();
+			if (shape.kind === "poly") {
+				const vertex = vertexAt(shape.points, point, tolerance);
+				if (vertex !== null) {
+					if (event.altKey) {
+						this.shapes[only] = withVertexRemoved(shape, vertex);
+						this.commit();
+					} else {
+						this.drag = { kind: "vertex", index: only, vertex };
+					}
+					return;
+				}
+			}
+			const handle = handleAt(shapeBox(shape), point, tolerance);
 			if (handle) {
-				this.drag = { kind: "resize", index: this.selected, handle };
+				this.drag = { kind: "resize", index: only, handle };
 				return;
 			}
 		}
 
 		if (this.tool === "select") {
 			const index = hitTest(this.shapes, point);
-			this.selected = index;
-			// Empty canvas: keep drawing rather than dead-ending. A click that
-			// never becomes a drag is still just a deselect, since a degenerate
-			// draw commits nothing.
-			this.drag = index === -1
-				? { kind: "draw", from: point }
-				: { kind: "move", index, start: shapeBox(this.shapes[index]!), from: point };
+			if (index === -1) {
+				if (!event.shiftKey) this.clearSelection();
+				// Empty canvas: keep drawing rather than dead-ending. A click that
+				// never becomes a drag is still just a deselect, since a degenerate
+				// draw commits nothing.
+				this.drag = { kind: "draw", from: point };
+			} else if (event.shiftKey) {
+				this.toggleShapeSelection(index);
+			} else {
+				this.selectedAnnotation = null;
+				// A plain click inside an existing multi-selection keeps it, so the
+				// whole arrangement can be dragged without reselecting it first.
+				if (!this.selectedShapes.includes(index)) this.selectedShapes = [index];
+				this.drag = { kind: "move", from: point, start: this.shapes.map(cloneShape) };
+			}
 			this.redraw();
 			return;
 		}
 
+		this.clearSelection();
 		this.drag = { kind: "draw", from: point };
 	}
 
@@ -278,16 +466,35 @@ export class OcclusionEditorModal extends Modal {
 				// ends as a click leaves nothing behind.
 				this.redraw(boxFromDrag(this.drag.from, point));
 				return;
-			case "move": {
-				const shape = this.shapes[this.drag.index]!;
-				const box = moveBox(this.drag.start, point.x - this.drag.from.x, point.y - this.drag.from.y);
-				this.shapes[this.drag.index] = shapeWithBox(shape, box);
+			case "move":
+				this.shapes = moveShapes(
+					this.drag.start,
+					this.selectedShapes,
+					point.x - this.drag.from.x,
+					point.y - this.drag.from.y,
+				);
 				this.redraw();
 				return;
-			}
 			case "resize": {
 				const shape = this.shapes[this.drag.index]!;
 				this.shapes[this.drag.index] = shapeWithBox(shape, resizeBox(shapeBox(shape), this.drag.handle, point));
+				this.redraw();
+				return;
+			}
+			case "vertex": {
+				const shape = this.shapes[this.drag.index]!;
+				this.shapes[this.drag.index] = withVertexMoved(shape, this.drag.vertex, point);
+				this.redraw();
+				return;
+			}
+			case "annotation": {
+				const annotation = this.annotations[this.drag.index];
+				if (!annotation) return;
+				this.annotations[this.drag.index] = {
+					...annotation,
+					x: clamp01(this.drag.origin.x + (point.x - this.drag.from.x)),
+					y: clamp01(this.drag.origin.y + (point.y - this.drag.from.y)),
+				};
 				this.redraw();
 				return;
 			}
@@ -309,18 +516,125 @@ export class OcclusionEditorModal extends Modal {
 				// Drop straight into Select on the new shape, so it can be nudged
 				// or regrouped without a trip back to the toolbar. Drawing another
 				// still costs nothing: a drag on empty canvas keeps drawing.
-				this.selected = this.shapes.length - 1;
+				this.selectedShapes = [this.shapes.length - 1];
 				this.tool = "select";
 			}
 		}
+
+		// `commit` ignores a snapshot equal to the one in force, so a click that
+		// selected without moving, or a resize dragged back to where it started,
+		// leaves no undo step behind.
+		this.commit();
+	}
+
+	/**
+	 * Double-click: finish a polygon being drawn, or add a vertex to one that is
+	 * selected. The two never overlap — drafting happens under the Polygon tool
+	 * and vertex insertion under Select.
+	 */
+	private onDoubleClick(event: MouseEvent): void {
+		if (this.polyDraft !== null) {
+			this.finishPolygon();
+			return;
+		}
+
+		const only = this.onlySelectedShape();
+		if (only === null) return;
+		const shape = this.shapes[only]!;
+		if (shape.kind !== "poly") return;
+
+		const point = this.pointAt(event);
+		if (!containsPoint(shape, point)) return;
+		this.shapes[only] = withVertexInserted(shape, point).shape;
+		this.commit();
+	}
+
+	// ── Polygons ──────────────────────────────────────────────────
+
+	/**
+	 * Add a vertex to the polygon being drawn, or close the path when the click
+	 * lands back on the first vertex.
+	 */
+	private addPolyVertex(point: Point): void {
+		const draft = this.polyDraft ?? [];
+		const tolerance = this.grabTolerance();
+		const near = (at: Point) =>
+			Math.abs(point.x - at.x) <= tolerance.x && Math.abs(point.y - at.y) <= tolerance.y;
+
+		const first = draft[0];
+		if (first !== undefined && draft.length >= 3 && near(first)) {
+			this.finishPolygon();
+			return;
+		}
+
+		// A double-click to finish delivers two clicks before `dblclick` fires,
+		// so without this the closing gesture would leave a duplicated vertex
+		// sitting on top of its neighbour.
+		const last = draft[draft.length - 1];
+		if (last !== undefined && near(last)) return;
+
+		this.polyDraft = [...draft, point];
 		this.redraw();
+	}
+
+	/** Commit the polygon draft if it encloses an area, otherwise discard it. */
+	private finishPolygon(): void {
+		const draft = this.polyDraft;
+		this.polyDraft = null;
+		if (draft === null) return;
+
+		const shape = polyFromPoints(this.freeGroup(), draft);
+		if (!shape) {
+			this.redraw();
+			return;
+		}
+
+		this.shapes.push(shape);
+		this.selectedShapes = [this.shapes.length - 1];
+		this.tool = "select";
+		this.commit();
+	}
+
+	// ── Annotations ───────────────────────────────────────────────
+
+	/**
+	 * Place a new label and open it for typing straight away.
+	 *
+	 * The annotation is pushed before its text exists, so placing and editing
+	 * are one code path rather than two; an empty one is dropped when the edit
+	 * commits, which is also what deleting all the text does.
+	 */
+	private addAnnotation(point: Point): void {
+		this.annotations.push({ x: point.x, y: point.y, text: "" });
+		this.selectedShapes = [];
+		this.selectedAnnotation = this.annotations.length - 1;
+		this.editingAnnotation = this.annotations.length - 1;
+		this.redraw();
+	}
+
+	/** Take the typed text, dropping the label when nothing was typed. */
+	private commitAnnotationEdit(index: number, text: string): void {
+		if (this.editingAnnotation !== index) return;
+		this.editingAnnotation = null;
+
+		const annotation = this.annotations[index];
+		if (!annotation) return;
+
+		const trimmed = text.trim();
+		if (trimmed === "") {
+			this.annotations.splice(index, 1);
+			if (this.selectedAnnotation === index) this.selectedAnnotation = null;
+		} else {
+			this.annotations[index] = { ...annotation, text: trimmed };
+		}
+		this.commit();
 	}
 
 	// ── Mutation ──────────────────────────────────────────────────
 
 	/** The kind a draw drag commits: the held tool, or the last one under Select. */
-	private drawKind(): Exclude<Tool, "select"> {
-		return this.tool === "select" ? this.lastDrawTool : this.tool;
+	private drawKind(): "rect" | "ellipse" {
+		return this.tool === "rect" || this.tool === "ellipse" ? this.tool : this.lastDrawTool;
 	}
 
 	/** The next group label free across the whole carrier, not just this set. */
@@ -328,21 +642,148 @@ export class OcclusionEditorModal extends Modal {
 		return nextGroup([...usedGroups(this.shapes), ...this.options.reservedGroups]);
 	}
 
+	/** The selected shape when exactly one is — the only state that can be reshaped. */
+	private onlySelectedShape(): number | null {
+		return this.selectedShapes.length === 1 ? this.selectedShapes[0]! : null;
+	}
+
+	private clearSelection(): void {
+		this.selectedShapes = [];
+		this.selectedAnnotation = null;
+	}
+
+	private toggleShapeSelection(index: number): void {
+		this.selectedAnnotation = null;
+		this.selectedShapes = this.selectedShapes.includes(index)
+			? this.selectedShapes.filter((i) => i !== index)
+			: [...this.selectedShapes, index];
+	}
+
 	private deleteSelected(): void {
-		if (this.selected < 0) return;
-		this.shapes.splice(this.selected, 1);
-		this.selected = -1;
-		this.redraw();
+		if (this.selectedAnnotation !== null) {
+			this.annotations.splice(this.selectedAnnotation, 1);
+			this.selectedAnnotation = null;
+			this.commit();
+			return;
+		}
+		if (this.selectedShapes.length === 0) return;
+		// Descending, so an earlier removal cannot shift a later index.
+		for (const index of [...this.selectedShapes].sort((a, b) => b - a)) {
+			this.shapes.splice(index, 1);
+		}
+		this.selectedShapes = [];
+		this.commit();
 	}
 
 	/**
-	 * Put the selected shape in a group. Choosing an existing group is how two
+	 * Copy the selection, nudged clear of the original.
+	 *
+	 * A duplicated shape keeps its group, so it joins the card it was copied
+	 * from rather than minting a new one — duplicating is how you cover a second
+	 * instance of the same feature, and a copy that started its own card would
+	 * turn one card into two behind the user's back.
+	 */
+	private duplicateSelected(): void {
+		if (this.selectedAnnotation !== null) {
+			const annotation = this.annotations[this.selectedAnnotation];
+			if (!annotation) return;
+			this.annotations.push(duplicateAnnotation(annotation));
+			this.selectedAnnotation = this.annotations.length - 1;
+			this.commit();
+			return;
+		}
+		if (this.selectedShapes.length === 0) return;
+
+		const copies = this.selectedShapes.map((i) => duplicateShape(this.shapes[i]!));
+		const first = this.shapes.length;
+		this.shapes.push(...copies);
+		this.selectedShapes = copies.map((_, i) => first + i);
+		this.commit();
+	}
+
+	/**
+	 * Put every selected shape in a group. Choosing an existing group is how
 	 * masks become one card — the same collapse a shared `cN` cloze label makes.
 	 */
 	private assignGroup(value: string): void {
-		if (this.selected < 0) return;
-		const shape = this.shapes[this.selected]!;
-		this.shapes[this.selected] = { ...shape, group: value === NEW_GROUP ? this.freeGroup() : value };
+		if (this.selectedShapes.length === 0) return;
+		const group = value === NEW_GROUP ? this.freeGroup() : value;
+		for (const index of this.selectedShapes) {
+			this.shapes[index] = { ...this.shapes[index]!, group };
+		}
+		this.commit();
+	}
+
+	/**
+	 * Give each selected shape a group of its own — the inverse of grouping.
+	 *
+	 * Allocated one at a time and always above the highest in use, never by
+	 * filling gaps: a reused number would inherit the deleted group's schedule
+	 * and present a brand-new mask as a card already deep into review.
+	 */
+	private ungroupSelected(): void {
+		if (this.selectedShapes.length === 0) return;
+		for (const index of this.selectedShapes) {
+			this.shapes[index] = { ...this.shapes[index]!, group: this.freeGroup() };
+		}
+		this.commit();
+	}
+
+	private align(alignment: Alignment): void {
+		if (this.selectedShapes.length < 2) return;
+		this.shapes = alignShapes(this.shapes, this.selectedShapes, alignment);
+		this.commit();
+	}
+
+	private setZoom(zoom: number): void {
+		this.zoom = zoom;
+		this.redraw();
+	}
+
+	// ── History ───────────────────────────────────────────────────
+
+	private snapshot(): Snapshot {
+		return {
+			shapes: this.shapes.map(cloneShape),
+			annotations: this.annotations.map((a) => ({ ...a })),
+		};
+	}
+
+	/**
+	 * Record the change just made and repaint.
+	 *
+	 * A snapshot identical to the one in force is not recorded. Every pointer
+	 * release runs through here, so without that check a stray click would push
+	 * a no-op step and the first Ctrl+Z after it would appear to do nothing.
+	 */
+	private commit(): void {
+		const snapshot = this.snapshot();
+		if (JSON.stringify(snapshot) !== JSON.stringify(this.history.current)) {
+			this.history.push(snapshot);
+		}
+		this.redraw();
+	}
+
+	private undo(): void {
+		this.restore(this.history.undo());
+	}
+
+	private redo(): void {
+		this.restore(this.history.redo());
+	}
+
+	/**
+	 * Adopt a snapshot. The selection is dropped rather than remapped: indices
+	 * from before the step may point at shapes that no longer exist, and a
+	 * selection that silently moved to a different mask is worse than none.
+	 */
+	private restore(snapshot: Snapshot | null): void {
+		if (!snapshot) return;
+		this.shapes = snapshot.shapes.map(cloneShape);
+		this.annotations = snapshot.annotations.map((a) => ({ ...a }));
+		this.clearSelection();
+		this.polyDraft = null;
+		this.editingAnnotation = null;
 		this.redraw();
 	}
 
@@ -360,7 +801,7 @@ export class OcclusionEditorModal extends Modal {
 
 		this.shapes.forEach((shape, index) => {
 			const element = this.svg.createSvg(svgTagFor(shape), {
-				cls: index === this.selected
+				cls: this.selectedShapes.includes(index)
 					? ["osmosis-occlusion-mask", "is-editing", "is-selected"]
 					: ["osmosis-occlusion-mask", "is-editing"],
 			});
@@ -379,7 +820,18 @@ export class OcclusionEditorModal extends Modal {
 			}
 		}
 
-		if (this.selected >= 0) this.drawHandles(shapeBox(this.shapes[this.selected]!));
+		if (this.polyDraft) this.drawPolyDraft(this.polyDraft);
+
+		const only = this.onlySelectedShape();
+		if (only !== null) {
+			const shape = this.shapes[only]!;
+			// Box handles stay on a polygon too, so it can still be scaled as a
+			// whole; the vertex handles are additional, not a replacement.
+			this.drawHandles(shapeBox(shape));
+			if (shape.kind === "poly") this.drawVertices(shape.points);
+		}
+
+		this.renderAnnotationLayer();
 		this.syncChrome();
 	}
 
@@ -399,31 +851,167 @@ export class OcclusionEditorModal extends Modal {
 		}
 	}
 
+	/**
+	 * A dot per polygon vertex. Ellipses rather than circles because the 0–1
+	 * space is stretched to the image's aspect ratio, so a circle drawn in it
+	 * would come out as an ellipse anyway — and the wrong one.
+	 */
+	private drawVertices(points: readonly [number, number][]): void {
+		const tolerance = this.grabTolerance();
+		for (const [x, y] of points) {
+			const vertex = this.svg.createSvg("ellipse", { cls: ["osmosis-occlusion-vertex"] });
+			vertex.setAttribute("cx", String(x));
+			vertex.setAttribute("cy", String(y));
+			vertex.setAttribute("rx", String(tolerance.x / 2));
+			vertex.setAttribute("ry", String(tolerance.y / 2));
+		}
+	}
+
+	/** The polygon being drawn: the path so far, with a dot on every vertex. */
+	private drawPolyDraft(draft: readonly Point[]): void {
+		if (draft.length >= 2) {
+			const line = this.svg.createSvg("polyline", { cls: ["osmosis-occlusion-draft"] });
+			line.setAttribute("points", draft.map((p) => `${String(p.x)},${String(p.y)}`).join(" "));
+		}
+		this.drawVertices(draft.map((p): [number, number] => [p.x, p.y]));
+	}
+
+	/**
+	 * Rebuild the annotation layer.
+	 *
+	 * Labels are HTML rather than SVG `<text>` for the same reason the study
+	 * renderer draws them that way: the overlay is deliberately stretched by
+	 * `preserveAspectRatio="none"`, and glyphs drawn in it would be stretched
+	 * with it. Percentages of the wrapper are the same normalised coordinates,
+	 * so `positionAnnotation` is shared with the renderer and the two cannot
+	 * drift apart.
+	 *
+	 * Pointer capture for a label drag is taken on the *SVG*, not on the label:
+	 * this layer is rebuilt on every pointer move, so a capture held by a label
+	 * would die with the element halfway through the drag.
+	 */
+	private renderAnnotationLayer(): void {
+		this.annotationLayer.empty();
+
+		this.annotations.forEach((annotation, index) => {
+			if (index === this.editingAnnotation) {
+				const input = this.annotationLayer.createEl("input", {
+					cls: "osmosis-occlusion-annotation-input",
+					value: annotation.text,
+					attr: { type: "text", placeholder: "Label" },
+				});
+				positionAnnotation(input, annotation.x, annotation.y);
+				input.addEventListener("keydown", (event: KeyboardEvent) => {
+					if (event.key === "Enter") {
+						event.preventDefault();
+						this.commitAnnotationEdit(index, input.value);
+					} else if (event.key === "Escape") {
+						event.preventDefault();
+						this.commitAnnotationEdit(index, annotation.text);
+					}
+					event.stopPropagation();
+				});
+				input.addEventListener("blur", () => { this.commitAnnotationEdit(index, input.value); });
+				input.focus();
+				input.select();
+				return;
+			}
+
+			const label = this.annotationLayer.createDiv({
+				cls: index === this.selectedAnnotation
+					? ["osmosis-occlusion-annotation", "is-selected"]
+					: ["osmosis-occlusion-annotation"],
+				text: annotation.text,
+			});
+			positionAnnotation(label, annotation.x, annotation.y);
+			label.addEventListener("pointerdown", (event: PointerEvent) => {
+				if (event.button !== 0) return;
+				// Stopped, not prevented — the label needs its own double-click to
+				// reopen for typing, and cancelling pointerdown would suppress it.
+				event.stopPropagation();
+				this.selectedShapes = [];
+				this.selectedAnnotation = index;
+				this.drag = {
+					kind: "annotation",
+					index,
+					from: this.pointAt(event),
+					origin: { x: annotation.x, y: annotation.y },
+				};
+				this.svg.setPointerCapture(event.pointerId);
+				this.redraw();
+			});
+			label.addEventListener("dblclick", (event: MouseEvent) => {
+				event.preventDefault();
+				event.stopPropagation();
+				this.editingAnnotation = index;
+				this.redraw();
+			});
+		});
+	}
+
 	/** Bring the toolbar and hint line back in step with the current state. */
 	private syncChrome(): void {
 		for (const [tool, button] of this.toolButtons) {
 			button.toggleClass("is-active", this.tool === tool);
 		}
-		this.deleteButton.disabled = this.selected < 0;
+
+		const hasSelection = this.selectedShapes.length > 0 || this.selectedAnnotation !== null;
+		this.deleteButton.disabled = !hasSelection;
+		this.duplicateButton.disabled = !hasSelection;
+		this.undoButton.disabled = !this.history.canUndo;
+		this.redoButton.disabled = !this.history.canRedo;
+		for (const button of this.alignButtons) button.disabled = this.selectedShapes.length < 2;
+		this.ungroupButton.disabled = this.selectedShapes.length === 0;
+		this.translucencyButton.toggleClass("is-active", this.opaque);
+
+		this.canvas.toggleClass("is-opaque", this.opaque);
+		this.stage.setCssProps({ "--osmosis-occlusion-zoom": String(this.zoom) });
 
 		const groups = usedGroups(this.shapes).sort(byGroupNumber);
 		this.groupSelect.empty();
 		for (const group of groups) this.groupSelect.createEl("option", { value: group, text: group });
 		this.groupSelect.createEl("option", { value: NEW_GROUP, text: "New group" });
-		this.groupSelect.disabled = this.selected < 0;
-		this.groupSelect.value = this.selected < 0 ? (groups[0] ?? NEW_GROUP) : this.shapes[this.selected]!.group;
+		this.groupSelect.disabled = this.selectedShapes.length === 0;
+		const firstSelected = this.selectedShapes[0];
+		this.groupSelect.value = firstSelected === undefined
+			? (groups[0] ?? NEW_GROUP)
+			: this.shapes[firstSelected]!.group;
 
-		const cards = groups.length;
-		this.hint.setText(
-			this.shapes.length === 0
-				? "Drag on the image to draw a mask."
-				: `${String(this.shapes.length)} shape${this.shapes.length === 1 ? "" : "s"} in ${String(cards)} group${cards === 1 ? "" : "s"} — ${String(cards)} card${cards === 1 ? "" : "s"}. Shapes sharing a group become one card.`,
-		);
+		this.hint.setText(this.hintText(groups.length));
+	}
+
+	private hintText(cards: number): string {
+		if (this.polyDraft !== null) {
+			return this.polyDraft.length < 3
+				? "Click to add polygon points — three or more make a mask."
+				: "Click the first point, double-click, or press Enter to close the polygon.";
+		}
+		if (this.tool === "poly") return "Click to place the polygon's first point.";
+		if (this.tool === "text") return "Click the image to place a label.";
+		if (this.shapes.length === 0) return "Drag on the image to draw a mask.";
+
+		const shapes = `${String(this.shapes.length)} shape${this.shapes.length === 1 ? "" : "s"}`;
+		return `${shapes} in ${String(cards)} group${cards === 1 ? "" : "s"} — ${String(cards)} card${cards === 1 ? "" : "s"}. Shapes sharing a group become one card.`;
 	}
 }
 
 /** Sentinel value for the group dropdown's "New group" entry. */
-const NEW_GROUP = " new";
+const NEW_GROUP = " new";
+
+function iconButton(
+	parent: HTMLElement,
+	icon: string,
+	label: string,
+	onClick: () => void,
+): HTMLButtonElement {
+	const button = parent.createEl("button", {
+		cls: "osmosis-occlusion-tool",
+		attr: { "aria-label": label },
+	});
+	setIcon(button, icon);
+	button.addEventListener("click", onClick);
+	return button;
+}
 
 function byGroupNumber(a: string, b: string): number {
 	const num = (group: string) => parseInt(/^c(\d+)$/.exec(group)?.[1] ?? "0", 10);

@@ -22,10 +22,30 @@ export type OcclusionShape =
 	| { group: string; kind: "ellipse"; x: number; y: number; rx: number; ry: number }
 	| { group: string; kind: "poly"; points: [number, number][] };
 
+/**
+ * A text label placed on an occluded image.
+ *
+ * Deliberately *not* an `OcclusionShape`: an annotation hides nothing and must
+ * never derive a card. Keeping it in its own list is what stops that happening
+ * by construction — every consumer that maps a shape to a group
+ * (`occlusionGroups`, `occludeLineCard`, `usedGroupsInFence`) would otherwise
+ * have to learn to skip it, and a single missed one mints a phantom card.
+ *
+ * `x`/`y` are the label's top-left corner, normalised 0–1 like every other
+ * coordinate here.
+ */
+export interface OcclusionAnnotation {
+	x: number;
+	y: number;
+	text: string;
+}
+
 /** The set of masks bound to one image embed. */
 export interface OcclusionSet {
 	mode: OcclusionMode;
 	shapes: OcclusionShape[];
+	/** Text labels drawn on the image, on both sides of every card. */
+	annotations?: OcclusionAnnotation[];
 }
 
 /**
@@ -40,6 +60,8 @@ export interface CardOcclusion {
 	shapes: OcclusionShape[];
 	/** The group this card asks the user to recall, e.g. "c1". */
 	target: string;
+	/** Text labels drawn over the image, identical on front and back. */
+	annotations?: OcclusionAnnotation[];
 }
 
 /** FSRS card states. */

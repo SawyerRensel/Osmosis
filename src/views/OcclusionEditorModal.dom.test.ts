@@ -2,6 +2,8 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type { App } from "obsidian";
 import type { OcclusionSet } from "../database/types";
+import type { Scope } from "../test/obsidian-stub";
+import { shapeBox } from "../study/occlusion-geometry";
 import { OcclusionEditorModal } from "./OcclusionEditorModal";
 
 /**
@@ -80,12 +82,31 @@ function click(content: HTMLElement, label: string): void {
 }
 
 /** Sweep the pointer from one pixel position to another over the canvas. */
-function drag(svg: SVGSVGElement, from: [number, number], to: [number, number]): void {
+function drag(
+	svg: SVGSVGElement,
+	from: [number, number],
+	to: [number, number],
+	modifiers: { shiftKey?: boolean; altKey?: boolean } = {},
+): void {
 	const at = (type: string, [clientX, clientY]: [number, number]) =>
-		svg.dispatchEvent(new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true }));
+		svg.dispatchEvent(new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true, ...modifiers }));
 	at("pointerdown", from);
 	at("pointermove", to);
 	at("pointerup", to);
+}
+
+/** A single click on the canvas, with no movement between down and up. */
+function tap(
+	svg: SVGSVGElement,
+	at: [number, number],
+	modifiers: { shiftKey?: boolean; altKey?: boolean } = {},
+): void {
+	drag(svg, at, at, modifiers);
+}
+
+/** Fire a hotkey the modal registered on its scope. */
+function hotkey(modal: OcclusionEditorModal, modifiers: string[], key: string): void {
+	(modal as unknown as { scope: Scope }).scope.trigger(modifiers, key);
 }
 
 let opened: Opened;
@@ -281,5 +302,406 @@ describe("OcclusionEditorModal", () => {
 		opened.modal.close();
 
 		expect(opened.content.childElementCount).toBe(0);
+	});
+});
+
+/** Compare point lists with a tolerance — normalised coordinates are floats. */
+function expectPoints(actual: readonly [number, number][], expected: [number, number][]): void {
+	expect(actual.length).toBe(expected.length);
+	actual.forEach(([x, y], i) => {
+		expect(x).toBeCloseTo(expected[i]![0]);
+		expect(y).toBeCloseTo(expected[i]![1]);
+	});
+}
+
+/** The toolbar button with this aria-label. */
+function button(content: HTMLElement, label: string): HTMLButtonElement {
+	return Array.from(content.querySelectorAll("button"))
+		.find((b) => b.getAttribute("aria-label") === label)!;
+}
+
+/**
+ * Polygon authoring — the one tool that is built click by click rather than
+ * swept out in a single drag. Everything it does to the points themselves is
+ * covered in `study/occlusion-geometry.test.ts`; what only exists here is the
+ * gesture that collects them.
+ */
+describe("OcclusionEditorModal polygons", () => {
+	const square: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [{ group: "c1", kind: "poly", points: [[0.1, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6]] }],
+	};
+
+	/** Select the only shape by clicking inside it. */
+	function selectSquare(opened: Opened): void {
+		click(opened.content, "Select");
+		tap(opened.svg, [120, 70]);
+	}
+
+	it("collects vertices click by click and closes on the first one", () => {
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+		tap(opened.svg, [100, 120]);
+		tap(opened.svg, [40, 20]);
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes[3]).toEqual({
+			group: "c3",
+			kind: "poly",
+			points: [[0.1, 0.1], [0.4, 0.1], [0.25, 0.6]],
+		});
+	});
+
+	it("closes the path on Enter too", () => {
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+		tap(opened.svg, [100, 120]);
+		hotkey(opened.modal, [], "Enter");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(4);
+	});
+
+	it("abandons the draft on Escape without touching the shapes", () => {
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+		hotkey(opened.modal, [], "Escape");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("discards a draft that encloses no area", () => {
+		// Two points would be an invisible mask — a card nobody could answer.
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+		click(opened.content, "Select");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("draws the path being collected, but not as a finished mask", () => {
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-draft")).toHaveLength(1);
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-mask")).toHaveLength(3);
+	});
+
+	it("puts a handle on every vertex of a selected polygon", () => {
+		const opened2 = open(square);
+		selectSquare(opened2);
+
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-vertex")).toHaveLength(4);
+		// Box handles stay too, so the polygon can still be scaled as a whole.
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-handle")).toHaveLength(8);
+	});
+
+	it("drags one vertex without disturbing the others", () => {
+		const opened2 = open(square);
+		selectSquare(opened2);
+		drag(opened2.svg, [200, 20], [240, 40]);
+		click(opened2.content, "Save");
+
+		expect(opened2.saved[0]?.shapes[0]).toEqual({
+			group: "c1",
+			kind: "poly",
+			points: [[0.1, 0.1], [0.6, 0.2], [0.5, 0.6], [0.1, 0.6]],
+		});
+	});
+
+	it("removes a vertex on alt-click, and refuses once three are left", () => {
+		const opened2 = open(square);
+		selectSquare(opened2);
+		tap(opened2.svg, [200, 20], { altKey: true });
+		tap(opened2.svg, [200, 120], { altKey: true });
+		click(opened2.content, "Save");
+
+		const shape = opened2.saved[0]?.shapes[0];
+		expect(shape?.kind === "poly" && shape.points).toEqual([[0.1, 0.1], [0.5, 0.6], [0.1, 0.6]]);
+	});
+
+	it("inserts a vertex where a double-click meets the outline", () => {
+		const opened2 = open(square);
+		selectSquare(opened2);
+		opened2.svg.dispatchEvent(new MouseEvent("dblclick", { clientX: 120, clientY: 30, bubbles: true }));
+		click(opened2.content, "Save");
+
+		const shape = opened2.saved[0]?.shapes[0];
+		expect(shape?.kind).toBe("poly");
+		// Coordinates are float arithmetic, so compare with a tolerance — exact
+		// equality would pin the test to IEEE noise rather than to the geometry.
+		expectPoints(shape?.kind === "poly" ? shape.points : [],
+			[[0.1, 0.1], [0.3, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6]]);
+	});
+});
+
+/** Multi-selection, and the arrange operations that only mean anything above one. */
+describe("OcclusionEditorModal arranging", () => {
+	/** Select the two c1 rectangles: click the first, shift-click the second. */
+	function selectBothRects(): void {
+		click(opened.content, "Select");
+		tap(opened.svg, [152, 50]);
+		tap(opened.svg, [268, 65], { shiftKey: true });
+	}
+
+	it("adds to the selection on shift-click", () => {
+		selectBothRects();
+
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(2);
+		// Handles are for reshaping, which needs one shape, not a set of them.
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-handle")).toHaveLength(0);
+	});
+
+	it("takes a shape back out of the selection on a second shift-click", () => {
+		selectBothRects();
+		tap(opened.svg, [268, 65], { shiftKey: true });
+
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(1);
+	});
+
+	it("lines the selection up on its own leftmost edge", () => {
+		selectBothRects();
+		click(opened.content, "Align left");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes[1]).toMatchObject({ x: 0.31, y: 0.3, w: 0.1, h: 0.05 });
+		expect(opened.saved[0]?.shapes[0]).toMatchObject({ x: 0.31, y: 0.22 });
+	});
+
+	it("offers no alignment below two shapes, where it would mean nothing", () => {
+		expect(button(opened.content, "Align left").disabled).toBe(true);
+
+		click(opened.content, "Select");
+		tap(opened.svg, [152, 50]);
+		expect(button(opened.content, "Align left").disabled).toBe(true);
+
+		tap(opened.svg, [268, 65], { shiftKey: true });
+		expect(button(opened.content, "Align left").disabled).toBe(false);
+	});
+
+	it("drags every selected shape by the same delta", () => {
+		selectBothRects();
+		drag(opened.svg, [268, 65], [288, 65]);
+		click(opened.content, "Save");
+
+		expect(shapeBox(opened.saved[0]!.shapes[0]!).x).toBeCloseTo(0.36);
+		expect(shapeBox(opened.saved[0]!.shapes[1]!).x).toBeCloseTo(0.67);
+	});
+
+	it("copies the selection into the same group, so the card is unchanged", () => {
+		// A copy that started its own group would turn one card into two behind
+		// the user's back.
+		click(opened.content, "Select");
+		tap(opened.svg, [152, 50]);
+		click(opened.content, "Duplicate");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(4);
+		expect(opened.saved[0]?.shapes[3]).toMatchObject({ group: "c1", x: 0.33, y: 0.24 });
+	});
+
+	it("gives each selected shape a group of its own on ungroup", () => {
+		selectBothRects();
+		click(opened.content, "Ungroup");
+		click(opened.content, "Save");
+
+		// Numbered above the highest in use, never filling a gap: a reused number
+		// would inherit the deleted group's schedule.
+		expect(opened.saved[0]?.shapes.map((s) => s.group)).toEqual(["c3", "c4", "c2"]);
+	});
+
+	it("puts every selected shape in one group from the dropdown", () => {
+		selectBothRects();
+		const select = opened.content.querySelector("select")!;
+		select.value = "c2";
+		select.dispatchEvent(new Event("change"));
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes.map((s) => s.group)).toEqual(["c2", "c2", "c2"]);
+	});
+
+	it("deletes the whole selection at once", () => {
+		selectBothRects();
+		click(opened.content, "Delete shape");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(1);
+	});
+});
+
+/**
+ * Undo/redo. The unit of history is a committed change, never a pointer-move
+ * frame — a drag that produced fifty frames must still be one step back.
+ */
+describe("OcclusionEditorModal history", () => {
+	it("steps a drawn shape back out and forward in again", () => {
+		drag(opened.svg, [100, 50], [200, 100]);
+		hotkey(opened.modal, ["Mod"], "z");
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-mask")).toHaveLength(3);
+
+		hotkey(opened.modal, ["Mod", "Shift"], "z");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(4);
+	});
+
+	it("treats one drag as one step, however many frames it took", () => {
+		click(opened.content, "Select");
+		opened.svg.dispatchEvent(new MouseEvent("pointerdown", { clientX: 152, clientY: 50, button: 0 }));
+		for (const x of [156, 160, 168, 176, 184, 192]) {
+			opened.svg.dispatchEvent(new MouseEvent("pointermove", { clientX: x, clientY: 50, button: 0 }));
+		}
+		opened.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 192, clientY: 50, button: 0 }));
+
+		hotkey(opened.modal, ["Mod"], "z");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes[0]).toMatchObject({ x: 0.31 });
+	});
+
+	it("records nothing for a click that changed nothing", () => {
+		// Otherwise the first Ctrl+Z after a stray click appears to do nothing.
+		expect(button(opened.content, "Undo").disabled).toBe(true);
+
+		click(opened.content, "Select");
+		tap(opened.svg, [380, 180]);
+
+		expect(button(opened.content, "Undo").disabled).toBe(true);
+	});
+
+	it("abandons the redo branch once a new edit lands on top", () => {
+		drag(opened.svg, [100, 50], [200, 100]);
+		hotkey(opened.modal, ["Mod"], "z");
+		drag(opened.svg, [220, 120], [280, 160]);
+
+		expect(button(opened.content, "Redo").disabled).toBe(true);
+		click(opened.content, "Save");
+		expect(opened.saved[0]?.shapes).toHaveLength(4);
+	});
+
+	it("never undoes past the set it was opened on", () => {
+		hotkey(opened.modal, ["Mod"], "z");
+		hotkey(opened.modal, ["Mod"], "z");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toEqual(set.shapes);
+	});
+});
+
+/**
+ * Text annotations. They label the picture and derive no card, so what matters
+ * here is that they reach `onSave` in their own list and never in `shapes`.
+ */
+describe("OcclusionEditorModal annotations", () => {
+	/** Place a label at a pixel position and type into it. */
+	function label(opened2: Opened, at: [number, number], text: string): void {
+		click(opened2.content, "Text");
+		tap(opened2.svg, at);
+		const input = opened2.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input")!;
+		input.value = text;
+		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+	}
+
+	it("places a label and takes the typed text", () => {
+		label(opened, [100, 20], "Deck");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+		expect(opened.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("drops a label that was left empty", () => {
+		label(opened, [100, 20], "   ");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.annotations).toBeUndefined();
+		expect(opened.content.querySelectorAll(".osmosis-occlusion-annotation")).toHaveLength(0);
+	});
+
+	it("restores the labels it was opened on", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.4, y: 0.2, text: "Pier" }] });
+
+		expect(opened2.content.querySelector(".osmosis-occlusion-annotation")?.textContent).toBe("Pier");
+	});
+
+	it("drags a label to a new position", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		const el = opened2.content.querySelector(".osmosis-occlusion-annotation")!;
+		el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
+		opened2.svg.dispatchEvent(new MouseEvent("pointermove", { clientX: 140, clientY: 40, button: 0 }));
+		opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 140, clientY: 40, button: 0 }));
+		click(opened2.content, "Save");
+
+		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.35, y: 0.2, text: "Deck" }]);
+	});
+
+	it("reopens a label for typing on double-click", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		opened2.content.querySelector(".osmosis-occlusion-annotation")!
+			.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+		const input = opened2.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input")!;
+		input.value = "Deck slab";
+		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+		click(opened2.content, "Save");
+
+		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck slab" }]);
+	});
+
+	it("deletes the selected label without touching the masks", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		opened2.content.querySelector(".osmosis-occlusion-annotation")!
+			.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
+		click(opened2.content, "Delete shape");
+		click(opened2.content, "Save");
+
+		expect(opened2.saved[0]?.annotations).toBeUndefined();
+		expect(opened2.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("keeps labels out of the shape list, so they derive no card", () => {
+		label(opened, [100, 20], "Deck");
+		click(opened.content, "Select");
+
+		expect(opened.content.querySelector(".osmosis-occlusion-hint")?.textContent)
+			.toContain("3 shapes in 2 groups — 2 cards");
+	});
+});
+
+/** View-only controls: neither writes anything into the user's note. */
+describe("OcclusionEditorModal view controls", () => {
+	it("scales the image without touching the overlay's viewBox", () => {
+		// A zoom done as a viewBox change would desync the canvas from the study
+		// renderer, which always paints `0 0 1 1`.
+		const stage = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
+		click(opened.content, "Zoom in");
+
+		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1.25");
+		expect(opened.svg.getAttribute("viewBox")).toBe("0 0 1 1");
+	});
+
+	it("returns to fit, and never zooms out below it", () => {
+		click(opened.content, "Zoom in");
+		click(opened.content, "Zoom to fit");
+		const stage = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
+		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
+
+		click(opened.content, "Zoom out");
+		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
+	});
+
+	it("toggles masks to solid without adding anything to the saved set", () => {
+		const canvas = opened.content.querySelector(".osmosis-occlusion-canvas")!;
+		click(opened.content, "Toggle translucency");
+		expect(canvas.classList.contains("is-opaque")).toBe(true);
+
+		click(opened.content, "Save");
+		expect(opened.saved[0]).toEqual(set);
 	});
 });

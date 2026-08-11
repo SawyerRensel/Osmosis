@@ -71,17 +71,36 @@ function installDomHelpers(): void {
 	el["setText"] = function (this: Element, text: string) {
 		this.textContent = text;
 	};
+
+	el["setCssProps"] = function (this: HTMLElement, props: Record<string, string>) {
+		for (const [name, value] of Object.entries(props)) this.style.setProperty(name, value);
+	};
 }
 
 if (typeof window !== "undefined") installDomHelpers();
 
-/** Registered hotkeys, kept so a test can fire one without a real Obsidian scope. */
+/**
+ * Registered hotkeys, kept so a test can fire one without a real Obsidian scope.
+ *
+ * Keyed by modifiers *and* key, because a view may legitimately bind both `Mod+z`
+ * and `Mod+Shift+z` — collapsing them onto the key alone would silently let one
+ * registration overwrite the other and make undo and redo the same command.
+ */
 export class Scope {
-	readonly handlers = new Map<string, () => unknown>();
+	readonly handlers = new Map<string, (evt?: KeyboardEvent) => unknown>();
 
-	register(_modifiers: string[], key: string, handler: () => unknown): void {
-		this.handlers.set(key, handler);
+	register(modifiers: string[] | null, key: string, handler: (evt?: KeyboardEvent) => unknown): void {
+		this.handlers.set(hotkeyId(modifiers ?? [], key), handler);
 	}
+
+	/** Fire a registered hotkey. Returns what the handler returned, or undefined. */
+	trigger(modifiers: string[], key: string, evt?: KeyboardEvent): unknown {
+		return this.handlers.get(hotkeyId(modifiers, key))?.(evt);
+	}
+}
+
+function hotkeyId(modifiers: readonly string[], key: string): string {
+	return `${[...modifiers].sort().join("+")}|${key}`;
 }
 
 /**

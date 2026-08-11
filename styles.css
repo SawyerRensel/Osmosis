@@ -1365,6 +1365,36 @@ hr.osmosis-map-style-divider {
 	stroke-width: 3;
 }
 
+/* Text annotations are positioned HTML rather than SVG <text>. The mask overlay
+   is deliberately stretched by preserveAspectRatio="none" — that is what makes
+   normalised coordinates land without measuring anything — and glyphs drawn in
+   it would be stretched with it. Percentages of the wrapper are the same 0–1
+   coordinates, so the label lands in the same place and renders at its true
+   shape. Size is a fixed UI size, not a fraction of the image: a label is chrome
+   on the picture, and one scaled to the image is unreadable wherever the card
+   renders small. */
+.osmosis-occlusion-annotations {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	line-height: var(--line-height-tight);
+}
+
+.osmosis-occlusion-annotation {
+	position: absolute;
+	left: var(--osmosis-annotation-x, 0%);
+	top: var(--osmosis-annotation-y, 0%);
+	max-width: 60%;
+	padding: 1px 4px;
+	border-radius: var(--radius-s);
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 .osmosis-occlusion-prose {
 	line-height: var(--line-height-normal);
 	margin-bottom: 8px;
@@ -3468,29 +3498,56 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 /* Centres the canvas and caps it, so a tall diagram cannot push the toolbar and
    buttons off-screen. `height: auto` on the image keeps its aspect ratio, and
    the inline-block wrapper shrinks with it — so the overlay stays exactly on
-   the picture. */
+   the picture.
+
+   The canvas is centred with `margin: auto` on the item rather than
+   `justify-content: center` on the stage: a zoomed canvas is wider than the
+   stage, and a centred flex item that overflows has its leading edge clipped
+   into territory the scrollbar cannot reach. */
 .osmosis-occlusion-stage {
 	display: flex;
-	justify-content: center;
+	overflow: auto;
+	max-height: 60vh;
 	background-color: var(--background-secondary);
 	border-radius: var(--radius-s);
 	padding: 8px;
 }
 
+/* `max-width: none` overrides the shared wrapper rule: at zoom > 1 the image is
+   deliberately wider than the stage, and a wrapper still clamped to 100% would
+   stop growing with it — leaving the overlay pinned to a box the picture had
+   already outgrown, which is exactly the misalignment the contract exists to
+   prevent. */
+.osmosis-occlusion-canvas {
+	margin: auto;
+	max-width: none;
+}
+
+/* Zoom scales the image, never the overlay's viewBox. The overlay is pinned to
+   the wrapper and the wrapper shrinks to the image, so getBoundingClientRect()
+   keeps reporting the truth and the pointer arithmetic needs no zoom term at
+   all. A zoom done as a viewBox change would desync this canvas from the study
+   renderer, which always paints `0 0 1 1`. */
 .osmosis-occlusion-canvas .osmosis-occlusion-image {
-	max-height: 55vh;
+	max-height: calc(55vh * var(--osmosis-occlusion-zoom, 1));
+	max-width: calc(100% * var(--osmosis-occlusion-zoom, 1));
 	width: auto;
 	user-select: none;
 }
 
 /* Unlike the study overlay, this one is the pointer target — every draw, move,
    and resize gesture arrives here. */
+/* `user-select` does the job `preventDefault()` on pointerdown used to: it stops
+   a drag selecting the modal's text, without suppressing the compatibility mouse
+   events that `dblclick` — closing a polygon, inserting a vertex — is built out
+   of. */
 .osmosis-occlusion-editor-layer {
 	position: absolute;
 	inset: 0;
 	width: 100%;
 	height: 100%;
 	touch-action: none;
+	user-select: none;
 	cursor: crosshair;
 }
 
@@ -3507,6 +3564,13 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	stroke-width: 2;
 }
 
+/* The translucency toggle: masks drawn solid, so the canvas previews what the
+   card will actually hide. Editing is translucent by default because you are
+   aiming at the thing underneath; this is for checking coverage once you have. */
+.osmosis-occlusion-canvas.is-opaque .osmosis-occlusion-mask.is-editing {
+	fill-opacity: 1;
+}
+
 .osmosis-occlusion-mask.is-preview {
 	fill-opacity: 0.3;
 	stroke-dasharray: 4 3;
@@ -3517,6 +3581,50 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	stroke: var(--interactive-accent);
 	stroke-width: 2;
 	vector-effect: non-scaling-stroke;
+}
+
+/* Polygon vertices. Drawn as ellipses sized in per-axis normalised units for the
+   same reason the box handles are rects: the 0–1 space is stretched to the
+   image's aspect ratio, so a circle in it would come out as the wrong ellipse. */
+.osmosis-occlusion-vertex {
+	fill: var(--interactive-accent);
+	stroke: var(--background-primary);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+}
+
+/* The polygon still being drawn: an open path, so it never reads as a finished
+   mask before it is one. */
+.osmosis-occlusion-draft {
+	fill: none;
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: 4 3;
+	vector-effect: non-scaling-stroke;
+}
+
+/* Only the labels take the pointer; the layer itself stays transparent to it, so
+   a drag starting on bare image reaches the mask overlay underneath. */
+.osmosis-occlusion-annotations.is-editing .osmosis-occlusion-annotation {
+	pointer-events: auto;
+	cursor: move;
+	border: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-occlusion-annotation.is-selected {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.osmosis-occlusion-annotation-input {
+	position: absolute;
+	left: var(--osmosis-annotation-x, 0%);
+	top: var(--osmosis-annotation-y, 0%);
+	width: 12em;
+	max-width: 60%;
+	padding: 1px 4px;
+	font-size: var(--font-ui-small);
+	pointer-events: auto;
 }
 
 .osmosis-occlusion-hint {

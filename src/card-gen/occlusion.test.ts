@@ -246,6 +246,119 @@ describe("round-tripping", () => {
 	});
 });
 
+/**
+ * Text annotations live in their own list, never in `shapes`. That is what stops
+ * them deriving a card by construction: every consumer that maps a shape to a
+ * group would otherwise have to learn to skip them, and one missed consumer
+ * mints a phantom card the user cannot explain.
+ */
+describe("annotations", () => {
+	const annotated: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
+		annotations: [
+			{ x: 0.5, y: 0.12, text: "Deck" },
+			{ x: 0.2, y: 0.9, text: "Abutment" },
+		],
+	};
+
+	it("survives fence serialize → parse unchanged", () => {
+		expect(parseOccludeBlock(serializeOccludeBlock("a", annotated), 0)!.set).toEqual(annotated);
+	});
+
+	it("survives frontmatter serialize → parse unchanged", () => {
+		expect(parseOcclusionSet(occlusionSetToYamlValue(annotated))).toEqual(annotated);
+	});
+
+	it("writes them as block mappings under their own key, after the shapes", () => {
+		expect(serializeOccludeBlock("", annotated)).toEqual([
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.3",
+			"      y: 0.2",
+			"      w: 0.14",
+			"      h: 0.06",
+			"  annotations:",
+			"    - x: 0.5",
+			"      y: 0.12",
+			'      text: "Deck"',
+			"    - x: 0.2",
+			"      y: 0.9",
+			'      text: "Abutment"',
+		]);
+	});
+
+	it("always quotes the text, since a bare scalar could break the whole block", () => {
+		// In the frontmatter carrier a malformed line fails the parse of the
+		// *note's* entire frontmatter, not just this entry.
+		const set: OcclusionSet = {
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
+			annotations: [{ x: 0.1, y: 0.2, text: "Span: main # 2" }],
+		};
+		const lines = serializeOccludeBlock("", set);
+
+		expect(lines).toContain('      text: "Span: main # 2"');
+		expect(parseOccludeBlock(lines, 0)!.set.annotations).toEqual(set.annotations);
+	});
+
+	it("round-trips text carrying quotes and backslashes", () => {
+		const set: OcclusionSet = {
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
+			annotations: [{ x: 0.1, y: 0.2, text: 'the "web" plate \\ flange' }],
+		};
+
+		expect(parseOccludeBlock(serializeOccludeBlock("", set), 0)!.set.annotations)
+			.toEqual(set.annotations);
+	});
+
+	it("omits the key entirely when there are none", () => {
+		const bare: OcclusionSet = { mode: "hide-all-guess-one", shapes: annotated.shapes };
+
+		expect(serializeOccludeBlock("a", bare).join("\n")).not.toContain("annotations");
+		expect(occlusionSetToYamlValue(bare)["annotations"]).toBeUndefined();
+		expect(parseOccludeBlock(serializeOccludeBlock("a", bare), 0)!.set).toEqual(bare);
+	});
+
+	it("derives no card of its own — cards still come only from shape groups", () => {
+		expect(occlusionGroups(annotated)).toEqual(["c1"]);
+	});
+
+	it("drops an entry with no text, which would be invisible and unreachable", () => {
+		expect(parseOcclusionSet({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
+			annotations: [{ x: 0.1, y: 0.2, text: "  " }, { x: 0.3, y: 0.4 }],
+		})?.annotations).toBeUndefined();
+	});
+
+	it("keeps a hand-written numeric label rather than losing it", () => {
+		expect(parseOcclusionSet({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
+			annotations: [{ x: 0.1, y: 0.2, text: 12 }],
+		})?.annotations).toEqual([{ x: 0.1, y: 0.2, text: "12" }]);
+	});
+
+	it("still reads a set written before annotations existed", () => {
+		const lines = [
+			"occlude-a:",
+			"  mode: hide-one-guess-one",
+			"  shapes:",
+			"    - { group: c1, kind: rect, x: 0.1, y: 0.2, w: 0.3, h: 0.4 }",
+		];
+
+		expect(parseOccludeBlock(lines, 0)!.set).toEqual({
+			mode: "hide-one-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.1, y: 0.2, w: 0.3, h: 0.4 }],
+		});
+	});
+});
+
 describe("embed labels", () => {
 	it("finds every labelled embed in source order", () => {
 		expect(findLabeledEmbeds("![[one.png]]{a}\ntext\n![[two.png]]{b}")).toEqual([

@@ -2,22 +2,38 @@ import { describe, it, expect } from "vitest";
 import type { OcclusionShape } from "../database/types";
 import type { Box } from "./occlusion-geometry";
 import {
+	alignShapes,
 	boxFromDrag,
 	clamp01,
+	cloneShape,
 	containsPoint,
+	duplicateAnnotation,
+	duplicateShape,
 	handleAt,
 	handlePoint,
 	hitTest,
 	isDegenerate,
+	MIN_POLY_POINTS,
 	MIN_SHAPE_SIZE,
 	moveBox,
+	moveShapes,
 	nextGroup,
+	polyFromPoints,
 	resizeBox,
 	shapeBox,
 	shapeFromBox,
 	shapeWithBox,
 	toNormalized,
+	unionBox,
 	usedGroups,
+	vertexAt,
+	withVertexInserted,
+	withVertexMoved,
+	withVertexRemoved,
+	zoomBy,
+	ZOOM_MAX,
+	ZOOM_MIN,
+	ZOOM_STEP,
 } from "./occlusion-geometry";
 
 /** A 400×200 image at an offset, so x and y scale differently. */
@@ -326,5 +342,273 @@ describe("nextGroup", () => {
 describe("usedGroups", () => {
 	it("lists each group once, in first-appearance order", () => {
 		expect(usedGroups([ellipse, rect, ellipse])).toEqual(["c2", "c1"]);
+	});
+});
+
+// ── Phase 4: polygons, arrangement, and zoom ──────────────────
+
+describe("polyFromPoints", () => {
+	it("builds a polygon from the vertices a draft collected", () => {
+		const shape = polyFromPoints("c5", [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.1 }, { x: 0.25, y: 0.5 }]);
+
+		expect(shape).toEqual({
+			group: "c5",
+			kind: "poly",
+			points: [[0.1, 0.1], [0.4, 0.1], [0.25, 0.5]],
+		});
+	});
+
+	it("refuses a draft that encloses no area", () => {
+		// Two points draw an invisible mask, which is a card nobody can answer.
+		expect(polyFromPoints("c1", [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.1 }])).toBeNull();
+		expect(MIN_POLY_POINTS).toBe(3);
+	});
+});
+
+describe("vertexAt", () => {
+	// Per-axis, because the 0-1 space is stretched to the image's aspect ratio.
+	const tolerance = { x: 0.03, y: 0.06 };
+
+	it("finds the vertex under the pointer", () => {
+		expect(vertexAt([[0.2, 0.2], [0.6, 0.2], [0.4, 0.6]], { x: 0.61, y: 0.22 }, tolerance)).toBe(1);
+	});
+
+	it("reports nothing when the pointer is on the outline but off every vertex", () => {
+		expect(vertexAt([[0.2, 0.2], [0.6, 0.2], [0.4, 0.6]], { x: 0.4, y: 0.2 }, tolerance)).toBeNull();
+	});
+
+	it("uses each axis's own tolerance rather than a single scalar", () => {
+		// 0.05 away on y is inside the taller tolerance; the same distance on x
+		// is outside the narrower one. A scalar could not tell these apart.
+		expect(vertexAt([[0.2, 0.2]], { x: 0.2, y: 0.25 }, tolerance)).toBe(0);
+		expect(vertexAt([[0.2, 0.2]], { x: 0.25, y: 0.2 }, tolerance)).toBeNull();
+	});
+});
+
+describe("withVertexMoved", () => {
+	it("moves one vertex and leaves the rest alone", () => {
+		const moved = withVertexMoved(poly, 1, { x: 0.7, y: 0.3 });
+
+		expect(moved.kind).toBe("poly");
+		if (moved.kind === "poly") {
+			expectPoints(moved.points, [[0.2, 0.2], [0.7, 0.3], [0.4, 0.6]]);
+		}
+	});
+
+	it("does not share the points array with the shape it came from", () => {
+		const moved = withVertexMoved(poly, 0, { x: 0.9, y: 0.9 });
+
+		expect(moved).not.toBe(poly);
+		if (poly.kind === "poly") expect(poly.points[0]).toEqual([0.2, 0.2]);
+	});
+
+	it("clamps a vertex dragged past the image, as the drag holds capture", () => {
+		const moved = withVertexMoved(poly, 0, { x: -0.4, y: 1.8 });
+
+		if (moved.kind === "poly") expect(moved.points[0]).toEqual([0, 1]);
+	});
+
+	it("passes other kinds through untouched", () => {
+		expect(withVertexMoved(rect, 0, { x: 0.9, y: 0.9 })).toEqual(rect);
+	});
+});
+
+describe("withVertexRemoved", () => {
+	const square: OcclusionShape = {
+		group: "c1",
+		kind: "poly",
+		points: [[0.2, 0.2], [0.6, 0.2], [0.6, 0.6], [0.2, 0.6]],
+	};
+
+	it("drops the named vertex", () => {
+		const shorter = withVertexRemoved(square, 1);
+
+		if (shorter.kind === "poly") expectPoints(shorter.points, [[0.2, 0.2], [0.6, 0.6], [0.2, 0.6]]);
+	});
+
+	it("refuses at three points rather than deleting the mask", () => {
+		// The user asked to drop a point, not to lose a card that may be deep
+		// into review.
+		expect(withVertexRemoved(poly, 0)).toEqual(poly);
+	});
+
+	it("ignores an index that is not there", () => {
+		expect(withVertexRemoved(square, 9)).toEqual(square);
+	});
+});
+
+describe("withVertexInserted", () => {
+	it("splits the edge the point lies closest to", () => {
+		const { shape, index } = withVertexInserted(poly, { x: 0.4, y: 0.21 });
+
+		expect(index).toBe(1);
+		if (shape.kind === "poly") {
+			expectPoints(shape.points, [[0.2, 0.2], [0.4, 0.2], [0.6, 0.2], [0.4, 0.6]]);
+		}
+	});
+
+	it("can split the closing edge, which has no successor in the list", () => {
+		const { index } = withVertexInserted(poly, { x: 0.3, y: 0.4 });
+
+		expect(index).toBe(3);
+	});
+
+	it("projects the point onto the edge rather than taking it literally", () => {
+		// The click is inside the shape, but the new vertex belongs on the outline
+		// — dropping it where the pointer was would dent the polygon inwards.
+		const { shape } = withVertexInserted(poly, { x: 0.4, y: 0.26 });
+
+		if (shape.kind === "poly") expect(shape.points[1]).toEqual([0.4, 0.2]);
+	});
+
+	it("passes other kinds through untouched", () => {
+		expect(withVertexInserted(rect, { x: 0.3, y: 0.3 })).toEqual({ shape: rect, index: -1 });
+	});
+});
+
+describe("unionBox", () => {
+	it("spans every box it is given", () => {
+		expectBox(unionBox([shapeBox(rect), shapeBox(ellipse)]), { x: 0.2, y: 0.1, w: 0.4, h: 0.6 });
+	});
+
+	it("is a zero box when there is nothing to span", () => {
+		expectBox(unionBox([]), { x: 0, y: 0, w: 0, h: 0 });
+	});
+});
+
+describe("alignShapes", () => {
+	const a: OcclusionShape = { group: "c1", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
+	const b: OcclusionShape = { group: "c2", kind: "rect", x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
+
+	it("lines shapes up on the selection's own bounding box, not the image edge", () => {
+		// Aligning to the picture's border would stack every mask on the edge;
+		// every drawing tool aligns to the selection instead.
+		const aligned = alignShapes([a, b], [0, 1], "left");
+
+		expectBox(shapeBox(aligned[0]!), { x: 0.1, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(shapeBox(aligned[1]!), { x: 0.1, y: 0.4, w: 0.3, h: 0.2 });
+	});
+
+	it("aligns right to the selection's far edge", () => {
+		const aligned = alignShapes([a, b], [0, 1], "right");
+
+		expectBox(shapeBox(aligned[0]!), { x: 0.6, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(shapeBox(aligned[1]!), { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
+	});
+
+	it("centres on the horizontal midline without touching the vertical axis", () => {
+		const aligned = alignShapes([a, b], [0, 1], "center");
+
+		expectBox(shapeBox(aligned[0]!), { x: 0.35, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(shapeBox(aligned[1]!), { x: 0.3, y: 0.4, w: 0.3, h: 0.2 });
+	});
+
+	it("aligns top, middle, and bottom on the other axis", () => {
+		expectBox(shapeBox(alignShapes([a, b], [0, 1], "top")[1]!), { x: 0.5, y: 0.1, w: 0.3, h: 0.2 });
+		expectBox(shapeBox(alignShapes([a, b], [0, 1], "middle")[1]!), { x: 0.5, y: 0.25, w: 0.3, h: 0.2 });
+		expectBox(shapeBox(alignShapes([a, b], [0, 1], "bottom")[1]!), { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
+	});
+
+	it("never resizes — a mask drawn to fit a label still fits it", () => {
+		const aligned = alignShapes([a, b], [0, 1], "left");
+
+		expect(shapeBox(aligned[1]!).w).toBeCloseTo(0.3);
+		expect(shapeBox(aligned[1]!).h).toBeCloseTo(0.2);
+	});
+
+	it("keeps an ellipse an ellipse, re-fitting it through its box", () => {
+		const aligned = alignShapes([rect, ellipse], [0, 1], "left");
+
+		expect(aligned[1]!.kind).toBe("ellipse");
+		expectBox(shapeBox(aligned[1]!), { x: 0.2, y: 0.3, w: 0.2, h: 0.4 });
+	});
+
+	it("does nothing below two shapes, where alignment has no meaning", () => {
+		expect(alignShapes([a, b], [0], "left")).toEqual([a, b]);
+	});
+
+	it("leaves unselected shapes exactly where they were", () => {
+		const aligned = alignShapes([a, b, rect], [0, 1], "left");
+
+		expect(aligned[2]).toEqual(rect);
+	});
+});
+
+describe("moveShapes", () => {
+	const a: OcclusionShape = { group: "c1", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
+	const b: OcclusionShape = { group: "c2", kind: "rect", x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
+
+	it("moves every selected shape by the same delta", () => {
+		const moved = moveShapes([a, b], [0, 1], 0.1, 0.2);
+
+		expectBox(shapeBox(moved[0]!), { x: 0.2, y: 0.3, w: 0.2, h: 0.1 });
+		expectBox(shapeBox(moved[1]!), { x: 0.6, y: 0.6, w: 0.3, h: 0.2 });
+	});
+
+	it("clamps the selection as a whole, so an arrangement is never deformed", () => {
+		// Clamping each shape on its own would let the trailing one keep going
+		// after the leading one hit the edge, silently squashing the group.
+		// The union spans 0.1–0.8, so it can only travel 0.2 before its trailing
+		// edge reaches the border; both shapes move by that, not by the 0.9 asked.
+		const moved = moveShapes([a, b], [0, 1], 0.9, 0);
+
+		expectBox(shapeBox(moved[1]!), { x: 0.7, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(shapeBox(moved[0]!), { x: 0.3, y: 0.1, w: 0.2, h: 0.1 });
+	});
+
+	it("leaves unselected shapes alone", () => {
+		expect(moveShapes([a, b], [0], 0.1, 0)[1]).toEqual(b);
+	});
+});
+
+describe("cloneShape", () => {
+	it("copies a polygon's points rather than sharing the array", () => {
+		const copy = cloneShape(poly);
+
+		expect(copy).toEqual(poly);
+		if (copy.kind === "poly" && poly.kind === "poly") {
+			expect(copy.points).not.toBe(poly.points);
+			expect(copy.points[0]).not.toBe(poly.points[0]);
+		}
+	});
+});
+
+describe("duplicateShape", () => {
+	it("keeps the copy in its source's group, so it joins the same card", () => {
+		// A copy that started its own group would turn one card into two behind
+		// the user's back.
+		expect(duplicateShape(rect).group).toBe("c1");
+	});
+
+	it("nudges the copy clear of the original", () => {
+		expectBox(shapeBox(duplicateShape(rect, 0.05)), { x: 0.25, y: 0.15, w: 0.4, h: 0.3 });
+	});
+
+	it("keeps the copy inside the image", () => {
+		const edge: OcclusionShape = { group: "c1", kind: "rect", x: 0.9, y: 0.9, w: 0.1, h: 0.1 };
+
+		expectBox(shapeBox(duplicateShape(edge, 0.05)), { x: 0.9, y: 0.9, w: 0.1, h: 0.1 });
+	});
+});
+
+describe("duplicateAnnotation", () => {
+	it("nudges the copy clear and keeps it on the image", () => {
+		expect(duplicateAnnotation({ x: 0.5, y: 0.99, text: "Deck" }, 0.05))
+			.toEqual({ x: 0.55, y: 1, text: "Deck" });
+	});
+});
+
+describe("zoomBy", () => {
+	it("steps up and down by the given factor", () => {
+		expect(zoomBy(2, ZOOM_STEP)).toBeCloseTo(2.5);
+		expect(zoomBy(2, 1 / ZOOM_STEP)).toBeCloseTo(1.6);
+	});
+
+	it("floors at fit, which is what the canvas already shows at rest", () => {
+		expect(zoomBy(ZOOM_MIN, 1 / ZOOM_STEP)).toBe(ZOOM_MIN);
+	});
+
+	it("caps rather than running away", () => {
+		expect(zoomBy(ZOOM_MAX, ZOOM_STEP)).toBe(ZOOM_MAX);
 	});
 });

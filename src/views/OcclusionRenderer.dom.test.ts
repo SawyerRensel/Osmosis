@@ -27,6 +27,10 @@ beforeAll(() => {
 		return this.appendChild(div);
 	};
 
+	el["setCssProps"] = function (this: HTMLElement, props: Record<string, string>) {
+		for (const [name, value] of Object.entries(props)) this.style.setProperty(name, value);
+	};
+
 	el["createEl"] = function (
 		this: Element,
 		tag: string,
@@ -131,5 +135,46 @@ describe("renderOcclusion", () => {
 		const container = render("front", { ...occlusion, image: url });
 
 		expect(container.querySelector("img")?.getAttribute("src")).toBe(url);
+	});
+});
+
+/**
+ * Annotations are HTML, not SVG `<text>`. The mask overlay is stretched by
+ * `preserveAspectRatio="none"` — the very thing that makes normalised
+ * coordinates land without measurement — so glyphs drawn inside it would be
+ * stretched with it and come out squashed on any non-square image.
+ */
+describe("renderOcclusion annotations", () => {
+	const annotated: CardOcclusion = {
+		...occlusion,
+		annotations: [
+			{ x: 0.25, y: 0.1, text: "Deck" },
+			{ x: 0.5, y: 0.9, text: "Pier" },
+		],
+	};
+
+	it("draws one positioned label per annotation", () => {
+		const labels = Array.from(render("front", annotated).querySelectorAll(".osmosis-occlusion-annotation"));
+
+		expect(labels.map((l) => l.textContent)).toEqual(["Deck", "Pier"]);
+		expect((labels[0] as HTMLElement).style.getPropertyValue("--osmosis-annotation-x")).toBe("25%");
+		expect((labels[0] as HTMLElement).style.getPropertyValue("--osmosis-annotation-y")).toBe("10%");
+	});
+
+	it("keeps labels out of the mask overlay so they are not stretched with it", () => {
+		const container = render("front", annotated);
+
+		expect(container.querySelectorAll(".osmosis-occlusion-masks .osmosis-occlusion-annotation"))
+			.toHaveLength(0);
+		expect(container.querySelector(".osmosis-occlusion-annotations")).not.toBeNull();
+	});
+
+	it("shows the same labels on the back — they label the picture, not a group", () => {
+		expect(render("back", annotated).querySelectorAll(".osmosis-occlusion-annotation"))
+			.toHaveLength(2);
+	});
+
+	it("adds no layer at all when there are none", () => {
+		expect(render("front").querySelector(".osmosis-occlusion-annotations")).toBeNull();
 	});
 });

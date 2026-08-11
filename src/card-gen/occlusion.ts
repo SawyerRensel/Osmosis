@@ -1,5 +1,6 @@
 import type {
 	CardOcclusion,
+	OcclusionAnnotation,
 	OcclusionMode,
 	OcclusionSet,
 	OcclusionShape,
@@ -164,11 +165,15 @@ export function parseOccludeBlock(
 	return { label: keyMatch[1] ?? "", set, nextIdx: end };
 }
 
-/** Parse the indented body of an occlude block: `mode:` and a `shapes:` list. */
+/**
+ * Parse the indented body of an occlude block: `mode:`, a `shapes:` list, and
+ * an optional `annotations:` list.
+ */
 function parseOccludeBody(body: readonly string[]): OcclusionSet {
 	let mode = DEFAULT_OCCLUSION_MODE;
 	const shapes: OcclusionShape[] = [];
-	let inShapes = false;
+	const annotations: OcclusionAnnotation[] = [];
+	let list: "shapes" | "annotations" | null = null;
 
 	for (let i = 0; i < body.length; i++) {
 		const raw = body[i]!;
@@ -178,36 +183,43 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 		const modeMatch = line.match(/^mode\s*:\s*(\S+)\s*$/);
 		if (modeMatch) {
 			mode = parseMode(modeMatch[1]!);
-			inShapes = false;
+			list = null;
 			continue;
 		}
 
-		if (/^shapes\s*:\s*$/.test(line)) {
-			inShapes = true;
+		const listMatch = line.match(/^(shapes|annotations)\s*:\s*$/);
+		if (listMatch) {
+			list = listMatch[1] as "shapes" | "annotations";
 			continue;
 		}
 
-		if (inShapes && line.startsWith("-")) {
+		if (list !== null && line.startsWith("-")) {
 			const rest = line.slice(1).trim();
+			let entry: unknown;
 
 			// Flow mapping — `- { group: c1, kind: rect, … }`. Every note written
 			// before shapes moved to block mappings uses this spelling, so it
 			// stays readable indefinitely; only the writer changed.
 			if (rest.startsWith("{")) {
-				const shape = parseShape(parseFlowValue(rest));
-				if (shape) shapes.push(shape);
-				continue;
+				entry = parseFlowValue(rest);
+			} else {
+				// Block mapping — the first key rides the `-`, the rest follow
+				// indented past it.
+				const indent = leadingWhitespace(raw);
+				const fields = [rest];
+				while (i + 1 < body.length && leadingWhitespace(body[i + 1]!) > indent) {
+					fields.push(body[++i]!.trim());
+				}
+				entry = parseBlockMapping(fields);
 			}
 
-			// Block mapping — the first key rides the `-`, the rest follow
-			// indented past it.
-			const indent = leadingWhitespace(raw);
-			const entry = [rest];
-			while (i + 1 < body.length && leadingWhitespace(body[i + 1]!) > indent) {
-				entry.push(body[++i]!.trim());
+			if (list === "shapes") {
+				const shape = parseShape(entry);
+				if (shape) shapes.push(shape);
+			} else {
+				const annotation = parseAnnotation(entry);
+				if (annotation) annotations.push(annotation);
 			}
-			const shape = parseShape(parseBlockMapping(entry));
-			if (shape) shapes.push(shape);
 			continue;
 		}
 
@@ -215,7 +227,7 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 		// rather than bailing keeps a note written by a newer Osmosis loadable.
 	}
 
-	return { mode, shapes };
+	return annotations.length === 0 ? { mode, shapes } : { mode, shapes, annotations };
 }
 
 /** Width of a line's leading indent. A blank line counts as zero, ending a block. */
@@ -257,7 +269,41 @@ export function parseOcclusionSet(raw: unknown): OcclusionSet | null {
 	}
 	if (shapes.length === 0) return null;
 
-	return { mode: parseMode(raw["mode"]), shapes };
+	const annotations = parseAnnotations(raw["annotations"]);
+	const set: OcclusionSet = { mode: parseMode(raw["mode"]), shapes };
+	if (annotations.length > 0) set.annotations = annotations;
+	return set;
+}
+
+/** Validate an `annotations` list, dropping any entry that cannot be drawn. */
+function parseAnnotations(raw: unknown): OcclusionAnnotation[] {
+	if (!Array.isArray(raw)) return [];
+	const annotations: OcclusionAnnotation[] = [];
+	for (const entry of raw) {
+		const annotation = parseAnnotation(entry);
+		if (annotation) annotations.push(annotation);
+	}
+	return annotations;
+}
+
+/**
+ * Validate one annotation. Empty text is dropped rather than kept: a label with
+ * nothing in it is invisible on the card and unreachable in the editor, so it
+ * would be a permanent invisible passenger in the user's note.
+ *
+ * A number is accepted for `text` because a hand-written `text: 12` parses as
+ * one, and refusing it would silently lose the label.
+ */
+function parseAnnotation(raw: unknown): OcclusionAnnotation | null {
+	if (!isPlainObject(raw)) return null;
+
+	const x = toFiniteNumber(raw["x"]);
+	const y = toFiniteNumber(raw["y"]);
+	if (x === null || y === null) return null;
+
+	const value = raw["text"];
+	const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
+	return text.trim() === "" ? null : { x, y, text };
 }
 
 function parseMode(value: unknown): OcclusionMode {
@@ -343,11 +389,13 @@ export function parseFlowValue(text: string): unknown {
 			.map((entry) => parseFlowValue(entry));
 	}
 
-	if (
-		(trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) ||
-		(trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
-	) {
-		return trimmed.slice(1, -1);
+	// Double-quoted scalars carry backslash escapes — the writer produces them
+	// for annotation text, which is the one field a user types freely.
+	if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
+		return trimmed.slice(1, -1).replace(/\\(["\\])/g, "$1");
+	}
+	if (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2) {
+		return trimmed.slice(1, -1).replace(/''/g, "'");
 	}
 
 	if (trimmed !== "" && /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(trimmed)) {
@@ -367,7 +415,11 @@ function splitTopLevel(text: string): string[] {
 	for (let i = 0; i < text.length; i++) {
 		const char = text[i]!;
 		if (quote !== null) {
-			if (char === quote) quote = null;
+			// A backslash escape inside a double-quoted scalar hides the closing
+			// quote from this scan; without skipping it a `\"` would end the string
+			// early and the rest would split on commas that are really text.
+			if (char === "\\" && quote === '"') i++;
+			else if (char === quote) quote = null;
 			continue;
 		}
 		if (char === '"' || char === "'") quote = char;
@@ -393,12 +445,39 @@ function splitTopLevel(text: string): string[] {
  * before this migrate when their fence is next written, not by a sweep.
  */
 export function serializeOccludeBlock(label: string, set: OcclusionSet): string[] {
-	return [
+	const lines = [
 		`occlude${label === "" ? "" : `-${label}`}:`,
 		`  mode: ${set.mode}`,
 		"  shapes:",
 		...set.shapes.flatMap((shape) => serializeShape(shape)),
 	];
+	// Omitted entirely when there are none, so an occlusion that never had a
+	// label is not given an empty key it will never use.
+	if (set.annotations && set.annotations.length > 0) {
+		lines.push("  annotations:", ...set.annotations.flatMap((a) => serializeAnnotation(a)));
+	}
+	return lines;
+}
+
+/**
+ * One annotation as an indented YAML block mapping, matching `serializeShape`.
+ *
+ * `text` is always double-quoted. It is the only field a user types freely, so
+ * it can hold a `:`, a `#`, or a leading `-`, any of which would change the
+ * meaning of a bare scalar — and in the frontmatter carrier a malformed line
+ * fails the parse of the *whole note's* frontmatter, not just this entry.
+ */
+export function serializeAnnotation(annotation: OcclusionAnnotation): string[] {
+	return [
+		`    - x: ${num(annotation.x)}`,
+		`      y: ${num(annotation.y)}`,
+		`      text: ${yamlString(annotation.text)}`,
+	];
+}
+
+/** A string as a double-quoted YAML scalar. */
+function yamlString(value: string): string {
+	return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 /**
@@ -427,7 +506,7 @@ export function serializeShape(shape: OcclusionShape): string[] {
 
 /** Serialize a shape set to the plain object the frontmatter carrier stores. */
 export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unknown> {
-	return {
+	const value: Record<string, unknown> = {
 		mode: set.mode,
 		shapes: set.shapes.map((shape) => {
 			switch (shape.kind) {
@@ -440,6 +519,10 @@ export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unkno
 			}
 		}),
 	};
+	if (set.annotations && set.annotations.length > 0) {
+		value["annotations"] = set.annotations.map((a) => ({ x: num(a.x), y: num(a.y), text: a.text }));
+	}
+	return value;
 }
 
 // ── Card derivation ───────────────────────────────────────────
@@ -467,7 +550,11 @@ export function cardOcclusion(
 	set: OcclusionSet,
 	target: string,
 ): CardOcclusion {
-	return { image, mode: set.mode, shapes: set.shapes, target };
+	const occlusion: CardOcclusion = { image, mode: set.mode, shapes: set.shapes, target };
+	// Annotations ride along on every card the set derives: they label the
+	// picture rather than any one group, so they read the same on all of them.
+	if (set.annotations && set.annotations.length > 0) occlusion.annotations = set.annotations;
+	return occlusion;
 }
 
 /**
