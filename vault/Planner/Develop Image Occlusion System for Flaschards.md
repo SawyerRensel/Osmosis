@@ -11,10 +11,10 @@ location:
 related:
 status: In-Progress
 priority:
-progress_current: 2
+progress_current: 3
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
-date_modified: 2026-08-10T13:05:00.000Z
+date_modified: 2026-08-10T23:20:00.000Z
 date_start_scheduled: 2026-08-09T17:34:17
 date_start_actual: 2026-08-09T17:34:17
 date_end_scheduled:
@@ -274,7 +274,7 @@ the release branch — this note closes only when all six phases are done.
 | 1. Format + parser | Done, manually verified | `267e91f`, `237cd3f` |
 | 2. Renderer | Done, manually verified | `d651112`, `8719ab5` |
 | — | [[Improve cloze data storage]] merged in ([PR #20](https://github.com/SawyerRensel/Osmosis/pull/20)) | `9dae548` |
-| 3. Editor | Not started | |
+| 3. Editor | Done, manually verified | `a533221` |
 | 4. Full toolset | Not started | |
 | 5. Remaining surfaces | Not started | |
 | 6. Touch | Not started | |
@@ -334,6 +334,103 @@ frontmatter, so both carriers write block mappings and the divergence is gone.
 Confirmed in practice — studying the line card in `occlusion.md` produced exactly
 the block mappings the fence writer now emits.
 
+### Phase 3 decisions worth remembering
+
+Shipped in `a533221`, manually verified 2026-08-10.
+
+- **Carrier follows the image, and is never restructured.** An embed already
+  inside an ```osmosis fence keeps its shapes in that fence's header; an image
+  anywhere else becomes a line card. Wrapping prose in a fence to make it a
+  fence card would rewrite the user's note *and* cost the embed Obsidian's own
+  rename handling, which only reaches links outside code fences.
+- **Identity is minted lazily, at save, never on open.** A fence with no `id:`,
+  an embed with no `{label}`, a line with no block ID all stay as they are until
+  Save. Cancelling leaves the note byte-identical — pinned by a manual step and
+  by `ensureFenceIdentity`'s tests. Inserting the `id:` line shifts the embed
+  down by one and the label is written to the *shifted* line; that off-by-one is
+  the function's whole difficulty and has its own test.
+- **A single-embed fence stays unlabelled** and uses the bare `occlude:`
+  spelling. A `{label}` is text in the user's own file and only earns its keep
+  once there are two diagrams to tell apart.
+- **Group numbers are allocated per carrier, not per diagram.** A fence derives
+  every occlusion card ID as `<fenceId>-cN` across *all* its labelled embeds, so
+  two diagrams each numbering from `c1` would derive the same IDs and the second
+  would overwrite the first. `usedGroupsInFence()` feeds the modal's
+  `reservedGroups`. `nextGroup()` counts *above* the highest in use rather than
+  filling gaps, so a reused number cannot inherit a deleted group's schedule and
+  present a brand-new mask as a card deep into review.
+- **The canvas reuses `.osmosis-occlusion` and `.osmosis-occlusion-image`**
+  rather than defining its own layout — the wrapper/`viewBox="0 0 1 1"`/
+  `preserveAspectRatio="none"`/`object-fit: fill` contract is what makes a shape
+  drawn in the editor land on the same pixels in study, and sharing the classes
+  is what stops the two halves drifting. `.osmosis-occlusion-editor-layer` is a
+  *second* overlay, separate from `.osmosis-occlusion-masks`, because the study
+  one is `pointer-events: none`.
+- **Handle-grab tolerance is per-axis**, not a scalar. The 0–1 space is stretched
+  to the image's aspect ratio, so one normalised unit is a different number of
+  pixels on x than on y; a scalar makes handles easy to grab on the short axis
+  and nearly impossible on the long one. Handles are *drawn* in per-axis
+  normalised units for the same reason.
+- **A drag on empty canvas keeps drawing**, in the kind last chosen. Drawing
+  drops into Select on the new shape so it can be nudged or regrouped, but the
+  common next action is another mask, and making the user return to the toolbar
+  between every shape was the first thing that felt wrong in use. A click that
+  never becomes a drag is still just a deselect, since a degenerate draw commits
+  nothing.
+- **All three menu registrations earn their keep** — this answers the open
+  question phase 3 was left with. `file-menu` carries the item for a bare image
+  in Live Preview (Obsidian 1.13's own image menu, where `setSection("image")`
+  groups it with Copy image / Swap file rather than trailing after Delete
+  image). `editor-menu` carries it in source mode. Neither reaches an image
+  *inside a rendered fence* — that is our DOM, not the editor's — so
+  `ContextualStudyProcessor` offers its own menu there, mapping the clicked
+  image back to its line via the embed's `src` and `getSectionInfo`. Matching by
+  counting rendered `<img>` elements would drift: front and back render into
+  separate containers and an unresolved embed produces no `<img>` at all.
+
+#### Fixed in phase 3, but older bugs
+
+- **Line-card chrome keyed on `cardType === "line"`**, so a note whose only cards
+  were occluded images got no study or peek button. An occluded line card fans
+  out into one card *per shape group* typed `"occlusion"` while still sitting on
+  its line. **The block ID is the signal, not the type** — the identical mistake
+  to the phase 1 routing bug fixed in phase 2. Two tests in
+  `spatial-study.test.ts` pinned a card shape that cannot exist (`explicit` with
+  a `blockId`); they were replaced with the real occlusion case.
+- **`{a}` rendered as literal text** on any fence that had both occlusion data
+  and a `***` separator: stripping lived inside the occlusion branch of
+  `parseFenceContent`, and the separator branch returns before it. Now stripped
+  once for every branch, pinned per surface in
+  `ContextualStudyProcessor.dom.test.ts`.
+- **A fence with no separator, cloze, or occlusion dumped raw source**, so the
+  diagram you were about to occlude was only ever shown to you as text — you had
+  to switch to source mode to reach it. It now renders its markdown as a
+  **draft**: no divider, no hidden back, no rating row, and nothing joins a deck.
+  Deliberately *not* a card, because `generateExplicitCards` skips exactly this
+  shape and the two must agree. Making front-only fences into real cards was
+  considered and rejected: unfinished drafts would start appearing in decks.
+
+#### Testing infrastructure — read before adding view tests
+
+`vitest` still cannot load the `obsidian` package (it ships types only,
+`"main": ""`), and `vi.mock` cannot paper over it — Vite fails at package
+resolution first. `src/test/obsidian-stub.ts` stands in for the module behind an
+alias in `vitest.config.ts`.
+
+**This is not a licence to move logic back into `src/views/`.** Pure logic still
+belongs outside it — `study/occlusion-geometry.ts` is where phase 3's arithmetic
+lives, and that is why it has 46 tests. The stub exists for DOM assembly that has
+nowhere else to go. Its `createSvg` hands each class token to `classList.add()`
+exactly as the real one does, so it still throws on a token containing a space; a
+forgiving stub would hide the bug that once took out a whole card render.
+
+### Known consequence — peek hides the whole diagram
+
+Now that occluded line cards register as line cards, peek and study hide the
+entire image line behind a placeholder rather than masking the occluded regions.
+The buttons work and study works; peek on a diagram is simply blunt until
+**phase 5** paints masks in place. Deliberate, not an oversight.
+
 ## Surface map
 
 | File | Change |
@@ -389,135 +486,134 @@ compatibility path.
 - Occlusion cards in the [[Create Card Browser - Editor]] type filter
 ---
 
-# Prompt — Phase 3: Editor
+# Prompt — Phase 4: Full toolset
 
-Written 2026-08-10 at `9dae548`, as a standalone brief for a fresh session.
+Written 2026-08-10 at `a533221`, as a standalone brief for a fresh session. It
+replaces the phase 3 prompt and handoff, whose durable content now lives in
+"Phase 3 decisions worth remembering" above.
 
 ## Where things stand
 
-Branch `feature/image-occlusion`, pushed, at `9dae548`. Work on this branch
-directly — phases share a branch and the note closes only when all six land.
-`npm run lint`, `npm test` (**1329 passing**), and `npm run build` are clean.
+Branch `feature/image-occlusion`, at `a533221`. Work on this branch directly —
+the six phases share it, and the note closes only when all six land, so there is
+no PR to open yet. `npm run lint`, `npm test` (**1457 passing**), and
+`npm run build` are clean.
 
-Phases 1 and 2 are done and manually verified: the format, parser, group→card
-derivation, rename rewriting, and the mask renderer wired into sequential study.
+Phases 1–3 are done and manually verified: the format and parser, the mask
+renderer wired into sequential study, and the canvas editor with rect, ellipse,
+grouping, and both modes, reachable from three context menus.
 
-**Read the "Phase 2 decisions worth remembering" section above before touching
-the renderer.** Two of those decisions constrain phase 3 directly.
+**Read "Phase 3 decisions worth remembering" above before touching the editor.**
+Several of those decisions constrain phase 4 directly — in particular the
+coordinate contract, the per-axis handle tolerance, and the per-carrier group
+numbering. `parser.test.ts` carries wall-clock benchmarks that fail under load;
+re-run before investigating a failure there.
 
-**The storage format changed after phase 2 shipped** — [[Improve cloze data
-storage]] merged into this branch as PR #20. The PRD above has been updated, but
-if you find flow-mapping shapes or `c1-due:` keys anywhere, they are pre-PR-#20
-notes, and they are supposed to still read. Do not "fix" them.
+## What phase 4 must deliver
 
-## What phase 3 must deliver
+From the PRD phase list: **polygon, text annotations, translucency, duplicate,
+align, zoom, undo/redo.** Contextual and spatial rendering are **phase 5** and
+touch is **phase 6** — do not pull either forward.
 
-From the PRD phase list: **canvas modal, rect and ellipse, grouping, both
-modes.** Polygon, text annotation, translucency, duplicate, align, zoom, and
-undo/redo are **phase 4** — do not pull them forward. The three Anki fields
-(Header, Back Extra, Comments) are not phase 3 either; the block parser ignores
-unknown keys precisely so they can arrive later with no migration.
+Anki's three fields (Header, Back Extra, Comments) are *not* listed under any
+phase. They are the natural companion to text annotations, and the block parser
+ignores unknown keys precisely so they can arrive with no migration. Decide
+whether they belong here or in phase 5, and record the choice.
 
-Acceptance criteria this phase should satisfy:
+Acceptance criteria this phase should close:
 
-- Right-clicking an image offers "Create image occlusion"
-- Rect and ellipse can be drawn, moved, resized, and deleted
-- Shapes sharing a group produce exactly one card
-- Reopening the editor restores the existing shape set exactly
-- One fence with two labelled embeds keeps its shape sets distinct
+- Rect, ellipse, **and polygon** can be drawn, moved, resized, and deleted
+- Header, Back Extra, and Comments behave as in Anki — *if* you take them on
 
-## The gap that is the actual work
+## The shape of the work
 
-**Neither carrier has a writer for shape sets.** `serializeOccludeBlock()` and
-`occlusionSetToYamlValue()` exist, are tested, and are called by **nothing** —
-phase 3 is their first caller. Do not delete them as dead code; build onto them.
-
-You need, roughly:
-
-- **Fence carrier.** Something like `writeOcclusion(content, cardId, label, set)`
-  in `src/store/FenceWriter.ts`, splicing `serializeOccludeBlock()` lines into
-  the header — replacing an existing `occlude-<label>:` block whole, or inserting
-  one. `writeNestedSchedule()` in that file is the worked precedent: it locates a
-  block via `indentedBlockKey()`, takes its extent via `blockEnd()`, and splices
-  the replacement in at the same position.
-- **Line-card carrier.** A setter on `ScheduleStore` for the `occlude` key
-  alongside the existing `setSchedule`/`setDisabled`, writing
-  `occlusionSetToYamlValue()` through `processFrontMatter`. `ScheduleStore`
-  currently only *reads* shapes (`parseOcclusionFrontmatter`).
-- **A fence to write into at all.** Right-clicking an image in a note that has
-  no ```osmosis fence means the editor must be able to *create* one wrapping
-  that embed, assign it an `id:`, and add the `{label}` marker. Decide and record
-  whether a right-click on a bare image creates a fence card or an occluded line
-  card — the PRD supports both carriers but does not say which the context menu
-  should reach for. **This is the one genuinely open question in phase 3.**
+- **Polygon is already half-built.** `poly` is a first-class shape kind:
+  `parseOcclusionSet` validates it, `serializeShape` writes its `points` list,
+  `occlusion-masks.ts` paints it, and `OcclusionRenderer` renders it as a
+  `<polygon>` — the phase 1–2 fixture has one. What is missing is *authoring*:
+  click-to-add-vertex, close-the-path, and per-vertex drag. Note that
+  `shapeBox`/`shapeWithBox`/`resizeBox` in `study/occlusion-geometry.ts` model a
+  shape as an axis-aligned box; a polygon needs vertex-level editing that the box
+  abstraction does not express. Extend the geometry module rather than the modal.
+- **Undo/redo wants a snapshot stack, not command objects.** Shapes number in the
+  tens and `redraw()` already rebuilds the overlay from scratch on every pointer
+  move, so pushing a copy of the shape array per committed mutation is both
+  simpler and sufficient. Push on commit (pointer *up*, delete, group change),
+  never per pointer-move frame, or a single drag becomes fifty undo steps.
+- **Zoom must not break the coordinate contract.** Shapes are normalised 0–1
+  against the image, and `toNormalized()` converts pointer pixels against
+  `image.getBoundingClientRect()`. Zoom by scaling the *wrapper* so that rect
+  keeps reporting the truth, and the arithmetic needs no zoom term at all. A
+  zoom implemented as an SVG `viewBox` change instead would silently desync the
+  editor from the study renderer, which always paints `0 0 1 1`.
+- **Translucency is a class on the editor layer**, not a per-shape field —
+  nothing in `OcclusionSet` should learn about it. It is a view setting for
+  drawing, not card data, and adding it to the shape schema would write editor
+  state into every user's notes.
+- **Text annotations are the one genuinely new data shape.** They are not masks:
+  they do not hide anything and they must not derive a card. If they land in
+  `shapes`, every consumer that maps a shape to a group — `occlusionGroups`,
+  `occludeLineCard`, `usedGroupsInFence` — has to learn to skip them, and a
+  missed one mints a phantom card. Prefer a separate `annotations` list in the
+  block, which the parser can ignore until the renderer is ready.
 
 ## Traps
 
-- **The coordinate contract is load-bearing and split across two files.** The
-  wrapper shrinks to the image; an SVG with `viewBox="0 0 1 1"` and
-  `preserveAspectRatio="none"` is pinned to its edges; the image is
-  `object-fit: fill`. That trio is why normalised coordinates need no
-  `ResizeObserver` and no load handler. The editor canvas must use the same
-  contract, or shapes drawn in the editor will not land where the study renderer
-  paints them. Changing either half alone silently misaligns masks.
-- **The editor must emit normalised 0–1 coordinates**, not pixels. Convert on
-  pointer input, against the image's rendered box.
 - **`createSvg` hands `cls` to `classList.add()`**, which throws on a token
-  containing a space. Class arrays, not strings. This already took out a whole
-  card render once.
-- **`vitest` cannot import `obsidian`.** Anything you want unit-tested — hit
-  testing, resize-handle maths, shape mutation, normalisation — must live outside
-  `src/views/`. `src/study/occlusion-masks.ts` and `splitFenceHeader` in
-  `card-gen/explicit.ts` exist for exactly this reason. Put the editor's geometry
-  in something like `src/study/occlusion-geometry.ts` and keep
-  `OcclusionEditorModal.ts` a thin shell over it.
-- **The `{a}` label must never render.** `stripEmbedLabels()` handles it; if the
-  editor adds a label to an embed, every render path must already be stripping
-  it. Pin with a test per surface.
+  containing a space. Class arrays, not strings. This has taken out a whole card
+  render once already.
+- **`vitest` cannot import `obsidian`** except through `src/test/obsidian-stub.ts`
+  and its `vitest.config.ts` alias. Put geometry in
+  `study/occlusion-geometry.ts` and keep the modal a thin shell — see "Testing
+  infrastructure" above for where that boundary sits and why the stub is not an
+  invitation to move it.
 - **`FenceWriter`'s metadata scans stop at any line they do not recognise.**
-  `opensIndentedBlock()` already covers `occlude*:`, `cN:` and `r:`. If the
-  editor introduces a new valueless header key, it must be added there too, or
-  the separator blank line lands inside the block and severs it. This is
-  invisible in the text and has bitten this codebase twice.
+  `opensIndentedBlock()` covers `occlude*:`, `cN:` and `r:`. Any new valueless
+  header key — an `annotations:` block, say — must be added there too, or the
+  separator blank line lands inside the block and severs it. Invisible in the
+  text, and it has bitten this codebase twice.
+- **The editor emits normalised 0–1 coordinates**, never pixels, and shares its
+  layout contract with the study renderer. Changing either half alone silently
+  misaligns every mask.
+- **Do not "fix" flow-mapping shapes or `c1-due:` keys** if you find them. They
+  are pre-PR-#20 notes and are supposed to keep reading.
 
 ## Existing surface to build on
 
 | What | Where |
 |---|---|
 | Parse / serialize shape sets | `src/card-gen/occlusion.ts` |
+| Editor geometry — hit test, handles, normalisation, groups | `src/study/occlusion-geometry.ts` |
 | Which masks to paint, per mode and side | `src/study/occlusion-masks.ts` |
+| The canvas modal | `src/views/OcclusionEditorModal.ts` |
 | Image + mask overlay for study | `src/views/OcclusionRenderer.ts` |
-| Shape / set / card types | `src/database/types.ts` |
-| Modal patterns | `src/views/ConfirmModal.ts`, `GenerateFlashcardsModal.ts`, `PromptModal.ts` |
-| Context-menu registration | `src/main.ts` — `file-menu` ~276, `editor-menu` ~917 |
-| Mask colours as custom properties | `styles.css` — `.osmosis-occlusion` ~1315 |
+| Editor and mask styles | `styles.css` — `.osmosis-occlusion*` |
+| Obsidian stand-in for view tests | `src/test/obsidian-stub.ts` |
 
 ## Test plan
 
-Unit, in a file that does not import `obsidian`: normalisation round-trip
-(pointer px → 0–1 → px), hit testing for rect and ellipse, resize-handle maths,
-group assignment, and set mutation (add / move / resize / delete). Plus
-`FenceWriter` round-trip — write a set, reparse the fence, assert on the parsed
-`OcclusionSet` rather than on strings, and confirm a second write replaces the
-block instead of appending a second one.
-
-`src/parser.test.ts` carries wall-clock benchmarks that fail under load; re-run
-before investigating a failure there.
+Unit, outside `src/views/`: polygon vertex insert / move / delete, polygon hit
+testing, undo/redo stack behaviour (including that a drag is one step), and
+alignment maths. Plus a DOM test per new tool in
+`OcclusionEditorModal.dom.test.ts`, which drives the modal through real pointer
+events against the strict stub.
 
 ## Manual fixture
 
-`e2e/fixtures/occlusion.md` (copied to `vault/tests/flashcard/`) already carries
-a two-embed fence, an occluded line card, and a pre-occlusion plain line card.
-`e2e/fixtures/cloze-schedule-migration.md` carries pre-PR-#20 formats. The vault
-copy of `occlusion.md` is currently dirty from manual testing — reset it from
-`e2e/fixtures/` before you start, and **back-date every card in any new fixture**:
-deck Total is `new + learn + due`, so a future-dated `review` card cannot be
-studied and looks exactly like a card that failed to generate.
+`e2e/fixtures/occlusion-editor.md` (copied to `vault/tests/flashcard/`) is the
+phase 3 fixture: nothing in it is a card yet, which is the point — it tests what
+the editor *writes*. `e2e/fixtures/occlusion.md` carries the phase 1–2 fence,
+line card, and pre-occlusion line card. Both vault copies get dirty as soon as
+you test; reset them from `e2e/fixtures/` before each run. **Back-date every card
+in any new fixture** — deck Total is `new + learn + due`, so a future-dated
+`review` card cannot be studied and looks exactly like a card that failed to
+generate.
 
 ## Conventions
 
-`CLAUDE.md` governs. In short: lint → test → build, then hand over manual test
-steps and **stop** for confirmation before committing. Commit code by explicit
-path, never `git add .`. This note gets its own commit, separately. Do not mark
-the note `Done` — phases 4–6 are still outstanding; update the Progress table and
-add a "Phase 3 decisions worth remembering" section instead.
+`CLAUDE.md` governs. Lint → test → build, then hand over manual test steps and
+**stop** for confirmation before committing. Commit code by explicit path, never
+`git add .`. This note gets its own commit, separately. Do **not** mark the note
+`Done` — phases 5 and 6 are outstanding. On completion, update the Progress
+table, add a "Phase 4 decisions worth remembering" section, and replace this
+prompt with one for phase 5.
