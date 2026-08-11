@@ -20,6 +20,7 @@ import {
 	parseFlowValue,
 	parseOccludeBlock,
 	parseOcclusionSet,
+	pickEmbedLine,
 	rewriteFenceEmbeds,
 	serializeOccludeBlock,
 	stripEmbedLabels,
@@ -884,6 +885,38 @@ describe("fenceEmbedLine", () => {
 
 	it("declines when nothing matches", () => {
 		expect(fenceEmbedLine(body, "other.svg")).toBeNull();
+	});
+});
+
+describe("pickEmbedLine", () => {
+	it("takes the only candidate, with or without a line to go on", () => {
+		expect(pickEmbedLine([7], 0)).toBe(7);
+		expect(pickEmbedLine([7], null)).toBe(7);
+	});
+
+	it("picks the instance the click landed on when one image is embedded twice", () => {
+		// The defect this exists for: the first embed was returned whichever
+		// instance was right-clicked, so the second opened the first one's shapes.
+		expect(pickEmbedLine([4, 12], 12)).toBe(12);
+		expect(pickEmbedLine([4, 12], 4)).toBe(4);
+	});
+
+	it("takes the nearest when the click resolved to a line either side", () => {
+		expect(pickEmbedLine([4, 12], 10)).toBe(12);
+		expect(pickEmbedLine([4, 12], 6)).toBe(4);
+	});
+
+	it("breaks a tie on the earlier embed, so order cannot change the answer", () => {
+		expect(pickEmbedLine([4, 12], 8)).toBe(4);
+		expect(pickEmbedLine([12, 4], 8)).toBe(4);
+	});
+
+	it("declines when several match and there is no line", () => {
+		expect(pickEmbedLine([4, 12], null)).toBeNull();
+	});
+
+	it("declines when nothing matches", () => {
+		expect(pickEmbedLine([], 3)).toBeNull();
 	});
 });
 

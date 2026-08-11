@@ -427,10 +427,29 @@ describe("OcclusionEditorModal polygons", () => {
 		expect(shape?.kind === "poly" && shape.points).toEqual([[0.1, 0.1], [0.5, 0.6], [0.1, 0.6]]);
 	});
 
+	it("closes the draft when a point is clicked twice", () => {
+		click(opened.content, "Polygon");
+		tap(opened.svg, [40, 20]);
+		tap(opened.svg, [160, 20]);
+		tap(opened.svg, [100, 120]);
+		tap(opened.svg, [100, 120]);
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes[3]).toEqual({
+			group: "c3",
+			kind: "poly",
+			points: [[0.1, 0.1], [0.4, 0.1], [0.25, 0.6]],
+		});
+	});
+
 	it("inserts a vertex where a double-click meets the outline", () => {
+		// Two real taps, not a synthetic `dblclick` fired at the SVG: the native
+		// event is what phase 4 relied on and what never arrived, and a test that
+		// dispatches it directly passes against exactly that broken behaviour.
 		const opened2 = open(square);
 		selectSquare(opened2);
-		opened2.svg.dispatchEvent(new MouseEvent("dblclick", { clientX: 120, clientY: 30, bubbles: true }));
+		tap(opened2.svg, [48, 40]);
+		tap(opened2.svg, [48, 40]);
 		click(opened2.content, "Save");
 
 		const shape = opened2.saved[0]?.shapes[0];
@@ -438,7 +457,19 @@ describe("OcclusionEditorModal polygons", () => {
 		// Coordinates are float arithmetic, so compare with a tolerance — exact
 		// equality would pin the test to IEEE noise rather than to the geometry.
 		expectPoints(shape?.kind === "poly" ? shape.points : [],
-			[[0.1, 0.1], [0.3, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6]]);
+			[[0.1, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6], [0.1, 0.2]]);
+	});
+
+	it("leaves the outline alone when the two clicks are far apart", () => {
+		const opened2 = open(square);
+		selectSquare(opened2);
+		tap(opened2.svg, [48, 40]);
+		tap(opened2.svg, [48, 100]);
+		click(opened2.content, "Save");
+
+		const shape = opened2.saved[0]?.shapes[0];
+		expectPoints(shape?.kind === "poly" ? shape.points : [],
+			[[0.1, 0.1], [0.5, 0.1], [0.5, 0.6], [0.1, 0.6]]);
 	});
 });
 
@@ -600,14 +631,56 @@ describe("OcclusionEditorModal history", () => {
  * here is that they reach `onSave` in their own list and never in `shapes`.
  */
 describe("OcclusionEditorModal annotations", () => {
+	/** The input a label is being typed into, or null when none is open. */
+	function editing(opened2: Opened): HTMLInputElement | null {
+		return opened2.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input");
+	}
+
+	/** Press and release on the label at a pixel position. */
+	function pressLabel(opened2: Opened, at: [number, number]): void {
+		const at2 = (type: string, target: Element) =>
+			target.dispatchEvent(new MouseEvent(type, { clientX: at[0], clientY: at[1], button: 0, bubbles: true }));
+		at2("pointerdown", opened2.content.querySelector(".osmosis-occlusion-annotation")!);
+		// On the SVG, which holds the capture — and where a real release lands.
+		at2("pointerup", opened2.svg);
+	}
+
 	/** Place a label at a pixel position and type into it. */
 	function label(opened2: Opened, at: [number, number], text: string): void {
 		click(opened2.content, "Text");
 		tap(opened2.svg, at);
-		const input = opened2.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input")!;
+		const input = editing(opened2)!;
 		input.value = text;
 		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 	}
+
+	it("places the label on release, not on press", () => {
+		// Created on press, the input is built before the browser's own mousedown
+		// focus handling runs — which then moves focus straight back off it, the
+		// blur commits an empty label, and the tool appears to do nothing at all.
+		click(opened.content, "Text");
+		opened.svg.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
+		expect(editing(opened)).toBeNull();
+
+		opened.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
+		expect(editing(opened)).not.toBeNull();
+	});
+
+	it("keeps a label whose field is blurred before it was ever focused", () => {
+		click(opened.content, "Text");
+		tap(opened.svg, [100, 20]);
+		const input = editing(opened)!;
+		input.dispatchEvent(new FocusEvent("blur"));
+
+		// Still open for typing: a blur that beat the focus is a focus steal, and
+		// committing on it would delete the label before a character was typed.
+		expect(editing(opened)).not.toBeNull();
+
+		input.value = "Deck";
+		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+		click(opened.content, "Save");
+		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+	});
 
 	it("places a label and takes the typed text", () => {
 		label(opened, [100, 20], "Deck");
@@ -643,10 +716,13 @@ describe("OcclusionEditorModal annotations", () => {
 	});
 
 	it("reopens a label for typing on double-click", () => {
+		// Detected from the presses, like every other double click here: this
+		// layer is rebuilt on each pointer move, so a label rarely survives long
+		// enough to receive a native `dblclick` of its own.
 		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
-		opened2.content.querySelector(".osmosis-occlusion-annotation")!
-			.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-		const input = opened2.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input")!;
+		pressLabel(opened2, [100, 20]);
+		pressLabel(opened2, [100, 20]);
+		const input = editing(opened2)!;
 		input.value = "Deck slab";
 		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 		click(opened2.content, "Save");
@@ -676,24 +752,32 @@ describe("OcclusionEditorModal annotations", () => {
 
 /** View-only controls: neither writes anything into the user's note. */
 describe("OcclusionEditorModal view controls", () => {
-	it("scales the image without touching the overlay's viewBox", () => {
-		// A zoom done as a viewBox change would desync the canvas from the study
-		// renderer, which always paints `0 0 1 1`.
-		const stage = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
+	it("scales the wrapper the overlay is pinned to, not the picture inside it", () => {
+		// The phase 4 defect: zoom capped the *image*, so the picture grew while
+		// the wrapper stayed put and the overlay pinned to the wrapper desynced
+		// from it — masks left sitting off the features they were drawn on. The
+		// element that scales has to be the one both the image and the SVG are
+		// measured against, which is why this asserts the parent and not just
+		// that a custom property changed somewhere.
+		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
 		click(opened.content, "Zoom in");
 
-		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1.25");
+		expect(opened.svg.parentElement).toBe(canvas);
+		expect(opened.content.querySelector("img")?.parentElement).toBe(canvas);
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1.25");
+		// And never as a viewBox change, which would desync the canvas from the
+		// study renderer, where the overlay always paints `0 0 1 1`.
 		expect(opened.svg.getAttribute("viewBox")).toBe("0 0 1 1");
 	});
 
 	it("returns to fit, and never zooms out below it", () => {
 		click(opened.content, "Zoom in");
 		click(opened.content, "Zoom to fit");
-		const stage = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
-		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
+		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
 
 		click(opened.content, "Zoom out");
-		expect(stage.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
 	});
 
 	it("toggles masks to solid without adding anything to the saved set", () => {

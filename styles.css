@@ -3449,14 +3449,12 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    image, overlay pinned to its edges, 0–1 viewBox stretched across it — is the
    same one shapes are drawn against. A shape drawn here therefore lands on the
    same pixels when the card is studied, with no measurement on either side. */
+/* The canvas is the whole point of this modal, so it takes most of the window.
+   `min-width: 0` so an overflowing canvas scrolls its stage instead of widening
+   the modal around it. */
 .osmosis-occlusion-modal {
-	width: min(900px, 92vw);
-}
-
-.osmosis-occlusion-subtitle {
-	color: var(--text-muted);
-	font-size: var(--font-ui-small);
-	margin-top: -8px;
+	width: min(1200px, 96vw);
+	min-width: 0;
 }
 
 .osmosis-occlusion-toolbar {
@@ -3495,43 +3493,45 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	font-size: var(--font-ui-small);
 }
 
-/* Centres the canvas and caps it, so a tall diagram cannot push the toolbar and
-   buttons off-screen. `height: auto` on the image keeps its aspect ratio, and
-   the inline-block wrapper shrinks with it — so the overlay stays exactly on
-   the picture.
+/* Caps the canvas so a tall diagram cannot push the toolbar and buttons
+   off-screen; anything past the cap, in either axis, scrolls here rather than
+   growing the modal.
 
-   The canvas is centred with `margin: auto` on the item rather than
-   `justify-content: center` on the stage: a zoomed canvas is wider than the
-   stage, and a centred flex item that overflows has its leading edge clipped
-   into territory the scrollbar cannot reach. */
+   A block box, not a flex one: the canvas sets its own width from the zoom, and
+   a centred flex item that overflows has its leading edge clipped into
+   territory the scrollbar cannot reach. */
 .osmosis-occlusion-stage {
-	display: flex;
+	display: block;
 	overflow: auto;
-	max-height: 60vh;
+	max-height: 70vh;
+	min-width: 0;
 	background-color: var(--background-secondary);
 	border-radius: var(--radius-s);
 	padding: 8px;
 }
 
-/* `max-width: none` overrides the shared wrapper rule: at zoom > 1 the image is
-   deliberately wider than the stage, and a wrapper still clamped to 100% would
-   stop growing with it — leaving the overlay pinned to a box the picture had
-   already outgrown, which is exactly the misalignment the contract exists to
-   prevent. */
+/* Zoom *sets* the wrapper's width rather than capping the image's.
+   `max-width`/`max-height` only ever constrain, so on a large window the image
+   was already inside both caps and raising them did nothing — zoom looked dead.
+   Where a cap did bind, the picture grew but this wrapper did not, and the
+   overlay pinned to it desynced from the image: masks left sitting off the
+   features they were drawn on.
+
+   With the width set here and the image filling it, wrapper, picture, and
+   overlay are one box at every zoom, and zoom 1 means fit-to-width.
+   `max-width: none` overrides the shared wrapper rule, which would otherwise
+   clamp the box back to 100% the moment zoom passed 1. */
 .osmosis-occlusion-canvas {
-	margin: auto;
+	display: block;
+	width: calc(var(--osmosis-occlusion-zoom, 1) * 100%);
 	max-width: none;
 }
 
-/* Zoom scales the image, never the overlay's viewBox. The overlay is pinned to
-   the wrapper and the wrapper shrinks to the image, so getBoundingClientRect()
-   keeps reporting the truth and the pointer arithmetic needs no zoom term at
-   all. A zoom done as a viewBox change would desync this canvas from the study
-   renderer, which always paints `0 0 1 1`. */
 .osmosis-occlusion-canvas .osmosis-occlusion-image {
-	max-height: calc(55vh * var(--osmosis-occlusion-zoom, 1));
-	max-width: calc(100% * var(--osmosis-occlusion-zoom, 1));
-	width: auto;
+	width: 100%;
+	height: auto;
+	max-width: none;
+	max-height: none;
 	user-select: none;
 }
 

@@ -72,6 +72,44 @@ export function toNormalized(clientX: number, clientY: number, box: PixelBox): P
 	};
 }
 
+/** A press, kept only so the next one can be judged a double click. */
+export interface Click {
+	/** `Date.now()` at the press. */
+	time: number;
+	point: Point;
+}
+
+/** How long after a press a second one still counts as a double click. */
+export const DOUBLE_CLICK_MS = 400;
+
+/**
+ * Whether a press continues the previous one into a double click.
+ *
+ * The editor detects double clicks itself rather than listening for the native
+ * `dblclick`. The overlay is destroyed and rebuilt on every pointer release, so
+ * the two constituent clicks land on different elements and the browser is left
+ * to fall back to their common ancestor — and pointer capture makes that
+ * fragile enough not to build a gesture on. Timing and proximity are
+ * deterministic and work the same however the browser routes its compatibility
+ * mouse events.
+ *
+ * Proximity is per-axis for the reason every tolerance here is: the 0–1 space
+ * is stretched to the image's aspect ratio.
+ */
+export function isDoubleClick(
+	previous: Click | null,
+	time: number,
+	point: Point,
+	tolerance: Point,
+): boolean {
+	if (!previous) return false;
+	if (time - previous.time > DOUBLE_CLICK_MS) return false;
+	return (
+		Math.abs(point.x - previous.point.x) <= tolerance.x &&
+		Math.abs(point.y - previous.point.y) <= tolerance.y
+	);
+}
+
 /** The box spanned by two corners of a drag, in either direction. */
 export function boxFromDrag(from: Point, to: Point): Box {
 	return {

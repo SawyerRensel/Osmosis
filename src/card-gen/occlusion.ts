@@ -807,6 +807,28 @@ export function embedLines(content: string): { line: number; target: string }[] 
 	return found;
 }
 
+/**
+ * Which of an image's embeds a menu was raised over, or null.
+ *
+ * A note can embed the same image more than once — deliberately, since each
+ * instance carries its own masks — so the file the menu hands us cannot say on
+ * its own which one was clicked. `at` is the document line the click resolved
+ * to, and the nearest candidate to it wins; ties go to the earlier embed, so
+ * the answer never depends on list order.
+ *
+ * With no line to go on, a single candidate is still unambiguous, but several
+ * are not: null then, so the caller can withhold the menu item rather than open
+ * the editor on the wrong diagram's shapes. Same reasoning as `fenceEmbedLine`.
+ */
+export function pickEmbedLine(candidates: readonly number[], at: number | null): number | null {
+	if (candidates.length <= 1) return candidates[0] ?? null;
+	if (at === null) return null;
+	return candidates.reduce((best, line) => {
+		const closer = Math.abs(line - at) - Math.abs(best - at);
+		return closer < 0 || (closer === 0 && line < best) ? line : best;
+	});
+}
+
 /** How many image embeds a fence's body holds. */
 export function countFenceEmbeds(lines: readonly string[], span: FenceSpan): number {
 	let count = 0;

@@ -7,12 +7,14 @@ import {
 	clamp01,
 	cloneShape,
 	containsPoint,
+	DOUBLE_CLICK_MS,
 	duplicateAnnotation,
 	duplicateShape,
 	handleAt,
 	handlePoint,
 	hitTest,
 	isDegenerate,
+	isDoubleClick,
 	MIN_POLY_POINTS,
 	MIN_SHAPE_SIZE,
 	moveBox,
@@ -595,6 +597,34 @@ describe("duplicateAnnotation", () => {
 	it("nudges the copy clear and keeps it on the image", () => {
 		expect(duplicateAnnotation({ x: 0.5, y: 0.99, text: "Deck" }, 0.05))
 			.toEqual({ x: 0.55, y: 1, text: "Deck" });
+	});
+});
+
+describe("isDoubleClick", () => {
+	const tolerance = { x: 0.03, y: 0.06 };
+	const first = { time: 1000, point: { x: 0.3, y: 0.2 } };
+
+	it("pairs a second press that lands soon enough and close enough", () => {
+		expect(isDoubleClick(first, 1200, { x: 0.31, y: 0.21 }, tolerance)).toBe(true);
+	});
+
+	it("refuses a press that came too late", () => {
+		expect(isDoubleClick(first, 1000 + DOUBLE_CLICK_MS + 1, { x: 0.3, y: 0.2 }, tolerance)).toBe(false);
+	});
+
+	it("refuses a press that landed somewhere else", () => {
+		expect(isDoubleClick(first, 1100, { x: 0.5, y: 0.2 }, tolerance)).toBe(false);
+	});
+
+	it("measures proximity per axis, as every tolerance here does", () => {
+		// The 0–1 space is stretched to the image's aspect ratio, so one
+		// normalised unit is a different number of pixels on each axis.
+		expect(isDoubleClick(first, 1100, { x: 0.3, y: 0.25 }, tolerance)).toBe(true);
+		expect(isDoubleClick(first, 1100, { x: 0.35, y: 0.2 }, tolerance)).toBe(false);
+	});
+
+	it("has nothing to pair with on the first press", () => {
+		expect(isDoubleClick(null, 1000, { x: 0.3, y: 0.2 }, tolerance)).toBe(false);
 	});
 });
 

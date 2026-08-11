@@ -1,4 +1,7 @@
 import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+// Type-only: CodeMirror 6 ships inside Obsidian and is reached through the
+// editor at runtime, so nothing from this import survives into the bundle.
+import type { EditorView } from "@codemirror/view";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -25,6 +28,7 @@ import {
 	ensureFenceIdentity,
 	fenceOcclusions,
 	locateOcclusionTarget,
+	pickEmbedLine,
 	rewriteFenceEmbeds,
 	usedGroupsInFence,
 	type FenceIdentity,
@@ -45,18 +49,37 @@ import type { DeckScope } from "./study/types";
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif"]);
 
 /**
- * The line an image file is embedded on in a note, or null when it is not.
+ * Every line an image file is embedded on in a note.
  *
  * Embeds are matched by *resolution* rather than by text, since the same file
  * can be written as a short link, a full path, or percent-encoded — and the
- * file-menu hands us a `TFile`, not the spelling the author used.
+ * file-menu hands us a `TFile`, not the spelling the author used. A note can
+ * hold several, deliberately: each instance of a diagram carries its own masks,
+ * so which one was clicked is `pickEmbedLine`'s question to answer.
  */
-function findEmbedLine(content: string, image: TFile, app: App, notePath: string): number | null {
-	for (const embed of embedLines(content)) {
-		const resolved = app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(embed.target), notePath);
-		if (resolved?.path === image.path) return embed.line;
-	}
-	return null;
+function findEmbedLines(content: string, image: TFile, app: App, notePath: string): number[] {
+	return embedLines(content)
+		.filter((embed) =>
+			app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(embed.target), notePath)?.path === image.path)
+		.map((embed) => embed.line);
+}
+
+/**
+ * The document line a click landed on, or null when it cannot be determined.
+ *
+ * Obsidian's `file-menu` carries no position and the bundled 1.13 `Editor`
+ * exposes neither `posAtMouse` nor `posAtCoords`, so the click is mapped
+ * through CodeMirror's own `posAtCoords` on the view behind the editor. Null in
+ * reading mode, where there is no CodeMirror view to ask.
+ */
+function lineAtMouse(editor: Editor, event: MouseEvent | null): number | null {
+	if (!event) return null;
+	const view = (editor as unknown as { cm?: EditorView }).cm;
+	if (!view) return null;
+	const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+	if (pos === null) return null;
+	// CodeMirror numbers lines from 1; the editor API and our parsers from 0.
+	return view.state.doc.lineAt(pos).number - 1;
 }
 
 /** localStorage key for the review log's rollup cache (per vault, per device). */
@@ -102,6 +125,8 @@ export default class OsmosisPlugin extends Plugin {
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
+	/** The most recent right-click, so a file-menu can be traced back to a line. */
+	private lastContextMenu: MouseEvent | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -344,13 +369,26 @@ export default class OsmosisPlugin extends Plugin {
 		// image since 1.13), and `file-menu`, which fires when the menu is
 		// raised against the image file itself. Whichever one the click reaches,
 		// the item is there.
+		// The file-menu hands over the image but not where it was clicked, so the
+		// right-click that raised it is recorded here. Captured, so it is on
+		// record before Obsidian's own handler builds the menu.
+		this.registerDomEvent(document, "contextmenu", (event) => { this.lastContextMenu = event; }, { capture: true });
+
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, image: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
 				if (!(image instanceof TFile) || !IMAGE_EXTENSIONS.has(image.extension.toLowerCase())) return;
 				const view = leaf?.view instanceof MarkdownView ? leaf.view : this.app.workspace.getActiveViewOfType(MarkdownView);
 				const note = view?.file;
 				if (!note) return;
-				const line = findEmbedLine(view.editor.getValue(), image, this.app, note.path);
+				// A note can embed one image more than once, each instance with its
+				// own masks, so the file alone cannot say which was clicked. The
+				// click's own position answers it; the cursor is the fallback for
+				// reading mode, where there is no CodeMirror view to ask. Neither
+				// resolving leaves the item off rather than guessing a diagram.
+				const line = pickEmbedLine(
+					findEmbedLines(view.editor.getValue(), image, this.app, note.path),
+					lineAtMouse(view.editor, this.lastContextMenu) ?? view.editor.getCursor().line,
+				);
 				if (line === null) return;
 				menu.addItem((item) => {
 					item.setTitle("Create image occlusion")

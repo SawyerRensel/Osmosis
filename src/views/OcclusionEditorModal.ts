@@ -18,6 +18,7 @@ import {
 	handlePoint,
 	hitTest,
 	isDegenerate,
+	isDoubleClick,
 	moveShapes,
 	nextGroup,
 	polyFromPoints,
@@ -35,6 +36,7 @@ import {
 	ZOOM_STEP,
 	type Alignment,
 	type Box,
+	type Click,
 	type HandleId,
 	type Point,
 } from "../study/occlusion-geometry";
@@ -59,11 +61,13 @@ import { positionAnnotation } from "./OcclusionRenderer";
  * pixels when the card is studied, at any rendered size, with no measurement
  * and no resize listener. Changing either half alone silently misaligns masks.
  *
- * **Zoom therefore scales the image itself, never the SVG's viewBox.** The
- * overlay is pinned to the wrapper and `getBoundingClientRect()` reports the
- * truth at any scale, so `toNormalized` needs no zoom term at all. A zoom
- * implemented as a viewBox change would desync the editor from the study
- * renderer, which always paints `0 0 1 1`.
+ * **Zoom therefore sets the wrapper's width, never the SVG's viewBox.** The
+ * image fills the wrapper and the overlay is pinned to it, so the three grow as
+ * one and `getBoundingClientRect()` reports the truth at any scale —
+ * `toNormalized` needs no zoom term at all. Zooming the *image* instead is what
+ * broke phase 4: the picture grew, the wrapper did not, and the masks sat off
+ * the features they were drawn on. A zoom done as a viewBox change would desync
+ * the editor from the study renderer, which always paints `0 0 1 1`.
  */
 
 /** Which drawing tool the pointer is currently holding. */
@@ -106,7 +110,7 @@ const ALIGNMENTS: { alignment: Alignment; icon: string; label: string }[] = [
 export interface OcclusionEditorOptions {
 	/** Resolved URL for the image being occluded. */
 	src: string;
-	/** The embed target as written, shown in the modal's subtitle. */
+	/** The embed target as written — the image's alternative text. */
 	image: string;
 	/** The set to open on — empty shapes for a new occlusion. */
 	set: OcclusionSet;
@@ -156,6 +160,15 @@ export class OcclusionEditorModal extends Modal {
 	/** The annotation whose text is being typed, or null. */
 	private editingAnnotation: number | null = null;
 	private drag: Drag | null = null;
+	/**
+	 * Where the Text tool was pressed, waiting for the release that places the
+	 * label. Placing on pointer *up* rather than down is what makes the tool work
+	 * at all: created on down, the input is built before the browser's own
+	 * mousedown focus handling runs, which then moves focus straight back off it.
+	 */
+	private pendingAnnotation: Point | null = null;
+	/** The last press, for detecting the next one as a double click. */
+	private lastClick: Click | null = null;
 	private zoom = 1;
 	/** Whether masks are drawn solid, previewing what the card will hide. */
 	private opaque = false;
@@ -163,7 +176,6 @@ export class OcclusionEditorModal extends Modal {
 
 	private image!: HTMLImageElement;
 	private svg!: SVGSVGElement;
-	private stage!: HTMLElement;
 	private canvas!: HTMLElement;
 	private annotationLayer!: HTMLElement;
 	private toolButtons = new Map<Tool, HTMLButtonElement>();
@@ -190,8 +202,8 @@ export class OcclusionEditorModal extends Modal {
 	onOpen(): void {
 		const { contentEl, modalEl } = this;
 		modalEl.addClass("osmosis-occlusion-modal");
-		contentEl.createEl("h2", { text: "Image occlusion" });
-		contentEl.createEl("p", { cls: "osmosis-occlusion-subtitle", text: this.options.image });
+		// No heading and no image name: the user just chose both, and between them
+		// they cost the whole top band of a modal whose entire point is the canvas.
 
 		this.buildToolbar(contentEl);
 		this.buildCanvas(contentEl);
@@ -311,11 +323,11 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private buildCanvas(parent: HTMLElement): void {
-		this.stage = parent.createDiv("osmosis-occlusion-stage");
+		const stage = parent.createDiv("osmosis-occlusion-stage");
 		// Same wrapper and image classes the study renderer uses — the layout
 		// contract that makes normalised coordinates land correctly is CSS, so
 		// sharing the classes is what keeps the two surfaces in agreement.
-		this.canvas = this.stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
+		this.canvas = stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
 		this.image = this.canvas.createEl("img", {
 			cls: "osmosis-occlusion-image",
 			attr: { src: this.options.src, alt: this.options.image, draggable: "false" },
@@ -336,7 +348,8 @@ export class OcclusionEditorModal extends Modal {
 		this.svg.addEventListener("pointermove", (event) => { this.onPointerMove(event); });
 		this.svg.addEventListener("pointerup", (event) => { this.onPointerUp(event); });
 		this.svg.addEventListener("pointercancel", (event) => { this.onPointerUp(event); });
-		this.svg.addEventListener("dblclick", (event) => { this.onDoubleClick(event); });
+		// No `dblclick` listener: double clicks are detected in `onPointerDown`
+		// from timing and proximity instead — see `takeDoubleClick`.
 		// The image is a native drag source; without this a drag that starts on
 		// it becomes a file drag and the mask is never drawn.
 		this.svg.addEventListener("dragstart", (event) => { event.preventDefault(); });
@@ -379,26 +392,40 @@ export class OcclusionEditorModal extends Modal {
 	/**
 	 * Note what is deliberately *not* here: `preventDefault()`.
 	 *
-	 * Cancelling `pointerdown` suppresses the compatibility mouse events, and
-	 * `dblclick` is built out of those — so preventing the default here would
-	 * silently kill both double-click gestures this editor relies on, closing a
-	 * polygon and inserting a vertex. Text selection is held off by
-	 * `user-select: none` on the overlay instead, and a native image drag cannot
-	 * start because the overlay, not the picture, is what the pointer lands on.
+	 * Cancelling `pointerdown` suppresses the browser's own focus handling along
+	 * with the compatibility mouse events, and the annotation input needs both —
+	 * an input built while that handling is still pending loses focus the instant
+	 * it runs. Text selection is held off by `user-select: none` on the overlay
+	 * instead, and a native image drag cannot start because the overlay, not the
+	 * picture, is what the pointer lands on.
+	 *
+	 * Double clicks no longer ride on the default either way: they are detected
+	 * here, from timing and proximity, rather than through a native `dblclick`
+	 * that the overlay's constant rebuilding made unreliable.
 	 */
 	private onPointerDown(event: PointerEvent): void {
 		if (event.button !== 0) return;
 		const point = this.pointAt(event);
+		const double = this.takeDoubleClick(point);
 
 		if (this.tool === "poly") {
+			// The closing gesture: two presses in the same spot finish the draft
+			// rather than piling a second vertex onto the first.
+			if (double && this.polyDraft !== null) {
+				this.finishPolygon();
+				return;
+			}
 			this.addPolyVertex(point);
 			return;
 		}
 
 		if (this.tool === "text") {
-			this.addAnnotation(point);
+			// Placed on release, not here — see `pendingAnnotation`.
+			this.pendingAnnotation = point;
 			return;
 		}
+
+		if (double && this.insertVertex(point)) return;
 
 		this.svg.setPointerCapture(event.pointerId);
 
@@ -502,6 +529,12 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private onPointerUp(event: PointerEvent): void {
+		if (this.pendingAnnotation) {
+			const point = this.pendingAnnotation;
+			this.pendingAnnotation = null;
+			this.addAnnotation(point);
+			return;
+		}
 		if (!this.drag) return;
 		const drag = this.drag;
 		this.drag = null;
@@ -528,25 +561,38 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	/**
-	 * Double-click: finish a polygon being drawn, or add a vertex to one that is
-	 * selected. The two never overlap — drafting happens under the Polygon tool
-	 * and vertex insertion under Select.
+	 * Whether this press completes a double click, consuming the record if it
+	 * does — so a third press in the same spot starts a fresh pair rather than
+	 * firing the gesture again.
 	 */
-	private onDoubleClick(event: MouseEvent): void {
-		if (this.polyDraft !== null) {
-			this.finishPolygon();
-			return;
+	private takeDoubleClick(point: Point): boolean {
+		const now = Date.now();
+		const previous = this.lastClick;
+		if (isDoubleClick(previous, now, point, this.grabTolerance())) {
+			this.lastClick = null;
+			return true;
 		}
+		this.lastClick = { time: now, point };
+		return false;
+	}
 
+	/**
+	 * Add a vertex where a double click met a selected polygon. False when there
+	 * is nothing to insert into, so the press falls through to ordinary handling.
+	 *
+	 * Only reachable under Select: a polygon is drafted under the Polygon tool,
+	 * where the same gesture closes the draft instead.
+	 */
+	private insertVertex(point: Point): boolean {
 		const only = this.onlySelectedShape();
-		if (only === null) return;
+		if (only === null) return false;
 		const shape = this.shapes[only]!;
-		if (shape.kind !== "poly") return;
+		if (shape.kind !== "poly") return false;
+		if (!containsPoint(shape, point)) return false;
 
-		const point = this.pointAt(event);
-		if (!containsPoint(shape, point)) return;
 		this.shapes[only] = withVertexInserted(shape, point).shape;
 		this.commit();
+		return true;
 	}
 
 	// ── Polygons ──────────────────────────────────────────────────
@@ -901,6 +947,12 @@ export class OcclusionEditorModal extends Modal {
 					attr: { type: "text", placeholder: "Label" },
 				});
 				positionAnnotation(input, annotation.x, annotation.y);
+				// A blur is only the user leaving the field once the field has been
+				// in it. Anything else is a focus steal, and committing on it would
+				// delete a label the user had not finished typing — silently, since
+				// an empty commit drops the annotation altogether.
+				let focused = false;
+				input.addEventListener("focus", () => { focused = true; });
 				input.addEventListener("keydown", (event: KeyboardEvent) => {
 					if (event.key === "Enter") {
 						event.preventDefault();
@@ -911,9 +963,16 @@ export class OcclusionEditorModal extends Modal {
 					}
 					event.stopPropagation();
 				});
-				input.addEventListener("blur", () => { this.commitAnnotationEdit(index, input.value); });
-				input.focus();
-				input.select();
+				input.addEventListener("blur", () => {
+					if (!focused) return;
+					this.commitAnnotationEdit(index, input.value);
+				});
+				// Deferred a tick, so the browser's own mousedown focus handling has
+				// finished before the field claims focus.
+				window.setTimeout(() => {
+					input.focus();
+					input.select();
+				}, 0);
 				return;
 			}
 
@@ -926,9 +985,17 @@ export class OcclusionEditorModal extends Modal {
 			positionAnnotation(label, annotation.x, annotation.y);
 			label.addEventListener("pointerdown", (event: PointerEvent) => {
 				if (event.button !== 0) return;
-				// Stopped, not prevented — the label needs its own double-click to
-				// reopen for typing, and cancelling pointerdown would suppress it.
+				// Stopped, so the press does not also reach the overlay underneath
+				// and start a draw. Double clicks are shared with the canvas rather
+				// than left to the native event, for the same reason: this layer is
+				// rebuilt on every pointer move, so a label never survives long
+				// enough to receive two clicks of its own reliably.
 				event.stopPropagation();
+				if (this.takeDoubleClick(this.pointAt(event))) {
+					this.editingAnnotation = index;
+					this.redraw();
+					return;
+				}
 				this.selectedShapes = [];
 				this.selectedAnnotation = index;
 				this.drag = {
@@ -938,12 +1005,6 @@ export class OcclusionEditorModal extends Modal {
 					origin: { x: annotation.x, y: annotation.y },
 				};
 				this.svg.setPointerCapture(event.pointerId);
-				this.redraw();
-			});
-			label.addEventListener("dblclick", (event: MouseEvent) => {
-				event.preventDefault();
-				event.stopPropagation();
-				this.editingAnnotation = index;
 				this.redraw();
 			});
 		});
@@ -965,7 +1026,9 @@ export class OcclusionEditorModal extends Modal {
 		this.translucencyButton.toggleClass("is-active", this.opaque);
 
 		this.canvas.toggleClass("is-opaque", this.opaque);
-		this.stage.setCssProps({ "--osmosis-occlusion-zoom": String(this.zoom) });
+		// Set on the canvas — the wrapper the overlay is pinned to — and not on
+		// the stage around it, because the wrapper is the box that has to grow.
+		this.canvas.setCssProps({ "--osmosis-occlusion-zoom": String(this.zoom) });
 
 		const groups = usedGroups(this.shapes).sort(byGroupNumber);
 		this.groupSelect.empty();

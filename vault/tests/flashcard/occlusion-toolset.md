@@ -1,6 +1,17 @@
 ---
 osmosis-cards: true
-osmosis-deck: Engineering/Bridges/occlusion-toolset
+osmosis-deck: Engineering/Bridges
+osmosis-schedule:
+  os-tool001:
+    occlude:
+      mode: hide-all-guess-one
+      shapes:
+        - group: c1
+          kind: ellipse
+          x: 0.4987
+          y: 0.0809
+          rx: 0.1228
+          ry: 0.0799
 ---
 
 # Image occlusion — full toolset fixture
@@ -46,24 +57,9 @@ occlude:
     - x: 0.62
       y: 0.86
       text: "Scour depth: 2.4 m"
-c1:
-  due: 2026-08-11T11:07:24.489Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-11T11:06:24.489Z
-  learningSteps: 0
-c2:
-  due: 2026-08-11T11:07:33.435Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-11T11:06:33.435Z
-  learningSteps: 0
+    - x: 0.2045
+      y: 0.6924
+      text: "test"
 
 Name the part of the span each mask covers.
 
@@ -91,17 +87,8 @@ occlude:
   mode: hide-all-guess-one
   shapes:
     - group: c1
-      kind: rect
-      x: 0.1209
-      y: 0.5017
-      w: 0.1515
-      h: 0.0999
-    - group: c1
-      kind: rect
-      x: 0.4194
-      y: 0
-      w: 0.1515
-      h: 0.1811
+      kind: poly
+      points: [[0.0952, 0.2729], [0.0613, 0.5373], [0.1941, 0.8893], [0.681, 0.99], [0.9502, 0.6551], [0.9349, 0.2939], [0.7833, 0.0802], [0.4135, 0.1417], [0.1724, 0.1416]]
 
 Which parts of this section carry load in compression?
 
@@ -113,5 +100,8 @@ Which parts of this section carry load in compression?
 The same annotation list, stored in frontmatter rather than a fence header once
 this line is occluded. Draw a mask and a label on it and the `osmosis-schedule`
 entry below its block ID should gain both `shapes` and `annotations`.
+
+![Pasted image 20260806172808](Pasted%20image%2020260806172808.png)
+
 
 ![[bridge-cross-section.svg]] ^os-tool001
