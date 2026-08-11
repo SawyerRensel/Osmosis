@@ -704,15 +704,23 @@ describe("OcclusionEditorModal annotations", () => {
 		expect(editing(opened)).not.toBeNull();
 	});
 
-	it("cancels the edit on Escape rather than closing the modal", () => {
+	it("cancels the edit rather than closing while a label is being typed", () => {
+		// Escape reaches the modal's own close handler, not ours — it shares this
+		// scope and is evaluated first — so the refusal has to live in `close`.
 		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
 		pressLabel(opened2, [100, 20]);
 		pressLabel(opened2, [100, 20]);
 		editing(opened2)!.value = "half typed";
-		expect(hotkey(opened2.modal, [], "Escape")).toBe(false);
+		opened2.modal.close();
 
-		click(opened2.content, "Save");
-		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+		expect(editing(opened2)).toBeNull();
+		expect(opened2.content.childElementCount).toBeGreaterThan(0);
+		// Reverted, rather than taking what was half typed.
+		expect(opened2.content.querySelector(".osmosis-occlusion-annotation")?.textContent).toBe("Deck");
+
+		// And a second Escape now closes as usual.
+		opened2.modal.close();
+		expect(opened2.content.childElementCount).toBe(0);
 	});
 
 	it("keeps a label whose field is blurred before it was ever focused", () => {

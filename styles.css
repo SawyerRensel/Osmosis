@@ -3515,11 +3515,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	gap: 6px;
 }
 
-.osmosis-occlusion-field label {
-	color: var(--text-muted);
-	font-size: var(--font-ui-small);
-}
-
 /* Takes whatever height the toolbar, hint, and buttons leave, and is the one
    thing in the modal that ever scrolls — and only once the user has zoomed in,
    since zoom 1 fits the whole image inside it.

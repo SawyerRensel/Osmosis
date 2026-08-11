@@ -259,6 +259,29 @@ export class OcclusionEditorModal extends Modal {
 		this.redraw();
 	}
 
+	/**
+	 * Escape belongs to the label being typed, not to the modal.
+	 *
+	 * Guarding the scope's Escape handler cannot achieve that — Obsidian's own
+	 * close-on-Escape is registered on this same scope and is evaluated first, so
+	 * ours never runs. Refusing the close itself is the one place the decision
+	 * cannot be pre-empted. The keyboard is the only route that reaches here mid
+	 * edit: clicking the close button, the backdrop, or Save all blur the field
+	 * first, which commits what was typed and clears `editingAnnotation`.
+	 */
+	close(): void {
+		if (this.editingAnnotation !== null) {
+			// Cancel, with the text as stored — a label that was never named is
+			// dropped and an edited one reverts, exactly as Escape does anywhere.
+			this.commitAnnotationEdit(
+				this.editingAnnotation,
+				this.annotations[this.editingAnnotation]?.text ?? "",
+			);
+			return;
+		}
+		super.close();
+	}
+
 	onClose(): void {
 		this.resize?.disconnect();
 		this.contentEl.empty();
@@ -300,15 +323,9 @@ export class OcclusionEditorModal extends Modal {
 			return false;
 		});
 		this.scope.register([], "Escape", () => {
-			if (this.editingAnnotation !== null) {
-				// Cancel the edit, keeping the modal open — the text as stored, so a
-				// label that was never named is dropped and an edited one reverts.
-				this.commitAnnotationEdit(
-					this.editingAnnotation,
-					this.annotations[this.editingAnnotation]?.text ?? "",
-				);
-				return false;
-			}
+			// Escape while a label is being typed is handled in `close()` instead:
+			// the modal's own Escape handler shares this scope and wins, so a guard
+			// here never gets the chance to keep the modal open.
 			if (this.polyDraft === null) return;
 			this.polyDraft = null;
 			this.redraw();
@@ -361,15 +378,22 @@ export class OcclusionEditorModal extends Modal {
 			this.redraw();
 		});
 
+		// No "Group" or "Mode" captions: each dropdown's own options say what it
+		// is, and the toolbar has better uses for the width. The labels live on
+		// as `aria-label`, which is what a screen reader was reading anyway.
 		const groupField = bar.createDiv("osmosis-occlusion-field");
-		groupField.createEl("label", { text: "Group" });
-		this.groupSelect = groupField.createEl("select", { cls: "dropdown" });
+		this.groupSelect = groupField.createEl("select", {
+			cls: "dropdown",
+			attr: { "aria-label": "Group" },
+		});
 		this.groupSelect.addEventListener("change", () => { this.assignGroup(this.groupSelect.value); });
 		this.ungroupButton = iconButton(groupField, "ungroup", "Ungroup", () => { this.ungroupSelected(); });
 
 		const modeField = bar.createDiv("osmosis-occlusion-field");
-		modeField.createEl("label", { text: "Mode" });
-		const modeSelect = modeField.createEl("select", { cls: "dropdown" });
+		const modeSelect = modeField.createEl("select", {
+			cls: "dropdown",
+			attr: { "aria-label": "Mode" },
+		});
 		for (const [value, label] of Object.entries(MODE_LABELS)) {
 			modeSelect.createEl("option", { value, text: label });
 		}
