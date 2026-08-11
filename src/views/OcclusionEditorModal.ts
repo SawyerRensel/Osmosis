@@ -7,12 +7,14 @@ import type {
 } from "../database/types";
 import {
 	alignShapes,
+	anchoredScroll,
 	boxFromDrag,
 	clamp01,
 	cloneShape,
 	containsPoint,
 	duplicateAnnotation,
 	duplicateShape,
+	fitWidth,
 	HANDLE_IDS,
 	handleAt,
 	handlePoint,
@@ -71,11 +73,17 @@ import { positionAnnotation } from "./OcclusionRenderer";
  */
 
 /** Which drawing tool the pointer is currently holding. */
-type Tool = "select" | "rect" | "ellipse" | "poly" | "text";
+type Tool = "select" | "rect" | "ellipse" | "poly" | "text" | "pan";
 
 /** What a pointer drag in progress is doing. */
 type Drag =
 	| { kind: "draw"; from: Point }
+	/**
+	 * Scrolling the stage under a zoomed-in canvas. Client pixels and scroll
+	 * offsets, not normalised units: this moves the viewport, not the document,
+	 * so nothing about it belongs in the image's coordinate space.
+	 */
+	| { kind: "pan"; from: { x: number; y: number }; scroll: { left: number; top: number } }
 	/** `start` is the shape list as it stood when the drag began, so the delta
 	 *  is always measured from there and a slow drag cannot accumulate drift. */
 	| { kind: "move"; from: Point; start: OcclusionShape[] }
@@ -89,12 +97,25 @@ interface Snapshot {
 	annotations: OcclusionAnnotation[];
 }
 
+/** A two-finger gesture in flight, as it stood when the second finger landed. */
+interface Gesture {
+	/** Distance between the two fingers, so the pinch ratio scales from it. */
+	spread: number;
+	/** Their midpoint in client pixels, so the pair can also pan. */
+	center: { x: number; y: number };
+	zoom: number;
+	scroll: { left: number; top: number };
+	/** The midpoint relative to the stage — what the pinch stays anchored on. */
+	focus: { x: number; y: number };
+}
+
 /** How close a pointer must come to a handle or vertex to grab it, in image pixels. */
 const HANDLE_GRAB_PX = 12;
 
+/** Sentence case, as Obsidian's own UI labels are. */
 const MODE_LABELS: Record<OcclusionMode, string> = {
-	"hide-all-guess-one": "Hide All, Guess One",
-	"hide-one-guess-one": "Hide One, Guess One",
+	"hide-all-guess-one": "Hide all, guess one",
+	"hide-one-guess-one": "Hide one, guess one",
 };
 
 /** The align actions, in toolbar order. */
@@ -169,6 +190,17 @@ export class OcclusionEditorModal extends Modal {
 	private pendingAnnotation: Point | null = null;
 	/** The last press, for detecting the next one as a double click. */
 	private lastClick: Click | null = null;
+	/** Every pointer currently down, in client pixels — two of them is a gesture. */
+	private pointers = new Map<number, { x: number; y: number }>();
+	private gesture: Gesture | null = null;
+	/**
+	 * The canvas width at which the whole image fits the stage, in pixels, or 0
+	 * before the image has loaded. Zoom multiplies it, so zoom 1 is fit-to-view
+	 * for a portrait diagram and a landscape one alike, and nothing scrolls until
+	 * the user asks for it.
+	 */
+	private fit = 0;
+	private resize: ResizeObserver | null = null;
 	private zoom = 1;
 	/** Whether masks are drawn solid, previewing what the card will hide. */
 	private opaque = false;
@@ -176,6 +208,7 @@ export class OcclusionEditorModal extends Modal {
 
 	private image!: HTMLImageElement;
 	private svg!: SVGSVGElement;
+	private stage!: HTMLElement;
 	private canvas!: HTMLElement;
 	private annotationLayer!: HTMLElement;
 	private toolButtons = new Map<Tool, HTMLButtonElement>();
@@ -227,6 +260,7 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	onClose(): void {
+		this.resize?.disconnect();
 		this.contentEl.empty();
 	}
 
@@ -240,29 +274,50 @@ export class OcclusionEditorModal extends Modal {
 	/**
 	 * Scoped to the modal so they do not fight the note editor underneath.
 	 *
-	 * Escape is registered but only *claims* the event while a polygon is being
-	 * drawn — abandoning a half-drawn shape is what the key means there. With no
-	 * draft in progress it falls through and Obsidian closes the modal, which is
-	 * what every other modal in the app does.
+	 * **Every one of them stands down while a label is being typed.** The scope
+	 * sees a key before the focused input does, and claiming it stops the input
+	 * ever receiving it — so Backspace deleted the very annotation being named
+	 * instead of a character, and Escape closed the whole modal. Declining
+	 * (returning nothing) hands the key back to the field.
+	 *
+	 * Escape and Enter stand down when there is nothing of their own to do, too:
+	 * Escape abandons a half-drawn polygon, and with no draft in progress it
+	 * falls through and Obsidian closes the modal, as every other modal does.
 	 */
 	private registerHotkeys(): void {
-		this.scope.register([], "Delete", () => { this.deleteSelected(); return false; });
-		this.scope.register([], "Backspace", () => { this.deleteSelected(); return false; });
+		/** Wrap a shape action so the keyboard belongs to a label being typed. */
+		const unlessTyping = (action: () => void) => () => {
+			if (this.editingAnnotation !== null) return;
+			action();
+			return false;
+		};
+
+		this.scope.register([], "Delete", unlessTyping(() => { this.deleteSelected(); }));
+		this.scope.register([], "Backspace", unlessTyping(() => { this.deleteSelected(); }));
 		this.scope.register([], "Enter", () => {
-			if (this.polyDraft === null) return;
+			if (this.editingAnnotation !== null || this.polyDraft === null) return;
 			this.finishPolygon();
 			return false;
 		});
 		this.scope.register([], "Escape", () => {
+			if (this.editingAnnotation !== null) {
+				// Cancel the edit, keeping the modal open — the text as stored, so a
+				// label that was never named is dropped and an edited one reverts.
+				this.commitAnnotationEdit(
+					this.editingAnnotation,
+					this.annotations[this.editingAnnotation]?.text ?? "",
+				);
+				return false;
+			}
 			if (this.polyDraft === null) return;
 			this.polyDraft = null;
 			this.redraw();
 			return false;
 		});
-		this.scope.register(["Mod"], "z", () => { this.undo(); return false; });
-		this.scope.register(["Mod", "Shift"], "z", () => { this.redo(); return false; });
-		this.scope.register(["Mod"], "y", () => { this.redo(); return false; });
-		this.scope.register(["Mod"], "d", () => { this.duplicateSelected(); return false; });
+		this.scope.register(["Mod"], "z", unlessTyping(() => { this.undo(); }));
+		this.scope.register(["Mod", "Shift"], "z", unlessTyping(() => { this.redo(); }));
+		this.scope.register(["Mod"], "y", unlessTyping(() => { this.redo(); }));
+		this.scope.register(["Mod"], "d", unlessTyping(() => { this.duplicateSelected(); }));
 	}
 
 	// ── Chrome ────────────────────────────────────────────────────
@@ -276,6 +331,10 @@ export class OcclusionEditorModal extends Modal {
 			{ tool: "ellipse", icon: "circle", label: "Ellipse" },
 			{ tool: "poly", icon: "pentagon", label: "Polygon" },
 			{ tool: "text", icon: "type", label: "Text" },
+			// The way round a zoomed canvas for anyone without a scroll wheel or a
+			// second finger — the overlay takes `touch-action: none`, so a one-finger
+			// drag draws rather than scrolling.
+			{ tool: "pan", icon: "hand", label: "Pan" },
 		];
 		const group = bar.createDiv("osmosis-occlusion-tools");
 		for (const { tool, icon, label } of tools) {
@@ -323,15 +382,32 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private buildCanvas(parent: HTMLElement): void {
-		const stage = parent.createDiv("osmosis-occlusion-stage");
+		this.stage = parent.createDiv("osmosis-occlusion-stage");
 		// Same wrapper and image classes the study renderer uses — the layout
 		// contract that makes normalised coordinates land correctly is CSS, so
 		// sharing the classes is what keeps the two surfaces in agreement.
-		this.canvas = stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
+		this.canvas = this.stage.createDiv({ cls: ["osmosis-occlusion", "osmosis-occlusion-canvas"] });
 		this.image = this.canvas.createEl("img", {
 			cls: "osmosis-occlusion-image",
 			attr: { src: this.options.src, alt: this.options.image, draggable: "false" },
 		});
+
+		// The fit depends on the image's proportions and on the room the stage
+		// ends up with, and neither is known at build time: the picture has still
+		// to load, and the toolbar may yet wrap to a second row and take a slice
+		// of the height with it. Both are watched rather than assumed.
+		this.image.addEventListener("load", () => { this.measure(); });
+		this.resize = new ResizeObserver(() => { this.measure(); });
+		this.resize.observe(this.stage);
+
+		// Ctrl+wheel zooms about the pointer, as every canvas app does; a plain
+		// wheel is left to scroll the stage. Not passive, since zooming has to
+		// take the event away from the browser's own page zoom.
+		this.stage.addEventListener("wheel", (event: WheelEvent) => {
+			if (!event.ctrlKey) return;
+			event.preventDefault();
+			this.zoomAbout(zoomBy(this.zoom, event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP), event);
+		}, { passive: false });
 
 		this.svg = this.canvas.createSvg("svg", { cls: "osmosis-occlusion-editor-layer" });
 		this.svg.setAttribute("viewBox", "0 0 1 1");
@@ -360,9 +436,10 @@ export class OcclusionEditorModal extends Modal {
 		this.finishPolygon();
 		this.tool = tool;
 		// Leaving a drawing tool for Select keeps the selection; entering one
-		// drops it, so the handles do not sit under the new shape.
+		// drops it, so the handles do not sit under the new shape. Pan draws
+		// nothing, so it has no reason to disturb what is selected.
 		if (tool === "rect" || tool === "ellipse") this.lastDrawTool = tool;
-		if (tool !== "select") this.clearSelection();
+		if (tool !== "select" && tool !== "pan") this.clearSelection();
 		this.redraw();
 	}
 
@@ -404,9 +481,26 @@ export class OcclusionEditorModal extends Modal {
 	 * that the overlay's constant rebuilding made unreliable.
 	 */
 	private onPointerDown(event: PointerEvent): void {
-		if (event.button !== 0) return;
+		this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+		// A second finger means the gesture, whatever the first one had started.
+		if (this.pointers.size === 2) {
+			this.beginGesture();
+			return;
+		}
+		if (this.pointers.size > 2 || event.button !== 0) return;
+
 		const point = this.pointAt(event);
 		const double = this.takeDoubleClick(point);
+
+		if (this.tool === "pan") {
+			this.svg.setPointerCapture(event.pointerId);
+			this.drag = {
+				kind: "pan",
+				from: { x: event.clientX, y: event.clientY },
+				scroll: { left: this.stage.scrollLeft, top: this.stage.scrollTop },
+			};
+			return;
+		}
 
 		if (this.tool === "poly") {
 			// The closing gesture: two presses in the same spot finish the draft
@@ -483,8 +577,22 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private onPointerMove(event: PointerEvent): void {
+		if (this.pointers.has(event.pointerId)) {
+			this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+		}
+		if (this.gesture) {
+			this.updateGesture();
+			return;
+		}
 		if (!this.drag) return;
 		event.preventDefault();
+
+		if (this.drag.kind === "pan") {
+			this.stage.scrollLeft = this.drag.scroll.left - (event.clientX - this.drag.from.x);
+			this.stage.scrollTop = this.drag.scroll.top - (event.clientY - this.drag.from.y);
+			return;
+		}
+
 		const point = this.pointAt(event);
 
 		switch (this.drag.kind) {
@@ -529,6 +637,14 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private onPointerUp(event: PointerEvent): void {
+		this.pointers.delete(event.pointerId);
+		if (this.gesture) {
+			// The finger still down does not resume drawing: a drag only ever
+			// begins on a press, and this one was spent on the gesture.
+			if (this.pointers.size < 2) this.gesture = null;
+			return;
+		}
+
 		if (this.pendingAnnotation) {
 			const point = this.pendingAnnotation;
 			this.pendingAnnotation = null;
@@ -541,6 +657,9 @@ export class OcclusionEditorModal extends Modal {
 		if (this.svg.hasPointerCapture(event.pointerId)) {
 			this.svg.releasePointerCapture(event.pointerId);
 		}
+
+		// Panning moved the viewport, not the document — nothing to record.
+		if (drag.kind === "pan") return;
 
 		if (drag.kind === "draw") {
 			const box = boxFromDrag(drag.from, this.pointAt(event));
@@ -558,6 +677,67 @@ export class OcclusionEditorModal extends Modal {
 		// selected without moving, or a resize dragged back to where it started,
 		// leaves no undo step behind.
 		this.commit();
+	}
+
+	// ── Two-finger gestures ───────────────────────────────────────
+
+	/**
+	 * Take over from whatever one finger had started, once a second lands.
+	 *
+	 * The overlay sets `touch-action: none` so a single finger can draw, which
+	 * leaves the browser doing nothing for touch at all — pinch and pan have to
+	 * be built here. Anything the first finger began is abandoned rather than
+	 * committed: it was the opening of a gesture, not a mask.
+	 */
+	private beginGesture(): void {
+		this.cancelDrag();
+		this.pendingAnnotation = null;
+		this.polyDraft = null;
+
+		const [a, b] = [...this.pointers.values()] as [{ x: number; y: number }, { x: number; y: number }];
+		const center = midpoint(a, b);
+		const box = this.stage.getBoundingClientRect();
+		this.gesture = {
+			spread: distance(a, b),
+			center,
+			zoom: this.zoom,
+			scroll: { left: this.stage.scrollLeft, top: this.stage.scrollTop },
+			focus: { x: center.x - box.left, y: center.y - box.top },
+		};
+		this.redraw();
+	}
+
+	/**
+	 * Pinch and pan together, both measured from where the gesture began rather
+	 * than from the previous move — so a slow drag cannot accumulate drift, the
+	 * same reason a shape move keeps its starting shapes.
+	 */
+	private updateGesture(): void {
+		const gesture = this.gesture;
+		if (!gesture || this.pointers.size < 2) return;
+
+		const [a, b] = [...this.pointers.values()] as [{ x: number; y: number }, { x: number; y: number }];
+		const spread = distance(a, b);
+		const center = midpoint(a, b);
+		const zoom = gesture.spread === 0 ? gesture.zoom : zoomBy(gesture.zoom, spread / gesture.spread);
+
+		this.setZoom(zoom);
+		const scale = zoom / gesture.zoom;
+		this.stage.scrollLeft =
+			anchoredScroll(gesture.scroll.left, gesture.focus.x, scale) - (center.x - gesture.center.x);
+		this.stage.scrollTop =
+			anchoredScroll(gesture.scroll.top, gesture.focus.y, scale) - (center.y - gesture.center.y);
+	}
+
+	/**
+	 * Abandon a drag in progress, putting the document back as the last committed
+	 * snapshot left it. The selection is kept, unlike an undo: no shape has come
+	 * or gone, so every index still points where it did.
+	 */
+	private cancelDrag(): void {
+		if (!this.drag) return;
+		this.drag = null;
+		this.adopt(this.history.current);
 	}
 
 	/**
@@ -781,9 +961,57 @@ export class OcclusionEditorModal extends Modal {
 		this.commit();
 	}
 
+	// ── View ──────────────────────────────────────────────────────
+
+	/**
+	 * Work out the width at which the whole image fits the stage, and repaint at
+	 * it. Run on load and on every stage resize, because either can change it.
+	 */
+	private measure(): void {
+		const fit = fitWidth(
+			{ width: this.stage.clientWidth, height: this.stage.clientHeight },
+			{ width: this.image.naturalWidth, height: this.image.naturalHeight },
+		);
+		if (fit === this.fit) return;
+		this.fit = fit;
+		// Only the canvas, not a full redraw: this can fire while the modal is
+		// still being assembled, before there is any chrome to bring in step.
+		this.applySize();
+	}
+
+	/**
+	 * Put the canvas at its current size. `fit` is the width the whole image
+	 * occupies and zoom multiplies it, so zoom 1 is fit-to-view and nothing
+	 * scrolls until the user asks it to.
+	 */
+	private applySize(): void {
+		this.canvas.setCssProps({
+			"--osmosis-occlusion-zoom": String(this.zoom),
+			"--osmosis-occlusion-fit": this.fit === 0 ? "100%" : `${String(this.fit)}px`,
+		});
+	}
+
 	private setZoom(zoom: number): void {
 		this.zoom = zoom;
 		this.redraw();
+	}
+
+	/**
+	 * Zoom while keeping whatever is under `at` where it is. Growing the canvas
+	 * on its own scales it from the top-left corner, which slides the thing being
+	 * zoomed towards out from under the pointer.
+	 */
+	private zoomAbout(zoom: number, at: { clientX: number; clientY: number }): void {
+		if (zoom === this.zoom) return;
+		const scale = zoom / this.zoom;
+		const box = this.stage.getBoundingClientRect();
+		const left = anchoredScroll(this.stage.scrollLeft, at.clientX - box.left, scale);
+		const top = anchoredScroll(this.stage.scrollTop, at.clientY - box.top, scale);
+
+		this.setZoom(zoom);
+		// After the resize, so there is something to scroll into.
+		this.stage.scrollLeft = left;
+		this.stage.scrollTop = top;
 	}
 
 	// ── History ───────────────────────────────────────────────────
@@ -825,12 +1053,17 @@ export class OcclusionEditorModal extends Modal {
 	 */
 	private restore(snapshot: Snapshot | null): void {
 		if (!snapshot) return;
-		this.shapes = snapshot.shapes.map(cloneShape);
-		this.annotations = snapshot.annotations.map((a) => ({ ...a }));
+		this.adopt(snapshot);
 		this.clearSelection();
 		this.polyDraft = null;
 		this.editingAnnotation = null;
 		this.redraw();
+	}
+
+	/** Take a snapshot's document as the working one, leaving state around it alone. */
+	private adopt(snapshot: Snapshot): void {
+		this.shapes = snapshot.shapes.map(cloneShape);
+		this.annotations = snapshot.annotations.map((a) => ({ ...a }));
 	}
 
 	// ── Rendering ─────────────────────────────────────────────────
@@ -1026,9 +1259,10 @@ export class OcclusionEditorModal extends Modal {
 		this.translucencyButton.toggleClass("is-active", this.opaque);
 
 		this.canvas.toggleClass("is-opaque", this.opaque);
-		// Set on the canvas — the wrapper the overlay is pinned to — and not on
+		this.svg.toggleClass("is-panning", this.tool === "pan");
+		// Sized on the canvas — the wrapper the overlay is pinned to — and not on
 		// the stage around it, because the wrapper is the box that has to grow.
-		this.canvas.setCssProps({ "--osmosis-occlusion-zoom": String(this.zoom) });
+		this.applySize();
 
 		const groups = usedGroups(this.shapes).sort(byGroupNumber);
 		this.groupSelect.empty();
@@ -1051,6 +1285,7 @@ export class OcclusionEditorModal extends Modal {
 		}
 		if (this.tool === "poly") return "Click to place the polygon's first point.";
 		if (this.tool === "text") return "Click the image to place a label.";
+		if (this.tool === "pan") return "Drag to move a zoomed image. Pinch or Ctrl+scroll to zoom.";
 		if (this.shapes.length === 0) return "Drag on the image to draw a mask.";
 
 		const shapes = `${String(this.shapes.length)} shape${this.shapes.length === 1 ? "" : "s"}`;
@@ -1060,6 +1295,16 @@ export class OcclusionEditorModal extends Modal {
 
 /** Sentinel value for the group dropdown's "New group" entry. */
 const NEW_GROUP = " new";
+
+/** Halfway between two pointers, in client pixels. */
+function midpoint(a: { x: number; y: number }, b: { x: number; y: number }): { x: number; y: number } {
+	return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/** How far apart two pointers are, in client pixels. */
+function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+	return Math.hypot(b.x - a.x, b.y - a.y);
+}
 
 function iconButton(
 	parent: HTMLElement,

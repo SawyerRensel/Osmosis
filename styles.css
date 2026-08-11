@@ -3450,19 +3450,46 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    same one shapes are drawn against. A shape drawn here therefore lands on the
    same pixels when the card is studied, with no measurement on either side. */
 /* The canvas is the whole point of this modal, so it takes most of the window.
-   `min-width: 0` so an overflowing canvas scrolls its stage instead of widening
-   the modal around it. */
+
+   A flex column with a definite height, and the content pane below it likewise:
+   that is what gives the stage a real height to fit the image into, and it is
+   what stops the modal growing a scrollbar of its own. Two scrollbars — one on
+   the modal, one on the stage — is what capping the image instead of sizing it
+   produced, and neither of them should ever be needed at rest. */
 .osmosis-occlusion-modal {
+	display: flex;
+	flex-direction: column;
 	width: min(1200px, 96vw);
+	/* Both, so Obsidian's own cap on `.modal` cannot leave the height and the
+	   cap disagreeing about how much room the stage actually has. */
+	height: min(900px, 88vh);
+	max-height: 88vh;
 	min-width: 0;
 }
 
+.osmosis-occlusion-modal .modal-content {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	margin: 0;
+}
+
+/* `flex: none` on everything around the stage, so a cramped window shrinks the
+   picture rather than squashing the controls: the stage is the one row with
+   room to give. */
 .osmosis-occlusion-toolbar {
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	flex-wrap: wrap;
+	flex: none;
 	margin-bottom: 10px;
+}
+
+.osmosis-occlusion-modal .modal-button-container {
+	flex: none;
 }
 
 .osmosis-occlusion-tools {
@@ -3493,21 +3520,31 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	font-size: var(--font-ui-small);
 }
 
-/* Caps the canvas so a tall diagram cannot push the toolbar and buttons
-   off-screen; anything past the cap, in either axis, scrolls here rather than
-   growing the modal.
+/* Takes whatever height the toolbar, hint, and buttons leave, and is the one
+   thing in the modal that ever scrolls — and only once the user has zoomed in,
+   since zoom 1 fits the whole image inside it.
 
-   A block box, not a flex one: the canvas sets its own width from the zoom, and
-   a centred flex item that overflows has its leading edge clipped into
-   territory the scrollbar cannot reach. */
+   No padding: the stage's own content box is what the fit is measured against,
+   so keeping it free of padding means the measurement needs no constant that
+   has to be kept in step with this file. `safe center` because a centred item
+   that overflows its scroll container has its leading edge pushed into
+   territory the scrollbar cannot reach; `safe` gives that case up on centring
+   and keeps the whole canvas reachable. */
 .osmosis-occlusion-stage {
-	display: block;
-	overflow: auto;
-	max-height: 70vh;
+	display: flex;
+	/* Plain `center` first: were `safe` ever unsupported the declaration would be
+	   dropped whole, leaving the canvas stretched — and a wrapper that is not
+	   exactly the image's box puts every mask in the wrong place. */
+	align-items: center;
+	align-items: safe center;
+	justify-content: center;
+	justify-content: safe center;
+	flex: 1;
+	min-height: 0;
 	min-width: 0;
+	overflow: auto;
 	background-color: var(--background-secondary);
 	border-radius: var(--radius-s);
-	padding: 8px;
 }
 
 /* Zoom *sets* the wrapper's width rather than capping the image's.
@@ -3517,13 +3554,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    overlay pinned to it desynced from the image: masks left sitting off the
    features they were drawn on.
 
-   With the width set here and the image filling it, wrapper, picture, and
-   overlay are one box at every zoom, and zoom 1 means fit-to-width.
-   `max-width: none` overrides the shared wrapper rule, which would otherwise
-   clamp the box back to 100% the moment zoom passed 1. */
+   `--osmosis-occlusion-fit` is the width at which the whole picture fits the
+   stage, measured in TypeScript because CSS cannot express "contain" for a box
+   that must stay exactly the image's box. Zoom multiplies it, so zoom 1 shows
+   everything whatever the aspect ratio, and Zoom to fit returns to precisely
+   that. `max-width: none` overrides the shared wrapper rule, which would
+   otherwise clamp the box back to 100% the moment zoom passed 1. */
 .osmosis-occlusion-canvas {
 	display: block;
-	width: calc(var(--osmosis-occlusion-zoom, 1) * 100%);
+	flex: none;
+	width: calc(var(--osmosis-occlusion-fit, 100%) * var(--osmosis-occlusion-zoom, 1));
 	max-width: none;
 }
 
@@ -3549,6 +3589,17 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	touch-action: none;
 	user-select: none;
 	cursor: crosshair;
+}
+
+/* `touch-action: none` is what lets one finger draw, and it also means the
+   browser will not scroll the stage for us — hence the Pan tool, and the
+   two-finger gestures the modal implements itself. */
+.osmosis-occlusion-editor-layer.is-panning {
+	cursor: grab;
+}
+
+.osmosis-occlusion-editor-layer.is-panning:active {
+	cursor: grabbing;
 }
 
 /* Editing masks are translucent so the picture underneath stays visible while
@@ -3630,5 +3681,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 .osmosis-occlusion-hint {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
+	flex: none;
 	margin-top: 8px;
 }

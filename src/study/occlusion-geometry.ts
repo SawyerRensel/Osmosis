@@ -45,12 +45,16 @@ export const HANDLE_IDS: readonly HandleId[] = ["nw", "n", "ne", "e", "se", "s",
  */
 export const MIN_SHAPE_SIZE = 0.005;
 
-/** The rendered box of the image, in client pixels. `DOMRect` satisfies this. */
-export interface PixelBox {
-	left: number;
-	top: number;
+/** A box's dimensions in pixels. `DOMRect` and an image's natural size both satisfy this. */
+export interface PixelSize {
 	width: number;
 	height: number;
+}
+
+/** The rendered box of the image, in client pixels. `DOMRect` satisfies this. */
+export interface PixelBox extends PixelSize {
+	left: number;
+	top: number;
 }
 
 /** Clamp to the 0–1 range a normalised coordinate has to stay inside. */
@@ -560,6 +564,40 @@ export const ZOOM_STEP = 1.25;
 export function zoomBy(zoom: number, factor: number): number {
 	const next = zoom * factor;
 	return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(next * 1000) / 1000));
+}
+
+/**
+ * The width at which an image of `natural` proportions fits entirely inside a
+ * `stage` box — the whole picture visible, whatever its aspect ratio.
+ *
+ * The editor sizes its canvas rather than capping it, because the wrapper has
+ * to *be* the image's box for the overlay pinned to it to land on the right
+ * pixels. That rules out `object-fit: contain`, which would letterbox the
+ * picture away from its wrapper, and it rules out capping with `max-height`,
+ * which cannot resolve a percentage through a shrink-to-fit wrapper. So the fit
+ * is arithmetic: the narrower of the two constraints wins.
+ *
+ * Zero when either box is degenerate — before the image has loaded, or while
+ * the modal is still being laid out — so the caller can leave the canvas at its
+ * CSS default rather than collapsing it to nothing.
+ */
+export function fitWidth(stage: PixelSize, natural: PixelSize): number {
+	if (stage.width <= 0 || stage.height <= 0) return 0;
+	if (natural.width <= 0 || natural.height <= 0) return 0;
+	return Math.min(stage.width, (stage.height * natural.width) / natural.height);
+}
+
+/**
+ * The scroll offset that keeps whatever sits under `focus` still under it after
+ * the content scales by `scale`.
+ *
+ * `focus` is measured from the scroll container's content edge — a pinch's
+ * midpoint or the pointer under a Ctrl+wheel. Without this the content grows
+ * from its top-left and the thing being zoomed towards slides out from under
+ * the fingers.
+ */
+export function anchoredScroll(scroll: number, focus: number, scale: number): number {
+	return (scroll + focus) * scale - focus;
 }
 
 /**

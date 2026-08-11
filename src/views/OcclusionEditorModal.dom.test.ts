@@ -21,6 +21,10 @@ import { OcclusionEditorModal } from "./OcclusionEditorModal";
 
 /** The image's rendered box, so pointer pixels have something to normalise against. */
 const IMAGE_BOX = { x: 0, y: 0, width: 400, height: 200 };
+/** The stage's content box, which the canvas is fitted into. */
+const STAGE_BOX = { width: 600, height: 400 };
+/** The image's own proportions — twice as wide as it is tall. */
+const NATURAL = { width: 1600, height: 800 };
 
 beforeAll(() => {
 	// jsdom lays nothing out, and it implements none of the pointer-capture API.
@@ -38,7 +42,30 @@ beforeAll(() => {
 	el["setPointerCapture"] = () => undefined;
 	el["releasePointerCapture"] = () => undefined;
 	el["hasPointerCapture"] = () => false;
+
+	// Layout the fit is measured from: the stage's box and the image's own size.
+	define(Element.prototype, "clientWidth", STAGE_BOX.width);
+	define(Element.prototype, "clientHeight", STAGE_BOX.height);
+	define(HTMLImageElement.prototype, "naturalWidth", NATURAL.width);
+	define(HTMLImageElement.prototype, "naturalHeight", NATURAL.height);
+	// jsdom's scroll offsets are read-only zeroes; as writable prototype defaults
+	// an assignment lands on the element and can be read back.
+	define(Element.prototype, "scrollLeft", 0, true);
+	define(Element.prototype, "scrollTop", 0, true);
+
+	// Fires its first observation on observe, as the real one does — which is
+	// what gives the modal a fit before the image has finished loading.
+	window.ResizeObserver = class {
+		constructor(private readonly callback: () => void) {}
+		observe(): void { this.callback(); }
+		unobserve(): void { /* nothing to stop */ }
+		disconnect(): void { /* nothing to stop */ }
+	} as unknown as typeof ResizeObserver;
 });
+
+function define(target: object, property: string, value: number, writable = false): void {
+	Object.defineProperty(target, property, { value, writable, configurable: true });
+}
 
 const app = {} as unknown as App;
 
@@ -104,9 +131,9 @@ function tap(
 	drag(svg, at, at, modifiers);
 }
 
-/** Fire a hotkey the modal registered on its scope. */
-function hotkey(modal: OcclusionEditorModal, modifiers: string[], key: string): void {
-	(modal as unknown as { scope: Scope }).scope.trigger(modifiers, key);
+/** Fire a hotkey the modal registered on its scope, returning what it claimed. */
+function hotkey(modal: OcclusionEditorModal, modifiers: string[], key: string): unknown {
+	return (modal as unknown as { scope: Scope }).scope.trigger(modifiers, key);
 }
 
 let opened: Opened;
@@ -666,6 +693,28 @@ describe("OcclusionEditorModal annotations", () => {
 		expect(editing(opened)).not.toBeNull();
 	});
 
+	it("leaves Backspace to the field it is being typed into", () => {
+		// The scope sees a key before the focused input does, so claiming Backspace
+		// deleted the annotation being named instead of a character of its text.
+		click(opened.content, "Text");
+		tap(opened.svg, [100, 20]);
+		const claimed = (opened.modal as unknown as { scope: Scope }).scope.trigger([], "Backspace");
+
+		expect(claimed).toBeUndefined();
+		expect(editing(opened)).not.toBeNull();
+	});
+
+	it("cancels the edit on Escape rather than closing the modal", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		pressLabel(opened2, [100, 20]);
+		pressLabel(opened2, [100, 20]);
+		editing(opened2)!.value = "half typed";
+		expect(hotkey(opened2.modal, [], "Escape")).toBe(false);
+
+		click(opened2.content, "Save");
+		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+	});
+
 	it("keeps a label whose field is blurred before it was ever focused", () => {
 		click(opened.content, "Text");
 		tap(opened.svg, [100, 20]);
@@ -780,6 +829,25 @@ describe("OcclusionEditorModal view controls", () => {
 		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
 	});
 
+	it("sizes the canvas so the whole image fits the stage, whatever its shape", () => {
+		// Fitting only the width is what gave the modal a second scrollbar: a tall
+		// diagram overflowed the stage and pushed the toolbar out of reach.
+		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
+
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-fit")).toBe("600px");
+	});
+
+	it("zooms on Ctrl+scroll, and leaves a plain scroll to the stage", () => {
+		const stage = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
+		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
+
+		stage.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1");
+
+		stage.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true }));
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("1.25");
+	});
+
 	it("toggles masks to solid without adding anything to the saved set", () => {
 		const canvas = opened.content.querySelector(".osmosis-occlusion-canvas")!;
 		click(opened.content, "Toggle translucency");
@@ -787,5 +855,75 @@ describe("OcclusionEditorModal view controls", () => {
 
 		click(opened.content, "Save");
 		expect(opened.saved[0]).toEqual(set);
+	});
+});
+
+/**
+ * Getting around a zoomed canvas. The overlay sets `touch-action: none` so one
+ * finger can draw, which leaves the browser scrolling nothing for touch at all
+ * — so both ways of moving the picture are the modal's own work.
+ */
+describe("OcclusionEditorModal panning", () => {
+	/** A pointer event carrying an id, which `MouseEvent` alone does not. */
+	function finger(type: string, id: number, [clientX, clientY]: [number, number]): MouseEvent {
+		return Object.assign(
+			new MouseEvent(type, { clientX, clientY, button: 0, bubbles: true }),
+			{ pointerId: id },
+		);
+	}
+
+	function stageOf(opened2: Opened): HTMLElement {
+		return opened2.content.querySelector<HTMLElement>(".osmosis-occlusion-stage")!;
+	}
+
+	it("scrolls the stage under the Pan tool instead of drawing", () => {
+		const stage = stageOf(opened);
+		click(opened.content, "Pan");
+		drag(opened.svg, [200, 100], [140, 70]);
+
+		expect(stage.scrollLeft).toBe(60);
+		expect(stage.scrollTop).toBe(30);
+
+		click(opened.content, "Save");
+		expect(opened.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("marks the overlay so the cursor says the drag will pan", () => {
+		click(opened.content, "Pan");
+
+		expect(opened.svg.classList.contains("is-panning")).toBe(true);
+	});
+
+	it("zooms on a two-finger pinch", () => {
+		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
+		opened.svg.dispatchEvent(finger("pointerdown", 1, [180, 100]));
+		opened.svg.dispatchEvent(finger("pointerdown", 2, [220, 100]));
+		opened.svg.dispatchEvent(finger("pointermove", 2, [260, 100]));
+
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-zoom")).toBe("2");
+	});
+
+	it("abandons what the first finger had started when the second lands", () => {
+		// The opening of a pinch is not a mask, and committing one would leave a
+		// stray rectangle behind every zoom.
+		opened.svg.dispatchEvent(finger("pointerdown", 1, [40, 20]));
+		opened.svg.dispatchEvent(finger("pointermove", 1, [160, 120]));
+		opened.svg.dispatchEvent(finger("pointerdown", 2, [200, 140]));
+		opened.svg.dispatchEvent(finger("pointerup", 1, [160, 120]));
+		opened.svg.dispatchEvent(finger("pointerup", 2, [200, 140]));
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(3);
+	});
+
+	it("draws again once the gesture's fingers have all lifted", () => {
+		opened.svg.dispatchEvent(finger("pointerdown", 1, [40, 20]));
+		opened.svg.dispatchEvent(finger("pointerdown", 2, [200, 140]));
+		opened.svg.dispatchEvent(finger("pointerup", 1, [40, 20]));
+		opened.svg.dispatchEvent(finger("pointerup", 2, [200, 140]));
+		drag(opened.svg, [40, 20], [160, 120]);
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.shapes).toHaveLength(4);
 	});
 });

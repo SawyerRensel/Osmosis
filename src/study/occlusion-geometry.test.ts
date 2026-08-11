@@ -3,6 +3,7 @@ import type { OcclusionShape } from "../database/types";
 import type { Box } from "./occlusion-geometry";
 import {
 	alignShapes,
+	anchoredScroll,
 	boxFromDrag,
 	clamp01,
 	cloneShape,
@@ -10,6 +11,7 @@ import {
 	DOUBLE_CLICK_MS,
 	duplicateAnnotation,
 	duplicateShape,
+	fitWidth,
 	handleAt,
 	handlePoint,
 	hitTest,
@@ -640,5 +642,47 @@ describe("zoomBy", () => {
 
 	it("caps rather than running away", () => {
 		expect(zoomBy(ZOOM_MAX, ZOOM_STEP)).toBe(ZOOM_MAX);
+	});
+});
+
+describe("fitWidth", () => {
+	const stage = { width: 600, height: 400 };
+
+	it("fills the width when the picture is the wider of the two", () => {
+		expect(fitWidth(stage, { width: 1600, height: 400 })).toBe(600);
+	});
+
+	it("stops at the height when the picture is the taller — the whole of it shows", () => {
+		// A portrait diagram at full width is what put a second scrollbar on the
+		// modal: fitting means fitting in both axes.
+		expect(fitWidth(stage, { width: 400, height: 1600 })).toBe(100);
+	});
+
+	it("matches the stage exactly when the proportions already agree", () => {
+		expect(fitWidth(stage, { width: 1200, height: 800 })).toBe(600);
+	});
+
+	it("gives up rather than collapsing before anything has been laid out", () => {
+		// Natural size is 0 until the image loads, and the stage has no box while
+		// the modal is still being built.
+		expect(fitWidth(stage, { width: 0, height: 0 })).toBe(0);
+		expect(fitWidth({ width: 0, height: 0 }, { width: 800, height: 400 })).toBe(0);
+	});
+});
+
+describe("anchoredScroll", () => {
+	it("keeps the point under the pointer where it was", () => {
+		// 200px into the content sits under a pointer 200px into an unscrolled
+		// stage; at double the size that content point is 400px in, so the stage
+		// has to be 200px along for it to stay under the pointer.
+		expect(anchoredScroll(0, 200, 2)).toBe(200);
+	});
+
+	it("accounts for how far the stage was already scrolled", () => {
+		expect(anchoredScroll(100, 200, 2)).toBe(400);
+	});
+
+	it("leaves the scroll alone when nothing scales", () => {
+		expect(anchoredScroll(100, 200, 1)).toBe(100);
 	});
 });
