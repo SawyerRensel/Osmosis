@@ -1,6 +1,6 @@
-import { Component, MarkdownRenderer, setIcon } from "obsidian";
+import { Component, MarkdownRenderer, Menu, setIcon, type MarkdownPostProcessorContext } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { stripEmbedLabels } from "../card-gen/occlusion";
+import { fenceEmbedLine, stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { ScheduleData } from "../database/types";
 import type { StudySessionManager } from "../study/StudySessionManager";
@@ -78,6 +78,8 @@ export class ContextualStudyProcessor {
 						// we're not in live preview we must be in reading view.
 						this.renderCard(source, el, ctx.sourcePath);
 					}
+
+					this.registerOcclusionMenu(source, el, ctx);
 				});
 			},
 		);
@@ -86,7 +88,7 @@ export class ContextualStudyProcessor {
 	private renderCard(source: string, el: HTMLElement, sourcePath: string): void {
 		const parsed = this.parseFenceContent(source);
 		if (!parsed) {
-			el.createEl("pre", { text: source });
+			this.renderDraft(source, el, sourcePath);
 			return;
 		}
 
@@ -189,11 +191,92 @@ export class ContextualStudyProcessor {
 		});
 	}
 
+	/**
+	 * Offer "Create image occlusion" when a diagram *inside* a rendered fence is
+	 * right-clicked.
+	 *
+	 * Obsidian's own image menu reaches native embeds in Live Preview, but an
+	 * image drawn by this processor is our DOM, not the editor's — so no menu
+	 * event fires for it and the only way in was to switch to source mode and
+	 * right-click the raw `![[…]]` text. That is a poor path to the one card
+	 * type Obsidian cannot author.
+	 *
+	 * The clicked image is mapped back to its line through the embed's `src`
+	 * (the link exactly as authored) plus the fence's own position from
+	 * `getSectionInfo`, rather than by counting rendered `<img>` elements —
+	 * front and back render into separate containers, and an unresolved embed
+	 * produces no `<img>` at all, so ordinal matching would drift.
+	 */
+	private registerOcclusionMenu(
+		source: string,
+		el: HTMLElement,
+		ctx: MarkdownPostProcessorContext,
+	): void {
+		el.addEventListener("contextmenu", (event: MouseEvent) => {
+			const target = event.target;
+			if (!(target instanceof HTMLImageElement)) return;
+
+			const link = target.closest(".internal-embed")?.getAttribute("src");
+			if (link === null || link === undefined) return;
+
+			const offset = fenceEmbedLine(source, link);
+			if (offset === null) return;
+
+			const section = ctx.getSectionInfo(el);
+			const file = this.plugin.app.vault.getFileByPath(ctx.sourcePath);
+			if (!section || !file) return;
+
+			// `source` starts *after* the opening ```osmosis line.
+			const line = section.lineStart + 1 + offset;
+
+			event.preventDefault();
+			const menu = new Menu();
+			menu.addItem((item) => {
+				item.setTitle("Create image occlusion")
+					.setIcon("square-dashed-mouse-pointer")
+					.onClick(() => { void this.plugin.openOcclusionEditor(file, line); });
+			});
+			menu.showAtMouseEvent(event);
+		});
+	}
+
+	/**
+	 * A fence that is not a card yet: no `***`, no cloze markers, no occlusion.
+	 * `generateExplicitCards` skips exactly this shape, so it is deliberately
+	 * *not* rendered as one — no divider, no hidden back, no rating row, and
+	 * nothing joins a deck.
+	 *
+	 * It does render its markdown rather than dumping raw source, because a
+	 * fence holding only a diagram is precisely the state you are in *before*
+	 * occluding that diagram, and you cannot right-click an image that is being
+	 * shown to you as text.
+	 */
+	private renderDraft(source: string, el: HTMLElement, sourcePath: string): void {
+		const lines = source.split("\n");
+		const { contentStart } = splitFenceHeader(lines);
+		const body = lines.slice(contentStart).map(stripEmbedLabels).join("\n").trim();
+		if (body.length === 0) {
+			// Nothing but a header — the raw source is the only useful thing to
+			// show, and it is what the user has to edit to fix it.
+			el.createEl("pre", { text: source });
+			return;
+		}
+
+		const container = el.createDiv({ cls: "osmosis-contextual-card osmosis-contextual-draft" });
+		void MarkdownRenderer.render(
+			this.plugin.app,
+			body,
+			container,
+			sourcePath,
+			this.renderComponent,
+		).then(() => addCodeBlockLanguageLabels(container));
+	}
+
 	/** Live preview: render front and back fully visible (no interactivity). */
 	private renderPreviewCard(source: string, el: HTMLElement, sourcePath: string): void {
 		const parsed = this.parseFenceContent(source);
 		if (!parsed) {
-			el.createEl("pre", { text: source });
+			this.renderDraft(source, el, sourcePath);
 			return;
 		}
 
@@ -381,7 +464,11 @@ export class ContextualStudyProcessor {
 	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean; isCloze: boolean } | null {
 		const lines = source.split("\n");
 		const { contentStart, exclude, hasOcclusion } = splitFenceHeader(lines);
-		const contentLines = lines.slice(contentStart);
+		// Stripped once, here, rather than per branch: an embed's `{a}` binds it
+		// to a shape set and is never meant to be seen. Doing it inside the
+		// occlusion branch alone let the label through on any fence that also had
+		// a `***` separator, since that branch returns first.
+		const contentLines = lines.slice(contentStart).map(stripEmbedLabels);
 		const separatorIdx = contentLines.findIndex((l) => l.trim() === "***");
 
 		if (separatorIdx >= 0) {
@@ -406,9 +493,8 @@ export class ContextualStudyProcessor {
 		// it lands with the other in-place surfaces. What matters now is that
 		// the diagram renders and the `{label}` markers do not survive into it.
 		if (hasOcclusion) {
-			const body = stripEmbedLabels(content);
-			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${body}`);
-			return { front: body, back: body, cardId, exclude, isCloze: true };
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${content}`);
+			return { front: content, back: content, cardId, exclude, isCloze: true };
 		}
 
 		// Check for code cloze (osmosis-cloze inside inner code fences)

@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -18,11 +18,46 @@ import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
-import { rewriteFenceEmbeds } from "./card-gen/occlusion";
+import {
+	DEFAULT_OCCLUSION_MODE,
+	decodeEmbedTarget,
+	embedLines,
+	ensureFenceIdentity,
+	fenceOcclusions,
+	locateOcclusionTarget,
+	rewriteFenceEmbeds,
+	usedGroupsInFence,
+	type FenceIdentity,
+	type OcclusionTarget,
+} from "./card-gen/occlusion";
+import { OcclusionEditorModal } from "./views/OcclusionEditorModal";
+import { generateBlockId } from "./block-id";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
-import type { Card, StudyMode } from "./database/types";
+import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
+
+/**
+ * Extensions the "Create image occlusion" item is offered for — Obsidian's own
+ * image formats. SVG is included: it rasterises in an `<img>` like any other,
+ * and diagrams are exactly what gets occluded.
+ */
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif"]);
+
+/**
+ * The line an image file is embedded on in a note, or null when it is not.
+ *
+ * Embeds are matched by *resolution* rather than by text, since the same file
+ * can be written as a short link, a full path, or percent-encoded — and the
+ * file-menu hands us a `TFile`, not the spelling the author used.
+ */
+function findEmbedLine(content: string, image: TFile, app: App, notePath: string): number | null {
+	for (const embed of embedLines(content)) {
+		const resolved = app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(embed.target), notePath);
+		if (resolved?.path === image.path) return embed.line;
+	}
+	return null;
+}
 
 /** localStorage key for the review log's rollup cache (per vault, per device). */
 const REVIEW_ROLLUP_CACHE_KEY = "osmosis-review-rollup";
@@ -301,6 +336,60 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 		);
 
+		// ── Image context menu: "Create image occlusion" ─────────
+		//
+		// Obsidian exposes no image-specific menu event, so the item is offered
+		// through both menus that can surface over an embed: `editor-menu`,
+		// which fires for a right-click in the editor (including on a selected
+		// image since 1.13), and `file-menu`, which fires when the menu is
+		// raised against the image file itself. Whichever one the click reaches,
+		// the item is there.
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, image: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
+				if (!(image instanceof TFile) || !IMAGE_EXTENSIONS.has(image.extension.toLowerCase())) return;
+				const view = leaf?.view instanceof MarkdownView ? leaf.view : this.app.workspace.getActiveViewOfType(MarkdownView);
+				const note = view?.file;
+				if (!note) return;
+				const line = findEmbedLine(view.editor.getValue(), image, this.app, note.path);
+				if (line === null) return;
+				menu.addItem((item) => {
+					item.setTitle("Create image occlusion")
+						.setIcon("square-dashed-mouse-pointer")
+						// Grouped with Obsidian's own image actions (Copy image,
+						// Swap file, …) rather than trailing after Delete image,
+						// which is where an unsectioned item lands.
+						.setSection("image")
+						.onClick(() => { void this.openOcclusionEditor(note, line); });
+				});
+			}),
+		);
+
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+				const file = info.file;
+				if (!file || file.extension !== "md") return;
+				const line = editor.getCursor().line;
+				if (locateOcclusionTarget(editor.getValue(), line) === null) return;
+				menu.addItem((item) => {
+					item.setTitle("Create image occlusion")
+						.setIcon("square-dashed-mouse-pointer")
+						.onClick(() => { void this.openOcclusionEditor(file, line); });
+				});
+			}),
+		);
+
+		this.addCommand({
+			id: "create-image-occlusion",
+			name: "Create image occlusion",
+			editorCheckCallback: (checking, editor, ctx) => {
+				const file = ctx.file;
+				if (!file || file.extension !== "md") return false;
+				if (locateOcclusionTarget(editor.getValue(), editor.getCursor().line) === null) return false;
+				if (!checking) void this.openOcclusionEditor(file, editor.getCursor().line);
+				return true;
+			},
+		});
+
 		// ── "Mind map view" icon in markdown view header ────────
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
@@ -407,6 +496,134 @@ export default class OsmosisPlugin extends Plugin {
 				void this.repointFenceEmbeds(oldPath, file);
 			}),
 		);
+	}
+
+	/**
+	 * Open the occlusion editor on the image embed at `line` of `file`.
+	 *
+	 * Which carrier the shapes land in follows where the image already lives: an
+	 * embed inside an ```osmosis fence keeps its set in that fence's header,
+	 * anything else becomes a line card. Wrapping prose in a fence would
+	 * restructure the user's note and cost the embed Obsidian's own rename
+	 * handling, which only reaches links *outside* code fences.
+	 *
+	 * Identity is minted lazily and only on save — a fence with no `id:`, an
+	 * embed with no `{label}`, a line with no block ID. Cancelling the editor
+	 * must leave the note exactly as it was.
+	 */
+	async openOcclusionEditor(file: TFile, line: number): Promise<void> {
+		const content = await this.app.vault.cachedRead(file);
+		const target = locateOcclusionTarget(content, line);
+		if (!target) {
+			new Notice("No image on this line to occlude.");
+			return;
+		}
+
+		const image = this.app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(target.image), file.path);
+		if (!image) {
+			new Notice(`Image not found: ${target.image}`);
+			return;
+		}
+
+		const lines = content.split("\n");
+		const existing = target.carrier === "fence"
+			? fenceOcclusions(lines, target.span!).get(target.label ?? "")
+			: parseOcclusionFrontmatter(
+				this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY],
+			).get(target.blockId ?? "");
+
+		// Numbering is per carrier, not per diagram: a fence's occlusion cards
+		// all derive `<fenceId>-cN`, so a second diagram starting again from c1
+		// would overwrite the first diagram's cards.
+		const reservedGroups = target.carrier === "fence"
+			? usedGroupsInFence(lines, target.span!)
+				.filter((group) => !(existing?.shapes ?? []).some((shape) => shape.group === group))
+			: [];
+
+		new OcclusionEditorModal(this.app, {
+			src: this.app.vault.getResourcePath(image),
+			image: target.image,
+			set: existing ?? { mode: DEFAULT_OCCLUSION_MODE, shapes: [] },
+			reservedGroups,
+			onSave: (set) => {
+				void this.saveOcclusion(file, target, set).catch((error: unknown) => {
+					console.error("Osmosis: failed to save image occlusion", error);
+					new Notice("Failed to save image occlusion — see the console for details.");
+				});
+			},
+		}).open();
+	}
+
+	/**
+	 * Persist an edited shape set, minting whatever identity its carrier still
+	 * lacks first.
+	 *
+	 * The identity edits and the shape write are separate passes over the file
+	 * because they go through different machinery — `vault.process` for the
+	 * markdown body, `FenceWriter`/`ScheduleStore` for the card data — and the
+	 * writers locate their target by the very ID being minted, so it has to be
+	 * on disk before they run.
+	 */
+	private async saveOcclusion(file: TFile, target: OcclusionTarget, set: OcclusionSet): Promise<void> {
+		if (target.carrier === "fence") {
+			// Re-derived inside `process` rather than reused from the modal's
+			// snapshot, so an edit made to the note while the editor was open
+			// cannot be clobbered — the same pattern `addLineCards` follows.
+			let identity: FenceIdentity | null = null;
+			await this.app.vault.process(file, (data) => {
+				identity = ensureFenceIdentity(data, target.line, target.image, () => generateBlockId());
+				return identity?.content ?? data;
+			});
+			if (!identity) {
+				new Notice("Could not find the card fence for this image.");
+				return;
+			}
+
+			const { id, label } = identity as FenceIdentity;
+			await this.fenceWriter.writeOcclusion(file, id, label, set);
+		} else {
+			let blockId = target.blockId;
+			if (blockId === null) {
+				const plan = planIdGeneration(await this.app.vault.cachedRead(file), {
+					start: target.line,
+					end: target.line,
+				});
+				const insertion = plan.insertions[0];
+				if (!insertion) {
+					new Notice("Could not tag this image as a card — its line cannot carry a block ID.");
+					return;
+				}
+				blockId = insertion.id;
+				await this.app.vault.process(file, (data) => {
+					const fresh = planIdGeneration(data, { start: target.line, end: target.line });
+					blockId = fresh.insertions[0]?.id ?? blockId;
+					return fresh.content;
+				});
+				await this.ensureLineCardsOptIn(file);
+			}
+
+			this.scheduleStore.setOcclusion(file.path, blockId!, set);
+			await this.scheduleStore.flushPath(file.path);
+		}
+
+		await this.cardSync.syncFile(file);
+		this.refreshDashboard();
+		this.lineReveal.refreshChrome();
+		const groups = new Set(set.shapes.map((shape) => shape.group)).size;
+		new Notice(
+			set.shapes.length === 0
+				? "Removed the image occlusion."
+				: `Saved ${String(set.shapes.length)} mask${set.shapes.length === 1 ? "" : "s"} as ${String(groups)} card${groups === 1 ? "" : "s"}.`,
+		);
+	}
+
+	/** Add `osmosis-cards: true` to a note that has not opted into line cards. */
+	private async ensureLineCardsOptIn(file: TFile): Promise<void> {
+		const rawOptIn: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.["osmosis-cards"];
+		if (rawOptIn === true || rawOptIn === "true") return;
+		await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+			frontmatter["osmosis-cards"] = true;
+		});
 	}
 
 	/**

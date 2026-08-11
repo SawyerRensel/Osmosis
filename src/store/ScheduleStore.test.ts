@@ -3,7 +3,7 @@
 // context and popout windows need the window-scoped timer).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TFile } from "obsidian";
-import type { ScheduleData } from "../database/types";
+import type { OcclusionSet, ScheduleData } from "../database/types";
 import {
 	ScheduleStore,
 	SCHEDULE_FRONTMATTER_KEY,
@@ -617,5 +617,108 @@ describe("occluded line cards", () => {
 		expect(map["os-ek322j"]!["c1"]!["disabled"]).toBe(true);
 		expect(map["os-ek322j"]!["c1"]!["stability"]).toBe(2.5);
 		expect(map["os-ek322j"]!["c2"]!["disabled"]).toBe(true);
+	});
+});
+
+/**
+ * The editor's line-card carrier. A shape set is written per block ID and sits
+ * beside the per-group schedules, and its presence is what makes the parser
+ * read that entry as an occlusion rather than as a plain line card's fields —
+ * so these assert on what the frontmatter *parses back to*.
+ */
+describe("occlusion writes", () => {
+	const set: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [
+			{ group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 },
+			{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 },
+		],
+	};
+
+	it("writes a shape set onto the block, not onto a group", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(set);
+	});
+
+	it("turns the entry into one the parser reads per group", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+
+		const parsed = parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]);
+		expect(parsed.get("os-ek322j/c1")?.due).toBe(baseSchedule.due);
+		expect(parsed.has("os-ek322j")).toBe(false);
+	});
+
+	it("replaces the drawing without disturbing the groups' schedules", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+
+		const moved: OcclusionSet = {
+			...set,
+			shapes: [{ group: "c1", kind: "rect", x: 0.5, y: 0.22, w: 0.14, h: 0.06 }],
+		};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", moved]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(moved);
+		expect(parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j/c1")?.due)
+			.toBe(baseSchedule.due);
+	});
+
+	it("removes the drawing when every shape is deleted, keeping the entry", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", null]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).has("os-ek322j")).toBe(false);
+		const block = (fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, unknown>)["os-ek322j"];
+		expect(block).toHaveProperty("c1");
+	});
+
+	it("leaves a plain line card's flat entry alone", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map([["os-plain", baseSchedule]]), new Map());
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+
+		const parsed = parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]);
+		expect(parsed.get("os-plain")?.due).toBe(baseSchedule.due);
+	});
+
+	it("stages through setOcclusion and flushes to frontmatter", async () => {
+		const fm: Record<string, unknown> = {};
+		// Test double — ScheduleStore only ever reads `.path`.
+		const file = { path: "note.md" } as never;
+		const store = new ScheduleStore(
+			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			() => file,
+		);
+
+		store.setOcclusion("note.md", "os-ek322j", set);
+		expect(store.hasPendingWrites()).toBe(true);
+		await store.flushPath("note.md");
+
+		expect(store.hasPendingWrites()).toBe(false);
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(set);
+	});
+
+	it("stages an empty set as a removal", async () => {
+		const fm: Record<string, unknown> = {};
+		// Test double — ScheduleStore only ever reads `.path`.
+		const file = { path: "note.md" } as never;
+		const store = new ScheduleStore(
+			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			() => file,
+		);
+
+		store.setOcclusion("note.md", "os-ek322j", set);
+		await store.flushPath("note.md");
+		store.setOcclusion("note.md", "os-ek322j", { mode: "hide-all-guess-one", shapes: [] });
+		await store.flushPath("note.md");
+
+		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toBeUndefined();
 	});
 });

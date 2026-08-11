@@ -1,0 +1,173 @@
+/**
+ * Runtime stand-in for the `obsidian` module, aliased in `vitest.config.ts`.
+ *
+ * The real package ships type definitions only (`"main": ""`), so a module that
+ * imports `Modal` or `setIcon` as *values* cannot be loaded under vitest at all.
+ * That is why this codebase keeps pure logic outside `src/views/`, and this stub
+ * is not a licence to move it back: it covers the DOM assembly that has nowhere
+ * else to live.
+ *
+ * Importing it installs Obsidian's `Element` helpers as a side effect, so a test
+ * only has to import the view under test. They are reproduced *faithfully*
+ * rather than forgivingly — in particular `createSvg` hands each class token
+ * straight to `classList.add()`, which throws on a token containing a space. A
+ * permissive stub would hide the exact bug this file exists to catch: that
+ * mistake once took out a whole card render.
+ */
+
+/** The subset of Obsidian's `DomElementInfo` this codebase's views actually use. */
+interface ElementInfo {
+	cls?: string | string[];
+	text?: string;
+	value?: string;
+	attr?: Record<string, string>;
+}
+
+function applyInfo(node: Element, info?: ElementInfo | string): void {
+	const opts: ElementInfo = typeof info === "string" ? { cls: info } : info ?? {};
+	for (const token of opts.cls === undefined ? [] : [opts.cls].flat()) {
+		node.classList.add(token);
+	}
+	if (opts.text !== undefined) node.textContent = opts.text;
+	if (opts.value !== undefined) (node as HTMLInputElement).value = opts.value;
+	for (const [name, value] of Object.entries(opts.attr ?? {})) {
+		node.setAttribute(name, value);
+	}
+}
+
+function installDomHelpers(): void {
+	const el = window.Element.prototype as unknown as Record<string, unknown>;
+
+	el["createEl"] = function (this: Element, tag: string, info?: ElementInfo | string) {
+		const node = document.createElement(tag);
+		applyInfo(node, info);
+		return this.appendChild(node);
+	};
+
+	el["createDiv"] = function (this: Element, info?: ElementInfo | string) {
+		const node = document.createElement("div");
+		applyInfo(node, info);
+		return this.appendChild(node);
+	};
+
+	el["createSvg"] = function (this: Element, tag: string, info?: ElementInfo | string) {
+		const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+		applyInfo(node, info);
+		return this.appendChild(node);
+	};
+
+	el["empty"] = function (this: Element) {
+		while (this.firstChild) this.removeChild(this.firstChild);
+	};
+
+	el["addClass"] = function (this: Element, ...classes: string[]) {
+		for (const token of classes) this.classList.add(token);
+	};
+
+	el["toggleClass"] = function (this: Element, classes: string | string[], value: boolean) {
+		for (const token of [classes].flat()) this.classList.toggle(token, value);
+	};
+
+	el["setText"] = function (this: Element, text: string) {
+		this.textContent = text;
+	};
+}
+
+if (typeof window !== "undefined") installDomHelpers();
+
+/** Registered hotkeys, kept so a test can fire one without a real Obsidian scope. */
+export class Scope {
+	readonly handlers = new Map<string, () => unknown>();
+
+	register(_modifiers: string[], key: string, handler: () => unknown): void {
+		this.handlers.set(key, handler);
+	}
+}
+
+/**
+ * `Modal` reduced to what a view subclass touches: the two elements it builds
+ * into, a scope, and open/close driving the lifecycle hooks.
+ */
+export class Modal {
+	readonly containerEl: HTMLElement;
+	readonly modalEl: HTMLElement;
+	readonly contentEl: HTMLElement;
+	readonly scope = new Scope();
+
+	constructor(readonly app: unknown) {
+		this.containerEl = document.createElement("div");
+		this.modalEl = document.createElement("div");
+		this.contentEl = document.createElement("div");
+		this.modalEl.appendChild(this.contentEl);
+		this.containerEl.appendChild(this.modalEl);
+	}
+
+	open(): void {
+		document.body.appendChild(this.containerEl);
+		this.onOpen();
+	}
+
+	close(): void {
+		this.containerEl.remove();
+		this.onClose();
+	}
+
+	onOpen(): void { /* overridden by the subclass */ }
+	onClose(): void { /* overridden by the subclass */ }
+}
+
+/** Records the icon name rather than injecting Obsidian's SVG sprite. */
+export function setIcon(parent: HTMLElement, iconId: string): void {
+	parent.setAttribute("data-icon", iconId);
+}
+
+/** Lifecycle host. Views hold one to own their child renderers. */
+export class Component {
+	load(): void { /* no children to start */ }
+	unload(): void { /* nothing registered */ }
+	register(_cb: () => unknown): void { /* nothing to clean up */ }
+}
+
+/**
+ * Renders markdown as its literal source. Enough to assert *what text reached
+ * the renderer* — which is the question the `{label}` markers exist to answer —
+ * without pulling in Obsidian's markdown pipeline.
+ */
+export const MarkdownRenderer = {
+	render: async (
+		_app: unknown,
+		markdown: string,
+		el: HTMLElement,
+		_sourcePath: string,
+		_component: unknown,
+	): Promise<void> => {
+		el.appendChild(document.createTextNode(markdown));
+		return Promise.resolve();
+	},
+};
+
+/** Collects the items added to it so a test can read the offered menu. */
+export class Menu {
+	readonly items: { title?: string; icon?: string; section?: string; click?: () => unknown }[] = [];
+
+	addItem(cb: (item: MenuItemStub) => unknown): this {
+		const entry: { title?: string; icon?: string; section?: string; click?: () => unknown } = {};
+		cb({
+			setTitle(title: string) { entry.title = title; return this; },
+			setIcon(icon: string) { entry.icon = icon; return this; },
+			setSection(section: string) { entry.section = section; return this; },
+			onClick(cb2: () => unknown) { entry.click = cb2; return this; },
+		});
+		this.items.push(entry);
+		return this;
+	}
+
+	showAtMouseEvent(_event: MouseEvent): this { return this; }
+}
+
+interface MenuItemStub {
+	setTitle(title: string): MenuItemStub;
+	setIcon(icon: string): MenuItemStub;
+	setSection(section: string): MenuItemStub;
+	onClick(cb: () => unknown): MenuItemStub;
+}

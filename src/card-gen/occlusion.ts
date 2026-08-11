@@ -491,10 +491,345 @@ export function occludeLineCard(card: GeneratedCard, set: OcclusionSet): Generat
 	}));
 }
 
-// ── Rename rewriting ──────────────────────────────────────────
+// ── Locating the carrier for an image the user right-clicked ──
 
 /** Matches an osmosis fence opening, capturing its backtick run. */
 const FENCE_OPEN_REGEX = /^(`{3,})osmosis\s*$/;
+
+/** The extent of one ```osmosis fence: its opening and closing line indices. */
+export interface FenceSpan {
+	/** 0-based line of the opening ```osmosis. */
+	start: number;
+	/** 0-based line of the closing fence, or the last line when unterminated. */
+	end: number;
+}
+
+/**
+ * The osmosis fence containing `line`, or null when the line is ordinary prose.
+ *
+ * This is what decides which carrier a newly drawn shape set is written into:
+ * an image already inside a fence keeps its shapes in that fence's header, and
+ * an image in prose becomes a line card instead. Wrapping prose in a fence
+ * would restructure the user's note and cost the embed Obsidian's own rename
+ * handling, which only reaches links *outside* code fences.
+ */
+export function enclosingOsmosisFence(lines: readonly string[], line: number): FenceSpan | null {
+	let i = 0;
+	while (i < lines.length) {
+		const openMatch = lines[i]!.replace(/\s*<!--.*?-->/g, "").trim().match(FENCE_OPEN_REGEX);
+		if (!openMatch) {
+			i++;
+			continue;
+		}
+
+		const backticks = openMatch[1]!.length;
+		const start = i;
+		// A code cloze opens ````osmosis around an inner ```block, so the close
+		// is the first run of *at least* as many backticks.
+		let close: number | null = null;
+		for (let j = start + 1; j < lines.length; j++) {
+			const closeMatch = lines[j]!.trim().match(/^(`{3,})\s*$/);
+			if (closeMatch && closeMatch[1]!.length >= backticks) {
+				close = j;
+				break;
+			}
+		}
+
+		// An unterminated fence runs to EOF — as `removeFence` also treats it —
+		// so its last line is content, not a delimiter to be excluded.
+		const contentEnd = close ?? lines.length;
+		if (line > start && line < contentEnd) {
+			return { start, end: close ?? lines.length - 1 };
+		}
+		i = contentEnd + 1;
+	}
+	return null;
+}
+
+/** The `id:` a fence declares, or null when it has none yet. */
+export function fenceId(lines: readonly string[], span: FenceSpan): string | null {
+	for (let i = span.start + 1; i < span.end; i++) {
+		const match = lines[i]!.trim().match(/^id\s*:\s*(\S+)\s*$/i);
+		if (match) return match[1]!;
+		if (lines[i]!.trim() === "") break; // the header ends at the blank line
+	}
+	return null;
+}
+
+/** Every shape set a fence's header declares, keyed by embed label. */
+export function fenceOcclusions(
+	lines: readonly string[],
+	span: FenceSpan,
+): Map<string, OcclusionSet> {
+	const sets = new Map<string, OcclusionSet>();
+	for (let i = span.start + 1; i < span.end; i++) {
+		if (lines[i]!.trim() === "") break;
+		const block = parseOccludeBlock(lines, i);
+		if (block) {
+			sets.set(block.label, block.set);
+			i = block.nextIdx - 1; // the loop's own i++ lands on nextIdx
+		}
+	}
+	return sets;
+}
+
+/**
+ * Every `cN` group label already in use anywhere in a fence, across all of its
+ * shape sets — what a newly drawn mask must number above.
+ *
+ * A fence derives its occlusion card IDs as `<fenceId>-cN` over *all* of its
+ * labelled embeds, so two diagrams in one fence that each numbered from `c1`
+ * would derive the same IDs and the second card would overwrite the first in
+ * the store. Allocation is therefore per fence, not per diagram.
+ */
+export function usedGroupsInFence(lines: readonly string[], span: FenceSpan): string[] {
+	const groups = new Set<string>();
+	for (const set of fenceOcclusions(lines, span).values()) {
+		for (const shape of set.shapes) groups.add(shape.group);
+	}
+	return [...groups];
+}
+
+/** Where an image the editor was invoked on stores its shapes. */
+export interface OcclusionTarget {
+	/** Which carrier holds the shape set. */
+	carrier: "fence" | "line";
+	/** The embed's link target as written, e.g. "diagrams/bridge.png". */
+	image: string;
+	/** 0-based line the embed sits on. */
+	line: number;
+	/** Fence carrier: the fence's extent. */
+	span?: FenceSpan;
+	/** Fence carrier: the fence's `id:`, or null when it has none yet. */
+	id?: string | null;
+	/** Fence carrier: the embed's `{label}`, or null when it carries none yet. */
+	label?: string | null;
+	/** Line carrier: the line's block ID, or null when it has none yet. */
+	blockId?: string | null;
+}
+
+/** The trailing ` ^block-id` on a line, without the caret. */
+const TRAILING_BLOCK_ID_REGEX = /\s\^([a-zA-Z0-9-]+)\s*$/;
+
+/**
+ * Work out where an image on `line` should store its shapes, or null when the
+ * line holds no image embed.
+ *
+ * Reports what is *there*, not what needs creating — a fence with no `id:`, or
+ * an embed with no `{label}`, comes back null-valued so the caller can mint one
+ * and write it. Keeping that split means this function stays pure and the file
+ * is touched exactly once, by the caller, rather than twice.
+ */
+export function locateOcclusionTarget(content: string, line: number): OcclusionTarget | null {
+	const lines = content.split("\n");
+	const raw = lines[line];
+	if (raw === undefined) return null;
+
+	ANY_EMBED_REGEX.lastIndex = 0;
+	const embed = ANY_EMBED_REGEX.exec(raw);
+	const image = (embed?.[1] ?? embed?.[2])?.trim();
+	if (image === undefined) return null;
+
+	const span = enclosingOsmosisFence(lines, line);
+	if (span) {
+		const labeled = findLabeledEmbeds(raw);
+		return {
+			carrier: "fence",
+			image,
+			line,
+			span,
+			id: fenceId(lines, span),
+			// Several embeds can share a line; the label that belongs to this one
+			// is the one whose target matches.
+			label: labeled.find((entry) => entry.target === image)?.label ?? null,
+		};
+	}
+
+	return {
+		carrier: "line",
+		image,
+		line,
+		blockId: TRAILING_BLOCK_ID_REGEX.exec(raw)?.[1] ?? null,
+	};
+}
+
+/**
+ * The first label not already bound in a fence: `a`, `b`, … then `a1`, `a2`, …
+ *
+ * Letters rather than numbers because the label names the *embed*, while `cN`
+ * names a shape group, and the two appear side by side in the header. Mixing
+ * both numbering schemes would make `occlude-1:`/`group: c1` read as related
+ * when they are not.
+ */
+export function nextEmbedLabel(used: Iterable<string>): string {
+	const taken = new Set(used);
+	for (let round = 0; ; round++) {
+		for (let i = 0; i < 26; i++) {
+			const label = String.fromCharCode(97 + i) + (round === 0 ? "" : String(round));
+			if (!taken.has(label)) return label;
+		}
+	}
+}
+
+/**
+ * Add `{label}` to the embed for `image` on `line`, leaving an embed that
+ * already carries one untouched.
+ *
+ * The marker is what binds the embed to its shapes, and it is written into the
+ * user's file — so it has to survive rendering, which is `stripEmbedLabels`'
+ * job on every study surface.
+ */
+export function labelEmbed(content: string, line: number, image: string, label: string): string {
+	const lines = content.split("\n");
+	const raw = lines[line];
+	if (raw === undefined) return content;
+
+	let done = false;
+	lines[line] = raw.replace(
+		/(!\[\[([^\]|#^]+)(?:[|#^][^\]]*)?\]\]|!\[[^\]]*\]\(([^)]+)\))(\{[A-Za-z0-9_-]+\})?/g,
+		(full, embed: string, wiki: string | undefined, md: string | undefined, existing: string | undefined) => {
+			if (done || existing !== undefined) return full;
+			if ((wiki ?? md ?? "").trim() !== image) return full;
+			done = true;
+			return `${embed}{${label}}`;
+		},
+	);
+	return done ? lines.join("\n") : content;
+}
+
+/**
+ * Add `id: <id>` to a fence that declares none, directly under its opening
+ * line — where `explicit.ts` reads header keys from.
+ */
+export function labelFence(content: string, span: FenceSpan, id: string): string {
+	const lines = content.split("\n");
+	lines.splice(span.start + 1, 0, `id: ${id}`);
+	return lines.join("\n");
+}
+
+/** Every image embed in a note, with the line it sits on. */
+export function embedLines(content: string): { line: number; target: string }[] {
+	const found: { line: number; target: string }[] = [];
+	content.split("\n").forEach((raw, line) => {
+		ANY_EMBED_REGEX.lastIndex = 0;
+		for (const match of raw.matchAll(ANY_EMBED_REGEX)) {
+			const target = (match[1] ?? match[2])?.trim();
+			if (target !== undefined) found.push({ line, target });
+		}
+	});
+	return found;
+}
+
+/** How many image embeds a fence's body holds. */
+export function countFenceEmbeds(lines: readonly string[], span: FenceSpan): number {
+	let count = 0;
+	for (let i = span.start + 1; i < span.end; i++) {
+		ANY_EMBED_REGEX.lastIndex = 0;
+		count += [...lines[i]!.matchAll(ANY_EMBED_REGEX)].length;
+	}
+	return count;
+}
+
+/** A fence's identity for occlusion, after anything missing has been minted. */
+export interface FenceIdentity {
+	/** The note's markdown, with any minted `id:` and `{label}` written in. */
+	content: string;
+	/** The fence's `id:` — the base every card it generates derives from. */
+	id: string;
+	/** The embed's label, or `""` for the bare `occlude:` single-embed form. */
+	label: string;
+}
+
+/**
+ * Give a fence whatever identity an occlusion needs and it does not yet have:
+ * an `id:` for the fence, and a `{label}` marker on the embed.
+ *
+ * Both are minted lazily and only here, at save time, so cancelling the editor
+ * leaves the note untouched. A fence holding a single embed is deliberately
+ * left unlabelled and uses the bare `occlude:` spelling — a label only earns
+ * its keep once there are two diagrams to tell apart, and it is text the user
+ * sees in their own file.
+ *
+ * Returns null when `line` is not inside a fence. `mintId` is injected so the
+ * function stays pure and its output is assertable.
+ */
+export function ensureFenceIdentity(
+	content: string,
+	line: number,
+	image: string,
+	mintId: () => string,
+): FenceIdentity | null {
+	let lines = content.split("\n");
+	let span = enclosingOsmosisFence(lines, line);
+	if (!span) return null;
+
+	let next = content;
+	let embedLine = line;
+
+	let id = fenceId(lines, span);
+	if (id === null) {
+		id = mintId();
+		next = labelFence(next, span, id);
+		// The inserted `id:` line pushes everything below it down by one.
+		embedLine += 1;
+		lines = next.split("\n");
+		span = enclosingOsmosisFence(lines, embedLine)!;
+	}
+
+	const labelled = findLabeledEmbeds(lines[embedLine] ?? "");
+	let label = labelled.find((entry) => entry.target === image)?.label ?? "";
+
+	if (label === "" && countFenceEmbeds(lines, span) > 1) {
+		const taken = findLabeledEmbeds(lines.slice(span.start, span.end + 1).join("\n"))
+			.map((entry) => entry.label);
+		label = nextEmbedLabel(taken);
+		next = labelEmbed(next, embedLine, image, label);
+	}
+
+	return { content: next, id, label };
+}
+
+/**
+ * An embed target reduced to its file path: percent-decoded, with any `|300`
+ * sizing suffix, `#heading`, or `^block` reference dropped.
+ *
+ * Obsidian writes the link *as authored* into an embed's `src` attribute, so
+ * matching a rendered image back to its source line means comparing the two
+ * spellings on equal terms.
+ */
+export function normalizeEmbedTarget(target: string): string {
+	return decodeEmbedTarget(target).split(/[|#^]/)[0]!.trim();
+}
+
+/**
+ * The line within a fence's content holding the embed for `target`, or null.
+ *
+ * Null when nothing matches *and* when several embeds do: a fence can hold the
+ * same diagram twice, and the target alone cannot say which one was clicked.
+ * That ambiguity is the whole reason shapes bind by `{label}` rather than by
+ * filename — but a fence with no occlusion yet has no labels to disambiguate
+ * with, so the honest answer is to decline rather than guess and attach the
+ * shapes to the wrong diagram.
+ */
+export function fenceEmbedLine(source: string, target: string): number | null {
+	const want = normalizeEmbedTarget(target);
+	const matches = embedLines(source).filter(
+		(embed) => normalizeEmbedTarget(embed.target) === want,
+	);
+	return matches.length === 1 ? matches[0]!.line : null;
+}
+
+/** Markdown-style embeds percent-encode spaces; wikilinks do not. */
+export function decodeEmbedTarget(target: string): string {
+	if (!target.includes("%")) return target;
+	try {
+		return decodeURIComponent(target);
+	} catch {
+		return target;
+	}
+}
+
+// ── Rename rewriting ──────────────────────────────────────────
 
 /**
  * Rewrite image embeds inside ```osmosis fences when their file is renamed.

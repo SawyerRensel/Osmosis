@@ -1,4 +1,6 @@
 import type { TFile, Vault } from "obsidian";
+import type { OcclusionSet } from "../database/types";
+import { serializeOccludeBlock } from "../card-gen/occlusion";
 
 /** Schedule fields to write into a fence. */
 export interface ScheduleFields {
@@ -94,10 +96,104 @@ export class FenceWriter {
 		}
 	}
 
+	/**
+	 * Write a shape set into a fence's header, replacing whatever set that embed
+	 * had before. An empty set removes the block — deleting every mask in the
+	 * editor means the diagram is no longer an occlusion card.
+	 */
+	async writeOcclusion(
+		file: TFile,
+		fenceId: string,
+		label: string,
+		set: OcclusionSet,
+	): Promise<void> {
+		if (this.writingPaths.has(file.path)) return;
+
+		const content = await this.vault.cachedRead(file);
+		const modified = updateFenceOcclusion(content, fenceId, label, set);
+		if (modified === content) return;
+
+		this.writingPaths.add(file.path);
+		try {
+			await this.vault.modify(file, modified);
+		} finally {
+			this.writingPaths.delete(file.path);
+		}
+	}
+
 	/** Check if a path is currently being written to. */
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
 	}
+}
+
+/**
+ * Pure function: write one embed's shape set into a fence header.
+ *
+ * The block replaces its predecessor *in place* rather than being appended, so
+ * a fence carrying two diagrams keeps them in a stable order across edits and
+ * the header does not reshuffle every time a mask moves. An empty set deletes
+ * the block outright.
+ *
+ * `label` is the embed's `{a}` marker — `""` for the bare `occlude:` spelling a
+ * single-embed fence may use.
+ */
+export function updateFenceOcclusion(
+	content: string,
+	fenceId: string,
+	label: string,
+	set: OcclusionSet,
+): string {
+	const located = locateFence(content, fenceId);
+	if (!located) return content;
+
+	const { lines, backtickCount, metaStart, metaEnd } = located;
+	const existingMeta = lines.slice(metaStart, metaEnd);
+	const targetKey = label === "" ? "occlude" : `occlude-${label}`;
+	const replacement = set.shapes.length === 0 ? [] : serializeOccludeBlock(label, set);
+
+	const updatedMeta: string[] = [];
+	let replaced = false;
+
+	for (let i = 0; i < existingMeta.length; i++) {
+		const line = existingMeta[i]!;
+		const blockKey = indentedBlockKey(line.trim());
+
+		// Every header block is taken whole. Walking into one line by line would
+		// treat its indented `mode:`/`shapes:` body as top-level header keys.
+		if (blockKey) {
+			const end = blockEnd(existingMeta, i);
+			if (blockKey === targetKey) {
+				updatedMeta.push(...replacement);
+				replaced = true;
+			} else {
+				updatedMeta.push(...existingMeta.slice(i, end + 1));
+			}
+			i = end;
+			continue;
+		}
+
+		updatedMeta.push(line);
+	}
+
+	if (!replaced) updatedMeta.push(...replacement);
+
+	// The blank line separating header from card content. Without it the content
+	// reads as more header — and a shape block's indented body would be severed
+	// from its key if the blank landed inside it, which is invisible in the text.
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	const needsBlank = nextLine !== "" && !isClosingFence;
+	if (needsBlank && updatedMeta.length > 0 && updatedMeta[updatedMeta.length - 1]?.trim() !== "") {
+		updatedMeta.push("");
+	}
+
+	return [
+		...lines.slice(0, metaStart),
+		...updatedMeta,
+		...lines.slice(metaEnd),
+	].join("\n");
 }
 
 /**

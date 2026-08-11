@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { generateExplicitCards } from "../card-gen/explicit";
+import type { OcclusionShape } from "../database/types";
 import {
 	updateFenceSchedule,
 	updateFenceExclude,
+	updateFenceOcclusion,
 	removeFenceSchedule,
 	removeFence,
 	fenceHasOwnDeck,
@@ -1035,5 +1037,154 @@ describe("schedule format migration", () => {
 		// c10 has no cloze occurrence here, so it generates no card to reparse —
 		// its block surviving in the text is the whole assertion.
 		expect(result).toContain("c10:\n  due: 2026-04-01T00:00:00.000Z");
+	});
+});
+
+/**
+ * The editor's fence writer. These assert on the `OcclusionSet` a fence
+ * *reparses to*, not on its text: the failure this format risks is the
+ * separator blank line landing inside the shape block, which leaves every line
+ * present and correct-looking while severing the shapes from their key.
+ */
+describe("updateFenceOcclusion", () => {
+	const rect: OcclusionShape = { group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 };
+	const ellipse: OcclusionShape = { group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 };
+
+	/** Every shape the fence's occlusion cards carry, for one labelled embed. */
+	const reparseShapes = (content: string, image: string): OcclusionShape[] =>
+		generateExplicitCards(content).find((c) => c.occlusion?.image === image)?.occlusion?.shapes ?? [];
+
+	const plainFence = `\`\`\`osmosis
+id: bridge
+
+![[bridge-cross-section.png]]{a}
+\`\`\``;
+
+	it("inserts a shape set into a fence that had none", () => {
+		const result = updateFenceOcclusion(plainFence, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect, ellipse],
+		});
+		expect(reparseShapes(result, "bridge-cross-section.png")).toEqual([rect, ellipse]);
+	});
+
+	it("writes block mappings, matching the frontmatter carrier", () => {
+		const result = updateFenceOcclusion(plainFence, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+		expect(result).toContain("    - group: c1\n      kind: rect\n");
+	});
+
+	it("round-trips the mode", () => {
+		const result = updateFenceOcclusion(plainFence, "bridge", "a", {
+			mode: "hide-one-guess-one",
+			shapes: [rect],
+		});
+		const card = generateExplicitCards(result).find((c) => c.occlusion);
+		expect(card?.occlusion?.mode).toBe("hide-one-guess-one");
+	});
+
+	it("replaces the block on a second write instead of appending another", () => {
+		const once = updateFenceOcclusion(plainFence, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+		const moved: OcclusionShape = { ...rect, x: 0.5 };
+		const twice = updateFenceOcclusion(once, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [moved],
+		});
+		expect(twice.match(/occlude-a:/g)).toHaveLength(1);
+		expect(reparseShapes(twice, "bridge-cross-section.png")).toEqual([moved]);
+	});
+
+	it("keeps a second embed's shape set distinct and in place", () => {
+		const twoEmbeds = `\`\`\`osmosis
+id: bridge
+occlude-b:
+  mode: hide-all-guess-one
+  shapes:
+    - group: c5
+      kind: rect
+      x: 0.1
+      y: 0.1
+      w: 0.2
+      h: 0.2
+
+![[bridge-cross-section.png]]{a}
+![[span-elevation.png]]{b}
+\`\`\``;
+		const result = updateFenceOcclusion(twoEmbeds, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+
+		expect(reparseShapes(result, "bridge-cross-section.png")).toEqual([rect]);
+		expect(reparseShapes(result, "span-elevation.png"))
+			.toEqual([{ group: "c5", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.2 }]);
+	});
+
+	it("preserves a schedule block written before it", () => {
+		const scheduled = updateFenceSchedule(plainFence, "bridge-c1", baseSchedule);
+		const result = updateFenceOcclusion(scheduled, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+
+		expect(reparseShapes(result, "bridge-cross-section.png")).toEqual([rect]);
+		expect(generateExplicitCards(result).find((c) => c.id === "bridge-c1")?.due).toBe(baseSchedule.due);
+	});
+
+	it("removes the block when every shape is deleted", () => {
+		const once = updateFenceOcclusion(plainFence, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+		const cleared = updateFenceOcclusion(once, "bridge", "a", { mode: "hide-all-guess-one", shapes: [] });
+
+		expect(cleared).not.toContain("occlude-a:");
+		expect(generateExplicitCards(cleared).some((c) => c.occlusion)).toBe(false);
+	});
+
+	it("upgrades a flow-mapping block written before PR #20", () => {
+		const flow = `\`\`\`osmosis
+id: bridge
+occlude-a:
+  mode: hide-all-guess-one
+  shapes:
+    - { group: c1, kind: rect, x: 0.31, y: 0.22, w: 0.14, h: 0.06 }
+
+![[bridge-cross-section.png]]{a}
+\`\`\``;
+		const result = updateFenceOcclusion(flow, "bridge", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect, ellipse],
+		});
+
+		expect(result).not.toContain("- {");
+		expect(reparseShapes(result, "bridge-cross-section.png")).toEqual([rect, ellipse]);
+	});
+
+	it("writes the bare `occlude:` spelling for an unlabelled single embed", () => {
+		const bare = `\`\`\`osmosis
+id: bridge
+
+![[bridge-cross-section.png]]
+\`\`\``;
+		const result = updateFenceOcclusion(bare, "bridge", "", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		});
+
+		expect(result).toContain("occlude:");
+		expect(reparseShapes(result, "bridge-cross-section.png")).toEqual([rect]);
+	});
+
+	it("leaves content untouched when no fence carries the id", () => {
+		expect(updateFenceOcclusion(plainFence, "missing", "a", {
+			mode: "hide-all-guess-one",
+			shapes: [rect],
+		})).toBe(plainFence);
 	});
 });

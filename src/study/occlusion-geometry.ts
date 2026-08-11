@@ -1,0 +1,315 @@
+import type { OcclusionShape } from "../database/types";
+
+/**
+ * The geometry behind the occlusion editor: normalising pointer input, hit
+ * testing, resize handles, and shape mutation.
+ *
+ * Lives outside `src/views/` because vitest cannot import `obsidian` — the same
+ * reason `occlusion-masks.ts` sits here and `splitFenceHeader` sits in
+ * `card-gen/explicit.ts`. `OcclusionEditorModal` is meant to stay a thin shell
+ * over this file, so the arithmetic that decides where a mask lands is unit
+ * tested rather than eyeballed through a canvas.
+ *
+ * Everything here works in the image's normalised 0–1 space, which is the same
+ * space the study renderer paints in. That is what makes a shape drawn in the
+ * editor land on the same pixels during study: the editor canvas reuses the
+ * renderer's wrapper/`viewBox="0 0 1 1"`/`preserveAspectRatio="none"` contract,
+ * so the two never need to agree on a pixel size.
+ */
+
+/** A normalised axis-aligned box — the bounding box every shape is edited through. */
+export interface Box {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+/** A point in normalised 0–1 image space. */
+export interface Point {
+	x: number;
+	y: number;
+}
+
+/** The eight resize handles, named by compass point. */
+export type HandleId = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+export const HANDLE_IDS: readonly HandleId[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+
+/**
+ * The smallest edge a mask may have, normalised.
+ *
+ * Below this a mask is invisible at any realistic image size, which would leave
+ * a card that cannot be answered and a shape that cannot be grabbed to delete.
+ * Both the draw gesture and every resize enforce it.
+ */
+export const MIN_SHAPE_SIZE = 0.005;
+
+/** The rendered box of the image, in client pixels. `DOMRect` satisfies this. */
+export interface PixelBox {
+	left: number;
+	top: number;
+	width: number;
+	height: number;
+}
+
+/** Clamp to the 0–1 range a normalised coordinate has to stay inside. */
+export function clamp01(value: number): number {
+	return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/**
+ * A client-space pointer position as a normalised image coordinate.
+ *
+ * Clamped, because a drag holds pointer capture and so keeps reporting
+ * positions after it leaves the image — an unclamped mask would extend past
+ * the picture, where the study renderer's SVG simply clips it away.
+ */
+export function toNormalized(clientX: number, clientY: number, box: PixelBox): Point {
+	return {
+		x: box.width === 0 ? 0 : clamp01((clientX - box.left) / box.width),
+		y: box.height === 0 ? 0 : clamp01((clientY - box.top) / box.height),
+	};
+}
+
+/** The box spanned by two corners of a drag, in either direction. */
+export function boxFromDrag(from: Point, to: Point): Box {
+	return {
+		x: Math.min(from.x, to.x),
+		y: Math.min(from.y, to.y),
+		w: Math.abs(to.x - from.x),
+		h: Math.abs(to.y - from.y),
+	};
+}
+
+/** True when a box is too small to be a usable mask — a click, not a drag. */
+export function isDegenerate(box: Box): boolean {
+	return box.w < MIN_SHAPE_SIZE || box.h < MIN_SHAPE_SIZE;
+}
+
+/**
+ * A shape's bounding box. Every edit — move, resize, handle placement — goes
+ * through the box, so the three kinds need only differ in how they convert
+ * back (`shapeWithBox`).
+ */
+export function shapeBox(shape: OcclusionShape): Box {
+	switch (shape.kind) {
+		case "rect":
+			return { x: shape.x, y: shape.y, w: shape.w, h: shape.h };
+		case "ellipse":
+			// x/y are the centre, matching Anki's ellipse handles.
+			return { x: shape.x - shape.rx, y: shape.y - shape.ry, w: shape.rx * 2, h: shape.ry * 2 };
+		case "poly": {
+			const xs = shape.points.map(([x]) => x);
+			const ys = shape.points.map(([, y]) => y);
+			const x = Math.min(...xs);
+			const y = Math.min(...ys);
+			return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+		}
+	}
+}
+
+/**
+ * The same shape re-fitted to a new bounding box.
+ *
+ * Polygons cannot be drawn until phase 4, but a set loaded from an existing
+ * note may already contain one, so it has to survive being moved and resized
+ * rather than being silently dropped or left behind. Its points scale with the
+ * box; a degenerate source box (every point on one axis) translates instead of
+ * dividing by zero.
+ */
+export function shapeWithBox(shape: OcclusionShape, box: Box): OcclusionShape {
+	switch (shape.kind) {
+		case "rect":
+			return { ...shape, x: box.x, y: box.y, w: box.w, h: box.h };
+		case "ellipse":
+			return { ...shape, x: box.x + box.w / 2, y: box.y + box.h / 2, rx: box.w / 2, ry: box.h / 2 };
+		case "poly": {
+			const from = shapeBox(shape);
+			const scaleX = from.w === 0 ? 0 : box.w / from.w;
+			const scaleY = from.h === 0 ? 0 : box.h / from.h;
+			return {
+				...shape,
+				points: shape.points.map(([x, y]): [number, number] => [
+					box.x + (x - from.x) * scaleX,
+					box.y + (y - from.y) * scaleY,
+				]),
+			};
+		}
+	}
+}
+
+/** Build a freshly drawn shape of `kind` from the box the pointer swept out. */
+export function shapeFromBox(kind: "rect" | "ellipse", group: string, box: Box): OcclusionShape {
+	return kind === "rect"
+		? { group, kind: "rect", x: box.x, y: box.y, w: box.w, h: box.h }
+		: {
+			group,
+			kind: "ellipse",
+			x: box.x + box.w / 2,
+			y: box.y + box.h / 2,
+			rx: box.w / 2,
+			ry: box.h / 2,
+		};
+}
+
+/** Whether a point falls inside a shape, tested against its true outline. */
+export function containsPoint(shape: OcclusionShape, point: Point): boolean {
+	switch (shape.kind) {
+		case "rect": {
+			const box = shapeBox(shape);
+			return (
+				point.x >= box.x && point.x <= box.x + box.w &&
+				point.y >= box.y && point.y <= box.y + box.h
+			);
+		}
+		case "ellipse": {
+			if (shape.rx === 0 || shape.ry === 0) return false;
+			const dx = (point.x - shape.x) / shape.rx;
+			const dy = (point.y - shape.y) / shape.ry;
+			return dx * dx + dy * dy <= 1;
+		}
+		case "poly":
+			return pointInPolygon(shape.points, point);
+	}
+}
+
+/** Standard ray-casting point-in-polygon test. */
+function pointInPolygon(points: readonly [number, number][], point: Point): boolean {
+	let inside = false;
+	for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+		const [xi, yi] = points[i]!;
+		const [xj, yj] = points[j]!;
+		if (yi > point.y !== yj > point.y) {
+			const crossing = xi + ((point.y - yi) / (yj - yi)) * (xj - xi);
+			if (point.x < crossing) inside = !inside;
+		}
+	}
+	return inside;
+}
+
+/**
+ * Index of the shape under a point, or -1.
+ *
+ * Searched last-to-first because shapes paint in source order, so the last one
+ * drawn is the one on top and the one the user means to grab.
+ */
+export function hitTest(shapes: readonly OcclusionShape[], point: Point): number {
+	for (let i = shapes.length - 1; i >= 0; i--) {
+		if (containsPoint(shapes[i]!, point)) return i;
+	}
+	return -1;
+}
+
+/** Where a handle sits on a box, in normalised space. */
+export function handlePoint(box: Box, handle: HandleId): Point {
+	const midX = box.x + box.w / 2;
+	const midY = box.y + box.h / 2;
+	const right = box.x + box.w;
+	const bottom = box.y + box.h;
+	switch (handle) {
+		case "nw": return { x: box.x, y: box.y };
+		case "n": return { x: midX, y: box.y };
+		case "ne": return { x: right, y: box.y };
+		case "e": return { x: right, y: midY };
+		case "se": return { x: right, y: bottom };
+		case "s": return { x: midX, y: bottom };
+		case "sw": return { x: box.x, y: bottom };
+		case "w": return { x: box.x, y: midY };
+	}
+}
+
+/**
+ * The handle under a point, or null.
+ *
+ * `tolerance` is per-axis because the 0–1 space is stretched to the image's
+ * aspect ratio: one normalised unit is a different number of pixels on x than
+ * on y, so a single scalar would make handles easy to grab on the short axis
+ * and nearly impossible on the long one. Corners are tested before edges, so
+ * the overlapping region at a corner resizes both axes.
+ */
+export function handleAt(box: Box, point: Point, tolerance: Point): HandleId | null {
+	for (const handle of HANDLE_IDS) {
+		const at = handlePoint(box, handle);
+		if (Math.abs(point.x - at.x) <= tolerance.x && Math.abs(point.y - at.y) <= tolerance.y) {
+			return handle;
+		}
+	}
+	return null;
+}
+
+/**
+ * Move a box by a normalised delta, kept wholly inside the image.
+ *
+ * Clamping the *box* rather than each edge means a drag past the border stops
+ * the shape at the edge and keeps its size, instead of squashing it — which is
+ * what a user dragging quickly past the corner expects.
+ */
+export function moveBox(box: Box, dx: number, dy: number): Box {
+	return {
+		...box,
+		x: Math.min(Math.max(box.x + dx, 0), Math.max(0, 1 - box.w)),
+		y: Math.min(Math.max(box.y + dy, 0), Math.max(0, 1 - box.h)),
+	};
+}
+
+/**
+ * The box that results from dragging `handle` to `point`.
+ *
+ * The opposite edge is fixed, so a drag past it flips the box rather than
+ * inverting its width — the shape follows the pointer, as every drawing tool
+ * does. Edges the handle does not own are untouched, and `MIN_SHAPE_SIZE` is
+ * enforced on the axes the handle moves.
+ */
+export function resizeBox(box: Box, handle: HandleId, point: Point): Box {
+	const touchesLeft = handle === "nw" || handle === "w" || handle === "sw";
+	const touchesRight = handle === "ne" || handle === "e" || handle === "se";
+	const touchesTop = handle === "nw" || handle === "n" || handle === "ne";
+	const touchesBottom = handle === "sw" || handle === "s" || handle === "se";
+
+	let left = box.x;
+	let right = box.x + box.w;
+	let top = box.y;
+	let bottom = box.y + box.h;
+
+	if (touchesLeft) left = clamp01(point.x);
+	if (touchesRight) right = clamp01(point.x);
+	if (touchesTop) top = clamp01(point.y);
+	if (touchesBottom) bottom = clamp01(point.y);
+
+	const next = boxFromDrag({ x: left, y: top }, { x: right, y: bottom });
+	if (touchesLeft || touchesRight) next.w = Math.max(next.w, MIN_SHAPE_SIZE);
+	if (touchesTop || touchesBottom) next.h = Math.max(next.h, MIN_SHAPE_SIZE);
+	return next;
+}
+
+/**
+ * The next free `cN` group label, given every label already spoken for.
+ *
+ * `used` must span the whole *carrier*, not just the set being edited. A fence
+ * derives its occlusion card IDs as `<fenceId>-cN` across all of its labelled
+ * embeds, so two diagrams in one fence both numbering from `c1` would derive
+ * the same IDs and the second card would overwrite the first in the store.
+ *
+ * Numbering continues above the highest in use rather than filling gaps: a
+ * reused number would inherit the deleted group's schedule, presenting a
+ * brand-new mask as a card already deep into review.
+ */
+export function nextGroup(used: Iterable<string>): string {
+	let highest = 0;
+	for (const label of used) {
+		const match = /^c(\d+)$/.exec(label);
+		if (match) {
+			const num = parseInt(match[1]!, 10);
+			if (num > highest) highest = num;
+		}
+	}
+	return `c${String(highest + 1)}`;
+}
+
+/** Every group label a shape list uses, in first-appearance order. */
+export function usedGroups(shapes: readonly OcclusionShape[]): string[] {
+	const seen = new Set<string>();
+	for (const shape of shapes) seen.add(shape.group);
+	return [...seen];
+}

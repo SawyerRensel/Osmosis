@@ -29,12 +29,19 @@ export interface SpatialNodeLike {
 }
 
 /**
- * A card that participates in line study: line type with a block ID, and not
+ * A card that participates in line study: one that lives on a line, and is not
  * disabled. Disabled ("excluded") line cards are fully out — peek and study,
  * both surfaces — so this single guard drops them from every filter below.
+ *
+ * **The block ID is the signal, not `cardType`.** An occluded line card fans
+ * out into one card *per shape group*, each carrying `cardType: "occlusion"`
+ * while still sitting on its line. Testing the type instead dropped those from
+ * every filter here, so a note whose only cards were occluded images got no
+ * study or peek button at all. Nothing else in the codebase mints a `blockId`
+ * for a card that is not on a line.
  */
 function isLineCard(card: Card): boolean {
-	return card.cardType === "line" && card.blockId !== undefined && !card.disabled;
+	return card.blockId !== undefined && !card.disabled;
 }
 
 /**

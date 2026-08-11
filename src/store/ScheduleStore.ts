@@ -1,6 +1,6 @@
 import type { FileManager, TFile } from "obsidian";
 import type { CardState, OcclusionSet, ScheduleData } from "../database/types";
-import { parseOcclusionSet } from "../card-gen/occlusion";
+import { occlusionSetToYamlValue, parseOcclusionSet } from "../card-gen/occlusion";
 
 /** Frontmatter key holding per-card FSRS schedule data for line cards. */
 export const SCHEDULE_FRONTMATTER_KEY = "osmosis-schedule";
@@ -80,6 +80,8 @@ export class ScheduleStore {
 	private pending = new Map<string, Map<string, ScheduleData | null>>();
 	/** Staged disabled-flag writes per note path (independent of schedule). */
 	private pendingDisabled = new Map<string, Map<string, boolean>>();
+	/** Staged shape-set writes per note path, keyed by block ID. `null` = remove. */
+	private pendingOcclusion = new Map<string, Map<string, OcclusionSet | null>>();
 	private timers = new Map<string, number>();
 	/** Per-path write chain — serializes processFrontMatter calls per file. */
 	private inflight = new Map<string, Promise<void>>();
@@ -121,6 +123,25 @@ export class ScheduleStore {
 	}
 
 	/**
+	 * Stage a shape set for an occluded line card, keyed by block ID alone — the
+	 * groups within it all share one drawing. An empty set removes the `occlude`
+	 * key, turning the line back into a plain line card.
+	 *
+	 * Callers that need the file on disk (the editor's Save) follow this with
+	 * `flushPath`; the debounce exists for review traffic, not for edits the user
+	 * is watching.
+	 */
+	setOcclusion(notePath: string, blockId: string, set: OcclusionSet): void {
+		let entries = this.pendingOcclusion.get(notePath);
+		if (!entries) {
+			entries = new Map();
+			this.pendingOcclusion.set(notePath, entries);
+		}
+		entries.set(blockId, set.shapes.length === 0 ? null : set);
+		this.armTimer(notePath);
+	}
+
+	/**
 	 * Look up a staged-but-unflushed schedule entry. Returns the pending
 	 * schedule, `null` for a pending removal, or `undefined` when nothing is
 	 * staged. Lets readers overlay pending state on top of (stale) frontmatter.
@@ -146,12 +167,16 @@ export class ScheduleStore {
 
 	/** True when any staged entries have not been flushed yet. */
 	hasPendingWrites(): boolean {
-		return this.pending.size > 0 || this.pendingDisabled.size > 0;
+		return this.pending.size > 0 || this.pendingDisabled.size > 0 || this.pendingOcclusion.size > 0;
 	}
 
 	/** Flush all pending entries immediately, cancelling debounce timers. */
 	async flush(): Promise<void> {
-		const paths = new Set([...this.pending.keys(), ...this.pendingDisabled.keys()]);
+		const paths = new Set([
+			...this.pending.keys(),
+			...this.pendingDisabled.keys(),
+			...this.pendingOcclusion.keys(),
+		]);
 		await Promise.all([...paths].map((path) => this.flushPath(path)));
 	}
 
@@ -203,11 +228,14 @@ export class ScheduleStore {
 	private async writePath(notePath: string): Promise<void> {
 		const schedule = this.pending.get(notePath);
 		const disabled = this.pendingDisabled.get(notePath);
+		const occlusion = this.pendingOcclusion.get(notePath);
 		this.pending.delete(notePath);
 		this.pendingDisabled.delete(notePath);
+		this.pendingOcclusion.delete(notePath);
 		const hasSchedule = schedule && schedule.size > 0;
 		const hasDisabled = disabled && disabled.size > 0;
-		if (!hasSchedule && !hasDisabled) return;
+		const hasOcclusion = occlusion && occlusion.size > 0;
+		if (!hasSchedule && !hasDisabled && !hasOcclusion) return;
 
 		const file = this.resolveFile(notePath);
 		if (!file) return; // note deleted — drop the pending entries
@@ -215,7 +243,12 @@ export class ScheduleStore {
 		this.writingPaths.add(notePath);
 		try {
 			await this.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-				applyScheduleEntries(fm, schedule ?? EMPTY_PENDING, disabled ?? EMPTY_DISABLED);
+				applyScheduleEntries(
+					fm,
+					schedule ?? EMPTY_PENDING,
+					disabled ?? EMPTY_DISABLED,
+					occlusion ?? EMPTY_OCCLUSION,
+				);
 			});
 		} catch (error) {
 			console.error(`Osmosis: failed to write schedule frontmatter for ${notePath}`, error);
@@ -223,6 +256,7 @@ export class ScheduleStore {
 			// rating or forced flush retries (no timer — avoids retry loops).
 			if (schedule) this.restage(this.pending, notePath, schedule);
 			if (disabled) this.restage(this.pendingDisabled, notePath, disabled);
+			if (occlusion) this.restage(this.pendingOcclusion, notePath, occlusion);
 		} finally {
 			this.writingPaths.delete(notePath);
 		}
@@ -243,6 +277,7 @@ export class ScheduleStore {
 
 const EMPTY_PENDING: ReadonlyMap<string, ScheduleData | null> = new Map();
 const EMPTY_DISABLED: ReadonlyMap<string, boolean> = new Map();
+const EMPTY_OCCLUSION: ReadonlyMap<string, OcclusionSet | null> = new Map();
 
 /**
  * Pure function: apply staged schedule and disabled changes to a frontmatter
@@ -252,16 +287,21 @@ const EMPTY_DISABLED: ReadonlyMap<string, boolean> = new Map();
  * Unknown/hand-added keys on an entry are preserved. Removes an entry when it
  * ends up with no fields, and the whole `osmosis-schedule` key when it ends up
  * empty. Exported for unit testing.
+ *
+ * `occlusion` is a third independent dimension, keyed by block ID alone rather
+ * than by schedule key: the groups of one occluded image all share a single
+ * drawing, which sits beside their per-group entries instead of inside one.
  */
 export function applyScheduleEntries(
 	fm: Record<string, unknown>,
 	schedule: ReadonlyMap<string, ScheduleData | null>,
 	disabled: ReadonlyMap<string, boolean>,
+	occlusion: ReadonlyMap<string, OcclusionSet | null> = EMPTY_OCCLUSION,
 ): void {
 	const raw = fm[SCHEDULE_FRONTMATTER_KEY];
 	const map: Record<string, unknown> = isPlainObject(raw) ? raw : {};
 
-	for (const key of new Set([...schedule.keys(), ...disabled.keys()])) {
+	for (const key of new Set([...schedule.keys(), ...disabled.keys(), ...occlusion.keys()])) {
 		const { blockId, group } = splitScheduleKey(key);
 		const block: Record<string, unknown> = isPlainObject(map[blockId]) ? map[blockId] : {};
 
@@ -289,6 +329,15 @@ export function applyScheduleEntries(
 		if (group !== undefined) {
 			if (Object.keys(entry).length === 0) delete block[group];
 			else block[group] = entry;
+		}
+
+		// The drawing lives on the block, never on a group — `occlude` is what
+		// tells the reader this entry's other keys are groups rather than
+		// schedule fields, so it is written last and read first.
+		if (occlusion.has(key)) {
+			const set = occlusion.get(key)!;
+			if (set === null) delete block[OCCLUDE_KEY];
+			else block[OCCLUDE_KEY] = occlusionSetToYamlValue(set);
 		}
 
 		// The shape set is the user's drawing, not schedule data — an emptied

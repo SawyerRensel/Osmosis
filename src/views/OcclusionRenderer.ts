@@ -1,5 +1,6 @@
 import type { App } from "obsidian";
 import type { CardOcclusion } from "../database/types";
+import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { maskElements, type MaskElement, type OcclusionSide } from "../study/occlusion-masks";
 
 /**
@@ -83,16 +84,6 @@ export function renderOcclusion(
 function resolveImageSrc(app: App, image: string, notePath: string): string | null {
 	if (/^https?:\/\//i.test(image)) return image;
 
-	const file = app.metadataCache.getFirstLinkpathDest(decodePath(image), notePath);
+	const file = app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(image), notePath);
 	return file === null ? null : app.vault.getResourcePath(file);
-}
-
-/** Markdown-style embeds percent-encode spaces; wikilinks do not. */
-function decodePath(path: string): string {
-	if (!path.includes("%")) return path;
-	try {
-		return decodeURIComponent(path);
-	} catch {
-		return path;
-	}
 }

@@ -3411,3 +3411,116 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	height: 100%;
 	border-radius: 3px;
 }
+
+/* ── Image occlusion editor ──────────────────────────────────────
+
+   The canvas reuses .osmosis-occlusion and .osmosis-occlusion-image, so the
+   layout contract the study renderer depends on — wrapper shrink-wrapped to the
+   image, overlay pinned to its edges, 0–1 viewBox stretched across it — is the
+   same one shapes are drawn against. A shape drawn here therefore lands on the
+   same pixels when the card is studied, with no measurement on either side. */
+.osmosis-occlusion-modal {
+	width: min(900px, 92vw);
+}
+
+.osmosis-occlusion-subtitle {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: -8px;
+}
+
+.osmosis-occlusion-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	margin-bottom: 10px;
+}
+
+.osmosis-occlusion-tools {
+	display: flex;
+	gap: 2px;
+}
+
+.osmosis-occlusion-tool {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
+}
+
+.osmosis-occlusion-tool.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.osmosis-occlusion-field {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.osmosis-occlusion-field label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* Centres the canvas and caps it, so a tall diagram cannot push the toolbar and
+   buttons off-screen. `height: auto` on the image keeps its aspect ratio, and
+   the inline-block wrapper shrinks with it — so the overlay stays exactly on
+   the picture. */
+.osmosis-occlusion-stage {
+	display: flex;
+	justify-content: center;
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	padding: 8px;
+}
+
+.osmosis-occlusion-canvas .osmosis-occlusion-image {
+	max-height: 55vh;
+	width: auto;
+	user-select: none;
+}
+
+/* Unlike the study overlay, this one is the pointer target — every draw, move,
+   and resize gesture arrives here. */
+.osmosis-occlusion-editor-layer {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+	cursor: crosshair;
+}
+
+/* Editing masks are translucent so the picture underneath stays visible while
+   shapes are placed — the answer is exactly what the user is aiming at. */
+.osmosis-occlusion-mask.is-editing {
+	fill: var(--osmosis-occlusion-mask);
+	fill-opacity: 0.55;
+}
+
+.osmosis-occlusion-mask.is-selected {
+	fill: var(--osmosis-occlusion-target);
+	stroke: var(--text-on-accent);
+	stroke-width: 2;
+}
+
+.osmosis-occlusion-mask.is-preview {
+	fill-opacity: 0.3;
+	stroke-dasharray: 4 3;
+}
+
+.osmosis-occlusion-handle {
+	fill: var(--background-primary);
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+}
+
+.osmosis-occlusion-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-top: 8px;
+}

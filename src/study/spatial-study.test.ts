@@ -29,10 +29,25 @@ describe("allLineCardBlockIds", () => {
 		const cards = [
 			makeCard({ id: "a", blockId: "os-new001" }),
 			makeCard({ id: "b", blockId: "os-fut001", due: NOW + 1000 }),
-			makeCard({ id: "c", cardType: "explicit", blockId: "os-fence1" }),
+			makeCard({ id: "c", cardType: "explicit" }), // fence card, no blockId
 			makeCard({ id: "d" }), // line card, no blockId
 		];
 		expect(allLineCardBlockIds(cards)).toEqual(new Set(["os-new001", "os-fut001"]));
+	});
+
+	it("counts an occluded line card, which carries the occlusion type on its line", () => {
+		// The block ID is what says "this card lives on a line", not the type: an
+		// occluded line card fans out into one `occlusion` card per shape group,
+		// all sharing the line's block ID. Filtering on `cardType === "line"` left
+		// a note of occluded images with no study or peek button.
+		const cards = [
+			makeCard({ id: "os-diag01-c1", cardType: "occlusion", blockId: "os-diag01" }),
+			makeCard({ id: "os-diag01-c2", cardType: "occlusion", blockId: "os-diag01" }),
+		];
+
+		expect(allLineCardBlockIds(cards)).toEqual(new Set(["os-diag01"]));
+		expect(dueOrNewLineCardBlockIds(cards, NOW)).toEqual(new Set(["os-diag01"]));
+		expect(allLineCardIds(cards)).toEqual(new Set(["os-diag01-c1", "os-diag01-c2"]));
 	});
 
 	it("excludes disabled line cards (fully out of peek and study)", () => {
@@ -61,10 +76,12 @@ describe("dueOrNewLineCardBlockIds", () => {
 		);
 	});
 
-	it("ignores non-line cards and line cards without a block ID", () => {
+	it("ignores fence cards and line cards without a block ID", () => {
+		// Fence cards never carry a block ID — that field is what marks a card as
+		// living on a line, whatever its type.
 		const cards = [
-			makeCard({ id: "a", cardType: "explicit", blockId: "os-fence1" }),
-			makeCard({ id: "b", cardType: "explicit_cloze", blockId: "os-fence2" }),
+			makeCard({ id: "a", cardType: "explicit" }),
+			makeCard({ id: "b", cardType: "explicit_cloze" }),
 			makeCard({ id: "c" }), // line card, no blockId
 		];
 		expect(dueOrNewLineCardBlockIds(cards, NOW)).toEqual(new Set());
@@ -87,7 +104,7 @@ describe("allLineCardIds", () => {
 		const cards = [
 			makeCard({ id: "tests/host.md#^os-aaa111", notePath: "tests/host.md", blockId: "os-aaa111" }),
 			makeCard({ id: "tests/source.md#^os-aaa111", notePath: "tests/source.md", blockId: "os-aaa111" }),
-			makeCard({ id: "c", cardType: "explicit", blockId: "os-fence1" }),
+			makeCard({ id: "c", cardType: "explicit" }), // fence card, no blockId
 			makeCard({ id: "d" }), // line card, no blockId
 		];
 		expect(allLineCardIds(cards)).toEqual(

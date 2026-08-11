@@ -2,9 +2,18 @@ import { describe, it, expect } from "vitest";
 import type { OcclusionSet } from "../database/types";
 import { generateExplicitCards } from "./explicit";
 import {
+	enclosingOsmosisFence,
+	ensureFenceIdentity,
+	fenceEmbedLine,
+	fenceId,
+	fenceOcclusions,
 	findFirstEmbed,
 	findLabeledEmbeds,
 	isolateEmbed,
+	labelEmbed,
+	labelFence,
+	locateOcclusionTarget,
+	nextEmbedLabel,
 	occludeLineCard,
 	occlusionGroups,
 	occlusionSetToYamlValue,
@@ -521,5 +530,342 @@ describe("rewriteFenceEmbeds", () => {
 	it("handles a fence opened with more than three backticks", () => {
 		const md = ["````osmosis", "![[old.png]]{a}", "```", "````"].join("\n");
 		expect(rewriteFenceEmbeds(md, toNew)).toContain("![[new.png]]{a}");
+	});
+});
+
+/**
+ * Locating the carrier for an image the user right-clicked. The rule the editor
+ * follows: an image already inside an ```osmosis fence keeps its shapes in that
+ * fence's header; an image in prose becomes a line card, so the note's
+ * structure is left alone and the embed keeps Obsidian's own rename handling.
+ */
+describe("locateOcclusionTarget", () => {
+	const note = [
+		"Cross-section of the span:",           // 0
+		"",                                      // 1
+		"![[bridge-cross-section.png]] ^os-ek322j", // 2
+		"",                                      // 3
+		"```osmosis",                            // 4
+		"id: bridge",                            // 5
+		"",                                      // 6
+		"![[span-elevation.png]]{b}",            // 7
+		"```",                                   // 8
+		"",                                      // 9
+		"![[untagged.png]]",                     // 10
+		"",                                      // 11
+		"Just prose, no image.",                 // 12
+	].join("\n");
+
+	it("returns null for a line holding no image", () => {
+		expect(locateOcclusionTarget(note, 12)).toBeNull();
+		expect(locateOcclusionTarget(note, 0)).toBeNull();
+	});
+
+	it("returns null for a line past the end of the note", () => {
+		expect(locateOcclusionTarget(note, 999)).toBeNull();
+	});
+
+	it("routes an image in prose to the line carrier, with its block ID", () => {
+		expect(locateOcclusionTarget(note, 2)).toEqual({
+			carrier: "line",
+			image: "bridge-cross-section.png",
+			line: 2,
+			blockId: "os-ek322j",
+		});
+	});
+
+	it("reports a null block ID when the line is not yet a card", () => {
+		expect(locateOcclusionTarget(note, 10)?.blockId).toBeNull();
+	});
+
+	it("routes an image inside a fence to the fence carrier", () => {
+		const target = locateOcclusionTarget(note, 7);
+		expect(target?.carrier).toBe("fence");
+		expect(target?.image).toBe("span-elevation.png");
+		expect(target?.id).toBe("bridge");
+		expect(target?.label).toBe("b");
+		expect(target?.span).toEqual({ start: 4, end: 8 });
+	});
+
+	it("reports a null id and label when the fence declares neither yet", () => {
+		const bare = "```osmosis\n\n![[diagram.png]]\n```";
+		const target = locateOcclusionTarget(bare, 2);
+		expect(target?.carrier).toBe("fence");
+		expect(target?.id).toBeNull();
+		expect(target?.label).toBeNull();
+	});
+
+	it("picks the label belonging to the embed, not a neighbour's", () => {
+		const shared = "```osmosis\nid: x\n\n![[a.png]]{a} ![[b.png]]{b}\n```";
+		// The scan takes the first embed on the line, so its own label wins.
+		expect(locateOcclusionTarget(shared, 3)?.label).toBe("a");
+	});
+
+	it("does not mistake the fence's own delimiter lines for content", () => {
+		expect(locateOcclusionTarget(note, 4)).toBeNull();
+		expect(locateOcclusionTarget(note, 8)).toBeNull();
+	});
+
+	it("treats a markdown-style embed the same as a wikilink", () => {
+		expect(locateOcclusionTarget("![alt](diagrams/bridge.png)", 0)).toEqual({
+			carrier: "line",
+			image: "diagrams/bridge.png",
+			line: 0,
+			blockId: null,
+		});
+	});
+
+	it("ignores a sizing suffix, which is display data not a link target", () => {
+		expect(locateOcclusionTarget("![[bridge.png|300]]", 0)?.image).toBe("bridge.png");
+	});
+});
+
+describe("enclosingOsmosisFence", () => {
+	it("does not end a ````osmosis fence at an inner ``` block's close", () => {
+		const lines = [
+			"````osmosis",     // 0
+			"id: code",        // 1
+			"```python",       // 2
+			"x = 1",           // 3
+			"```",             // 4
+			"![[plot.png]]",   // 5
+			"````",            // 6
+		];
+		expect(enclosingOsmosisFence(lines, 5)).toEqual({ start: 0, end: 6 });
+	});
+
+	it("returns null outside any fence", () => {
+		expect(enclosingOsmosisFence(["```osmosis", "id: a", "```", "prose"], 3)).toBeNull();
+	});
+
+	it("runs an unterminated fence to the end of the note", () => {
+		expect(enclosingOsmosisFence(["```osmosis", "id: a", "![[x.png]]"], 2))
+			.toEqual({ start: 0, end: 2 });
+	});
+});
+
+describe("fenceOcclusions", () => {
+	it("collects every shape set the header declares, by label", () => {
+		const lines = [
+			"```osmosis",
+			"id: bridge",
+			"occlude-a:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.1",
+			"      y: 0.1",
+			"      w: 0.2",
+			"      h: 0.2",
+			"occlude-b:",
+			"  mode: hide-one-guess-one",
+			"  shapes:",
+			"    - group: c7",
+			"      kind: rect",
+			"      x: 0.5",
+			"      y: 0.5",
+			"      w: 0.2",
+			"      h: 0.2",
+			"",
+			"![[a.png]]{a}",
+			"![[b.png]]{b}",
+			"```",
+		];
+		const sets = fenceOcclusions(lines, { start: 0, end: 23 });
+		expect([...sets.keys()]).toEqual(["a", "b"]);
+		expect(sets.get("b")?.shapes[0]?.group).toBe("c7");
+	});
+});
+
+describe("nextEmbedLabel", () => {
+	it("starts at a", () => {
+		expect(nextEmbedLabel([])).toBe("a");
+	});
+
+	it("skips labels already bound in the fence", () => {
+		expect(nextEmbedLabel(["a", "b"])).toBe("c");
+	});
+
+	it("wraps past z rather than colliding", () => {
+		const alphabet = Array.from({ length: 26 }, (_, i) => String.fromCharCode(97 + i));
+		expect(nextEmbedLabel(alphabet)).toBe("a1");
+	});
+});
+
+describe("labelEmbed", () => {
+	it("adds a label to the matching embed", () => {
+		expect(labelEmbed("![[bridge.png]]", 0, "bridge.png", "a")).toBe("![[bridge.png]]{a}");
+	});
+
+	it("leaves an embed that already carries one alone", () => {
+		const content = "![[bridge.png]]{a}";
+		expect(labelEmbed(content, 0, "bridge.png", "b")).toBe(content);
+	});
+
+	it("labels only the embed whose target matches", () => {
+		expect(labelEmbed("![[a.png]] ![[b.png]]", 0, "b.png", "b"))
+			.toBe("![[a.png]] ![[b.png]]{b}");
+	});
+
+	it("keeps a sizing suffix and a trailing block ID intact", () => {
+		expect(labelEmbed("![[bridge.png|300]] ^os-x1", 0, "bridge.png", "a"))
+			.toBe("![[bridge.png|300]]{a} ^os-x1");
+	});
+
+	it("returns the content unchanged when nothing matches", () => {
+		const content = "![[bridge.png]]";
+		expect(labelEmbed(content, 0, "other.png", "a")).toBe(content);
+	});
+
+	it("produces a label the render surfaces strip back out", () => {
+		const labelled = labelEmbed("![[bridge.png]]", 0, "bridge.png", "a");
+		expect(stripEmbedLabels(labelled)).toBe("![[bridge.png]]");
+	});
+});
+
+describe("labelFence", () => {
+	it("inserts the id directly under the opening line, where the header starts", () => {
+		const content = "```osmosis\n\n![[bridge.png]]\n```";
+		expect(labelFence(content, { start: 0, end: 3 }, "os-abc123"))
+			.toBe("```osmosis\nid: os-abc123\n\n![[bridge.png]]\n```");
+	});
+
+	it("gives the fence an identity the writer can then locate it by", () => {
+		const content = "```osmosis\n\n![[bridge.png]]\n```";
+		const withId = labelFence(content, { start: 0, end: 3 }, "os-abc123");
+		const span = { start: 0, end: 4 };
+		expect(fenceId(withId.split("\n"), span)).toBe("os-abc123");
+	});
+});
+
+describe("fenceEmbedLine", () => {
+	// The fence body as a code block processor hands it over: the opening
+	// ```osmosis line is not part of it.
+	const body = [
+		"Name the labelled parts.",
+		"",
+		"![[bridge-cross-section.svg]]",
+		"![[span-elevation.svg|300]]",
+	].join("\n");
+
+	it("finds the line of the embed the rendered image came from", () => {
+		expect(fenceEmbedLine(body, "bridge-cross-section.svg")).toBe(2);
+		expect(fenceEmbedLine(body, "span-elevation.svg")).toBe(3);
+	});
+
+	it("matches through a sizing suffix, since the src carries the link as authored", () => {
+		expect(fenceEmbedLine(body, "span-elevation.svg|300")).toBe(3);
+	});
+
+	it("matches a percent-encoded target against its plain spelling", () => {
+		expect(fenceEmbedLine("![[deck plan.svg]]", "deck%20plan.svg")).toBe(0);
+	});
+
+	it("declines when the same diagram is embedded twice", () => {
+		// Which one was clicked cannot be told from the target alone, and
+		// guessing would hang the shapes off the wrong diagram.
+		const twice = "![[span-elevation.svg]]\n![[span-elevation.svg]]";
+		expect(fenceEmbedLine(twice, "span-elevation.svg")).toBeNull();
+	});
+
+	it("declines when nothing matches", () => {
+		expect(fenceEmbedLine(body, "other.svg")).toBeNull();
+	});
+});
+
+describe("ensureFenceIdentity", () => {
+	/** A fence with no `id:`, holding one diagram. Embed sits on line 3. */
+	const bareSingle = [
+		"# Note",
+		"```osmosis",
+		"What does this show?",
+		"![[bridge.png]]",
+		"```",
+	].join("\n");
+
+	/** The same, holding two diagrams. Embeds sit on lines 3 and 4. */
+	const bareDouble = [
+		"# Note",
+		"```osmosis",
+		"What do these show?",
+		"![[bridge.png]]",
+		"![[span.png]]",
+		"```",
+	].join("\n");
+
+	const mint = () => "os-abc123";
+
+	it("mints an id for a fence that declares none", () => {
+		const identity = ensureFenceIdentity(bareSingle, 3, "bridge.png", mint);
+		expect(identity?.id).toBe("os-abc123");
+		expect(identity?.content).toContain("```osmosis\nid: os-abc123\n");
+	});
+
+	it("leaves a single-embed fence unlabelled, for the bare occlude: spelling", () => {
+		const identity = ensureFenceIdentity(bareSingle, 3, "bridge.png", mint);
+		expect(identity?.label).toBe("");
+		expect(identity?.content).toContain("![[bridge.png]]\n");
+		expect(identity?.content).not.toContain("{a}");
+	});
+
+	it("writes the label to the line the inserted id: pushed the embed down to", () => {
+		// The trap: minting the id shifts every line below it by one, so a
+		// label written to the caller's original line number lands on the
+		// embed above — or on the fence's prose.
+		const identity = ensureFenceIdentity(bareDouble, 3, "bridge.png", mint);
+		expect(identity?.label).toBe("a");
+		expect(identity?.content.split("\n")).toEqual([
+			"# Note",
+			"```osmosis",
+			"id: os-abc123",
+			"What do these show?",
+			"![[bridge.png]]{a}",
+			"![[span.png]]",
+			"```",
+		]);
+	});
+
+	it("labels the second embed of a fence that already has an id", () => {
+		const first = ensureFenceIdentity(bareDouble, 3, "bridge.png", mint)!;
+		const second = ensureFenceIdentity(first.content, 5, "span.png", () => "os-never");
+
+		expect(second?.id).toBe("os-abc123");
+		expect(second?.label).toBe("b");
+		expect(second?.content).toContain("![[span.png]]{b}");
+		expect(second?.content).toContain("![[bridge.png]]{a}");
+	});
+
+	it("does not mint an id when the fence already declares one", () => {
+		let minted = 0;
+		const identity = ensureFenceIdentity(twoDiagramFence, 13, "bridge-cross-section.png", () => {
+			minted++;
+			return "os-never";
+		});
+
+		expect(minted).toBe(0);
+		expect(identity?.id).toBe("bridge");
+	});
+
+	it("reuses the label an embed already carries, leaving the note byte-identical", () => {
+		// Reopening the editor on an occluded image must not rewrite the note.
+		const identity = ensureFenceIdentity(twoDiagramFence, 14, "span-elevation.png", mint);
+		expect(identity?.label).toBe("b");
+		expect(identity?.content).toBe(twoDiagramFence);
+	});
+
+	it("returns null for a line outside any fence", () => {
+		const content = "# Note\n\n![[bridge.png]]\n";
+		expect(ensureFenceIdentity(content, 2, "bridge.png", mint)).toBeNull();
+	});
+
+	it("mints an identity the shape reader then finds the set under", () => {
+		const identity = ensureFenceIdentity(bareDouble, 3, "bridge.png", mint)!;
+		const lines = identity.content.split("\n");
+		const span = enclosingOsmosisFence(lines, 4)!;
+
+		expect(fenceId(lines, span)).toBe(identity.id);
+		expect(findLabeledEmbeds(lines.join("\n")).map((entry) => entry.label))
+			.toEqual([identity.label]);
 	});
 });
