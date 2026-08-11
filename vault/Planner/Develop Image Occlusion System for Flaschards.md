@@ -11,10 +11,10 @@ location:
 related:
 status: In-Progress
 priority:
-progress_current: 3
+progress_current: 4
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
-date_modified: 2026-08-11T07:30:00.000Z
+date_modified: 2026-08-11T09:20:00.000Z
 date_start_scheduled: 2026-08-09T17:34:17
 date_start_actual: 2026-08-09T17:34:17
 date_end_scheduled:
@@ -275,9 +275,9 @@ the release branch — this note closes only when all six phases are done.
 | 2. Renderer | Done, manually verified | `d651112`, `8719ab5` |
 | — | [[Improve cloze data storage]] merged in ([PR #20](https://github.com/SawyerRensel/Osmosis/pull/20)) | `9dae548` |
 | 3. Editor | Done, manually verified | `a533221` |
-| 4. Full toolset | Shipped; manual testing found four defects, **not yet verified** | `88db8a7` |
+| 4. Full toolset | Done, manually verified | `88db8a7`, `1a21428`, `ad93112`, `0995a7d` |
 | 5. Remaining surfaces | Not started | |
-| 6. Touch | Not started | |
+| 6. Touch | Pan and pinch done (`ad93112`); one-finger authoring on a real phone untested | |
 
 Because PR #20 landed *here* rather than on `release/0.0.4`, the fence schedule
 format change reaches the release branch only when this branch merges.
@@ -433,8 +433,9 @@ The buttons work and study works; peek on a diagram is simply blunt until
 
 ### Phase 4 decisions worth remembering
 
-Shipped in `88db8a7`. Manual testing found four defects — see the prompt at the
-foot of this note — but the decisions below are settled and survive the fixes.
+Shipped in `88db8a7`, then repaired across `1a21428`, `ad93112`, and `0995a7d`
+after manual testing found four defects and a round of UI feedback. All of it is
+verified; the decisions below are settled.
 
 - **Anki's Header / Back Extra / Comments fields were deferred to phase 5**, and
   this is the answer to the open question phase 4 was handed. Their whole
@@ -487,11 +488,86 @@ foot of this note — but the decisions below are settled and survive the fixes.
   nothing. Mode is deliberately *outside* the snapshot: a two-value dropdown
   whose previous value is visible and one click away.
 - **`preventDefault()` was removed from `onPointerDown`.** Cancelling
-  `pointerdown` suppresses the compatibility mouse events, and `dblclick` is
-  built out of those — so preventing the default silently kills every
-  double-click gesture. Text selection is held off by `user-select: none` on the
-  overlay instead. **Do not put it back**; see defect 4 below, which is the
-  fallout, and fix that rather than reverting this.
+  `pointerdown` suppresses the browser's own focus handling along with the
+  compatibility mouse events, and the annotation input needs both — an input
+  built while that handling is still pending loses focus the instant it runs.
+  Text selection is held off by `user-select: none` on the overlay instead.
+  **Do not put it back.**
+
+#### The phase 4 fix-up — four defects and the UI round
+
+- **Double clicks are detected in `onPointerDown`, from timing and proximity
+  (`isDoubleClick`), never from the native `dblclick`.** `redraw()` destroys and
+  rebuilds every mask element on each pointer release, so the two constituent
+  clicks land on different elements and the browser falls back to their common
+  ancestor; with pointer capture in play the event simply never arrived. Vertex
+  insertion was dead as a result. The old DOM test dispatched a synthetic
+  `dblclick` straight at the SVG and passed against the broken behaviour — the
+  gesture is now driven from two real taps, which is the only way it stays
+  honest. The annotation label shares the same detector for the same reason.
+- **The Text tool places its label on pointer *up*.** Created on down, the input
+  is built before the browser's mousedown focus handling runs, which then moves
+  focus off it, the blur commits empty text, and the annotation deletes itself —
+  the tool appeared to do nothing at all. `input.focus()` is also deferred a
+  tick, and the blur handler ignores a blur that arrives before the field was
+  ever focused, so a focus steal can never silently delete a label.
+- **Zoom sizes the wrapper; the fit is measured in TypeScript.** `max-width` and
+  `max-height` only ever *constrain*, so on a large window the image was already
+  inside both caps and raising them did nothing — zoom looked dead — and where a
+  cap did bind the picture grew while the wrapper did not, leaving the overlay
+  pinned to a box the image had outgrown. The canvas width is now
+  `--osmosis-occlusion-fit × --osmosis-occlusion-zoom`, where the fit is
+  `fitWidth(stage, natural)`: the narrower of width-bound and height-bound.
+  **CSS cannot do this itself.** `object-fit: contain` letterboxes the picture
+  away from its wrapper, and a `max-height` percentage cannot resolve through a
+  shrink-to-fit wrapper — and the wrapper must stay *exactly* the image's box or
+  every mask lands wrong. Re-measured on image load and by a `ResizeObserver` on
+  the stage; `measure()` deliberately calls `applySize()` rather than `redraw()`,
+  because the observer's first delivery can arrive before the chrome exists.
+- **Zoom 1 means the whole image, not fit-to-width.** Fitting the width alone is
+  what put a second scrollbar on the modal: a portrait diagram overflowed the
+  stage, and between the modal's scrollbar and the stage's the toolbar could be
+  scrolled out of reach. The modal is a flex column with a definite height and a
+  `.modal-content` that does not scroll, so the stage is the only scroll surface
+  and only once the user has zoomed in.
+- **The stage has no padding**, so its own content box is what the fit is
+  measured against and no constant has to be kept in step with `styles.css`. It
+  centres with `safe center`, with plain `center` declared first as a fallback:
+  an unsupported value drops the whole declaration, and a stretched canvas is no
+  longer the image's box.
+- **Ctrl+wheel and pinch both zoom about a point** (`anchoredScroll`), because
+  growing the canvas alone scales it from its top-left and slides the thing
+  being zoomed towards out from under the pointer.
+- **Touch gestures are the modal's own work.** `touch-action: none` on the
+  overlay is what lets one finger draw, and it also means the browser scrolls
+  nothing — hence the Pan tool and the two-finger handlers. A second pointer
+  starts a gesture that pinches and pans together, both measured from where the
+  gesture began rather than from the previous move, so a slow drag cannot drift.
+  Whatever the first finger had started is **abandoned, not committed**: the
+  opening of a pinch is not a mask. Panning moves the viewport, so it records no
+  undo step and keeps the selection.
+- **Every shape hotkey stands down while a label is being typed.** Obsidian's
+  keymap sees a key *before* the focused input does, so claiming Backspace
+  deleted the annotation being named instead of a character of its text.
+  Returning nothing from the handler hands the key back to the field.
+- **Escape is guarded in `close()`, not in the scope handler.** Obsidian's own
+  close-on-Escape is registered on the modal's *same* scope and is evaluated
+  first, so a guard in our handler never runs — the observable proof that within
+  one `Scope` the earlier registration wins. Refusing the close itself is the one
+  decision nothing can pre-empt. Every other route to closing (the ✕, the
+  backdrop, Save) blurs the field first, which commits what was typed and clears
+  `editingAnnotation`, so only the keyboard reaches the guard.
+- **`file-menu` resolves *which* embed was clicked** through `pickEmbedLine`,
+  fed by CodeMirror's `posAtCoords` on the view behind `editor.cm`, with a
+  `contextmenu` listener registered in the capture phase holding the click's
+  coordinates. The 1.13 `Editor` type exposes no `posAtMouse`. `editor-menu` and
+  the command palette were never affected — they key off
+  `editor.getCursor().line`, which is the cursor's line by construction. Ties go
+  to the earlier embed and an unresolved line withholds the menu item, rather
+  than guessing a diagram.
+- **Chrome the user does not need is gone**: no `<h2>`, no image-name subtitle,
+  no "Group"/"Mode" captions (the words survive as `aria-label`). Mode options
+  are sentence case, as Obsidian's own UI is.
 
 ## Surface map
 
@@ -511,22 +587,26 @@ foot of this note — but the decisions below are settled and survive the fixes.
 
 ## Acceptance criteria
 
-- [ ] Right-clicking an image offers "Create image occlusion"
-- [ ] Rect, ellipse, and polygon can be drawn, moved, resized, and deleted
-- [ ] Shapes sharing a group produce exactly one card
-- [ ] Both modes render correctly on front and back
-- [ ] One fence with two labelled embeds keeps its shape sets distinct
-- [ ] Reordering embeds within a fence does not move masks between images
-- [ ] The `{a}` label never appears as text in sequential, contextual, or spatial study
-- [ ] The label is preserved in the source file after any render or write cycle
+- [x] Right-clicking an image offers "Create image occlusion"
+- [x] Rect, ellipse, and polygon can be drawn, moved, resized, and deleted
+- [x] Shapes sharing a group produce exactly one card
+- [x] Both modes render correctly on front and back — *sequential only; the other
+      two surfaces are phase 5*
+- [x] One fence with two labelled embeds keeps its shape sets distinct
+- [x] Reordering embeds within a fence does not move masks between images
+- [ ] The `{a}` label never appears as text in sequential, contextual, or spatial
+      study — *sequential and contextual pinned by tests; spatial has no
+      occlusion rendering yet*
+- [x] The label is preserved in the source file after any render or write cycle
 - [ ] Occlusion cards study correctly in all three modes
 - [ ] Header, Back Extra, and Comments behave as in Anki
-- [ ] Renaming an occluded image rewrites the fence; line cards are handled by Obsidian
-- [ ] Masks stay aligned when the image is resized or given a `|300` suffix
-- [ ] Reopening the editor restores the existing shape set exactly
-- [ ] Pre-existing `osmosis-schedule` entries still load unchanged
-- [ ] Shapes can be drawn and manipulated by touch on mobile
-- [ ] `npm run lint` and `npm test` clean
+- [x] Renaming an occluded image rewrites the fence; line cards are handled by Obsidian
+- [x] Masks stay aligned when the image is resized or given a `|300` suffix
+- [x] Reopening the editor restores the existing shape set exactly
+- [x] Pre-existing `osmosis-schedule` entries still load unchanged
+- [ ] Shapes can be drawn and manipulated by touch on mobile — *pan and pinch
+      done and confirmed; one-finger authoring on a real phone untested*
+- [x] `npm run lint` and `npm test` clean
 
 ## Test plan
 
@@ -546,214 +626,196 @@ compatibility path.
 - [[Spaced Repetition for Excalidraw]] and
   [[Spaced Repetition for Obsidian Canvas]] share the mask-overlay renderer
 - Occlusion cards in the [[Create Card Browser - Editor]] type filter
+
 ---
 
-# Prompt — Phase 4 fix-up: four defects and a modal redesign
+# Prompt — Phase 5: contextual and spatial rendering, and Anki's three fields
 
-Written 2026-08-11 at `88db8a7`, as a standalone brief for a fresh session. It
-replaces the phase 4 prompt, whose durable content now lives in "Phase 4
+Written 2026-08-11 at `0995a7d`, as a standalone brief for a fresh session. It
+replaces the phase 4 fix-up prompt, whose durable content now lives in "Phase 4
 decisions worth remembering" above.
 
 ## Where things stand
 
-Branch `feature/image-occlusion`, at `88db8a7`. Work on this branch directly —
+Branch `feature/image-occlusion`, at `0995a7d`. Work on this branch directly —
 the six phases share it and there is no PR to open yet. `npm run lint`,
-`npm test` (**1546 passing**), and `npm run build` are clean.
+`npm test` (**1577 passing**), and `npm run build` are clean.
 
-Phase 4 shipped the full toolset: polygon authoring, text annotations,
-multi-select, align, duplicate, ungroup, undo/redo, zoom, and a translucency
-toggle. Manual testing then found four defects. **Three of the tools work and
-are confirmed** — alt-click vertex removal, multi-select + align + duplicate +
-ungroup, and undo/redo — as is reading an existing polygon and annotations in
-sequential study. Do not re-litigate those.
+Phases 1–4 are done and manually verified: the format and parser, the mask
+renderer, the editor, the full toolset, and the fix-up round that repaired four
+defects and reworked the modal's sizing, zoom, and touch handling. **Read "Phase
+4 decisions worth remembering" above before touching anything** — the
+coordinate contract, why annotations are HTML rather than SVG, why zoom sizes
+the wrapper, and why Escape is guarded in `close()` all constrain this work.
+`parser.test.ts` carries wall-clock benchmarks that fail under load; re-run
+before investigating a failure there.
 
-**Read "Phase 4 decisions worth remembering" above before touching anything.**
-Several of those decisions constrain this work directly, in particular the
-coordinate contract, why annotations are HTML rather than SVG, and why
-`preventDefault()` is *not* called on `pointerdown`. `parser.test.ts` carries
-wall-clock benchmarks that fail under load; re-run before investigating a
-failure there.
+## What phase 5 owes
 
-## Defect 1 — double-click inside a polygon does not insert a vertex
+1. **Contextual study** — masks painted in place in the note, for both carriers.
+2. **Spatial study** — the occluded image inside a mind-map node.
+3. **Anki's Header / Back Extra / Comments fields** — deferred here from phase 4
+   deliberately, because their whole observable behaviour is rendering and two
+   of the three surfaces did not exist yet.
+4. **Peek on an occluded line card**, which today hides the whole image line
+   behind a placeholder rather than masking the occluded regions.
 
-Alt-click removal works; insertion does not. `onDoubleClick` in
-`OcclusionEditorModal` requires `polyDraft === null`, exactly one selected
-shape, `kind === "poly"`, and `containsPoint`. Two plausible causes, and they
-are not exclusive:
+## 1. Contextual study
 
-- **Tool state.** With the Polygon tool still held, `onPointerDown` routes to
-  `addPolyVertex` and starts a *new* draft, so `onDoubleClick` takes the
-  `polyDraft !== null` branch and discards it. Insertion is only reachable under
-  Select.
-- **The native `dblclick` never arrives.** `redraw()` destroys and rebuilds every
-  mask element on each pointer release, so the two `click` events have different
-  targets and the browser must fall back to their common ancestor. Add pointer
-  capture and it is fragile enough not to rely on.
+`ContextualStudyProcessor.parseFenceContent` currently ends the occlusion branch
+with a placeholder:
 
-**Recommended fix: stop using the native `dblclick` entirely.** Detect it in
-`onPointerDown` from timing and proximity — keep a `lastClick: {time, point}`,
-and treat a press within ~400 ms and within `grabTolerance()` of the previous
-one as a double click. That is deterministic, works regardless of what the
-browser does with compatibility events, and is drivable from the existing
-pointer-event helpers in the DOM test. Then delete the `dblclick` listener on
-the SVG *and* the one on the annotation label, which has the same exposure.
+```ts
+if (hasOcclusion) {
+    const cardId = ...;
+    return { front: content, back: content, cardId, exclude, isCloze: true };
+}
+```
 
-⚠️ **The current DOM test cannot catch this.** `"inserts a vertex where a
-double-click meets the outline"` dispatches a synthetic `dblclick` straight at
-the SVG, bypassing the whole click chain, so it passes against broken
-behaviour. Rewrite it to fire two real taps once detection moves into
-`onPointerDown`.
+Front and back are the *same* markdown, so the fence renders its diagram
+unmasked on both sides. That is the thing to replace, and it is not a one-line
+change, because of a shape mismatch worth understanding before you start:
 
-## Defect 2 — the Text tool does nothing at all
+**The processor traffics in markdown strings; occlusion needs a DOM overlay.**
+Every other card type here produces `front`/`back` markdown that goes through
+`MarkdownRenderer`. Masks cannot be expressed that way — `renderOcclusion` in
+`OcclusionRenderer.ts` builds an image plus an SVG sibling. So the return
+contract has to grow a third possibility (an occlusion payload the caller
+renders specially), rather than a cleverer string.
 
-The tool activates, but clicking the image produces no label and no input.
+**The open design question, and it is the real one.** In sequential study, one
+card is one shape group: the target is amber, its siblings deep purple, and
+flipping reveals the target. In the note there is no "current card" — the reader
+is looking at a diagram, not answering one of the three questions it carries. So
+decide, and record the reasoning in this note:
 
-`DomElementInfo.value` *is* supported (`obsidian.d.ts:160`), so the `<input>` is
-constructed correctly — that is not it. The likely cause is a focus race
-introduced by removing `preventDefault()` from `onPointerDown`: the browser's
-default mousedown focus handling now runs *after* our handler, moves focus off
-the freshly created input, the `blur` listener fires, `commitAnnotationEdit`
-sees empty text and deletes the annotation again. Net effect: nothing happens.
+- Paint every mask with no target and reveal them all on the fence's existing
+  reveal gesture? Simple, consistent with how a contextual cloze shows all its
+  blanks at once, and it makes the note a study surface rather than a card
+  player.
+- Or step through the groups one at a time, which matches sequential exactly but
+  invents an interaction the rest of contextual study does not have.
 
-Fix by creating the annotation on pointer **up** rather than pointer down — the
-default focus shuffle is over by then — and defer `input.focus()` to a
-`window.setTimeout(…, 0)`. Make the blur handler defensive too: ignore a blur
-that arrives before the input ever became `document.activeElement`, so a
-focus-steal can never silently delete a label.
+The first is the smaller, more consistent answer, and is where to start unless
+something argues otherwise.
 
-**Do not fix this by restoring `preventDefault()` on `pointerdown`** — that
-re-breaks every double-click gesture. Confirm the diagnosis first (a
-`console.log` in the blur handler settles it in one click).
+**Line cards.** `LineRevealProcessor` puts the peek and study chrome on line
+cards; an occluded line card fans out into one card *per shape group* while
+still living on its line, and the block ID — never `cardType` — is the routing
+signal. That mistake has now been made and fixed twice (see the two "fixed in a
+later phase, but an older bug" sections above); do not make it a third time.
+Peek currently hides the entire line, which is item 4 above and the same work.
 
-## Defect 3 — zoom is broken three ways, from one root cause
+**The `{a}` label must not survive into any of this.** `stripEmbedLabels` runs
+once for every branch of `parseFenceContent`, and
+`ContextualStudyProcessor.dom.test.ts` pins it. Keep it pinned.
 
-Reported: zooming resizes the modal; zoom does nothing at all when the Obsidian
-window is fullscreen; and when it does work the masks stay put while the picture
-grows, so they sit offset from the features they were drawn on.
+## 2. Spatial study
 
-One cause. The CSS zooms with `max-height: calc(55vh * var(--zoom))` and
-`max-width: calc(100% * var(--zoom))`, and `max-*` only ever *constrains*. In a
-fullscreen window the image's intrinsic size is already inside both caps, so
-raising them changes nothing — zoom looks dead. Where a cap does bind, the image
-grows but the wrapper does not track it (`.osmosis-occlusion-stage` is
-`display: flex` with the default `align-items: stretch`, so the wrapper's box is
-not the image's box), and the overlay — pinned to the wrapper — desyncs from the
-picture. **That is the coordinate-contract failure phases 2 and 3 both warn
-about**, and it is the most important thing on this list.
+`MindMapView.ts` has no occlusion code at all — this is greenfield. What exists:
+`spatial-study.ts` already *counts* occluded line cards correctly (the phase 3
+fix), and `spatial-study.test.ts` covers that.
 
-**Fix: set the size rather than capping it.** Make the stage a block box with
-`overflow: auto` and a `max-height`; give `.osmosis-occlusion-canvas`
-`display: block; width: calc(var(--osmosis-occlusion-zoom, 1) * 100%);
-max-width: none;` and the image `width: 100%; height: auto; max-height: none;`.
-Zoom 1 then means fit-to-width, the wrapper is always exactly the image's box at
-every zoom, and overflow scrolls the stage instead of pushing the modal wider.
-Add `min-width: 0` to the modal and the stage so overflowing content cannot grow
-them.
+The node is a small box, which is the constraint that shapes everything here.
+The renderer's coordinate contract holds at any size with no measurement, so the
+masks themselves are free; the questions are whether a diagram in a node is
+legible at all, whether annotations at their fixed UI font size are (the phase 4
+decision says a label is chrome on the picture, not part of it — this is the
+surface most likely to test that), and what a node does when its image is
+missing.
 
-Note the knock-on: centring an overflowing flex item clips its leading edge into
-territory the scrollbar cannot reach, which is why the canvas is centred with
-`margin` rather than `justify-content`. A block stage removes that problem
-outright, so drop the `margin: auto` with it.
+## 3. Header, Back Extra, Comments
 
-**Acceptance check:** draw a mask over a named feature, zoom to maximum, and
-confirm the mask has not moved relative to that feature. Repeat with the window
-fullscreen, floating, and split.
+Anki's three text fields. Nothing exists yet: no data model, no editor UI, no
+serialization, no rendering.
 
-## Defect 4 — right-click opens the wrong image's shapes
-
-On the `^os-tool001` line in `occlusion-toolset.md`, right-clicking the image
-opens the editor on the shapes stored in the `cross-section` *fence*. The note
-embeds `bridge-cross-section.svg` twice, deliberately.
-
-**This is not a storage bug** — shapes are per carrier, and the user's framing
-("shouldn't shapes be per-card, not per-image?") is already how it works.
-`findEmbedLine` (`src/main.ts:54`) returns the **first** embed in the note that
-resolves to the clicked file, so a second instance opens the first one's
-carrier. `editor-menu` and the command palette are both unaffected: they use
-`editor.getCursor().line`. Only the `file-menu` path is wrong.
-
-Constraint found while investigating: the bundled `obsidian` **1.13.1** `.d.ts`
-exposes no `posAtMouse` or `posAtCoords` on `Editor`, so there is no typed API
-for "which line did this right-click land on".
-
-Options, best first:
-
-1. Record the last `contextmenu` event with `registerDomEvent`, then map its
-   client coordinates to a document position through the CodeMirror `EditorView`
-   reached via `editorEditorField` (`obsidian.d.ts:2599` — a public export) and
-   its `posAtCoords`. Exact, and the public export keeps it defensible.
-2. Fall back to picking the candidate line nearest `editor.getCursor().line`.
-   Cheap, but CM6 does not reliably move the cursor on right-click, so it can
-   still choose wrong.
-3. Offer the item only when the resolution is unambiguous. Honest, but it
-   silently drops the feature on exactly the note that needs it.
-
-Take 1 with 2 as the fallback, and only offer the item when a line is resolved.
-`fenceEmbedLine` already declines rather than guessing when several embeds match
-— it is worth reading for the reasoning before choosing.
-
-## The modal redesign
-
-Same session, from the same manual pass:
-
-- **Drop the `<h2>Image occlusion</h2>` and the image-name subtitle.** The user
-  already knows what they opened and on what; between them they waste the whole
-  top band of the modal. `.osmosis-occlusion-subtitle` and its CSS become dead
-  once the subtitle goes — remove both rather than leaving an orphan.
-- **Make the modal wider and taller relative to the Obsidian window.** It is
-  currently `width: min(900px, 92vw)` with a `55vh` image cap. The canvas is the
-  point of this modal and should get most of the window.
-- The toolbar wraps to two rows at narrow widths, which is fine. Check no button
-  renders blank: the Lucide names in use are `pentagon`, `ungroup`, `scan`, and
-  the six `align-*` icons, and a name Obsidian's bundled set lacks produces an
-  empty button with a working tooltip.
+- **Storage** goes on `OcclusionSet`, beside `mode`, `shapes`, and
+  `annotations`. All three are free text the user types, so they take the same
+  rule annotation text does: **always double-quoted on write**, because a `:`,
+  a `#`, or a leading `-` changes the meaning of a bare scalar, and in the
+  frontmatter carrier a malformed line fails the parse of the *whole note*.
+- **Omit them when empty**, as `annotations` is omitted, so a set that uses none
+  of them serializes exactly as it does today and no existing note churns.
+- **The rendering-model decision this was deferred for.** `renderOcclusionSide`
+  in `SequentialStudyModal` already renders the prose *surrounding* the embed as
+  the card body. Do Anki's fields replace that, sit alongside it, or are they
+  simply the line card's answer to the same problem? Decide it once, with all
+  three surfaces in front of you, and write the reasoning into this note.
+  Comments are never shown on any surface — that part is not in question.
 
 ## Existing surface to build on
 
 | What | Where |
 |---|---|
 | Parse / serialize shape sets and annotations | `src/card-gen/occlusion.ts` |
-| Editor geometry — hit test, handles, vertices, align, zoom steps | `src/study/occlusion-geometry.ts` |
-| Undo/redo stack | `src/study/occlusion-history.ts` |
 | Which masks to paint, per mode and side | `src/study/occlusion-masks.ts` |
-| The canvas modal | `src/views/OcclusionEditorModal.ts` |
-| Image, masks, annotations for study | `src/views/OcclusionRenderer.ts` |
-| Editor and mask styles | `styles.css` — `.osmosis-occlusion*` |
-| Image context menus and line resolution | `src/main.ts` — `findEmbedLine`, `openOcclusionEditor` |
+| Image, masks, annotations — shared by every surface | `src/views/OcclusionRenderer.ts` |
+| Sequential rendering, the reference implementation | `src/views/SequentialStudyModal.ts` — `renderOcclusionSide` |
+| In-note rendering | `src/views/ContextualStudyProcessor.ts` — `parseFenceContent` |
+| Line-card chrome, peek and study | `src/views/LineRevealProcessor.ts`, `src/study/line-reveal.ts` |
+| Mind-map nodes | `src/views/MindMapView.ts` |
+| Editor geometry, history, the canvas modal | `src/study/occlusion-geometry.ts`, `occlusion-history.ts`, `src/views/OcclusionEditorModal.ts` |
+| Mask and editor styles | `styles.css` — `.osmosis-occlusion*` |
 | Obsidian stand-in for view tests | `src/test/obsidian-stub.ts` |
+
+## Testing infrastructure
+
+`vitest` cannot load the `obsidian` package (it ships types only, `"main": ""`),
+and `vi.mock` cannot paper over it — Vite fails at package resolution first.
+`src/test/obsidian-stub.ts` stands in behind an alias in `vitest.config.ts`.
+**This is not a licence to move logic back into `src/views/`**: pure logic
+belongs outside it, which is why `occlusion-geometry.ts` carries the arithmetic
+and its tests. The stub's `createSvg` hands each class token to
+`classList.add()` exactly as the real one does, so it still throws on a token
+containing a space.
+
+jsdom lays nothing out, so `OcclusionEditorModal.dom.test.ts` stubs what layout
+would have provided — `getBoundingClientRect`, the pointer-capture API,
+`clientWidth`/`clientHeight`, `naturalWidth`/`naturalHeight`, writable scroll
+offsets, and a `ResizeObserver` that delivers its first observation on
+`observe`. Any new view test that needs measurement should take the same
+approach rather than inventing another.
 
 ## Test plan
 
-Every defect here slipped past a green suite, so each fix needs a test that
-would have failed before it:
+- Contextual: the fence's diagram renders **masked**, per mode, and the `{a}`
+  label never appears — extend `ContextualStudyProcessor.dom.test.ts`.
+- Contextual line card: peek masks the occluded regions rather than hiding the
+  line, and the chrome keys off the block ID.
+- Spatial: a node holding an occluded card renders the image and its masks, and
+  strips the label — the third surface the acceptance criteria name.
+- The three fields: round-trip through both carriers with text containing a `:`,
+  a `#`, and a leading `-`; omitted entirely when empty.
+- Every existing occlusion test stays green; there are 1577 in the suite.
 
-- Double-click from **two real taps**, not a synthetic `dblclick`.
-- The Text tool driven through pointer up, asserting the label survives a blur
-  that arrives with the input never having been focused.
-- Zoom asserting the *wrapper* tracks the image, not just that a custom property
-  changed — the current test only checks the property and the viewBox, which is
-  why it passed against a broken zoom.
-- `findEmbedLine` (or its replacement) against a note embedding one image twice.
+## Manual fixtures
 
-## Manual fixture
+`e2e/fixtures/occlusion.md` (phases 1–2), `occlusion-editor.md` (phase 3), and
+`occlusion-toolset.md` (phase 4), copied to `vault/tests/flashcard/`. All three
+vault copies get dirty as soon as you test; **reset them from `e2e/fixtures/`
+before each run**. Phase 5 wants a fourth covering in-note and mind-map
+rendering: a note with an occluded fence card, an occluded line card, and a
+plain card in the same note, structured so a mind map over it has a node per
+card. **Back-date every card in any new fixture** — deck Total is
+`new + learn + due`, so a future-dated `review` card cannot be studied and looks
+exactly like a card that failed to generate.
 
-`e2e/fixtures/occlusion-toolset.md` (copied to `vault/tests/flashcard/`) is the
-phase 4 fixture and already covers every defect here: an existing polygon and
-annotations to read, a bare fence to draw in, and the same image embedded twice
-so defect 4 reproduces. `occlusion-editor.md` is the phase 3 fixture and
-`occlusion.md` the phase 1–2 one. All three vault copies get dirty as soon as
-you test; reset them from `e2e/fixtures/` before each run. **Back-date every
-card in any new fixture** — deck Total is `new + learn + due`, so a future-dated
-`review` card cannot be studied and looks exactly like a card that failed to
-generate.
+## Phase 6, and what is left of it
+
+Phase 6 is touch, and `ad93112` already landed the hard half: two-finger pan,
+pinch zoom, a Pan tool, and the gesture arbitration that abandons a one-finger
+drag when a second finger lands. All of it is confirmed working. What remains is
+a real-device pass on a phone: whether one finger can draw and grab handles at
+`HANDLE_GRAB_PX = 12` (a fingertip is nearer 40px — the tolerance may need to be
+pointer-type-aware), whether the modal is usable at phone width with the toolbar
+wrapped to several rows, and whether the annotation input behaves with a soft
+keyboard over it. `isDesktopOnly` is `false`, so this cannot be skipped.
 
 ## Conventions
 
 `CLAUDE.md` governs. Lint → test → build, then hand over manual test steps and
 **stop** for confirmation before committing. Commit code by explicit path, never
 `git add .`. This note gets its own commit, separately. Do **not** mark the note
-`Done` — phases 5 and 6 are outstanding. On completion, update the Progress
-table, fold anything durable into "Phase 4 decisions worth remembering", and
-replace this prompt with one for phase 5 (contextual and spatial rendering,
-plus Anki's Header / Back Extra / Comments fields — see the first bullet of that
-section for why they landed there).
+`Done` until phase 6 has had its device pass too. On completion, update the
+Progress table, fold anything durable into a "Phase 5 decisions worth
+remembering" section, and replace this prompt with one for phase 6.
