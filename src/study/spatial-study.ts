@@ -18,6 +18,7 @@
 
 import type { Card, CardOcclusion } from "../database/types";
 import { lineCardId } from "../card-gen/line-cards";
+import { groupNumber } from "../card-gen/occlusion";
 
 /**
  * Structural view of a laid-out map node — matches `LayoutNode` so the
@@ -233,6 +234,63 @@ export function occlusionForLineKey(cards: readonly Card[], key: string): CardOc
 		}
 	}
 	return null;
+}
+
+/**
+ * The key of the *node* a card is laid out on: its line key, or — for a fence
+ * card — the fence key. This is what `MindMapView.nodeCardKey` derives from the
+ * other end, off the node's own text.
+ */
+function nodeKeyForCard(card: Card): string {
+	return card.blockId === undefined ? fenceKey(card) : lineCardId(card.notePath, card.blockId);
+}
+
+/**
+ * The units of work spatial *study* asks for on one node.
+ *
+ * Ordinarily a node is one unit: it reveals, it takes one rating, and that
+ * rating reaches every card it carries. An **occluded** node is not. Its shape
+ * groups are separate cards with separate schedules, and spatial study is a card
+ * player — it has a target, a rating, and a completion count — so it steps
+ * through them one at a time exactly as sequential does, and the banner counts
+ * cards rather than nodes.
+ *
+ * This is deliberately *not* what the note surfaces do. Reading view and peek
+ * paint every group at once with no target, because a reader looking at a
+ * diagram in a note is not answering one of the questions it carries. Study is
+ * the surface where there is a question.
+ *
+ * Only the groups the scheduler would ask now are returned, so a node with one
+ * due group out of three is one unit of work, not three.
+ *
+ * A node whose due cards are *not* all occlusion cards stays a single unit — a
+ * fence can mix an occluded diagram with a caption cloze, and splitting on the
+ * diagram alone would leave the cloze card with no key and drop its review.
+ */
+export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: number): string[] {
+	const due = cards.filter(
+		(card) => !card.disabled && nodeKeyForCard(card) === nodeKey && isDueOrNew(card, now),
+	);
+	if (due.length === 0 || due.some((card) => card.occlusion === undefined)) return [nodeKey];
+	return due
+		.slice()
+		.sort((a, b) => groupNumber(a.occlusion!.target) - groupNumber(b.occlusion!.target))
+		.map((card) => card.id);
+}
+
+/**
+ * The cards a spatial target key stands for.
+ *
+ * Three key shapes reach here: a line key (`…#^block`), a fence key (`bridge`),
+ * and — once `spatialStudyKeys` has split an occluded node — a single occlusion
+ * card's own ID (`bridge-c1`, `…#^block/c1`). The last is checked first, because
+ * both of the other lookups would find nothing for it and silently drop the
+ * review, which is exactly how rating an occluded line came to record nothing.
+ */
+export function cardIdsForSpatialKey(cards: readonly Card[], key: string): string[] {
+	const own = cards.find((card) => card.id === key && card.occlusion !== undefined && !card.disabled);
+	if (own) return [own.id];
+	return key.includes("#^") ? cardIdsForLineKey(cards, key) : cardIdsForFenceKey(cards, key);
 }
 
 /**

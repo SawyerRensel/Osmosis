@@ -71,12 +71,22 @@ export function renderOcclusion(
 
 	paintMasks(wrapper, occlusion, side);
 
-	if (isAnswerSide(side) && occlusion.backExtra !== undefined && occlusion.backExtra !== "") {
-		container.createDiv({ cls: "osmosis-occlusion-back-extra", text: occlusion.backExtra });
+	if (occlusion.backExtra !== undefined && occlusion.backExtra !== "") {
+		const backExtra = container.createDiv({
+			cls: "osmosis-occlusion-back-extra",
+			text: occlusion.backExtra,
+		});
+		// The element is built on *every* side and hidden on the question ones,
+		// rather than being withheld. A mind-map node renders once and is flipped
+		// by repainting its masks in place, and Back Extra sits outside the wrapper
+		// the repaint reaches — so withholding it here meant a node that had been
+		// rendered revealed kept showing its answer text under a covered diagram.
+		// A repainting surface flips `.osmosis-occlusion-back-extra` itself.
+		backExtra.classList.toggle("osmosis-hidden", !isAnswerSide(side));
 	}
 }
 
-/** Whether this side is showing the answer — the two sides Back Extra belongs on. */
+/** Whether this side is showing the answer — the sides Back Extra belongs on. */
 function isAnswerSide(side: OcclusionSide): boolean {
 	return side === "back" || side === "all-revealed";
 }

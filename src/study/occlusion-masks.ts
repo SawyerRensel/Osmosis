@@ -27,8 +27,14 @@ import type { CardOcclusion, OcclusionShape } from "../database/types";
  * blanks at once, and the mode is irrelevant — `hide-one-guess-one` describes
  * how one card relates to its siblings, and in the note there are no siblings to
  * relate to.
+ *
+ * `none` is a diagram in view that is not the one being asked: a second labelled
+ * embed in the same fence, whose groups belong to a *different* card. Sequential
+ * has always shown those unmasked — covering them would pose a second question
+ * the card never answers — and spatial study has to say so explicitly, because
+ * it paints its diagrams in place rather than re-rendering the card's body.
  */
-export type OcclusionSide = "front" | "back" | "all-hidden" | "all-revealed";
+export type OcclusionSide = "front" | "back" | "all-hidden" | "all-revealed" | "none";
 
 /**
  * What a mask is doing on the side being drawn:
@@ -56,7 +62,7 @@ export interface MaskElement {
  * | hide-one-guess-one | back  | revealed     | untouched    |
  *
  * The note views ignore both the mode and the target: `all-hidden` covers every
- * group, `all-revealed` outlines every group.
+ * group, `all-revealed` outlines every group, and `none` paints nothing at all.
  *
  * Shapes keep their source order, so a diagram whose masks overlap paints the
  * same way every time rather than reshuffling between front and back.
@@ -83,6 +89,8 @@ function maskRole(
 	// sibling relationship for the mode to describe.
 	if (side === "all-hidden") return "hidden";
 	if (side === "all-revealed") return "revealed";
+	// A diagram that is not the one being asked keeps nothing on it.
+	if (side === "none") return null;
 
 	if (shape.group === occlusion.target) {
 		return side === "front" ? "target" : "revealed";

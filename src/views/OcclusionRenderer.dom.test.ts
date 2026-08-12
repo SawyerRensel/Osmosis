@@ -240,13 +240,21 @@ describe("renderOcclusion text fields", () => {
 	});
 
 	it("holds Back Extra until the answer side, on cards and in the note alike", () => {
-		expect(render("front", withFields).querySelector(".osmosis-occlusion-back-extra")).toBeNull();
-		expect(render("all-hidden", withFields).querySelector(".osmosis-occlusion-back-extra")).toBeNull();
+		// Built on every side and *hidden* on the question ones, never withheld: the
+		// mind map renders a node once and flips it by repainting, and Back Extra
+		// sits outside the wrapper a repaint reaches — so an element that was never
+		// created could not be taken back.
+		for (const side of ["front", "all-hidden"] as const) {
+			const backExtra = render(side, withFields).querySelector(".osmosis-occlusion-back-extra");
+			expect(backExtra?.textContent).toBe(withFields.backExtra);
+			expect(backExtra?.classList.contains("osmosis-hidden")).toBe(true);
+		}
 
-		expect(render("back", withFields).querySelector(".osmosis-occlusion-back-extra")?.textContent)
-			.toBe(withFields.backExtra);
-		expect(render("all-revealed", withFields).querySelector(".osmosis-occlusion-back-extra")?.textContent)
-			.toBe(withFields.backExtra);
+		for (const side of ["back", "all-revealed"] as const) {
+			const backExtra = render(side, withFields).querySelector(".osmosis-occlusion-back-extra");
+			expect(backExtra?.textContent).toBe(withFields.backExtra);
+			expect(backExtra?.classList.contains("osmosis-hidden")).toBe(false);
+		}
 	});
 
 	it("adds nothing when a card carries neither", () => {

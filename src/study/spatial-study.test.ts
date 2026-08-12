@@ -6,6 +6,7 @@ import {
 	allLineCardIds,
 	cardIdsForFenceKey,
 	cardIdsForLineKey,
+	cardIdsForSpatialKey,
 	collectSubtreeCardKeys,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
@@ -13,6 +14,7 @@ import {
 	fenceKey,
 	fenceKeyFromNode,
 	occlusionForLineKey,
+	spatialStudyKeys,
 	type SpatialNodeLike,
 } from "./spatial-study";
 
@@ -346,5 +348,154 @@ describe("fenceKeyFromNode", () => {
 
 	it("returns null for any other code block", () => {
 		expect(fenceKeyFromNode("```ts\nconst id = 1;\n```")).toBeNull();
+	});
+});
+
+/** An occlusion payload for `group`, on `image`. */
+function occlusionFor(group: string, image = "bridge.svg") {
+	return {
+		image,
+		mode: "hide-all-guess-one" as const,
+		shapes: [
+			{ group: "c1", kind: "rect" as const, x: 0.1, y: 0.2, w: 0.3, h: 0.1 },
+			{ group: "c2", kind: "rect" as const, x: 0.5, y: 0.2, w: 0.3, h: 0.1 },
+		],
+		target: group,
+	};
+}
+
+describe("spatialStudyKeys", () => {
+	it("splits an occlusion fence node into one key per due shape group", () => {
+		const cards = [
+			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
+			makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
+	});
+
+	it("splits an occluded line node the same way, keyed on the line", () => {
+		const cards = [
+			makeCard({
+				id: "tests/espresso.md#^os-diag01/c1",
+				cardType: "occlusion",
+				blockId: "os-diag01",
+				occlusion: occlusionFor("c1"),
+			}),
+			makeCard({
+				id: "tests/espresso.md#^os-diag01/c2",
+				cardType: "occlusion",
+				blockId: "os-diag01",
+				occlusion: occlusionFor("c2"),
+			}),
+		];
+		expect(spatialStudyKeys(cards, "tests/espresso.md#^os-diag01", NOW)).toEqual([
+			"tests/espresso.md#^os-diag01/c1",
+			"tests/espresso.md#^os-diag01/c2",
+		]);
+	});
+
+	it("orders by group number, so c10 never precedes c2", () => {
+		const cards = [
+			makeCard({ id: "bridge-c10", cardType: "occlusion", occlusion: occlusionFor("c10") }),
+			makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c2", "bridge-c10"]);
+	});
+
+	it("asks only the groups the scheduler would ask now", () => {
+		const cards = [
+			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
+			makeCard({
+				id: "bridge-c2",
+				cardType: "occlusion",
+				occlusion: occlusionFor("c2"),
+				due: NOW + 1000,
+			}),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1"]);
+	});
+
+	it("leaves an ordinary node as a single unit of work", () => {
+		const cards = [
+			makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
+			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+	});
+
+	it("does not split a fence that mixes an occluded diagram with another card", () => {
+		// Splitting on the diagram alone would leave the cloze card with no key
+		// at all, and its review would be dropped.
+		const cards = [
+			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
+			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+	});
+
+	it("ignores disabled cards, and falls back to the node key when all are out", () => {
+		const cards = [
+			makeCard({
+				id: "bridge-c1",
+				cardType: "occlusion",
+				occlusion: occlusionFor("c1"),
+				disabled: true,
+			}),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+	});
+});
+
+describe("cardIdsForSpatialKey", () => {
+	const fenceGroups = [
+		makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
+		makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
+	];
+
+	it("resolves one shape group of a fence to that card alone", () => {
+		expect(cardIdsForSpatialKey(fenceGroups, "bridge-c1")).toEqual(["bridge-c1"]);
+	});
+
+	it("resolves one shape group of a line to that card alone", () => {
+		// `cardIdsForLineKey` finds nothing for it — the key is `…#^block/c1`,
+		// not the line key — which is how a rating came to record nothing.
+		const cards = [
+			makeCard({
+				id: "tests/espresso.md#^os-diag01/c1",
+				cardType: "occlusion",
+				blockId: "os-diag01",
+				occlusion: occlusionFor("c1"),
+			}),
+		];
+		expect(cardIdsForSpatialKey(cards, "tests/espresso.md#^os-diag01/c1"))
+			.toEqual(["tests/espresso.md#^os-diag01/c1"]);
+	});
+
+	it("still resolves a whole fence key to every card the fence derived", () => {
+		expect(cardIdsForSpatialKey(fenceGroups, "bridge")).toEqual(["bridge-c1", "bridge-c2"]);
+	});
+
+	it("still resolves a whole line key to every card the line carries", () => {
+		const cards = [
+			makeCard({ id: "tests/espresso.md#^os-diag01/c1", blockId: "os-diag01" }),
+			makeCard({ id: "tests/espresso.md#^os-diag01/c2", blockId: "os-diag01" }),
+		];
+		expect(cardIdsForSpatialKey(cards, "tests/espresso.md#^os-diag01")).toEqual([
+			"tests/espresso.md#^os-diag01/c1",
+			"tests/espresso.md#^os-diag01/c2",
+		]);
+	});
+
+	it("drops a disabled card, whichever shape of key names it", () => {
+		const cards = [
+			makeCard({
+				id: "bridge-c1",
+				cardType: "occlusion",
+				occlusion: occlusionFor("c1"),
+				disabled: true,
+			}),
+		];
+		expect(cardIdsForSpatialKey(cards, "bridge-c1")).toEqual([]);
+		expect(cardIdsForSpatialKey(cards, "bridge")).toEqual([]);
 	});
 });
