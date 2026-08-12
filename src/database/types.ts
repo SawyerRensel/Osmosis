@@ -40,19 +40,26 @@ export type OcclusionShape =
  * (`occlusionGroups`, `occludeLineCard`, `usedGroupsInFence`) would otherwise
  * have to learn to skip it, and a single missed one mints a phantom card.
  *
- * `x`/`y` are the label's top-left corner, normalised 0–1 like every other
- * coordinate here.
+ * `x`/`y` are the label's top-left corner and `w`/`h` its size, all normalised
+ * 0–1 like every other coordinate here. The box is what makes a label
+ * resizable like any other shape, and it is what the text is *sized* from: the
+ * glyphs are a fraction of `h`, so a label keeps its size relative to the
+ * picture at any zoom and on any surface.
  *
- * `rotation` is degrees clockwise about that same corner — the anchor, not the
- * label's middle. A label is placed to point at a feature, so the anchor is the
- * part that must stay pinned while the text swings round it. Unlike a shape's
- * rotation this one needs no aspect compensation: annotations are positioned
+ * That reverses the phase 4 decision to give a label a fixed UI size. The
+ * consequence it was guarding against is real and accepted: a label in a small
+ * mind-map node now shrinks with the picture rather than staying legible.
+ *
+ * `rotation` is degrees clockwise about the **centre** of the box. Unlike a
+ * shape's rotation it needs no aspect compensation: annotations are positioned
  * HTML precisely so they dodge the mask overlay's stretch, and a CSS `rotate()`
  * is already applied in screen space. Omitted when 0.
  */
 export interface OcclusionAnnotation {
 	x: number;
 	y: number;
+	w: number;
+	h: number;
 	text: string;
 	rotation?: number;
 }

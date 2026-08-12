@@ -610,9 +610,11 @@ describe("duplicateShape", () => {
 });
 
 describe("duplicateAnnotation", () => {
-	it("nudges the copy clear and keeps it on the image", () => {
-		expect(duplicateAnnotation({ x: 0.5, y: 0.99, text: "Deck" }, 0.05))
-			.toEqual({ x: 0.55, y: 1, text: "Deck" });
+	it("nudges the copy clear and keeps the whole box on the image", () => {
+		// The box is clamped, not the anchor: clamping the corner alone would let
+		// a label's far end travel off the picture.
+		expect(duplicateAnnotation({ x: 0.5, y: 0.94, w: 0.25, h: 0.08, text: "Deck" }, 0.05))
+			.toEqual({ x: 0.55, y: 0.92, w: 0.25, h: 0.08, text: "Deck" });
 	});
 });
 
@@ -992,7 +994,7 @@ describe("withRotation", () => {
 
 describe("annotationWithRotation", () => {
 	it("stores the angle folded, and drops it at zero", () => {
-		const label = { x: 0.2, y: 0.3, text: "span" };
+		const label = { x: 0.2, y: 0.3, w: 0.25, h: 0.08, text: "span" };
 
 		expect(annotationWithRotation(label, 380).rotation).toBe(20);
 		expect(annotationWithRotation(annotationWithRotation(label, 45), 0)).toEqual(label);

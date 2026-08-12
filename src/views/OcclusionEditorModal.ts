@@ -9,10 +9,11 @@ import {
 	alignShapes,
 	anchoredScroll,
 	angleFrom,
+	annotationBox,
+	annotationCenter,
+	annotationWithBox,
 	annotationWithRotation,
-	bearingPoint,
 	boxFromDrag,
-	clamp01,
 	cloneShape,
 	containsPoint,
 	duplicateAnnotation,
@@ -24,6 +25,7 @@ import {
 	hitTest,
 	isDegenerate,
 	isDoubleClick,
+	moveBox,
 	moveShapes,
 	nextGroup,
 	polyFromPoints,
@@ -31,6 +33,7 @@ import {
 	ROTATE_HANDLE_PX,
 	rotationHandlePoint,
 	rotationTransform,
+	rotationTransformAbout,
 	shapeBox,
 	shapeCenter,
 	shapeFromBox,
@@ -38,6 +41,7 @@ import {
 	shapeWithBox,
 	snapRotation,
 	toNormalized,
+	unrotateAnnotationPoint,
 	unrotatePoint,
 	usedGroups,
 	vertexAt,
@@ -53,8 +57,9 @@ import {
 	type HandleId,
 	type Point,
 } from "../study/occlusion-geometry";
+import { DEFAULT_ANNOTATION_H, DEFAULT_ANNOTATION_W } from "../card-gen/occlusion";
 import { History } from "../study/occlusion-history";
-import { positionAnnotation } from "./OcclusionRenderer";
+import { placeAnnotation } from "./OcclusionRenderer";
 
 /**
  * The canvas editor for image occlusion: draw, move, resize, group, annotate,
@@ -98,9 +103,10 @@ type Drag =
 	/** `start` is the shape list as it stood when the drag began, so the delta
 	 *  is always measured from there and a slow drag cannot accumulate drift. */
 	| { kind: "move"; from: Point; start: OcclusionShape[] }
-	| { kind: "resize"; index: number; handle: HandleId }
+	/** `annotation` picks the list the index is into — labels resize like shapes. */
+	| { kind: "resize"; index: number; annotation: boolean; handle: HandleId }
 	| { kind: "vertex"; index: number; vertex: number }
-	| { kind: "annotation"; index: number; from: Point; origin: Point }
+	| { kind: "annotation"; index: number; from: Point; origin: Box }
 	/**
 	 * Turning a shape or a label. `start` is the angle it held when the grip was
 	 * taken and `from` the pointer's bearing at that moment, so the drag applies
@@ -671,7 +677,7 @@ export class OcclusionEditorModal extends Modal {
 		// The grip of a selected label, which sits over the canvas rather than in
 		// the annotation layer — that layer is rebuilt on every pointer move, so
 		// nothing durable can live in it.
-		if (this.grabAnnotationRotation(point)) return;
+		if (this.grabAnnotationGrip(point)) return;
 
 		// A grabbed vertex or handle wins over everything, including a shape
 		// drawn on top of it — otherwise a selected shape overlapped by a later
@@ -714,7 +720,7 @@ export class OcclusionEditorModal extends Modal {
 			}
 			const handle = handleAt(shapeBox(shape), local, tolerance);
 			if (handle) {
-				this.drag = { kind: "resize", index: only, handle };
+				this.drag = { kind: "resize", index: only, annotation: false, handle };
 				return;
 			}
 		}
@@ -779,6 +785,23 @@ export class OcclusionEditorModal extends Modal {
 				this.redraw();
 				return;
 			case "resize": {
+				// A label resizes through exactly the shape arithmetic: turn the
+				// pointer into the box's own frame, resize with the opposite handle
+				// pinned on screen, re-fit.
+				if (this.drag.annotation) {
+					const annotation = this.annotations[this.drag.index];
+					if (!annotation) return;
+					const box = resizeAnchored(
+						annotationBox(annotation),
+						this.drag.handle,
+						unrotateAnnotationPoint(annotation, point, this.aspect),
+						annotation.rotation ?? 0,
+						this.aspect,
+					);
+					this.annotations[this.drag.index] = annotationWithBox(annotation, box);
+					this.redraw();
+					return;
+				}
 				const shape = this.shapes[this.drag.index]!;
 				const box = resizeAnchored(
 					shapeBox(shape),
@@ -804,11 +827,14 @@ export class OcclusionEditorModal extends Modal {
 			case "annotation": {
 				const annotation = this.annotations[this.drag.index];
 				if (!annotation) return;
-				this.annotations[this.drag.index] = {
-					...annotation,
-					x: clamp01(this.drag.origin.x + (point.x - this.drag.from.x)),
-					y: clamp01(this.drag.origin.y + (point.y - this.drag.from.y)),
-				};
+				// The whole box is clamped, not the anchor: clamping the corner
+				// alone would let a label's far end travel off the picture.
+				const moved = moveBox(
+					this.drag.origin,
+					point.x - this.drag.from.x,
+					point.y - this.drag.from.y,
+				);
+				this.annotations[this.drag.index] = annotationWithBox(annotation, moved);
 				this.redraw();
 				return;
 			}
@@ -861,45 +887,42 @@ export class OcclusionEditorModal extends Modal {
 	// ── Rotation ──────────────────────────────────────────────────
 
 	/**
-	 * Start turning a selected label, if that is what the press landed on.
+	 * Start turning or resizing a selected label, if that is what the press
+	 * landed on.
 	 *
-	 * A label's grip is drawn on the canvas rather than in the annotation layer,
+	 * A label is a box like any other, so this is the shape branch of
+	 * `onPointerDown` over again: turn the pointer back into the label's own
+	 * unturned frame, test the rotation grip first because it sits clear of the
+	 * box, then the eight resize handles.
+	 *
+	 * The grips are drawn on the canvas rather than in the annotation layer,
 	 * because that layer is rebuilt on every pointer move — the same reason a
 	 * label drag takes its pointer capture on the SVG.
 	 */
-	private grabAnnotationRotation(point: Point): boolean {
+	private grabAnnotationGrip(point: Point): boolean {
 		const index = this.selectedAnnotation;
-		if (index === null) return false;
+		if (index === null || this.editingAnnotation !== null) return false;
 		const annotation = this.annotations[index];
 		if (!annotation) return false;
 
-		const anchor = { x: annotation.x, y: annotation.y };
-		if (!this.grabbing(point, this.annotationHandlePoint(annotation))) return false;
+		const box = annotationBox(annotation);
+		const local = unrotateAnnotationPoint(annotation, point, this.aspect);
 
-		this.drag = {
-			kind: "rotate",
-			index,
-			annotation: true,
-			start: annotation.rotation ?? 0,
-			from: angleFrom(anchor, point, this.aspect),
-		};
+		if (this.grabbing(local, rotationHandlePoint(box, this.handleOffset()))) {
+			this.drag = {
+				kind: "rotate",
+				index,
+				annotation: true,
+				start: annotation.rotation ?? 0,
+				from: angleFrom(annotationCenter(annotation), point, this.aspect),
+			};
+			return true;
+		}
+
+		const handle = handleAt(box, local, this.grabTolerance());
+		if (handle === null) return false;
+		this.drag = { kind: "resize", index, annotation: true, handle };
 		return true;
-	}
-
-	/**
-	 * Where a label's rotation grip sits, in normalised coordinates.
-	 *
-	 * A label turns about its anchor, not its middle, so the grip hangs off that
-	 * point directly — which is also the only part of a label whose position is
-	 * known without measuring the text.
-	 */
-	private annotationHandlePoint(annotation: OcclusionAnnotation): Point {
-		return bearingPoint(
-			{ x: annotation.x, y: annotation.y },
-			this.handleOffset(),
-			annotation.rotation ?? 0,
-			this.aspect,
-		);
 	}
 
 	/**
@@ -911,8 +934,8 @@ export class OcclusionEditorModal extends Modal {
 		if (drag.annotation) {
 			const annotation = this.annotations[drag.index];
 			if (!annotation) return;
-			const anchor = { x: annotation.x, y: annotation.y };
-			const turned = drag.start + angleFrom(anchor, point, this.aspect) - drag.from;
+			const center = annotationCenter(annotation);
+			const turned = drag.start + angleFrom(center, point, this.aspect) - drag.from;
 			this.annotations[drag.index] =
 				annotationWithRotation(annotation, snap ? snapRotation(turned) : turned);
 			this.redraw();
@@ -1080,7 +1103,15 @@ export class OcclusionEditorModal extends Modal {
 	 * commits, which is also what deleting all the text does.
 	 */
 	private addAnnotation(point: Point): void {
-		this.annotations.push({ x: point.x, y: point.y, text: "" });
+		// Placed with the press at its top-left corner, as it always was, and
+		// kept whole inside the picture — a label dropped near the right edge
+		// would otherwise start with its far end off the image.
+		const box = moveBox(
+			{ x: 0, y: 0, w: DEFAULT_ANNOTATION_W, h: DEFAULT_ANNOTATION_H },
+			point.x,
+			point.y,
+		);
+		this.annotations.push({ ...box, text: "" });
 		this.selectedShapes = [];
 		this.selectedAnnotation = this.annotations.length - 1;
 		this.editingAnnotation = this.annotations.length - 1;
@@ -1100,9 +1131,52 @@ export class OcclusionEditorModal extends Modal {
 			this.annotations.splice(index, 1);
 			if (this.selectedAnnotation === index) this.selectedAnnotation = null;
 		} else {
-			this.annotations[index] = { ...annotation, text: trimmed };
+			this.annotations[index] = this.fitToText({ ...annotation, text: trimmed });
 		}
 		this.commit();
+	}
+
+	/**
+	 * The same label, its box narrowed to the width its text actually needs.
+	 *
+	 * A label is placed before it has any text, so its width can only ever be a
+	 * guess at that moment — and a fixed guess is wrong for almost every label,
+	 * leaving a short word sitting in a chip several times its length. Fitting
+	 * on commit is the first instant the text is known.
+	 *
+	 * **The measuring is done here and nowhere else.** A rendered label carries
+	 * the width the editor stored, so every study surface goes on painting from
+	 * the stored box with nothing measured — the property the whole feature
+	 * rests on. The height is untouched: it is the size knob, and it is what the
+	 * text is scaled from.
+	 *
+	 * A width the user then drags is theirs and survives, until they retype the
+	 * text and ask for a fit again.
+	 */
+	private fitToText(annotation: OcclusionAnnotation): OcclusionAnnotation {
+		const available = this.annotationLayer.clientWidth;
+		if (available <= 0) return annotation;
+
+		// Measured off a real chip rather than estimated from the character
+		// count: the font is the theme's, so glyph widths are not ours to guess.
+		// `max-content` is what the chip would be with nothing constraining it,
+		// and it includes the padding, so the stored box matches the visible one
+		// and the resize handles drawn on it hug what the user can see.
+		const probe = this.annotationLayer.createDiv({
+			cls: ["osmosis-occlusion-annotation", "osmosis-occlusion-annotation-probe"],
+		});
+		probe.createSpan({ cls: "osmosis-occlusion-annotation-text", text: annotation.text });
+		placeAnnotation(probe, annotation);
+		const natural = probe.offsetWidth;
+		probe.remove();
+		if (natural <= 0) return annotation;
+
+		// Clamped through `moveBox` so a long label placed near the right edge
+		// is pulled back onto the picture rather than growing off it.
+		return annotationWithBox(
+			annotation,
+			moveBox({ ...annotationBox(annotation), w: Math.min(natural / available, 1) }, 0, 0),
+		);
 	}
 
 	// ── Mutation ──────────────────────────────────────────────────
@@ -1353,7 +1427,7 @@ export class OcclusionEditorModal extends Modal {
 
 		const only = this.onlySelectedShape();
 		if (only !== null) this.drawShapeGrips(this.shapes[only]!);
-		this.drawAnnotationGrip();
+		this.drawAnnotationGrips();
 
 		this.renderAnnotationLayer();
 		this.syncChrome();
@@ -1392,15 +1466,29 @@ export class OcclusionEditorModal extends Modal {
 		this.drawGrip(parent, at);
 	}
 
-	/** The grip that turns the selected label, hanging off its anchor. */
-	private drawAnnotationGrip(): void {
+	/**
+	 * The selected label's grips, in a group carrying its rotation — the same
+	 * treatment a shape gets, because a label is now a box like any other.
+	 */
+	private drawAnnotationGrips(): void {
 		const index = this.selectedAnnotation;
 		if (index === null) return;
 		const annotation = this.annotations[index];
-		// Not while it is being named: the field covers its own anchor, and a grip
-		// under the text cursor is only ever in the way.
+		// Not while it is being named: the field covers the box, and grips under
+		// the text cursor are only ever in the way.
 		if (!annotation || this.editingAnnotation === index) return;
-		this.drawGrip(this.svg, this.annotationHandlePoint(annotation));
+
+		const layer = this.svg.createSvg("g", { cls: ["osmosis-occlusion-grips"] });
+		const transform = rotationTransformAbout(
+			annotationCenter(annotation),
+			annotation.rotation ?? 0,
+			this.aspect,
+		);
+		if (transform !== null) layer.setAttribute("transform", transform);
+
+		const box = annotationBox(annotation);
+		this.drawRotationGrip(layer, box);
+		this.drawHandles(layer, box);
 	}
 
 	/**
@@ -1490,7 +1578,7 @@ export class OcclusionEditorModal extends Modal {
 					// Deliberately without the label's rotation: the field is chrome for
 				// typing in, and a tilted text box is only awkward. The label takes
 				// its angle back the moment the edit commits.
-				positionAnnotation(input, annotation.x, annotation.y);
+				placeAnnotation(input, annotation);
 				// A blur is only the user leaving the field once the field has been
 				// in it. Anything else is a focus steal, and committing on it would
 				// delete a label the user had not finished typing — silently, since
@@ -1524,9 +1612,11 @@ export class OcclusionEditorModal extends Modal {
 				cls: index === this.selectedAnnotation
 					? ["osmosis-occlusion-annotation", "is-selected"]
 					: ["osmosis-occlusion-annotation"],
-				text: annotation.text,
 			});
-			positionAnnotation(label, annotation.x, annotation.y, annotation.rotation);
+			// Same structure the renderer builds — the text in its own child, so
+			// the label can centre it while the child clips it.
+			label.createSpan({ cls: "osmosis-occlusion-annotation-text", text: annotation.text });
+			placeAnnotation(label, annotation);
 			label.addEventListener("pointerdown", (event: PointerEvent) => {
 				if (event.button !== 0) return;
 				// Stopped, so the press does not also reach the overlay underneath
@@ -1546,7 +1636,7 @@ export class OcclusionEditorModal extends Modal {
 					kind: "annotation",
 					index,
 					from: this.pointAt(event),
-					origin: { x: annotation.x, y: annotation.y },
+					origin: annotationBox(annotation),
 				};
 				this.svg.setPointerCapture(event.pointerId);
 				this.redraw();

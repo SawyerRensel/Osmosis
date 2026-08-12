@@ -681,6 +681,65 @@ describe("OcclusionEditorModal annotations", () => {
 		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 	}
 
+	/**
+	 * Run `body` with a measuring chip that reports `px` wide.
+	 *
+	 * jsdom defines `offsetWidth` on the prototype itself, so the original
+	 * descriptor has to be put back rather than deleted — deleting it leaves
+	 * `offsetWidth` undefined for every later test in the file.
+	 */
+	function withChipWidth(px: number, body: () => void): void {
+		const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+		Object.defineProperty(HTMLElement.prototype, "offsetWidth", { value: px, configurable: true });
+		try {
+			body();
+		} finally {
+			if (original) Object.defineProperty(HTMLElement.prototype, "offsetWidth", original);
+			else Reflect.deleteProperty(HTMLElement.prototype, "offsetWidth");
+		}
+	}
+
+	it("narrows the label's box to the width its text needs", () => {
+		// A label is placed before it has any text, so its starting width can only
+		// be a guess; committing the text is the first moment the real width is
+		// knowable. Measured here and stored, so every study surface still paints
+		// from the box with nothing measured.
+		//
+		// The chip measures 90px against a 600px canvas, so the box is 0.15 —
+		// narrower than the 0.25 it was placed with.
+		withChipWidth(90, () => {
+			label(opened, [100, 20], "Deck");
+			click(opened.content, "Save");
+
+			expect(opened.saved[0]?.annotations).toEqual([
+				{ x: 0.25, y: 0.1, w: 0.15, h: 0.14, text: "Deck" },
+			]);
+		});
+	});
+
+	it("keeps the placed width when nothing can be measured", () => {
+		// jsdom lays nothing out, so this is also why every other test here still
+		// sees the default box — and it is the real guard: a modal measured before
+		// its canvas has a size must not collapse a label to nothing.
+		label(opened, [100, 20], "Deck");
+		click(opened.content, "Save");
+
+		expect(opened.saved[0]?.annotations).toEqual([
+			{ x: 0.25, y: 0.1, w: 0.25, h: 0.14, text: "Deck" },
+		]);
+	});
+
+	it("pulls a long label back onto the picture rather than growing off it", () => {
+		// Placed near the right edge and then fitted to a width that no longer
+		// fits there: the whole box is what has to stay on the image.
+		withChipWidth(300, () => {
+			label(opened, [360, 20], "a long label");
+			click(opened.content, "Save");
+
+			expect(opened.saved[0]?.annotations?.[0]).toMatchObject({ x: 0.5, w: 0.5 });
+		});
+	});
+
 	it("places the label on release, not on press", () => {
 		// Created on press, the input is built before the browser's own mousedown
 		// focus handling runs — which then moves focus straight back off it, the
@@ -707,7 +766,7 @@ describe("OcclusionEditorModal annotations", () => {
 	it("cancels the edit rather than closing while a label is being typed", () => {
 		// Escape reaches the modal's own close handler, not ours — it shares this
 		// scope and is evaluated first — so the refusal has to live in `close`.
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck" }] });
 		pressLabel(opened2, [100, 20]);
 		pressLabel(opened2, [100, 20]);
 		editing(opened2)!.value = "half typed";
@@ -736,14 +795,14 @@ describe("OcclusionEditorModal annotations", () => {
 		input.value = "Deck";
 		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 		click(opened.content, "Save");
-		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, w: 0.25, h: 0.14, text: "Deck" }]);
 	});
 
 	it("places a label and takes the typed text", () => {
 		label(opened, [100, 20], "Deck");
 		click(opened.content, "Save");
 
-		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck" }]);
+		expect(opened.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, w: 0.25, h: 0.14, text: "Deck" }]);
 		expect(opened.saved[0]?.shapes).toHaveLength(3);
 	});
 
@@ -756,27 +815,27 @@ describe("OcclusionEditorModal annotations", () => {
 	});
 
 	it("restores the labels it was opened on", () => {
-		const opened2 = open({ ...set, annotations: [{ x: 0.4, y: 0.2, text: "Pier" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.4, y: 0.2, w: 0.25, h: 0.08, text: "Pier" }] });
 
 		expect(opened2.content.querySelector(".osmosis-occlusion-annotation")?.textContent).toBe("Pier");
 	});
 
 	it("drags a label to a new position", () => {
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck" }] });
 		const el = opened2.content.querySelector(".osmosis-occlusion-annotation")!;
 		el.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
 		opened2.svg.dispatchEvent(new MouseEvent("pointermove", { clientX: 140, clientY: 40, button: 0 }));
 		opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 140, clientY: 40, button: 0 }));
 		click(opened2.content, "Save");
 
-		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.35, y: 0.2, text: "Deck" }]);
+		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.35, y: 0.2, w: 0.25, h: 0.08, text: "Deck" }]);
 	});
 
 	it("reopens a label for typing on double-click", () => {
 		// Detected from the presses, like every other double click here: this
 		// layer is rebuilt on each pointer move, so a label rarely survives long
 		// enough to receive a native `dblclick` of its own.
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck" }] });
 		pressLabel(opened2, [100, 20]);
 		pressLabel(opened2, [100, 20]);
 		const input = editing(opened2)!;
@@ -784,11 +843,11 @@ describe("OcclusionEditorModal annotations", () => {
 		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 		click(opened2.content, "Save");
 
-		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, text: "Deck slab" }]);
+		expect(opened2.saved[0]?.annotations).toEqual([{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck slab" }]);
 	});
 
 	it("deletes the selected label without touching the masks", () => {
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, text: "Deck" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck" }] });
 		opened2.content.querySelector(".osmosis-occlusion-annotation")!
 			.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 20, button: 0, bubbles: true }));
 		click(opened2.content, "Delete shape");
@@ -1095,26 +1154,95 @@ describe("OcclusionEditorModal rotation", () => {
 		return [at.x * IMAGE_BOX.width, at.y * IMAGE_BOX.height];
 	}
 
-	it("turns a label about its anchor, through its own grip", () => {
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.5, text: "Deck" }] });
-		// Select the label by pressing it — a press on a label selects, a second
-		// one opens it for typing.
-		opened2.content.querySelector(".osmosis-occlusion-annotation")!
-			.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
-		opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+	it("turns a label about the centre of its box, through its own grip", () => {
+		// The label's box is 100×40 screen pixels at (100, 100), so its centre is
+		// (150, 120) and its grip hangs 22px above the box's top-centre: (150, 78).
+		const opened2 = openLabel();
+		selectLabel(opened2);
 
-		// Its grip hangs 22px straight above the anchor at (100, 100).
 		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(1);
-		drag(opened2.svg, [100, 78], [200, 100]);
+		// Dragging the grip round to due east of the centre is a quarter turn.
+		drag(opened2.svg, [150, 78], [250, 120]);
 
 		click(opened2.content, "Save");
 		expect(opened2.saved[0]?.annotations?.[0]?.rotation).toBeCloseTo(90, 6);
-		// The anchor itself never moves — that is the point of turning about it.
-		expect(opened2.saved[0]?.annotations?.[0]).toMatchObject({ x: 0.25, y: 0.5 });
+		// Turning changes the angle and nothing else: the box is untouched.
+		expect(opened2.saved[0]?.annotations?.[0])
+			.toMatchObject({ x: 0.25, y: 0.5, w: 0.25, h: 0.2 });
 	});
 
+	it("gives the label a stem, so its grip reads as belonging to it", () => {
+		const opened2 = openLabel();
+		selectLabel(opened2);
+
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-rotate-stem")).toHaveLength(1);
+	});
+
+	it("puts eight resize handles on a selected label, as on any other shape", () => {
+		const opened2 = openLabel();
+		selectLabel(opened2);
+
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-handle")).toHaveLength(8);
+	});
+
+	it("resizes a label by dragging a handle", () => {
+		// The south-east handle sits at the box's bottom-right, (200, 140).
+		const opened2 = openLabel();
+		selectLabel(opened2);
+		drag(opened2.svg, [200, 140], [280, 160]);
+
+		click(opened2.content, "Save");
+		const label = opened2.saved[0]!.annotations![0]!;
+		expect(label.w).toBeCloseTo(0.45, 6);
+		expect(label.h).toBeCloseTo(0.3, 6);
+		// The corner the drag pivots on stays exactly where it was.
+		expect(label).toMatchObject({ x: 0.25, y: 0.5 });
+	});
+
+	it("keeps a label's box within the picture when it is dragged", () => {
+		// The whole box is clamped, not the anchor — otherwise a label's far end
+		// travels off the image while its corner stays put.
+		const opened2 = openLabel();
+		const label = opened2.content.querySelector(".osmosis-occlusion-annotation")!;
+		label.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+		opened2.svg.dispatchEvent(new MouseEvent("pointermove", { clientX: 400, clientY: 100, button: 0, bubbles: true }));
+		opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 400, clientY: 100, button: 0, bubbles: true }));
+
+		click(opened2.content, "Save");
+		expect(opened2.saved[0]?.annotations?.[0]?.x).toBeCloseTo(0.75, 6);
+	});
+
+	it("gives a newly placed label the default box", () => {
+		click(opened.content, "Text");
+		tap(opened.svg, [100, 20]);
+		const input = opened.content.querySelector<HTMLInputElement>(".osmosis-occlusion-annotation-input")!;
+		input.value = "Deck";
+		input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+		click(opened.content, "Save");
+		expect(opened.saved[0]?.annotations?.[0]).toEqual({ x: 0.25, y: 0.1, w: 0.25, h: 0.14, text: "Deck" });
+	});
+
+	/**
+	 * A modal holding one label whose box is 100×40 pixels at (100, 100).
+	 *
+	 * Taller than the default box on purpose: at the default 16px a label is
+	 * shorter than the 12px handle tolerance, so its corner and edge handles
+	 * overlap and a press cannot say which was meant.
+	 */
+	function openLabel(): Opened {
+		return open({ ...set, annotations: [{ x: 0.25, y: 0.5, w: 0.25, h: 0.2, text: "Deck" }] });
+	}
+
+	/** Press the label once, which selects it — a second press opens it for typing. */
+	function selectLabel(o: Opened): void {
+		o.content.querySelector(".osmosis-occlusion-annotation")!
+			.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+		o.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+	}
+
 	it("hides the label's grip while it is being typed into", () => {
-		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.5, text: "Deck" }] });
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.5, w: 0.25, h: 0.08, text: "Deck" }] });
 		const press = () => {
 			opened2.content.querySelector(".osmosis-occlusion-annotation")!
 				.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));

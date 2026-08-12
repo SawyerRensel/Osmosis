@@ -483,14 +483,24 @@ export function unrotatePoint(shape: OcclusionShape, point: Point, aspect: numbe
  * overwhelmingly common case renders exactly as it always did.
  */
 export function rotationTransform(shape: OcclusionShape, aspect: number): string | null {
-	const rotation = shapeRotation(shape);
+	return rotationTransformAbout(shapeCenter(shape), shapeRotation(shape), aspect);
+}
+
+/**
+ * The same transform about an arbitrary centre — what the editor needs for a
+ * label, whose box is not a shape's.
+ */
+export function rotationTransformAbout(
+	center: Point,
+	rotation: number,
+	aspect: number,
+): string | null {
 	if (rotation === 0) return null;
 
 	const radians = (rotation * Math.PI) / 180;
 	const cos = Math.cos(radians);
 	const sin = Math.sin(radians);
 	const a = safeAspect(aspect);
-	const center = shapeCenter(shape);
 
 	// Columns of S⁻¹RS, in SVG's (a, b, c, d) order — a and d down the diagonal,
 	// b below it, c above.
@@ -580,6 +590,45 @@ export function annotationWithRotation(
 	if (rotation === 0) delete next.rotation;
 	else next.rotation = rotation;
 	return next;
+}
+
+// ── Annotation boxes ──────────────────────────────────────────
+
+/**
+ * A label's box, so it can be moved, resized, and turned through exactly the
+ * arithmetic a shape uses.
+ *
+ * A label is a box like any other: `x`/`y` are its top-left corner, `w`/`h` its
+ * size, and it rotates about the box's **centre** — not about the anchor, which
+ * is what made the rotation grip appear off one corner with nothing tying it to
+ * the label it belonged to.
+ */
+export function annotationBox(annotation: OcclusionAnnotation): Box {
+	return { x: annotation.x, y: annotation.y, w: annotation.w, h: annotation.h };
+}
+
+/** The point a label turns about. */
+export function annotationCenter(annotation: OcclusionAnnotation): Point {
+	return boxCenter(annotationBox(annotation));
+}
+
+/** The same label re-fitted to a new box, keeping its text and angle. */
+export function annotationWithBox(annotation: OcclusionAnnotation, box: Box): OcclusionAnnotation {
+	return { ...annotation, x: box.x, y: box.y, w: box.w, h: box.h };
+}
+
+/**
+ * A point in a label's own unturned frame — the frame its box, its resize
+ * handles and its rotation grip all live in, exactly as `unrotatePoint` gives
+ * for a shape.
+ */
+export function unrotateAnnotationPoint(
+	annotation: OcclusionAnnotation,
+	point: Point,
+	aspect: number,
+): Point {
+	const rotation = annotation.rotation ?? 0;
+	return rotation === 0 ? point : rotatePoint(point, annotationCenter(annotation), -rotation, aspect);
 }
 
 // ── Polygons ──────────────────────────────────────────────────
@@ -802,16 +851,12 @@ export function duplicateShape(shape: OcclusionShape, offset = DUPLICATE_OFFSET)
 	return shapeWithBox(cloneShape(shape), moveBox(shapeBox(shape), offset, offset));
 }
 
-/** A copy of an annotation, nudged clear of the original. */
+/** A copy of an annotation, nudged clear of the original and kept in the image. */
 export function duplicateAnnotation(
 	annotation: OcclusionAnnotation,
 	offset = DUPLICATE_OFFSET,
 ): OcclusionAnnotation {
-	return {
-		...annotation,
-		x: clamp01(annotation.x + offset),
-		y: clamp01(annotation.y + offset),
-	};
+	return annotationWithBox(annotation, moveBox(annotationBox(annotation), offset, offset));
 }
 
 // ── Zoom ──────────────────────────────────────────────────────

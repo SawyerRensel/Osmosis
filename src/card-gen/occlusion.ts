@@ -29,6 +29,27 @@ import type { GeneratedCard } from "./types";
 /** Anki's default: paint every mask on the front, mark the one being asked. */
 export const DEFAULT_OCCLUSION_MODE: OcclusionMode = "hide-all-guess-one";
 
+/**
+ * The box a newly placed label takes, and the one a label written before labels
+ * had a size is read with.
+ *
+ * A fraction of the picture rather than a number of pixels, because that is
+ * what an annotation's size now means. The width is only ever a starting guess:
+ * the editor measures the text and narrows the box the moment it is committed,
+ * so this value survives only on a label written before labels had a size.
+ *
+ * The height is the one that matters, because it is what the glyphs are scaled
+ * from. It was a twelfth of the picture and that read as too small to work with
+ * on the diagram shapes this is actually used on: a label is sized against the
+ * image's *height*, and a wide, short diagram — which is most of them — has
+ * little height to take a fraction of. A seventh is about the size a label has
+ * to be before it is comfortable at the editor's fit-to-window zoom, where a
+ * label is placed. It stays a fraction, so it is still resizable and still
+ * renders the same everywhere.
+ */
+export const DEFAULT_ANNOTATION_W = 0.25;
+export const DEFAULT_ANNOTATION_H = 0.14;
+
 const OCCLUSION_MODES: readonly OcclusionMode[] = [
 	"hide-all-guess-one",
 	"hide-one-guess-one",
@@ -394,7 +415,17 @@ function parseAnnotation(raw: unknown): OcclusionAnnotation | null {
 	const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
 	if (text.trim() === "") return null;
 
-	const annotation: OcclusionAnnotation = { x, y, text };
+	// A label written before labels had a size gets the default box and is
+	// migrated the next time its set is written, as the schedule format was.
+	// There is no conversion to make: the old size was a fixed number of screen
+	// pixels, which says nothing about how much of the picture it covered.
+	const annotation: OcclusionAnnotation = {
+		x,
+		y,
+		w: toFiniteNumber(raw["w"]) ?? DEFAULT_ANNOTATION_W,
+		h: toFiniteNumber(raw["h"]) ?? DEFAULT_ANNOTATION_H,
+		text,
+	};
 	const rotation = parseRotation(raw["rotation"]);
 	if (rotation !== 0) annotation.rotation = rotation;
 	return annotation;
@@ -601,7 +632,12 @@ export function serializeOccludeBlock(label: string, set: OcclusionSet): string[
  * fails the parse of the *whole note's* frontmatter, not just this entry.
  */
 export function serializeAnnotation(annotation: OcclusionAnnotation): string[] {
-	const fields = [`x: ${num(annotation.x)}`, `y: ${num(annotation.y)}`];
+	const fields = [
+		`x: ${num(annotation.x)}`,
+		`y: ${num(annotation.y)}`,
+		`w: ${num(annotation.w)}`,
+		`h: ${num(annotation.h)}`,
+	];
 	if (annotation.rotation) fields.push(`rotation: ${num(annotation.rotation)}`);
 	// Last, so the one free-text field is where the eye lands rather than buried
 	// between two numbers.
@@ -650,7 +686,7 @@ export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unkno
 	};
 	if (set.annotations && set.annotations.length > 0) {
 		value["annotations"] = set.annotations.map((a) =>
-			withRotation({ x: num(a.x), y: num(a.y), text: a.text }, a.rotation),
+			withRotation({ x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h), text: a.text }, a.rotation),
 		);
 	}
 	// Obsidian's own YAML dumper quotes whatever needs quoting here, so the text

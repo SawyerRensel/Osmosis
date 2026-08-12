@@ -20,6 +20,15 @@ osmosis-schedule:
           y: 0.2
           rotation: 313
           text: along the brace
+    c1:
+      due: 2026-08-12T07:21:52
+      stability: 0.212
+      difficulty: 6.4133
+      lastReview: 2026-08-12T07:20:52
+      reps: 1
+      lapses: 0
+      state: learning
+      learningSteps: 0
 ---
 
 # Image occlusion — rotation fixture
@@ -52,8 +61,6 @@ exactly like a card that failed to generate.
 id: truss-members
 occlude-a:
   mode: hide-all-guess-one
-  header: "Name the covered member"
-  back-extra: "Diagonals take shear, posts take it vertically, chords take moment."
   shapes:
     - group: c1
       kind: rect
@@ -89,47 +96,22 @@ occlude-a:
   annotations:
     - x: 0.2
       y: 0.12
+      w: 0.25
+      h: 0.14
       rotation: 340
       text: "west bay"
-    - x: 0.8
-      y: 0.12
+    - x: 0.6
+      y: 0.04
+      w: 0.34
+      h: 0.24
       text: "east bay"
-c1:
-  due: 2026-08-12T02:33:12.405Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T02:32:12.405Z
-  learningSteps: 0
-c2:
-  due: 2026-08-12T02:33:15.939Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T02:32:15.939Z
-  learningSteps: 0
-c3:
-  due: 2026-08-12T02:33:18.484Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T02:32:18.484Z
-  learningSteps: 0
-c4:
-  due: 2026-08-12T02:33:23.823Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T02:32:23.823Z
-  learningSteps: 0
+    - x: 0.3513
+      y: 0.86
+      w: 0.0608
+      h: 0.14
+      text: "test"
+  header: "Name the covered member"
+  back-extra: "Diagonals take shear, posts take it vertically, chords take moment."
 
 The gantry truss, in elevation.
 ![[gantry-truss.svg]]{a}
@@ -141,10 +123,24 @@ ellipse over the third, and `c4` upright over the centre post. "west bay" reads
 at a slight tilt; "east bay" is level. Clicking rings all four rather than
 clearing them.
 
-Expected in **sequential study**: four cards. The label text stays legible at
-its own angle and does **not** scale with the picture.
+The two labels are deliberately different sizes. "west bay" carries no `w`/`h`
+at all — it is written in the format labels had before they were boxes, and must
+read at the **default** box, which should be comfortably legible rather than the
+squint it used to be. "east bay" carries an explicit box nearly twice that
+height, so its text is visibly **larger**. If the two render at the same size,
+the box is not reaching the font.
 
-Expected in a **mind map**: the same masks, painted in the node.
+Expected in **sequential study**: four cards. Both labels now **scale with the
+picture** — deliberately, reversing the earlier fixed-size behaviour — so
+compare them against the diagram, not against the surrounding UI text.
+
+Expected in a **mind map**: the same masks, painted in the node — and at the
+**same proportions** as everywhere else. A node lays its diagram out small and
+the map then magnifies the whole node, so anything sized in fixed pixels is
+computed against a thumbnail and blown up. Compare a node against reading view:
+mask outlines must be equally fine relative to the picture, revealed rings
+equally thin, and label corners equally square. Heavy borders or pill-shaped
+labels mean a fixed pixel size has crept back in.
 
 ## Editing it back
 
@@ -158,11 +154,33 @@ Right-click the diagram → **Create image occlusion**. Then, in the editor:
 - Drag a turned shape's corner handle: it resizes, and the opposite corner
   **stays put**. If the whole shape slides sideways as you drag, the anchoring
   has been lost.
+- Zoom the canvas in and out across its whole range. Mask outlines must stay a
+  **constant hairline on screen** at every zoom, matching the resize handles,
+  which have always behaved that way. An outline that fattens as you magnify
+  hides the edge you zoomed in to place. Label text does the opposite — it is
+  part of the picture, so it grows and shrinks with it.
 - **Ctrl+Z** undoes a rotation and nothing else.
-- Select a label and it grows a grip of its own, hanging off its anchor. Turning
-  it leaves the anchor exactly where it was.
+- Place a new label with the Text tool and type a short word. Its box must
+  **hug the word**, not stretch a quarter of the way across the diagram. Type a
+  long phrase into another: that box comes out correspondingly wider. The fit
+  happens when the text commits, so it is the typed text that decides the width.
+- Widen a fitted label by dragging a side handle: the width you set **stays**.
+  Retype its text and it fits again — retyping is the request for a new fit.
+- Select a label and it grows the **same grips a shape gets** — a rotation grip
+  on a stem and eight resize handles, drawn around the label's own box. Drag a
+  corner: the label resizes and its **text grows with the box**. Drag the grip:
+  it turns about its **centre**, and the handles turn with it.
+- Grab a turned label's handles **where they are drawn**. Resizing one holds the
+  opposite corner still, exactly as a shape does.
+- Drag a label to the far right edge: the **whole box** stops at the border, not
+  just its top-left corner. A label must never hang off the picture.
+- Double-click a label to retype it. While the field is open the grips are
+  **gone**, and Escape cancels the edit rather than closing the modal.
 - Turn a shape back to square and **save**: its `rotation:` line must disappear
   from the fence entirely, not become `rotation: 0`.
+- Save, then reopen the fence in source mode: every annotation now carries `w:`
+  and `h:`. "west bay" has been migrated to the default box on write, the same
+  way the schedule format migrates.
 
 ## Line card — one turned mask and a turned label
 
@@ -174,3 +192,15 @@ sits in this note's frontmatter under `os-truss01`.
 Expected in **peek** and **contextual study**: the fourth diagonal covered by a
 rectangle lying along it, with "along the brace" tilted to match. Rating once
 moves the card.
+
+**Revealing must ring the mask, not clear it.** Turn on study mode, reveal this
+line, and rate it: the diagram stays where it is, the covered diagonal comes
+back as an amber **outline**, and the label is still there. What must *not*
+happen is the whole picture reverting to a bare diagram with no masks and no
+annotations — the answer would then arrive with nothing left to say which region
+had been the question. The line must not jump in height as it flips, either.
+
+This label also carries no `w`/`h`, so it exercises the migration through the
+**other** carrier: rate the card once, and the frontmatter entry above should
+come back with `w:` and `h:` on the annotation, written by Obsidian's own YAML
+dumper rather than by the fence writer.

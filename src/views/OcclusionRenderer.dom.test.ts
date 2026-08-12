@@ -32,6 +32,15 @@ beforeAll(() => {
 		return this.appendChild(buildDiv(o));
 	};
 
+	// A label's text sits in a child span, so the label itself can centre it
+	// while the child clips it.
+	el["createSpan"] = function (this: Element, o?: { cls?: string | string[]; text?: string }) {
+		const span = document.createElement("span");
+		for (const token of o?.cls === undefined ? [] : [o.cls].flat()) span.classList.add(token);
+		if (o?.text !== undefined) span.textContent = o.text;
+		return this.appendChild(span);
+	};
+
 	el["hasClass"] = function (this: Element, cls: string) {
 		return this.classList.contains(cls);
 	};
@@ -160,8 +169,8 @@ describe("renderOcclusion annotations", () => {
 	const annotated: CardOcclusion = {
 		...occlusion,
 		annotations: [
-			{ x: 0.25, y: 0.1, text: "Deck" },
-			{ x: 0.5, y: 0.9, text: "Pier" },
+			{ x: 0.25, y: 0.1, w: 0.25, h: 0.08, text: "Deck" },
+			{ x: 0.5, y: 0.9, w: 0.25, h: 0.08, text: "Pier" },
 		],
 	};
 
@@ -171,6 +180,31 @@ describe("renderOcclusion annotations", () => {
 		expect(labels.map((l) => l.textContent)).toEqual(["Deck", "Pier"]);
 		expect((labels[0] as HTMLElement).style.getPropertyValue("--osmosis-annotation-x")).toBe("25%");
 		expect((labels[0] as HTMLElement).style.getPropertyValue("--osmosis-annotation-y")).toBe("10%");
+	});
+
+	it("sizes the label from its box, as a fraction of the picture", () => {
+		// Percentages of the annotation layer, which is pinned to the wrapper and
+		// so is the image's own box — no measurement anywhere.
+		const label = render("front", annotated).querySelector<HTMLElement>(".osmosis-occlusion-annotation");
+
+		expect(label?.style.getPropertyValue("--osmosis-annotation-w")).toBe("25%");
+		expect(label?.style.getPropertyValue("--osmosis-annotation-h")).toBe("8%");
+	});
+
+	it("hands the height over a second time in container units, for the font size", () => {
+		// `font-size` resolves a percentage against the parent's font size, not
+		// against any box, so the one thing percentages cannot express goes over
+		// as `cqh` — which is why only the font degrades without container
+		// queries, and the label still lands and turns correctly.
+		const label = render("front", annotated).querySelector<HTMLElement>(".osmosis-occlusion-annotation");
+
+		expect(label?.style.getPropertyValue("--osmosis-annotation-size")).toBe("8cqh");
+	});
+
+	it("puts the text in its own child, so the label can centre what the child clips", () => {
+		const label = render("front", annotated).querySelector(".osmosis-occlusion-annotation");
+
+		expect(label?.querySelector(".osmosis-occlusion-annotation-text")?.textContent).toBe("Deck");
 	});
 
 	it("keeps labels out of the mask overlay so they are not stretched with it", () => {
@@ -441,7 +475,7 @@ describe("rotation", () => {
 		// overlay's stretch, so screen space is the space it is already in.
 		const container = render("front", {
 			...tilted,
-			annotations: [{ x: 0.5, y: 0.12, rotation: 45, text: "Deck" }],
+			annotations: [{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, rotation: 45, text: "Deck" }],
 		});
 		const label = container.querySelector<HTMLElement>(".osmosis-occlusion-annotation");
 
@@ -451,7 +485,7 @@ describe("rotation", () => {
 	it("leaves an unturned label at zero rather than omitting the property", () => {
 		const container = render("front", {
 			...tilted,
-			annotations: [{ x: 0.5, y: 0.12, text: "Deck" }],
+			annotations: [{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, text: "Deck" }],
 		});
 		const label = container.querySelector<HTMLElement>(".osmosis-occlusion-annotation");
 

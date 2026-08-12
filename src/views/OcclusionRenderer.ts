@@ -228,29 +228,47 @@ export function renderAnnotations(
 
 	const layer = wrapper.createDiv({ cls: "osmosis-occlusion-annotations" });
 	for (const annotation of annotations) {
-		const label = layer.createDiv({ cls: "osmosis-occlusion-annotation", text: annotation.text });
-		positionAnnotation(label, annotation.x, annotation.y, annotation.rotation);
+		const label = layer.createDiv({ cls: "osmosis-occlusion-annotation" });
+		// The text sits in a child so the label itself can centre it vertically
+		// while the child does the horizontal clipping — a flex parent cannot
+		// ellipsis its own anonymous text.
+		label.createSpan({ cls: "osmosis-occlusion-annotation-text", text: annotation.text });
+		placeAnnotation(label, annotation);
 	}
 }
 
 /**
- * Place an annotation element at its normalised coordinates, at its angle.
+ * Place and size an annotation element from its box.
  *
  * Exported because the editor draws its own interactive labels and must place
- * them identically — a label dragged in the editor has to land on the same spot
- * when the card is studied, which is the same contract the mask overlay keeps.
+ * them identically — a label dragged or resized in the editor has to land the
+ * same way when the card is studied, which is the contract the mask overlay
+ * keeps too.
  *
- * The rotation is a plain CSS `rotate()`, with no aspect compensation of the
- * kind a mask needs: a label is positioned HTML precisely so that it escapes
- * the overlay's stretch, so screen space is the space it is already in. Its
- * origin is the anchor rather than the label's middle — a label is placed to
- * point at a feature, and the anchor is the end that has to stay pinned to it.
+ * The box goes over as **percentages of the annotation layer**, which is pinned
+ * to the wrapper and so is the image's own box — the same trick the whole
+ * feature runs on, and it needs no container query to work.
+ *
+ * The *size* is the one thing percentages cannot express: `font-size` resolves
+ * a percentage against the parent's font size, not against any box. So the
+ * height goes over a second time in `cqh`, which the layer answers as a size
+ * container. That is what makes a label's glyphs a fraction of the picture with
+ * nothing measured, and it is why only the font degrades where container
+ * queries are missing.
+ *
+ * The rotation is a plain CSS `rotate()` about the box's centre, with none of
+ * the aspect compensation a mask needs: a label is positioned HTML precisely so
+ * that it escapes the overlay's stretch, so screen space is the space it is
+ * already in.
  */
-export function positionAnnotation(el: HTMLElement, x: number, y: number, rotation = 0): void {
+export function placeAnnotation(el: HTMLElement, annotation: OcclusionAnnotation): void {
 	el.setCssProps({
-		"--osmosis-annotation-x": `${String(x * 100)}%`,
-		"--osmosis-annotation-y": `${String(y * 100)}%`,
-		"--osmosis-annotation-rotation": `${String(rotation)}deg`,
+		"--osmosis-annotation-x": `${String(annotation.x * 100)}%`,
+		"--osmosis-annotation-y": `${String(annotation.y * 100)}%`,
+		"--osmosis-annotation-w": `${String(annotation.w * 100)}%`,
+		"--osmosis-annotation-h": `${String(annotation.h * 100)}%`,
+		"--osmosis-annotation-size": `${String(annotation.h * 100)}cqh`,
+		"--osmosis-annotation-rotation": `${String(annotation.rotation ?? 0)}deg`,
 	});
 }
 

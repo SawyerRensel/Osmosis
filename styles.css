@@ -1360,20 +1360,32 @@ hr.osmosis-map-style-divider {
 	object-fit: fill;
 }
 
+/* Also a size container, for the same reason the annotation layer is one: it is
+   pinned to the wrapper with `inset: 0`, so its size is the image's own box and
+   never comes from its contents. That is what lets a stroke be a fraction of
+   the picture without measuring anything. */
 .osmosis-occlusion-masks {
 	position: absolute;
 	inset: 0;
 	width: 100%;
 	height: 100%;
+	container-type: size;
 	pointer-events: none;
 }
 
 /* Strokes are set non-scaling because the viewBox is stretched to the image's
-   aspect ratio — a plain stroke would come out thicker on one axis. */
+   aspect ratio — a plain stroke would come out thicker on one axis.
+   Non-scaling, though, means a *fixed* thickness at the picture's layout size,
+   and a mind-map node lays its diagram out small and then magnifies the whole
+   node with the map's zoom transform. A fixed 1.5px outline computed against a
+   thumbnail and blown up reads as a heavy border. So the width is a fraction of
+   the picture (cqmin — the shorter axis, so a tall diagram is treated like a
+   wide one), which non-scaling-stroke then keeps uniform across both axes. On a
+   typical 800×200 diagram this resolves to the 1.5px it always was. */
 .osmosis-occlusion-mask {
 	fill: var(--osmosis-occlusion-mask);
 	stroke: rgba(0, 0, 0, 0.55);
-	stroke-width: 1.5;
+	stroke-width: 0.75cqmin;
 	vector-effect: non-scaling-stroke;
 }
 
@@ -1386,43 +1398,123 @@ hr.osmosis-map-style-divider {
 .osmosis-occlusion-mask.is-revealed {
 	fill: none;
 	stroke: var(--osmosis-occlusion-target);
+	stroke-width: 1.5cqmin;
+}
+
+/* Where container queries are missing, fall back to the fixed thicknesses these
+   strokes had before they were proportional — heavy in a small node, but a
+   stroke-width the browser cannot resolve computes to 0 and the ring vanishes
+   entirely, which is the one outcome that loses information. */
+@supports not (container-type: size) {
+	.osmosis-occlusion-mask {
+		stroke-width: 1.5;
+	}
+
+	.osmosis-occlusion-mask.is-revealed {
+		stroke-width: 3;
+	}
+}
+
+/* The editor keeps the fixed thicknesses, and this is not an inconsistency.
+   Everywhere else the picture is *shown*, so an outline is part of it and has to
+   be a fraction of it. In the editor the picture is *worked on*: zoom is a
+   magnifier for placing an edge precisely, and chrome that thickens as you
+   magnify hides the very edge you zoomed in to find. A proportional stroke came
+   out four times fatter at 4× — the mask stopped being a mask and became a blob
+   with a border. Constant on screen is also what every grip here already does:
+   HANDLE_GRAB_PX and ROTATE_HANDLE_PX are pixel sizes converted into the
+   canvas's units per zoom, so the outlines now match the handles drawn on them. */
+.osmosis-occlusion-canvas .osmosis-occlusion-mask {
+	stroke-width: 1.5;
+}
+
+.osmosis-occlusion-canvas .osmosis-occlusion-mask.is-revealed {
 	stroke-width: 3;
 }
 
 /* Text annotations are positioned HTML rather than SVG <text>. The mask overlay
    is deliberately stretched by preserveAspectRatio="none" — that is what makes
    normalised coordinates land without measuring anything — and glyphs drawn in
-   it would be stretched with it. Percentages of the wrapper are the same 0–1
-   coordinates, so the label lands in the same place and renders at its true
-   shape. Size is a fixed UI size, not a fraction of the image: a label is chrome
-   on the picture, and one scaled to the image is unreadable wherever the card
-   renders small. */
+   it would be stretched with it. This layer sits outside that overlay, so its
+   labels render at their true shape.
+
+   The layer is also a *size container*, which is what lets a label be sized as a
+   fraction of the picture with nothing measured: cqw/cqh resolve against this
+   element, and this element is pinned to the wrapper, which is the image's own
+   box. Putting `container-type: size` here is safe precisely because the layer
+   is absolutely positioned — its size comes from `inset: 0`, never from its
+   content, so the size containment it brings costs nothing. It could NOT go on
+   `.osmosis-occlusion` itself, which has to shrink to fit the image or every
+   mask lands wrong. */
 .osmosis-occlusion-annotations {
 	position: absolute;
 	inset: 0;
+	container-type: size;
 	pointer-events: none;
-	line-height: var(--line-height-tight);
 }
 
-/* Rotated about the anchor, not the label's middle: a label points at a feature,
-   so the corner the user placed is the end that must stay pinned while the text
-   swings round it. No aspect compensation, unlike a mask — this element sits
-   outside the stretched overlay, so a CSS rotate() is already in screen space. */
+/* Rotated about the box's centre, and sized from the box's height, so a label
+   keeps its size on the diagram at any zoom and on any surface. No aspect
+   compensation, unlike a mask — a CSS rotate() here is already in screen space.
+
+   The font is 70% of the box height: with 0.1em of padding above and below and
+   a 1.2 line height that fills the box almost exactly, so the resize handles
+   drawn on the stored box hug the chip the user can see. */
 .osmosis-occlusion-annotation {
 	position: absolute;
 	left: var(--osmosis-annotation-x, 0%);
 	top: var(--osmosis-annotation-y, 0%);
+	width: var(--osmosis-annotation-w, 25%);
+	height: var(--osmosis-annotation-h, 8%);
 	transform: rotate(var(--osmosis-annotation-rotation, 0deg));
-	transform-origin: 0 0;
-	max-width: 60%;
-	padding: 1px 4px;
-	border-radius: var(--radius-s);
+	transform-origin: 50% 50%;
+	display: flex;
+	align-items: center;
+	padding: 0 0.3em;
+	/* In `em`, so the corner is a fraction of the label's own text like its
+	   padding is. A fixed `--radius-s` is computed against the picture's layout
+	   size, so on a mind-map thumbnail — magnified afterwards by the map's zoom
+	   — a 4px corner rounds a small chip into a pill. */
+	border-radius: 0.35em;
 	background-color: var(--background-primary);
 	color: var(--text-normal);
-	font-size: var(--font-ui-small);
+	font-size: calc(var(--osmosis-annotation-size, 8cqh) * 0.7);
+	line-height: 1.2;
+	overflow: hidden;
+}
+
+/* The editor's off-screen measuring chip: a label with nothing constraining its
+   width, so `offsetWidth` reports what the text and padding actually need. It is
+   added and removed within one task and never paints, but is hidden regardless
+   so a stray one could not show. */
+.osmosis-occlusion-annotation-probe {
+	visibility: hidden;
+	width: max-content;
+	max-width: none;
+}
+
+/* The text sits in its own child: a flex parent cannot ellipsis the anonymous
+   item its own text would become. */
+.osmosis-occlusion-annotation-text {
+	width: 100%;
+	min-width: 0;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+/* Only the font size needs container units — position and box are percentages of
+   the layer, which work everywhere. So where container queries are unavailable
+   the label still lands and turns correctly; it just falls back to the fixed UI
+   size labels had before they were resizable, rather than collapsing to an empty
+   chip. `isDesktopOnly` is false, so an old mobile webview has to degrade to
+   something readable. */
+@supports not (container-type: size) {
+	.osmosis-occlusion-annotation {
+		height: auto;
+		padding: 1px 4px;
+		font-size: var(--font-ui-small);
+	}
 }
 
 .osmosis-occlusion-prose {

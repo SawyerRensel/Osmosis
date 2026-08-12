@@ -261,8 +261,8 @@ describe("annotations", () => {
 		mode: "hide-all-guess-one",
 		shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
 		annotations: [
-			{ x: 0.5, y: 0.12, text: "Deck" },
-			{ x: 0.2, y: 0.9, text: "Abutment" },
+			{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, text: "Deck" },
+			{ x: 0.2, y: 0.9, w: 0.25, h: 0.08, text: "Abutment" },
 		],
 	};
 
@@ -288,9 +288,13 @@ describe("annotations", () => {
 			"  annotations:",
 			"    - x: 0.5",
 			"      y: 0.12",
+			"      w: 0.25",
+			"      h: 0.08",
 			'      text: "Deck"',
 			"    - x: 0.2",
 			"      y: 0.9",
+			"      w: 0.25",
+			"      h: 0.08",
 			'      text: "Abutment"',
 		]);
 	});
@@ -301,7 +305,7 @@ describe("annotations", () => {
 		const set: OcclusionSet = {
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
-			annotations: [{ x: 0.1, y: 0.2, text: "Span: main # 2" }],
+			annotations: [{ x: 0.1, y: 0.2, w: 0.25, h: 0.08, text: "Span: main # 2" }],
 		};
 		const lines = serializeOccludeBlock("", set);
 
@@ -313,7 +317,7 @@ describe("annotations", () => {
 		const set: OcclusionSet = {
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
-			annotations: [{ x: 0.1, y: 0.2, text: 'the "web" plate \\ flange' }],
+			annotations: [{ x: 0.1, y: 0.2, w: 0.25, h: 0.08, text: 'the "web" plate \\ flange' }],
 		};
 
 		expect(parseOccludeBlock(serializeOccludeBlock("", set), 0)!.set.annotations)
@@ -336,7 +340,7 @@ describe("annotations", () => {
 		expect(parseOcclusionSet({
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
-			annotations: [{ x: 0.1, y: 0.2, text: "  " }, { x: 0.3, y: 0.4 }],
+			annotations: [{ x: 0.1, y: 0.2, w: 0.25, h: 0.08, text: "  " }, { x: 0.3, y: 0.4 }],
 		})?.annotations).toBeUndefined();
 	});
 
@@ -344,8 +348,8 @@ describe("annotations", () => {
 		expect(parseOcclusionSet({
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1 }],
-			annotations: [{ x: 0.1, y: 0.2, text: 12 }],
-		})?.annotations).toEqual([{ x: 0.1, y: 0.2, text: "12" }]);
+			annotations: [{ x: 0.1, y: 0.2, w: 0.25, h: 0.08, text: 12 }],
+		})?.annotations).toEqual([{ x: 0.1, y: 0.2, w: 0.25, h: 0.08, text: "12" }]);
 	});
 
 	it("still reads a set written before annotations existed", () => {
@@ -1161,7 +1165,7 @@ describe("rotation", () => {
 			{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05, rotation: 90 },
 			{ group: "c3", kind: "poly", points: [[0.2, 0.18], [0.42, 0.18], [0.31, 0.34]], rotation: 200 },
 		],
-		annotations: [{ x: 0.5, y: 0.12, rotation: 315, text: "Deck" }],
+		annotations: [{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, rotation: 315, text: "Deck" }],
 	};
 
 	it("survives fence serialize → parse unchanged", () => {
@@ -1194,11 +1198,13 @@ describe("rotation", () => {
 		expect(serializeOccludeBlock("", {
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
-			annotations: [{ x: 0.5, y: 0.12, rotation: 45, text: "Deck" }],
-		}).slice(-5)).toEqual([
+			annotations: [{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, rotation: 45, text: "Deck" }],
+		}).slice(-7)).toEqual([
 			"  annotations:",
 			"    - x: 0.5",
 			"      y: 0.12",
+			"      w: 0.25",
+			"      h: 0.08",
 			"      rotation: 45",
 			'      text: "Deck"',
 		]);
@@ -1210,7 +1216,7 @@ describe("rotation", () => {
 		const square: OcclusionSet = {
 			mode: "hide-all-guess-one",
 			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
-			annotations: [{ x: 0.5, y: 0.12, text: "Deck" }],
+			annotations: [{ x: 0.5, y: 0.12, w: 0.25, h: 0.08, text: "Deck" }],
 		};
 
 		expect(serializeOccludeBlock("a", square).join("\n")).not.toContain("rotation");

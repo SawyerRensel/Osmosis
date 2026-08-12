@@ -50,6 +50,12 @@ function installDomHelpers(): void {
 		return this.appendChild(node);
 	};
 
+	el["createSpan"] = function (this: Element, info?: ElementInfo | string) {
+		const node = document.createElement("span");
+		applyInfo(node, info);
+		return this.appendChild(node);
+	};
+
 	el["createSvg"] = function (this: Element, tag: string, info?: ElementInfo | string) {
 		const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
 		applyInfo(node, info);
