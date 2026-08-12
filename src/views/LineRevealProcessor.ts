@@ -6,6 +6,8 @@ import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
 import type { CardOcclusion } from "../database/types";
 import { allLineCardBlockIds, cardIdsForLineKey, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
+import type { OcclusionSide } from "../study/occlusion-masks";
 import { overlayMasks, renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
@@ -57,6 +59,14 @@ interface NoteRevealState {
 	 * defensible anchor.
 	 */
 	pendingRatingAt: number;
+	/**
+	 * The shape groups each occluded line asks this session, fixed when study
+	 * starts so the sequence cannot change under the user as schedules move.
+	 * A line with no masks has no entry — it is one question, as it always was.
+	 */
+	studySteps: Map<string, OcclusionStep[]>;
+	/** How far through `studySteps` each occluded line has been answered. */
+	stepAt: Map<string, number>;
 	/** Rendered elements by block ID — refreshed on every (re-)render. */
 	lines: Map<string, TrackedLine>;
 }
@@ -329,7 +339,10 @@ export class LineRevealProcessor {
 				const img = line.placeholder.querySelector("img");
 				// Repaint in place: rebuilding the <img> would re-request the file
 				// and flash the diagram away mid-answer.
-				if (img) overlayMasks(img, line.occlusion, hidden ? "all-hidden" : "all-revealed");
+				if (img) {
+					const { occlusion, side } = this.maskingFor(state, blockId, line.occlusion, hidden);
+					overlayMasks(img, occlusion, side);
+				}
 			}
 			// During study, only the next line is clickable; later ones are locked
 			const locked = state.mode === "study" && hidden && blockId !== next;
@@ -345,6 +358,45 @@ export class LineRevealProcessor {
 				bubble.remove();
 			}
 		}
+	}
+
+	/**
+	 * How an occluded line's diagram should be painted right now: which masks, and
+	 * which side of the question.
+	 *
+	 * **Peek and study part company here.** Peek is a reader looking at a picture:
+	 * every group is a blank at once and none is singled out, so it keeps the
+	 * `all-hidden` / `all-revealed` pair. Study is a card player — a target, a
+	 * rating, a completion count — so it asks the line's groups one at a time,
+	 * exactly as sequential and spatial do, and the mode decides what happens to
+	 * the group's siblings.
+	 *
+	 * A study session with no steps for this line (an ordinary occluded line whose
+	 * groups all resolved to nothing, say) falls back to the peek pair rather than
+	 * showing an unmasked diagram.
+	 */
+	private maskingFor(
+		state: NoteRevealState,
+		blockId: string,
+		occlusion: CardOcclusion,
+		hidden: boolean,
+	): { occlusion: CardOcclusion; side: OcclusionSide } {
+		const step = this.currentStep(state, blockId);
+		if (step === null) {
+			return { occlusion, side: hidden ? "all-hidden" : "all-revealed" };
+		}
+		return {
+			occlusion: { ...occlusion, target: step.group },
+			side: hidden ? "front" : "back",
+		};
+	}
+
+	/** The shape group a studied line is currently being asked about, if any. */
+	private currentStep(state: NoteRevealState, blockId: string): OcclusionStep | null {
+		if (state.mode !== "study") return null;
+		const steps = state.studySteps.get(blockId);
+		if (steps === undefined) return null;
+		return steps[state.stepAt.get(blockId) ?? 0] ?? null;
 	}
 
 	/** The block IDs currently subject to hiding, or null when mode is off. */
@@ -412,13 +464,18 @@ export class LineRevealProcessor {
 		const state = this.stateFor(notePath);
 		if (state.pendingRating !== blockId) return;
 
-		// One reveal, one rating — applied to every card the line carries. An
-		// occluded line fans out into a card per shape group, and the line key is
-		// not any of their IDs, so rating it as a single card recorded nothing.
-		const cardIds = cardIdsForLineKey(
-			this.plugin.cardStore.getCardsByNote(notePath),
-			lineCardId(notePath, blockId),
-		);
+		// One reveal, one rating. For an ordinary line that reaches every card the
+		// line carries — the line key is not any of their IDs, so rating it as a
+		// single card recorded nothing. An **occluded** line in study is stepping
+		// through its groups, and each group is its own card with its own
+		// schedule, so the rating reaches only the one just answered.
+		const step = this.currentStep(state, blockId);
+		const cardIds = step === null
+			? cardIdsForLineKey(
+				this.plugin.cardStore.getCardsByNote(notePath),
+				lineCardId(notePath, blockId),
+			)
+			: step.cardId === null ? [] : [step.cardId];
 		if (cardIds.length > 0) {
 			this.sessionManager ??= this.plugin.createSessionManager("contextual");
 			const elapsedMs = Date.now() - state.pendingRatingAt;
@@ -428,14 +485,30 @@ export class LineRevealProcessor {
 			this.plugin.refreshDashboard();
 		}
 
-		state.rated.add(blockId);
 		state.pendingRating = null;
+
+		// More groups on this line means the line is not finished: it goes back to
+		// hidden with the next group targeted, rather than being handed to the
+		// reveal order's next line.
+		const steps = state.studySteps.get(blockId);
+		const next = (state.stepAt.get(blockId) ?? 0) + 1;
+		if (steps !== undefined && next < steps.length) {
+			state.stepAt.set(blockId, next);
+			state.revealed.delete(blockId);
+			this.applyAll(notePath);
+			this.syncBanners();
+			return;
+		}
+		if (steps !== undefined) state.stepAt.set(blockId, steps.length);
+
+		state.rated.add(blockId);
 
 		const targets = state.studyTargets;
 		if (targets && targets.size > 0 && [...targets].every((id) => state.rated.has(id))) {
 			this.endStudy(notePath, state);
 			new Notice(`Contextual study complete — ${String(targets.size)} lines rated.`);
 			this.updateHeaderActions();
+			this.plugin.contextualStudy.refresh(notePath);
 		}
 
 		this.applyAll(notePath);
@@ -456,6 +529,7 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
+		this.plugin.contextualStudy.refresh(notePath);
 	}
 
 	private toggleStudy(notePath: string): void {
@@ -475,11 +549,43 @@ export class LineRevealProcessor {
 			state.revealed.clear();
 			state.rated.clear();
 			state.pendingRating = null;
+			this.planOcclusionSteps(notePath, state, targets);
 		}
 
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
+		this.plugin.contextualStudy.refresh(notePath);
+	}
+
+	/**
+	 * Work out, once at session start, which shape groups each occluded target
+	 * line will be asked about.
+	 *
+	 * Fixed up front rather than recomputed per reveal because rating the first
+	 * group moves its due date — recomputing would drop it from the list mid-flight
+	 * and renumber everything after it. Only the groups the scheduler would ask
+	 * now are included, so a line with one due group out of three is one question.
+	 */
+	private planOcclusionSteps(
+		notePath: string,
+		state: NoteRevealState,
+		targets: ReadonlySet<string>,
+	): void {
+		state.studySteps.clear();
+		state.stepAt.clear();
+
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const now = Date.now();
+		for (const blockId of targets) {
+			const occlusion = this.lineOcclusion(notePath, blockId);
+			if (!occlusion) continue;
+			const lineCards = cards.filter((card) => card.blockId === blockId);
+			const steps = occlusionSteps([occlusion], lineCards, now);
+			// No due groups leaves the line as the single question it has always
+			// been, rather than a target that can never be answered.
+			if (steps.length > 0) state.studySteps.set(blockId, steps);
+		}
 	}
 
 	/** Leave study mode: drop session state and flush pending schedule writes. */
@@ -488,6 +594,8 @@ export class LineRevealProcessor {
 		state.studyTargets = null;
 		state.pendingRating = null;
 		state.revealed.clear();
+		state.studySteps.clear();
+		state.stepAt.clear();
 		void this.plugin.scheduleStore.flush();
 		void this.plugin.reviewLog.flush();
 	}
@@ -599,16 +707,34 @@ export class LineRevealProcessor {
 	private renderBanner(banner: HTMLElement, notePath: string): void {
 		banner.empty();
 		const state = this.stateFor(notePath);
-		const total = state.studyTargets?.size ?? 0;
+		const { done, total } = this.studyProgress(state);
 
 		banner.createSpan({
 			cls: "osmosis-reveal-progress",
-			text: `${String(state.rated.size)}/${String(total)} rated`,
+			text: `${String(done)}/${String(total)} rated`,
 		});
 		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
 		stopBtn.addEventListener("click", () => {
 			this.toggleStudy(notePath);
 		});
+	}
+
+	/**
+	 * The pill's count, in **questions rather than lines**.
+	 *
+	 * An occluded line asks one question per shape group, so counting lines would
+	 * report "0/1" through two of the three answers a three-group diagram takes.
+	 * The mind map's banner counts cards for the same reason.
+	 */
+	private studyProgress(state: NoteRevealState): { done: number; total: number } {
+		let done = 0;
+		let total = 0;
+		for (const blockId of state.studyTargets ?? []) {
+			const steps = state.studySteps.get(blockId)?.length ?? 1;
+			total += steps;
+			done += state.rated.has(blockId) ? steps : (state.stepAt.get(blockId) ?? 0);
+		}
+		return { done, total };
 	}
 
 	/**
@@ -670,6 +796,8 @@ export class LineRevealProcessor {
 				studyTargets: null,
 				pendingRating: null,
 				pendingRatingAt: 0,
+				studySteps: new Map(),
+				stepAt: new Map(),
 				lines: new Map(),
 			};
 			this.states.set(notePath, state);

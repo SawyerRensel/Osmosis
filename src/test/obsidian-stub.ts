@@ -23,10 +23,19 @@ interface ElementInfo {
 	attr?: Record<string, string>;
 }
 
-function applyInfo(node: Element, info?: ElementInfo | string): void {
+/**
+ * `strict` reproduces `createSvg`'s behaviour: each `cls` entry goes to
+ * `classList.add()` whole, so a token containing a space throws exactly as it
+ * does in Obsidian. The HTML helpers are the forgiving half of that asymmetry —
+ * they split a space-separated string — and reproducing *both* halves is the
+ * point: a stub strict everywhere rejects `cls: "a b"` that production uses
+ * safely, and one forgiving everywhere hides the SVG bug this file exists for.
+ */
+function applyInfo(node: Element, info?: ElementInfo | string, strict = false): void {
 	const opts: ElementInfo = typeof info === "string" ? { cls: info } : info ?? {};
-	for (const token of opts.cls === undefined ? [] : [opts.cls].flat()) {
-		node.classList.add(token);
+	const classes = opts.cls === undefined ? [] : [opts.cls].flat();
+	for (const token of strict ? classes : classes.flatMap((cls) => cls.split(/\s+/))) {
+		if (token !== "") node.classList.add(token);
 	}
 	if (opts.text !== undefined) node.textContent = opts.text;
 	if (opts.value !== undefined) (node as HTMLInputElement).value = opts.value;
@@ -58,7 +67,7 @@ function installDomHelpers(): void {
 
 	el["createSvg"] = function (this: Element, tag: string, info?: ElementInfo | string) {
 		const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-		applyInfo(node, info);
+		applyInfo(node, info, true);
 		return this.appendChild(node);
 	};
 
@@ -68,6 +77,14 @@ function installDomHelpers(): void {
 
 	el["addClass"] = function (this: Element, ...classes: string[]) {
 		for (const token of classes) this.classList.add(token);
+	};
+
+	el["removeClass"] = function (this: Element, ...classes: string[]) {
+		for (const token of classes) this.classList.remove(token);
+	};
+
+	el["hasClass"] = function (this: Element, cls: string) {
+		return this.classList.contains(cls);
 	};
 
 	el["toggleClass"] = function (this: Element, classes: string | string[], value: boolean) {

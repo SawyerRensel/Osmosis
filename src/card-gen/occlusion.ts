@@ -39,13 +39,13 @@ export const DEFAULT_OCCLUSION_MODE: OcclusionMode = "hide-all-guess-one";
  * so this value survives only on a label written before labels had a size.
  *
  * The height is the one that matters, because it is what the glyphs are scaled
- * from. It was a twelfth of the picture and that read as too small to work with
- * on the diagram shapes this is actually used on: a label is sized against the
- * image's *height*, and a wide, short diagram — which is most of them — has
- * little height to take a fraction of. A seventh is about the size a label has
- * to be before it is comfortable at the editor's fit-to-window zoom, where a
- * label is placed. It stays a fraction, so it is still resizable and still
- * renders the same everywhere.
+ * from — and it is no longer what a new label actually takes. No constant can
+ * be: the same fraction is menu-sized on a tall diagram and enormous on a wide,
+ * short one, since a wide diagram has little height to take a fraction of. The
+ * editor measures the picture in front of the user instead
+ * (`defaultAnnotationHeight`) and this is the ceiling it clamps to, the value it
+ * falls back to when there is nothing to measure, and the height a label written
+ * before labels had a size is read with.
  */
 export const DEFAULT_ANNOTATION_W = 0.25;
 export const DEFAULT_ANNOTATION_H = 0.14;

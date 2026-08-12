@@ -705,14 +705,15 @@ describe("OcclusionEditorModal annotations", () => {
 		// knowable. Measured here and stored, so every study surface still paints
 		// from the box with nothing measured.
 		//
-		// The chip measures 90px against a 600px canvas, so the box is 0.15 —
-		// narrower than the 0.25 it was placed with.
+		// The chip measures 90px against a 600px canvas, and is stored one spare
+		// pixel wider so a rounded-down measurement cannot ellipsis its own last
+		// glyph — so 91/600, still far narrower than the 0.25 it was placed with.
 		withChipWidth(90, () => {
 			label(opened, [100, 20], "Deck");
 			click(opened.content, "Save");
 
 			expect(opened.saved[0]?.annotations).toEqual([
-				{ x: 0.25, y: 0.1, w: 0.15, h: 0.14, text: "Deck" },
+				{ x: 0.25, y: 0.1, w: 91 / 600, h: 0.14, text: "Deck" },
 			]);
 		});
 	});
@@ -736,7 +737,12 @@ describe("OcclusionEditorModal annotations", () => {
 			label(opened, [360, 20], "a long label");
 			click(opened.content, "Save");
 
-			expect(opened.saved[0]?.annotations?.[0]).toMatchObject({ x: 0.5, w: 0.5 });
+			// 301/600 wide — the spare pixel — so its right edge lands exactly on
+			// the picture's.
+			expect(opened.saved[0]?.annotations?.[0]).toMatchObject({
+				x: 1 - 301 / 600,
+				w: 301 / 600,
+			});
 		});
 	});
 
@@ -899,9 +905,13 @@ describe("OcclusionEditorModal view controls", () => {
 	it("sizes the canvas so the whole image fits the stage, whatever its shape", () => {
 		// Fitting only the width is what gave the modal a second scrollbar: a tall
 		// diagram overflowed the stage and pushed the toolbar out of reach.
+		//
+		// 599 rather than the stage's full 600: the fitted image gives a pixel
+		// back, so that filling the stage exactly can never be the thing that
+		// raises a scrollbar — see `FIT_SLACK`, and the shaking it stopped.
 		const canvas = opened.content.querySelector<HTMLElement>(".osmosis-occlusion-canvas")!;
 
-		expect(canvas.style.getPropertyValue("--osmosis-occlusion-fit")).toBe("600px");
+		expect(canvas.style.getPropertyValue("--osmosis-occlusion-fit")).toBe("599px");
 	});
 
 	it("zooms on Ctrl+scroll, and leaves a plain scroll to the stage", () => {

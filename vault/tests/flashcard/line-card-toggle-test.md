@@ -3,56 +3,56 @@ osmosis-cards: true
 osmosis-deck: tests/line-card-toggle
 osmosis-schedule:
   os-wcfb3w:
-    due: 2026-07-21T22:26:08
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:08
-    reps: 1
+    due: 2026-08-12T07:36:43
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:43
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0
   os-qsckj3:
-    due: 2026-07-21T22:26:11
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:11
-    reps: 1
+    due: 2026-08-12T07:36:44
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:44
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0
   os-cfku5q:
-    due: 2026-07-21T22:26:14
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:14
-    reps: 1
+    due: 2026-08-12T07:36:45
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:45
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0
   os-5t2qqx:
-    due: 2026-07-21T22:26:16
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:16
-    reps: 1
+    due: 2026-08-12T07:36:47
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:47
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0
   os-s3hl6m:
-    due: 2026-07-21T22:26:18
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:18
-    reps: 1
+    due: 2026-08-12T07:36:50
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:50
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0
   os-zg9owv:
-    due: 2026-07-21T22:26:20
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-07-21T22:25:20
-    reps: 1
+    due: 2026-08-12T07:36:49
+    stability: 0.0834
+    difficulty: 8.8063
+    lastReview: 2026-08-12T07:35:49
+    reps: 2
     lapses: 0
     state: learning
     learningSteps: 0

@@ -129,13 +129,14 @@ State Newton's three laws of motion:
 
 ```osmosis
 id: phys-em-spectrum
-due: 2026-03-09T17:11:13.598Z
-stability: 0.1080
-difficulty: 9.6989
-reps: 4
+due: 2026-08-12T11:41:34.932Z
+stability: 0.0444
+difficulty: 9.8863
+reps: 5
 lapses: 0
 state: learning
-last-review: 2026-03-09T17:10:13.598Z
+lastReview: 2026-08-12T11:40:34.932Z
+learningSteps: 0
 
 Order the electromagnetic spectrum from longest to shortest wavelength:
 ***

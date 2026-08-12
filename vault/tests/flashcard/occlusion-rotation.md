@@ -21,10 +21,10 @@ osmosis-schedule:
           rotation: 313
           text: along the brace
     c1:
-      due: 2026-08-12T07:21:52
+      due: 2026-08-12T08:43:56
       stability: 0.212
       difficulty: 6.4133
-      lastReview: 2026-08-12T07:20:52
+      lastReview: 2026-08-12T08:42:56
       reps: 1
       lapses: 0
       state: learning
@@ -105,13 +105,54 @@ occlude-a:
       w: 0.34
       h: 0.24
       text: "east bay"
-    - x: 0.3513
-      y: 0.86
+    - x: 0.3617
+      y: 0.7625
       w: 0.0608
       h: 0.14
       text: "test"
+    - x: 0.229
+      y: 0.6993
+      w: 0.0975
+      h: 0.14
+      text: "Testing"
   header: "Name the covered member"
   back-extra: "Diagonals take shear, posts take it vertically, chords take moment."
+c1:
+  due: 2026-08-12T12:41:12.563Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:40:12.563Z
+  learningSteps: 0
+c2:
+  due: 2026-08-12T12:41:24.489Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:40:24.489Z
+  learningSteps: 0
+c3:
+  due: 2026-08-12T12:41:32.983Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:40:32.983Z
+  learningSteps: 0
+c4:
+  due: 2026-08-12T12:41:40.561Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:40:40.561Z
+  learningSteps: 0
 
 The gantry truss, in elevation.
 ![[gantry-truss.svg]]{a}

@@ -96,11 +96,23 @@ The section, then the elevation.
 ![[span-elevation.svg]]
 ```
 
-Expected in **reading view**: the prose line and the plain elevation render as
-markdown; the cross-section renders with **both** groups covered at once — no
-amber "this one is being asked", because in the note no single card is being
-put to you. The header sits above it, and Back Extra is held back until you
-click to reveal, which rings all three masks rather than clearing them.
+Expected in **reading view and peek**: the prose line and the plain elevation
+render as markdown; the cross-section renders with **both** groups covered at
+once — no amber "this one is being asked", because a reader looking at a picture
+is not answering one of the questions it carries. The header sits above it, and
+Back Extra is held back until you click to reveal, which rings both masks rather
+than clearing them.
+
+Expected in **contextual study**: this becomes a card player, exactly as
+sequential and spatial are. It asks `c1` first — that group amber, `c2` covered
+as its sibling — with a `1/2` counter in the bottom row. Clicking rings `c1`;
+rating advances to `c2` and the counter reads `2/2`. After the second rating the
+diagram goes back to every region ringed, marked "Rated". Each rating must move
+**one** card: `surface-parts-c1`, then `surface-parts-c2`. The plain elevation
+stays unmasked throughout — its pixels belong to no card here.
+
+Starting and stopping study must reach this fence even though it is a code
+block, which Obsidian does not re-run on a mode change.
 
 Expected in **sequential study**: two cards, `surface-parts-c1` and
 `surface-parts-c2`, each singling its own group out in amber — and **both
@@ -122,8 +134,14 @@ Expected in **peek**: no rating buttons appear anywhere — peek records
 nothing, so it must not offer to. The diagram stays visible with its three
 labels masked,
 rather than the whole line disappearing behind `░░░░░░`. Clicking gives the line
-back. In **contextual study** the same, plus a rating bubble — and rating once
-must move all three cards' schedules, not none of them.
+back.
+
+Expected in **contextual study**: the line's three shape groups are asked one at
+a time, `c1` → `c2` → `c3`, each with its own reveal and its own rating bubble,
+and each rating moving **only that group's** card. The line stays "next" in the
+top-down order until all three are answered, and only then does study move on.
+The floating pill counts questions rather than lines, so this line alone takes it
+from `0/4` to `3/4`.
 
 Expected in a **mind map**: this node keeps its picture and shows the masks;
 tapping reveals.

@@ -64,10 +64,7 @@ export function renderOcclusion(
 	}
 
 	const wrapper = container.createDiv({ cls: "osmosis-occlusion" });
-	wrapper.createEl("img", {
-		cls: "osmosis-occlusion-image",
-		attr: { src, alt: occlusion.image },
-	});
+	createImage(wrapper, src, occlusion.image);
 
 	paintMasks(wrapper, occlusion, side);
 
@@ -86,9 +83,76 @@ export function renderOcclusion(
 	}
 }
 
+/** Every image this module has drawn, by source, at the size it turned out to be. */
+const naturalSizes = new Map<string, { width: number; height: number }>();
+
+/**
+ * The picture, given its proportions up front whenever they are already known.
+ *
+ * A fresh `<img>` has no intrinsic size until it decodes — even served from
+ * cache — so the element it is in has no height for a frame or two. That is the
+ * scroll bug in its second form: a card *cannot* always avoid being rebuilt,
+ * because rating rewrites the note's frontmatter and Obsidian answers a file
+ * change by re-running a code block's processor. The rebuilt card collapses, the
+ * document shortens under the reader, and reading view leaves them further down
+ * the note than they were.
+ *
+ * `width`/`height` attributes are what the platform provides for exactly this:
+ * with the stylesheet's `height: auto` they are read as the image's ratio and
+ * the box is reserved before a single byte is decoded. They are only ever the
+ * size this module measured on a previous render, so the first render of a
+ * picture is unchanged — and there is nothing to jump on a first render anyway.
+ */
+function createImage(wrapper: HTMLElement, src: string, alt: string): HTMLImageElement {
+	const known = naturalSizes.get(src);
+	const img = wrapper.createEl("img", {
+		cls: "osmosis-occlusion-image",
+		attr: known === undefined
+			? { src, alt }
+			: { src, alt, width: String(known.width), height: String(known.height) },
+	});
+
+	if (known === undefined) {
+		img.addEventListener("load", () => {
+			if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+				naturalSizes.set(src, { width: img.naturalWidth, height: img.naturalHeight });
+			}
+		}, { once: true });
+	}
+
+	return img;
+}
+
 /** Whether this side is showing the answer — the sides Back Extra belongs on. */
 function isAnswerSide(side: OcclusionSide): boolean {
 	return side === "back" || side === "all-revealed";
+}
+
+/**
+ * Flip an already-rendered diagram to another side **without rebuilding it**.
+ *
+ * `container` is whatever `renderOcclusion` was drawn into. Everything it built
+ * stays: the same `<img>`, so the file is not re-requested and the element never
+ * loses its height, and the same Back Extra element, toggled rather than
+ * recreated for the reason its own construction explains.
+ *
+ * That height is the whole point. A surface that redraws a card by emptying its
+ * container and calling `renderOcclusion` again briefly holds a picture with no
+ * intrinsic size — the image has not decoded yet — so the card collapses, the
+ * document shortens, and reading view scrolls the reader somewhere else mid-
+ * answer. Repainting keeps the box exactly where it was, which is why the line
+ * surface never had the problem and the fence one did.
+ */
+export function repaintOcclusion(
+	container: HTMLElement,
+	occlusion: CardOcclusion,
+	side: OcclusionSide,
+): void {
+	const img = container.querySelector("img");
+	if (img) overlayMasks(img, occlusion, side);
+	container
+		.querySelector(".osmosis-occlusion-back-extra")
+		?.classList.toggle("osmosis-hidden", !isAnswerSide(side));
 }
 
 /** Class marking a wrapper this module put *around* someone else's image. */

@@ -125,6 +125,8 @@ export default class OsmosisPlugin extends Plugin {
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
+	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
+	contextualStudy!: ContextualStudyProcessor;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 
@@ -460,7 +462,8 @@ export default class OsmosisPlugin extends Plugin {
 		});
 
 		// ── Contextual Study Mode ───────────────────────────────
-		new ContextualStudyProcessor(this).register();
+		this.contextualStudy = new ContextualStudyProcessor(this);
+		this.contextualStudy.register();
 
 		// Progressive line-card reveal in reading view (plan §5)
 		this.lineReveal = new LineRevealProcessor(this);

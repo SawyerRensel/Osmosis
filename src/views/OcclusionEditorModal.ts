@@ -137,6 +137,19 @@ interface Gesture {
 /** How close a pointer must come to a handle or vertex to grab it, in image pixels. */
 const HANDLE_GRAB_PX = 12;
 
+/**
+ * The pixel the fitted image gives back to the stage, so that fitting it can
+ * never be what makes it overflow.
+ *
+ * The fit is measured from the stage's *client* box, which is the box a
+ * scrollbar takes its width out of. Filling that box exactly leaves the two in a
+ * standoff: a sub-pixel of overflow raises a scrollbar, the smaller client box
+ * measures a smaller fit, the smaller image drops the scrollbar, and the resize
+ * observer runs the whole thing again — the image visibly shaking at rest, which
+ * is what "zoom to fit" looked like. A pixel of slack takes the tie away.
+ */
+const FIT_SLACK = 1;
+
 /** Sentence case, as Obsidian's own UI labels are. */
 const MODE_LABELS: Record<OcclusionMode, string> = {
 	"hide-all-guess-one": "Hide all, guess one",
@@ -1107,7 +1120,7 @@ export class OcclusionEditorModal extends Modal {
 		// kept whole inside the picture — a label dropped near the right edge
 		// would otherwise start with its far end off the image.
 		const box = moveBox(
-			{ x: 0, y: 0, w: DEFAULT_ANNOTATION_W, h: DEFAULT_ANNOTATION_H },
+			{ x: 0, y: 0, w: DEFAULT_ANNOTATION_W, h: this.defaultAnnotationHeight() },
 			point.x,
 			point.y,
 		);
@@ -1116,6 +1129,59 @@ export class OcclusionEditorModal extends Modal {
 		this.selectedAnnotation = this.annotations.length - 1;
 		this.editingAnnotation = this.annotations.length - 1;
 		this.redraw();
+	}
+
+	/**
+	 * The height a new label takes: the fraction of *this* picture that puts its
+	 * text at the size Obsidian's own UI text is.
+	 *
+	 * A label's size is a fraction of the image, which is what keeps it the same
+	 * label at any zoom and on any surface — but it makes "how big is a new one"
+	 * unanswerable by a constant. The same fraction is menu-sized on a tall
+	 * diagram and enormous on a wide, short one, because it is the *height* the
+	 * glyphs are scaled from, and a fixed guess was picked for the aspect ratio
+	 * of whatever image it was tried on.
+	 *
+	 * So the fraction is worked out from the picture in front of the user, at the
+	 * size it occupies when the whole of it is in view. Divided by the zoom, so a
+	 * label placed while zoomed in is the same label as one placed zoomed out —
+	 * the alternative sizes it against the screen, and it would come out tiny on
+	 * the diagram it is actually drawn on.
+	 *
+	 * Capped at the old fixed default so an unmeasurably small picture cannot ask
+	 * for a label bigger than the image, and falls back to it wherever the
+	 * measurement is unavailable: no layout yet, or a webview without container
+	 * queries, where the label takes a fixed UI size anyway and there is nothing
+	 * to convert.
+	 */
+	private defaultAnnotationHeight(): number {
+		const target = parseFloat(
+			getComputedStyle(this.annotationLayer).getPropertyValue("--font-ui-small"),
+		);
+		const full = this.fullHeightFontSize();
+		if (!Number.isFinite(target) || full === null || full <= target) {
+			return DEFAULT_ANNOTATION_H;
+		}
+		return Math.min((target * this.zoom) / full, DEFAULT_ANNOTATION_H);
+	}
+
+	/**
+	 * The size a label's text would draw at if its box filled the picture's whole
+	 * height, measured rather than derived.
+	 *
+	 * The box-height-to-font-size ratio is a CSS detail — it belongs to the
+	 * stylesheet that draws the chip, and reproducing it here would be a second
+	 * copy to keep in step. A probe reads back whatever the stylesheet decided,
+	 * the same trick `fitToText` uses for width.
+	 */
+	private fullHeightFontSize(): number | null {
+		const probe = this.annotationLayer.createDiv({
+			cls: ["osmosis-occlusion-annotation", "osmosis-occlusion-annotation-probe"],
+		});
+		placeAnnotation(probe, { x: 0, y: 0, w: 1, h: 1, text: "" });
+		const size = parseFloat(getComputedStyle(probe).fontSize);
+		probe.remove();
+		return Number.isFinite(size) && size > 0 ? size : null;
 	}
 
 	/** Take the typed text, dropping the label when nothing was typed. */
@@ -1171,11 +1237,19 @@ export class OcclusionEditorModal extends Modal {
 		probe.remove();
 		if (natural <= 0) return annotation;
 
+		// One spare pixel. `offsetWidth` is rounded to a whole pixel, so it comes
+		// back up to half a pixel short of the text it measured — and a chip a
+		// fraction of a pixel short of its own text ellipsises its last glyph,
+		// which is what the editor's labels were visibly doing. The pixel also
+		// absorbs the rounding the width goes through on its way back out as a
+		// percentage of the layer.
+		const fitted = natural + 1;
+
 		// Clamped through `moveBox` so a long label placed near the right edge
 		// is pulled back onto the picture rather than growing off it.
 		return annotationWithBox(
 			annotation,
-			moveBox({ ...annotationBox(annotation), w: Math.min(natural / available, 1) }, 0, 0),
+			moveBox({ ...annotationBox(annotation), w: Math.min(fitted / available, 1) }, 0, 0),
 		);
 	}
 
@@ -1292,7 +1366,7 @@ export class OcclusionEditorModal extends Modal {
 	 */
 	private measure(): void {
 		const fit = fitWidth(
-			{ width: this.stage.clientWidth, height: this.stage.clientHeight },
+			{ width: this.stage.clientWidth - FIT_SLACK, height: this.stage.clientHeight - FIT_SLACK },
 			{ width: this.image.naturalWidth, height: this.image.naturalHeight },
 		);
 		if (fit === this.fit) return;

@@ -2009,6 +2009,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    Contextual Study (Reading View)
    ═══════════════════════════════════════════════════════════ */
 
+/* A fence holding the height it last rendered to, for the frame between Obsidian
+   rebuilding the code block — which rating a card causes, since the schedule it
+   writes lives in the note's frontmatter — and the deferred render filling it
+   again. Without it the note loses the card's whole height for a frame and the
+   reader is left further down the page than they were. `min-height`, so a card
+   that comes back taller is never clipped by its own reservation. */
+.osmosis-fence-held {
+	min-height: var(--osmosis-fence-height, 0);
+}
+
 .osmosis-contextual-card {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
@@ -2175,6 +2185,20 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-contextual-rating-slot {
 	flex: 1;
+}
+
+/* "2/3" on an occluded fence being studied in place. Its groups are asked one at
+   a time, and without a count the only thing distinguishing the second question
+   from the first is which mask is amber — which says nothing about how many are
+   left. Sits where the undo button does on an ordinary card; a stepped card has
+   none, since undoing one group's rating mid-sequence has nowhere to put the
+   user back. */
+.osmosis-contextual-step {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+	margin-right: 8px;
 }
 
 .osmosis-contextual-exclude-toggle {
@@ -3827,10 +3851,22 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 }
 
 /* Only the labels take the pointer; the layer itself stays transparent to it, so
-   a drag starting on bare image reaches the mask overlay underneath. */
+   a drag starting on bare image reaches the mask overlay underneath.
+
+   `touch-action: none` for the same reason the overlay takes it, and it has to be
+   repeated here: touch-action is resolved on the element the finger actually
+   lands on, and a label is HTML sitting *above* the overlay rather than part of
+   it. Without it the browser claimed a label drag as a scroll gesture a few
+   pixels in and fired `pointercancel`, so a label could be nudged and no further
+   — while a shape, whose drag lands on the overlay, moved freely. Pointer
+   capture cannot rescue this: the gesture is already gone by the time it would
+   matter. `user-select` likewise mirrors the overlay, so a drag does not select
+   the label's own text. */
 .osmosis-occlusion-annotations.is-editing .osmosis-occlusion-annotation {
 	pointer-events: auto;
 	cursor: move;
+	touch-action: none;
+	user-select: none;
 	border: 1px solid var(--background-modifier-border);
 }
 

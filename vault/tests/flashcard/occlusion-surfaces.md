@@ -2,19 +2,11 @@
 osmosis-cards: true
 osmosis-deck: Engineering/Surfaces
 osmosis-schedule:
-  os-plainl1:
-    due: 2026-08-01T09:00:00
-    stability: 4.21
-    difficulty: 5.5
-    reps: 3
-    lapses: 0
-    state: review
-    learningSteps: 0
   os-elevat1:
     occlude:
       mode: hide-one-guess-one
-      header: "Where does the load go?"
-      back-extra: "The pier takes it down; the abutment takes it sideways."
+      header: Where does the load go?
+      back-extra: The pier takes it down; the abutment takes it sideways.
       shapes:
         - group: c1
           kind: rect
@@ -35,12 +27,31 @@ osmosis-schedule:
           rx: 0.1
           ry: 0.05
     c1:
-      due: 2026-08-02T09:00:00
-      stability: 2.5
-      difficulty: 6
+      due: 2026-08-12T08:39:10
+      stability: 0.212
+      difficulty: 6.4133
+      lastReview: 2026-08-12T08:38:10
       reps: 1
       lapses: 0
-      state: review
+      state: learning
+      learningSteps: 0
+    c2:
+      due: 2026-08-12T08:39:11
+      stability: 0.212
+      difficulty: 6.4133
+      lastReview: 2026-08-12T08:38:11
+      reps: 1
+      lapses: 0
+      state: learning
+      learningSteps: 0
+    c3:
+      due: 2026-08-12T08:39:12
+      stability: 0.212
+      difficulty: 6.4133
+      lastReview: 2026-08-12T08:38:12
+      reps: 1
+      lapses: 0
+      state: learning
       learningSteps: 0
 ---
 
@@ -69,8 +80,6 @@ node — and both must still be in this file afterwards.
 id: surface-parts
 occlude-a:
   mode: hide-all-guess-one
-  header: "Cross-section: name the covered parts"
-  back-extra: "Web plate carries shear; the parapet is non-structural."
   shapes:
     - group: c1
       kind: rect
@@ -90,17 +99,61 @@ occlude-a:
       y: 0.56
       rx: 0.065
       ry: 0.05
+  annotations:
+    - x: 0.255
+      y: 0.3022
+      w: 0.0411
+      h: 0.0332
+      text: "meow"
+    - x: 0.5175
+      y: 0.8122
+      w: 0.229
+      h: 0.0332
+      rotation: 28.0409
+      text: "testing a long annotation to see if it works"
+  header: "Cross-section: name the covered parts"
+  back-extra: "Web plate carries shear; the parapet is non-structural."
+c1:
+  due: 2026-08-12T12:39:01.006Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:38:01.006Z
+  learningSteps: 0
+c2:
+  due: 2026-08-12T12:39:05.576Z
+  stability: 0.2120
+  difficulty: 6.4133
+  reps: 1
+  lapses: 0
+  state: learning
+  lastReview: 2026-08-12T12:38:05.576Z
+  learningSteps: 0
 
 The section, then the elevation.
 ![[bridge-cross-section.svg]]{a}
 ![[span-elevation.svg]]
 ```
 
-Expected in **reading view**: the prose line and the plain elevation render as
-markdown; the cross-section renders with **both** groups covered at once — no
-amber "this one is being asked", because in the note no single card is being
-put to you. The header sits above it, and Back Extra is held back until you
-click to reveal, which rings all three masks rather than clearing them.
+Expected in **reading view and peek**: the prose line and the plain elevation
+render as markdown; the cross-section renders with **both** groups covered at
+once — no amber "this one is being asked", because a reader looking at a picture
+is not answering one of the questions it carries. The header sits above it, and
+Back Extra is held back until you click to reveal, which rings both masks rather
+than clearing them.
+
+Expected in **contextual study**: this becomes a card player, exactly as
+sequential and spatial are. It asks `c1` first — that group amber, `c2` covered
+as its sibling — with a `1/2` counter in the bottom row. Clicking rings `c1`;
+rating advances to `c2` and the counter reads `2/2`. After the second rating the
+diagram goes back to every region ringed, marked "Rated". Each rating must move
+**one** card: `surface-parts-c1`, then `surface-parts-c2`. The plain elevation
+stays unmasked throughout — its pixels belong to no card here.
+
+Starting and stopping study must reach this fence even though it is a code
+block, which Obsidian does not re-run on a mode change.
 
 Expected in **sequential study**: two cards, `surface-parts-c1` and
 `surface-parts-c2`, each singling its own group out in amber — and **both
@@ -122,8 +175,14 @@ Expected in **peek**: no rating buttons appear anywhere — peek records
 nothing, so it must not offer to. The diagram stays visible with its three
 labels masked,
 rather than the whole line disappearing behind `░░░░░░`. Clicking gives the line
-back. In **contextual study** the same, plus a rating bubble — and rating once
-must move all three cards' schedules, not none of them.
+back.
+
+Expected in **contextual study**: the line's three shape groups are asked one at
+a time, `c1` → `c2` → `c3`, each with its own reveal and its own rating bubble,
+and each rating moving **only that group's** card. The line stays "next" in the
+top-down order until all three are answered, and only then does study move on.
+The floating pill counts questions rather than lines, so this line alone takes it
+from `0/4` to `3/4`.
 
 Expected in a **mind map**: this node keeps its picture and shows the masks;
 tapping reveals.
