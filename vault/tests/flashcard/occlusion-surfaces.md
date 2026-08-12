@@ -53,6 +53,8 @@ node — and both must still be in this file afterwards.
 id: surface-parts
 occlude-a:
   mode: hide-all-guess-one
+  header: "Cross-section: name the covered parts"
+  back-extra: "Web plate carries shear; the parapet is non-structural."
   shapes:
     - group: c1
       kind: rect
@@ -60,7 +62,7 @@ occlude-a:
       y: 0.5225
       w: 0.1375
       h: 0.08
-    - group: c2
+    - group: c1
       kind: rect
       x: 0.6675
       y: 0.365
@@ -72,8 +74,6 @@ occlude-a:
       y: 0.56
       rx: 0.065
       ry: 0.05
-  header: "Cross-section: name the covered parts"
-  back-extra: "Web plate carries shear; the parapet is non-structural."
 
 The section, then the elevation.
 ![[bridge-cross-section.svg]]{a}
