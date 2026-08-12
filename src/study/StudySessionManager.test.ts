@@ -329,6 +329,99 @@ describe("StudySessionManager schedule-write routing", () => {
 	});
 });
 
+describe("StudySessionManager fence-write staging", () => {
+	interface StageCall { notePath: string; cardId: string; kind: "stage" | "stage-remove" }
+	interface WriteCall { path: string; cardId: string; kind: "write" | "remove" }
+
+	function makeManager(mode: StudyMode) {
+		const staged: StageCall[] = [];
+		const written: WriteCall[] = [];
+
+		const fenceWriter = {
+			stageSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage" });
+			},
+			stageRemoveSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage-remove" });
+			},
+			writeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "write" });
+				return Promise.resolve();
+			},
+			removeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "remove" });
+				return Promise.resolve();
+			},
+		};
+
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			mode,
+		);
+		return { manager, staged, written };
+	}
+
+	// The bug this staging exists for: a fence keeps its schedule inside its own
+	// source, so writing one mid-session rewrites the block reading view is
+	// displaying and scrolls the reader off the card they just answered.
+	it("stages a contextual rating instead of rewriting the note being read", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+		]);
+	});
+
+	it("still applies the rating to the store while the write is staged", async () => {
+		const { manager } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(store.getCard("abc12345")?.reps).toBe(1);
+		expect(store.getCard("abc12345")?.due).toBeGreaterThan(Date.now());
+	});
+
+	// Nothing is displaying the note's source in these surfaces, so a review
+	// belongs on disk the moment it happens.
+	for (const mode of ["sequential", "spatial"] as const) {
+		it(`writes a ${mode} rating through immediately`, async () => {
+			const { manager, staged, written } = makeManager(mode);
+			store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+			await manager.recordReview("abc12345", 3);
+
+			expect(staged).toHaveLength(0);
+			expect(written).toEqual([
+				{ path: "notes/diagrams.md", cardId: "abc12345", kind: "write" },
+			]);
+		});
+	}
+
+	// An undo that wrote through would be overwritten by the staged rating it
+	// was undoing, the moment that rating flushed.
+	it("stages a contextual undo alongside the rating it reverts", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+		await manager.revertReview("abc12345", null);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage-remove" },
+		]);
+	});
+});
+
 describe("StudySessionManager review logging", () => {
 	interface Harness {
 		manager: StudySessionManager;
@@ -359,6 +452,8 @@ describe("StudySessionManager review logging", () => {
 			{
 				writeSchedule: () => Promise.resolve(),
 				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
 			} as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
 			mode,
@@ -473,6 +568,8 @@ describe("StudySessionManager review logging", () => {
 			{
 				writeSchedule: () => Promise.resolve(),
 				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
 			} as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
 			"sequential",

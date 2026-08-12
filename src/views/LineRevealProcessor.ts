@@ -125,6 +125,7 @@ export class LineRevealProcessor {
 			this.plugin.app.workspace.on("layout-change", () => {
 				this.updateHeaderActions();
 				this.syncBanners();
+				this.flushClosedNotes();
 			}),
 		);
 		// Tab/leaf activation fires neither of the above: switching between
@@ -597,7 +598,33 @@ export class LineRevealProcessor {
 		state.studySteps.clear();
 		state.stepAt.clear();
 		void this.plugin.scheduleStore.flush();
+		// Fence cards keep their schedule inside the note's own text, so a
+		// contextual session holds those writes back rather than rewriting the
+		// block being read after every answer. This is where they land.
+		void this.plugin.fenceWriter.flush();
 		void this.plugin.reviewLog.flush();
+	}
+
+	/**
+	 * Write out the staged fence schedules of any note that is no longer open.
+	 *
+	 * Holding a fence write back is only worth doing while the note is on screen
+	 * — that is the whole reason for it (see `FenceWriter.stageSchedule`). Once
+	 * the note is closed there is nothing left to disturb, and leaving reviews
+	 * unwritten risks losing them to a crash if the reader never presses Stop.
+	 */
+	private flushClosedNotes(): void {
+		const pending = this.plugin.fenceWriter.pendingPaths();
+		if (pending.length === 0) return;
+
+		const open = new Set<string>();
+		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file) open.add(view.file.path);
+		}
+		for (const path of pending) {
+			if (!open.has(path)) void this.plugin.fenceWriter.flushPath(path);
+		}
 	}
 
 	// ── Header actions (peek + study) ─────────────────────────

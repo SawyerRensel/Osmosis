@@ -709,6 +709,9 @@ export default class OsmosisPlugin extends Plugin {
 	onunload() {
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
+		// ...and any fence schedules a contextual session was still holding, so
+		// closing Obsidian mid-session does not lose the reviews it staged
+		void this.fenceWriter.flush();
 		// ...and any buffered review-log entries, so closing Obsidian mid-session
 		// does not lose the reviews it holds
 		void this.reviewLog.flush();

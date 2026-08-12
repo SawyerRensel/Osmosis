@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { generateExplicitCards } from "../card-gen/explicit";
 import type { OcclusionShape } from "../database/types";
 import {
+	FenceWriter,
 	updateFenceSchedule,
 	updateFenceExclude,
 	updateFenceOcclusion,
@@ -1186,5 +1187,113 @@ id: bridge
 			mode: "hide-all-guess-one",
 			shapes: [rect],
 		})).toBe(plainFence);
+	});
+});
+
+describe("staged schedule writes", () => {
+	const note = `\`\`\`osmosis
+id: abc123
+
+What is 2+2?
+***
+4
+\`\`\`
+
+\`\`\`osmosis
+id: def456
+
+Capital of France?
+***
+Paris
+\`\`\``;
+
+	/** A vault of one note, recording every modify so coalescing is visible. */
+	function makeVault(content = note) {
+		const files = new Map<string, string>([["notes/cards.md", content]]);
+		const modifies: string[] = [];
+		const vault = {
+			getFileByPath: (path: string) =>
+				files.has(path) ? ({ path } as import("obsidian").TFile) : null,
+			cachedRead: (file: { path: string }) => Promise.resolve(files.get(file.path)!),
+			modify: (file: { path: string }, data: string) => {
+				files.set(file.path, data);
+				modifies.push(file.path);
+				return Promise.resolve();
+			},
+		};
+		return {
+			writer: new FenceWriter(vault as unknown as import("obsidian").Vault),
+			files,
+			modifies,
+		};
+	}
+
+	// The point of the whole mechanism: rating a fence in reading view must not
+	// rewrite the section the reader is looking at.
+	it("leaves the note untouched until it is flushed", () => {
+		const { writer, files, modifies } = makeVault();
+
+		writer.stageSchedule("notes/cards.md", "abc123", baseSchedule);
+
+		expect(modifies).toHaveLength(0);
+		expect(files.get("notes/cards.md")).toBe(note);
+		expect([...writer.getPendingSchedules("notes/cards.md").keys()]).toEqual(["abc123"]);
+		expect(writer.pendingPaths()).toEqual(["notes/cards.md"]);
+	});
+
+	it("writes a whole session's ratings in a single modify", async () => {
+		const { writer, files, modifies } = makeVault();
+
+		writer.stageSchedule("notes/cards.md", "abc123", baseSchedule);
+		writer.stageSchedule("notes/cards.md", "def456", { ...baseSchedule, reps: 7 });
+		await writer.flush();
+
+		expect(modifies).toEqual(["notes/cards.md"]);
+		const written = files.get("notes/cards.md")!;
+		expect(written).toContain("reps: 3");
+		expect(written).toContain("reps: 7");
+		expect(writer.pendingPaths()).toEqual([]);
+	});
+
+	it("keeps only the last rating of a card answered twice", async () => {
+		const { writer, files, modifies } = makeVault();
+
+		writer.stageSchedule("notes/cards.md", "abc123", baseSchedule);
+		writer.stageSchedule("notes/cards.md", "abc123", { ...baseSchedule, reps: 9 });
+		await writer.flush();
+
+		expect(modifies).toEqual(["notes/cards.md"]);
+		expect(files.get("notes/cards.md")).toContain("reps: 9");
+		expect(files.get("notes/cards.md")).not.toContain("reps: 3");
+	});
+
+	// An undone review on a new card. Staged rather than written through, so the
+	// rating it reverts cannot resurrect it at flush time.
+	it("flushes a staged removal after the rating it undoes", async () => {
+		const { writer, files } = makeVault();
+
+		writer.stageSchedule("notes/cards.md", "abc123", baseSchedule);
+		writer.stageRemoveSchedule("notes/cards.md", "abc123");
+		await writer.flush();
+
+		expect(files.get("notes/cards.md")).toBe(note);
+	});
+
+	it("reports a staged removal as null so readers do not fall back to the fence", () => {
+		const { writer } = makeVault();
+
+		writer.stageRemoveSchedule("notes/cards.md", "abc123");
+
+		expect(writer.getPendingSchedules("notes/cards.md").get("abc123")).toBeNull();
+	});
+
+	it("drops staged entries for a note that has since been deleted", async () => {
+		const { writer, modifies } = makeVault();
+
+		writer.stageSchedule("gone.md", "abc123", baseSchedule);
+		await writer.flush();
+
+		expect(modifies).toHaveLength(0);
+		expect(writer.pendingPaths()).toEqual([]);
 	});
 });

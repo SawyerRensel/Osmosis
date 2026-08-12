@@ -211,7 +211,7 @@ function syncService(): { sync: CardSyncService; store: CardStore } {
 	const sync = new CardSyncService(
 		{} as never,
 		store,
-		{ isWriting: () => false } as never,
+		{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 		() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
 	);
 	return { sync, store };
@@ -320,7 +320,7 @@ describe("CardSyncService occlusion", () => {
 		const sync = new CardSyncService(
 			{ cachedRead: () => Promise.resolve(note) } as never,
 			store,
-			{ isWriting: () => false } as never,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
 			() => [],
 			() => options?.schedules ?? new Map(),
@@ -380,11 +380,90 @@ describe("CardSyncService occlusion", () => {
 		const sync = new CardSyncService(
 			{ cachedRead: () => Promise.resolve(note) } as never,
 			store,
-			{ isWriting: () => false } as never,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
 		);
 		await sync.syncFile(file);
 
 		expect(store.getCardsByNote("Atlas.md").map((c) => c.cardType)).toEqual(["line", "line"]);
+	});
+});
+
+describe("staged fence schedules", () => {
+	// A fence whose card carries a schedule already written into its metadata.
+	const note = `---
+osmosis-cards: true
+---
+
+\`\`\`osmosis
+id: abc123
+stability: 4.5
+difficulty: 5.2
+due: 2026-03-15T00:00:00.000Z
+reps: 3
+lapses: 0
+state: review
+lastReview: 2026-03-10T00:00:00.000Z
+learningSteps: 0
+
+What is 2+2?
+***
+4
+\`\`\``;
+
+	const file = { path: "notes/cards.md", extension: "md" } as never;
+
+	function syncWithStaged(
+		staged: Map<string, import("../store/FenceWriter").ScheduleFields | null>,
+	): { sync: CardSyncService; store: CardStore } {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => staged } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+		);
+		return { sync, store };
+	}
+
+	// A re-sync mid-session (a debounced frontmatter flush rewrites the note)
+	// would otherwise restore the pre-rating schedule from the fence text and
+	// put the card back in the day's due counts.
+	it("prefers a contextual session's staged rating over the stale fence text", async () => {
+		const { sync, store } = syncWithStaged(new Map([
+			["abc123", {
+				stability: 12.5,
+				difficulty: 4.1,
+				due: new Date("2026-04-01T00:00:00.000Z").getTime(),
+				lastReview: new Date("2026-03-20T00:00:00.000Z").getTime(),
+				reps: 4,
+				lapses: 0,
+				state: "review" as const,
+				learningSteps: 0,
+			}],
+		]));
+		await sync.syncFile(file);
+
+		const card = store.getCard("abc123")!;
+		expect(card.reps).toBe(4);
+		expect(card.stability).toBe(12.5);
+		expect(card.due).toBe(new Date("2026-04-01T00:00:00.000Z").getTime());
+	});
+
+	it("returns a card to new when its review has been undone but not yet written", async () => {
+		const { sync, store } = syncWithStaged(new Map([["abc123", null]]));
+		await sync.syncFile(file);
+
+		const card = store.getCard("abc123")!;
+		expect(card.due).toBeUndefined();
+		expect(card.reps).toBeUndefined();
+		expect(card.state).toBeUndefined();
+	});
+
+	it("reads the fence text for cards with nothing staged", async () => {
+		const { sync, store } = syncWithStaged(new Map());
+		await sync.syncFile(file);
+
+		expect(store.getCard("abc123")?.reps).toBe(3);
 	});
 });

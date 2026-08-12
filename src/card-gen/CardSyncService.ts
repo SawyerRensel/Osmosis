@@ -87,6 +87,10 @@ export class CardSyncService {
 			// overlay), parsed once
 			const lineSchedules = this.getLineSchedules?.(file);
 			const lineDisabled = this.getLineDisabled?.(file);
+			// Fence-card reviews a contextual session is holding in memory. The
+			// fence text just parsed is one review out of date for these, since
+			// contextual study waits until the note is off screen to rewrite it.
+			const stagedFences = this.fenceWriter.getPendingSchedules(file.path);
 
 			for (const genCard of this.occludeLineCards(file, result.cards)) {
 				generatedIds.add(genCard.id);
@@ -106,6 +110,14 @@ export class CardSyncService {
 					? lineDisabled?.has(key) ?? false
 					: genCard.disabled === true;
 
+				// The schedule the plugin knows about but the file does not yet:
+				// osmosis-schedule frontmatter for a line card (already overlaid with
+				// its own pending ratings), a contextual session's staged review for a
+				// fence card. `null` is a staged *removal* — an undone review on a new
+				// card — and has to win outright, or the card is restored from the very
+				// fence text the removal has not been written into yet.
+				const override = key !== undefined ? lineSchedule : stagedFences.get(genCard.id);
+
 				const card: Card = {
 					id: genCard.id,
 					notePath: file.path,
@@ -122,14 +134,16 @@ export class CardSyncService {
 					occlusion: genCard.occlusion,
 					occlusionGroup: genCard.occlusionGroup,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
-					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
-					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
-					due: lineSchedule?.due ?? genCard.due ?? existing?.due,
-					lastReview: lineSchedule?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
-					reps: lineSchedule?.reps ?? genCard.reps ?? existing?.reps,
-					lapses: lineSchedule?.lapses ?? genCard.lapses ?? existing?.lapses,
-					state: lineSchedule?.state ?? genCard.state ?? existing?.state,
-					learningSteps: lineSchedule?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
+					...(override === null ? {} : {
+						stability: override?.stability ?? genCard.stability ?? existing?.stability,
+						difficulty: override?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
+						due: override?.due ?? genCard.due ?? existing?.due,
+						lastReview: override?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
+						reps: override?.reps ?? genCard.reps ?? existing?.reps,
+						lapses: override?.lapses ?? genCard.lapses ?? existing?.lapses,
+						state: override?.state ?? genCard.state ?? existing?.state,
+						learningSteps: override?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
+					}),
 				};
 
 				this.store.addCard(card);

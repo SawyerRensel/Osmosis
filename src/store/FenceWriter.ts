@@ -1,5 +1,5 @@
 import type { TFile, Vault } from "obsidian";
-import type { OcclusionSet } from "../database/types";
+import type { CardState, OcclusionSet } from "../database/types";
 import { serializeOccludeBlock } from "../card-gen/occlusion";
 
 /** Schedule fields to write into a fence. */
@@ -10,7 +10,7 @@ export interface ScheduleFields {
 	lastReview: number; // epoch ms
 	reps: number;
 	lapses: number;
-	state: string;
+	state: CardState;
 	learningSteps: number;
 }
 
@@ -18,10 +18,19 @@ export interface ScheduleFields {
  * Writes FSRS schedule data back into osmosis code fences in markdown files.
  *
  * After each review, the updated schedule is persisted directly in the
- * source fence metadata so it syncs with any file sync service.
+ * source fence metadata so it syncs with any file sync service — except in
+ * contextual study, which stages the write and flushes it when the session
+ * ends (see {@link stageSchedule}).
  */
 export class FenceWriter {
 	private writingPaths = new Set<string>();
+	/**
+	 * Schedule writes held in memory rather than performed, per note path and
+	 * keyed by card ID. `null` = remove that card's schedule.
+	 */
+	private readonly pending = new Map<string, Map<string, ScheduleFields | null>>();
+	/** Per-path write chain, so two flushes of one note cannot interleave. */
+	private readonly inflight = new Map<string, Promise<void>>();
 
 	constructor(private readonly vault: Vault) {}
 
@@ -38,6 +47,7 @@ export class FenceWriter {
 		cardId: string,
 		schedule: ScheduleFields,
 	): Promise<void> {
+		this.discardStaged(file.path, cardId);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -82,6 +92,7 @@ export class FenceWriter {
 		file: TFile,
 		cardId: string,
 	): Promise<void> {
+		this.discardStaged(file.path, cardId);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -93,6 +104,66 @@ export class FenceWriter {
 			await this.vault.modify(file, modified);
 		} finally {
 			this.writingPaths.delete(file.path);
+		}
+	}
+
+	/**
+	 * Hold a schedule write in memory instead of performing it now.
+	 *
+	 * A fence stores its schedule *inside itself*, so writing one while the note
+	 * is on screen rewrites the very block the reader is looking at. Obsidian
+	 * re-renders that section, the code block processor rebuilds the card from
+	 * scratch, and the reader is scrolled off the diagram they just answered.
+	 * Line cards never had this problem: their schedules live in frontmatter,
+	 * which does not invalidate the body — and `ScheduleStore` is the staged,
+	 * overlaid model this mirrors.
+	 *
+	 * So contextual study stages its reviews and flushes them once, when the
+	 * session ends, when the note is closed, or when the plugin unloads. The
+	 * other surfaces keep writing eagerly, because nothing is displaying the
+	 * source there and a review on disk immediately is worth more. Readers
+	 * overlay {@link getPendingSchedules} so the card store, the due filters and
+	 * the deck counts see the staged review rather than the stale fence text.
+	 */
+	stageSchedule(notePath: string, cardId: string, schedule: ScheduleFields): void {
+		this.stage(notePath, cardId, { ...schedule });
+	}
+
+	/** Hold a schedule *removal* — an undone review on a new card — in memory. */
+	stageRemoveSchedule(notePath: string, cardId: string): void {
+		this.stage(notePath, cardId, null);
+	}
+
+	/**
+	 * Staged-but-unwritten schedules for a note, keyed by card ID.
+	 *
+	 * `null` marks a staged removal, which a reader must treat as "this card has
+	 * no schedule" rather than falling back to the fence text the removal has
+	 * not reached yet.
+	 */
+	getPendingSchedules(notePath: string): ReadonlyMap<string, ScheduleFields | null> {
+		return this.pending.get(notePath) ?? EMPTY_PENDING;
+	}
+
+	/** Note paths carrying staged writes. */
+	pendingPaths(): string[] {
+		return [...this.pending.keys()];
+	}
+
+	/** Write out every staged schedule immediately. */
+	async flush(): Promise<void> {
+		await Promise.all(this.pendingPaths().map((path) => this.flushPath(path)));
+	}
+
+	/** Write out one note's staged schedules immediately. */
+	async flushPath(notePath: string): Promise<void> {
+		const prev = this.inflight.get(notePath) ?? Promise.resolve();
+		const next = prev.then(() => this.writePending(notePath));
+		this.inflight.set(notePath, next);
+		try {
+			await next;
+		} finally {
+			if (this.inflight.get(notePath) === next) this.inflight.delete(notePath);
 		}
 	}
 
@@ -125,7 +196,78 @@ export class FenceWriter {
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
 	}
+
+	// ── Private Helpers ───────────────────────────────────────
+
+	/**
+	 * Forget a card's staged schedule, because something is writing that card's
+	 * schedule through right now — a card-browser reset, say. The direct write
+	 * is the newer intent, and a staged entry left behind would flush on top of
+	 * it later and quietly bring back the schedule that was just cleared.
+	 */
+	private discardStaged(notePath: string, cardId: string): void {
+		const entries = this.pending.get(notePath);
+		if (!entries?.delete(cardId)) return;
+		if (entries.size === 0) this.pending.delete(notePath);
+	}
+
+	private stage(notePath: string, cardId: string, schedule: ScheduleFields | null): void {
+		let entries = this.pending.get(notePath);
+		if (!entries) {
+			entries = new Map();
+			this.pending.set(notePath, entries);
+		}
+		entries.set(cardId, schedule);
+	}
+
+	/**
+	 * Apply a note's staged schedules to its markdown in a single write.
+	 *
+	 * One `vault.modify` for a whole session instead of one per answer is the
+	 * point of staging — the note is rewritten once, when nothing is displaying
+	 * it. Entries that fail to write are re-staged so the next flush retries
+	 * rather than dropping the reviews on the floor.
+	 */
+	private async writePending(notePath: string): Promise<void> {
+		const entries = this.pending.get(notePath);
+		if (!entries || entries.size === 0) return;
+		this.pending.delete(notePath);
+
+		const file = this.vault.getFileByPath(notePath);
+		if (!file) return; // note deleted — drop the staged entries
+
+		this.writingPaths.add(notePath);
+		try {
+			const content = await this.vault.cachedRead(file);
+			let modified = content;
+			for (const [cardId, schedule] of entries) {
+				modified = schedule === null
+					? removeFenceSchedule(modified, cardId)
+					: updateFenceSchedule(modified, cardId, schedule);
+			}
+			if (modified !== content) await this.vault.modify(file, modified);
+		} catch (error) {
+			console.error(`Osmosis: failed to write fence schedules for ${notePath}`, error);
+			this.restage(notePath, entries);
+		} finally {
+			this.writingPaths.delete(notePath);
+		}
+	}
+
+	/** Re-stage entries that failed to write, without clobbering newer reviews. */
+	private restage(notePath: string, entries: Map<string, ScheduleFields | null>): void {
+		const current = this.pending.get(notePath);
+		if (!current) {
+			this.pending.set(notePath, entries);
+			return;
+		}
+		for (const [cardId, schedule] of entries) {
+			if (!current.has(cardId)) current.set(cardId, schedule);
+		}
+	}
 }
+
+const EMPTY_PENDING: ReadonlyMap<string, ScheduleFields | null> = new Map();
 
 /**
  * Pure function: write one embed's shape set into a fence header.
