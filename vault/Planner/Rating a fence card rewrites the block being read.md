@@ -11,14 +11,14 @@ location:
 related:
   - "[[Develop Image Occlusion System for Flaschards]]"
   - "[[Improve cloze data storage]]"
-status: To-Do
+status: In-Progress
 priority:
 progress_current:
 progress_total:
 date_created: "2026-08-12T08:45:00.000Z"
-date_modified: "2026-08-12T08:45:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-08-12T13:00:48.000Z"
+date_start_scheduled: "2026-08-12T13:00:48.000Z"
+date_start_actual: "2026-08-12T13:00:48.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
