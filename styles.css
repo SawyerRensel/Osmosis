@@ -1163,18 +1163,42 @@ hr.osmosis-map-style-divider {
    Sequential Study Modal
    ═══════════════════════════════════════════════════════════ */
 
+/* A flex column capped at 85vh, with the card as the only row that scrolls.
+   `max-height` rather than a fixed height, so a one-line card still gets a
+   compact modal; the cap only binds once the content would leave the screen,
+   and then the card absorbs it instead of the modal growing a scrollbar of its
+   own. Two scrollbars — one on `.modal-content`, one on the card — is what a
+   long card with two images produced, and between them the Show answer button
+   could be scrolled out of reach. */
 .osmosis-study-modal {
+	display: flex;
+	flex-direction: column;
 	width: 600px;
 	max-width: 90vw;
 	max-height: 85vh;
 }
 
 .osmosis-study-modal .modal-content {
-	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
 	/* Reserve room at the top for the absolutely-positioned icon row + ×
 	   close button so the progress bar doesn't slide underneath them. */
 	padding-top: 28px;
 	padding-bottom: 8px;
+}
+
+/* `flex: none` on everything around the card, so a card taller than the modal
+   shrinks itself rather than squeezing the progress bar or pushing the flip and
+   rating buttons off the bottom. Those must stay reachable at every card
+   length — they are how the session is driven. */
+.osmosis-study-modal .osmosis-study-progress,
+.osmosis-study-modal .osmosis-study-breadcrumb,
+.osmosis-study-modal .osmosis-study-actions,
+.osmosis-study-modal > .modal-content > .osmosis-study-complete {
+	flex: none;
 }
 
 /* Mobile: leave a comfortable thumb gap between the rating/flip buttons and
@@ -1456,10 +1480,16 @@ hr.osmosis-map-style-divider {
 	white-space: nowrap;
 }
 
+/* The one scroll surface in the modal. `flex: 1` with an explicit `min-height`
+   is what lets it shrink below its content — a flex item's default
+   `min-height: auto` refuses to — and the floor keeps a short card from
+   collapsing to nothing. It replaces a `max-height: calc(85vh - 120px)`, whose
+   120px was a guess at the surrounding chrome: when the chrome was taller than
+   that, the card fitted its cap and `.modal-content` scrolled as well. */
 .osmosis-study-card {
 	padding: 16px;
+	flex: 1;
 	min-height: 120px;
-	max-height: calc(85vh - 120px);
 	overflow-y: auto;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
