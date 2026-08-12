@@ -16,11 +16,20 @@ export type OcclusionMode = "hide-all-guess-one" | "hide-one-guess-one";
  * Coordinates are normalised 0–1 against the image's own dimensions rather
  * than stored in pixels, so a mask stays put when the image is resized, swapped
  * for a retina variant, or given a `|300` sizing suffix.
+ *
+ * `rotation` is degrees clockwise about the centre of the shape's own bounding
+ * box, applied in the image's **pixel** space rather than in this normalised
+ * one — the two differ by the image's aspect ratio, and rotating in normalised
+ * space would render a tilted rectangle as a parallelogram on any diagram that
+ * is not square. The stored geometry is always the *unrotated* shape, so every
+ * edit (move, resize, vertex drag) goes on working in one axis-aligned frame;
+ * only painting and hit testing know about the angle. Omitted when 0, so no
+ * existing note churns.
  */
 export type OcclusionShape =
-	| { group: string; kind: "rect"; x: number; y: number; w: number; h: number }
-	| { group: string; kind: "ellipse"; x: number; y: number; rx: number; ry: number }
-	| { group: string; kind: "poly"; points: [number, number][] };
+	| { group: string; kind: "rect"; x: number; y: number; w: number; h: number; rotation?: number }
+	| { group: string; kind: "ellipse"; x: number; y: number; rx: number; ry: number; rotation?: number }
+	| { group: string; kind: "poly"; points: [number, number][]; rotation?: number };
 
 /**
  * A text label placed on an occluded image.
@@ -33,11 +42,19 @@ export type OcclusionShape =
  *
  * `x`/`y` are the label's top-left corner, normalised 0–1 like every other
  * coordinate here.
+ *
+ * `rotation` is degrees clockwise about that same corner — the anchor, not the
+ * label's middle. A label is placed to point at a feature, so the anchor is the
+ * part that must stay pinned while the text swings round it. Unlike a shape's
+ * rotation this one needs no aspect compensation: annotations are positioned
+ * HTML precisely so they dodge the mask overlay's stretch, and a CSS `rotate()`
+ * is already applied in screen space. Omitted when 0.
  */
 export interface OcclusionAnnotation {
 	x: number;
 	y: number;
 	text: string;
+	rotation?: number;
 }
 
 /**

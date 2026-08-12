@@ -1,4 +1,5 @@
 import type { OcclusionAnnotation, OcclusionShape } from "../database/types";
+import { normalizeRotation } from "../card-gen/occlusion";
 
 /**
  * The geometry behind the occlusion editor: normalising pointer input, hit
@@ -195,24 +196,33 @@ export function shapeFromBox(kind: "rect" | "ellipse", group: string, box: Box):
 		};
 }
 
-/** Whether a point falls inside a shape, tested against its true outline. */
-export function containsPoint(shape: OcclusionShape, point: Point): boolean {
+/**
+ * Whether a point falls inside a shape, tested against its true outline.
+ *
+ * A rotated shape is tested by turning the *point* back into the shape's own
+ * unrotated frame rather than by rotating the outline — the stored geometry is
+ * always axis-aligned, and one inverse rotation is cheaper and exact for all
+ * three kinds. `aspect` is the image's width÷height, which the rotation is
+ * measured in; it is irrelevant for an unrotated shape, hence the default.
+ */
+export function containsPoint(shape: OcclusionShape, point: Point, aspect = 1): boolean {
+	const local = unrotatePoint(shape, point, aspect);
 	switch (shape.kind) {
 		case "rect": {
 			const box = shapeBox(shape);
 			return (
-				point.x >= box.x && point.x <= box.x + box.w &&
-				point.y >= box.y && point.y <= box.y + box.h
+				local.x >= box.x && local.x <= box.x + box.w &&
+				local.y >= box.y && local.y <= box.y + box.h
 			);
 		}
 		case "ellipse": {
 			if (shape.rx === 0 || shape.ry === 0) return false;
-			const dx = (point.x - shape.x) / shape.rx;
-			const dy = (point.y - shape.y) / shape.ry;
+			const dx = (local.x - shape.x) / shape.rx;
+			const dy = (local.y - shape.y) / shape.ry;
 			return dx * dx + dy * dy <= 1;
 		}
 		case "poly":
-			return pointInPolygon(shape.points, point);
+			return pointInPolygon(shape.points, local);
 	}
 }
 
@@ -236,9 +246,9 @@ function pointInPolygon(points: readonly [number, number][], point: Point): bool
  * Searched last-to-first because shapes paint in source order, so the last one
  * drawn is the one on top and the one the user means to grab.
  */
-export function hitTest(shapes: readonly OcclusionShape[], point: Point): number {
+export function hitTest(shapes: readonly OcclusionShape[], point: Point, aspect = 1): number {
 	for (let i = shapes.length - 1; i >= 0; i--) {
-		if (containsPoint(shapes[i]!, point)) return i;
+		if (containsPoint(shapes[i]!, point, aspect)) return i;
 	}
 	return -1;
 }
@@ -304,24 +314,271 @@ export function moveBox(box: Box, dx: number, dy: number): Box {
  * enforced on the axes the handle moves.
  */
 export function resizeBox(box: Box, handle: HandleId, point: Point): Box {
+	return handleDragBox(box, handle, point, true);
+}
+
+/**
+ * `resizeBox`, with the choice of whether the pointer is held inside the image.
+ *
+ * A rotated shape is resized in its own turned frame, where the image's borders
+ * are not axis-aligned and 0–1 no longer describes them — clamping there would
+ * stop the drag against an invisible wall part-way across the picture. An
+ * unrotated shape keeps the clamp, which is the only behaviour that ever
+ * existed and the one `resizeBox`'s tests pin.
+ */
+function handleDragBox(box: Box, handle: HandleId, point: Point, clamp: boolean): Box {
 	const touchesLeft = handle === "nw" || handle === "w" || handle === "sw";
 	const touchesRight = handle === "ne" || handle === "e" || handle === "se";
 	const touchesTop = handle === "nw" || handle === "n" || handle === "ne";
 	const touchesBottom = handle === "sw" || handle === "s" || handle === "se";
+
+	const held = (value: number) => (clamp ? clamp01(value) : value);
 
 	let left = box.x;
 	let right = box.x + box.w;
 	let top = box.y;
 	let bottom = box.y + box.h;
 
-	if (touchesLeft) left = clamp01(point.x);
-	if (touchesRight) right = clamp01(point.x);
-	if (touchesTop) top = clamp01(point.y);
-	if (touchesBottom) bottom = clamp01(point.y);
+	if (touchesLeft) left = held(point.x);
+	if (touchesRight) right = held(point.x);
+	if (touchesTop) top = held(point.y);
+	if (touchesBottom) bottom = held(point.y);
 
 	const next = boxFromDrag({ x: left, y: top }, { x: right, y: bottom });
 	if (touchesLeft || touchesRight) next.w = Math.max(next.w, MIN_SHAPE_SIZE);
 	if (touchesTop || touchesBottom) next.h = Math.max(next.h, MIN_SHAPE_SIZE);
+	return next;
+}
+
+/** The handle diagonally or directly opposite another — the one a resize pivots on. */
+const OPPOSITE_HANDLE: Record<HandleId, HandleId> = {
+	nw: "se", n: "s", ne: "sw", e: "w", se: "nw", s: "n", sw: "ne", w: "e",
+};
+
+/**
+ * `resizeBox` for a shape that may be rotated, keeping the opposite handle
+ * pinned where it is *on screen*.
+ *
+ * Resizing changes the box, and rotation turns about the box's centre — so
+ * without this the pivot moves as the box grows and the whole shape slides
+ * across the picture while being resized, which reads as a bug rather than as
+ * a resize. The correction is one translation: rotate the anchor before and
+ * after and put back the difference.
+ *
+ * `point` is already in the shape's own unrotated frame, as `unrotatePoint`
+ * gives it. The result may leave the 0–1 box, which is correct: for a rotated
+ * shape that box is an internal frame, not the picture's border, and the SVG
+ * clips whatever falls outside the image.
+ */
+export function resizeAnchored(
+	box: Box,
+	handle: HandleId,
+	point: Point,
+	rotation: number,
+	aspect: number,
+): Box {
+	if (rotation === 0) return resizeBox(box, handle, point);
+
+	const next = handleDragBox(box, handle, point, false);
+	const anchor = OPPOSITE_HANDLE[handle];
+	const before = rotatePoint(handlePoint(box, anchor), boxCenter(box), rotation, aspect);
+	const after = rotatePoint(handlePoint(next, anchor), boxCenter(next), rotation, aspect);
+	return { ...next, x: next.x + before.x - after.x, y: next.y + before.y - after.y };
+}
+
+/** The middle of a box. */
+export function boxCenter(box: Box): Point {
+	return { x: box.x + box.w / 2, y: box.y + box.h / 2 };
+}
+
+// ── Rotation ──────────────────────────────────────────────────
+
+/**
+ * Rotation is applied in the image's **pixel** space, not in the normalised 0–1
+ * space everything else here works in.
+ *
+ * That distinction is the whole of this section. The mask overlay is
+ * deliberately stretched — `viewBox="0 0 1 1"` with `preserveAspectRatio="none"`
+ * — which is exactly what lets normalised coordinates land without measuring
+ * anything. A plain `rotate()` inside that space would be applied *after* the
+ * stretch, so a tilted rectangle would render as a parallelogram on any diagram
+ * that is not square, and this project's diagrams are wide.
+ *
+ * The fix is one scalar: `aspect`, the image's width÷height. Rotating by θ in
+ * pixel space is `S⁻¹RS` with `S = diag(W, H)`, which in normalised space is
+ *
+ * ```
+ * x' = x·cos θ − y·sin θ / aspect
+ * y' = x·aspect·sin θ + y·cos θ
+ * ```
+ *
+ * — the matrix `rotationTransform` emits and the rotation `rotatePoint`
+ * applies. Both take the aspect as an argument rather than reading it off the
+ * DOM, because `maskElements` is what the mask tests assert against.
+ *
+ * Angles are degrees clockwise, matching SVG's own `rotate()` in a y-down
+ * coordinate system, and are stored folded into [0, 360).
+ */
+
+/** The increment a rotate drag snaps to while Shift is held, in degrees. */
+export const ROTATION_SNAP = 15;
+
+/** How far the rotation handle sits above a shape's box, in image pixels. */
+export const ROTATE_HANDLE_PX = 22;
+
+/** A shape's rotation in degrees; 0 when it has none. */
+export function shapeRotation(shape: OcclusionShape): number {
+	return shape.rotation ?? 0;
+}
+
+/**
+ * The point a shape turns about: the centre of its own bounding box.
+ *
+ * The box is the *unrotated* one, which is what makes rotation composable with
+ * every other edit — moving or resizing a tilted shape works on the same
+ * axis-aligned box it always did, and the angle simply rides along.
+ */
+export function shapeCenter(shape: OcclusionShape): Point {
+	return boxCenter(shapeBox(shape));
+}
+
+/** A usable aspect ratio: anything degenerate falls back to square. */
+function safeAspect(aspect: number): number {
+	return Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+}
+
+/**
+ * `point` turned `degrees` clockwise about `center`, in the image's pixel
+ * space — see this section's note for why the aspect ratio has to be in it.
+ */
+export function rotatePoint(point: Point, center: Point, degrees: number, aspect: number): Point {
+	if (degrees === 0) return point;
+	const radians = (degrees * Math.PI) / 180;
+	const cos = Math.cos(radians);
+	const sin = Math.sin(radians);
+	const a = safeAspect(aspect);
+	const dx = point.x - center.x;
+	const dy = point.y - center.y;
+	return {
+		x: center.x + dx * cos - (dy * sin) / a,
+		y: center.y + dx * a * sin + dy * cos,
+	};
+}
+
+/**
+ * A point as it stands in a shape's own unrotated frame — the frame the stored
+ * geometry, the resize handles, and the vertices all live in.
+ *
+ * Every editor gesture goes through this on the way in, which is what keeps
+ * `handleAt`, `resizeBox`, `vertexAt` and friends free of rotation entirely.
+ */
+export function unrotatePoint(shape: OcclusionShape, point: Point, aspect: number): Point {
+	const rotation = shapeRotation(shape);
+	return rotation === 0 ? point : rotatePoint(point, shapeCenter(shape), -rotation, aspect);
+}
+
+/**
+ * The SVG `transform` that paints a shape at its angle, or null when it has
+ * none — so an unrotated mask carries no transform attribute at all and the
+ * overwhelmingly common case renders exactly as it always did.
+ */
+export function rotationTransform(shape: OcclusionShape, aspect: number): string | null {
+	const rotation = shapeRotation(shape);
+	if (rotation === 0) return null;
+
+	const radians = (rotation * Math.PI) / 180;
+	const cos = Math.cos(radians);
+	const sin = Math.sin(radians);
+	const a = safeAspect(aspect);
+	const center = shapeCenter(shape);
+
+	// Columns of S⁻¹RS, in SVG's (a, b, c, d) order — a and d down the diagonal,
+	// b below it, c above.
+	const m11 = cos;
+	const m12 = -sin / a;
+	const m21 = a * sin;
+	const m22 = cos;
+	// The translation that puts the centre back where it was: the matrix turns
+	// about the origin, and the shape has to turn about itself.
+	const e = center.x - (m11 * center.x + m12 * center.y);
+	const f = center.y - (m21 * center.x + m22 * center.y);
+
+	return `matrix(${six(m11)}, ${six(m21)}, ${six(m12)}, ${six(m22)}, ${six(e)}, ${six(f)})`;
+}
+
+/** Six decimal places — sub-pixel on any image, and stable to assert against. */
+function six(value: number): number {
+	return Math.round(value * 1e6) / 1e6;
+}
+
+/**
+ * The bearing of `point` from `center`, in degrees clockwise from straight up —
+ * the angle a rotate drag reads off the pointer.
+ *
+ * Measured in pixel space like the rotation itself, so the handle stays under
+ * the pointer on a wide image instead of leading or lagging it.
+ */
+export function angleFrom(center: Point, point: Point, aspect: number): number {
+	const dx = (point.x - center.x) * safeAspect(aspect);
+	const dy = point.y - center.y;
+	return normalizeRotation((Math.atan2(dx, -dy) * 180) / Math.PI);
+}
+
+/**
+ * The point `offset` away from `from` at bearing `degrees` — where a rotation
+ * handle sits when its subject is not a shape with a box to hang it off.
+ *
+ * `offset` is in normalised *y* units, so the handle keeps a constant pixel
+ * distance whatever the image's proportions.
+ */
+export function bearingPoint(from: Point, offset: number, degrees: number, aspect: number): Point {
+	const radians = (degrees * Math.PI) / 180;
+	return {
+		x: from.x + (offset * Math.sin(radians)) / safeAspect(aspect),
+		y: from.y - offset * Math.cos(radians),
+	};
+}
+
+/**
+ * Where the rotation handle sits, in the shape's own unrotated frame: `offset`
+ * above the top-centre of its box.
+ *
+ * Local rather than rotated, because the editor draws the handle inside the
+ * group that carries the shape's transform and tests for it with the pointer
+ * already turned back by `unrotatePoint`. Both halves therefore work in one
+ * frame and cannot disagree about where the handle is.
+ */
+export function rotationHandlePoint(box: Box, offset: number): Point {
+	return { x: box.x + box.w / 2, y: box.y - offset };
+}
+
+/** `degrees` snapped to the nearest `ROTATION_SNAP`, for a Shift-held drag. */
+export function snapRotation(degrees: number): number {
+	return Math.round(degrees / ROTATION_SNAP) * ROTATION_SNAP;
+}
+
+/**
+ * The same shape at a new angle, with the key dropped entirely at 0 — so
+ * rotating a mask back to square leaves it serializing exactly as an untouched
+ * one does, rather than carrying a `rotation: 0` the format never writes.
+ */
+export function withRotation(shape: OcclusionShape, degrees: number): OcclusionShape {
+	const rotation = normalizeRotation(degrees);
+	const next = cloneShape(shape);
+	if (rotation === 0) delete next.rotation;
+	else next.rotation = rotation;
+	return next;
+}
+
+/** The same annotation at a new angle, with the key dropped at 0. */
+export function annotationWithRotation(
+	annotation: OcclusionAnnotation,
+	degrees: number,
+): OcclusionAnnotation {
+	const rotation = normalizeRotation(degrees);
+	const next = { ...annotation };
+	if (rotation === 0) delete next.rotation;
+	else next.rotation = rotation;
 	return next;
 }
 
@@ -362,11 +619,19 @@ export function vertexAt(
 	return null;
 }
 
-/** The same polygon with one vertex dragged to `point`. Other kinds pass through. */
+/**
+ * The same polygon with one vertex dragged to `point`. Other kinds pass through.
+ *
+ * `point` is in the polygon's own frame, so a rotated one is *not* clamped: the
+ * image's borders are not axis-aligned in a turned frame, and 0–1 would stop
+ * the drag against an invisible wall somewhere across the picture.
+ */
 export function withVertexMoved(shape: OcclusionShape, index: number, point: Point): OcclusionShape {
 	if (shape.kind !== "poly" || index < 0 || index >= shape.points.length) return shape;
 	const points = shape.points.map((p): [number, number] => [...p]);
-	points[index] = [clamp01(point.x), clamp01(point.y)];
+	points[index] = shapeRotation(shape) === 0
+		? [clamp01(point.x), clamp01(point.y)]
+		: [point.x, point.y];
 	return { ...shape, points };
 }
 

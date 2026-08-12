@@ -1147,3 +1147,120 @@ describe("ensureFenceIdentity", () => {
 			.toEqual([identity.label]);
 	});
 });
+
+/**
+ * Rotation is stored on the shape, in degrees clockwise about the centre of its
+ * own bounding box, and omitted at 0 so that no existing note churns the first
+ * time it is written back.
+ */
+describe("rotation", () => {
+	const tilted: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [
+			{ group: "c1", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1, rotation: 37 },
+			{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05, rotation: 90 },
+			{ group: "c3", kind: "poly", points: [[0.2, 0.18], [0.42, 0.18], [0.31, 0.34]], rotation: 200 },
+		],
+		annotations: [{ x: 0.5, y: 0.12, rotation: 315, text: "Deck" }],
+	};
+
+	it("survives fence serialize → parse unchanged", () => {
+		expect(parseOccludeBlock(serializeOccludeBlock("a", tilted), 0)!.set).toEqual(tilted);
+	});
+
+	it("survives frontmatter serialize → parse unchanged", () => {
+		expect(parseOcclusionSet(occlusionSetToYamlValue(tilted))).toEqual(tilted);
+	});
+
+	it("writes the angle after the coordinates, so a shape reads geometry-first", () => {
+		expect(serializeOccludeBlock("", {
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06, rotation: 37 }],
+		})).toEqual([
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.3",
+			"      y: 0.2",
+			"      w: 0.14",
+			"      h: 0.06",
+			"      rotation: 37",
+		]);
+	});
+
+	it("writes a label's angle before its text, keeping the free text last", () => {
+		expect(serializeOccludeBlock("", {
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
+			annotations: [{ x: 0.5, y: 0.12, rotation: 45, text: "Deck" }],
+		}).slice(-5)).toEqual([
+			"  annotations:",
+			"    - x: 0.5",
+			"      y: 0.12",
+			"      rotation: 45",
+			'      text: "Deck"',
+		]);
+	});
+
+	it("writes nothing at all when nothing is rotated", () => {
+		// An unrotated set must serialize exactly as it did before rotation
+		// existed — otherwise every note in the vault churns on its next write.
+		const square: OcclusionSet = {
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }],
+			annotations: [{ x: 0.5, y: 0.12, text: "Deck" }],
+		};
+
+		expect(serializeOccludeBlock("a", square).join("\n")).not.toContain("rotation");
+		expect(JSON.stringify(occlusionSetToYamlValue(square))).not.toContain("rotation");
+	});
+
+	it("drops a zero written by hand rather than carrying it in memory", () => {
+		const parsed = parseOccludeBlock([
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.3",
+			"      y: 0.2",
+			"      w: 0.1",
+			"      h: 0.1",
+			"      rotation: 0",
+		], 0)!;
+
+		expect(parsed.set.shapes[0]).toEqual({ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.1, h: 0.1 });
+	});
+
+	it("folds a hand-written angle into [0, 360)", () => {
+		expect(parseOcclusionSet({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.1, h: 0.1, rotation: -90 }],
+		})!.shapes[0]!.rotation).toBe(270);
+	});
+
+	it("ignores an unusable angle rather than losing the shape", () => {
+		// A shape with a mangled rotation is still a mask the user drew, and a
+		// card that may be deep into review.
+		expect(parseOcclusionSet({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.1, h: 0.1, rotation: "sideways" }],
+		})!.shapes[0]).toEqual({ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.1, h: 0.1 });
+	});
+
+	it("reads an angle out of a pre-migration flow mapping too", () => {
+		expect(parseOccludeBlock([
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - { group: c1, kind: rect, x: 0.1, y: 0.2, w: 0.3, h: 0.4, rotation: 45 }",
+		], 0)!.set.shapes[0]!.rotation).toBe(45);
+	});
+
+	it("derives one card per group regardless of angle", () => {
+		// Rotation is presentation; it must not touch the group→card collapse.
+		expect(occlusionGroups(tilted)).toEqual(["c1", "c2", "c3"]);
+	});
+});

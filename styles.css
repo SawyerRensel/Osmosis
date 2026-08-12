@@ -1404,10 +1404,16 @@ hr.osmosis-map-style-divider {
 	line-height: var(--line-height-tight);
 }
 
+/* Rotated about the anchor, not the label's middle: a label points at a feature,
+   so the corner the user placed is the end that must stay pinned while the text
+   swings round it. No aspect compensation, unlike a mask — this element sits
+   outside the stretched overlay, so a CSS rotate() is already in screen space. */
 .osmosis-occlusion-annotation {
 	position: absolute;
 	left: var(--osmosis-annotation-x, 0%);
 	top: var(--osmosis-annotation-y, 0%);
+	transform: rotate(var(--osmosis-annotation-rotation, 0deg));
+	transform-origin: 0 0;
 	max-width: 60%;
 	padding: 1px 4px;
 	border-radius: var(--radius-s);
@@ -3687,6 +3693,25 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	stroke: var(--interactive-accent);
 	stroke-width: 2;
 	vector-effect: non-scaling-stroke;
+}
+
+/* The rotation grip and its stem. Both sit inside the group that carries the
+   shape's own transform, so they swing round with it and are grabbed exactly
+   where they are drawn. */
+.osmosis-occlusion-rotate {
+	fill: var(--background-primary);
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+	cursor: grab;
+	pointer-events: auto;
+}
+
+.osmosis-occlusion-rotate-stem {
+	stroke: var(--interactive-accent);
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+	pointer-events: none;
 }
 
 /* Polygon vertices. Drawn as ellipses sized in per-axis normalised units for the

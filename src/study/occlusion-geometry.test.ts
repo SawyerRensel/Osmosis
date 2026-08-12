@@ -4,6 +4,10 @@ import type { Box } from "./occlusion-geometry";
 import {
 	alignShapes,
 	anchoredScroll,
+	angleFrom,
+	annotationWithRotation,
+	bearingPoint,
+	boxCenter,
 	boxFromDrag,
 	clamp01,
 	cloneShape,
@@ -23,14 +27,24 @@ import {
 	moveShapes,
 	nextGroup,
 	polyFromPoints,
+	resizeAnchored,
 	resizeBox,
+	ROTATION_SNAP,
+	rotatePoint,
+	rotationHandlePoint,
+	rotationTransform,
 	shapeBox,
+	shapeCenter,
 	shapeFromBox,
+	shapeRotation,
 	shapeWithBox,
+	snapRotation,
 	toNormalized,
 	unionBox,
+	unrotatePoint,
 	usedGroups,
 	vertexAt,
+	withRotation,
 	withVertexInserted,
 	withVertexMoved,
 	withVertexRemoved,
@@ -684,5 +698,395 @@ describe("anchoredScroll", () => {
 
 	it("leaves the scroll alone when nothing scales", () => {
 		expect(anchoredScroll(100, 200, 1)).toBe(100);
+	});
+});
+
+// ── Rotation ──────────────────────────────────────────────────
+
+/**
+ * A deliberately wide image — twice as wide as it is tall — because that is the
+ * only shape of picture on which the aspect compensation is visible at all. On
+ * a square one every rotation test below passes with the compensation removed.
+ */
+const WIDE = 2;
+
+describe("rotatePoint", () => {
+	const center = { x: 0.5, y: 0.5 };
+
+	it("leaves a point alone at zero", () => {
+		expect(rotatePoint({ x: 0.2, y: 0.3 }, center, 0, WIDE)).toEqual({ x: 0.2, y: 0.3 });
+	});
+
+	it("turns clockwise, matching SVG's own rotate in a y-down space", () => {
+		// A point directly above the centre lands directly to its right.
+		const turned = rotatePoint({ x: 0.5, y: 0.25 }, center, 90, 1);
+
+		expect(turned.x).toBeCloseTo(0.75, 10);
+		expect(turned.y).toBeCloseTo(0.5, 10);
+	});
+
+	it("compensates for the image's aspect, so a quarter turn is square on screen", () => {
+		// 0.25 up on a 2:1 image is half as many pixels as 0.25 across, so the
+		// quarter turn has to come out at half the normalised distance sideways.
+		const turned = rotatePoint({ x: 0.5, y: 0.25 }, center, 90, WIDE);
+
+		expect(turned.x).toBeCloseTo(0.625, 10);
+		expect(turned.y).toBeCloseTo(0.5, 10);
+	});
+
+	it("brings a point back where it started after a full turn", () => {
+		const turned = rotatePoint({ x: 0.2, y: 0.3 }, center, 360, WIDE);
+
+		expect(turned.x).toBeCloseTo(0.2, 10);
+		expect(turned.y).toBeCloseTo(0.3, 10);
+	});
+
+	it("falls back to square rather than dividing by a degenerate aspect", () => {
+		// The renderer paints at aspect 1 until the image has loaded.
+		expect(rotatePoint({ x: 0.5, y: 0.25 }, center, 90, 0).x).toBeCloseTo(0.75, 10);
+	});
+});
+
+describe("unrotatePoint", () => {
+	const shape: OcclusionShape = { group: "c1", kind: "rect", x: 0.4, y: 0.4, w: 0.2, h: 0.2, rotation: 30 };
+
+	it("is the exact inverse of the rotation the shape is painted with", () => {
+		const point = { x: 0.7, y: 0.2 };
+		const local = unrotatePoint(shape, point, WIDE);
+		const back = rotatePoint(local, shapeCenter(shape), 30, WIDE);
+
+		expect(back.x).toBeCloseTo(point.x, 10);
+		expect(back.y).toBeCloseTo(point.y, 10);
+	});
+
+	it("passes an unrotated shape's point straight through", () => {
+		const square: OcclusionShape = { group: "c1", kind: "rect", x: 0.4, y: 0.4, w: 0.2, h: 0.2 };
+
+		expect(unrotatePoint(square, { x: 0.7, y: 0.2 }, WIDE)).toEqual({ x: 0.7, y: 0.2 });
+	});
+});
+
+describe("containsPoint, rotated", () => {
+	// A wide, flat rect turned a quarter turn: it now stands tall on screen.
+	const flat: OcclusionShape = { group: "c1", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1 };
+	const turned: OcclusionShape = { ...flat, rotation: 90 };
+
+	it("grabs a rotated shape where it is drawn, not where its box is", () => {
+		// Straight above the centre: outside the flat rect, inside the turned one.
+		const above = { x: 0.5, y: 0.36 };
+
+		expect(containsPoint(flat, above, WIDE)).toBe(false);
+		expect(containsPoint(turned, above, WIDE)).toBe(true);
+	});
+
+	it("stops covering what the unrotated shape covered", () => {
+		const alongside = { x: 0.66, y: 0.5 };
+
+		expect(containsPoint(flat, alongside, WIDE)).toBe(true);
+		expect(containsPoint(turned, alongside, WIDE)).toBe(false);
+	});
+
+	it("takes the aspect ratio into account", () => {
+		// The same point is inside the turned rect on a 2:1 image and outside it
+		// on a square one: a quarter turn carries the rect's 0.4 of width into
+		// 0.8 of height on a picture twice as wide as it is tall, and only 0.4 on
+		// a square one.
+		const point = { x: 0.5, y: 0.8 };
+
+		expect(containsPoint(turned, point, WIDE)).toBe(true);
+		expect(containsPoint(turned, point, 1)).toBe(false);
+	});
+
+	it("rotates ellipses and polygons too, not only rects", () => {
+		const ellipse: OcclusionShape = { group: "c1", kind: "ellipse", x: 0.5, y: 0.5, rx: 0.2, ry: 0.05, rotation: 90 };
+		const poly: OcclusionShape = {
+			group: "c1", kind: "poly", points: [[0.3, 0.45], [0.7, 0.45], [0.7, 0.55]], rotation: 90,
+		};
+
+		expect(containsPoint(ellipse, { x: 0.5, y: 0.42 }, WIDE)).toBe(true);
+		expect(containsPoint(ellipse, { x: 0.65, y: 0.5 }, WIDE)).toBe(false);
+		expect(containsPoint(poly, { x: 0.51, y: 0.7 }, WIDE)).toBe(true);
+	});
+});
+
+describe("hitTest, rotated", () => {
+	it("carries the aspect through to every shape it tries", () => {
+		const shapes: OcclusionShape[] = [
+			{ group: "c1", kind: "rect", x: 0.05, y: 0.05, w: 0.1, h: 0.1 },
+			{ group: "c2", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1, rotation: 90 },
+		];
+
+		expect(hitTest(shapes, { x: 0.5, y: 0.8 }, WIDE)).toBe(1);
+		expect(hitTest(shapes, { x: 0.5, y: 0.8 }, 1)).toBe(-1);
+	});
+});
+
+describe("rotationTransform", () => {
+	const shape: OcclusionShape = { group: "c1", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1 };
+
+	it("emits nothing at all for an unrotated shape", () => {
+		// An untouched mask must carry no transform attribute, so the common case
+		// renders exactly as it did before rotation existed.
+		expect(rotationTransform(shape, WIDE)).toBeNull();
+	});
+
+	it("is a matrix, not a rotate() — a rotate() would shear on a wide image", () => {
+		expect(rotationTransform({ ...shape, rotation: 90 }, WIDE)).toMatch(/^matrix\(/);
+	});
+
+	it("scales the off-diagonal terms by the aspect, in SVG's column order", () => {
+		// matrix(a, b, c, d, e, f) maps x' = ax + cy + e, y' = bx + dy + f, so the
+		// aspect multiplies b and divides c.
+		const parts = matrixParts(rotationTransform({ ...shape, rotation: 90 }, WIDE)!);
+
+		expect(parts[0]).toBeCloseTo(0, 5);
+		expect(parts[1]).toBeCloseTo(WIDE, 5);
+		expect(parts[2]).toBeCloseTo(-1 / WIDE, 5);
+		expect(parts[3]).toBeCloseTo(0, 5);
+	});
+
+	it("keeps the shape's centre exactly where it was", () => {
+		// The translation terms exist only to turn the shape about itself rather
+		// than about the image's top-left corner.
+		const center = shapeCenter(shape);
+		const parts = matrixParts(rotationTransform({ ...shape, rotation: 37 }, WIDE)!);
+		const [a, b, c, d, e, f] = parts as [number, number, number, number, number, number];
+
+		expect(a * center.x + c * center.y + e).toBeCloseTo(center.x, 5);
+		expect(b * center.x + d * center.y + f).toBeCloseTo(center.y, 5);
+	});
+
+	it("maps a corner exactly where rotatePoint puts it", () => {
+		// The painted shape and the hit test must agree, or a mask cannot be
+		// grabbed where it is drawn.
+		const corner = { x: shape.x, y: shape.y };
+		const [a, b, c, d, e, f] = matrixParts(rotationTransform({ ...shape, rotation: 37 }, WIDE)!) as
+			[number, number, number, number, number, number];
+		const expected = rotatePoint(corner, shapeCenter(shape), 37, WIDE);
+
+		expect(a * corner.x + c * corner.y + e).toBeCloseTo(expected.x, 5);
+		expect(b * corner.x + d * corner.y + f).toBeCloseTo(expected.y, 5);
+	});
+
+	it("keeps a right angle a right angle on screen — the whole point of the matrix", () => {
+		// The two edges leaving a rect's corner must still meet at 90° once the
+		// overlay's stretch has been applied. A plain rotate() fails this, which
+		// is what makes a tilted rect render as a parallelogram.
+		const rotated = { ...shape, rotation: 37 };
+		const box = shapeBox(shape);
+		const corner = rotatePoint({ x: box.x, y: box.y }, shapeCenter(shape), 37, WIDE);
+		const alongX = rotatePoint({ x: box.x + box.w, y: box.y }, shapeCenter(shape), 37, WIDE);
+		const alongY = rotatePoint({ x: box.x, y: box.y + box.h }, shapeCenter(shape), 37, WIDE);
+
+		// Back into pixel proportions, where the angle is the one the eye sees.
+		const edgeX = { x: (alongX.x - corner.x) * WIDE, y: alongX.y - corner.y };
+		const edgeY = { x: (alongY.x - corner.x) * WIDE, y: alongY.y - corner.y };
+
+		expect(edgeX.x * edgeY.x + edgeX.y * edgeY.y).toBeCloseTo(0, 10);
+		expect(rotationTransform(rotated, WIDE)).not.toBeNull();
+	});
+});
+
+/** The six numbers out of a `matrix(...)` transform. */
+function matrixParts(transform: string): number[] {
+	return /^matrix\(([^)]*)\)$/.exec(transform)![1]!.split(",").map((part) => Number(part.trim()));
+}
+
+describe("angleFrom", () => {
+	const center = { x: 0.5, y: 0.5 };
+
+	it("reads straight up as zero", () => {
+		expect(angleFrom(center, { x: 0.5, y: 0.2 }, WIDE)).toBeCloseTo(0, 10);
+	});
+
+	it("reads clockwise, so the right-hand side is a quarter turn", () => {
+		expect(angleFrom(center, { x: 0.8, y: 0.5 }, WIDE)).toBeCloseTo(90, 10);
+	});
+
+	it("comes back folded into [0, 360) rather than going negative", () => {
+		expect(angleFrom(center, { x: 0.2, y: 0.5 }, WIDE)).toBeCloseTo(270, 10);
+	});
+
+	it("undoes rotatePoint, so grabbing a grip never snaps the shape", () => {
+		const grip = rotatePoint({ x: 0.5, y: 0.2 }, center, 37, WIDE);
+
+		expect(angleFrom(center, grip, WIDE)).toBeCloseTo(37, 10);
+	});
+
+	it("measures in pixel space, so the aspect changes what a bearing reads as", () => {
+		const off = { x: 0.7, y: 0.3 };
+
+		expect(angleFrom(center, off, 1)).toBeCloseTo(45, 10);
+		expect(angleFrom(center, off, WIDE)).not.toBeCloseTo(45, 1);
+	});
+});
+
+describe("bearingPoint", () => {
+	it("hangs the grip straight above its subject at zero", () => {
+		expect(bearingPoint({ x: 0.5, y: 0.5 }, 0.1, 0, WIDE)).toEqual({ x: 0.5, y: 0.4 });
+	});
+
+	it("swings it round with the label, aspect and all", () => {
+		const at = bearingPoint({ x: 0.5, y: 0.5 }, 0.1, 90, WIDE);
+
+		expect(at.x).toBeCloseTo(0.55, 10);
+		expect(at.y).toBeCloseTo(0.5, 10);
+	});
+
+	it("is the inverse of angleFrom, so the grip is grabbed where it is drawn", () => {
+		const anchor = { x: 0.4, y: 0.6 };
+		const at = bearingPoint(anchor, 0.1, 200, WIDE);
+
+		expect(angleFrom(anchor, at, WIDE)).toBeCloseTo(200, 10);
+	});
+});
+
+describe("rotationHandlePoint", () => {
+	it("sits above the top-centre of the box, in the shape's own frame", () => {
+		// Local, not rotated: the editor draws it inside the group that carries
+		// the shape's transform and tests for it with the pointer already turned
+		// back, so both halves work in one frame.
+		const at = rotationHandlePoint({ x: 0.2, y: 0.4, w: 0.4, h: 0.2 }, 0.05);
+
+		expect(at.x).toBeCloseTo(0.4);
+		expect(at.y).toBeCloseTo(0.35);
+	});
+});
+
+describe("snapRotation", () => {
+	it("snaps to the nearest increment", () => {
+		expect(snapRotation(37)).toBe(30);
+		expect(snapRotation(38)).toBe(45);
+		expect(snapRotation(ROTATION_SNAP * 3)).toBe(ROTATION_SNAP * 3);
+	});
+
+	it("snaps a negative turn the same way", () => {
+		expect(snapRotation(-37)).toBe(-30);
+	});
+});
+
+describe("withRotation", () => {
+	const shape: OcclusionShape = { group: "c1", kind: "rect", x: 0.3, y: 0.4, w: 0.2, h: 0.1 };
+
+	it("stores the angle folded into [0, 360)", () => {
+		expect(shapeRotation(withRotation(shape, 400))).toBe(40);
+		expect(shapeRotation(withRotation(shape, -90))).toBe(270);
+	});
+
+	it("drops the key entirely at zero, so a squared-up mask serializes as it always did", () => {
+		const rotated = withRotation(shape, 45);
+
+		expect(withRotation(rotated, 0)).toEqual(shape);
+		expect("rotation" in withRotation(rotated, 0)).toBe(false);
+		expect("rotation" in withRotation(rotated, 360)).toBe(false);
+	});
+
+	it("deep-copies, so a polygon's points are not shared with the original", () => {
+		const poly: OcclusionShape = { group: "c1", kind: "poly", points: [[0, 0], [1, 0], [1, 1]] };
+		const rotated = withRotation(poly, 20) as Extract<OcclusionShape, { kind: "poly" }>;
+		rotated.points[0]![0] = 0.5;
+
+		expect(poly.points[0]![0]).toBe(0);
+	});
+});
+
+describe("annotationWithRotation", () => {
+	it("stores the angle folded, and drops it at zero", () => {
+		const label = { x: 0.2, y: 0.3, text: "span" };
+
+		expect(annotationWithRotation(label, 380).rotation).toBe(20);
+		expect(annotationWithRotation(annotationWithRotation(label, 45), 0)).toEqual(label);
+	});
+});
+
+describe("rotation survives the other edits", () => {
+	const shape: OcclusionShape = { group: "c1", kind: "rect", x: 0.3, y: 0.4, w: 0.2, h: 0.1, rotation: 45 };
+
+	it("rides along through a move", () => {
+		expect(shapeRotation(moveShapes([shape], [0], 0.1, 0)[0]!)).toBe(45);
+	});
+
+	it("rides along through a resize", () => {
+		expect(shapeRotation(shapeWithBox(shape, { x: 0.1, y: 0.1, w: 0.5, h: 0.5 }))).toBe(45);
+	});
+
+	it("rides along through a duplicate, with the group, so one card stays one card", () => {
+		const copy = duplicateShape(shape);
+
+		expect(shapeRotation(copy)).toBe(45);
+		expect(copy.group).toBe("c1");
+	});
+
+	it("rides along through a clone", () => {
+		expect(shapeRotation(cloneShape(shape))).toBe(45);
+	});
+
+	it("rides along through an align, which lines up the unrotated boxes", () => {
+		const other: OcclusionShape = { group: "c2", kind: "rect", x: 0.6, y: 0.7, w: 0.2, h: 0.1 };
+		const aligned = alignShapes([shape, other], [0, 1], "left");
+
+		expect(shapeRotation(aligned[0]!)).toBe(45);
+		expect(shapeBox(aligned[1]!).x).toBe(0.3);
+	});
+});
+
+describe("resizeAnchored", () => {
+	const box: Box = { x: 0.3, y: 0.4, w: 0.2, h: 0.1 };
+
+	it("is plain resizeBox when nothing is rotated", () => {
+		expect(resizeAnchored(box, "se", { x: 0.6, y: 0.7 }, 0, WIDE))
+			.toEqual(resizeBox(box, "se", { x: 0.6, y: 0.7 }));
+	});
+
+	it("keeps the opposite corner pinned where it is on screen", () => {
+		// Resizing moves the box's centre, and the shape turns about that centre —
+		// so without the correction the whole shape slides across the picture
+		// while being resized, which reads as a bug rather than as a resize.
+		const rotation = 37;
+		const before = rotatePoint(handlePoint(box, "nw"), boxCenter(box), rotation, WIDE);
+		const next = resizeAnchored(box, "se", { x: 0.62, y: 0.66 }, rotation, WIDE);
+		const after = rotatePoint(handlePoint(next, "nw"), boxCenter(next), rotation, WIDE);
+
+		expect(after.x).toBeCloseTo(before.x, 10);
+		expect(after.y).toBeCloseTo(before.y, 10);
+	});
+
+	it("pins the opposite edge for a side handle too", () => {
+		const rotation = 120;
+		const before = rotatePoint(handlePoint(box, "w"), boxCenter(box), rotation, WIDE);
+		const next = resizeAnchored(box, "e", { x: 0.9, y: 0.45 }, rotation, WIDE);
+		const after = rotatePoint(handlePoint(next, "w"), boxCenter(next), rotation, WIDE);
+
+		expect(after.x).toBeCloseTo(before.x, 10);
+		expect(after.y).toBeCloseTo(before.y, 10);
+	});
+
+	it("does not clamp a rotated drag to 0–1, which is not the picture's border there", () => {
+		// In a turned frame the image's edges are not axis-aligned, so clamping
+		// would stop the drag against an invisible wall part-way across it.
+		expect(resizeAnchored(box, "se", { x: 1.4, y: 0.7 }, 90, WIDE).w).toBeCloseTo(1.1, 10);
+		expect(resizeBox(box, "se", { x: 1.4, y: 0.7 }).w).toBeCloseTo(0.7, 10);
+	});
+
+	it("still refuses to collapse a shape below the minimum", () => {
+		expect(resizeAnchored(box, "e", { x: 0.3, y: 0.45 }, 45, WIDE).w).toBe(MIN_SHAPE_SIZE);
+	});
+});
+
+describe("withVertexMoved, rotated", () => {
+	const points: [number, number][] = [[0.3, 0.4], [0.5, 0.4], [0.4, 0.6]];
+
+	it("clamps an unrotated polygon, as it always has", () => {
+		const shape: OcclusionShape = { group: "c1", kind: "poly", points };
+		const moved = withVertexMoved(shape, 0, { x: 1.4, y: -0.2 });
+
+		expect((moved as Extract<OcclusionShape, { kind: "poly" }>).points[0]).toEqual([1, 0]);
+	});
+
+	it("leaves a rotated one unclamped — 0–1 is not its border", () => {
+		const shape: OcclusionShape = { group: "c1", kind: "poly", points, rotation: 90 };
+		const moved = withVertexMoved(shape, 0, { x: 1.4, y: -0.2 });
+
+		expect((moved as Extract<OcclusionShape, { kind: "poly" }>).points[0]).toEqual([1.4, -0.2]);
 	});
 });

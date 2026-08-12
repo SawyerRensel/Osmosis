@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import type { App } from "obsidian";
 import type { OcclusionSet } from "../database/types";
 import type { Scope } from "../test/obsidian-stub";
-import { shapeBox } from "../study/occlusion-geometry";
+import { rotatePoint, shapeBox } from "../study/occlusion-geometry";
 import { OcclusionEditorModal } from "./OcclusionEditorModal";
 
 /**
@@ -933,5 +933,197 @@ describe("OcclusionEditorModal panning", () => {
 		click(opened.content, "Save");
 
 		expect(opened.saved[0]?.shapes).toHaveLength(4);
+	});
+});
+
+/**
+ * Rotation. The fixture image is 400×200 on screen and 1600×800 naturally, so
+ * its aspect is 2 — a deliberately wide picture, which is the only kind on
+ * which the aspect compensation is visible at all.
+ *
+ * Shape 0 is the rect at x 0.31–0.45, y 0.22–0.28: on screen 124–180 across and
+ * 44–56 down, with its centre at (152, 50). Its rotation grip sits
+ * `ROTATE_HANDLE_PX` (22) above the box's top edge, at (152, 22).
+ */
+describe("OcclusionEditorModal rotation", () => {
+	const CENTER: [number, number] = [152, 50];
+	const GRIP: [number, number] = [152, 22];
+
+	/** Select shape 0 by pressing inside it, which is what puts grips on it. */
+	function selectFirst(o: Opened): void {
+		tap(o.svg, CENTER);
+	}
+
+	/** The saved rotation of shape 0, or undefined when it has none. */
+	function savedRotation(o: Opened): number | undefined {
+		click(o.content, "Save");
+		return o.saved[o.saved.length - 1]?.shapes[0]?.rotation;
+	}
+
+	it("puts a rotation grip and its stem on the selected shape", () => {
+		selectFirst(opened);
+
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(1);
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-rotate-stem")).toHaveLength(1);
+	});
+
+	it("offers no grip while nothing is selected", () => {
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(0);
+	});
+
+	it("turns the shape by dragging the grip, clockwise", () => {
+		// Grip straight up from the centre is 0°; dragging it out to the right is
+		// a quarter turn.
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [252, 50]);
+
+		expect(savedRotation(opened)).toBeCloseTo(90, 6);
+	});
+
+	it("applies the change in bearing, so grabbing the grip never snaps the shape", () => {
+		selectFirst(opened);
+		// Press slightly off the grip's exact centre, still within grabbing range,
+		// and release without moving: the shape must not jump to that bearing.
+		drag(opened.svg, [156, 24], [156, 24]);
+
+		expect(savedRotation(opened)).toBeUndefined();
+	});
+
+	it("snaps to 15° while shift is held", () => {
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [176, 22], { shiftKey: true });
+
+		expect(savedRotation(opened)).toBe(45);
+	});
+
+	it("turns freely without shift", () => {
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [176, 22]);
+
+		const rotation = savedRotation(opened)!;
+		expect(rotation).toBeGreaterThan(35);
+		expect(rotation).toBeLessThan(45);
+	});
+
+	it("paints the turned shape through a matrix, and its grips with it", () => {
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [252, 50]);
+
+		const mask = opened.svg.querySelectorAll(".osmosis-occlusion-mask")[0];
+		expect(mask?.getAttribute("transform")).toMatch(/^matrix\(/);
+		// Handles, vertices and the grip live in one group carrying the same
+		// transform — which is what keeps the picture and the pointer test in
+		// agreement about where a grip is.
+		expect(opened.svg.querySelector(".osmosis-occlusion-grips")?.getAttribute("transform"))
+			.toBe(mask?.getAttribute("transform"));
+	});
+
+	it("leaves the unrotated shapes without a transform", () => {
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [252, 50]);
+
+		expect(opened.svg.querySelectorAll(".osmosis-occlusion-mask")[1]?.getAttribute("transform"))
+			.toBeNull();
+	});
+
+	it("grabs a turned shape where it is drawn, not where its box was", () => {
+		// A quarter turn stands the flat rect on end: it now covers ground well
+		// below its own bounding box and no longer covers its own right-hand end.
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [252, 50]);
+		tap(opened.svg, [300, 150]);
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(0);
+
+		tap(opened.svg, [152, 70]);
+
+		const masks = Array.from(opened.svg.querySelectorAll(".osmosis-occlusion-mask"));
+		expect(masks[0]?.classList.contains("is-selected")).toBe(true);
+	});
+
+	it("undoes a rotation and nothing else", () => {
+		selectFirst(opened);
+		drag(opened.svg, GRIP, [252, 50]);
+		hotkey(opened.modal, ["Mod"], "z");
+
+		click(opened.content, "Save");
+		expect(opened.saved[0]?.shapes).toEqual(set.shapes);
+	});
+
+	it("keeps the rotation through a move, so the two edits compose", () => {
+		// A shape big enough that its middle is clear of its own resize handles —
+		// the fixture rect is only 12px tall, which is the grab tolerance itself.
+		const opened2 = open({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.4, w: 0.2, h: 0.2, rotation: 90 }],
+		});
+		// One gesture: pressing an unselected shape picks it up and moves it.
+		drag(opened2.svg, [160, 100], [180, 100]);
+
+		click(opened2.content, "Save");
+		expect(opened2.saved[0]?.shapes[0]).toMatchObject({ kind: "rect", x: 0.35, rotation: 90 });
+	});
+
+	it("resizes a turned shape without sliding it across the picture", () => {
+		// Resizing moves the box's centre, and the shape turns about that centre,
+		// so the opposite corner has to be pinned back where it was on screen.
+		const rotation = 37;
+		const opened2 = open({
+			mode: "hide-all-guess-one",
+			shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.4, w: 0.2, h: 0.2, rotation }],
+		});
+		// Select it, then drag its south-east handle outwards.
+		tap(opened2.svg, [160, 100]);
+		drag(opened2.svg, cornerPixels(0.5, 0.6, rotation), [260, 160]);
+
+		click(opened2.content, "Save");
+		const box = shapeBox(opened2.saved[0]!.shapes[0]!);
+		const before = rotatePoint({ x: 0.3, y: 0.4 }, { x: 0.4, y: 0.5 }, rotation, 2);
+		const after = rotatePoint(
+			{ x: box.x, y: box.y },
+			{ x: box.x + box.w / 2, y: box.y + box.h / 2 },
+			rotation,
+			2,
+		);
+		expect(after.x).toBeCloseTo(before.x, 6);
+		expect(after.y).toBeCloseTo(before.y, 6);
+		expect(box.w).toBeGreaterThan(0.2);
+	});
+
+	/** Where a corner of the 0.3–0.5 / 0.4–0.6 box lands on screen once turned. */
+	function cornerPixels(x: number, y: number, rotation: number): [number, number] {
+		const at = rotatePoint({ x, y }, { x: 0.4, y: 0.5 }, rotation, 2);
+		return [at.x * IMAGE_BOX.width, at.y * IMAGE_BOX.height];
+	}
+
+	it("turns a label about its anchor, through its own grip", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.5, text: "Deck" }] });
+		// Select the label by pressing it — a press on a label selects, a second
+		// one opens it for typing.
+		opened2.content.querySelector(".osmosis-occlusion-annotation")!
+			.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+		opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+
+		// Its grip hangs 22px straight above the anchor at (100, 100).
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(1);
+		drag(opened2.svg, [100, 78], [200, 100]);
+
+		click(opened2.content, "Save");
+		expect(opened2.saved[0]?.annotations?.[0]?.rotation).toBeCloseTo(90, 6);
+		// The anchor itself never moves — that is the point of turning about it.
+		expect(opened2.saved[0]?.annotations?.[0]).toMatchObject({ x: 0.25, y: 0.5 });
+	});
+
+	it("hides the label's grip while it is being typed into", () => {
+		const opened2 = open({ ...set, annotations: [{ x: 0.25, y: 0.5, text: "Deck" }] });
+		const press = () => {
+			opened2.content.querySelector(".osmosis-occlusion-annotation")!
+				.dispatchEvent(new MouseEvent("pointerdown", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+			opened2.svg.dispatchEvent(new MouseEvent("pointerup", { clientX: 100, clientY: 100, button: 0, bubbles: true }));
+		};
+		press();
+		press();
+
+		expect(opened2.content.querySelector(".osmosis-occlusion-annotation-input")).not.toBeNull();
+		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(0);
 	});
 });

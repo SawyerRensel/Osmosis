@@ -1,4 +1,5 @@
 import type { CardOcclusion, OcclusionShape } from "../database/types";
+import { rotationTransform } from "./occlusion-geometry";
 
 /**
  * Which masks an occlusion card paints, and where.
@@ -66,17 +67,30 @@ export interface MaskElement {
  *
  * Shapes keep their source order, so a diagram whose masks overlap paints the
  * same way every time rather than reshuffling between front and back.
+ *
+ * `aspect` is the image's width÷height, and only a rotated shape uses it: the
+ * overlay is stretched by `preserveAspectRatio="none"`, so a rotation applied
+ * inside it has to be pre-compensated or a tilted rectangle comes out as a
+ * parallelogram. It is a parameter rather than something read off the DOM
+ * because this function is the one the mask tests assert against; a caller that
+ * cannot know it yet passes 1 and repaints once the image has loaded.
  */
 export function maskElements(
 	occlusion: CardOcclusion,
 	side: OcclusionSide,
+	aspect = 1,
 ): MaskElement[] {
 	const elements: MaskElement[] = [];
 	for (const shape of occlusion.shapes) {
 		const role = maskRole(shape, occlusion, side);
-		if (role !== null) elements.push(maskElement(shape, role));
+		if (role !== null) elements.push(maskElement(shape, role, aspect));
 	}
 	return elements;
+}
+
+/** Whether anything in this occlusion is rotated, and so needs the image's aspect. */
+export function needsAspect(occlusion: CardOcclusion): boolean {
+	return occlusion.shapes.some((shape) => (shape.rotation ?? 0) !== 0);
 }
 
 /** The role this shape plays on the given side, or null when it is not painted. */
@@ -100,13 +114,25 @@ function maskRole(
 	return occlusion.mode === "hide-all-guess-one" ? "hidden" : null;
 }
 
-/** One shape as the SVG element that draws it. */
-function maskElement(shape: OcclusionShape, role: MaskRole): MaskElement {
+/**
+ * One shape as the SVG element that draws it.
+ *
+ * A rotation rides along as a `transform` attribute, which needs no plumbing of
+ * its own: the renderer sets every entry of `attrs` with `setAttribute`.
+ */
+function maskElement(shape: OcclusionShape, role: MaskRole, aspect: number): MaskElement {
+	const element: MaskElement = { ...maskGeometry(shape), role };
+	const transform = rotationTransform(shape, aspect);
+	if (transform !== null) element.attrs["transform"] = transform;
+	return element;
+}
+
+/** One shape's tag and coordinates, before rotation. */
+function maskGeometry(shape: OcclusionShape): Pick<MaskElement, "tag" | "attrs"> {
 	switch (shape.kind) {
 		case "rect":
 			return {
 				tag: "rect",
-				role,
 				attrs: {
 					x: String(shape.x),
 					y: String(shape.y),
@@ -118,7 +144,6 @@ function maskElement(shape: OcclusionShape, role: MaskRole): MaskElement {
 			// `x`/`y` are the centre, matching Anki's ellipse handles.
 			return {
 				tag: "ellipse",
-				role,
 				attrs: {
 					cx: String(shape.x),
 					cy: String(shape.y),
@@ -129,7 +154,6 @@ function maskElement(shape: OcclusionShape, role: MaskRole): MaskElement {
 		case "poly":
 			return {
 				tag: "polygon",
-				role,
 				attrs: {
 					points: shape.points.map(([x, y]) => `${x},${y}`).join(" "),
 				},

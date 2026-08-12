@@ -392,7 +392,33 @@ function parseAnnotation(raw: unknown): OcclusionAnnotation | null {
 
 	const value = raw["text"];
 	const text = typeof value === "string" ? value : typeof value === "number" ? String(value) : "";
-	return text.trim() === "" ? null : { x, y, text };
+	if (text.trim() === "") return null;
+
+	const annotation: OcclusionAnnotation = { x, y, text };
+	const rotation = parseRotation(raw["rotation"]);
+	if (rotation !== 0) annotation.rotation = rotation;
+	return annotation;
+}
+
+/**
+ * Degrees folded into [0, 360), which is the range everything downstream
+ * assumes and the range the editor writes.
+ *
+ * Exported because `study/occlusion-geometry.ts` folds the angle a rotate drag
+ * produces through the same function — a drag turns past 360° and back below 0°
+ * freely, and the two halves must agree on what that becomes or a shape's stored
+ * angle would depend on which way the user got there.
+ */
+export function normalizeRotation(degrees: number): number {
+	if (!Number.isFinite(degrees)) return 0;
+	const wrapped = degrees % 360;
+	return wrapped < 0 ? wrapped + 360 : wrapped;
+}
+
+/** A stored `rotation` value, or 0 when it is absent or unusable. */
+function parseRotation(raw: unknown): number {
+	const value = toFiniteNumber(raw);
+	return value === null ? 0 : normalizeRotation(value);
 }
 
 function parseMode(value: unknown): OcclusionMode {
@@ -408,6 +434,18 @@ function parseShape(raw: unknown): OcclusionShape | null {
 	const group = typeof raw["group"] === "string" ? raw["group"].trim() : "";
 	if (!/^c\d+$/.test(group)) return null;
 
+	const shape = parseShapeGeometry(raw, group);
+	if (shape === null) return null;
+
+	// Applied after the geometry rather than inside each branch, so a kind added
+	// later cannot forget it. Absent at 0, which is what the writer emits.
+	const rotation = parseRotation(raw["rotation"]);
+	if (rotation !== 0) shape.rotation = rotation;
+	return shape;
+}
+
+/** One shape's kind and coordinates, before rotation is applied. */
+function parseShapeGeometry(raw: Record<string, unknown>, group: string): OcclusionShape | null {
 	switch (raw["kind"]) {
 		case "rect": {
 			const x = toFiniteNumber(raw["x"]);
@@ -563,11 +601,12 @@ export function serializeOccludeBlock(label: string, set: OcclusionSet): string[
  * fails the parse of the *whole note's* frontmatter, not just this entry.
  */
 export function serializeAnnotation(annotation: OcclusionAnnotation): string[] {
-	return [
-		`    - x: ${num(annotation.x)}`,
-		`      y: ${num(annotation.y)}`,
-		`      text: ${yamlString(annotation.text)}`,
-	];
+	const fields = [`x: ${num(annotation.x)}`, `y: ${num(annotation.y)}`];
+	if (annotation.rotation) fields.push(`rotation: ${num(annotation.rotation)}`);
+	// Last, so the one free-text field is where the eye lands rather than buried
+	// between two numbers.
+	fields.push(`text: ${yamlString(annotation.text)}`);
+	return fields.map((field, idx) => (idx === 0 ? `    - ${field}` : `      ${field}`));
 }
 
 /** A string as a double-quoted YAML scalar. */
@@ -596,6 +635,10 @@ export function serializeShape(shape: OcclusionShape): string[] {
 			fields.push(`points: [${shape.points.map(([x, y]) => `[${num(x)}, ${num(y)}]`).join(", ")}]`);
 			break;
 	}
+	// After the coordinates, and omitted at 0: an unrotated shape serializes
+	// exactly as it did before rotation existed, so no existing note churns the
+	// first time it is written.
+	if (shape.rotation) fields.push(`rotation: ${num(shape.rotation)}`);
 	return fields.map((field, idx) => (idx === 0 ? `    - ${field}` : `      ${field}`));
 }
 
@@ -603,19 +646,12 @@ export function serializeShape(shape: OcclusionShape): string[] {
 export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unknown> {
 	const value: Record<string, unknown> = {
 		mode: set.mode,
-		shapes: set.shapes.map((shape) => {
-			switch (shape.kind) {
-				case "rect":
-					return { group: shape.group, kind: "rect", x: num(shape.x), y: num(shape.y), w: num(shape.w), h: num(shape.h) };
-				case "ellipse":
-					return { group: shape.group, kind: "ellipse", x: num(shape.x), y: num(shape.y), rx: num(shape.rx), ry: num(shape.ry) };
-				case "poly":
-					return { group: shape.group, kind: "poly", points: shape.points.map(([x, y]) => [num(x), num(y)]) };
-			}
-		}),
+		shapes: set.shapes.map((shape) => withRotation(shapeToYamlValue(shape), shape.rotation)),
 	};
 	if (set.annotations && set.annotations.length > 0) {
-		value["annotations"] = set.annotations.map((a) => ({ x: num(a.x), y: num(a.y), text: a.text }));
+		value["annotations"] = set.annotations.map((a) =>
+			withRotation({ x: num(a.x), y: num(a.y), text: a.text }, a.rotation),
+		);
 	}
 	// Obsidian's own YAML dumper quotes whatever needs quoting here, so the text
 	// goes in raw — unlike the fence carrier, which is written as plain text.
@@ -623,6 +659,31 @@ export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unkno
 		const text = set[prop];
 		if (text !== undefined && text !== "") value[key] = text;
 	}
+	return value;
+}
+
+/** One shape's kind and coordinates as the plain object frontmatter stores. */
+function shapeToYamlValue(shape: OcclusionShape): Record<string, unknown> {
+	switch (shape.kind) {
+		case "rect":
+			return { group: shape.group, kind: "rect", x: num(shape.x), y: num(shape.y), w: num(shape.w), h: num(shape.h) };
+		case "ellipse":
+			return { group: shape.group, kind: "ellipse", x: num(shape.x), y: num(shape.y), rx: num(shape.rx), ry: num(shape.ry) };
+		case "poly":
+			return { group: shape.group, kind: "poly", points: shape.points.map(([x, y]) => [num(x), num(y)]) };
+	}
+}
+
+/**
+ * Add a `rotation` key, unless there is nothing to add. Omitted at 0 for the
+ * same reason the fence writer omits it: an unrotated shape must serialize
+ * exactly as it did before rotation existed.
+ */
+function withRotation(
+	value: Record<string, unknown>,
+	rotation: number | undefined,
+): Record<string, unknown> {
+	if (rotation) value["rotation"] = num(rotation);
 	return value;
 }
 

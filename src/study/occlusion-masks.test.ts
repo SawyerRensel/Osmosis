@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { CardOcclusion, OcclusionMode, OcclusionShape } from "../database/types";
-import { maskElements } from "./occlusion-masks";
+import { maskElements, needsAspect } from "./occlusion-masks";
 
 /** Two shapes in the asked group, one in another, plus a third group. */
 const shapes: OcclusionShape[] = [
@@ -114,5 +114,58 @@ describe("grouping", () => {
 
 	it("paints nothing when the target group has no shapes on this image", () => {
 		expect(maskElements(occlusion("hide-one-guess-one", "c9"), "front")).toEqual([]);
+	});
+});
+
+describe("rotation", () => {
+	const rotated: OcclusionShape[] = [
+		{ group: "c1", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1, rotation: 90 },
+		{ group: "c2", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+	];
+	const turned: CardOcclusion = {
+		image: "bridge.svg", mode: "hide-all-guess-one", shapes: rotated, target: "c1",
+	};
+
+	it("carries a rotated shape's angle as a transform, alongside its geometry", () => {
+		const [mask] = maskElements(turned, "front", 2);
+
+		expect(mask?.attrs["transform"]).toMatch(/^matrix\(/);
+		expect(mask?.attrs["x"]).toBe("0.3");
+	});
+
+	it("leaves an unrotated shape with no transform at all", () => {
+		// The overwhelmingly common case has to render exactly as it did before
+		// rotation existed, attribute for attribute.
+		expect(maskElements(turned, "front", 2)[1]?.attrs["transform"]).toBeUndefined();
+	});
+
+	it("bakes the aspect into the matrix, so the same shape paints differently", () => {
+		// A rotation inside a `preserveAspectRatio="none"` overlay is applied
+		// after the stretch, so the aspect has to be pre-compensated or a tilted
+		// rectangle comes out a parallelogram.
+		const wide = maskElements(turned, "front", 2)[0]?.attrs["transform"];
+		const square = maskElements(turned, "front", 1)[0]?.attrs["transform"];
+
+		expect(wide).not.toBe(square);
+	});
+
+	it("defaults to square, which is what a caller that cannot measure yet passes", () => {
+		expect(maskElements(turned, "front")[0]?.attrs["transform"])
+			.toBe(maskElements(turned, "front", 1)[0]?.attrs["transform"]);
+	});
+});
+
+describe("needsAspect", () => {
+	const base = { image: "bridge.svg", mode: "hide-all-guess-one" as const, target: "c1" };
+
+	it("is false when nothing is rotated, so no load listener is ever registered", () => {
+		expect(needsAspect({ ...base, shapes })).toBe(false);
+	});
+
+	it("is true as soon as one shape carries an angle", () => {
+		expect(needsAspect({
+			...base,
+			shapes: [...shapes, { group: "c3", kind: "rect", x: 0, y: 0, w: 0.1, h: 0.1, rotation: 5 }],
+		})).toBe(true);
 	});
 });

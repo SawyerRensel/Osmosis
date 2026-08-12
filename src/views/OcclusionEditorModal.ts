@@ -8,6 +8,9 @@ import type {
 import {
 	alignShapes,
 	anchoredScroll,
+	angleFrom,
+	annotationWithRotation,
+	bearingPoint,
 	boxFromDrag,
 	clamp01,
 	cloneShape,
@@ -24,13 +27,21 @@ import {
 	moveShapes,
 	nextGroup,
 	polyFromPoints,
-	resizeBox,
+	resizeAnchored,
+	ROTATE_HANDLE_PX,
+	rotationHandlePoint,
+	rotationTransform,
 	shapeBox,
+	shapeCenter,
 	shapeFromBox,
+	shapeRotation,
 	shapeWithBox,
+	snapRotation,
 	toNormalized,
+	unrotatePoint,
 	usedGroups,
 	vertexAt,
+	withRotation,
 	withVertexInserted,
 	withVertexMoved,
 	withVertexRemoved,
@@ -89,7 +100,15 @@ type Drag =
 	| { kind: "move"; from: Point; start: OcclusionShape[] }
 	| { kind: "resize"; index: number; handle: HandleId }
 	| { kind: "vertex"; index: number; vertex: number }
-	| { kind: "annotation"; index: number; from: Point; origin: Point };
+	| { kind: "annotation"; index: number; from: Point; origin: Point }
+	/**
+	 * Turning a shape or a label. `start` is the angle it held when the grip was
+	 * taken and `from` the pointer's bearing at that moment, so the drag applies
+	 * the *difference* — grabbing the grip never snaps the shape to the pointer,
+	 * and a turn measured from the outset cannot drift, the same reason a move
+	 * keeps its starting shapes.
+	 */
+	| { kind: "rotate"; index: number; annotation: boolean; start: number; from: number };
 
 /** The editable document — what undo and redo restore. */
 interface Snapshot {
@@ -474,7 +493,14 @@ export class OcclusionEditorModal extends Modal {
 		// ends up with, and neither is known at build time: the picture has still
 		// to load, and the toolbar may yet wrap to a second row and take a slice
 		// of the height with it. Both are watched rather than assumed.
-		this.image.addEventListener("load", () => { this.measure(); });
+		// Repainted as well as re-measured: the image's proportions are what a
+		// rotated mask is drawn against, so until it has loaded a tilted shape is
+		// painted as though the picture were square. `load` is always async, so
+		// the chrome `redraw` brings in step is built by the time this runs.
+		this.image.addEventListener("load", () => {
+			this.measure();
+			this.redraw();
+		});
 		this.resize = new ResizeObserver(() => { this.measure(); });
 		this.resize.observe(this.stage);
 
@@ -545,6 +571,31 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	/**
+	 * The image's width÷height — the one scalar rotation needs.
+	 *
+	 * Read from the *natural* size rather than the rendered box, because the two
+	 * agree by construction (the canvas is `fit × zoom` wide and `fit` preserves
+	 * the picture's proportions) and the natural size is stable across a resize.
+	 * 1 until the image has loaded, at which point the load handler repaints.
+	 */
+	private get aspect(): number {
+		const { naturalWidth: width, naturalHeight: height } = this.image;
+		return width > 0 && height > 0 ? width / height : 1;
+	}
+
+	/** How far above a shape's box the rotation grip sits, in normalised y units. */
+	private handleOffset(): number {
+		const rect = this.image.getBoundingClientRect();
+		return rect.height === 0 ? 0 : ROTATE_HANDLE_PX / rect.height;
+	}
+
+	/** Whether a point is within grabbing distance of another, per axis. */
+	private grabbing(point: Point, at: Point): boolean {
+		const tolerance = this.grabTolerance();
+		return Math.abs(point.x - at.x) <= tolerance.x && Math.abs(point.y - at.y) <= tolerance.y;
+	}
+
+	/**
 	 * Note what is deliberately *not* here: `preventDefault()`.
 	 *
 	 * Cancelling `pointerdown` suppresses the browser's own focus handling along
@@ -590,7 +641,7 @@ export class OcclusionEditorModal extends Modal {
 		// shape is exactly where one is wanted. A polygon mid-draft is exempt too
 		// — that press is the next vertex, and the draft may well cross a shape.
 		if (this.tool !== "select" && this.tool !== "text" && this.polyDraft === null
-			&& hitTest(this.shapes, point) !== -1) {
+			&& hitTest(this.shapes, point, this.aspect) !== -1) {
 			this.chooseTool("select");
 			// Falls through: the select branch below picks the shape up and starts
 			// the move drag, so the press that selected can drag in one gesture.
@@ -617,6 +668,11 @@ export class OcclusionEditorModal extends Modal {
 
 		this.svg.setPointerCapture(event.pointerId);
 
+		// The grip of a selected label, which sits over the canvas rather than in
+		// the annotation layer — that layer is rebuilt on every pointer move, so
+		// nothing durable can live in it.
+		if (this.grabAnnotationRotation(point)) return;
+
 		// A grabbed vertex or handle wins over everything, including a shape
 		// drawn on top of it — otherwise a selected shape overlapped by a later
 		// one could never be reshaped. Vertices are tested first: they sit on the
@@ -626,8 +682,26 @@ export class OcclusionEditorModal extends Modal {
 		if (only !== null) {
 			const shape = this.shapes[only]!;
 			const tolerance = this.grabTolerance();
+			// Every grip on a rotated shape is drawn inside a group carrying its
+			// transform, so the pointer is turned back into the shape's own frame
+			// once here and each test then works in the frame it was drawn in.
+			const local = unrotatePoint(shape, point, this.aspect);
+
+			// The rotation grip sits clear of the box, above it, so a press there
+			// cannot have meant a resize handle or a vertex.
+			if (this.grabbing(local, rotationHandlePoint(shapeBox(shape), this.handleOffset()))) {
+				this.drag = {
+					kind: "rotate",
+					index: only,
+					annotation: false,
+					start: shapeRotation(shape),
+					from: angleFrom(shapeCenter(shape), point, this.aspect),
+				};
+				return;
+			}
+
 			if (shape.kind === "poly") {
-				const vertex = vertexAt(shape.points, point, tolerance);
+				const vertex = vertexAt(shape.points, local, tolerance);
 				if (vertex !== null) {
 					if (event.altKey) {
 						this.shapes[only] = withVertexRemoved(shape, vertex);
@@ -638,7 +712,7 @@ export class OcclusionEditorModal extends Modal {
 					return;
 				}
 			}
-			const handle = handleAt(shapeBox(shape), point, tolerance);
+			const handle = handleAt(shapeBox(shape), local, tolerance);
 			if (handle) {
 				this.drag = { kind: "resize", index: only, handle };
 				return;
@@ -646,7 +720,7 @@ export class OcclusionEditorModal extends Modal {
 		}
 
 		if (this.tool === "select") {
-			const index = hitTest(this.shapes, point);
+			const index = hitTest(this.shapes, point, this.aspect);
 			if (index === -1) {
 				if (!event.shiftKey) this.clearSelection();
 				// Empty canvas: keep drawing rather than dead-ending. A click that
@@ -706,16 +780,27 @@ export class OcclusionEditorModal extends Modal {
 				return;
 			case "resize": {
 				const shape = this.shapes[this.drag.index]!;
-				this.shapes[this.drag.index] = shapeWithBox(shape, resizeBox(shapeBox(shape), this.drag.handle, point));
+				const box = resizeAnchored(
+					shapeBox(shape),
+					this.drag.handle,
+					unrotatePoint(shape, point, this.aspect),
+					shapeRotation(shape),
+					this.aspect,
+				);
+				this.shapes[this.drag.index] = shapeWithBox(shape, box);
 				this.redraw();
 				return;
 			}
 			case "vertex": {
 				const shape = this.shapes[this.drag.index]!;
-				this.shapes[this.drag.index] = withVertexMoved(shape, this.drag.vertex, point);
+				const at = unrotatePoint(shape, point, this.aspect);
+				this.shapes[this.drag.index] = withVertexMoved(shape, this.drag.vertex, at);
 				this.redraw();
 				return;
 			}
+			case "rotate":
+				this.turn(this.drag, point, event.shiftKey);
+				return;
 			case "annotation": {
 				const annotation = this.annotations[this.drag.index];
 				if (!annotation) return;
@@ -771,6 +856,74 @@ export class OcclusionEditorModal extends Modal {
 		// selected without moving, or a resize dragged back to where it started,
 		// leaves no undo step behind.
 		this.commit();
+	}
+
+	// ── Rotation ──────────────────────────────────────────────────
+
+	/**
+	 * Start turning a selected label, if that is what the press landed on.
+	 *
+	 * A label's grip is drawn on the canvas rather than in the annotation layer,
+	 * because that layer is rebuilt on every pointer move — the same reason a
+	 * label drag takes its pointer capture on the SVG.
+	 */
+	private grabAnnotationRotation(point: Point): boolean {
+		const index = this.selectedAnnotation;
+		if (index === null) return false;
+		const annotation = this.annotations[index];
+		if (!annotation) return false;
+
+		const anchor = { x: annotation.x, y: annotation.y };
+		if (!this.grabbing(point, this.annotationHandlePoint(annotation))) return false;
+
+		this.drag = {
+			kind: "rotate",
+			index,
+			annotation: true,
+			start: annotation.rotation ?? 0,
+			from: angleFrom(anchor, point, this.aspect),
+		};
+		return true;
+	}
+
+	/**
+	 * Where a label's rotation grip sits, in normalised coordinates.
+	 *
+	 * A label turns about its anchor, not its middle, so the grip hangs off that
+	 * point directly — which is also the only part of a label whose position is
+	 * known without measuring the text.
+	 */
+	private annotationHandlePoint(annotation: OcclusionAnnotation): Point {
+		return bearingPoint(
+			{ x: annotation.x, y: annotation.y },
+			this.handleOffset(),
+			annotation.rotation ?? 0,
+			this.aspect,
+		);
+	}
+
+	/**
+	 * Apply a rotate drag. The turn is the *change* in the pointer's bearing
+	 * since the grip was taken, so grabbing the grip anywhere along its travel
+	 * leaves the shape exactly where it was.
+	 */
+	private turn(drag: Drag & { kind: "rotate" }, point: Point, snap: boolean): void {
+		if (drag.annotation) {
+			const annotation = this.annotations[drag.index];
+			if (!annotation) return;
+			const anchor = { x: annotation.x, y: annotation.y };
+			const turned = drag.start + angleFrom(anchor, point, this.aspect) - drag.from;
+			this.annotations[drag.index] =
+				annotationWithRotation(annotation, snap ? snapRotation(turned) : turned);
+			this.redraw();
+			return;
+		}
+
+		const shape = this.shapes[drag.index];
+		if (!shape) return;
+		const turned = drag.start + angleFrom(shapeCenter(shape), point, this.aspect) - drag.from;
+		this.shapes[drag.index] = withRotation(shape, snap ? snapRotation(turned) : turned);
+		this.redraw();
 	}
 
 	// ── Two-finger gestures ───────────────────────────────────────
@@ -862,9 +1015,11 @@ export class OcclusionEditorModal extends Modal {
 		if (only === null) return false;
 		const shape = this.shapes[only]!;
 		if (shape.kind !== "poly") return false;
-		if (!containsPoint(shape, point)) return false;
+		if (!containsPoint(shape, point, this.aspect)) return false;
 
-		this.shapes[only] = withVertexInserted(shape, point).shape;
+		// The vertex list is the shape's own unrotated frame, so the click has to
+		// be turned back into it before an edge can be found for it.
+		this.shapes[only] = withVertexInserted(shape, unrotatePoint(shape, point, this.aspect)).shape;
 		this.commit();
 		return true;
 	}
@@ -1178,7 +1333,7 @@ export class OcclusionEditorModal extends Modal {
 					? ["osmosis-occlusion-mask", "is-editing", "is-selected"]
 					: ["osmosis-occlusion-mask", "is-editing"],
 			});
-			for (const [name, value] of Object.entries(shapeAttrs(shape))) {
+			for (const [name, value] of Object.entries(shapeAttrs(shape, this.aspect))) {
 				element.setAttribute(name, value);
 			}
 		});
@@ -1188,7 +1343,8 @@ export class OcclusionEditorModal extends Modal {
 			const element = this.svg.createSvg(kind, {
 				cls: ["osmosis-occlusion-mask", "is-editing", "is-preview"],
 			});
-			for (const [name, value] of Object.entries(shapeAttrs(shapeFromBox(kind, "c1", preview)))) {
+			const attrs = shapeAttrs(shapeFromBox(kind, "c1", preview), this.aspect);
+			for (const [name, value] of Object.entries(attrs)) {
 				element.setAttribute(name, value);
 			}
 		}
@@ -1196,24 +1352,80 @@ export class OcclusionEditorModal extends Modal {
 		if (this.polyDraft) this.drawPolyDraft(this.polyDraft);
 
 		const only = this.onlySelectedShape();
-		if (only !== null) {
-			const shape = this.shapes[only]!;
-			// Box handles stay on a polygon too, so it can still be scaled as a
-			// whole; the vertex handles are additional, not a replacement.
-			this.drawHandles(shapeBox(shape));
-			if (shape.kind === "poly") this.drawVertices(shape.points);
-		}
+		if (only !== null) this.drawShapeGrips(this.shapes[only]!);
+		this.drawAnnotationGrip();
 
 		this.renderAnnotationLayer();
 		this.syncChrome();
 	}
 
+	/**
+	 * Every grip on the selected shape, inside a group carrying the shape's own
+	 * rotation.
+	 *
+	 * Drawing them in the shape's unrotated frame and letting the transform turn
+	 * them is what keeps the picture and the pointer test in agreement: the test
+	 * turns the pointer back into that same frame, so a grip is grabbed exactly
+	 * where it appears, at any angle, with no second set of arithmetic.
+	 */
+	private drawShapeGrips(shape: OcclusionShape): void {
+		const layer = this.svg.createSvg("g", { cls: ["osmosis-occlusion-grips"] });
+		const transform = rotationTransform(shape, this.aspect);
+		if (transform !== null) layer.setAttribute("transform", transform);
+
+		const box = shapeBox(shape);
+		this.drawRotationGrip(layer, box);
+		// Box handles stay on a polygon too, so it can still be scaled as a
+		// whole; the vertex handles are additional, not a replacement.
+		this.drawHandles(layer, box);
+		if (shape.kind === "poly") this.drawVertices(layer, shape.points);
+	}
+
+	/** The grip that turns a shape, on a stem above its box. */
+	private drawRotationGrip(parent: SVGElement, box: Box): void {
+		const at = rotationHandlePoint(box, this.handleOffset());
+		const stem = parent.createSvg("line", { cls: ["osmosis-occlusion-rotate-stem"] });
+		stem.setAttribute("x1", String(at.x));
+		stem.setAttribute("y1", String(box.y));
+		stem.setAttribute("x2", String(at.x));
+		stem.setAttribute("y2", String(at.y));
+		this.drawGrip(parent, at);
+	}
+
+	/** The grip that turns the selected label, hanging off its anchor. */
+	private drawAnnotationGrip(): void {
+		const index = this.selectedAnnotation;
+		if (index === null) return;
+		const annotation = this.annotations[index];
+		// Not while it is being named: the field covers its own anchor, and a grip
+		// under the text cursor is only ever in the way.
+		if (!annotation || this.editingAnnotation === index) return;
+		this.drawGrip(this.svg, this.annotationHandlePoint(annotation));
+	}
+
+	/**
+	 * One rotation grip. An ellipse sized in per-axis normalised units, so it
+	 * comes out a circle on screen whatever the image's proportions — the same
+	 * reason the tolerance that grabs it is per-axis.
+	 */
+	private drawGrip(parent: SVGElement, at: Point): void {
+		const tolerance = this.grabTolerance();
+		const grip = parent.createSvg("ellipse", { cls: ["osmosis-occlusion-rotate"] });
+		grip.setAttribute("cx", String(at.x));
+		grip.setAttribute("cy", String(at.y));
+		grip.setAttribute("rx", String(tolerance.x / 2));
+		grip.setAttribute("ry", String(tolerance.y / 2));
+		// The only place the Shift modifier is discoverable — the toolbar has no
+		// rotate button, because rotating is a drag on the shape itself.
+		grip.createSvg("title").textContent = "Rotate — hold shift to snap to 15°";
+	}
+
 	/** The eight resize handles around the selected shape. */
-	private drawHandles(box: Box): void {
+	private drawHandles(parent: SVGElement, box: Box): void {
 		const tolerance = this.grabTolerance();
 		for (const id of HANDLE_IDS) {
 			const at = handlePoint(box, id);
-			const handle = this.svg.createSvg("rect", { cls: ["osmosis-occlusion-handle"] });
+			const handle = parent.createSvg("rect", { cls: ["osmosis-occlusion-handle"] });
 			// Sized in normalised units so the handle keeps a constant pixel size
 			// whatever the image's aspect ratio — the same reason the tolerance
 			// that grabs it is per-axis.
@@ -1229,10 +1441,10 @@ export class OcclusionEditorModal extends Modal {
 	 * space is stretched to the image's aspect ratio, so a circle drawn in it
 	 * would come out as an ellipse anyway — and the wrong one.
 	 */
-	private drawVertices(points: readonly [number, number][]): void {
+	private drawVertices(parent: SVGElement, points: readonly [number, number][]): void {
 		const tolerance = this.grabTolerance();
 		for (const [x, y] of points) {
-			const vertex = this.svg.createSvg("ellipse", { cls: ["osmosis-occlusion-vertex"] });
+			const vertex = parent.createSvg("ellipse", { cls: ["osmosis-occlusion-vertex"] });
 			vertex.setAttribute("cx", String(x));
 			vertex.setAttribute("cy", String(y));
 			vertex.setAttribute("rx", String(tolerance.x / 2));
@@ -1246,7 +1458,9 @@ export class OcclusionEditorModal extends Modal {
 			const line = this.svg.createSvg("polyline", { cls: ["osmosis-occlusion-draft"] });
 			line.setAttribute("points", draft.map((p) => `${String(p.x)},${String(p.y)}`).join(" "));
 		}
-		this.drawVertices(draft.map((p): [number, number] => [p.x, p.y]));
+		// A draft is never rotated — it has no shape to belong to yet — so its
+		// dots go straight on the canvas rather than into a transformed group.
+		this.drawVertices(this.svg, draft.map((p): [number, number] => [p.x, p.y]));
 	}
 
 	/**
@@ -1273,6 +1487,9 @@ export class OcclusionEditorModal extends Modal {
 					value: annotation.text,
 					attr: { type: "text", placeholder: "Label" },
 				});
+					// Deliberately without the label's rotation: the field is chrome for
+				// typing in, and a tilted text box is only awkward. The label takes
+				// its angle back the moment the edit commits.
 				positionAnnotation(input, annotation.x, annotation.y);
 				// A blur is only the user leaving the field once the field has been
 				// in it. Anything else is a focus steal, and committing on it would
@@ -1309,7 +1526,7 @@ export class OcclusionEditorModal extends Modal {
 					: ["osmosis-occlusion-annotation"],
 				text: annotation.text,
 			});
-			positionAnnotation(label, annotation.x, annotation.y);
+			positionAnnotation(label, annotation.x, annotation.y, annotation.rotation);
 			label.addEventListener("pointerdown", (event: PointerEvent) => {
 				if (event.button !== 0) return;
 				// Stopped, so the press does not also reach the overlay underneath
@@ -1429,7 +1646,14 @@ function svgTagFor(shape: OcclusionShape): "rect" | "ellipse" | "polygon" {
  * `occlusion-masks.ts`: that module decides what study *paints* and carries the
  * mode/side logic with it, while the editor always draws every shape.
  */
-function shapeAttrs(shape: OcclusionShape): Record<string, string> {
+function shapeAttrs(shape: OcclusionShape, aspect: number): Record<string, string> {
+	const attrs = shapeGeometryAttrs(shape);
+	const transform = rotationTransform(shape, aspect);
+	if (transform !== null) attrs["transform"] = transform;
+	return attrs;
+}
+
+function shapeGeometryAttrs(shape: OcclusionShape): Record<string, string> {
 	switch (shape.kind) {
 		case "rect":
 			return { x: String(shape.x), y: String(shape.y), width: String(shape.w), height: String(shape.h) };

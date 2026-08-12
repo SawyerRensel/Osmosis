@@ -324,3 +324,142 @@ describe("overlayMasks", () => {
 		expect(host.innerHTML).toBe(before);
 	});
 });
+
+/**
+ * Rotation is the one thing here that cannot be done in normalised coordinates
+ * alone. The overlay is stretched by `preserveAspectRatio="none"`, so a plain
+ * `rotate()` inside it is applied *after* the stretch and a tilted rectangle
+ * renders as a parallelogram. The renderer therefore reads the image's
+ * proportions and hands them to `maskElements`, painting at square until the
+ * picture has loaded and repainting once it has.
+ */
+describe("rotation", () => {
+	/** A deliberately wide image, where a shear would be unmistakable. */
+	const WIDE = { width: 1600, height: 800 };
+
+	const tilted: CardOcclusion = {
+		image: "bridge.svg",
+		mode: "hide-all-guess-one",
+		target: "c1",
+		// A deliberately oblique angle: at 90° the matrix's diagonal is all zeroes
+		// and a sheared transform would pass the perpendicularity test below by
+		// accident.
+		shapes: [{ group: "c1", kind: "rect", x: 0.3, y: 0.45, w: 0.4, h: 0.1, rotation: 37 }],
+	};
+
+	/** Give the container's image a natural size, as a loaded one would have. */
+	function loaded(container: HTMLElement, natural = WIDE): HTMLImageElement {
+		const img = container.querySelector("img")!;
+		Object.defineProperty(img, "naturalWidth", { value: natural.width, configurable: true });
+		Object.defineProperty(img, "naturalHeight", { value: natural.height, configurable: true });
+		return img;
+	}
+
+	it("paints a rotated mask through a matrix, never a bare rotate()", () => {
+		const mask = render("front", tilted).querySelector(".osmosis-occlusion-mask");
+
+		expect(mask?.getAttribute("transform")).toMatch(/^matrix\(/);
+	});
+
+	it("keeps a rotated rect a rectangle on a wide image, not a parallelogram", () => {
+		// The two edges leaving a corner must still meet at a right angle once
+		// the overlay's own stretch has been applied — that is the whole test.
+		const container = document.createElement("div");
+		const img = document.createElement("img");
+		Object.defineProperty(img, "naturalWidth", { value: WIDE.width, configurable: true });
+		Object.defineProperty(img, "naturalHeight", { value: WIDE.height, configurable: true });
+		container.appendChild(img);
+		overlayMasks(img, tilted, "front");
+
+		const [a, b, c, d] = matrixParts(
+			container.querySelector(".osmosis-occlusion-mask")!.getAttribute("transform")!,
+		) as [number, number, number, number];
+		// Each column, scaled back into pixel proportions by the stretch the SVG
+		// applies: (a·W, b·H) and (c·W, d·H). Perpendicular means the dot product
+		// of those two is zero.
+		// To five places, not ten: the matrix is written to six decimals, which is
+		// sub-pixel on any image but leaves a floor no assertion can go under.
+		const aspect = WIDE.width / WIDE.height;
+		expect(a * c * aspect * aspect + b * d).toBeCloseTo(0, 5);
+	});
+
+	it("shears at square, which is exactly why it repaints once the image loads", () => {
+		// Painted before the picture's proportions are known, the same matrix has
+		// no compensation in it — so the first paint is provisional by design.
+		const container = render("front", tilted);
+		const [a, b, c, d] = matrixParts(
+			container.querySelector(".osmosis-occlusion-mask")!.getAttribute("transform")!,
+		) as [number, number, number, number];
+
+		expect(a * c * 4 + b * d).not.toBeCloseTo(0, 10);
+	});
+
+	it("repaints with the real aspect when the image finishes loading", () => {
+		const container = render("front", tilted);
+		const before = container.querySelector(".osmosis-occlusion-mask")!.getAttribute("transform");
+
+		loaded(container).dispatchEvent(new Event("load"));
+
+		const after = container.querySelector(".osmosis-occlusion-mask")!.getAttribute("transform");
+		expect(after).not.toBe(before);
+		expect(container.querySelectorAll(".osmosis-occlusion-masks")).toHaveLength(1);
+	});
+
+	it("keeps the image itself across the repaint, so it is never re-requested", () => {
+		const container = render("front", tilted);
+		const img = loaded(container);
+
+		img.dispatchEvent(new Event("load"));
+
+		expect(container.querySelector("img")).toBe(img);
+	});
+
+	it("registers no load listener at all when nothing is rotated", () => {
+		// The overwhelmingly common case must cost nothing — and a repaint on a
+		// listener that fires again would be a loop.
+		const container = render("front");
+		const before = container.innerHTML;
+
+		loaded(container).dispatchEvent(new Event("load"));
+
+		expect(container.innerHTML).toBe(before);
+	});
+
+	it("does not repaint a second time, so a load cannot loop", () => {
+		const container = render("front", tilted);
+		const img = loaded(container);
+		img.dispatchEvent(new Event("load"));
+		const after = container.innerHTML;
+
+		img.dispatchEvent(new Event("load"));
+
+		expect(container.innerHTML).toBe(after);
+	});
+
+	it("turns a label with CSS, which needs no aspect compensation of its own", () => {
+		// An annotation is positioned HTML precisely so that it escapes the
+		// overlay's stretch, so screen space is the space it is already in.
+		const container = render("front", {
+			...tilted,
+			annotations: [{ x: 0.5, y: 0.12, rotation: 45, text: "Deck" }],
+		});
+		const label = container.querySelector<HTMLElement>(".osmosis-occlusion-annotation");
+
+		expect(label?.style.getPropertyValue("--osmosis-annotation-rotation")).toBe("45deg");
+	});
+
+	it("leaves an unturned label at zero rather than omitting the property", () => {
+		const container = render("front", {
+			...tilted,
+			annotations: [{ x: 0.5, y: 0.12, text: "Deck" }],
+		});
+		const label = container.querySelector<HTMLElement>(".osmosis-occlusion-annotation");
+
+		expect(label?.style.getPropertyValue("--osmosis-annotation-rotation")).toBe("0deg");
+	});
+});
+
+/** The six numbers out of a `matrix(...)` transform. */
+function matrixParts(transform: string): number[] {
+	return /^matrix\(([^)]*)\)$/.exec(transform)![1]!.split(",").map((part) => Number(part.trim()));
+}
