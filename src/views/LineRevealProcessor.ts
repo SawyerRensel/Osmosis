@@ -6,7 +6,7 @@ import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
 import type { CardOcclusion } from "../database/types";
 import { allLineCardBlockIds, cardIdsForLineKey, dueOrNewLineCardBlockIds } from "../study/spatial-study";
-import { renderOcclusion } from "./OcclusionRenderer";
+import { overlayMasks, renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -32,6 +32,13 @@ interface TrackedLine {
 	/** Element carrying the hidden/revealed state (li or section container). */
 	container: HTMLElement;
 	placeholder: HTMLElement;
+	/**
+	 * The masked diagram this line carries, when it has one.
+	 *
+	 * Held so the reveal can *repaint* it rather than swap it away — see
+	 * `applyAll`. Null for an ordinary line card.
+	 */
+	occlusion: CardOcclusion | null;
 }
 
 /** Per-note reveal/study state. Survives re-renders (keyed by block ID). */
@@ -250,6 +257,11 @@ export class LineRevealProcessor {
 
 	/** Wrap a line's content for hiding (idempotent) and register it. */
 	private trackLine(state: NoteRevealState, notePath: string, blockId: string, container: HTMLElement): void {
+		// Looked up on every render, not just the first: the placeholder survives
+		// a re-render but the card store may only have caught up with the line's
+		// shapes since.
+		const occlusion = this.lineOcclusion(notePath, blockId);
+
 		let placeholder = container.querySelector<HTMLElement>(":scope > .osmosis-line-placeholder");
 		if (!placeholder) {
 			// Move the line's own content into a hideable wrapper. Nested
@@ -269,8 +281,6 @@ export class LineRevealProcessor {
 			// entirely asks the reader to recall the image rather than the labels
 			// on it, which is the one thing occlusion exists not to do. Every group
 			// is covered at once, since in the note no single card is being asked.
-			// Revealing swaps in the line's own content, as it does for any line.
-			const occlusion = this.lineOcclusion(notePath, blockId);
 			if (occlusion) {
 				renderOcclusion(this.plugin.app, placeholder, occlusion, "all-hidden", notePath);
 			} else {
@@ -285,7 +295,7 @@ export class LineRevealProcessor {
 			container.insertBefore(back, firstNestedList);
 		}
 
-		state.lines.set(blockId, { container, placeholder });
+		state.lines.set(blockId, { container, placeholder, occlusion });
 	}
 
 	/** Re-apply mode/reveal state to every tracked line of a note. */
@@ -301,9 +311,26 @@ export class LineRevealProcessor {
 			// Freshly rendered sections may not be attached yet — class
 			// changes stick either way, and trackLine replaces stale entries
 			// per block ID on the next render.
-			const hidden = (targets?.has(blockId) ?? false) && !state.revealed.has(blockId);
-			line.container.classList.toggle("osmosis-line-hidden", hidden);
-			line.placeholder.classList.toggle("osmosis-hidden", !hidden);
+			const targeted = targets?.has(blockId) ?? false;
+			const hidden = targeted && !state.revealed.has(blockId);
+
+			// An occluded line is revealed by *repainting* its masks, never by
+			// swapping the line's own content back in. Its content is the bare
+			// diagram, so the swap threw away the masks and the annotations
+			// together — the answer arrived as an unmarked picture with nothing
+			// to say which regions had been the question. Ringing them instead
+			// keeps the question visible beside its answer, and holds the line's
+			// height steady, exactly as a fence card does in reading view.
+			const painted = line.occlusion !== null && targeted;
+			const showPlaceholder = painted || hidden;
+			line.container.classList.toggle("osmosis-line-hidden", showPlaceholder);
+			line.placeholder.classList.toggle("osmosis-hidden", !showPlaceholder);
+			if (painted && line.occlusion) {
+				const img = line.placeholder.querySelector("img");
+				// Repaint in place: rebuilding the <img> would re-request the file
+				// and flash the diagram away mid-answer.
+				if (img) overlayMasks(img, line.occlusion, hidden ? "all-hidden" : "all-revealed");
+			}
 			// During study, only the next line is clickable; later ones are locked
 			const locked = state.mode === "study" && hidden && blockId !== next;
 			line.placeholder.classList.toggle("osmosis-line-locked", locked);
