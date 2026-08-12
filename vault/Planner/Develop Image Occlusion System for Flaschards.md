@@ -11,10 +11,10 @@ location:
 related:
 status: In-Progress
 priority:
-progress_current: 4
+progress_current: 5
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
-date_modified: 2026-08-11T09:20:00.000Z
+date_modified: 2026-08-11T21:50:00.000Z
 date_start_scheduled: 2026-08-09T17:34:17
 date_start_actual: 2026-08-09T17:34:17
 date_end_scheduled:
@@ -276,8 +276,11 @@ the release branch — this note closes only when all six phases are done.
 | — | [[Improve cloze data storage]] merged in ([PR #20](https://github.com/SawyerRensel/Osmosis/pull/20)) | `9dae548` |
 | 3. Editor | Done, manually verified | `a533221` |
 | 4. Full toolset | Done, manually verified | `88db8a7`, `1a21428`, `ad93112`, `0995a7d` |
-| 5. Remaining surfaces | Rendering done and verified; spatial study of an occlusion fence still reveals all groups at once | `5cc7e74` |
+| 5. Remaining surfaces | Done, manually verified | `5cc7e74`, `dd7de3e`, `b4a1392` |
 | 6. Touch | Pan and pinch done (`ad93112`); one-finger authoring on a real phone untested | |
+
+Rotation was scoped during phase 5 and deliberately not built — it is the one
+piece of the editor still missing, and it has a prompt of its own below.
 
 Because PR #20 landed *here* rather than on `release/0.0.4`, the fence schedule
 format change reaches the release branch only when this branch merges.
@@ -638,6 +641,76 @@ otherwise.
   nothing; the link now comes from the `alt` the renderer sets to the embed
   target as authored.
 
+### The phase 5 fix-up — two defects and the modal's scrollbars
+
+Shipped in `dd7de3e` and `b4a1392`, manually verified 2026-08-11.
+
+- **Spatial study asks one shape group at a time, and the key set is per card.**
+  This is the answer to the design question phase 5 was handed, and it went the
+  way that note preferred. A node's *identity* key is untouched —
+  `nodeCardKey` still returns one key per node, because the context menu and
+  "Study this branch" scope collection are built on it. What changed is that a
+  session no longer targets node keys directly: `spatialNodeTargets` maps a node
+  key to the units of work it carries, one per **due** shape group for an
+  occluded node and one for everything else, and `spatialTargets` is the union.
+  The banner therefore counts cards, which is what the reader is pacing against.
+- **Peek deliberately does not split.** It reveals in any order and records
+  nothing, so there is no question being asked and nothing for a target group to
+  mean. `enterSpatialPeek` maps every node key to itself.
+- **Occluded *line* nodes split too**, not just fences. The phase 5 prompt only
+  reported the fence bug, but the reasoning — spatial study is a card player,
+  with a target, a rating and a completion count — does not depend on which
+  carrier the shapes sit in, and leaving lines alone would have made the same
+  diagram behave differently in a fence and on a line.
+- **A node whose due cards are not *all* occlusion cards stays one unit.** A
+  fence can mix an occluded diagram with a caption cloze; splitting on the
+  diagram alone would leave the cloze card with no key at all and drop its
+  review. `spatialStudyKeys` returns the bare node key in that case, which is
+  the old behaviour exactly.
+- **`spatialNodeStep` derives the node's state from the two sets** rather than
+  storing a cursor: the first key not revealed is the question, the first
+  revealed-but-unrated key is the answer, and a node with neither is finished.
+  It survives a re-render for free, which a cursor would have had to be rebuilt
+  to do, and it collapses to the old two-state behaviour for an unsplit node.
+- **`OcclusionSide` grew `none`** — a diagram in view that is not the one being
+  asked. A fence's *other* labelled embed belongs to a different card, and
+  sequential has always shown those unmasked; the map paints its diagrams in
+  place rather than re-rendering a card body, so it has to say so explicitly.
+- **Back Extra is built on every side and hidden on the question ones**, never
+  withheld. It is a sibling of the wrapper `overlayMasks` repaints, so an
+  element that was never created could not be taken back — which is how a node
+  rendered `all-revealed` came to show its answer text under a covered diagram.
+  Building it always is also what keeps the node's laid-out height stable, the
+  property the map wants. Header is correct as it was: it shows on both sides.
+- **One rating re-applies the whole spatial state.** `rateSpatialCard` used to
+  redraw only the banner; an occluded node with groups left has to reset and ask
+  the next one, which is the whole point of stepping through them.
+- **The study modal is a flex column with one scroll surface.** The card's
+  `max-height: calc(85vh - 120px)` guessed at the height of the surrounding
+  chrome, so whenever the real chrome was taller the card sat inside its own cap
+  while the column overflowed and `.modal-content` scrolled as well — and the
+  flip and rating buttons live *below* the card, so between the two scrollbars
+  they could be scrolled out of reach. `.modal-content` no longer scrolls, the
+  card is the only row that does (`flex: 1` with an explicit `min-height`, since
+  a flex item's default `min-height: auto` refuses to shrink below its content),
+  and everything around it is `flex: none`. `max-height` rather than a fixed
+  height, so a one-line card still gets a compact modal. This is the same shape
+  `.osmosis-occlusion-modal` already used, for the same reason.
+
+#### Known gaps, deliberately left
+
+- **An occluded *line* card's Header and Back Extra do not render on every
+  surface.** Reading-view peek draws the Header (`LineRevealProcessor` calls
+  `renderOcclusion`) but reveals by swapping in the line's own content, so Back
+  Extra never appears there; a mind-map line node paints through `overlayMasks`,
+  which draws masks and annotations only, so it shows neither. Fence cards are
+  unaffected — they render through `renderOcclusion` on every surface. Small,
+  and it is why "Header, Back Extra, and Comments behave as in Anki" is still
+  unticked.
+- **Spatial rendering has no automated coverage.** `MindMapView.ts` cannot be
+  imported by `vitest` at all, so `spatialStudyKeys` and `cardIdsForSpatialKey`
+  carry the tests and the painting itself is pinned only by manual testing.
+
 ## Surface map
 
 | File | Change |
@@ -650,9 +723,12 @@ otherwise.
 | `src/views/OcclusionRenderer.ts` | New — image + mask overlay, shared by all three modes |
 | `src/views/SequentialStudyModal.ts` | Render occlusion cards |
 | `src/views/ContextualStudyProcessor.ts` | Render occlusion cards in place |
-| `src/views/MindMapView.ts` | Render occlusion cards in nodes |
+| `src/views/MindMapView.ts` | Render occlusion cards in nodes; step through their groups in study |
+| `src/study/spatial-study.ts` | Node/card keys; split an occluded node into its due groups |
+| `src/study/occlusion-masks.ts` | Which masks each side paints |
 | `src/main.ts` | Image context-menu item; rename rewriting |
 | `src/database/types.ts` | `occlusion` card type; shape types |
+| `styles.css` | Mask, editor, and study-modal layout |
 
 ## Acceptance criteria
 
@@ -663,12 +739,15 @@ otherwise.
       two surfaces are phase 5*
 - [x] One fence with two labelled embeds keeps its shape sets distinct
 - [x] Reordering embeds within a fence does not move masks between images
-- [ ] The `{a}` label never appears as text in sequential, contextual, or spatial
-      study — *sequential and contextual pinned by tests; spatial has no
-      occlusion rendering yet*
+- [x] The `{a}` label never appears as text in sequential, contextual, or spatial
+      study — *sequential and contextual pinned by tests; spatial verified by
+      hand, since `MindMapView.ts` cannot be imported by `vitest`*
 - [x] The label is preserved in the source file after any render or write cycle
-- [ ] Occlusion cards study correctly in all three modes
-- [ ] Header, Back Extra, and Comments behave as in Anki
+- [x] Occlusion cards study correctly in all three modes
+- [ ] Header, Back Extra, and Comments behave as in Anki — *Comments dropped
+      deliberately; Header and Back Extra render on every surface for a fence
+      card, but an occluded **line** card shows neither in the mind map and no
+      Back Extra on reading-view peek*
 - [x] Renaming an occluded image rewrites the fence; line cards are handled by Obsidian
 - [x] Masks stay aligned when the image is resized or given a `|300` suffix
 - [x] Reopening the editor restores the existing shape set exactly
@@ -699,106 +778,36 @@ compatibility path.
 ---
 
 
-# Prompt — Phase 5 fix-up, rotation, and phase 6
 
-Written 2026-08-11 at `5cc7e74`, as a standalone brief for a fresh session. It
-replaces the phase 5 prompt, whose durable content now lives in "Phase 5
-decisions worth remembering" above.
+# Prompt — Rotation, then phase 6
+
+Written 2026-08-11 at `b4a1392`, as a standalone brief for a fresh session. It
+replaces the phase 5 fix-up prompt, whose durable content now lives in "The
+phase 5 fix-up" above. **Two things are left in this feature: rotation, and a
+real-device pass.** Nothing else is outstanding.
 
 ## Where things stand
 
-Branch `feature/image-occlusion`, at `5cc7e74`. Work on this branch directly —
+Branch `feature/image-occlusion`, at `b4a1392`. Work on this branch directly —
 the six phases share it and there is no PR to open yet. `npm run lint`,
-`npm test` (**1619 passing**), and `npm run build` are clean. `parser.test.ts`
+`npm test` (**1630 passing**), and `npm run build` are clean. `parser.test.ts`
 carries wall-clock benchmarks that fail under load; re-run before investigating
-a failure there.
+a failure there — they pass in isolation.
 
-Phase 5 shipped and was manually verified: masks now paint in contextual study,
-on line-card peek, and in mind-map nodes; sequential shows every diagram in a
-fence; fence cards became mind-map study targets; ratings are confined to study
-mode; Anki's Header and Back Extra render and Comments was dropped. **Read
-"Phase 5 decisions worth remembering" above before touching anything** — the
-key shapes, why a fence node is never blanked, and why the note views ignore the
-target all constrain this work.
+Phases 1–5 are shipped and manually verified. Spatial study now steps through an
+occluded node's shape groups one at a time, Back Extra no longer leaks onto a
+covered node, and the sequential modal has a single scroll surface with its
+buttons always reachable. **Read "Phase 2/3/4/5 decisions worth remembering" and
+"The phase 5 fix-up" above before touching anything** — the coordinate contract,
+the key shapes, and the undo model all constrain this work, and several of those
+decisions look like tidy-up opportunities and are not.
 
-Two defects survived that verification, and they are items 1 and 2 below.
+## 1. Rotation — shapes and annotation labels
 
-## 1. Spatial study must ask one occlusion group at a time
-
-**The bug.** A mind-map node holding an occlusion fence covers *every* shape
-group at once and reveals them all on a single click, then takes one rating for
-the lot. `surface-parts` has two cards, `-c1` and `-c2`, and the node treats
-them as one.
-
-**What it should do.** Step through the groups the way sequential study does:
-cover everything, ask `c1` (its mask amber, its siblings deep purple per the
-mode), reveal and rate `c1`, then reset the node to ask `c2`, and so on. The
-node is not finished until its last group is rated.
-
-**Why it is the way it is.** Phase 5 decided that the note surfaces paint every
-group with no target, because a reader looking at a diagram in a note is not
-answering one of its questions. That reasoning is right for reading view and for
-peek, and **wrong for spatial study**, which is a card player: it has a target,
-a rating, and a completion count. `applyFenceHidden` in `MindMapView.ts` paints
-`all-hidden` / `all-revealed`, which by construction have no target — so the
-per-group states were never reachable from that path.
-
-**Where to work.**
-
-- `MindMapView.applyFenceHidden` — needs a per-group notion for study mode. Peek
-  should keep painting `all-hidden`: peek reveals in any order and records
-  nothing, so stepping there would invent an interaction it does not have.
-- `MindMapView.applySpatialState` / `handleSpatialClick` / `rateSpatialCard` —
-  these currently treat one node as one unit of work. A fence node with three
-  groups is three. `spatialRevealed`, `spatialRated`, and `spatialTargets` are
-  all keyed by node key, and the banner's `n/m` counts keys.
-- `cardIdsForFenceKey` in `src/study/spatial-study.ts` returns the fence's cards
-  in order; `cardOcclusion(target, set, group)` in `card-gen/occlusion.ts` builds
-  the payload for one group, and `maskElements` already paints `front`/`back`
-  with a target correctly. The renderer needs no change.
-
-**The design question to settle first, and record here.** Targets are currently
-one-key-one-rating. Either the key set becomes per-card for fences (a node
-appears under several keys, and the banner counts cards, which is more honest
-about how much work is left), or the node keeps one key and carries its own
-group cursor (fewer moving parts, but the banner under-reports). Prefer the
-first unless it fights the existing key plumbing — the counts are what the
-reader is pacing against.
-
-Note this changes what a fence node's single rating means, so the phase 5
-decision "a revealed node keeps its laid-out size" still applies: resetting a
-node to ask the next group must not re-measure the map.
-
-## 2. Back Extra leaks onto the front of a hidden node
-
-**The bug.** In the mind map, a hidden occlusion node shows its Back Extra text
-under the masked picture — visible in the phase 5 verification screenshot as
-"Web plate carries shear; the parapet is non-structural." while the diagram was
-still covered.
-
-**The cause.** `renderOcclusion` draws Header *before* the wrapper and Back Extra
-*after* it, as siblings of the wrapper, and only emits Back Extra when
-`isAnswerSide(side)`. `renderOsmosisCardInto` renders the node once with
-`all-revealed` — so the Back Extra element is created — and `applyFenceHidden`
-then repaints only what is *inside* the wrapper. The text is outside it and
-survives untouched.
-
-**The fix** is a judgment call worth making deliberately: either keep the
-render-once approach and have `applyFenceHidden` toggle the Back Extra element
-alongside the masks, or have the node render with `all-hidden` first so the
-element is never created until reveal. The first keeps node height stable
-between the two states, which is the property the map wants. Header is correct
-as-is: it shows on both sides by design.
-
-Contextual study and sequential are unaffected — both render a genuine second
-side rather than repainting one.
-
-## 3. Rotation — shapes and annotation labels
-
-Deferred deliberately from this round. The user asked for a rotation handle so
-shapes can be tilted, and chose "shapes **and** annotation labels", which
-partially reverses the phase 4 decision that a label is chrome on the picture
-rather than part of it. Labels rotate; they still do not scale with the image.
+The user asked for a rotation handle so shapes can be tilted, and chose "shapes
+**and** annotation labels", which partially reverses the phase 4 decision that a
+label is chrome on the picture rather than part of it. Labels rotate; they still
+do not scale with the image.
 
 **The constraint that shapes the whole job.** The mask overlay is deliberately
 stretched — `viewBox="0 0 1 1"` with `preserveAspectRatio="none"` — which is
@@ -829,7 +838,7 @@ each `OcclusionShape` variant and on `OcclusionAnnotation`; omitted when 0 so no
 existing note churns. Both carriers, same round-trip tests the text fields got.
 
 **Geometry** (`src/study/occlusion-geometry.ts`, where the arithmetic belongs and
-is unit-tested):
+is unit-tested — it carries 95 tests):
 
 - `containsPoint` / `hitTest` must inverse-rotate the test point about the
   shape's centre, or a rotated shape cannot be grabbed where it is drawn.
@@ -843,7 +852,18 @@ is unit-tested):
 pointer's bearing about the centre, snapping to 15° with Shift. Rotation belongs
 *in* the undo history (unlike `mode` and the text fields, which are outside it).
 
-## 4. Phase 6, and what is left of it
+**Annotations rotate through CSS**, since they are already positioned HTML
+precisely to dodge the overlay's stretch — `positionAnnotation` in
+`OcclusionRenderer.ts` is shared with the editor and is where the transform
+belongs, so the two halves cannot drift.
+
+**Watch for**: `maskElements` builds `attrs` as a flat `Record<string, string>`
+and the renderer sets each with `setAttribute`, so a `transform` rides along
+with no plumbing change — but `MaskElement` is also what
+`occlusion-masks.test.ts` asserts against, so the aspect has to reach
+`maskElements` as an argument rather than being read from the DOM.
+
+## 2. Phase 6, and what is left of it
 
 Phase 6 is touch, and `ad93112` landed the hard half: two-finger pan, pinch zoom,
 a Pan tool, and gesture arbitration that abandons a one-finger drag when a second
@@ -853,7 +873,20 @@ fingertip is nearer 40px — the tolerance may need to be pointer-type-aware, an
 rotation handle makes that more pressing), whether the modal is usable at phone
 width with the toolbar wrapped to several rows, and whether the annotation input
 behaves with a soft keyboard over it. `isDesktopOnly` is `false`, so this cannot
-be skipped.
+be skipped, and **the note does not close until it is done**.
+
+## 3. Optional — the two known gaps
+
+Both are recorded under "Known gaps, deliberately left" above. Neither blocks the
+note, and both are fair game if rotation lands early:
+
+- An occluded **line** card shows no Header or Back Extra in a mind-map node
+  (`overlayMasks` paints masks and annotations only), and no Back Extra on
+  reading-view peek (reveal swaps in the line's own content). Fence cards are
+  fine on every surface.
+- Spatial rendering has no automated coverage, because `MindMapView.ts` cannot be
+  imported by `vitest`. Anything worth pinning has to leave the view first —
+  which is what `spatial-study.ts` is for.
 
 ## Existing surface to build on
 
@@ -865,10 +898,10 @@ be skipped.
 | Sequential rendering, the reference implementation | `src/views/SequentialStudyModal.ts` — `renderOcclusionSide` |
 | In-note rendering | `src/views/ContextualStudyProcessor.ts` — `renderSide` |
 | Line-card chrome, peek and study | `src/views/LineRevealProcessor.ts`, `src/study/line-reveal.ts` |
-| Mind-map nodes, spatial peek and study | `src/views/MindMapView.ts` — `applyFenceHidden`, `applySpatialHidden`, `applySpatialState` |
-| Node/card keys, both shapes | `src/study/spatial-study.ts` |
+| Mind-map nodes, spatial peek and study | `src/views/MindMapView.ts` — `applyFenceHidden`, `applySpatialHidden`, `applySpatialState`, `spatialNodeStep` |
+| Node/card keys, and splitting a node into its groups | `src/study/spatial-study.ts` |
 | Editor geometry, history, the canvas modal | `src/study/occlusion-geometry.ts`, `occlusion-history.ts`, `src/views/OcclusionEditorModal.ts` |
-| Mask and editor styles | `styles.css` — `.osmosis-occlusion*` |
+| Mask, editor, and study-modal styles | `styles.css` — `.osmosis-occlusion*`, `.osmosis-study-*` |
 | Obsidian stand-in for view tests | `src/test/obsidian-stub.ts` |
 
 ## Testing infrastructure
@@ -890,31 +923,39 @@ than inventing another.
 
 ## Test plan
 
-- Spatial study of `surface-parts` asks `c1`, takes a rating, then asks `c2` —
-  and the banner's count reflects however many cards are actually left.
-- A hidden node shows no Back Extra; revealing it shows it.
-- Rotation round-trips through both carriers, is omitted at 0, and a rotated
-  rect renders as a rectangle — not a parallelogram — on a wide image.
-- A rotated shape can be grabbed, moved, and resized where it is drawn.
-- Every existing occlusion test stays green; there are 1619 in the suite.
+- Rotation round-trips through both carriers, is omitted at 0, and survives a
+  review write — which re-dumps frontmatter through Obsidian's YAML serializer.
+- A rotated rect renders as a rectangle, **not a parallelogram**, on a
+  deliberately wide image, in the editor *and* in all three study surfaces.
+- A rotated shape can be grabbed, moved, and resized where it is drawn, and a
+  rotated polygon's vertices can still be inserted and dragged.
+- Shift snaps to 15°; Ctrl+Z undoes a rotation and nothing else.
+- A rotated annotation label reads at its true shape and does not scale with the
+  image.
+- Every existing occlusion test stays green; there are 1630 in the suite.
 
 ## Manual fixtures
 
 `e2e/fixtures/occlusion.md` (phases 1–2), `occlusion-editor.md` (phase 3),
 `occlusion-toolset.md` (phase 4), and `occlusion-surfaces.md` (phase 5), copied
-to `vault/tests/flashcard/`. All four vault copies get dirty as soon as you test;
-**reset them from `e2e/fixtures/` before each run**. `occlusion-surfaces.md`
-already covers items 1 and 2 — its `surface-parts` fence has two groups and a
-Back Extra. Rotation wants a fixture of its own on a deliberately wide image, so
-a shear would be obvious. **Back-date every card in any new fixture** — deck
-Total is `new + learn + due`, so a future-dated `review` card cannot be studied
-and looks exactly like a card that failed to generate.
+to `vault/tests/flashcard/`. The images live in `vault/media/` — do **not** copy
+them next to the notes, or the short links resolve ambiguously. All four vault
+copies get dirty as soon as you test; **reset them from `e2e/fixtures/` before
+each run**, and commit the reset as its own `chore:` commit afterwards.
+
+Rotation wants a fixture of its own on a deliberately wide image, so a shear
+would be obvious. **Back-date every card in any new fixture** — deck Total is
+`new + learn + due`, so a future-dated `review` card cannot be studied and looks
+exactly like a card that failed to generate.
 
 ## Conventions
 
 `CLAUDE.md` governs. Lint → test → build, then hand over manual test steps and
 **stop** for confirmation before committing. Commit code by explicit path, never
-`git add .`. This note gets its own commit, separately. Do **not** mark the note
-`Done` until phase 6 has had its device pass too. On completion, update the
-Progress table, fold anything durable into the decisions sections above, and
-replace this prompt with one for whatever is left.
+`git add .`. This note gets its own commit, separately.
+
+Do **not** mark the note `Done` until phase 6 has had its device pass. When both
+remaining items are finished: update the Progress table, fold anything durable
+into the decisions sections above, delete this prompt, open the PR against
+`release/0.0.4`, and close the note out per CLAUDE.md's Step 5 — `status: Done`,
+`date_end_actual`, `pull_request`, and a "What was implemented" section.
