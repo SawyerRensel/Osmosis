@@ -14,7 +14,7 @@ priority:
 progress_current: 5
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
-date_modified: 2026-08-11T21:50:00.000Z
+date_modified: 2026-08-12T19:47:22.000Z
 date_start_scheduled: 2026-08-09T17:34:17
 date_start_actual: 2026-08-09T17:34:17
 date_end_scheduled:
@@ -237,14 +237,20 @@ existing shape set instead.
 
 Full Anki toolset: select, rectangle, ellipse, polygon, text annotation, undo,
 redo, zoom in/out, zoom-to-fit, toggle translucency, delete, duplicate, group,
-ungroup, align. Plus the two modes and Anki's three fields — Header (above the
-image), Back Extra (below, answer side), and Comments (never shown).
+ungroup, align. Plus the two modes.
+
+> **Updated 2026-08-12 (`51a749b`).** This originally read "plus Anki's three
+> fields — Header (above the image), Back Extra (below, answer side), and
+> Comments (never shown)". **All three are gone**, and the editor has no text
+> inputs at all. See "Anki's text fields, reversed" below for why. Parity with
+> Anki was the goal everywhere else in this note; this is the one place it was
+> deliberately abandoned.
 
 ## Study rendering
 
 | Mode | Surface | Behaviour |
 |---|---|---|
-| Sequential | `SequentialStudyModal` | Front: image with masks per mode. Back: target group revealed, others per mode. Header above, Back Extra below. |
+| Sequential | `SequentialStudyModal` | Front: image with masks per mode. Back: target group revealed, others per mode |
 | Contextual | `ContextualStudyProcessor` | Same masking, in place in the note |
 | Spatial | `MindMapView` | Occluded image inside the node |
 
@@ -278,6 +284,7 @@ the release branch — this note closes only when all six phases are done.
 | 4. Full toolset | Done, manually verified | `88db8a7`, `1a21428`, `ad93112`, `0995a7d` |
 | 5. Remaining surfaces | Done, manually verified | `5cc7e74`, `dd7de3e`, `b4a1392` |
 | 6. Touch | Pan and pinch done (`ad93112`); one-finger authoring on a real phone untested | |
+| — | Anki's text fields removed, Cancel dropped, mode labels shortened | `51a749b` |
 
 Rotation was scoped during phase 5 and deliberately not built — it is the one
 piece of the editor still missing, and it has a prompt of its own below.
@@ -440,7 +447,10 @@ after manual testing found four defects and a round of UI feedback. All of it is
 verified; the decisions below are settled.
 
 - **Anki's Header / Back Extra / Comments fields were deferred to phase 5**, and
-  this is the answer to the open question phase 4 was handed. Their whole
+  this is the answer to the open question phase 4 was handed. *(Superseded: all
+  three were built in phase 5 and then removed entirely in `51a749b` — see
+  "Anki's text fields, reversed". The deferral reasoning below is still worth
+  reading, since it is where the deciding argument first appears.)* Their whole
   observable behaviour is rendering, and two of the three surfaces do not exist
   until phase 5, so "behave as in Anki" could not have closed here either way.
   The stronger reason: `renderOcclusionSide` in `SequentialStudyModal` already
@@ -620,7 +630,9 @@ otherwise.
 - **Anki's Comments field was dropped** after being built. It renders on no
   surface, so its only effect was to sit in the user's file. A `comments:` key
   from the interim build parses as an unknown key, which this format ignores,
-  and is dropped the next time the set is written.
+  and is dropped the next time the set is written. *(Header and Back Extra
+  followed it out in `51a749b`, by the same migration path — see "Anki's text
+  fields, reversed".)*
 - **`fenceDiagrams` lives in `card-gen/occlusion.ts`, not in a view.** Reading
   view and the mind map paint the same diagrams from the same fence text, and
   `vitest` cannot import `obsidian` — logic in `src/views/` is untestable.
@@ -676,12 +688,13 @@ Shipped in `dd7de3e` and `b4a1392`, manually verified 2026-08-11.
   asked. A fence's *other* labelled embed belongs to a different card, and
   sequential has always shown those unmasked; the map paints its diagrams in
   place rather than re-rendering a card body, so it has to say so explicitly.
-- **Back Extra is built on every side and hidden on the question ones**, never
-  withheld. It is a sibling of the wrapper `overlayMasks` repaints, so an
-  element that was never created could not be taken back — which is how a node
-  rendered `all-revealed` came to show its answer text under a covered diagram.
-  Building it always is also what keeps the node's laid-out height stable, the
-  property the map wants. Header is correct as it was: it shows on both sides.
+- ~~**Back Extra is built on every side and hidden on the question ones**~~ —
+  *obsolete as of `51a749b`, which removed both fields.* The bug it fixed is
+  still worth knowing, because the shape recurs: an element that is a **sibling**
+  of the wrapper `overlayMasks` repaints cannot be taken back by a repaint, so
+  anything conditional living outside that wrapper has to be built always and
+  toggled, never withheld. That is how a node rendered `all-revealed` came to
+  show its answer text under a covered diagram.
 - **One rating re-applies the whole spatial state.** `rateSpatialCard` used to
   redraw only the banner; an occluded node with groups left has to reset and ask
   the next one, which is the whole point of stepping through them.
@@ -699,17 +712,59 @@ Shipped in `dd7de3e` and `b4a1392`, manually verified 2026-08-11.
 
 #### Known gaps, deliberately left
 
-- **An occluded *line* card's Header and Back Extra do not render on every
-  surface.** Reading-view peek draws the Header (`LineRevealProcessor` calls
-  `renderOcclusion`) but reveals by swapping in the line's own content, so Back
-  Extra never appears there; a mind-map line node paints through `overlayMasks`,
-  which draws masks and annotations only, so it shows neither. Fence cards are
-  unaffected — they render through `renderOcclusion` on every surface. Small,
-  and it is why "Header, Back Extra, and Comments behave as in Anki" is still
-  unticked.
+- ~~**An occluded *line* card's Header and Back Extra do not render on every
+  surface.**~~ *Resolved in `51a749b` by removing both fields.* Worth recording
+  how it was resolved, because "delete the feature" is not the usual answer: the
+  gap was real and the fix was known (teach `overlayMasks` and the line-reveal
+  swap about the two elements), but it was the second time the fields had cost
+  work to make behave on a surface where the note's own prose already rendered
+  correctly. That was the evidence that settled the reversal.
 - **Spatial rendering has no automated coverage.** `MindMapView.ts` cannot be
   imported by `vitest` at all, so `spatialStudyKeys` and `cardIdsForSpatialKey`
   carry the tests and the painting itself is pinned only by manual testing.
+
+### Anki's text fields, reversed
+
+Shipped in `51a749b`, manually verified 2026-08-12. This **removes** working,
+tested behaviour that phases 4 and 5 deliberately built, so the reasoning matters
+more than usual — a future session reading the phase 4 and 5 sections above will
+find them arguing the opposite case.
+
+- **Header, Back Extra, and Comments are all gone** — from the format, the
+  editor, and every study surface. The deciding argument is the one phase 4
+  already half-made and then deferred: `renderOcclusionSide` renders the prose
+  *surrounding* the embed as the card body, on every surface. So the note's own
+  prose was already a card's text, already markdown, already editable where the
+  user writes everything else. Anki's fields were a **second** text channel for
+  the same job, reachable only from inside a modal, storing plain text that
+  rendered nowhere else. In Anki they earn their place because there is no note
+  around the card; here there always is.
+- **This closes the phase 4 open question the wrong way round from how it was
+  posed.** Phase 4 asked whether the fields "replace, sit alongside, or are the
+  line-card answer to" the surrounding prose, and deferred it to phase 5 so the
+  decision could be made with all three surfaces in front of you. Phase 5 built
+  them and answered "alongside". Using them for a while is what settled it: the
+  answer is **none of the three** — the prose was already sufficient.
+- **The migration is the same one Comments already took.** `header:`,
+  `back-extra:`, and `comments:` now all parse as unknown keys, which this format
+  ignores by design, and are dropped the next time the set is written. No sweep,
+  no version flag, and an old note still loads with its shapes intact. Two tests
+  in `occlusion.test.ts` pin exactly that, and they are the *reason* the removal
+  could be total rather than a deprecation.
+- **`OcclusionSide`'s four values survive the removal**, even though Back Extra
+  was the only thing `isAnswerSide` existed for. `front`/`back`/`all-hidden`/
+  `all-revealed` still decide which masks paint, which is the distinction phase 5
+  introduced them for. Only the helper went.
+- **Cancel went with them.** The editor's close button, Escape, and a backdrop
+  click all already discarded, so the button was a fourth spelling of a route
+  sitting in the same dialog's corner. The discard path is unchanged and still
+  pinned — `OcclusionEditorModal.dom.test.ts` now drives it through `close()`
+  rather than a button click, which is the honest test either way.
+- **Mode labels read "Hide all, guess 1" / "Hide 1, guess 1".** Numerals rather
+  than words, to buy the dropdown ~40px so it can share a toolbar row with the
+  group dropdown instead of wrapping. The toolbar needs roughly 940px to keep
+  both on one row; below that it still wraps, and the next lever is the toolbar's
+  own gaps rather than the labels.
 
 ## Surface map
 
@@ -744,10 +799,12 @@ Shipped in `dd7de3e` and `b4a1392`, manually verified 2026-08-11.
       hand, since `MindMapView.ts` cannot be imported by `vitest`*
 - [x] The label is preserved in the source file after any render or write cycle
 - [x] Occlusion cards study correctly in all three modes
-- [ ] Header, Back Extra, and Comments behave as in Anki — *Comments dropped
-      deliberately; Header and Back Extra render on every surface for a fence
-      card, but an occluded **line** card shows neither in the mind map and no
-      Back Extra on reading-view peek*
+- [x] ~~Header, Back Extra, and Comments behave as in Anki~~ — **criterion
+      withdrawn**, not met. All three were built, shipped, used, and then removed
+      in `51a749b`: the note's own prose around the embed is the card's text on
+      every surface, so Anki's fields were a second channel for a job already
+      done. The one place this feature deliberately does not follow Anki. See
+      "Anki's text fields, reversed"
 - [x] Renaming an occluded image rewrites the fence; line cards are handled by Obsidian
 - [x] Masks stay aligned when the image is resized or given a `|300` suffix
 - [x] Reopening the editor restores the existing shape set exactly
@@ -835,7 +892,7 @@ project's diagrams are wide. Three ways out, in order of preference:
 
 **Storage.** `rotation?: number`, degrees clockwise about the shape's centre, on
 each `OcclusionShape` variant and on `OcclusionAnnotation`; omitted when 0 so no
-existing note churns. Both carriers, same round-trip tests the text fields got.
+existing note churns. Both carriers, with round-trip tests through each.
 
 **Geometry** (`src/study/occlusion-geometry.ts`, where the arithmetic belongs and
 is unit-tested — it carries 95 tests):
@@ -850,7 +907,7 @@ is unit-tested — it carries 95 tests):
 
 **Editor.** A `rotate` drag kind beside `move`/`resize`/`vertex`, angle from the
 pointer's bearing about the centre, snapping to 15° with Shift. Rotation belongs
-*in* the undo history (unlike `mode` and the text fields, which are outside it).
+*in* the undo history (unlike `mode`, which is outside it).
 
 **Annotations rotate through CSS**, since they are already positioned HTML
 precisely to dodge the overlay's stretch — `positionAnnotation` in
@@ -875,26 +932,26 @@ width with the toolbar wrapped to several rows, and whether the annotation input
 behaves with a soft keyboard over it. `isDesktopOnly` is `false`, so this cannot
 be skipped, and **the note does not close until it is done**.
 
-## 3. Optional — the two known gaps
+## 3. Optional — the one known gap left
 
-Both are recorded under "Known gaps, deliberately left" above. Neither blocks the
-note, and both are fair game if rotation lands early:
+Recorded under "Known gaps, deliberately left" above. It does not block the note,
+and is fair game if rotation lands early:
 
-- An occluded **line** card shows no Header or Back Extra in a mind-map node
-  (`overlayMasks` paints masks and annotations only), and no Back Extra on
-  reading-view peek (reveal swaps in the line's own content). Fence cards are
-  fine on every surface.
 - Spatial rendering has no automated coverage, because `MindMapView.ts` cannot be
   imported by `vitest`. Anything worth pinning has to leave the view first —
   which is what `spatial-study.ts` is for.
+
+*(This section listed a second gap — an occluded line card showing no Header or
+Back Extra in a mind-map node. `51a749b` removed both fields, so the gap is
+gone.)*
 
 ## Existing surface to build on
 
 | What | Where |
 |---|---|
-| Parse / serialize shape sets, annotations, text fields | `src/card-gen/occlusion.ts` |
+| Parse / serialize shape sets and annotations | `src/card-gen/occlusion.ts` |
 | Which masks to paint, per mode and side | `src/study/occlusion-masks.ts` |
-| Image, masks, annotations, Header/Back Extra | `src/views/OcclusionRenderer.ts` |
+| Image, masks, annotations | `src/views/OcclusionRenderer.ts` |
 | Sequential rendering, the reference implementation | `src/views/SequentialStudyModal.ts` — `renderOcclusionSide` |
 | In-note rendering | `src/views/ContextualStudyProcessor.ts` — `renderSide` |
 | Line-card chrome, peek and study | `src/views/LineRevealProcessor.ts`, `src/study/line-reveal.ts` |
