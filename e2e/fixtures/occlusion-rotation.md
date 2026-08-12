@@ -5,8 +5,6 @@ osmosis-schedule:
   os-truss01:
     occlude:
       mode: hide-all-guess-one
-      header: "Which member is covered?"
-      back-extra: "A diagonal carries shear between the two chords."
       shapes:
         - group: c1
           kind: rect
@@ -60,8 +58,6 @@ exactly like a card that failed to generate.
 id: truss-members
 occlude-a:
   mode: hide-all-guess-one
-  header: "Name the covered member"
-  back-extra: "Diagonals take shear, posts take it vertically, chords take moment."
   shapes:
     - group: c1
       kind: rect

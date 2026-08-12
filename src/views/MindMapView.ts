@@ -1241,13 +1241,6 @@ export class MindMapView extends ItemView {
 					overlayMasks(img, occlusion, "none");
 				}
 			}
-			// Back Extra is a *sibling* of the wrapper the repaint above reaches, so
-			// it survives untouched unless it is toggled here. The node is rendered
-			// once, revealed, which is how its answer text came to sit under a
-			// covered diagram.
-			for (const el of Array.from(group.querySelectorAll(".osmosis-occlusion-back-extra"))) {
-				el.classList.toggle("osmosis-hidden", hidden);
-			}
 			return true;
 		}
 

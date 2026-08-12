@@ -1530,20 +1530,6 @@ hr.osmosis-map-style-divider {
 	margin-bottom: 0;
 }
 
-/* Anki's Header and Back Extra. Plain text, sitting immediately around the
-   picture — the note's own prose stays the card body above them. */
-.osmosis-occlusion-header {
-	margin-bottom: 6px;
-	font-weight: var(--font-semibold);
-	line-height: var(--line-height-normal);
-}
-
-.osmosis-occlusion-back-extra {
-	margin-top: 6px;
-	color: var(--text-muted);
-	line-height: var(--line-height-normal);
-}
-
 .osmosis-occlusion-missing {
 	color: var(--text-error);
 	font-size: var(--font-ui-small);
@@ -3679,22 +3665,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-}
-
-/* Header and Back Extra, under the canvas. They wrap rather
-   than shrink so each stays wide enough to read at phone width, and the row
-   keeps its height off the stage, which is the flex item that gives. */
-.osmosis-occlusion-fields {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	flex: none;
-	margin-top: 8px;
-}
-
-.osmosis-occlusion-fields input {
-	flex: 1 1 160px;
-	min-width: 0;
 }
 
 /* Takes whatever height the toolbar, hint, and buttons leave, and is the one

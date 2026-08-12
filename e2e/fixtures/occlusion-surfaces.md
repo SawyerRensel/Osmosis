@@ -13,8 +13,6 @@ osmosis-schedule:
   os-elevat1:
     occlude:
       mode: hide-one-guess-one
-      header: "Where does the load go?"
-      back-extra: "The pier takes it down; the abutment takes it sideways."
       shapes:
         - group: c1
           kind: rect
@@ -46,8 +44,8 @@ osmosis-schedule:
 
 # Image occlusion — contextual and spatial fixture
 
-Phase 5 fixture: the two surfaces that had no occlusion rendering, plus Anki's
-three text fields. Reset this file from `e2e/fixtures/` between runs.
+Phase 5 fixture: the two surfaces that had no occlusion rendering. Reset this
+file from `e2e/fixtures/` between runs.
 
 Every card here is **new or overdue**, so all of them are studiable. Deck Total
 is new + learn + due — a future-dated `review` card counts for nothing and looks
@@ -69,8 +67,6 @@ node — and both must still be in this file afterwards.
 id: surface-parts
 occlude-a:
   mode: hide-all-guess-one
-  header: "Cross-section: name the covered parts"
-  back-extra: "Web plate carries shear; the parapet is non-structural."
   shapes:
     - group: c1
       kind: rect
@@ -99,9 +95,8 @@ The section, then the elevation.
 Expected in **reading view and peek**: the prose line and the plain elevation
 render as markdown; the cross-section renders with **both** groups covered at
 once — no amber "this one is being asked", because a reader looking at a picture
-is not answering one of the questions it carries. The header sits above it, and
-Back Extra is held back until you click to reveal, which rings both masks rather
-than clearing them.
+is not answering one of the questions it carries. Clicking to reveal rings both
+masks rather than clearing them.
 
 Expected in **contextual study**: this becomes a card player, exactly as
 sequential and spatial are. It asks `c1` first — that group amber, `c2` covered
@@ -123,7 +118,7 @@ Expected in a **mind map**: this fence renders as a card with its masks, not as
 a block of `occlude:` geometry. In peek or study the diagram is covered and the
 node is never replaced by a "?"; clicking uncovers it.
 
-## Line card — occluded, with both text fields
+## Line card — occluded
 
 The block ID identifies the line and the line holds one embed, so the shape set
 sits in this note's frontmatter under `os-elevat1`.

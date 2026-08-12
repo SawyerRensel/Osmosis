@@ -184,9 +184,11 @@ describe("OcclusionEditorModal", () => {
 		expect(opened.saved[0]).toEqual(set);
 	});
 
-	it("discards the edit on cancel, leaving the caller's set untouched", () => {
+	it("discards the edit when closed unsaved, leaving the caller's set untouched", () => {
+		// Closing *is* the discard: there is no Cancel button, since the dialog's
+		// own close button, Escape, and the backdrop already all lead here.
 		drag(opened.svg, [40, 20], [120, 60]);
-		click(opened.content, "Cancel");
+		opened.modal.close();
 
 		expect(opened.saved).toHaveLength(0);
 		expect(set.shapes).toHaveLength(3);

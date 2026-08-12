@@ -63,26 +63,6 @@ const OCCLUSION_MODES: readonly OcclusionMode[] = [
 const OCCLUDE_KEY_REGEX = /^occlude(?:-([A-Za-z0-9_-]+))?\s*:\s*$/;
 
 /**
- * The occlusion text fields: the YAML key each is stored under, paired with its
- * `OcclusionSet` property, in the order they serialize.
- *
- * Hyphenated in YAML like every other multi-word value in this format
- * (`hide-all-guess-one`), camel-cased in TypeScript.
- *
- * Anki's third field, Comments, is deliberately not here: it renders on no
- * surface, so it was a field whose only effect was to sit in the user's note.
- * A `comments:` key written by an older build parses as an unknown key, which
- * this format ignores, and is dropped the next time the set is written.
- */
-const TEXT_FIELDS = [
-	["header", "header"],
-	["back-extra", "backExtra"],
-] as const;
-
-/** The YAML key half of `TEXT_FIELDS`, as the alternation a line match needs. */
-const TEXT_FIELD_KEY_REGEX = /^(header|back-extra)\s*:\s*(.*)$/;
-
-/**
  * An image embed carrying an occlusion label. Both embed spellings are
  * matched, since either can appear inside a fence:
  *   `![[bridge.png]]{a}`   (group 1 = target, group 2 = label)
@@ -237,14 +217,13 @@ export function parseOccludeBlock(
 }
 
 /**
- * Parse the indented body of an occlude block: `mode:`, a `shapes:` list, an
- * optional `annotations:` list, and Anki's three text fields.
+ * Parse the indented body of an occlude block: `mode:`, a `shapes:` list, and
+ * an optional `annotations:` list.
  */
 function parseOccludeBody(body: readonly string[]): OcclusionSet {
 	let mode = DEFAULT_OCCLUSION_MODE;
 	const shapes: OcclusionShape[] = [];
 	const annotations: OcclusionAnnotation[] = [];
-	const text: Record<string, string> = {};
 	let list: "shapes" | "annotations" | null = null;
 
 	for (let i = 0; i < body.length; i++) {
@@ -255,16 +234,6 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 		const modeMatch = line.match(/^mode\s*:\s*(\S+)\s*$/);
 		if (modeMatch) {
 			mode = parseMode(modeMatch[1]!);
-			list = null;
-			continue;
-		}
-
-		// Header / Back Extra. The value goes through the flow-scalar
-		// reader so the double quotes the writer always puts round it come back
-		// off, escapes and all.
-		const textMatch = line.match(TEXT_FIELD_KEY_REGEX);
-		if (textMatch) {
-			text[textMatch[1]!] = asText(parseFlowValue(textMatch[2]!));
 			list = null;
 			continue;
 		}
@@ -311,33 +280,7 @@ function parseOccludeBody(body: readonly string[]): OcclusionSet {
 
 	const set: OcclusionSet = { mode, shapes };
 	if (annotations.length > 0) set.annotations = annotations;
-	return assignTextFields(set, (key) => text[key]);
-}
-
-/**
- * Copy Anki's three text fields onto a set from whatever holds them, dropping
- * any that are blank.
- *
- * Blank is the same as absent: an empty field renders nothing on any surface,
- * and keeping it would write an empty key into the user's note that they can
- * neither see nor reach.
- */
-function assignTextFields(set: OcclusionSet, read: (key: string) => unknown): OcclusionSet {
-	for (const [key, prop] of TEXT_FIELDS) {
-		const value = asText(read(key));
-		if (value.trim() !== "") set[prop] = value;
-	}
 	return set;
-}
-
-/**
- * A parsed scalar as the text of a field. A number is accepted because a
- * hand-written `header: 12` parses as one, and refusing it would silently lose
- * what the user typed — the same tolerance `parseAnnotation` gives its text.
- */
-function asText(value: unknown): string {
-	if (typeof value === "string") return value;
-	return typeof value === "number" ? String(value) : "";
 }
 
 /** Width of a line's leading indent. A blank line counts as zero, ending a block. */
@@ -382,7 +325,7 @@ export function parseOcclusionSet(raw: unknown): OcclusionSet | null {
 	const annotations = parseAnnotations(raw["annotations"]);
 	const set: OcclusionSet = { mode: parseMode(raw["mode"]), shapes };
 	if (annotations.length > 0) set.annotations = annotations;
-	return assignTextFields(set, (key) => raw[key]);
+	return set;
 }
 
 /** Validate an `annotations` list, dropping any entry that cannot be drawn. */
@@ -614,12 +557,6 @@ export function serializeOccludeBlock(label: string, set: OcclusionSet): string[
 	if (set.annotations && set.annotations.length > 0) {
 		lines.push("  annotations:", ...set.annotations.flatMap((a) => serializeAnnotation(a)));
 	}
-	// Anki's three text fields, each omitted when empty for the same reason —
-	// and each double-quoted, since they are free text the user types.
-	for (const [key, prop] of TEXT_FIELDS) {
-		const value = set[prop];
-		if (value !== undefined && value !== "") lines.push(`  ${key}: ${yamlString(value)}`);
-	}
 	return lines;
 }
 
@@ -689,12 +626,6 @@ export function occlusionSetToYamlValue(set: OcclusionSet): Record<string, unkno
 			withRotation({ x: num(a.x), y: num(a.y), w: num(a.w), h: num(a.h), text: a.text }, a.rotation),
 		);
 	}
-	// Obsidian's own YAML dumper quotes whatever needs quoting here, so the text
-	// goes in raw — unlike the fence carrier, which is written as plain text.
-	for (const [key, prop] of TEXT_FIELDS) {
-		const text = set[prop];
-		if (text !== undefined && text !== "") value[key] = text;
-	}
 	return value;
 }
 
@@ -752,10 +683,6 @@ export function cardOcclusion(
 	// Annotations ride along on every card the set derives: they label the
 	// picture rather than any one group, so they read the same on all of them.
 	if (set.annotations && set.annotations.length > 0) occlusion.annotations = set.annotations;
-	// Header and Back Extra do the same: they describe the picture rather than
-	// any one group, so every card the set derives carries both.
-	if (set.header !== undefined && set.header !== "") occlusion.header = set.header;
-	if (set.backExtra !== undefined && set.backExtra !== "") occlusion.backExtra = set.backExtra;
 	return occlusion;
 }
 

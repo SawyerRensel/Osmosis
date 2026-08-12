@@ -150,10 +150,14 @@ const HANDLE_GRAB_PX = 12;
  */
 const FIT_SLACK = 1;
 
-/** Sentence case, as Obsidian's own UI labels are. */
+/**
+ * Sentence case, as Obsidian's own UI labels are, and numerals rather than
+ * words: the dropdown sits beside the group one in a toolbar that wraps, and
+ * every character it sheds is width the two need to stay on one row.
+ */
 const MODE_LABELS: Record<OcclusionMode, string> = {
-	"hide-all-guess-one": "Hide all, guess one",
-	"hide-one-guess-one": "Hide one, guess one",
+	"hide-all-guess-one": "Hide all, guess 1",
+	"hide-one-guess-one": "Hide 1, guess 1",
 };
 
 /** The align actions, in toolbar order. */
@@ -243,9 +247,6 @@ export class OcclusionEditorModal extends Modal {
 	/** Whether masks are drawn solid, previewing what the card will hide. */
 	private opaque = false;
 	private history: History<Snapshot>;
-	/** The two text fields. Outside the history — see `buildTextFields`. */
-	private header: string;
-	private backExtra: string;
 
 	private image!: HTMLImageElement;
 	private svg!: SVGSVGElement;
@@ -265,13 +266,11 @@ export class OcclusionEditorModal extends Modal {
 
 	constructor(app: App, private readonly options: OcclusionEditorOptions) {
 		super(app);
-		// Copied, so Cancel genuinely discards: the caller's set is the one on
-		// disk and must not be mutated by editing that is never saved.
+		// Copied, so closing without saving genuinely discards: the caller's set is
+		// the one on disk and must not be mutated by editing that is never saved.
 		this.shapes = options.set.shapes.map((shape) => cloneShape(shape));
 		this.annotations = (options.set.annotations ?? []).map((a) => ({ ...a }));
 		this.mode = options.set.mode;
-		this.header = options.set.header ?? "";
-		this.backExtra = options.set.backExtra ?? "";
 		this.history = new History<Snapshot>(this.snapshot());
 	}
 
@@ -283,10 +282,12 @@ export class OcclusionEditorModal extends Modal {
 
 		this.buildToolbar(contentEl);
 		this.buildCanvas(contentEl);
-		this.buildTextFields(contentEl);
 
 		this.hint = contentEl.createDiv({ cls: "osmosis-occlusion-hint" });
 
+		// Save alone: the modal's own close button discards, as does Escape and a
+		// click on the backdrop, so a Cancel button beside it was a third spelling
+		// of a route the user already has in the corner of the same dialog.
 		const buttons = contentEl.createDiv("modal-button-container");
 		const save = buttons.createEl("button", { cls: "mod-cta", text: "Save" });
 		save.addEventListener("click", () => {
@@ -296,8 +297,6 @@ export class OcclusionEditorModal extends Modal {
 			this.close();
 			this.options.onSave(this.currentSet());
 		});
-		buttons.createEl("button", { text: "Cancel" })
-			.addEventListener("click", () => { this.close(); });
 
 		this.registerHotkeys();
 		this.redraw();
@@ -335,13 +334,6 @@ export class OcclusionEditorModal extends Modal {
 	private currentSet(): OcclusionSet {
 		const set: OcclusionSet = { mode: this.mode, shapes: this.shapes };
 		if (this.annotations.length > 0) set.annotations = this.annotations;
-		// Trimmed, then dropped when blank: a field the user tabbed through and
-		// left empty must serialize away entirely, so a set that uses neither
-		// writes exactly what it always did.
-		const header = this.header.trim();
-		const backExtra = this.backExtra.trim();
-		if (header !== "") set.header = header;
-		if (backExtra !== "") set.backExtra = backExtra;
 		return set;
 	}
 
@@ -390,7 +382,7 @@ export class OcclusionEditorModal extends Modal {
 
 	/**
 	 * Whether the keyboard currently belongs to a text field rather than the
-	 * canvas — an annotation being named, or one of Anki's three fields.
+	 * canvas — an annotation being named.
 	 *
 	 * `editingAnnotation` is checked as well as the focused element because the
 	 * annotation input is built a tick before it is focused, and a shape hotkey
@@ -468,33 +460,6 @@ export class OcclusionEditorModal extends Modal {
 			// previous value is always visible and one click away.
 			this.mode = modeSelect.value as OcclusionMode;
 		});
-	}
-
-	/**
-	 * Header and Back Extra, below the canvas.
-	 *
-	 * Not in the toolbar: that row is icon-dense and already wraps to several
-	 * rows at phone width, and a free-text field there would be a couple of
-	 * characters wide. Below the picture is also where they appear when the card
-	 * is studied, so the panel reads in the order it renders.
-	 *
-	 * Deliberately outside the undo history, as `mode` is: the browser's own
-	 * text undo is what a focused field should be doing on Ctrl+Z, and
-	 * `isTyping()` is what hands it the key.
-	 */
-	private buildTextFields(parent: HTMLElement): void {
-		const fields = parent.createDiv("osmosis-occlusion-fields");
-		const field = (label: string, value: string, onInput: (text: string) => void): void => {
-			const input = fields.createEl("input", {
-				type: "text",
-				value,
-				attr: { placeholder: label, "aria-label": label },
-			});
-			input.addEventListener("input", () => { onInput(input.value); });
-		};
-
-		field("Header", this.header, (text) => { this.header = text; });
-		field("Back extra", this.backExtra, (text) => { this.backExtra = text; });
 	}
 
 	private buildCanvas(parent: HTMLElement): void {

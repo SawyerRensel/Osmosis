@@ -5,8 +5,6 @@ osmosis-schedule:
   os-truss01:
     occlude:
       mode: hide-all-guess-one
-      header: Which member is covered?
-      back-extra: A diagonal carries shear between the two chords.
       shapes:
         - group: c1
           kind: rect
@@ -21,11 +19,11 @@ osmosis-schedule:
           rotation: 313
           text: along the brace
     c1:
-      due: 2026-08-12T08:43:56
-      stability: 0.212
-      difficulty: 6.4133
-      lastReview: 2026-08-12T08:42:56
-      reps: 1
+      due: 2026-08-12T19:35:10
+      stability: 0.0155
+      difficulty: 9.8514
+      lastReview: 2026-08-12T19:34:10
+      reps: 4
       lapses: 0
       state: learning
       learningSteps: 0
@@ -100,58 +98,52 @@ occlude-a:
       h: 0.14
       rotation: 340
       text: "west bay"
-    - x: 0.6
-      y: 0.04
-      w: 0.34
-      h: 0.24
-      text: "east bay"
-    - x: 0.3617
-      y: 0.7625
-      w: 0.0608
-      h: 0.14
-      text: "test"
-    - x: 0.229
-      y: 0.6993
-      w: 0.0975
-      h: 0.14
-      text: "Testing"
-  header: "Name the covered member"
-  back-extra: "Diagonals take shear, posts take it vertically, chords take moment."
+    - x: 0.3047
+      y: 0.5012
+      w: 0.1443
+      h: 0.0892
+      rotation: 8.1569
+      text: "Meowwowo"
+    - x: 0.6439
+      y: 0.4758
+      w: 0.0941
+      h: 0.1371
+      text: "testing"
 c1:
-  due: 2026-08-12T12:41:12.563Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T23:43:52.804Z
+  stability: 0.0072
+  difficulty: 9.9364
+  reps: 5
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:40:12.563Z
+  lastReview: 2026-08-12T23:42:52.804Z
   learningSteps: 0
 c2:
-  due: 2026-08-12T12:41:24.489Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T23:34:32.681Z
+  stability: 0.0155
+  difficulty: 9.8514
+  reps: 4
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:40:24.489Z
+  lastReview: 2026-08-12T23:33:32.681Z
   learningSteps: 0
 c3:
-  due: 2026-08-12T12:41:32.983Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T23:43:48.348Z
+  stability: 0.0349
+  difficulty: 9.5929
+  reps: 3
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:40:32.983Z
+  lastReview: 2026-08-12T23:42:48.348Z
   learningSteps: 0
 c4:
-  due: 2026-08-12T12:41:40.561Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T23:43:50.679Z
+  stability: 0.0349
+  difficulty: 9.5929
+  reps: 3
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:40:40.561Z
+  lastReview: 2026-08-12T23:42:50.679Z
   learningSteps: 0
 
 The gantry truss, in elevation.

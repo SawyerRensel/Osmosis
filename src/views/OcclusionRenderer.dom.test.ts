@@ -254,48 +254,19 @@ describe("renderOcclusion in a note", () => {
 	});
 });
 
-/** The two text fields the renderer draws. */
-describe("renderOcclusion text fields", () => {
-	const withFields: CardOcclusion = {
-		...occlusion,
-		header: "Which member carries the deck?",
-		backExtra: "The truss chord, in tension.",
-	};
+/**
+ * The picture and its masks are the whole of what this renderer draws. Anki's
+ * Header and Back Extra are deliberately not part of the format — a card's text
+ * is the note's own prose around the embed, which every study surface already
+ * renders itself.
+ */
+describe("renderOcclusion content", () => {
+	it("puts nothing around the picture on any side", () => {
+		for (const side of ["front", "back", "all-hidden", "all-revealed"] as const) {
+			const children = Array.from(render(side).children);
 
-	it("puts the header above the picture on both sides", () => {
-		for (const side of ["front", "back"] as const) {
-			const container = render(side, withFields);
-			const header = container.querySelector(".osmosis-occlusion-header");
-
-			expect(header?.textContent).toBe(withFields.header);
-			// Before the image, not after it.
-			expect(header?.nextElementSibling?.classList.contains("osmosis-occlusion")).toBe(true);
+			expect(children.map((el) => el.className)).toEqual(["osmosis-occlusion"]);
 		}
-	});
-
-	it("holds Back Extra until the answer side, on cards and in the note alike", () => {
-		// Built on every side and *hidden* on the question ones, never withheld: the
-		// mind map renders a node once and flips it by repainting, and Back Extra
-		// sits outside the wrapper a repaint reaches — so an element that was never
-		// created could not be taken back.
-		for (const side of ["front", "all-hidden"] as const) {
-			const backExtra = render(side, withFields).querySelector(".osmosis-occlusion-back-extra");
-			expect(backExtra?.textContent).toBe(withFields.backExtra);
-			expect(backExtra?.classList.contains("osmosis-hidden")).toBe(true);
-		}
-
-		for (const side of ["back", "all-revealed"] as const) {
-			const backExtra = render(side, withFields).querySelector(".osmosis-occlusion-back-extra");
-			expect(backExtra?.textContent).toBe(withFields.backExtra);
-			expect(backExtra?.classList.contains("osmosis-hidden")).toBe(false);
-		}
-	});
-
-	it("adds nothing when a card carries neither", () => {
-		const container = render("back");
-
-		expect(container.querySelector(".osmosis-occlusion-header")).toBeNull();
-		expect(container.querySelector(".osmosis-occlusion-back-extra")).toBeNull();
 	});
 });
 

@@ -5,8 +5,6 @@ osmosis-schedule:
   os-elevat1:
     occlude:
       mode: hide-one-guess-one
-      header: Where does the load go?
-      back-extra: The pier takes it down; the abutment takes it sideways.
       shapes:
         - group: c1
           kind: rect
@@ -26,39 +24,55 @@ osmosis-schedule:
           y: 0.1225
           rx: 0.1
           ry: 0.05
+      annotations:
+        - x: 0.2714
+          y: 0.2902
+          w: 0.1153
+          h: 0.087
+          text: test
+          rotation: 162.8937
     c1:
-      due: 2026-08-12T08:39:10
-      stability: 0.212
-      difficulty: 6.4133
-      lastReview: 2026-08-12T08:38:10
-      reps: 1
+      due: 2026-08-12T09:26:22
+      stability: 0.0834
+      difficulty: 8.8063
+      lastReview: 2026-08-12T09:25:22
+      reps: 2
       lapses: 0
       state: learning
       learningSteps: 0
     c2:
-      due: 2026-08-12T08:39:11
-      stability: 0.212
-      difficulty: 6.4133
-      lastReview: 2026-08-12T08:38:11
-      reps: 1
+      due: 2026-08-12T09:26:23
+      stability: 0.0834
+      difficulty: 8.8063
+      lastReview: 2026-08-12T09:25:23
+      reps: 2
       lapses: 0
       state: learning
       learningSteps: 0
     c3:
-      due: 2026-08-12T08:39:12
+      due: 2026-08-12T09:26:28
       stability: 0.212
       difficulty: 6.4133
-      lastReview: 2026-08-12T08:38:12
+      lastReview: 2026-08-12T09:25:28
       reps: 1
       lapses: 0
       state: learning
       learningSteps: 0
+  os-plainl1:
+    due: 2026-08-12T09:26:31
+    stability: 0.212
+    difficulty: 6.4133
+    lastReview: 2026-08-12T09:25:31
+    reps: 1
+    lapses: 0
+    state: learning
+    learningSteps: 0
 ---
 
 # Image occlusion — contextual and spatial fixture
 
-Phase 5 fixture: the two surfaces that had no occlusion rendering, plus Anki's
-three text fields. Reset this file from `e2e/fixtures/` between runs.
+Phase 5 fixture: the two surfaces that had no occlusion rendering. Reset this
+file from `e2e/fixtures/` between runs.
 
 Every card here is **new or overdue**, so all of them are studiable. Deck Total
 is new + learn + due — a future-dated `review` card counts for nothing and looks
@@ -99,38 +113,25 @@ occlude-a:
       y: 0.56
       rx: 0.065
       ry: 0.05
-  annotations:
-    - x: 0.255
-      y: 0.3022
-      w: 0.0411
-      h: 0.0332
-      text: "meow"
-    - x: 0.5175
-      y: 0.8122
-      w: 0.229
-      h: 0.0332
-      rotation: 28.0409
-      text: "testing a long annotation to see if it works"
-  header: "Cross-section: name the covered parts"
-  back-extra: "Web plate carries shear; the parapet is non-structural."
 c1:
-  due: 2026-08-12T12:39:01.006Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T13:26:14.603Z
+  stability: 0.0834
+  difficulty: 8.8063
+  reps: 2
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:38:01.006Z
+  lastReview: 2026-08-12T13:25:14.603Z
   learningSteps: 0
 c2:
-  due: 2026-08-12T12:39:05.576Z
-  stability: 0.2120
-  difficulty: 6.4133
-  reps: 1
+  due: 2026-08-12T13:26:19.680Z
+  stability: 0.0834
+  difficulty: 8.8063
+  reps: 2
   lapses: 0
   state: learning
-  lastReview: 2026-08-12T12:38:05.576Z
+  lastReview: 2026-08-12T13:25:19.680Z
   learningSteps: 0
+
 
 The section, then the elevation.
 ![[bridge-cross-section.svg]]{a}
@@ -140,9 +141,8 @@ The section, then the elevation.
 Expected in **reading view and peek**: the prose line and the plain elevation
 render as markdown; the cross-section renders with **both** groups covered at
 once — no amber "this one is being asked", because a reader looking at a picture
-is not answering one of the questions it carries. The header sits above it, and
-Back Extra is held back until you click to reveal, which rings both masks rather
-than clearing them.
+is not answering one of the questions it carries. Clicking to reveal rings both
+masks rather than clearing them.
 
 Expected in **contextual study**: this becomes a card player, exactly as
 sequential and spatial are. It asks `c1` first — that group amber, `c2` covered
@@ -164,7 +164,7 @@ Expected in a **mind map**: this fence renders as a card with its masks, not as
 a block of `occlude:` geometry. In peek or study the diagram is covered and the
 node is never replaced by a "?"; clicking uncovers it.
 
-## Line card — occluded, with both text fields
+## Line card — occluded
 
 The block ID identifies the line and the line holds one embed, so the shape set
 sits in this note's frontmatter under `os-elevat1`.

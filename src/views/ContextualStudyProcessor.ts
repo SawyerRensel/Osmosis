@@ -405,7 +405,7 @@ export class ContextualStudyProcessor {
 
 		// One set of diagrams for the whole card, since both sides show the same
 		// pictures with different masks on them. Each gets its own slot so that a
-		// repaint reaches exactly one diagram's image, header and Back Extra.
+		// repaint reaches exactly one diagram's image.
 		const slots = occlusions.map((occlusion) => {
 			const slot = container.createDiv({ cls: "osmosis-occlusion-slot" });
 			renderOcclusion(this.plugin.app, slot, occlusion, "all-hidden", sourcePath);
@@ -455,7 +455,7 @@ export class ContextualStudyProcessor {
 
 			// Nothing but the placeholder and its rule goes away on reveal: the
 			// answer to an occluded card is the masks, which have just been
-			// repainted, and any Back Extra, which the repaint brings in with them.
+			// repainted.
 			dividerEl.toggleClass("osmosis-hidden", revealed);
 			hiddenEl.toggleClass("osmosis-hidden", revealed);
 

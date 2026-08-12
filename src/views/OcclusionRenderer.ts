@@ -36,12 +36,6 @@ const ROLE_CLASSES: Record<MaskElement["role"], string[]> = {
  *
  * `notePath` is the note the embed was written in, which is what resolves a
  * short link like `bridge.svg` to a file the way Obsidian would.
- *
- * Anki's Header sits above the picture on every side, Back Extra below it on the
- * answer sides only. Both are drawn as **plain text**, not markdown: they are
- * chrome on the diagram, the note's own prose around the embed is where markdown
- * already lives, and rendering markdown here would make this function async and
- * force a `Component` on every one of its four callers.
  */
 export function renderOcclusion(
 	app: App,
@@ -59,28 +53,10 @@ export function renderOcclusion(
 		return;
 	}
 
-	if (occlusion.header !== undefined && occlusion.header !== "") {
-		container.createDiv({ cls: "osmosis-occlusion-header", text: occlusion.header });
-	}
-
 	const wrapper = container.createDiv({ cls: "osmosis-occlusion" });
 	createImage(wrapper, src, occlusion.image);
 
 	paintMasks(wrapper, occlusion, side);
-
-	if (occlusion.backExtra !== undefined && occlusion.backExtra !== "") {
-		const backExtra = container.createDiv({
-			cls: "osmosis-occlusion-back-extra",
-			text: occlusion.backExtra,
-		});
-		// The element is built on *every* side and hidden on the question ones,
-		// rather than being withheld. A mind-map node renders once and is flipped
-		// by repainting its masks in place, and Back Extra sits outside the wrapper
-		// the repaint reaches — so withholding it here meant a node that had been
-		// rendered revealed kept showing its answer text under a covered diagram.
-		// A repainting surface flips `.osmosis-occlusion-back-extra` itself.
-		backExtra.classList.toggle("osmosis-hidden", !isAnswerSide(side));
-	}
 }
 
 /** Every image this module has drawn, by source, at the size it turned out to be. */
@@ -123,18 +99,12 @@ function createImage(wrapper: HTMLElement, src: string, alt: string): HTMLImageE
 	return img;
 }
 
-/** Whether this side is showing the answer — the sides Back Extra belongs on. */
-function isAnswerSide(side: OcclusionSide): boolean {
-	return side === "back" || side === "all-revealed";
-}
-
 /**
  * Flip an already-rendered diagram to another side **without rebuilding it**.
  *
  * `container` is whatever `renderOcclusion` was drawn into. Everything it built
- * stays: the same `<img>`, so the file is not re-requested and the element never
- * loses its height, and the same Back Extra element, toggled rather than
- * recreated for the reason its own construction explains.
+ * stays — the same `<img>`, so the file is not re-requested and the element
+ * never loses its height; only the masks over it are repainted.
  *
  * That height is the whole point. A surface that redraws a card by emptying its
  * container and calling `renderOcclusion` again briefly holds a picture with no
@@ -150,9 +120,6 @@ export function repaintOcclusion(
 ): void {
 	const img = container.querySelector("img");
 	if (img) overlayMasks(img, occlusion, side);
-	container
-		.querySelector(".osmosis-occlusion-back-extra")
-		?.classList.toggle("osmosis-hidden", !isAnswerSide(side));
 }
 
 /** Class marking a wrapper this module put *around* someone else's image. */

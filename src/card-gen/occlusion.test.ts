@@ -368,48 +368,41 @@ describe("annotations", () => {
 });
 
 /**
- * Header and Back Extra. Free text the user types, so each is always
- * double-quoted on write — a `:`, a `#`, or a leading `-` changes the meaning of
- * a bare scalar, and in the frontmatter carrier one malformed line fails the
- * parse of the *whole note's* frontmatter.
+ * Anki's three occlusion text fields — Header, Back Extra, Comments — are not
+ * part of this format. Each rendered nothing the note's own prose around the
+ * embed did not already render, so none earned storage in the user's file.
  *
- * Anki's third field, Comments, is not part of this format: it rendered on no
- * surface, so it was storage the user could never see the effect of.
+ * What is worth testing is the way out: a note written by a build that *did*
+ * store them must still load, and must shed them the next time it is written
+ * rather than carrying a key nothing reads.
  */
-describe("text fields", () => {
+describe("Anki's text fields", () => {
 	const shapes: OcclusionShape[] = [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }];
-	const filled: OcclusionSet = {
-		mode: "hide-all-guess-one",
-		shapes,
-		header: "Cross-section: the deck",
-		backExtra: "- the pier carries 60% of the load",
-	};
 
-	it("survives fence serialize → parse unchanged", () => {
-		expect(parseOccludeBlock(serializeOccludeBlock("a", filled), 0)!.set).toEqual(filled);
-	});
-
-	it("survives frontmatter serialize → parse unchanged", () => {
-		expect(parseOcclusionSet(occlusionSetToYamlValue(filled))).toEqual(filled);
-	});
-
-	it("quotes both of them on the fence carrier", () => {
-		expect(serializeOccludeBlock("", filled).slice(-2)).toEqual([
+	it("loads a set written when they were stored, keeping its shapes", () => {
+		const lines = [
+			"occlude:",
+			"  mode: hide-all-guess-one",
 			'  header: "Cross-section: the deck"',
 			'  back-extra: "- the pier carries 60% of the load"',
-		]);
+			'  comments: "redraw at 2x"',
+			"  shapes:",
+			...serializeShape(shapes[0]!),
+		];
+
+		expect(parseOccludeBlock(lines, 0)!.set).toEqual({ mode: "hide-all-guess-one", shapes });
 	});
 
-	it("round-trips text carrying quotes and backslashes", () => {
-		const set: OcclusionSet = { mode: "hide-all-guess-one", shapes, header: 'the "web" plate \\ flange' };
+	it("drops them on the next write of either carrier", () => {
+		const raw = {
+			mode: "hide-all-guess-one",
+			shapes,
+			header: "Cross-section: the deck",
+			"back-extra": "- the pier carries 60% of the load",
+		};
+		const set = parseOcclusionSet(raw)!;
 
-		expect(parseOccludeBlock(serializeOccludeBlock("", set), 0)!.set).toEqual(set);
-	});
-
-	it("omits every empty field, so a set that uses neither writes what it always did", () => {
-		const bare: OcclusionSet = { mode: "hide-all-guess-one", shapes };
-
-		expect(serializeOccludeBlock("a", bare)).toEqual([
+		expect(serializeOccludeBlock("a", set)).toEqual([
 			"occlude-a:",
 			"  mode: hide-all-guess-one",
 			"  shapes:",
@@ -420,47 +413,19 @@ describe("text fields", () => {
 			"      w: 0.14",
 			"      h: 0.06",
 		]);
-		expect(occlusionSetToYamlValue(bare)["header"]).toBeUndefined();
+		expect(occlusionSetToYamlValue(set)).not.toHaveProperty("header");
+		expect(occlusionSetToYamlValue(set)).not.toHaveProperty("back-extra");
 	});
 
-	it("treats a blank field as absent rather than storing an unreachable empty key", () => {
-		expect(parseOcclusionSet({ mode: "hide-all-guess-one", shapes, header: "   " })?.header)
-			.toBeUndefined();
-	});
+	it("carries none of them onto the cards a set derives", () => {
+		const set = parseOcclusionSet({ mode: "hide-all-guess-one", shapes, header: "the deck" })!;
 
-	it("keeps a hand-written numeric field rather than losing it", () => {
-		expect(parseOcclusionSet({ mode: "hide-all-guess-one", shapes, header: 12 })?.header).toBe("12");
-	});
-
-	it("derives no card of its own — cards still come only from shape groups", () => {
-		expect(occlusionGroups(filled)).toEqual(["c1"]);
-	});
-
-	it("still reads a set written before the fields existed", () => {
-		const lines = ["occlude:", "  mode: hide-all-guess-one", "  shapes:", ...serializeShape(shapes[0]!)];
-
-		expect(parseOccludeBlock(lines, 0)!.set).toEqual({ mode: "hide-all-guess-one", shapes });
-	});
-
-	it("puts Header and Back Extra on every card the set derives", () => {
-		const card = cardOcclusion("bridge.svg", filled, "c1");
-
-		expect(card.header).toBe(filled.header);
-		expect(card.backExtra).toBe(filled.backExtra);
-	});
-
-	it("drops a comments key left by an older build rather than carrying it", () => {
-		const lines = [
-			"occlude:",
-			"  mode: hide-all-guess-one",
-			'  comments: "redraw at 2x"',
-			"  shapes:",
-			...serializeShape(shapes[0]!),
-		];
-		const set = parseOccludeBlock(lines, 0)!.set;
-
-		expect(set).not.toHaveProperty("comments");
-		expect(serializeOccludeBlock("", set).join("\n")).not.toContain("comments");
+		expect(cardOcclusion("bridge.svg", set, "c1")).toEqual({
+			image: "bridge.svg",
+			mode: "hide-all-guess-one",
+			shapes,
+			target: "c1",
+		});
 	});
 });
 
