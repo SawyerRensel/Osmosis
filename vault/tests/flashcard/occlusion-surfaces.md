@@ -2,11 +2,19 @@
 osmosis-cards: true
 osmosis-deck: Engineering/Surfaces
 osmosis-schedule:
+  os-plainl1:
+    due: 2026-08-01T09:00:00
+    stability: 4.21
+    difficulty: 5.5
+    reps: 3
+    lapses: 0
+    state: review
+    learningSteps: 0
   os-elevat1:
     occlude:
       mode: hide-one-guess-one
-      header: Where does the load go?
-      back-extra: The pier takes it down; the abutment takes it sideways.
+      header: "Where does the load go?"
+      back-extra: "The pier takes it down; the abutment takes it sideways."
       shapes:
         - group: c1
           kind: rect
@@ -26,6 +34,14 @@ osmosis-schedule:
           y: 0.1225
           rx: 0.1
           ry: 0.05
+    c1:
+      due: 2026-08-02T09:00:00
+      stability: 2.5
+      difficulty: 6
+      reps: 1
+      lapses: 0
+      state: review
+      learningSteps: 0
 ---
 
 # Image occlusion — contextual and spatial fixture
