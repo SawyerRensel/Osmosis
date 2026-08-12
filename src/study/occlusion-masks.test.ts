@@ -43,6 +43,39 @@ describe("hide-one-guess-one", () => {
 	});
 });
 
+/**
+ * The note views — contextual study, a mind-map node, peek on a line. Nobody is
+ * answering one of the diagram's questions there, so every group is a blank at
+ * once and the mode has nothing to describe.
+ */
+describe("note views", () => {
+	it("covers every group whatever the mode, with no target singled out", () => {
+		for (const mode of ["hide-all-guess-one", "hide-one-guess-one"] as const) {
+			expect(maskElements(occlusion(mode), "all-hidden").map((m) => m.role))
+				.toEqual(["hidden", "hidden", "hidden"]);
+		}
+	});
+
+	it("rings every group when revealed, so the answer still says where the questions were", () => {
+		for (const mode of ["hide-all-guess-one", "hide-one-guess-one"] as const) {
+			expect(maskElements(occlusion(mode), "all-revealed").map((m) => m.role))
+				.toEqual(["revealed", "revealed", "revealed"]);
+		}
+	});
+
+	it("ignores the target, which the note has no way to choose", () => {
+		const painted = maskElements({ ...occlusion("hide-all-guess-one"), target: "" }, "all-hidden");
+		expect(painted.map((m) => m.role)).toEqual(["hidden", "hidden", "hidden"]);
+	});
+
+	it("paints the same shapes in the same order as a card side, so nothing reflows", () => {
+		const hidden = maskElements(occlusion("hide-all-guess-one"), "all-hidden");
+		const revealed = maskElements(occlusion("hide-all-guess-one"), "all-revealed");
+		expect(hidden.map((m) => m.tag)).toEqual(revealed.map((m) => m.tag));
+		expect(hidden.map((m) => m.attrs)).toEqual(revealed.map((m) => m.attrs));
+	});
+});
+
 describe("shape geometry", () => {
 	it("keeps rect coordinates in the normalised 0–1 space", () => {
 		const [rect] = maskElements(occlusion("hide-one-guess-one"), "front");

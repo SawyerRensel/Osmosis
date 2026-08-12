@@ -4,7 +4,9 @@ import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
-import { allLineCardBlockIds, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import type { CardOcclusion } from "../database/types";
+import { allLineCardBlockIds, cardIdsForLineKey, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import { renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -232,6 +234,20 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 	}
 
+	/**
+	 * The occluded diagram sitting on a line, or null when the line has no masks.
+	 *
+	 * Every card the line fans out into carries the whole shape set, so the first
+	 * one answers the question. **The block ID is the signal, never `cardType`** —
+	 * an occluded line card is typed `"occlusion"` while still living on its line.
+	 */
+	private lineOcclusion(notePath: string, blockId: string): CardOcclusion | null {
+		for (const card of this.plugin.cardStore.getCardsByNote(notePath)) {
+			if (card.blockId === blockId && card.occlusion) return card.occlusion;
+		}
+		return null;
+	}
+
 	/** Wrap a line's content for hiding (idempotent) and register it. */
 	private trackLine(state: NoteRevealState, notePath: string, blockId: string, container: HTMLElement): void {
 		let placeholder = container.querySelector<HTMLElement>(":scope > .osmosis-line-placeholder");
@@ -248,7 +264,18 @@ export class LineRevealProcessor {
 
 			placeholder = createSpan();
 			placeholder.className = "osmosis-line-placeholder osmosis-hidden";
-			placeholder.textContent = PLACEHOLDER_TEXT;
+			// An occluded line is hidden by masking the regions that carry its
+			// cards, not by blanking the whole diagram: covering the picture
+			// entirely asks the reader to recall the image rather than the labels
+			// on it, which is the one thing occlusion exists not to do. Every group
+			// is covered at once, since in the note no single card is being asked.
+			// Revealing swaps in the line's own content, as it does for any line.
+			const occlusion = this.lineOcclusion(notePath, blockId);
+			if (occlusion) {
+				renderOcclusion(this.plugin.app, placeholder, occlusion, "all-hidden", notePath);
+			} else {
+				placeholder.textContent = PLACEHOLDER_TEXT;
+			}
 			placeholder.addEventListener("click", () => {
 				this.onPlaceholderClick(notePath, blockId);
 			});
@@ -358,12 +385,19 @@ export class LineRevealProcessor {
 		const state = this.stateFor(notePath);
 		if (state.pendingRating !== blockId) return;
 
-		const cardId = lineCardId(notePath, blockId);
-		if (this.plugin.cardStore.getCard(cardId)) {
+		// One reveal, one rating — applied to every card the line carries. An
+		// occluded line fans out into a card per shape group, and the line key is
+		// not any of their IDs, so rating it as a single card recorded nothing.
+		const cardIds = cardIdsForLineKey(
+			this.plugin.cardStore.getCardsByNote(notePath),
+			lineCardId(notePath, blockId),
+		);
+		if (cardIds.length > 0) {
 			this.sessionManager ??= this.plugin.createSessionManager("contextual");
-			await this.sessionManager.recordReview(cardId, rating, {
-				elapsedMs: Date.now() - state.pendingRatingAt,
-			});
+			const elapsedMs = Date.now() - state.pendingRatingAt;
+			for (const cardId of cardIds) {
+				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+			}
 			this.plugin.refreshDashboard();
 		}
 
@@ -588,6 +622,15 @@ export class LineRevealProcessor {
 		const file = this.plugin.app.vault.getFileByPath(notePath);
 		if (!(file instanceof TFile)) return null;
 		return this.plugin.app.metadataCache.getFileCache(file);
+	}
+
+	/**
+	 * The reveal mode a note is currently in, without creating state for a note
+	 * that has none. Read by the fence processor, which shares the reading view
+	 * with these lines and must only offer a rating while study is running.
+	 */
+	revealMode(notePath: string): RevealMode {
+		return this.states.get(notePath)?.mode ?? "off";
 	}
 
 	private stateFor(notePath: string): NoteRevealState {

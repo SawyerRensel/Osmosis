@@ -2,7 +2,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { App } from "obsidian";
 import type { CardOcclusion } from "../database/types";
-import { renderOcclusion } from "./OcclusionRenderer";
+import type { OcclusionSide } from "../study/occlusion-masks";
+import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 
 /**
  * Smoke tests that the mask overlay actually draws.
@@ -20,12 +21,23 @@ import { renderOcclusion } from "./OcclusionRenderer";
 beforeAll(() => {
 	const el = window.Element.prototype as unknown as Record<string, unknown>;
 
-	el["createDiv"] = function (this: Element, o?: { cls?: string; text?: string }) {
+	const buildDiv = (o?: { cls?: string | string[]; text?: string }): HTMLDivElement => {
 		const div = document.createElement("div");
-		if (o?.cls !== undefined) div.setAttribute("class", o.cls);
+		for (const token of o?.cls === undefined ? [] : [o.cls].flat()) div.classList.add(token);
 		if (o?.text !== undefined) div.textContent = o.text;
-		return this.appendChild(div);
+		return div;
 	};
+
+	el["createDiv"] = function (this: Element, o?: { cls?: string | string[]; text?: string }) {
+		return this.appendChild(buildDiv(o));
+	};
+
+	el["hasClass"] = function (this: Element, cls: string) {
+		return this.classList.contains(cls);
+	};
+
+	// `overlayMasks` builds its wrapper detached, so it uses the global helper.
+	(window as unknown as Record<string, unknown>)["createDiv"] = buildDiv;
 
 	el["setCssProps"] = function (this: HTMLElement, props: Record<string, string>) {
 		for (const [name, value] of Object.entries(props)) this.style.setProperty(name, value);
@@ -76,7 +88,7 @@ const occlusion: CardOcclusion = {
 	],
 };
 
-function render(side: "front" | "back", card: CardOcclusion = occlusion): HTMLElement {
+function render(side: OcclusionSide, card: CardOcclusion = occlusion): HTMLElement {
 	const container = document.createElement("div");
 	renderOcclusion(app, container, card, side, "notes/bridges.md");
 	return container;
@@ -176,5 +188,131 @@ describe("renderOcclusion annotations", () => {
 
 	it("adds no layer at all when there are none", () => {
 		expect(render("front").querySelector(".osmosis-occlusion-annotations")).toBeNull();
+	});
+});
+
+/**
+ * The note views: contextual study, a mind-map node, peek on a line. Nobody is
+ * answering one of the diagram's questions there, so every group is a blank at
+ * once and the mode has nothing to say.
+ */
+describe("renderOcclusion in a note", () => {
+	it("covers every group with no target, whatever the mode", () => {
+		for (const mode of ["hide-all-guess-one", "hide-one-guess-one"] as const) {
+			const masks = Array.from(
+				render("all-hidden", { ...occlusion, mode, target: "" })
+					.querySelectorAll(".osmosis-occlusion-mask"),
+			);
+
+			expect(masks).toHaveLength(3);
+			expect(masks.some((m) => m.classList.contains("is-target"))).toBe(false);
+		}
+	});
+
+	it("rings every group when revealed, so the answer says where the questions were", () => {
+		const masks = Array.from(
+			render("all-revealed", { ...occlusion, target: "" })
+				.querySelectorAll(".osmosis-occlusion-mask"),
+		);
+
+		expect(masks).toHaveLength(3);
+		expect(masks.every((m) => m.classList.contains("is-revealed"))).toBe(true);
+	});
+});
+
+/** The two text fields the renderer draws. */
+describe("renderOcclusion text fields", () => {
+	const withFields: CardOcclusion = {
+		...occlusion,
+		header: "Which member carries the deck?",
+		backExtra: "The truss chord, in tension.",
+	};
+
+	it("puts the header above the picture on both sides", () => {
+		for (const side of ["front", "back"] as const) {
+			const container = render(side, withFields);
+			const header = container.querySelector(".osmosis-occlusion-header");
+
+			expect(header?.textContent).toBe(withFields.header);
+			// Before the image, not after it.
+			expect(header?.nextElementSibling?.classList.contains("osmosis-occlusion")).toBe(true);
+		}
+	});
+
+	it("holds Back Extra until the answer side, on cards and in the note alike", () => {
+		expect(render("front", withFields).querySelector(".osmosis-occlusion-back-extra")).toBeNull();
+		expect(render("all-hidden", withFields).querySelector(".osmosis-occlusion-back-extra")).toBeNull();
+
+		expect(render("back", withFields).querySelector(".osmosis-occlusion-back-extra")?.textContent)
+			.toBe(withFields.backExtra);
+		expect(render("all-revealed", withFields).querySelector(".osmosis-occlusion-back-extra")?.textContent)
+			.toBe(withFields.backExtra);
+	});
+
+	it("adds nothing when a card carries neither", () => {
+		const container = render("back");
+
+		expect(container.querySelector(".osmosis-occlusion-header")).toBeNull();
+		expect(container.querySelector(".osmosis-occlusion-back-extra")).toBeNull();
+	});
+});
+
+/**
+ * Masks pinned over an image something else rendered — a mind-map node, whose
+ * size was measured from its rendered content, or a note's own embed carrying
+ * the user's `|300` suffix. Drawing our own copy would change both.
+ */
+describe("overlayMasks", () => {
+	/** An embed as Obsidian renders one: the image inside its `.internal-embed`. */
+	function rendered(): { host: HTMLElement; img: HTMLImageElement } {
+		const host = document.createElement("div");
+		const embed = document.createElement("span");
+		embed.className = "internal-embed";
+		const img = document.createElement("img");
+		img.setAttribute("src", "app://vault/bridge.svg");
+		embed.appendChild(img);
+		host.appendChild(embed);
+		return { host, img };
+	}
+
+	it("wraps the image it was given rather than drawing another", () => {
+		const { host, img } = rendered();
+		overlayMasks(img, { ...occlusion, target: "" }, "all-hidden");
+
+		expect(host.querySelectorAll("img")).toHaveLength(1);
+		expect(host.querySelector("img")).toBe(img);
+		expect(img.parentElement?.classList.contains("osmosis-occlusion")).toBe(true);
+		expect(host.querySelectorAll(".osmosis-occlusion-mask")).toHaveLength(3);
+	});
+
+	it("repaints rather than nesting when called again, and never reloads the image", () => {
+		const { host, img } = rendered();
+		overlayMasks(img, { ...occlusion, target: "" }, "all-hidden");
+		const wrapper = img.parentElement;
+		overlayMasks(img, { ...occlusion, target: "" }, "all-revealed");
+
+		expect(img.parentElement).toBe(wrapper);
+		expect(host.querySelectorAll(".osmosis-occlusion")).toHaveLength(1);
+		expect(host.querySelectorAll(".osmosis-occlusion-masks")).toHaveLength(1);
+		expect(host.querySelector(".osmosis-occlusion-mask")?.classList.contains("is-revealed"))
+			.toBe(true);
+	});
+
+	it("puts the image back exactly where it was when the overlay is removed", () => {
+		const { host, img } = rendered();
+		const before = host.innerHTML;
+		overlayMasks(img, { ...occlusion, target: "" }, "all-hidden");
+		removeMaskOverlays(host);
+
+		expect(host.innerHTML).toBe(before);
+		expect(host.querySelector("img")).toBe(img);
+	});
+
+	it("leaves a host with no overlay untouched", () => {
+		const { host } = rendered();
+		const before = host.innerHTML;
+		removeMaskOverlays(host);
+
+		expect(host.innerHTML).toBe(before);
 	});
 });

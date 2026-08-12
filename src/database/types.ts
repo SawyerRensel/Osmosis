@@ -40,12 +40,24 @@ export interface OcclusionAnnotation {
 	text: string;
 }
 
-/** The set of masks bound to one image embed. */
+/**
+ * The set of masks bound to one image embed.
+ *
+ * `header` and `backExtra` are two of Anki's three occlusion text fields; both
+ * are omitted when empty, so a set that uses neither serializes exactly as it
+ * did before they existed and no existing note churns. Anki's third, Comments,
+ * is deliberately absent — it renders nowhere, so it earned no place in the
+ * user's file.
+ */
 export interface OcclusionSet {
 	mode: OcclusionMode;
 	shapes: OcclusionShape[];
 	/** Text labels drawn on the image, on both sides of every card. */
 	annotations?: OcclusionAnnotation[];
+	/** Shown above the image on both sides. */
+	header?: string;
+	/** Shown below the image on the answer side only. */
+	backExtra?: string;
 }
 
 /**
@@ -62,6 +74,10 @@ export interface CardOcclusion {
 	target: string;
 	/** Text labels drawn over the image, identical on front and back. */
 	annotations?: OcclusionAnnotation[];
+	/** Anki's Header field: shown above the image on both sides. */
+	header?: string;
+	/** Anki's Back Extra field: shown below the image on the answer side. */
+	backExtra?: string;
 }
 
 /** FSRS card states. */

@@ -205,6 +205,9 @@ export class OcclusionEditorModal extends Modal {
 	/** Whether masks are drawn solid, previewing what the card will hide. */
 	private opaque = false;
 	private history: History<Snapshot>;
+	/** The two text fields. Outside the history — see `buildTextFields`. */
+	private header: string;
+	private backExtra: string;
 
 	private image!: HTMLImageElement;
 	private svg!: SVGSVGElement;
@@ -229,6 +232,8 @@ export class OcclusionEditorModal extends Modal {
 		this.shapes = options.set.shapes.map((shape) => cloneShape(shape));
 		this.annotations = (options.set.annotations ?? []).map((a) => ({ ...a }));
 		this.mode = options.set.mode;
+		this.header = options.set.header ?? "";
+		this.backExtra = options.set.backExtra ?? "";
 		this.history = new History<Snapshot>(this.snapshot());
 	}
 
@@ -240,6 +245,7 @@ export class OcclusionEditorModal extends Modal {
 
 		this.buildToolbar(contentEl);
 		this.buildCanvas(contentEl);
+		this.buildTextFields(contentEl);
 
 		this.hint = contentEl.createDiv({ cls: "osmosis-occlusion-hint" });
 
@@ -287,10 +293,17 @@ export class OcclusionEditorModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	/** The set as it now stands, with `annotations` omitted when there are none. */
+	/** The set as it now stands, with every empty optional omitted. */
 	private currentSet(): OcclusionSet {
 		const set: OcclusionSet = { mode: this.mode, shapes: this.shapes };
 		if (this.annotations.length > 0) set.annotations = this.annotations;
+		// Trimmed, then dropped when blank: a field the user tabbed through and
+		// left empty must serialize away entirely, so a set that uses neither
+		// writes exactly what it always did.
+		const header = this.header.trim();
+		const backExtra = this.backExtra.trim();
+		if (header !== "") set.header = header;
+		if (backExtra !== "") set.backExtra = backExtra;
 		return set;
 	}
 
@@ -308,9 +321,9 @@ export class OcclusionEditorModal extends Modal {
 	 * falls through and Obsidian closes the modal, as every other modal does.
 	 */
 	private registerHotkeys(): void {
-		/** Wrap a shape action so the keyboard belongs to a label being typed. */
+		/** Wrap a shape action so the keyboard belongs to a field being typed in. */
 		const unlessTyping = (action: () => void) => () => {
-			if (this.editingAnnotation !== null) return;
+			if (this.isTyping()) return;
 			action();
 			return false;
 		};
@@ -318,7 +331,7 @@ export class OcclusionEditorModal extends Modal {
 		this.scope.register([], "Delete", unlessTyping(() => { this.deleteSelected(); }));
 		this.scope.register([], "Backspace", unlessTyping(() => { this.deleteSelected(); }));
 		this.scope.register([], "Enter", () => {
-			if (this.editingAnnotation !== null || this.polyDraft === null) return;
+			if (this.isTyping() || this.polyDraft === null) return;
 			this.finishPolygon();
 			return false;
 		});
@@ -335,6 +348,20 @@ export class OcclusionEditorModal extends Modal {
 		this.scope.register(["Mod", "Shift"], "z", unlessTyping(() => { this.redo(); }));
 		this.scope.register(["Mod"], "y", unlessTyping(() => { this.redo(); }));
 		this.scope.register(["Mod"], "d", unlessTyping(() => { this.duplicateSelected(); }));
+	}
+
+	/**
+	 * Whether the keyboard currently belongs to a text field rather than the
+	 * canvas — an annotation being named, or one of Anki's three fields.
+	 *
+	 * `editingAnnotation` is checked as well as the focused element because the
+	 * annotation input is built a tick before it is focused, and a shape hotkey
+	 * arriving in that window would delete the very label being created.
+	 */
+	private isTyping(): boolean {
+		if (this.editingAnnotation !== null) return true;
+		const active = this.contentEl.ownerDocument.activeElement;
+		return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
 	}
 
 	// ── Chrome ────────────────────────────────────────────────────
@@ -403,6 +430,33 @@ export class OcclusionEditorModal extends Modal {
 			// previous value is always visible and one click away.
 			this.mode = modeSelect.value as OcclusionMode;
 		});
+	}
+
+	/**
+	 * Header and Back Extra, below the canvas.
+	 *
+	 * Not in the toolbar: that row is icon-dense and already wraps to several
+	 * rows at phone width, and a free-text field there would be a couple of
+	 * characters wide. Below the picture is also where they appear when the card
+	 * is studied, so the panel reads in the order it renders.
+	 *
+	 * Deliberately outside the undo history, as `mode` is: the browser's own
+	 * text undo is what a focused field should be doing on Ctrl+Z, and
+	 * `isTyping()` is what hands it the key.
+	 */
+	private buildTextFields(parent: HTMLElement): void {
+		const fields = parent.createDiv("osmosis-occlusion-fields");
+		const field = (label: string, value: string, onInput: (text: string) => void): void => {
+			const input = fields.createEl("input", {
+				type: "text",
+				value,
+				attr: { placeholder: label, "aria-label": label },
+			});
+			input.addEventListener("input", () => { onInput(input.value); });
+		};
+
+		field("Header", this.header, (text) => { this.header = text; });
+		field("Back extra", this.backExtra, (text) => { this.backExtra = text; });
 	}
 
 	private buildCanvas(parent: HTMLElement): void {
@@ -524,6 +578,22 @@ export class OcclusionEditorModal extends Modal {
 				scroll: { left: this.stage.scrollLeft, top: this.stage.scrollTop },
 			};
 			return;
+		}
+
+		// Pressing on a shape means "select it", whatever tool is armed. Reaching
+		// for the Select button first is the commonest thing a user does in this
+		// editor and the least interesting, and pressing an existing mask is
+		// never an attempt to start a new one underneath it. Pressing empty
+		// canvas still draws with the armed tool, so the drawing flow is intact.
+		//
+		// Text is exempt: a label belongs *on* what it names, so a press over a
+		// shape is exactly where one is wanted. A polygon mid-draft is exempt too
+		// — that press is the next vertex, and the draft may well cross a shape.
+		if (this.tool !== "select" && this.tool !== "text" && this.polyDraft === null
+			&& hitTest(this.shapes, point) !== -1) {
+			this.chooseTool("select");
+			// Falls through: the select branch below picks the shape up and starts
+			// the move drag, so the press that selected can drag in one gesture.
 		}
 
 		if (this.tool === "poly") {

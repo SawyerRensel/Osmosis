@@ -36,6 +36,12 @@ const ROLE_CLASSES: Record<MaskElement["role"], string[]> = {
  *
  * `notePath` is the note the embed was written in, which is what resolves a
  * short link like `bridge.svg` to a file the way Obsidian would.
+ *
+ * Anki's Header sits above the picture on every side, Back Extra below it on the
+ * answer sides only. Both are drawn as **plain text**, not markdown: they are
+ * chrome on the diagram, the note's own prose around the embed is where markdown
+ * already lives, and rendering markdown here would make this function async and
+ * force a `Component` on every one of its four callers.
  */
 export function renderOcclusion(
 	app: App,
@@ -53,12 +59,78 @@ export function renderOcclusion(
 		return;
 	}
 
+	if (occlusion.header !== undefined && occlusion.header !== "") {
+		container.createDiv({ cls: "osmosis-occlusion-header", text: occlusion.header });
+	}
+
 	const wrapper = container.createDiv({ cls: "osmosis-occlusion" });
 	wrapper.createEl("img", {
 		cls: "osmosis-occlusion-image",
 		attr: { src, alt: occlusion.image },
 	});
 
+	paintMasks(wrapper, occlusion, side);
+
+	if (isAnswerSide(side) && occlusion.backExtra !== undefined && occlusion.backExtra !== "") {
+		container.createDiv({ cls: "osmosis-occlusion-back-extra", text: occlusion.backExtra });
+	}
+}
+
+/** Whether this side is showing the answer — the two sides Back Extra belongs on. */
+function isAnswerSide(side: OcclusionSide): boolean {
+	return side === "back" || side === "all-revealed";
+}
+
+/** Class marking a wrapper this module put *around* someone else's image. */
+const OVERLAY_CLASS = "osmosis-occlusion-overlay";
+
+/**
+ * Pin masks over an image that something else already rendered.
+ *
+ * The alternative — drawing our own copy of the picture, as `renderOcclusion`
+ * does — is wrong wherever the host has already committed to the image's size:
+ * a mind-map node is laid out by measuring its rendered content, and a note's
+ * own embed carries the user's `|300` suffix. Wrapping keeps whatever box the
+ * image already occupies and honours the same contract, because the wrapper
+ * shrinks to fit and the overlay is pinned to the wrapper.
+ *
+ * Idempotent: an image already inside a mask wrapper is repainted, not nested —
+ * whether that wrapper came from here or from `renderOcclusion`. Repainting is
+ * how a surface flips a diagram between covered and revealed without rebuilding
+ * the `<img>`, which would re-request the file and flash the picture away.
+ */
+export function overlayMasks(
+	img: HTMLImageElement,
+	occlusion: CardOcclusion,
+	side: OcclusionSide,
+): void {
+	const existing = img.parentElement;
+	if (existing?.hasClass("osmosis-occlusion") === true) {
+		// Everything but the image itself, so the picture is never reloaded.
+		for (const child of Array.from(existing.children)) {
+			if (child !== img) child.remove();
+		}
+		paintMasks(existing, occlusion, side);
+		return;
+	}
+
+	const wrapper = createDiv({ cls: ["osmosis-occlusion", OVERLAY_CLASS] });
+	img.replaceWith(wrapper);
+	wrapper.appendChild(img);
+	paintMasks(wrapper, occlusion, side);
+}
+
+/** Undo every `overlayMasks` inside `root`, restoring the images it wrapped. */
+export function removeMaskOverlays(root: ParentNode): void {
+	for (const wrapper of Array.from(root.querySelectorAll(`.${OVERLAY_CLASS}`))) {
+		const img = wrapper.querySelector("img");
+		if (img) wrapper.replaceWith(img);
+		else wrapper.remove();
+	}
+}
+
+/** Draw the mask layer and any annotations into a wrapper holding the image. */
+function paintMasks(wrapper: HTMLElement, occlusion: CardOcclusion, side: OcclusionSide): void {
 	// SVG attributes go on with setAttribute rather than through the helper's
 	// `attr`, matching how `stats/charts.ts` draws — case-sensitive names like
 	// viewBox and preserveAspectRatio then survive verbatim.

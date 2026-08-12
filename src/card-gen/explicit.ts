@@ -5,7 +5,6 @@ import {
 	findFirstEmbed,
 	findLabeledEmbeds,
 	groupNumber,
-	isolateEmbed,
 	occlusionGroups,
 	parseOccludeBlock,
 	stripEmbedLabels,
@@ -921,7 +920,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		}
 	}
 
-	// Belt and braces on the `{label}` markers. `isolateEmbed` already strips
+	// Belt and braces on the `{label}` markers. `bindEmbeds` already strips
 	// them from occlusion cards, but a fence can mix an occluded diagram with a
 	// caption cloze, and the label would ride through the cloze renderer into
 	// every study surface as literal stray text beside the image. Stripping at
@@ -984,6 +983,15 @@ function buildOcclusionCards(
  * Pair each declared shape set with the embed it belongs to, and the content
  * that embed's cards should show.
  *
+ * **Every card gets the fence's whole body**, other diagrams included. A card
+ * asking about one diagram used to have the others cut out of it, on the
+ * grounds that they were not what was being asked; in practice a fence holds
+ * several diagrams precisely because they explain each other, and hiding the
+ * elevation while asking about the cross-section threw away the context the
+ * author was providing. The sibling diagrams render unmasked — they are not
+ * being asked, and covering parts of them would pose a second question this
+ * card never answers.
+ *
  * A label may only bind once: two embeds carrying `{a}` would otherwise derive
  * the same `<fenceId>-cN` IDs twice and the later card would overwrite the
  * earlier one in the store.
@@ -1011,7 +1019,7 @@ function bindEmbeds(
 		bound.push({
 			label: embed.label,
 			target: embed.target,
-			body: isolateEmbed(content, embed.label),
+			body: stripEmbedLabels(content),
 		});
 	}
 	return bound;

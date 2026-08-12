@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import type { OcclusionSet } from "../database/types";
+import type { OcclusionSet, OcclusionShape } from "../database/types";
 import { generateExplicitCards } from "./explicit";
 import {
+	cardOcclusion,
 	enclosingOsmosisFence,
 	ensureFenceIdentity,
 	fenceEmbedLine,
@@ -9,7 +10,7 @@ import {
 	fenceOcclusions,
 	findFirstEmbed,
 	findLabeledEmbeds,
-	isolateEmbed,
+	splitAtEmbed,
 	labelEmbed,
 	labelFence,
 	locateOcclusionTarget,
@@ -23,8 +24,10 @@ import {
 	pickEmbedLine,
 	rewriteFenceEmbeds,
 	serializeOccludeBlock,
+	serializeShape,
 	stripEmbedLabels,
 	stripEmbeds,
+	stripLabeledEmbeds,
 } from "./occlusion";
 import type { GeneratedCard } from "./types";
 
@@ -360,6 +363,103 @@ describe("annotations", () => {
 	});
 });
 
+/**
+ * Header and Back Extra. Free text the user types, so each is always
+ * double-quoted on write — a `:`, a `#`, or a leading `-` changes the meaning of
+ * a bare scalar, and in the frontmatter carrier one malformed line fails the
+ * parse of the *whole note's* frontmatter.
+ *
+ * Anki's third field, Comments, is not part of this format: it rendered on no
+ * surface, so it was storage the user could never see the effect of.
+ */
+describe("text fields", () => {
+	const shapes: OcclusionShape[] = [{ group: "c1", kind: "rect", x: 0.3, y: 0.2, w: 0.14, h: 0.06 }];
+	const filled: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes,
+		header: "Cross-section: the deck",
+		backExtra: "- the pier carries 60% of the load",
+	};
+
+	it("survives fence serialize → parse unchanged", () => {
+		expect(parseOccludeBlock(serializeOccludeBlock("a", filled), 0)!.set).toEqual(filled);
+	});
+
+	it("survives frontmatter serialize → parse unchanged", () => {
+		expect(parseOcclusionSet(occlusionSetToYamlValue(filled))).toEqual(filled);
+	});
+
+	it("quotes both of them on the fence carrier", () => {
+		expect(serializeOccludeBlock("", filled).slice(-2)).toEqual([
+			'  header: "Cross-section: the deck"',
+			'  back-extra: "- the pier carries 60% of the load"',
+		]);
+	});
+
+	it("round-trips text carrying quotes and backslashes", () => {
+		const set: OcclusionSet = { mode: "hide-all-guess-one", shapes, header: 'the "web" plate \\ flange' };
+
+		expect(parseOccludeBlock(serializeOccludeBlock("", set), 0)!.set).toEqual(set);
+	});
+
+	it("omits every empty field, so a set that uses neither writes what it always did", () => {
+		const bare: OcclusionSet = { mode: "hide-all-guess-one", shapes };
+
+		expect(serializeOccludeBlock("a", bare)).toEqual([
+			"occlude-a:",
+			"  mode: hide-all-guess-one",
+			"  shapes:",
+			"    - group: c1",
+			"      kind: rect",
+			"      x: 0.3",
+			"      y: 0.2",
+			"      w: 0.14",
+			"      h: 0.06",
+		]);
+		expect(occlusionSetToYamlValue(bare)["header"]).toBeUndefined();
+	});
+
+	it("treats a blank field as absent rather than storing an unreachable empty key", () => {
+		expect(parseOcclusionSet({ mode: "hide-all-guess-one", shapes, header: "   " })?.header)
+			.toBeUndefined();
+	});
+
+	it("keeps a hand-written numeric field rather than losing it", () => {
+		expect(parseOcclusionSet({ mode: "hide-all-guess-one", shapes, header: 12 })?.header).toBe("12");
+	});
+
+	it("derives no card of its own — cards still come only from shape groups", () => {
+		expect(occlusionGroups(filled)).toEqual(["c1"]);
+	});
+
+	it("still reads a set written before the fields existed", () => {
+		const lines = ["occlude:", "  mode: hide-all-guess-one", "  shapes:", ...serializeShape(shapes[0]!)];
+
+		expect(parseOccludeBlock(lines, 0)!.set).toEqual({ mode: "hide-all-guess-one", shapes });
+	});
+
+	it("puts Header and Back Extra on every card the set derives", () => {
+		const card = cardOcclusion("bridge.svg", filled, "c1");
+
+		expect(card.header).toBe(filled.header);
+		expect(card.backExtra).toBe(filled.backExtra);
+	});
+
+	it("drops a comments key left by an older build rather than carrying it", () => {
+		const lines = [
+			"occlude:",
+			"  mode: hide-all-guess-one",
+			'  comments: "redraw at 2x"',
+			"  shapes:",
+			...serializeShape(shapes[0]!),
+		];
+		const set = parseOccludeBlock(lines, 0)!.set;
+
+		expect(set).not.toHaveProperty("comments");
+		expect(serializeOccludeBlock("", set).join("\n")).not.toContain("comments");
+	});
+});
+
 describe("embed labels", () => {
 	it("finds every labelled embed in source order", () => {
 		expect(findLabeledEmbeds("![[one.png]]{a}\ntext\n![[two.png]]{b}")).toEqual([
@@ -391,10 +491,23 @@ describe("embed labels", () => {
 		);
 	});
 
-	it("keeps one diagram and drops its siblings", () => {
-		const content = "![[one.png]]{a}\ncaption\n![[two.png]]{b}";
-		expect(isolateEmbed(content, "a")).toBe("![[one.png]]\ncaption\n");
-		expect(isolateEmbed(content, "b")).toBe("\ncaption\n![[two.png]]");
+	it("splits a body at the embed the masks belong to, keeping the rest in place", () => {
+		const content = "intro\n![[one.png]]\ncaption\n![[two.png]]";
+
+		// The sibling stays, and stays *after* the split — rendering the halves
+		// around the masked picture is what preserves the authored order.
+		expect(splitAtEmbed(content, "one.png")).toEqual({
+			before: "intro\n",
+			after: "\ncaption\n![[two.png]]",
+		});
+		expect(splitAtEmbed(content, "two.png")).toEqual({
+			before: "intro\n![[one.png]]\ncaption\n",
+			after: "",
+		});
+	});
+
+	it("returns null when the body holds no embed for that image", () => {
+		expect(splitAtEmbed("caption only", "one.png")).toBeNull();
 	});
 
 	it("finds the first embed whether or not it is labelled", () => {
@@ -411,6 +524,22 @@ describe("embed labels", () => {
 		expect(stripEmbeds("See [[bridge notes]] and ![[bridge.png]]")).toBe(
 			"See [[bridge notes]] and ",
 		);
+	});
+
+	it("removes only the named diagrams, leaving one with no shape set in place", () => {
+		// A fence can hold an occluded diagram beside a plain one. Only the
+		// occluded embed is drawn by the mask renderer, so taking the other out
+		// with it would make the second diagram vanish from the note.
+		const content = "![[one.png]]{a}\ncaption\n![[two.png]]{b}\n![[three.png]]";
+
+		expect(stripLabeledEmbeds(content, new Set(["a"]))).toBe(
+			"\ncaption\n![[two.png]]{b}\n![[three.png]]",
+		);
+	});
+
+	it("removes nothing when no label is named", () => {
+		const content = "![[one.png]]{a}\n![[two.png]]{b}";
+		expect(stripLabeledEmbeds(content, new Set())).toBe(content);
 	});
 });
 
@@ -455,10 +584,13 @@ describe("fence cards", () => {
 		expect(cards.find((c) => c.id === "bridge-c3")!.occlusion!.mode).toBe("hide-one-guess-one");
 	});
 
-	it("shows a card only its own diagram", () => {
+	it("shows a card every diagram in its fence, not just its own", () => {
+		// One picture is often the context for another, so a card asking about
+		// the cross-section keeps the elevation beside it. The card's own embed
+		// is removed at render time by `splitAtEmbed`, not here.
 		const c1 = cards.find((c) => c.id === "bridge-c1")!;
 		expect(c1.front).toContain("bridge-cross-section.png");
-		expect(c1.front).not.toContain("span-elevation.png");
+		expect(c1.front).toContain("span-elevation.png");
 	});
 
 	it("never leaks a {label} into card content", () => {

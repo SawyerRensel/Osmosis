@@ -13,7 +13,13 @@ import { ContextualStudyProcessor } from "./ContextualStudyProcessor";
  * returned from the branch above it with the markers intact, putting a literal
  * `{a}` under the diagram in reading view.
  */
-type Parsed = { front: string; back: string; cardId: string; exclude: boolean } | null;
+type Parsed = {
+	front: string;
+	back: string;
+	cardId: string;
+	exclude: boolean;
+	occlusions?: { image: string }[];
+} | null;
 
 /** `parseFenceContent` is private; the fence text in, card text out is the contract. */
 function parse(source: string): Parsed {
@@ -35,10 +41,14 @@ const shapes = [
 ].join("\n");
 
 describe("parseFenceContent — embed labels", () => {
-	it("strips the label from an occlusion fence", () => {
+	it("hands an occlusion fence's diagram to the mask renderer, not to markdown", () => {
 		const parsed = parse(`id: bridge\n${shapes}\n\n![[bridge.svg]]{a}`);
 
-		expect(parsed?.front).toBe("![[bridge.svg]]");
+		// The embed leaves the markdown entirely: `renderOcclusion` draws the
+		// picture, so leaving it in would render the diagram twice — once masked
+		// and once not. Nothing is left here but the (absent) prose.
+		expect(parsed?.front).toBe("");
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
 		expect(parsed?.front).not.toContain("{a}");
 	});
 
@@ -50,10 +60,29 @@ describe("parseFenceContent — embed labels", () => {
 		expect(parsed?.back).toBe("The deck slab.");
 	});
 
-	it("strips labels from both diagrams of a two-embed fence", () => {
+	it("keeps an embed that has no shape set, and strips its label", () => {
+		// Only `a` is occluded. `b` is ordinary content: taking it out with the
+		// masked one would make the second diagram vanish from the note.
 		const parsed = parse(`id: bridge\n${shapes}\n\n![[a.svg]]{a}\n![[b.svg]]{b}`);
 
-		expect(parsed?.front).toBe("![[a.svg]]\n![[b.svg]]");
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["a.svg"]);
+		expect(parsed?.front).toBe("![[b.svg]]");
+		expect(parsed?.front).not.toContain("{b}");
+	});
+
+	it("carries the prose around a diagram through to the card body", () => {
+		const parsed = parse(`id: bridge\n${shapes}\n\nWhich parts carry load?\n![[bridge.svg]]{a}`);
+
+		expect(parsed?.front).toBe("Which parts carry load?");
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
+	});
+
+	it("occludes a single-embed fence, which carries no label at all", () => {
+		const bare = shapes.replace("occlude-a:", "occlude:");
+		const parsed = parse(`id: bridge\n${bare}\n\n![[bridge.svg]]`);
+
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
+		expect(parsed?.front).toBe("");
 	});
 
 	it("leaves the user's own braces alone", () => {

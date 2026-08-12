@@ -14,8 +14,21 @@ import type { CardOcclusion, OcclusionShape } from "../database/types";
  * a resized modal, a retina variant — costs no arithmetic here.
  */
 
-/** Which side of an occlusion card is being drawn. */
-export type OcclusionSide = "front" | "back";
+/**
+ * What is being drawn.
+ *
+ * `front` and `back` are the two sides of one card: a group is being asked, so
+ * the mode decides what happens to its siblings.
+ *
+ * `all-hidden` and `all-revealed` are the *note* views — contextual study, a
+ * mind-map node, peek on a line. There is no current card there: the reader is
+ * looking at a diagram, not answering one of the three questions it carries. So
+ * every group is a blank at once, exactly as a contextual cloze shows all of its
+ * blanks at once, and the mode is irrelevant — `hide-one-guess-one` describes
+ * how one card relates to its siblings, and in the note there are no siblings to
+ * relate to.
+ */
+export type OcclusionSide = "front" | "back" | "all-hidden" | "all-revealed";
 
 /**
  * What a mask is doing on the side being drawn:
@@ -42,6 +55,9 @@ export interface MaskElement {
  * | hide-one-guess-one | front | covered      | untouched    |
  * | hide-one-guess-one | back  | revealed     | untouched    |
  *
+ * The note views ignore both the mode and the target: `all-hidden` covers every
+ * group, `all-revealed` outlines every group.
+ *
  * Shapes keep their source order, so a diagram whose masks overlap paints the
  * same way every time rather than reshuffling between front and back.
  */
@@ -63,6 +79,11 @@ function maskRole(
 	occlusion: CardOcclusion,
 	side: OcclusionSide,
 ): MaskRole | null {
+	// The note views ask nothing, so there is no target to single out and no
+	// sibling relationship for the mode to describe.
+	if (side === "all-hidden") return "hidden";
+	if (side === "all-revealed") return "revealed";
+
 	if (shape.group === occlusion.target) {
 		return side === "front" ? "target" : "revealed";
 	}

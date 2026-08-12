@@ -5,7 +5,7 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, ScheduleData } from "../database/types";
 import type { FenceWriter } from "../store/FenceWriter";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
-import { stripEmbeds } from "../card-gen/occlusion";
+import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
@@ -316,29 +316,56 @@ export class SequentialStudyModal extends Modal {
 	}
 
 	/**
-	 * Occlusion card: the masked diagram, under whatever prose the card body
-	 * carries around the embed (a caption, or the fence's hint).
+	 * Occlusion card: the card body with its own diagram replaced, in place, by
+	 * the masked one `renderOcclusion` draws.
 	 *
-	 * The embed itself is stripped from that body — `renderOcclusion` draws the
-	 * image, so leaving the embed in would render the diagram a second time,
-	 * unmasked, right beside the question.
+	 * Rendering the body in two halves around the picture is what keeps the
+	 * fence's *other* diagrams where the author put them. They stay in the body
+	 * as ordinary embeds and render unmasked — a fence carries several diagrams
+	 * because they explain each other, so the elevation is context for the
+	 * cross-section rather than a second question. Appending the masked image
+	 * after all the prose would print those siblings above it, in the reverse of
+	 * the order they were written.
+	 *
+	 * The card's own embed must come out of the markdown either way: leaving it
+	 * in would render that diagram a second time, unmasked, beside the question.
 	 */
 	private renderOcclusionSide(card: Card, side: OcclusionSide): void {
 		if (!card.occlusion) return;
 
-		const prose = stripEmbeds(side === "front" ? card.front : card.back).trim();
-		if (prose !== "") {
-			const proseEl = this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" });
+		const body = side === "front" ? card.front : card.back;
+		const split = splitAtEmbed(body, card.occlusion.image);
+		// A body with no embed at all — the image was renamed out from under the
+		// shape set, say. Still draw the masks; `renderOcclusion` shows its own
+		// missing-file notice.
+		const before = split ? split.before : stripEmbeds(body);
+		const after = split ? split.after : "";
+
+		// Both halves get their element up front, in order: `MarkdownRenderer`
+		// resolves asynchronously, so anything appended after the await would
+		// otherwise land above prose that started rendering first.
+		const beforeEl = before.trim() !== ""
+			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
+			: null;
+		const imageEl = this.frontEl.createDiv();
+		const afterEl = after.trim() !== ""
+			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
+			: null;
+
+		const renderProse = (markdown: string, el: HTMLElement | null): void => {
+			if (!el) return;
 			void MarkdownRenderer.render(
 				this.app,
-				prose,
-				proseEl,
+				markdown.trim(),
+				el,
 				card.notePath,
 				this.renderComponent,
-			).then(() => addCodeBlockLanguageLabels(proseEl));
-		}
+			).then(() => addCodeBlockLanguageLabels(el));
+		};
 
-		renderOcclusion(this.app, this.frontEl, card.occlusion, side, card.notePath);
+		renderProse(before, beforeEl);
+		renderOcclusion(this.app, imageEl, card.occlusion, side, card.notePath);
+		renderProse(after, afterEl);
 	}
 
 	/**
