@@ -1,6 +1,6 @@
 ---
 title: Support per-card deck
-summary: "What if you could override the `osmosis-deck` from a note's frontmatter with a `deck:` field inside a card's fence?"
+summary: What if you could override the `osmosis-deck` from a note's frontmatter with a `deck:` field inside a card's fence?
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Ideas
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-08T22:29:21.793Z"
-date_modified: "2026-08-08T22:29:21.793Z"
+date_created: 2026-08-08T22:29:21.793Z
+date_modified: 2026-08-13T02:15:36.101Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

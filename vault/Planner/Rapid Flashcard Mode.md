@@ -1,6 +1,6 @@
 ---
-title: Study all Osmosis flashcards in all modes
-summary: Study and peek buttons  in Note view currently don't even show up unless there are line cards.  We need to make sure you can study any kind of flashcard in every view - in sequential, spatial, and contextual modes - and get the same experience.
+title: Rapid Flashcard Mode
+summary: What if you could quickly create flashcards - especially on mobile - by activating a mode where adding a line of text as the front and then adding another line as the back and pressing enter to the third line creates a fence card?
 tags:
   - task
 calendar:
@@ -9,17 +9,17 @@ context:
 people:
 location:
 related:
-status: In-Progress
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-03T15:38:58.397Z"
-date_modified: "2026-08-12T22:15:03.441Z"
+date_created: "2026-08-12T22:09:14.525Z"
+date_modified: "2026-08-12T22:09:14.525Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
-all_day: true
+all_day: false
 repeat_frequency:
 repeat_interval:
 repeat_until:
@@ -35,7 +35,6 @@ blocked_by:
 cover:
 color:
 ---
-
 # Feature Request
 
 ## What do you need built?
