@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
+import { CLOZE_BLANK } from "../card-gen/explicit";
 import type { Card } from "../database/types";
 import type OsmosisPlugin from "../main";
 import { dueOrNewFenceCardKeys } from "../study/spatial-study";
@@ -148,6 +149,8 @@ function groupCard(group: string): Card {
 interface Harness {
 	el: HTMLElement;
 	reviews: { cardId: string; rating: number }[];
+	/** The keys handed to the session's progress pill, which counts fences. */
+	ratedFences: string[];
 	/**
 	 * Draw the same fence again into the same element, as Obsidian does whenever
 	 * the file changes — which a rating does, since flushing a schedule rewrites
@@ -160,6 +163,7 @@ interface Harness {
 /** `cards` is read on every call, so a test can move a schedule mid-session. */
 function renderFence(source: string, mode: "off" | "study", cards: Card[] = []): Harness {
 	const reviews: { cardId: string; rating: number }[] = [];
+	const ratedFences: string[] = [];
 	const plugin = {
 		app: {
 			metadataCache: {
@@ -178,7 +182,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			revealMode: () => mode,
 			isFenceTarget: (_path: string, fenceId: string) =>
 				mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
-			markFenceRated: () => { /* the pill is not under test here */ },
+			markFenceRated: (_path: string, key: string) => ratedFences.push(key),
 		},
 		createSessionManager: () => ({
 			recordReview: (cardId: string, rating: number) => {
@@ -198,7 +202,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 		}).renderCard(source, el, NOTE);
 	};
 	render();
-	return { el, reviews, rerender: render };
+	return { el, reviews, ratedFences, rerender: render };
 }
 
 /** The group each painted mask belongs to, by the role class the renderer gave it. */
@@ -256,6 +260,17 @@ describe("an occluded fence in contextual study", () => {
 		// Back to what the note shows outside study: every region ringed, so the
 		// finished card still says where all the questions were.
 		expect(maskRoles(el)).toEqual(["revealed", "revealed"]);
+	});
+
+	it("advances the pill on the fence key, not on the group that was rated", () => {
+		const { el, ratedFences } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// A session's targets are fence keys. Handing the pill `bridge-c1` matched
+		// no target, so it silently stayed put for the whole diagram.
+		expect(ratedFences).toEqual(["bridge"]);
 	});
 
 	it("skips a group the scheduler would not ask now", () => {
@@ -342,6 +357,146 @@ describe("an occluded fence in contextual study", () => {
 		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1")]);
 
 		expect(stepCount(el)).toBe("1/1");
+	});
+});
+
+/**
+ * A fence rendered from the cards the store holds, rather than from a second
+ * derivation of its source.
+ *
+ * The generator mints one card per cloze group (`<fenceId>-c1`, `-c2`, …) and a
+ * pair for a bidirectional fence (`<fenceId>` and `-r`), each carrying a fully
+ * rendered front and back. Reading view used to re-derive its own front and back
+ * from the fence text and rate the *fence's* ID — which for anything that fans
+ * out is not a card the store holds, so `recordRating` hit its "card not in
+ * store" guard and every cloze review taken in a note was silently discarded.
+ */
+describe("a fence whose cards the store holds", () => {
+	const CLOZE = [
+		"id: rivers",
+		"",
+		"The ==c1:Nile== drains into the ==c2:Mediterranean==.",
+	].join("\n");
+
+	const PASSAGE = "The ==Nile== drains into the ==Mediterranean==.";
+
+	/** As `generateExplicitCards` writes it: one group blanked, the rest intact. */
+	function clozeCard(group: number, front: string): Card {
+		return {
+			id: `rivers-c${String(group)}`,
+			notePath: NOTE,
+			deck: "tests",
+			cardType: "explicit_cloze",
+			front,
+			back: PASSAGE,
+			typeIn: false,
+			sourceLine: 0,
+		};
+	}
+
+	const C1 = clozeCard(1, `The ${CLOZE_BLANK} drains into the ==Mediterranean==.`);
+	const C2 = clozeCard(2, `The ==Nile== drains into the ${CLOZE_BLANK}.`);
+
+	function frontText(el: HTMLElement): string {
+		return el.querySelector(".osmosis-contextual-front")?.textContent ?? "";
+	}
+
+	it("records a cloze review against the group's own card, not the fence", () => {
+		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// `rivers` is not a card. Rating it recorded nothing at all, so the
+		// schedule never moved and the passage came back next session unanswered.
+		expect(reviews).toEqual([{ cardId: "rivers-c1", rating: 3 }]);
+	});
+
+	it("advances the pill on the fence key, not on the card that was rated", () => {
+		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// The session's targets are fence keys, so handing it `rivers-c1` left the
+		// pill stuck and the session never recognised itself as finished.
+		expect(ratedFences).toEqual(["rivers"]);
+	});
+
+	it("asks the question the generator wrote, not one re-derived here", () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+
+		// One group blanked. The derivation blanked *every* group at once and
+		// called that one question, which is not a question any card asks.
+		expect(frontText(el)).toBe(C1.front);
+	});
+
+	it("plays a bidirectional fence's forward card from the store", () => {
+		const BIDI = ["id: capital", "bidi: true", "", "France", "***", "Paris"].join("\n");
+		const forward: Card = {
+			id: "capital",
+			notePath: NOTE,
+			deck: "tests",
+			cardType: "explicit_bidi",
+			front: "France",
+			back: "Paris",
+			typeIn: false,
+			sourceLine: 0,
+		};
+		const reverse: Card = { ...forward, id: "capital-r", front: "Paris", back: "France" };
+		const { el, reviews } = renderFence(BIDI, "study", [forward, reverse]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// Forward first. Asking the reverse in the same spot is phase 3.
+		expect(frontText(el)).toBe("France");
+		expect(reviews).toEqual([{ cardId: "capital", rating: 3 }]);
+	});
+
+	it("keeps asking the same card when the note re-renders mid-session", () => {
+		const cards = [C1, C2];
+		const { el, rerender } = renderFence(CLOZE, "study", cards);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+		// Rating `c1` pushed it out of the due window, and any file change rebuilds
+		// the code block's DOM.
+		cards[0] = { ...C1, due: Date.now() + 60_000 };
+		rerender();
+
+		// Still `c1`. Re-resolving would swap in `c2` — a question the session has
+		// already counted as answered, asked in a spot that cannot record it twice.
+		expect(frontText(el)).toBe(C1.front);
+	});
+
+	it("skips a card the scheduler would not ask now", () => {
+		const notYet = { ...C1, due: Date.now() + 60_000 };
+		const { el } = renderFence(CLOZE, "study", [notYet, C2]);
+
+		// A fence is a target because *something* on it is due, so the question it
+		// puts has to be one of the due ones.
+		expect(frontText(el)).toBe(C2.front);
+	});
+
+	it("falls back to the fence's own text when the store has no card for it", () => {
+		// Never synced, or just typed. It renders as what it says, takes no rating,
+		// and is not one of the session's questions.
+		const { el, reviews } = renderFence(CLOZE, "study", []);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-card")!.click();
+
+		expect(frontText(el)).toBe(`The ${CLOZE_BLANK} drains into the ${CLOZE_BLANK}.`);
+		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(reviews).toEqual([]);
+	});
+
+	it("leaves an excluded fence on its own text, since its cards are disabled", () => {
+		const disabled = [{ ...C1, disabled: true }, { ...C2, disabled: true }];
+		const { el, reviews } = renderFence(CLOZE, "study", disabled);
+
+		expect(frontText(el)).toBe(`The ${CLOZE_BLANK} drains into the ${CLOZE_BLANK}.`);
+		expect(reviews).toEqual([]);
 	});
 });
 

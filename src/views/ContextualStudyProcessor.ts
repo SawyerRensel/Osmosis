@@ -7,6 +7,7 @@ import { renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
+import { cardsForFenceKey } from "../study/spatial-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /**
@@ -25,6 +26,19 @@ interface ParsedFence {
 	isCloze: boolean;
 	/** Occluded diagrams, rendered after the prose on both sides. */
 	occlusions?: CardOcclusion[];
+}
+
+/**
+ * The question a fence is putting, and the card that answers it.
+ *
+ * `cardId` is null for a fence the store has no card for — never synced, or
+ * just typed. That fence renders as what its source says and takes no rating:
+ * there is nothing for a review to move.
+ */
+interface FenceCard {
+	front: string;
+	back: string;
+	cardId: string | null;
 }
 
 /** An undo entry for contextual review. */
@@ -80,6 +94,15 @@ export class ContextualStudyProcessor {
 	 * plan at session start for the same reason.
 	 */
 	private readonly occlusionPlan = new Map<string, OcclusionStep[]>();
+	/**
+	 * Which of its cards each fence is asking, by fence ID.
+	 *
+	 * Pinned for the reason `occlusionPlan` is pinned: answering a card moves its
+	 * due date, and Obsidian rebuilds a code block on any file change, so
+	 * re-resolving would swap a rated `c1` for `c2` — a second question in a spot
+	 * whose answer the session has already counted.
+	 */
+	private readonly fenceCardAt = new Map<string, string>();
 	/**
 	 * The fences on screen, so `refresh` can restart one when the note's reveal
 	 * mode changes.
@@ -255,6 +278,7 @@ export class ContextualStudyProcessor {
 		}
 
 		this.totalCards++;
+		const card = this.fenceCard(parsed, sourcePath);
 		const container = el.createDiv({ cls: "osmosis-contextual-card" });
 
 		if (parsed.exclude) {
@@ -263,7 +287,7 @@ export class ContextualStudyProcessor {
 
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
-		this.renderSide(parsed, "front", frontEl, sourcePath);
+		this.renderProse(card.front, frontEl, sourcePath);
 
 		// Separator
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
@@ -297,7 +321,7 @@ export class ContextualStudyProcessor {
 		});
 
 		const alreadyRevealed = this.revealedCardIds.has(parsed.cardId);
-		const alreadyRated = this.ratedCardIds.has(parsed.cardId);
+		const alreadyRated = card.cardId !== null && this.ratedCardIds.has(card.cardId);
 		let revealed = alreadyRevealed || !this.shouldHideBack(sourcePath, parsed.cardId);
 
 		/**
@@ -317,7 +341,7 @@ export class ContextualStudyProcessor {
 			frontEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
 			dividerEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
 			revealedEl.empty();
-			this.renderSide(parsed, "back", revealedEl, sourcePath);
+			this.renderProse(card.back, revealedEl, sourcePath);
 		};
 
 		const hideBack = (): void => {
@@ -334,8 +358,8 @@ export class ContextualStudyProcessor {
 			this.revealedCardIds.add(parsed.cardId);
 			showBack(true);
 
-			if (parsed.cardId && !alreadyRated && this.isFenceTarget(sourcePath, parsed.cardId)) {
-				this.showRating(ratingSlot, parsed.cardId, sourcePath);
+			if (card.cardId !== null && !alreadyRated && this.isFenceTarget(sourcePath, parsed.cardId)) {
+				this.showRating(ratingSlot, card.cardId, parsed.cardId, sourcePath);
 			}
 		};
 
@@ -345,8 +369,8 @@ export class ContextualStudyProcessor {
 			showBack(alreadyRevealed);
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
-			} else if (parsed.cardId && this.isFenceTarget(sourcePath, parsed.cardId)) {
-				this.showRating(ratingSlot, parsed.cardId, sourcePath);
+			} else if (card.cardId !== null && this.isFenceTarget(sourcePath, parsed.cardId)) {
+				this.showRating(ratingSlot, card.cardId, parsed.cardId, sourcePath);
 			}
 		}
 
@@ -363,9 +387,12 @@ export class ContextualStudyProcessor {
 		this.trackFence(container, sourcePath, () => {
 			// A mode change starts a fresh pass: what the reader uncovered under the
 			// old mode says nothing about what the new one should show. Peek would
-			// otherwise open on the answers of everything read before it.
+			// otherwise open on the answers of everything read before it. The pinned
+			// card goes with it, so the next full re-render asks whatever is due
+			// under the new mode rather than the question the old one had reached.
 			this.revealedCardIds.delete(parsed.cardId);
-			this.ratedCardIds.delete(parsed.cardId);
+			this.fenceCardAt.delete(parsed.cardId);
+			if (card.cardId !== null) this.ratedCardIds.delete(card.cardId);
 
 			revealed = !this.shouldHideBack(sourcePath, parsed.cardId);
 			// Nothing has been asked yet under the new mode, so a back on screen
@@ -375,6 +402,41 @@ export class ContextualStudyProcessor {
 
 			ratingSlot.empty();
 		});
+	}
+
+	/**
+	 * The card this fence puts on screen — **the store's, not one derived here.**
+	 *
+	 * The generator has already turned the fence into cards and put fully rendered
+	 * fronts and backs in the store, one per cloze group and one per direction of
+	 * a bidirectional pair. Reading view used to derive its own pair from the same
+	 * source and rate the *fence's* ID, which for anything that fans out is not a
+	 * card at all — so `recordRating` dropped the review on its "card not in
+	 * store" guard and cloze reviews taken in a note went nowhere.
+	 *
+	 * A due card is preferred because a fence is one of a session's questions
+	 * exactly when something on it is due, so the question it puts has to be one
+	 * of those. One card per fence is still one question; stepping a fence through
+	 * all of its cards is phase 3.
+	 *
+	 * `cardsForFenceKey` skips disabled cards, so an excluded fence — whose cards
+	 * all carry `disabled` — falls through to its own text, which is what it has
+	 * always rendered and is not a target either way.
+	 */
+	private fenceCard(parsed: ParsedFence, sourcePath: string): FenceCard {
+		const cards = cardsForFenceKey(
+			this.plugin.cardStore.getCardsByNote(sourcePath),
+			parsed.cardId,
+		);
+		if (cards.length === 0) return { front: parsed.front, back: parsed.back, cardId: null };
+
+		const pinned = this.fenceCardAt.get(parsed.cardId);
+		const now = Date.now();
+		const card = cards.find((candidate) => candidate.id === pinned)
+			?? cards.find((candidate) => candidate.due === undefined || candidate.due <= now)
+			?? cards[0]!;
+		this.fenceCardAt.set(parsed.cardId, card.id);
+		return { front: card.front, back: card.back, cardId: card.id };
 	}
 
 	/**
@@ -533,7 +595,7 @@ export class ContextualStudyProcessor {
 			}
 			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
 			if (revealed && step?.cardId != null) {
-				this.showRating(ratingSlot, step.cardId, sourcePath, advance);
+				this.showRating(ratingSlot, step.cardId, parsed.cardId, sourcePath, advance);
 			}
 			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
@@ -805,10 +867,16 @@ export class ContextualStudyProcessor {
 	 * The four rating buttons. `onRated` lets a stepped occlusion card move on to
 	 * its next shape group once this one has been answered; without it the row
 	 * simply reports what was chosen and stays put.
+	 *
+	 * `cardId` and `fenceKey` are **not** interchangeable, and conflating them is
+	 * how the pill came to sit still through a whole occluded diagram. A review
+	 * moves the schedule of one derived card (`<fence>-c1`); the session counts
+	 * its questions in fences, and its targets are fence keys.
 	 */
 	private showRating(
 		container: HTMLElement,
 		cardId: string,
+		fenceKey: string,
 		sourcePath: string,
 		onRated?: () => void,
 	): void {
@@ -852,7 +920,7 @@ export class ContextualStudyProcessor {
 				this.updateProgress();
 				// The session's progress pill lives in LineRevealProcessor, which
 				// owns the mode; tell it one of its questions is answered.
-				this.plugin.lineReveal?.markFenceRated(sourcePath, cardId);
+				this.plugin.lineReveal?.markFenceRated(sourcePath, fenceKey);
 				void this.recordRating(cardId, rating, Date.now() - revealedAt);
 
 				this.undoStack.push({

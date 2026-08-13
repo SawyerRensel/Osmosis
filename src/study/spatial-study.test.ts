@@ -7,6 +7,7 @@ import {
 	cardIdsForFenceKey,
 	cardIdsForLineKey,
 	cardIdsForSpatialKey,
+	cardsForFenceKey,
 	collectSubtreeCardKeys,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
@@ -323,6 +324,32 @@ describe("fence keys", () => {
 			"surface-parts-c1",
 			"surface-parts-c2",
 		]);
+	});
+
+	it("orders a fence's cards the way a study surface asks them", () => {
+		// Deliberately shuffled: the store hands its note index back in insertion
+		// order, and an incremental re-sync re-adds an edited card at the end — so
+		// a fence would start asking `c2` before `c1` because `c1` was the group
+		// whose wording changed.
+		const cards = [
+			fenceCard("rivers-c10"),
+			fenceCard("rivers-r"),
+			fenceCard("rivers-c2"),
+			fenceCard("rivers"),
+			fenceCard("rivers-c1"),
+		];
+		expect(cardsForFenceKey(cards, "rivers").map((card) => card.id)).toEqual([
+			"rivers",
+			"rivers-c1",
+			"rivers-c2",
+			"rivers-c10",
+			"rivers-r",
+		]);
+	});
+
+	it("leaves a disabled card out, so an excluded fence has no cards to ask", () => {
+		const cards = [fenceCard("rivers-c1", { disabled: true }), fenceCard("rivers-c2")];
+		expect(cardsForFenceKey(cards, "rivers").map((card) => card.id)).toEqual(["rivers-c2"]);
 	});
 });
 

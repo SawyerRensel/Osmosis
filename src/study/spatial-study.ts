@@ -169,6 +169,30 @@ export function cardIdsForFenceKey(cards: readonly Card[], key: string): string[
 }
 
 /**
+ * The cards a fence key stands for, in the order a study surface asks them:
+ * the fence's own card, then its cloze or shape groups by number, then the
+ * reverse of a bidirectional pair.
+ *
+ * Sorted rather than taken in store order, because the store hands its note
+ * index back in insertion order and an incremental re-sync re-adds an edited
+ * card at the end — so a fence would start asking `c2` before `c1` purely
+ * because `c1` was the group whose wording changed.
+ */
+export function cardsForFenceKey(cards: readonly Card[], key: string): Card[] {
+	return cards
+		.filter((card) => isFenceCard(card) && fenceKey(card) === key)
+		.sort((a, b) => askRank(a.id, key) - askRank(b.id, key));
+}
+
+/** `<id>` first, then `<id>-cN` by group number, then `<id>-r`. */
+function askRank(id: string, key: string): number {
+	const suffix = id.slice(key.length);
+	if (suffix === "") return 0;
+	if (suffix === "-r") return Number.MAX_SAFE_INTEGER;
+	return groupNumber(suffix.slice(1));
+}
+
+/**
  * Line keys of every line card in the set, regardless of schedule.
  * Same filter as `allLineCardBlockIds`, keyed collision-safely for maps
  * that mix cards from several notes (transclusion).
