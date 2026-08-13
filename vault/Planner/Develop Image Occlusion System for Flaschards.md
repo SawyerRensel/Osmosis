@@ -15,9 +15,9 @@ progress_current: 6
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
 date_modified: 2026-08-13T02:12:31.000Z
-date_start_scheduled: 2026-08-09T17:34:17
+date_start_scheduled: 2026-08-09T00:00:00
 date_start_actual: 2026-08-09T17:34:17
-date_end_scheduled: 2026-08-13T02:12:31
+date_end_scheduled: 2026-08-13T00:00:00
 date_end_actual: 2026-08-13T02:12:31
 all_day: true
 repeat_frequency:
