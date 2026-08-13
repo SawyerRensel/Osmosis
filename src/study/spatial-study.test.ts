@@ -490,22 +490,45 @@ describe("spatialStudyKeys", () => {
 		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1"]);
 	});
 
-	it("leaves an ordinary node as a single unit of work", () => {
+	it("splits a cloze node into one key per due group, as sequential asks them", () => {
 		const cards = [
 			makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
 			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
 	});
 
-	it("does not split a fence that mixes an occluded diagram with another card", () => {
-		// Splitting on the diagram alone would leave the cloze card with no key
-		// at all, and its review would be dropped.
+	it("splits a bidirectional node forwards then backwards", () => {
+		const cards = [
+			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
+			makeCard({ id: "bridge", cardType: "explicit_bidi" }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge", "bridge-r"]);
+	});
+
+	it("splits a fence that mixes an occluded diagram with another card", () => {
+		// Splitting on the diagram alone used to leave the cloze card with no key
+		// at all, so its review was dropped; splitting on any derived card gives
+		// each one its own.
 		const cards = [
 			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
 			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
 		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
+	});
+
+	it("leaves a node carrying one card as one unit of work, keyed on the card", () => {
+		// Which for an ordinary line or a basic fence is the node key itself.
+		const cards = [makeCard({ id: "bridge", cardType: "explicit" })];
 		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+	});
+
+	it("asks only the due direction of a bidirectional node", () => {
+		const cards = [
+			makeCard({ id: "bridge", cardType: "explicit_bidi", due: NOW + 1000 }),
+			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
+		];
+		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-r"]);
 	});
 
 	it("ignores disabled cards, and falls back to the node key when all are out", () => {
@@ -544,6 +567,27 @@ describe("cardIdsForSpatialKey", () => {
 		];
 		expect(cardIdsForSpatialKey(cards, "tests/espresso.md#^os-diag01/c1"))
 			.toEqual(["tests/espresso.md#^os-diag01/c1"]);
+	});
+
+	it("resolves a split cloze group to that card alone", () => {
+		// `cardIdsForFenceKey` would strip the `-c2` and hand the rating to every
+		// group the fence derived, which is the spreading phase 4 set out to end.
+		const cards = [
+			makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
+			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
+		];
+		expect(cardIdsForSpatialKey(cards, "bridge-c2")).toEqual(["bridge-c2"]);
+	});
+
+	it("resolves the forward card of a bidirectional fence without its reverse", () => {
+		// The forward card is named after the fence, so falling through to
+		// `cardIdsForFenceKey` would rate the reverse on the same answer.
+		const cards = [
+			makeCard({ id: "bridge", cardType: "explicit_bidi" }),
+			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
+		];
+		expect(cardIdsForSpatialKey(cards, "bridge")).toEqual(["bridge"]);
+		expect(cardIdsForSpatialKey(cards, "bridge-r")).toEqual(["bridge-r"]);
 	});
 
 	it("still resolves a whole fence key to every card the fence derived", () => {

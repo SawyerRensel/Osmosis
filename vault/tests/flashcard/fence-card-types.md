@@ -21,6 +21,19 @@ actually holds, and that answering it moves *that card's* schedule in this file.
 Seven questions are due in this note: three cloze groups, two directions, and
 two basic cards. The pill should read `0/7`.
 
+**The same seven on the map.** Open this note in Mind Map View and press Study:
+the banner should read `0/7` too, and each fence node should step through its own
+cards one at a time — the node showing the question being rated, not the passage
+every card came from. Every node here is a fence, so none of them blanks behind a
+"?"; they hide their answer and keep their question on screen. Before phase 4 the
+map asked four questions, one per fence, and spread each single rating across
+every card that fence carried.
+
+A scheduled cloze or bidirectional node also used to render its own `due:` and
+`stability:` fields as the card text, because the map skipped a fence header by
+looking for consecutive unindented `key: value` lines and a nested `c1:` block is
+not that. If any node below shows a timestamp, that regressed.
+
 ## Three-group cloze — the review that used to vanish
 
 All three groups are due, so this fence is **three** questions: `1/3`, `2/3`,
@@ -81,13 +94,13 @@ else.
 ```osmosis
 id: fct-capital
 bidi: true
-due: 2026-08-13T03:44:50.887Z
-stability: 0.9049
-difficulty: 8.4075
-reps: 4
-lapses: 1
-state: relearning
-lastReview: 2026-08-13T03:34:50.887Z
+due: 2026-08-09T09:00:00.000Z
+stability: 5.4000
+difficulty: 5.1000
+reps: 3
+lapses: 0
+state: review
+lastReview: 2026-08-04T09:00:00.000Z
 learningSteps: 0
 r:
   due: 2026-08-08T09:00:00.000Z
@@ -114,13 +127,13 @@ says nothing the card does not already show.
 
 ```osmosis
 id: fct-basic
-due: 2026-08-13T03:35:54.638Z
-stability: 0.0834
-difficulty: 8.8063
-reps: 2
+due: 2026-08-10T09:00:00.000Z
+stability: 6.7000
+difficulty: 4.6000
+reps: 3
 lapses: 0
-state: learning
-lastReview: 2026-08-13T03:34:54.638Z
+state: review
+lastReview: 2026-08-03T09:00:00.000Z
 learningSteps: 0
 
 Which HTTP status code means the request succeeded but returned no body?
@@ -132,7 +145,8 @@ Which HTTP status code means the request succeeded but returned no body?
 
 Scheduled well into 2027, so a session should render it fully readable — both
 groups blanked above, filled in below — offer no rating, and not count it in the
-pill.
+pill. On the map it is not a target either: it sits there with its answer
+showing, as unstudied context.
 
 ```osmosis
 id: fct-indexes
