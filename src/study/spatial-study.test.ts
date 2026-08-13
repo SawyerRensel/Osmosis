@@ -9,6 +9,7 @@ import {
 	cardIdsForSpatialKey,
 	cardsForFenceKey,
 	collectSubtreeCardKeys,
+	dueCardsForFenceKey,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
 	dueOrNewLineCardIds,
@@ -350,6 +351,53 @@ describe("fence keys", () => {
 	it("leaves a disabled card out, so an excluded fence has no cards to ask", () => {
 		const cards = [fenceCard("rivers-c1", { disabled: true }), fenceCard("rivers-c2")];
 		expect(cardsForFenceKey(cards, "rivers").map((card) => card.id)).toEqual(["rivers-c2"]);
+	});
+
+	describe("the questions a fence asks in place", () => {
+		it("asks every due card the fence derived, in ask order", () => {
+			const cards = [
+				fenceCard("rivers-c2"),
+				fenceCard("rivers-c1", { due: NOW - 1000 }),
+				fenceCard("rivers-c3", { due: NOW }),
+			];
+
+			expect(dueCardsForFenceKey(cards, "rivers", NOW).map((card) => card.id)).toEqual([
+				"rivers-c1",
+				"rivers-c2",
+				"rivers-c3",
+			]);
+		});
+
+		it("asks both directions of a bidirectional fence, forward first", () => {
+			const cards = [fenceCard("capital-r", { due: NOW - 1000 }), fenceCard("capital")];
+
+			expect(dueCardsForFenceKey(cards, "capital", NOW).map((card) => card.id)).toEqual([
+				"capital",
+				"capital-r",
+			]);
+		});
+
+		it("drops the groups that are not due, so one due group is one question", () => {
+			const cards = [
+				fenceCard("rivers-c1", { due: NOW - 1000 }),
+				fenceCard("rivers-c2", { due: NOW + 60_000 }),
+				fenceCard("rivers-c3", { due: NOW + 60_000 }),
+			];
+
+			expect(dueCardsForFenceKey(cards, "rivers", NOW).map((card) => card.id)).toEqual([
+				"rivers-c1",
+			]);
+		});
+
+		it("asks nothing for a fence whose cards are all excluded", () => {
+			const cards = [fenceCard("rivers-c1", { disabled: true })];
+
+			expect(dueCardsForFenceKey(cards, "rivers", NOW)).toEqual([]);
+		});
+
+		it("asks nothing for a fence the store has no card for", () => {
+			expect(dueCardsForFenceKey([fenceCard("other-c1")], "rivers", NOW)).toEqual([]);
+		});
 	});
 });
 

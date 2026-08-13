@@ -2,12 +2,12 @@ import { Component, MarkdownRenderer, Menu, setIcon, type MarkdownPostProcessorC
 import type OsmosisPlugin from "../main";
 import { fenceDiagrams, fenceEmbedLine, stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import type { CardOcclusion, ScheduleData } from "../database/types";
+import type { Card, CardOcclusion, ScheduleData } from "../database/types";
 import { renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
-import { cardsForFenceKey } from "../study/spatial-study";
+import { dueCardsForFenceKey } from "../study/spatial-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /**
@@ -26,19 +26,6 @@ interface ParsedFence {
 	isCloze: boolean;
 	/** Occluded diagrams, rendered after the prose on both sides. */
 	occlusions?: CardOcclusion[];
-}
-
-/**
- * The question a fence is putting, and the card that answers it.
- *
- * `cardId` is null for a fence the store has no card for — never synced, or
- * just typed. That fence renders as what its source says and takes no rating:
- * there is nothing for a review to move.
- */
-interface FenceCard {
-	front: string;
-	back: string;
-	cardId: string | null;
 }
 
 /** An undo entry for contextual review. */
@@ -71,18 +58,18 @@ export class ContextualStudyProcessor {
 
 	/** Track cards whose answers have been revealed this session to survive re-renders. */
 	private readonly revealedCardIds = new Set<string>();
-	/** Track cards that have been rated this session to hide rating buttons on re-render. */
-	private readonly ratedCardIds = new Set<string>();
 	/** Undo stack for contextual review actions. */
 	private readonly undoStack: ContextualUndoEntry[] = [];
 	/**
-	 * How far through its shape groups an occluded fence has been studied, by
-	 * fence ID. Kept here rather than in the render, because Obsidian rebuilds a
-	 * code block's DOM on every file change — a debounced schedule flush lands
+	 * How many of its questions each fence has been asked, by fence ID — shape
+	 * groups for an occluded fence, derived cards for every other kind.
+	 *
+	 * Kept here rather than in the render, because Obsidian rebuilds a code
+	 * block's DOM on every file change — a debounced schedule flush lands
 	 * mid-session — and a step counter living in the element would restart the
-	 * diagram from `c1` each time.
+	 * fence from its first question each time.
 	 */
-	private readonly occlusionStepAt = new Map<string, number>();
+	private readonly stepAt = new Map<string, number>();
 	/**
 	 * The questions each occluded fence asks this session, by fence ID.
 	 *
@@ -95,14 +82,15 @@ export class ContextualStudyProcessor {
 	 */
 	private readonly occlusionPlan = new Map<string, OcclusionStep[]>();
 	/**
-	 * Which of its cards each fence is asking, by fence ID.
+	 * The cards each non-occluded fence is asking this session, by fence ID.
 	 *
-	 * Pinned for the reason `occlusionPlan` is pinned: answering a card moves its
-	 * due date, and Obsidian rebuilds a code block on any file change, so
-	 * re-resolving would swap a rated `c1` for `c2` — a second question in a spot
-	 * whose answer the session has already counted.
+	 * The cloze and bidirectional counterpart of `occlusionPlan`, and pinned for
+	 * the same reason: answering a card moves its due date, so re-resolving after
+	 * the file changed would drop the card just answered and renumber everything
+	 * after it — a three-group fence would report itself finished on its second
+	 * answer.
 	 */
-	private readonly fenceCardAt = new Map<string, string>();
+	private readonly fencePlan = new Map<string, Card[]>();
 	/**
 	 * The fences on screen, so `refresh` can restart one when the note's reveal
 	 * mode changes.
@@ -247,21 +235,40 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Forget where an occluded fence had got to, because the note's mode changed
-	 * and a mode change starts a fresh pass: study restarts at the first group
-	 * rather than resuming a sequence that has since ended, and a diagram revealed
+	 * Forget where a fence had got to, because the note's mode changed and a mode
+	 * change starts a fresh pass: study restarts at the fence's first question
+	 * rather than resuming a sequence that has since ended, and a card revealed
 	 * while reading does not open already answered.
 	 */
-	private resetOcclusionState(cardId: string): void {
-		this.occlusionStepAt.delete(cardId);
+	private resetFenceState(cardId: string): void {
+		this.stepAt.delete(cardId);
 		this.occlusionPlan.delete(cardId);
-		this.ratedCardIds.delete(cardId);
-		// The unstepped render keys on the fence, a stepped one on `<fence>#<group>`.
+		this.fencePlan.delete(cardId);
+		// The unstepped render keys on the fence, a stepped one on `<fence>#<step>`.
 		for (const key of [...this.revealedCardIds]) {
 			if (key === cardId || key.startsWith(`${cardId}#`)) this.revealedCardIds.delete(key);
 		}
 	}
 
+	/**
+	 * A fence in reading view: the questions it is being asked, or the document
+	 * it is part of.
+	 *
+	 * **Stepping happens inside a session and nowhere else.** A fence the running
+	 * session picked out asks its cards one at a time — a cloze group, then the
+	 * next; a bidirectional pair forwards, then backwards — each with its own
+	 * reveal and its own rating, exactly as sequential and spatial ask them.
+	 * Every other fence renders as what its source says: both sides, in order,
+	 * exactly as live preview draws it. That covers ordinary reading, peek, a
+	 * fence nothing is due on, an excluded one, and one the store has never seen.
+	 *
+	 * The alternative — showing the *current card's* blanking while reading, which
+	 * is what phase 2 left behind — meant a three-group cloze fence silently hid
+	 * two of its groups from a reader who had started nothing.
+	 *
+	 * Built once and redrawn in place, like `renderOcclusionCard`: the step moves
+	 * under handlers that are bound only here.
+	 */
 	private renderCard(source: string, el: HTMLElement, sourcePath: string): void {
 		const parsed = this.parseFenceContent(source);
 		if (!parsed) {
@@ -277,19 +284,14 @@ export class ContextualStudyProcessor {
 			return;
 		}
 
-		this.totalCards++;
-		const card = this.fenceCard(parsed, sourcePath);
-		const container = el.createDiv({ cls: "osmosis-contextual-card" });
+		this.totalCards += Math.max(this.fenceStepPlan(parsed, sourcePath).length, 1);
 
+		const container = el.createDiv({ cls: "osmosis-contextual-card" });
 		if (parsed.exclude) {
 			container.addClass("osmosis-contextual-excluded");
 		}
 
-		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
-		this.renderProse(card.front, frontEl, sourcePath);
-
-		// Separator
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Back: hidden placeholder + revealed content
@@ -298,11 +300,125 @@ export class ContextualStudyProcessor {
 			cls: "osmosis-contextual-hidden",
 			text: "░░░░░░",
 		});
-		const revealedEl = backEl.createDiv({ cls: "osmosis-contextual-revealed osmosis-hidden" });
+		const revealedEl = backEl.createDiv({ cls: "osmosis-contextual-revealed" });
 
-		// Bottom row: undo (far left) + rating area (left) + exclude toggle (right)
+		// Bottom row: undo (far left) + step counter + rating area + exclude toggle.
+		// Rebuilt on every draw, because which of them belong there changes with the
+		// step; it holds no picture, so its height cannot move what is being read.
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
-		const undoBtn = bottomRow.createDiv({
+
+		// Which question is showing, kept where the click handlers can read it:
+		// they are bound once and the step moves under them.
+		let revealKey = parsed.cardId;
+		let index = 0;
+
+		const draw = (): void => {
+			const hiding = this.shouldHideBack(sourcePath, parsed.cardId);
+			const steps = this.fenceStepPlan(parsed, sourcePath);
+			index = this.stepAt.get(parsed.cardId) ?? 0;
+			const step = steps[index] ?? null;
+			// A missing step means two different things, so the count decides which:
+			// a fence the session is not asking has no steps at all, one it is asking
+			// has run out.
+			const finished = steps.length > 0 && step === null;
+			// Keyed per step, so a re-render mid-session (a debounced schedule flush
+			// rewrites the file) brings back the side that was showing.
+			revealKey = step === null ? parsed.cardId : `${parsed.cardId}#${step.id}`;
+			const revealed = finished || this.revealedCardIds.has(revealKey);
+
+			// A finished fence shows what its source says, which is the whole passage
+			// filled in — not the last group it happened to be asked about.
+			this.updateProse(frontEl, step?.front ?? parsed.front, sourcePath);
+			// An answer that has not been asked for stays out of the document
+			// entirely, as it always has: hidden text is still text to a reader
+			// searching the note.
+			if (!hiding || revealed) {
+				this.updateProse(revealedEl, step?.back ?? parsed.back, sourcePath);
+			}
+
+			/**
+			 * Being *asked* is what finishes a question, and only then does a cloze
+			 * card collapse onto its filled-in text — so the reader's eye stays on one
+			 * body of text mid-session. A reader who was never asked is simply reading
+			 * the note, and gets both sides, in order, as live preview draws them.
+			 */
+			const collapse = parsed.isCloze && hiding && revealed;
+			frontEl.toggleClass("osmosis-hidden", collapse);
+			dividerEl.toggleClass("osmosis-hidden", collapse);
+			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
+			revealedEl.toggleClass("osmosis-hidden", hiding && !revealed);
+
+			bottomRow.empty();
+			this.addUndoButton(bottomRow);
+			if (finished) {
+				bottomRow.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+			} else if (steps.length > 1) {
+				// Only when there is a sequence to be somewhere in. "1/1" on a basic
+				// fence would say nothing the card does not already show.
+				bottomRow.createSpan({
+					cls: "osmosis-contextual-step",
+					text: `${String(index + 1)}/${String(steps.length)}`,
+				});
+			}
+			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
+			if (revealed && step !== null) {
+				this.showRating(ratingSlot, step.id, parsed.cardId, sourcePath, advance);
+			}
+			this.addExcludeToggle(bottomRow, parsed, sourcePath);
+		};
+
+		// Defined after `draw` because the two call each other; both are only ever
+		// invoked below, once each is in scope.
+		const advance = (): void => {
+			this.revealedCardIds.delete(revealKey);
+			this.stepAt.set(parsed.cardId, index + 1);
+			draw();
+		};
+
+		const reveal = (): void => {
+			// Reading mode has nothing to uncover — the answer is already below the
+			// rule — and there is no question here to be finished with.
+			if (!this.shouldHideBack(sourcePath, parsed.cardId)) return;
+			if (this.revealedCardIds.has(revealKey)) return;
+			this.revealedCardIds.add(revealKey);
+			draw();
+		};
+
+		draw();
+
+		hiddenEl.addEventListener("click", reveal);
+		container.addEventListener("click", (e) => {
+			if (e.target === container) reveal();
+		});
+
+		// Entering or leaving peek or study changes what this card should be
+		// showing, and does not re-run this processor. Redraw in place rather than
+		// rebuilding, so the note does not jump under the reader.
+		this.trackFence(container, sourcePath, () => {
+			this.resetFenceState(parsed.cardId);
+			draw();
+		});
+	}
+
+	/**
+	 * Put `markdown` on screen in `el`, skipping the work when it is already what
+	 * `el` shows.
+	 *
+	 * A stepping fence redraws on every reveal and every rating, and most of those
+	 * draws change one half of the card at most — re-rendering the other half
+	 * would blank unchanged text and paint it again a frame later, under a reader
+	 * who is looking straight at it.
+	 */
+	private updateProse(el: HTMLElement, markdown: string, sourcePath: string): void {
+		if (el.dataset["osmosisProse"] === markdown) return;
+		el.dataset["osmosisProse"] = markdown;
+		el.empty();
+		this.renderProse(markdown, el, sourcePath);
+	}
+
+	/** The undo affordance, present but invisible until there is something to undo. */
+	private addUndoButton(row: HTMLElement): void {
+		const undoBtn = row.createDiv({
 			cls: `osmosis-contextual-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
 		});
 		setIcon(undoBtn, "undo-2");
@@ -311,101 +427,11 @@ export class ContextualStudyProcessor {
 			e.stopPropagation();
 			void this.undo();
 		});
-		const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
-		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
-		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
-		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
-		toggleIcon.addEventListener("click", (e) => {
-			e.stopPropagation();
-			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
-		});
-
-		const alreadyRevealed = this.revealedCardIds.has(parsed.cardId);
-		const alreadyRated = card.cardId !== null && this.ratedCardIds.has(card.cardId);
-		let revealed = alreadyRevealed || !this.shouldHideBack(sourcePath, parsed.cardId);
-
-		/**
-		 * `answered` distinguishes the two ways a back comes to be on screen.
-		 *
-		 * A reader who was *asked* — peek, or a session question — has finished
-		 * with the question, so a cloze collapses onto its filled-in text rather
-		 * than stacking two copies of the same passage. A reader who was never
-		 * asked is simply reading the note, and gets what live preview draws:
-		 * both sides, in order.
-		 */
-		const showBack = (answered: boolean): void => {
-			hiddenEl.addClass("osmosis-hidden");
-			revealedEl.removeClass("osmosis-hidden");
-			// Cloze cards replace the front in-place rather than stacking, so the
-			// reader's eye stays on the same body of text.
-			frontEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
-			dividerEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
-			revealedEl.empty();
-			this.renderProse(card.back, revealedEl, sourcePath);
-		};
-
-		const hideBack = (): void => {
-			hiddenEl.removeClass("osmosis-hidden");
-			revealedEl.addClass("osmosis-hidden");
-			revealedEl.empty();
-			frontEl.removeClass("osmosis-hidden");
-			dividerEl.removeClass("osmosis-hidden");
-		};
-
-		const reveal = (): void => {
-			if (revealed) return;
-			revealed = true;
-			this.revealedCardIds.add(parsed.cardId);
-			showBack(true);
-
-			if (card.cardId !== null && !alreadyRated && this.isFenceTarget(sourcePath, parsed.cardId)) {
-				this.showRating(ratingSlot, card.cardId, parsed.cardId, sourcePath);
-			}
-		};
-
-		// Show the back straight away unless something is deliberately asking for
-		// it: peek, or a session that has picked this card out as a question.
-		if (revealed) {
-			showBack(alreadyRevealed);
-			if (alreadyRated) {
-				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
-			} else if (card.cardId !== null && this.isFenceTarget(sourcePath, parsed.cardId)) {
-				this.showRating(ratingSlot, card.cardId, parsed.cardId, sourcePath);
-			}
-		}
-
-		hiddenEl.addEventListener("click", reveal);
-		container.addEventListener("click", (e) => {
-			if (!revealed && e.target === container) {
-				reveal();
-			}
-		});
-
-		// Entering or leaving peek or study changes what this card should be
-		// showing, and does not re-run this processor. Repaint in place rather than
-		// rebuilding, so the note does not jump under the reader.
-		this.trackFence(container, sourcePath, () => {
-			// A mode change starts a fresh pass: what the reader uncovered under the
-			// old mode says nothing about what the new one should show. Peek would
-			// otherwise open on the answers of everything read before it. The pinned
-			// card goes with it, so the next full re-render asks whatever is due
-			// under the new mode rather than the question the old one had reached.
-			this.revealedCardIds.delete(parsed.cardId);
-			this.fenceCardAt.delete(parsed.cardId);
-			if (card.cardId !== null) this.ratedCardIds.delete(card.cardId);
-
-			revealed = !this.shouldHideBack(sourcePath, parsed.cardId);
-			// Nothing has been asked yet under the new mode, so a back on screen
-			// here is the reading-mode one: stacked, not collapsed.
-			if (revealed) showBack(false);
-			else hideBack();
-
-			ratingSlot.empty();
-		});
 	}
 
 	/**
-	 * The card this fence puts on screen — **the store's, not one derived here.**
+	 * The cards this fence asks this session — **the store's, not a pair derived
+	 * here** — or none at all when the session is not asking it.
 	 *
 	 * The generator has already turned the fence into cards and put fully rendered
 	 * fronts and backs in the store, one per cloze group and one per direction of
@@ -414,29 +440,29 @@ export class ContextualStudyProcessor {
 	 * card at all — so `recordRating` dropped the review on its "card not in
 	 * store" guard and cloze reviews taken in a note went nowhere.
 	 *
-	 * A due card is preferred because a fence is one of a session's questions
-	 * exactly when something on it is due, so the question it puts has to be one
-	 * of those. One card per fence is still one question; stepping a fence through
-	 * all of its cards is phase 3.
+	 * Gated on being one of the session's targets rather than on study being on,
+	 * because those are not the same question: a fence with nothing due sits in a
+	 * studied note as context, and context is read, not asked.
 	 *
-	 * `cardsForFenceKey` skips disabled cards, so an excluded fence — whose cards
-	 * all carry `disabled` — falls through to its own text, which is what it has
-	 * always rendered and is not a target either way.
+	 * `dueCardsForFenceKey` skips disabled cards, so an excluded fence — whose
+	 * cards all carry `disabled` — has nothing to ask and falls through to its own
+	 * text, which is what it has always rendered.
 	 */
-	private fenceCard(parsed: ParsedFence, sourcePath: string): FenceCard {
-		const cards = cardsForFenceKey(
+	private fenceStepPlan(parsed: ParsedFence, sourcePath: string): readonly Card[] {
+		if (!this.isFenceTarget(sourcePath, parsed.cardId)) return [];
+
+		const planned = this.fencePlan.get(parsed.cardId);
+		if (planned !== undefined) return planned;
+
+		const steps = dueCardsForFenceKey(
 			this.plugin.cardStore.getCardsByNote(sourcePath),
 			parsed.cardId,
+			Date.now(),
 		);
-		if (cards.length === 0) return { front: parsed.front, back: parsed.back, cardId: null };
-
-		const pinned = this.fenceCardAt.get(parsed.cardId);
-		const now = Date.now();
-		const card = cards.find((candidate) => candidate.id === pinned)
-			?? cards.find((candidate) => candidate.due === undefined || candidate.due <= now)
-			?? cards[0]!;
-		this.fenceCardAt.set(parsed.cardId, card.id);
-		return { front: card.front, back: card.back, cardId: card.id };
+		// An empty plan is not kept, for the reason `stepPlan` gives: it is what a
+		// fence drawn before the card store has caught up produces.
+		if (steps.length > 0) this.fencePlan.set(parsed.cardId, steps);
+		return steps;
 	}
 
 	/**
@@ -544,7 +570,7 @@ export class ContextualStudyProcessor {
 			// takes no clicks. Peek and study are the surfaces that pose a question.
 			const hiding = this.shouldHideBack(sourcePath, parsed.cardId);
 			const steps = this.stepPlan(parsed, sourcePath);
-			index = this.occlusionStepAt.get(parsed.cardId) ?? 0;
+			index = this.stepAt.get(parsed.cardId) ?? 0;
 			const step = steps[index] ?? null;
 			// A missing step means two different things, so the count decides which:
 			// a fence outside study has no steps at all, one inside it has run out.
@@ -604,7 +630,7 @@ export class ContextualStudyProcessor {
 		// invoked below, once each is in scope.
 		const advance = (): void => {
 			this.revealedCardIds.delete(revealKey);
-			this.occlusionStepAt.set(parsed.cardId, index + 1);
+			this.stepAt.set(parsed.cardId, index + 1);
 			draw();
 		};
 
@@ -626,7 +652,7 @@ export class ContextualStudyProcessor {
 		});
 
 		this.trackFence(container, sourcePath, () => {
-			this.resetOcclusionState(parsed.cardId);
+			this.resetFenceState(parsed.cardId);
 			draw();
 		});
 	}
@@ -913,7 +939,6 @@ export class ContextualStudyProcessor {
 					}
 					: null;
 
-				this.ratedCardIds.add(cardId);
 				ratingEl.empty();
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
@@ -986,7 +1011,6 @@ export class ContextualStudyProcessor {
 				await this.sessionManager.revertReview(entry.cardId, entry.previousSchedule ?? null);
 			}
 
-			this.ratedCardIds.delete(entry.cardId);
 			this.reviewedCount = Math.max(0, this.reviewedCount - 1);
 			this.updateProgress();
 			this.plugin.refreshDashboard();

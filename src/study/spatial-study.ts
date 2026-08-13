@@ -184,6 +184,24 @@ export function cardsForFenceKey(cards: readonly Card[], key: string): Card[] {
 		.sort((a, b) => askRank(a.id, key) - askRank(b.id, key));
 }
 
+/**
+ * The questions a fence asks in place this session: its cards in ask order,
+ * narrowed to the ones the scheduler would ask now.
+ *
+ * This is to a fence what `occlusionSteps` is to a diagram — the sequence, kept
+ * pure so the surface that draws it and the surface that counts it derive it the
+ * same way. It lives here rather than widening `OcclusionStep`, because a cloze
+ * or bidirectional step has no `diagram` or `group` and making those optional
+ * would weaken the type the mask renderer depends on.
+ *
+ * Filtering by time is what keeps a fence honest about its size: a three-group
+ * cloze fence with one group due is one question, not three — the same rule an
+ * occluded diagram and a mind map node already follow.
+ */
+export function dueCardsForFenceKey(cards: readonly Card[], key: string, now: number): Card[] {
+	return cardsForFenceKey(cards, key).filter((card) => isDueOrNew(card, now));
+}
+
 /** `<id>` first, then `<id>-cN` by group number, then `<id>-r`. */
 function askRank(id: string, key: string): number {
 	const suffix = id.slice(key.length);

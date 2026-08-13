@@ -1,29 +1,16 @@
 ---
 osmosis-cards: true
-osmosis-schedule:
-  os-t76lqu:
-    due: 2026-08-12T22:58:45
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-08-12T22:57:45
-    reps: 1
-    lapses: 0
-    state: learning
-    learningSteps: 0
 ---
 # Fence-Only Study
 
 This note carries no line cards at all — every card in it is an `osmosis` fence.
-
 Before this task, that meant the Study and Peek buttons never appeared in the
-
 note's header and none of these cards could be studied in place.
 
 Two of the three cards below are due. The third is scheduled well into the
-
 future, so a session should treat it as context rather than as a question.
 
-## Due ^os-t76lqu
+## Due
 
 ```osmosis
 id: fen00001

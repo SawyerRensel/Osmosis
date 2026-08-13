@@ -431,7 +431,42 @@ describe("a fence whose cards the store holds", () => {
 		expect(frontText(el)).toBe(C1.front);
 	});
 
-	it("plays a bidirectional fence's forward card from the store", () => {
+	it("asks every group the fence derived, one at a time", () => {
+		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
+
+		expect(stepCount(el)).toBe("1/2");
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// The second group is a question in its own right, with its own schedule.
+		// Asking only the first left `c2` and `c3` reachable in sequential alone.
+		expect(stepCount(el)).toBe("2/2");
+		expect(frontText(el)).toBe(C2.front);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		expect(reviews).toEqual([
+			{ cardId: "rivers-c1", rating: 3 },
+			{ cardId: "rivers-c2", rating: 3 },
+		]);
+		expect(el.querySelector(".osmosis-contextual-rated")?.textContent).toBe("Rated");
+	});
+
+	it("counts each group as a question of the session, not the fence once", () => {
+		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
+
+		for (let i = 0; i < 2; i++) {
+			el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+		}
+
+		// Twice on the fence key: the pill counts questions, and the session's
+		// targets are fences. Handing it the card IDs matched no target at all.
+		expect(ratedFences).toEqual(["rivers", "rivers"]);
+	});
+
+	it("asks both directions of a bidirectional fence, forward first", () => {
 		const BIDI = ["id: capital", "bidi: true", "", "France", "***", "Paris"].join("\n");
 		const forward: Card = {
 			id: "capital",
@@ -446,15 +481,22 @@ describe("a fence whose cards the store holds", () => {
 		const reverse: Card = { ...forward, id: "capital-r", front: "Paris", back: "France" };
 		const { el, reviews } = renderFence(BIDI, "study", [forward, reverse]);
 
+		expect(frontText(el)).toBe("France");
 		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
-		// Forward first. Asking the reverse in the same spot is phase 3.
-		expect(frontText(el)).toBe("France");
-		expect(reviews).toEqual([{ cardId: "capital", rating: 3 }]);
+		// The reverse used to be reachable in sequential study and nowhere else.
+		expect(frontText(el)).toBe("Paris");
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		expect(reviews).toEqual([
+			{ cardId: "capital", rating: 3 },
+			{ cardId: "capital-r", rating: 3 },
+		]);
 	});
 
-	it("keeps asking the same card when the note re-renders mid-session", () => {
+	it("keeps its place in the sequence when the note re-renders mid-session", () => {
 		const cards = [C1, C2];
 		const { el, rerender } = renderFence(CLOZE, "study", cards);
 
@@ -465,9 +507,18 @@ describe("a fence whose cards the store holds", () => {
 		cards[0] = { ...C1, due: Date.now() + 60_000 };
 		rerender();
 
-		// Still `c1`. Re-resolving would swap in `c2` — a question the session has
-		// already counted as answered, asked in a spot that cannot record it twice.
-		expect(frontText(el)).toBe(C1.front);
+		// Still on `c2`, and still the second of two. Re-resolving the plan would
+		// drop the answered `c1`, leaving a fence that reports itself finished on
+		// the answer to its first question.
+		expect(frontText(el)).toBe(C2.front);
+		expect(stepCount(el)).toBe("2/2");
+	});
+
+	it("shows no step counter on a fence that asks a single question", () => {
+		const { el } = renderFence(CLOZE, "study", [C1]);
+
+		// "1/1" says nothing the card does not already show.
+		expect(stepCount(el)).toBeNull();
 	});
 
 	it("skips a card the scheduler would not ask now", () => {
@@ -477,6 +528,16 @@ describe("a fence whose cards the store holds", () => {
 		// A fence is a target because *something* on it is due, so the question it
 		// puts has to be one of the due ones.
 		expect(frontText(el)).toBe(C2.front);
+	});
+
+	it("blanks every group at once while the note is only being read", () => {
+		const { el } = renderFence(CLOZE, "off", [C1, C2]);
+
+		// What live preview draws, and what the source says. Showing the *current
+		// card's* blanking here — which is what playing a store card outside a
+		// session gives you — hid `c2` from a reader who had started nothing.
+		expect(frontText(el)).toBe(`The ${CLOZE_BLANK} drains into the ${CLOZE_BLANK}.`);
+		expect(stepCount(el)).toBeNull();
 	});
 
 	it("falls back to the fence's own text when the store has no card for it", () => {

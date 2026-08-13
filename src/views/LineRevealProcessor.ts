@@ -9,6 +9,7 @@ import {
 	allFenceCardKeys,
 	allLineCardBlockIds,
 	cardIdsForLineKey,
+	dueCardsForFenceKey,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
 } from "../study/spatial-study";
@@ -66,8 +67,14 @@ interface NoteRevealState {
 	 * to draw is a target; the pill counts both.
 	 */
 	fenceTargets: Set<string> | null;
-	/** Fence keys rated this session, for the pill. Fences rate in the other processor. */
-	ratedFences: Set<string>;
+	/**
+	 * How many questions each fence target asks this session, fixed when study
+	 * starts — a cloze group or a direction of a bidirectional pair is its own
+	 * card, so a fence is one target but often several questions.
+	 */
+	fenceSteps: Map<string, number>;
+	/** How many of them have been answered. Fences rate in the other processor. */
+	ratedFences: Map<string, number>;
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
 	/**
@@ -575,6 +582,7 @@ export class LineRevealProcessor {
 			state.ratedFences.clear();
 			state.pendingRating = null;
 			this.planOcclusionSteps(notePath, state, targets);
+			this.planFenceSteps(notePath, state, fences);
 		}
 
 		this.applyAll(notePath);
@@ -613,6 +621,36 @@ export class LineRevealProcessor {
 		}
 	}
 
+	/**
+	 * How many questions each fence target will ask this session.
+	 *
+	 * Counted from the store here rather than reported by each fence as it draws,
+	 * because reading view builds its sections lazily: a fence below the fold has
+	 * not been rendered yet, and the pill would understate the session until the
+	 * reader happened to scroll past it.
+	 *
+	 * `ContextualStudyProcessor` derives the same sequence from the same store
+	 * with the same filter, so the two agree — see `fenceStepPlan`. An occluded
+	 * fence is counted the same way, one question per shape group, since the
+	 * store holds a card per group exactly as it does per cloze group.
+	 */
+	private planFenceSteps(
+		notePath: string,
+		state: NoteRevealState,
+		targets: ReadonlySet<string>,
+	): void {
+		state.fenceSteps.clear();
+
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const now = Date.now();
+		for (const key of targets) {
+			// A target with nothing countable is still one question, for the reason
+			// `planOcclusionSteps` gives: better one that cannot be answered than a
+			// session whose total is short by a fence the reader can see.
+			state.fenceSteps.set(key, Math.max(dueCardsForFenceKey(cards, key, now).length, 1));
+		}
+	}
+
 	/** Leave study mode: drop session state and flush pending schedule writes. */
 	private endStudy(notePath: string, state: NoteRevealState): void {
 		state.mode = "off";
@@ -621,6 +659,7 @@ export class LineRevealProcessor {
 		state.pendingRating = null;
 		state.revealed.clear();
 		state.ratedFences.clear();
+		state.fenceSteps.clear();
 		state.studySteps.clear();
 		state.stepAt.clear();
 		void this.plugin.scheduleStore.flush();
@@ -791,12 +830,15 @@ export class LineRevealProcessor {
 			total += steps;
 			done += state.rated.has(blockId) ? steps : (state.stepAt.get(blockId) ?? 0);
 		}
-		// Fences count as one question each here. Stepping a multi-cloze or
-		// bidirectional fence through its derived cards is phase 3 of this task;
-		// until then the pill would over-count questions that cannot be asked.
+		// A fence counts its questions the same way: a three-group cloze fence asks
+		// three and a bidirectional pair asks two, each rated separately, so the
+		// pill would sit still through most of a note of them if it counted fences.
 		for (const key of state.fenceTargets ?? []) {
-			total += 1;
-			if (state.ratedFences.has(key)) done += 1;
+			const steps = state.fenceSteps.get(key) ?? 1;
+			total += steps;
+			// Clamped, because the count comes from another processor's ratings and a
+			// total that ran ahead of itself would be worse than one that stalls.
+			done += Math.min(state.ratedFences.get(key) ?? 0, steps);
 		}
 		return { done, total };
 	}
@@ -865,16 +907,18 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Record that a fence was rated, so the pill advances.
+	 * Record that one of a fence's questions was answered, so the pill advances.
 	 *
 	 * The rating itself is written by `ContextualStudyProcessor` — this only
 	 * tells the session's progress counter that one of its questions is done.
+	 * Counted rather than flagged: a fence that fans out is answered a card at a
+	 * time, and each of those is a question the reader has finished.
 	 */
 	markFenceRated(notePath: string, fenceKey: string): void {
 		const state = this.states.get(notePath);
 		if (!state || state.mode !== "study") return;
 		if (!state.fenceTargets?.has(fenceKey)) return;
-		state.ratedFences.add(fenceKey);
+		state.ratedFences.set(fenceKey, (state.ratedFences.get(fenceKey) ?? 0) + 1);
 		this.syncBanners();
 	}
 
@@ -902,7 +946,8 @@ export class LineRevealProcessor {
 				rated: new Set(),
 				studyTargets: null,
 				fenceTargets: null,
-				ratedFences: new Set(),
+				ratedFences: new Map(),
+				fenceSteps: new Map(),
 				pendingRating: null,
 				pendingRatingAt: 0,
 				studySteps: new Map(),
