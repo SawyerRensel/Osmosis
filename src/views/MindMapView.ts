@@ -128,6 +128,12 @@ interface OsmosisCardContent {
 	front: string;
 	back: string;
 	occlusions?: CardOcclusion[];
+	/**
+	 * A cloze fence, whose two halves are the same passage blanked and filled in
+	 * — so revealing it replaces the question rather than adding an answer under
+	 * it. See `applyFenceHidden`.
+	 */
+	isCloze?: boolean;
 }
 
 /**
@@ -617,7 +623,7 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with cloze deletions (no *** separator),
 	 * return { front, back } with all clozes blanked in front.
 	 */
-	private parseOsmosisCloze(content: string): { front: string; back: string } | null {
+	private parseOsmosisCloze(content: string): OsmosisCardContent | null {
 		const contentLines = MindMapView.fenceContentLines(content);
 		if (!contentLines) return null;
 		const text = contentLines.join("\n").trim();
@@ -638,7 +644,7 @@ export class MindMapView extends ItemView {
 			const delim = full.startsWith("==") ? "==" : "**";
 			return `${delim}${full.slice(2, -2).replace(/^c\d+:/, "")}${delim}`;
 		});
-		return { front, back };
+		return { front, back, isCloze: true };
 	}
 
 	/** Strip osmosis-cloze inline marker (and its comment prefix) from a line. */
@@ -648,7 +654,7 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with code cloze markers,
 	 * return { front, back } with all cloze regions blanked in front.
 	 */
-	private parseOsmosisCodeCloze(content: string): { front: string; back: string } | null {
+	private parseOsmosisCodeCloze(content: string): OsmosisCardContent | null {
 		const contentLines = MindMapView.fenceContentLines(content);
 		if (!contentLines) return null;
 		if (!contentLines.some((l) => l.includes("osmosis-cloze"))) return null;
@@ -685,7 +691,7 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+		return { front: frontLines.join("\n"), back: backLines.join("\n"), isCloze: true };
 	}
 
 	/**
@@ -1213,10 +1219,12 @@ export class MindMapView extends ItemView {
 	 * Returns false when the node is not a fence, so the caller falls back to
 	 * blanking it.
 	 *
-	 * The two kinds of fence hide differently. An occluded one is rendered once
-	 * and its masks repainted — covered while the node is hidden, outlined once
+	 * The kinds of fence hide differently. An occluded one is rendered once and
+	 * its masks repainted — covered while the node is hidden, outlined once
 	 * revealed — so the picture never reloads and the node never changes size.
-	 * Every other kind has a real back half in the DOM, which is simply hidden.
+	 * Every other kind has a real back half in the DOM, which is simply hidden;
+	 * a cloze fence additionally drops its *front* on reveal, since the answer is
+	 * the same passage filled in.
 	 *
 	 * The node keeps the height it was laid out at either way. Re-measuring on
 	 * every reveal would reflow the whole map under the reader's cursor, and a
@@ -1274,9 +1282,27 @@ export class MindMapView extends ItemView {
 		this.updateNodeProse(group.querySelector(".osmosis-contextual-front"), step?.front ?? card.front);
 		this.updateNodeProse(group.querySelector(".osmosis-contextual-revealed"), step?.back ?? card.back);
 
-		for (const el of Array.from(group.querySelectorAll(".osmosis-contextual-revealed, .osmosis-study-divider"))) {
-			el.classList.toggle("osmosis-hidden", hidden);
-		}
+		// A cloze card's two halves are one passage, blanked and filled in, so its
+		// answer *replaces* the question — the reader's eye stays on one body of
+		// text, and a node does not carry the same lines twice. A basic or
+		// bidirectional fence keeps both halves, because there its front is a
+		// question the answer does not contain. Note view has read this way since
+		// phase 3; the map used to stack every kind, which made a cloze node as
+		// tall as its passage twice over.
+		//
+		// Gated on being *in* a session, exactly as Note view gates on `hiding`:
+		// `exitSpatialMode` restores every node through this method with
+		// `hidden: false` after clearing the mode, and a collapse that outlived the
+		// session would leave the fence showing its answer and nothing else.
+		const collapse = card.isCloze === true && !hidden && this.spatialMode !== "off";
+		const setHidden = (selector: string, hide: boolean): void => {
+			for (const el of Array.from(group.querySelectorAll(selector))) {
+				el.classList.toggle("osmosis-hidden", hide);
+			}
+		};
+		setHidden(".osmosis-contextual-front", collapse);
+		setHidden(".osmosis-contextual-revealed", hidden);
+		setHidden(".osmosis-study-divider", hidden || collapse);
 		return true;
 	}
 
