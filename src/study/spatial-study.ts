@@ -169,6 +169,54 @@ export function cardIdsForFenceKey(cards: readonly Card[], key: string): string[
 }
 
 /**
+ * The cards a fence key stands for, in the order a study surface asks them:
+ * the fence's own card, then its cloze or shape groups by number, then the
+ * reverse of a bidirectional pair.
+ *
+ * Sorted rather than taken in store order, because the store hands its note
+ * index back in insertion order and an incremental re-sync re-adds an edited
+ * card at the end — so a fence would start asking `c2` before `c1` purely
+ * because `c1` was the group whose wording changed.
+ */
+export function cardsForFenceKey(cards: readonly Card[], key: string): Card[] {
+	return cards
+		.filter((card) => isFenceCard(card) && fenceKey(card) === key)
+		.sort((a, b) => askRank(a.id, key) - askRank(b.id, key));
+}
+
+/**
+ * The questions a fence asks in place this session: its cards in ask order,
+ * narrowed to the ones the scheduler would ask now.
+ *
+ * This is to a fence what `occlusionSteps` is to a diagram — the sequence, kept
+ * pure so the surface that draws it and the surface that counts it derive it the
+ * same way. It lives here rather than widening `OcclusionStep`, because a cloze
+ * or bidirectional step has no `diagram` or `group` and making those optional
+ * would weaken the type the mask renderer depends on.
+ *
+ * Filtering by time is what keeps a fence honest about its size: a three-group
+ * cloze fence with one group due is one question, not three — the same rule an
+ * occluded diagram and a mind map node already follow.
+ */
+export function dueCardsForFenceKey(cards: readonly Card[], key: string, now: number): Card[] {
+	return cardsForFenceKey(cards, key).filter((card) => isDueOrNew(card, now));
+}
+
+/**
+ * `<id>` first, then `<id>-cN` by group number, then `<id>-r`.
+ *
+ * `key` is whatever the cards hang off — a fence ID or a line key — so the same
+ * ranking orders an occluded line's `…#^block/c1`, `/c2` as well: the separator
+ * is dropped with the first character of the suffix either way.
+ */
+function askRank(id: string, key: string): number {
+	const suffix = id.slice(key.length);
+	if (suffix === "") return 0;
+	if (suffix === "-r") return Number.MAX_SAFE_INTEGER;
+	return groupNumber(suffix.slice(1));
+}
+
+/**
  * Line keys of every line card in the set, regardless of schedule.
  * Same filter as `allLineCardBlockIds`, keyed collision-safely for maps
  * that mix cards from several notes (transclusion).
@@ -248,33 +296,40 @@ function nodeKeyForCard(card: Card): string {
 /**
  * The units of work spatial *study* asks for on one node.
  *
- * Ordinarily a node is one unit: it reveals, it takes one rating, and that
- * rating reaches every card it carries. An **occluded** node is not. Its shape
- * groups are separate cards with separate schedules, and spatial study is a card
- * player — it has a target, a rating, and a completion count — so it steps
- * through them one at a time exactly as sequential does, and the banner counts
- * cards rather than nodes.
+ * One key per **due card**, in ask order. A node that carries a single card is
+ * still a single unit of work — that key is simply the card's own ID, which for
+ * an ordinary line or a basic fence is the node key itself. Everything that
+ * fanned out is several: an occluded diagram's shape groups, a cloze's groups,
+ * the two directions of a bidirectional pair. They are separate cards with
+ * separate schedules, and spatial study is a card player — it has a target, a
+ * rating and a completion count — so it steps through them one at a time
+ * exactly as sequential and the note do, and the banner counts cards rather
+ * than nodes.
  *
- * This is deliberately *not* what the note surfaces do. Reading view and peek
- * paint every group at once with no target, because a reader looking at a
- * diagram in a note is not answering one of the questions it carries. Study is
- * the surface where there is a question.
+ * This is deliberately *not* what the note surfaces do *outside* a session.
+ * Plain reading view and peek paint every group at once with no target, because
+ * a reader looking at a passage in a note is not answering one of the questions
+ * it carries. Stepping happens inside a session and nowhere else.
  *
- * Only the groups the scheduler would ask now are returned, so a node with one
+ * Only the cards the scheduler would ask now are returned, so a node with one
  * due group out of three is one unit of work, not three.
  *
- * A node whose due cards are *not* all occlusion cards stays a single unit — a
- * fence can mix an occluded diagram with a caption cloze, and splitting on the
- * diagram alone would leave the cloze card with no key and drop its review.
+ * Splitting used to be reserved for a node whose due cards were *all* occlusion
+ * cards, ordered by `occlusion.target`. That left a three-group cloze node
+ * asking one question where sequential asks three, never asked a bidirectional
+ * node its reverse, and spread the single rating it did take across every card
+ * the node carried. Ordering is `askRank`'s job now, because a cloze or
+ * bidirectional card has no `occlusion.target` to sort on; an occluded node's
+ * cards sort identically under it, so its behaviour is unchanged.
  */
 export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: number): string[] {
 	const due = cards.filter(
 		(card) => !card.disabled && nodeKeyForCard(card) === nodeKey && isDueOrNew(card, now),
 	);
-	if (due.length === 0 || due.some((card) => card.occlusion === undefined)) return [nodeKey];
+	if (due.length === 0) return [nodeKey];
 	return due
 		.slice()
-		.sort((a, b) => groupNumber(a.occlusion!.target) - groupNumber(b.occlusion!.target))
+		.sort((a, b) => askRank(a.id, nodeKey) - askRank(b.id, nodeKey))
 		.map((card) => card.id);
 }
 
@@ -282,13 +337,16 @@ export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: n
  * The cards a spatial target key stands for.
  *
  * Three key shapes reach here: a line key (`…#^block`), a fence key (`bridge`),
- * and — once `spatialStudyKeys` has split an occluded node — a single occlusion
- * card's own ID (`bridge-c1`, `…#^block/c1`). The last is checked first, because
- * both of the other lookups would find nothing for it and silently drop the
- * review, which is exactly how rating an occluded line came to record nothing.
+ * and — once `spatialStudyKeys` has split a node — a single card's own ID
+ * (`bridge-c1`, `bridge-r`, `…#^block/c1`). The last is checked first, because
+ * both of the other lookups would find nothing for a suffixed ID and silently
+ * drop the review, which is exactly how rating an occluded line came to record
+ * nothing. It is checked first for an *unsuffixed* ID too: the forward card of a
+ * bidirectional fence is named after the fence, and falling through would hand
+ * its rating to the reverse card as well.
  */
 export function cardIdsForSpatialKey(cards: readonly Card[], key: string): string[] {
-	const own = cards.find((card) => card.id === key && card.occlusion !== undefined && !card.disabled);
+	const own = cards.find((card) => card.id === key && !card.disabled);
 	if (own) return [own.id];
 	return key.includes("#^") ? cardIdsForLineKey(cards, key) : cardIdsForFenceKey(cards, key);
 }

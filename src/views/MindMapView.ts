@@ -128,6 +128,12 @@ interface OsmosisCardContent {
 	front: string;
 	back: string;
 	occlusions?: CardOcclusion[];
+	/**
+	 * A cloze fence, whose two halves are the same passage blanked and filled in
+	 * — so revealing it replaces the question rather than adding an answer under
+	 * it. See `applyFenceHidden`.
+	 */
+	isCloze?: boolean;
 }
 
 /**
@@ -341,13 +347,14 @@ export class MindMapView extends ItemView {
 	 * The targets each node carries, keyed by the node's own card key, in the
 	 * order study asks them.
 	 *
-	 * Nearly always one key — a node is one unit of work. An **occluded** node in
-	 * study mode is the exception: its shape groups are separate cards with
-	 * separate schedules, so it steps through them one at a time and appears here
-	 * under several keys. That is why `spatialTargets` is not simply the node keys
-	 * on the map, and why the banner's count is honest about how much is left.
-	 * Peek never splits: it reveals in any order and records nothing, so stepping
-	 * would invent an interaction it does not have.
+	 * One key per due card. Nearly always that is one key — a node is one unit of
+	 * work — but anything that fanned out is several: an occluded diagram's shape
+	 * groups, a cloze's groups, the two directions of a bidirectional pair. Each
+	 * is a card with its own schedule, so the node steps through them one at a
+	 * time and appears here under several keys. That is why `spatialTargets` is
+	 * not simply the node keys on the map, and why the banner's count is honest
+	 * about how much is left. Peek never splits: it reveals in any order and
+	 * records nothing, so stepping would invent an interaction it does not have.
 	 */
 	private spatialNodeTargets = new Map<string, string[]>();
 	/**
@@ -355,6 +362,16 @@ export class MindMapView extends ItemView {
 	 * out. Only occlusion group keys appear here; an unsplit node has no target.
 	 */
 	private spatialGroupOcclusions = new Map<string, CardOcclusion>();
+	/**
+	 * The card each split target asks, for every fence that is not a diagram — so
+	 * a stepping node can put the question being rated on screen instead of the
+	 * passage all its cards came from.
+	 *
+	 * An occluded node is absent by design: its steps differ in which masks are
+	 * filled, not in their markdown, and it is repainted through
+	 * `spatialGroupOcclusions` rather than rebuilt.
+	 */
+	private spatialStepCards = new Map<string, Card>();
 	/** Targets already revealed (rated or awaiting a rating). */
 	private spatialRevealed = new Set<string>();
 	/** Targets rated so far (study progress). */
@@ -566,28 +583,30 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Where a fence's card text starts, past its header.
+	 *
+	 * `splitFenceHeader` is the generator's own reader, and using anything else
+	 * here was a bug: the naive "consecutive `key: value` lines" skip these
+	 * parsers used to do stops dead at the first *indented* line, which is what a
+	 * nested schedule block is made of. A scheduled cloze or bidirectional fence
+	 * — `c1:` and `r:` open one — therefore rendered its own `due:` and
+	 * `stability:` fields on the node as though they were the card. Only flat
+	 * schedules and unscheduled fences ever came out right, which is why it
+	 * survived: a basic fence writes its schedule flat.
+	 */
+	private static fenceContentLines(content: string): string[] | null {
+		const body = MindMapView.fenceBodyLines(content);
+		if (!body) return null;
+		return body.slice(splitFenceHeader(body).contentStart);
+	}
+
+	/**
 	 * If `content` is an ```osmosis fence with a *** separator,
 	 * return { front, back } split. Otherwise return null.
 	 */
 	private parseOsmosisFence(content: string): { front: string; back: string } | null {
-		const lines = content.split("\n");
-		// Find opening ```osmosis line
-		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
-		if (openIdx < 0) return null;
-		// Find closing fence (``` with optional whitespace)
-		let closeIdx = -1;
-		for (let i = lines.length - 1; i > openIdx; i--) {
-			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
-		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines (key: value) before first blank line
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const contentLines = body.slice(start);
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
 		// Find *** separator (with optional whitespace)
 		const sepIdx = contentLines.findIndex((l) => l.trim() === "***");
 		if (sepIdx < 0) return null;
@@ -604,30 +623,28 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with cloze deletions (no *** separator),
 	 * return { front, back } with all clozes blanked in front.
 	 */
-	private parseOsmosisCloze(content: string): { front: string; back: string } | null {
-		const lines = content.split("\n");
-		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
-		if (openIdx < 0) return null;
-		let closeIdx = -1;
-		for (let i = lines.length - 1; i > openIdx; i--) {
-			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
-		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const text = body.slice(start).join("\n").trim();
+	private parseOsmosisCloze(content: string): OsmosisCardContent | null {
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
+		const text = contentLines.join("\n").trim();
 		if (!text) return null;
 
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
 		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
-		return { front, back: text };
+		// The `cN:` prefix groups a deletion; it is not part of the answer. The
+		// generator strips it and keeps the `==`/`**` delimiters, so the two sides
+		// of a card read alike, and the map has to do the same — handing the text
+		// back whole printed "c1:Danube" on the node every time the fence showed
+		// its own words, which is before a session and after its last rating.
+		// The front never showed it, being blanked over, which is why it took a
+		// node stepping through its groups to make it visible.
+		const back = text.replace(MindMapView.CLOZE_REGEX, (full) => {
+			const delim = full.startsWith("==") ? "==" : "**";
+			return `${delim}${full.slice(2, -2).replace(/^c\d+:/, "")}${delim}`;
+		});
+		return { front, back, isCloze: true };
 	}
 
 	/** Strip osmosis-cloze inline marker (and its comment prefix) from a line. */
@@ -637,23 +654,9 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with code cloze markers,
 	 * return { front, back } with all cloze regions blanked in front.
 	 */
-	private parseOsmosisCodeCloze(content: string): { front: string; back: string } | null {
-		const lines = content.split("\n");
-		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
-		if (openIdx < 0) return null;
-		let closeIdx = -1;
-		for (let i = lines.length - 1; i > openIdx; i--) {
-			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
-		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const contentLines = body.slice(start);
+	private parseOsmosisCodeCloze(content: string): OsmosisCardContent | null {
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
 		if (!contentLines.some((l) => l.includes("osmosis-cloze"))) return null;
 
 		const frontLines: string[] = [];
@@ -688,7 +691,7 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+		return { front: frontLines.join("\n"), back: backLines.join("\n"), isCloze: true };
 	}
 
 	/**
@@ -767,6 +770,10 @@ export class MindMapView extends ItemView {
 		}
 
 		const frontEl = createElement("div", "osmosis-contextual-front");
+		// What each half currently shows, so a study step can swap in the card
+		// being asked and swap the source text back without re-rendering markdown
+		// that has not changed — see `updateNodeProse`.
+		frontEl.dataset["osmosisProse"] = front;
 		container.appendChild(frontEl);
 
 		if (this.renderComponent) {
@@ -783,6 +790,7 @@ export class MindMapView extends ItemView {
 		container.appendChild(divider);
 
 		const backEl = createElement("div", "osmosis-contextual-revealed");
+		backEl.dataset["osmosisProse"] = back;
 		container.appendChild(backEl);
 
 		if (this.renderComponent) {
@@ -1006,6 +1014,7 @@ export class MindMapView extends ItemView {
 		this.spatialTargets = targets;
 		this.spatialNodeTargets = new Map([...targets].map((key) => [key, [key]]));
 		this.spatialGroupOcclusions.clear();
+		this.spatialStepCards.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -1016,13 +1025,14 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Expand the node keys a study session covers into the units it actually
-	 * asks — one per due shape group on an occluded node, one for everything
-	 * else — and remember which diagram each one is about.
+	 * asks — one per due card — and remember what each one is about: the diagram
+	 * for a shape group, the card itself for every other kind.
 	 */
 	private setSpatialTargets(nodeKeys: ReadonlySet<string>, cards: readonly Card[], now: number): void {
 		this.spatialTargets = new Set<string>();
 		this.spatialNodeTargets = new Map<string, string[]>();
 		this.spatialGroupOcclusions = new Map<string, CardOcclusion>();
+		this.spatialStepCards = new Map<string, Card>();
 
 		for (const nodeKey of nodeKeys) {
 			const keys = spatialStudyKeys(cards, nodeKey, now);
@@ -1030,9 +1040,9 @@ export class MindMapView extends ItemView {
 			for (const key of keys) this.spatialTargets.add(key);
 		}
 		for (const card of cards) {
-			if (card.occlusion && this.spatialTargets.has(card.id)) {
-				this.spatialGroupOcclusions.set(card.id, card.occlusion);
-			}
+			if (!this.spatialTargets.has(card.id)) continue;
+			if (card.occlusion) this.spatialGroupOcclusions.set(card.id, card.occlusion);
+			else this.spatialStepCards.set(card.id, card);
 		}
 	}
 
@@ -1054,10 +1064,11 @@ export class MindMapView extends ItemView {
 			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
 			// Neither a fence node nor an occluded line ever carried the hidden
 			// class — masks and a hidden back half are how they hide — so both
-			// need putting back explicitly.
+			// need putting back explicitly. A null step also puts a stepping
+			// fence's own text back, in place of the last question it was asked.
 			for (const nodeId of this.nodeMap.keys()) {
 				const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-				if (group) this.applyFenceHidden(group, nodeId, false, null);
+				if (group) this.applyFenceHidden(group, nodeId, false, null, null);
 			}
 			removeMaskOverlays(this.svg);
 		}
@@ -1066,6 +1077,7 @@ export class MindMapView extends ItemView {
 		this.spatialTargets.clear();
 		this.spatialNodeTargets.clear();
 		this.spatialGroupOcclusions.clear();
+		this.spatialStepCards.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -1097,7 +1109,10 @@ export class MindMapView extends ItemView {
 			// Only a split node singles a group out; an ordinary one covers or
 			// uncovers itself whole.
 			const occlusion = asking === null ? null : this.spatialGroupOcclusions.get(asking) ?? null;
-			this.applySpatialHidden(nodeId, !answered, occlusion);
+			// The card on screen while it is being asked. Null once the node has
+			// answered them all, and the node goes back to its own text.
+			const step = asking === null ? null : this.spatialStepCards.get(asking) ?? null;
+			this.applySpatialHidden(nodeId, !answered, occlusion, step);
 
 			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
 			// Toggled, not just added: rating one group resets the node to ask the
@@ -1138,10 +1153,16 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Paint one target node. `occlusion` is the diagram being asked when the node
-	 * is stepping through its shape groups, and null when the node hides or
+	 * is stepping through its shape groups, and `step` the card being asked when
+	 * it is stepping through anything else; both are null when the node hides or
 	 * reveals as a whole.
 	 */
-	private applySpatialHidden(nodeId: string, hidden: boolean, occlusion: CardOcclusion | null): void {
+	private applySpatialHidden(
+		nodeId: string,
+		hidden: boolean,
+		occlusion: CardOcclusion | null,
+		step: Card | null,
+	): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
@@ -1150,7 +1171,7 @@ export class MindMapView extends ItemView {
 		// cloze with its blanks, a masked diagram — and hiding the whole node
 		// would take the question away with the answer, leaving a "?" that asks
 		// nothing. Reading view has always worked this way; the map now matches.
-		if (this.applyFenceHidden(group, nodeId, hidden, occlusion)) return;
+		if (this.applyFenceHidden(group, nodeId, hidden, occlusion, step)) return;
 
 		// An occluded line hides its masked regions rather than its whole self:
 		// blanking the node behind a "?" would ask the reader to recall the
@@ -1198,23 +1219,28 @@ export class MindMapView extends ItemView {
 	 * Returns false when the node is not a fence, so the caller falls back to
 	 * blanking it.
 	 *
-	 * The two kinds of fence hide differently. An occluded one is rendered once
-	 * and its masks repainted — covered while the node is hidden, outlined once
+	 * The kinds of fence hide differently. An occluded one is rendered once and
+	 * its masks repainted — covered while the node is hidden, outlined once
 	 * revealed — so the picture never reloads and the node never changes size.
-	 * Every other kind has a real back half in the DOM, which is simply hidden.
+	 * Every other kind has a real back half in the DOM, which is simply hidden;
+	 * a cloze fence additionally drops its *front* on reveal, since the answer is
+	 * the same passage filled in.
 	 *
 	 * The node keeps the height it was laid out at either way. Re-measuring on
 	 * every reveal would reflow the whole map under the reader's cursor, and a
 	 * node that grows when tapped is worse than one with a little space in it.
 	 *
 	 * `target` is the diagram being asked while a node steps through its shape
-	 * groups, and null when the node hides or reveals as a whole.
+	 * groups, and null when the node hides or reveals as a whole. `step` is the
+	 * same thing for every other kind of fence — the card being asked — and swaps
+	 * the node's two halves for that card's own front and back.
 	 */
 	private applyFenceHidden(
 		group: Element,
 		nodeId: string,
 		hidden: boolean,
 		target: CardOcclusion | null,
+		step: Card | null,
 	): boolean {
 		const node = this.nodeMap.get(nodeId);
 		const card = node ? this.getOsmosisCardContent(node.source) : null;
@@ -1244,10 +1270,72 @@ export class MindMapView extends ItemView {
 			return true;
 		}
 
-		for (const el of Array.from(group.querySelectorAll(".osmosis-contextual-revealed, .osmosis-study-divider"))) {
-			el.classList.toggle("osmosis-hidden", hidden);
-		}
+		// A fence that fanned out asks a different question per step, so while one
+		// is on screen the node shows *that card's* front and back — the same
+		// generator-rendered strings sequential and the note put up — rather than
+		// the passage every card came from. Otherwise a three-group cloze node
+		// would put the identical all-blanked passage three times and take three
+		// ratings on it, and a bidirectional node would never ask its reverse.
+		//
+		// A null step puts the fence's own text back: the node has answered
+		// everything it was asked, or the session is over.
+		this.updateNodeProse(group.querySelector(".osmosis-contextual-front"), step?.front ?? card.front);
+		this.updateNodeProse(group.querySelector(".osmosis-contextual-revealed"), step?.back ?? card.back);
+
+		// A cloze card's two halves are one passage, blanked and filled in, so its
+		// answer *replaces* the question — the reader's eye stays on one body of
+		// text, and a node does not carry the same lines twice. A basic or
+		// bidirectional fence keeps both halves, because there its front is a
+		// question the answer does not contain. Note view has read this way since
+		// phase 3; the map used to stack every kind, which made a cloze node as
+		// tall as its passage twice over.
+		//
+		// Gated on being *in* a session, exactly as Note view gates on `hiding`:
+		// `exitSpatialMode` restores every node through this method with
+		// `hidden: false` after clearing the mode, and a collapse that outlived the
+		// session would leave the fence showing its answer and nothing else.
+		const collapse = card.isCloze === true && !hidden && this.spatialMode !== "off";
+		const setHidden = (selector: string, hide: boolean): void => {
+			for (const el of Array.from(group.querySelectorAll(selector))) {
+				el.classList.toggle("osmosis-hidden", hide);
+			}
+		};
+		setHidden(".osmosis-contextual-front", collapse);
+		setHidden(".osmosis-contextual-revealed", hidden);
+		setHidden(".osmosis-study-divider", hidden || collapse);
 		return true;
+	}
+
+	/**
+	 * Put `markdown` on screen in one half of a fence node, skipping the work when
+	 * it is already what the element shows.
+	 *
+	 * The guard is what keeps this affordable: `applySpatialState` re-applies to
+	 * every target node on every render pass, and without it each pass would blank
+	 * a node the reader is looking at and paint it again a frame later. The
+	 * attribute is seeded by `renderOsmosisCardInto`, so a node that never steps
+	 * away from its source text is never re-rendered at all.
+	 *
+	 * The node keeps the size it was laid out at, as everything else here does —
+	 * see `applyFenceHidden`. A step's front is at most as long as the fence's
+	 * full text, which the node was already measured to hold, so the swap fits;
+	 * a long answer revealed under a long question can still clip, and clipping is
+	 * the price of not reflowing the map under the reader's cursor mid-session.
+	 */
+	private updateNodeProse(el: Element | null, markdown: string): void {
+		if (!(el instanceof HTMLElement)) return;
+		if (el.dataset["osmosisProse"] === markdown) return;
+		el.dataset["osmosisProse"] = markdown;
+		el.empty();
+		if (this.renderComponent) {
+			void MarkdownRenderer.render(
+				this.app,
+				markdown,
+				el,
+				this.currentFile?.path ?? "",
+				this.renderComponent,
+			);
+		}
 	}
 
 	/**

@@ -5,7 +5,14 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
 import type { CardOcclusion } from "../database/types";
-import { allLineCardBlockIds, cardIdsForLineKey, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import {
+	allFenceCardKeys,
+	allLineCardBlockIds,
+	cardIdsForLineKey,
+	dueCardsForFenceKey,
+	dueOrNewFenceCardKeys,
+	dueOrNewLineCardBlockIds,
+} from "../study/spatial-study";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { overlayMasks, renderOcclusion } from "./OcclusionRenderer";
@@ -50,6 +57,24 @@ interface NoteRevealState {
 	rated: Set<string>;
 	/** Block IDs being studied this session (due or new at session start). */
 	studyTargets: Set<string> | null;
+	/**
+	 * Fence keys being studied this session (due or new at session start).
+	 *
+	 * Held beside `studyTargets` rather than merged into it because the two are
+	 * different kinds of string — a bare block ID and a fence's own `id:` — and
+	 * every line lookup here indexes by the former. `ContextualStudyProcessor`
+	 * owns the fences themselves and asks this set whether the one it is about
+	 * to draw is a target; the pill counts both.
+	 */
+	fenceTargets: Set<string> | null;
+	/**
+	 * How many questions each fence target asks this session, fixed when study
+	 * starts — a cloze group or a direction of a bidirectional pair is its own
+	 * card, so a fence is one target but often several questions.
+	 */
+	fenceSteps: Map<string, number>;
+	/** How many of them have been answered. Fences rate in the other processor. */
+	ratedFences: Map<string, number>;
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
 	/**
@@ -538,19 +563,26 @@ export class LineRevealProcessor {
 		if (state.mode === "study") {
 			this.endStudy(notePath, state);
 		} else {
-			// Only lines whose card is due (or never reviewed) get studied —
-			// scheduling decides, same as spatial mode (plan §5)
-			const targets = this.dueOrNewBlockIds(notePath, Date.now());
-			if (targets.size === 0) {
-				new Notice("No line cards are due in this note.");
+			// Only cards that are due (or never reviewed) get studied —
+			// scheduling decides, same as spatial mode (plan §5). One timestamp
+			// for both halves so a card on the boundary cannot land in one and
+			// not the other.
+			const now = Date.now();
+			const targets = this.dueOrNewBlockIds(notePath, now);
+			const fences = this.dueOrNewFenceKeys(notePath, now);
+			if (targets.size === 0 && fences.size === 0) {
+				new Notice("No cards are due in this note.");
 				return;
 			}
 			state.mode = "study";
 			state.studyTargets = targets;
+			state.fenceTargets = fences;
 			state.revealed.clear();
 			state.rated.clear();
+			state.ratedFences.clear();
 			state.pendingRating = null;
 			this.planOcclusionSteps(notePath, state, targets);
+			this.planFenceSteps(notePath, state, fences);
 		}
 
 		this.applyAll(notePath);
@@ -589,12 +621,45 @@ export class LineRevealProcessor {
 		}
 	}
 
+	/**
+	 * How many questions each fence target will ask this session.
+	 *
+	 * Counted from the store here rather than reported by each fence as it draws,
+	 * because reading view builds its sections lazily: a fence below the fold has
+	 * not been rendered yet, and the pill would understate the session until the
+	 * reader happened to scroll past it.
+	 *
+	 * `ContextualStudyProcessor` derives the same sequence from the same store
+	 * with the same filter, so the two agree — see `fenceStepPlan`. An occluded
+	 * fence is counted the same way, one question per shape group, since the
+	 * store holds a card per group exactly as it does per cloze group.
+	 */
+	private planFenceSteps(
+		notePath: string,
+		state: NoteRevealState,
+		targets: ReadonlySet<string>,
+	): void {
+		state.fenceSteps.clear();
+
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const now = Date.now();
+		for (const key of targets) {
+			// A target with nothing countable is still one question, for the reason
+			// `planOcclusionSteps` gives: better one that cannot be answered than a
+			// session whose total is short by a fence the reader can see.
+			state.fenceSteps.set(key, Math.max(dueCardsForFenceKey(cards, key, now).length, 1));
+		}
+	}
+
 	/** Leave study mode: drop session state and flush pending schedule writes. */
 	private endStudy(notePath: string, state: NoteRevealState): void {
 		state.mode = "off";
 		state.studyTargets = null;
+		state.fenceTargets = null;
 		state.pendingRating = null;
 		state.revealed.clear();
+		state.ratedFences.clear();
+		state.fenceSteps.clear();
 		state.studySteps.clear();
 		state.stepAt.clear();
 		void this.plugin.scheduleStore.flush();
@@ -631,9 +696,13 @@ export class LineRevealProcessor {
 
 	/**
 	 * Keep the peek/study buttons on every markdown view header in sync:
-	 * present on notes with line cards in both reading and edit mode,
+	 * present on notes carrying **any** card in both reading and edit mode,
 	 * between the mind map button and the reading/edit toggle, with
 	 * `is-active` reflecting the note's current mode.
+	 *
+	 * The gate used to be line cards alone, which meant a note whose cards were
+	 * all ```osmosis fences — a whole deck of basic question/answer cards, say —
+	 * offered no way to study them in place at all.
 	 *
 	 * Returns false when a markdown leaf couldn't be processed because its
 	 * view isn't ready yet (still deferred, header not built, no file) —
@@ -655,7 +724,7 @@ export class LineRevealProcessor {
 
 			const path = view.file?.path;
 			if (path === undefined) allReady = false;
-			const show = path !== undefined && this.lineCardBlockIds(path).size > 0;
+			const show = path !== undefined && this.hasAnyCard(path);
 
 			let studyBtn = actions.querySelector(".osmosis-line-study-action");
 			let peekBtn = actions.querySelector(".osmosis-line-peek-action");
@@ -761,6 +830,16 @@ export class LineRevealProcessor {
 			total += steps;
 			done += state.rated.has(blockId) ? steps : (state.stepAt.get(blockId) ?? 0);
 		}
+		// A fence counts its questions the same way: a three-group cloze fence asks
+		// three and a bidirectional pair asks two, each rated separately, so the
+		// pill would sit still through most of a note of them if it counted fences.
+		for (const key of state.fenceTargets ?? []) {
+			const steps = state.fenceSteps.get(key) ?? 1;
+			total += steps;
+			// Clamped, because the count comes from another processor's ratings and a
+			// total that ran ahead of itself would be worse than one that stalls.
+			done += Math.min(state.ratedFences.get(key) ?? 0, steps);
+		}
 		return { done, total };
 	}
 
@@ -798,6 +877,51 @@ export class LineRevealProcessor {
 		return dueOrNewLineCardBlockIds(this.plugin.cardStore.getCardsByNote(notePath), now);
 	}
 
+	/** Fence keys of this note's fence cards, whatever their schedule. */
+	private fenceKeys(notePath: string): Set<string> {
+		return allFenceCardKeys(this.plugin.cardStore.getCardsByNote(notePath));
+	}
+
+	/** Fence cards the scheduler would study now: due, or new (never reviewed). */
+	private dueOrNewFenceKeys(notePath: string, now: number): Set<string> {
+		return dueOrNewFenceCardKeys(this.plugin.cardStore.getCardsByNote(notePath), now);
+	}
+
+	/** Whether the note carries any card at all — line or fence. Gates the header buttons. */
+	private hasAnyCard(notePath: string): boolean {
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		return allLineCardBlockIds(cards).size > 0 || allFenceCardKeys(cards).size > 0;
+	}
+
+	/**
+	 * Whether this fence is one of the questions the running session is asking.
+	 *
+	 * Read by `ContextualStudyProcessor`, which owns fence rendering: a fence
+	 * that is not a target renders revealed and inert during a session — it is
+	 * context, not a question — and takes no rating.
+	 */
+	isFenceTarget(notePath: string, fenceKey: string): boolean {
+		const state = this.states.get(notePath);
+		if (!state || state.mode !== "study") return false;
+		return state.fenceTargets?.has(fenceKey) ?? false;
+	}
+
+	/**
+	 * Record that one of a fence's questions was answered, so the pill advances.
+	 *
+	 * The rating itself is written by `ContextualStudyProcessor` — this only
+	 * tells the session's progress counter that one of its questions is done.
+	 * Counted rather than flagged: a fence that fans out is answered a card at a
+	 * time, and each of those is a question the reader has finished.
+	 */
+	markFenceRated(notePath: string, fenceKey: string): void {
+		const state = this.states.get(notePath);
+		if (!state || state.mode !== "study") return;
+		if (!state.fenceTargets?.has(fenceKey)) return;
+		state.ratedFences.set(fenceKey, (state.ratedFences.get(fenceKey) ?? 0) + 1);
+		this.syncBanners();
+	}
+
 	private fileCache(notePath: string): CachedMetadata | null {
 		const file = this.plugin.app.vault.getFileByPath(notePath);
 		if (!(file instanceof TFile)) return null;
@@ -821,6 +945,9 @@ export class LineRevealProcessor {
 				revealed: new Set(),
 				rated: new Set(),
 				studyTargets: null,
+				fenceTargets: null,
+				ratedFences: new Map(),
+				fenceSteps: new Map(),
 				pendingRating: null,
 				pendingRatingAt: 0,
 				studySteps: new Map(),
