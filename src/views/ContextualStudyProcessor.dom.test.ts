@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import type { Card } from "../database/types";
 import type OsmosisPlugin from "../main";
+import { dueOrNewFenceCardKeys } from "../study/spatial-study";
 import { ContextualStudyProcessor } from "./ContextualStudyProcessor";
 
 /**
@@ -171,7 +172,14 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			getCardsByNote: () => cards,
 			getCard: (id: string) => cards.find((card) => card.id === id),
 		},
-		lineReveal: { revealMode: () => mode },
+		// Mirrors the real processor: during a session the fences the scheduler
+		// picked out are the questions, and only those take a rating.
+		lineReveal: {
+			revealMode: () => mode,
+			isFenceTarget: (_path: string, fenceId: string) =>
+				mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
+			markFenceRated: () => { /* the pill is not under test here */ },
+		},
 		createSessionManager: () => ({
 			recordReview: (cardId: string, rating: number) => {
 				reviews.push({ cardId, rating });

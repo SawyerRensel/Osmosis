@@ -81,18 +81,22 @@ export class ContextualStudyProcessor {
 	 */
 	private readonly occlusionPlan = new Map<string, OcclusionStep[]>();
 	/**
-	 * The occluded fences on screen, so `refresh` can restart one when the note's
-	 * reveal mode changes.
+	 * The fences on screen, so `refresh` can restart one when the note's reveal
+	 * mode changes.
 	 *
 	 * A fence is a code block, and toggling peek or study does **not** re-run its
 	 * processor — which is why the rating row is read late, at reveal time.
-	 * Stepping cannot be read late: whether a diagram covers every group at once
-	 * or singles one out is decided when the *front* is drawn, so starting study
-	 * has to reach fences that were rendered before it. Only occluded fences are
-	 * tracked, because they are the only ones that render differently inside
-	 * study than outside it.
+	 * Whether a fence is one of a *session's* questions cannot be read that late:
+	 * a fence the session is not asking shows both its sides from the start, and
+	 * that is decided when the front is drawn. So starting or stopping study has
+	 * to reach fences that were already on screen.
+	 *
+	 * This used to track only occluded fences, on the reasoning that they were
+	 * the only ones that render differently inside study than outside it. That
+	 * stopped being true once a session began distinguishing its targets from the
+	 * cards around them.
 	 */
-	private readonly occlusionCards: {
+	private readonly trackedFences: {
 		el: HTMLElement;
 		sourcePath: string;
 		restart: () => void;
@@ -186,22 +190,22 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Remember an occluded fence so `refresh` can restart it, dropping any entry
-	 * whose element has since left the document.
+	 * Remember a fence so `refresh` can restart it, dropping any entry whose
+	 * element has since left the document.
 	 *
 	 * Pruning on every render rather than on a schedule is enough: a note that is
 	 * re-rendered replaces its own entries, and one that is closed stops producing
 	 * them — so the list is bounded by what is actually on screen.
 	 */
-	private trackOcclusionCard(el: HTMLElement, sourcePath: string, restart: () => void): void {
-		for (let i = this.occlusionCards.length - 1; i >= 0; i--) {
-			if (!this.occlusionCards[i]!.el.isConnected) this.occlusionCards.splice(i, 1);
+	private trackFence(el: HTMLElement, sourcePath: string, restart: () => void): void {
+		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
+			if (!this.trackedFences[i]!.el.isConnected) this.trackedFences.splice(i, 1);
 		}
-		this.occlusionCards.push({ el, sourcePath, restart });
+		this.trackedFences.push({ el, sourcePath, restart });
 	}
 
 	/**
-	 * Start a note's occluded fences over, for when its reveal mode changes.
+	 * Start a note's fences over, for when its reveal mode changes.
 	 *
 	 * Called by `LineRevealProcessor` on entering and leaving peek or study, which
 	 * are the two things that change what a fence should be drawing and do not
@@ -213,7 +217,7 @@ export class ContextualStudyProcessor {
 	 * on a line.
 	 */
 	refresh(notePath: string): void {
-		for (const entry of [...this.occlusionCards]) {
+		for (const entry of [...this.trackedFences]) {
 			if (entry.sourcePath !== notePath || !entry.el.isConnected) continue;
 			entry.restart();
 		}
@@ -294,7 +298,12 @@ export class ContextualStudyProcessor {
 
 		const alreadyRevealed = this.revealedCardIds.has(parsed.cardId);
 		const alreadyRated = this.ratedCardIds.has(parsed.cardId);
-		let revealed = alreadyRevealed;
+		// A session asks the cards the scheduler picked out. The rest of the note's
+		// cards are not questions right now, so they read as what they are —
+		// context, already answered — rather than sitting there as blanks the
+		// reader can never clear.
+		const inert = this.isInert(sourcePath, parsed.cardId);
+		let revealed = alreadyRevealed || inert;
 
 		const showBack = (): void => {
 			hiddenEl.addClass("osmosis-hidden");
@@ -305,7 +314,18 @@ export class ContextualStudyProcessor {
 				frontEl.addClass("osmosis-hidden");
 				dividerEl.addClass("osmosis-hidden");
 			}
+			revealedEl.empty();
 			this.renderSide(parsed, "back", revealedEl, sourcePath);
+		};
+
+		const hideBack = (): void => {
+			hiddenEl.removeClass("osmosis-hidden");
+			revealedEl.addClass("osmosis-hidden");
+			revealedEl.empty();
+			if (parsed.isCloze) {
+				frontEl.removeClass("osmosis-hidden");
+				dividerEl.removeClass("osmosis-hidden");
+			}
 		};
 
 		const reveal = (): void => {
@@ -314,17 +334,18 @@ export class ContextualStudyProcessor {
 			this.revealedCardIds.add(parsed.cardId);
 			showBack();
 
-			if (parsed.cardId && !alreadyRated && this.isStudying(sourcePath)) {
+			if (parsed.cardId && !alreadyRated && this.isFenceTarget(sourcePath, parsed.cardId)) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		};
 
-		// Auto-reveal if this card was previously revealed this session
-		if (alreadyRevealed) {
+		// Auto-reveal if this card was previously revealed this session, or if the
+		// running session is not asking it.
+		if (revealed) {
 			showBack();
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
-			} else if (parsed.cardId && this.isStudying(sourcePath)) {
+			} else if (parsed.cardId && this.isFenceTarget(sourcePath, parsed.cardId)) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		}
@@ -333,6 +354,28 @@ export class ContextualStudyProcessor {
 		container.addEventListener("click", (e) => {
 			if (!revealed && e.target === container) {
 				reveal();
+			}
+		});
+
+		// Starting or stopping a session changes which of these cards are
+		// questions, and does not re-run this processor. Repaint in place rather
+		// than rebuilding, so the note does not jump under the reader.
+		this.trackFence(container, sourcePath, () => {
+			const nowInert = this.isInert(sourcePath, parsed.cardId);
+			const keep = this.revealedCardIds.has(parsed.cardId);
+			if (nowInert || keep) {
+				revealed = true;
+				showBack();
+			} else {
+				revealed = false;
+				hideBack();
+			}
+
+			ratingSlot.empty();
+			if (revealed && this.ratedCardIds.has(parsed.cardId)) {
+				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+			} else if (revealed && parsed.cardId && this.isFenceTarget(sourcePath, parsed.cardId)) {
+				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		});
 	}
@@ -498,7 +541,7 @@ export class ContextualStudyProcessor {
 			if (e.target === container) reveal();
 		});
 
-		this.trackOcclusionCard(container, sourcePath, () => {
+		this.trackFence(container, sourcePath, () => {
 			this.resetOcclusionState(parsed.cardId);
 			draw();
 		});
@@ -532,6 +575,27 @@ export class ContextualStudyProcessor {
 	 */
 	private isStudying(sourcePath: string): boolean {
 		return this.plugin.lineReveal?.revealMode(sourcePath) === "study";
+	}
+
+	/**
+	 * Whether this fence is one of the questions the running session is asking.
+	 *
+	 * Only a target takes a rating. Outside a session nothing is a target, which
+	 * is what keeps peek — and ordinary reading — from writing a schedule.
+	 */
+	private isFenceTarget(sourcePath: string, fenceId: string): boolean {
+		return this.plugin.lineReveal?.isFenceTarget(sourcePath, fenceId) ?? false;
+	}
+
+	/**
+	 * Whether this fence should show both its sides because a session is running
+	 * and it is not one of the session's questions.
+	 *
+	 * Deliberately false outside study: a card the reader has simply scrolled to
+	 * is still a card, and reading mode has always hidden its back until asked.
+	 */
+	private isInert(sourcePath: string, fenceId: string): boolean {
+		return this.isStudying(sourcePath) && !this.isFenceTarget(sourcePath, fenceId);
 	}
 
 	/**
@@ -756,6 +820,9 @@ export class ContextualStudyProcessor {
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
+				// The session's progress pill lives in LineRevealProcessor, which
+				// owns the mode; tell it one of its questions is answered.
+				this.plugin.lineReveal?.markFenceRated(sourcePath, cardId);
 				void this.recordRating(cardId, rating, Date.now() - revealedAt);
 
 				this.undoStack.push({
