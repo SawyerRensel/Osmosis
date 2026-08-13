@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Progress
+status: Done
 priority:
-progress_current: 5
+progress_current: 6
 progress_total: 6
 date_created: 2026-08-03T15:38:04.268Z
-date_modified: 2026-08-12T19:47:22.000Z
+date_modified: 2026-08-13T02:12:31.000Z
 date_start_scheduled: 2026-08-09T17:34:17
 date_start_actual: 2026-08-09T17:34:17
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-08-13T02:12:31
+date_end_actual: 2026-08-13T02:12:31
 all_day: true
 repeat_frequency:
 repeat_interval:
@@ -34,6 +34,7 @@ children:
 blocked_by:
 cover:
 color:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/21
 ---
 
 # Feature Request
@@ -272,8 +273,9 @@ ungroup, align. Plus the two modes.
 
 ## Progress
 
-Branch `feature/image-occlusion`, cut from `release/0.0.4`, **pushed**. No PR to
-the release branch — this note closes only when all six phases are done.
+Branch `feature/image-occlusion`, cut from `release/0.0.4`. **All six phases are
+done and manually verified**, and the branch is open as
+[PR #21](https://github.com/SawyerRensel/Osmosis/pull/21).
 
 | Phase | State | Commits |
 |---|---|---|
@@ -283,11 +285,16 @@ the release branch — this note closes only when all six phases are done.
 | 3. Editor | Done, manually verified | `a533221` |
 | 4. Full toolset | Done, manually verified | `88db8a7`, `1a21428`, `ad93112`, `0995a7d` |
 | 5. Remaining surfaces | Done, manually verified | `5cc7e74`, `dd7de3e`, `b4a1392` |
-| 6. Touch | Pan and pinch done (`ad93112`); one-finger authoring on a real phone untested | |
 | — | Anki's text fields removed, Cancel dropped, mode labels shortened | `51a749b` |
+| — | Rotation for shapes and annotation labels | `ac3710f` |
+| — | An occluded line's masks ring on reveal rather than clearing | `a7c8b5c` |
+| — | Labels sized from a box, as a fraction of the picture | `04a09da` |
+| — | Contextual study steps through a carrier's shape groups | `af947b4` |
+| 6. Touch | Done, manually verified on a real device | `ad93112`, `9aa1f61` |
 
-Rotation was scoped during phase 5 and deliberately not built — it is the one
-piece of the editor still missing, and it has a prompt of its own below.
+Rotation was scoped during phase 5 and deferred; it shipped afterwards in
+`ac3710f`, and the editor is now feature-complete against Anki's toolset apart
+from the text fields, which were removed deliberately.
 
 Because PR #20 landed *here* rather than on `release/0.0.4`, the fence schedule
 format change reaches the release branch only when this branch merges.
@@ -471,11 +478,14 @@ verified; the decisions below are settled.
   of the wrapper are the same 0–1 coordinates, so `positionAnnotation` is
   exported from `OcclusionRenderer` and shared with the editor; that sharing is
   what stops the two halves drifting.
-- **Annotation font size is a fixed UI size, not a fraction of the image.** A
-  label is chrome on the picture rather than part of it, and one scaled to the
-  image becomes illegible wherever the card renders small — which is exactly
-  what phase 5's mind-map nodes will do to it. Add a `size` field only if that
-  turns out to be wrong.
+- ~~**Annotation font size is a fixed UI size, not a fraction of the image.**~~
+  *Reversed in `04a09da` — see "Labels became boxes" below.* The reasoning was
+  that a label is chrome on the picture rather than part of it, and one scaled to
+  the image becomes illegible wherever the card renders small, which is exactly
+  what a mind-map node does to it. That consequence is real and was accepted
+  knowingly; what outweighed it was that a label the user drags to a size has to
+  keep that size relative to the picture, or it is not the same annotation on two
+  surfaces.
 - **Annotation text is always double-quoted on write.** It is the one field a
   user types freely, so it can hold a `:`, a `#`, or a leading `-`, any of which
   changes the meaning of a bare scalar. In the frontmatter carrier a malformed
@@ -766,6 +776,152 @@ find them arguing the opposite case.
   both on one row; below that it still wraps, and the next lever is the toolbar's
   own gaps rather than the labels.
 
+### Rotation
+
+Shipped in `ac3710f`, manually verified 2026-08-12. This was scoped in phase 5,
+deferred, and built last.
+
+- **The transform is aspect-compensated, not a plain `rotate()`.** The overlay is
+  stretched by `preserveAspectRatio="none"` — the thing that lets normalised
+  coordinates land without measuring anything — so a `rotate()` inside it applies
+  *after* the stretch and a tilted rectangle renders as a parallelogram on any
+  non-square image. This project's diagrams are wide, so it was glaring.
+  `rotationTransform` emits `matrix(cos, a·sin, −sin/a, cos, e, f)` with
+  `a = W/H` instead. Of the three options weighed, this was the only
+  geometrically correct one that keeps a single coordinate contract.
+- **The aspect reaches `maskElements` as an argument, never off the DOM.**
+  `MaskElement` is what `occlusion-masks.test.ts` asserts against, so reading the
+  image would have made the paint untestable. The renderer supplies it from the
+  image's natural size, paints at `a = 1` before the picture loads, and repaints
+  on `load` — registered **only when something is rotated**, so an unrotated card
+  adds no listener and cannot loop.
+- **Stored geometry stays the unrotated box.** Every editor gesture turns the
+  pointer back into the shape's own frame on the way in, and the grips are drawn
+  inside a group carrying the shape's transform — so the picture and the hit test
+  work in one frame by construction rather than by two pieces of arithmetic
+  agreeing.
+- **`resizeAnchored` pins the opposite handle in screen space.** Without it,
+  resizing a tilted shape slides it across the picture. 0–1 clamping is dropped
+  for a rotated resize or vertex drag, because in a turned frame those axes are
+  not the image's borders.
+- **Labels turn through CSS and need no compensation** — they are positioned HTML
+  precisely so they escape the overlay's stretch.
+
+### Labels became boxes
+
+Shipped in `04a09da`, manually verified 2026-08-12. **This reverses the phase 4
+decision that a label is fixed-size chrome** — see the struck-through bullet in
+"Phase 4 decisions worth remembering".
+
+- **An annotation is a box like any other shape**, with normalised `w`/`h`, and
+  turns about the box's centre rather than its anchor. It therefore moves,
+  resizes and rotates through exactly the arithmetic a shape uses
+  (`annotationBox`/`annotationWithBox`, inverse-rotated pointer) and grows the
+  same eight handles and rotation grip. That sharing is the point: a second
+  arithmetic for labels is what would drift.
+- **The consequence phase 4 guarded against is real and accepted.** A label in a
+  small mind-map node now shrinks with the picture rather than staying legible.
+  It was taken knowingly, because a label the user has dragged to a size must
+  keep that size relative to the picture or it is not the same annotation on two
+  surfaces.
+- **Glyphs are `cqh` against the annotation layer**, which is a size container
+  precisely because it is pinned with `inset: 0` — so its size is the image's box
+  and never its own contents. Position and box stay percentages, so a webview
+  without container queries still lands and turns a label correctly and only the
+  font falls back.
+- **Only the editor measures text.** A label is placed before it has any text, so
+  its width can then only be a guess; the editor measures the committed text off
+  a real chip and stores the result. Every study surface paints from the stored
+  box with nothing measured — that is the contract the whole feature rests on. A
+  width the user drags is theirs until they retype.
+- **The default height is a seventh of the picture, not a twelfth.** Labels scale
+  from the image's *height*, and a wide, short diagram has little height to take
+  a fraction of; a twelfth read as a squint. A seventh is about what a label has
+  to be to be comfortable at the editor's fit-to-window zoom, which is where
+  labels get placed.
+- **Mask strokes and label corners are fractions of the picture now**, not fixed
+  pixels — those were computed against a mind-map node's thumbnail layout and
+  then magnified with the node, giving heavy borders and pill-shaped labels. The
+  editor deliberately keeps fixed thicknesses, which is not an inconsistency:
+  elsewhere the picture is *shown*, so an outline is part of it; in the editor it
+  is *worked on*, zoom is a magnifier, and an outline that fattens as you magnify
+  hides the very edge you zoomed in to find. The grips have always worked this
+  way.
+
+### An occluded line rings its masks on reveal
+
+Shipped in `a7c8b5c`.
+
+`trackLine` built a masked placeholder, but the reveal did what it does for any
+line card — hide the placeholder, swap the line's own content back in. That
+content is the bare embed, so masks and annotations went with it: rating produced
+an unmarked picture with nothing left to say which region had been the question,
+which is the one thing occlusion exists not to do.
+
+The line's `CardOcclusion` is now held on its `TrackedLine`, and the placeholder
+stays up for the whole of peek and study, repainting `all-hidden` →
+`all-revealed` instead of being swapped away. That matches what a fence card
+already did in reading view and holds the line's height steady across the flip.
+Repainting goes through `overlayMasks`, so the `<img>` is never rebuilt and the
+diagram cannot flash away mid-answer. The occlusion is looked up on **every**
+render, not just the first: the placeholder survives a re-render, but the card
+store may only have caught up with the line's shapes since.
+
+### Contextual study steps through the groups
+
+Shipped in `af947b4`, manually verified 2026-08-12.
+
+- **Reading view had two jobs on one diagram and was doing only one.** Peek is a
+  reader looking at a picture — every group blanked at once, none singled out,
+  nothing recorded. Study is a card player, exactly as sequential and spatial
+  are, so it asks the groups one at a time and moves one schedule per answer.
+  Both note surfaces derive that sequence from `src/study/occlusion-steps.ts`,
+  kept pure so a fence and a line order their questions identically.
+- **Contextual ratings on an occluded fence went to the *fence* ID**, which is
+  not a card the store holds, so `recordRating`'s guard silently dropped every
+  one of them. They now go to the group's own card. This is the
+  card-ID-vs-carrier-key mistake for the **fourth** time.
+- **A fence is a code block, so toggling peek or study never re-ran its
+  processor.** A render registry plus `refresh(notePath)` restarts a tracked card
+  in place.
+- **An occluded fence is built once and repainted, never rebuilt.** Emptying its
+  container re-created the `<img>`, which has no height until the picture
+  decodes, so the note collapsed under the reader and reading view scrolled them
+  off the diagram they were answering. The renderer also remembers each picture's
+  natural size and reserves its box on the next render, and a fence holds the
+  height it last rendered to across the frame in which Obsidian rebuilds the
+  block.
+- **The fitted image gives the stage a pixel back.** Filling the stage exactly
+  had the image and the scrollbar shaking at each other through the resize
+  observer.
+
+### Phase 6 — touch, and selecting masks with labels
+
+Pan, pinch and the Pan tool landed in `ad93112` (recorded under phase 4's fix-up,
+where they were built); multi-select by touch landed in `9aa1f61`. Manually
+verified on a real device 2026-08-12, which is what closes phase 6.
+
+- **Touch multi-select is sticky, armed by a 500ms hold, and touch/pen only.** A
+  hold-per-shape scheme cannot work: the second shape's press would replace the
+  selection the first one built, so only one thing is ever selectable. A press on
+  bare image is the only way out by touch alone, so keep it. The hint line
+  announces the mode, since the gesture leaves nothing on screen. **Mice are
+  excluded on purpose** — holding still before moving is how a careful user
+  starts a precise drag.
+- **Labels join the selection, and the two lists are no longer mutually
+  exclusive.** The old comment justified the exclusion with "the two share no
+  operations beyond delete and duplicate"; aligning a label against a mask is the
+  case that retired it. They stay *two* lists (`selectedShapes` /
+  `selectedAnnotations`) because grouping and ungrouping are meaningless for a
+  label, which derives no card — those still read `selectedShapes` alone. Do not
+  re-split them, and do not extend Group/Ungroup to labels.
+- **Align and move are box arithmetic over one list.** `alignShapes`/`moveShapes`
+  became `alignBoxes`/`moveBoxes`, and `reshapeSelection` maps a mixed selection
+  through them. Two passes would align labels to the labels' box and masks to the
+  masks', and would clamp a drag twice and shear the arrangement apart at the
+  image's edge. The `annotation` drag variant is gone with it — a label drag is a
+  move of a one-element selection.
+
 ## Surface map
 
 | File | Change |
@@ -779,10 +935,15 @@ find them arguing the opposite case.
 | `src/views/SequentialStudyModal.ts` | Render occlusion cards |
 | `src/views/ContextualStudyProcessor.ts` | Render occlusion cards in place |
 | `src/views/MindMapView.ts` | Render occlusion cards in nodes; step through their groups in study |
+| `src/views/LineRevealProcessor.ts` | Masked placeholder for an occluded line; ring on reveal |
 | `src/study/spatial-study.ts` | Node/card keys; split an occluded node into its due groups |
 | `src/study/occlusion-masks.ts` | Which masks each side paints |
+| `src/study/occlusion-geometry.ts` | New — editor arithmetic: hit tests, handles, rotation, align/move |
+| `src/study/occlusion-history.ts` | New — the undo snapshot stack |
+| `src/study/occlusion-steps.ts` | New — the order a carrier's groups are asked in |
+| `src/test/obsidian-stub.ts` | New — stands in for the `obsidian` module under vitest |
 | `src/main.ts` | Image context-menu item; rename rewriting |
-| `src/database/types.ts` | `occlusion` card type; shape types |
+| `src/database/types.ts` | `occlusion` card type; shape, annotation and rotation types |
 | `styles.css` | Mask, editor, and study-modal layout |
 
 ## Acceptance criteria
@@ -790,8 +951,8 @@ find them arguing the opposite case.
 - [x] Right-clicking an image offers "Create image occlusion"
 - [x] Rect, ellipse, and polygon can be drawn, moved, resized, and deleted
 - [x] Shapes sharing a group produce exactly one card
-- [x] Both modes render correctly on front and back — *sequential only; the other
-      two surfaces are phase 5*
+- [x] Both modes render correctly on front and back — *on all three surfaces;
+      contextual and spatial landed in phase 5*
 - [x] One fence with two labelled embeds keeps its shape sets distinct
 - [x] Reordering embeds within a fence does not move masks between images
 - [x] The `{a}` label never appears as text in sequential, contextual, or spatial
@@ -809,9 +970,13 @@ find them arguing the opposite case.
 - [x] Masks stay aligned when the image is resized or given a `|300` suffix
 - [x] Reopening the editor restores the existing shape set exactly
 - [x] Pre-existing `osmosis-schedule` entries still load unchanged
-- [ ] Shapes can be drawn and manipulated by touch on mobile — *pan and pinch
-      done and confirmed; one-finger authoring on a real phone untested*
-- [x] `npm run lint` and `npm test` clean
+- [x] Shapes can be drawn and manipulated by touch on mobile — *pan, pinch,
+      one-finger authoring and sticky multi-select, confirmed on a real device
+      2026-08-12*
+- [x] Shapes and annotation labels can be rotated, and a rotated rect renders as
+      a rectangle rather than a parallelogram on a wide image — *added after the
+      six phases, `ac3710f`*
+- [x] `npm run lint` and `npm test` clean — *1766 tests passing*
 
 ## Test plan
 
@@ -821,198 +986,95 @@ frontmatter, group→card derivation, ID derivation matching cloze's `-cN`,
 coordinate normalisation, label binding with multiple embeds, rename rewriting,
 and backwards compatibility of existing schedule entries.
 
-Manual fixture — `e2e/fixtures/flashcard/occlusion.md`, copied to `vault/`:
-one fence with two labelled embeds and mixed shape kinds, one occluded line
-card, and one pre-existing non-occlusion line card in the same note to prove the
-compatibility path.
+Manual fixtures live in `e2e/fixtures/` (**not** an `e2e/fixtures/flashcard/`
+subdirectory — an earlier draft of this note said otherwise) and are copied to
+`vault/tests/flashcard/`. The images live in `vault/media/`; do **not** copy them
+next to the notes, or the short links resolve ambiguously.
+
+| Fixture | Covers |
+|---|---|
+| `occlusion.md` | Phases 1–2: one fence with two labelled embeds and mixed shape kinds, one occluded line card, and one pre-existing non-occlusion line card to prove the compatibility path |
+| `occlusion-editor.md` | Phase 3 |
+| `occlusion-toolset.md` | Phase 4 |
+| `occlusion-surfaces.md` | Phase 5 — contextual and spatial |
+| `occlusion-rotation.md` | Rotation, on a deliberately wide image (`gantry-truss.svg`) so a shear would be obvious |
+| `occlusion-multi-select.md` | Touch multi-select |
+
+All the vault copies get dirty as soon as you test, because studying writes
+schedules back. **Reset them from `e2e/fixtures/` before each run**, and commit
+the reset as its own `chore:` commit afterwards. **Back-date every card in any
+new fixture** — deck Total is `new + learn + due`, so a future-dated `review`
+card cannot be studied and looks exactly like a card that failed to generate.
 
 ## Follow-ups
 
 - [[Spaced Repetition for Excalidraw]] and
   [[Spaced Repetition for Obsidian Canvas]] share the mask-overlay renderer
 - Occlusion cards in the [[Create Card Browser - Editor]] type filter
+- [[Rating a fence card rewrites the block being read]] — found while testing
+  phase 5's contextual surface; its fix rides in the same PR
 
 ---
 
+# What was implemented
 
+**Where it shipped.** [PR #21](https://github.com/SawyerRensel/Osmosis/pull/21),
+`feature/image-occlusion` → `release/0.0.4`, 37 commits. The per-phase commits
+are in the Progress table above.
 
-# Prompt — Rotation, then phase 6
+**What it does.** Right-click any image → **Create image occlusion** opens a
+canvas editor with Anki's full toolset — select, rect, ellipse, polygon, text
+annotation, rotate, undo/redo, zoom, translucency, delete, duplicate, group,
+ungroup, align, pan — plus the two modes. Masks become flashcards that study in
+all three modes: sequential, contextual (in the note), and spatial (in a mind-map
+node).
 
-Written 2026-08-11 at `b4a1392`, as a standalone brief for a fresh session. It
-replaces the phase 5 fix-up prompt, whose durable content now lives in "The
-phase 5 fix-up" above. **Two things are left in this feature: rotation, and a
-real-device pass.** Nothing else is outstanding.
+**The idea the design rests on.** Masks *are* card data, so they live wherever
+that card's data already lives — no new fence type, no SVG sidecar, no parallel
+store. And a shape group **is** a cloze group, which meant Anki's shape-grouping
+feature and the `-cN` ID derivation both arrived for free. The one thing that
+cannot be inline is geometry, since nobody hand-writes coordinates; shapes
+therefore sit in the header, bound to their embed by a `{label}` that is stripped
+at render time on every surface.
 
-## Where things stand
+**The contract everything else follows from.** The overlay measures nothing: a
+wrapper shrunk to exactly the image's box, with a `viewBox="0 0 1 1"` SVG pinned
+to its edges at `preserveAspectRatio="none"` and the image at `object-fit: fill`.
+Normalised coordinates then land on the right pixels at any size, with no
+`ResizeObserver` and no load handler, and a shape drawn in the editor lands on
+the same pixels in study. **Changing either half of that alone silently
+misaligns every mask** — it is also what forced rotation to be
+aspect-compensated and annotations to be positioned HTML rather than SVG
+`<text>`.
 
-Branch `feature/image-occlusion`, at `b4a1392`. Work on this branch directly —
-the six phases share it and there is no PR to open yet. `npm run lint`,
-`npm test` (**1630 passing**), and `npm run build` are clean. `parser.test.ts`
-carries wall-clock benchmarks that fail under load; re-run before investigating
-a failure there — they pass in isolation.
+**The recurring bug, four times over.** A carrier key is not a card ID. An
+occluded line fans out into one card *per shape group* while still living on its
+line, so `cardType`-based and ID-based routing both fail on it: schedules were
+dropped in phase 1, line chrome vanished in phase 3, node keys never matched in
+phase 5, and contextual ratings went to the fence ID in `af947b4`.
+`cardIdsForLineKey`, `cardIdsForFenceKey` and `occlusionForLineKey` in
+`src/study/spatial-study.ts` exist so it need not happen a fifth time.
 
-Phases 1–5 are shipped and manually verified. Spatial study now steps through an
-occluded node's shape groups one at a time, Back Extra no longer leaks onto a
-covered node, and the sequential modal has a single scroll surface with its
-buttons always reachable. **Read "Phase 2/3/4/5 decisions worth remembering" and
-"The phase 5 fix-up" above before touching anything** — the coordinate contract,
-the key shapes, and the undo model all constrain this work, and several of those
-decisions look like tidy-up opportunities and are not.
+**Decisions worth remembering** are recorded per phase above, under "Phase N
+decisions worth remembering" and the fix-up sections. Two are **deliberate
+reversals of working, tested behaviour** and will read as mistakes to a session
+that only sees the code:
 
-## 1. Rotation — shapes and annotation labels
+- Anki's Header, Back Extra and Comments fields were built, shipped, used, and
+  then removed entirely — the note's own prose around the embed is already the
+  card's text on every surface. See "Anki's text fields, reversed".
+- Annotation labels scale with the picture, reversing phase 4's fixed-size
+  decision. See "Labels became boxes". The illegible-in-a-small-node consequence
+  is real and was accepted knowingly.
 
-The user asked for a rotation handle so shapes can be tilted, and chose "shapes
-**and** annotation labels", which partially reverses the phase 4 decision that a
-label is chrome on the picture rather than part of it. Labels rotate; they still
-do not scale with the image.
+Both migrate by being ignored: unknown keys are dropped on the next write, so old
+notes load with their shapes intact and no sweep was needed.
 
-**The constraint that shapes the whole job.** The mask overlay is deliberately
-stretched — `viewBox="0 0 1 1"` with `preserveAspectRatio="none"` — which is
-exactly what lets normalised coordinates land without measuring anything (phase
-2). A plain `rotate()` inside that space is applied in the *stretched* space, so
-a rotated rectangle renders as a parallelogram on any non-square image, and the
-project's diagrams are wide. Three ways out, in order of preference:
+**Surface map** and **Test plan** are the sections above. Verified with
+`npm run lint`, `npm test` (1766 passing) and `npm run build` clean, and every
+phase manually verified — phase 6 on a real device on 2026-08-12.
 
-1. **Aspect-compensated transform.** Rotation in pixel space is `M = S⁻¹RS` with
-   `S = diag(W,H)`, giving SVG `matrix(cos, sin·a, −sin/a, cos, e, f)` where
-   `a = W/H` and `e`/`f` put the origin back at the shape's centre. Needs one
-   scalar, the aspect, at paint time — available from the image's
-   `naturalWidth`/`naturalHeight` once it has loaded. `overlayMasks` already
-   repaints any `.osmosis-occlusion` wrapper in place, so a repaint on the
-   image's `load` event (`{ once: true }`, guard against loops) is cheap; paint
-   with `a = 1` until then. This is the only option that is geometrically
-   correct, and it keeps one coordinate contract.
-2. **Rotate in normalised space and accept the shear.** Self-consistent — the
-   editor and study use the same stretched space, so what you draw is what you
-   get — but a rotated rect visibly skews on a 16:9 diagram. Rejected on quality
-   unless option 1 proves unworkable.
-3. **HTML elements with CSS `transform: rotate()`**, as annotations already use
-   to dodge the stretch. True rotation with no measurement, but it cannot draw
-   polygons without `clip-path`, and it splits the renderer in two.
-
-**Storage.** `rotation?: number`, degrees clockwise about the shape's centre, on
-each `OcclusionShape` variant and on `OcclusionAnnotation`; omitted when 0 so no
-existing note churns. Both carriers, with round-trip tests through each.
-
-**Geometry** (`src/study/occlusion-geometry.ts`, where the arithmetic belongs and
-is unit-tested — it carries 95 tests):
-
-- `containsPoint` / `hitTest` must inverse-rotate the test point about the
-  shape's centre, or a rotated shape cannot be grabbed where it is drawn.
-- `handleAt` / `vertexAt` / `resizeBox` are simplest kept operating on the
-  *unrotated* box, with the pointer inverse-rotated on the way in — the editor
-  then draws the handles rotated and everything else stays as it is.
-- The rotation handle itself sits off the box's top-centre, rotated with it.
-  `HANDLE_GRAB_PX = 12` is the existing tolerance; see phase 6 on touch.
-
-**Editor.** A `rotate` drag kind beside `move`/`resize`/`vertex`, angle from the
-pointer's bearing about the centre, snapping to 15° with Shift. Rotation belongs
-*in* the undo history (unlike `mode`, which is outside it).
-
-**Annotations rotate through CSS**, since they are already positioned HTML
-precisely to dodge the overlay's stretch — `positionAnnotation` in
-`OcclusionRenderer.ts` is shared with the editor and is where the transform
-belongs, so the two halves cannot drift.
-
-**Watch for**: `maskElements` builds `attrs` as a flat `Record<string, string>`
-and the renderer sets each with `setAttribute`, so a `transform` rides along
-with no plumbing change — but `MaskElement` is also what
-`occlusion-masks.test.ts` asserts against, so the aspect has to reach
-`maskElements` as an argument rather than being read from the DOM.
-
-## 2. Phase 6, and what is left of it
-
-Phase 6 is touch, and `ad93112` landed the hard half: two-finger pan, pinch zoom,
-a Pan tool, and gesture arbitration that abandons a one-finger drag when a second
-finger lands. All confirmed working. What remains is a real-device pass on a
-phone: whether one finger can draw and grab handles at `HANDLE_GRAB_PX = 12` (a
-fingertip is nearer 40px — the tolerance may need to be pointer-type-aware, and a
-rotation handle makes that more pressing), whether the modal is usable at phone
-width with the toolbar wrapped to several rows, and whether the annotation input
-behaves with a soft keyboard over it. `isDesktopOnly` is `false`, so this cannot
-be skipped, and **the note does not close until it is done**.
-
-## 3. Optional — the one known gap left
-
-Recorded under "Known gaps, deliberately left" above. It does not block the note,
-and is fair game if rotation lands early:
-
-- Spatial rendering has no automated coverage, because `MindMapView.ts` cannot be
-  imported by `vitest`. Anything worth pinning has to leave the view first —
-  which is what `spatial-study.ts` is for.
-
-*(This section listed a second gap — an occluded line card showing no Header or
-Back Extra in a mind-map node. `51a749b` removed both fields, so the gap is
-gone.)*
-
-## Existing surface to build on
-
-| What | Where |
-|---|---|
-| Parse / serialize shape sets and annotations | `src/card-gen/occlusion.ts` |
-| Which masks to paint, per mode and side | `src/study/occlusion-masks.ts` |
-| Image, masks, annotations | `src/views/OcclusionRenderer.ts` |
-| Sequential rendering, the reference implementation | `src/views/SequentialStudyModal.ts` — `renderOcclusionSide` |
-| In-note rendering | `src/views/ContextualStudyProcessor.ts` — `renderSide` |
-| Line-card chrome, peek and study | `src/views/LineRevealProcessor.ts`, `src/study/line-reveal.ts` |
-| Mind-map nodes, spatial peek and study | `src/views/MindMapView.ts` — `applyFenceHidden`, `applySpatialHidden`, `applySpatialState`, `spatialNodeStep` |
-| Node/card keys, and splitting a node into its groups | `src/study/spatial-study.ts` |
-| Editor geometry, history, the canvas modal | `src/study/occlusion-geometry.ts`, `occlusion-history.ts`, `src/views/OcclusionEditorModal.ts` |
-| Mask, editor, and study-modal styles | `styles.css` — `.osmosis-occlusion*`, `.osmosis-study-*` |
-| Obsidian stand-in for view tests | `src/test/obsidian-stub.ts` |
-
-## Testing infrastructure
-
-`vitest` cannot load the `obsidian` package (it ships types only, `"main": ""`),
-and `vi.mock` cannot paper over it — Vite fails at package resolution first.
-`src/test/obsidian-stub.ts` stands in behind an alias in `vitest.config.ts`.
-**This is not a licence to move logic back into `src/views/`**: pure logic
-belongs outside it, which is why `occlusion-geometry.ts` and `spatial-study.ts`
-carry the arithmetic and their tests. `MindMapView.ts` cannot be imported at all,
-so anything testable must leave it first.
-
-jsdom lays nothing out, so `OcclusionEditorModal.dom.test.ts` stubs what layout
-would have provided — `getBoundingClientRect`, the pointer-capture API,
-`clientWidth`/`clientHeight`, `naturalWidth`/`naturalHeight`, writable scroll
-offsets, and a `ResizeObserver` that delivers its first observation on `observe`.
-Any new view test that needs measurement should take the same approach rather
-than inventing another.
-
-## Test plan
-
-- Rotation round-trips through both carriers, is omitted at 0, and survives a
-  review write — which re-dumps frontmatter through Obsidian's YAML serializer.
-- A rotated rect renders as a rectangle, **not a parallelogram**, on a
-  deliberately wide image, in the editor *and* in all three study surfaces.
-- A rotated shape can be grabbed, moved, and resized where it is drawn, and a
-  rotated polygon's vertices can still be inserted and dragged.
-- Shift snaps to 15°; Ctrl+Z undoes a rotation and nothing else.
-- A rotated annotation label reads at its true shape and does not scale with the
-  image.
-- Every existing occlusion test stays green; there are 1630 in the suite.
-
-## Manual fixtures
-
-`e2e/fixtures/occlusion.md` (phases 1–2), `occlusion-editor.md` (phase 3),
-`occlusion-toolset.md` (phase 4), and `occlusion-surfaces.md` (phase 5), copied
-to `vault/tests/flashcard/`. The images live in `vault/media/` — do **not** copy
-them next to the notes, or the short links resolve ambiguously. All four vault
-copies get dirty as soon as you test; **reset them from `e2e/fixtures/` before
-each run**, and commit the reset as its own `chore:` commit afterwards.
-
-Rotation wants a fixture of its own on a deliberately wide image, so a shear
-would be obvious. **Back-date every card in any new fixture** — deck Total is
-`new + learn + due`, so a future-dated `review` card cannot be studied and looks
-exactly like a card that failed to generate.
-
-## Conventions
-
-`CLAUDE.md` governs. Lint → test → build, then hand over manual test steps and
-**stop** for confirmation before committing. Commit code by explicit path, never
-`git add .`. This note gets its own commit, separately.
-
-Do **not** mark the note `Done` until phase 6 has had its device pass. When both
-remaining items are finished: update the Progress table, fold anything durable
-into the decisions sections above, delete this prompt, open the PR against
-`release/0.0.4`, and close the note out per CLAUDE.md's Step 5 — `status: Done`,
-`date_end_actual`, `pull_request`, and a "What was implemented" section.
+**What was not done.** Spatial rendering has no automated coverage, because
+`MindMapView.ts` cannot be imported by `vitest` at all; `spatialStudyKeys` and
+`cardIdsForSpatialKey` carry the tests and the painting itself is pinned only by
+manual testing. Anything more that is worth pinning has to leave the view first.
