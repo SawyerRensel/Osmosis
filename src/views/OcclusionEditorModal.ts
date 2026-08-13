@@ -6,7 +6,7 @@ import type {
 	OcclusionShape,
 } from "../database/types";
 import {
-	alignShapes,
+	alignBoxes,
 	anchoredScroll,
 	angleFrom,
 	annotationBox,
@@ -26,7 +26,7 @@ import {
 	isDegenerate,
 	isDoubleClick,
 	moveBox,
-	moveShapes,
+	moveBoxes,
 	nextGroup,
 	polyFromPoints,
 	resizeAnchored,
@@ -100,13 +100,21 @@ type Drag =
 	 * so nothing about it belongs in the image's coordinate space.
 	 */
 	| { kind: "pan"; from: { x: number; y: number }; scroll: { left: number; top: number } }
-	/** `start` is the shape list as it stood when the drag began, so the delta
-	 *  is always measured from there and a slow drag cannot accumulate drift. */
-	| { kind: "move"; from: Point; start: OcclusionShape[] }
+	/**
+	 * Dragging the selection — masks and labels together, since the two can be
+	 * selected as one set. `start` and `startAnnotations` are the lists as they
+	 * stood when the drag began, so the delta is always measured from there and a
+	 * slow drag cannot accumulate drift.
+	 */
+	| {
+		kind: "move";
+		from: Point;
+		start: OcclusionShape[];
+		startAnnotations: OcclusionAnnotation[];
+	}
 	/** `annotation` picks the list the index is into — labels resize like shapes. */
 	| { kind: "resize"; index: number; annotation: boolean; handle: HandleId }
 	| { kind: "vertex"; index: number; vertex: number }
-	| { kind: "annotation"; index: number; from: Point; origin: Box }
 	/**
 	 * Turning a shape or a label. `start` is the angle it held when the grip was
 	 * taken and `from` the pointer's bearing at that moment, so the drag applies
@@ -136,6 +144,19 @@ interface Gesture {
 
 /** How close a pointer must come to a handle or vertex to grab it, in image pixels. */
 const HANDLE_GRAB_PX = 12;
+
+/** How long a touch must rest on a mask or label before it arms multi-select. */
+const LONG_PRESS_MS = 500;
+
+/**
+ * How far that touch may stray and still count as a hold, in client pixels.
+ *
+ * Generous, because a fingertip resting on glass wanders several pixels on its
+ * own — too tight a figure and the hold simply never fires on a real phone. It
+ * is a client-pixel figure rather than a normalised one because it describes
+ * the hand, not the picture: the tremor is the same at any zoom.
+ */
+const LONG_PRESS_SLOP_PX = 10;
 
 /**
  * The pixel the fitted image gives back to the stage, so that fitting it can
@@ -212,12 +233,34 @@ export class OcclusionEditorModal extends Modal {
 	 */
 	private selectedShapes: number[] = [];
 	/**
-	 * The selected annotation, or null. Kept apart from `selectedShapes` and
-	 * mutually exclusive with it: the two share no operations beyond delete and
-	 * duplicate, and a single mixed list would make every shape operation start
-	 * by filtering annotations back out.
+	 * Selected annotations, by index.
+	 *
+	 * Two lists rather than one mixed list, but **no longer mutually exclusive**:
+	 * masks and labels can be selected together, and move and align then operate
+	 * on the pair. They were once exclusive on the grounds that the two shared no
+	 * operations beyond delete and duplicate — aligning a label to a mask is
+	 * exactly the case that retired that reasoning, so do not re-split them.
+	 *
+	 * Kept as two lists because the operations that are *not* shared are the ones
+	 * with teeth: grouping and ungrouping are meaningless for a label, which
+	 * derives no card, so those read `selectedShapes` alone and a mixed list would
+	 * make them start by filtering labels back out.
 	 */
-	private selectedAnnotation: number | null = null;
+	private selectedAnnotations: number[] = [];
+	/**
+	 * Whether a press adds to the selection instead of replacing it.
+	 *
+	 * Sticky, and armed by a long press, because touch has no Shift. Per-press
+	 * holding would be no use: the second shape's press would replace the
+	 * selection the first one built, so a hold-per-shape scheme can only ever
+	 * select one thing. Cleared wherever the selection is, which is every point
+	 * at which an additive mode has nothing left to add to.
+	 */
+	private multiSelect = false;
+	/** The pending long press, or null. */
+	private longPress: number | null = null;
+	/** Where that press landed, in client pixels — it dies if the finger strays. */
+	private pressedAt: { x: number; y: number } | null = null;
 	/** Vertices collected so far by an in-progress polygon, or null. */
 	private polyDraft: Point[] | null = null;
 	/** The annotation whose text is being typed, or null. */
@@ -327,6 +370,7 @@ export class OcclusionEditorModal extends Modal {
 
 	onClose(): void {
 		this.resize?.disconnect();
+		this.cancelLongPress();
 		this.contentEl.empty();
 	}
 
@@ -706,19 +750,33 @@ export class OcclusionEditorModal extends Modal {
 		if (this.tool === "select") {
 			const index = hitTest(this.shapes, point, this.aspect);
 			if (index === -1) {
-				if (!event.shiftKey) this.clearSelection();
+				// A press on bare image ends a touch multi-selection. That is the
+				// gesture that means "done with these", and without it an armed
+				// selection could not be dismissed by touch at all. Shift keeps its
+				// old meaning for a mouse: a stray shift-click on empty canvas does
+				// not wipe the selection being built.
+				if (this.multiSelect || !event.shiftKey) this.clearSelection();
 				// Empty canvas: keep drawing rather than dead-ending. A click that
 				// never becomes a drag is still just a deselect, since a degenerate
 				// draw commits nothing.
 				this.drag = { kind: "draw", from: point };
-			} else if (event.shiftKey) {
-				this.toggleShapeSelection(index);
 			} else {
-				this.selectedAnnotation = null;
-				// A plain click inside an existing multi-selection keeps it, so the
-				// whole arrangement can be dragged without reselecting it first.
-				if (!this.selectedShapes.includes(index)) this.selectedShapes = [index];
-				this.drag = { kind: "move", from: point, start: this.shapes.map(cloneShape) };
+				// A hold on a mask arms multi-select — what Shift spells on a
+				// keyboard, for a device that has none.
+				this.armLongPress(event);
+				if (this.additive(event)) {
+					this.toggleShapeSelection(index);
+				} else {
+					// A plain press inside an existing selection keeps the whole of it,
+					// labels included, so an arrangement drags without being reselected
+					// first. Clearing the labels unconditionally here is what stopped a
+					// mixed selection being dragged by grabbing one of its masks.
+					if (!this.selectedShapes.includes(index)) {
+						this.selectedShapes = [index];
+						this.selectedAnnotations = [];
+					}
+					this.drag = this.beginMove(point);
+				}
 			}
 			this.redraw();
 			return;
@@ -731,6 +789,13 @@ export class OcclusionEditorModal extends Modal {
 	private onPointerMove(event: PointerEvent): void {
 		if (this.pointers.has(event.pointerId)) {
 			this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+		}
+		// A finger that travels is dragging, not holding — so the hold stands down
+		// and the drag it would have cancelled carries on.
+		if (this.pressedAt !== null
+			&& Math.hypot(event.clientX - this.pressedAt.x, event.clientY - this.pressedAt.y)
+				> LONG_PRESS_SLOP_PX) {
+			this.cancelLongPress();
 		}
 		if (this.gesture) {
 			this.updateGesture();
@@ -753,15 +818,16 @@ export class OcclusionEditorModal extends Modal {
 				// ends as a click leaves nothing behind.
 				this.redraw(boxFromDrag(this.drag.from, point));
 				return;
-			case "move":
-				this.shapes = moveShapes(
-					this.drag.start,
-					this.selectedShapes,
-					point.x - this.drag.from.x,
-					point.y - this.drag.from.y,
+			case "move": {
+				const dx = point.x - this.drag.from.x;
+				const dy = point.y - this.drag.from.y;
+				this.reshapeSelection(
+					{ shapes: this.drag.start, annotations: this.drag.startAnnotations },
+					(boxes) => moveBoxes(boxes, dx, dy),
 				);
 				this.redraw();
 				return;
+			}
 			case "resize": {
 				// A label resizes through exactly the shape arithmetic: turn the
 				// pointer into the box's own frame, resize with the opposite handle
@@ -802,25 +868,14 @@ export class OcclusionEditorModal extends Modal {
 			case "rotate":
 				this.turn(this.drag, point, event.shiftKey);
 				return;
-			case "annotation": {
-				const annotation = this.annotations[this.drag.index];
-				if (!annotation) return;
-				// The whole box is clamped, not the anchor: clamping the corner
-				// alone would let a label's far end travel off the picture.
-				const moved = moveBox(
-					this.drag.origin,
-					point.x - this.drag.from.x,
-					point.y - this.drag.from.y,
-				);
-				this.annotations[this.drag.index] = annotationWithBox(annotation, moved);
-				this.redraw();
-				return;
-			}
 		}
 	}
 
 	private onPointerUp(event: PointerEvent): void {
 		this.pointers.delete(event.pointerId);
+		// Before every early return below: a lifted finger is not holding, whatever
+		// else the release turns out to mean.
+		this.cancelLongPress();
 		if (this.gesture) {
 			// The finger still down does not resume drawing: a drag only ever
 			// begins on a press, and this one was spent on the gesture.
@@ -862,6 +917,60 @@ export class OcclusionEditorModal extends Modal {
 		this.commit();
 	}
 
+	// ── Multi-select by touch ─────────────────────────────────────
+
+	/**
+	 * Start the hold that arms multi-select.
+	 *
+	 * **Touch and pen only.** A mouse has Shift, and holding the button still
+	 * before moving is precisely how a careful user *starts* a drag — claiming
+	 * that gesture would break precise dragging for exactly the people taking
+	 * care over it.
+	 *
+	 * The press has already selected whatever is under the finger, as a click
+	 * does; the hold only arms the sticky mode and stands the pending drag down,
+	 * so the finger that declared itself a selection gesture does not also carry
+	 * the shape off with it.
+	 */
+	private armLongPress(event: PointerEvent): void {
+		if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
+		this.cancelLongPress();
+		this.pressedAt = { x: event.clientX, y: event.clientY };
+		this.longPress = window.setTimeout(() => {
+			this.longPress = null;
+			this.pressedAt = null;
+			this.cancelDrag();
+			this.multiSelect = true;
+			this.redraw();
+		}, LONG_PRESS_MS);
+	}
+
+	/**
+	 * Stand the pending hold down. Called from every route that ends a press —
+	 * release, cancel, a straying finger, a second finger, and modal close, since
+	 * a timer that outlives the modal would repaint a canvas that is gone.
+	 */
+	private cancelLongPress(): void {
+		if (this.longPress !== null) window.clearTimeout(this.longPress);
+		this.longPress = null;
+		this.pressedAt = null;
+	}
+
+	/** Whether this press adds to the selection rather than replacing it. */
+	private additive(event: { shiftKey: boolean }): boolean {
+		return event.shiftKey || this.multiSelect;
+	}
+
+	/** A move drag over the whole selection, from the lists as they now stand. */
+	private beginMove(from: Point): Drag {
+		return {
+			kind: "move",
+			from,
+			start: this.shapes.map(cloneShape),
+			startAnnotations: this.annotations.map((a) => ({ ...a })),
+		};
+	}
+
 	// ── Rotation ──────────────────────────────────────────────────
 
 	/**
@@ -878,7 +987,7 @@ export class OcclusionEditorModal extends Modal {
 	 * label drag takes its pointer capture on the SVG.
 	 */
 	private grabAnnotationGrip(point: Point): boolean {
-		const index = this.selectedAnnotation;
+		const index = this.onlySelectedAnnotation();
 		if (index === null || this.editingAnnotation !== null) return false;
 		const annotation = this.annotations[index];
 		if (!annotation) return false;
@@ -939,6 +1048,7 @@ export class OcclusionEditorModal extends Modal {
 	 */
 	private beginGesture(): void {
 		this.cancelDrag();
+		this.cancelLongPress();
 		this.pendingAnnotation = null;
 		this.polyDraft = null;
 
@@ -1090,8 +1200,8 @@ export class OcclusionEditorModal extends Modal {
 			point.y,
 		);
 		this.annotations.push({ ...box, text: "" });
-		this.selectedShapes = [];
-		this.selectedAnnotation = this.annotations.length - 1;
+		this.clearSelection();
+		this.selectedAnnotations = [this.annotations.length - 1];
 		this.editingAnnotation = this.annotations.length - 1;
 		this.redraw();
 	}
@@ -1160,7 +1270,11 @@ export class OcclusionEditorModal extends Modal {
 		const trimmed = text.trim();
 		if (trimmed === "") {
 			this.annotations.splice(index, 1);
-			if (this.selectedAnnotation === index) this.selectedAnnotation = null;
+			// Every later label has shifted down one. A selection still holding the
+			// old indices would point at its neighbours, or one past the end.
+			this.selectedAnnotations = this.selectedAnnotations
+				.filter((i) => i !== index)
+				.map((i) => (i > index ? i - 1 : i));
 		} else {
 			this.annotations[index] = this.fitToText({ ...annotation, text: trimmed });
 		}
@@ -1230,36 +1344,60 @@ export class OcclusionEditorModal extends Modal {
 		return nextGroup([...usedGroups(this.shapes), ...this.options.reservedGroups]);
 	}
 
-	/** The selected shape when exactly one is — the only state that can be reshaped. */
-	private onlySelectedShape(): number | null {
-		return this.selectedShapes.length === 1 ? this.selectedShapes[0]! : null;
+	/** How many things are selected, masks and labels together. */
+	private selectionSize(): number {
+		return this.selectedShapes.length + this.selectedAnnotations.length;
 	}
 
+	/**
+	 * The selected shape when it is the only thing selected — the one state that
+	 * can be reshaped, since handles and a rotation grip need a single subject.
+	 */
+	private onlySelectedShape(): number | null {
+		return this.selectionSize() === 1 && this.selectedShapes.length === 1
+			? this.selectedShapes[0]!
+			: null;
+	}
+
+	/** The selected label when it is the only thing selected, for the same reason. */
+	private onlySelectedAnnotation(): number | null {
+		return this.selectionSize() === 1 && this.selectedAnnotations.length === 1
+			? this.selectedAnnotations[0]!
+			: null;
+	}
+
+	/**
+	 * Drop the selection — and with it a touch multi-select, which exists only to
+	 * extend a selection and has nothing to extend once there is none.
+	 */
 	private clearSelection(): void {
 		this.selectedShapes = [];
-		this.selectedAnnotation = null;
+		this.selectedAnnotations = [];
+		this.multiSelect = false;
 	}
 
 	private toggleShapeSelection(index: number): void {
-		this.selectedAnnotation = null;
 		this.selectedShapes = this.selectedShapes.includes(index)
 			? this.selectedShapes.filter((i) => i !== index)
 			: [...this.selectedShapes, index];
 	}
 
+	private toggleAnnotationSelection(index: number): void {
+		this.selectedAnnotations = this.selectedAnnotations.includes(index)
+			? this.selectedAnnotations.filter((i) => i !== index)
+			: [...this.selectedAnnotations, index];
+	}
+
 	private deleteSelected(): void {
-		if (this.selectedAnnotation !== null) {
-			this.annotations.splice(this.selectedAnnotation, 1);
-			this.selectedAnnotation = null;
-			this.commit();
-			return;
-		}
-		if (this.selectedShapes.length === 0) return;
-		// Descending, so an earlier removal cannot shift a later index.
+		if (this.selectionSize() === 0) return;
+		// Descending in each list, so an earlier removal cannot shift a later index.
 		for (const index of [...this.selectedShapes].sort((a, b) => b - a)) {
 			this.shapes.splice(index, 1);
 		}
-		this.selectedShapes = [];
+		for (const index of [...this.selectedAnnotations].sort((a, b) => b - a)) {
+			this.annotations.splice(index, 1);
+		}
+		this.clearSelection();
 		this.commit();
 	}
 
@@ -1272,20 +1410,18 @@ export class OcclusionEditorModal extends Modal {
 	 * turn one card into two behind the user's back.
 	 */
 	private duplicateSelected(): void {
-		if (this.selectedAnnotation !== null) {
-			const annotation = this.annotations[this.selectedAnnotation];
-			if (!annotation) return;
-			this.annotations.push(duplicateAnnotation(annotation));
-			this.selectedAnnotation = this.annotations.length - 1;
-			this.commit();
-			return;
-		}
-		if (this.selectedShapes.length === 0) return;
+		if (this.selectionSize() === 0) return;
 
-		const copies = this.selectedShapes.map((i) => duplicateShape(this.shapes[i]!));
-		const first = this.shapes.length;
-		this.shapes.push(...copies);
-		this.selectedShapes = copies.map((_, i) => first + i);
+		const shapes = this.selectedShapes.map((i) => duplicateShape(this.shapes[i]!));
+		const labels = this.selectedAnnotations.map((i) => duplicateAnnotation(this.annotations[i]!));
+		const firstShape = this.shapes.length;
+		const firstLabel = this.annotations.length;
+		this.shapes.push(...shapes);
+		this.annotations.push(...labels);
+		// The copies become the selection, so a duplicate can be dragged straight
+		// off its original without reselecting it.
+		this.selectedShapes = shapes.map((_, i) => firstShape + i);
+		this.selectedAnnotations = labels.map((_, i) => firstLabel + i);
 		this.commit();
 	}
 
@@ -1318,9 +1454,49 @@ export class OcclusionEditorModal extends Modal {
 	}
 
 	private align(alignment: Alignment): void {
-		if (this.selectedShapes.length < 2) return;
-		this.shapes = alignShapes(this.shapes, this.selectedShapes, alignment);
+		if (this.selectionSize() < 2) return;
+		this.reshapeSelection(
+			{ shapes: this.shapes, annotations: this.annotations },
+			(boxes) => alignBoxes(boxes, alignment),
+		);
 		this.commit();
+	}
+
+	/**
+	 * Run a box operation over the whole selection and write the results back.
+	 *
+	 * Masks and labels go through **one** list of boxes, never a pass each,
+	 * because every operation here is defined against the selection's *shared*
+	 * bounds: two passes would align the labels to the labels' box and the masks
+	 * to the masks', which is not what "align these together" means, and would
+	 * clamp a drag twice and shear the arrangement apart at the image's edge.
+	 *
+	 * `from` is the lists the boxes are read out of — the live ones for an align,
+	 * and a drag's starting snapshot for a move, so the delta is always measured
+	 * from where the drag began.
+	 */
+	private reshapeSelection(
+		from: { shapes: readonly OcclusionShape[]; annotations: readonly OcclusionAnnotation[] },
+		transform: (boxes: Box[]) => Box[],
+	): void {
+		// Filtered against the source lists, not the live ones: a drag holds the
+		// snapshot it began on, and an index past its end has no box to read.
+		const shapes = this.selectedShapes.filter((i) => i < from.shapes.length);
+		const labels = this.selectedAnnotations.filter((i) => i < from.annotations.length);
+		const boxes = transform([
+			...shapes.map((i) => shapeBox(from.shapes[i]!)),
+			...labels.map((i) => annotationBox(from.annotations[i]!)),
+		]);
+
+		this.shapes = [...from.shapes];
+		shapes.forEach((index, n) => {
+			this.shapes[index] = shapeWithBox(from.shapes[index]!, boxes[n]!);
+		});
+		this.annotations = [...from.annotations];
+		labels.forEach((index, n) => {
+			this.annotations[index] =
+				annotationWithBox(from.annotations[index]!, boxes[shapes.length + n]!);
+		});
 	}
 
 	// ── View ──────────────────────────────────────────────────────
@@ -1510,7 +1686,7 @@ export class OcclusionEditorModal extends Modal {
 	 * treatment a shape gets, because a label is now a box like any other.
 	 */
 	private drawAnnotationGrips(): void {
-		const index = this.selectedAnnotation;
+		const index = this.onlySelectedAnnotation();
 		if (index === null) return;
 		const annotation = this.annotations[index];
 		// Not while it is being named: the field covers the box, and grips under
@@ -1648,7 +1824,7 @@ export class OcclusionEditorModal extends Modal {
 			}
 
 			const label = this.annotationLayer.createDiv({
-				cls: index === this.selectedAnnotation
+				cls: this.selectedAnnotations.includes(index)
 					? ["osmosis-occlusion-annotation", "is-selected"]
 					: ["osmosis-occlusion-annotation"],
 			});
@@ -1669,14 +1845,23 @@ export class OcclusionEditorModal extends Modal {
 					this.redraw();
 					return;
 				}
-				this.selectedShapes = [];
-				this.selectedAnnotation = index;
-				this.drag = {
-					kind: "annotation",
-					index,
-					from: this.pointAt(event),
-					origin: annotationBox(annotation),
-				};
+				// A hold on a label arms multi-select exactly as one on a mask does,
+				// which is what lets the two be gathered into one selection by touch.
+				this.armLongPress(event);
+				if (this.additive(event)) {
+					this.toggleAnnotationSelection(index);
+				} else {
+					// As with a mask: a plain press inside an existing selection keeps
+					// the whole of it, so the arrangement drags without being reselected.
+					if (!this.selectedAnnotations.includes(index)) {
+						this.selectedAnnotations = [index];
+						this.selectedShapes = [];
+					}
+					this.drag = this.beginMove(this.pointAt(event));
+				}
+				// Taken whatever the press meant, and on the *SVG*: this layer is
+				// rebuilt on the redraw below, so the release has nothing else left
+				// to land on that the modal is listening to.
 				this.svg.setPointerCapture(event.pointerId);
 				this.redraw();
 			});
@@ -1689,12 +1874,14 @@ export class OcclusionEditorModal extends Modal {
 			button.toggleClass("is-active", this.tool === tool);
 		}
 
-		const hasSelection = this.selectedShapes.length > 0 || this.selectedAnnotation !== null;
-		this.deleteButton.disabled = !hasSelection;
-		this.duplicateButton.disabled = !hasSelection;
+		const selected = this.selectionSize();
+		this.deleteButton.disabled = selected === 0;
+		this.duplicateButton.disabled = selected === 0;
 		this.undoButton.disabled = !this.history.canUndo;
 		this.redoButton.disabled = !this.history.canRedo;
-		for (const button of this.alignButtons) button.disabled = this.selectedShapes.length < 2;
+		// Counted across both kinds: a mask and a label are two things to line up.
+		for (const button of this.alignButtons) button.disabled = selected < 2;
+		// Grouping stays shape-only — a label derives no card, so it has no group.
 		this.ungroupButton.disabled = this.selectedShapes.length === 0;
 		this.translucencyButton.toggleClass("is-active", this.opaque);
 
@@ -1726,6 +1913,11 @@ export class OcclusionEditorModal extends Modal {
 		if (this.tool === "poly") return "Click to place the polygon's first point.";
 		if (this.tool === "text") return "Click the image to place a label.";
 		if (this.tool === "pan") return "Drag to move a zoomed image. Pinch or Ctrl+scroll to zoom.";
+		// The only place the hold is discoverable: it leaves nothing on screen, and
+		// the state it arms changes what an ordinary tap does.
+		if (this.multiSelect) {
+			return `Multi-select on — tap masks and labels to add or remove, then align or move them together. ${String(this.selectionSize())} selected. Tap the image to finish.`;
+		}
 		if (this.shapes.length === 0) return "Drag on the image to draw a mask.";
 
 		const shapes = `${String(this.shapes.length)} shape${this.shapes.length === 1 ? "" : "s"}`;

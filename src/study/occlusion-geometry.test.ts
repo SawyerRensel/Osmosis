@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import type { OcclusionShape } from "../database/types";
 import type { Box } from "./occlusion-geometry";
 import {
-	alignShapes,
+	alignBoxes,
 	anchoredScroll,
 	angleFrom,
+	annotationBox,
+	annotationWithBox,
 	annotationWithRotation,
 	bearingPoint,
 	boxCenter,
@@ -24,7 +26,7 @@ import {
 	MIN_POLY_POINTS,
 	MIN_SHAPE_SIZE,
 	moveBox,
-	moveShapes,
+	moveBoxes,
 	nextGroup,
 	polyFromPoints,
 	resizeAnchored,
@@ -494,88 +496,111 @@ describe("unionBox", () => {
 	});
 });
 
-describe("alignShapes", () => {
-	const a: OcclusionShape = { group: "c1", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
-	const b: OcclusionShape = { group: "c2", kind: "rect", x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
+/**
+ * Alignment is expressed over plain boxes rather than shapes because the editor
+ * lets masks and text labels be selected together, and both round-trip through
+ * a `Box`. The shape-specific half — that an ellipse comes back an ellipse, and
+ * that a rotation survives — is exercised here by mapping through
+ * `shapeBox`/`shapeWithBox`, which is exactly what the editor does.
+ */
+describe("alignBoxes", () => {
+	const a: Box = { x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
+	const b: Box = { x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
 
-	it("lines shapes up on the selection's own bounding box, not the image edge", () => {
+	it("lines boxes up on the selection's own bounding box, not the image edge", () => {
 		// Aligning to the picture's border would stack every mask on the edge;
 		// every drawing tool aligns to the selection instead.
-		const aligned = alignShapes([a, b], [0, 1], "left");
+		const aligned = alignBoxes([a, b], "left");
 
-		expectBox(shapeBox(aligned[0]!), { x: 0.1, y: 0.1, w: 0.2, h: 0.1 });
-		expectBox(shapeBox(aligned[1]!), { x: 0.1, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(aligned[0]!, { x: 0.1, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(aligned[1]!, { x: 0.1, y: 0.4, w: 0.3, h: 0.2 });
 	});
 
 	it("aligns right to the selection's far edge", () => {
-		const aligned = alignShapes([a, b], [0, 1], "right");
+		const aligned = alignBoxes([a, b], "right");
 
-		expectBox(shapeBox(aligned[0]!), { x: 0.6, y: 0.1, w: 0.2, h: 0.1 });
-		expectBox(shapeBox(aligned[1]!), { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(aligned[0]!, { x: 0.6, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(aligned[1]!, { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
 	});
 
 	it("centres on the horizontal midline without touching the vertical axis", () => {
-		const aligned = alignShapes([a, b], [0, 1], "center");
+		const aligned = alignBoxes([a, b], "center");
 
-		expectBox(shapeBox(aligned[0]!), { x: 0.35, y: 0.1, w: 0.2, h: 0.1 });
-		expectBox(shapeBox(aligned[1]!), { x: 0.3, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(aligned[0]!, { x: 0.35, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(aligned[1]!, { x: 0.3, y: 0.4, w: 0.3, h: 0.2 });
 	});
 
 	it("aligns top, middle, and bottom on the other axis", () => {
-		expectBox(shapeBox(alignShapes([a, b], [0, 1], "top")[1]!), { x: 0.5, y: 0.1, w: 0.3, h: 0.2 });
-		expectBox(shapeBox(alignShapes([a, b], [0, 1], "middle")[1]!), { x: 0.5, y: 0.25, w: 0.3, h: 0.2 });
-		expectBox(shapeBox(alignShapes([a, b], [0, 1], "bottom")[1]!), { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(alignBoxes([a, b], "top")[1]!, { x: 0.5, y: 0.1, w: 0.3, h: 0.2 });
+		expectBox(alignBoxes([a, b], "middle")[1]!, { x: 0.5, y: 0.25, w: 0.3, h: 0.2 });
+		expectBox(alignBoxes([a, b], "bottom")[1]!, { x: 0.5, y: 0.4, w: 0.3, h: 0.2 });
 	});
 
 	it("never resizes — a mask drawn to fit a label still fits it", () => {
-		const aligned = alignShapes([a, b], [0, 1], "left");
+		const aligned = alignBoxes([a, b], "left");
 
-		expect(shapeBox(aligned[1]!).w).toBeCloseTo(0.3);
-		expect(shapeBox(aligned[1]!).h).toBeCloseTo(0.2);
+		expect(aligned[1]!.w).toBeCloseTo(0.3);
+		expect(aligned[1]!.h).toBeCloseTo(0.2);
 	});
 
 	it("keeps an ellipse an ellipse, re-fitting it through its box", () => {
-		const aligned = alignShapes([rect, ellipse], [0, 1], "left");
+		const aligned = alignBoxes([shapeBox(rect), shapeBox(ellipse)], "left");
+		const moved = shapeWithBox(ellipse, aligned[1]!);
 
-		expect(aligned[1]!.kind).toBe("ellipse");
-		expectBox(shapeBox(aligned[1]!), { x: 0.2, y: 0.3, w: 0.2, h: 0.4 });
+		expect(moved.kind).toBe("ellipse");
+		expectBox(shapeBox(moved), { x: 0.2, y: 0.3, w: 0.2, h: 0.4 });
 	});
 
-	it("does nothing below two shapes, where alignment has no meaning", () => {
-		expect(alignShapes([a, b], [0], "left")).toEqual([a, b]);
+	it("lines a text label up against a mask, since the two share a box", () => {
+		// The pair the mutual-exclusion rule used to forbid: a label and a mask
+		// are one selection, and align means "against their shared bounds".
+		const label = { x: 0.6, y: 0.5, w: 0.25, h: 0.08, text: "span" };
+		const aligned = alignBoxes([shapeBox(rect), annotationBox(label)], "left");
+
+		expectBox(annotationBox(annotationWithBox(label, aligned[1]!)), {
+			x: 0.2, y: 0.5, w: 0.25, h: 0.08,
+		});
 	});
 
-	it("leaves unselected shapes exactly where they were", () => {
-		const aligned = alignShapes([a, b, rect], [0, 1], "left");
-
-		expect(aligned[2]).toEqual(rect);
+	it("does nothing below two boxes, where alignment has no meaning", () => {
+		expect(alignBoxes([a], "left")).toEqual([a]);
+		expect(alignBoxes([], "left")).toEqual([]);
 	});
 });
 
-describe("moveShapes", () => {
-	const a: OcclusionShape = { group: "c1", kind: "rect", x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
-	const b: OcclusionShape = { group: "c2", kind: "rect", x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
+describe("moveBoxes", () => {
+	const a: Box = { x: 0.1, y: 0.1, w: 0.2, h: 0.1 };
+	const b: Box = { x: 0.5, y: 0.4, w: 0.3, h: 0.2 };
 
-	it("moves every selected shape by the same delta", () => {
-		const moved = moveShapes([a, b], [0, 1], 0.1, 0.2);
+	it("moves every box by the same delta", () => {
+		const moved = moveBoxes([a, b], 0.1, 0.2);
 
-		expectBox(shapeBox(moved[0]!), { x: 0.2, y: 0.3, w: 0.2, h: 0.1 });
-		expectBox(shapeBox(moved[1]!), { x: 0.6, y: 0.6, w: 0.3, h: 0.2 });
+		expectBox(moved[0]!, { x: 0.2, y: 0.3, w: 0.2, h: 0.1 });
+		expectBox(moved[1]!, { x: 0.6, y: 0.6, w: 0.3, h: 0.2 });
 	});
 
 	it("clamps the selection as a whole, so an arrangement is never deformed", () => {
-		// Clamping each shape on its own would let the trailing one keep going
+		// Clamping each box on its own would let the trailing one keep going
 		// after the leading one hit the edge, silently squashing the group.
 		// The union spans 0.1–0.8, so it can only travel 0.2 before its trailing
-		// edge reaches the border; both shapes move by that, not by the 0.9 asked.
-		const moved = moveShapes([a, b], [0, 1], 0.9, 0);
+		// edge reaches the border; both boxes move by that, not by the 0.9 asked.
+		const moved = moveBoxes([a, b], 0.9, 0);
 
-		expectBox(shapeBox(moved[1]!), { x: 0.7, y: 0.4, w: 0.3, h: 0.2 });
-		expectBox(shapeBox(moved[0]!), { x: 0.3, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(moved[1]!, { x: 0.7, y: 0.4, w: 0.3, h: 0.2 });
+		expectBox(moved[0]!, { x: 0.3, y: 0.1, w: 0.2, h: 0.1 });
 	});
 
-	it("leaves unselected shapes alone", () => {
-		expect(moveShapes([a, b], [0], 0.1, 0)[1]).toEqual(b);
+	it("clamps a label and a mask as one arrangement, not one at a time", () => {
+		const label = { x: 0.7, y: 0.1, w: 0.2, h: 0.08, text: "span" };
+		// The union spans 0.1–0.9, so the pair can travel 0.1 and no further.
+		const moved = moveBoxes([a, annotationBox(label)], 0.5, 0);
+
+		expectBox(moved[0]!, { x: 0.2, y: 0.1, w: 0.2, h: 0.1 });
+		expectBox(moved[1]!, { x: 0.8, y: 0.1, w: 0.2, h: 0.08 });
+	});
+
+	it("has nothing to move when the selection is empty", () => {
+		expect(moveBoxes([], 0.1, 0)).toEqual([]);
 	});
 });
 
@@ -1005,7 +1030,7 @@ describe("rotation survives the other edits", () => {
 	const shape: OcclusionShape = { group: "c1", kind: "rect", x: 0.3, y: 0.4, w: 0.2, h: 0.1, rotation: 45 };
 
 	it("rides along through a move", () => {
-		expect(shapeRotation(moveShapes([shape], [0], 0.1, 0)[0]!)).toBe(45);
+		expect(shapeRotation(shapeWithBox(shape, moveBoxes([shapeBox(shape)], 0.1, 0)[0]!))).toBe(45);
 	});
 
 	it("rides along through a resize", () => {
@@ -1025,10 +1050,10 @@ describe("rotation survives the other edits", () => {
 
 	it("rides along through an align, which lines up the unrotated boxes", () => {
 		const other: OcclusionShape = { group: "c2", kind: "rect", x: 0.6, y: 0.7, w: 0.2, h: 0.1 };
-		const aligned = alignShapes([shape, other], [0, 1], "left");
+		const aligned = alignBoxes([shapeBox(shape), shapeBox(other)], "left");
 
-		expect(shapeRotation(aligned[0]!)).toBe(45);
-		expect(shapeBox(aligned[1]!).x).toBe(0.3);
+		expect(shapeRotation(shapeWithBox(shape, aligned[0]!))).toBe(45);
+		expect(shapeBox(shapeWithBox(other, aligned[1]!)).x).toBe(0.3);
 	});
 });
 

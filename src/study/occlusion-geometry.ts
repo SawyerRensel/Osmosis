@@ -762,7 +762,7 @@ export function unionBox(boxes: readonly Box[]): Box {
 }
 
 /**
- * Line the shapes at `indices` up against the selection's own bounding box.
+ * Line `boxes` up against their own shared bounding box.
  *
  * The reference is the selection rather than the image, matching every drawing
  * tool: aligning left means "to the leftmost of these", not "to the edge of the
@@ -770,22 +770,22 @@ export function unionBox(boxes: readonly Box[]): Box {
  *
  * Sizes never change — only the position along the aligned axis — so a mask
  * that was drawn to fit a label still fits it afterwards.
+ *
+ * **Boxes, not shapes**, because a mask and a text label align by exactly the
+ * same arithmetic and the editor lets the two be selected together. Both sides
+ * already round-trip through a `Box` — `shapeBox`/`shapeWithBox` and
+ * `annotationBox`/`annotationWithBox` — so the caller maps into this and back,
+ * and there is one spelling of the alignment rather than one per kind.
+ *
+ * A rotated shape aligns by its *unrotated* box, the frame its own handles
+ * live in. The visible outline of a turned mask therefore need not sit flush
+ * with its neighbour's, which is the honest reading of "align" for something
+ * whose edges are no longer axis-aligned.
  */
-export function alignShapes(
-	shapes: readonly OcclusionShape[],
-	indices: readonly number[],
-	alignment: Alignment,
-): OcclusionShape[] {
-	const chosen = indices.filter((i) => i >= 0 && i < shapes.length);
-	if (chosen.length < 2) return [...shapes];
-
-	const bounds = unionBox(chosen.map((i) => shapeBox(shapes[i]!)));
-	const next = [...shapes];
-	for (const i of chosen) {
-		const box = shapeBox(shapes[i]!);
-		next[i] = shapeWithBox(shapes[i]!, { ...box, ...alignedOrigin(box, bounds, alignment) });
-	}
-	return next;
+export function alignBoxes(boxes: readonly Box[], alignment: Alignment): Box[] {
+	if (boxes.length < 2) return [...boxes];
+	const bounds = unionBox(boxes);
+	return boxes.map((box) => ({ ...box, ...alignedOrigin(box, bounds, alignment) }));
 }
 
 /** Where one box's origin moves to under an alignment. */
@@ -801,32 +801,24 @@ function alignedOrigin(box: Box, bounds: Box, alignment: Alignment): Partial<Box
 }
 
 /**
- * Move the shapes at `indices` together by a normalised delta.
+ * Move `boxes` together by a normalised delta.
  *
- * The *union* box is what gets clamped to the image, not each shape: clamping
+ * The *union* box is what gets clamped to the image, not each box: clamping
  * individually would let a shape that reaches the edge stop while its
  * neighbours carried on, quietly deforming a group the user had arranged.
+ *
+ * Boxes rather than shapes for the same reason as `alignBoxes` — a label drags
+ * alongside a mask, and one clamp over the pair is what keeps their spacing.
  */
-export function moveShapes(
-	shapes: readonly OcclusionShape[],
-	indices: readonly number[],
-	dx: number,
-	dy: number,
-): OcclusionShape[] {
-	const chosen = indices.filter((i) => i >= 0 && i < shapes.length);
-	if (chosen.length === 0) return [...shapes];
+export function moveBoxes(boxes: readonly Box[], dx: number, dy: number): Box[] {
+	if (boxes.length === 0) return [];
 
-	const bounds = unionBox(chosen.map((i) => shapeBox(shapes[i]!)));
+	const bounds = unionBox(boxes);
 	const moved = moveBox(bounds, dx, dy);
 	const actualX = moved.x - bounds.x;
 	const actualY = moved.y - bounds.y;
 
-	const next = [...shapes];
-	for (const i of chosen) {
-		const box = shapeBox(shapes[i]!);
-		next[i] = shapeWithBox(shapes[i]!, { ...box, x: box.x + actualX, y: box.y + actualY });
-	}
-	return next;
+	return boxes.map((box) => ({ ...box, x: box.x + actualX, y: box.y + actualY }));
 }
 
 /** How far a duplicate is nudged off its original, so the copy is visible. */

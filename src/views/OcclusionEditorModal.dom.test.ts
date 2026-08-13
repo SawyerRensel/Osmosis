@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import type { App } from "obsidian";
 import type { OcclusionSet } from "../database/types";
 import type { Scope } from "../test/obsidian-stub";
@@ -1265,5 +1265,268 @@ describe("OcclusionEditorModal rotation", () => {
 
 		expect(opened2.content.querySelector(".osmosis-occlusion-annotation-input")).not.toBeNull();
 		expect(opened2.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(0);
+	});
+});
+
+/**
+ * Selecting several things at once, by keyboard on a desktop and by holding a
+ * finger on a phone — and treating masks and text labels as one selection, so
+ * the two can be lined up against each other.
+ *
+ * The arithmetic is `alignBoxes`/`moveBoxes` in `occlusion-geometry`; what is
+ * only testable here is which indices reach them and in what order, since the
+ * editor keeps masks and labels in two lists and writes the results back into
+ * both.
+ */
+describe("OcclusionEditorModal multi-select", () => {
+	/** A modal holding the three masks plus one label, well clear of them. */
+	function openMixed(): Opened {
+		return open({ ...set, annotations: [{ x: 0.6, y: 0.7, w: 0.25, h: 0.1, text: "Deck" }] });
+	}
+
+	/** The label element, which is HTML in its own layer rather than SVG. */
+	function labelEl(o: Opened): HTMLElement {
+		return o.content.querySelector(".osmosis-occlusion-annotation")!;
+	}
+
+	/** A touch pointer event — the hold is gated on `pointerType` by design. */
+	function touch(type: string, [clientX, clientY]: [number, number]): PointerEvent {
+		return new PointerEvent(type, {
+			clientX, clientY, button: 0, bubbles: true, pointerId: 1, pointerType: "touch",
+		});
+	}
+
+	/**
+	 * Hold a finger on `target` past the long-press threshold, then lift it.
+	 *
+	 * The release goes to the SVG because that is where the modal takes pointer
+	 * capture, and so where a real release lands however the press began.
+	 */
+	function hold(o: Opened, target: Element, at: [number, number], travel?: [number, number]): void {
+		vi.useFakeTimers();
+		try {
+			target.dispatchEvent(touch("pointerdown", at));
+			if (travel) o.svg.dispatchEvent(touch("pointermove", travel));
+			vi.advanceTimersByTime(1000);
+		} finally {
+			vi.useRealTimers();
+		}
+		o.svg.dispatchEvent(touch("pointerup", travel ?? at));
+	}
+
+	/** A one-finger tap, which is what toggles once the hold has armed the mode. */
+	function tapTouch(o: Opened, target: Element, at: [number, number]): void {
+		target.dispatchEvent(touch("pointerdown", at));
+		o.svg.dispatchEvent(touch("pointerup", at));
+	}
+
+	const FIRST_RECT: [number, number] = [152, 50];
+	const SECOND_RECT: [number, number] = [268, 65];
+	const LABEL: [number, number] = [260, 150];
+
+	it("arms multi-select when a finger rests on a mask", () => {
+		click(opened.content, "Select");
+		hold(opened, opened.svg, FIRST_RECT);
+
+		expect(opened.content.querySelector(".osmosis-occlusion-hint")?.textContent)
+			.toContain("Multi-select on");
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(1);
+	});
+
+	it("adds each tapped mask once the hold has armed it", () => {
+		// The whole reason the mode is sticky: without it the second tap would
+		// replace the selection the hold just made, and a phone could never
+		// select more than one thing.
+		click(opened.content, "Select");
+		hold(opened, opened.svg, FIRST_RECT);
+		tapTouch(opened, opened.svg, SECOND_RECT);
+
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(2);
+	});
+
+	it("takes a mask back out on a second tap", () => {
+		click(opened.content, "Select");
+		hold(opened, opened.svg, FIRST_RECT);
+		tapTouch(opened, opened.svg, SECOND_RECT);
+		tapTouch(opened, opened.svg, SECOND_RECT);
+
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(1);
+	});
+
+	it("ends the mode on a tap on bare image, the only way out by touch", () => {
+		click(opened.content, "Select");
+		hold(opened, opened.svg, FIRST_RECT);
+		tapTouch(opened, opened.svg, [420, 180]);
+
+		expect(opened.content.querySelector(".osmosis-occlusion-hint")?.textContent)
+			.not.toContain("Multi-select on");
+		expect(opened.svg.querySelectorAll(".is-selected")).toHaveLength(0);
+	});
+
+	it("leaves a held mouse button alone, since a mouse has Shift", () => {
+		// Holding still before moving is how a careful user starts a drag;
+		// claiming it would break precise dragging for exactly those people.
+		click(opened.content, "Select");
+		vi.useFakeTimers();
+		try {
+			opened.svg.dispatchEvent(new MouseEvent("pointerdown", {
+				clientX: FIRST_RECT[0], clientY: FIRST_RECT[1], button: 0, bubbles: true,
+			}));
+			vi.advanceTimersByTime(1000);
+		} finally {
+			vi.useRealTimers();
+		}
+		opened.svg.dispatchEvent(new MouseEvent("pointerup", {
+			clientX: FIRST_RECT[0], clientY: FIRST_RECT[1], button: 0, bubbles: true,
+		}));
+
+		expect(opened.content.querySelector(".osmosis-occlusion-hint")?.textContent)
+			.not.toContain("Multi-select on");
+	});
+
+	it("stands the hold down when the finger travels, so a drag stays a drag", () => {
+		click(opened.content, "Select");
+		hold(opened, opened.svg, FIRST_RECT, [252, 50]);
+
+		expect(opened.content.querySelector(".osmosis-occlusion-hint")?.textContent)
+			.not.toContain("Multi-select on");
+		// And the drag it would have cancelled went through: 100px of a 400px
+		// image is a quarter, so the first rect travelled 0.31 → 0.56.
+		click(opened.content, "Save");
+		expect(shapeBox(opened.saved[0]!.shapes[0]!).x).toBeCloseTo(0.56);
+	});
+
+	it("holds a label into the selection alongside a mask", () => {
+		const o = openMixed();
+		click(o.content, "Select");
+		hold(o, o.svg, FIRST_RECT);
+		tapTouch(o, labelEl(o), LABEL);
+
+		expect(o.svg.querySelectorAll(".is-selected")).toHaveLength(1);
+		expect(o.content.querySelectorAll(".osmosis-occlusion-annotation.is-selected")).toHaveLength(1);
+	});
+
+	it("adds a label to a shape selection on shift-click", () => {
+		const o = openMixed();
+		click(o.content, "Select");
+		tap(o.svg, FIRST_RECT);
+		labelEl(o).dispatchEvent(new MouseEvent("pointerdown", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true, shiftKey: true,
+		}));
+		o.svg.dispatchEvent(new MouseEvent("pointerup", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true,
+		}));
+
+		expect(o.svg.querySelectorAll(".is-selected")).toHaveLength(1);
+		expect(o.content.querySelectorAll(".osmosis-occlusion-annotation.is-selected")).toHaveLength(1);
+	});
+
+	it("counts a mask and a label as two things to align", () => {
+		const o = openMixed();
+		expect(button(o.content, "Align left").disabled).toBe(true);
+
+		click(o.content, "Select");
+		tap(o.svg, FIRST_RECT);
+		expect(button(o.content, "Align left").disabled).toBe(true);
+
+		labelEl(o).dispatchEvent(new MouseEvent("pointerdown", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true, shiftKey: true,
+		}));
+		o.svg.dispatchEvent(new MouseEvent("pointerup", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true,
+		}));
+		expect(button(o.content, "Align left").disabled).toBe(false);
+	});
+
+	/** Select the first rect and the label together, by shift-clicking the label. */
+	function selectRectAndLabel(o: Opened): void {
+		click(o.content, "Select");
+		tap(o.svg, FIRST_RECT);
+		labelEl(o).dispatchEvent(new MouseEvent("pointerdown", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true, shiftKey: true,
+		}));
+		o.svg.dispatchEvent(new MouseEvent("pointerup", {
+			clientX: LABEL[0], clientY: LABEL[1], button: 0, bubbles: true,
+		}));
+	}
+
+	it("lines a label up against the mask it labels", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		click(o.content, "Align left");
+		click(o.content, "Save");
+
+		// The rect is the leftmost at 0.31, so the label moves to it and the
+		// mask stays put. Neither changes size.
+		expect(o.saved[0]?.annotations?.[0]).toMatchObject({ x: 0.31, y: 0.7, w: 0.25, h: 0.1 });
+		expect(o.saved[0]?.shapes[0]).toMatchObject({ x: 0.31, y: 0.22 });
+	});
+
+	it("leaves everything outside the selection where it was", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		click(o.content, "Align left");
+		click(o.content, "Save");
+
+		expect(o.saved[0]?.shapes[1]).toEqual(set.shapes[1]);
+		expect(o.saved[0]?.shapes[2]).toEqual(set.shapes[2]);
+	});
+
+	it("drags a mask and a label by one delta, clamped as one arrangement", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		// Grabbed by the *mask*, with the label selected too: a plain press inside
+		// an existing selection keeps the whole of it rather than narrowing to
+		// what was pressed.
+		drag(o.svg, FIRST_RECT, [172, 50]);
+		click(o.content, "Save");
+
+		// 20px of a 400px image is 0.05, applied to both.
+		expect(shapeBox(o.saved[0]!.shapes[0]!).x).toBeCloseTo(0.36);
+		expect(o.saved[0]?.annotations?.[0]?.x).toBeCloseTo(0.65);
+	});
+
+	it("deletes masks and labels together", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		click(o.content, "Delete shape");
+		click(o.content, "Save");
+
+		expect(o.saved[0]?.shapes).toHaveLength(2);
+		expect(o.saved[0]?.annotations).toBeUndefined();
+	});
+
+	it("duplicates masks and labels together, keeping the group", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		click(o.content, "Duplicate");
+		click(o.content, "Save");
+
+		expect(o.saved[0]?.shapes).toHaveLength(4);
+		expect(o.saved[0]?.shapes[3]).toMatchObject({ group: "c1", x: 0.33 });
+		expect(o.saved[0]?.annotations).toHaveLength(2);
+		expect(o.saved[0]?.annotations?.[1]).toMatchObject({ text: "Deck", x: 0.62 });
+	});
+
+	it("offers no reshaping grips while a mask and a label are both selected", () => {
+		// Handles and a rotation grip need one subject; with two there is no
+		// single box for them to hug.
+		const o = openMixed();
+		selectRectAndLabel(o);
+
+		expect(o.svg.querySelectorAll(".osmosis-occlusion-handle")).toHaveLength(0);
+		expect(o.svg.querySelectorAll(".osmosis-occlusion-rotate")).toHaveLength(0);
+	});
+
+	it("keeps grouping to the masks, since a label derives no card", () => {
+		const o = openMixed();
+		selectRectAndLabel(o);
+		const select = o.content.querySelector("select")!;
+		select.value = "c2";
+		select.dispatchEvent(new Event("change"));
+		click(o.content, "Save");
+
+		expect(o.saved[0]?.shapes.map((s) => s.group)).toEqual(["c2", "c1", "c2"]);
+		expect(o.saved[0]?.annotations).toHaveLength(1);
 	});
 });
