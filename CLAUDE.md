@@ -384,6 +384,24 @@ Is this correct? What's missing?
    - Include: which file to open, what actions to perform, what to expect
    - The user will report back with results or screenshots
 
+#### The reset hazard
+
+A fixture whose schedule a test moves has to be reset afterwards — and **the
+running plugin is authoritative over a file it has open**. Obsidian keeps its own
+in-memory copy of an open note; the next schedule flush serializes *that* copy
+plus whatever the store staged, so a fixture rewritten from disk while the note
+is open is silently reverted, and the reverted file still carries the ratings the
+reset was meant to undo.
+
+So, whenever a fixture is written or restored under `vault/`:
+
+1. Write the file (from `e2e/fixtures/`, which is the master copy).
+2. **Reload Obsidian (Ctrl+R) before testing it.** Until the reload, what is on
+   screen is the old copy.
+3. Expect sync to stamp `id:` onto any fence that lacks one within a second of
+   the write — a fixture therefore *cannot* hold an unsynced fence, and a case
+   that needs one belongs in a unit test.
+
 ---
 
 ## Debugging with Claude
@@ -495,6 +513,9 @@ What am I missing?
 
 After completing each subtask:
 - Create test fixture files in `e2e/fixtures/` and copy them to `vault/`
+  (see [the reset hazard](#the-reset-hazard) before rewriting one that already
+  exists — a fixture edited while Obsidian holds the note open is silently
+  reverted)
 - Provide the user with clear manual testing steps:
   - Which file to open in Obsidian
   - What actions to perform (open mind map, click nodes, edit, etc.)
