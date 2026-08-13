@@ -9,16 +9,18 @@ context:
 people:
 location:
 related:
-status: In-Progress
+  - "[[Cloze markers leak into the revealed half outside a session]]"
+status: Done
 priority:
 progress_current:
 progress_total:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/22
 date_created: "2026-08-03T15:38:58.397Z"
-date_modified: "2026-08-13T11:32:06.000Z"
+date_modified: "2026-08-13T12:14:57.000Z"
 date_start_scheduled: "2026-08-13T02:42:45.000Z"
 date_start_actual: "2026-08-13T02:42:45.000Z"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-08-13T12:14:57.000Z"
+date_end_actual: "2026-08-13T12:14:57.000Z"
 all_day: true
 repeat_frequency:
 repeat_interval:
@@ -46,17 +48,17 @@ plays the full deck correctly.
 
 | Card type | Sequential | Spatial (map) | Contextual (note) |
 |---|---|---|---|
-| `explicit` (basic) | ✅ | ✅ | ✅ *(phase 1)* |
-| `explicit_bidi` | ✅ both directions | ✅ both directions *(phase 4)* | ✅ both directions *(phase 3)* |
-| `explicit_cloze` | ✅ one card per `cN` | ✅ one card per `cN` *(phase 4)* | ✅ one card per `cN` *(phase 3)* |
-| `code_cloze` | ✅ one card per `cN` | ✅ *(phase 4, unverified — no fixture yet)* | ✅ *(phase 3, unverified — no fixture yet)* |
+| `explicit` (basic) | ✅ | ✅ | ✅ |
+| `explicit_bidi` | ✅ both directions | ✅ both directions | ✅ both directions |
+| `explicit_cloze` | ✅ one card per `cN` | ✅ one card per `cN` | ✅ one card per `cN` |
+| `code_cloze` | ✅ one card per `cN` | ✅ one card per `cN` | ✅ one card per `cN` |
 | `occlusion` | ✅ | ✅ per group | ✅ per group |
 | `line` | ✅ | ✅ | ✅ |
 
-`code_cloze` rides the same path every other fence type now takes — the note
-plays whatever cards the store holds for a fence, and the generator fans a code
-cloze out per `cN` exactly as it does a text one — so it is expected to work and
-has simply never been put in front of a reader. Phase 5 is where that is proven.
+Every cell was walked in Obsidian in phase 5 — see the matrix under "Progress".
+`code_cloze` had never been put in front of a reader before then: it rides the
+same path every other fence type takes, so it was expected to work, and the
+fixture that proves it is `code-cloze-study.md`.
 
 Occlusion is the only non-trivial type that works everywhere, because per-group
 stepping was built for it in both surfaces (`occlusion-steps.ts`,
@@ -157,76 +159,100 @@ might otherwise "helpfully" undo.
    3 questions, a bidi fence asks 2.
 4. ✅ Spatial: generalize `spatialStudyKeys`; ask bidi on the map → verify: node
    step count matches sequential's card count.
-5. Fixtures + full type × mode verification matrix.
+5. ✅ Fixtures + full type × mode verification matrix → verify: all
+   eighteen cells walked in Obsidian, each asking the same questions and
+   recording each answer.
 
-## Next session — Phase 5: fixtures and the full type × mode matrix
+## What was implemented
 
-Phases 1–4 and the reading-mode change are **shipped** on
-`feature/study-all-card-types` (see "Progress" below). Start here. **No PR is
-open yet** — the branch carries four phases and the PR goes up when phase 5
-lands.
+### Where it shipped
 
-### What is left
+[PR #22](https://github.com/SawyerRensel/Osmosis/pull/22), branch
+`feature/study-all-card-types` → `release/0.0.4`. Six commits, one per phase
+plus the reading-mode reversal; the per-phase record and the decisions taken
+inside each are under "Progress" below.
 
-Every cell of the table at the top of this note is now either ✅ or ✅ with
-*unverified* against it, and "unverified" is the whole of phase 5. Two things
-have never been put in front of a reader in any surface:
+### The cause
 
-1. **`code_cloze`.** It rides the same path every other fence type takes — the
-   note and the map play whatever cards the store holds for a fence, and the
-   generator fans a code cloze out per `cN` exactly as it does a text one — so
-   it is *expected* to work. No fixture has ever proved it. `e2e/fixtures/
-   code-cloze.md` exists but was written for live preview, not for study.
-2. **The matrix itself.** Each of the six card types, in each of the three
-   modes, asked the same questions and recording each answer. Nobody has sat
-   down and walked all eighteen.
+Three surfaces played cards and only one of them played the *store's* cards.
 
-### What to build
+`SequentialStudyModal` plays `Card` records, which carry generator-rendered
+`front`/`back` and a real ID. `ContextualStudyProcessor` instead re-derived a
+front and a back from the fence source and rated an ID it hashed itself — which
+for a multi-cloze fence is the bare fence ID, never `<fenceId>-cN`. No card in
+the store answers to that, so `recordRating` took its "card not in store" early
+return and **every cloze review taken in a note was silently discarded**. The
+same re-derivation had no notion of a reverse card, so `<fenceId>-r` could only
+ever be answered in sequential study.
 
-1. **A `code_cloze` fixture with a real schedule**, in a note that renders as a
-   mind map, covering both marker shapes: the single-line `// osmosis-cloze`
-   trailing comment and the `osmosis-cloze-start` / `-end` block. Watch the
-   node's rendering specifically — `parseOsmosisCodeCloze` blanks a whole line
-   where the prose parser blanks a word, so a code cloze node's front and back
-   differ in *height*, which is the case phase 4's per-step swap is most likely
-   to clip. Check a long block.
-2. **Walk the matrix** and record the result in a table in this note — type ×
-   mode, with what was asked and whether the schedule moved. Where a cell is
-   wrong, write the task note for it rather than fixing it inline; phase 5 is a
-   verification pass, not a fifth round of implementation.
-3. **Fold the reset hazard into the repo's conventions**, wherever fixtures are
-   documented. See "the reset hazard" under phase 4 in Progress — a fixture
-   rewritten while Obsidian holds the note open is silently reverted, and that
-   cost most of an hour in phase 4.
+The two in-place surfaces then gated their chrome on the wrong signal.
+`LineRevealProcessor` computed `show = lineCardBlockIds(path).size > 0`, so a
+note whose cards are all fences got no Study or Peek button at all — the symptom
+that opened this task. `spatialStudyKeys` split a node into steps only when
+*every* due card was an occlusion card, so a node carrying a three-group cloze
+was one unit of work where sequential asked three questions and took one rating
+on all three.
 
-### Where the seams are
+Underneath both: per-group stepping had been built once, for occlusion, in both
+surfaces. Nothing else ever got the equivalent.
 
-- `vault/tests/flashcard/fence-card-types.md` covers the fanned-out types in
-  both the note and the map, and `fence-only-study.md` the target/non-target
-  split. Neither covers `code_cloze` or occlusion; `occlusion-surfaces.md` does
-  the latter.
-- The map renders a fence node from its **source**, and only swaps to the
-  store's card while a step is on screen. So a source-parser gap shows up
-  *outside* a session and disappears inside one — which is exactly how the
-  `c1:` label leak survived until phase 4. When something looks wrong on a node,
-  check whether it is wrong in both states before believing the card is at
-  fault.
-- MindMapView's fence parsers still do not recognise the `:::text:::` cloze
-  form, which `PROSE_CLOZE_REGEX` in the generator does. A `:::`-only fence is
-  therefore not a card node on the map at all. Pre-existing, out of scope for
-  phase 4, and worth a line in the matrix.
+### The fix
 
-### Verify
+Contextual and spatial both stop deriving and start **playing the store**. A
+fence node or a fence section builds a plan of its due cards in ask order,
+pinned at first draw so a re-render from a schedule flush cannot shuffle it, and
+asks them one at a time — a reveal, a rating and an advance per card, with the
+rating landing on the ID that was asked. The pill and the banner count questions
+rather than fences. `spatialStudyKeys` splits on any due card, so a node with N
+due cards is N steps whatever their type.
 
-1. A `code_cloze` fence asks one question per group in all three modes, and each
-   answer moves that group's schedule in the fence.
-2. The matrix table in this note is filled in, every cell, with the surface
-   actually exercised rather than reasoned about.
-3. `npm run lint`, `npm test`, `npm run build` all clean.
+Source-derived rendering survives in exactly two places, both off every rating
+path: live preview, which this task deliberately does not touch, and the
+fallback for a fence the store has no card for.
 
-### Then
+### Decisions worth remembering
 
-Open the PR against `release/0.0.4`, close this note out, and merge when asked.
+Each phase's own decisions are recorded under "Progress" — those are the ones a
+future session might undo while working in that code. The four that shape the
+feature as a whole:
+
+1. **Contextual plays store `Card` records**, chosen over extending the
+   derivation. Two renderers that must agree forever is precisely what caused
+   the bug.
+2. **Hiding belongs to peek and study alone.** Plain reading mode renders a
+   fence as live preview does. Reading view used to hide every back and make the
+   reader click each one, which turned an ordinary read of a card-bearing note
+   into a quiz nobody started. The rule that falls out is worth keeping whole:
+   **stepping happens inside a session and nowhere else** — a multi-group cloze
+   blanks *every* group while reading, not the group whose card happens to be
+   next.
+3. **A cloze reveals in place; everything else stacks.** Its two halves are one
+   passage, blanked and filled in, so the answer replaces the question and the
+   reader's eye stays on one body of text. A basic or bidirectional fence keeps
+   both halves, because there the answer does not contain the question. Note
+   view has read this way since phase 3 and the map since phase 5.
+4. **Non-due fences render revealed and inert** during a session — visible as
+   context, not a target, not counted.
+
+### Test fixture
+
+| Fixture | Covers |
+|---|---|
+| `vault/tests/flashcard/fence-card-types.md` | The fanned-out types: a three-group cloze, a bidi pair, a basic control, a not-due cloze, a card the store has only just met. Seven due questions in each of the three modes. |
+| `vault/tests/flashcard/fence-only-study.md` | The target/non-target split — two due fences and one scheduled to 2027, in a note with no line cards. |
+| `vault/tests/flashcard/occlusion-surfaces.md` | Occlusion in both in-place surfaces, plus an occluded and a plain line card. |
+| `vault/tests/flashcard/code-cloze-study.md` | **New in phase 5.** Both code-cloze marker shapes with real schedules, in a note shaped for the map. Four due questions. |
+
+Every one of them moves schedules when studied. Reset from `e2e/fixtures/`
+after testing **and reload Obsidian** — see "The reset hazard" in `CLAUDE.md`,
+which this task added after losing most of an hour to it in phase 4.
+
+### Follow-ups
+
+- [[Cloze markers leak into the revealed half outside a session]] — two
+  source-parser gaps found while walking the matrix, both pre-existing: a
+  labelled `# osmosis-cloze-cN` marker prints on the answer outside a session,
+  and a `:::text:::` fence is not a card node on the map at all.
 
 ## Progress
 
@@ -255,7 +281,58 @@ Open the PR against `release/0.0.4`, close this note out, and merge when asked.
   `c2` and `c3` on three timestamps a second apart and both directions of the
   bidirectional pair, and confirmed an occluded node still steps as it did and
   peek still reveals whole nodes in any order.
-- **Phase 5 — not started.**
+- **Phase 5 — shipped** (`a22d71c`, `9d176c9`). `code-cloze-study.md` covers
+  both marker shapes with real schedules, in a note shaped for the map; the
+  reset hazard is folded into `CLAUDE.md` under "The reset hazard", linked from
+  Step 4.5. All eighteen matrix cells walked. The walk turned up one parity gap
+  and it was fixed here rather than deferred — the map revealed a cloze node by
+  stacking its answer under its question, so a cloze node carried its passage
+  twice and was twice as tall as it needed to be. `applyFenceHidden` now drops
+  the blanked front and the divider on reveal, gated on being inside a session,
+  because `exitSpatialMode` restores every node through that same method with
+  `hidden: false` after clearing the mode and a collapse that outlived the
+  session would leave the fence showing its answer and nothing else.
+
+### The type × mode matrix
+
+Walked cell by cell in Obsidian — the count is the questions the surface put on
+screen, *recorded* means the schedule in the source file moved for the card that
+was answered.
+
+| Card type | Fixture | Sequential | Spatial (map) | Contextual (note) |
+|---|---|---|---|---|
+| `explicit` | `fence-card-types.md` · `fct-basic` | ✅ 1, recorded | ✅ 1, recorded | ✅ 1, recorded |
+| `explicit_bidi` | `fence-card-types.md` · `fct-capital` | ✅ 2, recorded | ✅ 2, recorded | ✅ 2, recorded |
+| `explicit_cloze` | `fence-card-types.md` · `fct-rivers` | ✅ 3, recorded | ✅ 3, recorded | ✅ 3, recorded |
+| `code_cloze` | `code-cloze-study.md` · all three fences | ✅ 4, recorded | ✅ 4, recorded | ✅ 4, recorded |
+| `occlusion` | `occlusion-surfaces.md` · fence + `os-elevat1` | ✅ per group | ✅ per group | ✅ per group |
+| `line` | `occlusion-surfaces.md` · `os-plainl1` | ✅ 1, recorded | ✅ 1, recorded | ✅ 1, recorded |
+
+**Every cell asks the same questions and records each answer** — which is what
+this task set out to fix, and the matrix is what proves it. `code_cloze` was
+walked for the first time here: both marker shapes fan out per `cN`, the map
+steps `0/4` → `4/4`, and the tall start/end region revealed under a one-line
+blank without clipping.
+
+The two cloze rows were re-walked after the map's reveal was fixed; the counts
+above are the ones the fixed build produced. Phase 5's rule was to record a
+wrong cell rather than fix it, and the other two gaps the walk found were left
+alone accordingly — both are source-parser drift rather than anything this task
+built. See [[Cloze markers leak into the revealed half outside a session]].
+
+Known seams to record rather than fix (phase 5 is a verification pass):
+
+- **A labelled `# osmosis-cloze-cN` marker leaks into the revealed half outside
+  a session.** Both view-side source parsers strip a bare marker and neither
+  strips a labelled one —
+  `MindMapView.STRIP_CLOZE_COMMENT` and `ContextualStudyProcessor.MARKER_COMMENT`
+  are the same regex, and both end at `osmosis-cloze\s*(?:\*\/|-->)?\s*$`, which
+  a `-c1` suffix defeats. The generator strips it correctly, so the marker
+  disappears the moment a session asks the card and comes back when it ends —
+  the same "wrong outside a session, right inside one" shape as the `c1:` label
+  leak phase 4 fixed. `code-cloze-study.md`'s third fence exercises it.
+- **`:::text:::` is not a card node on the map.** MindMapView's fence parsers
+  still do not recognise the form `PROSE_CLOZE_REGEX` accepts. Pre-existing.
 
 Four decisions taken during phase 4 that a later session should not undo
 silently:
@@ -401,7 +478,9 @@ Shipped so far, by file:
 | `src/views/LineRevealProcessor.ts` | 1, 3 | Button gate, fence targets; pill counts fence *questions* (`planFenceSteps`, `ratedFences` as a counter) |
 | `src/views/ContextualStudyProcessor.ts` | 1–3 | Plays store cards; steps a fence through them (`fencePlan`, `stepAt`, shared with the occluded path); source rendering outside a session |
 | `src/study/spatial-study.ts` | 2–4 | `cardsForFenceKey`, `dueCardsForFenceKey`; `spatialStudyKeys` splits on any due card, ordered by `askRank`; `cardIdsForSpatialKey` resolves a split key to that card alone |
-| `src/views/MindMapView.ts` | 4 | `spatialStepCards`; per-step markdown swap (`updateNodeProse`, seeded by `renderOsmosisCardInto`); all three fence parsers routed through `splitFenceHeader`; cloze `cN:` labels stripped from the back |
+| `src/views/MindMapView.ts` | 4, 5 | `spatialStepCards`; per-step markdown swap (`updateNodeProse`, seeded by `renderOsmosisCardInto`); all three fence parsers routed through `splitFenceHeader`; cloze `cN:` labels stripped from the back; `isCloze` on the source parse and the in-place reveal in `applyFenceHidden` |
+| `CLAUDE.md` | 5 | "The reset hazard" under manual testing, linked from Step 4.5 |
+| `e2e/fixtures/code-cloze-study.md` → `vault/tests/flashcard/` | 5 | The `code_cloze` fixture: both marker shapes, four due questions |
 
 ## What's your current workaround?
 
