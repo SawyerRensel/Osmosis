@@ -298,22 +298,24 @@ export class ContextualStudyProcessor {
 
 		const alreadyRevealed = this.revealedCardIds.has(parsed.cardId);
 		const alreadyRated = this.ratedCardIds.has(parsed.cardId);
-		// A session asks the cards the scheduler picked out. The rest of the note's
-		// cards are not questions right now, so they read as what they are —
-		// context, already answered — rather than sitting there as blanks the
-		// reader can never clear.
-		const inert = this.isInert(sourcePath, parsed.cardId);
-		let revealed = alreadyRevealed || inert;
+		let revealed = alreadyRevealed || !this.shouldHideBack(sourcePath, parsed.cardId);
 
-		const showBack = (): void => {
+		/**
+		 * `answered` distinguishes the two ways a back comes to be on screen.
+		 *
+		 * A reader who was *asked* — peek, or a session question — has finished
+		 * with the question, so a cloze collapses onto its filled-in text rather
+		 * than stacking two copies of the same passage. A reader who was never
+		 * asked is simply reading the note, and gets what live preview draws:
+		 * both sides, in order.
+		 */
+		const showBack = (answered: boolean): void => {
 			hiddenEl.addClass("osmosis-hidden");
 			revealedEl.removeClass("osmosis-hidden");
 			// Cloze cards replace the front in-place rather than stacking, so the
 			// reader's eye stays on the same body of text.
-			if (parsed.isCloze) {
-				frontEl.addClass("osmosis-hidden");
-				dividerEl.addClass("osmosis-hidden");
-			}
+			frontEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
+			dividerEl.toggleClass("osmosis-hidden", parsed.isCloze && answered);
 			revealedEl.empty();
 			this.renderSide(parsed, "back", revealedEl, sourcePath);
 		};
@@ -322,27 +324,25 @@ export class ContextualStudyProcessor {
 			hiddenEl.removeClass("osmosis-hidden");
 			revealedEl.addClass("osmosis-hidden");
 			revealedEl.empty();
-			if (parsed.isCloze) {
-				frontEl.removeClass("osmosis-hidden");
-				dividerEl.removeClass("osmosis-hidden");
-			}
+			frontEl.removeClass("osmosis-hidden");
+			dividerEl.removeClass("osmosis-hidden");
 		};
 
 		const reveal = (): void => {
 			if (revealed) return;
 			revealed = true;
 			this.revealedCardIds.add(parsed.cardId);
-			showBack();
+			showBack(true);
 
 			if (parsed.cardId && !alreadyRated && this.isFenceTarget(sourcePath, parsed.cardId)) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		};
 
-		// Auto-reveal if this card was previously revealed this session, or if the
-		// running session is not asking it.
+		// Show the back straight away unless something is deliberately asking for
+		// it: peek, or a session that has picked this card out as a question.
 		if (revealed) {
-			showBack();
+			showBack(alreadyRevealed);
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
 			} else if (parsed.cardId && this.isFenceTarget(sourcePath, parsed.cardId)) {
@@ -357,26 +357,23 @@ export class ContextualStudyProcessor {
 			}
 		});
 
-		// Starting or stopping a session changes which of these cards are
-		// questions, and does not re-run this processor. Repaint in place rather
-		// than rebuilding, so the note does not jump under the reader.
+		// Entering or leaving peek or study changes what this card should be
+		// showing, and does not re-run this processor. Repaint in place rather than
+		// rebuilding, so the note does not jump under the reader.
 		this.trackFence(container, sourcePath, () => {
-			const nowInert = this.isInert(sourcePath, parsed.cardId);
-			const keep = this.revealedCardIds.has(parsed.cardId);
-			if (nowInert || keep) {
-				revealed = true;
-				showBack();
-			} else {
-				revealed = false;
-				hideBack();
-			}
+			// A mode change starts a fresh pass: what the reader uncovered under the
+			// old mode says nothing about what the new one should show. Peek would
+			// otherwise open on the answers of everything read before it.
+			this.revealedCardIds.delete(parsed.cardId);
+			this.ratedCardIds.delete(parsed.cardId);
+
+			revealed = !this.shouldHideBack(sourcePath, parsed.cardId);
+			// Nothing has been asked yet under the new mode, so a back on screen
+			// here is the reading-mode one: stacked, not collapsed.
+			if (revealed) showBack(false);
+			else hideBack();
 
 			ratingSlot.empty();
-			if (revealed && this.ratedCardIds.has(parsed.cardId)) {
-				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
-			} else if (revealed && parsed.cardId && this.isFenceTarget(sourcePath, parsed.cardId)) {
-				this.showRating(ratingSlot, parsed.cardId, sourcePath);
-			}
 		});
 	}
 
@@ -456,6 +453,22 @@ export class ContextualStudyProcessor {
 		});
 
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
+
+		// The answer, drawn once and left alone: plain reading mode shows the
+		// unmasked diagram beneath the masked one, exactly as live preview does.
+		// Peek and study hide these and put their questions on the slots above.
+		//
+		// A second set of pictures rather than a repaint of the first, because the
+		// two have to be on screen *together* while reading. The prose is not
+		// repeated with them — live preview does repeat it, and that is a wart of
+		// rendering an occluded fence as two independent sides, not something to
+		// carry over.
+		const answerSlots = occlusions.map((occlusion) => {
+			const slot = container.createDiv({ cls: "osmosis-occlusion-slot" });
+			renderOcclusion(this.plugin.app, slot, occlusion, "all-revealed", sourcePath);
+			return slot;
+		});
+
 		const hiddenEl = container.createDiv({ cls: "osmosis-contextual-hidden", text: "░░░░░░" });
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
 
@@ -465,6 +478,9 @@ export class ContextualStudyProcessor {
 		let index = 0;
 
 		const draw = (): void => {
+			// Reading mode asks nothing, so the card shows both its sides at once and
+			// takes no clicks. Peek and study are the surfaces that pose a question.
+			const hiding = this.shouldHideBack(sourcePath, parsed.cardId);
 			const steps = this.stepPlan(parsed, sourcePath);
 			index = this.occlusionStepAt.get(parsed.cardId) ?? 0;
 			const step = steps[index] ?? null;
@@ -498,9 +514,11 @@ export class ContextualStudyProcessor {
 
 			// Nothing but the placeholder and its rule goes away on reveal: the
 			// answer to an occluded card is the masks, which have just been
-			// repainted.
-			dividerEl.toggleClass("osmosis-hidden", revealed);
-			hiddenEl.toggleClass("osmosis-hidden", revealed);
+			// repainted. While reading, the rule stays as the seam between the
+			// question and the answer beneath it.
+			answerSlots.forEach((slot) => { slot.toggleClass("osmosis-hidden", hiding); });
+			dividerEl.toggleClass("osmosis-hidden", hiding && revealed);
+			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
 
 			// Rebuilt rather than repainted: it holds no picture, and it sits below
 			// the diagram, so its height changes cannot move what is being read.
@@ -529,6 +547,10 @@ export class ContextualStudyProcessor {
 		};
 
 		const reveal = (): void => {
+			// Reading mode has nothing to uncover — the answer is already below the
+			// rule — and revealing the masks here would put the same picture on
+			// screen twice.
+			if (!this.shouldHideBack(sourcePath, parsed.cardId)) return;
 			if (this.revealedCardIds.has(revealKey)) return;
 			this.revealedCardIds.add(revealKey);
 			draw();
@@ -588,14 +610,22 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Whether this fence should show both its sides because a session is running
-	 * and it is not one of the session's questions.
+	 * Whether this fence's back should start hidden.
 	 *
-	 * Deliberately false outside study: a card the reader has simply scrolled to
-	 * is still a card, and reading mode has always hidden its back until asked.
+	 * **Hiding belongs to peek and study alone.** Plain reading mode shows both
+	 * sides, exactly as live preview does — a note is a document first, and a
+	 * reader scrolling through it is not being asked anything. Reading view used
+	 * to hide every back and make the reader click each one, which turned an
+	 * ordinary read of a card-bearing note into a quiz nobody started.
+	 *
+	 * In a session only the cards the scheduler picked out are hidden; the rest
+	 * read as what they are — context, already answered.
 	 */
-	private isInert(sourcePath: string, fenceId: string): boolean {
-		return this.isStudying(sourcePath) && !this.isFenceTarget(sourcePath, fenceId);
+	private shouldHideBack(sourcePath: string, fenceId: string): boolean {
+		const mode = this.plugin.lineReveal?.revealMode(sourcePath) ?? "off";
+		if (mode === "off") return false;
+		if (mode === "peek") return true;
+		return this.isFenceTarget(sourcePath, fenceId);
 	}
 
 	/**

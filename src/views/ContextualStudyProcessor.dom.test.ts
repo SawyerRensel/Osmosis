@@ -267,12 +267,27 @@ describe("an occluded fence in contextual study", () => {
 		expect(stepCount(el)).toBe("1/1");
 	});
 
-	it("blanks every group at once when the note is not being studied", () => {
-		// Peek and ordinary reading are unchanged: no target, no rating, no steps.
+	it("shows the answer beneath the question when the note is not being studied", () => {
 		const { el } = renderFence(TWO_GROUPS, "off", [groupCard("c1"), groupCard("c2")]);
 
-		expect(maskRoles(el)).toEqual(["hidden", "hidden"]);
+		// Reading mode draws what live preview draws: the masked diagram, then the
+		// unmasked one below it. Hiding an answer outright belongs to peek and
+		// study — a reader scrolling past a note is not being asked anything.
+		// No group is singled out on either, because nothing is being answered.
+		expect(maskRoles(el)).toEqual(["hidden", "hidden", "revealed", "revealed"]);
 		expect(stepCount(el)).toBeNull();
+	});
+
+	it("takes no rating and no clicks while the note is only being read", () => {
+		const { el, reviews } = renderFence(TWO_GROUPS, "off", [groupCard("c1"), groupCard("c2")]);
+
+		// The answer is already on screen, so clicking must not repaint the top
+		// diagram to match it and leave the same picture up twice.
+		el.querySelector<HTMLElement>(".osmosis-contextual-card")?.click();
+
+		expect(maskRoles(el)).toEqual(["hidden", "hidden", "revealed", "revealed"]);
+		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(reviews).toEqual([]);
 	});
 
 	it("renders the fence's prose once, so an unoccluded diagram is not embedded twice", () => {
@@ -342,5 +357,90 @@ describe("parseFenceContent — what counts as a card", () => {
 
 		expect(parsed?.front).toBe("![[span.svg]]");
 		expect(parsed?.back).toBe("The main span.");
+	});
+});
+
+/**
+ * What a note shows when nobody has started anything.
+ *
+ * Reading view used to hide every card's back and make the reader click each one
+ * in turn, which turned an ordinary read of a card-bearing note into a quiz
+ * nobody asked for. Hiding now belongs to peek and study alone: plain reading
+ * mode draws what live preview draws, both sides in order.
+ */
+describe("a fence in plain reading mode", () => {
+	const BASIC = [
+		"id: basic1",
+		"",
+		"Which HTTP status code means the request succeeded but returned no body?",
+		"***",
+		"204 No Content.",
+	].join("\n");
+
+	const CLOZE = ["id: cloze1", "", "The ==Nile== is the longest river in ==Africa==."].join("\n");
+
+	function basicCard(id: string): Card {
+		return {
+			id,
+			notePath: NOTE,
+			deck: "tests",
+			cardType: "explicit",
+			front: "",
+			back: "",
+			typeIn: false,
+			sourceLine: 0,
+		};
+	}
+
+	/** Present and not hidden — i.e. actually on screen. */
+	function visible(el: HTMLElement, selector: string): boolean {
+		const found = el.querySelector(selector);
+		return found !== null && !found.classList.contains("osmosis-hidden");
+	}
+
+	it("shows a basic card's back without being asked", () => {
+		const { el } = renderFence(BASIC, "off");
+
+		expect(visible(el, ".osmosis-contextual-front")).toBe(true);
+		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
+		expect(visible(el, ".osmosis-contextual-hidden")).toBe(false);
+	});
+
+	it("stacks a cloze card's blanked and filled-in halves, as live preview does", () => {
+		const { el } = renderFence(CLOZE, "off");
+
+		// Not collapsed onto the answer. Collapsing is what a reader gets after
+		// *answering* a cloze — it keeps their eye on one body of text — and
+		// nothing has been answered here.
+		expect(visible(el, ".osmosis-contextual-front")).toBe(true);
+		expect(visible(el, ".osmosis-study-divider")).toBe(true);
+		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
+	});
+
+	it("offers no rating, because reading is not answering", () => {
+		const { el, reviews } = renderFence(BASIC, "off", [basicCard("basic1")]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-card")?.click();
+
+		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(reviews).toEqual([]);
+	});
+
+	it("hides the back of a card the session is asking", () => {
+		// No `due` means never reviewed, which the scheduler counts as due now.
+		const { el } = renderFence(BASIC, "study", [basicCard("basic1")]);
+
+		expect(visible(el, ".osmosis-contextual-hidden")).toBe(true);
+		expect(visible(el, ".osmosis-contextual-revealed")).toBe(false);
+	});
+
+	it("leaves a card the session is not asking fully readable", () => {
+		const later = { ...basicCard("basic1"), due: Date.now() + 60_000 };
+		const { el } = renderFence(BASIC, "study", [later]);
+
+		// Context, not a question: a blank the reader could never clear is worse
+		// than no blank at all.
+		expect(visible(el, ".osmosis-contextual-hidden")).toBe(false);
+		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
 	});
 });
