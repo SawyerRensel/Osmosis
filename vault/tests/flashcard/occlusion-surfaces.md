@@ -2,6 +2,14 @@
 osmosis-cards: true
 osmosis-deck: Engineering/Surfaces
 osmosis-schedule:
+  os-plainl1:
+    due: 2026-08-01T09:00:00
+    stability: 4.21
+    difficulty: 5.5
+    reps: 3
+    lapses: 0
+    state: review
+    learningSteps: 0
   os-elevat1:
     occlude:
       mode: hide-one-guess-one
@@ -24,49 +32,14 @@ osmosis-schedule:
           y: 0.1225
           rx: 0.1
           ry: 0.05
-      annotations:
-        - x: 0.2714
-          y: 0.2902
-          w: 0.1153
-          h: 0.087
-          text: test
-          rotation: 162.8937
     c1:
-      due: 2026-08-12T09:26:22
-      stability: 0.0834
-      difficulty: 8.8063
-      lastReview: 2026-08-12T09:25:22
-      reps: 2
-      lapses: 0
-      state: learning
-      learningSteps: 0
-    c2:
-      due: 2026-08-12T09:26:23
-      stability: 0.0834
-      difficulty: 8.8063
-      lastReview: 2026-08-12T09:25:23
-      reps: 2
-      lapses: 0
-      state: learning
-      learningSteps: 0
-    c3:
-      due: 2026-08-12T09:26:28
-      stability: 0.212
-      difficulty: 6.4133
-      lastReview: 2026-08-12T09:25:28
+      due: 2026-08-02T09:00:00
+      stability: 2.5
+      difficulty: 6
       reps: 1
       lapses: 0
-      state: learning
+      state: review
       learningSteps: 0
-  os-plainl1:
-    due: 2026-08-12T09:26:31
-    stability: 0.212
-    difficulty: 6.4133
-    lastReview: 2026-08-12T09:25:31
-    reps: 1
-    lapses: 0
-    state: learning
-    learningSteps: 0
 ---
 
 # Image occlusion — contextual and spatial fixture
@@ -113,25 +86,6 @@ occlude-a:
       y: 0.56
       rx: 0.065
       ry: 0.05
-c1:
-  due: 2026-08-12T13:26:14.603Z
-  stability: 0.0834
-  difficulty: 8.8063
-  reps: 2
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T13:25:14.603Z
-  learningSteps: 0
-c2:
-  due: 2026-08-12T13:26:19.680Z
-  stability: 0.0834
-  difficulty: 8.8063
-  reps: 2
-  lapses: 0
-  state: learning
-  lastReview: 2026-08-12T13:25:19.680Z
-  learningSteps: 0
-
 
 The section, then the elevation.
 ![[bridge-cross-section.svg]]{a}
