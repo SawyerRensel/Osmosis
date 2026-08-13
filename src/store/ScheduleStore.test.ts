@@ -3,7 +3,7 @@
 // context and popout windows need the window-scoped timer).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TFile } from "obsidian";
-import type { ScheduleData } from "../database/types";
+import type { OcclusionSet, ScheduleData } from "../database/types";
 import {
 	ScheduleStore,
 	SCHEDULE_FRONTMATTER_KEY,
@@ -12,6 +12,9 @@ import {
 	parseScheduleEntry,
 	parseScheduleFrontmatter,
 	parseDisabledFrontmatter,
+	parseOcclusionFrontmatter,
+	scheduleKey,
+	splitScheduleKey,
 	formatLocalTimestamp,
 	parseTimestamp,
 } from "./ScheduleStore";
@@ -485,5 +488,237 @@ describe("ScheduleStore", () => {
 		expect(h.store.isWriting("note.md")).toBe(false);
 		await h.store.flush();
 		expect(h.store.isWriting("note.md")).toBe(false);
+	});
+
+	it("stages a group write through the store's public API", async () => {
+		const h = makeHarness();
+		h.store.setSchedule("note.md", "os-ek322j", baseSchedule, "c1");
+		await h.store.flush();
+
+		const map = h.frontmatters.get("note.md")?.[SCHEDULE_FRONTMATTER_KEY] as Record<
+			string,
+			Record<string, { reps: number }>
+		>;
+		expect(map["os-ek322j"]!["c1"]!.reps).toBe(baseSchedule.reps);
+	});
+});
+
+describe("occluded line cards", () => {
+	/**
+	 * An entry carrying a shape set plus a schedule per group, alongside a
+	 * plain entry written before occlusion existed. Both must load.
+	 */
+	const mixedFrontmatter = {
+		"os-plain1": {
+			due: "2026-08-12T09:00:00",
+			stability: 4.21,
+			difficulty: 5.5,
+			reps: 3,
+			lapses: 0,
+			state: "review",
+			learningSteps: 0,
+		},
+		"os-ek322j": {
+			occlude: {
+				mode: "hide-all-guess-one",
+				shapes: [
+					{ group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 },
+					{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 },
+				],
+			},
+			c1: {
+				due: "2026-08-14T09:00:00",
+				stability: 2.5,
+				difficulty: 6,
+				reps: 1,
+				lapses: 0,
+				state: "review",
+				learningSteps: 0,
+			},
+			c2: { disabled: true },
+		},
+	};
+
+	it("loads a pre-existing flat entry unchanged next to an occlusion entry", () => {
+		const schedules = parseScheduleFrontmatter(mixedFrontmatter);
+		expect(schedules.get("os-plain1")?.stability).toBe(4.21);
+		expect(schedules.get("os-plain1")?.reps).toBe(3);
+	});
+
+	it("keys a group's schedule under blockId/group", () => {
+		const schedules = parseScheduleFrontmatter(mixedFrontmatter);
+		expect(schedules.get("os-ek322j/c1")?.stability).toBe(2.5);
+		// The block ID alone is not a card once the entry is occluded.
+		expect(schedules.has("os-ek322j")).toBe(false);
+	});
+
+	it("does not mistake the shape set for a schedule", () => {
+		expect(parseScheduleFrontmatter(mixedFrontmatter).has("os-ek322j/occlude")).toBe(false);
+	});
+
+	it("reads the disabled flag off the group, not the image", () => {
+		const disabled = parseDisabledFrontmatter(mixedFrontmatter);
+		expect(disabled.has("os-ek322j/c2")).toBe(true);
+		expect(disabled.has("os-ek322j")).toBe(false);
+	});
+
+	it("extracts the shape set for card generation", () => {
+		const sets = parseOcclusionFrontmatter(mixedFrontmatter);
+		expect(sets.get("os-ek322j")?.mode).toBe("hide-all-guess-one");
+		expect(sets.get("os-ek322j")?.shapes).toHaveLength(2);
+		expect(sets.has("os-plain1")).toBe(false);
+	});
+
+	it("builds scheduleKey and splits it back", () => {
+		expect(scheduleKey("os-ek322j", "c1")).toBe("os-ek322j/c1");
+		expect(scheduleKey("os-ek322j")).toBe("os-ek322j");
+		expect(splitScheduleKey("os-ek322j/c1")).toEqual({ blockId: "os-ek322j", group: "c1" });
+		expect(splitScheduleKey("os-ek322j")).toEqual({ blockId: "os-ek322j" });
+	});
+
+	it("does not mis-split a hand-written block ID that ends in -cN", () => {
+		expect(splitScheduleKey("diagram-c1")).toEqual({ blockId: "diagram-c1" });
+	});
+
+	it("writes a group's schedule nested under its block ID", () => {
+		const fm: Record<string, unknown> = { [SCHEDULE_FRONTMATTER_KEY]: { ...mixedFrontmatter } };
+		applyScheduleEntries(fm, new Map([["os-ek322j/c2", { ...baseSchedule, reps: 7 }]]), new Map());
+
+		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, Record<string, { reps: number }>>;
+		expect(map["os-ek322j"]!["c2"]!.reps).toBe(7);
+	});
+
+	it("leaves the shape set alone when a group's schedule is removed", () => {
+		const fm: Record<string, unknown> = {
+			[SCHEDULE_FRONTMATTER_KEY]: JSON.parse(JSON.stringify(mixedFrontmatter)) as unknown,
+		};
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", null]]), new Map());
+
+		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, Record<string, unknown>>;
+		expect(map["os-ek322j"]!["occlude"]).toBeDefined();
+		expect(map["os-ek322j"]!["c1"]).toBeUndefined();
+	});
+
+	it("keeps a plain entry's write flat", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map([["os-a1b2c3", baseSchedule]]), new Map());
+
+		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, Record<string, unknown>>;
+		expect(map["os-a1b2c3"]!["due"]).toBeDefined();
+	});
+
+	it("suspends one group without touching its siblings", () => {
+		const fm: Record<string, unknown> = {
+			[SCHEDULE_FRONTMATTER_KEY]: JSON.parse(JSON.stringify(mixedFrontmatter)) as unknown,
+		};
+		applyScheduleEntries(fm, new Map(), new Map([["os-ek322j/c1", true]]));
+
+		const map = fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, Record<string, Record<string, unknown>>>;
+		expect(map["os-ek322j"]!["c1"]!["disabled"]).toBe(true);
+		expect(map["os-ek322j"]!["c1"]!["stability"]).toBe(2.5);
+		expect(map["os-ek322j"]!["c2"]!["disabled"]).toBe(true);
+	});
+});
+
+/**
+ * The editor's line-card carrier. A shape set is written per block ID and sits
+ * beside the per-group schedules, and its presence is what makes the parser
+ * read that entry as an occlusion rather than as a plain line card's fields —
+ * so these assert on what the frontmatter *parses back to*.
+ */
+describe("occlusion writes", () => {
+	const set: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [
+			{ group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 },
+			{ group: "c2", kind: "ellipse", x: 0.55, y: 0.4, rx: 0.08, ry: 0.05 },
+		],
+	};
+
+	it("writes a shape set onto the block, not onto a group", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(set);
+	});
+
+	it("turns the entry into one the parser reads per group", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+
+		const parsed = parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]);
+		expect(parsed.get("os-ek322j/c1")?.due).toBe(baseSchedule.due);
+		expect(parsed.has("os-ek322j")).toBe(false);
+	});
+
+	it("replaces the drawing without disturbing the groups' schedules", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+
+		const moved: OcclusionSet = {
+			...set,
+			shapes: [{ group: "c1", kind: "rect", x: 0.5, y: 0.22, w: 0.14, h: 0.06 }],
+		};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", moved]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(moved);
+		expect(parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j/c1")?.due)
+			.toBe(baseSchedule.due);
+	});
+
+	it("removes the drawing when every shape is deleted, keeping the entry", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+		applyScheduleEntries(fm, new Map([["os-ek322j/c1", baseSchedule]]), new Map());
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", null]]));
+
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).has("os-ek322j")).toBe(false);
+		const block = (fm[SCHEDULE_FRONTMATTER_KEY] as Record<string, unknown>)["os-ek322j"];
+		expect(block).toHaveProperty("c1");
+	});
+
+	it("leaves a plain line card's flat entry alone", () => {
+		const fm: Record<string, unknown> = {};
+		applyScheduleEntries(fm, new Map([["os-plain", baseSchedule]]), new Map());
+		applyScheduleEntries(fm, new Map(), new Map(), new Map([["os-ek322j", set]]));
+
+		const parsed = parseScheduleFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]);
+		expect(parsed.get("os-plain")?.due).toBe(baseSchedule.due);
+	});
+
+	it("stages through setOcclusion and flushes to frontmatter", async () => {
+		const fm: Record<string, unknown> = {};
+		// Test double — ScheduleStore only ever reads `.path`.
+		const file = { path: "note.md" } as never;
+		const store = new ScheduleStore(
+			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			() => file,
+		);
+
+		store.setOcclusion("note.md", "os-ek322j", set);
+		expect(store.hasPendingWrites()).toBe(true);
+		await store.flushPath("note.md");
+
+		expect(store.hasPendingWrites()).toBe(false);
+		expect(parseOcclusionFrontmatter(fm[SCHEDULE_FRONTMATTER_KEY]).get("os-ek322j")).toEqual(set);
+	});
+
+	it("stages an empty set as a removal", async () => {
+		const fm: Record<string, unknown> = {};
+		// Test double — ScheduleStore only ever reads `.path`.
+		const file = { path: "note.md" } as never;
+		const store = new ScheduleStore(
+			{ processFrontMatter: async (_f, fn: (fm: Record<string, unknown>) => void) => { fn(fm); } },
+			() => file,
+		);
+
+		store.setOcclusion("note.md", "os-ek322j", set);
+		await store.flushPath("note.md");
+		store.setOcclusion("note.md", "os-ek322j", { mode: "hide-all-guess-one", shapes: [] });
+		await store.flushPath("note.md");
+
+		expect(fm[SCHEDULE_FRONTMATTER_KEY]).toBeUndefined();
 	});
 });

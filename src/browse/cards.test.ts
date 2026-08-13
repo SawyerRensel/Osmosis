@@ -274,7 +274,7 @@ describe("readBrowseOptions", () => {
 				[cardTypeOptionKey("line")]: false,
 			};
 			expect(readBrowseOptions((key) => stored[key]).cardTypes)
-				.toEqual(new Set<CardType>(["explicit", "code_cloze"]));
+				.toEqual(new Set<CardType>(["explicit", "code_cloze", "occlusion"]));
 		});
 	});
 });
@@ -626,7 +626,7 @@ describe("buildFlat", () => {
 
 describe("typeLabel", () => {
 	it("names every card type Osmosis generates", () => {
-		const types: CardType[] = ["explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "line"];
+		const types: CardType[] = [...FILTERABLE_CARD_TYPES];
 		for (const type of types) {
 			expect(typeLabel(type)).not.toBe("");
 		}
@@ -718,5 +718,31 @@ describe("toRow", () => {
 
 	it("flags a suspended card", () => {
 		expect(toRow(card({ id: "a", disabled: true }), NOW).suspended).toBe(true);
+	});
+});
+
+describe("card-type coverage", () => {
+	/**
+	 * `readBrowseOptions` builds the active type set by iterating
+	 * FILTERABLE_CARD_TYPES, so a card type missing from that list is filtered
+	 * out of the browser entirely — not merely missing a checkbox. Occlusion
+	 * cards were invisible in the browser for exactly this reason.
+	 */
+	it("filters to every card type the store can hold", () => {
+		const every: CardType[] = [
+			"explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "occlusion", "line",
+		];
+		expect([...FILTERABLE_CARD_TYPES].sort()).toEqual([...every].sort());
+	});
+
+	it("shows an occlusion card under the default options", () => {
+		const options = readBrowseOptions(() => undefined);
+		expect(matchesTypes({ cardType: "occlusion" } as Card, options.cardTypes)).toBe(true);
+	});
+
+	it("labels every filterable type", () => {
+		for (const cardType of FILTERABLE_CARD_TYPES) {
+			expect(typeLabel(cardType)).toBeTruthy();
+		}
 	});
 });

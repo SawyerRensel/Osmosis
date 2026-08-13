@@ -1,5 +1,14 @@
 import { generateCardId, extractCardIds } from "../card-id";
-import type { CardState } from "../database/types";
+import type { CardState, OcclusionSet } from "../database/types";
+import {
+	cardOcclusion,
+	findFirstEmbed,
+	findLabeledEmbeds,
+	groupNumber,
+	occlusionGroups,
+	parseOccludeBlock,
+	stripEmbedLabels,
+} from "./occlusion";
 import type { GeneratedCard, FenceMetadata, DerivedSchedule } from "./types";
 
 /** Match an osmosis code fence block (3+ backticks). */
@@ -30,11 +39,34 @@ function isClosingFence(line: string, backtickCount: number): boolean {
 	return match !== null && match[1]!.length >= backtickCount;
 }
 
-/** Schedule field names for derived card prefix matching. */
+/** Schedule field names, in the canonical spelling `applyScheduleField` switches on. */
 const SCHEDULE_FIELDS = new Set([
 	"stability", "difficulty", "due", "last-review",
 	"reps", "lapses", "state", "learning-steps",
 ]);
+
+/**
+ * A derived card's schedule block key — `c1:`, `r:` — carrying no value and
+ * opening an indented block of fields, the way frontmatter stores the same
+ * data. The flat `c1-due:` spelling it replaced is still read.
+ */
+const DERIVED_SCHEDULE_KEY_REGEX = /^(r|c\d+)\s*:\s*$/;
+
+/**
+ * Canonical field name for a schedule key in either carrier's spelling, or null
+ * when the key is not a schedule field.
+ *
+ * The fence header used to write `last-review`/`learning-steps` while
+ * frontmatter wrote `lastReview`/`learningSteps`. The fence writes camelCase
+ * now, so both have to read. Callers lowercase keys before they arrive here,
+ * which is why the camelCase forms are matched flattened.
+ */
+function normalizeScheduleField(name: string): string | null {
+	const key = name.trim().toLowerCase();
+	if (key === "lastreview") return "last-review";
+	if (key === "learningsteps") return "learning-steps";
+	return SCHEDULE_FIELDS.has(key) ? key : null;
+}
 
 /** Valid card states for validation. */
 const VALID_STATES = new Set<string>(["new", "learning", "review", "relearning"]);
@@ -72,6 +104,35 @@ function applyScheduleField(
 			target.learningSteps = parseInt(value, 10);
 			break;
 	}
+}
+
+/**
+ * Parse a derived card's nested schedule block — a `c1:`/`r:` key plus its
+ * indented fields — starting at `startIdx`. Returns null when `startIdx` is not
+ * such a key.
+ *
+ * Mirrors `parseOccludeBlock`: the block runs to the first line that is blank,
+ * unindented, or the closing fence.
+ */
+function parseDerivedScheduleBlock(
+	lines: readonly string[],
+	startIdx: number,
+): { suffix: string; schedule: DerivedSchedule; nextIdx: number } | null {
+	const keyMatch = lines[startIdx]?.trim().match(DERIVED_SCHEDULE_KEY_REGEX);
+	if (!keyMatch) return null;
+
+	let end = startIdx + 1;
+	while (end < lines.length && /^\s+\S/.test(lines[end]!)) end++;
+
+	const schedule: DerivedSchedule = {};
+	for (const raw of lines.slice(startIdx + 1, end)) {
+		const fieldMatch = raw.trim().match(/^(\w[\w-]*)\s*:\s*(.+)$/);
+		if (!fieldMatch) continue;
+		const field = normalizeScheduleField(fieldMatch[1]!);
+		if (field) applyScheduleField(schedule, field, fieldMatch[2]!.trim());
+	}
+
+	return { suffix: keyMatch[1]!, schedule, nextIdx: end };
 }
 
 /**
@@ -166,8 +227,17 @@ function findInnerCodeFence(contentLines: string[]): { start: number; end: numbe
  * Collect every cloze occurrence in the fence content, grouped by user-authored
  * cN label. Anonymous occurrences each become their own group, numbered strictly
  * above the largest labeled group.
+ *
+ * `reserved` holds group numbers already claimed by the fence's shape sets.
+ * Cloze groups and shape groups share one `cN` namespace per fence because both
+ * derive `<fenceId>-cN`, so without this a caption cloze labelled `c1` beside an
+ * occluded diagram whose masks are also `c1` would emit two cards under one ID
+ * and the second would silently overwrite the first in the store.
  */
-function collectClozeGroups(contentLines: string[]): ClozeGroup[] {
+function collectClozeGroups(
+	contentLines: string[],
+	reserved: ReadonlySet<number> = new Set(),
+): ClozeGroup[] {
 	const innerFence = findInnerCodeFence(contentLines);
 	const inCodeFence = (i: number): boolean =>
 		innerFence !== null && i > innerFence.start && i < innerFence.end;
@@ -304,11 +374,17 @@ function collectClozeGroups(contentLines: string[]): ClozeGroup[] {
 
 	const groups: ClozeGroup[] = [];
 	for (const [num, occs] of labeled) {
+		// A shape set already owns this number — the occlusion card wins, since
+		// its geometry cannot be re-labelled without reopening the editor.
+		if (reserved.has(num)) continue;
 		groups.push({ suffix: num, firstLineIdx: firstLineOf(occs), occurrences: occs });
 	}
 
 	let nextAnon = 1;
 	for (const num of labeled.keys()) {
+		if (num >= nextAnon) nextAnon = num + 1;
+	}
+	for (const num of reserved) {
 		if (num >= nextAnon) nextAnon = num + 1;
 	}
 	// Anonymous groups are emitted in source order so the first anonymous
@@ -479,6 +555,62 @@ function renderClozeCard(
 }
 
 /**
+ * Split a fence's header from its content, reading the two header facts
+ * reading view needs: whether the card is excluded, and whether it declares
+ * image occlusion.
+ *
+ * Pulled out of `parseFenceContent` so it can be tested without a plugin
+ * instance. The indented blocks are the reason it is worth testing: an
+ * `occlude[-label]:` or `c1:` key carries no value, so the single-line
+ * `key: value` test rejects it and the scan would end *on top of* the block —
+ * spilling a shape set, or a derived card's schedule, into the rendered content.
+ */
+export function splitFenceHeader(lines: readonly string[]): {
+	contentStart: number;
+	exclude: boolean;
+	hasOcclusion: boolean;
+} {
+	let contentStart = 0;
+	let exclude = false;
+	let hasOcclusion = false;
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i]!.trim();
+		if (line === "") {
+			contentStart = i + 1;
+			break;
+		}
+
+		const occlude = parseOccludeBlock(lines, i);
+		if (occlude) {
+			hasOcclusion = true;
+			contentStart = occlude.nextIdx;
+			i = occlude.nextIdx - 1; // the loop's own i++ lands on nextIdx
+			continue;
+		}
+
+		const derived = parseDerivedScheduleBlock(lines, i);
+		if (derived) {
+			contentStart = derived.nextIdx;
+			i = derived.nextIdx - 1;
+			continue;
+		}
+
+		if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
+			const excludeMatch = line.match(/^exclude\s*:\s*(.+)$/i);
+			if (excludeMatch) exclude = excludeMatch[1]!.trim() === "true";
+			contentStart = i + 1;
+			continue;
+		}
+
+		contentStart = i;
+		break;
+	}
+
+	return { contentStart, exclude, hasOcclusion };
+}
+
+/**
  * Generate explicit cards from ```osmosis code fences.
  *
  * Fence format:
@@ -492,8 +624,11 @@ function renderClozeCard(
  * ```
  *
  * Metadata keys: id, exclude, bidi, type-in, deck, hint
- * Schedule keys: stability, difficulty, due, last-review, reps, lapses, state
- * Derived schedule keys: r-due, c1-stability, etc.
+ * Schedule keys: stability, difficulty, due, lastReview, reps, lapses, state,
+ *   learningSteps — the fence's own card, flat at the top level.
+ * Derived cards (bidi reverse, cloze/occlusion groups) nest their schedule
+ *   under a `r:`/`c1:` block. The pre-migration flat spelling (`r-due`,
+ *   `c1-stability`, `c1-last-review`) still reads.
  * bidi: true generates two cards (forward + reverse as explicit_bidi type).
  *
  * If no *** separator, the fence is treated as a cloze card. Any of these
@@ -537,6 +672,11 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			hint: "",
 		};
 
+		// Kept apart so the merge below is decided by format rather than by which
+		// spelling happened to appear first in the header.
+		const flatDerived = new Map<string, DerivedSchedule>();
+		const nestedDerived = new Map<string, DerivedSchedule>();
+
 		let metadataEnded = false;
 		while (i < lines.length && !isClosingFence(lines[i]!, backtickCount)) {
 			const line = lines[i]!.trim();
@@ -548,31 +688,54 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 					continue;
 				}
 
+				// An `occlude[-label]:` key opens an indented block rather than
+				// carrying a value, so it has to be consumed before the
+				// single-line `key: value` match below rejects it and ends
+				// metadata parsing early.
+				const occlude = parseOccludeBlock(lines, i);
+				if (occlude) {
+					if (!metadata.occlusions) metadata.occlusions = new Map();
+					metadata.occlusions.set(occlude.label, occlude.set);
+					i = occlude.nextIdx;
+					continue;
+				}
+
+				// A derived card's schedule is a nested block since the format
+				// change. Like `occlude:`, the key carries no value, so it has to
+				// be consumed before the `key: value` match below rejects it.
+				const derivedBlock = parseDerivedScheduleBlock(lines, i);
+				if (derivedBlock) {
+					nestedDerived.set(derivedBlock.suffix, {
+						...nestedDerived.get(derivedBlock.suffix),
+						...derivedBlock.schedule,
+					});
+					i = derivedBlock.nextIdx;
+					continue;
+				}
+
 				const metaMatch = line.match(/^(\w[\w-]*)\s*:\s*(.+)$/);
 				if (metaMatch) {
 					const key = metaMatch[1]!.toLowerCase();
 					const value = metaMatch[2]!.trim();
 
-					// Check for derived schedule prefix (e.g., r-due, c1-stability)
+					// Pre-migration derived schedule keys (e.g., r-due, c1-stability)
 					const prefixMatch = key.match(/^(r|c\d+)-(.+)$/);
-					if (prefixMatch && SCHEDULE_FIELDS.has(prefixMatch[2]!)) {
+					const prefixField = prefixMatch ? normalizeScheduleField(prefixMatch[2]!) : null;
+					if (prefixMatch && prefixField) {
 						const suffix = prefixMatch[1]!;
-						const field = prefixMatch[2]!;
-						if (!metadata.derivedSchedules) {
-							metadata.derivedSchedules = new Map();
-						}
-						let derived = metadata.derivedSchedules.get(suffix);
+						let derived = flatDerived.get(suffix);
 						if (!derived) {
 							derived = {};
-							metadata.derivedSchedules.set(suffix, derived);
+							flatDerived.set(suffix, derived);
 						}
-						applyScheduleField(derived, field, value);
+						applyScheduleField(derived, prefixField, value);
 						i++;
 						continue;
 					}
 
-					if (SCHEDULE_FIELDS.has(key)) {
-						applyScheduleField(metadata, key, value);
+					const field = normalizeScheduleField(key);
+					if (field) {
+						applyScheduleField(metadata, field, value);
 						i++;
 						continue;
 					}
@@ -611,6 +774,19 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 			break;
 		}
 
+		// Migration happens on write, one card at a time, so a three-group fence
+		// sits with `c1:` nested and `c2-due:`/`c3-due:` still flat until those
+		// two come up for review. Both forms have to survive that, and a group
+		// described by both resolves field by field with the nested block
+		// winning — it is what the most recent write produced.
+		if (flatDerived.size > 0 || nestedDerived.size > 0) {
+			const merged = new Map<string, DerivedSchedule>();
+			for (const suffix of new Set([...flatDerived.keys(), ...nestedDerived.keys()])) {
+				merged.set(suffix, { ...flatDerived.get(suffix), ...nestedDerived.get(suffix) });
+			}
+			metadata.derivedSchedules = merged;
+		}
+
 		// Collect content lines until closing fence
 		const contentLines: string[] = [];
 		while (i < lines.length && !isClosingFence(lines[i]!, backtickCount)) {
@@ -640,11 +816,24 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		);
 
 		if (separatorIdx === -1) {
-			// Cloze path — unified across prose and code.
+			// Cloze path — unified across prose and code — plus occlusion, which
+			// is the same model with its geometry lifted into the header.
 			const content = contentLines.join("\n").trim();
 			if (content.length === 0) continue;
 
-			const groups = collectClozeGroups(contentLines);
+			const occlusionCards = buildOcclusionCards(
+				contentLines,
+				metadata,
+				fenceId,
+				fenceStartLine,
+				suspension,
+			);
+			cards.push(...occlusionCards);
+
+			const reserved = new Set(
+				occlusionCards.map((card) => groupNumber(card.occlusion!.target)),
+			);
+			const groups = collectClozeGroups(contentLines, reserved);
 			if (groups.length === 0) continue;
 
 			const hasInlineCode = groups.some((g) =>
@@ -731,7 +920,109 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		}
 	}
 
+	// Belt and braces on the `{label}` markers. `bindEmbeds` already strips
+	// them from occlusion cards, but a fence can mix an occluded diagram with a
+	// caption cloze, and the label would ride through the cloze renderer into
+	// every study surface as literal stray text beside the image. Stripping at
+	// the one point every card leaves this generator means no future card path
+	// can forget. Only the rendered output is cleaned — the source keeps its
+	// labels, which is what binds the shapes to the embed.
+	for (const card of cards) {
+		card.front = stripEmbedLabels(card.front);
+		card.back = stripEmbedLabels(card.back);
+	}
+
 	return cards;
+}
+
+/**
+ * One card per shape group, for every embed the fence binds a shape set to.
+ *
+ * Content is narrowed to the card's own diagram — a fence may carry several
+ * labelled embeds, and a card asking about one of them must not display the
+ * rest. The card keeps *all* of its set's shapes, though, not just the target
+ * group's: hide-all-guess-one paints every mask on the front, so the renderer
+ * needs the siblings even while asking about one.
+ */
+function buildOcclusionCards(
+	contentLines: string[],
+	metadata: FenceMetadata,
+	fenceId: string,
+	fenceStartLine: number,
+	suspension: { disabled?: boolean },
+): GeneratedCard[] {
+	const occlusions = metadata.occlusions;
+	if (!occlusions || occlusions.size === 0) return [];
+
+	const content = contentLines.join("\n");
+	const cards: GeneratedCard[] = [];
+
+	for (const { label, target, body } of bindEmbeds(content, occlusions)) {
+		const set = occlusions.get(label)!;
+		for (const group of occlusionGroups(set)) {
+			const derived = metadata.derivedSchedules?.get(group);
+			cards.push({
+				id: `${fenceId}-${group}`,
+				card_type: "occlusion",
+				front: metadata.hint ? `${body}\n\n_Hint: ${metadata.hint}_` : body,
+				back: body,
+				deck: metadata.deck,
+				sourceLine: fenceStartLine,
+				typeIn: metadata.typeIn,
+				occlusion: cardOcclusion(target, set, group),
+				...suspension,
+				...spreadSchedule(derived),
+			});
+		}
+	}
+
+	return cards;
+}
+
+/**
+ * Pair each declared shape set with the embed it belongs to, and the content
+ * that embed's cards should show.
+ *
+ * **Every card gets the fence's whole body**, other diagrams included. A card
+ * asking about one diagram used to have the others cut out of it, on the
+ * grounds that they were not what was being asked; in practice a fence holds
+ * several diagrams precisely because they explain each other, and hiding the
+ * elevation while asking about the cross-section threw away the context the
+ * author was providing. The sibling diagrams render unmasked — they are not
+ * being asked, and covering parts of them would pose a second question this
+ * card never answers.
+ *
+ * A label may only bind once: two embeds carrying `{a}` would otherwise derive
+ * the same `<fenceId>-cN` IDs twice and the later card would overwrite the
+ * earlier one in the store.
+ */
+function bindEmbeds(
+	content: string,
+	occlusions: ReadonlyMap<string, OcclusionSet>,
+): Array<{ label: string; target: string; body: string }> {
+	// Bare `occlude:` — the line-card spelling, also accepted in a fence that
+	// holds a single embed, so the two carriers stay legible the same way.
+	const bare = occlusions.get("");
+	if (bare && occlusions.size === 1) {
+		const target = findFirstEmbed(content);
+		return target === null
+			? []
+			: [{ label: "", target, body: stripEmbedLabels(content) }];
+	}
+
+	const bound: Array<{ label: string; target: string; body: string }> = [];
+	const used = new Set<string>();
+	for (const embed of findLabeledEmbeds(content)) {
+		const set = occlusions.get(embed.label);
+		if (!set || set.shapes.length === 0 || used.has(embed.label)) continue;
+		used.add(embed.label);
+		bound.push({
+			label: embed.label,
+			target: embed.target,
+			body: stripEmbedLabels(content),
+		});
+	}
+	return bound;
 }
 
 /**

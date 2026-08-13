@@ -1,0 +1,338 @@
+// @vitest-environment jsdom
+import { describe, it, expect } from "vitest";
+import type { Card } from "../database/types";
+import type OsmosisPlugin from "../main";
+import { ContextualStudyProcessor } from "./ContextualStudyProcessor";
+
+/**
+ * What text a fence hands to the markdown renderer.
+ *
+ * The `{a}` marker binds an embed to its shape set and lives in the user's own
+ * file, so every render surface has to strip it — an acceptance criterion in
+ * its own right. It regressed once already: stripping was done inside the
+ * occlusion branch alone, and a fence that *also* carried a `***` separator
+ * returned from the branch above it with the markers intact, putting a literal
+ * `{a}` under the diagram in reading view.
+ */
+type Parsed = {
+	front: string;
+	back: string;
+	cardId: string;
+	exclude: boolean;
+	occlusions?: { image: string }[];
+} | null;
+
+/** `parseFenceContent` is private; the fence text in, card text out is the contract. */
+function parse(source: string): Parsed {
+	const processor = new ContextualStudyProcessor({} as unknown as OsmosisPlugin);
+	return (processor as unknown as { parseFenceContent: (s: string) => Parsed })
+		.parseFenceContent(source);
+}
+
+const shapes = [
+	"occlude-a:",
+	"  mode: hide-all-guess-one",
+	"  shapes:",
+	"    - group: c1",
+	"      kind: rect",
+	"      x: 0.31",
+	"      y: 0.22",
+	"      w: 0.14",
+	"      h: 0.06",
+].join("\n");
+
+describe("parseFenceContent — embed labels", () => {
+	it("hands an occlusion fence's diagram to the mask renderer, not to markdown", () => {
+		const parsed = parse(`id: bridge\n${shapes}\n\n![[bridge.svg]]{a}`);
+
+		// The embed leaves the markdown entirely: `renderOcclusion` draws the
+		// picture, so leaving it in would render the diagram twice — once masked
+		// and once not. Nothing is left here but the (absent) prose.
+		expect(parsed?.front).toBe("");
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
+		expect(parsed?.front).not.toContain("{a}");
+	});
+
+	it("strips the label from a fence that also has a separator", () => {
+		// The regression: this branch returns before the occlusion one is reached.
+		const parsed = parse(`id: bridge\n${shapes}\n\n![[bridge.svg]]{a}\n***\nThe deck slab.`);
+
+		expect(parsed?.front).toBe("![[bridge.svg]]");
+		expect(parsed?.back).toBe("The deck slab.");
+	});
+
+	it("keeps an embed that has no shape set, and strips its label", () => {
+		// Only `a` is occluded. `b` is ordinary content: taking it out with the
+		// masked one would make the second diagram vanish from the note.
+		const parsed = parse(`id: bridge\n${shapes}\n\n![[a.svg]]{a}\n![[b.svg]]{b}`);
+
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["a.svg"]);
+		expect(parsed?.front).toBe("![[b.svg]]");
+		expect(parsed?.front).not.toContain("{b}");
+	});
+
+	it("carries the prose around a diagram through to the card body", () => {
+		const parsed = parse(`id: bridge\n${shapes}\n\nWhich parts carry load?\n![[bridge.svg]]{a}`);
+
+		expect(parsed?.front).toBe("Which parts carry load?");
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
+	});
+
+	it("occludes a single-embed fence, which carries no label at all", () => {
+		const bare = shapes.replace("occlude-a:", "occlude:");
+		const parsed = parse(`id: bridge\n${bare}\n\n![[bridge.svg]]`);
+
+		expect(parsed?.occlusions?.map((o) => o.image)).toEqual(["bridge.svg"]);
+		expect(parsed?.front).toBe("");
+	});
+
+	it("leaves the user's own braces alone", () => {
+		// The marker is anchored to a preceding embed precisely so prose and
+		// LaTeX survive: `{x}` on its own is the author's text.
+		const parsed = parse("id: sets\n\nThe set ==$\\{x\\}$== is closed.");
+
+		expect(parsed?.back).toContain("$\\{x\\}$");
+	});
+});
+
+/**
+ * An occluded fence being studied in the note.
+ *
+ * Reading view has two jobs on the same diagram. *Peek* is a reader looking at a
+ * picture — every group blanked at once, none singled out, nothing recorded.
+ * *Study* is a card player, exactly as sequential and spatial are, so it steps
+ * through the shape groups one at a time and each step moves one card's
+ * schedule. The two were the same rendering, which made contextual study a
+ * second peek that answered three cards on one rating it then dropped: the
+ * fence's own ID is not a card the store holds, so `recordRating` skipped it.
+ */
+const TWO_GROUPS = [
+	"id: bridge",
+	"occlude-a:",
+	"  mode: hide-all-guess-one",
+	"  shapes:",
+	"    - group: c1",
+	"      kind: rect",
+	"      x: 0.31",
+	"      y: 0.22",
+	"      w: 0.14",
+	"      h: 0.06",
+	"    - group: c2",
+	"      kind: rect",
+	"      x: 0.6",
+	"      y: 0.5",
+	"      w: 0.1",
+	"      h: 0.1",
+	"",
+	"![[bridge.svg]]{a}",
+].join("\n");
+
+const NOTE = "notes/bridges.md";
+
+function groupCard(group: string): Card {
+	return {
+		id: `bridge-${group}`,
+		notePath: NOTE,
+		deck: "tests",
+		cardType: "occlusion",
+		front: "",
+		back: "",
+		typeIn: false,
+		sourceLine: 0,
+		occlusion: { image: "bridge.svg", mode: "hide-all-guess-one", shapes: [], target: group },
+	};
+}
+
+/** The reviews a render's rating buttons actually recorded. */
+interface Harness {
+	el: HTMLElement;
+	reviews: { cardId: string; rating: number }[];
+	/**
+	 * Draw the same fence again into the same element, as Obsidian does whenever
+	 * the file changes — which a rating does, since flushing a schedule rewrites
+	 * the note. The processor is kept, because the session state that has to
+	 * survive that lives on it.
+	 */
+	rerender: () => void;
+}
+
+/** `cards` is read on every call, so a test can move a schedule mid-session. */
+function renderFence(source: string, mode: "off" | "study", cards: Card[] = []): Harness {
+	const reviews: { cardId: string; rating: number }[] = [];
+	const plugin = {
+		app: {
+			metadataCache: {
+				getFirstLinkpathDest: (linkpath: string) =>
+					linkpath === "bridge.svg" ? { path: linkpath } : null,
+			},
+			vault: { getResourcePath: (file: { path: string }) => `app://vault/${file.path}` },
+		},
+		cardStore: {
+			getCardsByNote: () => cards,
+			getCard: (id: string) => cards.find((card) => card.id === id),
+		},
+		lineReveal: { revealMode: () => mode },
+		createSessionManager: () => ({
+			recordReview: (cardId: string, rating: number) => {
+				reviews.push({ cardId, rating });
+				return Promise.resolve();
+			},
+		}),
+		refreshDashboard: () => { /* no dashboard in a test */ },
+	} as unknown as OsmosisPlugin;
+
+	const processor = new ContextualStudyProcessor(plugin);
+	const el = document.createElement("div");
+	const render = (): void => {
+		el.replaceChildren();
+		(processor as unknown as {
+			renderCard: (s: string, e: HTMLElement, p: string) => void;
+		}).renderCard(source, el, NOTE);
+	};
+	render();
+	return { el, reviews, rerender: render };
+}
+
+/** The group each painted mask belongs to, by the role class the renderer gave it. */
+function maskRoles(el: HTMLElement): string[] {
+	return Array.from(el.querySelectorAll(".osmosis-occlusion-mask:not(.osmosis-hidden *)"))
+		.map((mask) =>
+			mask.classList.contains("is-target")
+				? "target"
+				: mask.classList.contains("is-revealed") ? "revealed" : "hidden",
+		);
+}
+
+/** The step counter's text, or null on a card that is not stepping. */
+function stepCount(el: HTMLElement): string | null {
+	return el.querySelector(".osmosis-contextual-step")?.textContent ?? null;
+}
+
+describe("an occluded fence in contextual study", () => {
+	it("singles out one shape group at a time instead of blanking them all", () => {
+		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+
+		// `hide-all-guess-one`: c1 is the question, c2 stays covered as its sibling.
+		// Not two anonymous blanks, which is what a reader gets in peek.
+		expect(maskRoles(el)).toEqual(["target", "hidden"]);
+		expect(stepCount(el)).toBe("1/2");
+	});
+
+	it("advances to the next group when the first is rated", () => {
+		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		// Revealing rings the group that was asked rather than clearing it, so the
+		// answer still says where the question was.
+		expect(maskRoles(el)).toEqual(["revealed", "hidden"]);
+
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// The rating reached the *group's* card. Rating the fence ID recorded
+		// nothing at all: no such card exists for an occluded fence.
+		expect(reviews).toEqual([{ cardId: "bridge-c1", rating: 3 }]);
+		expect(stepCount(el)).toBe("2/2");
+		expect(maskRoles(el)).toEqual(["hidden", "target"]);
+	});
+
+	it("reports the diagram as rated once every group has been answered", () => {
+		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+
+		for (let i = 0; i < 2; i++) {
+			el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+		}
+
+		expect(reviews.map((review) => review.cardId)).toEqual(["bridge-c1", "bridge-c2"]);
+		expect(el.querySelector(".osmosis-contextual-rated")?.textContent).toBe("Rated");
+		// Back to what the note shows outside study: every region ringed, so the
+		// finished card still says where all the questions were.
+		expect(maskRoles(el)).toEqual(["revealed", "revealed"]);
+	});
+
+	it("skips a group the scheduler would not ask now", () => {
+		const later = { ...groupCard("c2"), due: Date.now() + 60_000 };
+		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), later]);
+
+		// One due group out of two is one question, not two — the rule spatial
+		// study already applies when it splits a node.
+		expect(stepCount(el)).toBe("1/1");
+	});
+
+	it("blanks every group at once when the note is not being studied", () => {
+		// Peek and ordinary reading are unchanged: no target, no rating, no steps.
+		const { el } = renderFence(TWO_GROUPS, "off", [groupCard("c1"), groupCard("c2")]);
+
+		expect(maskRoles(el)).toEqual(["hidden", "hidden"]);
+		expect(stepCount(el)).toBeNull();
+	});
+
+	it("renders the fence's prose once, so an unoccluded diagram is not embedded twice", () => {
+		// An occluded fence's two sides are the same markdown: the question is put
+		// by the masks, not by withholding text. Drawing a side each would put the
+		// elevation on screen twice and load it twice with it.
+		const source = TWO_GROUPS.replace(
+			"![[bridge.svg]]{a}",
+			"The section, then the elevation.\n![[bridge.svg]]{a}\n![[span.svg]]",
+		);
+		const { el } = renderFence(source, "study", [groupCard("c1"), groupCard("c2")]);
+
+		expect(el.textContent?.split("![[span.svg]]").length).toBe(2);
+	});
+
+	it("keeps the same image element from question to answer to next group", () => {
+		// The scroll bug: redrawing the card rebuilt its `<img>`, which has no
+		// height until the picture decodes again, so the note shortened under the
+		// reader and reading view scrolled them off the diagram — on reveal and
+		// again on rating. Repainting keeps the box exactly where it was.
+		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+		const img = el.querySelector("img");
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		expect(el.querySelector("img")).toBe(img);
+
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+		expect(el.querySelector("img")).toBe(img);
+	});
+
+	it("keeps its place in the sequence when the note re-renders mid-session", () => {
+		const cards = [groupCard("c1"), groupCard("c2")];
+		const { el, rerender } = renderFence(TWO_GROUPS, "study", cards);
+
+		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+		// Rating `c1` pushed it out of the due window, and flushing that schedule
+		// rewrites the note — so Obsidian rebuilds the code block.
+		cards[0] = { ...cards[0]!, due: Date.now() + 60_000 };
+		rerender();
+
+		// Still the second of two questions. Recomputing the sequence per render
+		// dropped the answered group and renumbered what was left, so the card
+		// came back claiming to be finished with `c2` never asked.
+		expect(stepCount(el)).toBe("2/2");
+		expect(maskRoles(el)).toEqual(["hidden", "target"]);
+	});
+
+	it("leaves a group with no card in the store out of the sequence", () => {
+		// Sync has not caught up, or the fence has no `id:` to derive IDs from.
+		// A question whose rating goes nowhere is not one worth asking.
+		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1")]);
+
+		expect(stepCount(el)).toBe("1/1");
+	});
+});
+
+describe("parseFenceContent — what counts as a card", () => {
+	it("returns nothing for a fence with no separator, cloze, or occlusion", () => {
+		// `generateExplicitCards` skips this shape too. Reading view renders it
+		// as a draft preview rather than a card, so the two agree.
+		expect(parse("id: draft\n\nWhich parts carry load?\n\n![[span.svg]]")).toBeNull();
+	});
+
+	it("still makes a card from a separator fence holding only an image", () => {
+		const parsed = parse("id: bridge\n\n![[span.svg]]\n***\nThe main span.");
+
+		expect(parsed?.front).toBe("![[span.svg]]");
+		expect(parsed?.back).toBe("The main span.");
+	});
+});

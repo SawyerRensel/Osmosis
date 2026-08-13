@@ -1,6 +1,6 @@
 ---
-title: Study Osmosis flashcards from Mind Map View
-summary:
+title: Study all Osmosis flashcards in all modes
+summary: Study and peek buttons  in Note view currently don't even show up unless there are line cards.  We need to make sure you can study any kind of flashcard in every view - in sequential, spatial, and contextual modes - and get the same experience.
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Progress
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-03T15:38:58.397Z
-date_modified: 2026-08-03T22:19:02.784Z
+date_created: "2026-08-03T15:38:58.397Z"
+date_modified: "2026-08-12T22:15:03.441Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

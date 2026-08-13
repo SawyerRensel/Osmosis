@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400">
+  <rect width="800" height="400" fill="#eef2f4"/>
+
+  <!-- water line -->
+  <rect x="0" y="320" width="800" height="80" fill="#c5d8e2"/>
+  <!-- abutments -->
+  <rect x="40" y="200" width="70" height="120" fill="#a89f8f" stroke="#5c564a" stroke-width="3"/>
+  <rect x="690" y="200" width="70" height="120" fill="#a89f8f" stroke="#5c564a" stroke-width="3"/>
+  <!-- piers -->
+  <rect x="270" y="220" width="46" height="100" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <rect x="484" y="220" width="46" height="100" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <!-- roadway -->
+  <rect x="40" y="182" width="720" height="20" fill="#6b7280" stroke="#2b3240" stroke-width="3"/>
+  <!-- arch spans -->
+  <path d="M110 202 Q193 120 270 202" fill="none" stroke="#3d4a5c" stroke-width="6"/>
+  <path d="M316 202 Q400 104 484 202" fill="none" stroke="#3d4a5c" stroke-width="6"/>
+  <path d="M530 202 Q613 120 690 202" fill="none" stroke="#3d4a5c" stroke-width="6"/>
+
+  <text x="400" y="60" font-family="sans-serif" font-size="26" text-anchor="middle" fill="#2b2b2b">Main span</text>
+  <text x="293" y="372" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#2b2b2b">Pier</text>
+  <text x="75" y="372" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#2b2b2b">Abutment</text>
+</svg>

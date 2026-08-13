@@ -1,11 +1,14 @@
-import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+// Type-only: CodeMirror 6 ships inside Obsidian and is reached through the
+// editor at runtime, so nothing from this import survives into the bundle.
+import type { EditorView } from "@codemirror/view";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
-import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter } from "./store/ScheduleStore";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
@@ -18,10 +21,66 @@ import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
+import {
+	DEFAULT_OCCLUSION_MODE,
+	decodeEmbedTarget,
+	embedLines,
+	ensureFenceIdentity,
+	fenceOcclusions,
+	locateOcclusionTarget,
+	pickEmbedLine,
+	rewriteFenceEmbeds,
+	usedGroupsInFence,
+	type FenceIdentity,
+	type OcclusionTarget,
+} from "./card-gen/occlusion";
+import { OcclusionEditorModal } from "./views/OcclusionEditorModal";
+import { generateBlockId } from "./block-id";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
-import type { Card, StudyMode } from "./database/types";
+import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
+
+/**
+ * Extensions the "Create image occlusion" item is offered for — Obsidian's own
+ * image formats. SVG is included: it rasterises in an `<img>` like any other,
+ * and diagrams are exactly what gets occluded.
+ */
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif"]);
+
+/**
+ * Every line an image file is embedded on in a note.
+ *
+ * Embeds are matched by *resolution* rather than by text, since the same file
+ * can be written as a short link, a full path, or percent-encoded — and the
+ * file-menu hands us a `TFile`, not the spelling the author used. A note can
+ * hold several, deliberately: each instance of a diagram carries its own masks,
+ * so which one was clicked is `pickEmbedLine`'s question to answer.
+ */
+function findEmbedLines(content: string, image: TFile, app: App, notePath: string): number[] {
+	return embedLines(content)
+		.filter((embed) =>
+			app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(embed.target), notePath)?.path === image.path)
+		.map((embed) => embed.line);
+}
+
+/**
+ * The document line a click landed on, or null when it cannot be determined.
+ *
+ * Obsidian's `file-menu` carries no position and the bundled 1.13 `Editor`
+ * exposes neither `posAtMouse` nor `posAtCoords`, so the click is mapped
+ * through CodeMirror's own `posAtCoords` on the view behind the editor. Null in
+ * reading mode, where there is no CodeMirror view to ask.
+ */
+function lineAtMouse(editor: Editor, event: MouseEvent | null): number | null {
+	if (!event) return null;
+	const view = (editor as unknown as { cm?: EditorView }).cm;
+	if (!view) return null;
+	const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+	if (pos === null) return null;
+	// CodeMirror numbers lines from 1; the editor API and our parsers from 0.
+	return view.state.doc.lineAt(pos).number - 1;
+}
 
 /** localStorage key for the review log's rollup cache (per vault, per device). */
 const REVIEW_ROLLUP_CACHE_KEY = "osmosis-review-rollup";
@@ -66,6 +125,10 @@ export default class OsmosisPlugin extends Plugin {
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
+	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
+	contextualStudy!: ContextualStudyProcessor;
+	/** The most recent right-click, so a file-menu can be traced back to a line. */
+	private lastContextMenu: MouseEvent | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -144,6 +207,13 @@ export default class OsmosisPlugin extends Plugin {
 					else disabled.delete(blockId);
 				}
 				return disabled;
+			},
+			(file: TFile) => {
+				// Shape sets for occluded line cards. No pending overlay: masks
+				// change only when the editor saves them, which rewrites the
+				// frontmatter directly rather than staging through ScheduleStore.
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				return parseOcclusionFrontmatter(raw);
 			},
 		);
 
@@ -293,6 +363,73 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 		);
 
+		// ── Image context menu: "Create image occlusion" ─────────
+		//
+		// Obsidian exposes no image-specific menu event, so the item is offered
+		// through both menus that can surface over an embed: `editor-menu`,
+		// which fires for a right-click in the editor (including on a selected
+		// image since 1.13), and `file-menu`, which fires when the menu is
+		// raised against the image file itself. Whichever one the click reaches,
+		// the item is there.
+		// The file-menu hands over the image but not where it was clicked, so the
+		// right-click that raised it is recorded here. Captured, so it is on
+		// record before Obsidian's own handler builds the menu.
+		this.registerDomEvent(document, "contextmenu", (event) => { this.lastContextMenu = event; }, { capture: true });
+
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, image: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
+				if (!(image instanceof TFile) || !IMAGE_EXTENSIONS.has(image.extension.toLowerCase())) return;
+				const view = leaf?.view instanceof MarkdownView ? leaf.view : this.app.workspace.getActiveViewOfType(MarkdownView);
+				const note = view?.file;
+				if (!note) return;
+				// A note can embed one image more than once, each instance with its
+				// own masks, so the file alone cannot say which was clicked. The
+				// click's own position answers it; the cursor is the fallback for
+				// reading mode, where there is no CodeMirror view to ask. Neither
+				// resolving leaves the item off rather than guessing a diagram.
+				const line = pickEmbedLine(
+					findEmbedLines(view.editor.getValue(), image, this.app, note.path),
+					lineAtMouse(view.editor, this.lastContextMenu) ?? view.editor.getCursor().line,
+				);
+				if (line === null) return;
+				menu.addItem((item) => {
+					item.setTitle("Create image occlusion")
+						.setIcon("square-dashed-mouse-pointer")
+						// Grouped with Obsidian's own image actions (Copy image,
+						// Swap file, …) rather than trailing after Delete image,
+						// which is where an unsectioned item lands.
+						.setSection("image")
+						.onClick(() => { void this.openOcclusionEditor(note, line); });
+				});
+			}),
+		);
+
+		this.registerEvent(
+			this.app.workspace.on("editor-menu", (menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
+				const file = info.file;
+				if (!file || file.extension !== "md") return;
+				const line = editor.getCursor().line;
+				if (locateOcclusionTarget(editor.getValue(), line) === null) return;
+				menu.addItem((item) => {
+					item.setTitle("Create image occlusion")
+						.setIcon("square-dashed-mouse-pointer")
+						.onClick(() => { void this.openOcclusionEditor(file, line); });
+				});
+			}),
+		);
+
+		this.addCommand({
+			id: "create-image-occlusion",
+			name: "Create image occlusion",
+			editorCheckCallback: (checking, editor, ctx) => {
+				const file = ctx.file;
+				if (!file || file.extension !== "md") return false;
+				if (locateOcclusionTarget(editor.getValue(), editor.getCursor().line) === null) return false;
+				if (!checking) void this.openOcclusionEditor(file, editor.getCursor().line);
+				return true;
+			},
+		});
+
 		// ── "Mind map view" icon in markdown view header ────────
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
@@ -325,7 +462,8 @@ export default class OsmosisPlugin extends Plugin {
 		});
 
 		// ── Contextual Study Mode ───────────────────────────────
-		new ContextualStudyProcessor(this).register();
+		this.contextualStudy = new ContextualStudyProcessor(this);
+		this.contextualStudy.register();
 
 		// Progressive line-card reveal in reading view (plan §5)
 		this.lineReveal = new LineRevealProcessor(this);
@@ -390,17 +528,190 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
-				if (file instanceof TFile && file.extension === "md") {
+				if (!(file instanceof TFile)) return;
+				if (file.extension === "md") {
 					this.cardSync.handleRename(oldPath, file.path);
 					this.refreshDashboard();
+					return;
 				}
+				void this.repointFenceEmbeds(oldPath, file);
 			}),
 		);
+	}
+
+	/**
+	 * Open the occlusion editor on the image embed at `line` of `file`.
+	 *
+	 * Which carrier the shapes land in follows where the image already lives: an
+	 * embed inside an ```osmosis fence keeps its set in that fence's header,
+	 * anything else becomes a line card. Wrapping prose in a fence would
+	 * restructure the user's note and cost the embed Obsidian's own rename
+	 * handling, which only reaches links *outside* code fences.
+	 *
+	 * Identity is minted lazily and only on save — a fence with no `id:`, an
+	 * embed with no `{label}`, a line with no block ID. Cancelling the editor
+	 * must leave the note exactly as it was.
+	 */
+	async openOcclusionEditor(file: TFile, line: number): Promise<void> {
+		const content = await this.app.vault.cachedRead(file);
+		const target = locateOcclusionTarget(content, line);
+		if (!target) {
+			new Notice("No image on this line to occlude.");
+			return;
+		}
+
+		const image = this.app.metadataCache.getFirstLinkpathDest(decodeEmbedTarget(target.image), file.path);
+		if (!image) {
+			new Notice(`Image not found: ${target.image}`);
+			return;
+		}
+
+		const lines = content.split("\n");
+		const existing = target.carrier === "fence"
+			? fenceOcclusions(lines, target.span!).get(target.label ?? "")
+			: parseOcclusionFrontmatter(
+				this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY],
+			).get(target.blockId ?? "");
+
+		// Numbering is per carrier, not per diagram: a fence's occlusion cards
+		// all derive `<fenceId>-cN`, so a second diagram starting again from c1
+		// would overwrite the first diagram's cards.
+		const reservedGroups = target.carrier === "fence"
+			? usedGroupsInFence(lines, target.span!)
+				.filter((group) => !(existing?.shapes ?? []).some((shape) => shape.group === group))
+			: [];
+
+		new OcclusionEditorModal(this.app, {
+			src: this.app.vault.getResourcePath(image),
+			image: target.image,
+			set: existing ?? { mode: DEFAULT_OCCLUSION_MODE, shapes: [] },
+			reservedGroups,
+			onSave: (set) => {
+				void this.saveOcclusion(file, target, set).catch((error: unknown) => {
+					console.error("Osmosis: failed to save image occlusion", error);
+					new Notice("Failed to save image occlusion — see the console for details.");
+				});
+			},
+		}).open();
+	}
+
+	/**
+	 * Persist an edited shape set, minting whatever identity its carrier still
+	 * lacks first.
+	 *
+	 * The identity edits and the shape write are separate passes over the file
+	 * because they go through different machinery — `vault.process` for the
+	 * markdown body, `FenceWriter`/`ScheduleStore` for the card data — and the
+	 * writers locate their target by the very ID being minted, so it has to be
+	 * on disk before they run.
+	 */
+	private async saveOcclusion(file: TFile, target: OcclusionTarget, set: OcclusionSet): Promise<void> {
+		if (target.carrier === "fence") {
+			// Re-derived inside `process` rather than reused from the modal's
+			// snapshot, so an edit made to the note while the editor was open
+			// cannot be clobbered — the same pattern `addLineCards` follows.
+			let identity: FenceIdentity | null = null;
+			await this.app.vault.process(file, (data) => {
+				identity = ensureFenceIdentity(data, target.line, target.image, () => generateBlockId());
+				return identity?.content ?? data;
+			});
+			if (!identity) {
+				new Notice("Could not find the card fence for this image.");
+				return;
+			}
+
+			const { id, label } = identity as FenceIdentity;
+			await this.fenceWriter.writeOcclusion(file, id, label, set);
+		} else {
+			let blockId = target.blockId;
+			if (blockId === null) {
+				const plan = planIdGeneration(await this.app.vault.cachedRead(file), {
+					start: target.line,
+					end: target.line,
+				});
+				const insertion = plan.insertions[0];
+				if (!insertion) {
+					new Notice("Could not tag this image as a card — its line cannot carry a block ID.");
+					return;
+				}
+				blockId = insertion.id;
+				await this.app.vault.process(file, (data) => {
+					const fresh = planIdGeneration(data, { start: target.line, end: target.line });
+					blockId = fresh.insertions[0]?.id ?? blockId;
+					return fresh.content;
+				});
+				await this.ensureLineCardsOptIn(file);
+			}
+
+			this.scheduleStore.setOcclusion(file.path, blockId!, set);
+			await this.scheduleStore.flushPath(file.path);
+		}
+
+		await this.cardSync.syncFile(file);
+		this.refreshDashboard();
+		this.lineReveal.refreshChrome();
+		const groups = new Set(set.shapes.map((shape) => shape.group)).size;
+		new Notice(
+			set.shapes.length === 0
+				? "Removed the image occlusion."
+				: `Saved ${String(set.shapes.length)} mask${set.shapes.length === 1 ? "" : "s"} as ${String(groups)} card${groups === 1 ? "" : "s"}.`,
+		);
+	}
+
+	/** Add `osmosis-cards: true` to a note that has not opted into line cards. */
+	private async ensureLineCardsOptIn(file: TFile): Promise<void> {
+		const rawOptIn: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.["osmosis-cards"];
+		if (rawOptIn === true || rawOptIn === "true") return;
+		await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
+			frontmatter["osmosis-cards"] = true;
+		});
+	}
+
+	/**
+	 * Repoint osmosis-fence image embeds after the image they point at is renamed.
+	 *
+	 * Obsidian's metadata cache deliberately does not index links inside code
+	 * fences — the reason `[[example]]` in a code block renders as literal text —
+	 * so its own rename handling cannot see these embeds and would leave an
+	 * occluded diagram pointing at a path that no longer exists. Line cards need
+	 * none of this: their embed is ordinary Markdown outside any fence.
+	 *
+	 * Only fences are rewritten, and only in notes whose cached links or embeds
+	 * already mention the image, so the common rename touches a handful of files
+	 * rather than the whole vault.
+	 */
+	private async repointFenceEmbeds(oldPath: string, file: TFile): Promise<void> {
+		const basename = (path: string): string => path.split("/").pop() ?? path;
+		const oldName = basename(oldPath);
+		const newName = basename(file.path);
+
+		// A link is ours to rewrite when it resolved to the renamed file. The
+		// cache can no longer resolve the old path, so match on the text as
+		// written: either the full old path or its basename (the shortest-path
+		// spelling Obsidian writes by default). The replacement keeps whichever
+		// form the author used.
+		const resolve = (target: string): string | null => {
+			if (target === oldPath) return file.path;
+			if (target === oldName) return newName;
+			return null;
+		};
+
+		for (const note of this.app.vault.getMarkdownFiles()) {
+			const content = await this.app.vault.cachedRead(note);
+			if (!content.includes(oldName)) continue;
+			const rewritten = rewriteFenceEmbeds(content, resolve);
+			if (rewritten !== content) {
+				await this.app.vault.modify(note, rewritten);
+			}
+		}
 	}
 
 	onunload() {
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
+		// ...and any fence schedules a contextual session was still holding, so
+		// closing Obsidian mid-session does not lose the reviews it staged
+		void this.fenceWriter.flush();
 		// ...and any buffered review-log entries, so closing Obsidian mid-session
 		// does not lose the reviews it holds
 		void this.reviewLog.flush();
@@ -1014,7 +1325,7 @@ export default class OsmosisPlugin extends Plugin {
 
 		for (const card of targets) {
 			this.cardStore.setDisabled(card.id, disabled);
-			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled);
+			this.scheduleStore.setDisabled(file.path, card.blockId!, disabled, card.occlusionGroup);
 		}
 		await this.scheduleStore.flushPath(file.path);
 		this.refreshDashboard();

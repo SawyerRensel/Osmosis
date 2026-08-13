@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
+  <!-- Deliberately 4:1. A rotated mask painted without aspect compensation
+       shears badly at this ratio, so a parallelogram is unmistakable here in a
+       way it would not be on a square diagram. -->
+  <rect width="1200" height="300" fill="#f4f1ea"/>
+
+  <!-- chords -->
+  <rect x="60" y="60" width="1080" height="18" fill="#b9b2a3" stroke="#5c564a" stroke-width="3"/>
+  <rect x="60" y="222" width="1080" height="18" fill="#b9b2a3" stroke="#5c564a" stroke-width="3"/>
+
+  <!-- posts -->
+  <rect x="60" y="78" width="14" height="144" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <rect x="593" y="78" width="14" height="144" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <rect x="1126" y="78" width="14" height="144" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+
+  <!-- diagonal bracing, a Warren zigzag -->
+  <polyline points="74,222 209,78 344,222 479,78 614,222 749,78 884,222 1019,78 1133,222"
+    fill="none" stroke="#3d4a5c" stroke-width="8"/>
+
+  <!-- bearing pads -->
+  <ellipse cx="67" cy="252" rx="34" ry="14" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <ellipse cx="1133" cy="252" rx="34" ry="14" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+
+  <text x="600" y="40" font-family="sans-serif" font-size="24" text-anchor="middle" fill="#2b2b2b">Top chord</text>
+  <text x="600" y="285" font-family="sans-serif" font-size="24" text-anchor="middle" fill="#2b2b2b">Bottom chord</text>
+  <text x="150" y="160" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#2b2b2b">Diagonal</text>
+  <text x="700" y="160" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#2b2b2b">Post</text>
+</svg>

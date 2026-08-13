@@ -1,6 +1,6 @@
 ---
-title: Reset card scheduling data
-summary: By note or by deck
+title: Reset card scheduling data by selection
+summary: What if you could right-click a fence or line card and reset scheduling data?
 tags:
   - event
 calendar:
@@ -13,8 +13,8 @@ status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-03T21:31:09.602Z
-date_modified: 2026-08-04T01:32:00.735Z
+date_created: "2026-08-03T21:31:09.602Z"
+date_modified: "2026-08-12T22:17:24.446Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

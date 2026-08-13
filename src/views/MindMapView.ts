@@ -41,12 +41,24 @@ import {
 import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView } from "@codemirror/view";
-import { CLOZE_BLANK } from "../card-gen/explicit";
+import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { fenceDiagrams } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
 import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
-import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
-import type { Card } from "../database/types";
+import {
+	allFenceCardKeys,
+	allLineCardIds,
+	cardIdsForSpatialKey,
+	collectSubtreeCardKeys,
+	dueOrNewFenceCardKeys,
+	dueOrNewLineCardIds,
+	fenceKeyFromNode,
+	occlusionForLineKey,
+	spatialStudyKeys,
+} from "../study/spatial-study";
+import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
@@ -104,6 +116,19 @@ function frontmatterValue(content: string, key: string): unknown {
 }
 
 type FileEdit = edit.FileEdit;
+
+/**
+ * A fence node rendered as a card.
+ *
+ * `front`/`back` are markdown. An occlusion fence adds `occlusions`: masks are
+ * an SVG overlay pinned to an image rather than markdown, so its diagrams are
+ * carried separately and its prose holds only what surrounded them.
+ */
+interface OsmosisCardContent {
+	front: string;
+	back: string;
+	occlusions?: CardOcclusion[];
+}
 
 /**
  * A single reversible map edit. Usually one file, but a move across an embed
@@ -312,6 +337,24 @@ export class MindMapView extends ItemView {
 	private spatialPeekActionEl: HTMLElement | null = null;
 	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
 	private spatialTargets = new Set<string>();
+	/**
+	 * The targets each node carries, keyed by the node's own card key, in the
+	 * order study asks them.
+	 *
+	 * Nearly always one key — a node is one unit of work. An **occluded** node in
+	 * study mode is the exception: its shape groups are separate cards with
+	 * separate schedules, so it steps through them one at a time and appears here
+	 * under several keys. That is why `spatialTargets` is not simply the node keys
+	 * on the map, and why the banner's count is honest about how much is left.
+	 * Peek never splits: it reveals in any order and records nothing, so stepping
+	 * would invent an interaction it does not have.
+	 */
+	private spatialNodeTargets = new Map<string, string[]>();
+	/**
+	 * The diagram each split target asks about, so a repaint can single its group
+	 * out. Only occlusion group keys appear here; an unsplit node has no target.
+	 */
+	private spatialGroupOcclusions = new Map<string, CardOcclusion>();
 	/** Targets already revealed (rated or awaiting a rating). */
 	private spatialRevealed = new Set<string>();
 	/** Targets rated so far (study progress). */
@@ -508,6 +551,21 @@ export class MindMapView extends ItemView {
 	// ── Spatial Study Mode ──────────────────────────────────
 
 	/**
+	 * A fence node's body — the lines between its opening and closing backticks —
+	 * or null when the content is not an ```osmosis fence.
+	 */
+	private static fenceBodyLines(content: string): string[] | null {
+		const lines = content.split("\n");
+		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
+		if (openIdx < 0) return null;
+		let closeIdx = -1;
+		for (let i = lines.length - 1; i > openIdx; i--) {
+			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
+		}
+		return closeIdx <= openIdx ? null : lines.slice(openIdx + 1, closeIdx);
+	}
+
+	/**
 	 * If `content` is an ```osmosis fence with a *** separator,
 	 * return { front, back } split. Otherwise return null.
 	 */
@@ -634,24 +692,51 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Check if a node is an osmosis fence (Q&A, cloze, or code cloze).
+	 * Check if a node is an osmosis fence (occlusion, Q&A, cloze, or code cloze).
 	 * Returns parsed front/back or null.
 	 */
-	private getOsmosisCardContent(node: OsmosisNode): { front: string; back: string } | null {
+	private getOsmosisCardContent(node: OsmosisNode): OsmosisCardContent | null {
 		if (node.type !== "codeblock") return null;
-		return this.parseOsmosisFence(node.content)
+		return this.parseOsmosisOcclusion(node.content)
+			?? this.parseOsmosisFence(node.content)
 			?? this.parseOsmosisCodeCloze(node.content)
 			?? this.parseOsmosisCloze(node.content);
 	}
 
 	/**
+	 * If `content` is an ```osmosis fence carrying shape sets, return its prose
+	 * and the diagrams to paint. Otherwise null.
+	 *
+	 * Occlusion was the one fence type the map could not read, so it fell
+	 * through to the plain code-block path and a node showed the raw `occlude:`
+	 * geometry as text. Front and back are the same prose here — what differs
+	 * between the sides of an occlusion card is the masks, not the markdown.
+	 */
+	private parseOsmosisOcclusion(content: string): OsmosisCardContent | null {
+		const body = MindMapView.fenceBodyLines(content);
+		if (!body) return null;
+		const { contentStart, hasOcclusion } = splitFenceHeader(body);
+		if (!hasOcclusion) return null;
+
+		const { diagrams, prose } = fenceDiagrams(body, contentStart);
+		if (diagrams.length === 0) return null;
+		return { front: prose, back: prose, occlusions: diagrams };
+	}
+
+	/**
 	 * Render osmosis fence as a card (front + divider + back) into the given container.
 	 * Used in both measurement and drawing phases for consistent sizing.
+	 *
+	 * An occlusion fence renders once rather than twice: its two sides differ
+	 * only in whether the masks are filled, so it gets the prose, the diagrams
+	 * with every group *revealed*, and no back half at all. Study covers them by
+	 * repainting the masks in place — see `applySpatialHidden`. Drawing a second
+	 * copy of every picture for the back would double a node's height and make
+	 * the map re-request each image.
 	 */
 	private async renderOsmosisCardInto(
 		container: Element,
-		front: string,
-		back: string,
+		card: OsmosisCardContent,
 		sourcePath: string,
 		ns?: string,
 	): Promise<void> {
@@ -666,6 +751,20 @@ export class MindMapView extends ItemView {
 			el.className = cls;
 			return el;
 		};
+
+		const { front, back } = card;
+
+		if (card.occlusions) {
+			const el = createElement("div", "osmosis-contextual-front");
+			container.appendChild(el);
+			if (front !== "" && this.renderComponent) {
+				await MarkdownRenderer.render(this.app, front, el, sourcePath, this.renderComponent);
+			}
+			for (const occlusion of card.occlusions) {
+				renderOcclusion(this.app, el, occlusion, "all-revealed", sourcePath);
+			}
+			return;
+		}
 
 		const frontEl = createElement("div", "osmosis-contextual-front");
 		container.appendChild(frontEl);
@@ -714,18 +813,31 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Card key for a laid-out node: its line card's ID. Local nodes key
-	 * against the host note, transcluded nodes against their origin note —
-	 * so ratings and schedules always land in the note that owns the line.
+	 * Card key for a laid-out node: its line card's ID, or — for a node that is
+	 * an ```osmosis fence — the fence's own ID. Local nodes key against the host
+	 * note, transcluded nodes against their origin note, so ratings and
+	 * schedules always land in the note that owns the line.
+	 *
+	 * The two key shapes cannot collide: a line key always contains `#^`, and a
+	 * fence ID never does.
 	 */
 	private nodeCardKey(node: LayoutNode): string | null {
 		const blockId = node.source.blockId;
-		if (blockId === undefined) return null;
+		if (blockId === undefined) {
+			return node.source.type === "codeblock"
+				? fenceKeyFromNode(node.source.content)
+				: null;
+		}
 		const path = node.source.isTranscluded
 			? node.source.sourceFile
 			: this.currentFile?.path;
 		if (path === undefined) return null;
 		return lineCardId(path, blockId);
+	}
+
+	/** The cards a spatial target key stands for, whichever kind of key it is. */
+	private cardsForKey(key: string): string[] {
+		return cardIdsForSpatialKey(this.mapCards(), key);
 	}
 
 	/**
@@ -838,19 +950,29 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
 		const notePath = this.currentFile?.path;
-		const dueOrNew = dueOrNewLineCardIds(this.mapCards(), Date.now());
+		const cards = this.mapCards();
+		// One timestamp for the whole session, so the split below cannot disagree
+		// with the due filter about a card sitting on the boundary.
+		const now = Date.now();
+		// Fence cards join line cards as study targets: a fence is a card that
+		// happens to be laid out as a node, and leaving it out meant the map
+		// showed its answer throughout a session that was meant to test it.
+		const dueOrNew = new Set([
+			...dueOrNewLineCardIds(cards, now),
+			...dueOrNewFenceCardKeys(cards, now),
+		]);
 		const scopeKeys = scope && notePath !== undefined
 			? collectSubtreeCardKeys(scope, notePath)
 			: null;
-		const targets = this.cardKeysOnMap(dueOrNew, scopeKeys);
+		const nodeKeys = this.cardKeysOnMap(dueOrNew, scopeKeys);
 
-		if (targets.size === 0) {
-			new Notice(scope ? "No line cards are due in this branch." : "No line cards are due on this map.");
+		if (nodeKeys.size === 0) {
+			new Notice(scope ? "No cards are due in this branch." : "No cards are due on this map.");
 			return;
 		}
 
 		this.spatialMode = "study";
-		this.spatialTargets = targets;
+		this.setSpatialTargets(nodeKeys, cards, now);
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -867,21 +989,51 @@ export class MindMapView extends ItemView {
 	private enterSpatialPeek(): void {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
-		const targets = this.cardKeysOnMap(allLineCardIds(this.mapCards()));
+		const cards = this.mapCards();
+		const targets = this.cardKeysOnMap(
+			new Set([...allLineCardIds(cards), ...allFenceCardKeys(cards)]),
+		);
 
 		if (targets.size === 0) {
-			new Notice("No line cards on this map.");
+			new Notice("No cards on this map.");
 			return;
 		}
 
 		this.spatialMode = "peek";
+		// Peek never splits an occluded node into its groups: it reveals in any
+		// order and records nothing, so there is no question being asked and
+		// nothing for a target group to mean.
 		this.spatialTargets = targets;
+		this.spatialNodeTargets = new Map([...targets].map((key) => [key, [key]]));
+		this.spatialGroupOcclusions.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 		this.spatialPeekActionEl?.addClass("is-active");
 		this.applySpatialState();
+	}
+
+	/**
+	 * Expand the node keys a study session covers into the units it actually
+	 * asks — one per due shape group on an occluded node, one for everything
+	 * else — and remember which diagram each one is about.
+	 */
+	private setSpatialTargets(nodeKeys: ReadonlySet<string>, cards: readonly Card[], now: number): void {
+		this.spatialTargets = new Set<string>();
+		this.spatialNodeTargets = new Map<string, string[]>();
+		this.spatialGroupOcclusions = new Map<string, CardOcclusion>();
+
+		for (const nodeKey of nodeKeys) {
+			const keys = spatialStudyKeys(cards, nodeKey, now);
+			this.spatialNodeTargets.set(nodeKey, keys);
+			for (const key of keys) this.spatialTargets.add(key);
+		}
+		for (const card of cards) {
+			if (card.occlusion && this.spatialTargets.has(card.id)) {
+				this.spatialGroupOcclusions.set(card.id, card.occlusion);
+			}
+		}
 	}
 
 	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
@@ -900,10 +1052,20 @@ export class MindMapView extends ItemView {
 				group.classList.remove("osmosis-spatial-revealed");
 			}
 			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
+			// Neither a fence node nor an occluded line ever carried the hidden
+			// class — masks and a hidden back half are how they hide — so both
+			// need putting back explicitly.
+			for (const nodeId of this.nodeMap.keys()) {
+				const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+				if (group) this.applyFenceHidden(group, nodeId, false, null);
+			}
+			removeMaskOverlays(this.svg);
 		}
 		this.spatialBanner?.remove();
 		this.spatialBanner = null;
 		this.spatialTargets.clear();
+		this.spatialNodeTargets.clear();
+		this.spatialGroupOcclusions.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -927,33 +1089,87 @@ export class MindMapView extends ItemView {
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
 		for (const [nodeId, node] of this.nodeMap) {
-			const key = this.nodeCardKey(node);
-			if (key === null || !this.spatialTargets.has(key)) continue;
+			const nodeKey = this.nodeCardKey(node);
+			const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+			if (!keys || keys.length === 0) continue;
 
-			if (!this.spatialRevealed.has(key)) {
-				this.applySpatialHidden(nodeId, true);
-			} else {
-				this.applySpatialHidden(nodeId, false);
-				this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
-				if (this.spatialMode === "study" && key === this.spatialPendingRating) {
-					// Duplicate embeds share a card key — the bubble anchors to
-					// the clicked node, or the first survivor after a reload
-					if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
-						this.spatialPendingNodeId = nodeId;
-					}
-					if (nodeId === this.spatialPendingNodeId) {
-						this.ensureRatingBubble(nodeId, node);
-					}
+			const { asking, answered } = this.spatialNodeStep(keys);
+			// Only a split node singles a group out; an ordinary one covers or
+			// uncovers itself whole.
+			const occlusion = asking === null ? null : this.spatialGroupOcclusions.get(asking) ?? null;
+			this.applySpatialHidden(nodeId, !answered, occlusion);
+
+			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+			// Toggled, not just added: rating one group resets the node to ask the
+			// next, and a node that kept the revealed class would stay lit up while
+			// its next question was on screen.
+			group?.classList.toggle("osmosis-spatial-revealed", answered);
+
+			if (this.spatialMode === "study" && asking !== null && asking === this.spatialPendingRating) {
+				// Duplicate embeds share a card key — the bubble anchors to
+				// the clicked node, or the first survivor after a reload
+				if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
+					this.spatialPendingNodeId = nodeId;
+				}
+				if (nodeId === this.spatialPendingNodeId) {
+					this.ensureRatingBubble(nodeId, node);
 				}
 			}
 		}
 		if (this.spatialMode === "study") this.ensureSpatialBanner();
 	}
 
-	private applySpatialHidden(nodeId: string, hidden: boolean): void {
+	/**
+	 * Which of a node's targets is on screen, and whether its answer is up.
+	 *
+	 * A node with one target is the old two-state affair: hidden until revealed,
+	 * revealed thereafter. A split occluded node walks its groups in order —
+	 * ask, reveal, rate, then on to the next — and is only finished, `asking`
+	 * null, once its last group has been rated. Peek never rates, so its single
+	 * target simply stops at "revealed", which is all peek has ever meant.
+	 */
+	private spatialNodeStep(keys: readonly string[]): { asking: string | null; answered: boolean } {
+		for (const key of keys) {
+			if (!this.spatialRevealed.has(key)) return { asking: key, answered: false };
+			if (!this.spatialRated.has(key)) return { asking: key, answered: true };
+		}
+		return { asking: null, answered: true };
+	}
+
+	/**
+	 * Paint one target node. `occlusion` is the diagram being asked when the node
+	 * is stepping through its shape groups, and null when the node hides or
+	 * reveals as a whole.
+	 */
+	private applySpatialHidden(nodeId: string, hidden: boolean, occlusion: CardOcclusion | null): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
+
+		// A fence node is never blanked. Its front is the question — prose, a
+		// cloze with its blanks, a masked diagram — and hiding the whole node
+		// would take the question away with the answer, leaving a "?" that asks
+		// nothing. Reading view has always worked this way; the map now matches.
+		if (this.applyFenceHidden(group, nodeId, hidden, occlusion)) return;
+
+		// An occluded line hides its masked regions rather than its whole self:
+		// blanking the node behind a "?" would ask the reader to recall the
+		// diagram, when the card asks about the labels on it. In study one group
+		// is asked at a time; peek covers the lot, having no question to put.
+		const masks = occlusion ?? (hidden ? this.nodeOcclusion(nodeId) : null);
+		if (masks) {
+			const img = group.querySelector("img");
+			if (img instanceof HTMLImageElement) {
+				group.classList.remove("osmosis-spatial-hidden");
+				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+				overlayMasks(img, masks, occlusion ? (hidden ? "front" : "back") : "all-hidden");
+				return;
+			}
+			// No image rendered (missing file, or the node is still rendering) —
+			// fall through and hide it the ordinary way, so it is never a card the
+			// user can see the answer to.
+		}
+		removeMaskOverlays(group);
 
 		if (hidden) {
 			group.classList.add("osmosis-spatial-hidden");
@@ -978,6 +1194,77 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Hide or reveal a fence node's *answer*, leaving its question on screen.
+	 * Returns false when the node is not a fence, so the caller falls back to
+	 * blanking it.
+	 *
+	 * The two kinds of fence hide differently. An occluded one is rendered once
+	 * and its masks repainted — covered while the node is hidden, outlined once
+	 * revealed — so the picture never reloads and the node never changes size.
+	 * Every other kind has a real back half in the DOM, which is simply hidden.
+	 *
+	 * The node keeps the height it was laid out at either way. Re-measuring on
+	 * every reveal would reflow the whole map under the reader's cursor, and a
+	 * node that grows when tapped is worse than one with a little space in it.
+	 *
+	 * `target` is the diagram being asked while a node steps through its shape
+	 * groups, and null when the node hides or reveals as a whole.
+	 */
+	private applyFenceHidden(
+		group: Element,
+		nodeId: string,
+		hidden: boolean,
+		target: CardOcclusion | null,
+	): boolean {
+		const node = this.nodeMap.get(nodeId);
+		const card = node ? this.getOsmosisCardContent(node.source) : null;
+		if (!card) return false;
+
+		group.classList.remove("osmosis-spatial-hidden");
+		group.querySelector(".osmosis-spatial-placeholder")?.remove();
+
+		if (card.occlusions) {
+			// Matched on the embed target the renderer wrote to `alt`, so a fence
+			// holding several diagrams repaints each with its own shape set.
+			const byImage = new Map(card.occlusions.map((o) => [o.image, o]));
+			for (const img of Array.from(group.querySelectorAll("img"))) {
+				const occlusion = byImage.get(img.getAttribute("alt") ?? "");
+				if (!occlusion) continue;
+				if (target === null) {
+					overlayMasks(img, occlusion, hidden ? "all-hidden" : "all-revealed");
+				} else if (occlusion.image === target.image) {
+					overlayMasks(img, target, hidden ? "front" : "back");
+				} else {
+					// A second diagram in the same fence belongs to a different card,
+					// so it is shown unmasked — covering it would pose a question this
+					// card never answers. Sequential has always read this way.
+					overlayMasks(img, occlusion, "none");
+				}
+			}
+			return true;
+		}
+
+		for (const el of Array.from(group.querySelectorAll(".osmosis-contextual-revealed, .osmosis-study-divider"))) {
+			el.classList.toggle("osmosis-hidden", hidden);
+		}
+		return true;
+	}
+
+	/**
+	 * The occluded diagram on a node's line, or null when it carries no masks.
+	 *
+	 * Resolved through the *line key*, never `getCard` — an occluded line's cards
+	 * are `…/c1`, `…/c2`, so the key is nobody's card ID. **The block ID is the
+	 * signal, never `cardType`**: an occluded line card is typed `"occlusion"`
+	 * while still living on its line.
+	 */
+	private nodeOcclusion(nodeId: string): CardOcclusion | null {
+		const node = this.nodeMap.get(nodeId);
+		const key = node ? this.nodeCardKey(node) : null;
+		return key === null ? null : occlusionForLineKey(this.mapCards(), key);
+	}
+
+	/**
 	 * Tap on a node during peek/study. Returns true when the tap was
 	 * consumed. Only hidden targets react. Peek: reveal in any order,
 	 * nothing recorded. Study: reveal opens the rating bubble, which must
@@ -986,9 +1273,12 @@ export class MindMapView extends ItemView {
 	private handleSpatialClick(nodeId: string): boolean {
 		if (this.spatialMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
-		const key = node ? this.nodeCardKey(node) : null;
-		if (!node || key === null) return false;
-		if (!this.spatialTargets.has(key) || this.spatialRevealed.has(key)) return false;
+		const nodeKey = node ? this.nodeCardKey(node) : null;
+		const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+		if (!node || !keys) return false;
+		// The next group the node has to ask — undefined once it has asked them all.
+		const key = keys.find((k) => !this.spatialRevealed.has(k));
+		if (key === undefined) return false;
 
 		// Study: one rating at a time — the open bubble must be answered first
 		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
@@ -1063,11 +1353,17 @@ export class MindMapView extends ItemView {
 		this.spatialRated.add(cardId);
 		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
 
-		// The card key is the card's ID; the card's own notePath routes the
-		// schedule write — to the source note for transcluded lines (plan §11)
-		if (this.plugin.cardStore.getCard(cardId)) {
+		// The key is either a *node* — a line or a fence, which can carry several
+		// cards a single rating must reach, one per cloze — or one shape group of
+		// an occluded node, which is a card of its own. Each card's own notePath
+		// routes its schedule write, to the source note for transcluded lines
+		// (plan §11).
+		const cardIds = this.cardsForKey(cardId);
+		if (cardIds.length > 0) {
 			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
-			await this.spatialSessionManager.recordReview(cardId, rating, { elapsedMs });
+			for (const id of cardIds) {
+				await this.spatialSessionManager.recordReview(id, rating, { elapsedMs });
+			}
 			this.plugin.refreshDashboard();
 		}
 
@@ -1076,7 +1372,10 @@ export class MindMapView extends ItemView {
 			this.exitSpatialMode(); // flushes schedule writes; map stays open
 			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
 		} else {
-			this.ensureSpatialBanner();
+			// Re-apply rather than only redrawing the banner: an occluded node that
+			// has more groups left must reset to ask the next one, which is the
+			// whole point of stepping through them.
+			this.applySpatialState();
 		}
 	}
 
@@ -7486,7 +7785,7 @@ export class MindMapView extends ItemView {
 				// Render osmosis fences as cards (front+back) instead of code blocks
 				const osmosisCard = this.getOsmosisCardContent(node);
 				if (osmosisCard) {
-					await this.renderOsmosisCardInto(cell, osmosisCard.front, osmosisCard.back, sourcePath);
+					await this.renderOsmosisCardInto(cell, osmosisCard, sourcePath);
 				} else if (this.renderComponent) {
 					await MarkdownRenderer.render(
 						this.app,
@@ -7959,13 +8258,7 @@ export class MindMapView extends ItemView {
 				}
 			} else if (osmosisCard) {
 				// Render osmosis fence as card (front + divider + back)
-				await this.renderOsmosisCardInto(
-					wrapper,
-					osmosisCard.front,
-					osmosisCard.back,
-					sourcePath,
-					XHTML_NS,
-				);
+				await this.renderOsmosisCardInto(wrapper, osmosisCard, sourcePath, XHTML_NS);
 			} else if (this.renderComponent) {
 				await MarkdownRenderer.render(
 					this.app,

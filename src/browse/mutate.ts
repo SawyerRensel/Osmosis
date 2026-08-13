@@ -51,8 +51,8 @@ export interface FenceCardWriter {
 
 /** The `osmosis-schedule` frontmatter write path for line cards (`ScheduleStore`). */
 export interface LineCardWriter {
-	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
-	removeSchedule(notePath: string, blockId: string): void;
+	setDisabled(notePath: string, blockId: string, disabled: boolean, group?: string): void;
+	removeSchedule(notePath: string, blockId: string, group?: string): void;
 	flushPath(notePath: string): Promise<void>;
 }
 
@@ -245,7 +245,7 @@ export async function setSuspended(
 
 		for (const card of lineTargets) {
 			deps.cardStore.setDisabled(card.id, suspend);
-			deps.lineCards.setDisabled(plan.notePath, card.blockId!, suspend);
+			deps.lineCards.setDisabled(plan.notePath, card.blockId!, suspend, card.occlusionGroup);
 		}
 		for (const card of fenceTargets) {
 			deps.cardStore.setDisabled(card.id, suspend);
@@ -317,7 +317,7 @@ export async function resetCards(
 
 		for (const card of lineTargets) {
 			deps.cardStore.clearSchedule(card.id);
-			deps.lineCards.removeSchedule(plan.notePath, card.blockId!);
+			deps.lineCards.removeSchedule(plan.notePath, card.blockId!, card.occlusionGroup);
 		}
 		for (const card of fenceTargets) {
 			deps.cardStore.clearSchedule(card.id);

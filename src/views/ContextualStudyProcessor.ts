@@ -1,10 +1,31 @@
-import { Component, MarkdownRenderer, setIcon } from "obsidian";
+import { Component, MarkdownRenderer, Menu, setIcon, type MarkdownPostProcessorContext } from "obsidian";
 import type OsmosisPlugin from "../main";
+import { fenceDiagrams, fenceEmbedLine, stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import type { ScheduleData } from "../database/types";
+import type { CardOcclusion, ScheduleData } from "../database/types";
+import { renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
-import { CLOZE_BLANK } from "../card-gen/explicit";
+import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+
+/**
+ * A fence resolved into what the two sides render.
+ *
+ * `front`/`back` are markdown, as every card type here has always produced.
+ * Occlusion cannot be: masks are an SVG overlay pinned to an image, not
+ * markdown, so an occluded fence carries its diagrams separately and its
+ * markdown holds only the prose that surrounded them.
+ */
+interface ParsedFence {
+	front: string;
+	back: string;
+	cardId: string;
+	exclude: boolean;
+	isCloze: boolean;
+	/** Occluded diagrams, rendered after the prose on both sides. */
+	occlusions?: CardOcclusion[];
+}
 
 /** An undo entry for contextual review. */
 interface ContextualUndoEntry {
@@ -40,6 +61,47 @@ export class ContextualStudyProcessor {
 	private readonly ratedCardIds = new Set<string>();
 	/** Undo stack for contextual review actions. */
 	private readonly undoStack: ContextualUndoEntry[] = [];
+	/**
+	 * How far through its shape groups an occluded fence has been studied, by
+	 * fence ID. Kept here rather than in the render, because Obsidian rebuilds a
+	 * code block's DOM on every file change — a debounced schedule flush lands
+	 * mid-session — and a step counter living in the element would restart the
+	 * diagram from `c1` each time.
+	 */
+	private readonly occlusionStepAt = new Map<string, number>();
+	/**
+	 * The questions each occluded fence asks this session, by fence ID.
+	 *
+	 * Worked out once, when the fence is first drawn into a studied note, and
+	 * kept for the rest of the session. Recomputing per render would renumber the
+	 * sequence under the user: answering `c1` moves its due date, so the very next
+	 * render would drop it, leaving a two-group diagram reporting itself finished
+	 * on the answer to its first question. `LineRevealProcessor` fixes its own
+	 * plan at session start for the same reason.
+	 */
+	private readonly occlusionPlan = new Map<string, OcclusionStep[]>();
+	/**
+	 * The occluded fences on screen, so `refresh` can restart one when the note's
+	 * reveal mode changes.
+	 *
+	 * A fence is a code block, and toggling peek or study does **not** re-run its
+	 * processor — which is why the rating row is read late, at reveal time.
+	 * Stepping cannot be read late: whether a diagram covers every group at once
+	 * or singles one out is decided when the *front* is drawn, so starting study
+	 * has to reach fences that were rendered before it. Only occluded fences are
+	 * tracked, because they are the only ones that render differently inside
+	 * study than outside it.
+	 */
+	private readonly occlusionCards: {
+		el: HTMLElement;
+		sourcePath: string;
+		restart: () => void;
+	}[] = [];
+	/**
+	 * The height each reading-view fence last rendered to, by its source text.
+	 * See `holdHeight` for what it is for.
+	 */
+	private readonly fenceHeights = new Map<string, number>();
 
 	constructor(private readonly plugin: OsmosisPlugin) {}
 
@@ -64,6 +126,7 @@ export class ContextualStudyProcessor {
 		this.plugin.registerMarkdownCodeBlockProcessor(
 			"osmosis",
 			(source: string, el: HTMLElement, ctx) => {
+				this.holdHeight(source, el);
 				// Defer so the element is attached to the DOM before we check context
 				window.requestAnimationFrame(() => {
 					const inLivePreview = el.closest(".is-live-preview") !== null;
@@ -76,16 +139,114 @@ export class ContextualStudyProcessor {
 						// Code block processors are not called in source mode, so if
 						// we're not in live preview we must be in reading view.
 						this.renderCard(source, el, ctx.sourcePath);
+						this.rememberHeight(source, el);
 					}
+
+					el.removeClass("osmosis-fence-held");
+					this.registerOcclusionMenu(source, el, ctx);
 				});
 			},
 		);
 	}
 
+	/**
+	 * Give a fence being (re-)rendered the height it had last time, until the
+	 * deferred render fills it.
+	 *
+	 * Rating a card rewrites the note — schedules live in its frontmatter — and
+	 * Obsidian answers a file change by re-running a code block's processor. The
+	 * rebuilt block is inserted **empty** and only filled on the next frame, so
+	 * the note briefly loses the whole card's height and the reader ends up
+	 * further down it than they were: the same scroll bug as the rebuilt `<img>`,
+	 * one level up. Holding the height keeps the document the same length across
+	 * that frame.
+	 *
+	 * Keyed on the fence's source text, which is stable across re-renders and
+	 * changes exactly when the card's height might have — an edited fence simply
+	 * has no remembered height and reserves nothing.
+	 */
+	private holdHeight(source: string, el: HTMLElement): void {
+		const held = this.fenceHeights.get(source);
+		if (held === undefined) return;
+
+		el.setCssProps({ "--osmosis-fence-height": `${String(held)}px` });
+		el.addClass("osmosis-fence-held");
+	}
+
+	/**
+	 * Record what the fence just rendered to, for the next rebuild to hold.
+	 *
+	 * Read a frame later, once the card has been laid out — and after the hold
+	 * has been released, so a stale reservation cannot be measured back in.
+	 */
+	private rememberHeight(source: string, el: HTMLElement): void {
+		window.requestAnimationFrame(() => {
+			if (el.isConnected && el.offsetHeight > 0) this.fenceHeights.set(source, el.offsetHeight);
+		});
+	}
+
+	/**
+	 * Remember an occluded fence so `refresh` can restart it, dropping any entry
+	 * whose element has since left the document.
+	 *
+	 * Pruning on every render rather than on a schedule is enough: a note that is
+	 * re-rendered replaces its own entries, and one that is closed stops producing
+	 * them — so the list is bounded by what is actually on screen.
+	 */
+	private trackOcclusionCard(el: HTMLElement, sourcePath: string, restart: () => void): void {
+		for (let i = this.occlusionCards.length - 1; i >= 0; i--) {
+			if (!this.occlusionCards[i]!.el.isConnected) this.occlusionCards.splice(i, 1);
+		}
+		this.occlusionCards.push({ el, sourcePath, restart });
+	}
+
+	/**
+	 * Start a note's occluded fences over, for when its reveal mode changes.
+	 *
+	 * Called by `LineRevealProcessor` on entering and leaving peek or study, which
+	 * are the two things that change what a fence should be drawing and do not
+	 * themselves re-run the code block processor.
+	 *
+	 * Each card *restarts* rather than being re-rendered: the card is repainted in
+	 * place, so pressing the peek eye does not rebuild the picture and scroll the
+	 * reader away from it — the very jump peek used to cause on a fence and never
+	 * on a line.
+	 */
+	refresh(notePath: string): void {
+		for (const entry of [...this.occlusionCards]) {
+			if (entry.sourcePath !== notePath || !entry.el.isConnected) continue;
+			entry.restart();
+		}
+	}
+
+	/**
+	 * Forget where an occluded fence had got to, because the note's mode changed
+	 * and a mode change starts a fresh pass: study restarts at the first group
+	 * rather than resuming a sequence that has since ended, and a diagram revealed
+	 * while reading does not open already answered.
+	 */
+	private resetOcclusionState(cardId: string): void {
+		this.occlusionStepAt.delete(cardId);
+		this.occlusionPlan.delete(cardId);
+		this.ratedCardIds.delete(cardId);
+		// The unstepped render keys on the fence, a stepped one on `<fence>#<group>`.
+		for (const key of [...this.revealedCardIds]) {
+			if (key === cardId || key.startsWith(`${cardId}#`)) this.revealedCardIds.delete(key);
+		}
+	}
+
 	private renderCard(source: string, el: HTMLElement, sourcePath: string): void {
 		const parsed = this.parseFenceContent(source);
 		if (!parsed) {
-			el.createEl("pre", { text: source });
+			this.renderDraft(source, el, sourcePath);
+			return;
+		}
+
+		// An occluded fence is drawn once and repainted, never rebuilt — see
+		// `renderOcclusionCard`. Both what it shows and how it flips differ from
+		// every other card type here.
+		if (parsed.occlusions !== undefined && parsed.occlusions.length > 0) {
+			this.renderOcclusionCard(parsed, el, sourcePath);
 			return;
 		}
 
@@ -98,13 +259,7 @@ export class ContextualStudyProcessor {
 
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
-		void MarkdownRenderer.render(
-			this.plugin.app,
-			parsed.front,
-			frontEl,
-			sourcePath,
-			this.renderComponent,
-		).then(() => addCodeBlockLanguageLabels(frontEl));
+		this.renderSide(parsed, "front", frontEl, sourcePath);
 
 		// Separator
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
@@ -150,13 +305,7 @@ export class ContextualStudyProcessor {
 				frontEl.addClass("osmosis-hidden");
 				dividerEl.addClass("osmosis-hidden");
 			}
-			void MarkdownRenderer.render(
-				this.plugin.app,
-				parsed.back,
-				revealedEl,
-				sourcePath,
-				this.renderComponent,
-			).then(() => addCodeBlockLanguageLabels(revealedEl));
+			this.renderSide(parsed, "back", revealedEl, sourcePath);
 		};
 
 		const reveal = (): void => {
@@ -165,7 +314,7 @@ export class ContextualStudyProcessor {
 			this.revealedCardIds.add(parsed.cardId);
 			showBack();
 
-			if (parsed.cardId && !alreadyRated) {
+			if (parsed.cardId && !alreadyRated && this.isStudying(sourcePath)) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		};
@@ -175,7 +324,7 @@ export class ContextualStudyProcessor {
 			showBack();
 			if (alreadyRated) {
 				ratingSlot.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
-			} else if (parsed.cardId) {
+			} else if (parsed.cardId && this.isStudying(sourcePath)) {
 				this.showRating(ratingSlot, parsed.cardId, sourcePath);
 			}
 		}
@@ -188,11 +337,344 @@ export class ContextualStudyProcessor {
 		});
 	}
 
+	/**
+	 * The questions this fence asks this session — none when the note is not
+	 * being studied, which is when it is a diagram to look at rather than a card
+	 * to answer.
+	 *
+	 * Filtered by time, so a diagram with one due group out of three is one
+	 * question rather than three — the same rule spatial study applies to a node.
+	 * Worked out once and kept, for the reason `occlusionPlan` explains.
+	 */
+	private stepPlan(parsed: ParsedFence, sourcePath: string): readonly OcclusionStep[] {
+		if (!this.isStudying(sourcePath)) return [];
+
+		const planned = this.occlusionPlan.get(parsed.cardId);
+		if (planned !== undefined) return planned;
+
+		const steps = occlusionSteps(
+			parsed.occlusions ?? [],
+			this.plugin.cardStore.getCardsByNote(sourcePath),
+			Date.now(),
+		);
+		// An empty plan is not kept: it is what a fence rendered before the card
+		// store has caught up produces, and holding on to it would leave the
+		// diagram unstepped for the rest of the session. A fence with genuinely
+		// nothing due simply blanks every group at once, as peek does.
+		if (steps.length > 0) this.occlusionPlan.set(parsed.cardId, steps);
+		return steps;
+	}
+
+	/**
+	 * An occluded fence in reading view: its prose, its diagrams, and one hidden
+	 * answer — **built once and then repainted**, never rebuilt.
+	 *
+	 * Every other card type here redraws by emptying its container and rendering
+	 * again. An occluded one must not. Rebuilding the `<img>` leaves the card with
+	 * no intrinsic height until the picture decodes, so the document shortens
+	 * under the reader and reading view scrolls them away from the very diagram
+	 * they were answering — on reveal, on rating, and on the peek toggle. So the
+	 * prose and the pictures are drawn once, the diagrams are painted in place by
+	 * `repaintOcclusion`, and only the bottom row is ever rebuilt. That is what
+	 * the line surface has always done, and why it never had the jump.
+	 *
+	 * In study the fence steps through its shape groups one at a time, each with
+	 * its own reveal and its own rating, exactly as sequential and spatial do.
+	 * Outside study — peek, or ordinary reading — every group is blanked at once,
+	 * none is singled out, and there is no rating: the reader is looking at a
+	 * picture, not answering one of the questions it carries.
+	 *
+	 * Ratings go to the group's own card (`<fenceId>-cN`), which is what the store
+	 * actually holds. The unstepped path rated the *fence* ID, and no such card
+	 * exists for an occluded fence — so every rating was silently dropped by
+	 * `recordRating`'s "card not in store" guard.
+	 */
+	private renderOcclusionCard(parsed: ParsedFence, el: HTMLElement, sourcePath: string): void {
+		const occlusions = parsed.occlusions ?? [];
+		this.totalCards += Math.max(this.stepPlan(parsed, sourcePath).length, 1);
+
+		const container = el.createDiv({ cls: "osmosis-contextual-card" });
+		if (parsed.exclude) container.addClass("osmosis-contextual-excluded");
+
+		// Drawn once and never swapped. An occluded fence's two sides are the *same*
+		// markdown — `parseFenceContent` hands the prose to both — because the
+		// question is put by the masks, not by withholding text. Rendering a side
+		// each would embed any unoccluded diagram in the fence twice over.
+		const proseEl = container.createDiv({ cls: "osmosis-occlusion-prose" });
+		this.renderProse(parsed.front, proseEl, sourcePath);
+
+		// One set of diagrams for the whole card, since both sides show the same
+		// pictures with different masks on them. Each gets its own slot so that a
+		// repaint reaches exactly one diagram's image.
+		const slots = occlusions.map((occlusion) => {
+			const slot = container.createDiv({ cls: "osmosis-occlusion-slot" });
+			renderOcclusion(this.plugin.app, slot, occlusion, "all-hidden", sourcePath);
+			return slot;
+		});
+
+		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
+		const hiddenEl = container.createDiv({ cls: "osmosis-contextual-hidden", text: "░░░░░░" });
+		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+
+		// Which question is showing, kept where the click handlers can read it:
+		// they are bound once and the step moves under them.
+		let revealKey = parsed.cardId;
+		let index = 0;
+
+		const draw = (): void => {
+			const steps = this.stepPlan(parsed, sourcePath);
+			index = this.occlusionStepAt.get(parsed.cardId) ?? 0;
+			const step = steps[index] ?? null;
+			// A missing step means two different things, so the count decides which:
+			// a fence outside study has no steps at all, one inside it has run out.
+			const finished = steps.length > 0 && step === null;
+			// Keyed per group, so a re-render mid-session (a debounced schedule
+			// flush rewrites the file) brings back the side that was showing.
+			revealKey = step === null ? parsed.cardId : `${parsed.cardId}#${step.group}`;
+			const revealed = finished || this.revealedCardIds.has(revealKey);
+
+			slots.forEach((slot, slotIndex) => {
+				const occlusion = occlusions[slotIndex]!;
+				if (step === null) {
+					// Revealing rings the regions that were covered rather than simply
+					// clearing them, so the answer still says where the questions were.
+					repaintOcclusion(slot, occlusion, revealed ? "all-revealed" : "all-hidden");
+				} else if (slotIndex === step.diagram) {
+					repaintOcclusion(
+						slot,
+						{ ...occlusion, target: step.group },
+						revealed ? "back" : "front",
+					);
+				} else {
+					// Another diagram's groups belong to other cards. Covering them
+					// would pose a question this card never answers, so it stays
+					// unmasked — sequential draws a card's siblings the same way.
+					repaintOcclusion(slot, occlusion, "none");
+				}
+			});
+
+			// Nothing but the placeholder and its rule goes away on reveal: the
+			// answer to an occluded card is the masks, which have just been
+			// repainted.
+			dividerEl.toggleClass("osmosis-hidden", revealed);
+			hiddenEl.toggleClass("osmosis-hidden", revealed);
+
+			// Rebuilt rather than repainted: it holds no picture, and it sits below
+			// the diagram, so its height changes cannot move what is being read.
+			bottomRow.empty();
+			if (finished) {
+				bottomRow.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+			} else if (steps.length > 0) {
+				bottomRow.createSpan({
+					cls: "osmosis-contextual-step",
+					text: `${String(index + 1)}/${String(steps.length)}`,
+				});
+			}
+			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
+			if (revealed && step?.cardId != null) {
+				this.showRating(ratingSlot, step.cardId, sourcePath, advance);
+			}
+			this.addExcludeToggle(bottomRow, parsed, sourcePath);
+		};
+
+		// Defined after `draw` because the two call each other; both are only ever
+		// invoked below, once each is in scope.
+		const advance = (): void => {
+			this.revealedCardIds.delete(revealKey);
+			this.occlusionStepAt.set(parsed.cardId, index + 1);
+			draw();
+		};
+
+		const reveal = (): void => {
+			if (this.revealedCardIds.has(revealKey)) return;
+			this.revealedCardIds.add(revealKey);
+			draw();
+		};
+
+		draw();
+
+		hiddenEl.addEventListener("click", reveal);
+		container.addEventListener("click", (e) => {
+			if (e.target === container) reveal();
+		});
+
+		this.trackOcclusionCard(container, sourcePath, () => {
+			this.resetOcclusionState(parsed.cardId);
+			draw();
+		});
+	}
+
+	/** The eye toggle that takes a fence in or out of the deck. */
+	private addExcludeToggle(row: HTMLElement, parsed: ParsedFence, sourcePath: string): void {
+		const toggleIcon = row.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
+		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
+		toggleIcon.setAttribute(
+			"aria-label",
+			parsed.exclude ? "Include this card" : "Exclude this card",
+		);
+		toggleIcon.addEventListener("click", (e) => {
+			e.stopPropagation();
+			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
+		});
+	}
+
+	/**
+	 * Whether a rating belongs on a card revealed in this note right now.
+	 *
+	 * Reading view has always shown the rating row on every fence card, whatever
+	 * the note was doing — so peeking, which records nothing by definition,
+	 * still offered four buttons that wrote a schedule. A rating is the act of
+	 * answering, and only study asks.
+	 *
+	 * Read at reveal time rather than at render time: a fence is a code block,
+	 * and toggling the mode does not re-run its processor, so a card rendered
+	 * before study started would otherwise never offer a rating.
+	 */
+	private isStudying(sourcePath: string): boolean {
+		return this.plugin.lineReveal?.revealMode(sourcePath) === "study";
+	}
+
+	/**
+	 * Render one side of a fence into `el`: its markdown, then its occluded
+	 * diagrams beneath.
+	 *
+	 * Both sides of an occluded fence paint every mask rather than singling one
+	 * group out, because there is no current card on this path — it draws live
+	 * preview, where nothing is being answered at all. The reading-view card that
+	 * *does* step through its groups is `renderOcclusionCard`, which paints its
+	 * diagrams itself so that it can repaint them rather than rebuild them.
+	 */
+	private renderSide(
+		parsed: ParsedFence,
+		side: "front" | "back",
+		el: HTMLElement,
+		sourcePath: string,
+	): void {
+		const occlusions = parsed.occlusions ?? [];
+		// Its own child when diagrams follow, so the two are not interleaved by
+		// the renderer resolving after the images were already appended.
+		const proseEl = occlusions.length > 0
+			? el.createDiv({ cls: "osmosis-occlusion-prose" })
+			: el;
+		this.renderProse(side === "front" ? parsed.front : parsed.back, proseEl, sourcePath);
+
+		for (const occlusion of occlusions) {
+			renderOcclusion(
+				this.plugin.app,
+				el,
+				occlusion,
+				side === "front" ? "all-hidden" : "all-revealed",
+				sourcePath,
+			);
+		}
+	}
+
+	/** Render a card side's markdown into `el`, or nothing when it has none. */
+	private renderProse(markdown: string, el: HTMLElement, sourcePath: string): void {
+		if (markdown === "") return;
+
+		void MarkdownRenderer.render(
+			this.plugin.app,
+			markdown,
+			el,
+			sourcePath,
+			this.renderComponent,
+		).then(() => addCodeBlockLanguageLabels(el));
+	}
+
+	/**
+	 * Offer "Create image occlusion" when a diagram *inside* a rendered fence is
+	 * right-clicked.
+	 *
+	 * Obsidian's own image menu reaches native embeds in Live Preview, but an
+	 * image drawn by this processor is our DOM, not the editor's — so no menu
+	 * event fires for it and the only way in was to switch to source mode and
+	 * right-click the raw `![[…]]` text. That is a poor path to the one card
+	 * type Obsidian cannot author.
+	 *
+	 * The clicked image is mapped back to its line through the embed's `src`
+	 * (the link exactly as authored) plus the fence's own position from
+	 * `getSectionInfo`, rather than by counting rendered `<img>` elements —
+	 * front and back render into separate containers, and an unresolved embed
+	 * produces no `<img>` at all, so ordinal matching would drift.
+	 *
+	 * A diagram that already has masks is not an Obsidian embed any more — this
+	 * processor draws it — so its link comes from the `alt` the renderer sets to
+	 * the embed target as authored. Without that, occluding an image made it
+	 * impossible to right-click back into the editor.
+	 */
+	private registerOcclusionMenu(
+		source: string,
+		el: HTMLElement,
+		ctx: MarkdownPostProcessorContext,
+	): void {
+		el.addEventListener("contextmenu", (event: MouseEvent) => {
+			const target = event.target;
+			if (!(target instanceof HTMLImageElement)) return;
+
+			const link = target.hasClass("osmosis-occlusion-image")
+				? target.getAttribute("alt")
+				: target.closest(".internal-embed")?.getAttribute("src");
+			if (link === null || link === undefined) return;
+
+			const offset = fenceEmbedLine(source, link);
+			if (offset === null) return;
+
+			const section = ctx.getSectionInfo(el);
+			const file = this.plugin.app.vault.getFileByPath(ctx.sourcePath);
+			if (!section || !file) return;
+
+			// `source` starts *after* the opening ```osmosis line.
+			const line = section.lineStart + 1 + offset;
+
+			event.preventDefault();
+			const menu = new Menu();
+			menu.addItem((item) => {
+				item.setTitle("Create image occlusion")
+					.setIcon("square-dashed-mouse-pointer")
+					.onClick(() => { void this.plugin.openOcclusionEditor(file, line); });
+			});
+			menu.showAtMouseEvent(event);
+		});
+	}
+
+	/**
+	 * A fence that is not a card yet: no `***`, no cloze markers, no occlusion.
+	 * `generateExplicitCards` skips exactly this shape, so it is deliberately
+	 * *not* rendered as one — no divider, no hidden back, no rating row, and
+	 * nothing joins a deck.
+	 *
+	 * It does render its markdown rather than dumping raw source, because a
+	 * fence holding only a diagram is precisely the state you are in *before*
+	 * occluding that diagram, and you cannot right-click an image that is being
+	 * shown to you as text.
+	 */
+	private renderDraft(source: string, el: HTMLElement, sourcePath: string): void {
+		const lines = source.split("\n");
+		const { contentStart } = splitFenceHeader(lines);
+		const body = lines.slice(contentStart).map(stripEmbedLabels).join("\n").trim();
+		if (body.length === 0) {
+			// Nothing but a header — the raw source is the only useful thing to
+			// show, and it is what the user has to edit to fix it.
+			el.createEl("pre", { text: source });
+			return;
+		}
+
+		const container = el.createDiv({ cls: "osmosis-contextual-card osmosis-contextual-draft" });
+		void MarkdownRenderer.render(
+			this.plugin.app,
+			body,
+			container,
+			sourcePath,
+			this.renderComponent,
+		).then(() => addCodeBlockLanguageLabels(container));
+	}
+
 	/** Live preview: render front and back fully visible (no interactivity). */
 	private renderPreviewCard(source: string, el: HTMLElement, sourcePath: string): void {
 		const parsed = this.parseFenceContent(source);
 		if (!parsed) {
-			el.createEl("pre", { text: source });
+			this.renderDraft(source, el, sourcePath);
 			return;
 		}
 
@@ -204,26 +686,14 @@ export class ContextualStudyProcessor {
 
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
-		void MarkdownRenderer.render(
-			this.plugin.app,
-			parsed.front,
-			frontEl,
-			sourcePath,
-			this.renderComponent,
-		).then(() => addCodeBlockLanguageLabels(frontEl));
+		this.renderSide(parsed, "front", frontEl, sourcePath);
 
 		// Separator
 		container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Render back (fully visible, no hiding)
 		const backEl = container.createDiv({ cls: "osmosis-contextual-revealed" });
-		void MarkdownRenderer.render(
-			this.plugin.app,
-			parsed.back,
-			backEl,
-			sourcePath,
-			this.renderComponent,
-		).then(() => addCodeBlockLanguageLabels(backEl));
+		this.renderSide(parsed, "back", backEl, sourcePath);
 
 		// Bottom row with exclude toggle (bottom-right)
 		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
@@ -237,7 +707,17 @@ export class ContextualStudyProcessor {
 		});
 	}
 
-	private showRating(container: HTMLElement, cardId: string, sourcePath: string): void {
+	/**
+	 * The four rating buttons. `onRated` lets a stepped occlusion card move on to
+	 * its next shape group once this one has been answered; without it the row
+	 * simply reports what was chosen and stays put.
+	 */
+	private showRating(
+		container: HTMLElement,
+		cardId: string,
+		sourcePath: string,
+		onRated?: () => void,
+	): void {
 		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
 		// The answer just went on screen. A contextual card has no separate
 		// "question shown" moment — it lives inline in the note — so the reveal
@@ -285,6 +765,8 @@ export class ContextualStudyProcessor {
 					previousSchedule,
 					ratingLabel: label,
 				});
+
+				onRated?.();
 			});
 		}
 	}
@@ -377,29 +859,14 @@ export class ContextualStudyProcessor {
 	 * Parse fence content into front/back/metadata.
 	 * Reuses the same format as explicit.ts card generators.
 	 */
-	private parseFenceContent(source: string): { front: string; back: string; cardId: string; exclude: boolean; isCloze: boolean } | null {
+	private parseFenceContent(source: string): ParsedFence | null {
 		const lines = source.split("\n");
-
-		// Parse metadata lines (key: value before blank line)
-		let contentStart = 0;
-		let exclude = false;
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i]!.trim();
-			if (line === "") {
-				contentStart = i + 1;
-				break;
-			}
-			if (/^\w[\w-]*\s*:\s*.+$/.test(line)) {
-				const excludeMatch = line.match(/^exclude\s*:\s*(.+)$/i);
-				if (excludeMatch) exclude = excludeMatch[1]!.trim() === "true";
-				contentStart = i + 1;
-				continue;
-			}
-			contentStart = i;
-			break;
-		}
-
-		const contentLines = lines.slice(contentStart);
+		const { contentStart, exclude, hasOcclusion } = splitFenceHeader(lines);
+		// Stripped once, here, rather than per branch: an embed's `{a}` binds it
+		// to a shape set and is never meant to be seen. Doing it inside the
+		// occlusion branch alone let the label through on any fence that also had
+		// a `***` separator, since that branch returns first.
+		const contentLines = lines.slice(contentStart).map(stripEmbedLabels);
 		const separatorIdx = contentLines.findIndex((l) => l.trim() === "***");
 
 		if (separatorIdx >= 0) {
@@ -413,6 +880,24 @@ export class ContextualStudyProcessor {
 		// No separator — check for code cloze markers first, then text cloze
 		const content = contentLines.join("\n").trim();
 		if (!content) return null;
+
+		// Occlusion: the content is a diagram and the blanks live in the header
+		// as geometry rather than inline as markers, so neither the separator
+		// nor the cloze scans can see a card here. Without this the fence falls
+		// through to the raw-source fallback and reading view shows the shape
+		// block as literal text.
+		if (hasOcclusion) {
+			const { diagrams, prose } = fenceDiagrams(lines, contentStart);
+			if (diagrams.length > 0) {
+				const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${content}`);
+				return { front: prose, back: prose, cardId, exclude, isCloze: true, occlusions: diagrams };
+			}
+			// Shape sets that bind to no embed in this fence — a stale label, or an
+			// embed the user deleted. The diagram is gone, so there is nothing to
+			// mask; render what is left rather than dropping the fence.
+			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`occlusion|||${content}`);
+			return { front: content, back: content, cardId, exclude, isCloze: true };
+		}
 
 		// Check for code cloze (osmosis-cloze inside inner code fences)
 		if (content.includes("osmosis-cloze")) {

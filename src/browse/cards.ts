@@ -47,12 +47,13 @@ export type SortBy =
 /**
  * Every card type the browser can filter to.
  *
- * `occlusion` is deliberately absent: image occlusion is a later task and a
- * filter value that can never match anything reads as a broken control. It
- * arrives with the card type.
+ * This list is not just the filter UI — `readBrowseOptions` builds the active
+ * type set by iterating it, so a type missing here is filtered *out* of the
+ * browser entirely rather than merely lacking a checkbox. `occlusion` waited
+ * here until the card type existed; it does now.
  */
 export const FILTERABLE_CARD_TYPES: readonly CardType[] = [
-	"explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "line",
+	"explicit", "explicit_bidi", "explicit_cloze", "code_cloze", "occlusion", "line",
 ];
 
 /** The options Bases persists into the `.base` file. */
@@ -545,6 +546,7 @@ const TYPE_LABELS: Record<CardType, string> = {
 	explicit_bidi: "Bidirectional",
 	explicit_cloze: "Cloze",
 	code_cloze: "Code cloze",
+	occlusion: "Image occlusion",
 	line: "Line",
 };
 

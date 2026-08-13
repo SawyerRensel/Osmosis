@@ -1,11 +1,13 @@
 import type { TFile, Vault } from "obsidian";
-import type { Card, ScheduleData } from "../database/types";
+import type { Card, OcclusionSet, ScheduleData } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter } from "../store/FenceWriter";
+import { scheduleKey } from "../store/ScheduleStore";
 import type { CardGenerationOptions } from "./note-processor";
 import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
 import { lineCardId } from "./line-cards";
+import { occludeLineCard } from "./occlusion";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -35,6 +37,15 @@ export class CardSyncService {
 		 * osmosis-schedule `disabled: true` overlaid with pending changes.
 		 */
 		private readonly getLineDisabled?: (file: TFile) => Set<string>,
+		/**
+		 * Shape sets for occluded line cards in a note, keyed by block ID.
+		 *
+		 * Occlusion is structural rather than schedule data, but it arrives the
+		 * same way: nested in the `osmosis-schedule` frontmatter entry, which
+		 * only the metadata cache has parsed. So it reaches card generation here
+		 * rather than inside `processNote`, which sees only the raw markdown.
+		 */
+		private readonly getLineOcclusions?: (file: TFile) => Map<string, OcclusionSet>,
 	) {}
 
 	/**
@@ -76,8 +87,12 @@ export class CardSyncService {
 			// overlay), parsed once
 			const lineSchedules = this.getLineSchedules?.(file);
 			const lineDisabled = this.getLineDisabled?.(file);
+			// Fence-card reviews a contextual session is holding in memory. The
+			// fence text just parsed is one review out of date for these, since
+			// contextual study waits until the note is off screen to rewrite it.
+			const stagedFences = this.fenceWriter.getPendingSchedules(file.path);
 
-			for (const genCard of result.cards) {
+			for (const genCard of this.occludeLineCards(file, result.cards)) {
 				generatedIds.add(genCard.id);
 
 				// Preserve existing schedule data if the card already exists in the store
@@ -85,14 +100,23 @@ export class CardSyncService {
 
 				// Line cards read their schedule from osmosis-schedule frontmatter;
 				// fence cards carry it in fence metadata (genCard fields).
-				const lineSchedule = genCard.blockId !== undefined
-					? lineSchedules?.get(genCard.blockId)
+				const key = genCard.blockId !== undefined
+					? scheduleKey(genCard.blockId, genCard.occlusionGroup)
 					: undefined;
+				const lineSchedule = key !== undefined ? lineSchedules?.get(key) : undefined;
 				// Line cards source `disabled` from osmosis-schedule frontmatter;
 				// fence cards carry it in the markdown as `exclude: true`.
-				const isDisabled = genCard.blockId !== undefined
-					? lineDisabled?.has(genCard.blockId) ?? false
+				const isDisabled = key !== undefined
+					? lineDisabled?.has(key) ?? false
 					: genCard.disabled === true;
+
+				// The schedule the plugin knows about but the file does not yet:
+				// osmosis-schedule frontmatter for a line card (already overlaid with
+				// its own pending ratings), a contextual session's staged review for a
+				// fence card. `null` is a staged *removal* — an undone review on a new
+				// card — and has to win outright, or the card is restored from the very
+				// fence text the removal has not been written into yet.
+				const override = key !== undefined ? lineSchedule : stagedFences.get(genCard.id);
 
 				const card: Card = {
 					id: genCard.id,
@@ -107,15 +131,19 @@ export class CardSyncService {
 					excludeFromDecks: genCard.excludeFromDecks,
 					...(isDisabled ? { disabled: true } : {}),
 					contextBefore: genCard.contextBefore,
+					occlusion: genCard.occlusion,
+					occlusionGroup: genCard.occlusionGroup,
 					// Schedule: prefer source-of-truth metadata, fall back to existing store data
-					stability: lineSchedule?.stability ?? genCard.stability ?? existing?.stability,
-					difficulty: lineSchedule?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
-					due: lineSchedule?.due ?? genCard.due ?? existing?.due,
-					lastReview: lineSchedule?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
-					reps: lineSchedule?.reps ?? genCard.reps ?? existing?.reps,
-					lapses: lineSchedule?.lapses ?? genCard.lapses ?? existing?.lapses,
-					state: lineSchedule?.state ?? genCard.state ?? existing?.state,
-					learningSteps: lineSchedule?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
+					...(override === null ? {} : {
+						stability: override?.stability ?? genCard.stability ?? existing?.stability,
+						difficulty: override?.difficulty ?? genCard.difficulty ?? existing?.difficulty,
+						due: override?.due ?? genCard.due ?? existing?.due,
+						lastReview: override?.lastReview ?? genCard.lastReview ?? existing?.lastReview,
+						reps: override?.reps ?? genCard.reps ?? existing?.reps,
+						lapses: override?.lapses ?? genCard.lapses ?? existing?.lapses,
+						state: override?.state ?? genCard.state ?? existing?.state,
+						learningSteps: override?.learningSteps ?? genCard.learningSteps ?? existing?.learningSteps,
+					}),
 				};
 
 				this.store.addCard(card);
@@ -191,6 +219,21 @@ export class CardSyncService {
 	}
 
 	/**
+	 * Replace each line card whose block ID carries a shape set with one
+	 * occlusion card per group. Fence cards and unoccluded line cards pass
+	 * through untouched.
+	 */
+	private occludeLineCards(file: TFile, cards: GeneratedCard[]): GeneratedCard[] {
+		const occlusions = this.getLineOcclusions?.(file);
+		if (!occlusions || occlusions.size === 0) return cards;
+
+		return cards.flatMap((card) => {
+			const set = card.blockId !== undefined ? occlusions.get(card.blockId) : undefined;
+			return set ? occludeLineCard(card, set) : [card];
+		});
+	}
+
+	/**
 	 * Remove cards whose notePath doesn't exist in activePaths.
 	 */
 	private cleanOrphans(activePaths: Set<string>): void {
@@ -243,11 +286,27 @@ export function injectFenceIdsIntoContent(content: string, cards: GeneratedCard[
 
 const META_KEYS = new Set([
 	"id", "exclude", "bidi", "type-in", "deck", "hint",
-	"due", "stability", "difficulty", "reps", "lapses",
-	"state", "last-review", "learning-steps",
+	"due", "stability", "difficulty", "reps", "lapses", "state",
+	"last-review", "learning-steps", "lastreview", "learningsteps",
 ]);
 
+/**
+ * A line belonging to a header block that opens rather than carries a value —
+ * an `occlude[-label]:` shape set or a derived card's `c1:`/`r:` schedule — or
+ * one of its indented body lines.
+ *
+ * The scans below stop at the first line they do not recognize. A block's key
+ * fails the `key: value` test on its own, so without this an id injected at the
+ * top of the fence brings its separator blank line down *inside* the block,
+ * cutting the body loose from its key.
+ */
+function isBlockLine(rawLine: string): boolean {
+	if (/^\s+\S/.test(rawLine)) return true;
+	return /^(?:occlude(?:-[A-Za-z0-9_-]+)?|r|c\d+)\s*:\s*$/.test(rawLine.trim());
+}
+
 function isRecognizedMetadataLine(line: string): boolean {
+	if (isBlockLine(line)) return true;
 	const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
 	if (!match) return false;
 	const key = match[1]!.toLowerCase();
@@ -265,6 +324,7 @@ function fenceHasIdMetadata(lines: string[], fenceLine: number): boolean {
 		const closeMatch = line.match(/^(`{3,})\s*$/);
 		if (line === "" || (closeMatch && closeMatch[1]!.length >= backtickCount)) break;
 		if (/^id\s*:\s*.+$/i.test(line)) return true;
+		if (isBlockLine(lines[i]!)) continue;
 		if (!/^\w[\w-]*\s*:\s*.+$/.test(line)) break;
 	}
 	return false;

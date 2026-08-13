@@ -161,7 +161,13 @@ describe("FSRS integration", () => {
 
 describe("StudySessionManager schedule-write routing", () => {
 	interface FenceCall { cardId: string; kind: "write" | "remove" }
-	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" | "disable" | "enable" }
+	/** `group` is recorded only when one was passed, so plain line cards keep asserting flat. */
+	interface LineCall {
+		notePath: string;
+		blockId: string;
+		kind: "set" | "remove" | "disable" | "enable";
+		group?: string;
+	}
 
 	function makeManager() {
 		const fenceCalls: FenceCall[] = [];
@@ -178,14 +184,19 @@ describe("StudySessionManager schedule-write routing", () => {
 			},
 		};
 		const scheduleStore = {
-			setSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "set" });
+			setSchedule: (notePath: string, blockId: string, _schedule: unknown, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "set", ...(group !== undefined && { group }) });
 			},
-			removeSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "remove" });
+			removeSchedule: (notePath: string, blockId: string, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "remove", ...(group !== undefined && { group }) });
 			},
-			setDisabled: (notePath: string, blockId: string, disabled: boolean) => {
-				lineCalls.push({ notePath, blockId, kind: disabled ? "disable" : "enable" });
+			setDisabled: (notePath: string, blockId: string, disabled: boolean, group?: string) => {
+				lineCalls.push({
+					notePath,
+					blockId,
+					kind: disabled ? "disable" : "enable",
+					...(group !== undefined && { group }),
+				});
 			},
 		};
 		const logged: ReviewLogEntry[] = [];
@@ -230,6 +241,45 @@ describe("StudySessionManager schedule-write routing", () => {
 		expect(fenceCalls).toHaveLength(0);
 		expect(lineCalls).toEqual([
 			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
+		]);
+	});
+
+	it("routes an occluded line card's rating to its per-group frontmatter entry", async () => {
+		// It carries cardType "occlusion" but still lives on a line, so the block
+		// ID is what decides the carrier. Routing on the type instead sent it to
+		// the fence writer, which had no fence called `os-elev001-c2` to write to
+		// and silently lost the review.
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		}));
+
+		await manager.recordReview("notes/bridges.md#^os-elev001-c2", 3);
+
+		expect(fenceCalls).toHaveLength(0);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "set", group: "c2" },
+		]);
+	});
+
+	it("excludes an occluded line card through its group entry", async () => {
+		const { manager, lineCalls } = makeManager();
+		const card = makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		});
+		store.addCard(card);
+
+		expect(manager.setLineCardDisabled(card, true)).toBe(true);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "disable", group: "c2" },
 		]);
 	});
 
@@ -279,6 +329,99 @@ describe("StudySessionManager schedule-write routing", () => {
 	});
 });
 
+describe("StudySessionManager fence-write staging", () => {
+	interface StageCall { notePath: string; cardId: string; kind: "stage" | "stage-remove" }
+	interface WriteCall { path: string; cardId: string; kind: "write" | "remove" }
+
+	function makeManager(mode: StudyMode) {
+		const staged: StageCall[] = [];
+		const written: WriteCall[] = [];
+
+		const fenceWriter = {
+			stageSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage" });
+			},
+			stageRemoveSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage-remove" });
+			},
+			writeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "write" });
+				return Promise.resolve();
+			},
+			removeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "remove" });
+				return Promise.resolve();
+			},
+		};
+
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			mode,
+		);
+		return { manager, staged, written };
+	}
+
+	// The bug this staging exists for: a fence keeps its schedule inside its own
+	// source, so writing one mid-session rewrites the block reading view is
+	// displaying and scrolls the reader off the card they just answered.
+	it("stages a contextual rating instead of rewriting the note being read", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+		]);
+	});
+
+	it("still applies the rating to the store while the write is staged", async () => {
+		const { manager } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(store.getCard("abc12345")?.reps).toBe(1);
+		expect(store.getCard("abc12345")?.due).toBeGreaterThan(Date.now());
+	});
+
+	// Nothing is displaying the note's source in these surfaces, so a review
+	// belongs on disk the moment it happens.
+	for (const mode of ["sequential", "spatial"] as const) {
+		it(`writes a ${mode} rating through immediately`, async () => {
+			const { manager, staged, written } = makeManager(mode);
+			store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+			await manager.recordReview("abc12345", 3);
+
+			expect(staged).toHaveLength(0);
+			expect(written).toEqual([
+				{ path: "notes/diagrams.md", cardId: "abc12345", kind: "write" },
+			]);
+		});
+	}
+
+	// An undo that wrote through would be overwritten by the staged rating it
+	// was undoing, the moment that rating flushed.
+	it("stages a contextual undo alongside the rating it reverts", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+		await manager.revertReview("abc12345", null);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage-remove" },
+		]);
+	});
+});
+
 describe("StudySessionManager review logging", () => {
 	interface Harness {
 		manager: StudySessionManager;
@@ -309,6 +452,8 @@ describe("StudySessionManager review logging", () => {
 			{
 				writeSchedule: () => Promise.resolve(),
 				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
 			} as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
 			mode,
@@ -423,6 +568,8 @@ describe("StudySessionManager review logging", () => {
 			{
 				writeSchedule: () => Promise.resolve(),
 				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
 			} as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
 			"sequential",

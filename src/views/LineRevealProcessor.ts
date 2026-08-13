@@ -4,7 +4,11 @@ import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { lineCardId } from "../card-gen/line-cards";
-import { allLineCardBlockIds, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import type { CardOcclusion } from "../database/types";
+import { allLineCardBlockIds, cardIdsForLineKey, dueOrNewLineCardBlockIds } from "../study/spatial-study";
+import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
+import type { OcclusionSide } from "../study/occlusion-masks";
+import { overlayMasks, renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -30,6 +34,13 @@ interface TrackedLine {
 	/** Element carrying the hidden/revealed state (li or section container). */
 	container: HTMLElement;
 	placeholder: HTMLElement;
+	/**
+	 * The masked diagram this line carries, when it has one.
+	 *
+	 * Held so the reveal can *repaint* it rather than swap it away — see
+	 * `applyAll`. Null for an ordinary line card.
+	 */
+	occlusion: CardOcclusion | null;
 }
 
 /** Per-note reveal/study state. Survives re-renders (keyed by block ID). */
@@ -48,6 +59,14 @@ interface NoteRevealState {
 	 * defensible anchor.
 	 */
 	pendingRatingAt: number;
+	/**
+	 * The shape groups each occluded line asks this session, fixed when study
+	 * starts so the sequence cannot change under the user as schedules move.
+	 * A line with no masks has no entry — it is one question, as it always was.
+	 */
+	studySteps: Map<string, OcclusionStep[]>;
+	/** How far through `studySteps` each occluded line has been answered. */
+	stepAt: Map<string, number>;
 	/** Rendered elements by block ID — refreshed on every (re-)render. */
 	lines: Map<string, TrackedLine>;
 }
@@ -106,6 +125,7 @@ export class LineRevealProcessor {
 			this.plugin.app.workspace.on("layout-change", () => {
 				this.updateHeaderActions();
 				this.syncBanners();
+				this.flushClosedNotes();
 			}),
 		);
 		// Tab/leaf activation fires neither of the above: switching between
@@ -232,8 +252,27 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 	}
 
+	/**
+	 * The occluded diagram sitting on a line, or null when the line has no masks.
+	 *
+	 * Every card the line fans out into carries the whole shape set, so the first
+	 * one answers the question. **The block ID is the signal, never `cardType`** —
+	 * an occluded line card is typed `"occlusion"` while still living on its line.
+	 */
+	private lineOcclusion(notePath: string, blockId: string): CardOcclusion | null {
+		for (const card of this.plugin.cardStore.getCardsByNote(notePath)) {
+			if (card.blockId === blockId && card.occlusion) return card.occlusion;
+		}
+		return null;
+	}
+
 	/** Wrap a line's content for hiding (idempotent) and register it. */
 	private trackLine(state: NoteRevealState, notePath: string, blockId: string, container: HTMLElement): void {
+		// Looked up on every render, not just the first: the placeholder survives
+		// a re-render but the card store may only have caught up with the line's
+		// shapes since.
+		const occlusion = this.lineOcclusion(notePath, blockId);
+
 		let placeholder = container.querySelector<HTMLElement>(":scope > .osmosis-line-placeholder");
 		if (!placeholder) {
 			// Move the line's own content into a hideable wrapper. Nested
@@ -248,7 +287,16 @@ export class LineRevealProcessor {
 
 			placeholder = createSpan();
 			placeholder.className = "osmosis-line-placeholder osmosis-hidden";
-			placeholder.textContent = PLACEHOLDER_TEXT;
+			// An occluded line is hidden by masking the regions that carry its
+			// cards, not by blanking the whole diagram: covering the picture
+			// entirely asks the reader to recall the image rather than the labels
+			// on it, which is the one thing occlusion exists not to do. Every group
+			// is covered at once, since in the note no single card is being asked.
+			if (occlusion) {
+				renderOcclusion(this.plugin.app, placeholder, occlusion, "all-hidden", notePath);
+			} else {
+				placeholder.textContent = PLACEHOLDER_TEXT;
+			}
 			placeholder.addEventListener("click", () => {
 				this.onPlaceholderClick(notePath, blockId);
 			});
@@ -258,7 +306,7 @@ export class LineRevealProcessor {
 			container.insertBefore(back, firstNestedList);
 		}
 
-		state.lines.set(blockId, { container, placeholder });
+		state.lines.set(blockId, { container, placeholder, occlusion });
 	}
 
 	/** Re-apply mode/reveal state to every tracked line of a note. */
@@ -274,9 +322,29 @@ export class LineRevealProcessor {
 			// Freshly rendered sections may not be attached yet — class
 			// changes stick either way, and trackLine replaces stale entries
 			// per block ID on the next render.
-			const hidden = (targets?.has(blockId) ?? false) && !state.revealed.has(blockId);
-			line.container.classList.toggle("osmosis-line-hidden", hidden);
-			line.placeholder.classList.toggle("osmosis-hidden", !hidden);
+			const targeted = targets?.has(blockId) ?? false;
+			const hidden = targeted && !state.revealed.has(blockId);
+
+			// An occluded line is revealed by *repainting* its masks, never by
+			// swapping the line's own content back in. Its content is the bare
+			// diagram, so the swap threw away the masks and the annotations
+			// together — the answer arrived as an unmarked picture with nothing
+			// to say which regions had been the question. Ringing them instead
+			// keeps the question visible beside its answer, and holds the line's
+			// height steady, exactly as a fence card does in reading view.
+			const painted = line.occlusion !== null && targeted;
+			const showPlaceholder = painted || hidden;
+			line.container.classList.toggle("osmosis-line-hidden", showPlaceholder);
+			line.placeholder.classList.toggle("osmosis-hidden", !showPlaceholder);
+			if (painted && line.occlusion) {
+				const img = line.placeholder.querySelector("img");
+				// Repaint in place: rebuilding the <img> would re-request the file
+				// and flash the diagram away mid-answer.
+				if (img) {
+					const { occlusion, side } = this.maskingFor(state, blockId, line.occlusion, hidden);
+					overlayMasks(img, occlusion, side);
+				}
+			}
 			// During study, only the next line is clickable; later ones are locked
 			const locked = state.mode === "study" && hidden && blockId !== next;
 			line.placeholder.classList.toggle("osmosis-line-locked", locked);
@@ -291,6 +359,45 @@ export class LineRevealProcessor {
 				bubble.remove();
 			}
 		}
+	}
+
+	/**
+	 * How an occluded line's diagram should be painted right now: which masks, and
+	 * which side of the question.
+	 *
+	 * **Peek and study part company here.** Peek is a reader looking at a picture:
+	 * every group is a blank at once and none is singled out, so it keeps the
+	 * `all-hidden` / `all-revealed` pair. Study is a card player — a target, a
+	 * rating, a completion count — so it asks the line's groups one at a time,
+	 * exactly as sequential and spatial do, and the mode decides what happens to
+	 * the group's siblings.
+	 *
+	 * A study session with no steps for this line (an ordinary occluded line whose
+	 * groups all resolved to nothing, say) falls back to the peek pair rather than
+	 * showing an unmasked diagram.
+	 */
+	private maskingFor(
+		state: NoteRevealState,
+		blockId: string,
+		occlusion: CardOcclusion,
+		hidden: boolean,
+	): { occlusion: CardOcclusion; side: OcclusionSide } {
+		const step = this.currentStep(state, blockId);
+		if (step === null) {
+			return { occlusion, side: hidden ? "all-hidden" : "all-revealed" };
+		}
+		return {
+			occlusion: { ...occlusion, target: step.group },
+			side: hidden ? "front" : "back",
+		};
+	}
+
+	/** The shape group a studied line is currently being asked about, if any. */
+	private currentStep(state: NoteRevealState, blockId: string): OcclusionStep | null {
+		if (state.mode !== "study") return null;
+		const steps = state.studySteps.get(blockId);
+		if (steps === undefined) return null;
+		return steps[state.stepAt.get(blockId) ?? 0] ?? null;
 	}
 
 	/** The block IDs currently subject to hiding, or null when mode is off. */
@@ -358,23 +465,51 @@ export class LineRevealProcessor {
 		const state = this.stateFor(notePath);
 		if (state.pendingRating !== blockId) return;
 
-		const cardId = lineCardId(notePath, blockId);
-		if (this.plugin.cardStore.getCard(cardId)) {
+		// One reveal, one rating. For an ordinary line that reaches every card the
+		// line carries — the line key is not any of their IDs, so rating it as a
+		// single card recorded nothing. An **occluded** line in study is stepping
+		// through its groups, and each group is its own card with its own
+		// schedule, so the rating reaches only the one just answered.
+		const step = this.currentStep(state, blockId);
+		const cardIds = step === null
+			? cardIdsForLineKey(
+				this.plugin.cardStore.getCardsByNote(notePath),
+				lineCardId(notePath, blockId),
+			)
+			: step.cardId === null ? [] : [step.cardId];
+		if (cardIds.length > 0) {
 			this.sessionManager ??= this.plugin.createSessionManager("contextual");
-			await this.sessionManager.recordReview(cardId, rating, {
-				elapsedMs: Date.now() - state.pendingRatingAt,
-			});
+			const elapsedMs = Date.now() - state.pendingRatingAt;
+			for (const cardId of cardIds) {
+				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+			}
 			this.plugin.refreshDashboard();
 		}
 
-		state.rated.add(blockId);
 		state.pendingRating = null;
+
+		// More groups on this line means the line is not finished: it goes back to
+		// hidden with the next group targeted, rather than being handed to the
+		// reveal order's next line.
+		const steps = state.studySteps.get(blockId);
+		const next = (state.stepAt.get(blockId) ?? 0) + 1;
+		if (steps !== undefined && next < steps.length) {
+			state.stepAt.set(blockId, next);
+			state.revealed.delete(blockId);
+			this.applyAll(notePath);
+			this.syncBanners();
+			return;
+		}
+		if (steps !== undefined) state.stepAt.set(blockId, steps.length);
+
+		state.rated.add(blockId);
 
 		const targets = state.studyTargets;
 		if (targets && targets.size > 0 && [...targets].every((id) => state.rated.has(id))) {
 			this.endStudy(notePath, state);
 			new Notice(`Contextual study complete — ${String(targets.size)} lines rated.`);
 			this.updateHeaderActions();
+			this.plugin.contextualStudy.refresh(notePath);
 		}
 
 		this.applyAll(notePath);
@@ -395,6 +530,7 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
+		this.plugin.contextualStudy.refresh(notePath);
 	}
 
 	private toggleStudy(notePath: string): void {
@@ -414,11 +550,43 @@ export class LineRevealProcessor {
 			state.revealed.clear();
 			state.rated.clear();
 			state.pendingRating = null;
+			this.planOcclusionSteps(notePath, state, targets);
 		}
 
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
+		this.plugin.contextualStudy.refresh(notePath);
+	}
+
+	/**
+	 * Work out, once at session start, which shape groups each occluded target
+	 * line will be asked about.
+	 *
+	 * Fixed up front rather than recomputed per reveal because rating the first
+	 * group moves its due date — recomputing would drop it from the list mid-flight
+	 * and renumber everything after it. Only the groups the scheduler would ask
+	 * now are included, so a line with one due group out of three is one question.
+	 */
+	private planOcclusionSteps(
+		notePath: string,
+		state: NoteRevealState,
+		targets: ReadonlySet<string>,
+	): void {
+		state.studySteps.clear();
+		state.stepAt.clear();
+
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const now = Date.now();
+		for (const blockId of targets) {
+			const occlusion = this.lineOcclusion(notePath, blockId);
+			if (!occlusion) continue;
+			const lineCards = cards.filter((card) => card.blockId === blockId);
+			const steps = occlusionSteps([occlusion], lineCards, now);
+			// No due groups leaves the line as the single question it has always
+			// been, rather than a target that can never be answered.
+			if (steps.length > 0) state.studySteps.set(blockId, steps);
+		}
 	}
 
 	/** Leave study mode: drop session state and flush pending schedule writes. */
@@ -427,8 +595,36 @@ export class LineRevealProcessor {
 		state.studyTargets = null;
 		state.pendingRating = null;
 		state.revealed.clear();
+		state.studySteps.clear();
+		state.stepAt.clear();
 		void this.plugin.scheduleStore.flush();
+		// Fence cards keep their schedule inside the note's own text, so a
+		// contextual session holds those writes back rather than rewriting the
+		// block being read after every answer. This is where they land.
+		void this.plugin.fenceWriter.flush();
 		void this.plugin.reviewLog.flush();
+	}
+
+	/**
+	 * Write out the staged fence schedules of any note that is no longer open.
+	 *
+	 * Holding a fence write back is only worth doing while the note is on screen
+	 * — that is the whole reason for it (see `FenceWriter.stageSchedule`). Once
+	 * the note is closed there is nothing left to disturb, and leaving reviews
+	 * unwritten risks losing them to a crash if the reader never presses Stop.
+	 */
+	private flushClosedNotes(): void {
+		const pending = this.plugin.fenceWriter.pendingPaths();
+		if (pending.length === 0) return;
+
+		const open = new Set<string>();
+		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file) open.add(view.file.path);
+		}
+		for (const path of pending) {
+			if (!open.has(path)) void this.plugin.fenceWriter.flushPath(path);
+		}
 	}
 
 	// ── Header actions (peek + study) ─────────────────────────
@@ -538,16 +734,34 @@ export class LineRevealProcessor {
 	private renderBanner(banner: HTMLElement, notePath: string): void {
 		banner.empty();
 		const state = this.stateFor(notePath);
-		const total = state.studyTargets?.size ?? 0;
+		const { done, total } = this.studyProgress(state);
 
 		banner.createSpan({
 			cls: "osmosis-reveal-progress",
-			text: `${String(state.rated.size)}/${String(total)} rated`,
+			text: `${String(done)}/${String(total)} rated`,
 		});
 		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
 		stopBtn.addEventListener("click", () => {
 			this.toggleStudy(notePath);
 		});
+	}
+
+	/**
+	 * The pill's count, in **questions rather than lines**.
+	 *
+	 * An occluded line asks one question per shape group, so counting lines would
+	 * report "0/1" through two of the three answers a three-group diagram takes.
+	 * The mind map's banner counts cards for the same reason.
+	 */
+	private studyProgress(state: NoteRevealState): { done: number; total: number } {
+		let done = 0;
+		let total = 0;
+		for (const blockId of state.studyTargets ?? []) {
+			const steps = state.studySteps.get(blockId)?.length ?? 1;
+			total += steps;
+			done += state.rated.has(blockId) ? steps : (state.stepAt.get(blockId) ?? 0);
+		}
+		return { done, total };
 	}
 
 	/**
@@ -590,6 +804,15 @@ export class LineRevealProcessor {
 		return this.plugin.app.metadataCache.getFileCache(file);
 	}
 
+	/**
+	 * The reveal mode a note is currently in, without creating state for a note
+	 * that has none. Read by the fence processor, which shares the reading view
+	 * with these lines and must only offer a rating while study is running.
+	 */
+	revealMode(notePath: string): RevealMode {
+		return this.states.get(notePath)?.mode ?? "off";
+	}
+
 	private stateFor(notePath: string): NoteRevealState {
 		let state = this.states.get(notePath);
 		if (!state) {
@@ -600,6 +823,8 @@ export class LineRevealProcessor {
 				studyTargets: null,
 				pendingRating: null,
 				pendingRatingAt: 0,
+				studySteps: new Map(),
+				stepAt: new Map(),
 				lines: new Map(),
 			};
 			this.states.set(notePath, state);
