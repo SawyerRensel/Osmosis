@@ -14,7 +14,7 @@ priority:
 progress_current:
 progress_total:
 date_created: "2026-08-03T15:38:58.397Z"
-date_modified: "2026-08-12T22:15:03.441Z"
+date_modified: "2026-08-12T23:35:00.000Z"
 date_start_scheduled: "2026-08-13T02:42:45.000Z"
 date_start_actual: "2026-08-13T02:42:45.000Z"
 date_end_scheduled:
@@ -46,10 +46,10 @@ plays the full deck correctly.
 
 | Card type | Sequential | Spatial (map) | Contextual (note) |
 |---|---|---|---|
-| `explicit` (basic) | ✅ | ✅ | ❌ no buttons on a fence-only note |
+| `explicit` (basic) | ✅ | ✅ | ✅ *(phase 1)* |
 | `explicit_bidi` | ✅ both directions | ❌ forward only | ❌ forward only |
-| `explicit_cloze` | ✅ one card per `cN` | ❌ node = 1 unit | ❌ all blanks at once, **rating dropped** |
-| `code_cloze` | ✅ one card per `cN` | ❌ node = 1 unit | ❌ all blanks at once, **rating dropped** |
+| `explicit_cloze` | ✅ one card per `cN` | ❌ node = 1 unit | ❌ first `cN` only *(rating fixed, phase 2)* |
+| `code_cloze` | ✅ one card per `cN` | ❌ node = 1 unit | ❌ first `cN` only *(rating fixed, phase 2)* |
 | `occlusion` | ✅ | ✅ per group | ✅ per group |
 | `line` | ✅ | ✅ | ✅ |
 
@@ -148,72 +148,74 @@ might otherwise "helpfully" undo.
    step count matches sequential's card count.
 5. Fixtures + full type × mode verification matrix.
 
-## Next session — Phase 2: contextual plays store cards
+## Next session — Phase 3: cloze-group and bidi stepping in contextual
 
-Phases 1 and the reading-mode change are **shipped** on
+Phases 1 and 2 and the reading-mode change are **shipped** on
 `feature/study-all-card-types` (see "Progress" below). Start here.
 
-### The bug you are fixing
+### What is left
 
-`ContextualStudyProcessor.parseFenceContent` re-derives a fence's front and back
-from its source text. The generator has already done that work and put the
-result in the store, and the two disagree on every card type that fans out:
+A fence now plays a store card, so its ratings land. But it plays **one** card —
+the first of its cards the scheduler would ask — so a three-group cloze fence
+asks one question where sequential asks three, and a bidirectional fence's
+reverse is still reachable only in sequential. Phase 3 makes a fence ask all of
+its due cards in place, one at a time.
 
-| Fence | Store holds | Contextual renders |
-|---|---|---|
-| 3-group cloze | `<id>-c1`, `-c2`, `-c3` — each `front` blanks *one* group, `back` is the full passage | one card, every group blanked at once |
-| bidirectional | `<id>` (front→back) **and** `<id>-r` (back→front) | forward only |
-| basic | `<id>` | matches ✅ |
+The machinery already exists and is the model to copy: `renderOcclusionCard`
+steps an occluded fence through its shape groups via `stepPlan` /
+`occlusionSteps`, with `occlusionStepAt` holding the position and `occlusionPlan`
+pinning the sequence at session start. Phase 3 is generalizing that from "shape
+groups of a diagram" to "the cards a fence derived", and pointing `renderCard` at
+it.
 
-Card construction is in `src/card-gen/explicit.ts` — cloze at ~line 847, the
-bidi pair at ~line 880. Both carry fully rendered `front`/`back` strings.
-
-The rating consequence is the urgent half. `renderCard` mints its ID as
-`extractIdFromSource(source) ?? hashContent("cloze|||…")`, which for a
-multi-cloze fence is the *bare fence ID*. No such card exists in the store, so
-`recordRating` hits its `Card not in store — skip rating` guard and the review
-is silently discarded. Confirm this first with a failing test — it is the
-acceptance criterion.
+`cardsForFenceKey` (added in phase 2, `src/study/spatial-study.ts`) already
+returns a fence's cards in ask order — `<id>`, then `-c1`…`-cN` by number, then
+`-r`. That ordering *is* the step sequence; it needs the due filter
+`occlusionSteps` applies and the same "pin it at session start" treatment.
 
 ### What to build
 
-Contextual looks the note's cards up in the store (`cardStore.getCardsByNote`)
-and renders `card.front` / `card.back`, rating against `card.id`. Source-derived
-rendering survives **only** as the fallback for a fence the store does not know
-yet — never synced, or just typed. That fallback renders visible, takes no
-rating, and is never a session target. Decision 1 in this note explains why this
-is the shape rather than teaching the derivation about `-cN`.
-
-Note that Phase 2 is only the *plumbing* — one store card per fence still asks
-one question. Phase 3 is what makes a 3-cloze fence ask three.
+1. Generalize `src/study/occlusion-steps.ts` so a step is "a card to ask" rather
+   than "a group on a diagram". An occluded step keeps its `diagram`/`group`
+   fields — the mask renderer needs them — but a cloze or bidi step carries only
+   a card ID.
+2. `renderCard` steps: reveal → rate → advance → next card's front, with a
+   `n/N` counter, exactly as the occluded path shows. `fenceCardAt` (the phase-2
+   single-card pin) becomes the step index.
+3. `studyProgress` in `LineRevealProcessor` currently counts **one question per
+   fence** — there is a comment there saying so and naming this phase. Make it
+   count steps, the way it already does for occluded lines via `studySteps`.
+4. Decide what plain reading mode shows for a multi-cloze fence. Phase 2 left it
+   showing the *first* card's blanking, which diverges from live preview (all
+   groups blanked at once). Stacking every group's question-and-answer pair is
+   the option that matches decision 2's "a cloze card stacks its blanked half
+   above its filled-in half" read per card. Whatever you choose, say so here.
 
 ### Where the seams are
 
-- `parseFenceContent` also feeds `renderPreviewCard` (live preview) and the
-  exclude toggle, which are **not** study surfaces. Don't rip it out; change who
-  decides what a *card* shows.
-- `ParsedFence.occlusions` has no equivalent on `Card` beyond `card.occlusion`
-  (one group per card). `renderOcclusionCard` already plays store cards through
-  `stepPlan`/`occlusionSteps` — leave that path alone, it is the model.
-- Reading mode now shows both sides (see decision 2). A store-card renderer has
-  to keep that: `shouldHideBack` stays the single gate.
-- Matching a fence in the DOM to its store cards means the fence's own `id:` —
-  `fenceKeyFromNode` / `fenceKey` in `src/study/spatial-study.ts` already do
-  this stripping. Reuse them rather than writing a third ID parser.
+- `markFenceRated` takes a **fence key**, not a card ID — phase 2 fixed a bug
+  where the pill sat still through a whole occluded diagram because it was given
+  `<fence>-c1`. `showRating` now takes both, separately. Keep them apart.
+- `isFenceTarget` / `fenceTargets` are keyed on fence keys and fixed at session
+  start. A fence stays one *target* however many steps it asks; the pill is what
+  counts questions.
+- Live preview stays on `parseFenceContent` (decision 7). The divergent cloze
+  builders therefore still exist and are still correct for that surface — they
+  are simply off every rating path now.
+- The unsynced-fence fallback (no store card) must stay a single unstepped
+  render with no rating.
 
 ### Verify
 
-1. A failing test first: rating a multi-cloze fence in contextual mode records
-   nothing. Then make it pass.
-2. `npm run lint`, `npm test`, `npm run build` all clean.
-3. Manual: rate a cloze card in Note view, press Stop, confirm the fence's
-   `c1:`/`c2:` nested schedule actually moved in the note's text.
-4. Reading mode still stacks both sides for every type (the 6 tests in
-   `ContextualStudyProcessor.dom.test.ts` → "a fence in plain reading mode").
+1. A 3-cloze fence asks 3 questions in Note view and a bidi fence asks 2, each
+   rated separately; the pill totals match.
+2. Manual: study `tests/flashcard/fence-card-types.md`, press Stop, confirm
+   `c1:`, `c2:` and `c3:` all moved — phase 2's fixture deliberately has all
+   three due, and today only `c1` moves.
+3. `npm run lint`, `npm test`, `npm run build` all clean.
 
 ### Then
 
-Phase 3 (cloze-group + bidi stepping, generalizing `occlusion-steps.ts`),
 Phase 4 (`spatialStudyKeys` splits on any derived card), Phase 5 (fixtures +
 the full type × mode matrix).
 
@@ -226,11 +228,36 @@ the full type × mode matrix).
 - **Reading mode — shipped** (`80c8a71`). Hiding moved to peek and study alone;
   plain reading mode draws what live preview draws. Reverses part of decision 2,
   which is rewritten above.
-- **Phases 2–5 — not started.**
+- **Phase 2 — shipped** (`4d3e59e`). A fence plays the store's card —
+  `card.front`, `card.back`, `card.id` — instead of re-deriving a pair from its
+  source and rating an ID no card carries. Cloze reviews taken in a note now
+  actually record. Source-derived rendering demoted to the fallback for a fence
+  the store has no card for. Also fixed the pill on occluded fences.
+- **Phases 3–5 — not started.**
 
-Manual testing confirmed by the user for both. Fixture
+Three decisions taken during phase 2 that a later session should not undo
+silently:
+
+1. **The divergent cloze builders were kept**, contrary to the surface map
+   below. Live preview is unchanged by design (decision 7) and still parses the
+   source, as does the unsynced-fence fallback. They are off every *rating*
+   path, which is what caused the bug; deleting them would mean rewriting live
+   preview, which this task deliberately does not touch.
+2. **Peek still hides an unsynced fence's back.** The phase-2 prompt said the
+   fallback "renders visible"; `shouldHideBack` was kept as the single gate
+   instead, so the fallback is visible while reading and as context during a
+   session, but peek — whose whole job is hiding, and which records nothing —
+   still covers it.
+3. **A multi-cloze fence in plain reading mode now blanks one group, not all of
+   them**, a direct consequence of playing store cards. This diverges from live
+   preview. Phase 3 decides whether to stack every group instead.
+
+Manual testing confirmed by the user for all three. Fixtures:
 `vault/tests/flashcard/fence-only-study.md` (two due fences + one scheduled to
-2027) covers the target/non-target split; reset it after testing, as the repo
+2027) covers the target/non-target split, and
+`vault/tests/flashcard/fence-card-types.md` covers the fanned-out types — a
+three-group cloze with all groups due, a bidi pair, a basic control, a
+not-due cloze, and an unsynced fence. Reset both after testing, as the repo
 does for every fixture whose schedule a session moves.
 
 ## Surface map (expected)
@@ -238,16 +265,20 @@ does for every fixture whose schedule a session moves.
 | File | Change |
 |---|---|
 | `src/views/LineRevealProcessor.ts` | Button gate, session targets, progress pill, chrome refresh |
-| `src/views/ContextualStudyProcessor.ts` | Play store cards; delete divergent cloze builders; fallback path |
+| `src/views/ContextualStudyProcessor.ts` | Play store cards; fallback path; card ID and fence key kept apart |
 | `src/study/occlusion-steps.ts` | Generalize stepping beyond occlusion groups |
-| `src/study/spatial-study.ts` | `spatialStudyKeys` splits on any derived card |
+| `src/study/spatial-study.ts` | `cardsForFenceKey` (ask order); `spatialStudyKeys` splits on any derived card |
 | `src/views/MindMapView.ts` | Bidi targets on the map |
+
+The "delete divergent cloze builders" entry was dropped in phase 2 — see the
+decisions under "Progress" for why.
 
 ## What's your current workaround?
 
 Study those cards in sequential mode, which is the only surface that asks every
-card. Cloze cards reviewed in Note view need re-reviewing in sequential, since
-those ratings never reached the store.
+card. Cloze cards reviewed in Note view **before phase 2** need re-reviewing
+there, since those ratings never reached the store; reviews taken since do
+record, but a fence still only asks its first due card until phase 3.
 
 ## Reference Attachments/Screenshots
 
