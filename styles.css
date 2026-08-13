@@ -3144,6 +3144,19 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: flex;
 	align-items: center;
 	gap: var(--size-4-2);
+	min-width: 0;
+}
+
+/* A native <select> takes its intrinsic width from its widest <option>, not from
+   the option currently showing, so a single long deck path stretched the deck
+   field past the width of a phone screen and set the whole view scrolling
+   sideways. Pin the width and let the closed control ellipsise instead; the
+   popup still renders full labels, since that list is drawn by the OS. */
+.osmosis-stats-deck-select {
+	width: 14em;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 /* The in-panel segmented control carries a bottom margin. `align-items: center`

@@ -753,7 +753,7 @@ export class StatsView extends ItemView {
 
 		const deckWrap = bar.createDiv({ cls: "osmosis-stats-scope-field" });
 		deckWrap.createSpan({ cls: "osmosis-stats-scope-label", text: "Deck" });
-		const select = deckWrap.createEl("select", { cls: "dropdown" });
+		const select = deckWrap.createEl("select", { cls: "dropdown osmosis-stats-deck-select" });
 		select.createEl("option", { value: "all", text: "Whole collection" });
 		for (const option of this.deckOptions()) {
 			select.createEl("option", { value: option.value, text: option.label });
