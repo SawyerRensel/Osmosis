@@ -806,7 +806,7 @@ export default class OsmosisPlugin extends Plugin {
 			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
 
 			const btn = createEl("a");
-			btn.className = "clickable-icon osmosis-mindmap-action";
+			btn.className = "clickable-icon view-action osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
 			setIcon(btn, "brain-circuit");
 			btn.addEventListener("click", () => {
