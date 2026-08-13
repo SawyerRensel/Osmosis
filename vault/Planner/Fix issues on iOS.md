@@ -1,6 +1,6 @@
 ---
-title: Blocks are ghosting in iOS
-summary: iOS admonitions and other nodes are ghosting in mind map view, where the node content is frozen/stuck at its originally rendered location when mind map is loaded.  When the map is panned/zoomed, the content stays in the same position. 
+title: Fix issues on iOS
+summary: There are many rendering issues on iOS that do not appear on any other operating system.  Let's provide full experience parity for iOS.
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-03T15:32:30.793Z"
-date_modified: "2026-08-03T15:32:43.436Z"
+date_created: 2026-08-03T15:32:30.793Z
+date_modified: 2026-08-13T12:14:00.393Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -49,7 +49,17 @@ color:
 
 *What actually happened? Describe what went wrong.*
 
-​
+​iOS admonitions and other nodes are ghosting in mind map view, where the node content is frozen/stuck at its originally rendered location when mind map is loaded. When the map is panned/zoomed, the content stays in the same position.
+
+![](2026-08-13%20iOS%20Osmosis%20screenshot%201.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%202.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%203.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%204.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%205.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%206.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%207.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%208.png)
+![](2026-08-13%20iOS%20Osmosis%20screenshot%209.png)
 
 ## What should have happened?
 
