@@ -17,13 +17,37 @@ Uses Obsidian CSS variables for theme compatibility.
 	cursor: grabbing;
 }
 
-/* Mobile editing: SVG gets position:fixed inline to escape Obsidian's
+/* Mobile editing: the map gets position:fixed inline to escape Obsidian's
    layout resize when the keyboard opens. No CSS overrides needed here. */
 
 .osmosis-mindmap-svg {
 	display: block;
 	width: 100%;
 	height: 100%;
+}
+
+/* ── iOS: pan and zoom as a CSS transform ──────────────────────────────────
+   WKWebView re-transforms SVG geometry on a viewBox change but leaves any
+   composited layer inside a <foreignObject> exactly where it first painted,
+   so node bodies strand on screen while the map moves out from under them.
+   A CSS transform on an ancestor *is* honoured for descendant layers, so on
+   iOS the map moves that way instead — the same shape Obsidian's own Canvas
+   uses, where `.canvas` is transform-origin: 0 0 inside a clipping
+   `.canvas-wrapper`. src/mindmap-viewport.ts has the mechanism and the maths.
+
+   These two rules are structural, not cosmetic: the host must clip because
+   the SVG no longer can (the visible region is no longer its own viewport),
+   and the origin must be the top-left corner because that is the corner the
+   transform is computed against. */
+.osmosis-mindmap-host {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+}
+
+.osmosis-mindmap-svg-transformed {
+	overflow: visible;
+	transform-origin: 0 0;
 }
 
 .osmosis-node {
@@ -1631,6 +1655,18 @@ hr.osmosis-map-style-divider {
 	flex-shrink: 0;
 }
 
+/* `setIcon` drops a bare <svg> into the button and leaves its size to
+   Obsidian's `--icon-size`, which resolves against the surrounding context.
+   That context is missing on iOS — the top bar is mounted on `modalEl`, outside
+   the content area that carries it — and an <svg> flex item with no resolved
+   size collapses to a dot inside a 42px circle. `--icon-m` is a fixed token, so
+   pinning it here is the size desktop already computes, just stated outright. */
+.osmosis-study-icon-btn svg {
+	width: var(--icon-m);
+	height: var(--icon-m);
+	flex-shrink: 0;
+}
+
 .osmosis-study-icon-btn:hover {
 	color: var(--text-normal);
 	background: var(--background-modifier-hover);
@@ -1814,6 +1850,14 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-dashboard {
 	padding: 8px;
+}
+
+/* Desktop puts icons in the view header, so 8px is only ever read as padding.
+   Mobile puts a full-width title bar there instead, and at 8px the operator
+   row reads as part of that bar rather than as the top of the deck list.
+   Material's 16dp step is the first that separates them into two regions. */
+.is-mobile .osmosis-dashboard {
+	padding-top: 16px;
 }
 
 .osmosis-dash-operators {
@@ -2248,6 +2292,15 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	justify-content: center;
 	margin-top: 0;
 	animation: osmosis-fade-in 0.2s;
+	/* The bubble is the one part of the map that is painted while the map is
+	   moving under it: it appears mid-session and then rides along on every
+	   pan. Its fade-in gives it a compositing layer for 0.2s and then hands the
+	   layer back, and on iOS the repaints after that under-damaged its left
+	   edge — the leftmost button, Again, smeared a trail of red slivers across
+	   the map until a selection forced a full repaint. Asking for the layer
+	   outright keeps it for the bubble's whole life, so a pan moves the bubble
+	   instead of redrawing it. */
+	will-change: transform;
 }
 
 
