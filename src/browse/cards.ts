@@ -21,8 +21,8 @@ const MS_PER_DAY = 86_400_000;
 
 // ── Options ───────────────────────────────────────────────────
 
-/** How cards are laid out. `table` is flat; `list` and `cards` group by note. */
-export type Layout = "table" | "list" | "cards";
+/** How cards are laid out. `table` is flat; `cards` groups by note. */
+export type Layout = "table" | "cards";
 
 export type CardStateFilter = "all" | CardState;
 
@@ -71,7 +71,7 @@ export interface BrowseOptions {
 	sortBy: SortBy;
 	/**
 	 * The table's own sort, set by clicking column headers, outermost level
-	 * first. Empty falls back to `sortBy`. Table-only: the other layouts have no
+	 * first. Empty falls back to `sortBy`. Table-only: the cards layout has no
 	 * headers to click, so honouring it there would apply an order the user has
 	 * no way to see or undo from that layout.
 	 */
@@ -108,7 +108,7 @@ export function cardTypeOptionKey(cardType: CardType): string {
 	return `type_${cardType}`;
 }
 
-const LAYOUTS: readonly Layout[] = ["table", "list", "cards"];
+const LAYOUTS: readonly Layout[] = ["table", "cards"];
 const CARD_STATES: readonly CardStateFilter[] = ["all", "new", "learning", "review", "relearning"];
 const DUE_WINDOWS: readonly DueWindow[] = ["any", "overdue", "today", "7d", "30d"];
 const SORT_KEYS: readonly SortBy[] = [
@@ -446,7 +446,7 @@ function tieBreak(a: Card, b: Card): number {
 
 // ── Grouping ──────────────────────────────────────────────────
 
-/** One note and the cards inside it, for the grouped layouts. */
+/** One note and the cards inside it, for the grouped layout. */
 export interface NoteGroup {
 	notePath: string;
 	/** Every distinct deck the note's surviving cards land in, sorted. */

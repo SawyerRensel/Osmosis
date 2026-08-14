@@ -2612,7 +2612,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    gesture rather than a text one. Left un-suppressed, Shift+click would paint a
    text range across every row it spanned on top of the selection it made. */
 .osmosis-browse-row,
-.osmosis-browse-line,
 .osmosis-browse-tile,
 .osmosis-browse-group-header {
 	user-select: none;
@@ -2622,9 +2621,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    the two read as the same surface at two strengths rather than as two
    different things happening to the row. */
 .osmosis-browse-row.is-selected,
-.osmosis-browse-row.is-selected:hover,
-.osmosis-browse-line.is-selected,
-.osmosis-browse-line.is-selected:hover {
+.osmosis-browse-row.is-selected:hover {
 	background: var(--text-selection);
 }
 
@@ -2876,7 +2873,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	background: var(--background-modifier-hover);
 }
 
-/* ── Grouped layouts (list, cards) ─────────────────────────── */
+/* ── Grouped layout (cards) ────────────────────────────────── */
 
 .osmosis-browse-group {
 	margin-bottom: var(--size-4-4);
@@ -2907,65 +2904,6 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
-}
-
-.osmosis-browse-line {
-	display: flex;
-	align-items: center;
-	gap: var(--size-4-2);
-	padding: 3px var(--size-4-2);
-	border-radius: var(--radius-s);
-	font-size: var(--font-ui-small);
-	cursor: pointer;
-}
-
-.osmosis-browse-line:hover {
-	background: var(--background-modifier-hover);
-}
-
-.osmosis-browse-line-index {
-	width: 32px;
-	flex-shrink: 0;
-	text-align: right;
-	color: var(--text-faint);
-	font-size: var(--font-ui-smaller);
-	font-variant-numeric: tabular-nums;
-}
-
-/* Front and back share one flexible column, so the badges past them line up
-   down the list however long either half runs. */
-.osmosis-browse-line-content {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	align-items: baseline;
-	gap: var(--size-4-1);
-	overflow: hidden;
-}
-
-.osmosis-browse-line-front {
-	flex: 0 1 auto;
-	min-width: 0;
-}
-
-/* The back is the answer, so it recedes — present for scanning and searching,
-   not competing with the question. */
-.osmosis-browse-line-back {
-	flex: 0 1 auto;
-	min-width: 0;
-	color: var(--text-muted);
-}
-
-.osmosis-browse-line-sep {
-	flex: none;
-	color: var(--text-faint);
-}
-
-.osmosis-browse-line-due {
-	color: var(--text-muted);
-	font-size: var(--font-ui-smaller);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
 }
 
 .osmosis-browse-tiles {
@@ -3051,7 +2989,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	height: auto;
 }
 
-/* The single-line variant, for table cells and list rows: markdown still
+/* The single-line variant, for table cells: markdown still
    renders (so cloze highlights and emphasis read correctly) but it is forced
    onto one line and clipped, rather than growing the row. */
 .osmosis-browse-md-inline {

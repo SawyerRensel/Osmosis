@@ -556,7 +556,7 @@ export class CardBrowserView extends BasesView {
 		table.style.width = `${String(total)}px`;
 	}
 
-	// ── List and cards: grouped under their note ──────────────────
+	// ── Cards: tiles grouped under their note ─────────────────────
 
 	private renderGroup(
 		parent: HTMLElement,
@@ -585,55 +585,16 @@ export class CardBrowserView extends BasesView {
 			text: `${String(group.cards.length)} card${group.cards.length === 1 ? "" : "s"}`,
 		});
 
-		const isTiles = options.layout === "cards";
-		const body = section.createDiv({
-			cls: isTiles ? "osmosis-browse-tiles" : "osmosis-browse-lines",
-		});
-		if (isTiles) {
-			body.style.setProperty("--osmosis-tile-height", `${String(options.tileHeight)}px`);
-		}
+		const body = section.createDiv({ cls: "osmosis-browse-tiles" });
+		body.style.setProperty("--osmosis-tile-height", `${String(options.tileHeight)}px`);
 
-		group.cards.forEach((card, index) => {
+		for (const card of group.cards) {
 			try {
-				const row = toRow(card, now);
-				if (isTiles) this.renderTile(body, row);
-				else this.renderLine(body, row, index + 1);
+				this.renderTile(body, toRow(card, now));
 			} catch (error) {
 				console.error("Osmosis: card browser could not render card", card.id, error);
 			}
-		});
-	}
-
-	private renderLine(parent: HTMLElement, row: CardRow, index: number): void {
-		const line = parent.createDiv({ cls: "osmosis-browse-line" });
-		if (row.suspended) line.addClass("osmosis-browse-suspended");
-
-		line.createSpan({ cls: "osmosis-browse-line-index", text: String(index) });
-
-		// Front and back share one flexible column so the badges stay aligned
-		// down the list however long either half is.
-		const content = line.createDiv({ cls: "osmosis-browse-line-content" });
-		this.deferMarkdown(
-			content.createDiv({ cls: "osmosis-browse-md osmosis-browse-md-inline osmosis-browse-line-front" }),
-			row.card.front,
-			row.card.notePath,
-			row.front,
-		);
-		if (row.back !== "") {
-			content.createSpan({ cls: "osmosis-browse-line-sep", text: "·" });
-			this.deferMarkdown(
-				content.createDiv({ cls: "osmosis-browse-md osmosis-browse-md-inline osmosis-browse-line-back" }),
-				row.card.back,
-				row.card.notePath,
-				row.back,
-			);
 		}
-
-		line.createSpan({ cls: "osmosis-browse-badge", text: row.typeLabel });
-		line.createSpan({ cls: `osmosis-browse-state osmosis-browse-state-${row.state}`, text: row.state });
-		line.createSpan({ cls: "osmosis-browse-line-due", text: row.due });
-
-		this.bindRow(line, row.card);
 	}
 
 	private renderTile(parent: HTMLElement, row: CardRow): void {
@@ -1546,7 +1507,7 @@ export function createCardBrowserRegistration(plugin: OsmosisPlugin): BasesViewR
 				key: "layout",
 				displayName: "Card layout",
 				default: "table",
-				options: { table: "Table", list: "List", cards: "Cards" },
+				options: { table: "Table", cards: "Cards" },
 			},
 			{
 				type: "slider",
@@ -1556,7 +1517,7 @@ export function createCardBrowserRegistration(plugin: OsmosisPlugin): BasesViewR
 				min: TILE_HEIGHT.min,
 				max: TILE_HEIGHT.max,
 				step: TILE_HEIGHT.step,
-				// Meaningless in the other two layouts, so it does not appear there.
+				// Meaningless in the table layout, so it does not appear there.
 				shouldHide: () => config.get("layout") !== "cards",
 			},
 			{
