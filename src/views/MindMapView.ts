@@ -322,6 +322,8 @@ export class MindMapView extends ItemView {
 
 	// Viewport culling state
 	private renderedNodeIds = new Set<string>();
+	// Branch lines are culled on their own geometry, keyed by child node id
+	private renderedBranchIds = new Set<string>();
 	private cullRafId: number | null = null;
 	private branchLinesGroup: SVGGElement | null = null;
 	private nodesGroup: SVGGElement | null = null;
@@ -1771,6 +1773,7 @@ export class MindMapView extends ItemView {
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
 		this.cancelLongPress();
 		this.activePointers.clear();
 		this.pinchStartDistance = null;
@@ -2967,6 +2970,7 @@ export class MindMapView extends ItemView {
 		const lineStyle = this.mapSettings.branchLineStyle;
 
 		const nowVisible = new Set<string>();
+		const nowVisibleBranches = new Set<string>();
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
 			if (
@@ -2975,25 +2979,41 @@ export class MindMapView extends ItemView {
 			) {
 				nowVisible.add(node.source.id);
 			}
+			// A branch is culled on its own geometry, never on its child's. A
+			// branch crosses the viewport whenever it spans it — zooming in on a
+			// parent puts its children outside the viewport long before the
+			// branches reaching them leave it, and panning past a parent does the
+			// same from the other end.
+			if (
+				node.parent &&
+				node.parent.source.type !== "root" &&
+				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
+			) {
+				nowVisibleBranches.add(node.source.id);
+			}
 		}
 
 		// Remove nodes that left the viewport (but never cull the node being edited)
 		for (const id of this.renderedNodeIds) {
 			if (!nowVisible.has(id) && id !== this.editingNodeId) {
-				// Remove node group
 				const el = this.nodesGroup.querySelector(
 					`.osmosis-node-group[data-node-id="${id}"]`,
 				);
 				el?.remove();
-				// Remove branch line
-				const line = this.branchLinesGroup.querySelector(
-					`.osmosis-branch-line[data-child-id="${id}"]`,
-				);
-				line?.remove();
 			}
 		}
 
-		// Add nodes that entered the viewport
+		// Remove branch lines that left the viewport. A tapered *and* patterned
+		// branch is two paths under the one child id, so take every match.
+		for (const id of this.renderedBranchIds) {
+			if (!nowVisibleBranches.has(id)) {
+				this.branchLinesGroup
+					.querySelectorAll(`.osmosis-branch-line[data-child-id="${id}"]`)
+					.forEach((line) => { line.remove(); });
+			}
+		}
+
+		// Add nodes and branches that entered the viewport
 		const renderPromises: Promise<void>[] = [];
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
@@ -3002,17 +3022,20 @@ export class MindMapView extends ItemView {
 				renderPromises.push(
 					this.drawNode(this.nodesGroup, node, offsetX, offsetY),
 				);
-				// Draw branch line whenever the child node is visible
-				if (node.parent && node.parent.source.type !== "root") {
-					this.drawBranchLine(
-						this.branchLinesGroup,
-						node.parent,
-						node,
-						offsetX,
-						offsetY,
-						lineStyle,
-					);
-				}
+			}
+			if (
+				node.parent &&
+				nowVisibleBranches.has(id) &&
+				!this.renderedBranchIds.has(id)
+			) {
+				this.drawBranchLine(
+					this.branchLinesGroup,
+					node.parent,
+					node,
+					offsetX,
+					offsetY,
+					lineStyle,
+				);
 			}
 		}
 		await Promise.all(renderPromises);
@@ -3021,6 +3044,7 @@ export class MindMapView extends ItemView {
 		this.applySpatialState();
 
 		this.renderedNodeIds = nowVisible;
+		this.renderedBranchIds = nowVisibleBranches;
 	}
 
 	private screenToSvg(
@@ -8186,17 +8210,22 @@ export class MindMapView extends ItemView {
 
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
 		const renderPromises: Promise<void>[] = [];
 
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
-			if (!this.isNodeInViewport(node, offsetX, offsetY)) continue;
 
-			this.renderedNodeIds.add(node.source.id);
-			renderPromises.push(
-				this.drawNode(nodesGroup, node, offsetX, offsetY),
-			);
+			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+				this.renderedNodeIds.add(node.source.id);
+				renderPromises.push(
+					this.drawNode(nodesGroup, node, offsetX, offsetY),
+				);
+			}
 
+			// A branch is tested on its own geometry, so a branch that spans the
+			// viewport is drawn even when neither node it joins is inside it.
+			//
 			// Top-level nodes hang off the virtual root, which is never drawn
 			// (see the `continue` above, and OsmosisTree.root). A branch line to
 			// it therefore had nothing to reach and was drawn as a fixed-length
@@ -8208,6 +8237,7 @@ export class MindMapView extends ItemView {
 				node.parent.source.type !== "root" &&
 				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
 			) {
+				this.renderedBranchIds.add(node.source.id);
 				this.drawBranchLine(
 					branchLinesGroup,
 					node.parent,
