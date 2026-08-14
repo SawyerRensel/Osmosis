@@ -6,20 +6,38 @@ import type { CardState, StudyMode } from "../database/types";
  * to the current scheduling state that `ScheduleData` holds and overwrites on
  * every answer.
  *
- * Entries live in JSONL shards in the vault, one file per month *and* device
- * (`2026-08.pixel-10a.jsonl`), so no file ever has two writers and Obsidian
- * Sync has nothing to reconcile. Readers take the union of every shard.
+ * Entries live in Markdown shards in the vault, one file per month *and* device
+ * (`2026-08.pixel-10a.md`), so no file ever has two writers and Obsidian Sync
+ * has nothing to reconcile. Readers take the union of every shard.
+ *
+ * The files are Markdown rather than `.jsonl` for one reason: Obsidian Sync
+ * carries non-Markdown files only when *Sync all other types* is on, that
+ * toggle is off by default, and it does not propagate between devices. A
+ * `.md` shard syncs like every other note with no configuration at all.
  *
  * Most of this module is I/O-free — serialisation, shard naming, aggregation —
  * so the logic that matters is unit-testable. `ReviewLog` at the bottom is the
  * stateful half: buffering, the collision guard, and the local rollup cache.
  */
 
-/** Format version written into each shard's header line. */
-export const SHARD_FORMAT_VERSION = 1;
+/**
+ * Format version written into each shard's header line.
+ *
+ * v2 added `pi`, the interval the card was answered *at*. See `classifyReview`
+ * for why every maturity split now reads it.
+ */
+export const SHARD_FORMAT_VERSION = 2;
 
 /** Shard file extension. */
-export const SHARD_EXTENSION = ".jsonl";
+export const SHARD_EXTENSION = ".md";
+
+/**
+ * Language tag on the fence wrapping a shard's lines.
+ *
+ * Must not be `osmosis` — that tag is claimed by the flashcard processor, which
+ * would parse every shard as a card fence.
+ */
+export const SHARD_FENCE_TAG = "osmosis-reviews";
 
 /** Interval at or above which a card counts as mature. Anki's threshold. */
 export const MATURE_INTERVAL_DAYS = 21;
@@ -51,6 +69,13 @@ export interface ReviewLogEntry {
 	s: CardState;
 	/** Interval granted by the answer, seconds. */
 	iv: number;
+	/**
+	 * Interval the card was sitting on when it was answered, seconds — the
+	 * schedule *before* this review. `0` for a card with no prior schedule.
+	 *
+	 * Every maturity split reads this; see `classifyReview`.
+	 */
+	pi: number;
 	/** FSRS stability after the answer. */
 	st: number;
 	/** FSRS difficulty after the answer. */
@@ -75,6 +100,12 @@ export interface ShardHeader {
 	v: number;
 }
 
+/** An inclusive range of `YYYY-MM` shard months. Either bound may be open. */
+export interface MonthRange {
+	from?: string;
+	to?: string;
+}
+
 /** A parsed shard. `header` is null when the file has lost or never had one. */
 export interface ParsedShard {
 	header: ShardHeader | null;
@@ -94,6 +125,7 @@ export function serializeEntry(entry: ReviewLogEntry): string {
 		r: entry.r,
 		s: entry.s,
 		iv: Math.round(entry.iv),
+		pi: Math.round(entry.pi),
 		st: round4(entry.st),
 		d: round4(entry.d),
 		e: Math.round(entry.e),
@@ -132,6 +164,7 @@ export function parseEntry(line: string): ReviewLogEntry | null {
 		r,
 		s: parseCardState(raw["s"]),
 		iv: toFiniteNumber(raw["iv"]) ?? 0,
+		pi: toFiniteNumber(raw["pi"]) ?? 0,
 		st: toFiniteNumber(raw["st"]) ?? 0,
 		d: toFiniteNumber(raw["d"]) ?? 0,
 		e: toFiniteNumber(raw["e"]) ?? 0,
@@ -157,6 +190,10 @@ export function parseHeader(line: string): ShardHeader | null {
  * Parse a whole shard. The header is expected first, but a truncated or
  * hand-assembled file may have lost it, so anything that doesn't parse as a
  * header is tried as an entry. Unparseable lines are skipped, never thrown on.
+ *
+ * That tolerance is also what lets this read the Markdown wrapper unchanged:
+ * the preamble and the fence opener parse as neither a header nor an entry, so
+ * they fall out on their own, and the header is still found behind them.
  */
 export function parseShard(text: string): ParsedShard {
 	let header: ShardHeader | null = null;
@@ -289,7 +326,27 @@ export function shardFileName(month: string, device: string): string {
 	return `${month}.${device}${SHARD_EXTENSION}`;
 }
 
-const SHARD_NAME_PATTERN = /^(\d{4}-\d{2})\.([a-z0-9-]+)\.jsonl$/;
+/**
+ * The text a new shard opens with: a human-readable line, then the fence the
+ * entries live inside.
+ *
+ * **The fence is never closed.** CommonMark runs an unclosed fence to the end
+ * of the document, so the file is well-formed at every moment *and* every write
+ * stays a pure append. Closing it would mean moving the terminator on each
+ * flush — the whole-file rewrite this design exists to avoid.
+ */
+export function shardPreamble(month: string, device: string): string {
+	return (
+		`Osmosis review log — ${device}, ${month}. Generated file; do not edit.\n\n`
+		+ `\`\`\`${SHARD_FENCE_TAG}\n`
+	);
+}
+
+// Derived from SHARD_EXTENSION rather than spelled out: a hardcoded extension
+// here silently stops matching every shard the moment the constant changes.
+const SHARD_NAME_PATTERN = new RegExp(
+	`^(\\d{4}-\\d{2})\\.([a-z0-9-]+)${SHARD_EXTENSION.replace(/\./g, "\\.")}$`,
+);
 
 /**
  * Split a shard filename back into month and device, or null when the name
@@ -304,6 +361,62 @@ export function parseShardFileName(
 	const device = match?.[2];
 	if (month === undefined || device === undefined) return null;
 	return { month, device };
+}
+
+/**
+ * True when a vault path lies in the review log folder.
+ *
+ * Shards are Markdown, so without this every one of them is card-sync input:
+ * `getMarkdownFiles()` would feed the whole log to the flashcard parser at
+ * launch, and each flush would re-parse its own shard through the vault
+ * listeners. One shared predicate rather than an inline check per call site,
+ * because the failure mode is silent — no error, just a slow startup and a card
+ * parser chewing JSON — and a sixth call site must not be able to forget.
+ */
+export function isReviewLogPath(path: string, folder: string): boolean {
+	if (folder === "") return false;
+	return path === folder || path.startsWith(`${folder}/`);
+}
+
+/** The three facts the shard renderer shows, without parsing the entries. */
+export interface ShardSummary {
+	header: ShardHeader | null;
+	/** Lines inside the fence that are not the header. */
+	entries: number;
+}
+
+/**
+ * Summarise a shard's fence body for display.
+ *
+ * Deliberately does **not** `JSON.parse` the entries: the renderer is handed
+ * the whole ~1.8 MB body, and parsing it per line would cost 100 ms+ on every
+ * open to display one number. Counting lines is a single pass over the bytes.
+ */
+export function summarizeShardSource(source: string): ShardSummary {
+	let lines = 0;
+	let lineHasContent = false;
+	let firstLineEnd = -1;
+
+	for (let i = 0; i < source.length; i++) {
+		if (source[i] === "\n") {
+			if (lineHasContent) {
+				lines += 1;
+				if (firstLineEnd === -1) firstLineEnd = i;
+			}
+			lineHasContent = false;
+		} else if (source[i] !== "\r") {
+			lineHasContent = true;
+		}
+	}
+	if (lineHasContent) {
+		lines += 1;
+		if (firstLineEnd === -1) firstLineEnd = source.length;
+	}
+
+	const header = firstLineEnd === -1
+		? null
+		: parseHeader(source.slice(0, firstLineEnd).trim());
+	return { header, entries: header === null ? lines : lines - 1 };
 }
 
 /** Local month key (`YYYY-MM`) for a timestamp — the shard a review lands in. */
@@ -376,16 +489,26 @@ export function emptyDayRollup(): DayRollup {
 }
 
 /**
- * Which bar a review stacks into, from the state and interval the answer
- * *produced*.
+ * Which bar a review stacks into, from the state the answer produced and the
+ * interval the card was answered *at*.
  *
- * Anki classifies on the interval the card had going *in*; this classifies on
- * the interval it came out with, because that is what the log records. The two
- * differ only on the single review that carries a card across the 21-day line,
- * which Osmosis calls mature one review earlier than Anki would. Storing the
- * prior interval to close that gap would mean changing the shard format, which
- * is append-only and cannot be backfilled — a permanent cost for a one-review
- * boundary difference.
+ * **This used to read `entry.iv`, the interval the answer produced, and the
+ * docstring here argued for keeping it. That reversed when `pi` landed — do not
+ * put it back.** The old reasoning priced one thing only: `iv` and `pi` differ
+ * by a single review at the 21-day line, which is a small price against a
+ * format change that could not be backfilled. What it did not price is that two
+ * other graphs also split on maturity, each with a third definition of it —
+ * `aggregateAnswerButtons` read the card's schedule *right now*, `trueRetention`
+ * reconstructed the prior interval by walking every entry — so the same word
+ * meant three things on one dashboard. And the format change is free here:
+ * nothing outside a dev vault holds a shard.
+ *
+ * `iv` is also actively wrong for this on the graphs that lapse: the rating
+ * determines the interval, so answering Again on a mature card collapses `iv`
+ * to minutes and files the lapse under *young*.
+ *
+ * State is tested before the interval, matching Anki: a lapse on a mature card
+ * belongs in the relearning bar, not the mature one.
  *
  * A post-answer state of `new` is not something Osmosis writes (answering a new
  * card moves it to learning), so it can only arrive from a hand-edited line. It
@@ -394,7 +517,7 @@ export function emptyDayRollup(): DayRollup {
 export function classifyReview(entry: ReviewLogEntry): ReviewClass {
 	if (entry.s === "relearning") return "relearning";
 	if (entry.s !== "review") return "learning";
-	return entry.iv >= MATURE_INTERVAL_SECONDS ? "mature" : "young";
+	return entry.pi >= MATURE_INTERVAL_SECONDS ? "mature" : "young";
 }
 
 /**
@@ -408,21 +531,22 @@ export function classifyReview(entry: ReviewLogEntry): ReviewClass {
  */
 export function aggregateRollup(entries: readonly ReviewLogEntry[]): Rollup {
 	const rollup: Rollup = {};
-
-	for (const entry of entries) {
-		const day = (rollup[dayKey(entry.t)] ??= emptyDayRollup());
-		day.reviews += 1;
-		day.timeMs += entry.e;
-		day.byRating[entry.r] += 1;
-		day.byState[entry.s] += 1;
-		day.byMode[entry.m] += 1;
-
-		const reviewClass = classifyReview(entry);
-		day.byClass[reviewClass] += 1;
-		day.timeByClass[reviewClass] += entry.e;
-	}
-
+	for (const entry of entries) foldEntryIntoRollup(rollup, entry);
 	return rollup;
+}
+
+/** Add one entry to its day bucket. The streaming path's unit of work. */
+export function foldEntryIntoRollup(rollup: Rollup, entry: ReviewLogEntry): void {
+	const day = (rollup[dayKey(entry.t)] ??= emptyDayRollup());
+	day.reviews += 1;
+	day.timeMs += entry.e;
+	day.byRating[entry.r] += 1;
+	day.byState[entry.s] += 1;
+	day.byMode[entry.m] += 1;
+
+	const reviewClass = classifyReview(entry);
+	day.byClass[reviewClass] += 1;
+	day.timeByClass[reviewClass] += entry.e;
 }
 
 /**
@@ -460,39 +584,34 @@ export interface MaturityCard {
 export interface AnswerButtonCounts {
 	young: RatingCounts;
 	mature: RatingCounts;
-	/**
-	 * Entries left out of the split because maturity is undeterminable: the
-	 * card no longer resolves (its note was deleted, or its ID regenerated),
-	 * or its schedule was reset. These still count in `aggregateRollup` —
-	 * excluding them here is about what can be *known*, not about pruning.
-	 */
-	excluded: number;
 }
 
 /**
- * Answer-button counts split young/mature.
+ * Answer-button counts split young/mature, on the interval each card was
+ * answered at.
  *
- * Unlike volume, this needs the card: maturity is a property of the current
- * schedule, which only the card carries. An unresolvable card ID is therefore
- * a normal outcome here, not an error — it lands in `excluded`.
+ * **This used to join `CardStore` and read the card's schedule as it stands
+ * today. That was wrong and is not to be restored.** Reading the current
+ * schedule makes the split mutate retroactively: a card reviewed a hundred
+ * times while young and matured last week reported all hundred of those reviews
+ * as mature. The graph answers "when I meet a mature card, how often do I press
+ * Again" — a question about the review, not about the card as it is now. Cards
+ * whose note was deleted or whose schedule was reset dropped out for the same
+ * structural reason, which is why there is no longer an `excluded` count.
+ *
+ * With `pi` this needs no card lookup at all, so a deleted card no longer
+ * changes the graph.
  */
 export function aggregateAnswerButtons(
 	entries: readonly ReviewLogEntry[],
-	resolveCard: (cardId: string) => MaturityCard | undefined,
 ): AnswerButtonCounts {
 	const counts: AnswerButtonCounts = {
 		young: { 1: 0, 2: 0, 3: 0, 4: 0 },
 		mature: { 1: 0, 2: 0, 3: 0, 4: 0 },
-		excluded: 0,
 	};
 
 	for (const entry of entries) {
-		const intervalDays = cardIntervalDays(resolveCard(entry.c));
-		if (intervalDays === null) {
-			counts.excluded += 1;
-			continue;
-		}
-		const bucket = intervalDays >= MATURE_INTERVAL_DAYS ? counts.mature : counts.young;
+		const bucket = entry.pi >= MATURE_INTERVAL_SECONDS ? counts.mature : counts.young;
 		bucket[entry.r] += 1;
 	}
 
@@ -552,8 +671,13 @@ export interface ReviewLogConfig {
  * from a genuinely empty day, so the Reviews graph would silently show flat bars
  * for all history predating the upgrade. One re-parse of the shards rebuilds it
  * exactly, which is the property this cache was designed around.
+ *
+ * v3 changed what `byClass` *means* — `classifyReview` now splits on `pi`
+ * rather than `iv` — so a v2 bucket holds correctly-shaped, wrongly-classified
+ * counts. The shard rename to `.md` would have invalidated every entry anyway,
+ * but the version says why rather than leaving it to a filename coincidence.
  */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 /** How many `-2`, `-3`, … labels the collision guard will try. */
 const MAX_LABEL_ATTEMPTS = 50;
@@ -649,21 +773,44 @@ export class ReviewLog {
 	}
 
 	/**
-	 * Every logged review from every device, exactly once, ordered by
-	 * timestamp — including entries still buffered, so Stats opened mid-session
-	 * shows what you just did.
+	 * Hand every logged review to `visit`, one shard at a time — including
+	 * entries still buffered, so Stats opened mid-session shows what you just
+	 * did.
+	 *
+	 * Streaming rather than returning a list is the point. Materialising the
+	 * whole log costs an object per review, and five heavy years is ~900,000 of
+	 * them: hundreds of megabytes of heap, most of it spent in individual
+	 * `JSON.parse` calls, which freezes the desktop and very likely OOMs mobile.
+	 * Here one shard is parsed, drained into the caller's accumulators, and
+	 * released, so peak memory is one shard whatever the history.
+	 *
+	 * `range` prunes by month key *before opening a file*, so a twelve-month
+	 * view reads twelve shards instead of sixty. Both bounds are inclusive.
+	 *
+	 * **Entries arrive in shard order, not global timestamp order,** and are not
+	 * deduplicated. Sorting or deduplicating would mean holding the whole log,
+	 * which is exactly what this exists to avoid — and every aggregate the
+	 * dashboard draws is order-independent now that `pi` removed the per-card
+	 * walk that needed a sorted list. A caller that genuinely needs a
+	 * materialised, ordered, deduplicated list still has `mergeShards`.
 	 *
 	 * This parses raw shards. Call it only for graphs that need per-review
 	 * detail, never on plugin start.
 	 */
-	async readAll(): Promise<ReviewLogEntry[]> {
+	async scan(
+		visit: (entry: ReviewLogEntry) => void,
+		range?: MonthRange,
+	): Promise<void> {
 		const { folder } = this.config();
-		const shards: ReviewLogEntry[][] = [];
 		for (const name of await this.listShardFiles(folder)) {
-			shards.push(await this.readShardEntries(`${folder}/${name}`));
+			if (!monthInRange(parseShardFileName(name)?.month, range)) continue;
+			for (const entry of await this.readShardEntries(`${folder}/${name}`)) {
+				visit(entry);
+			}
 		}
-		shards.push([...this.buffer]);
-		return mergeShards(shards);
+		for (const entry of this.buffer) {
+			if (monthInRange(monthKey(entry.t), range)) visit(entry);
+		}
 	}
 
 	/**
@@ -782,7 +929,7 @@ export class ReviewLog {
 				install: installId,
 				v: SHARD_FORMAT_VERSION,
 			});
-			await this.fs.write(path, `${header}\n${lines}`);
+			await this.fs.write(path, `${shardPreamble(month, label)}${header}\n${lines}`);
 		}
 
 		await this.foldIntoCache(path, name, entries, before);
@@ -1029,6 +1176,14 @@ function toCount(value: unknown): number {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Month keys sort lexically, so an inclusive range is a pair of comparisons. */
+function monthInRange(month: string | undefined, range: MonthRange | undefined): boolean {
+	if (month === undefined) return false;
+	if (!range) return true;
+	if (range.from !== undefined && month < range.from) return false;
+	return range.to === undefined || month <= range.to;
 }
 
 function basename(path: string): string {

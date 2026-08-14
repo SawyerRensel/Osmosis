@@ -100,6 +100,17 @@ export class StudySessionManager {
 		const ts = context?.now ?? Date.now();
 		const card = this.store.getCard(cardId);
 
+		// The interval the card is sitting on, before this answer replaces it —
+		// what every maturity split on the stats dashboard reads.
+		//
+		// It has to be captured *here*. `updateSchedule` below mutates the stored
+		// card in place, so by the time the log entry is built `card.due` is
+		// already the interval this answer produced. Reading it from `card`
+		// rather than from `currentSchedule` for a second reason: a card with no
+		// schedule gets a synthetic one below, whose interval would read as a
+		// real prior interval it never had.
+		const priorIv = priorIntervalSeconds(card);
+
 		// Build current schedule from card data
 		const currentSchedule: ScheduleData = card && card.due !== undefined
 			? {
@@ -161,6 +172,7 @@ export class StudySessionManager {
 			r: rating,
 			s: update.schedule.state,
 			iv: Math.max(0, Math.round((update.schedule.due - ts) / 1000)),
+			pi: priorIv,
 			st: update.schedule.stability,
 			d: update.schedule.difficulty,
 			e: Math.max(0, Math.round(context?.elapsedMs ?? 0)),
@@ -338,4 +350,34 @@ export class StudySessionManager {
  */
 function isLineCard(card: Card): card is Card & { blockId: string } {
 	return card.blockId !== undefined;
+}
+
+/** Seconds in a day — the unit `stability` is measured in. */
+const SECONDS_PER_DAY = 86_400;
+
+/**
+ * The interval a card was sitting on before an answer replaced it, in seconds.
+ * Written to each log entry as `pi`, and read by every maturity split on the
+ * stats dashboard.
+ *
+ * `due - lastReview` is the real interval and is used whenever both are there.
+ * But **`lastReview` is optional on a scheduled card**: `serializeScheduleEntry`
+ * omits it from frontmatter when it is null, and a hand-authored
+ * `osmosis-schedule` block may never have carried it. Returning 0 in that case
+ * logged a genuinely scheduled card as though it were brand new, which silently
+ * dropped the review out of the retention and recall panels — they filter on
+ * this value — while `currentSchedule` built a real schedule from the very same
+ * card, because it tests `due` alone. The two tests have to agree on what "has a
+ * prior schedule" means, and `due` is that test.
+ *
+ * Stability is the fallback rather than an invented constant because it is what
+ * FSRS derived the interval from in the first place, so it is the closest
+ * recoverable estimate of the number that went missing.
+ */
+export function priorIntervalSeconds(card: Card | undefined): number {
+	if (card?.due === undefined) return 0;
+	if (card.lastReview !== undefined) {
+		return Math.max(0, Math.round((card.due - card.lastReview) / 1000));
+	}
+	return Math.max(0, Math.round((card.stability ?? 0) * SECONDS_PER_DAY));
 }

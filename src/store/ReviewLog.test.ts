@@ -3,8 +3,9 @@
 // (Obsidian runs in a browser context and popout windows need window timers).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-	MATURE_INTERVAL_DAYS,
 	MATURE_INTERVAL_SECONDS,
+	SHARD_EXTENSION,
+	SHARD_FENCE_TAG,
 	SHARD_FORMAT_VERSION,
 	ReviewLog,
 	aggregateAnswerButtons,
@@ -13,6 +14,7 @@ import {
 	classifyReview,
 	dayKey,
 	deviceLabelCandidate,
+	isReviewLogPath,
 	mergeRollups,
 	mergeShards,
 	monthKey,
@@ -25,8 +27,9 @@ import {
 	serializeEntry,
 	serializeHeader,
 	shardFileName,
+	shardPreamble,
 	slugifyDeviceLabel,
-	type MaturityCard,
+	summarizeShardSource,
 	type ReviewLogCache,
 	type ReviewLogFs,
 	type ShardStat,
@@ -40,6 +43,7 @@ const baseEntry: ReviewLogEntry = {
 	r: 3,
 	s: "review",
 	iv: 345_600,
+	pi: 172_800,
 	st: 12.3,
 	d: 6.4,
 	e: 4200,
@@ -60,8 +64,14 @@ describe("entry serialisation", () => {
 	it("writes fields in the documented order", () => {
 		expect(serializeEntry(baseEntry)).toBe(
 			'{"t":' + String(baseEntry.t) + ',"c":"os-wcfb3w","r":3,"s":"review"' +
-			',"iv":345600,"st":12.3,"d":6.4,"e":4200,"m":"sequential"}',
+			',"iv":345600,"pi":172800,"st":12.3,"d":6.4,"e":4200,"m":"sequential"}',
 		);
+	});
+
+	it("defaults a prior interval the writer left out to zero", () => {
+		// A card with no schedule going in has no prior interval, and a
+		// hand-edited line that lost the field must not read as a huge one.
+		expect(parseEntry('{"t":1754500000000,"c":"os-a1","r":3}')?.pi).toBe(0);
 	});
 
 	it("rounds stability and difficulty to four decimals", () => {
@@ -119,6 +129,7 @@ describe("parseEntry rejection and defaults", () => {
 			r: 2,
 			s: "review",
 			iv: 0,
+			pi: 0,
 			st: 0,
 			d: 0,
 			e: 0,
@@ -194,6 +205,120 @@ describe("parseShard", () => {
 
 	it("returns nothing for an empty file", () => {
 		expect(parseShard("")).toEqual({ header: null, entries: [] });
+	});
+
+	it("reads a whole Markdown shard without changing", () => {
+		// The point of the Markdown wrapper: `parseShard` needed no edit at all.
+		// The preamble and the fence opener parse as neither a header nor an
+		// entry, so its existing tolerance drops them and still finds the header.
+		const text =
+			shardPreamble("2026-08", "pixel-10a")
+			+ serializeHeader({ device: "pixel-10a", install: "a3f9", v: 2 })
+			+ "\n"
+			+ serializeEntry(baseEntry)
+			+ "\n";
+
+		const shard = parseShard(text);
+		expect(shard.header).toEqual({ device: "pixel-10a", install: "a3f9", v: 2 });
+		expect(shard.entries).toEqual([baseEntry]);
+	});
+
+	it("skips a stray closing fence a hand-edit left behind", () => {
+		const text =
+			shardPreamble("2026-08", "pixel-10a")
+			+ serializeHeader({ device: "d", install: "i", v: 2 })
+			+ "\n"
+			+ serializeEntry(baseEntry)
+			+ "\n```\n";
+
+		expect(parseShard(text).entries).toEqual([baseEntry]);
+	});
+});
+
+describe("shard file shape", () => {
+	it("opens with a readable line and an unclosed fence", () => {
+		// Unclosed on purpose: CommonMark runs it to the end of the document, so
+		// the file is well-formed at every moment *and* every write stays a pure
+		// append. A terminator would have to move on each flush.
+		const preamble = shardPreamble("2026-08", "pixel-10a");
+		expect(preamble).toContain("pixel-10a");
+		expect(preamble).toContain("2026-08");
+		expect(preamble).toContain("do not edit");
+		expect(preamble.trimEnd().endsWith(`\`\`\`${SHARD_FENCE_TAG}`)).toBe(true);
+		expect(preamble).not.toContain("\n```\n");
+	});
+
+	it("does not claim the fence tag the flashcard processor owns", () => {
+		expect(SHARD_FENCE_TAG).not.toBe("osmosis");
+	});
+
+	it("names shards with the configured extension", () => {
+		expect(SHARD_EXTENSION).toBe(".md");
+		expect(shardFileName("2026-08", "pixel-10a").endsWith(SHARD_EXTENSION)).toBe(true);
+	});
+});
+
+describe("summarizeShardSource", () => {
+	const source = (entries: number) =>
+		serializeHeader({ device: "pixel-10a", install: "a3f9", v: 2 })
+		+ "\n"
+		+ Array.from({ length: entries }, (_, i) => serializeEntry(entry({ t: 1000 + i })) + "\n").join("");
+
+	it("reads the header and counts the entries behind it", () => {
+		const summary = summarizeShardSource(source(3));
+		expect(summary.header).toMatchObject({ device: "pixel-10a", v: 2 });
+		expect(summary.entries).toBe(3);
+	});
+
+	it("counts every line when there is no header to discount", () => {
+		expect(summarizeShardSource(`${serializeEntry(baseEntry)}\n`).entries).toBe(1);
+	});
+
+	it("is empty for an empty fence", () => {
+		expect(summarizeShardSource("")).toEqual({ header: null, entries: 0 });
+		expect(summarizeShardSource("\n\n")).toEqual({ header: null, entries: 0 });
+	});
+
+	it("counts a last line with no trailing newline", () => {
+		expect(summarizeShardSource(source(2).trimEnd()).entries).toBe(2);
+	});
+
+	it("never parses an entry line", () => {
+		// It is handed the whole ~1.8 MB body on every open; a parse per line
+		// would cost 100 ms+ to display one number.
+		const parse = JSON.parse.bind(JSON);
+		let calls = 0;
+		JSON.parse = ((text: string) => {
+			calls += 1;
+			return parse(text) as unknown;
+		}) as typeof JSON.parse;
+		try {
+			summarizeShardSource(source(500));
+		} finally {
+			JSON.parse = parse;
+		}
+		// Exactly one: the header line.
+		expect(calls).toBe(1);
+	});
+});
+
+describe("isReviewLogPath", () => {
+	it("matches the folder itself and everything under it", () => {
+		expect(isReviewLogPath("Osmosis/Reviews", "Osmosis/Reviews")).toBe(true);
+		expect(isReviewLogPath("Osmosis/Reviews/2026-08.pixel-10a.md", "Osmosis/Reviews")).toBe(true);
+		expect(isReviewLogPath("Osmosis/Reviews/archive/old.md", "Osmosis/Reviews")).toBe(true);
+	});
+
+	it("does not match a same-named folder somewhere else", () => {
+		expect(isReviewLogPath("Archive/Osmosis/Reviews/x.md", "Osmosis/Reviews")).toBe(false);
+	});
+
+	it("does not treat a name prefix as the folder", () => {
+		expect(isReviewLogPath("Osmosis/ReviewsOld/x.md", "Osmosis/Reviews")).toBe(false);
+	});
+
+	it("matches nothing when no folder is configured", () => {
+		expect(isReviewLogPath("anything.md", "")).toBe(false);
 	});
 });
 
@@ -322,11 +447,11 @@ describe("deviceLabelCandidate", () => {
 
 describe("shard filenames", () => {
 	it("builds a readable month.device name", () => {
-		expect(shardFileName("2026-08", "pixel-10a")).toBe("2026-08.pixel-10a.jsonl");
+		expect(shardFileName("2026-08", "pixel-10a")).toBe("2026-08.pixel-10a.md");
 	});
 
 	it("round-trips through the parser", () => {
-		expect(parseShardFileName("2026-07.sawyers-macbook.jsonl")).toEqual({
+		expect(parseShardFileName("2026-07.sawyers-macbook.md")).toEqual({
 			month: "2026-07",
 			device: "sawyers-macbook",
 		});
@@ -334,9 +459,9 @@ describe("shard filenames", () => {
 
 	it("ignores files that are not shards", () => {
 		expect(parseShardFileName("notes.md")).toBeNull();
-		expect(parseShardFileName("2026-08.jsonl")).toBeNull();
-		expect(parseShardFileName("2026-8.pixel.jsonl")).toBeNull();
-		expect(parseShardFileName("2026-08.Pixel.jsonl")).toBeNull();
+		expect(parseShardFileName("2026-08.md")).toBeNull();
+		expect(parseShardFileName("2026-8.pixel.md")).toBeNull();
+		expect(parseShardFileName("2026-08.Pixel.md")).toBeNull();
 		expect(parseShardFileName("2026-08.pixel.json")).toBeNull();
 		expect(parseShardFileName("rollup.json")).toBeNull();
 	});
@@ -398,10 +523,10 @@ describe("aggregateRollup", () => {
 
 	it("splits counts and time by review class", () => {
 		const rollup = aggregateRollup([
-			entry({ t: day(9), s: "learning", iv: 600, e: 3000 }),
-			entry({ t: day(10), s: "review", iv: MATURE_INTERVAL_SECONDS - 1, e: 5000 }),
-			entry({ t: day(11), s: "review", iv: MATURE_INTERVAL_SECONDS, e: 1000 }),
-			entry({ t: day(12), s: "relearning", iv: 600, e: 7000 }),
+			entry({ t: day(9), s: "learning", pi: 0, e: 3000 }),
+			entry({ t: day(10), s: "review", pi: MATURE_INTERVAL_SECONDS - 1, e: 5000 }),
+			entry({ t: day(11), s: "review", pi: MATURE_INTERVAL_SECONDS, e: 1000 }),
+			entry({ t: day(12), s: "relearning", pi: MATURE_INTERVAL_SECONDS * 2, e: 7000 }),
 		]);
 
 		const bucket = rollup["2026-08-07"];
@@ -417,7 +542,7 @@ describe("aggregateRollup", () => {
 	it("keeps byClass totals equal to the day's review count", () => {
 		const rollup = aggregateRollup([
 			entry({ t: day(9), s: "learning" }),
-			entry({ t: day(10), s: "review", iv: MATURE_INTERVAL_SECONDS * 4 }),
+			entry({ t: day(10), s: "review", pi: MATURE_INTERVAL_SECONDS * 4 }),
 			entry({ t: day(11), s: "new" }),
 		]);
 
@@ -464,13 +589,13 @@ describe("mergeRollups", () => {
 
 	it("sums the review-class split across shards", () => {
 		const desktop = aggregateRollup([
-			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), s: "review", iv: 86_400, e: 1000 }),
+			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), s: "review", pi: 86_400, e: 1000 }),
 		]);
 		const phone = aggregateRollup([
 			entry({
 				t: new Date(2026, 7, 7, 20, 0).getTime(),
 				s: "review",
-				iv: MATURE_INTERVAL_SECONDS,
+				pi: MATURE_INTERVAL_SECONDS,
 				e: 500,
 			}),
 		]);
@@ -512,22 +637,32 @@ describe("mergeRollups", () => {
 
 describe("classifyReview", () => {
 	it("puts a review-state card either side of the 21-day line", () => {
-		expect(classifyReview(entry({ s: "review", iv: MATURE_INTERVAL_SECONDS - 1 }))).toBe("young");
-		expect(classifyReview(entry({ s: "review", iv: MATURE_INTERVAL_SECONDS }))).toBe("mature");
+		expect(classifyReview(entry({ s: "review", pi: MATURE_INTERVAL_SECONDS - 1 }))).toBe("young");
+		expect(classifyReview(entry({ s: "review", pi: MATURE_INTERVAL_SECONDS }))).toBe("mature");
+	});
+
+	it("reads the interval the card was answered at, not the one it produced", () => {
+		// A card sitting on two months, answered Good into six: mature either
+		// way. A card sitting on three days, answered Easy into a month: young,
+		// because that is what it was when it was recalled. `iv` would call the
+		// second one mature and shift the graph a review early.
+		expect(
+			classifyReview(entry({ s: "review", pi: 3 * 86_400, iv: MATURE_INTERVAL_SECONDS * 2 })),
+		).toBe("young");
 	});
 
 	it("classifies by state before interval for the learning states", () => {
 		// A relearning card can carry a long interval; it is still relearning.
-		expect(classifyReview(entry({ s: "relearning", iv: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
+		expect(classifyReview(entry({ s: "relearning", pi: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
 			"relearning",
 		);
-		expect(classifyReview(entry({ s: "learning", iv: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
+		expect(classifyReview(entry({ s: "learning", pi: MATURE_INTERVAL_SECONDS * 10 }))).toBe(
 			"learning",
 		);
 	});
 
 	it("folds a hand-edited `new` post-state into learning", () => {
-		expect(classifyReview(entry({ s: "new", iv: 0 }))).toBe("learning");
+		expect(classifyReview(entry({ s: "new", pi: 0 }))).toBe("learning");
 	});
 });
 
@@ -551,87 +686,37 @@ describe("cardIntervalDays", () => {
 });
 
 describe("aggregateAnswerButtons", () => {
-	const lastReview = new Date(2026, 7, 1, 9, 0).getTime();
-	const withInterval = (days: number): MaturityCard => ({
-		lastReview,
-		due: lastReview + days * 86_400_000,
-	});
-
-	/** A store holding only the cards named. */
-	function store(cards: Record<string, MaturityCard>) {
-		return (cardId: string): MaturityCard | undefined => cards[cardId];
-	}
-
-	it("splits ratings by maturity", () => {
-		const counts = aggregateAnswerButtons(
-			[
-				entry({ c: "os-young", r: 1 }),
-				entry({ c: "os-young", r: 3 }),
-				entry({ c: "os-mature", r: 4 }),
-			],
-			store({ "os-young": withInterval(5), "os-mature": withInterval(60) }),
-		);
+	it("splits ratings on the interval each card was answered at", () => {
+		const counts = aggregateAnswerButtons([
+			entry({ c: "os-young", r: 1, pi: 5 * 86_400 }),
+			entry({ c: "os-young", r: 3, pi: 5 * 86_400 }),
+			entry({ c: "os-mature", r: 4, pi: 60 * 86_400 }),
+		]);
 
 		expect(counts.young).toEqual({ 1: 1, 2: 0, 3: 1, 4: 0 });
 		expect(counts.mature).toEqual({ 1: 0, 2: 0, 3: 0, 4: 1 });
-		expect(counts.excluded).toBe(0);
 	});
 
-	it("treats the 21-day threshold as mature", () => {
-		const counts = aggregateAnswerButtons(
-			[entry({ c: "os-edge", r: 3 })],
-			store({ "os-edge": withInterval(MATURE_INTERVAL_DAYS) }),
-		);
-		expect(counts.mature[3]).toBe(1);
-		expect(counts.young[3]).toBe(0);
+	it("treats the 21-day threshold as mature and a hair under it as young", () => {
+		expect(aggregateAnswerButtons([entry({ r: 3, pi: MATURE_INTERVAL_SECONDS })]).mature[3])
+			.toBe(1);
+		expect(aggregateAnswerButtons([entry({ r: 3, pi: MATURE_INTERVAL_SECONDS - 1 })]).young[3])
+			.toBe(1);
 	});
 
-	it("treats a hair under the threshold as young", () => {
-		const counts = aggregateAnswerButtons(
-			[entry({ c: "os-edge", r: 3 })],
-			store({ "os-edge": withInterval(MATURE_INTERVAL_DAYS - 0.01) }),
-		);
-		expect(counts.young[3]).toBe(1);
-		expect(counts.mature[3]).toBe(0);
-	});
-
-	it("excludes entries whose card is gone, without erroring", () => {
-		const counts = aggregateAnswerButtons(
-			[
-				entry({ c: "os-live", r: 3 }),
-				entry({ c: "os-deleted", r: 1 }),
-				entry({ c: "os-also-deleted", r: 2 }),
-			],
-			store({ "os-live": withInterval(3) }),
-		);
-
-		expect(counts.young).toEqual({ 1: 0, 2: 0, 3: 1, 4: 0 });
-		expect(counts.mature).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0 });
-		expect(counts.excluded).toBe(2);
-	});
-
-	it("excludes a card whose schedule was reset", () => {
-		const counts = aggregateAnswerButtons(
-			[entry({ c: "os-reset", r: 3 })],
-			store({ "os-reset": {} }),
-		);
-		expect(counts.excluded).toBe(1);
-	});
-
-	it("counts an orphaned entry in volume while dropping it from the split", () => {
-		const orphan = entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), c: "os-deleted" });
-		const lookup = store({});
-
+	it("needs no card, so a deleted one takes nothing out of the graph", () => {
+		// It used to join the store and drop what it could not resolve into an
+		// `excluded` count. Maturity is on the entry now, so there is nothing to
+		// resolve and nothing to exclude.
+		const orphan = entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), c: "os-deleted", pi: 0 });
 		expect(aggregateRollup([orphan])["2026-08-07"]?.reviews).toBe(1);
-		expect(aggregateAnswerButtons([orphan], lookup).excluded).toBe(1);
+		expect(aggregateAnswerButtons([orphan]).young[3]).toBe(1);
 	});
 
 	it("returns zeroed counts for an empty log", () => {
-		const counts = aggregateAnswerButtons([], store({}));
-		expect(counts).toEqual({
+		expect(aggregateAnswerButtons([])).toEqual({
 			young: { 1: 0, 2: 0, 3: 0, 4: 0 },
 			mature: { 1: 0, 2: 0, 3: 0, 4: 0 },
-			excluded: 0,
 		});
 	});
 });
@@ -714,18 +799,30 @@ class FakeFs implements ReviewLogFs {
 
 	/** Seed a shard as if another device had synced it in. */
 	seedShard(name: string, install: string, entries: readonly ReviewLogEntry[]): void {
+		const parsed = parseShardFileName(name);
+		const preamble = shardPreamble(parsed?.month ?? "2026-08", parsed?.device ?? "seeded");
 		const header = serializeHeader({ device: "seeded", install, v: SHARD_FORMAT_VERSION });
 		const lines = entries.map((e) => `${serializeEntry(e)}\n`).join("");
-		this.files.set(`${FOLDER}/${name}`, `${header}\n${lines}`);
+		this.files.set(`${FOLDER}/${name}`, `${preamble}${header}\n${lines}`);
 		this.touch(`${FOLDER}/${name}`);
 		this.folders.add(FOLDER);
 	}
 
-	/** Shard lines, header excluded. */
+	/**
+	 * The JSON lines of a shard: header first, then entries.
+	 *
+	 * The Markdown wrapper is dropped so these assertions stay about the log's
+	 * contents. That the wrapper is *there* is asserted separately — see
+	 * "wraps a new shard in Markdown".
+	 */
 	linesOf(name: string): string[] {
 		return (this.files.get(`${FOLDER}/${name}`) ?? "")
 			.split("\n")
-			.filter((line) => line.trim() !== "");
+			.map((line) => line.trim())
+			.filter(
+				(line) =>
+					line !== "" && !line.startsWith("```") && !line.startsWith("Osmosis review log"),
+			);
 	}
 
 	/** Names of every file in the log folder. */
@@ -789,13 +886,50 @@ describe("ReviewLog writes", () => {
 		log.record(entry({ t: AUG_7, c: "os-a1" }));
 		await log.flush();
 
-		const lines = fs.linesOf("2026-08.pixel-10a.jsonl");
+		const lines = fs.linesOf("2026-08.pixel-10a.md");
 		expect(parseHeader(lines[0] ?? "")).toEqual({
 			device: DEVICE,
 			install: INSTALL,
 			v: SHARD_FORMAT_VERSION,
 		});
 		expect(parseEntry(lines[1] ?? "")).toMatchObject({ c: "os-a1" });
+	});
+
+	it("wraps a new shard in Markdown, and never closes the fence", async () => {
+		const { log, fs } = makeLog();
+		log.record(entry({ t: AUG_7, c: "os-a1" }));
+		await log.flush();
+
+		const text = fs.files.get(`${FOLDER}/2026-08.pixel-10a.md`) ?? "";
+		expect(text.startsWith("Osmosis review log — pixel-10a, 2026-08.")).toBe(true);
+		expect(text).toContain(`\`\`\`${SHARD_FENCE_TAG}\n`);
+		// Exactly one fence line: the opener. A closing fence would have to move
+		// on every flush, which is the whole-file rewrite appends exist to avoid.
+		expect(text.split("\n").filter((line) => line.startsWith("```"))).toHaveLength(1);
+	});
+
+	it("appends without rewriting the wrapper", async () => {
+		const { log, fs } = makeLog();
+		log.record(entry({ t: AUG_7, c: "os-a1" }));
+		await log.flush();
+		log.record(entry({ t: AUG_7 + 1000, c: "os-b2" }));
+		await log.flush();
+
+		const text = fs.files.get(`${FOLDER}/2026-08.pixel-10a.md`) ?? "";
+		expect(text.split("\n").filter((line) => line.startsWith("```"))).toHaveLength(1);
+		expect(fs.writes).toHaveLength(1);
+		expect(fs.appends).toHaveLength(1);
+		expect(parseShard(text).entries.map((e) => e.c)).toEqual(["os-a1", "os-b2"]);
+	});
+
+	it("records the prior interval a review was answered at", async () => {
+		const { log, fs } = makeLog();
+		log.record(entry({ t: AUG_7, c: "os-a1", pi: MATURE_INTERVAL_SECONDS * 2 }));
+		await log.flush();
+
+		const text = fs.files.get(`${FOLDER}/2026-08.pixel-10a.md`) ?? "";
+		expect(parseShard(text).entries[0]?.pi).toBe(MATURE_INTERVAL_SECONDS * 2);
+		expect(parseShard(text).header?.v).toBe(2);
 	});
 
 	it("creates the log folder, including its parent", async () => {
@@ -819,8 +953,8 @@ describe("ReviewLog writes", () => {
 
 		// The whole point of JSONL: never a whole-file rewrite.
 		expect(fs.writes).toEqual([]);
-		expect(fs.appends).toEqual([`${FOLDER}/2026-08.pixel-10a.jsonl`]);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(4);
+		expect(fs.appends).toEqual([`${FOLDER}/2026-08.pixel-10a.md`]);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(4);
 	});
 
 	it("writes one entry per answer", async () => {
@@ -830,7 +964,7 @@ describe("ReviewLog writes", () => {
 		}
 		await log.flush();
 
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(13); // + header
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(13); // + header
 	});
 
 	it("splits a session that crosses a month boundary across two shards", async () => {
@@ -840,8 +974,8 @@ describe("ReviewLog writes", () => {
 		await log.flush();
 
 		expect(fs.folderContents()).toEqual([
-			"2026-07.pixel-10a.jsonl",
-			"2026-08.pixel-10a.jsonl",
+			"2026-07.pixel-10a.md",
+			"2026-08.pixel-10a.md",
 		]);
 	});
 
@@ -853,7 +987,7 @@ describe("ReviewLog writes", () => {
 
 	it("re-buffers entries when the write fails, so the next flush retries", async () => {
 		const { log, fs } = makeLog();
-		const path = `${FOLDER}/2026-08.pixel-10a.jsonl`;
+		const path = `${FOLDER}/2026-08.pixel-10a.md`;
 		fs.failWrites.add(path);
 		vi.spyOn(console, "error").mockImplementation(() => undefined);
 
@@ -864,7 +998,7 @@ describe("ReviewLog writes", () => {
 		fs.failWrites.delete(path);
 		await log.flush();
 		expect(log.hasPendingWrites()).toBe(false);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(2);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(2);
 		vi.restoreAllMocks();
 	});
 });
@@ -885,7 +1019,7 @@ describe("ReviewLog debounce", () => {
 		expect(log.hasPendingWrites()).toBe(true);
 
 		await vi.advanceTimersByTimeAsync(2000);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(2);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(2);
 		expect(log.hasPendingWrites()).toBe(false);
 	});
 
@@ -899,7 +1033,7 @@ describe("ReviewLog debounce", () => {
 
 		expect(fs.writes).toHaveLength(1);
 		expect(fs.appends).toEqual([]);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(6);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(6);
 	});
 
 	it("an explicit flush cancels the pending timer", async () => {
@@ -917,16 +1051,16 @@ describe("ReviewLog debounce", () => {
 describe("ReviewLog collision guard", () => {
 	it("bumps the label when another install already owns the shard", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", "different-install", [entry({ t: AUG_7, c: "os-theirs" })]);
+		fs.seedShard("2026-08.pixel-10a.md", "different-install", [entry({ t: AUG_7, c: "os-theirs" })]);
 
 		log.record(entry({ t: AUG_7 + 1000, c: "os-ours" }));
 		await log.flush();
 
 		expect(fs.folderContents()).toEqual([
-			"2026-08.pixel-10a-2.jsonl",
-			"2026-08.pixel-10a.jsonl",
+			"2026-08.pixel-10a-2.md",
+			"2026-08.pixel-10a.md",
 		]);
-		expect(parseHeader(fs.linesOf("2026-08.pixel-10a-2.jsonl")[0] ?? "")).toMatchObject({
+		expect(parseHeader(fs.linesOf("2026-08.pixel-10a-2.md")[0] ?? "")).toMatchObject({
 			device: "pixel-10a-2",
 			install: INSTALL,
 		});
@@ -934,51 +1068,53 @@ describe("ReviewLog collision guard", () => {
 
 	it("loses no data when the label bumps — both shards read back", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", "different-install", [entry({ t: AUG_7, c: "os-theirs" })]);
+		fs.seedShard("2026-08.pixel-10a.md", "different-install", [entry({ t: AUG_7, c: "os-theirs" })]);
 
 		log.record(entry({ t: AUG_7 + 1000, c: "os-ours" }));
 		await log.flush();
 
-		expect((await log.readAll()).map((e) => e.c)).toEqual(["os-theirs", "os-ours"]);
+		// Shard order, not timestamp order — `scan` walks files, and `-2` sorts
+		// before `.` in a filename. Every aggregate it feeds is order-independent.
+		expect((await collect(log)).map((e) => e.c).sort()).toEqual(["os-ours", "os-theirs"]);
 	});
 
 	it("bumps again when -2 is also taken by a third install", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", "install-b", []);
-		fs.seedShard("2026-08.pixel-10a-2.jsonl", "install-c", []);
+		fs.seedShard("2026-08.pixel-10a.md", "install-b", []);
+		fs.seedShard("2026-08.pixel-10a-2.md", "install-c", []);
 
 		log.record(entry({ t: AUG_7 }));
 		await log.flush();
 
-		expect(fs.folderContents()).toContain("2026-08.pixel-10a-3.jsonl");
+		expect(fs.folderContents()).toContain("2026-08.pixel-10a-3.md");
 	});
 
 	it("appends to its own shard rather than bumping", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-earlier" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-earlier" })]);
 
 		log.record(entry({ t: AUG_7 + 1000, c: "os-later" }));
 		await log.flush();
 
-		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.jsonl"]);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(3);
+		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.md"]);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(3);
 	});
 
 	it("adopts a headerless shard rather than orphaning it", async () => {
 		const { log, fs } = makeLog();
-		fs.files.set(`${FOLDER}/2026-08.pixel-10a.jsonl`, `${serializeEntry(entry({ t: AUG_7, c: "os-old" }))}\n`);
+		fs.files.set(`${FOLDER}/2026-08.pixel-10a.md`, `${serializeEntry(entry({ t: AUG_7, c: "os-old" }))}\n`);
 		fs.folders.add(FOLDER);
 
 		log.record(entry({ t: AUG_7 + 1000, c: "os-new" }));
 		await log.flush();
 
-		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.jsonl"]);
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(2);
+		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.md"]);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(2);
 	});
 
 	it("resolves the label once per month, not once per flush", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", "different-install", []);
+		fs.seedShard("2026-08.pixel-10a.md", "different-install", []);
 
 		log.record(entry({ t: AUG_7 }));
 		await log.flush();
@@ -990,70 +1126,138 @@ describe("ReviewLog collision guard", () => {
 	});
 });
 
-describe("ReviewLog reads", () => {
-	it("unions every device's shard, ordered by timestamp", async () => {
+/** Everything `scan` visits, in the order it visits it. */
+async function collect(
+	log: ReviewLog,
+	range?: { from?: string; to?: string },
+): Promise<ReviewLogEntry[]> {
+	const seen: ReviewLogEntry[] = [];
+	await log.scan((entry) => seen.push(entry), range);
+	return seen;
+}
+
+describe("ReviewLog.scan", () => {
+	it("visits every device's shard, oldest month first", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.sawyers-macbook.jsonl", "desktop-install", [
+		fs.seedShard("2026-08.sawyers-macbook.md", "desktop-install", [
 			entry({ t: AUG_7 + 3000, c: "os-desk" }),
 		]);
-		fs.seedShard("2026-08.pixel-10a.jsonl", "phone-install", [
+		fs.seedShard("2026-08.pixel-10a.md", "phone-install", [
 			entry({ t: AUG_7 + 1000, c: "os-phone" }),
 		]);
-		fs.seedShard("2026-07.sawyers-macbook.jsonl", "desktop-install", [
+		fs.seedShard("2026-07.sawyers-macbook.md", "desktop-install", [
 			entry({ t: new Date(2026, 6, 20, 9, 0).getTime(), c: "os-july" }),
 		]);
 
-		expect((await log.readAll()).map((e) => e.c)).toEqual(["os-july", "os-phone", "os-desk"]);
+		expect((await collect(log)).map((e) => e.c)).toEqual(["os-july", "os-phone", "os-desk"]);
 	});
 
 	it("includes entries still buffered, so mid-session stats are current", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-flushed" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-flushed" })]);
 
 		log.record(entry({ t: AUG_7 + 1000, c: "os-buffered" }));
 
-		expect((await log.readAll()).map((e) => e.c)).toEqual(["os-flushed", "os-buffered"]);
+		expect((await collect(log)).map((e) => e.c)).toEqual(["os-flushed", "os-buffered"]);
 	});
 
-	it("counts a just-flushed entry exactly once", async () => {
+	it("visits a just-flushed entry exactly once", async () => {
 		const { log } = makeLog();
 		log.record(entry({ t: AUG_7, c: "os-a1" }));
 		await log.flush();
 
-		expect(await log.readAll()).toHaveLength(1);
+		expect(await collect(log)).toHaveLength(1);
 	});
 
 	it("ignores files in the folder that are not shards", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
 		fs.files.set(`${FOLDER}/README.md`, "Notes about my review log");
 		fs.files.set(`${FOLDER}/rollup.json`, "{}");
 
-		expect(await log.readAll()).toHaveLength(1);
+		expect(await collect(log)).toHaveLength(1);
 	});
 
-	it("returns nothing when the folder does not exist yet", async () => {
+	it("visits nothing when the folder does not exist yet", async () => {
 		const { log } = makeLog();
-		expect(await log.readAll()).toEqual([]);
+		expect(await collect(log)).toEqual([]);
 	});
 
-	it("skips an unreadable shard rather than failing the whole read", async () => {
+	it("skips an unreadable shard rather than failing the whole scan", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-good" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-good" })]);
 		// A listed file that cannot be read — deleted between list and read.
-		fs.files.set(`${FOLDER}/2026-07.ghost.jsonl`, "");
-		fs.files.delete(`${FOLDER}/2026-07.ghost.jsonl`);
-		fs.files.set(`${FOLDER}/2026-06.ghost.jsonl`, "x");
-		fs.files.delete(`${FOLDER}/2026-06.ghost.jsonl`);
+		fs.files.set(`${FOLDER}/2026-07.ghost.md`, "");
+		fs.files.delete(`${FOLDER}/2026-07.ghost.md`);
+		fs.files.set(`${FOLDER}/2026-06.ghost.md`, "x");
+		fs.files.delete(`${FOLDER}/2026-06.ghost.md`);
 
-		expect(await log.readAll()).toHaveLength(1);
+		expect(await collect(log)).toHaveLength(1);
+	});
+
+	it("opens only the shards inside a month range", async () => {
+		// The whole point of pruning by month: a twelve-month view must not pay
+		// to open five years of files.
+		const { log, fs } = makeLog();
+		for (const month of ["2026-05", "2026-06", "2026-07", "2026-08"]) {
+			fs.seedShard(`${month}.pixel-10a.md`, INSTALL, [
+				entry({ t: new Date(2026, Number(month.slice(5)) - 1, 10, 9, 0).getTime(), c: month }),
+			]);
+		}
+		fs.resetCounters();
+
+		const seen = await collect(log, { from: "2026-06", to: "2026-07" });
+		expect(seen.map((e) => e.c)).toEqual(["2026-06", "2026-07"]);
+		expect(fs.reads).toEqual([
+			`${FOLDER}/2026-06.pixel-10a.md`,
+			`${FOLDER}/2026-07.pixel-10a.md`,
+		]);
+	});
+
+	it("leaves an open upper bound open", async () => {
+		const { log, fs } = makeLog();
+		fs.seedShard("2026-05.pixel-10a.md", INSTALL, [entry({ t: new Date(2026, 4, 10).getTime(), c: "old" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "new" })]);
+
+		expect((await collect(log, { from: "2026-06" })).map((e) => e.c)).toEqual(["new"]);
+	});
+
+	it("prunes buffered entries by month too", async () => {
+		const { log, fs } = makeLog();
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, []);
+		log.record(entry({ t: new Date(2026, 4, 10, 9, 0).getTime(), c: "os-may" }));
+		log.record(entry({ t: AUG_7, c: "os-august" }));
+
+		expect((await collect(log, { from: "2026-08" })).map((e) => e.c)).toEqual(["os-august"]);
+	});
+
+	it("holds one shard at a time rather than the whole log", async () => {
+		// The property the streaming pass exists for: peak memory is one shard,
+		// whatever the history. Observed through the fs — a shard is read, fully
+		// visited, and only then is the next one opened.
+		const { log, fs } = makeLog();
+		for (const month of ["2026-06", "2026-07", "2026-08"]) {
+			fs.seedShard(`${month}.pixel-10a.md`, INSTALL, [
+				entry({ t: new Date(2026, Number(month.slice(5)) - 1, 10, 9, 0).getTime(), c: month }),
+			]);
+		}
+		fs.resetCounters();
+
+		const order: string[] = [];
+		await log.scan((e) => {
+			order.push(`visit:${e.c}`);
+		});
+		const interleaved = fs.reads.map((path) => `read:${path.slice(FOLDER.length + 1, -3)}`);
+
+		expect(order).toEqual(["visit:2026-06", "visit:2026-07", "visit:2026-08"]);
+		expect(interleaved).toEqual(["read:2026-06.pixel-10a", "read:2026-07.pixel-10a", "read:2026-08.pixel-10a"]);
 	});
 });
 
 describe("ReviewLog rollup cache", () => {
 	it("does not parse any shard on construction", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
 
 		const { log } = makeLog({ fs });
 		log.cachedRollup();
@@ -1065,7 +1269,7 @@ describe("ReviewLog rollup cache", () => {
 
 	it("aggregates shards into day buckets on demand", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [
 			entry({ t: AUG_7, e: 1000 }),
 			entry({ t: AUG_7 + 1000, e: 500 }),
 		]);
@@ -1076,8 +1280,8 @@ describe("ReviewLog rollup cache", () => {
 
 	it("sums the same day across two devices' shards", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", "phone", [entry({ t: AUG_7, e: 1000 })]);
-		fs.seedShard("2026-08.sawyers-macbook.jsonl", "desk", [entry({ t: AUG_7 + 5000, e: 2000 })]);
+		fs.seedShard("2026-08.pixel-10a.md", "phone", [entry({ t: AUG_7, e: 1000 })]);
+		fs.seedShard("2026-08.sawyers-macbook.md", "desk", [entry({ t: AUG_7 + 5000, e: 2000 })]);
 
 		expect(await log.getRollup()).toMatchObject({
 			"2026-08-07": { reviews: 2, timeMs: 3000 },
@@ -1086,7 +1290,7 @@ describe("ReviewLog rollup cache", () => {
 
 	it("re-parses nothing when no shard changed", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7 })]);
 		await log.getRollup();
 		fs.resetCounters();
 
@@ -1096,10 +1300,10 @@ describe("ReviewLog rollup cache", () => {
 
 	it("re-parses a shard another device appended to", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.sawyers-macbook.jsonl", "desk", [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.sawyers-macbook.md", "desk", [entry({ t: AUG_7 })]);
 		expect((await log.getRollup())["2026-08-07"]?.reviews).toBe(1);
 
-		fs.seedShard("2026-08.sawyers-macbook.jsonl", "desk", [
+		fs.seedShard("2026-08.sawyers-macbook.md", "desk", [
 			entry({ t: AUG_7 }),
 			entry({ t: AUG_7 + 1000 }),
 		]);
@@ -1108,10 +1312,10 @@ describe("ReviewLog rollup cache", () => {
 
 	it("forgets a shard that disappeared", async () => {
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.sawyers-macbook.jsonl", "desk", [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.sawyers-macbook.md", "desk", [entry({ t: AUG_7 })]);
 		expect((await log.getRollup())["2026-08-07"]?.reviews).toBe(1);
 
-		fs.files.delete(`${FOLDER}/2026-08.sawyers-macbook.jsonl`);
+		fs.files.delete(`${FOLDER}/2026-08.sawyers-macbook.md`);
 		expect(await log.getRollup()).toEqual({});
 	});
 
@@ -1133,7 +1337,7 @@ describe("ReviewLog rollup cache", () => {
 		// Cache cleared (new device, cleared storage) but the shard has history:
 		// folding only the new entries under a fresh fingerprint would hide it.
 		const { log, fs } = makeLog();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [
 			entry({ t: AUG_7, c: "os-a1" }),
 			entry({ t: AUG_7 + 1000, c: "os-b2" }),
 		]);
@@ -1173,14 +1377,14 @@ describe("ReviewLog rollup cache", () => {
 		await log.flush();
 		await log.getRollup();
 
-		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.jsonl"]);
+		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.md"]);
 		expect(cache.saves).toBeGreaterThan(0);
 		expect(cache.peek()).not.toBeNull();
 	});
 
 	it("rebuilds from the shards when the stored cache is junk", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7 })]);
 		const cache = new FakeCacheStore({ v: 99, shards: "not an object" });
 
 		const { log } = makeLog({ fs, cache });
@@ -1198,8 +1402,8 @@ describe("ReviewLog.discardBuffered", () => {
 		expect(log.discardBuffered("os-a1")).toBe(true);
 		await log.flush();
 
-		expect(fs.linesOf("2026-08.pixel-10a.jsonl")).toHaveLength(2); // header + os-b2
-		expect((await log.readAll()).map((e) => e.c)).toEqual(["os-b2"]);
+		expect(fs.linesOf("2026-08.pixel-10a.md")).toHaveLength(2); // header + os-b2
+		expect((await collect(log)).map((e) => e.c)).toEqual(["os-b2"]);
 	});
 
 	it("drops only the most recent entry for that card", async () => {
@@ -1208,7 +1412,7 @@ describe("ReviewLog.discardBuffered", () => {
 		log.record(entry({ t: AUG_7 + 1000, c: "os-a1", r: 3 }));
 
 		expect(log.discardBuffered("os-a1")).toBe(true);
-		expect((await log.readAll()).map((e) => e.r)).toEqual([1]);
+		expect((await collect(log)).map((e) => e.r)).toEqual([1]);
 	});
 
 	it("reports false once the entry has been flushed", async () => {
@@ -1218,7 +1422,7 @@ describe("ReviewLog.discardBuffered", () => {
 
 		// A review that reached disk happened; the shard stays append-only.
 		expect(log.discardBuffered("os-a1")).toBe(false);
-		expect(await log.readAll()).toHaveLength(1);
+		expect(await collect(log)).toHaveLength(1);
 	});
 
 	it("reports false for a card that was never recorded", () => {
@@ -1230,22 +1434,22 @@ describe("ReviewLog.discardBuffered", () => {
 describe("ReviewLog.moveFolder", () => {
 	it("moves existing shards into the new folder", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
-		fs.seedShard("2026-07.pixel-10a.jsonl", INSTALL, [entry({ t: new Date(2026, 6, 5, 9, 0).getTime() })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
+		fs.seedShard("2026-07.pixel-10a.md", INSTALL, [entry({ t: new Date(2026, 6, 5, 9, 0).getTime() })]);
 		const { log, config } = makeLog({ fs });
 
 		await log.moveFolder(FOLDER, "Study/History");
 		config.folder = "Study/History";
 
-		expect(fs.files.has("Study/History/2026-08.pixel-10a.jsonl")).toBe(true);
-		expect(fs.files.has("Study/History/2026-07.pixel-10a.jsonl")).toBe(true);
-		expect(fs.files.has(`${FOLDER}/2026-08.pixel-10a.jsonl`)).toBe(false);
-		expect(await log.readAll()).toHaveLength(2);
+		expect(fs.files.has("Study/History/2026-08.pixel-10a.md")).toBe(true);
+		expect(fs.files.has("Study/History/2026-07.pixel-10a.md")).toBe(true);
+		expect(fs.files.has(`${FOLDER}/2026-08.pixel-10a.md`)).toBe(false);
+		expect(await collect(log)).toHaveLength(2);
 	});
 
 	it("leaves non-shard files where the user put them", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7 })]);
 		fs.files.set(`${FOLDER}/README.md`, "Why this folder exists");
 		const { log } = makeLog({ fs });
 
@@ -1257,7 +1461,7 @@ describe("ReviewLog.moveFolder", () => {
 
 	it("keeps appending to the moved shard rather than starting a new one", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, c: "os-a1" })]);
 		const { log, config } = makeLog({ fs });
 
 		await log.moveFolder(FOLDER, "Study/History");
@@ -1265,12 +1469,12 @@ describe("ReviewLog.moveFolder", () => {
 		log.record(entry({ t: AUG_7 + 1000, c: "os-b2" }));
 		await log.flush();
 
-		expect((await log.readAll()).map((e) => e.c)).toEqual(["os-a1", "os-b2"]);
+		expect((await collect(log)).map((e) => e.c)).toEqual(["os-a1", "os-b2"]);
 	});
 
 	it("keeps the rollup correct after a move", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7, e: 900 })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7, e: 900 })]);
 		const { log, config } = makeLog({ fs });
 		await log.getRollup();
 
@@ -1282,11 +1486,11 @@ describe("ReviewLog.moveFolder", () => {
 
 	it("does nothing when the folder is unchanged", async () => {
 		const fs = new FakeFs();
-		fs.seedShard("2026-08.pixel-10a.jsonl", INSTALL, [entry({ t: AUG_7 })]);
+		fs.seedShard("2026-08.pixel-10a.md", INSTALL, [entry({ t: AUG_7 })]);
 		const { log } = makeLog({ fs });
 
 		await log.moveFolder(FOLDER, FOLDER);
-		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.jsonl"]);
+		expect(fs.folderContents()).toEqual(["2026-08.pixel-10a.md"]);
 	});
 
 	it("does nothing when there is nothing to move", async () => {
@@ -1296,12 +1500,43 @@ describe("ReviewLog.moveFolder", () => {
 	});
 });
 
+describe("rollup cache size", () => {
+	it("stays well inside localStorage after five heavy years", async () => {
+		// The cache lives in `app.saveLocalStorage`, so its growth is a real
+		// ceiling rather than a tidiness concern. A day bucket is 19 counters;
+		// five years is ~1,825 of them. This is also the guard on ever keying a
+		// bucket by day × hour, which would be ~13 MB and blow the quota.
+		const { log, cache, fs } = makeLog();
+		const byMonth = new Map<string, ReviewLogEntry[]>();
+
+		for (let day = 0; day < 365 * 5; day++) {
+			// One entry per day is enough: a bucket's size is fixed by its
+			// counters, not by how many reviews landed in it.
+			const t = new Date(2021, 7, 7 + day, 9, 0).getTime();
+			const month = monthKey(t);
+			const group = byMonth.get(month) ?? [];
+			group.push(entry({ t, c: `os-${String(day)}` }));
+			byMonth.set(month, group);
+		}
+		for (const [month, entries] of byMonth) {
+			fs.seedShard(`${month}.pixel-10a.md`, INSTALL, entries);
+		}
+
+		await log.getRollup();
+
+		// Every day really is in there — a ceiling met by caching nothing would
+		// pass this test and tell us nothing.
+		expect(Object.keys(log.cachedRollup())).toHaveLength(365 * 5);
+		expect(JSON.stringify(cache.peek()).length).toBeLessThan(2_000_000);
+	});
+});
+
 describe("normalizeCache", () => {
 	it("accepts a cache it wrote itself", () => {
 		const cache: ReviewLogCache = {
-			v: 2,
+			v: 3,
 			shards: {
-				"2026-08.pixel-10a.jsonl": {
+				"2026-08.pixel-10a.md": {
 					mtime: 5000,
 					size: 240,
 					days: aggregateRollup([entry({ t: AUG_7 })]),
@@ -1312,31 +1547,31 @@ describe("normalizeCache", () => {
 	});
 
 	it("discards a cache from an unknown version", () => {
-		expect(normalizeCache({ v: 99, shards: { "2026-08.pixel-10a.jsonl": {} } })).toEqual({
-			v: 2,
+		expect(normalizeCache({ v: 99, shards: { "2026-08.pixel-10a.md": {} } })).toEqual({
+			v: 3,
 			shards: {},
 		});
 	});
 
-	// A v1 cache predates `byClass`, so its day buckets cannot be told apart
-	// from genuinely empty days. Discarding costs one re-parse; migrating would
-	// flatten the Reviews graph across all pre-upgrade history.
-	it("discards a cache from the previous version", () => {
-		expect(normalizeCache({ v: 1, shards: { "2026-08.pixel-10a.jsonl": {} } })).toEqual({
-			v: 2,
+	// A v2 cache holds correctly-shaped but wrongly-classified `byClass` counts:
+	// it was built when `classifyReview` read `iv`. Discarding costs one
+	// re-parse; keeping it would leave the Reviews graph quietly wrong.
+	it("discards a cache from a previous version", () => {
+		expect(normalizeCache({ v: 2, shards: { "2026-08.pixel-10a.md": {} } })).toEqual({
+			v: 3,
 			shards: {},
 		});
 	});
 
 	it("discards anything that is not a cache", () => {
 		for (const junk of [null, undefined, "", 42, [], "{}"]) {
-			expect(normalizeCache(junk)).toEqual({ v: 2, shards: {} });
+			expect(normalizeCache(junk)).toEqual({ v: 3, shards: {} });
 		}
 	});
 
 	it("drops entries keyed by something that is not a shard name", () => {
 		const result = normalizeCache({
-			v: 2,
+			v: 3,
 			shards: { "notes.md": { mtime: 1, size: 1, days: {} } },
 		});
 		expect(result.shards).toEqual({});
@@ -1344,17 +1579,17 @@ describe("normalizeCache", () => {
 
 	it("drops shards with an unusable fingerprint", () => {
 		const result = normalizeCache({
-			v: 2,
-			shards: { "2026-08.pixel-10a.jsonl": { mtime: "soon", size: 1, days: {} } },
+			v: 3,
+			shards: { "2026-08.pixel-10a.md": { mtime: "soon", size: 1, days: {} } },
 		});
 		expect(result.shards).toEqual({});
 	});
 
 	it("coerces missing and nonsense counts to zero", () => {
 		const result = normalizeCache({
-			v: 2,
+			v: 3,
 			shards: {
-				"2026-08.pixel-10a.jsonl": {
+				"2026-08.pixel-10a.md": {
 					mtime: 1,
 					size: 1,
 					days: {
@@ -1369,7 +1604,7 @@ describe("normalizeCache", () => {
 			},
 		});
 
-		expect(result.shards["2026-08.pixel-10a.jsonl"]?.days["2026-08-07"]).toEqual({
+		expect(result.shards["2026-08.pixel-10a.md"]?.days["2026-08-07"]).toEqual({
 			reviews: 0,
 			timeMs: 0,
 			byRating: { 1: 2, 2: 0, 3: 0, 4: 0 },

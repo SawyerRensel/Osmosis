@@ -1,15 +1,9 @@
 import { describe, it, expect } from "vitest";
-import {
-	MATURE_INTERVAL_SECONDS,
-	aggregateRollup,
-	type ReviewLogEntry,
-} from "../store/ReviewLog";
+import { aggregateRollup, type ReviewLogEntry } from "../store/ReviewLog";
 import type { Card } from "../database/types";
 import {
-	GRADUATED_INTERVAL_SECONDS,
 	bucketPoints,
 	calendarYear,
-	cardsReviewedInMode,
 	cardCounts,
 	cardsInScope,
 	dailySeries,
@@ -17,27 +11,20 @@ import {
 	dayKeysInRange,
 	deckInScope,
 	difficulties,
-	entriesInMode,
-	entriesInScope,
-	entriesSince,
+	entryInScope,
 	formatDays,
 	formatDuration,
 	futureDue,
 	histogram,
+	historyMonthRange,
 	historyStartDay,
-	hourlyBreakdown,
 	intervalDays,
 	percentile,
 	rankByRecall,
-	recallBy,
-	retentionByPeriod,
 	retrievability,
 	stabilityDays,
-	studyModeFromEntries,
 	studyModeTotals,
 	todaySummary,
-	trueRetention,
-	withPriorIntervals,
 	yearsWithActivity,
 	type DayPoint,
 } from "./aggregate";
@@ -51,6 +38,7 @@ const baseEntry: ReviewLogEntry = {
 	r: 3,
 	s: "review",
 	iv: 4 * DAY_SECONDS,
+	pi: 2 * DAY_SECONDS,
 	st: 12.3,
 	d: 6.4,
 	e: 4200,
@@ -110,33 +98,66 @@ describe("deckInScope", () => {
 	});
 });
 
-describe("entriesInScope", () => {
+describe("entryInScope", () => {
 	const cards = new Map<string, Card>([
 		["os-rivers", card({ id: "os-rivers", deck: "Geography/Rivers" })],
 		["os-spanish", card({ id: "os-spanish", deck: "Languages/Spanish" })],
 	]);
 	const resolve = (id: string) => cards.get(id);
+	const scope = (over: Partial<Parameters<typeof entryInScope>[1]> = {}) => ({
+		deck: { type: "all" } as const,
+		mode: "all" as const,
+		startDay: null,
+		...over,
+	});
 
 	it("keeps every entry under the whole collection, deleted cards included", () => {
-		const entries = [entry({ c: "os-rivers" }), entry({ c: "os-deleted" })];
-		expect(entriesInScope(entries, { type: "all" }, resolve)).toHaveLength(2);
+		expect(entryInScope(entry({ c: "os-rivers" }), scope(), resolve)).toBe(true);
+		expect(entryInScope(entry({ c: "os-deleted" }), scope(), resolve)).toBe(true);
 	});
 
 	it("drops entries whose card is in another deck", () => {
-		const entries = [entry({ c: "os-rivers" }), entry({ c: "os-spanish" })];
-		const scoped = entriesInScope(entries, { type: "parent", deck: "Geography" }, resolve);
-		expect(scoped.map((e) => e.c)).toEqual(["os-rivers"]);
+		const deck = scope({ deck: { type: "parent", deck: "Geography" } });
+		expect(entryInScope(entry({ c: "os-rivers" }), deck, resolve)).toBe(true);
+		expect(entryInScope(entry({ c: "os-spanish" }), deck, resolve)).toBe(false);
 	});
 
 	it("drops entries whose card no longer resolves", () => {
 		// A deleted card belongs to no deck, so it cannot be inside one. This is
 		// the documented cost of narrowing the scope off "whole collection".
-		const entries = [entry({ c: "os-deleted" })];
-		expect(entriesInScope(entries, { type: "parent", deck: "Geography" }, resolve)).toEqual([]);
+		const deck = scope({ deck: { type: "parent", deck: "Geography" } });
+		expect(entryInScope(entry({ c: "os-deleted" }), deck, resolve)).toBe(false);
+	});
+
+	it("narrows to one study surface", () => {
+		const spatial = scope({ mode: "spatial" });
+		expect(entryInScope(entry({ m: "spatial" }), spatial, resolve)).toBe(true);
+		expect(entryInScope(entry({ m: "sequential" }), spatial, resolve)).toBe(false);
+	});
+
+	it("drops entries before the start day and keeps the boundary day", () => {
+		const since = scope({ startDay: "2025-08-07" });
+		expect(
+			entryInScope(entry({ t: new Date(2025, 7, 6, 23, 0).getTime() }), since, resolve),
+		).toBe(false);
+		expect(
+			entryInScope(entry({ t: new Date(2025, 7, 7, 0, 30).getTime() }), since, resolve),
+		).toBe(true);
+	});
+
+	it("does not consult the card when the scope is the whole collection", () => {
+		// The join is what makes a deleted card vanish from a graph, so it must
+		// not happen on the path that is supposed to keep them.
+		let looked = 0;
+		entryInScope(entry({ c: "os-rivers" }), scope(), (id) => {
+			looked += 1;
+			return cards.get(id);
+		});
+		expect(looked).toBe(0);
 	});
 });
 
-describe("historyStartDay / entriesSince", () => {
+describe("historyStartDay / historyMonthRange", () => {
 	it("has no start day for all history", () => {
 		expect(historyStartDay(AUG_7, "all")).toBeNull();
 	});
@@ -145,19 +166,18 @@ describe("historyStartDay / entriesSince", () => {
 		expect(historyStartDay(AUG_7, "12m")).toBe("2025-08-07");
 	});
 
-	it("keeps everything when there is no start day", () => {
-		const entries = [entry({ t: new Date(2020, 0, 1).getTime() })];
-		expect(entriesSince(entries, null)).toHaveLength(1);
+	it("prunes shards to the months the start day can reach", () => {
+		expect(historyMonthRange(AUG_7, "12m")).toEqual({ from: "2025-08" });
 	});
 
-	it("drops entries before the start day and keeps the boundary day", () => {
-		const entries = [
-			entry({ t: new Date(2025, 7, 6, 23, 0).getTime() }),
-			entry({ t: new Date(2025, 7, 7, 0, 30).getTime() }),
-		];
-		const kept = entriesSince(entries, "2025-08-07");
-		expect(kept).toHaveLength(1);
-		expect(kept[0]?.t).toBe(new Date(2025, 7, 7, 0, 30).getTime());
+	it("prunes nothing over all history", () => {
+		expect(historyMonthRange(AUG_7, "all")).toBeUndefined();
+	});
+
+	it("leaves the upper bound open, so a clock-skewed shard is still read", () => {
+		// The day filter is the authority on what counts; the month range only
+		// exists to avoid opening files it would reject anyway.
+		expect(historyMonthRange(AUG_7, "12m")).not.toHaveProperty("to");
 	});
 });
 
@@ -267,11 +287,11 @@ describe("dailySeries", () => {
 
 	it("carries the maturity split through", () => {
 		const rollup = aggregateRollup([
-			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), s: "review", iv: DAY_SECONDS, e: 500 }),
+			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), s: "review", pi: DAY_SECONDS, e: 500 }),
 			entry({
 				t: new Date(2026, 7, 7, 10, 0).getTime(),
 				s: "review",
-				iv: MATURE_INTERVAL_SECONDS,
+				pi: 21 * DAY_SECONDS,
 				e: 1500,
 			}),
 		]);
@@ -472,18 +492,7 @@ describe("study mode totals", () => {
 		});
 	});
 
-	it("counts modes directly off entries for the deck-scoped path", () => {
-		expect(
-			studyModeFromEntries([
-				entry({ m: "contextual" }),
-				entry({ m: "contextual" }),
-				entry({ m: "sequential" }),
-			]),
-		).toEqual({ sequential: 1, contextual: 2, spatial: 0 });
-	});
-
 	it("is all zeroes with no reviews", () => {
-		expect(studyModeFromEntries([])).toEqual({ sequential: 0, contextual: 0, spatial: 0 });
 		expect(studyModeTotals([], {})).toEqual({ sequential: 0, contextual: 0, spatial: 0 });
 	});
 });
@@ -759,337 +768,7 @@ describe("retrievability", () => {
 
 // ── Hourly breakdown ──────────────────────────────────────────
 
-describe("hourlyBreakdown", () => {
-	it("always returns all twenty-four hours", () => {
-		const buckets = hourlyBreakdown([]);
-		expect(buckets).toHaveLength(24);
-		expect(buckets.map((b) => b.hour)).toEqual([...Array(24).keys()]);
-		expect(buckets.every((b) => b.reviews === 0)).toBe(true);
-	});
-
-	it("buckets by the local hour on the clock", () => {
-		const buckets = hourlyBreakdown([
-			entry({ t: new Date(2026, 7, 7, 9, 15).getTime() }),
-			entry({ t: new Date(2026, 7, 7, 9, 59).getTime() }),
-			entry({ t: new Date(2026, 7, 8, 9, 5).getTime() }),
-			entry({ t: new Date(2026, 7, 7, 22, 0).getTime() }),
-		]);
-		expect(buckets[9]?.reviews).toBe(3);
-		expect(buckets[22]?.reviews).toBe(1);
-	});
-
-	it("counts Hard and better as passed", () => {
-		const buckets = hourlyBreakdown([
-			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), r: 1 }),
-			entry({ t: new Date(2026, 7, 7, 9, 1).getTime(), r: 2 }),
-			entry({ t: new Date(2026, 7, 7, 9, 2).getTime(), r: 4 }),
-		]);
-		expect(buckets[9]?.reviews).toBe(3);
-		expect(buckets[9]?.passed).toBe(2);
-	});
-
-	it("keeps every review on a day that gains or loses an hour to DST", () => {
-		// Whatever the runner's timezone, a day spanning a DST change must not
-		// lose or duplicate reviews: every one lands in some hour of 0–23.
-		const entries: ReviewLogEntry[] = [];
-		for (let hour = 0; hour < 24; hour++) {
-			entries.push(entry({ t: new Date(2026, 10, 1, hour, 30).getTime() }));
-			entries.push(entry({ t: new Date(2026, 2, 8, hour, 30).getTime() }));
-		}
-
-		const buckets = hourlyBreakdown(entries);
-		expect(buckets.reduce((sum, b) => sum + b.reviews, 0)).toBe(entries.length);
-	});
-});
-
-// ── True retention ────────────────────────────────────────────
-
-describe("withPriorIntervals", () => {
-	it("reads a review's interval off the previous review of that card", () => {
-		const annotated = withPriorIntervals([
-			entry({ c: "a", t: 1000, iv: 10 * DAY_SECONDS }),
-			entry({ c: "a", t: 2000, iv: 30 * DAY_SECONDS }),
-			entry({ c: "a", t: 3000, iv: 60 * DAY_SECONDS }),
-		]);
-		expect(annotated.map((a) => a.priorIv)).toEqual([null, 10 * DAY_SECONDS, 30 * DAY_SECONDS]);
-	});
-
-	it("tracks each card independently", () => {
-		const annotated = withPriorIntervals([
-			entry({ c: "a", t: 1000, iv: 10 * DAY_SECONDS }),
-			entry({ c: "b", t: 2000, iv: 99 * DAY_SECONDS }),
-			entry({ c: "a", t: 3000, iv: 20 * DAY_SECONDS }),
-		]);
-		expect(annotated[2]?.priorIv).toBe(10 * DAY_SECONDS);
-	});
-
-	it("orders by timestamp before walking", () => {
-		const annotated = withPriorIntervals([
-			entry({ c: "a", t: 3000, iv: 60 * DAY_SECONDS }),
-			entry({ c: "a", t: 1000, iv: 10 * DAY_SECONDS }),
-		]);
-		expect(annotated.map((a) => a.entry.t)).toEqual([1000, 3000]);
-		expect(annotated[1]?.priorIv).toBe(10 * DAY_SECONDS);
-	});
-
-	it("does not mutate its input", () => {
-		const entries = [entry({ c: "a", t: 3000 }), entry({ c: "a", t: 1000 })];
-		withPriorIntervals(entries);
-		expect(entries[0]?.t).toBe(3000);
-	});
-});
-
-describe("trueRetention", () => {
-	const at = (day: number, hour: number) => new Date(2026, 7, day, hour).getTime();
-	const MATURE = MATURE_INTERVAL_SECONDS;
-
-	it("counts a failure on a mature card, despite its interval collapsing", () => {
-		// The regression this whole prior-interval machinery exists for: the
-		// failing review's own `iv` is minutes, so classifying on it would drop
-		// every failure and report retention as a flat 100%.
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: MATURE * 2 }),
-			entry({ c: "a", t: at(5, 9), iv: 600, r: 1, s: "relearning" }),
-		]);
-		expect(stats.reviewed).toBe(1);
-		expect(stats.passed).toBe(0);
-		expect(stats.rate).toBe(0);
-	});
-
-	it("ignores reviews of young cards", () => {
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: 5 * DAY_SECONDS }),
-			entry({ c: "a", t: at(3, 9), iv: 8 * DAY_SECONDS, r: 3 }),
-		]);
-		expect(stats.reviewed).toBe(0);
-	});
-
-	it("takes only the first review of a card each day", () => {
-		// Failing then immediately re-answering correctly must not raise
-		// retention — that would invert the meaning of the graph.
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: MATURE * 2 }),
-			entry({ c: "a", t: at(5, 9), iv: 600, r: 1, s: "relearning" }),
-			entry({ c: "a", t: at(5, 10), iv: 600, r: 3, s: "relearning" }),
-		]);
-		expect(stats.reviewed).toBe(1);
-		expect(stats.passed).toBe(0);
-	});
-
-	it("counts the same card again on a later day", () => {
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: MATURE * 2 }),
-			entry({ c: "a", t: at(5, 9), iv: MATURE * 3, r: 3 }),
-			entry({ c: "a", t: at(9, 9), iv: MATURE * 4, r: 3 }),
-		]);
-		expect(stats.reviewed).toBe(2);
-		expect(stats.passed).toBe(2);
-		expect(stats.rate).toBe(1);
-	});
-
-	it("treats Hard as a pass and Again as the only failure", () => {
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: MATURE * 2 }),
-			entry({ c: "a", t: at(2, 9), iv: MATURE * 2, r: 2 }),
-			entry({ c: "b", t: at(1, 9), iv: MATURE * 2 }),
-			entry({ c: "b", t: at(2, 9), iv: 600, r: 1 }),
-		]);
-		expect(stats.reviewed).toBe(2);
-		expect(stats.passed).toBe(1);
-		expect(stats.rate).toBe(0.5);
-	});
-
-	it("splits exactly at the 21-day line", () => {
-		const stats = trueRetention([
-			entry({ c: "a", t: at(1, 9), iv: MATURE - 1 }),
-			entry({ c: "a", t: at(2, 9), r: 3 }),
-			entry({ c: "b", t: at(1, 9), iv: MATURE }),
-			entry({ c: "b", t: at(2, 9), r: 3 }),
-		]);
-		expect(stats.reviewed).toBe(1);
-	});
-
-	it("reports mature reviews whose history predates the log", () => {
-		const stats = trueRetention([entry({ c: "a", t: at(2, 9), iv: MATURE * 2, r: 3 })]);
-		expect(stats.reviewed).toBe(0);
-		expect(stats.unknownInterval).toBe(1);
-	});
-
-	it("does not report a card's first-ever review as unknown", () => {
-		const stats = trueRetention([entry({ c: "a", t: at(2, 9), iv: 600, r: 3 })]);
-		expect(stats.unknownInterval).toBe(0);
-	});
-
-	it("is empty and does not divide by zero on an empty log", () => {
-		expect(trueRetention([])).toEqual({
-			reviewed: 0,
-			passed: 0,
-			rate: 0,
-			unknownInterval: 0,
-		});
-	});
-});
-
-describe("retentionByPeriod", () => {
-	const MATURE = MATURE_INTERVAL_SECONDS;
-	const now = new Date(2026, 7, 8, 14, 0).getTime();
-	const daysAgo = (days: number, hour = 9) =>
-		new Date(2026, 7, 8 - days, hour).getTime();
-
-	it("returns a row per window, widest last", () => {
-		const rows = retentionByPeriod([], now);
-		expect(rows.map((row) => row.label)).toEqual(["Today", "Week", "Month", "Year", "All"]);
-		expect(rows[4]?.days).toBeNull();
-	});
-
-	it("narrows to the window", () => {
-		const entries = [
-			entry({ c: "a", t: daysAgo(200), iv: MATURE * 2 }),
-			entry({ c: "a", t: daysAgo(100), iv: MATURE * 2, r: 3 }),
-			entry({ c: "a", t: daysAgo(0), iv: MATURE * 2, r: 3 }),
-		];
-		const rows = retentionByPeriod(entries, now);
-		const by = Object.fromEntries(rows.map((row) => [row.label, row.stats.reviewed]));
-
-		expect(by["Today"]).toBe(1);
-		expect(by["Week"]).toBe(1);
-		expect(by["Year"]).toBe(2);
-		expect(by["All"]).toBe(2);
-	});
-
-	it("reads the prior interval from outside the window", () => {
-		// The review that established maturity is a year old; the review being
-		// judged is today. Filtering before annotating would lose the former and
-		// silently drop the latter as "unknown interval".
-		const entries = [
-			entry({ c: "a", t: daysAgo(300), iv: MATURE * 2 }),
-			entry({ c: "a", t: daysAgo(0), iv: MATURE * 3, r: 3 }),
-		];
-		const today = retentionByPeriod(entries, now).find((row) => row.label === "Today");
-
-		expect(today?.stats.reviewed).toBe(1);
-		expect(today?.stats.passed).toBe(1);
-		expect(today?.stats.unknownInterval).toBe(0);
-	});
-
-	it("agrees with trueRetention over all history", () => {
-		const entries = [
-			entry({ c: "a", t: daysAgo(40), iv: MATURE * 2 }),
-			entry({ c: "a", t: daysAgo(20), iv: MATURE * 2, r: 3 }),
-			entry({ c: "b", t: daysAgo(30), iv: MATURE * 2 }),
-			entry({ c: "b", t: daysAgo(10), iv: 600, r: 1 }),
-		];
-		const all = retentionByPeriod(entries, now).find((row) => row.label === "All");
-		expect(all?.stats).toEqual(trueRetention(entries));
-	});
-
-	it("counts today from local midnight, not twenty-four hours back", () => {
-		const entries = [
-			entry({ c: "a", t: daysAgo(2), iv: MATURE * 2 }),
-			// Yesterday evening — inside 24h of `now`, but not today.
-			entry({ c: "a", t: daysAgo(1, 23), iv: MATURE * 2, r: 3 }),
-		];
-		const today = retentionByPeriod(entries, now).find((row) => row.label === "Today");
-		expect(today?.stats.reviewed).toBe(0);
-	});
-
-	it("does not divide by zero on an empty log", () => {
-		for (const row of retentionByPeriod([], now)) {
-			expect(row.stats).toEqual({ reviewed: 0, passed: 0, rate: 0, unknownInterval: 0 });
-		}
-	});
-});
-
 // ── Comparative recall ────────────────────────────────────────
-
-describe("recallBy", () => {
-	const GRAD = GRADUATED_INTERVAL_SECONDS;
-	const at = (day: number, hour = 9) => new Date(2026, 7, day, hour).getTime();
-
-	it("groups by whatever the key function returns", () => {
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: GRAD * 5, m: "contextual" }),
-				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3, m: "contextual" }),
-				entry({ c: "b", t: at(1), iv: GRAD * 5, m: "spatial" }),
-				entry({ c: "b", t: at(3), iv: GRAD * 5, r: 1, m: "spatial" }),
-			],
-			(e) => e.m,
-		);
-
-		expect(stats.get("contextual")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
-		expect(stats.get("spatial")).toMatchObject({ reviewed: 1, passed: 0, rate: 0 });
-		expect(stats.has("sequential")).toBe(false);
-	});
-
-	it("ignores reviews the card had not graduated into", () => {
-		// A learning-step answer minutes after the last one says nothing about
-		// memory, and there are far more of them than real reviews.
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: 600 }),
-				entry({ c: "a", t: at(1, 10), iv: 600, r: 3 }),
-			],
-			(e) => e.m,
-		);
-		expect(stats.size).toBe(0);
-	});
-
-	it("splits exactly at the one-day line", () => {
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: GRAD - 1 }),
-				entry({ c: "a", t: at(2), r: 3 }),
-				entry({ c: "b", t: at(1), iv: GRAD }),
-				entry({ c: "b", t: at(2), r: 3 }),
-			],
-			() => "x" as const,
-		);
-		expect(stats.get("x")?.reviewed).toBe(1);
-	});
-
-	it("takes only the first review of a card each day", () => {
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: GRAD * 5 }),
-				entry({ c: "a", t: at(5, 9), iv: 600, r: 1 }),
-				entry({ c: "a", t: at(5, 10), iv: 600, r: 3 }),
-			],
-			() => "x" as const,
-		);
-		expect(stats.get("x")).toMatchObject({ reviewed: 1, passed: 0 });
-	});
-
-	it("drops entries whose key cannot be determined", () => {
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: GRAD * 5 }),
-				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3 }),
-			],
-			() => null,
-		);
-		expect(stats.size).toBe(0);
-	});
-
-	it("averages time on screen across counted reviews only", () => {
-		const stats = recallBy(
-			[
-				entry({ c: "a", t: at(1), iv: GRAD * 5, e: 99_999 }),
-				entry({ c: "a", t: at(3), iv: GRAD * 5, r: 3, e: 2000 }),
-				entry({ c: "b", t: at(1), iv: GRAD * 5, e: 99_999 }),
-				entry({ c: "b", t: at(3), iv: GRAD * 5, r: 3, e: 4000 }),
-			],
-			() => "x" as const,
-		);
-		// The two seeding reviews are uncounted (no prior interval), so the mean
-		// is over the two that qualified.
-		expect(stats.get("x")?.meanMs).toBe(3000);
-	});
-
-	it("returns nothing for an empty log", () => {
-		expect(recallBy([], (e) => e.m).size).toBe(0);
-	});
-});
 
 describe("rankByRecall", () => {
 	const stats = (reviewed: number, passed: number) => ({
@@ -1141,47 +820,6 @@ describe("rankByRecall", () => {
 });
 
 // ── Study-mode filtering ──────────────────────────────────────
-
-describe("entriesInMode", () => {
-	it("keeps everything under all", () => {
-		const entries = [entry({ m: "spatial" }), entry({ m: "sequential" })];
-		expect(entriesInMode(entries, "all")).toHaveLength(2);
-	});
-
-	it("narrows to one surface", () => {
-		const entries = [
-			entry({ c: "a", m: "spatial" }),
-			entry({ c: "b", m: "sequential" }),
-			entry({ c: "c", m: "spatial" }),
-		];
-		expect(entriesInMode(entries, "spatial").map((e) => e.c)).toEqual(["a", "c"]);
-	});
-});
-
-describe("cardsReviewedInMode", () => {
-	const entries = [
-		entry({ c: "a", m: "contextual" }),
-		entry({ c: "b", m: "sequential" }),
-		entry({ c: "a", m: "sequential" }),
-	];
-
-	it("collects every card under all", () => {
-		expect([...cardsReviewedInMode(entries, "all")].sort()).toEqual(["a", "b"]);
-	});
-
-	it("collects cards ever answered on that surface", () => {
-		expect([...cardsReviewedInMode(entries, "contextual")]).toEqual(["a"]);
-	});
-
-	it("counts a card studied on two surfaces under both", () => {
-		expect(cardsReviewedInMode(entries, "sequential").has("a")).toBe(true);
-		expect(cardsReviewedInMode(entries, "contextual").has("a")).toBe(true);
-	});
-
-	it("is empty for a surface never used", () => {
-		expect(cardsReviewedInMode(entries, "spatial").size).toBe(0);
-	});
-});
 
 // ── Formatting ────────────────────────────────────────────────
 

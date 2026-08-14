@@ -205,6 +205,63 @@ describe("injectFenceIdsIntoContent", () => {
 	});
 });
 
+describe("review log guard", () => {
+	/** A sync service that treats one folder as the review log. */
+	function guarded(note: string): { sync: CardSyncService; store: CardStore; reads: string[] } {
+		const store = new CardStore();
+		const reads: string[] = [];
+		const sync = new CardSyncService(
+			{
+				cachedRead: (file: { path: string }) => {
+					reads.push(file.path);
+					return Promise.resolve(note);
+				},
+			} as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			(path: string) => path.startsWith("Osmosis/Reviews/"),
+		);
+		return { sync, store, reads };
+	}
+
+	const note = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"",
+		"```osmosis",
+		"id: os-riv001",
+		"",
+		"Longest river in Europe",
+		"***",
+		"The Volga",
+		"```",
+		"",
+	].join("\n");
+
+	it("does not even read a file the review log owns", async () => {
+		// Shards are Markdown, so `getMarkdownFiles()` offers every one of them
+		// here. Reading them would mean feeding the card parser the whole log at
+		// every launch — silently, since nothing errors.
+		const { sync, store, reads } = guarded(note);
+		await sync.syncFile({
+			path: "Osmosis/Reviews/2026-08.pixel-10a.md",
+			extension: "md",
+		} as never);
+
+		expect(reads).toEqual([]);
+		expect(store.getAllCards()).toEqual([]);
+	});
+
+	it("still syncs a note outside the folder", async () => {
+		const { sync, store } = guarded(note);
+		await sync.syncFile({ path: "Geography/Rivers.md", extension: "md" } as never);
+
+		expect(store.getCardsByNote("Geography/Rivers.md")).toHaveLength(1);
+	});
+});
+
 /** A CardSyncService wired to a real CardStore; the vault is never touched. */
 function syncService(): { sync: CardSyncService; store: CardStore } {
 	const store = new CardStore();
@@ -213,6 +270,7 @@ function syncService(): { sync: CardSyncService; store: CardStore } {
 		store,
 		{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 		() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+		() => false,
 	);
 	return { sync, store };
 }
@@ -322,6 +380,7 @@ describe("CardSyncService occlusion", () => {
 			store,
 			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
 			() => [],
 			() => options?.schedules ?? new Map(),
 			() => options?.disabled ?? new Set(),
@@ -382,6 +441,7 @@ describe("CardSyncService occlusion", () => {
 			store,
 			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
 			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
 		);
 		await sync.syncFile(file);
 
@@ -422,6 +482,7 @@ What is 2+2?
 			store,
 			{ isWriting: () => false, getPendingSchedules: () => staged } as never,
 			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
 		);
 		return { sync, store };
 	}

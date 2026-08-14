@@ -4,41 +4,29 @@ import { FSRSScheduler } from "../database/FSRSScheduler";
 import type { Card, CardType, StudyMode } from "../database/types";
 import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
-import {
-	aggregateAnswerButtons,
-	aggregateRollup,
-	type ReviewLogEntry,
-	type Rollup,
-} from "../store/ReviewLog";
+import type { Rollup } from "../store/ReviewLog";
 import {
 	bucketPoints,
 	calendarYear,
-	cardsReviewedInMode,
 	cardCounts,
 	cardsInScope,
 	dailySeries,
 	daysBefore,
 	difficulties,
-	entriesInMode,
-	entriesInScope,
-	entriesSince,
+	entryInScope,
 	formatDays,
 	formatDuration,
 	futureDue,
 	histogram,
+	historyMonthRange,
 	historyStartDay,
-	hourlyBreakdown,
 	intervalDays,
 	percentile,
 	rankByRecall,
-	recallBy,
-	retentionByPeriod,
 	retrievability,
 	stabilityDays,
-	studyModeFromEntries,
 	studyModeTotals,
 	todaySummary,
-	trueRetention,
 	yearsWithActivity,
 	type DayPoint,
 	type Granularity,
@@ -47,6 +35,7 @@ import {
 	type RecallStats,
 	type SeriesBucket,
 } from "../stats/aggregate";
+import { DetailAccumulator, type DetailStats } from "../stats/detail";
 import {
 	barChart,
 	calendarHeatmap,
@@ -193,8 +182,13 @@ export class StatsView extends ItemView {
 
 	/** Day-bucketed aggregates for the whole collection. Cheap; always present. */
 	private rollup: Rollup = {};
-	/** Raw entries. Null until something needs them. */
-	private entries: ReviewLogEntry[] | null = null;
+	/**
+	 * The detail panels' aggregates, from one streaming pass over the shards.
+	 * Null until something needs them; discarded whenever the scope changes,
+	 * since the scope is baked into the pass rather than filtered out of a list.
+	 */
+	private detail: DetailStats | null = null;
+	private detailScope = "";
 	private entriesLoading = false;
 
 	private resizeObserver: ResizeObserver | null = null;
@@ -249,6 +243,16 @@ export class StatsView extends ItemView {
 		// Then reconcile against any shard another device has synced in.
 		void this.refreshRollup();
 
+		// `onOpen` runs once per leaf, but `activateMainView` reveals an existing
+		// Stats tab rather than rebuilding it — so without this, a tab left open
+		// across a study session shows the numbers it loaded when it was created
+		// and never notices the reviews that landed behind it.
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", (leaf) => {
+				if (leaf === this.leaf) void this.refreshRollup();
+			}),
+		);
+
 		this.resizeObserver = new ResizeObserver(() => {
 			const width = this.contentEl.clientWidth;
 			// Charts are drawn at a pixel width, so only a real width change
@@ -272,6 +276,7 @@ export class StatsView extends ItemView {
 	// ── Data ──────────────────────────────────────────────────
 
 	private async refreshRollup(): Promise<void> {
+		const before = rollupFingerprint(this.rollup);
 		try {
 			this.rollup = await this.plugin.reviewLog.getRollup();
 		} catch (error) {
@@ -280,46 +285,81 @@ export class StatsView extends ItemView {
 			console.error("Osmosis: failed to refresh the review rollup", error);
 			return;
 		}
+
+		// Steady state — tabbing back to an unchanged log — costs one folder
+		// listing and a stat per shard, and must not also cost a full rebuild of
+		// every chart in the grid.
+		if (rollupFingerprint(this.rollup) === before) return;
+
+		// Reviews landed since the detail pass ran. Its scope key is still valid,
+		// so `invalidateDetail` cannot see that it is stale; drop it by hand and
+		// let the panels re-stream on their next draw.
+		this.detail = null;
 		this.render();
 	}
 
-	/** Parse raw shards once, then redraw whatever was waiting on them. */
-	private async loadEntries(): Promise<void> {
-		if (this.entries !== null || this.entriesLoading) return;
+	/**
+	 * Stream the shards once into the detail accumulators, then redraw whatever
+	 * was waiting on them.
+	 *
+	 * The scope is applied per entry on the way past rather than to a list
+	 * afterwards, because there is no list: `scan` hands over one shard's worth
+	 * at a time and releases it. That is also why a scope change discards the
+	 * result instead of re-filtering it.
+	 */
+	private async loadDetail(): Promise<void> {
+		if (this.detail !== null || this.entriesLoading) return;
 		this.entriesLoading = true;
+
+		const now = Date.now();
+		const scope = {
+			deck: this.deckScope,
+			mode: this.modeFilter,
+			startDay: historyStartDay(now, this.history),
+		};
+		const scopeKey = this.scopeKey();
+		const accumulator = new DetailAccumulator(now, (id) =>
+			this.plugin.cardStore.getCard(id),
+		);
+
 		try {
-			this.entries = await this.plugin.reviewLog.readAll();
+			await this.plugin.reviewLog.scan((entry) => {
+				if (entryInScope(entry, scope, (id) => this.plugin.cardStore.getCard(id))) {
+					accumulator.add(entry);
+				}
+			}, historyMonthRange(now, this.history));
 		} catch (error) {
 			console.error("Osmosis: failed to read the review log", error);
-			this.entries = [];
 		} finally {
 			this.entriesLoading = false;
 		}
+
+		this.detail = accumulator.result();
+		this.detailScope = scopeKey;
 		this.render();
 	}
 
-	/** Entries narrowed to the current deck and history scope, or null if unread. */
-	private scopedEntries(): ReviewLogEntry[] | null {
-		if (this.entries === null) return null;
-		const byDeck = entriesInScope(this.entries, this.deckScope, (id) =>
-			this.plugin.cardStore.getCard(id),
-		);
-		const byMode = entriesInMode(byDeck, this.modeFilter);
-		return entriesSince(byMode, historyStartDay(Date.now(), this.history));
+	/** Identity of the scope a pass was computed under. */
+	private scopeKey(): string {
+		return `${scopeToValue(this.deckScope)}|${this.modeFilter}|${this.history}`;
+	}
+
+	/** Drop a pass computed under a scope that no longer applies. */
+	private invalidateDetail(): void {
+		if (this.detailScope !== this.scopeKey()) this.detail = null;
 	}
 
 	/**
 	 * The day-bucketed data the volume graphs read.
 	 *
 	 * Under the whole collection this is the cached rollup. Under a deck scope
-	 * it is rebuilt from the scoped entries — the same aggregation the cache
+	 * it is the rollup the streaming pass built — the same aggregation the cache
 	 * itself is built with, so every downstream graph is identical either way
 	 * and none of them needs to know which path it got.
 	 */
 	private scopedRollup(): Rollup | null {
 		if (!this.needsEntries()) return this.rollup;
-		const entries = this.scopedEntries();
-		return entries === null ? null : aggregateRollup(entries);
+		return this.detail?.rollup ?? null;
 	}
 
 	/**
@@ -335,9 +375,8 @@ export class StatsView extends ItemView {
 		const byDeck = cardsInScope(this.plugin.cardStore.getAllCards(), this.deckScope);
 		if (this.modeFilter === "all") return byDeck;
 
-		const entries = this.scopedEntries();
-		if (entries === null) return [];
-		const studied = cardsReviewedInMode(entries, this.modeFilter);
+		const studied = this.detail?.reviewedCards;
+		if (studied === undefined) return [];
 		return byDeck.filter((card) => studied.has(card.id));
 	}
 
@@ -352,6 +391,10 @@ export class StatsView extends ItemView {
 		const { contentEl } = this;
 		const scrollTop = contentEl.scrollTop;
 		this.lastWidth = contentEl.clientWidth;
+
+		// A scope change reaches here as a redraw, and the detail pass has the
+		// old scope baked in. Drop it before anything reads it.
+		this.invalidateDetail();
 
 		// The panels it was watching are about to be destroyed.
 		this.detailObserver?.disconnect();
@@ -403,7 +446,7 @@ export class StatsView extends ItemView {
 
 		contentEl.scrollTop = scrollTop;
 
-		if (this.needsEntries() && this.entries === null) void this.loadEntries();
+		if (this.needsEntries() && this.detail === null) void this.loadDetail();
 	}
 
 	/** Every panel, in the order a fresh install shows them. */
@@ -1289,11 +1332,10 @@ export class StatsView extends ItemView {
 				return;
 			}
 			const points = this.seriesForRange(rollup, this.history === "all" ? "all" : "year");
-			const scoped = this.scopedEntries();
 			const totals =
-				this.deckScope.type === "all" || scoped === null
+				this.deckScope.type === "all" || this.detail === null
 					? studyModeTotals(points, rollup)
-					: studyModeFromEntries(scoped);
+					: this.detail.modeTotals;
 
 			if (sumValues(totals) === 0) {
 				renderEmpty(plot, "No reviews recorded yet.");
@@ -1327,10 +1369,10 @@ export class StatsView extends ItemView {
 		const plot = chartPanel(parent, "Hourly breakdown", "When you study, and how it goes.");
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const buckets = hourlyBreakdown(entries);
+			const buckets = detail.hours;
 			if (buckets.every((bucket) => bucket.reviews === 0)) {
 				renderEmpty(plot, "No reviews recorded yet.");
 				return;
@@ -1382,19 +1424,23 @@ export class StatsView extends ItemView {
 	}
 
 	private buildAnswerButtons(parent: HTMLElement, draws: (() => void)[]): void {
-		const plot = chartPanel(parent, "Answer buttons", "Which button you press, by card maturity.");
+		const plot = chartPanel(
+			parent,
+			"Answer buttons",
+			"Which button you press, by the maturity each card had when you answered it.",
+		);
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const counts = aggregateAnswerButtons(entries, (id) => this.plugin.cardStore.getCard(id));
+			const counts = detail.answerButtons;
 			const labels = ["Again", "Hard", "Good", "Easy"] as const;
 			const totalYoung = sumValues(counts.young);
 			const totalMature = sumValues(counts.mature);
 
 			if (totalYoung + totalMature === 0) {
-				renderEmpty(plot, "No reviews of resolvable cards yet.");
+				renderEmpty(plot, "No reviews recorded yet.");
 				return;
 			}
 
@@ -1418,13 +1464,6 @@ export class StatsView extends ItemView {
 			});
 
 			renderLegend(plot, MATURITY_SERIES, { young: totalYoung, mature: totalMature });
-
-			if (counts.excluded > 0) {
-				plot.createDiv({
-					cls: "osmosis-stats-note",
-					text: `${counts.excluded.toLocaleString()} reviews left out — their card no longer resolves.`,
-				});
-			}
 		});
 	}
 
@@ -1436,10 +1475,12 @@ export class StatsView extends ItemView {
 		);
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const stats = trueRetention(entries);
+			// "All" is the last window, and the headline figure.
+			const stats = detail.retention[detail.retention.length - 1]?.stats
+				?? { reviewed: 0, passed: 0, rate: 0 };
 			const tiles = plot.createDiv({ cls: "osmosis-stats-tiles" });
 			this.tile(
 				tiles,
@@ -1456,7 +1497,7 @@ export class StatsView extends ItemView {
 				// whether retention is holding up lately — so the same figure is
 				// also broken out by window.
 				const table = plot.createDiv({ cls: "osmosis-stats-table" });
-				for (const period of retentionByPeriod(entries, Date.now())) {
+				for (const period of detail.retention) {
 					const row = table.createDiv({ cls: "osmosis-stats-row" });
 					row.createSpan({ cls: "osmosis-stats-row-label", text: period.label });
 					row.createSpan({
@@ -1471,15 +1512,6 @@ export class StatsView extends ItemView {
 						text: `${period.stats.passed.toLocaleString()} / ${period.stats.reviewed.toLocaleString()}`,
 					});
 				}
-			}
-
-			if (stats.unknownInterval > 0) {
-				plot.createDiv({
-					cls: "osmosis-stats-note",
-					text:
-						`${stats.unknownInterval.toLocaleString()} mature reviews left out — ` +
-						"their card's history starts before the log did.",
-				});
 			}
 		});
 	}
@@ -1500,10 +1532,10 @@ export class StatsView extends ItemView {
 		);
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const byMode = recallBy(entries, (entry) => entry.m);
+			const byMode = detail.byMode;
 			if (byMode.size === 0) {
 				renderEmpty(plot, "No graduated reviews yet.");
 				return;
@@ -1536,13 +1568,10 @@ export class StatsView extends ItemView {
 		);
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const byType = recallBy(
-				entries,
-				(entry) => this.plugin.cardStore.getCard(entry.c)?.cardType ?? null,
-			);
+			const byType = detail.byType;
 			if (byType.size === 0) {
 				renderEmpty(plot, "No graduated reviews of resolvable cards yet.");
 				return;
@@ -1577,13 +1606,10 @@ export class StatsView extends ItemView {
 		);
 
 		draws.push(() => {
-			const entries = this.requireEntries(plot);
-			if (entries === null) return;
+			const detail = this.requireDetail(plot);
+			if (detail === null) return;
 
-			const byNote = recallBy(
-				entries,
-				(entry) => this.plugin.cardStore.getCard(entry.c)?.notePath ?? null,
-			);
+			const byNote = detail.byNote;
 			const ranked = rankByRecall(byNote, MIN_NOTE_REVIEWS).slice(0, WEAKEST_NOTE_LIMIT);
 
 			if (ranked.length === 0) {
@@ -1668,16 +1694,15 @@ export class StatsView extends ItemView {
 	// ── Small pieces ──────────────────────────────────────────
 
 	/**
-	 * Entries, or a placeholder plus a load kicked off when they first scroll
-	 * into view.
+	 * The detail aggregates, or a placeholder plus a load kicked off when they
+	 * first scroll into view.
 	 *
 	 * The observer is what keeps the promise that opening this view costs no
-	 * shard parse: these three panels sit below the fold, so a reader who came
-	 * for the heatmap never triggers one.
+	 * shard parse: these panels sit below the fold, so a reader who came for the
+	 * heatmap never triggers one.
 	 */
-	private requireEntries(plot: HTMLElement): ReviewLogEntry[] | null {
-		const scoped = this.scopedEntries();
-		if (scoped !== null) return scoped;
+	private requireDetail(plot: HTMLElement): DetailStats | null {
+		if (this.detail !== null) return this.detail;
 
 		renderEmpty(plot, this.entriesLoading ? "Reading review log…" : "Scroll to load…");
 		if (this.entriesLoading) return null;
@@ -1689,7 +1714,7 @@ export class StatsView extends ItemView {
 			if (!records.some((record) => record.isIntersecting)) return;
 			this.detailObserver?.disconnect();
 			this.detailObserver = null;
-			void this.loadEntries();
+			void this.loadDetail();
 		});
 		this.detailObserver.observe(plot);
 		return null;
@@ -1793,6 +1818,28 @@ function valueToScope(value: string): DeckScope {
 
 function sumValues(counts: Readonly<Record<string, number>>): number {
 	return Object.values(counts).reduce((sum, value) => sum + value, 0);
+}
+
+/**
+ * A cheap identity for a rollup's contents — enough to tell "reviews landed
+ * while I wasn't looking" from "nothing moved", without a deep compare of every
+ * day bucket on every tab activation.
+ *
+ * Day count, review count and elapsed time together, because any one of them
+ * alone can stand still across a real change: a second session on a day already
+ * in the rollup adds no day, and an undo that re-answers can leave the review
+ * count flat while the time moves.
+ */
+function rollupFingerprint(rollup: Rollup): string {
+	let days = 0;
+	let reviews = 0;
+	let timeMs = 0;
+	for (const day of Object.values(rollup)) {
+		days += 1;
+		reviews += day.reviews;
+		timeMs += day.timeMs;
+	}
+	return `${String(days)}|${String(reviews)}|${String(timeMs)}`;
 }
 
 /** Structural, so it sums daily points and bucketed columns alike. */

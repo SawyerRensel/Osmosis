@@ -2419,16 +2419,45 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
-/* ── Review history settings ──────────────────────────────── */
-/* Sync notice: shown while Obsidian Sync is running, until dismissed. An
-   advisory rather than a detected fault, so accent rather than warning */
-.osmosis-settings-notice {
-	border-left: 3px solid var(--text-accent);
-	padding-left: var(--size-4-3);
+/* ── Review log shard summary ──────────────────────────────── */
+/* Replaces the fence body when a shard is opened as a note. Deliberately
+   inert-looking: it is a generated file, not something to interact with. */
+.osmosis-shard-summary {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	padding: var(--size-4-3);
+	background: var(--background-secondary);
 }
 
-.osmosis-settings-notice .setting-item-name {
-	color: var(--text-accent);
+.osmosis-shard-title {
+	font-weight: var(--font-semibold);
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-shard-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-4);
+}
+
+.osmosis-shard-fact {
+	display: flex;
+	flex-direction: column;
+}
+
+.osmosis-shard-fact-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.osmosis-shard-fact-value {
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-shard-note {
+	margin-top: var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
 }
 
 /* ═══════════════════════════════════════════════════════════
