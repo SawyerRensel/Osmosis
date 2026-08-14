@@ -3,31 +3,28 @@ osmosis-cards: true
 osmosis-deck: Testing/iOS Ghosting
 osmosis-schedule:
   os-iosline1:
-    due: 2026-08-13T20:44:31
-    stability: 0.7144
-    difficulty: 8.5061
-    lastReview: 2026-08-13T20:34:31
-    reps: 4
-    lapses: 1
-    state: relearning
+    due: 2026-08-02T09:00:00
+    stability: 4.10
+    difficulty: 5.5
+    reps: 3
+    lapses: 0
+    state: review
     learningSteps: 0
   os-iosline2:
-    due: 2026-08-13T20:44:46
-    stability: 0.6342
-    difficulty: 8.6047
-    lastReview: 2026-08-13T20:34:46
-    reps: 3
-    lapses: 1
-    state: relearning
+    due: 2026-08-03T09:00:00
+    stability: 3.40
+    difficulty: 5.8
+    reps: 2
+    lapses: 0
+    state: review
     learningSteps: 0
   os-iosline3:
-    due: 2026-08-13T20:44:48
-    stability: 0.8262
-    difficulty: 8.3746
-    lastReview: 2026-08-13T20:34:48
-    reps: 5
-    lapses: 1
-    state: relearning
+    due: 2026-08-04T09:00:00
+    stability: 5.20
+    difficulty: 5.1
+    reps: 4
+    lapses: 0
+    state: review
     learningSteps: 0
 ---
 
@@ -73,13 +70,13 @@ This node must show its question, a divider, and its answer.
 
 ```osmosis
 id: ios-ghost-1
-due: 2026-08-14T00:44:36.456Z
-stability: 1.1802
-difficulty: 8.3089
-reps: 4
-lapses: 1
-state: relearning
-lastReview: 2026-08-14T00:34:36.456Z
+due: 2026-08-05T09:00:00.000Z
+stability: 6.10
+difficulty: 4.9
+reps: 3
+lapses: 0
+state: review
+lastReview: 2026-08-01T09:00:00.000Z
 learningSteps: 0
 
 Which projection preserves angles at the cost of area?
