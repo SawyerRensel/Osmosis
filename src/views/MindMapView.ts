@@ -32,6 +32,7 @@ import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
+import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -180,6 +181,21 @@ export class MindMapView extends ItemView {
 	private isPanning = false;
 	private panStart = { x: 0, y: 0 };
 	private svg: SVGSVGElement | null = null;
+	/**
+	 * WKWebView strands composited `<foreignObject>` content when the SVG's
+	 * `viewBox` changes, so iOS pans the map with a CSS transform on the SVG
+	 * instead — see `src/mindmap-viewport.ts` for the mechanism and the maths.
+	 * Chromium (desktop Electron, Android's WebView) re-transforms those layers
+	 * correctly and stays on the `viewBox` path.
+	 */
+	private readonly panByTransform = Platform.isIosApp;
+	/**
+	 * The element whose box *is* the viewport, on the transform path: the SVG
+	 * no longer clips at its own bounds, so this wrapper does the clipping,
+	 * stays put while the SVG moves, and is what screen coordinates are
+	 * measured against. Null on the `viewBox` path, where the SVG is all three.
+	 */
+	private viewportHost: HTMLDivElement | null = null;
 
 	// Collapse state
 	private collapsedIds = new Set<string>();
@@ -1751,6 +1767,7 @@ export class MindMapView extends ItemView {
 		this.renderComponent?.unload();
 		this.renderComponent = null;
 		this.svg = null;
+		this.viewportHost = null;
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
@@ -2775,8 +2792,17 @@ export class MindMapView extends ItemView {
 
 	private updateViewBox(): void {
 		if (!this.svg) return;
-		const { x, y, w, h } = this.viewBox;
-		this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		if (this.viewportHost) {
+			// iOS: the same viewport, expressed as a CSS transform so that
+			// composited node content travels with the map instead of stranding.
+			this.svg.style.transform = viewBoxTransform(
+				this.viewBox,
+				this.viewportHost.getBoundingClientRect(),
+			);
+		} else {
+			const { x, y, w, h } = this.viewBox;
+			this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		}
 		// The edit overlay lives outside the SVG, so the viewBox does not carry
 		// it along — re-place it or it freezes where the node used to be.
 		if (this.editingNodeId) this.positionEditOverlay();
@@ -3022,6 +3048,18 @@ export class MindMapView extends ItemView {
 		clientY: number,
 	): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
+		if (this.viewportHost) {
+			// getScreenCTM() reports the SVG's *own* user space, which on this
+			// path no longer includes the pan/zoom — that lives in a CSS
+			// transform above it. Invert the transform instead; the maths is
+			// unit-tested against the viewBox mapping it replaces.
+			return clientToUser(
+				this.viewBox,
+				this.viewportHost.getBoundingClientRect(),
+				clientX,
+				clientY,
+			);
+		}
 		const ctm = this.svg.getScreenCTM();
 		if (!ctm) return { x: 0, y: 0 };
 		const inv = ctm.inverse();
@@ -6355,17 +6393,21 @@ export class MindMapView extends ItemView {
 		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
-			// Lock the SVG to position:fixed so it escapes Obsidian's layout
-			// resize when the virtual keyboard opens. The SVG keeps its
-			// pre-keyboard pixel dimensions and is unaffected by parent shrinking.
-			if (this.svg) {
-				const svgRect = this.svg.getBoundingClientRect();
-				const s = this.svg.style;
+			// Lock the map to position:fixed so it escapes Obsidian's layout
+			// resize when the virtual keyboard opens, keeping its pre-keyboard
+			// pixel dimensions and staying unaffected by parent shrinking. On
+			// the transform path this has to be the host, not the SVG: the SVG
+			// is mid-transform, so its client rect is the *panned* box rather
+			// than the viewport, and pinning it would also lift its clipping.
+			const pinned = this.viewportHost ?? this.svg;
+			if (pinned) {
+				const rect = pinned.getBoundingClientRect();
+				const s = pinned.style;
 				s.position = "fixed";
-				s.left = `${svgRect.left}px`;
-				s.top = `${svgRect.top}px`;
-				s.width = `${svgRect.width}px`;
-				s.height = `${svgRect.height}px`;
+				s.left = `${rect.left}px`;
+				s.top = `${rect.top}px`;
+				s.width = `${rect.width}px`;
+				s.height = `${rect.height}px`;
 				s.zIndex = "9998";
 			}
 
@@ -6777,9 +6819,10 @@ export class MindMapView extends ItemView {
 		}
 		this.editMetrics = null;
 
-		// Restore SVG from fixed positioning used during mobile editing
-		if (this.svg) {
-			const s = this.svg.style;
+		// Restore the map from fixed positioning used during mobile editing
+		const pinned = this.viewportHost ?? this.svg;
+		if (pinned) {
+			const s = pinned.style;
 			s.position = "";
 			s.left = "";
 			s.top = "";
@@ -8110,6 +8153,7 @@ export class MindMapView extends ItemView {
 		svg.setAttribute("width", "100%");
 		svg.setAttribute("height", "100%");
 		svg.addClass("osmosis-mindmap-svg");
+		if (this.panByTransform) svg.addClass("osmosis-mindmap-svg-transformed");
 
 		// Initialize viewBox: use actual container dimensions so culling works from the start.
 		// The user sees the top-left portion of the map; pan/zoom to explore.
@@ -8121,12 +8165,25 @@ export class MindMapView extends ItemView {
 			this.zoom = 1;
 		}
 
-		svg.setAttribute(
-			"viewBox",
-			`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
-		);
+		// On the transform path the SVG carries no viewBox at all: without one,
+		// one user unit is one CSS pixel and the origin is the element's
+		// top-left, which is exactly the coordinate system the transform below
+		// is written against. The transform itself is applied once the host is
+		// in the document and has a box to measure.
+		if (!this.panByTransform) {
+			svg.setAttribute(
+				"viewBox",
+				`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
+			);
+		}
 
 		this.svg = svg;
+		// The previous host went out with container.empty() and the new one is
+		// not built until the nodes have rendered, below. Node rendering is
+		// awaited, so a pointer or resize event can land in between: leave the
+		// viewport unset for that window rather than measuring a detached box,
+		// which degrades to a no-op pan instead of a jump.
+		this.viewportHost = null;
 
 		// Create groups for layering: branch lines behind nodes
 		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
@@ -8176,7 +8233,21 @@ export class MindMapView extends ItemView {
 		}
 
 		await Promise.all(renderPromises);
-		container.appendChild(svg);
+		if (this.panByTransform) {
+			const host = container.createDiv({ cls: "osmosis-mindmap-host" });
+			host.appendChild(svg);
+			this.viewportHost = host;
+			// The host is in the document now, so it has a box to measure —
+			// place the map. This is the transform path's equivalent of the
+			// viewBox attribute set above, not a viewport change, so it stays
+			// clear of updateViewBox()'s culling and overlay side effects.
+			svg.style.transform = viewBoxTransform(
+				this.viewBox,
+				host.getBoundingClientRect(),
+			);
+		} else {
+			container.appendChild(svg);
+		}
 	}
 
 	private async drawNode(
