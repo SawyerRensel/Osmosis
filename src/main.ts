@@ -1,7 +1,8 @@
 import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
-// Type-only: CodeMirror 6 ships inside Obsidian and is reached through the
-// editor at runtime, so nothing from this import survives into the bundle.
-import type { EditorView } from "@codemirror/view";
+/* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
+import { keymap, type EditorView } from "@codemirror/view";
+/* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/state is provided by Obsidian, never bundled. */
+import { Prec } from "@codemirror/state";
 import { DEFAULT_SETTINGS, OsmosisSettings, OsmosisSettingTab } from "./settings";
 import { FSRSScheduler } from "./database/FSRSScheduler";
 import { StudySessionManager } from "./study/StudySessionManager";
@@ -37,6 +38,7 @@ import {
 } from "./card-gen/occlusion";
 import { OcclusionEditorModal } from "./views/OcclusionEditorModal";
 import { generateBlockId } from "./block-id";
+import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
@@ -130,6 +132,12 @@ export default class OsmosisPlugin extends Plugin {
 	contextualStudy!: ContextualStudyProcessor;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
+	/**
+	 * Whether Rapid Flashcard Mode is on. Deliberately in memory only and off at
+	 * every startup: nothing but the menu item turns it off, and a persisted
+	 * "on" would mean Enter behaving strangely days later in an unrelated note.
+	 */
+	private rapidMode = false;
 
 	async onload() {
 		await this.loadSettings();
@@ -481,6 +489,9 @@ export default class OsmosisPlugin extends Plugin {
 		// ── Granular line-card add/remove/exclude (plan §8) ──────
 		this.registerLineCardCommands();
 
+		// ── Rapid Flashcard Mode ────────────────────────────────
+		this.registerRapidFlashcardMode();
+
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
 		this.app.workspace.onLayoutReady(() => {
@@ -670,7 +681,7 @@ export default class OsmosisPlugin extends Plugin {
 					blockId = fresh.insertions[0]?.id ?? blockId;
 					return fresh.content;
 				});
-				await this.ensureLineCardsOptIn(file);
+				await this.ensureCardsOptIn(file);
 			}
 
 			this.scheduleStore.setOcclusion(file.path, blockId!, set);
@@ -688,13 +699,35 @@ export default class OsmosisPlugin extends Plugin {
 		);
 	}
 
-	/** Add `osmosis-cards: true` to a note that has not opted into line cards. */
-	private async ensureLineCardsOptIn(file: TFile): Promise<void> {
+	/** Whether a note's frontmatter already opts it into card generation. */
+	private hasCardsOptIn(file: TFile): boolean {
 		const rawOptIn: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.["osmosis-cards"];
-		if (rawOptIn === true || rawOptIn === "true") return;
+		return rawOptIn === true || rawOptIn === "true";
+	}
+
+	/** Add `osmosis-cards: true` to a note that has not opted into card generation. */
+	private async ensureCardsOptIn(file: TFile): Promise<void> {
+		if (this.hasCardsOptIn(file)) return;
 		await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
 			frontmatter["osmosis-cards"] = true;
 		});
+	}
+
+	/**
+	 * Opt a note into card generation after a card has been written into its
+	 * editor — by Rapid Flashcard Mode or an "Insert … card" command.
+	 *
+	 * Without the opt-in the note generates *nothing*, fences included (see
+	 * `processNote`), so a card inserted into an un-opted-in note would sit
+	 * there inert. The editor is flushed first because `processFrontMatter`
+	 * reads the file from disk, while the new card is so far only in the
+	 * editor's buffer.
+	 */
+	private async optInAfterCardInsert(view: MarkdownView): Promise<void> {
+		const file = view.file;
+		if (!file || this.hasCardsOptIn(file)) return;
+		await view.save();
+		await this.ensureCardsOptIn(file);
 	}
 
 	/**
@@ -1120,7 +1153,7 @@ export default class OsmosisPlugin extends Plugin {
 			this.addCommand({
 				id: skeleton.id,
 				name: skeleton.name,
-				editorCallback: (editor) => {
+				editorCallback: (editor, ctx) => {
 					const cursor = editor.getCursor();
 					const metaBlock = skeleton.meta ? `${skeleton.meta}\n` : "";
 					const fence = `\`\`\`osmosis\n${metaBlock}Front content\n***\nBack content\n\`\`\`\n`;
@@ -1134,9 +1167,99 @@ export default class OsmosisPlugin extends Plugin {
 						{ line: frontLine, ch: 0 },
 						{ line: frontLine, ch: "Front content".length },
 					);
+
+					// A fence in an un-opted-in note generates no card at all.
+					if (ctx instanceof MarkdownView) void this.optInAfterCardInsert(ctx);
 				},
 			});
 		}
+	}
+
+	/**
+	 * Rapid Flashcard Mode: while it is on, blank lines alone turn typed text
+	 * into an `osmosis` fence — one blank line separates front from back, two
+	 * commit the card. The grammar and its edge cases live in `rapid-cards.ts`;
+	 * this is the keymap and the toggle.
+	 *
+	 * The toggle sits in a note's ⋯ menu rather than the command palette, which
+	 * is several taps deep on the platform the mode exists for.
+	 */
+	private registerRapidFlashcardMode(): void {
+		// Highest precedence, so a commit is decided before the editor's own
+		// Enter — list continuation and the rest — claims the keystroke.
+		this.registerEditorExtension(
+			Prec.highest(keymap.of([{ key: "Enter", run: (view) => this.commitRapidCard(view) }])),
+		);
+
+		this.addCommand({
+			id: "toggle-rapid-flashcard-mode",
+			name: "Toggle rapid flashcard mode",
+			callback: () => {
+				this.toggleRapidMode();
+			},
+		});
+
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, source: string) => {
+				if (source !== "more-options") return;
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+				menu.addItem((item) => {
+					item.setTitle("Rapid flashcard mode")
+						.setIcon("zap")
+						.setChecked(this.rapidMode)
+						// Alongside "Source mode", the other editor-behaviour toggle.
+						.setSection("pane")
+						.onClick(() => {
+							this.toggleRapidMode();
+						});
+				});
+			}),
+		);
+	}
+
+	/** Flip Rapid Flashcard Mode, from either the ⋯ menu or the command palette. */
+	private toggleRapidMode(): void {
+		this.rapidMode = !this.rapidMode;
+		new Notice(`Rapid flashcard mode ${this.rapidMode ? "on" : "off"}`);
+	}
+
+	/**
+	 * Handle Enter while the mode is on: commit a card when this keystroke is
+	 * the second blank line below a front/back pair, and otherwise hand the
+	 * keystroke back to the editor untouched.
+	 */
+	private commitRapidCard(view: EditorView): boolean {
+		if (!this.rapidMode) return false;
+
+		// Only the note you are actually editing. The mind map's embedded
+		// editors inherit registered extensions too, and a fence appearing
+		// inside a node being renamed is not what anyone asked for.
+		const active = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!active || (active.editor as unknown as { cm?: EditorView }).cm !== view) return false;
+
+		const { state } = view;
+		const cursor = state.selection.main;
+		if (!cursor.empty) return false;
+
+		const edit = planRapidCard(
+			state.doc.toString().split("\n"),
+			state.doc.lineAt(cursor.head).number - 1,
+		);
+		if (!edit) return false;
+
+		const from = state.doc.line(edit.fromLine + 1).from;
+		const to = state.doc.line(edit.toLine + 1).to;
+		// Every replacement line before the one the cursor ends on, newlines included.
+		const offset = edit.text
+			.split("\n")
+			.slice(0, edit.cursorLine)
+			.reduce((sum, line) => sum + line.length + 1, 0);
+		view.dispatch({
+			changes: { from, to, insert: edit.text },
+			selection: { anchor: from + offset },
+		});
+		void this.optInAfterCardInsert(active);
+		return true;
 	}
 
 	/**
