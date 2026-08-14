@@ -188,7 +188,19 @@ function paintMasks(wrapper: HTMLElement, occlusion: CardOcclusion, side: Occlus
 	svg.setAttribute("viewBox", "0 0 1 1");
 	svg.setAttribute("preserveAspectRatio", "none");
 
-	for (const element of maskElements(occlusion, side, imageAspect(img))) {
+	const elements = maskElements(occlusion, side, imageAspect(img));
+
+	// A diagram with anything still covered is a question, not a picture to open.
+	// The platform's image viewer clones the `<img>` alone — the masks are a
+	// sibling SVG, so they are left behind — and what pops up over the card is the
+	// unmasked picture: the answer. The class makes the image untouchable, which
+	// takes the tap away from Obsidian's delegated `img` handler and hands it to
+	// the wrapper, where the study surfaces are already listening for a reveal. A
+	// diagram with nothing covered keeps the viewer: zooming it shows exactly what
+	// is on screen already.
+	wrapper.classList.toggle("is-covered", elements.some((el) => el.role !== "revealed"));
+
+	for (const element of elements) {
 		const mask = svg.createSvg(element.tag, { cls: ROLE_CLASSES[element.role] });
 		for (const [name, value] of Object.entries(element.attrs)) {
 			mask.setAttribute(name, value);
