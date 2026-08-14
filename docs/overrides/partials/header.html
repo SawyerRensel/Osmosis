@@ -1,0 +1,94 @@
+{#-
+  Overrides the stock header so the section nav sits inline in the header row
+  (between the site name and the search box) on desktop, instead of in the
+  separate tabs bar below it. The tabs bar itself is suppressed by the empty
+  `tabs` block in main.html.
+
+  Everything outside the two marked blocks is the stock partial verbatim.
+-#}
+{% import "partials/tabs-item.html" as item with context %}
+{% set class = "md-header" %}
+{% if "navigation.tabs.sticky" in features %}
+  {% set class = class ~ " md-header--shadow md-header--lifted" %}
+{% elif "navigation.tabs" not in features %}
+  {% set class = class ~ " md-header--shadow" %}
+{% endif %}
+<header class="{{ class }}" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="{{ lang.t('header') }}">
+    <a href="{{ config.extra.homepage | d(nav.homepage.url, true) | url }}" title="{{ config.site_name | e }}" class="md-header__button md-logo" aria-label="{{ config.site_name }}" data-md-component="logo">
+      {% include "partials/logo.html" %}
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="{{ lang.t('nav') }}">
+      {% set icon = config.theme.icon.menu or "material/menu" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            {#- The site name is the way home now that the Home tab is gone, so
+                it links rather than sitting there as inert text. -#}
+            <a href="{{ config.extra.homepage | d(nav.homepage.url, true) | url }}" class="osmosis-header-home">
+              {{ config.site_name }}
+            </a>
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            {% if page.meta and page.meta.title %}
+              {{ page.meta.title }}
+            {% else %}
+              {{ page.title }}
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+    {#- BEGIN Osmosis: inline section nav (desktop only, hidden by CSS below the
+        breakpoint where the drawer takes over). Home is dropped because the
+        site name links there, and the pages listed here are the ones the footer
+        does not carry. -#}
+    {% set footer_only = ["Use Cases", "Changelog"] %}
+    <nav class="osmosis-header-nav" aria-label="{{ lang.t('tabs') }}">
+      <ul class="md-tabs__list">
+        {% for nav_item in nav.items %}
+          {% if nav_item.title != "Home" and nav_item.title not in footer_only %}
+            {{ item.render(nav_item) }}
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </nav>
+    {#- END Osmosis -#}
+    {% if config.theme.palette %}
+      {% if not config.theme.palette is mapping %}
+        {% include "partials/palette.html" %}
+      {% endif %}
+    {% endif %}
+    {% if not config.theme.palette is mapping %}
+      {% include "partials/javascripts/palette.html" %}
+    {% endif %}
+    {% if config.extra.alternate %}
+      {% include "partials/alternate.html" %}
+    {% endif %}
+    {% if "search" in config.plugins %}
+      {% set search = config.plugins["search"] | attr("config") %}
+      {% if search.enabled %}
+        <label class="md-header__button md-icon" for="__search" aria-label="{{ lang.t('search') }}">
+          {% set icon = config.theme.icon.search or "material/magnify" %}
+          {% include ".icons/" ~ icon ~ ".svg" %}
+        </label>
+        {% include "partials/search.html" %}
+      {% endif %}
+    {% endif %}
+    <div class="md-header__source">
+      {% if config.repo_url %}
+        {% include "partials/source.html" %}
+      {% endif %}
+    </div>
+  </nav>
+  {% if "navigation.tabs.sticky" in features %}
+    {% if "navigation.tabs" in features %}
+      {% include "partials/tabs.html" %}
+    {% endif %}
+  {% endif %}
+</header>
