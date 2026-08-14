@@ -10,12 +10,12 @@ people:
 location:
 related:
   - "[[Study all Osmosis flashcards in all modes]]"
-status: To-Do
+status: Ideas
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-13T12:03:12.000Z
-date_modified: 2026-08-13T12:03:12.000Z
+date_modified: 2026-08-14T01:11:06.143Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

@@ -15,12 +15,12 @@ priority:
 progress_current:
 progress_total:
 pull_request: https://github.com/SawyerRensel/Osmosis/pull/22
-date_created: "2026-08-03T15:38:58.397Z"
-date_modified: "2026-08-13T12:14:57.000Z"
-date_start_scheduled: "2026-08-13T02:42:45.000Z"
-date_start_actual: "2026-08-13T02:42:45.000Z"
-date_end_scheduled: "2026-08-13T12:14:57.000Z"
-date_end_actual: "2026-08-13T12:14:57.000Z"
+date_created: 2026-08-03T15:38:58.397Z
+date_modified: 2026-08-14T02:30:16.189Z
+date_start_scheduled: 2026-08-13T06:12:45-04:00
+date_start_actual: 2026-08-13T02:42:45.000Z
+date_end_scheduled: 2026-08-13T09:14:57-04:00
+date_end_actual: 2026-08-13T12:14:57.000Z
 all_day: true
 repeat_frequency:
 repeat_interval:

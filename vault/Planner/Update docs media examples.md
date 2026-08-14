@@ -70,6 +70,14 @@ color:
 
 > [!important] Colorful
 > Let's make this examples colorful.  People mind map for style and color. 
+> Let's also include mobile screenshots too
+
+
+- [ ] Docs screenshots
+- [ ] Homepage screenshots/recordings
+- [ ] Community Plugins listing page 
+	- [ ] Desktop
+	- [ ] Mobile
 
 
 **Videos** — MP4 (H.264 `yuv420p`) _and_ WebM (VP9), silent. Start and end on the same frame so the loop is seamless; move the cursor slowly. Export frame 1 of each as a PNG poster.
