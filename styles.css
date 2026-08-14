@@ -2292,6 +2292,15 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	justify-content: center;
 	margin-top: 0;
 	animation: osmosis-fade-in 0.2s;
+	/* The bubble is the one part of the map that is painted while the map is
+	   moving under it: it appears mid-session and then rides along on every
+	   pan. Its fade-in gives it a compositing layer for 0.2s and then hands the
+	   layer back, and on iOS the repaints after that under-damaged its left
+	   edge — the leftmost button, Again, smeared a trail of red slivers across
+	   the map until a selection forced a full repaint. Asking for the layer
+	   outright keeps it for the bubble's whole life, so a pan moves the bubble
+	   instead of redrawing it. */
+	will-change: transform;
 }
 
 
