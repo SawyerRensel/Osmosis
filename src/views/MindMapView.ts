@@ -2910,43 +2910,23 @@ export class MindMapView extends ItemView {
 		if (isSecondary && isTopDown) {
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + child.rect.height + offsetY;
-			if (parent.source.type === "root") {
-				px = cx;
-				py = cy + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + offsetY;
 		} else if (isSecondary) {
 			cx = child.rect.x + child.rect.width + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				px = cx + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				py = cy;
-			} else {
-				px = parent.rect.x + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		} else if (isTopDown) {
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + offsetY;
-			if (parent.source.type === "root") {
-				px = cx;
-				py = cy - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + parent.rect.height + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + parent.rect.height + offsetY;
 		} else {
 			cx = child.rect.x + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				px = cx - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				py = cy;
-			} else {
-				px = parent.rect.x + parent.rect.width + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
 		const minX = Math.min(px, cx);
@@ -3023,7 +3003,7 @@ export class MindMapView extends ItemView {
 					this.drawNode(this.nodesGroup, node, offsetX, offsetY),
 				);
 				// Draw branch line whenever the child node is visible
-				if (node.parent) {
+				if (node.parent && node.parent.source.type !== "root") {
 					this.drawBranchLine(
 						this.branchLinesGroup,
 						node.parent,
@@ -8217,8 +8197,15 @@ export class MindMapView extends ItemView {
 				this.drawNode(nodesGroup, node, offsetX, offsetY),
 			);
 
+			// Top-level nodes hang off the virtual root, which is never drawn
+			// (see the `continue` above, and OsmosisTree.root). A branch line to
+			// it therefore had nothing to reach and was drawn as a fixed-length
+			// stub — a line poking out of the side of the map's first node, and
+			// out of every top-level node in a note with no single heading above
+			// them.
 			if (
 				node.parent &&
+				node.parent.source.type !== "root" &&
 				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
 			) {
 				this.drawBranchLine(
@@ -8609,52 +8596,28 @@ export class MindMapView extends ItemView {
 			// Child attachment: bottom-center
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + child.rect.height + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx;
-				py = cy + stubLength;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + offsetY;
 		} else if (isSecondary) {
 			// Secondary in horizontal: child is to the left of parent
 			// Child attachment: center-right
 			cx = child.rect.x + child.rect.width + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx + stubLength;
-				py = cy;
-			} else {
-				px = parent.rect.x + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		} else if (isTopDown) {
 			// Primary in top-down: child is below parent
 			// Child attachment: top-center
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx;
-				py = cy - stubLength;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + parent.rect.height + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + parent.rect.height + offsetY;
 		} else {
 			// Primary side (default): center-left of child
 			cx = child.rect.x + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx - stubLength;
-				py = cy;
-			} else {
-				px = parent.rect.x + parent.rect.width + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
 		// Apply branch line styles: per-node overrides > class > map-level > theme > default
