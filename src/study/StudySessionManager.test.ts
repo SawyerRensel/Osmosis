@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CardStore } from "../store/CardStore";
 import { FSRSScheduler } from "../database/FSRSScheduler";
-import { StudySessionManager } from "./StudySessionManager";
+import { StudySessionManager, priorIntervalSeconds } from "./StudySessionManager";
 import type { Card, StudyMode } from "../database/types";
 import type { ReviewLogEntry } from "../store/ReviewLog";
 
@@ -577,5 +577,49 @@ describe("StudySessionManager review logging", () => {
 		store.addCard(makeCard({ id: "os-a1" }));
 
 		await expect(manager.recordReview("os-a1", 3)).resolves.toBeDefined();
+	});
+});
+
+describe("priorIntervalSeconds", () => {
+	it("is zero for a card with no schedule", () => {
+		expect(priorIntervalSeconds(undefined)).toBe(0);
+		expect(priorIntervalSeconds({ id: "os-a1" } as Card)).toBe(0);
+	});
+
+	it("is due minus lastReview when both are present", () => {
+		const due = Date.parse("2026-08-01T09:00:00Z");
+		const card = {
+			id: "os-a1",
+			due,
+			lastReview: due - 4 * 86_400_000,
+		} as Card;
+
+		expect(priorIntervalSeconds(card)).toBe(4 * 86_400);
+	});
+
+	// `serializeScheduleEntry` omits `lastReview` when it is null, so a card can
+	// carry a real `due` and no `lastReview`. Falling back to 0 here filed a
+	// scheduled card as brand new and dropped its review out of the retention
+	// and recall panels, which filter on this value.
+	it("falls back to stability when lastReview is missing", () => {
+		const card = {
+			id: "os-a1",
+			due: Date.parse("2026-08-01T09:00:00Z"),
+			stability: 4.21,
+			state: "review",
+		} as Card;
+
+		expect(priorIntervalSeconds(card)).toBe(Math.round(4.21 * 86_400));
+	});
+
+	it("treats a mature stability as mature", () => {
+		const card = { id: "os-a1", due: Date.now(), stability: 30 } as Card;
+		expect(priorIntervalSeconds(card)).toBeGreaterThanOrEqual(21 * 86_400);
+	});
+
+	it("never returns a negative interval", () => {
+		const due = Date.parse("2026-08-01T09:00:00Z");
+		const card = { id: "os-a1", due, lastReview: due + 86_400_000 } as Card;
+		expect(priorIntervalSeconds(card)).toBe(0);
 	});
 });

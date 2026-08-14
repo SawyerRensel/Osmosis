@@ -3,9 +3,13 @@
  * Write a synthetic review log into the dev vault, so the stats dashboard can
  * be tested against a full year of history without waiting a year for one.
  *
- * The generated shards are real `.jsonl` files in the log folder and are
- * gitignored (`vault/**\/*.jsonl`), which is why the *generator* is committed
- * and its output is not. Only this script is a fixture; the data is disposable.
+ * The generated shards are real Markdown shards in the log folder, written in
+ * the same shape `ReviewLog` writes: a preamble line, an unclosed
+ * ` ```osmosis-reviews ` fence, a header line, then one JSON entry per line.
+ * Only this script is a fixture; the data it writes is disposable, and the
+ * default log folder (`vault/Osmosis/`) is gitignored. Point the log folder
+ * somewhere else and its output is *not* ignored — that is a property of where
+ * you aimed the setting, not of this script.
  *
  *   node e2e/fixtures/generate-review-log.mjs            # 400 days, ~6k reviews
  *   node e2e/fixtures/generate-review-log.mjs --days 60
@@ -52,6 +56,13 @@ const DEVICE = "fixture";
 const INSTALL = "fixture-install";
 const MATURE_SECONDS = 21 * 86_400;
 
+// Mirrors `SHARD_EXTENSION`, `SHARD_FENCE_TAG` and `SHARD_FORMAT_VERSION` in
+// src/store/ReviewLog.ts. Duplicated rather than imported because this is plain
+// node and those live in TypeScript — if they change there, change them here.
+const SHARD_EXTENSION = ".md";
+const SHARD_FENCE_TAG = "osmosis-reviews";
+const SHARD_FORMAT_VERSION = 2;
+
 const args = process.argv.slice(2);
 const clean = args.includes("--clean");
 const daysArg = args.indexOf("--days");
@@ -60,7 +71,7 @@ const totalDays = daysArg === -1 ? 400 : Number(args[daysArg + 1]);
 if (clean) {
 	if (existsSync(LOG_FOLDER)) {
 		for (const name of readdirSync(LOG_FOLDER)) {
-			if (name.endsWith(`.${DEVICE}.jsonl`)) rmSync(join(LOG_FOLDER, name));
+			if (name.endsWith(`.${DEVICE}${SHARD_EXTENSION}`)) rmSync(join(LOG_FOLDER, name));
 		}
 	}
 	console.log(`Removed ${DEVICE} shards from ${LOG_FOLDER}`);
@@ -87,6 +98,13 @@ function harvestCardIds(root) {
 	const ids = [];
 
 	const walk = (dir) => {
+		// Shards are Markdown now, so this walk would otherwise descend into the
+		// log folder and scan its own output — megabytes of JSON per file, and a
+		// ` ```osmosis-reviews ` fence that the fence check below reads as a card
+		// fence. The same reason `isReviewLogPath` guards the plugin's own
+		// Markdown listeners.
+		if (dir === LOG_FOLDER) return;
+
 		for (const name of readdirSync(dir)) {
 			if (name.startsWith(".")) continue;
 			const path = join(dir, name);
@@ -182,6 +200,11 @@ for (let dayOffset = totalDays - 1; dayOffset >= 0; dayOffset--) {
 			r: rating,
 			s: state,
 			iv,
+			// The interval the card was answered *at* — what it carried before
+			// this answer replaced it. Every maturity split on the dashboard
+			// reads this rather than `iv`, so without it the generated log has
+			// no mature reviews at all.
+			pi: previous.iv,
 			st: Math.round((iv / 86_400) * 1.4 * 10000) / 10000,
 			d: Math.round((2 + random() * 7) * 10000) / 10000,
 			e: Math.floor(2000 + random() * 12_000),
@@ -226,10 +249,20 @@ mkdirSync(LOG_FOLDER, { recursive: true });
 
 let written = 0;
 for (const [month, lines] of shards) {
-	const header = JSON.stringify({ device: DEVICE, install: INSTALL, v: 1 });
+	const header = JSON.stringify({
+		device: DEVICE,
+		install: INSTALL,
+		v: SHARD_FORMAT_VERSION,
+	});
+	// The fence is deliberately never closed, exactly as `shardPreamble` writes
+	// it: an unclosed fence runs to the end of the document, so the file stays
+	// well-formed while every write remains a pure append.
+	const preamble =
+		`Osmosis review log — ${DEVICE}, ${month}. Generated file; do not edit.\n\n` +
+		`\`\`\`${SHARD_FENCE_TAG}\n`;
 	writeFileSync(
-		join(LOG_FOLDER, `${month}.${DEVICE}.jsonl`),
-		`${header}\n${lines.join("\n")}\n`,
+		join(LOG_FOLDER, `${month}.${DEVICE}${SHARD_EXTENSION}`),
+		`${preamble}${header}\n${lines.join("\n")}\n`,
 	);
 	written += lines.length;
 }

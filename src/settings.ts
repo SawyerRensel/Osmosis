@@ -99,12 +99,6 @@ export interface OsmosisSettings {
 	 * slug to the same label can be told apart. Generated on first load.
 	 */
 	installId: string;
-	/**
-	 * Whether the user has dismissed the Obsidian Sync notice. The notice
-	 * informs rather than detects — Sync's "all other types" toggle is not
-	 * readable from the plugin — so it needs a way to be closed.
-	 */
-	reviewLogSyncNoticeDismissed: boolean;
 
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
@@ -170,7 +164,6 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	reviewLogFolder: "Osmosis/Reviews",
 	reviewLogDeviceLabel: "",
 	installId: "",
-	reviewLogSyncNoticeDismissed: false,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -359,34 +352,11 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				heading: "Review history",
 				items: [
 					{
-						name: "Check that Obsidian Sync carries review history",
-						desc:
-							"Sync only carries .jsonl files when \"Sync all other types\" is on in Settings → Sync, and it is off by default. "
-							+ "Sync settings do not propagate, so it has to be enabled on every device separately. "
-							+ "Reviews recorded while it is off stay on this device. "
-							+ "Osmosis cannot read that setting, so it cannot confirm this for you.",
-						// Shown whenever Sync is running, until dismissed. It
-						// deliberately does not claim the toggle is off —
-						// that state is not reachable from the Sync instance.
-						visible: () => this.plugin.shouldShowSyncNotice(),
-						render: (setting) => {
-							setting.setClass("osmosis-settings-notice");
-							setting.addButton((btn) => {
-								btn.setButtonText("Dismiss").onClick(() => {
-									void this.plugin.dismissSyncNotice().then(() => {
-										// update(), not display(): on Obsidian
-										// 1.13+ only update() re-evaluates the
-										// declarative definitions, including
-										// this row's `visible` predicate.
-										this.update();
-									});
-								});
-							});
-						},
-					},
-					{
 						name: "Review log folder",
-						desc: "Where per-review history is stored. Changing this moves the existing files.",
+						desc:
+							"Where per-review history is stored, as generated Markdown files. "
+							+ "Changing this moves the existing files. "
+							+ "Add this folder to Settings → Files & links → Excluded files to keep it out of search.",
 						render: (setting) => {
 							this.buildPathInput(setting, {
 								value: this.plugin.settings.reviewLogFolder,

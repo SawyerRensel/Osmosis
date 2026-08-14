@@ -24,14 +24,18 @@ declare module "obsidian" {
 		 * fallback names the device.
 		 *
 		 * Note what is deliberately *not* declared here: whether Sync's "Sync
-		 * all other types" toggle is on, which governs whether the log's
-		 * `.jsonl` shards travel between devices at all. It was looked for and
-		 * is not reachable from the instance — there is no `allowTypes` on it,
-		 * `filter.allowTypes` stays `{}` with the toggle both on and off, and
-		 * `canSyncPath()` tests only path filters (it answers true for
-		 * `.jsonl` and `.png` in both states). Checked against Sync internal
-		 * version 5280. The settings notice therefore informs rather than
-		 * detects — see `shouldShowSyncNotice()` in main.ts.
+		 * all other types" toggle is on. It was looked for and is not reachable
+		 * from the instance — there is no `allowTypes` on it, `filter.allowTypes`
+		 * stays `{}` with the toggle both on and off, and `canSyncPath()` tests
+		 * only path filters (it answers true for `.jsonl` and `.png` in both
+		 * states). Checked against Sync internal version 5280.
+		 *
+		 * That dead end is why review log shards are Markdown. The toggle
+		 * governs whether non-Markdown files travel between devices at all, it
+		 * is off by default, and it does not propagate — so a `.jsonl` shard
+		 * could silently never reach a second device and the plugin had no way
+		 * to detect it or even warn accurately. A `.md` shard sidesteps the
+		 * question entirely. See the header of `store/ReviewLog.ts`.
 		 */
 		internalPlugins: {
 			plugins: {

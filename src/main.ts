@@ -9,7 +9,7 @@ import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
-import { ReviewLog, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
+import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -18,6 +18,7 @@ import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBro
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
+import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
 import { planIdGeneration, removeBlockIdsInRange, type LineRange } from "./card-gen/generate-ids";
@@ -178,6 +179,7 @@ export default class OsmosisPlugin extends Plugin {
 				excludeTags: this.settings.excludeTags,
 				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
+			(path: string) => isReviewLogPath(path, this.settings.reviewLogFolder),
 			(file: TFile) => {
 				const cache = this.app.metadataCache.getFileCache(file);
 				const inlineTags = (cache?.tags ?? []).map((t) => t.tag.replace(/^#/, ""));
@@ -469,6 +471,10 @@ export default class OsmosisPlugin extends Plugin {
 		this.lineReveal = new LineRevealProcessor(this);
 		this.lineReveal.register();
 
+		// Review log shards are notes now, so opening one has to show something
+		// better than fifteen thousand lines of JSON.
+		registerReviewShardProcessor(this);
+
 		// ── Card Insertion Commands ──────────────────────────────
 		this.registerCardInsertionCommands();
 
@@ -503,23 +509,19 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (file instanceof TFile && file.extension === "md") {
-					debouncedSync(file);
-				}
+				if (this.isNoteFile(file)) debouncedSync(file);
 			}),
 		);
 
 		this.registerEvent(
 			this.app.vault.on("create", (file) => {
-				if (file instanceof TFile && file.extension === "md") {
-					debouncedSync(file);
-				}
+				if (this.isNoteFile(file)) debouncedSync(file);
 			}),
 		);
 
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
-				if (file instanceof TFile && file.extension === "md") {
+				if (this.isNoteFile(file)) {
 					this.cardSync.handleDelete(file.path);
 					this.refreshDashboard();
 				}
@@ -528,14 +530,42 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
-				if (!(file instanceof TFile)) return;
-				if (file.extension === "md") {
+				if (this.isNoteFile(file)) {
 					this.cardSync.handleRename(oldPath, file.path);
 					this.refreshDashboard();
 					return;
 				}
-				void this.repointFenceEmbeds(oldPath, file);
+				if (!(file instanceof TFile)) return;
+				// A note moved *into* the review log folder: nothing will sync
+				// that path again, so its cards have to go now or linger forever.
+				if (
+					file.extension === "md"
+					&& !isReviewLogPath(oldPath, this.settings.reviewLogFolder)
+				) {
+					this.cardSync.handleDelete(oldPath);
+					this.refreshDashboard();
+					return;
+				}
+				if (file.extension !== "md") void this.repointFenceEmbeds(oldPath, file);
 			}),
+		);
+	}
+
+	/**
+	 * Whether a vault event is about a note Osmosis should look at.
+	 *
+	 * Review log shards are Markdown so that Obsidian Sync carries them without
+	 * configuration, which also makes them indistinguishable from notes to every
+	 * listener above. Each flush would otherwise re-parse its own 1.8 MB shard
+	 * through the card parser and drag a dashboard and chrome refresh along with
+	 * it — silently, since nothing errors; studying just gets slower the longer
+	 * you have been studying.
+	 */
+	private isNoteFile(file: TAbstractFile): file is TFile {
+		return (
+			file instanceof TFile
+			&& file.extension === "md"
+			&& !isReviewLogPath(file.path, this.settings.reviewLogFolder)
 		);
 	}
 
@@ -736,33 +766,6 @@ export default class OsmosisPlugin extends Plugin {
 		}
 
 		return platformDeviceLabel(Platform);
-	}
-
-	/**
-	 * Whether to show the Sync notice in settings: Obsidian Sync is running
-	 * and the user has not dismissed it.
-	 *
-	 * Worth surfacing because the failure it describes is invisible — reviews
-	 * keep recording normally, they just never reach the other devices, and
-	 * the toggle is per-device so enabling it once is not enough.
-	 *
-	 * Note this does *not* check whether the toggle is actually off. That
-	 * state is not reachable from the Sync instance (see
-	 * `obsidian-internals.d.ts` for what was tried), so the notice informs
-	 * rather than detects, and carries a Dismiss instead. Two guesses at the
-	 * internal shape both produced a notice that lied about the user's
-	 * configuration; saying something true and letting the user close it beats
-	 * a third guess.
-	 */
-	shouldShowSyncNotice(): boolean {
-		if (this.settings.reviewLogSyncNoticeDismissed) return false;
-		return this.app.internalPlugins.plugins.sync?.enabled === true;
-	}
-
-	/** Hide the Sync notice for good. */
-	async dismissSyncNotice(): Promise<void> {
-		this.settings.reviewLogSyncNoticeDismissed = true;
-		await this.saveData(this.settings);
 	}
 
 	/**

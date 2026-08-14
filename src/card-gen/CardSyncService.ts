@@ -26,6 +26,15 @@ export class CardSyncService {
 		private readonly store: CardStore,
 		private readonly fenceWriter: FenceWriter,
 		private readonly getOptions: () => CardGenerationOptions,
+		/**
+		 * True for a path the review log owns.
+		 *
+		 * Shards are Markdown, so `getMarkdownFiles()` hands every one of them to
+		 * the flashcard parser — five heavy years is 108 MB of JSON fed through
+		 * card generation at every launch. Nothing errors; startup just gets
+		 * slower the longer the user has been studying.
+		 */
+		private readonly isLogPath: (path: string) => boolean,
 		private readonly getFileTags?: (file: TFile) => string[],
 		/**
 		 * Resolved line-card schedules for a note, keyed by block ID —
@@ -68,6 +77,9 @@ export class CardSyncService {
 	 * Sync a single file's cards to the store.
 	 */
 	async syncFile(file: TFile): Promise<void> {
+		// Guarded here rather than at each caller: this is the one funnel every
+		// sync goes through, so a future call site cannot forget it.
+		if (this.isLogPath(file.path)) return;
 		// Skip re-sync if we're currently writing IDs or schedule data
 		if (this.writingPaths.has(file.path)) return;
 		if (this.fenceWriter.isWriting(file.path)) return;

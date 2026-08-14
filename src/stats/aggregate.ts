@@ -1,7 +1,6 @@
 import type { Card, StudyMode } from "../database/types";
 import type { DeckScope } from "../study/types";
 import {
-	MATURE_INTERVAL_SECONDS,
 	cardIntervalDays,
 	dayKey,
 	MATURE_INTERVAL_DAYS,
@@ -23,9 +22,11 @@ import {
  *     I/O. They can answer "how much did I study" but not "in which deck",
  *     because `DayRollup` deliberately holds no card IDs — that is what keeps
  *     a deleted deck from retroactively emptying the heatmap.
- *   - **Entry-level** functions take `ReviewLogEntry[]`, which costs a parse of
- *     every shard. Deck scoping lives here of necessity: joining a review to a
- *     deck needs the card ID the rollup does not carry.
+ *   - **Entry-level** work costs a parse of every shard. It is streamed rather
+ *     than materialised (see `DetailAccumulator` in `detail.ts`); what lives
+ *     here is the per-entry *predicate* half of it, so an entry can be admitted
+ *     or dropped without a list to filter. Deck scoping is here of necessity:
+ *     joining a review to a deck needs the card ID the rollup does not carry.
  *
  * So choosing a deck is what moves a volume graph from the cheap path to the
  * expensive one, and under a deck scope reviews of since-deleted cards drop
@@ -56,24 +57,33 @@ export function cardsInScope(cards: readonly Card[], scope: DeckScope): Card[] {
 	return cards.filter((card) => deckInScope(card.deck, scope));
 }
 
+/** Everything narrowing which reviews a detail panel counts. */
+export interface EntryScope {
+	deck: DeckScope;
+	mode: ModeFilter;
+	/** First day included, `YYYY-MM-DD`, or null for all history. */
+	startDay: string | null;
+}
+
 /**
- * The entries a deck scope covers.
+ * Whether one entry is inside a scope — the streaming path's admission test.
  *
- * An entry whose card no longer resolves is dropped rather than kept: it
- * belongs to no deck, so it cannot be inside one. Under "whole collection"
- * this filter is skipped entirely, which is what keeps deleted cards in the
- * collection-wide volume graphs.
+ * An entry whose card no longer resolves is dropped under a deck scope rather
+ * than kept: it belongs to no deck, so it cannot be inside one. Under "whole
+ * collection" the card is never consulted, which is what keeps deleted cards in
+ * the collection-wide volume graphs.
  */
-export function entriesInScope(
-	entries: readonly ReviewLogEntry[],
-	scope: DeckScope,
+export function entryInScope(
+	entry: ReviewLogEntry,
+	scope: EntryScope,
 	resolveCard: CardResolver,
-): ReviewLogEntry[] {
-	if (scope.type === "all") return [...entries];
-	return entries.filter((entry) => {
-		const card = resolveCard(entry.c);
-		return card !== undefined && deckInScope(card.deck, scope);
-	});
+): boolean {
+	if (scope.mode !== "all" && entry.m !== scope.mode) return false;
+	if (scope.startDay !== null && dayKey(entry.t) < scope.startDay) return false;
+	if (scope.deck.type === "all") return true;
+
+	const card = resolveCard(entry.c);
+	return card !== undefined && deckInScope(card.deck, scope.deck);
 }
 
 /** The first day a history scope includes, as a `YYYY-MM-DD` key. */
@@ -84,13 +94,22 @@ export function historyStartDay(now: number, history: HistoryScope): string | nu
 	return dayKey(start.getTime());
 }
 
-/** Restrict entries to a history scope. */
-export function entriesSince(
-	entries: readonly ReviewLogEntry[],
-	startDay: string | null,
-): ReviewLogEntry[] {
-	if (startDay === null) return [...entries];
-	return entries.filter((entry) => dayKey(entry.t) >= startDay);
+/**
+ * The shard months a history scope can possibly touch, or undefined for all of
+ * them — what lets a twelve-month view skip opening five years of files.
+ *
+ * Derived from `historyStartDay` rather than computed separately, so the month
+ * range can never exclude a shard the day filter would have admitted. Only the
+ * lower bound is set, for the same reason: a shard dated ahead of now is a
+ * clock-skewed write, not a reason to hide reviews the day filter accepts.
+ */
+export function historyMonthRange(
+	now: number,
+	history: HistoryScope,
+): { from: string } | undefined {
+	const startDay = historyStartDay(now, history);
+	if (startDay === null) return undefined;
+	return { from: startDay.slice(0, 7) };
 }
 
 // ── Day keys ──────────────────────────────────────────────────
@@ -350,15 +369,6 @@ export function studyModeTotals(points: readonly DayPoint[], rollup: Rollup): Re
 	return totals;
 }
 
-/** Reviews per study surface, straight from entries — the deck-scoped path. */
-export function studyModeFromEntries(
-	entries: readonly ReviewLogEntry[],
-): Record<StudyMode, number> {
-	const totals: Record<StudyMode, number> = { sequential: 0, contextual: 0, spatial: 0 };
-	for (const entry of entries) totals[entry.m] += 1;
-	return totals;
-}
-
 // ── Card counts ───────────────────────────────────────────────
 
 /** Slices of the Card Counts pie. */
@@ -586,7 +596,13 @@ export function retrievability(
 
 // ── Hourly breakdown ──────────────────────────────────────────
 
-/** One hour of the Hourly Breakdown graph. */
+/**
+ * One hour of the Hourly Breakdown graph.
+ *
+ * Hours are local, read with `getHours()`, so an hour repeated or skipped by a
+ * DST change lands where the clock on the wall said it did — the only reading
+ * of "what time do I study best" that means anything.
+ */
 export interface HourBucket {
 	hour: number;
 	reviews: number;
@@ -594,66 +610,7 @@ export interface HourBucket {
 	passed: number;
 }
 
-/**
- * Reviews by hour of the local day.
- *
- * Local, via `getHours()`, so an hour repeated or skipped by a DST change lands
- * where the clock on the wall said it did — which is the only reading of "what
- * time do I study best" that means anything.
- */
-export function hourlyBreakdown(entries: readonly ReviewLogEntry[]): HourBucket[] {
-	const buckets: HourBucket[] = Array.from({ length: 24 }, (_, hour) => ({
-		hour,
-		reviews: 0,
-		passed: 0,
-	}));
-
-	for (const entry of entries) {
-		const bucket = buckets[new Date(entry.t).getHours()];
-		if (!bucket) continue;
-		bucket.reviews += 1;
-		if (entry.r > 1) bucket.passed += 1;
-	}
-
-	return buckets;
-}
-
 // ── True retention ────────────────────────────────────────────
-
-/**
- * An entry paired with the interval the card was *sitting on* when it was
- * answered — the previous entry's granted interval, in seconds.
- */
-export interface EntryWithPriorInterval {
-	entry: ReviewLogEntry;
-	/** Null for a card's first logged review: nothing precedes it to ask. */
-	priorIv: number | null;
-}
-
-/**
- * Annotate each entry with the interval it was answered at.
- *
- * This exists because an entry's own `iv` is the interval the answer
- * *produced*, and using it to judge maturity would be catastrophically wrong
- * for retention: answering a mature card Again collapses its interval to
- * minutes, so every failure would classify as young and get filtered out,
- * reporting retention as a flat 100%.
- *
- * The interval going in is the interval the previous review handed out, so a
- * per-card walk in timestamp order recovers it exactly.
- */
-export function withPriorIntervals(
-	entries: readonly ReviewLogEntry[],
-): EntryWithPriorInterval[] {
-	const ordered = [...entries].sort((a, b) => a.t - b.t);
-	const lastIv = new Map<string, number>();
-
-	return ordered.map((entry) => {
-		const priorIv = lastIv.get(entry.c) ?? null;
-		lastIv.set(entry.c, entry.iv);
-		return { entry, priorIv };
-	});
-}
 
 /** The True Retention panel. */
 export interface RetentionStats {
@@ -661,54 +618,6 @@ export interface RetentionStats {
 	passed: number;
 	/** Pass rate, 0–1. Zero when nothing qualified. */
 	rate: number;
-	/**
-	 * Mature reviews skipped because the card's history starts inside the log —
-	 * there is no preceding entry to read an interval from. Reported rather than
-	 * hidden, because on a young log it can be most of them.
-	 */
-	unknownInterval: number;
-}
-
-/**
- * Retention on mature cards: the share answered Hard or better.
- *
- * Two filters, both Anki's, both load-bearing:
- *
- *  - **Mature only.** Learning-step reviews are answered many times a day and
- *    would swamp the ratio with numbers that say nothing about memory.
- *  - **First review of a card per day.** Without it, failing a card and
- *    immediately re-answering it correctly would *raise* retention, which
- *    inverts the meaning of the graph.
- */
-export function trueRetention(entries: readonly ReviewLogEntry[]): RetentionStats {
-	const seen = new Set<string>();
-	let reviewed = 0;
-	let passed = 0;
-	let unknownInterval = 0;
-
-	for (const { entry, priorIv } of withPriorIntervals(entries)) {
-		if (priorIv === null) {
-			// Only worth reporting for reviews that could plausibly be mature;
-			// a card's first-ever review never is.
-			if (entry.iv >= MATURE_INTERVAL_SECONDS) unknownInterval += 1;
-			continue;
-		}
-		if (priorIv < MATURE_INTERVAL_SECONDS) continue;
-
-		const key = `${entry.c}|${dayKey(entry.t)}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-
-		reviewed += 1;
-		if (entry.r > 1) passed += 1;
-	}
-
-	return {
-		reviewed,
-		passed,
-		rate: reviewed === 0 ? 0 : passed / reviewed,
-		unknownInterval,
-	};
 }
 
 /** One row of the True retention breakdown. */
@@ -719,7 +628,14 @@ export interface RetentionPeriod {
 	stats: RetentionStats;
 }
 
-const RETENTION_PERIODS: readonly { label: string; days: number | null }[] = [
+/**
+ * The windows the True Retention breakdown reports.
+ *
+ * One number over all history hides the thing worth knowing — whether retention
+ * is holding up lately — so the headline figure is also cut by window. They are
+ * nested, which is what lets one streaming pass fill all five.
+ */
+export const RETENTION_PERIODS: readonly { label: string; days: number | null }[] = [
 	{ label: "Today", days: 1 },
 	{ label: "Week", days: 7 },
 	{ label: "Month", days: 30 },
@@ -727,55 +643,9 @@ const RETENTION_PERIODS: readonly { label: string; days: number | null }[] = [
 	{ label: "All", days: null },
 ];
 
-/**
- * Retention over several windows at once.
- *
- * The windows are computed from one annotated pass rather than by calling
- * `trueRetention` per window, because the prior interval a review was answered
- * at can only be read from the entry *before* it — which may fall outside the
- * window. Filtering first would strip that predecessor and silently reclassify
- * the oldest review in every window.
- */
-export function retentionByPeriod(
-	entries: readonly ReviewLogEntry[],
-	now: number,
-): RetentionPeriod[] {
-	const annotated = withPriorIntervals(entries);
-
-	return RETENTION_PERIODS.map(({ label, days }) => {
-		const since = days === null ? null : startOfDay(daysBefore(now, days - 1));
-		const seen = new Set<string>();
-		let reviewed = 0;
-		let passed = 0;
-		let unknownInterval = 0;
-
-		for (const { entry, priorIv } of annotated) {
-			if (since !== null && entry.t < since) continue;
-			if (priorIv === null) {
-				if (entry.iv >= MATURE_INTERVAL_SECONDS) unknownInterval += 1;
-				continue;
-			}
-			if (priorIv < MATURE_INTERVAL_SECONDS) continue;
-
-			const key = `${entry.c}|${dayKey(entry.t)}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-
-			reviewed += 1;
-			if (entry.r > 1) passed += 1;
-		}
-
-		return {
-			label,
-			days,
-			stats: {
-				reviewed,
-				passed,
-				rate: reviewed === 0 ? 0 : passed / reviewed,
-				unknownInterval,
-			},
-		};
-	});
+/** The first timestamp a retention window includes; null is all history. */
+export function retentionWindowStart(now: number, days: number | null): number | null {
+	return days === null ? null : startOfDay(daysBefore(now, days - 1));
 }
 
 // ── Comparative recall ────────────────────────────────────────
@@ -804,42 +674,30 @@ export interface RecallStats {
 	meanMs: number;
 }
 
-/**
- * Recall rate grouped by whatever `keyOf` returns.
- *
- * One function behind three graphs — by study mode, by card type, by note —
- * because the only thing that differs between those questions is the grouping
- * key. The filtering underneath (graduated only, first review per card per day,
- * maturity from the *previous* entry's interval) is subtle enough that three
- * copies of it would be three chances to get it subtly different.
- *
- * A null key drops the entry: it is how "this card no longer resolves" is
- * expressed, and an unresolvable card belongs to no note and no type.
- */
-export function recallBy<K extends string>(
-	entries: readonly ReviewLogEntry[],
-	keyOf: (entry: ReviewLogEntry) => K | null,
+/** A recall bucket mid-accumulation, before the rates are worked out. */
+export interface RecallTotals {
+	reviewed: number;
+	passed: number;
+	totalMs: number;
+}
+
+/** Add one qualifying entry to a keyed bucket. */
+export function foldIntoRecall<K extends string>(
+	totals: Map<K, RecallTotals>,
+	key: K,
+	entry: ReviewLogEntry,
+): void {
+	const bucket = totals.get(key) ?? { reviewed: 0, passed: 0, totalMs: 0 };
+	bucket.reviewed += 1;
+	if (entry.r > 1) bucket.passed += 1;
+	bucket.totalMs += entry.e;
+	totals.set(key, bucket);
+}
+
+/** Finish accumulated buckets into the rates the tables render. */
+export function finishRecall<K extends string>(
+	totals: ReadonlyMap<K, RecallTotals>,
 ): Map<K, RecallStats> {
-	const totals = new Map<K, { reviewed: number; passed: number; totalMs: number }>();
-	const seen = new Set<string>();
-
-	for (const { entry, priorIv } of withPriorIntervals(entries)) {
-		if (priorIv === null || priorIv < GRADUATED_INTERVAL_SECONDS) continue;
-
-		const key = keyOf(entry);
-		if (key === null) continue;
-
-		const dedupeKey = `${entry.c}|${dayKey(entry.t)}`;
-		if (seen.has(dedupeKey)) continue;
-		seen.add(dedupeKey);
-
-		const bucket = totals.get(key) ?? { reviewed: 0, passed: 0, totalMs: 0 };
-		bucket.reviewed += 1;
-		if (entry.r > 1) bucket.passed += 1;
-		bucket.totalMs += entry.e;
-		totals.set(key, bucket);
-	}
-
 	const result = new Map<K, RecallStats>();
 	for (const [key, bucket] of totals) {
 		result.set(key, {
@@ -884,34 +742,6 @@ export function rankByRecall<K extends string>(
 
 /** The mode filter: a single study surface, or every one. */
 export type ModeFilter = StudyMode | "all";
-
-/** Entries answered on one study surface. */
-export function entriesInMode(
-	entries: readonly ReviewLogEntry[],
-	mode: ModeFilter,
-): ReviewLogEntry[] {
-	if (mode === "all") return [...entries];
-	return entries.filter((entry) => entry.m === mode);
-}
-
-/**
- * IDs of cards ever answered on a given surface.
- *
- * This is what lets the card-state graphs honour the mode filter at all: a
- * *card* has no mode — only a review does — so "cards studied contextually"
- * has to be reconstructed from the log. A card never reviewed appears in no
- * mode, which is why new cards drop out of the state graphs under any filter.
- */
-export function cardsReviewedInMode(
-	entries: readonly ReviewLogEntry[],
-	mode: ModeFilter,
-): Set<string> {
-	const ids = new Set<string>();
-	for (const entry of entries) {
-		if (mode === "all" || entry.m === mode) ids.add(entry.c);
-	}
-	return ids;
-}
 
 // ── Formatting ────────────────────────────────────────────────
 
