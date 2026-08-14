@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Cancelled
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-03T21:31:09.602Z
-date_modified: 2026-08-14T10:10:00.622Z
+date_modified: 2026-08-14T12:12:49.549Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -35,3 +35,4 @@ blocked_by:
 cover:
 color:
 ---
+Cancelled because it's easy enough to deleted scheduling data on a per-card basis by deleting the scheduling text.  The card browser also makes it easy enough to reset scheduling individually and in batch.  
