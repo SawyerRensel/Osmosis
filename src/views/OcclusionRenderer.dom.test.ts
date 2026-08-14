@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import type { App } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
-import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
+import { overlayMasks, removeMaskOverlays, renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 
 /**
  * Smoke tests that the mask overlay actually draws.
@@ -255,6 +255,43 @@ describe("renderOcclusion in a note", () => {
 });
 
 /**
+ * Whether the wrapper says the picture is still hiding something.
+ *
+ * The stylesheet takes a covered image out of hit testing, which is what stops
+ * Obsidian opening its image viewer on the tap that was meant to reveal the
+ * card. The viewer clones the `<img>` and nothing else, so a covered diagram
+ * opened in it is the answer — masks left behind, labels on show, over the very
+ * card being asked.
+ */
+describe("covered diagrams are not tappable pictures", () => {
+	const isCovered = (side: OcclusionSide, card: CardOcclusion = occlusion): boolean =>
+		render(side, card).querySelector(".osmosis-occlusion")!.classList.contains("is-covered");
+
+	it("marks a side that hides something, whichever side it is", () => {
+		// The back covers the target's siblings, so it hides an answer too.
+		expect(isCovered("front")).toBe(true);
+		expect(isCovered("back")).toBe(true);
+		expect(isCovered("all-hidden", { ...occlusion, target: "" })).toBe(true);
+	});
+
+	it("leaves an uncovered diagram alone — zooming it shows what is on screen", () => {
+		expect(isCovered("all-revealed", { ...occlusion, target: "" })).toBe(false);
+		expect(isCovered("none")).toBe(false);
+	});
+
+	it("clears the mark when a repaint uncovers the picture", () => {
+		// Reveal is a repaint, never a rebuild, so the class has to come back off
+		// the wrapper the first paint put it on.
+		const container = render("all-hidden", { ...occlusion, target: "" });
+		const wrapper = container.querySelector(".osmosis-occlusion")!;
+
+		repaintOcclusion(container, { ...occlusion, target: "" }, "all-revealed");
+
+		expect(wrapper.classList.contains("is-covered")).toBe(false);
+	});
+});
+
+/**
  * The picture and its masks are the whole of what this renderer draws. Anki's
  * Header and Back Extra are deliberately not part of the format — a card's text
  * is the note's own prose around the embed, which every study surface already
@@ -265,7 +302,8 @@ describe("renderOcclusion content", () => {
 		for (const side of ["front", "back", "all-hidden", "all-revealed"] as const) {
 			const children = Array.from(render(side).children);
 
-			expect(children.map((el) => el.className)).toEqual(["osmosis-occlusion"]);
+			expect(children).toHaveLength(1);
+			expect(children[0]!.classList.contains("osmosis-occlusion")).toBe(true);
 		}
 	});
 });

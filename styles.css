@@ -1384,6 +1384,19 @@ hr.osmosis-map-style-divider {
 	object-fit: fill;
 }
 
+/* While anything on the diagram is covered, the picture must not be tappable.
+   Obsidian opens an image viewer on a click that lands on an `img`, and that
+   viewer clones the image alone — the masks are a sibling SVG, so they do not
+   come with it and the pop-up is the *unmasked* picture, i.e. the answer laid
+   over the card being asked. Taking the image out of hit testing hands the tap
+   to the wrapper instead, which is where every study surface already listens for
+   a reveal, so tapping a masked diagram uncovers it rather than zooming it.
+   Selected on the wrapper rather than the image, because `overlayMasks` wraps
+   images the note itself rendered, which carry none of our classes. */
+.osmosis-occlusion.is-covered > img {
+	pointer-events: none;
+}
+
 /* Also a size container, for the same reason the annotation layer is one: it is
    pinned to the wrapper with `inset: 0`, so its size is the image's own box and
    never comes from its contents. That is what lets a stroke be a fraction of
