@@ -56,6 +56,9 @@ extra_css:
   - assets/stylesheets/chrome.css
   - assets/stylesheets/home.css
 
+extra_javascript:
+  - assets/javascripts/home-media.js
+
 # Plugins
 plugins:
   - search
@@ -117,10 +120,9 @@ nav:
     - studying/index.md
     - Study Modes: studying/study-modes.md
     - Spaced Repetition: studying/spaced-repetition.md
-  - Dashboard:
-    - dashboard/index.md
-    - Card Browser: dashboard/card-browser.md
-    - Statistics: dashboard/statistics.md
+    - Dashboard: studying/dashboard.md
+    - Card Browser: studying/card-browser.md
+    - Statistics: studying/statistics.md
   - Reference:
     - reference/index.md
     - Settings: reference/settings.md

@@ -6,7 +6,7 @@ icon: lucide/bar-chart-3
 
 Seventeen panels over your whole review history: what you studied, how it went,
 and what's coming. Open it with the :lucide-bar-chart: **Stats** button on the
-[dashboard](index.md), or run **Open statistics** from the command palette.
+[dashboard](dashboard.md), or run **Open statistics** from the command palette.
 
 ![The Osmosis stats dashboard](../assets/media/osmosis_stats_dashboard.png)
 

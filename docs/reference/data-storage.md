@@ -130,7 +130,7 @@ sending someone the note sends them the map.
 ## Review History
 
 Every answer you give is appended to a **review log**: an append-only history
-that the [stats dashboard](../dashboard/statistics.md) reads. It lives in
+that the [stats dashboard](../studying/statistics.md) reads. It lives in
 `Osmosis/Reviews` by default (**Settings > Osmosis > Review log folder**).
 
 ### Shards

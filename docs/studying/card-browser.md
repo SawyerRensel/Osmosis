@@ -8,7 +8,7 @@ The Osmosis Browser is every card in your vault in one list — fences, line
 cards, clozes, occlusions and all — with the scheduling controls you would
 expect: suspend, reset, change deck, delete.
 
-Open it with the :lucide-search: **Browse** button on the [dashboard](index.md),
+Open it with the :lucide-search: **Browse** button on the [dashboard](dashboard.md),
 or run **Open card browser** from the command palette.
 
 ![The card browser in table layout](../assets/media/osmosis_browser_table_layout.png)

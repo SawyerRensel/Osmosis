@@ -80,4 +80,4 @@ this for you. You can also opt in whole folders or tags under
 - Learn the full set of [mind map editing and navigation shortcuts](../mind-mapping/editing.md)
 - Explore all [card types](../flashcards/card-types.md), including cloze deletions, code cloze, and [image occlusion](../flashcards/image-occlusion.md)
 - Customize your maps with [themes and styling](../mind-mapping/styling.md)
-- Watch your progress on the [statistics dashboard](../dashboard/statistics.md)
+- Watch your progress on the [statistics dashboard](../studying/statistics.md)

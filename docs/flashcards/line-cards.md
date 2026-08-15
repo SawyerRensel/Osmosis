@@ -150,7 +150,7 @@ To keep them out of decks while still studiable in place (peek/study/spatial):
 
 Deleting a line (or just its block ID) **soft-deletes** the card: the schedule entry stays in `osmosis-schedule`, and if the ID reappears the card re-links with its history intact.
 
-The [card browser](../dashboard/card-browser.md) deletes a line card the same
+The [card browser](../studying/card-browser.md) deletes a line card the same
 way — by stripping its block ID. Your prose is never touched.
 
 ## Bonus: Stable Styling Anchors

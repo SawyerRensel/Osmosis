@@ -50,7 +50,7 @@ scheduled for next week is in none of the three columns, so it isn't in the
 total either.
 
 Click any deck to study just that deck and its sub-decks; click **Study all** for
-everything. Counts respect your [daily limits](../studying/spaced-repetition.md#daily-limits),
+everything. Counts respect your [daily limits](spaced-repetition.md#daily-limits),
 and [excluded cards](../flashcards/line-cards.md#exclude-from-study) never appear
 in them.
 

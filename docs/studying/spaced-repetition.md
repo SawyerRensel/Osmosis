@@ -59,7 +59,7 @@ Configure in **Settings > Osmosis**:
 ## Fixing a Card's Schedule
 
 FSRS handles scheduling on its own, but sometimes a card needs a hand. The
-[card browser](../dashboard/card-browser.md#mutations) is where that happens:
+[card browser](card-browser.md#mutations) is where that happens:
 
 | Situation | Do this |
 |-----------|---------|
@@ -85,7 +85,7 @@ fence's own card stays at the top level.
 [Data Storage](../reference/data-storage.md) has the complete format, including
 the [review log](../reference/data-storage.md#review-history) that records every
 answer you give and feeds the
-[statistics dashboard](../dashboard/statistics.md).
+[statistics dashboard](statistics.md).
 
 ### Why This Matters
 

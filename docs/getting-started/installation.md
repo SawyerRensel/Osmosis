@@ -18,11 +18,11 @@ icon: lucide/download
 4. Open **Settings > Community Plugins** and enable "Osmosis"
 
 !!! tip
-    After enabling, a :lucide-brain-circuit: icon appears in the left ribbon — that's the [Osmosis dashboard](../dashboard/index.md). Mind maps open from a note, not the ribbon: see [Quick Start](quick-start.md).
+    After enabling, a :lucide-brain-circuit: icon appears in the left ribbon — that's the [Osmosis dashboard](../studying/dashboard.md). Mind maps open from a note, not the ribbon: see [Quick Start](quick-start.md).
 
 ## Requirements
 
 | | |
 |---|---|
 | **Obsidian** | 1.13.0 or later, desktop or mobile |
-| **Bases** | Obsidian's Bases core plugin, for the [card browser](../dashboard/card-browser.md). Everything else works without it |
+| **Bases** | Obsidian's Bases core plugin, for the [card browser](../studying/card-browser.md). Everything else works without it |

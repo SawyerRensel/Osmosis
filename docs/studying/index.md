@@ -18,7 +18,7 @@ your performance, so a card rated anywhere updates its schedule everywhere.
 
 ## Starting a Session
 
-- **Sequential** — open the [dashboard](../dashboard/index.md) and click a deck,
+- **Sequential** — open the [dashboard](dashboard.md) and click a deck,
   or run **Study all decks**
 - **Contextual** — open a note with cards and click :lucide-graduation-cap:
   **Study this note** in its header
@@ -40,7 +40,7 @@ every card and records nothing, wherever you are.
 
     How FSRS works, ratings, card states, learning steps, and daily limits
 
--   [:octicons-table-24: __Dashboard__](../dashboard/index.md)
+-   [:octicons-table-24: __Dashboard__](dashboard.md)
 
     Decks and counts, the card browser, and the statistics dashboard
 

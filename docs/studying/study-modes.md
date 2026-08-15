@@ -17,7 +17,7 @@ two, an occluded diagram is one per mask group.
 
 Classic card-by-card review in a modal dialog.
 
-1. Open the [dashboard](../dashboard/index.md) and click a deck (or **Study all**)
+1. Open the [dashboard](dashboard.md) and click a deck (or **Study all**)
 2. The front of the card appears
 3. Click **Show Answer** (or press ++space++) to reveal the back
 4. Rate your recall: **Again** (++1++), **Hard** (++2++), **Good** (++3++), **Easy** (++4++)
@@ -42,7 +42,7 @@ Three icon buttons sit in the modal's top-left corner, beside the close button:
 
 Undo is **multi-level**: press it repeatedly to walk back through the session. It reverts excludes and ratings alike — undoing a rating restores the card's previous FSRS schedule, so a misclick costs you nothing.
 
-**Exclude** works differently depending on the card. Fence cards get `exclude: true` written into their fence; [line cards](../flashcards/line-cards.md#exclude-from-study) get `disabled: true` in the note's `osmosis-schedule`. Either way the history is kept and the card can be brought back later — from the same button, or in the [card browser](../dashboard/card-browser.md#mutations).
+**Exclude** works differently depending on the card. Fence cards get `exclude: true` written into their fence; [line cards](../flashcards/line-cards.md#exclude-from-study) get `disabled: true` in the note's `osmosis-schedule`. Either way the history is kept and the card can be brought back later — from the same button, or in the [card browser](card-browser.md#mutations).
 
 ### Keyboard Shortcuts
 
@@ -153,7 +153,7 @@ The :lucide-scan-eye: icon next to the study button enters **peek mode**: every 
 | **Contextual** | Studying while reading | Inline in your notes |
 | **Spatial** | Learning structure and relationships | On the mind map |
 
-All three modes use the same FSRS scheduler — a card rated in one mode updates its schedule everywhere. The [statistics dashboard](../dashboard/statistics.md) can tell you which mode is actually working best for you: **Recall by study mode** compares them.
+All three modes use the same FSRS scheduler — a card rated in one mode updates its schedule everywhere. The [statistics dashboard](statistics.md) can tell you which mode is actually working best for you: **Recall by study mode** compares them.
 
 !!! note "Excluded cards"
     A card you've [excluded from study](../flashcards/line-cards.md#exclude-from-study) sits out all three modes: it stays visible in peek and study, never enters the sequential queue, and doesn't count toward dashboard totals. Its history is kept, so including it again picks up where it left off.

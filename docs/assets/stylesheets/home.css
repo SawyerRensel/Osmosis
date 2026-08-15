@@ -207,6 +207,48 @@ a.osmosis-btn--ghost:hover {
 }
 
 /* --------------------------------------------------------------------------
+   Swappable media — a stack of frames driven by the rows beside it, so
+   pointing at a feature shows that feature. Wiring: assets/javascripts/
+   home-media.js. The rows carry `data-osmosis-swap-key`, matched against the
+   frames in the stack.
+   -------------------------------------------------------------------------- */
+
+/* Every frame shares one grid cell, so the stack stands as tall as the tallest
+   of them and swapping never reflows the section around it. */
+.osmosis-swap {
+  display: grid;
+}
+
+/* Centred, not top-aligned: the frames differ in aspect ratio, so the cell is
+   as tall as the tallest and a shorter frame would otherwise hang its slack
+   entirely below itself, pulling the section off balance. */
+.osmosis-swap > [data-osmosis-swap-key] {
+  align-self: center;
+  grid-area: 1 / 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.osmosis-swap > [data-osmosis-swap-key].is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Nothing is ever marked active without the script, so the first frame stands
+   in as the section's still image. */
+.osmosis-swap:not(:has(.is-active)) > [data-osmosis-swap-key]:first-child {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* The rows are made focusable by the script, so they need a focus ring. */
+.osmosis-home [data-osmosis-swap-key]:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
    Bands — a themed run of the page: centred heading, then stories and/or a
    row of secondary cards. The hairline goes on the *second* band onward, so
    the pillars sit under the hero without a rule cutting them off from it.
@@ -303,6 +345,20 @@ a.osmosis-btn--ghost:hover {
   color: var(--home-muted);
   font-size: 0.85rem;
   line-height: 1.7;
+}
+
+/* A row of pillars that drives a shared visual takes on card padding, so the
+   selected one has something to fill. Same specificity as the padding reset
+   above, so it wins on source order. */
+.osmosis-home ul.osmosis-pillars--swap:not([hidden]) > li {
+  border-radius: var(--home-radius);
+  cursor: pointer;
+  padding: 1.25rem;
+  transition: background-color 150ms;
+}
+
+.osmosis-home ul.osmosis-pillars--swap:not([hidden]) > li:is(:hover, .is-active) {
+  background: var(--home-surface);
 }
 
 /* --------------------------------------------------------------------------
@@ -434,8 +490,18 @@ a.osmosis-story__link {
   transition: background-color 125ms;
 }
 
-.osmosis-home ul.osmosis-story__list:not([hidden]) > li:hover {
+.osmosis-home ul.osmosis-story__list:not([hidden]) > li:is(:hover, .is-active) {
   background: var(--home-surface);
+}
+
+/* The selected row also gets an accent edge, so it stays legible as the one
+   driving the visual after the pointer has moved on to another row. */
+.osmosis-home ul.osmosis-story__list:not([hidden]) > li.is-active {
+  box-shadow: inset 2px 0 0 var(--md-accent-fg-color);
+}
+
+.osmosis-home ul.osmosis-story__list[data-osmosis-swap]:not([hidden]) > li {
+  cursor: pointer;
 }
 
 .osmosis-story__list svg {
@@ -526,6 +592,38 @@ a.osmosis-story__link {
 }
 
 /* --------------------------------------------------------------------------
+   Audience grid — ruled entries rather than cards, so the band reads as a list
+   of readers instead of another run of feature tiles.
+   -------------------------------------------------------------------------- */
+
+.osmosis-home ul.osmosis-audience:not([hidden]) {
+  display: grid;
+  gap: 1.5rem 2.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.osmosis-home ul.osmosis-audience:not([hidden]) > li {
+  border-top: 1px solid var(--home-hairline);
+  margin: 0;
+  padding: 1rem 0 0;
+}
+
+.osmosis-audience h3 {
+  font-size: 0.95rem;
+  margin-bottom: 0.45rem;
+}
+
+.osmosis-home ul.osmosis-audience:not([hidden]) > li > p {
+  color: var(--home-muted);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* --------------------------------------------------------------------------
    Closing call to action
    -------------------------------------------------------------------------- */
 
@@ -559,7 +657,7 @@ a.osmosis-story__link {
    -------------------------------------------------------------------------- */
 
 @media screen and (max-width: 76.1875em) {
-  .osmosis-home ul.osmosis-features__grid:not([hidden]) {
+  .osmosis-home :is(ul.osmosis-features__grid, ul.osmosis-audience):not([hidden]) {
     grid-template-columns: repeat(2, 1fr);
   }
 }
@@ -590,7 +688,7 @@ a.osmosis-story__link {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .osmosis-home :is(ul.osmosis-features__grid, ul.osmosis-mediacards):not([hidden]) {
+  .osmosis-home :is(ul.osmosis-features__grid, ul.osmosis-mediacards, ul.osmosis-audience):not([hidden]) {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -634,5 +732,9 @@ a.osmosis-story__link {
 
   a.osmosis-btn:hover {
     transform: none;
+  }
+
+  .osmosis-swap > [data-osmosis-swap-key] {
+    transition: none;
   }
 }

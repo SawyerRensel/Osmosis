@@ -122,7 +122,7 @@ Storage](../reference/data-storage.md) for the full format.
 
     Organizing cards into decks by folder, frontmatter, or per-card override
 
--   [:octicons-search-24: __Card Browser__](../dashboard/card-browser.md)
+-   [:octicons-search-24: __Card Browser__](../studying/card-browser.md)
 
     Find any card in the vault — then suspend, reset, re-deck, or delete it
 

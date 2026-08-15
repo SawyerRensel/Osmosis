@@ -15,16 +15,16 @@ that reach the same things. Any command can be bound to a hotkey under
 | **Open mind map view** | The [mind map](../mind-mapping/index.md) for the active note |
 | **Toggle mind map reading mode** | Switches the active map between editing and [reading mode](../mind-mapping/index.md#reading-mode) (++ctrl+e++) |
 | **Open mind map properties** | The [properties sidebar](../mind-mapping/styling.md#properties-sidebar) |
-| **Open dashboard** | The [dashboard](../dashboard/index.md) sidebar |
-| **Open card browser** | The [card browser](../dashboard/card-browser.md) |
-| **Open statistics** | The [stats dashboard](../dashboard/statistics.md) |
+| **Open dashboard** | The [dashboard](../studying/dashboard.md) sidebar |
+| **Open card browser** | The [card browser](../studying/card-browser.md) |
+| **Open statistics** | The [stats dashboard](../studying/statistics.md) |
 
 ## Studying
 
 | Command | What it does |
 |---------|--------------|
 | **Study all decks** | Starts a [sequential](../studying/study-modes.md#sequential-study) session across every deck |
-| **Undo last card mutation** | Reverts the last [card browser](../dashboard/card-browser.md#undo) mutation |
+| **Undo last card mutation** | Reverts the last [card browser](../studying/card-browser.md#undo) mutation |
 | **Redo last undone card mutation** | Replays it |
 
 ## Making Cards

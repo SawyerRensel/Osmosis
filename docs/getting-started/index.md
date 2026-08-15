@@ -41,7 +41,7 @@ Get Osmosis installed and learn the basics in under five minutes.
 
     Sequential, contextual, and spatial review, all scheduled by FSRS
 
--   [:octicons-graph-24: __Dashboard__](../dashboard/index.md)
+-   [:octicons-graph-24: __Dashboard__](../studying/dashboard.md)
 
     Decks, the card browser, and seventeen panels of statistics
 
