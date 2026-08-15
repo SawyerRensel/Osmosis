@@ -20,7 +20,6 @@ hide:
         <a class="osmosis-btn osmosis-btn--primary" href="obsidian://show-plugin?id=osmosis">Install Osmosis</a>
         <a class="osmosis-btn osmosis-btn--ghost" href="getting-started/quick-start/">Quick start &rarr;</a>
       </div>
-      <p class="osmosis-hero__note">Free and open source &middot; GPL-3.0 &middot; Requires Obsidian 1.13+</p>
     </div>
     <div class="osmosis-hero__media">
       <!-- MEDIA SWAP — video V1 (note ↔ map two-way edit loop). Replace the <img>
