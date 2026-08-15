@@ -92,4 +92,4 @@ answer you give and feeds the
 - **No external database** — Everything lives in your markdown files
 - **Sync just works** — Obsidian Sync, iCloud, Dropbox, or any file sync service carries your scheduling data automatically
 - **Portable** — Your review history travels with your notes
-- **Transparent** — You can inspect (but shouldn't edit) scheduling data directly
+- **Transparent** — You can inspect (but generally shouldn't edit) scheduling data directly

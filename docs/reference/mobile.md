@@ -61,15 +61,3 @@ toggle to find, and no per-device setup.
 Each device writes its **own** review log files, so two devices studying the
 same day never fight over one file. If your devices end up with the same
 auto-detected name, set **Settings > Osmosis > Device name** on one of them.
-
-## Known Differences
-
-- **The mind map pans by CSS transform on iOS.** WebKit strands rendered
-  markdown inside a panned SVG, which showed up as nodes vanishing or ghosting
-  mid-drag. Panning is done differently there as a result; nothing changes in
-  how you use it.
-- **Touch reordering on the stats dashboard is lightly tested.** It's built on a
-  known-working touch drag implementation, but hasn't been exercised on every
-  device.
-- **Large maps are heavier on a phone.** Viewport culling keeps rendering cheap,
-  but a very large transcluded map is still best explored collapsed.

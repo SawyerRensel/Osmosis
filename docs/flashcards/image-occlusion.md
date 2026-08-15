@@ -162,9 +162,3 @@ masks survive resizing, retina variants, and Obsidian's `|300` sizing suffix.
     update an embed sitting in an `osmosis` fence on its own. Osmosis handles
     that itself — fences are scanned on rename and rewritten. Line-card embeds
     are ordinary Markdown, so Obsidian already handles those.
-
-## What It Doesn't Have
-
-There are no separate **Header**, **Back Extra** or **Comments** fields, on
-purpose: the note's own prose around the image is already the card's context on
-every surface. Write above and below the image as you normally would.

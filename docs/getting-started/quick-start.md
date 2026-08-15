@@ -28,9 +28,9 @@ Add an `osmosis` code fence anywhere in a markdown file:
 
 ````markdown
 ```osmosis
-What does HTTP 429 mean?
+What is the capital of France?
 ***
-Too Many Requests — back off and retry later
+Paris
 ```
 ````
 

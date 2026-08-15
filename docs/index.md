@@ -37,7 +37,7 @@ hide:
 
            The fallback pair is what the reduced-motion rules in home.css expect. -->
       <img class="osmosis-media"
-           src="assets/media/osmosis_note_mind_map_split_view_zoomed.png"
+           src="assets/media/osmosis_note_view_mindmap_view_split_hero_banner_study_mode.png"
            alt="An Obsidian note and its Osmosis mind map side by side">
     </div>
   </div>
@@ -60,7 +60,7 @@ hide:
       <li>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>
         <h3>Your notes should last.</h3>
-        <p>Osmosis authors your content in plain text — readable in any editor and yours to keep.</p>
+        <p>Osmosis authors your content in plain text — readable in any editor and yours to keep forever.</p>
       </li>
     </ul>
   </div>
@@ -70,7 +70,7 @@ hide:
 <section class="osmosis-band">
   <div class="osmosis-home__inner osmosis-band__head">
     <p class="osmosis-home__eyebrow">Mind maps</p>
-    <h2>Think in shapes, write in Markdown.</h2>
+    <h2>Visualize your thoughts.</h2>
     <p class="osmosis-band__lead">
       Headings become branches. Lists become nodes. Every edit on the map is an
       edit to the file.
@@ -93,7 +93,7 @@ hide:
         </div>
       </li>
       <li>
-        <h3>Thirteen themes, or your own</h3>
+        <h3>Built-in themes</h3>
         <p>
           Layout, spacing, branch lines, and per-node shape and colour — all
           saved in the note's frontmatter, so a map travels with its file.
@@ -117,16 +117,15 @@ hide:
         </div>
       </li>
       <li>
-        <h3>Safe to explore</h3>
+        <h3>A rich experience</h3>
         <p>
-          Reading mode makes a map read-only: pan, zoom, fold, and study all
-          still work, and the file stays exactly as you left it.
-          <a class="osmosis-story__link" href="mind-mapping/#reading-mode">Reading mode &rarr;</a>
+          Tables, code blocks, images, callouts, and LaTeX render inside the
+          node — just like they do in your notes.
+          <a class="osmosis-story__link" href="mind-mapping/#how-markdown-maps-to-nodes">What becomes a node &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
-          <!-- MEDIA SWAP: still S14 (mind map in reading mode on a phone) -->
-          <img src="assets/media/osmosis_mind_map_default_theme.png"
-               alt="Placeholder: a mind map open in reading mode">
+          <img src="assets/media/osmosis_note_mind_map_split_view_zoomed_rust_crate_ecosystem.png"
+               alt="A mind map whose nodes hold a table, a code block, and an image">
         </div>
       </li>
     </ul>
@@ -140,49 +139,74 @@ hide:
       <p class="osmosis-home__eyebrow">Flashcards</p>
       <h2>Cards that live in your notes.</h2>
       <p class="osmosis-story__body">
-        Write a card where the idea comes up. Six ways to make one, all landing
-        in the Markdown file you were already writing.
+        Write a card where the idea comes up. Seven card types, all landing in
+        the Markdown file you were already writing — and
+        <a href="flashcards/rapid-capture/">Rapid Capture</a> turns a run of
+        typing into cards as you go.
       </p>
       <ul class="osmosis-story__list" data-osmosis-swap="cards">
-        <li data-osmosis-swap-key="types">
+        <li data-osmosis-swap-key="basic">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="m6.08 10.37-3.48 1.58a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83l-3.5-1.59"/></svg>
-          <p><strong>Five card types.</strong> Basic, bidirectional, type-in, cloze, and code cloze — all from one <code>osmosis</code> fence.</p>
+          <p><strong>Basic.</strong> A classic front and a back experience.</p>
+        </li>
+        <li data-osmosis-swap-key="bidi">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
+          <p><strong>Bidirectional.</strong> One fence, two cards, scheduled apart.</p>
+        </li>
+        <li data-osmosis-swap-key="typein">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
+          <p><strong>Type-in.</strong> Type the answer instead of flipping the card.</p>
+        </li>
+        <li data-osmosis-swap-key="cloze">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/></svg>
+          <p><strong>Cloze deletion.</strong> Blank out a span; each blank is a card.</p>
+        </li>
+        <li data-osmosis-swap-key="codecloze">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></svg>
+          <p><strong>Code cloze.</strong> Hide code, highlighting left intact.</p>
         </li>
         <li data-osmosis-swap-key="occlusion">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></svg>
-          <p><strong>Image occlusion.</strong> Mask a diagram with rectangles, ellipses, and polygons. Each group of masks is its own card.</p>
-        </li>
-        <li data-osmosis-swap-key="rapid">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
-          <p><strong>Rapid capture.</strong> Blank lines commit cards as you type — built for making them on a phone.</p>
+          <p><strong>Image occlusion.</strong> Mask a diagram; each group is a card.</p>
         </li>
         <li data-osmosis-swap-key="lines">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M3 7.5h4"/><path d="M3 12h4"/><path d="M3 16.5h4"/><path d="M17 7.5h4"/><path d="M17 12h4"/><path d="M17 16.5h4"/></svg>
-          <p><strong>Whole notes, as cards.</strong> One command turns every eligible line into a scheduled card, anchored by a native block ID.</p>
+          <p><strong>Line cards.</strong> One command cards a whole note, line by line.</p>
         </li>
       </ul>
       <a class="osmosis-story__link" href="flashcards/card-types/">See the card types &rarr;</a>
     </div>
     <!-- Pointing at a row above brings its frame forward — see
-         assets/javascripts/home-media.js. Three of the four frames are stand-ins
-         drawn from the closest capture we have; each is marked below with the
-         still it is waiting for. -->
+         assets/javascripts/home-media.js. Only Basic and Code cloze have their
+         own capture; the rest are stand-ins drawn from the closest still we
+         have, each marked below with the shot it is waiting for. -->
     <div class="osmosis-story__media osmosis-swap" data-osmosis-swap-target="cards">
-      <img class="osmosis-media" data-osmosis-swap-key="types"
+      <img class="osmosis-media" data-osmosis-swap-key="basic"
+           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
+           alt="A basic Osmosis flashcard under review, question side">
+      <!-- MEDIA SWAP: still of a bidirectional card studied in its reverse direction -->
+      <img class="osmosis-media" data-osmosis-swap-key="bidi"
            src="assets/media/osmosis_sequential_study_flashcard_answer_frontback.png"
-           alt="An Osmosis flashcard showing its answer during review">
+           alt="Placeholder: a bidirectional card showing its answer">
+      <!-- MEDIA SWAP: still of a type-in card with a graded answer in the input -->
+      <img class="osmosis-media" data-osmosis-swap-key="typein"
+           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
+           alt="Placeholder: a type-in card awaiting a typed answer">
+      <!-- MEDIA SWAP: still of a cloze card with one blank hidden -->
+      <img class="osmosis-media" data-osmosis-swap-key="cloze"
+           src="assets/media/osmosis_sequential_study_flashcard_answer_code_cloze.png"
+           alt="Placeholder: a cloze card with one deletion hidden">
+      <img class="osmosis-media" data-osmosis-swap-key="codecloze"
+           src="assets/media/osmosis_sequential_study_flashcard_question_code_cloze.png"
+           alt="A code cloze card with part of the code block hidden">
       <!-- MEDIA SWAP: still of the occlusion editor, masks drawn over a diagram -->
       <img class="osmosis-media" data-osmosis-swap-key="occlusion"
-           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
-           alt="An Osmosis flashcard built from an image">
-      <!-- MEDIA SWAP: still of Rapid Flashcard Mode capturing cards in a note -->
-      <img class="osmosis-media" data-osmosis-swap-key="rapid"
-           src="assets/media/osmosis_sequential_study_flashcard_question_code_cloze.png"
-           alt="A card captured in a note, under review">
+           src="assets/media/osmosis_browser_card_layout.png"
+           alt="Placeholder: an image occlusion card, masks over a diagram">
       <!-- MEDIA SWAP: still of a note whose lines have become cards -->
       <img class="osmosis-media" data-osmosis-swap-key="lines"
            src="assets/media/osmosis_contextual_and_spatial_study_modes.png"
-           alt="A note whose lines are scheduled cards, beside its mind map">
+           alt="Placeholder: a note whose lines are scheduled cards, beside its mind map">
     </div>
   </section>
 </section>
@@ -193,9 +217,8 @@ hide:
     <p class="osmosis-home__eyebrow">Studying</p>
     <h2>Three ways to study the same card.</h2>
     <p class="osmosis-band__lead">
-      Every card type works in every mode, scheduled by FSRS — a scheduler
-      built on memory research. Rate a card anywhere and its schedule moves
-      everywhere.
+      Study any card in any mode, scheduled by FSRS — a system
+      built on memory research. Rate a card anywhere and its schedule updates consistently.
     </p>
     <a class="osmosis-story__link" href="studying/study-modes/">Compare study modes &rarr;</a>
   </div>
@@ -205,7 +228,7 @@ hide:
       <li data-osmosis-swap-key="spatial">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>
         <h3>On the map</h3>
-        <p>Due nodes hide behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.</p>
+        <p>Spatial study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.</p>
       </li>
       <li data-osmosis-swap-key="contextual">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M8 13h4"/><path d="M8 17h6"/></svg>
@@ -214,7 +237,7 @@ hide:
       </li>
       <li data-osmosis-swap-key="sequential">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M8 8h8"/><path d="M8 13h5"/><path d="M8 18h3"/></svg>
-        <h3>In a modal</h3>
+        <h3>From a window</h3>
         <p>Sequential study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.</p>
       </li>
     </ul>
@@ -249,7 +272,7 @@ hide:
   <div class="osmosis-home__inner">
     <ul class="osmosis-mediacards">
       <li>
-        <h3>Seventeen panels of statistics</h3>
+        <h3>Analyze your growth</h3>
         <p>
           A year-long heatmap, true retention, interval and stability, answer
           buttons, and your load for the weeks ahead — plus recall by study mode,
@@ -262,11 +285,11 @@ hide:
         </div>
       </li>
       <li>
-        <h3>Every card in the vault, in one table</h3>
+        <h3>Find any card in the vault</h3>
         <p>
           The browser is a Bases view, so Obsidian's own filtering narrows it to
-          the notes you care about. Then suspend, reset, change deck, or delete —
-          with session undo behind all four.
+          the notes you care about. Then suspend, reset, change deck, or delete flashcards —
+          with undo if you change your mind.
           <a class="osmosis-story__link" href="studying/card-browser/">Card browser &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
@@ -374,48 +397,6 @@ The value is dropped and its memory freed.
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
         <h3>Free and open source</h3>
         <p>GPL-3.0, developed in the open, with every feature available to everyone.</p>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<!-- ===================== Who it's for ===================== -->
-<section class="osmosis-band">
-  <div class="osmosis-home__inner osmosis-band__head">
-    <p class="osmosis-home__eyebrow">Who it's for</p>
-    <h2>Built for people who take notes to remember them.</h2>
-    <p class="osmosis-band__lead">
-      The subject changes; the loop stays the same. Here is where Osmosis tends
-      to land.
-    </p>
-    <a class="osmosis-story__link" href="use-cases/">Read the use cases &rarr;</a>
-  </div>
-
-  <div class="osmosis-home__inner">
-    <ul class="osmosis-audience">
-      <li>
-        <h3>Students</h3>
-        <p>Lecture notes are the deck. Diagrams become occlusion cards, and a term's worth of structure fits on one map.</p>
-      </li>
-      <li>
-        <h3>Self-taught developers</h3>
-        <p>Code cloze drills the syntax and the API while the map holds the architecture around it.</p>
-      </li>
-      <li>
-        <h3>Lifelong learners</h3>
-        <p>Books, talks, and articles you meant to keep. A card costs two blank lines, so you write them.</p>
-      </li>
-      <li>
-        <h3>Obsidian power users</h3>
-        <p>A Bases-backed card browser, a Markdown review log, and the sync you already run.</p>
-      </li>
-      <li>
-        <h3>Visual thinkers</h3>
-        <p>Structure you can see, rearrange, and study on directly — grown from the outline you already had.</p>
-      </li>
-      <li>
-        <h3>Measured reviewers</h3>
-        <p>Retention, workload, and recall by study mode, so the routine can be tuned against evidence.</p>
       </li>
     </ul>
   </div>

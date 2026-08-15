@@ -10,12 +10,15 @@ icon: lucide/download
 2. Search for "Osmosis"
 3. Click **Install**, then **Enable**
 
+[Install Osmosis](obsidian://show-plugin?id=osmosis){ .md-button .md-button--primary }
+
 ## Manual Installation
 
 1. Download the latest release (`main.js`, `manifest.json`, `styles.css`) from [GitHub Releases](https://github.com/SawyerRensel/Osmosis/releases)
 2. Create the folder `.obsidian/plugins/osmosis/` in your vault
 3. Copy the downloaded files into that folder
-4. Open **Settings > Community Plugins** and enable "Osmosis"
+4. Open the command pallette and run `Reload app without saving`
+5. Open **Settings > Community Plugins** and enable "Osmosis"
 
 !!! tip
     After enabling, a :lucide-brain-circuit: icon appears in the left ribbon — that's the [Osmosis dashboard](../studying/dashboard.md). Mind maps open from a note, not the ribbon: see [Quick Start](quick-start.md).

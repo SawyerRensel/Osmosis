@@ -80,7 +80,7 @@ Sometimes a line shouldn't be studied right now, but you don't want to lose its 
 
 | Where | How |
 |-------|-----|
-| Editor | **Exclude line cards in selection from study** / **Include line cards in selection in study** |
+| Editor | ++ctrl+++++p++ > **Exclude line cards in selection from study** / **Include line cards in selection in study** |
 | Mind map | Right-click a node > **Exclude from study** / **Include in study** (:lucide-eye-off: / :lucide-eye:) |
 | Sequential study | The exclude button on the study modal |
 

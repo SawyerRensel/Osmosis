@@ -279,10 +279,12 @@ The `osmosis-cloze` marker works with any comment syntax:
 
 ## Image Occlusion
 
-The sixth type doesn't come from typing a fence at all: right-click an image and
-choose **Create image occlusion** to draw masks over it. Each group of masks is
-one card, scheduled like a cloze deletion. See
-[Image Occlusion](image-occlusion.md).
+Right-click an image and choose **Create image occlusion** to draw masks over it. Each group of masks is one card, scheduled like a cloze deletion. See [Image Occlusion](image-occlusion.md).
+
+## Line Cards
+
+Line cards turn a whole note - or a part of a note - into flashcards. **Every line becomes its own scheduled card**, with no fences and no duplicate authoring. See [Line Cards](line-cards.md).
+
 
 ## Inserting Cards via Command Palette
 

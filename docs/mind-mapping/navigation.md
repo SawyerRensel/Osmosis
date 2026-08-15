@@ -39,8 +39,8 @@ Arrow keys navigate between nodes. Their behavior adapts to the map's layout dir
 
 | Action | Input |
 |--------|-------|
-| Pan | Drag on empty canvas |
-| Zoom | Scroll wheel or pinch |
+| Pan | Scroll (up/down) or ++shift+++scroll (left/right), or Drag on empty canvas |
+| Zoom | ++ctrl+++Scroll wheel, or pinch |
 | Fit all content | Right-click canvas > "Fit to view" |
 | Center on root | Right-click canvas > "Center on root" |
 
