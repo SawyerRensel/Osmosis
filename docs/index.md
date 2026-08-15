@@ -182,30 +182,30 @@ hide:
          have, each marked below with the shot it is waiting for. -->
     <div class="osmosis-story__media osmosis-swap" data-osmosis-swap-target="cards">
       <img class="osmosis-media" data-osmosis-swap-key="basic"
-           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
+           src="assets/media/osmosis_sequential_mode_card_basic_with_audio.png"
            alt="A basic Osmosis flashcard under review, question side">
       <!-- MEDIA SWAP: still of a bidirectional card studied in its reverse direction -->
       <img class="osmosis-media" data-osmosis-swap-key="bidi"
-           src="assets/media/osmosis_sequential_study_flashcard_answer_frontback.png"
+           src="assets/media/osmosis_sequential_mode_card_front_back_bidi.png"
            alt="Placeholder: a bidirectional card showing its answer">
       <!-- MEDIA SWAP: still of a type-in card with a graded answer in the input -->
       <img class="osmosis-media" data-osmosis-swap-key="typein"
-           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
+           src="assets/media/osmosis_sequential_mode_card_front_back_type_in.png"
            alt="Placeholder: a type-in card awaiting a typed answer">
       <!-- MEDIA SWAP: still of a cloze card with one blank hidden -->
       <img class="osmosis-media" data-osmosis-swap-key="cloze"
-           src="assets/media/osmosis_sequential_study_flashcard_answer_code_cloze.png"
+           src="assets/media/osmosis_sequential_study_card_cloze.png"
            alt="Placeholder: a cloze card with one deletion hidden">
       <img class="osmosis-media" data-osmosis-swap-key="codecloze"
-           src="assets/media/osmosis_sequential_study_flashcard_question_code_cloze.png"
+           src="assets/media/osmosis_sequential_study_card_code_cloze.png"
            alt="A code cloze card with part of the code block hidden">
       <!-- MEDIA SWAP: still of the occlusion editor, masks drawn over a diagram -->
       <img class="osmosis-media" data-osmosis-swap-key="occlusion"
-           src="assets/media/osmosis_browser_card_layout.png"
+           src="assets/media/osmosis_sequential_mode_card_image_occlusion.png"
            alt="Placeholder: an image occlusion card, masks over a diagram">
       <!-- MEDIA SWAP: still of a note whose lines have become cards -->
       <img class="osmosis-media" data-osmosis-swap-key="lines"
-           src="assets/media/osmosis_contextual_and_spatial_study_modes.png"
+           src="assets/media/osmosis_spatial_mode_line_card.png"
            alt="Placeholder: a note whose lines are scheduled cards, beside its mind map">
     </div>
   </section>
