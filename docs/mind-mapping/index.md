@@ -31,7 +31,11 @@ Nodes render rich content — bold, italic, code, images, and LaTeX all display 
 | Editor header | Click the :lucide-brain-circuit: icon next to the reading view toggle |
 | Command palette | "Open mind map view" |
 | File menu | Right-click a file > "Mind map view" |
-| Ribbon | Click the :lucide-brain-circuit: icon in the left sidebar |
+
+Every one of these knows which note to map. The mind map header carries the way
+back — :lucide-file-text: **Note view** — plus [reading mode](#reading-mode),
+[study and peek](../studying/study-modes.md#spatial-study), a pin toggle, and
+the :lucide-paintbrush: [properties sidebar](styling.md).
 
 ![Launch mind map from note view](../assets/media/osmosis_note_view_how_to_launch_mind_map_view_buttons.png)
 
@@ -96,6 +100,9 @@ Osmosis works on Obsidian mobile:
 | Select | Tap a node |
 | Edit | Double-tap a node |
 | Context menu | Long-press a node or canvas |
+
+See [Mobile](../reference/mobile.md) for the rest — including why *Reading on
+mobile only* is the setting most phone users want.
 
 ## Guides
 

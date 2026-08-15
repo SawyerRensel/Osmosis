@@ -4,11 +4,20 @@ icon: lucide/play
 
 # Study Modes
 
+Three surfaces, one scheduler. **Every card type works in every mode** — basic,
+bidirectional, type-in, cloze, code cloze, [occlusion](../flashcards/image-occlusion.md),
+and [line cards](../flashcards/line-cards.md) — and each mode asks the same
+questions of them.
+
+A fence that fans out into several cards is several questions everywhere: a
+three-group cloze is three reveals and three ratings, a bidirectional pair is
+two, an occluded diagram is one per mask group.
+
 ## Sequential Study
 
-Classic Anki-style card review in a modal dialog.
+Classic card-by-card review in a modal dialog.
 
-1. Open the **Dashboard** and click a deck (or "Study all")
+1. Open the [dashboard](../dashboard/index.md) and click a deck (or **Study all**)
 2. The front of the card appears
 3. Click **Show Answer** (or press ++space++) to reveal the back
 4. Rate your recall: **Again** (++1++), **Hard** (++2++), **Good** (++3++), **Easy** (++4++)
@@ -33,7 +42,7 @@ Three icon buttons sit in the modal's top-left corner, beside the close button:
 
 Undo is **multi-level**: press it repeatedly to walk back through the session. It reverts excludes and ratings alike — undoing a rating restores the card's previous FSRS schedule, so a misclick costs you nothing.
 
-**Exclude** works differently depending on the card. Fence cards get `exclude: true` written into their fence; [line cards](../flashcards/line-cards.md#exclude-from-study) get `disabled: true` in the note's `osmosis-schedule`. Either way the history is kept and the card can be brought back later.
+**Exclude** works differently depending on the card. Fence cards get `exclude: true` written into their fence; [line cards](../flashcards/line-cards.md#exclude-from-study) get `disabled: true` in the note's `osmosis-schedule`. Either way the history is kept and the card can be brought back later — from the same button, or in the [card browser](../dashboard/card-browser.md#mutations).
 
 ### Keyboard Shortcuts
 
@@ -50,49 +59,71 @@ Undo is **multi-level**: press it repeatedly to walk back through the session. I
 
 ## Contextual Study
 
-Study cards inline while reading your notes — no modal, no context switching. Reading view stays a normal reading surface by default: nothing is hidden until you ask for it.
+Study in the note itself — no modal, no context switching, surrounded by the
+explanations and examples you wrote.
 
-### Fence Cards
+Two actions appear in the header of any note that has cards, next to the
+reading/edit toggle:
 
-1. Open a note with cards in **reading view**
-2. `osmosis` fences appear as interactive cards with their answers hidden
-3. Click a card to reveal the answer — a casual peek, nothing recorded
-4. Click **Start studying** to activate FSRS rating; after each reveal, rate with Again / Hard / Good / Easy
+- :lucide-scan-eye: **Peek mode** — hides *every* card in the note. Reveal them
+  in any order by clicking; nothing is recorded. The equivalent of covering the
+  page with your hand.
+- :lucide-graduation-cap: **Study this note** — hides only the cards that are
+  **due or new**, and asks them one at a time. After each reveal, a rating
+  bubble appears and must be answered before the next card unlocks. A floating
+  pill tracks progress ("4/9 rated") with a **Stop** button, and a toast
+  confirms completion. If nothing is due, the button tells you instead of
+  starting a session.
 
-Fence-card hiding activates automatically when you open a note with cards. This is configurable in settings.
+![Contextual and spatial study](../assets/media/osmosis_contextual_and_spatial_study_modes.png)
 
-Once you rate a card, its answer **stays visible** for the rest of the session — you're reading the note, not drilling, so the text shouldn't vanish behind you. Each card also carries an exclude toggle, and ++ctrl+z++ undoes ratings and excludes here just as it does in the sequential modal.
+!!! note "Reading a note is not a quiz"
+    Outside a session, reading view renders your cards the way live preview
+    does — answers visible, clozes filled in. Hiding belongs to peek and study,
+    and nothing is hidden until you ask for it.
 
-For cloze cards, revealing swaps the front **in place** rather than stacking the answer beneath it: the surrounding sentence stays put and only the blanks fill in. Basic front/back cards keep the stacked layout.
+### How Cards Reveal
 
-![contextual study — question and answer](../assets/media/osmosis_contextual_and_spatial_study_modes.png)
+- **Cloze cards reveal in place** — the blanks fill in and the surrounding
+  sentence stays put, so your eye never leaves the passage.
+- **Basic and bidirectional cards stack** — the answer appears beneath the
+  question, because there the answer doesn't contain the question.
+- **Line cards** hide behind a `░░░░░░` placeholder and reveal in place.
+- **Multi-line blocks hide as one unit** — a code block, table, or callout
+  hides whole, including a list nested inside a callout, matching what the mind
+  map does.
+- **Cards that aren't due render normally during a session** — visible as
+  context, not asked, not counted.
 
-### Line Cards: Peek & Study
+Once you rate a card, its answer **stays visible** for the rest of the session —
+you're reading the note, not drilling. Each card also carries an exclude toggle,
+and ++ctrl+z++ undoes ratings and excludes here just as it does in the
+sequential modal.
 
-On notes with [line cards](../flashcards/line-cards.md), two extra actions appear in the reading-view header, next to the reading/edit toggle:
-
-- **Peek** (:lucide-scan-eye: icon) — hides *every* line-card line behind a `░░░░░░` placeholder. Click any placeholder to reveal it, in any order. Nothing is recorded — toggle off to return to normal reading.
-- **Study** (:lucide-graduation-cap: icon) — hides only lines whose card is **due or new** (scheduling decides, like spatial mode). Reveal proceeds top-down, one line at a time; after each reveal a rating bubble appears below the line and must be answered before the next line unlocks. A floating pill tracks progress ("4/9 rated") with a **Stop** button, and a toast confirms completion. If nothing is due, the button tells you instead of entering study.
-
-Multi-line blocks hide as one unit — a code block, table, or callout hides whole, including a list nested inside a callout, matching what the mind map does.
-
-!!! note
-    FSRS scheduling applies when you rate cards in contextual mode, just like in sequential mode. Ratings are batched into a single frontmatter write at session end.
+!!! info "Embedded notes stay put"
+    Contextual study deliberately leaves `![[embeds]]` alone. Study an embedded
+    note's cards in its own reading view, or on a [map](#spatial-study) that
+    includes it.
 
 ## Spatial Study
 
-Study on the mind map itself. Concepts stay in their spatial context, reinforcing structural relationships.
+Study on the mind map itself. Concepts stay in their spatial context,
+reinforcing structural relationships.
 
-1. Open a **mind map** of a note with [line cards](../flashcards/line-cards.md)
+1. Open a **mind map** of a note with cards
 2. Click the :lucide-graduation-cap: icon in the mind map header
-3. Nodes whose card is **due or new** hide behind `?` placeholders — the rest of the map stays fully visible, because seeing how information fits together is the point
+3. Nodes whose cards are **due or new** hide behind `?` placeholders — the rest of the map stays fully visible, because seeing how information fits together is the point
 4. **Tap a hidden node** to reveal it
 5. **Rate** with the bubble that appears below the node — Again (++1++), Hard (++2++), Good (++3++), Easy (++4++)
-6. A floating pill tracks progress ("4/9 due reviewed") with a **Stop** button; a toast confirms when every due card is reviewed, and the map stays open
+6. A floating pill tracks progress with a **Stop** button; a toast confirms when every due card is reviewed, and the map stays open
 
 ![Spatial study — nodes hidden](../assets/media/osmosis_spatial_study_mode_hidden.png)
 
 ![Spatial study — nodes revealed](../assets/media/osmosis_spatial_study_mode_revealed.png)
+
+A node holding a multi-card fence steps through its questions one at a time —
+the node's content swaps per question — so a three-group cloze on the map asks
+exactly what it asks in the modal.
 
 Spatial study is especially powerful for topics where understanding the relationships between concepts matters as much as memorizing individual facts. The physical position of nodes on the map creates spatial memory associations that reinforce recall.
 
@@ -110,11 +141,9 @@ Embedded notes (`![[note]]`) are first-class citizens in spatial study and peek:
 - A note whose line cards are [opted out of decks](../flashcards/line-cards.md) is still studiable in place — opt-out only affects decks and sequential study.
 - Embedding the same note twice puts both copies on one card: revealing one reveals the other, and it is rated (and counted) once.
 
-Contextual (reading-view) study deliberately leaves `![[embeds]]` alone — study an embedded note's lines in its own reading view or on a map that includes it.
-
 ### Peek on the Map
 
-The :lucide-scan-eye: icon next to the study button enters **peek mode**: every line-card node hides, you reveal them in any order by tapping, and nothing is recorded — the map equivalent of covering the page with your hand.
+The :lucide-scan-eye: icon next to the study button enters **peek mode**: every card node hides, you reveal them in any order by tapping, and nothing is recorded.
 
 ## Choosing a Mode
 
@@ -124,7 +153,7 @@ The :lucide-scan-eye: icon next to the study button enters **peek mode**: every 
 | **Contextual** | Studying while reading | Inline in your notes |
 | **Spatial** | Learning structure and relationships | On the mind map |
 
-All three modes use the same FSRS scheduler — a card rated in one mode updates its schedule everywhere.
+All three modes use the same FSRS scheduler — a card rated in one mode updates its schedule everywhere. The [statistics dashboard](../dashboard/statistics.md) can tell you which mode is actually working best for you: **Recall by study mode** compares them.
 
 !!! note "Excluded cards"
-    A line card you've [excluded from study](../flashcards/line-cards.md#exclude-from-study) sits out all three modes: it stays visible in peek and study, never enters the sequential queue, and doesn't count toward dashboard totals. Its history is kept, so including it again picks up where it left off.
+    A card you've [excluded from study](../flashcards/line-cards.md#exclude-from-study) sits out all three modes: it stays visible in peek and study, never enters the sequential queue, and doesn't count toward dashboard totals. Its history is kept, so including it again picks up where it left off.

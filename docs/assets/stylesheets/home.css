@@ -49,11 +49,11 @@
    Note: the `a` reset below sits at the same specificity as Material's
    `.md-typeset a`, so it wins on source order — which means the button and
    link rules further down must carry an `a` element prefix to outrank it. */
-.osmosis-home :is(h1, h2, h3, p) {
+.osmosis-home :is(h1, h2, h3, h4, p) {
   margin: 0;
 }
 
-.osmosis-home :is(h1, h2, h3) {
+.osmosis-home :is(h1, h2, h3, h4) {
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -207,6 +207,166 @@ a.osmosis-btn--ghost:hover {
 }
 
 /* --------------------------------------------------------------------------
+   Bands — a themed run of the page: centred heading, then stories and/or a
+   row of secondary cards. The hairline goes on the *second* band onward, so
+   the pillars sit under the hero without a rule cutting them off from it.
+   -------------------------------------------------------------------------- */
+
+.osmosis-band {
+  padding-block: clamp(3rem, 7vw, 5.5rem);
+}
+
+.osmosis-band--tight {
+  padding-block: clamp(2rem, 5vw, 3.5rem);
+}
+
+.osmosis-band + .osmosis-band {
+  border-top: 1px solid var(--home-hairline);
+}
+
+/* The head used to be followed by a story, which brought its own padding. It
+   is now followed by a grid, so it has to open the gap itself. */
+.osmosis-band__head {
+  margin-bottom: clamp(2.25rem, 5vw, 3.25rem);
+  text-align: center;
+}
+
+/* A left-aligned head breaks the run of centred ones; the lead loses its auto
+   margins so it hangs off the same edge as the heading. */
+.osmosis-band__head--start {
+  text-align: left;
+}
+
+.osmosis-home .osmosis-band__head--start p.osmosis-band__lead {
+  margin-inline: 0;
+  max-width: 40rem;
+}
+
+.osmosis-band__head h2 {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  margin-block: 0.7rem 1.1rem;
+}
+
+.osmosis-home p.osmosis-band__lead {
+  color: var(--home-muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+  margin-inline: auto;
+  max-width: 36rem;
+}
+
+/* A single wide visual closing out a band, under whatever sits above it. */
+.osmosis-band__media {
+  margin-top: clamp(2.5rem, 6vw, 4rem);
+}
+
+/* A story nested in a band gives up its own outer rhythm — the band owns the
+   space above and below the run. */
+.osmosis-band .osmosis-story {
+  padding-block: clamp(2rem, 4.5vw, 3.25rem);
+}
+
+/* --------------------------------------------------------------------------
+   Pillars — the three-up value proposition directly under the hero
+   -------------------------------------------------------------------------- */
+
+/* Same specificity battle as the feature grid below: the theme's
+   `.md-typeset ul:not([hidden])` and its list-item margin both have to be
+   outranked, hence the element-qualified selectors. */
+.osmosis-home ul.osmosis-pillars:not([hidden]) {
+  display: grid;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.osmosis-home ul.osmosis-pillars:not([hidden]) > li {
+  margin: 0;
+  padding: 0;
+}
+
+.osmosis-pillars svg {
+  color: var(--md-accent-fg-color);
+  height: 1.6rem;
+  margin-bottom: 1rem;
+  width: 1.6rem;
+}
+
+.osmosis-pillars h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.6rem;
+}
+
+.osmosis-home ul.osmosis-pillars:not([hidden]) > li > p {
+  color: var(--home-muted);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+
+/* --------------------------------------------------------------------------
+   Media cards — copy on top, a screenshot clipped by the card's bottom edge.
+   Same specificity dance as the other grids (see the feature grid note).
+   -------------------------------------------------------------------------- */
+
+.osmosis-home ul.osmosis-mediacards:not([hidden]) {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* No bottom padding: the shot is meant to run into the card's edge. */
+.osmosis-home ul.osmosis-mediacards:not([hidden]) > li {
+  background: var(--home-surface);
+  border-radius: var(--home-radius);
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  overflow: hidden;
+  padding: 1.75rem 1.75rem 0;
+}
+
+.osmosis-mediacards h3 {
+  font-size: 1.05rem;
+  margin-bottom: 0.6rem;
+}
+
+.osmosis-home ul.osmosis-mediacards:not([hidden]) > li > p {
+  color: var(--home-muted);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* The link rides inside the copy paragraph, so it needs its own line rather
+   than the block margin the standalone links use. */
+.osmosis-mediacards a.osmosis-story__link {
+  display: block;
+  margin-top: 0.9rem;
+}
+
+/* `margin-top: auto` pushes every shot to the bottom of its card, so a row of
+   cards with different amounts of copy still starts its screenshots on one
+   line. The fixed height then crops each one identically. */
+.osmosis-mediacards__shot {
+  height: 12rem;
+  margin-top: auto;
+  overflow: hidden;
+  padding-top: 1.5rem;
+}
+
+.osmosis-mediacards__shot img {
+  border-radius: 0.5rem 0.5rem 0 0;
+  box-shadow: 0 0 0 1px var(--home-hairline);
+  display: block;
+  width: 100%;
+}
+
+/* --------------------------------------------------------------------------
    Alternating story sections
    -------------------------------------------------------------------------- */
 
@@ -231,8 +391,8 @@ a.osmosis-btn--ghost:hover {
   order: -1;
 }
 
-.osmosis-story h2 {
-  font-size: clamp(1.6rem, 3.5vw, 2.4rem);
+.osmosis-story :is(h2, h3) {
+  font-size: clamp(1.4rem, 3vw, 2rem);
   margin-block: 0.6rem 1rem;
 }
 
@@ -252,6 +412,49 @@ a.osmosis-story__link {
   font-size: 0.8rem;
   font-weight: 700;
   margin-top: 1.25rem;
+}
+
+/* Icon + lead-in + text rows stacked under a story's copy — the denser
+   alternative to giving each point its own card. */
+.osmosis-home ul.osmosis-story__list:not([hidden]) {
+  display: grid;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 1.75rem 0 0;
+  padding: 0;
+}
+
+.osmosis-home ul.osmosis-story__list:not([hidden]) > li {
+  border-radius: 0.5rem;
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 1.1rem minmax(0, 1fr);
+  margin: 0;
+  padding: 0.8rem;
+  transition: background-color 125ms;
+}
+
+.osmosis-home ul.osmosis-story__list:not([hidden]) > li:hover {
+  background: var(--home-surface);
+}
+
+.osmosis-story__list svg {
+  color: var(--md-accent-fg-color);
+  height: 1.1rem;
+  margin-top: 0.1rem;
+  width: 1.1rem;
+}
+
+.osmosis-home ul.osmosis-story__list:not([hidden]) > li > p {
+  color: var(--home-muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.osmosis-story__list strong {
+  color: var(--md-default-fg-color);
+  font-weight: 700;
 }
 
 /* Markdown proof block used by the "Plain Markdown" section */
@@ -374,13 +577,36 @@ a.osmosis-story__link {
   }
 }
 
+/* The pillars carry more copy than the small cards, so they stack a breakpoint
+   earlier — two columns of five-line paragraphs read as a wall. */
+@media screen and (max-width: 59.9375em) {
+  .osmosis-home ul.osmosis-pillars:not([hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media screen and (max-width: 44.9375em) {
   .osmosis-story {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .osmosis-home ul.osmosis-features__grid:not([hidden]) {
+  .osmosis-home :is(ul.osmosis-features__grid, ul.osmosis-mediacards):not([hidden]) {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* One column makes each card wide enough that its screenshot scales down
+     shorter than the crop box, so the bleed would leave a gap under a
+     square-cornered image. Contain it properly instead. */
+  .osmosis-home ul.osmosis-mediacards:not([hidden]) > li {
+    padding-bottom: 1.75rem;
+  }
+
+  .osmosis-mediacards__shot {
+    height: auto;
+  }
+
+  .osmosis-mediacards__shot img {
+    border-radius: 0.5rem;
   }
 
   /* Media always follows the copy once stacked, whatever the desktop order */

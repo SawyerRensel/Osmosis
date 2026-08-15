@@ -74,8 +74,11 @@
   margin-left: 0.8rem;
 }
 
+/* Tighter than the theme's own 0.6rem: six sections have to share the row with
+   the brand, the palette toggle, search, and the repo link. */
 .osmosis-header-nav .md-tabs__item {
   height: auto;
+  padding-inline: 0.45rem;
 }
 
 .osmosis-header-nav .md-tabs__link {
@@ -139,7 +142,7 @@
 .osmosis-footer__groups {
   display: grid;
   gap: 2rem clamp(1.5rem, 4vw, 3rem);
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .osmosis-footer__heading {
@@ -176,7 +179,8 @@
   }
 }
 
-@media screen and (max-width: 29.9375em) {
+/* Four link columns get cramped well before the brand column stacks. */
+@media screen and (max-width: 44.9375em) {
   .osmosis-footer__groups {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
