@@ -79,27 +79,26 @@ hide:
   <div class="osmosis-home__inner">
     <ul class="osmosis-mediacards">
       <li>
-        <h3>Rearrange as you think</h3>
+        <h3>Interactive mind mapping</h3>
         <p>
-          Add a node, drag a branch under a new parent, fold a subtree. The
-          Markdown keeps pace, with block IDs and card history intact.
+          Add a node, drag a branch under a new parent, fold a subtree. Osmosis syncs your notes as you edit the map.
           <a class="osmosis-story__link" href="mind-mapping/editing/">Editing and shortcuts &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
           <!-- MEDIA SWAP: video V2 (add node, drag branch, fold subtree) -->
-          <img src="assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png"
+          <img src="assets/media/osmosis_mindmap_view_interactive_editing_drag_and_drop.png"
                alt="Dragging a node to a new parent in an Osmosis mind map">
         </div>
       </li>
       <li>
-        <h3>Built-in themes</h3>
+        <h3>Colorful theming</h3>
         <p>
           Layout, spacing, branch lines, and per-node shape and colour — all
           saved in the note's frontmatter, so a map travels with its file.
           <a class="osmosis-story__link" href="mind-mapping/styling/">Styling &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
-          <img src="assets/media/osmosis_mind_map_ocean_theme.png"
+          <img src="assets/media/osmosis_theme_ocean.png"
                alt="An Osmosis mind map in the Ocean theme">
         </div>
       </li>
@@ -111,19 +110,19 @@ hide:
           <a class="osmosis-story__link" href="mind-mapping/#transclusion">Transclusion &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
-          <img src="assets/media/osmosis_mind_map_transclusion_split_view.png"
+          <img src="assets/media/osmosis_note_view_mindmap_view_split_transclusion.png"
                alt="A master map with an embedded note rendered as a sub-branch">
         </div>
       </li>
       <li>
-        <h3>A rich experience</h3>
+        <h3>Enhanced Markdown support</h3>
         <p>
           Tables, code blocks, images, callouts, and LaTeX render inside the
           node — just like they do in your notes.
           <a class="osmosis-story__link" href="mind-mapping/#how-markdown-maps-to-nodes">What becomes a node &rarr;</a>
         </p>
         <div class="osmosis-mediacards__shot">
-          <img src="assets/media/osmosis_note_mind_map_split_view_zoomed_rust_crate_ecosystem.png"
+          <img src="assets/media/osmosis_enhanced_markdown_support_callout.png"
                alt="A mind map whose nodes hold a table, a code block, and an image">
         </div>
       </li>
@@ -245,13 +244,13 @@ hide:
          assets/javascripts/home-media.js. -->
     <div class="osmosis-band__media osmosis-swap" data-osmosis-swap-target="study">
       <img class="osmosis-media" data-osmosis-swap-key="spatial"
-           src="assets/media/osmosis_spatial_study_mode_revealed.png"
+           src="assets/media/osmosis_fence_card_on_the_map.png"
            alt="Spatial study mode revealing a card answer on the mind map">
       <img class="osmosis-media" data-osmosis-swap-key="contextual"
-           src="assets/media/osmosis_contextual_and_spatial_study_modes.png"
+           src="assets/media/osmosis_fence_card_in_the_note.png"
            alt="Contextual study running inline in a note beside its mind map">
       <img class="osmosis-media" data-osmosis-swap-key="sequential"
-           src="assets/media/osmosis_sequential_study_flashcard_question_frontback.png"
+           src="assets/media/osmosis_fence_card_from_a_window.png"
            alt="A sequential study session showing a card's question in a modal">
     </div>
   </div>
@@ -261,10 +260,9 @@ hide:
 <section class="osmosis-band">
   <div class="osmosis-home__inner osmosis-band__head">
     <p class="osmosis-home__eyebrow">Dashboard</p>
-    <h2>A clear view of your recall.</h2>
+    <h2>A clear view of your learning.</h2>
     <p class="osmosis-band__lead">
-      Decks and due counts in the sidebar; a full card browser and seventeen
-      panels of statistics in the main area.
+      Navigate your decks, get a birds-eye view of your learning patterns, and find every flashcard in your vault with ease.
     </p>
   </div>
 
@@ -284,7 +282,7 @@ hide:
         </div>
       </li>
       <li>
-        <h3>Find any card in the vault</h3>
+        <h3>Find any card</h3>
         <p>
           The browser is a Bases view, so Obsidian's own filtering narrows it to
           the notes you care about. Then suspend, reset, change deck, or delete flashcards —
@@ -350,7 +348,7 @@ The value is dropped and its memory freed.
 <!-- ===================== Feature grid ===================== -->
 <section class="osmosis-features">
   <div class="osmosis-home__inner">
-    <h2>And a great deal more</h2>
+    <h2>Fully featured.</h2>
     <ul class="osmosis-features__grid">
       <li>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
