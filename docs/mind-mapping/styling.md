@@ -39,16 +39,6 @@ Each section has a reset button to clear overrides.
 
 Osmosis includes 13 themes:
 
-![Default theme](../assets/media/osmosis_mind_map_default_theme.png)
-
-![Ocean theme](../assets/media/osmosis_mind_map_ocean_theme.png)
-
-![Monokai theme](../assets/media/osmosis_mind_map_monokai_theme.png)
-
-![Solarized Dark theme](../assets/media/osmosis_mind_map_solarized_dark_theme.png)
-
-![Solarized Light theme](../assets/media/osmosis_mind_map_solarized_light.png)
-
 | Theme | Style |
 |-------|-------|
 | Default | Inherits your Obsidian theme colors |
@@ -63,6 +53,73 @@ Osmosis includes 13 themes:
 | Rose Pine | Muted pinks and purples |
 | Everforest | Soft green earth tones |
 | One Light | Clean, bright |
+
+Every preset on the same map — Default is left out because it has no look of its
+own, it takes your Obsidian theme's colors:
+
+<div class="grid" markdown>
+
+<figure markdown="span">
+![Ocean theme](../assets/media/osmosis_theme_ocean.png){ loading=lazy }
+<figcaption>Ocean</figcaption>
+</figure>
+
+<figure markdown="span">
+![Solarized Dark theme](../assets/media/osmosis_theme_solarized_dark.png){ loading=lazy }
+<figcaption>Solarized Dark</figcaption>
+</figure>
+
+<figure markdown="span">
+![Solarized Light theme](../assets/media/osmosis_theme_solarized_light.png){ loading=lazy }
+<figcaption>Solarized Light</figcaption>
+</figure>
+
+<figure markdown="span">
+![Nord theme](../assets/media/osmosis_theme_nord.png){ loading=lazy }
+<figcaption>Nord</figcaption>
+</figure>
+
+<figure markdown="span">
+![Dracula theme](../assets/media/osmosis_theme_dracula.png){ loading=lazy }
+<figcaption>Dracula</figcaption>
+</figure>
+
+<figure markdown="span">
+![Monokai theme](../assets/media/osmosis_theme_monokai.png){ loading=lazy }
+<figcaption>Monokai</figcaption>
+</figure>
+
+<figure markdown="span">
+![Gruvbox Dark theme](../assets/media/osmosis_theme_gruvbox_dark.png){ loading=lazy }
+<figcaption>Gruvbox Dark</figcaption>
+</figure>
+
+<figure markdown="span">
+![Catppuccin Mocha theme](../assets/media/osmosis_theme_catppuccin_mocha.png){ loading=lazy }
+<figcaption>Catppuccin Mocha</figcaption>
+</figure>
+
+<figure markdown="span">
+![Tokyo Night theme](../assets/media/osmosis_theme_tokyo_night.png){ loading=lazy }
+<figcaption>Tokyo Night</figcaption>
+</figure>
+
+<figure markdown="span">
+![Rose Pine theme](../assets/media/osmosis_theme_rose_pine.png){ loading=lazy }
+<figcaption>Rose Pine</figcaption>
+</figure>
+
+<figure markdown="span">
+![Everforest theme](../assets/media/osmosis_theme_everforest.png){ loading=lazy }
+<figcaption>Everforest</figcaption>
+</figure>
+
+<figure markdown="span">
+![One Light theme](../assets/media/osmosis_theme_one_light.png){ loading=lazy }
+<figcaption>One Light</figcaption>
+</figure>
+
+</div>
 
 You can create, rename, and delete custom themes from the Map tab in the properties sidebar.
 

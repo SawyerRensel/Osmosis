@@ -35,6 +35,7 @@ blocked_by:
 cover:
 color:
 ---
+
 ## Description of the Documentation Request
 
 *Provide a clear and concise description of what documentation is missing, incorrect, or needs improvement.*
@@ -66,3 +67,20 @@ color:
 ## Additional Information
 
 *Add any other context, code snippets, or screenshots about the documentation request here.*
+
+### Feedback from Obsidian Automated Review
+
+#### CSS lint
+
+- **Warning**: Unexpected browser feature "css-display-contents" is only partially supported by Obsidian 1.11.4
+  - styles.css:589
+- **Warning**: Unexpected browser feature "multicolumn" is only partially supported by Obsidian 1.11.4
+  - styles.css:3225, styles.css:3226, styles.css:3231
+- **Warning**: Unexpected duplicate "align-items"
+  - styles.css:3731
+- **Warning**: Unexpected duplicate "justify-content"
+  - styles.css:3733
+- **Warning**: Avoid !important — override styles by increasing selector specificity or using CSS variables instead.
+  - styles.css:185, styles.css:238, styles.css:239, styles.css:240, styles.css:246, styles.css:247, styles.css:248, styles.css:265, styles.css:427, styles.css:441, styles.css:442, styles.css:461, styles.css:462, styles.css:468, styles.css:1183
+- **Warning**: Avoid :has — it can cause significant performance issues due to broad selector invalidation.
+  - styles.css:3299

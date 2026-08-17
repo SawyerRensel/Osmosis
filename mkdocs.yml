@@ -56,6 +56,9 @@ extra_css:
   - assets/stylesheets/chrome.css
   - assets/stylesheets/home.css
 
+extra_javascript:
+  - assets/javascripts/home-media.js
+
 # Plugins
 plugins:
   - search
@@ -109,11 +112,22 @@ nav:
   - Flashcards:
     - flashcards/index.md
     - Card Types: flashcards/card-types.md
+    - Image Occlusion: flashcards/image-occlusion.md
     - Line Cards: flashcards/line-cards.md
+    - Rapid Capture: flashcards/rapid-capture.md
     - Decks: flashcards/decks.md
   - Studying:
     - studying/index.md
     - Study Modes: studying/study-modes.md
     - Spaced Repetition: studying/spaced-repetition.md
+    - Dashboard: studying/dashboard.md
+    - Card Browser: studying/card-browser.md
+    - Statistics: studying/statistics.md
+  - Reference:
+    - reference/index.md
+    - Settings: reference/settings.md
+    - Commands: reference/commands.md
+    - Data Storage: reference/data-storage.md
+    - Mobile: reference/mobile.md
   - Use Cases: use-cases.md
   - Changelog: changelog.md
