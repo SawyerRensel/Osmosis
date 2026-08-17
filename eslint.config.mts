@@ -36,6 +36,7 @@ export default tseslint.config(
 	globalIgnores([
 		"node_modules",
 		"dist",
+		"docs/assets",
 		"esbuild.config.mjs",
 		"eslint.config.js",
 		"version-bump.mjs",
