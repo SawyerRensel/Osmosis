@@ -1,151 +1,290 @@
+<div align="center">
+
 # Osmosis
 
-**Absorb knowledge faster. An Obsidian plugin that turns your notes into interactive mind maps you study with spaced repetition.**
+### Absorb knowledge faster.
 
-Osmosis turns your Markdown notes into interactive mind maps — and then makes the map itself the thing you study. Every line of a note can become a scheduled flashcard, so nodes on the map hide behind `?`, you tap to recall, and you rate with FSRS right where each fact sits in your knowledge structure. No duplicate content, no external tools, no proprietary formats.
+An Obsidian plugin that turns your notes into mind maps you study with spaced repetition.
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Obsidian](https://img.shields.io/badge/Obsidian-1.10.0+-purple)](https://obsidian.md)
+[![Release](https://img.shields.io/github/v/release/SawyerRensel/Osmosis?style=flat-square&color=7c3aed)](https://github.com/SawyerRensel/Osmosis/releases)
+[![Downloads](https://img.shields.io/github/downloads/SawyerRensel/Osmosis/total?style=flat-square&color=7c3aed)](https://github.com/SawyerRensel/Osmosis/releases)
+[![Obsidian](https://img.shields.io/badge/Obsidian-1.13.0%2B-7c3aed?style=flat-square)](https://obsidian.md)
+[![License](https://img.shields.io/badge/license-GPL--3.0-7c3aed?style=flat-square)](LICENSE)
 
-![Osmosis Mind Map View](docs/assets/media/osmosis_note_mind_map_split_view_zoomed.png)
+**[Install Osmosis](obsidian://show-plugin?id=osmosis)** · **[Quick start](https://sawyerrensel.github.io/osmosis/getting-started/quick-start/)** · **[Documentation](https://sawyerrensel.github.io/osmosis/)**
 
-## Features
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_note_view_mindmap_view_split_hero_banner_study_mode.png" alt="An Obsidian note and its Osmosis mind map side by side">
 
-- **Study the Mind Map Itself** — Spatial study hides due nodes behind `?` placeholders while the rest of the map stays visible. Tap to recall, rate with FSRS, and never lose sight of how the fact connects to everything around it.
-- **Your Whole Note Becomes Cards** — One command tags every heading, bullet, and paragraph with a block ID, turning the note into scheduled flashcards. No fences to write, no content to duplicate.
-- **Interactive Mind Maps** — Your headings become branches, lists become nodes. Edit the map and the Markdown updates. Edit the Markdown and the map updates.
-- **FSRS Spaced Repetition** — The same algorithm powering modern Anki, built right into your notes
-- **Three Study Modes** — Spatial (on the mind map), contextual (inline in your notes), and sequential (classic card review) — all sharing one schedule
-- **Five Card Types** — For hand-authored cards: basic Q&A, bidirectional, type-in, cloze deletion, and code cloze, all defined with a simple code fence syntax
-- **Plain Markdown** — Everything lives in your files. Scheduling data is stored in note frontmatter and the fences themselves — no external databases, no sync issues
-- **Themes and Styling** — Customize mind map appearance with built-in themes, colors, and layout options
-- **Keyboard Navigation** — Full keyboard support for mind map editing and study sessions
-- **Dashboard** — See all your decks, due card counts, and study statistics at a glance
+</div>
 
-## Why Osmosis?
+---
 
-Mind maps are great for *building* understanding and flashcards are great for *keeping* it — but every other tool makes you do those in two different apps, from two different copies of the same material. Osmosis collapses them: the map you built is the surface you study.
+### Your learning has flow.
 
-🧭 **Study on the map, not in a modal.** Start a spatial session and the nodes you owe a review hide behind `?` — everything else stays on screen. You recall each fact while looking at its parent, its siblings, and the branch it belongs to, so you're rehearsing the structure and the content at once. No other tool reviews cards inside the shape of your knowledge.
+Write notes and study cards together in one app. Organize your thoughts with style.
 
-🌱 **No card authoring step.** Run **Generate flashcards from note** and every heading, bullet, and paragraph gets a native Obsidian block ID — that's the card. Write your notes the way you always have; the study material is already there. IDs survive edits, reorders, and renames, so scheduling history sticks to the line.
+### Your memory is connected.
 
-🗺️ **Not just a viewer — a full editor.** Tools like [Markmap](https://markmap.js.org/) render beautiful mind maps from Markdown, but they're read-only. Osmosis mind maps are fully interactive — add nodes, edit text, rearrange branches — and every change writes back to your Markdown instantly.
+Answer flashcards on a visual map. Learn facts while seeing the big picture.
 
-🔓 **Not proprietary — plain Markdown.** Tools like [Xmind](https://xmind.com/) are powerful mind mappers, but your data lives in a proprietary format. Markdown export is an afterthought. With Osmosis, Markdown *is* the format. Your notes work everywhere, with every tool, forever.
+### Your notes should last.
 
-🤖 **AI-native by design.** Plain Markdown means AI assistants can read, generate, and edit your content natively — flashcards, mind maps, study material — no export, no conversion, no friction.
+Osmosis authors your content in plain text — readable in any editor and yours to keep forever.
 
-🧩 **Notes + mind maps + flashcards in one file.** Other tools force you to maintain these in separate apps. Osmosis unifies all three in a single Markdown file. Your headings become mind map branches, your lines become cards, and your `osmosis` code fences become hand-authored cards. One file, three views, zero duplication.
+---
 
-📝 **One card, everywhere you study it.** A node on the map, a line in your reading view, and an entry in the sequential queue are the same card with the same schedule. Review a branch on the map in the morning and those cards are gone from tonight's queue.
+## Mind maps
 
-🔗 **Study a map of maps.** Embed one mind map inside another with `![[note]]` and build a master map of an entire subject. Embedded nodes are first-class in spatial study — they hide, reveal, and rate like local ones, and each rating is written back to the note that actually owns the line.
+### Visualize your thoughts.
 
-## Who It's For
+Headings become branches. Lists become nodes. Every edit on the map is an edit to the file.
 
-**The Med Student** — You're drowning in anatomy, pharmacology, and pathology. You already use Anki, but maintaining two separate systems — notes and flashcards — is killing your workflow. Osmosis lets you define flashcards right inside your lecture notes, so your study material lives where you take notes. Mind maps help you see how body systems connect. FSRS keeps you on schedule.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**The Self-Taught Developer** — You're learning a new language, framework, or codebase on your own. Code cloze cards let you drill syntax and API patterns. Mind maps give you the big-picture architecture view. Everything stays in the same Markdown files you already take notes in.
+**Interactive mind mapping**
 
-**The Lifelong Learner** — You read books, watch lectures, and take notes — but forget most of it within weeks. Spaced repetition fixes that. With Osmosis the notes you already wrote *are* the cards: one command turns a note into a deck, and you review it on its own mind map. No separate app, no export step, no card-writing chore standing between reading and retaining.
+Add a node, drag a branch under a new parent, fold a subtree. Osmosis syncs your notes as you edit the map.
 
-**The Obsidian Power User** — You've built your second brain in Obsidian and you want mind mapping and spaced repetition without leaving the ecosystem. No proprietary formats, no external accounts, no sync issues. Plain Markdown, full ownership.
+[Editing and shortcuts →](https://sawyerrensel.github.io/osmosis/mind-mapping/editing/)
 
-**The Visual Thinker** — Outlines and bullet points don't click for you. You need to see the structure, and a flashcard stripped out of its context is exactly the wrong format. Osmosis turns any Markdown file into an interactive mind map you can edit, rearrange, and review on — so recall happens at the position on the map where you learned it.
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_mindmap_view_interactive_editing_drag_and_drop.png" alt="Dragging a node to a new parent in an Osmosis mind map">
 
-## Views
+</td>
+<td width="50%" valign="top">
 
-### Mind Map View
+**Colorful theming**
 
-![Mind Map View](docs/assets/media/osmosis_mind_map_default_theme.png)
+Layout, spacing, branch lines, and per-node shape and colour — all saved in the note's frontmatter, so a map travels with its file.
 
-Your Markdown rendered as a fully interactive mind map:
+[Styling →](https://sawyerrensel.github.io/osmosis/mind-mapping/styling/)
 
-- Headings become branches, lists become child nodes
-- Click any node to edit — changes sync back to the Markdown instantly
-- Pan, zoom, and navigate with keyboard shortcuts
-- Multiple themes and color schemes
-- Viewport culling for large documents (1000+ nodes)
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_theme_ocean.png" alt="An Osmosis mind map in the Ocean theme">
 
-### Spatial Study — Studying the Map Itself
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-![Spatial study — nodes hidden](docs/assets/media/osmosis_spatial_study_mode_hidden.png)
-![Spatial study — nodes revealed](docs/assets/media/osmosis_spatial_study_mode_revealed.png)
+**Maps inside maps**
 
-Click the graduation cap in the mind map header and the map becomes a review session:
+Embed a note with `![[note]]` and its structure becomes a sub-branch you can edit in place.
 
-- Nodes whose card is **due or new** hide behind `?` — the rest of the map stays visible, because seeing how the pieces fit together is the point
-- **Tap a hidden node** to reveal it, then rate it in the bubble below: Again (`1`), Hard (`2`), Good (`3`), Easy (`4`)
-- A floating pill tracks progress (`4/9 due reviewed`) with a **Stop** button
-- Right-click any node > **Study this branch** to scope the session to one subtree
-- **Peek mode** (the scan-eye icon) hides every card node with nothing recorded — the map equivalent of covering the page with your hand
-- Works in mind map reading mode, so a stray tap-drag on a phone can't rearrange a branch mid-review
+[Transclusion →](https://sawyerrensel.github.io/osmosis/mind-mapping/#transclusion)
 
-### Flashcard View
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_note_view_mindmap_view_split_transclusion.png" alt="A master map with an embedded note rendered as a sub-branch">
 
-![Flashcard Question](docs/assets/media/osmosis_sequential_study_flashcard_question_frontback.png)
-![Flashcard Answer](docs/assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
+</td>
+<td width="50%" valign="top">
 
-Line cards from your notes and fence cards you author by hand share one queue and one scheduler. Fence cards come in five types:
+**Enhanced Markdown support**
 
-- **Basic** — Question and answer
-- **Bidirectional** — Study in both directions
-- **Type-in** — Type your answer before revealing
-- **Cloze** — Fill-in-the-blank with `==highlighted==` or `**bold**` markers
-- **Code Cloze** — Cloze deletions inside code blocks
+Tables, code blocks, images, callouts, and LaTeX render inside the node — just like they do in your notes.
 
-### Study Dashboard
+[What becomes a node →](https://sawyerrensel.github.io/osmosis/mind-mapping/#how-markdown-maps-to-nodes)
 
-![Study Dashboard](docs/assets/media/osmosis_flashcard_dashboard.png)
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_enhanced_markdown_support_callout.png" alt="A mind map whose nodes hold a table, a code block, and an image">
 
-Central hub for all your study sessions:
+</td>
+</tr>
+</table>
 
-- Deck overview with due card counts
-- Study statistics and progress tracking
-- One-click access to sequential, contextual, or spatial study modes
+---
 
-## Quick Start
+## Flashcards
 
-### Open a Mind Map
+### Cards that live in your notes.
 
-1. Open any Markdown file
-2. Click the brain icon in the editor header (or use the command palette: **Open mind map view**)
-3. Your headings and lists appear as an interactive mind map
+Write a card where the idea comes up. Seven card types, all landing in the Markdown file you were already writing — and [Rapid Capture](https://sawyerrensel.github.io/osmosis/flashcards/rapid-capture/) turns a run of typing into cards as you go.
 
-### Turn the Note Into Cards
+| Card type | What it does |
+|---|---|
+| **Basic** | A classic front and a back experience. |
+| **Bidirectional** | One fence, two cards, scheduled apart. |
+| **Type-in** | Type the answer instead of flipping the card. |
+| **Cloze deletion** | Blank out a span; each blank is a card. |
+| **Code cloze** | Hide code, highlighting left intact. |
+| **Image occlusion** | Mask a diagram; each group is a card. |
+| **Line cards** | One command cards a whole note, line by line. |
 
-Run **Generate flashcards from note** from the command palette (or right-click the note > **Generate flashcards**). Osmosis previews every line it will tag, then writes block IDs in a single undoable edit:
+[See the card types →](https://sawyerrensel.github.io/osmosis/flashcards/card-types/)
 
-```markdown
-- Pour water at 96 °C in slow circles ^os-a1b2c3
-```
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_mode_card_basic_with_audio.png" alt="A basic Osmosis flashcard under review, question side">
 
-Each tagged line is now an FSRS-scheduled card. Re-running the command is incremental — existing IDs and their history are left alone.
+---
 
-### Study on the Map
+## Studying
 
-1. Open the mind map for that note
-2. Click the graduation cap icon in the mind map header
-3. Due and new nodes hide behind `?` — tap one to reveal it, then rate it
+### Three ways to study the same card.
 
-Ratings are saved to the note's `osmosis-schedule` frontmatter, so the schedule travels with the note.
+Study any card in any mode, scheduled by FSRS — a system built on memory research. Rate a card anywhere and its schedule updates consistently.
 
-### Add a Hand-Authored Card
+<table>
+<tr>
+<td width="33%" valign="top">
 
-For a question that isn't just a line of your notes, add an `osmosis` code fence:
+**On the map**
+
+Spatial study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_on_the_map.png" alt="Spatial study mode revealing a card answer on the mind map">
+
+</td>
+<td width="33%" valign="top">
+
+**In the note**
+
+Contextual study hides what's due, reveals it in place, and lets you rate it and read on. Peek mode reveals a card and leaves its schedule untouched.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_in_the_note.png" alt="Contextual study running inline in a note beside its mind map">
+
+</td>
+<td width="33%" valign="top">
+
+**From a window**
+
+Sequential study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_from_a_window.png" alt="A sequential study session showing a card's question in a modal">
+
+</td>
+</tr>
+</table>
+
+[Compare study modes →](https://sawyerrensel.github.io/osmosis/studying/study-modes/)
+
+---
+
+## Dashboard
+
+### A clear view of your learning.
+
+Navigate your decks, get a birds-eye view of your learning patterns, and find every flashcard in your vault with ease.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Analyze your growth**
+
+A year-long heatmap, true retention, interval and stability, answer buttons, and your load for the weeks ahead — plus recall by study mode, which shows how well the facts you studied in context are holding.
+
+[Statistics →](https://sawyerrensel.github.io/osmosis/studying/statistics/)
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_stats_dashboard.png" alt="The Osmosis statistics dashboard, showing card counts, retrievability, reviews, and a calendar heatmap">
+
+</td>
+<td width="50%" valign="top">
+
+**Find any card**
+
+The browser is a Bases view, so Obsidian's own filtering narrows it to the notes you care about. Then suspend, reset, change deck, or delete flashcards — with undo if you change your mind.
+
+[Card browser →](https://sawyerrensel.github.io/osmosis/studying/card-browser/)
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_browser_card_layout.png" alt="The Osmosis card browser in its cards layout">
+
+</td>
+</tr>
+</table>
+
+---
+
+## Your data
+
+### Plain Markdown. Forever.
+
+A card's schedule lives in the fence that holds it, or in the note's frontmatter beside the line it belongs to. Your vault syncs the way it always has — Obsidian Sync, iCloud, Dropbox, Git — and your review history goes with it.
+
+Because it is only ever text, an AI assistant can read and write your study material natively — and so can every other tool that has ever opened a Markdown file.
 
 ````markdown
+## Ownership and borrowing
+
+- Each value has exactly one owner ^b3f1a2
+
 ```osmosis
-Which brew method uses full immersion?
+id: os-3jds9x
+due: 2026-05-02T19:52:12.592Z
+stability: 2.0215
+difficulty: 6.3909
+reps: 3
+lapses: 0
+state: review
+last-review: 2026-04-30T19:52:12.592Z
+learning-steps: 0
+
+What happens when an owner goes out of scope?
 ***
-French press
+The value is dropped and its memory freed.
 ```
 ````
 
-### Enable Cards for a Note
+[How it's stored →](https://sawyerrensel.github.io/osmosis/reference/data-storage/)
 
-Add `osmosis-cards: true` to your note's frontmatter:
+---
+
+## Fully featured.
+
+| | |
+|---|---|
+| **Two-way everything** | Edit the note, the map, or the card — the other two follow, immediately. |
+| **Keyboard first** | Full keyboard control of map editing, navigation, and a review session. |
+| **Built for mobile** | Touch gestures throughout, a reading-mode default for phones, and capture designed for thumbs. |
+| **Rich nodes** | Images, LaTeX, code blocks, tables, callouts, checkboxes, and embeds render inside the map. |
+| **Undo that fits the map** | Map edits have their own history — one step per operation, with configurable depth and memory. |
+| **Opt in, or opt out** | Per note, per folder, per tag — and exclusion always wins, so a vault-in-a-vault stays out. |
+| **Native block IDs** | Cards anchor to Obsidian's own `^block-ids`, so `[[note#^id]]` links work and history survives edits. |
+| **Every review, logged** | An append-only history in your vault, per month and per device, that syncs with your notes. |
+| **Free and open source** | GPL-3.0, developed in the open, with every feature available to everyone. |
+
+---
+
+## Installation
+
+### From Community Plugins
+
+1. Open **Settings → Community Plugins → Browse**
+2. Search for "Osmosis"
+3. Click **Install**, then **Enable**
+
+Or open it straight from this page: **[Install Osmosis](obsidian://show-plugin?id=osmosis)**
+
+### Manual installation
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/SawyerRensel/Osmosis/releases)
+2. Create the folder `.obsidian/plugins/osmosis/` in your vault
+3. Copy the downloaded files into that folder
+4. Run **Reload app without saving** from the command palette
+5. Open **Settings → Community Plugins** and enable "Osmosis"
+
+### Requirements
+
+| | |
+|---|---|
+| **Obsidian** | 1.13.0 or later, desktop or mobile |
+| **Bases** | Obsidian's Bases core plugin, for the [card browser](https://sawyerrensel.github.io/osmosis/studying/card-browser/). Everything else works without it |
+
+---
+
+## Start with one note.
+
+Open any Markdown file you already have, press the mind map button, and see the structure you have been writing all along.
+
+**1. Open a mind map.** Open a note and click the brain-circuit icon in the editor header bar — your headings and lists appear as an interactive map.
+
+**2. Write a flashcard.** Add an `osmosis` fence anywhere in a note. The `***` separator divides the front from the back:
+
+````markdown
+```osmosis
+What is the capital of France?
+***
+Paris
+```
+````
+
+**3. Opt the note in.** Cards aren't generated until a note opts in — the card-insertion commands do this for you, or add it yourself:
 
 ```yaml
 ---
@@ -153,140 +292,69 @@ osmosis-cards: true
 ---
 ```
 
-Or configure tag/folder-based inclusion in Settings > Osmosis. (Generating flashcards adds this for you.)
+**4. Study.** Click the brain-circuit icon in the left ribbon to open the dashboard, then pick a deck.
 
-### Study Everything Else
+<div align="center">
 
-Click the graduation cap icon in the sidebar to open the Dashboard. It shows your decks and due card counts across the vault. Click any deck to start a sequential session.
+**[Install Osmosis](obsidian://show-plugin?id=osmosis)** · **[Read the docs →](https://sawyerrensel.github.io/osmosis/getting-started/)**
 
-## Card Syntax
+</div>
 
-Line cards need no syntax — they're just your notes with block IDs. The card types below are for hand-authored cards, and all use the `osmosis` code fence with `***` as the separator.
-
-### Basic Card
-
-````markdown
-```osmosis
-What is the powerhouse of the cell?
-***
-The mitochondria
-```
-````
-
-### Bidirectional Card
-
-````markdown
-```osmosis
-bidi: true
-
-Mitochondria
-***
-The powerhouse of the cell
-```
-````
-
-### Type-in Card
-
-````markdown
-```osmosis
-type-in: true
-
-The powerhouse of the cell is the ___
-***
-mitochondria
-```
-````
-
-### Cloze Card
-
-Use `==highlights==` or `**bold**` to mark deletions. Each marked term generates a separate card.
-
-````markdown
-```osmosis
-==Mitochondria== are the ==powerhouse== of the ==cell==
-```
-````
-
-### Code Cloze Card
-
-Use `osmosis-cloze` in a comment to mark lines for deletion. Use `osmosis-cloze-start` / `osmosis-cloze-end` for multi-line regions.
-
-`````markdown
-````osmosis
-```python
-def fibonacci(n):
-    if n <= 1:
-        return n  # osmosis-cloze
-    return fibonacci(n-1) + fibonacci(n-2)
-```
-````
-`````
-
-## Installation
-
-### From Community Plugins
-
-1. Open **Settings** > **Community Plugins**
-2. Click **Browse** and search for "Osmosis"
-3. Click **Install**, then **Enable**
-
-### Manual Installation
-
-1. Download `main.js`, `styles.css`, and `manifest.json` from the [latest release](https://github.com/SawyerRensel/Osmosis/releases/latest)
-2. Copy them into your vault's `.obsidian/plugins/osmosis/` directory, creating it if needed
-3. Reload Obsidian, then enable Osmosis in **Settings** > **Community Plugins**
-
-## Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| Language | TypeScript |
-| Platform | Obsidian Plugin API |
-| Spaced Repetition | [FSRS](https://github.com/open-spaced-repetition/ts-fsrs) |
-| Testing | Vitest (unit), Playwright (E2E) |
-| Linting | ESLint with obsidianmd plugin |
+---
 
 ## Documentation
 
-Full documentation is available at **[sawyerrensel.github.io/Osmosis](https://sawyerrensel.github.io/Osmosis/)**:
+Full documentation lives at **[sawyerrensel.github.io/osmosis](https://sawyerrensel.github.io/osmosis/)**.
 
-- **Getting Started** — [Installation](https://sawyerrensel.github.io/Osmosis/getting-started/installation/) · [Quick Start](https://sawyerrensel.github.io/Osmosis/getting-started/quick-start/)
-- **Mind Mapping** — [Editing](https://sawyerrensel.github.io/Osmosis/mind-mapping/editing/) · [Navigation](https://sawyerrensel.github.io/Osmosis/mind-mapping/navigation/) · [Styling](https://sawyerrensel.github.io/Osmosis/mind-mapping/styling/)
-- **Flashcards** — [Line Cards](https://sawyerrensel.github.io/Osmosis/flashcards/line-cards/) · [Card Types](https://sawyerrensel.github.io/Osmosis/flashcards/card-types/) · [Decks](https://sawyerrensel.github.io/Osmosis/flashcards/decks/)
-- **Studying** — [Spaced Repetition](https://sawyerrensel.github.io/Osmosis/studying/spaced-repetition/) · [Study Modes](https://sawyerrensel.github.io/Osmosis/studying/study-modes/)
+| Section | What's in it |
+|---|---|
+| [Getting Started](https://sawyerrensel.github.io/osmosis/getting-started/) | Installation, quick start |
+| [Mind Mapping](https://sawyerrensel.github.io/osmosis/mind-mapping/) | Editing, navigation, styling, transclusion |
+| [Flashcards](https://sawyerrensel.github.io/osmosis/flashcards/) | Card types, decks, rapid capture, image occlusion, line cards |
+| [Studying](https://sawyerrensel.github.io/osmosis/studying/) | Study modes, spaced repetition, dashboard, statistics, card browser |
+| [Reference](https://sawyerrensel.github.io/osmosis/reference/) | Commands, settings, data storage, mobile |
+| [Changelog](https://sawyerrensel.github.io/osmosis/changelog/) | What changed, release by release |
+
+---
 
 ## Development
 
+Osmosis is TypeScript, bundled with esbuild, tested with Vitest.
+
 ```bash
-# Clone the repository
 git clone https://github.com/SawyerRensel/Osmosis.git
 cd Osmosis
-
-# Install dependencies
 npm install
-
-# Build for development (watches for changes)
-npm run dev
-
-# Build for production
-npm run build
 ```
 
-Build output goes to `vault/.obsidian/plugins/Osmosis/` for testing.
+| Command | What it does |
+|---|---|
+| `npm run dev` | Build and watch for changes |
+| `npm run build` | Type-check and produce a production build |
+| `npm run lint` | ESLint, including `eslint-plugin-obsidianmd` rules |
+| `npm test` | Run the Vitest unit suite |
+
+The build writes `main.js`, `manifest.json`, and `styles.css` into
+`vault/.obsidian/plugins/Osmosis/`. Open `vault/` in Obsidian to test your
+changes against a real vault.
+
+---
 
 ## Contributing
 
-Contributions are welcome! Please:
+Issues and pull requests are welcome.
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+- **Found a bug?** [Open a bug report](https://github.com/SawyerRensel/Osmosis/issues/new?template=bug.md)
+- **Have an idea?** [Open an idea](https://github.com/SawyerRensel/Osmosis/issues/new?template=idea.md)
+- **Sending a PR?** Make sure `npm run lint`, `npm test`, and `npm run build` all pass, and describe what you changed and how you tested it.
+
+---
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
+[GPL-3.0-only](LICENSE) © 2026 Sawyer Rensel
+
+---
 
 ## Acknowledgments
 
@@ -297,7 +365,3 @@ This project is licensed under the GNU General Public License v3.0 — see the [
 - [Minder](https://github.com/phase1geo/Minder) — Open-source mind mapping software
 - [obsidian-spaced-repetition](https://github.com/st3v3nmw/obsidian-spaced-repetition) — The original Obsidian spaced repetition plugin
 - [Decks](https://github.com/pheralb/decks) — Modern flashcard plugin for Obsidian using FSRS
-
----
-
-**Author:** Sawyer Rensel ([@SawyerRensel](https://github.com/SawyerRensel))

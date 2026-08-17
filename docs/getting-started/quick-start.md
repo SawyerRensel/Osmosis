@@ -10,7 +10,7 @@ icon: lucide/zap
 2. Click the :lucide-brain-circuit: icon in the editor header bar (next to the reading view toggle)
 3. Your headings and lists appear as an interactive mind map
 
-![Mind map split view](../assets/media/osmosis_note_mind_map_split_view_zoomed_rust_crate_ecosystem.png)
+![osmosis_note_view_mindmap_view_split_hero_banner](../assets/media/osmosis_note_view_mindmap_view_split_hero_banner.png)
 
 You can also open a mind map from:
 
