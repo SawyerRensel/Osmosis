@@ -8383,12 +8383,17 @@ export class MindMapView extends ItemView {
 			// Use inline style on shape element — SVG attributes are overridden by CSS class rules
 			const shapeStyles: string[] = [];
 			if (style.fill) shapeStyles.push(`fill: ${style.fill}`);
-			if (style.border?.color) shapeStyles.push(`stroke: ${style.border.color}`);
-			if (style.border?.width) shapeStyles.push(`stroke-width: ${String(style.border.width)}`);
-			if (style.border?.style === "dashed") shapeStyles.push("stroke-dasharray: 4 2");
-			else if (style.border?.style === "dotted") shapeStyles.push("stroke-dasharray: 1 2");
-			else if (style.border?.style === "none") shapeStyles.push("stroke: none");
-			else if (style.border?.style === "solid") shapeStyles.push("stroke-dasharray: none");
+			// The border goes on as custom properties, not as `stroke` and
+			// friends: styles.css reads them back through `var()`, so selection
+			// and cursor-sync stay able to repaint a themed border by
+			// specificity. Declared inline, `stroke` would outrank every
+			// selector and only `!important` could beat it.
+			if (style.border?.color) shapeStyles.push(`--osmosis-node-stroke: ${style.border.color}`);
+			if (style.border?.width) shapeStyles.push(`--osmosis-node-stroke-width: ${String(style.border.width)}`);
+			if (style.border?.style === "dashed") shapeStyles.push("--osmosis-node-dash: 4 2");
+			else if (style.border?.style === "dotted") shapeStyles.push("--osmosis-node-dash: 1 2");
+			else if (style.border?.style === "none") shapeStyles.push("--osmosis-node-stroke: none");
+			else if (style.border?.style === "solid") shapeStyles.push("--osmosis-node-dash: none");
 			if (shapeStyles.length > 0) shapeEl.setAttribute("style", shapeStyles.join("; "));
 			const textStyles: string[] = [];
 			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
