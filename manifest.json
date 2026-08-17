@@ -1,7 +1,7 @@
 {
 	"id": "osmosis",
 	"name": "Osmosis",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"minAppVersion": "1.13.0",
 	"description": "Absorb knowledge faster. Turn your notes into interactive mind maps you study with spaced repetition.",
 	"author": "Sawyer Rensel",

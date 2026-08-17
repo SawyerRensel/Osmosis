@@ -9,6 +9,12 @@ All notable changes to Osmosis will be documented in this page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] - 2026-08-17
+
+### Changed
+
+- Version bump so the Obsidian community plugin scanner re-runs its automated checks. The 0.0.4 scan ran before that release had been published, so it recorded the release as missing, and a scan cannot be repeated for a version it has already checked. No functional changes — 0.0.5 is 0.0.4
+
 ## [0.0.4] - 2026-08-17
 
 ### Added
