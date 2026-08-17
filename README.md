@@ -7,11 +7,10 @@
 An Obsidian plugin that turns your notes into mind maps you study with spaced repetition.
 
 [![Release](https://img.shields.io/github/v/release/SawyerRensel/Osmosis?style=flat-square&color=7c3aed)](https://github.com/SawyerRensel/Osmosis/releases)
-[![Downloads](https://img.shields.io/github/downloads/SawyerRensel/Osmosis/total?style=flat-square&color=7c3aed)](https://github.com/SawyerRensel/Osmosis/releases)
 [![Obsidian](https://img.shields.io/badge/Obsidian-1.13.0%2B-7c3aed?style=flat-square)](https://obsidian.md)
 [![License](https://img.shields.io/badge/license-GPL--3.0-7c3aed?style=flat-square)](LICENSE)
 
-**[Install Osmosis](obsidian://show-plugin?id=osmosis)** · **[Quick start](https://sawyerrensel.github.io/osmosis/getting-started/quick-start/)** · **[Documentation](https://sawyerrensel.github.io/osmosis/)**
+**[Install Osmosis](https://obsidian.md/plugins?id=osmosis)** · **[Quick start](https://sawyerrensel.github.io/Osmosis/getting-started/quick-start/)** · **[Documentation](https://sawyerrensel.github.io/Osmosis/)**
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_note_view_mindmap_view_split_hero_banner_study_mode.png" alt="An Obsidian note and its Osmosis mind map side by side">
 
@@ -47,7 +46,7 @@ Headings become branches. Lists become nodes. Every edit on the map is an edit t
 
 Add a node, drag a branch under a new parent, fold a subtree. Osmosis syncs your notes as you edit the map.
 
-[Editing and shortcuts →](https://sawyerrensel.github.io/osmosis/mind-mapping/editing/)
+[Editing and shortcuts →](https://sawyerrensel.github.io/Osmosis/mind-mapping/editing/)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_mindmap_view_interactive_editing_drag_and_drop.png" alt="Dragging a node to a new parent in an Osmosis mind map">
 
@@ -58,7 +57,7 @@ Add a node, drag a branch under a new parent, fold a subtree. Osmosis syncs your
 
 Layout, spacing, branch lines, and per-node shape and colour — all saved in the note's frontmatter, so a map travels with its file.
 
-[Styling →](https://sawyerrensel.github.io/osmosis/mind-mapping/styling/)
+[Styling →](https://sawyerrensel.github.io/Osmosis/mind-mapping/styling/)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_theme_ocean.png" alt="An Osmosis mind map in the Ocean theme">
 
@@ -71,7 +70,7 @@ Layout, spacing, branch lines, and per-node shape and colour — all saved in th
 
 Embed a note with `![[note]]` and its structure becomes a sub-branch you can edit in place.
 
-[Transclusion →](https://sawyerrensel.github.io/osmosis/mind-mapping/#transclusion)
+[Transclusion →](https://sawyerrensel.github.io/Osmosis/mind-mapping/#transclusion)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_note_view_mindmap_view_split_transclusion.png" alt="A master map with an embedded note rendered as a sub-branch">
 
@@ -82,7 +81,7 @@ Embed a note with `![[note]]` and its structure becomes a sub-branch you can edi
 
 Tables, code blocks, images, callouts, and LaTeX render inside the node — just like they do in your notes.
 
-[What becomes a node →](https://sawyerrensel.github.io/osmosis/mind-mapping/#how-markdown-maps-to-nodes)
+[What becomes a node →](https://sawyerrensel.github.io/Osmosis/mind-mapping/#how-markdown-maps-to-nodes)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_enhanced_markdown_support_callout.png" alt="A mind map whose nodes hold a table, a code block, and an image">
 
@@ -96,21 +95,90 @@ Tables, code blocks, images, callouts, and LaTeX render inside the node — just
 
 ### Cards that live in your notes.
 
-Write a card where the idea comes up. Seven card types, all landing in the Markdown file you were already writing — and [Rapid Capture](https://sawyerrensel.github.io/osmosis/flashcards/rapid-capture/) turns a run of typing into cards as you go.
+Write a card where the idea comes up. Seven card types, all landing in the Markdown file you were already writing — and [Rapid Capture](https://sawyerrensel.github.io/Osmosis/flashcards/rapid-capture/) turns a run of typing into cards as you go.
 
-| Card type | What it does |
-|---|---|
-| **Basic** | A classic front and a back experience. |
-| **Bidirectional** | One fence, two cards, scheduled apart. |
-| **Type-in** | Type the answer instead of flipping the card. |
-| **Cloze deletion** | Blank out a span; each blank is a card. |
-| **Code cloze** | Hide code, highlighting left intact. |
-| **Image occlusion** | Mask a diagram; each group is a card. |
-| **Line cards** | One command cards a whole note, line by line. |
+<table>
+<tr>
+<td width="50%" valign="top">
 
-[See the card types →](https://sawyerrensel.github.io/osmosis/flashcards/card-types/)
+**Basic**
+
+A classic front and a back experience.
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_mode_card_basic_with_audio.png" alt="A basic Osmosis flashcard under review, question side">
+
+</td>
+<td width="50%" valign="top">
+
+**Bidirectional**
+
+One fence, two cards, scheduled apart.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_mode_card_front_back_bidi.png" alt="A bidirectional card studied in both directions, stacked">
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Type-in**
+
+Type the answer instead of flipping the card.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_mode_card_front_back_type_in.png" alt="A type-in card awaiting a typed answer, and the same card graded">
+
+</td>
+<td width="50%" valign="top">
+
+**Cloze deletion**
+
+Blank out a span; each blank is a card.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_study_card_cloze.png" alt="A cloze card with one deletion hidden">
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Code cloze**
+
+Hide code, highlighting left intact.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_study_card_code_cloze.png" alt="A code cloze card with part of the code block hidden">
+
+</td>
+<td width="50%" valign="top">
+
+**Image occlusion**
+
+Mask a diagram; each group is a card.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_sequential_mode_card_image_occlusion.png" alt="An image occlusion card, masks over a diagram with the answered group ringed">
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**Line cards**
+
+One command cards a whole note, line by line.
+
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_spatial_mode_line_card.png" alt="A note whose lines are scheduled cards, studied on its mind map">
+
+</td>
+<td width="50%" valign="top">
+
+**All seven, in depth**
+
+How each type is written, and when to reach for it.
+
+[See the card types →](https://sawyerrensel.github.io/Osmosis/flashcards/card-types/)
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -152,7 +220,7 @@ Sequential study is the classic deck run: one card at a time, with multi-level u
 </tr>
 </table>
 
-[Compare study modes →](https://sawyerrensel.github.io/osmosis/studying/study-modes/)
+[Compare study modes →](https://sawyerrensel.github.io/Osmosis/studying/study-modes/)
 
 ---
 
@@ -170,7 +238,7 @@ Navigate your decks, get a birds-eye view of your learning patterns, and find ev
 
 A year-long heatmap, true retention, interval and stability, answer buttons, and your load for the weeks ahead — plus recall by study mode, which shows how well the facts you studied in context are holding.
 
-[Statistics →](https://sawyerrensel.github.io/osmosis/studying/statistics/)
+[Statistics →](https://sawyerrensel.github.io/Osmosis/studying/statistics/)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_stats_dashboard.png" alt="The Osmosis statistics dashboard, showing card counts, retrievability, reviews, and a calendar heatmap">
 
@@ -181,7 +249,7 @@ A year-long heatmap, true retention, interval and stability, answer buttons, and
 
 The browser is a Bases view, so Obsidian's own filtering narrows it to the notes you care about. Then suspend, reset, change deck, or delete flashcards — with undo if you change your mind.
 
-[Card browser →](https://sawyerrensel.github.io/osmosis/studying/card-browser/)
+[Card browser →](https://sawyerrensel.github.io/Osmosis/studying/card-browser/)
 
 <img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_browser_card_layout.png" alt="The Osmosis card browser in its cards layout">
 
@@ -221,7 +289,7 @@ The value is dropped and its memory freed.
 ```
 ````
 
-[How it's stored →](https://sawyerrensel.github.io/osmosis/reference/data-storage/)
+[How it's stored →](https://sawyerrensel.github.io/Osmosis/reference/data-storage/)
 
 ---
 
@@ -249,7 +317,7 @@ The value is dropped and its memory freed.
 2. Search for "Osmosis"
 3. Click **Install**, then **Enable**
 
-Or open it straight from this page: **[Install Osmosis](obsidian://show-plugin?id=osmosis)**
+Or open the listing in the plugin directory: **[Install Osmosis](https://obsidian.md/plugins?id=osmosis)**
 
 ### Manual installation
 
@@ -264,7 +332,7 @@ Or open it straight from this page: **[Install Osmosis](obsidian://show-plugin?i
 | | |
 |---|---|
 | **Obsidian** | 1.13.0 or later, desktop or mobile |
-| **Bases** | Obsidian's Bases core plugin, for the [card browser](https://sawyerrensel.github.io/osmosis/studying/card-browser/). Everything else works without it |
+| **Bases** | Obsidian's Bases core plugin, for the [card browser](https://sawyerrensel.github.io/Osmosis/studying/card-browser/). Everything else works without it |
 
 ---
 
@@ -296,7 +364,7 @@ osmosis-cards: true
 
 <div align="center">
 
-**[Install Osmosis](obsidian://show-plugin?id=osmosis)** · **[Read the docs →](https://sawyerrensel.github.io/osmosis/getting-started/)**
+**[Install Osmosis](https://obsidian.md/plugins?id=osmosis)** · **[Read the docs →](https://sawyerrensel.github.io/Osmosis/getting-started/)**
 
 </div>
 
@@ -304,16 +372,16 @@ osmosis-cards: true
 
 ## Documentation
 
-Full documentation lives at **[sawyerrensel.github.io/osmosis](https://sawyerrensel.github.io/osmosis/)**.
+Full documentation lives at **[sawyerrensel.github.io/Osmosis](https://sawyerrensel.github.io/Osmosis/)**.
 
 | Section | What's in it |
 |---|---|
-| [Getting Started](https://sawyerrensel.github.io/osmosis/getting-started/) | Installation, quick start |
-| [Mind Mapping](https://sawyerrensel.github.io/osmosis/mind-mapping/) | Editing, navigation, styling, transclusion |
-| [Flashcards](https://sawyerrensel.github.io/osmosis/flashcards/) | Card types, decks, rapid capture, image occlusion, line cards |
-| [Studying](https://sawyerrensel.github.io/osmosis/studying/) | Study modes, spaced repetition, dashboard, statistics, card browser |
-| [Reference](https://sawyerrensel.github.io/osmosis/reference/) | Commands, settings, data storage, mobile |
-| [Changelog](https://sawyerrensel.github.io/osmosis/changelog/) | What changed, release by release |
+| [Getting Started](https://sawyerrensel.github.io/Osmosis/getting-started/) | Installation, quick start |
+| [Mind Mapping](https://sawyerrensel.github.io/Osmosis/mind-mapping/) | Editing, navigation, styling, transclusion |
+| [Flashcards](https://sawyerrensel.github.io/Osmosis/flashcards/) | Card types, decks, rapid capture, image occlusion, line cards |
+| [Studying](https://sawyerrensel.github.io/Osmosis/studying/) | Study modes, spaced repetition, dashboard, statistics, card browser |
+| [Reference](https://sawyerrensel.github.io/Osmosis/reference/) | Commands, settings, data storage, mobile |
+| [Changelog](https://sawyerrensel.github.io/Osmosis/changelog/) | What changed, release by release |
 
 ---
 
