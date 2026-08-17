@@ -407,6 +407,10 @@ export function calendarHeatmap(plot: HTMLElement, options: HeatmapOptions): voi
 	const width = weeks * cell + 30;
 	const height = 7 * cell + 16;
 
+	// The heatmap is the one chart wider than its pane, so its plot is the one
+	// that scrolls. Marked here rather than matched in CSS with `:has()`.
+	plot.addClass("osmosis-stats-plot-scrolls");
+
 	// Two classes must be an array: `createSvg` passes `cls` to
 	// `classList.add()`, which rejects a token containing a space. The HTML
 	// helpers accept a space-separated string, so the asymmetry is easy to trip.

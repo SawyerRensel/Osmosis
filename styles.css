@@ -50,16 +50,23 @@ Uses Obsidian CSS variables for theme compatibility.
 	transform-origin: 0 0;
 }
 
+/* The border a theme resolves for a node arrives as custom properties on the
+   shape element rather than as inline `stroke` declarations (see `drawNode`).
+   A custom property feeds the cascade instead of short-circuiting it, so the
+   selection and cursor-sync rules further down can repaint a themed border
+   through specificity alone; written inline, `stroke` would outrank every
+   selector and only `!important` could beat it. */
 .osmosis-node {
 	fill: var(--background-secondary);
-	stroke: var(--background-modifier-border);
-	stroke-width: 1;
+	stroke: var(--osmosis-node-stroke, var(--background-modifier-border));
+	stroke-width: var(--osmosis-node-stroke-width, 1);
+	stroke-dasharray: var(--osmosis-node-dash, none);
 }
 
+/* Only the fill differs — the stroke comes from `.osmosis-node`, which is on
+   this same element. */
 .osmosis-node-heading {
 	fill: var(--background-primary-alt);
-	stroke: var(--background-modifier-border);
-	stroke-width: 1;
 }
 
 /* Shape: underline — bottom line only, no background fill */
@@ -70,7 +77,9 @@ Uses Obsidian CSS variables for theme compatibility.
 /* Shape: none — fully invisible background */
 .osmosis-node-group[data-shape="none"] > .osmosis-node {
 	fill: none;
-	stroke: none;
+	/* A themed border still shows through on this shape, exactly as it did when
+	   the theme wrote `stroke` inline and outranked the rule. */
+	stroke: var(--osmosis-node-stroke, none);
 }
 
 .osmosis-node-content {
@@ -178,11 +187,13 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 /* Hide Obsidian's copy button inside mind map nodes (non-functional in SVG
-   foreignObject). !important: Obsidian core toggles this button's display from
-   its own rules, which we cannot outrank by specificity alone. */
+   foreignObject). Obsidian reveals it from a rule of its own that is qualified
+   by both `.markdown-rendered` and the hovered `pre`, so the second selector
+   here spells out the same ancestry — the node wrapper carries
+   `.markdown-rendered` too — to come out one element heavier and win. */
 .osmosis-node-content .copy-code-button,
-.osmosis-node-content button.copy-code-button {
-	display: none !important;
+.osmosis-node-content.markdown-rendered pre .copy-code-button {
+	display: none;
 }
 
 /* Code block language label */
@@ -231,23 +242,6 @@ pre.osmosis-code-block {
 	transition: transform 80ms ease-out, opacity 80ms ease-out;
 }
 
-/* Selection — !important is required here: per-node theme colors are written as
-   inline style attributes by the renderer, and inline styles outrank every
-   selector. This is the only way to show selection state on a themed node. */
-.osmosis-node-selected > .osmosis-node {
-	stroke: var(--interactive-accent) !important;
-	stroke-width: 2 !important;
-	stroke-dasharray: none !important;
-}
-
-/* Cursor sync highlight (editor cursor → map node).
-   !important for the same reason as selection above: inline theme styles. */
-.osmosis-node-cursor-synced > .osmosis-node {
-	stroke: var(--text-accent) !important;
-	stroke-width: 2 !important;
-	stroke-dasharray: 4 2 !important;
-}
-
 /* Rubber-band selection */
 .osmosis-rubber-band {
 	fill: var(--interactive-accent);
@@ -258,11 +252,12 @@ pre.osmosis-code-block {
 	pointer-events: none;
 }
 
-/* Drag-and-drop. !important: applied to the view's content element so the
-   grabbing cursor holds across every descendant that sets its own cursor
-   (nodes, buttons, resize handles) for the duration of the drag. */
+/* Drag-and-drop. This class lands on the view's content element, which is the
+   same element as `.osmosis-mindmap-container` — so it is that rule's `cursor:
+   grab` this has to beat, and being declared later at equal specificity is
+   enough. */
 .osmosis-dragging {
-	cursor: grabbing !important;
+	cursor: grabbing;
 }
 
 .osmosis-drag-ghost {
@@ -326,17 +321,25 @@ pre.osmosis-code-block {
 	user-select: none;
 }
 
+/*
+ * The three transclusion-state borders below take second place to a themed
+ * border, which is what they did when the theme wrote `stroke` inline and no
+ * selector could reach past it. Reading the same custom properties, with the
+ * state's own colour as the fallback, keeps that order intact now that the
+ * theme goes through the cascade like everything else.
+ */
+
 /* Unresolved transclusion */
 .osmosis-node-group-transclusion.osmosis-node-unresolved > .osmosis-node {
-	stroke: var(--text-faint);
-	stroke-dasharray: 4 2;
+	stroke: var(--osmosis-node-stroke, var(--text-faint));
+	stroke-dasharray: var(--osmosis-node-dash, 4 2);
 }
 
 /* Cyclic transclusion indicator */
 .osmosis-node-cyclic > .osmosis-node {
-	stroke: var(--text-warning);
-	stroke-width: 2;
-	stroke-dasharray: 6 3;
+	stroke: var(--osmosis-node-stroke, var(--text-warning));
+	stroke-width: var(--osmosis-node-stroke-width, 2);
+	stroke-dasharray: var(--osmosis-node-dash, 6 3);
 }
 
 .osmosis-cycle-indicator {
@@ -347,9 +350,31 @@ pre.osmosis-code-block {
 
 /* Transcluded branch visual distinction (opt-in via settings) */
 .osmosis-node-transcluded > .osmosis-node {
-	stroke: var(--text-accent);
-	stroke-dasharray: 3 2;
+	stroke: var(--osmosis-node-stroke, var(--text-accent));
+	stroke-dasharray: var(--osmosis-node-dash, 3 2);
 	stroke-opacity: 0.6;
+}
+
+/*
+ * Selection and cursor sync are the two states that must be visible whatever
+ * else a node is — themed, transcluded, unresolved, cyclic — so they are
+ * declared here, after every rule they have to outrank, and pair their state
+ * class with `.osmosis-node-group` (both sit on the group element) to match the
+ * heaviest of them. This is the ordering `!important` used to stand in for.
+ */
+
+.osmosis-node-group.osmosis-node-selected > .osmosis-node {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: none;
+}
+
+/* Editor cursor → map node. After selection, so a node that is both reads as
+   synced. */
+.osmosis-node-group.osmosis-node-cursor-synced > .osmosis-node {
+	stroke: var(--text-accent);
+	stroke-width: 2;
+	stroke-dasharray: 4 2;
 }
 
 /* Inline editing — overlay positioned outside the SVG */
@@ -419,27 +444,36 @@ pre.osmosis-code-block {
 	top: -32px;
 }
 
-/* Hide CM6 chrome not needed in node editing. !important: CodeMirror injects
-   these rules into the document at runtime, so source order cannot be relied on. */
-.osmosis-edit-overlay .cm-gutters,
-.osmosis-edit-overlay .cm-lineNumbers,
-.osmosis-edit-overlay .cm-foldGutter {
-	display: none !important;
+/*
+ * The rules below fight CodeMirror's and Obsidian's own editor styling, and
+ * each repeats `.osmosis-edit-overlay` to do it. The repeat is deliberate: a
+ * class counted twice is a selector one class heavier than the two-class rules
+ * those stylesheets use for the same elements, which is what it takes to win
+ * without `!important`. It selects exactly the same elements as writing the
+ * class once, so nothing else about these rules changes.
+ */
+
+/* Hide CM6 chrome not needed in node editing. CodeMirror injects its own rules
+   into the document at runtime, so source order cannot be relied on. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-gutters,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-lineNumbers,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-foldGutter {
+	display: none;
 }
 
 /* Match node text styling. The overlay carries the node's own font size and
    padding, scaled to the current zoom, as custom properties (see
    `positionEditOverlay`), so the editor reads as the node it covers rather
    than as an Obsidian editor.
-   !important: both CodeMirror and Obsidian set absolute font sizes here — on
-   .cm-editor and on the heading line classes. A node ignores those (its text
-   size comes from its heading depth), so the overlay must ignore them too. */
-.osmosis-edit-overlay .cm-editor,
-.osmosis-edit-overlay .cm-content,
-.osmosis-edit-overlay .cm-line,
-.osmosis-fallback-textarea {
-	font-size: var(--osmosis-edit-font-size, 13px) !important;
-	line-height: var(--osmosis-edit-line-height, 17px) !important;
+   Both CodeMirror and Obsidian set absolute font sizes here — on .cm-editor and
+   on the heading line classes. A node ignores those (its text size comes from
+   its heading depth), so the overlay must ignore them too. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-editor,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-content,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-line,
+.osmosis-edit-overlay.osmosis-edit-overlay .osmosis-fallback-textarea {
+	font-size: var(--osmosis-edit-font-size, 13px);
+	line-height: var(--osmosis-edit-line-height, 17px);
 }
 
 .osmosis-edit-overlay .cm-content {
@@ -452,20 +486,19 @@ pre.osmosis-code-block {
    single node that reads as an unexplained gap above the text.
    Only the block axis is touched — a list line's inline padding is the hanging
    indent its `- ` marker sits in, and zeroing it drags the marker out of the
-   box, where .cm-editor's overflow clips it.
-   !important: those are Obsidian's own rules and outrank us on specificity. */
-.osmosis-edit-overlay .cm-scroller,
-.osmosis-edit-overlay .cm-sizer,
-.osmosis-edit-overlay .cm-contentContainer,
-.osmosis-edit-overlay .cm-line {
-	margin-block: 0 !important;
-	padding-block: 0 !important;
+   box, where .cm-editor's overflow clips it. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-scroller,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-sizer,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-contentContainer,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-line {
+	margin-block: 0;
+	padding-block: 0;
 }
 
-/* Remove CM6 default focus outline (container already has border).
-   !important: CodeMirror's own injected .cm-focused rule sets this outline. */
-.osmosis-edit-overlay .cm-focused {
-	outline: none !important;
+/* Remove CM6 default focus outline (container already has border) — CodeMirror's
+   own injected .cm-focused rule sets it. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-focused {
+	outline: none;
 }
 
 /* Ensure the editor fills its container */
@@ -585,12 +618,16 @@ pre.osmosis-code-block {
 	border: none;
 }
 
+/* Holds the name alone: `sidebarSetting` lifts the description out of here and
+   onto the row, so this wrapper is simply the first cell. Obsidian's own
+   right margin on it would double the grid's column gap. */
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-info {
-	display: contents;
+	grid-area: 1 / 1;
+	min-width: 0;
+	margin-right: 0;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-name {
-	grid-area: 1 / 1;
 	font-size: var(--font-ui-small);
 	line-height: 1.4;
 }
@@ -1176,11 +1213,12 @@ hr.osmosis-map-style-divider {
 
 /* ─── Utility ────────────────────────────────────────────── */
 
-/* Single-purpose visibility utility. !important is intentional: it is applied
-   on top of components that set their own display (flex/grid), and must win
-   regardless of which component it is toggled on. */
-.osmosis-hidden {
-	display: none !important;
+/* Single-purpose visibility utility, toggled on top of components that set
+   their own display (flex/grid). The class is repeated so the selector counts
+   two classes and outranks any of those single-class component rules, whichever
+   one it lands on and wherever that rule sits in this file. */
+.osmosis-hidden.osmosis-hidden {
+	display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3291,12 +3329,14 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 }
 
 /* The heatmap is the one chart that cannot reflow — a year is 53 columns wide
-   whatever the pane is — so it scrolls inside its own box. */
+   whatever the pane is — so it scrolls inside its own box. The plot that holds
+   one is marked by `calendarHeatmap` rather than matched with `:has()`, which
+   invalidates far too broadly for a view that redraws on every resize. */
 .osmosis-stats-heatmap {
 	max-width: none;
 }
 
-.osmosis-stats-plot:has(.osmosis-stats-heatmap) {
+.osmosis-stats-plot-scrolls {
 	overflow-x: auto;
 }
 
@@ -3725,12 +3765,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
    and keeps the whole canvas reachable. */
 .osmosis-occlusion-stage {
 	display: flex;
-	/* Plain `center` first: were `safe` ever unsupported the declaration would be
-	   dropped whole, leaving the canvas stretched — and a wrapper that is not
-	   exactly the image's box puts every mask in the wrong place. */
-	align-items: center;
 	align-items: safe center;
-	justify-content: center;
 	justify-content: safe center;
 	flex: 1;
 	min-height: 0;
