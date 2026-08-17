@@ -18,6 +18,8 @@ cards asks three questions and takes three ratings whether you meet it in the
 
 The simplest card. Front and back separated by `***`:
 
+![osmosis_sequential_mode_card_basic](../assets/media/osmosis_sequential_mode_card_basic.png){width=66%}
+
 ````markdown
 ```osmosis
 What does HTTP 429 mean?
@@ -28,13 +30,11 @@ Too Many Requests — back off and retry later
 
 Both front and back support full markdown — bold, italic, code, images, LaTeX.
 
-![Basic card — question side](../assets/media/osmosis_sequential_study_flashcard_question_frontback.png)
-
-![Basic card — answer side](../assets/media/osmosis_sequential_study_flashcard_answer_frontback.png)
-
 ## Bidirectional
 
 Generates two cards, one in each direction. Add `bidi: true`:
+
+![osmosis_sequential_mode_card_front_back_bidi](../assets/media/osmosis_sequential_mode_card_front_back_bidi.png){width=66%}
 
 ````markdown
 ```osmosis
@@ -56,6 +56,8 @@ Each direction is scheduled independently.
 ## Type-In
 
 Requires you to type the answer instead of flipping the card. Add `type-in: true`:
+
+![osmosis_sequential_mode_card_front_back_type_in](../assets/media/osmosis_sequential_mode_card_front_back_type_in.png){width=66%}
 
 ````markdown
 ```osmosis
@@ -83,6 +85,8 @@ Hello
 ## Cloze Deletion
 
 Blank out terms in a sentence using `==term==`, `**term**`, or `:::term:::` markers:
+
+![osmosis_sequential_study_card_cloze](../assets/media/osmosis_sequential_study_card_cloze.png){width=66%}
 
 ````markdown
 ```osmosis
@@ -129,6 +133,9 @@ User-chosen numbers are preserved verbatim on card IDs (`…-c1`, `…-c5`), so 
 
 Blank out lines of code using comment annotations. Works with any programming language.
 
+![osmosis_sequential_study_card_code_cloze](../assets/media/osmosis_sequential_study_card_code_cloze.png){width=66%}
+
+
 ### Single Line
 
 Add `osmosis-cloze` in a comment at the end of the line:
@@ -143,10 +150,6 @@ def greet(name):
 `````
 
 The marked line shows as `________` on the front (preserving indentation). The comment marker is stripped from the back.
-
-![Code cloze — question side](../assets/media/osmosis_sequential_study_flashcard_question_code_cloze.png)
-
-![Code cloze — answer side](../assets/media/osmosis_sequential_study_flashcard_answer_code_cloze.png)
 
 ### Multi-Line Region
 
@@ -281,10 +284,13 @@ The `osmosis-cloze` marker works with any comment syntax:
 
 Right-click an image and choose **Create image occlusion** to draw masks over it. Each group of masks is one card, scheduled like a cloze deletion. See [Image Occlusion](image-occlusion.md).
 
+![osmosis_sequential_mode_card_image_occlusion](../assets/media/osmosis_sequential_mode_card_image_occlusion.png){width=66%}
+
 ## Line Cards
 
 Line cards turn a whole note - or a part of a note - into flashcards. **Every line becomes its own scheduled card**, with no fences and no duplicate authoring. See [Line Cards](line-cards.md).
 
+![osmosis_spatial_mode_line_card](../assets/media/osmosis_spatial_mode_line_card.png){width=66%}
 
 ## Inserting Cards via Command Palette
 

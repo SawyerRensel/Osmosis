@@ -10,8 +10,6 @@ icon: lucide/zap
 2. Click the :lucide-brain-circuit: icon in the editor header bar (next to the reading view toggle)
 3. Your headings and lists appear as an interactive mind map
 
-![How to launch a mind map from note view](../assets/media/osmosis_note_view_how_to_launch_mind_map_view_buttons.png)
-
 ![Mind map split view](../assets/media/osmosis_note_mind_map_split_view_zoomed_rust_crate_ecosystem.png)
 
 You can also open a mind map from:
@@ -64,8 +62,6 @@ this for you. You can also opt in whole folders or tags under
 1. Click the :lucide-brain-circuit: icon in the left ribbon to open the **Osmosis dashboard**
 2. Your decks appear with counts: new, learning, due, and the total waiting now
 3. Click a deck to start a study session — or **Study all**
-
-![Flashcard dashboard](../assets/media/osmosis_flashcard_dashboard.png)
 
 !!! tip "Three study modes"
     - **Sequential** — classic card-by-card review, from the dashboard

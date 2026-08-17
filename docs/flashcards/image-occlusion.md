@@ -10,6 +10,8 @@ on Osmosis's own cloze model and stored in the note the image already lives in.
 Anatomy diagrams, circuit schematics, UI mockups, maps, chord charts, exploded
 views: anything where *where a thing is* is part of what you're learning.
 
+![osmosis_sequential_mode_card_image_occlusion](../assets/media/osmosis_sequential_mode_card_image_occlusion.png){width=66%}
+
 ## Creating Occlusions
 
 1. Put an image in a note — `![[diagram.png]]`, either on its own line or inside

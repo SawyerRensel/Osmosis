@@ -11,7 +11,7 @@ and [Statistics](statistics.md) — in the main area.
 Open it by clicking the :lucide-brain-circuit: **Osmosis dashboard** icon in the
 left ribbon, or run **Open dashboard** from the command palette.
 
-![The Osmosis dashboard sidebar beside the card browser](../assets/media/osmosis_browser_table_layout.png)
+![osmosis_dashboard](../assets/media/osmosis_dashboard.png){width=66%}
 
 ## The Operator Bar
 

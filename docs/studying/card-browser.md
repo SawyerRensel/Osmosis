@@ -38,6 +38,8 @@ every column, and click a header to sort (click again to reverse).
 Fronts and backs render as real markdown — images, embeds, LaTeX and code
 included — and render lazily as you scroll.
 
+![The same cards in card layout, grouped by note](../assets/media/osmosis_browser_card_layout.png)
+
 ## Filtering
 
 Card-level filters live in the view options panel:

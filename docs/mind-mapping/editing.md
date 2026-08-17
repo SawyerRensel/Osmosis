@@ -9,7 +9,7 @@ Double-click a node (or press ++f2++) to enter edit mode. Press ++escape++ to ca
 !!! note "Editing mode required"
     Everything on this page needs the map to be in **editing** mode. If nodes won't move or edit, the map is probably in [reading mode](index.md#reading-mode) — press ++ctrl+e++ or click the :lucide-book-open: header icon to switch back.
 
-![Drag and drop node repositioning](../assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png)
+![Dragging a node — the dashed line marks where it will land](../assets/media/osmosis_mindmap_view_interactive_editing_drag_and_drop.png)
 
 ## Editing a Node's Markdown
 

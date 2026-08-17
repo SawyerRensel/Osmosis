@@ -25,7 +25,7 @@ Classic card-by-card review in a modal dialog.
 
 A progress bar at the top tracks remaining cards. Optionally, turn on **Settings > Osmosis > Show deck breadcrumb in study modal** to see which deck the card on screen belongs to.
 
-![Sequential study — question and answer](../assets/media/osmosis_sequential_study_flashcard_question_frontback.png)
+![osmosis_fence_card_from_a_window](../assets/media/osmosis_fence_card_from_a_window.png)
 
 !!! tip "Type-in cards"
     For type-in cards, a text input replaces the "Show Answer" button. Type your answer and submit to compare against the correct answer.
@@ -75,7 +75,7 @@ reading/edit toggle:
   confirms completion. If nothing is due, the button tells you instead of
   starting a session.
 
-![Contextual and spatial study](../assets/media/osmosis_contextual_and_spatial_study_modes.png)
+![osmosis_fence_card_in_the_note](../assets/media/osmosis_fence_card_in_the_note.png)
 
 !!! note "Reading a note is not a quiz"
     Outside a session, reading view renders your cards the way live preview
@@ -117,9 +117,7 @@ reinforcing structural relationships.
 5. **Rate** with the bubble that appears below the node — Again (++1++), Hard (++2++), Good (++3++), Easy (++4++)
 6. A floating pill tracks progress with a **Stop** button; a toast confirms when every due card is reviewed, and the map stays open
 
-![Spatial study — nodes hidden](../assets/media/osmosis_spatial_study_mode_hidden.png)
-
-![Spatial study — nodes revealed](../assets/media/osmosis_spatial_study_mode_revealed.png)
+![osmosis_fence_card_on_the_map](../assets/media/osmosis_fence_card_on_the_map.png)
 
 A node holding a multi-card fence steps through its questions one at a time —
 the node's content swaps per question — so a three-group cloze on the map asks

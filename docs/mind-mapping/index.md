@@ -6,7 +6,7 @@ icon: lucide/brain-circuit
 
 Osmosis renders your markdown structure as a fully interactive mind map. Headings, bullet lists, and numbered lists become nodes. The map and your markdown stay in sync — edit one, and the other updates instantly.
 
-![Full-screen mind map view](../assets/media/osmosis_note_mind_map_fullscreen.png)
+![A note and its mind map side by side](../assets/media/osmosis_note_view_mindmap_view_split_hero_banner.png)
 
 ## How Markdown Maps to Nodes
 
@@ -36,8 +36,6 @@ Every one of these knows which note to map. The mind map header carries the way
 back — :lucide-file-text: **Note view** — plus [reading mode](#reading-mode),
 [study and peek](../studying/study-modes.md#spatial-study), a pin toggle, and
 the :lucide-paintbrush: [properties sidebar](styling.md).
-
-![Launch mind map from note view](../assets/media/osmosis_note_view_how_to_launch_mind_map_view_buttons.png)
 
 ## Reading Mode
 
@@ -81,7 +79,7 @@ Embed another note's content as a sub-branch using standard Obsidian syntax:
 
 The embedded note's heading and list structure appears as a collapsible sub-branch, loaded expanded by default. Turn off **Expand transclusions** in the plugin settings to lazy-load them instead — collapsed until first expanded. Editing a transcluded node writes changes to the source file.
 
-![osmosis_mind_map_transclusion_split_view](../assets/media/osmosis_mind_map_transclusion_split_view.png)
+![An embedded note rendered as a sub-branch of the host map](../assets/media/osmosis_note_view_mindmap_view_split_transclusion.png)
 
 ## Cursor Sync
 

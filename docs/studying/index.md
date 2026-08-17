@@ -14,7 +14,7 @@ your performance, so a card rated anywhere updates its schedule everywhere.
 | [**Contextual**](study-modes.md#contextual-study) | In the note itself | Studying while reading, in your own words |
 | [**Spatial**](study-modes.md#spatial-study) | On the mind map | Learning structure and relationships |
 
-![Contextual and spatial study](../assets/media/osmosis_contextual_and_spatial_study_modes.png)
+![osmosis_fence_card_on_the_map](../assets/media/osmosis_fence_card_on_the_map.png){width=66%}
 
 ## Starting a Session
 

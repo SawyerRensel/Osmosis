@@ -6,6 +6,8 @@ icon: lucide/list-tree
 
 Line cards turn a whole note into flashcards — **every line becomes its own scheduled card**, with no fences and no duplicate authoring. Osmosis tags eligible lines with native Obsidian block IDs, and each tagged line is scheduled by FSRS like any other card: the front is the line's place in the note's structure, the back is the line itself.
 
+![osmosis_spatial_mode_line_card](../assets/media/osmosis_spatial_mode_line_card.png){width=66%}
+
 ## Generating Line Cards
 
 Run **Generate flashcards from note** from the command palette, or right-click a note and choose **Generate flashcards**.
