@@ -1,6 +1,6 @@
 {
   "name": "osmosis",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Absorb knowledge faster. Turn your notes into interactive mind maps you study with spaced repetition.",
   "main": "main.js",
   "type": "module",
