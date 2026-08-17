@@ -6,6 +6,8 @@ icon: lucide/list-tree
 
 Line cards turn a whole note into flashcards — **every line becomes its own scheduled card**, with no fences and no duplicate authoring. Osmosis tags eligible lines with native Obsidian block IDs, and each tagged line is scheduled by FSRS like any other card: the front is the line's place in the note's structure, the back is the line itself.
 
+![osmosis_spatial_mode_line_card](../assets/media/osmosis_spatial_mode_line_card.png){width=66%}
+
 ## Generating Line Cards
 
 Run **Generate flashcards from note** from the command palette, or right-click a note and choose **Generate flashcards**.
@@ -39,6 +41,10 @@ Code blocks, tables, and callouts/blockquotes are single units, so they get a si
 
 - **`osmosis` fences** use their existing `id:` metadata key (added if missing).
 - **Generic code blocks, tables, and callouts/blockquotes** get a standalone `^os-xxxxxx` line immediately after the block — Obsidian's native way to block-reference multi-line content.
+
+An **image on a line** can carry occlusion masks: right-click it, draw, and the
+line becomes one card per mask group. Osmosis tags the line and opts the note in
+for you — see [Image Occlusion](image-occlusion.md).
 
 A **callout or blockquote** is one card, not one card per line. A run of consecutive `>`-prefixed lines — title, body, and any nested list — is a single block:
 
@@ -76,7 +82,7 @@ Sometimes a line shouldn't be studied right now, but you don't want to lose its 
 
 | Where | How |
 |-------|-----|
-| Editor | **Exclude line cards in selection from study** / **Include line cards in selection in study** |
+| Editor | ++ctrl+++++p++ > **Exclude line cards in selection from study** / **Include line cards in selection in study** |
 | Mind map | Right-click a node > **Exclude from study** / **Include in study** (:lucide-eye-off: / :lucide-eye:) |
 | Sequential study | The exclude button on the study modal |
 
@@ -123,7 +129,7 @@ osmosis-schedule:
 ---
 ```
 
-The key is written lazily — only after the first review, not when IDs are generated. Writes are debounced and coalesced, so rating a run of cards produces one file write, flushed at session end. See [Spaced Repetition](../studying/spaced-repetition.md#data-storage) for details.
+The key is written lazily — only after the first review, not when IDs are generated. Writes are debounced and coalesced, so rating a run of cards produces one file write, flushed at session end. See [Data Storage](../reference/data-storage.md#line-cards) for the full format.
 
 ## Studying Line Cards
 
@@ -145,6 +151,9 @@ To keep them out of decks while still studiable in place (peek/study/spatial):
 ## Deleting Lines & Orphans
 
 Deleting a line (or just its block ID) **soft-deletes** the card: the schedule entry stays in `osmosis-schedule`, and if the ID reappears the card re-links with its history intact.
+
+The [card browser](../studying/card-browser.md) deletes a line card the same
+way — by stripping its block ID. Your prose is never touched.
 
 ## Bonus: Stable Styling Anchors
 

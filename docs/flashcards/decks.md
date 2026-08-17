@@ -70,3 +70,12 @@ Instead of adding `osmosis-cards: true` to every note, you can auto-include note
 - **Include tags** — Any note with these tags generates cards
 
 This pairs well with folder-based deck assignment — add a folder to the include list, and every note in it automatically generates cards organized into the right deck.
+
+## Automatic Exclusion
+
+The same settings screen has the opposite lists, useful when a vault contains another vault you'd rather keep out of your decks:
+
+- **Exclude folders** — No note in these folders generates cards
+- **Exclude tags** — No note with these tags generates cards
+
+Exclusion wins over every opt-in: a note in an excluded folder generates no cards even with `osmosis-cards: true` in its frontmatter or a matching include folder or tag. Tags match hierarchically, so excluding `archive` also excludes `archive/2024`.

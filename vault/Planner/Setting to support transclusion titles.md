@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: Backlog
+status: Ideas
 priority:
 progress_current:
 progress_total:
 date_created: "2026-04-03T21:49:49.650Z"
-date_modified: "2026-04-03T21:49:49.650Z"
+date_modified: "2026-07-31T21:05:39.182Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
@@ -39,40 +39,27 @@ about: Suggest a feature or optimization
 labels: feature, optimization
 assignees:
 ---
-### 💡 Summary
-A short, clear description of the feature or optimization.  
 
-- [ ] Filename as h1 branch node
-- [ ] `title` frontmatter fields as h1 branch node
-- [ ] Add option to ignore h1 headings if picking either of these two
+# Feature Request
 
-***
+## What do you need built?
 
-### 🤔 What Problem Does This Solve?
-Describe the issue or workflow friction this feature would address.  
+*Describe the new tool, script, or capability you're requesting.*
 
 
 
-***
+## What problem does this solve?
 
-### 🧩 Proposed Solution / Idea
-Explain how you'd like the feature to work or what it would look like.  
-
-
-
-***
-
-
-### 🔄 Alternatives Considered
-Have you tried or considered other ways to solve this problem?  
+*Describe the problem or need. What are you trying to accomplish?*
 
 
 
-***
+## What's your current workaround?
 
-### 📎 Additional Context
-Add any other context, screenshots, or mockups that might help explain your request.  
-
+*How do you currently handle this? Describe any manual steps or workarounds.*
 
 
-***
+
+## Reference Attachments/Screenshots
+
+*Attach any reference files, screenshots, sketches, or examples.*

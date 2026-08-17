@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400">
+  <rect width="800" height="400" fill="#f4f1ea"/>
+
+  <!-- deck slab -->
+  <rect x="120" y="120" width="560" height="28" fill="#b9b2a3" stroke="#5c564a" stroke-width="3"/>
+  <!-- web plates -->
+  <rect x="236" y="148" width="24" height="150" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <rect x="540" y="148" width="24" height="150" fill="#8d99ae" stroke="#3d4a5c" stroke-width="3"/>
+  <!-- bottom flange -->
+  <rect x="180" y="298" width="440" height="24" fill="#b9b2a3" stroke="#5c564a" stroke-width="3"/>
+  <!-- diagonal bracing -->
+  <line x1="260" y1="160" x2="540" y2="290" stroke="#3d4a5c" stroke-width="4"/>
+  <line x1="540" y1="160" x2="260" y2="290" stroke="#3d4a5c" stroke-width="4"/>
+  <!-- parapet -->
+  <rect x="120" y="92" width="18" height="28" fill="#5c564a"/>
+  <rect x="662" y="92" width="18" height="28" fill="#5c564a"/>
+
+  <text x="400" y="46" font-family="sans-serif" font-size="26" text-anchor="middle" fill="#2b2b2b">Deck slab</text>
+  <text x="150" y="230" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#2b2b2b">Web plate</text>
+  <text x="400" y="360" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#2b2b2b">Bottom flange</text>
+  <text x="660" y="230" font-family="sans-serif" font-size="22" text-anchor="middle" fill="#2b2b2b">Parapet</text>
+</svg>

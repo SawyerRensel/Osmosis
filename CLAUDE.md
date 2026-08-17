@@ -4,7 +4,7 @@ This file guides Claude through Osmosis development, from planning through refin
 
 ---
 
-## Behavrioal Guidelines
+## Behavioral Guidelines
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
@@ -89,7 +89,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 Osmosis/
 ├── CLAUDE.md                          # This file - Claude instructions
 ├── README.md                          # Project overview
-├── vault/                         # Dev + E2E vault (build output goes here, gitignored)
+├── vault/                             # Dev + E2E vault (build output goes here)
+│   ├── Planner/                       # Project & task management — one note per task (source of truth for task state)
+│   ├── templates/                     # Planner note templates (Bug Report / Feature / Optimization / Research)
+│   ├── Bases/                         # Obsidian Bases views over the Planner notes
+│   └── tests/                         # Manual-test fixtures, copied from e2e/fixtures/
 ├── media/                             # Reference media such as screenshots
 ├── docs/                              # User-facing documentation
 ├── ref/                               # Example plugins and other references
@@ -112,7 +116,7 @@ Osmosis/
 ├── e2e-launch.sh                      # Opens Obsidian with vault for manual debugging
 ├── playwright.config.ts               # Playwright configuration
 │
-└── notes/                             # All project planning & tracking
+└── notes/                             # Design & reference docs (PRD, architecture, plans). Task *state* lives in vault/Planner/
     ├── GETTING_STARTED.md             # Phase overview & workflow
     ├── OPTIMIZATION_GUIDE.md          # How to optimize for Claude
     ├── CLAUDE_CONVERSATIONS.md        # Index of important Claude chats
@@ -151,7 +155,7 @@ Before helping with code, Claude should:
 
 1. **For Architecture Questions**: Read `notes/02_planning/implementation_plan.md`
 2. **For Feature Questions**: Read `notes/01_requirements/prd.md`
-3. **For Context on What's Done**: Run `bd ready` and `bd list --status=in_progress` (Beads is the source of truth for task state)
+3. **For Context on What's Done**: Read the task notes in `vault/Planner/` (Planner is the source of truth for task state) — check their `status` frontmatter
 4. **For Testing/Quality Standards**: Read `notes/04_refinement/testing_checklist.md`
 
 ### Key References
@@ -380,6 +384,24 @@ Is this correct? What's missing?
    - Include: which file to open, what actions to perform, what to expect
    - The user will report back with results or screenshots
 
+#### The reset hazard
+
+A fixture whose schedule a test moves has to be reset afterwards — and **the
+running plugin is authoritative over a file it has open**. Obsidian keeps its own
+in-memory copy of an open note; the next schedule flush serializes *that* copy
+plus whatever the store staged, so a fixture rewritten from disk while the note
+is open is silently reverted, and the reverted file still carries the ratings the
+reset was meant to undo.
+
+So, whenever a fixture is written or restored under `vault/`:
+
+1. Write the file (from `e2e/fixtures/`, which is the master copy).
+2. **Reload Obsidian (Ctrl+R) before testing it.** Until the reload, what is on
+   screen is the old copy.
+3. Expect sync to stamp `id:` onto any fence that lacks one within a second of
+   the write — a fixture therefore *cannot* hold an unsynced fence, and a case
+   that needs one belongs in a unit test.
+
 ---
 
 ## Debugging with Claude
@@ -491,28 +513,48 @@ What am I missing?
 
 After completing each subtask:
 - Create test fixture files in `e2e/fixtures/` and copy them to `vault/`
+  (see [the reset hazard](#the-reset-hazard) before rewriting one that already
+  exists — a fixture edited while Obsidian holds the note open is silently
+  reverted)
 - Provide the user with clear manual testing steps:
   - Which file to open in Obsidian
   - What actions to perform (open mind map, click nodes, edit, etc.)
   - What the expected result should be
   - What to check to confirm it works (e.g., "the source file should now contain X")
 
-**IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT close beads issues or commit code until the user has validated the changes work.
+**IMPORTANT**: After providing test instructions, **STOP and wait for the user to confirm** that manual testing passes before proceeding to Step 5. Do NOT update the task note's status or commit code until the user has validated the changes work.
 
-### Step 5: Update Beads (After User Confirms Testing)
+### Step 5: Ship It and Close Out the Task (After User Confirms Testing)
 
 Only proceed to this step after the user has confirmed that manual testing passes.
 
-```bash
-bd close <id>                        # Mark issue complete
-bd close <id> --reason="explanation" # Close with context
-```
+1. **Branch** — task work belongs on a `feature/…` (or `fix/…`) branch cut from
+   the current release branch, not on the release branch itself. Create it at the
+   start of the task if you can; at the latest, before the first commit.
+2. **Commit** code **by explicit path** (never `git add .` — task-note and
+   template edits are the user's working documents and must not ride along in a
+   code commit).
+3. **PR** — push, then open a PR against the release branch the task belongs to.
+   Confirm the base branch actually exists rather than assuming a version number.
+4. **Document the task note, then commit it to the same branch** — see
+   [Documenting a Completed Task](#documenting-a-completed-task). Set `status` to
+   `Done`, fill `date_end_actual` and `pull_request` (the URL from step 3), fill
+   `date_end_scheduled` if it is blank, and write the "What was implemented"
+   section into the body. Then commit **that
+   note by path** as its own commit — `docs: Close out [Task Name]` — and push,
+   so the note rides into the release branch through the PR instead of being left
+   uncommitted for the user to clean up afterward.
+5. **Merge** — only when the user asks for it.
 
-For follow-up tasks discovered during implementation, create new issues before closing the current one:
-```bash
-bd create --title="Follow-up task" --type=task --priority=2
-bd dep add <new-id> <blocking-id>    # If there are dependencies
-```
+The note is therefore written while the PR is still open. That's fine: the PR
+number and base branch are known once step 3 finishes, so write the "Where it
+shipped" line as if it has landed. `date_end_actual` is the close-out time, not
+the merge timestamp. If review changes the code afterward, amend the note in a
+follow-up commit on the same branch rather than after the merge.
+
+For follow-up work discovered during implementation, create a new task note from
+the matching template in `vault/templates/` and link it via `related` (or
+`blocked_by` when it genuinely blocks).
 
 ---
 
@@ -688,10 +730,10 @@ npm run build                             # Build the plugin
 # Provide manual test instructions to the user
 ```
 
-**Step 6**: Close the Beads issue
-```bash
-bd close <id> --reason="Acceptance criteria met: X, Y, Z"
-```
+**Step 6**: Ship and close out — branch, commit code by path, PR, then mark the
+task note `Done` with its `pull_request` link and a "What was implemented"
+write-up and commit that note to the same branch, then merge (see
+[Documenting a Completed Task](#documenting-a-completed-task))
 
 ---
 
@@ -719,44 +761,99 @@ Always include:
 
 ---
 
-## Task Tracking with Beads
+## Task Tracking with Planner
 
-Beads (`bd`) is the source of truth for all task state. **Do not use TodoWrite or markdown files for task tracking.**
+Project and task management lives in **`vault/Planner/`**, one markdown note per
+task, managed by Sawyer's [Planner](https://github.com/SawyerRensel/Planner)
+plugin. It is the source of truth for task state. **Do not use TodoWrite, and do
+not track tasks in `notes/` or ad-hoc markdown files.**
 
-### Claude's Workflow with Beads
+Beads (`bd`) is **not installed** — ignore any Beads instructions you find in
+older docs or prompts.
 
-```bash
-bd ready                              # Check what's available at session start
-bd list --status=in_progress          # See what's already claimed
-bd show <id>                          # Review issue details before starting
-bd update <id> --status=in_progress   # Claim an issue before working on it
-bd close <id>                         # Mark complete when done
-```
+### Claude's Workflow with Planner
 
-### Creating Issues
+1. **At session start**: read `vault/Planner/` — the notes' `status` frontmatter
+   tells you what is in flight. A task note usually *is* the prompt for its work.
+2. **Before starting**: set the note's `status` to `In-Progress`, set
+   `date_start_actual` to now, and set `date_start_scheduled` to now **only if it
+   is blank** — a date the user already planned is theirs, never overwrite it.
+3. **When done** (after the user confirms manual testing, and after the PR is
+   open): set `status` to `Done`, fill `date_end_actual` and `pull_request`, fill
+   `date_end_scheduled` **only if it is blank**, write the note's "What was
+   implemented" section, and commit the note to the PR branch so it merges along
+   with the code.
 
-```bash
-bd create --title="Summary" --description="Why this exists and what to do" --type=task --priority=2
-```
+### Creating a Task Note
 
-Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
+Copy the matching template from `vault/templates/`:
 
-### Dependencies
+| Template | Use for |
+|---|---|
+| `Bug Report Template.md` | Something is broken |
+| `Feature Template.md` | New capability |
+| `Optimization Template.md` | Existing tool/workflow needs improving |
+| `Research Template.md` | Investigation before committing to a build |
 
-```bash
-bd dep add <child-id> <parent-id>   # child depends on parent (parent blocks child)
-bd blocked                           # See all blocked issues
-```
+Fill in `title`, `summary`, and `calendar` (a **string array** — e.g.
+`- Feature`), then write the body. A task note aimed at a future Claude session
+should be a complete, self-contained prompt: state of the tree, the design, open
+questions, the surface map, test plan, and conventions.
+
+Key frontmatter (full reference:
+[docs/reference/properties.md](https://github.com/SawyerRensel/Planner/tree/release/0.2.0/docs)):
+
+- `status` — free string; this vault uses `Ideas`, `To-Do`, `In-Progress`,
+  `In-Review`, `Done`
+- `calendar`, `context`, `tags` — string arrays
+- `progress` — number, 0–100
+- `related`, `parent`, `children`, `blocked_by`, `people` — wikilink arrays,
+  quoted: `- "[[Other Task]]"`
+- `date_created` / `date_modified` — ISO datetimes
+- `pull_request` — URL of the PR that shipped the task, filled at close-out
+- `date_start_actual` — ISO datetime, set when work begins (`status` →
+  `In-Progress`)
+- `date_end_actual` — ISO datetime, set when the task is marked `Done`
+- `date_start_scheduled` / `date_end_scheduled` — ISO datetimes, the plan rather
+  than the record. Backfill them from the actuals **only when blank**, so a note
+  that was never explicitly scheduled still lands on the calendar. If the user
+  set either one, leave it alone — the gap between planned and actual is the
+  point.
+
+### Documenting a Completed Task
+
+A closed task note is the project's record of *why* the code looks the way it
+does — it outlives the branch, the PR description, and this conversation. So
+after the work merges, write a **"What was implemented"** section into the note
+body. Not a changelog of commits; an explanation a future session can act on:
+
+- **Where it shipped** — link the PR and name the branch it merged into.
+- **The cause** — why the code behaved the way it did. This is the most valuable
+  part and the part a diff cannot show. ("The editor opened on `content`, which
+  the parser had already stripped the markers out of.")
+- **The fix** — the shape of the solution, not a line-by-line restatement.
+- **Decisions worth remembering** — the judgment calls, each with its reason.
+  Anything a future session might otherwise "helpfully" undo belongs here.
+- **Surface map** — a `File | Change` table of everything touched.
+- **Test fixture** — its path and what it covers.
+- **Follow-ups** — wikilinks to the task notes for what was deliberately left.
+
+Keep it honest about what was *not* done and why. See
+`vault/Planner/Expose all Markdown elements in Mind Map Edit Mode.md` for a
+worked example.
 
 ### Session End
 
-**Always prompt the user for manual testing before closing issues or committing.**
+**Always prompt the user for manual testing before updating a task's status or
+committing.**
 
-```bash
-# After user confirms testing passes:
-bd close <id1> <id2> ...            # Close completed issues
-git add <files> && git commit -m "..." && git push
-```
+After the user confirms testing passes, follow
+[Step 5](#step-5-ship-it-and-close-out-the-task-after-user-confirms-testing):
+branch → commit **code by explicit path** → PR → document the task note and
+commit it **by path** as its own commit on the same branch → merge (when asked).
+Task notes are the user's working documents: they get their own commit and never
+ride along inside a code commit. Leave the working tree clean at session end —
+no uncommitted `vault/Planner/` edits for the user to deal with.
 
 ---
 
@@ -768,13 +865,22 @@ Commit when:
 - Acceptance criteria are met
 - **The user has manually tested and confirmed the changes work**
 
-**IMPORTANT**: Do NOT commit or close beads issues until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
+**IMPORTANT**: Do NOT commit or mark a task note `Done` until the user has confirmed manual testing passes. Always prompt the user for testing before finalizing.
+
+**Branches and PRs**: task work goes on a `feature/…` (or `fix/…`) branch cut
+from the current release branch; it reaches the release branch through a PR, and
+merges only when the user asks. Record the PR URL in the task note's
+`pull_request` field. Stage code **by explicit path** so `vault/Planner/` and
+`vault/templates/` edits never ride along with a code commit — the closed-out
+task note gets its own commit on the branch after the PR is open, so it merges
+with the code rather than being left uncommitted.
 
 Example commit messages:
 ```
 feat: Implement [Feature Name], meets acceptance criteria X, Y, Z
 fix: Handle edge case in [Feature Name]
 refactor: Simplify [Component], no behavior change
+docs: Close out [Task Name] task note
 docs: Update progress log, [Feature] complete
 ```
 
@@ -797,10 +903,10 @@ Before asking Claude for help on any code task:
 
 - **About the project**: Check `notes/01_requirements/prd.md` (what we're building)
 - **About architecture**: Check `notes/02_planning/technical_decisions.md` (why we chose this tech)
-- **About what's done**: Run `bd list --status=in_progress` and `bd ready`
+- **About what's done**: Read the task notes in `vault/Planner/` and check their `status`
 - **About quality standards**: Check `notes/04_refinement/testing_checklist.md`
 
 ---
 
-**Last Updated**: 2026-03-02
+**Last Updated**: 2026-08-06
 **For Claude**: This file is your guide. Reference it before helping with any Osmosis code.

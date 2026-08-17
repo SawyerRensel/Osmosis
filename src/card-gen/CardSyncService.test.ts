@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { injectFenceIdsIntoContent } from "./CardSyncService";
+import { CardSyncService, injectFenceIdsIntoContent } from "./CardSyncService";
+import { CardStore } from "../store/CardStore";
+import { lineCardId } from "./line-cards";
+import type { Card, OcclusionSet, ScheduleData } from "../database/types";
 import type { GeneratedCard } from "./types";
 
 function card(partial: Partial<GeneratedCard> & Pick<GeneratedCard, "id" | "sourceLine">): GeneratedCard {
@@ -199,5 +202,329 @@ describe("injectFenceIdsIntoContent", () => {
 		];
 
 		expect(injectFenceIdsIntoContent(content, cards)).toBe(content);
+	});
+});
+
+describe("review log guard", () => {
+	/** A sync service that treats one folder as the review log. */
+	function guarded(note: string): { sync: CardSyncService; store: CardStore; reads: string[] } {
+		const store = new CardStore();
+		const reads: string[] = [];
+		const sync = new CardSyncService(
+			{
+				cachedRead: (file: { path: string }) => {
+					reads.push(file.path);
+					return Promise.resolve(note);
+				},
+			} as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			(path: string) => path.startsWith("Osmosis/Reviews/"),
+		);
+		return { sync, store, reads };
+	}
+
+	const note = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"",
+		"```osmosis",
+		"id: os-riv001",
+		"",
+		"Longest river in Europe",
+		"***",
+		"The Volga",
+		"```",
+		"",
+	].join("\n");
+
+	it("does not even read a file the review log owns", async () => {
+		// Shards are Markdown, so `getMarkdownFiles()` offers every one of them
+		// here. Reading them would mean feeding the card parser the whole log at
+		// every launch — silently, since nothing errors.
+		const { sync, store, reads } = guarded(note);
+		await sync.syncFile({
+			path: "Osmosis/Reviews/2026-08.pixel-10a.md",
+			extension: "md",
+		} as never);
+
+		expect(reads).toEqual([]);
+		expect(store.getAllCards()).toEqual([]);
+	});
+
+	it("still syncs a note outside the folder", async () => {
+		const { sync, store } = guarded(note);
+		await sync.syncFile({ path: "Geography/Rivers.md", extension: "md" } as never);
+
+		expect(store.getCardsByNote("Geography/Rivers.md")).toHaveLength(1);
+	});
+});
+
+/** A CardSyncService wired to a real CardStore; the vault is never touched. */
+function syncService(): { sync: CardSyncService; store: CardStore } {
+	const store = new CardStore();
+	const sync = new CardSyncService(
+		{} as never,
+		store,
+		{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
+		() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+		() => false,
+	);
+	return { sync, store };
+}
+
+function lineCard(notePath: string, blockId: string, overrides: Partial<Card> = {}): Card {
+	return {
+		id: lineCardId(notePath, blockId),
+		notePath,
+		blockId,
+		deck: "Transit",
+		cardType: "line",
+		front: "Network gaps",
+		back: "",
+		typeIn: false,
+		sourceLine: 3,
+		reps: 4,
+		lapses: 1,
+		due: 1_700_000_000_000,
+		state: "review",
+		...overrides,
+	};
+}
+
+describe("CardSyncService.handleBlockMove", () => {
+	it("re-keys a moved line card to the destination note, history intact", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeUndefined();
+		const moved = store.getCard("transit-map.md#^os-seamgap1");
+		expect(moved?.notePath).toBe("transit-map.md");
+		expect(moved?.blockId).toBe("os-seamgap1");
+		expect(moved?.reps).toBe(4);
+		expect(moved?.due).toBe(1_700_000_000_000);
+		expect(store.getCardsByNote("bike-lanes.md")).toHaveLength(0);
+	});
+
+	it("leaves the origin's other cards alone", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+		store.addCard(lineCard("bike-lanes.md", "os-stay001"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCardsByNote("bike-lanes.md").map((c) => c.blockId)).toEqual([
+			"os-stay001",
+		]);
+	});
+
+	it("carries the disabled flag across, so an excluded card stays excluded", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1", { disabled: true }));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-seamgap1"]));
+
+		expect(store.getCard("transit-map.md#^os-seamgap1")?.disabled).toBe(true);
+	});
+
+	it("ignores block IDs with no card and same-file moves", () => {
+		const { sync, store } = syncService();
+		store.addCard(lineCard("bike-lanes.md", "os-seamgap1"));
+
+		sync.handleBlockMove("bike-lanes.md", "transit-map.md", new Set(["os-absent"]));
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeDefined();
+
+		sync.handleBlockMove("bike-lanes.md", "bike-lanes.md", new Set(["os-seamgap1"]));
+		expect(store.getCard("bike-lanes.md#^os-seamgap1")).toBeDefined();
+	});
+});
+
+describe("CardSyncService occlusion", () => {
+	/**
+	 * An occluded line card: the shapes live in the note's `osmosis-schedule`
+	 * frontmatter, which only Obsidian's YAML parser has read — so they reach
+	 * card generation through a callback rather than through `processNote`,
+	 * which sees only the raw markdown.
+	 */
+	const note = [
+		"---",
+		"osmosis-cards: true",
+		"---",
+		"",
+		"# Rail network",
+		"",
+		"![[network-map.png]] ^os-ek322j",
+		"",
+		"- An ordinary tagged line ^os-plain1",
+	].join("\n");
+
+	const set: OcclusionSet = {
+		mode: "hide-all-guess-one",
+		shapes: [
+			{ group: "c1", kind: "rect", x: 0.31, y: 0.22, w: 0.14, h: 0.06 },
+			{ group: "c2", kind: "rect", x: 0.5, y: 0.5, w: 0.1, h: 0.1 },
+		],
+	};
+
+	function occludedSync(options?: {
+		schedules?: Map<string, ScheduleData>;
+		disabled?: Set<string>;
+	}): { sync: CardSyncService; store: CardStore } {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
+			() => [],
+			() => options?.schedules ?? new Map(),
+			() => options?.disabled ?? new Set(),
+			() => new Map([["os-ek322j", set]]),
+		);
+		return { sync, store };
+	}
+
+	const file = { path: "Atlas.md", extension: "md" } as never;
+
+	it("fans the occluded line into one card per group, leaving plain lines alone", async () => {
+		const { sync, store } = occludedSync();
+		await sync.syncFile(file);
+
+		const ids = store.getCardsByNote("Atlas.md").map((c) => c.id).sort();
+		expect(ids).toEqual([
+			"Atlas.md#^os-ek322j-c1",
+			"Atlas.md#^os-ek322j-c2",
+			"Atlas.md#^os-plain1",
+		]);
+	});
+
+	it("carries the renderer payload onto each card", async () => {
+		const { sync, store } = occludedSync();
+		await sync.syncFile(file);
+
+		const c1 = store.getCard("Atlas.md#^os-ek322j-c1")!;
+		expect(c1.cardType).toBe("occlusion");
+		expect(c1.occlusionGroup).toBe("c1");
+		expect(c1.blockId).toBe("os-ek322j");
+		expect(c1.occlusion?.image).toBe("network-map.png");
+		expect(c1.occlusion?.shapes).toHaveLength(2);
+	});
+
+	it("routes each group's schedule through its own nested key", async () => {
+		const schedules = new Map<string, ScheduleData>([
+			["os-ek322j/c1", { stability: 9.5, difficulty: 5, due: 1_800_000_000_000, lastReview: null, reps: 6, lapses: 0, state: "review", learningSteps: 0 }],
+		]);
+		const { sync, store } = occludedSync({ schedules });
+		await sync.syncFile(file);
+
+		expect(store.getCard("Atlas.md#^os-ek322j-c1")?.reps).toBe(6);
+		expect(store.getCard("Atlas.md#^os-ek322j-c2")?.reps).toBeUndefined();
+	});
+
+	it("suspends one group without suspending the image's other cards", async () => {
+		const { sync, store } = occludedSync({ disabled: new Set(["os-ek322j/c2"]) });
+		await sync.syncFile(file);
+
+		expect(store.getCard("Atlas.md#^os-ek322j-c2")?.disabled).toBe(true);
+		expect(store.getCard("Atlas.md#^os-ek322j-c1")?.disabled).toBeUndefined();
+	});
+
+	it("leaves every card a plain line card when the note declares no shapes", async () => {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => new Map() } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
+		);
+		await sync.syncFile(file);
+
+		expect(store.getCardsByNote("Atlas.md").map((c) => c.cardType)).toEqual(["line", "line"]);
+	});
+});
+
+describe("staged fence schedules", () => {
+	// A fence whose card carries a schedule already written into its metadata.
+	const note = `---
+osmosis-cards: true
+---
+
+\`\`\`osmosis
+id: abc123
+stability: 4.5
+difficulty: 5.2
+due: 2026-03-15T00:00:00.000Z
+reps: 3
+lapses: 0
+state: review
+lastReview: 2026-03-10T00:00:00.000Z
+learningSteps: 0
+
+What is 2+2?
+***
+4
+\`\`\``;
+
+	const file = { path: "notes/cards.md", extension: "md" } as never;
+
+	function syncWithStaged(
+		staged: Map<string, import("../store/FenceWriter").ScheduleFields | null>,
+	): { sync: CardSyncService; store: CardStore } {
+		const store = new CardStore();
+		const sync = new CardSyncService(
+			{ cachedRead: () => Promise.resolve(note) } as never,
+			store,
+			{ isWriting: () => false, getPendingSchedules: () => staged } as never,
+			() => ({ includeFolders: [], includeTags: [], includeLineCardsInDecks: true }),
+			() => false,
+		);
+		return { sync, store };
+	}
+
+	// A re-sync mid-session (a debounced frontmatter flush rewrites the note)
+	// would otherwise restore the pre-rating schedule from the fence text and
+	// put the card back in the day's due counts.
+	it("prefers a contextual session's staged rating over the stale fence text", async () => {
+		const { sync, store } = syncWithStaged(new Map([
+			["abc123", {
+				stability: 12.5,
+				difficulty: 4.1,
+				due: new Date("2026-04-01T00:00:00.000Z").getTime(),
+				lastReview: new Date("2026-03-20T00:00:00.000Z").getTime(),
+				reps: 4,
+				lapses: 0,
+				state: "review" as const,
+				learningSteps: 0,
+			}],
+		]));
+		await sync.syncFile(file);
+
+		const card = store.getCard("abc123")!;
+		expect(card.reps).toBe(4);
+		expect(card.stability).toBe(12.5);
+		expect(card.due).toBe(new Date("2026-04-01T00:00:00.000Z").getTime());
+	});
+
+	it("returns a card to new when its review has been undone but not yet written", async () => {
+		const { sync, store } = syncWithStaged(new Map([["abc123", null]]));
+		await sync.syncFile(file);
+
+		const card = store.getCard("abc123")!;
+		expect(card.due).toBeUndefined();
+		expect(card.reps).toBeUndefined();
+		expect(card.state).toBeUndefined();
+	});
+
+	it("reads the fence text for cards with nothing staged", async () => {
+		const { sync, store } = syncWithStaged(new Map());
+		await sync.syncFile(file);
+
+		expect(store.getCard("abc123")?.reps).toBe(3);
 	});
 });

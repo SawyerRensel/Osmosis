@@ -171,6 +171,145 @@ describe("generateExplicitCards", () => {
 		});
 	});
 
+	/**
+	 * A fence is rewritten only for the card being reviewed, so a multi-group
+	 * fence sits in a mixed state — some groups migrated to nested blocks, the
+	 * rest still flat — for as long as it takes every group to come up. Both
+	 * forms have to read, side by side, in one fence.
+	 */
+	describe("derived schedule storage", () => {
+		const fence = (...header: string[]) =>
+			[
+				"```osmosis",
+				"id: bridge",
+				...header,
+				"",
+				"The span is ==120 metres== long and carries ==four== lanes.",
+				"```",
+			].join("\n");
+
+		it("reads a nested schedule block", () => {
+			const cards = generateExplicitCards(fence(
+				"c1:",
+				"  due: 2026-08-14T09:00:00.000Z",
+				"  stability: 2.5000",
+				"  reps: 1",
+				"  state: review",
+				"  lastReview: 2026-08-13T09:00:00.000Z",
+				"  learningSteps: 0",
+			));
+
+			const c1 = cards.find((card) => card.id === "bridge-c1")!;
+			expect(c1.due).toBe(new Date("2026-08-14T09:00:00.000Z").getTime());
+			expect(c1.stability).toBe(2.5);
+			expect(c1.reps).toBe(1);
+			expect(c1.state).toBe("review");
+			expect(c1.lastReview).toBe(new Date("2026-08-13T09:00:00.000Z").getTime());
+			expect(c1.learningSteps).toBe(0);
+		});
+
+		it("reads one group nested and another still flat, in the same fence", () => {
+			const cards = generateExplicitCards(fence(
+				"c1:",
+				"  due: 2026-08-14T09:00:00.000Z",
+				"  stability: 2.5000",
+				"c2-due: 2026-08-15T09:00:00.000Z",
+				"c2-stability: 1.2000",
+			));
+
+			const c1 = cards.find((card) => card.id === "bridge-c1")!;
+			const c2 = cards.find((card) => card.id === "bridge-c2")!;
+			expect(c1.due).toBe(new Date("2026-08-14T09:00:00.000Z").getTime());
+			expect(c1.stability).toBe(2.5);
+			expect(c2.due).toBe(new Date("2026-08-15T09:00:00.000Z").getTime());
+			expect(c2.stability).toBe(1.2);
+		});
+
+		it("reads kebab and camelCase field names alike", () => {
+			const [flat] = generateExplicitCards(fence(
+				"c1-last-review: 2026-08-13T09:00:00.000Z",
+				"c1-learning-steps: 2",
+			)).filter((card) => card.id === "bridge-c1");
+			const [nested] = generateExplicitCards(fence(
+				"c1:",
+				"  lastReview: 2026-08-13T09:00:00.000Z",
+				"  learningSteps: 2",
+			)).filter((card) => card.id === "bridge-c1");
+
+			expect(flat!.lastReview).toBe(new Date("2026-08-13T09:00:00.000Z").getTime());
+			expect(flat!.learningSteps).toBe(2);
+			expect(nested!.lastReview).toBe(flat!.lastReview);
+			expect(nested!.learningSteps).toBe(2);
+		});
+
+		it("lets the nested block win field by field when a group is described twice", () => {
+			// Should not survive a write — the writer drops the flat keys in the
+			// same edit — but a hand-merged sync conflict can produce it, and the
+			// migrated block is the more recent of the two.
+			const cards = generateExplicitCards(fence(
+				"c1-due: 2026-01-01T00:00:00.000Z",
+				"c1-reps: 1",
+				"c1:",
+				"  due: 2026-08-14T09:00:00.000Z",
+			));
+
+			const c1 = cards.find((card) => card.id === "bridge-c1")!;
+			expect(c1.due).toBe(new Date("2026-08-14T09:00:00.000Z").getTime());
+			expect(c1.reps).toBe(1); // only the flat form carries it
+		});
+
+		it("nests a bidi reverse card's schedule under `r:`", () => {
+			const md = [
+				"```osmosis",
+				"id: abc",
+				"bidi: true",
+				"r:",
+				"  due: 2026-08-16T09:00:00.000Z",
+				"  stability: 3.1000",
+				"",
+				"Paris",
+				"***",
+				"Capital of France",
+				"```",
+			].join("\n");
+
+			const reverse = generateExplicitCards(md).find((card) => card.id === "abc-r")!;
+			expect(reverse.due).toBe(new Date("2026-08-16T09:00:00.000Z").getTime());
+			expect(reverse.stability).toBe(3.1);
+		});
+
+		it("reads the fence's own card's fields flat, in camelCase", () => {
+			const md = [
+				"```osmosis",
+				"id: abc",
+				"due: 2026-08-12T09:00:00.000Z",
+				"stability: 4.2100",
+				"lastReview: 2026-08-11T09:00:00.000Z",
+				"learningSteps: 1",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+
+			const [card] = generateExplicitCards(md);
+			expect(card!.due).toBe(new Date("2026-08-12T09:00:00.000Z").getTime());
+			expect(card!.stability).toBe(4.21);
+			expect(card!.lastReview).toBe(new Date("2026-08-11T09:00:00.000Z").getTime());
+			expect(card!.learningSteps).toBe(1);
+		});
+
+		it("keeps the content intact below a nested block", () => {
+			const cards = generateExplicitCards(fence(
+				"c1:",
+				"  due: 2026-08-14T09:00:00.000Z",
+			));
+			expect(cards.find((card) => card.id === "bridge-c1")!.back)
+				.toContain("The span is ==120 metres== long and carries ==four== lanes.");
+		});
+	});
+
 	describe("card identity", () => {
 		it("uses id: metadata as primary source", () => {
 			const md = [
@@ -660,7 +799,7 @@ describe("generateExplicitCards", () => {
 			expect(cards[0]!.front).toContain("```python");
 		});
 
-		it("skips excluded code cloze fence", () => {
+		it("suspends an excluded code cloze fence rather than dropping it", () => {
 			const md = [
 				"````osmosis",
 				"exclude: true",
@@ -671,7 +810,8 @@ describe("generateExplicitCards", () => {
 				"````",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
 		});
 	});
 
@@ -957,18 +1097,38 @@ describe("generateExplicitCards", () => {
 	});
 
 	describe("exclude metadata", () => {
-		it("skips fence with exclude: true", () => {
+		// `exclude: true` suspends a card, it does not delete one. The card is
+		// still generated, carrying `disabled` — that is what keeps it visible
+		// and unsuspendable in the card browser. Every store query that decides
+		// study and deck counts skips disabled cards, so it stays out of study.
+		it("suspends a fence with exclude: true, preserving its schedule", () => {
 			const md = [
 				"```osmosis",
 				"exclude: true",
+				"due: 2026-08-12T10:00:00.000Z",
+				"reps: 7",
 				"",
-				"This should NOT generate a card",
+				"This should generate a suspended card",
 				"***",
-				"Because it is excluded",
+				"Because exclude means suspended",
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
+			expect(cards[0]!.reps).toBe(7);
+			expect(cards[0]!.due).toBe(Date.parse("2026-08-12T10:00:00.000Z"));
+		});
+
+		it("leaves disabled unset when exclude is not set", () => {
+			const md = [
+				"```osmosis",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			expect(generateExplicitCards(md)[0]!.disabled).toBeUndefined();
 		});
 
 		it("generates card when exclude is not set", () => {
@@ -983,7 +1143,7 @@ describe("generateExplicitCards", () => {
 			expect(cards).toHaveLength(1);
 		});
 
-		it("excludes only the fence with exclude: true", () => {
+		it("suspends only the fence with exclude: true, leaving its neighbours alone", () => {
 			const md = [
 				"```osmosis",
 				"Keep this",
@@ -1006,21 +1166,38 @@ describe("generateExplicitCards", () => {
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(2);
-			expect(cards[0]!.front).toBe("Keep this");
-			expect(cards[1]!.front).toBe("Also keep");
+			expect(cards).toHaveLength(3);
+			expect(cards.map((c) => c.front)).toEqual(["Keep this", "Skip this", "Also keep"]);
+			expect(cards.map((c) => c.disabled)).toEqual([undefined, true, undefined]);
 		});
 
-		it("excludes cloze fence with exclude: true", () => {
+		it("suspends a cloze fence with exclude: true", () => {
 			const md = [
 				"```osmosis",
 				"exclude: true",
 				"",
-				"The ==mitochondria== is important.",
+				"The ==Danube== flows through ten countries.",
 				"```",
 			].join("\n");
 			const cards = generateExplicitCards(md);
-			expect(cards).toHaveLength(0);
+			expect(cards).toHaveLength(1);
+			expect(cards[0]!.disabled).toBe(true);
+		});
+
+		it("suspends both halves of an excluded bidirectional fence", () => {
+			const md = [
+				"```osmosis",
+				"exclude: true",
+				"bidi: true",
+				"",
+				"Front",
+				"***",
+				"Back",
+				"```",
+			].join("\n");
+			const cards = generateExplicitCards(md);
+			expect(cards).toHaveLength(2);
+			expect(cards.every((c) => c.disabled === true)).toBe(true);
 		});
 	});
 

@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting, SettingDefinitionItem, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
+import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
@@ -85,11 +86,29 @@ export interface OsmosisSettings {
 	/** Whether line cards count in deck totals and sequential study (default: true). */
 	includeLineCardsInDecks: boolean;
 
+	// ── Review Log ──────────────────────────────────────────
+	/** Vault folder holding the append-only review-history shards. */
+	reviewLogFolder: string;
+	/**
+	 * Overrides the auto-detected device label in shard filenames. Empty means
+	 * detect (Obsidian Sync's device name, else the platform).
+	 */
+	reviewLogDeviceLabel: string;
+	/**
+	 * Random ID identifying this install in shard headers, so two devices that
+	 * slug to the same label can be told apart. Generated on first load.
+	 */
+	installId: string;
+
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
 	includeFolders: string[];
 	/** Tags that auto-enable card generation (without #, without osmosis-cards: true). */
 	includeTags: string[];
+	/** Folder paths whose notes never generate cards, even with osmosis-cards: true. */
+	excludeFolders: string[];
+	/** Tags (without #) whose notes never generate cards, even with osmosis-cards: true. */
+	excludeTags: string[];
 
 	// ── Study Mode Settings ─────────────────────────────────
 	/** Whether contextual mode activates automatically in reading view (default: true). */
@@ -100,6 +119,19 @@ export interface OsmosisSettings {
 	showStudyBreadcrumb: boolean;
 	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
 	sequentialContextLines: number;
+
+	/** Default maximum node width before text wraps, in px. Per-map "Max width"
+	 *  in the properties sidebar overrides this (default: 230). */
+	defaultMaxNodeWidth: number;
+
+	// ── Stats Dashboard ─────────────────────────────────────
+	/**
+	 * Panel IDs in the order the stats dashboard shows them, written when a
+	 * reader drags a panel by its handle. Empty means the default order; IDs are
+	 * reconciled against the panels that actually exist on every render, so a
+	 * stale entry is harmless.
+	 */
+	statsPanelOrder: string[];
 
 	// ── Mind Map Editing ────────────────────────────────────
 	/** Maximum undo/redo history entries kept per mind map (default: 50). */
@@ -115,6 +147,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	showTransclusionStyle: false,
 	expandTransclusions: true,
 	mindMapDefaultMode: "editing",
+	defaultMaxNodeWidth: 230,
 	mapSettings: {},
 	customColors: [],
 	globalClasses: {},
@@ -127,15 +160,25 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	relearningSteps: "10m",
 	includeLineCardsInDecks: true,
 
+	// Review log defaults
+	reviewLogFolder: "Osmosis/Reviews",
+	reviewLogDeviceLabel: "",
+	installId: "",
+
 	// Note inclusion defaults
 	includeFolders: [],
 	includeTags: [],
+	excludeFolders: [],
+	excludeTags: [],
 
 	// Study Mode defaults
 	contextualAutoActivate: true,
 	contextualInlineCloze: false,
 	showStudyBreadcrumb: false,
 	sequentialContextLines: 2,
+
+	// Stats dashboard defaults
+	statsPanelOrder: [],
 
 	// Mind map editing defaults
 	undoMaxSteps: 50,
@@ -172,6 +215,9 @@ export class OsmosisSettingTab extends PluginSettingTab {
 	async setControlValue(key: string, value: unknown): Promise<void> {
 		Object.assign(this.plugin.settings, { [key]: value });
 		await this.plugin.saveSettings();
+		if (key === "defaultMaxNodeWidth") {
+			this.plugin.remeasureOpenMindMaps();
+		}
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem<keyof OsmosisSettings>[] {
@@ -188,6 +234,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						angular: "Angular",
 						"rounded-elbow": "Rounded elbow",
 					},
+				},
+			},
+			{
+				name: "Max node width",
+				desc: "Default maximum width before node text wraps. Individual maps can override this from the properties sidebar.",
+				control: {
+					type: "slider",
+					key: "defaultMaxNodeWidth",
+					min: 100,
+					max: 800,
+					step: 10,
+					displayFormat: (value: number) => `${String(value)} px`,
 				},
 			},
 			{
@@ -291,6 +349,42 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
+				heading: "Review history",
+				items: [
+					{
+						name: "Review log folder",
+						desc:
+							"Where per-review history is stored, as generated Markdown files. "
+							+ "Changing this moves the existing files. "
+							+ "Add this folder to Settings → Files & links → Excluded files to keep it out of search.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.reviewLogFolder,
+								placeholder: DEFAULT_SETTINGS.reviewLogFolder,
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => normalizeLogFolder(raw, DEFAULT_SETTINGS.reviewLogFolder),
+								onCommit: (folder) => this.plugin.changeReviewLogFolder(folder),
+							});
+						},
+					},
+					{
+						name: "Device name",
+						desc: "Labels this device's review-history files, keeping them separate from your other devices' so no file ever has two writers. Leave empty to detect automatically.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.reviewLogDeviceLabel,
+								// Shows what detection picked, so an empty
+								// field reads as "automatic", not "unset"
+								placeholder: this.plugin.resolveDeviceLabel(),
+								normalize: (raw) => raw.trim(),
+								onCommit: (label) => this.plugin.setReviewLogDeviceLabel(label),
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
 				heading: "Study mode",
 				items: [
 					{
@@ -337,9 +431,84 @@ export class OsmosisSettingTab extends PluginSettingTab {
 								},
 							}),
 					},
+					{
+						name: "Exclude folders",
+						desc: "Notes in these folders never generate cards, even with osmosis-cards: true or a matching include folder or tag.",
+						render: (setting) =>
+							this.buildChipList(setting, {
+								items: this.plugin.settings.excludeFolders,
+								placeholder: "Add folder...",
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								onUpdate: async (items) => {
+									this.plugin.settings.excludeFolders = items;
+									await this.plugin.saveSettings();
+								},
+							}),
+					},
+					{
+						name: "Exclude tags",
+						desc: "Notes with these tags never generate cards, even with osmosis-cards: true or a matching include folder or tag.",
+						render: (setting) =>
+							this.buildChipList(setting, {
+								items: this.plugin.settings.excludeTags,
+								placeholder: "Add tag...",
+								createSuggest: (input) => new TagSuggest(this.app, input),
+								onUpdate: async (items) => {
+									this.plugin.settings.excludeTags = items;
+									await this.plugin.saveSettings();
+								},
+							}),
+					},
 				],
 			},
 		];
+	}
+
+	/**
+	 * Attach a single-value text input, optionally with auto-suggest.
+	 *
+	 * Commits on blur or Enter rather than per keystroke: these settings have
+	 * side effects (the folder one moves files), and firing them on every
+	 * character typed would move the log once per letter.
+	 */
+	private buildPathInput(
+		setting: Setting,
+		opts: {
+			value: string;
+			placeholder: string;
+			createSuggest?: (input: HTMLInputElement) => AbstractInputSuggest<string>;
+			normalize: (raw: string) => string;
+			onCommit: (value: string) => Promise<void>;
+		},
+	): void {
+		setting.addText((text) => {
+			text.setPlaceholder(opts.placeholder).setValue(opts.value);
+
+			let committed = opts.value;
+			const commit = (raw: string): void => {
+				const next = opts.normalize(raw);
+				text.setValue(next);
+				if (next === committed) return;
+				committed = next;
+				void opts.onCommit(next);
+			};
+
+			if (opts.createSuggest) {
+				opts.createSuggest(text.inputEl).onSelect((value: string) => {
+					commit(value);
+				});
+			}
+
+			text.inputEl.addEventListener("blur", () => {
+				commit(text.getValue());
+			});
+			text.inputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					text.inputEl.blur();
+				}
+			});
+		});
 	}
 
 	/** Attach a chip-list control with auto-suggest input to an existing row. */
@@ -354,6 +523,14 @@ export class OsmosisSettingTab extends PluginSettingTab {
 	): void {
 		// Chip container
 		const chipContainer = setting.controlEl.createDiv({ cls: "osmosis-chip-list" });
+
+		// Built detached; renderChips() re-appends it after the chips on every
+		// render, since empty() clears the input out along with them.
+		const input = createEl("input", {
+			type: "text",
+			placeholder: opts.placeholder,
+			cls: "osmosis-chip-input",
+		});
 
 		const renderChips = (): void => {
 			chipContainer.empty();
@@ -370,16 +547,10 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					}
 				});
 			}
+			chipContainer.appendChild(input);
 		};
 
 		renderChips();
-
-		// Input with auto-suggest
-		const input = chipContainer.createEl("input", {
-			type: "text",
-			placeholder: opts.placeholder,
-			cls: "osmosis-chip-input",
-		});
 
 		const suggest = opts.createSuggest(input);
 
@@ -388,8 +559,6 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			if (cleaned && !opts.items.includes(cleaned)) {
 				opts.items.push(cleaned);
 				renderChips();
-				// Re-append input after chips
-				chipContainer.appendChild(input);
 				void opts.onUpdate(opts.items);
 			}
 			input.value = "";

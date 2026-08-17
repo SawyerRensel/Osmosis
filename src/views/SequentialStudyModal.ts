@@ -5,8 +5,11 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, ScheduleData } from "../database/types";
 import type { FenceWriter } from "../store/FenceWriter";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
+import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
+import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+import { renderOcclusion } from "./OcclusionRenderer";
 
 /** A card waiting for its learning timer to fire. */
 interface DeferredCard {
@@ -48,6 +51,13 @@ export class SequentialStudyModal extends Modal {
 
 	/** Stack of undoable actions (ratings and excludes). */
 	private undoStack: UndoEntry[] = [];
+
+	/**
+	 * When the current card's question went on screen, for the review log's
+	 * elapsed time. Anchored at the question rather than the flip, matching
+	 * what Anki records as time taken.
+	 */
+	private cardShownAt = Date.now();
 
 	// DOM elements
 	private progressEl!: HTMLElement;
@@ -213,6 +223,7 @@ export class SequentialStudyModal extends Modal {
 		}
 
 		this.isFlipped = false;
+		this.cardShownAt = Date.now();
 
 		// Rebuild card area if it was replaced by waiting/complete screen
 		this.rebuildCardArea();
@@ -230,6 +241,8 @@ export class SequentialStudyModal extends Modal {
 		this.dividerEl.removeClass("osmosis-hidden");
 		if (studyCard.card.cardType === "line") {
 			this.renderLineCardFront(studyCard.card);
+		} else if (studyCard.card.occlusion) {
+			this.renderOcclusionSide(studyCard.card, "front");
 		} else {
 			void MarkdownRenderer.render(
 				this.app,
@@ -303,6 +316,59 @@ export class SequentialStudyModal extends Modal {
 	}
 
 	/**
+	 * Occlusion card: the card body with its own diagram replaced, in place, by
+	 * the masked one `renderOcclusion` draws.
+	 *
+	 * Rendering the body in two halves around the picture is what keeps the
+	 * fence's *other* diagrams where the author put them. They stay in the body
+	 * as ordinary embeds and render unmasked — a fence carries several diagrams
+	 * because they explain each other, so the elevation is context for the
+	 * cross-section rather than a second question. Appending the masked image
+	 * after all the prose would print those siblings above it, in the reverse of
+	 * the order they were written.
+	 *
+	 * The card's own embed must come out of the markdown either way: leaving it
+	 * in would render that diagram a second time, unmasked, beside the question.
+	 */
+	private renderOcclusionSide(card: Card, side: OcclusionSide): void {
+		if (!card.occlusion) return;
+
+		const body = side === "front" ? card.front : card.back;
+		const split = splitAtEmbed(body, card.occlusion.image);
+		// A body with no embed at all — the image was renamed out from under the
+		// shape set, say. Still draw the masks; `renderOcclusion` shows its own
+		// missing-file notice.
+		const before = split ? split.before : stripEmbeds(body);
+		const after = split ? split.after : "";
+
+		// Both halves get their element up front, in order: `MarkdownRenderer`
+		// resolves asynchronously, so anything appended after the await would
+		// otherwise land above prose that started rendering first.
+		const beforeEl = before.trim() !== ""
+			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
+			: null;
+		const imageEl = this.frontEl.createDiv();
+		const afterEl = after.trim() !== ""
+			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
+			: null;
+
+		const renderProse = (markdown: string, el: HTMLElement | null): void => {
+			if (!el) return;
+			void MarkdownRenderer.render(
+				this.app,
+				markdown.trim(),
+				el,
+				card.notePath,
+				this.renderComponent,
+			).then(() => addCodeBlockLanguageLabels(el));
+		};
+
+		renderProse(before, beforeEl);
+		renderOcclusion(this.app, imageEl, card.occlusion, side, card.notePath);
+		renderProse(after, afterEl);
+	}
+
+	/**
 	 * Rebuild the card area DOM elements if they were destroyed
 	 * (e.g., by renderWaiting or renderComplete calling cardEl.empty()).
 	 */
@@ -349,7 +415,14 @@ export class SequentialStudyModal extends Modal {
 			studyCard.card.cardType === "explicit_cloze" ||
 			studyCard.card.cardType === "code_cloze";
 
-		if (isCloze) {
+		if (studyCard.card.occlusion) {
+			// Occlusion answers in place, as cloze does: the answer is the same
+			// diagram with one mask lifted, and stacking a second copy of the
+			// image under the first would only ask the user to compare them.
+			this.frontEl.empty();
+			this.renderOcclusionSide(studyCard.card, "back");
+			this.dividerEl.addClass("osmosis-hidden");
+		} else if (isCloze) {
 			// Cloze: replace the front in-place with the revealed text rather than
 			// stacking front + back. Keeps the card body anchored where the user
 			// was already reading.
@@ -456,6 +529,7 @@ export class SequentialStudyModal extends Modal {
 
 		const updatedSchedule = await this.sessionManager.recordReview(
 			studyCard.card.id, rating,
+			{ elapsedMs: Date.now() - this.cardShownAt },
 		);
 
 		const undoEntry: UndoEntry = {

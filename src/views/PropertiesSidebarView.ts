@@ -81,6 +81,26 @@ function emptyFormatControls(): FormatControls {
 	};
 }
 
+/**
+ * A setting row for this sidebar, laid out as a grid: name and control share
+ * the first line, description spans the full width below it (see styles.css).
+ *
+ * Obsidian builds the description as a *grandchild* of the row, inside
+ * `.setting-item-info` next to the name, and a grandchild cannot be given a
+ * grid area of its own. Lifting it to a direct child is what makes the layout
+ * expressible — the alternative, `display: contents` on the info wrapper, is
+ * flagged as only partially supported by Obsidian's CSS lint.
+ *
+ * Safe to do at construction time: `Setting` creates `descEl` in its
+ * constructor and `setDesc()` only writes text into it, so a description added
+ * later still lands in the element this moved.
+ */
+function sidebarSetting(parent: HTMLElement): Setting {
+	const setting = new Setting(parent);
+	setting.settingEl.appendChild(setting.descEl);
+	return setting;
+}
+
 export class PropertiesSidebarView extends ItemView {
 	plugin: OsmosisPlugin;
 	private currentFilePath: string | null = null;
@@ -459,7 +479,7 @@ export class PropertiesSidebarView extends ItemView {
 		deleteThemeBtn.addEventListener("click", () => this.confirmDeleteTheme());
 		this.deleteThemeBtn = deleteThemeBtn;
 
-		new Setting(themeSection)
+		sidebarSetting(themeSection)
 			.setName("Active")
 			.addDropdown((dropdown) => {
 				this.themeDropdown = dropdown.selectEl;
@@ -594,7 +614,7 @@ export class PropertiesSidebarView extends ItemView {
 		setIcon(deleteVarBtn, "trash-2");
 		deleteVarBtn.addEventListener("click", () => this.confirmDeleteVariant());
 
-		new Setting(variantSection)
+		sidebarSetting(variantSection)
 			.setName("Active")
 			.addDropdown((dropdown) => {
 				this.variantDropdown = dropdown.selectEl;
@@ -843,7 +863,7 @@ export class PropertiesSidebarView extends ItemView {
 		}
 
 		// Class assignment dropdown
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Class")
 			.addDropdown((d) => {
 				d.addOption("", "(None)");
@@ -1711,7 +1731,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	private renderLayoutSection(body: HTMLElement, settings: MapSettings): void {
 		// Map layout
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Map layout")
 			.addDropdown((dropdown) => {
 				this.mapLayoutDropdown = dropdown.selectEl;
@@ -1724,7 +1744,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Direction
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Direction")
 			.addDropdown((dropdown) => {
 				this.mapDirectionDropdown = dropdown.selectEl;
@@ -1742,7 +1762,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Balance
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Balance")
 			.addDropdown((dropdown) => {
 				this.mapBalanceDropdown = dropdown.selectEl;
@@ -1758,7 +1778,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Side (conditional — only shown when balance = "one-side")
-		const sideSetting = new Setting(body)
+		const sideSetting = sidebarSetting(body)
 			.setName("Side");
 		this.mapSideSetting = sideSetting.settingEl;
 		sideSetting.addDropdown((dropdown) => {
@@ -1773,7 +1793,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.updateSideSettingVisibility();
 
 		// Collapse depth
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Default collapse depth")
 			.setDesc("0 = expand all")
 			.addSlider((slider) => {
@@ -1787,7 +1807,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Horizontal spacing
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Horizontal spacing")
 			.setDesc("Space between parent and children")
 			.addSlider((slider) => {
@@ -1801,7 +1821,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Vertical spacing
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Vertical spacing")
 			.setDesc("Space between sibling nodes")
 			.addSlider((slider) => {
@@ -1846,7 +1866,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private renderMapBackgroundSection(body: HTMLElement): void {
-		const setting = new Setting(body).setName("Color");
+		const setting = sidebarSetting(body).setName("Color");
 		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.mapBackgroundSwatch = swatch;
 
@@ -1863,7 +1883,7 @@ export class PropertiesSidebarView extends ItemView {
 		const { base } = this.getResolvedThemeBase();
 
 		// Topic shape
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Shape")
 			.addDropdown((dropdown) => {
 				this.mapTopicShapeDropdown = dropdown.selectEl;
@@ -1878,7 +1898,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Set node width (global default, applied via baseStyle.width)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Width")
 			.setDesc("Content width in px (blank = auto)")
 			.addText((text) => {
@@ -1933,23 +1953,24 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Max node width
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Max width")
 			.setDesc("Maximum width before text wraps (px)")
 			.addSlider((slider) => {
 				this.mapMaxNodeWidthSlider = slider.sliderEl;
 				slider
 					.setLimits(100, 800, 10)
-					.setValue(settings.maxNodeWidth ?? 300)
+					.setValue(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth)
 					.onChange(async (value) => {
-						await this.saveSetting("maxNodeWidth", value === 300 ? undefined : value);
+						const isDefault = value === this.plugin.settings.defaultMaxNodeWidth;
+						await this.saveSetting("maxNodeWidth", isDefault ? undefined : value);
 					});
 			});
 	}
 
 	private renderMapFillSection(body: HTMLElement): void {
 		// Fill color
-		const setting = new Setting(body).setName("Color");
+		const setting = sidebarSetting(body).setName("Color");
 		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.mapFillSwatch = swatch;
 
@@ -1963,7 +1984,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	private renderMapBorderSection(body: HTMLElement): void {
 		// Color
-		const colorSetting = new Setting(body).setName("Color");
+		const colorSetting = sidebarSetting(body).setName("Color");
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.mapBorderColorSwatch = colorSwatch;
 
@@ -1975,7 +1996,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Width
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Width")
 			.addSlider((slider) => {
 				slider
@@ -1989,7 +2010,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Style
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Style")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2010,7 +2031,7 @@ export class PropertiesSidebarView extends ItemView {
 	private renderMapTextSection(body: HTMLElement): void {
 		// Font family
 		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
-		const fontLabel = new Setting(fontContainer).setName("Font family");
+		const fontLabel = sidebarSetting(fontContainer).setName("Font family");
 		const fontPickerEl = fontLabel.controlEl.createDiv();
 		const fp = new FontPicker({
 			app: this.app,
@@ -2025,7 +2046,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapTextFontPicker = fp;
 
 		// Size
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Size")
 			.addSlider((slider) => {
 				slider
@@ -2039,7 +2060,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Weight
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Weight")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2053,7 +2074,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Color
-		const textColorSetting = new Setting(body).setName("Color");
+		const textColorSetting = sidebarSetting(body).setName("Color");
 		const textColorSwatch = textColorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.mapTextColorSwatch = textColorSwatch;
 
@@ -2065,7 +2086,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Alignment
-		const alignSetting = new Setting(body).setName("Alignment");
+		const alignSetting = sidebarSetting(body).setName("Alignment");
 		const alignGroup = alignSetting.controlEl.createDiv({ cls: "osmosis-align-group" });
 		this.mapTextAlignBtns = alignGroup;
 
@@ -2087,7 +2108,7 @@ export class PropertiesSidebarView extends ItemView {
 		const settings = this.getEffectiveSettings();
 
 		// Branch line style
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Style")
 			.addDropdown((dropdown) => {
 				this.mapBranchStyleDropdown = dropdown.selectEl;
@@ -2103,7 +2124,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Color
-		const colorSetting = new Setting(body).setName("Color");
+		const colorSetting = sidebarSetting(body).setName("Color");
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.mapBranchColorSwatch = colorSwatch;
 
@@ -2115,7 +2136,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Thickness
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Thickness")
 			.addSlider((slider) => {
 				slider
@@ -2129,7 +2150,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Pattern (solid, dashed, dotted)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Pattern")
 			.addDropdown((dropdown) => {
 				this.mapBranchPatternDropdown = dropdown.selectEl;
@@ -2149,7 +2170,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Taper (none, fade, grow)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Taper")
 			.addDropdown((dropdown) => {
 				this.mapBranchTaperDropdown = dropdown.selectEl;
@@ -2307,7 +2328,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.mapNodeWidthInput.value = base.width != null ? String(base.width) : "";
 		}
 		if (this.mapMaxNodeWidthSlider) {
-			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? 300);
+			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth);
 		}
 	}
 
@@ -2675,7 +2696,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private renderShapeSection(body: HTMLElement): void {
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Shape")
 			.addDropdown((dropdown) => {
 				dropdown.addOption("inherit", "(Inherit)");
@@ -2693,7 +2714,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Node width (custom content width via drag-to-resize or manual input)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Width")
 			.setDesc("Content width in px (blank = auto)")
 			.addText((text) => {
@@ -2721,7 +2742,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private renderFillSection(body: HTMLElement): void {
-		const setting = new Setting(body).setName("Color");
+		const setting = sidebarSetting(body).setName("Color");
 		const swatch = setting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.fillSwatch = swatch;
 
@@ -2734,7 +2755,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	private renderBorderSection(body: HTMLElement): void {
 		// Color
-		const colorSetting = new Setting(body).setName("Color");
+		const colorSetting = sidebarSetting(body).setName("Color");
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.borderColorSwatch = colorSwatch;
 
@@ -2745,7 +2766,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Width
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Width")
 			.addSlider((slider) => {
 				slider
@@ -2758,7 +2779,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Style
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Style")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2783,7 +2804,7 @@ export class PropertiesSidebarView extends ItemView {
 	private renderTextSection(body: HTMLElement): void {
 		// Font family
 		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
-		const fontLabel = new Setting(fontContainer).setName("Font family");
+		const fontLabel = sidebarSetting(fontContainer).setName("Font family");
 		const fontPickerEl = fontLabel.controlEl.createDiv();
 		const fp = new FontPicker({
 			app: this.app,
@@ -2797,7 +2818,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.fontPicker = fp;
 
 		// Size
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Size")
 			.addSlider((slider) => {
 				slider
@@ -2810,7 +2831,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Weight
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Weight")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2828,7 +2849,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Color
-		const textColorSetting = new Setting(body).setName("Color");
+		const textColorSetting = sidebarSetting(body).setName("Color");
 		const textColorSwatch = textColorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.textColorSwatch = textColorSwatch;
 
@@ -2839,7 +2860,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Alignment
-		const alignSetting = new Setting(body).setName("Alignment");
+		const alignSetting = sidebarSetting(body).setName("Alignment");
 		const alignGroup = alignSetting.controlEl.createDiv({ cls: "osmosis-align-group" });
 		this.controls.textAlignBtns = alignGroup;
 
@@ -2858,7 +2879,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	private renderBranchLineSection(body: HTMLElement): void {
 		// Shape (line style)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Shape")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2880,7 +2901,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Color
-		const colorSetting = new Setting(body).setName("Color");
+		const colorSetting = sidebarSetting(body).setName("Color");
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.branchColorSwatch = colorSwatch;
 
@@ -2891,7 +2912,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 
 		// Thickness
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Thickness")
 			.addSlider((slider) => {
 				slider
@@ -2904,7 +2925,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Pattern (solid, dashed, dotted)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Pattern")
 			.addDropdown((dropdown) => {
 				dropdown
@@ -2925,7 +2946,7 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		// Taper (none, fade, grow)
-		new Setting(body)
+		sidebarSetting(body)
 			.setName("Taper")
 			.addDropdown((dropdown) => {
 				dropdown

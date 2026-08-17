@@ -1,0 +1,162 @@
+import type { CardOcclusion, OcclusionShape } from "../database/types";
+import { rotationTransform } from "./occlusion-geometry";
+
+/**
+ * Which masks an occlusion card paints, and where.
+ *
+ * Kept separate from `OcclusionRenderer` because this is the whole of the
+ * feature's correctness: given a mode, a side, and a target group, exactly which
+ * shapes are covered and which are not. That decision is pure, so it is unit
+ * tested rather than eyeballed through three study surfaces.
+ *
+ * Coordinates pass through untouched, still normalised 0–1 against the image's
+ * own dimensions. The renderer paints them into an SVG whose viewBox is the
+ * same 0–1 box stretched over the rendered image, so scaling — a `|300` suffix,
+ * a resized modal, a retina variant — costs no arithmetic here.
+ */
+
+/**
+ * What is being drawn.
+ *
+ * `front` and `back` are the two sides of one card: a group is being asked, so
+ * the mode decides what happens to its siblings.
+ *
+ * `all-hidden` and `all-revealed` are the *note* views — contextual study, a
+ * mind-map node, peek on a line. There is no current card there: the reader is
+ * looking at a diagram, not answering one of the three questions it carries. So
+ * every group is a blank at once, exactly as a contextual cloze shows all of its
+ * blanks at once, and the mode is irrelevant — `hide-one-guess-one` describes
+ * how one card relates to its siblings, and in the note there are no siblings to
+ * relate to.
+ *
+ * `none` is a diagram in view that is not the one being asked: a second labelled
+ * embed in the same fence, whose groups belong to a *different* card. Sequential
+ * has always shown those unmasked — covering them would pose a second question
+ * the card never answers — and spatial study has to say so explicitly, because
+ * it paints its diagrams in place rather than re-rendering the card's body.
+ */
+export type OcclusionSide = "front" | "back" | "all-hidden" | "all-revealed" | "none";
+
+/**
+ * What a mask is doing on the side being drawn:
+ * - `hidden` — covers some other group, so it stays opaque
+ * - `target` — covers the group being asked
+ * - `revealed` — the target on the answer side: outlined, not filled
+ */
+export type MaskRole = "hidden" | "target" | "revealed";
+
+/** One SVG element to paint, in the image's normalised 0–1 coordinate space. */
+export interface MaskElement {
+	tag: "rect" | "ellipse" | "polygon";
+	attrs: Record<string, string>;
+	role: MaskRole;
+}
+
+/**
+ * The masks to paint for one side of one occlusion card.
+ *
+ * | mode               | side  | target group | other groups |
+ * |--------------------|-------|--------------|--------------|
+ * | hide-all-guess-one | front | covered      | covered      |
+ * | hide-all-guess-one | back  | revealed     | covered      |
+ * | hide-one-guess-one | front | covered      | untouched    |
+ * | hide-one-guess-one | back  | revealed     | untouched    |
+ *
+ * The note views ignore both the mode and the target: `all-hidden` covers every
+ * group, `all-revealed` outlines every group, and `none` paints nothing at all.
+ *
+ * Shapes keep their source order, so a diagram whose masks overlap paints the
+ * same way every time rather than reshuffling between front and back.
+ *
+ * `aspect` is the image's width÷height, and only a rotated shape uses it: the
+ * overlay is stretched by `preserveAspectRatio="none"`, so a rotation applied
+ * inside it has to be pre-compensated or a tilted rectangle comes out as a
+ * parallelogram. It is a parameter rather than something read off the DOM
+ * because this function is the one the mask tests assert against; a caller that
+ * cannot know it yet passes 1 and repaints once the image has loaded.
+ */
+export function maskElements(
+	occlusion: CardOcclusion,
+	side: OcclusionSide,
+	aspect = 1,
+): MaskElement[] {
+	const elements: MaskElement[] = [];
+	for (const shape of occlusion.shapes) {
+		const role = maskRole(shape, occlusion, side);
+		if (role !== null) elements.push(maskElement(shape, role, aspect));
+	}
+	return elements;
+}
+
+/** Whether anything in this occlusion is rotated, and so needs the image's aspect. */
+export function needsAspect(occlusion: CardOcclusion): boolean {
+	return occlusion.shapes.some((shape) => (shape.rotation ?? 0) !== 0);
+}
+
+/** The role this shape plays on the given side, or null when it is not painted. */
+function maskRole(
+	shape: OcclusionShape,
+	occlusion: CardOcclusion,
+	side: OcclusionSide,
+): MaskRole | null {
+	// The note views ask nothing, so there is no target to single out and no
+	// sibling relationship for the mode to describe.
+	if (side === "all-hidden") return "hidden";
+	if (side === "all-revealed") return "revealed";
+	// A diagram that is not the one being asked keeps nothing on it.
+	if (side === "none") return null;
+
+	if (shape.group === occlusion.target) {
+		return side === "front" ? "target" : "revealed";
+	}
+	// Hide-one shows everything except the group being asked, so a sibling mask
+	// is simply never drawn — on either side.
+	return occlusion.mode === "hide-all-guess-one" ? "hidden" : null;
+}
+
+/**
+ * One shape as the SVG element that draws it.
+ *
+ * A rotation rides along as a `transform` attribute, which needs no plumbing of
+ * its own: the renderer sets every entry of `attrs` with `setAttribute`.
+ */
+function maskElement(shape: OcclusionShape, role: MaskRole, aspect: number): MaskElement {
+	const element: MaskElement = { ...maskGeometry(shape), role };
+	const transform = rotationTransform(shape, aspect);
+	if (transform !== null) element.attrs["transform"] = transform;
+	return element;
+}
+
+/** One shape's tag and coordinates, before rotation. */
+function maskGeometry(shape: OcclusionShape): Pick<MaskElement, "tag" | "attrs"> {
+	switch (shape.kind) {
+		case "rect":
+			return {
+				tag: "rect",
+				attrs: {
+					x: String(shape.x),
+					y: String(shape.y),
+					width: String(shape.w),
+					height: String(shape.h),
+				},
+			};
+		case "ellipse":
+			// `x`/`y` are the centre, matching Anki's ellipse handles.
+			return {
+				tag: "ellipse",
+				attrs: {
+					cx: String(shape.x),
+					cy: String(shape.y),
+					rx: String(shape.rx),
+					ry: String(shape.ry),
+				},
+			};
+		case "poly":
+			return {
+				tag: "polygon",
+				attrs: {
+					points: shape.points.map(([x, y]) => `${x},${y}`).join(" "),
+				},
+			};
+	}
+}

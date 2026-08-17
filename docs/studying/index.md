@@ -4,24 +4,29 @@ icon: lucide/graduation-cap
 
 # Studying
 
-Osmosis offers three ways to study your flashcards. Each mode uses the FSRS algorithm to schedule reviews based on your performance.
+Osmosis offers three ways to study your flashcards — and every card type works
+in all three. Each mode uses the FSRS algorithm to schedule reviews based on
+your performance, so a card rated anywhere updates its schedule everywhere.
 
-## The Dashboard
+| Mode | Where | Best for |
+|------|-------|----------|
+| [**Sequential**](study-modes.md#sequential-study) | A modal, from the dashboard | Focused review, clearing a backlog |
+| [**Contextual**](study-modes.md#contextual-study) | In the note itself | Studying while reading, in your own words |
+| [**Spatial**](study-modes.md#spatial-study) | On the mind map | Learning structure and relationships |
 
-Open the Dashboard by clicking the :lucide-graduation-cap: icon in the left sidebar, or via the command palette (**Open dashboard**).
+![osmosis_fence_card_on_the_map](../assets/media/osmosis_fence_card_on_the_map.png){width=66%}
 
-The Dashboard shows:
+## Starting a Session
 
-- **Study all** button — Start a session across all decks
-- **Deck tree** — Hierarchical, collapsible list of your decks
-- **Card counts** per deck:
-    - **New** (blue) — Cards you haven't seen yet
-    - **Learning** (orange) — Cards being learned
-    - **Due** (red) — Cards due for review
+- **Sequential** — open the [dashboard](dashboard.md) and click a deck,
+  or run **Study all decks**
+- **Contextual** — open a note with cards and click :lucide-graduation-cap:
+  **Study this note** in its header
+- **Spatial** — open a mind map and click :lucide-graduation-cap: **Study mode**
+  in its header, or right-click a node and choose **Study this branch**
 
-Click any deck to study just that deck. The Dashboard refreshes automatically.
-
-![Flashcard dashboard](../assets/media/osmosis_flashcard_dashboard.png)
+Both in-place modes have a no-stakes twin: :lucide-scan-eye: **Peek** hides
+every card and records nothing, wherever you are.
 
 ## Guides
 
@@ -33,6 +38,10 @@ Click any deck to study just that deck. The Dashboard refreshes automatically.
 
 -   [:octicons-graph-24: __Spaced Repetition__](spaced-repetition.md)
 
-    How FSRS works, ratings, card states, daily limits, and data storage
+    How FSRS works, ratings, card states, learning steps, and daily limits
+
+-   [:octicons-table-24: __Dashboard__](dashboard.md)
+
+    Decks and counts, the card browser, and the statistics dashboard
 
 </div>

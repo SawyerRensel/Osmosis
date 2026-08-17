@@ -80,7 +80,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
 	nodePaddingY: 4,
 	defaultNodeWidth: 120,
 	defaultNodeHeight: 28,
-	maxNodeWidth: 300,
+	maxNodeWidth: 230,
 	topicShape: "rounded-rect",
 	balance: "one-side",
 	layoutSide: "right",

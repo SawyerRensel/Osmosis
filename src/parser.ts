@@ -221,7 +221,7 @@ export class OsmosisParser {
 			const node = this.createNode(parsed.type, parsed.depth, parsed.content, {
 				start: line.start,
 				end: line.end,
-			});
+			}, parsed.raw);
 			lastMultilineNode = null;
 
 			// Store ordered list number in metadata
@@ -285,10 +285,25 @@ export class OsmosisParser {
 
 				listStack.push(node);
 			} else if (parsed.type === "transclusion") {
-				// Transclusion nodes are children of the current heading context
-				listStack = [];
-				const parent = headingStack[headingStack.length - 1] ?? root;
-				parent.children.push(node);
+				// An unindented embed ends the list and belongs to the heading;
+				// an indented one is nested content of the list item enclosing
+				// it. Clearing the stack unconditionally detached not just the
+				// embed but every list item after it, which is how a pasted
+				// subtree containing an embed lost its whole tree.
+				while (listStack.length > 0) {
+					const top = listStack[listStack.length - 1];
+					if (top !== undefined && top.depth >= parsed.depth) {
+						listStack.pop();
+					} else {
+						break;
+					}
+				}
+
+				const parent =
+					listStack.length > 0
+						? listStack[listStack.length - 1]
+						: (headingStack[headingStack.length - 1] ?? root);
+				parent?.children.push(node);
 			} else {
 				// Paragraph: child of current list item if in a list, else heading
 				if (listStack.length > 0) {
@@ -334,15 +349,18 @@ export class OsmosisParser {
 		// not content — strip it before structural matching so it never
 		// appears in node labels or card text.
 		const extracted = extractTrailingBlockId(raw);
-		const parsed = this.parseLineContent(extracted?.stripped ?? raw);
-		if (parsed !== null && extracted) {
-			parsed.blockId = extracted.id;
+		const source = extracted?.stripped ?? raw;
+		const parsed = this.parseLineContent(source);
+		if (parsed === null) return null;
+		const result: ParsedLine = { ...parsed, raw: source };
+		if (extracted) {
+			result.blockId = extracted.id;
 		}
-		return parsed;
+		return result;
 	}
 
 	/** Structural matching for a line whose trailing block ID (if any) is already stripped. */
-	private parseLineContent(text: string): ParsedLine | null {
+	private parseLineContent(text: string): Omit<ParsedLine, "raw"> | null {
 		// Heading: # through ######
 		const headingMatch = /^(#{1,6})\s+(.*)$/.exec(text);
 		if (headingMatch?.[1] !== undefined && headingMatch[2] !== undefined) {
@@ -515,13 +533,18 @@ export class OsmosisParser {
 
 	/**
 	 * Create a new AST node.
+	 *
+	 * `raw` is the node's source text with its structural markers intact (see
+	 * `OsmosisNode.raw`); it defaults to `content`, which is already verbatim
+	 * for the multiline block types.
 	 */
-	private createNode(type: NodeType, depth: number, content: string, range: Range): OsmosisNode {
+	private createNode(type: NodeType, depth: number, content: string, range: Range, raw: string = content): OsmosisNode {
 		return {
 			id: this.generateId(type, depth, content, this.nextOccurrence(type, depth, content)),
 			type,
 			depth,
 			content,
+			raw,
 			children: [],
 			range,
 			isTranscluded: false,
@@ -609,6 +632,8 @@ interface ParsedLine {
 	type: NodeType;
 	depth: number;
 	content: string;
+	/** The line's source text, block ID stripped (see `OsmosisNode.raw`). */
+	raw: string;
 	/** For ordered list items, the original number (e.g. 1, 2, 3). */
 	listNumber?: number;
 	/** Whether this is a checkbox list item. */

@@ -4,7 +4,7 @@ icon: lucide/bar-chart-3
 
 # Spaced Repetition
 
-Osmosis uses the **Free Spaced Repetition Scheduler** (FSRS) for all card scheduling. FSRS is the modern successor to SM-2 (used by classic Anki) and produces more accurate scheduling intervals based on memory research.
+Osmosis uses the **Free Spaced Repetition Scheduler** (FSRS) for all card scheduling. FSRS is the modern successor to the SM-2 algorithm and produces more accurate scheduling intervals based on memory research.
 
 ## Ratings
 
@@ -28,7 +28,7 @@ After revealing a card's answer, rate your recall:
 
 ## Learning Steps
 
-New and lapsed cards don't leave the session after one look. A card rated **Again**, or one still working through its learning steps, comes back **within the same study session** after a short delay — the same behavior as Anki.
+New and lapsed cards don't leave the session after one look. A card rated **Again**, or one still working through its learning steps, comes back **within the same study session** after a short delay.
 
 Configure the delays in **Settings > Osmosis**:
 
@@ -56,69 +56,40 @@ Configure in **Settings > Osmosis**:
 !!! tip
     Start with the defaults. If you're adding many cards at once, consider lowering the new card limit to avoid overwhelming yourself. Review limits rarely need changing.
 
+## Fixing a Card's Schedule
+
+FSRS handles scheduling on its own, but sometimes a card needs a hand. The
+[card browser](card-browser.md#mutations) is where that happens:
+
+| Situation | Do this |
+|-----------|---------|
+| A card keeps failing and its schedule is nonsense | **Reset** it — scheduling clears, review history is kept |
+| A card isn't relevant right now | **Suspend** it — the schedule is preserved for later |
+| A card is wrong | Fix the note; the card follows |
+| A card shouldn't exist | **Delete** it from the browser |
+
+Everything except deleting is reversible, and deleting is undoable within the
+session.
+
 ## Data Storage
 
-All scheduling data lives **in your markdown files** — no external database. Fence cards store it inside the fence itself; [line cards](../flashcards/line-cards.md) store it in the note's frontmatter.
+All scheduling data lives **in your markdown files** — no external database.
+Fence cards store it inside the fence; [line cards](../flashcards/line-cards.md)
+store it in the note's frontmatter under `osmosis-schedule`.
 
-### Fence Cards
+A fence that produces several cards gives each one a nested block named for the
+card it belongs to — `r:` for a bidirectional reverse, `c1:`, `c2:` … for cloze
+deletions and [occlusion](../flashcards/image-occlusion.md) groups — while the
+fence's own card stays at the top level.
 
-Scheduling fields are written into the fence metadata:
-
-````markdown
-```osmosis
-id: abc123
-due: 2026-03-15T00:00:00.000Z
-stability: 4.5
-difficulty: 5.2
-reps: 3
-lapses: 0
-state: review
-last-review: 2026-03-10T00:00:00.000Z
-
-What is the capital of France?
-***
-Paris
-```
-````
-
-### Line Cards
-
-[Line card](../flashcards/line-cards.md) schedules are stored in the note's frontmatter under `osmosis-schedule`, keyed by block ID:
-
-```yaml
----
-osmosis-cards: true
-osmosis-schedule:
-  os-a1b2c3:
-    due: 2026-07-22T10:30:00
-    stability: 4.2
-    difficulty: 5.1
-    lastReview: 2026-07-15T09:12:00
-    reps: 3
-    lapses: 0
-    state: review
-    learningSteps: 0
----
-```
-
-The key appears after a card's first review (never at ID-generation time), and writes are debounced — a run of ratings during a study session produces a single frontmatter write, flushed when the session ends. Timestamps are ISO 8601 local datetimes so the source view stays human-readable. Frontmatter is hidden in reading view, and the Properties panel shows the key as a single non-editable property.
+[Data Storage](../reference/data-storage.md) has the complete format, including
+the [review log](../reference/data-storage.md#review-history) that records every
+answer you give and feeds the
+[statistics dashboard](statistics.md).
 
 ### Why This Matters
 
 - **No external database** — Everything lives in your markdown files
 - **Sync just works** — Obsidian Sync, iCloud, Dropbox, or any file sync service carries your scheduling data automatically
 - **Portable** — Your review history travels with your notes
-- **Transparent** — You can inspect (but shouldn't edit) scheduling data directly
-
-### Derived Card Schedules
-
-Bidirectional and cloze cards store scheduling data for each derived card with prefixed keys:
-
-| Prefix | Card |
-|--------|------|
-| `r-` | Reverse (bidirectional) |
-| `c1-` | Cloze deletion 1 |
-| `c2-` | Cloze deletion 2 |
-| `c3-` | Cloze deletion 3, and so on |
-
-For example, a bidirectional card might have both `due: ...` (forward schedule) and `r-due: ...` (reverse schedule) in the same fence.
+- **Transparent** — You can inspect (but generally shouldn't edit) scheduling data directly

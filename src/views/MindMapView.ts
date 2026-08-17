@@ -32,6 +32,7 @@ import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
+import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -39,11 +40,26 @@ import {
 } from "../editor/EmbeddableMarkdownEditor";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
 import { EditorSelection } from "@codemirror/state";
-import { CLOZE_BLANK } from "../card-gen/explicit";
+/* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
+import { EditorView } from "@codemirror/view";
+import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { fenceDiagrams } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
-import { allLineCardIds, collectSubtreeCardKeys, dueOrNewLineCardIds } from "../study/spatial-study";
-import type { Card } from "../database/types";
+import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
+import {
+	allFenceCardKeys,
+	allLineCardIds,
+	cardIdsForSpatialKey,
+	collectSubtreeCardKeys,
+	dueOrNewFenceCardKeys,
+	dueOrNewLineCardIds,
+	fenceKeyFromNode,
+	occlusionForLineKey,
+	spatialStudyKeys,
+} from "../study/spatial-study";
+import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
@@ -60,6 +76,10 @@ const ZOOM_SENSITIVITY = 0.002;
 const SCROLL_SENSITIVITY = 1;
 const LAYOUT_PADDING = 50;
 
+// Inline editing constants
+const EDIT_OVERLAY_MARGIN = 8; // px kept between the edit overlay and the viewport edge
+const EDIT_BUTTONS_MIN_WIDTH = 72; // px the overlay needs to hold both icon buttons side by side
+
 // Animation constants
 const COLLAPSE_ANIMATION_MS = 80;
 
@@ -74,11 +94,70 @@ const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
-/** A single reversible map edit: a file's content before and after the change. */
+// Identity migration constants
+const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Read one key out of a file's YAML frontmatter block, straight from its raw
+ * markdown. Used where the metadata cache can't be trusted — right after our
+ * own write, it still holds the pre-write frontmatter.
+ */
+function frontmatterValue(content: string, key: string): unknown {
+	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+	if (!match?.[1]) return undefined;
+	try {
+		const parsed: unknown = parseYaml(match[1]);
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return undefined;
+		}
+		return (parsed as Record<string, unknown>)[key];
+	} catch {
+		return undefined;
+	}
+}
+
+type FileEdit = edit.FileEdit;
+
+/**
+ * A fence node rendered as a card.
+ *
+ * `front`/`back` are markdown. An occlusion fence adds `occlusions`: masks are
+ * an SVG overlay pinned to an image rather than markdown, so its diagrams are
+ * carried separately and its prose holds only what surrounded them.
+ */
+interface OsmosisCardContent {
+	front: string;
+	back: string;
+	occlusions?: CardOcclusion[];
+	/**
+	 * A cloze fence, whose two halves are the same passage blanked and filled in
+	 * — so revealing it replaces the question rather than adding an answer under
+	 * it. See `applyFenceHidden`.
+	 */
+	isCloze?: boolean;
+}
+
+/**
+ * A single reversible map edit. Usually one file, but a move across an embed
+ * boundary rewrites both the origin and the destination note, and those must
+ * undo together as one step rather than leaving the content duplicated after a
+ * single Ctrl+Z.
+ */
 interface MapEditSnapshot {
-	path: string;
-	before: string;
-	after: string;
+	edits: FileEdit[];
+}
+
+/**
+ * One copied subtree: its source text, plus enough of the original node for
+ * `reindentSubtree` to re-serialize the first line at a new type/depth. The
+ * node itself is not kept — after a *cut* it no longer exists by paste time.
+ */
+interface ClipboardItem {
+	type: OsmosisNode["type"];
+	depth: number;
+	content: string;
+	blockId?: string;
+	text: string;
 }
 
 export class MindMapView extends ItemView {
@@ -102,6 +181,21 @@ export class MindMapView extends ItemView {
 	private isPanning = false;
 	private panStart = { x: 0, y: 0 };
 	private svg: SVGSVGElement | null = null;
+	/**
+	 * WKWebView strands composited `<foreignObject>` content when the SVG's
+	 * `viewBox` changes, so iOS pans the map with a CSS transform on the SVG
+	 * instead — see `src/mindmap-viewport.ts` for the mechanism and the maths.
+	 * Chromium (desktop Electron, Android's WebView) re-transforms those layers
+	 * correctly and stays on the `viewBox` path.
+	 */
+	private readonly panByTransform = Platform.isIosApp;
+	/**
+	 * The element whose box *is* the viewport, on the transform path: the SVG
+	 * no longer clips at its own bounds, so this wrapper does the clipping,
+	 * stays put while the SVG moves, and is what screen coordinates are
+	 * measured against. Null on the `viewBox` path, where the SVG is all three.
+	 */
+	private viewportHost: HTMLDivElement | null = null;
 
 	// Collapse state
 	private collapsedIds = new Set<string>();
@@ -122,7 +216,13 @@ export class MindMapView extends ItemView {
 	// nor push individual undo entries; instead the whole session collapses into
 	// one before→after snapshot recorded when it ends.
 	private liveEditActive = false;
-	private liveEditSnapshot: MapEditSnapshot | null = null;
+	private liveEditSnapshot: FileEdit | null = null;
+
+	// Edit group: a multi-file gesture (a move across an embed boundary, with the
+	// identity migration that follows it) whose writes collapse into one undo
+	// step. Also gates reload-on-modify for its duration — `suppressNextReload`
+	// covers a single write, and a group can write the host more than once.
+	private editGroup: Map<string, FileEdit> | null = null;
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -141,16 +241,46 @@ export class MindMapView extends ItemView {
 	private editContainer: HTMLDivElement | null = null;
 	private editEditor: EmbeddableMarkdownEditor | null = null;
 	private editCleanup: (() => void) | null = null;
+	/**
+	 * The node being edited, measured at zoom 1: its rendered text metrics and
+	 * the width it wraps at. Read once when editing starts, then re-scaled by
+	 * `positionEditOverlay` on every pan and zoom.
+	 */
+	private editMetrics: {
+		fontSize: number;
+		lineHeight: number;
+		maxNodeWidth: number;
+	} | null = null;
 
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
 
 	// Clipboard state for copy/cut/paste
 	private clipboardText: string | null = null;
-	private clipboardNodeType: OsmosisNode["type"] | null = null;
-	private clipboardNodeDepth: number | null = null;
+	/**
+	 * One record per copied subtree. Paste promotes each *top-level* item to a
+	 * direct child of the target on its own terms — a single type/depth for the
+	 * whole clipboard re-levels a heading and a bullet by the same delta, and
+	 * lands one of them wrong.
+	 */
+	private clipboardItems: ClipboardItem[] = [];
 	private clipboardIsCut = false;
 	private clipboardSourceIds: Set<string> = new Set();
+	/**
+	 * Containing file of the copied nodes — null when the selection spanned more
+	 * than one, where there is no single origin for identity to move from. Also
+	 * marks the clipboard as Osmosis' own rather than an external app's.
+	 */
+	private clipboardSourcePath: string | null = null;
+	/** Block IDs carried by {@link clipboardText}. */
+	private clipboardBlockIds: Set<string> = new Set();
+	/**
+	 * The origin's `osmosis-schedule` entries for those block IDs, captured at
+	 * cut time. A cut deletes immediately, so by the time the user pastes the
+	 * line is gone from the origin and its frontmatter may have been rewritten —
+	 * capture on cut, replay on paste.
+	 */
+	private clipboardSchedules: Record<string, unknown> = {};
 
 	// Clipboard state for copy/paste style
 	private clipboardNodeStyle: NodeStyle | null = null;
@@ -162,7 +292,15 @@ export class MindMapView extends ItemView {
 	private isDragging = false;
 	private dragGhost: SVGGElement | null = null;
 	private dropIndicator: SVGLineElement | null = null;
+	/** Destination-note label shown beside the indicator on a cross-note drop. */
+	private dropIndicatorLabel: SVGTextElement | null = null;
 	private dropTarget: { parentId: string; index: number } | null = null;
+	/**
+	 * Containing-file lookup captured for the duration of a drag. Resolved once
+	 * at drag start rather than per mousemove — it walks the whole tree, and the
+	 * tree cannot change while a drag is in flight.
+	 */
+	private dragFileOf: edit.FileOf | null = null;
 
 	// Pending selection: after a save-edit re-render, re-select the node at this position
 	private pendingSelectionRangeStart: number | null = null;
@@ -184,6 +322,8 @@ export class MindMapView extends ItemView {
 
 	// Viewport culling state
 	private renderedNodeIds = new Set<string>();
+	// Branch lines are culled on their own geometry, keyed by child node id
+	private renderedBranchIds = new Set<string>();
 	private cullRafId: number | null = null;
 	private branchLinesGroup: SVGGElement | null = null;
 	private nodesGroup: SVGGElement | null = null;
@@ -221,6 +361,35 @@ export class MindMapView extends ItemView {
 	private spatialPeekActionEl: HTMLElement | null = null;
 	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
 	private spatialTargets = new Set<string>();
+	/**
+	 * The targets each node carries, keyed by the node's own card key, in the
+	 * order study asks them.
+	 *
+	 * One key per due card. Nearly always that is one key — a node is one unit of
+	 * work — but anything that fanned out is several: an occluded diagram's shape
+	 * groups, a cloze's groups, the two directions of a bidirectional pair. Each
+	 * is a card with its own schedule, so the node steps through them one at a
+	 * time and appears here under several keys. That is why `spatialTargets` is
+	 * not simply the node keys on the map, and why the banner's count is honest
+	 * about how much is left. Peek never splits: it reveals in any order and
+	 * records nothing, so stepping would invent an interaction it does not have.
+	 */
+	private spatialNodeTargets = new Map<string, string[]>();
+	/**
+	 * The diagram each split target asks about, so a repaint can single its group
+	 * out. Only occlusion group keys appear here; an unsplit node has no target.
+	 */
+	private spatialGroupOcclusions = new Map<string, CardOcclusion>();
+	/**
+	 * The card each split target asks, for every fence that is not a diagram — so
+	 * a stepping node can put the question being rated on screen instead of the
+	 * passage all its cards came from.
+	 *
+	 * An occluded node is absent by design: its steps differ in which masks are
+	 * filled, not in their markdown, and it is repainted through
+	 * `spatialGroupOcclusions` rather than rebuilt.
+	 */
+	private spatialStepCards = new Map<string, Card>();
 	/** Targets already revealed (rated or awaiting a rating). */
 	private spatialRevealed = new Set<string>();
 	/** Targets rated so far (study progress). */
@@ -233,6 +402,12 @@ export class MindMapView extends ItemView {
 	 * the user actually clicked. Re-picked if a reload dropped the node.
 	 */
 	private spatialPendingNodeId: string | null = null;
+	/**
+	 * When the pending card was revealed, for the review log's elapsed time.
+	 * A node sits on the map alongside everything else, so there is no separate
+	 * "question shown" moment — the reveal is the only defensible anchor.
+	 */
+	private spatialPendingRatingAt = 0;
 	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
 	private spatialBanner: HTMLElement | null = null;
 	private spatialSessionManager: StudySessionManager | null = null;
@@ -411,28 +586,45 @@ export class MindMapView extends ItemView {
 	// ── Spatial Study Mode ──────────────────────────────────
 
 	/**
-	 * If `content` is an ```osmosis fence with a *** separator,
-	 * return { front, back } split. Otherwise return null.
+	 * A fence node's body — the lines between its opening and closing backticks —
+	 * or null when the content is not an ```osmosis fence.
 	 */
-	private parseOsmosisFence(content: string): { front: string; back: string } | null {
+	private static fenceBodyLines(content: string): string[] | null {
 		const lines = content.split("\n");
-		// Find opening ```osmosis line
 		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
 		if (openIdx < 0) return null;
-		// Find closing fence (``` with optional whitespace)
 		let closeIdx = -1;
 		for (let i = lines.length - 1; i > openIdx; i--) {
 			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
 		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines (key: value) before first blank line
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const contentLines = body.slice(start);
+		return closeIdx <= openIdx ? null : lines.slice(openIdx + 1, closeIdx);
+	}
+
+	/**
+	 * Where a fence's card text starts, past its header.
+	 *
+	 * `splitFenceHeader` is the generator's own reader, and using anything else
+	 * here was a bug: the naive "consecutive `key: value` lines" skip these
+	 * parsers used to do stops dead at the first *indented* line, which is what a
+	 * nested schedule block is made of. A scheduled cloze or bidirectional fence
+	 * — `c1:` and `r:` open one — therefore rendered its own `due:` and
+	 * `stability:` fields on the node as though they were the card. Only flat
+	 * schedules and unscheduled fences ever came out right, which is why it
+	 * survived: a basic fence writes its schedule flat.
+	 */
+	private static fenceContentLines(content: string): string[] | null {
+		const body = MindMapView.fenceBodyLines(content);
+		if (!body) return null;
+		return body.slice(splitFenceHeader(body).contentStart);
+	}
+
+	/**
+	 * If `content` is an ```osmosis fence with a *** separator,
+	 * return { front, back } split. Otherwise return null.
+	 */
+	private parseOsmosisFence(content: string): { front: string; back: string } | null {
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
 		// Find *** separator (with optional whitespace)
 		const sepIdx = contentLines.findIndex((l) => l.trim() === "***");
 		if (sepIdx < 0) return null;
@@ -449,30 +641,28 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with cloze deletions (no *** separator),
 	 * return { front, back } with all clozes blanked in front.
 	 */
-	private parseOsmosisCloze(content: string): { front: string; back: string } | null {
-		const lines = content.split("\n");
-		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
-		if (openIdx < 0) return null;
-		let closeIdx = -1;
-		for (let i = lines.length - 1; i > openIdx; i--) {
-			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
-		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const text = body.slice(start).join("\n").trim();
+	private parseOsmosisCloze(content: string): OsmosisCardContent | null {
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
+		const text = contentLines.join("\n").trim();
 		if (!text) return null;
 
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
 		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
-		return { front, back: text };
+		// The `cN:` prefix groups a deletion; it is not part of the answer. The
+		// generator strips it and keeps the `==`/`**` delimiters, so the two sides
+		// of a card read alike, and the map has to do the same — handing the text
+		// back whole printed "c1:Danube" on the node every time the fence showed
+		// its own words, which is before a session and after its last rating.
+		// The front never showed it, being blanked over, which is why it took a
+		// node stepping through its groups to make it visible.
+		const back = text.replace(MindMapView.CLOZE_REGEX, (full) => {
+			const delim = full.startsWith("==") ? "==" : "**";
+			return `${delim}${full.slice(2, -2).replace(/^c\d+:/, "")}${delim}`;
+		});
+		return { front, back, isCloze: true };
 	}
 
 	/** Strip osmosis-cloze inline marker (and its comment prefix) from a line. */
@@ -482,23 +672,9 @@ export class MindMapView extends ItemView {
 	 * If `content` is an ```osmosis fence with code cloze markers,
 	 * return { front, back } with all cloze regions blanked in front.
 	 */
-	private parseOsmosisCodeCloze(content: string): { front: string; back: string } | null {
-		const lines = content.split("\n");
-		const openIdx = lines.findIndex((l) => /^\s*`{3,}osmosis\s*$/.test(l));
-		if (openIdx < 0) return null;
-		let closeIdx = -1;
-		for (let i = lines.length - 1; i > openIdx; i--) {
-			if (/^\s*`{3,}\s*$/.test(lines[i]!)) { closeIdx = i; break; }
-		}
-		if (closeIdx <= openIdx) return null;
-		const body = lines.slice(openIdx + 1, closeIdx);
-		// Skip metadata lines
-		let start = 0;
-		for (let i = 0; i < body.length; i++) {
-			if (body[i]!.trim() === "") { start = i + 1; break; }
-			if (!/^\w[\w-]*:/.test(body[i]!)) { start = i; break; }
-		}
-		const contentLines = body.slice(start);
+	private parseOsmosisCodeCloze(content: string): OsmosisCardContent | null {
+		const contentLines = MindMapView.fenceContentLines(content);
+		if (!contentLines) return null;
 		if (!contentLines.some((l) => l.includes("osmosis-cloze"))) return null;
 
 		const frontLines: string[] = [];
@@ -533,28 +709,55 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		return { front: frontLines.join("\n"), back: backLines.join("\n") };
+		return { front: frontLines.join("\n"), back: backLines.join("\n"), isCloze: true };
 	}
 
 	/**
-	 * Check if a node is an osmosis fence (Q&A, cloze, or code cloze).
+	 * Check if a node is an osmosis fence (occlusion, Q&A, cloze, or code cloze).
 	 * Returns parsed front/back or null.
 	 */
-	private getOsmosisCardContent(node: OsmosisNode): { front: string; back: string } | null {
+	private getOsmosisCardContent(node: OsmosisNode): OsmosisCardContent | null {
 		if (node.type !== "codeblock") return null;
-		return this.parseOsmosisFence(node.content)
+		return this.parseOsmosisOcclusion(node.content)
+			?? this.parseOsmosisFence(node.content)
 			?? this.parseOsmosisCodeCloze(node.content)
 			?? this.parseOsmosisCloze(node.content);
 	}
 
 	/**
+	 * If `content` is an ```osmosis fence carrying shape sets, return its prose
+	 * and the diagrams to paint. Otherwise null.
+	 *
+	 * Occlusion was the one fence type the map could not read, so it fell
+	 * through to the plain code-block path and a node showed the raw `occlude:`
+	 * geometry as text. Front and back are the same prose here — what differs
+	 * between the sides of an occlusion card is the masks, not the markdown.
+	 */
+	private parseOsmosisOcclusion(content: string): OsmosisCardContent | null {
+		const body = MindMapView.fenceBodyLines(content);
+		if (!body) return null;
+		const { contentStart, hasOcclusion } = splitFenceHeader(body);
+		if (!hasOcclusion) return null;
+
+		const { diagrams, prose } = fenceDiagrams(body, contentStart);
+		if (diagrams.length === 0) return null;
+		return { front: prose, back: prose, occlusions: diagrams };
+	}
+
+	/**
 	 * Render osmosis fence as a card (front + divider + back) into the given container.
 	 * Used in both measurement and drawing phases for consistent sizing.
+	 *
+	 * An occlusion fence renders once rather than twice: its two sides differ
+	 * only in whether the masks are filled, so it gets the prose, the diagrams
+	 * with every group *revealed*, and no back half at all. Study covers them by
+	 * repainting the masks in place — see `applySpatialHidden`. Drawing a second
+	 * copy of every picture for the back would double a node's height and make
+	 * the map re-request each image.
 	 */
 	private async renderOsmosisCardInto(
 		container: Element,
-		front: string,
-		back: string,
+		card: OsmosisCardContent,
 		sourcePath: string,
 		ns?: string,
 	): Promise<void> {
@@ -570,7 +773,25 @@ export class MindMapView extends ItemView {
 			return el;
 		};
 
+		const { front, back } = card;
+
+		if (card.occlusions) {
+			const el = createElement("div", "osmosis-contextual-front");
+			container.appendChild(el);
+			if (front !== "" && this.renderComponent) {
+				await MarkdownRenderer.render(this.app, front, el, sourcePath, this.renderComponent);
+			}
+			for (const occlusion of card.occlusions) {
+				renderOcclusion(this.app, el, occlusion, "all-revealed", sourcePath);
+			}
+			return;
+		}
+
 		const frontEl = createElement("div", "osmosis-contextual-front");
+		// What each half currently shows, so a study step can swap in the card
+		// being asked and swap the source text back without re-rendering markdown
+		// that has not changed — see `updateNodeProse`.
+		frontEl.dataset["osmosisProse"] = front;
 		container.appendChild(frontEl);
 
 		if (this.renderComponent) {
@@ -587,6 +808,7 @@ export class MindMapView extends ItemView {
 		container.appendChild(divider);
 
 		const backEl = createElement("div", "osmosis-contextual-revealed");
+		backEl.dataset["osmosisProse"] = back;
 		container.appendChild(backEl);
 
 		if (this.renderComponent) {
@@ -617,18 +839,31 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Card key for a laid-out node: its line card's ID. Local nodes key
-	 * against the host note, transcluded nodes against their origin note —
-	 * so ratings and schedules always land in the note that owns the line.
+	 * Card key for a laid-out node: its line card's ID, or — for a node that is
+	 * an ```osmosis fence — the fence's own ID. Local nodes key against the host
+	 * note, transcluded nodes against their origin note, so ratings and
+	 * schedules always land in the note that owns the line.
+	 *
+	 * The two key shapes cannot collide: a line key always contains `#^`, and a
+	 * fence ID never does.
 	 */
 	private nodeCardKey(node: LayoutNode): string | null {
 		const blockId = node.source.blockId;
-		if (blockId === undefined) return null;
+		if (blockId === undefined) {
+			return node.source.type === "codeblock"
+				? fenceKeyFromNode(node.source.content)
+				: null;
+		}
 		const path = node.source.isTranscluded
 			? node.source.sourceFile
 			: this.currentFile?.path;
 		if (path === undefined) return null;
 		return lineCardId(path, blockId);
+	}
+
+	/** The cards a spatial target key stands for, whichever kind of key it is. */
+	private cardsForKey(key: string): string[] {
+		return cardIdsForSpatialKey(this.mapCards(), key);
 	}
 
 	/**
@@ -741,19 +976,29 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
 		const notePath = this.currentFile?.path;
-		const dueOrNew = dueOrNewLineCardIds(this.mapCards(), Date.now());
+		const cards = this.mapCards();
+		// One timestamp for the whole session, so the split below cannot disagree
+		// with the due filter about a card sitting on the boundary.
+		const now = Date.now();
+		// Fence cards join line cards as study targets: a fence is a card that
+		// happens to be laid out as a node, and leaving it out meant the map
+		// showed its answer throughout a session that was meant to test it.
+		const dueOrNew = new Set([
+			...dueOrNewLineCardIds(cards, now),
+			...dueOrNewFenceCardKeys(cards, now),
+		]);
 		const scopeKeys = scope && notePath !== undefined
 			? collectSubtreeCardKeys(scope, notePath)
 			: null;
-		const targets = this.cardKeysOnMap(dueOrNew, scopeKeys);
+		const nodeKeys = this.cardKeysOnMap(dueOrNew, scopeKeys);
 
-		if (targets.size === 0) {
-			new Notice(scope ? "No line cards are due in this branch." : "No line cards are due on this map.");
+		if (nodeKeys.size === 0) {
+			new Notice(scope ? "No cards are due in this branch." : "No cards are due on this map.");
 			return;
 		}
 
 		this.spatialMode = "study";
-		this.spatialTargets = targets;
+		this.setSpatialTargets(nodeKeys, cards, now);
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -770,21 +1015,53 @@ export class MindMapView extends ItemView {
 	private enterSpatialPeek(): void {
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
-		const targets = this.cardKeysOnMap(allLineCardIds(this.mapCards()));
+		const cards = this.mapCards();
+		const targets = this.cardKeysOnMap(
+			new Set([...allLineCardIds(cards), ...allFenceCardKeys(cards)]),
+		);
 
 		if (targets.size === 0) {
-			new Notice("No line cards on this map.");
+			new Notice("No cards on this map.");
 			return;
 		}
 
 		this.spatialMode = "peek";
+		// Peek never splits an occluded node into its groups: it reveals in any
+		// order and records nothing, so there is no question being asked and
+		// nothing for a target group to mean.
 		this.spatialTargets = targets;
+		this.spatialNodeTargets = new Map([...targets].map((key) => [key, [key]]));
+		this.spatialGroupOcclusions.clear();
+		this.spatialStepCards.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 		this.spatialPeekActionEl?.addClass("is-active");
 		this.applySpatialState();
+	}
+
+	/**
+	 * Expand the node keys a study session covers into the units it actually
+	 * asks — one per due card — and remember what each one is about: the diagram
+	 * for a shape group, the card itself for every other kind.
+	 */
+	private setSpatialTargets(nodeKeys: ReadonlySet<string>, cards: readonly Card[], now: number): void {
+		this.spatialTargets = new Set<string>();
+		this.spatialNodeTargets = new Map<string, string[]>();
+		this.spatialGroupOcclusions = new Map<string, CardOcclusion>();
+		this.spatialStepCards = new Map<string, Card>();
+
+		for (const nodeKey of nodeKeys) {
+			const keys = spatialStudyKeys(cards, nodeKey, now);
+			this.spatialNodeTargets.set(nodeKey, keys);
+			for (const key of keys) this.spatialTargets.add(key);
+		}
+		for (const card of cards) {
+			if (!this.spatialTargets.has(card.id)) continue;
+			if (card.occlusion) this.spatialGroupOcclusions.set(card.id, card.occlusion);
+			else this.spatialStepCards.set(card.id, card);
+		}
 	}
 
 	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
@@ -803,18 +1080,34 @@ export class MindMapView extends ItemView {
 				group.classList.remove("osmosis-spatial-revealed");
 			}
 			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
+			// Neither a fence node nor an occluded line ever carried the hidden
+			// class — masks and a hidden back half are how they hide — so both
+			// need putting back explicitly. A null step also puts a stepping
+			// fence's own text back, in place of the last question it was asked.
+			for (const nodeId of this.nodeMap.keys()) {
+				const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
+				if (group) this.applyFenceHidden(group, nodeId, false, null, null);
+			}
+			removeMaskOverlays(this.svg);
 		}
 		this.spatialBanner?.remove();
 		this.spatialBanner = null;
 		this.spatialTargets.clear();
+		this.spatialNodeTargets.clear();
+		this.spatialGroupOcclusions.clear();
+		this.spatialStepCards.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 
-		// Study session end: push debounced schedule writes out now (plan §3).
-		// Peek records nothing, so there is nothing to flush.
-		if (wasStudy) void this.plugin.scheduleStore.flush();
+		// Study session end: push debounced schedule writes and buffered
+		// review-log entries out now (plan §3). Peek records nothing, so there
+		// is nothing to flush.
+		if (wasStudy) {
+			void this.plugin.scheduleStore.flush();
+			void this.plugin.reviewLog.flush();
+		}
 	}
 
 	/**
@@ -826,33 +1119,96 @@ export class MindMapView extends ItemView {
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
 		for (const [nodeId, node] of this.nodeMap) {
-			const key = this.nodeCardKey(node);
-			if (key === null || !this.spatialTargets.has(key)) continue;
+			const nodeKey = this.nodeCardKey(node);
+			const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+			if (!keys || keys.length === 0) continue;
 
-			if (!this.spatialRevealed.has(key)) {
-				this.applySpatialHidden(nodeId, true);
-			} else {
-				this.applySpatialHidden(nodeId, false);
-				this.svg?.querySelector(`[data-node-id="${nodeId}"]`)?.classList.add("osmosis-spatial-revealed");
-				if (this.spatialMode === "study" && key === this.spatialPendingRating) {
-					// Duplicate embeds share a card key — the bubble anchors to
-					// the clicked node, or the first survivor after a reload
-					if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
-						this.spatialPendingNodeId = nodeId;
-					}
-					if (nodeId === this.spatialPendingNodeId) {
-						this.ensureRatingBubble(nodeId, node);
-					}
+			const { asking, answered } = this.spatialNodeStep(keys);
+			// Only a split node singles a group out; an ordinary one covers or
+			// uncovers itself whole.
+			const occlusion = asking === null ? null : this.spatialGroupOcclusions.get(asking) ?? null;
+			// The card on screen while it is being asked. Null once the node has
+			// answered them all, and the node goes back to its own text.
+			const step = asking === null ? null : this.spatialStepCards.get(asking) ?? null;
+			this.applySpatialHidden(nodeId, !answered, occlusion, step);
+
+			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+			// Toggled, not just added: rating one group resets the node to ask the
+			// next, and a node that kept the revealed class would stay lit up while
+			// its next question was on screen.
+			group?.classList.toggle("osmosis-spatial-revealed", answered);
+
+			if (this.spatialMode === "study" && asking !== null && asking === this.spatialPendingRating) {
+				// Duplicate embeds share a card key — the bubble anchors to
+				// the clicked node, or the first survivor after a reload
+				if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
+					this.spatialPendingNodeId = nodeId;
+				}
+				if (nodeId === this.spatialPendingNodeId) {
+					this.ensureRatingBubble(nodeId, node);
 				}
 			}
 		}
 		if (this.spatialMode === "study") this.ensureSpatialBanner();
 	}
 
-	private applySpatialHidden(nodeId: string, hidden: boolean): void {
+	/**
+	 * Which of a node's targets is on screen, and whether its answer is up.
+	 *
+	 * A node with one target is the old two-state affair: hidden until revealed,
+	 * revealed thereafter. A split occluded node walks its groups in order —
+	 * ask, reveal, rate, then on to the next — and is only finished, `asking`
+	 * null, once its last group has been rated. Peek never rates, so its single
+	 * target simply stops at "revealed", which is all peek has ever meant.
+	 */
+	private spatialNodeStep(keys: readonly string[]): { asking: string | null; answered: boolean } {
+		for (const key of keys) {
+			if (!this.spatialRevealed.has(key)) return { asking: key, answered: false };
+			if (!this.spatialRated.has(key)) return { asking: key, answered: true };
+		}
+		return { asking: null, answered: true };
+	}
+
+	/**
+	 * Paint one target node. `occlusion` is the diagram being asked when the node
+	 * is stepping through its shape groups, and `step` the card being asked when
+	 * it is stepping through anything else; both are null when the node hides or
+	 * reveals as a whole.
+	 */
+	private applySpatialHidden(
+		nodeId: string,
+		hidden: boolean,
+		occlusion: CardOcclusion | null,
+		step: Card | null,
+	): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
 		if (!group) return;
+
+		// A fence node is never blanked. Its front is the question — prose, a
+		// cloze with its blanks, a masked diagram — and hiding the whole node
+		// would take the question away with the answer, leaving a "?" that asks
+		// nothing. Reading view has always worked this way; the map now matches.
+		if (this.applyFenceHidden(group, nodeId, hidden, occlusion, step)) return;
+
+		// An occluded line hides its masked regions rather than its whole self:
+		// blanking the node behind a "?" would ask the reader to recall the
+		// diagram, when the card asks about the labels on it. In study one group
+		// is asked at a time; peek covers the lot, having no question to put.
+		const masks = occlusion ?? (hidden ? this.nodeOcclusion(nodeId) : null);
+		if (masks) {
+			const img = group.querySelector("img");
+			if (img instanceof HTMLImageElement) {
+				group.classList.remove("osmosis-spatial-hidden");
+				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+				overlayMasks(img, masks, occlusion ? (hidden ? "front" : "back") : "all-hidden");
+				return;
+			}
+			// No image rendered (missing file, or the node is still rendering) —
+			// fall through and hide it the ordinary way, so it is never a card the
+			// user can see the answer to.
+		}
+		removeMaskOverlays(group);
 
 		if (hidden) {
 			group.classList.add("osmosis-spatial-hidden");
@@ -877,6 +1233,144 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Hide or reveal a fence node's *answer*, leaving its question on screen.
+	 * Returns false when the node is not a fence, so the caller falls back to
+	 * blanking it.
+	 *
+	 * The kinds of fence hide differently. An occluded one is rendered once and
+	 * its masks repainted — covered while the node is hidden, outlined once
+	 * revealed — so the picture never reloads and the node never changes size.
+	 * Every other kind has a real back half in the DOM, which is simply hidden;
+	 * a cloze fence additionally drops its *front* on reveal, since the answer is
+	 * the same passage filled in.
+	 *
+	 * The node keeps the height it was laid out at either way. Re-measuring on
+	 * every reveal would reflow the whole map under the reader's cursor, and a
+	 * node that grows when tapped is worse than one with a little space in it.
+	 *
+	 * `target` is the diagram being asked while a node steps through its shape
+	 * groups, and null when the node hides or reveals as a whole. `step` is the
+	 * same thing for every other kind of fence — the card being asked — and swaps
+	 * the node's two halves for that card's own front and back.
+	 */
+	private applyFenceHidden(
+		group: Element,
+		nodeId: string,
+		hidden: boolean,
+		target: CardOcclusion | null,
+		step: Card | null,
+	): boolean {
+		const node = this.nodeMap.get(nodeId);
+		const card = node ? this.getOsmosisCardContent(node.source) : null;
+		if (!card) return false;
+
+		group.classList.remove("osmosis-spatial-hidden");
+		group.querySelector(".osmosis-spatial-placeholder")?.remove();
+
+		if (card.occlusions) {
+			// Matched on the embed target the renderer wrote to `alt`, so a fence
+			// holding several diagrams repaints each with its own shape set.
+			const byImage = new Map(card.occlusions.map((o) => [o.image, o]));
+			for (const img of Array.from(group.querySelectorAll("img"))) {
+				const occlusion = byImage.get(img.getAttribute("alt") ?? "");
+				if (!occlusion) continue;
+				if (target === null) {
+					overlayMasks(img, occlusion, hidden ? "all-hidden" : "all-revealed");
+				} else if (occlusion.image === target.image) {
+					overlayMasks(img, target, hidden ? "front" : "back");
+				} else {
+					// A second diagram in the same fence belongs to a different card,
+					// so it is shown unmasked — covering it would pose a question this
+					// card never answers. Sequential has always read this way.
+					overlayMasks(img, occlusion, "none");
+				}
+			}
+			return true;
+		}
+
+		// A fence that fanned out asks a different question per step, so while one
+		// is on screen the node shows *that card's* front and back — the same
+		// generator-rendered strings sequential and the note put up — rather than
+		// the passage every card came from. Otherwise a three-group cloze node
+		// would put the identical all-blanked passage three times and take three
+		// ratings on it, and a bidirectional node would never ask its reverse.
+		//
+		// A null step puts the fence's own text back: the node has answered
+		// everything it was asked, or the session is over.
+		this.updateNodeProse(group.querySelector(".osmosis-contextual-front"), step?.front ?? card.front);
+		this.updateNodeProse(group.querySelector(".osmosis-contextual-revealed"), step?.back ?? card.back);
+
+		// A cloze card's two halves are one passage, blanked and filled in, so its
+		// answer *replaces* the question — the reader's eye stays on one body of
+		// text, and a node does not carry the same lines twice. A basic or
+		// bidirectional fence keeps both halves, because there its front is a
+		// question the answer does not contain. Note view has read this way since
+		// phase 3; the map used to stack every kind, which made a cloze node as
+		// tall as its passage twice over.
+		//
+		// Gated on being *in* a session, exactly as Note view gates on `hiding`:
+		// `exitSpatialMode` restores every node through this method with
+		// `hidden: false` after clearing the mode, and a collapse that outlived the
+		// session would leave the fence showing its answer and nothing else.
+		const collapse = card.isCloze === true && !hidden && this.spatialMode !== "off";
+		const setHidden = (selector: string, hide: boolean): void => {
+			for (const el of Array.from(group.querySelectorAll(selector))) {
+				el.classList.toggle("osmosis-hidden", hide);
+			}
+		};
+		setHidden(".osmosis-contextual-front", collapse);
+		setHidden(".osmosis-contextual-revealed", hidden);
+		setHidden(".osmosis-study-divider", hidden || collapse);
+		return true;
+	}
+
+	/**
+	 * Put `markdown` on screen in one half of a fence node, skipping the work when
+	 * it is already what the element shows.
+	 *
+	 * The guard is what keeps this affordable: `applySpatialState` re-applies to
+	 * every target node on every render pass, and without it each pass would blank
+	 * a node the reader is looking at and paint it again a frame later. The
+	 * attribute is seeded by `renderOsmosisCardInto`, so a node that never steps
+	 * away from its source text is never re-rendered at all.
+	 *
+	 * The node keeps the size it was laid out at, as everything else here does —
+	 * see `applyFenceHidden`. A step's front is at most as long as the fence's
+	 * full text, which the node was already measured to hold, so the swap fits;
+	 * a long answer revealed under a long question can still clip, and clipping is
+	 * the price of not reflowing the map under the reader's cursor mid-session.
+	 */
+	private updateNodeProse(el: Element | null, markdown: string): void {
+		if (!(el instanceof HTMLElement)) return;
+		if (el.dataset["osmosisProse"] === markdown) return;
+		el.dataset["osmosisProse"] = markdown;
+		el.empty();
+		if (this.renderComponent) {
+			void MarkdownRenderer.render(
+				this.app,
+				markdown,
+				el,
+				this.currentFile?.path ?? "",
+				this.renderComponent,
+			);
+		}
+	}
+
+	/**
+	 * The occluded diagram on a node's line, or null when it carries no masks.
+	 *
+	 * Resolved through the *line key*, never `getCard` — an occluded line's cards
+	 * are `…/c1`, `…/c2`, so the key is nobody's card ID. **The block ID is the
+	 * signal, never `cardType`**: an occluded line card is typed `"occlusion"`
+	 * while still living on its line.
+	 */
+	private nodeOcclusion(nodeId: string): CardOcclusion | null {
+		const node = this.nodeMap.get(nodeId);
+		const key = node ? this.nodeCardKey(node) : null;
+		return key === null ? null : occlusionForLineKey(this.mapCards(), key);
+	}
+
+	/**
 	 * Tap on a node during peek/study. Returns true when the tap was
 	 * consumed. Only hidden targets react. Peek: reveal in any order,
 	 * nothing recorded. Study: reveal opens the rating bubble, which must
@@ -885,9 +1379,12 @@ export class MindMapView extends ItemView {
 	private handleSpatialClick(nodeId: string): boolean {
 		if (this.spatialMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
-		const key = node ? this.nodeCardKey(node) : null;
-		if (!node || key === null) return false;
-		if (!this.spatialTargets.has(key) || this.spatialRevealed.has(key)) return false;
+		const nodeKey = node ? this.nodeCardKey(node) : null;
+		const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+		if (!node || !keys) return false;
+		// The next group the node has to ask — undefined once it has asked them all.
+		const key = keys.find((k) => !this.spatialRevealed.has(k));
+		if (key === undefined) return false;
 
 		// Study: one rating at a time — the open bubble must be answered first
 		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
@@ -896,6 +1393,7 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode === "study") {
 			this.spatialPendingRating = key;
 			this.spatialPendingNodeId = nodeId;
+			this.spatialPendingRatingAt = Date.now();
 			// Keys 1–4 rate via the container's keydown handler
 			this.contentEl.focus();
 		}
@@ -955,16 +1453,23 @@ export class MindMapView extends ItemView {
 	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
 		const cardId = this.spatialPendingRating;
 		if (this.spatialMode !== "study" || cardId === null) return;
+		const elapsedMs = Date.now() - this.spatialPendingRatingAt;
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
 		this.spatialRated.add(cardId);
 		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
 
-		// The card key is the card's ID; the card's own notePath routes the
-		// schedule write — to the source note for transcluded lines (plan §11)
-		if (this.plugin.cardStore.getCard(cardId)) {
-			this.spatialSessionManager ??= this.plugin.createSessionManager();
-			await this.spatialSessionManager.recordReview(cardId, rating);
+		// The key is either a *node* — a line or a fence, which can carry several
+		// cards a single rating must reach, one per cloze — or one shape group of
+		// an occluded node, which is a card of its own. Each card's own notePath
+		// routes its schedule write, to the source note for transcluded lines
+		// (plan §11).
+		const cardIds = this.cardsForKey(cardId);
+		if (cardIds.length > 0) {
+			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
+			for (const id of cardIds) {
+				await this.spatialSessionManager.recordReview(id, rating, { elapsedMs });
+			}
 			this.plugin.refreshDashboard();
 		}
 
@@ -973,7 +1478,10 @@ export class MindMapView extends ItemView {
 			this.exitSpatialMode(); // flushes schedule writes; map stays open
 			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
 		} else {
-			this.ensureSpatialBanner();
+			// Re-apply rather than only redrawing the banner: an occluded node that
+			// has more groups left must reset to ask the next one, which is the
+			// whole point of stepping through them.
+			this.applySpatialState();
 		}
 	}
 
@@ -1169,7 +1677,8 @@ export class MindMapView extends ItemView {
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (file instanceof TFile && file === this.currentFile) {
+				if (!(file instanceof TFile)) return;
+				if (file === this.currentFile) {
 					if (this.liveEditActive) {
 						// A live-edit session (color-picker drag) drives rendering
 						// directly via applyMapSettings/render; ignore our own writes
@@ -1179,17 +1688,46 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
+					if (this.editGroup) {
+						// Same reasoning as a live edit: a grouped gesture can
+						// write this file more than once (content splice, then
+						// the frontmatter that carries card identity across),
+						// and one boolean can't cover both.
+						this.suppressNextReload = false;
+						return;
+					}
 					if (this.suppressNextReload) {
 						this.suppressNextReload = false;
 						return;
 					}
-					// Our own schedule flush only touches frontmatter, which
-					// the map doesn't render — skip the reload so a debounced
-					// mid-session write can't flicker or reset study state
-					// (same pattern as CardSyncService with FenceWriter).
-					if (this.plugin.scheduleStore.isWriting(file.path)) return;
+					// Our own schedule flush only touches frontmatter, which the
+					// map doesn't render — so re-sync rather than reload, keeping
+					// study state and undo history instead of tearing them down
+					// mid-session. Re-sync it must: the frontmatter it grows
+					// shifts every body offset, and the tree's ranges are what
+					// structural edits splice with.
+					if (this.plugin.scheduleStore.isWriting(file.path)) {
+						void this.resyncFromParent();
+						return;
+					}
 					void this.loadFile(file);
+					return;
 				}
+
+				// A note this map transcludes changed underneath it. Nothing
+				// re-parses it otherwise, so its nodes keep the offsets they had
+				// before the write — and the next edit that splices by those
+				// offsets writes into the wrong bytes. A debounced schedule flush
+				// is the common case: it renders identically and still moves every
+				// line in the file.
+				if (this.liveEditActive || this.editGroup || this.editingNodeId) return;
+				if (this.suppressNextReload) {
+					this.suppressNextReload = false;
+					return;
+				}
+				if (!this.transcludedPaths().has(file.path)) return;
+				this.cache.invalidate(file.path);
+				void this.resyncFromParent();
 			}),
 		);
 
@@ -1231,9 +1769,11 @@ export class MindMapView extends ItemView {
 		this.renderComponent?.unload();
 		this.renderComponent = null;
 		this.svg = null;
+		this.viewportHost = null;
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
 		this.cancelLongPress();
 		this.activePointers.clear();
 		this.pinchStartDistance = null;
@@ -1344,6 +1884,13 @@ export class MindMapView extends ItemView {
 			this.nodeSizeCache.clear();
 		}
 		this.mapSettings = { ...settings };
+		void this.render();
+	}
+
+	/** Re-measure every node and re-render, for changes outside MapSettings
+	 *  (e.g. the global max node width setting). */
+	remeasureAndRender(): void {
+		this.nodeSizeCache.clear();
 		void this.render();
 	}
 
@@ -2248,8 +2795,20 @@ export class MindMapView extends ItemView {
 
 	private updateViewBox(): void {
 		if (!this.svg) return;
-		const { x, y, w, h } = this.viewBox;
-		this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		if (this.viewportHost) {
+			// iOS: the same viewport, expressed as a CSS transform so that
+			// composited node content travels with the map instead of stranding.
+			this.svg.style.transform = viewBoxTransform(
+				this.viewBox,
+				this.viewportHost.getBoundingClientRect(),
+			);
+		} else {
+			const { x, y, w, h } = this.viewBox;
+			this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
+		}
+		// The edit overlay lives outside the SVG, so the viewBox does not carry
+		// it along — re-place it or it freezes where the node used to be.
+		if (this.editingNodeId) this.positionEditOverlay();
 		this.scheduleCullUpdate();
 	}
 
@@ -2354,43 +2913,23 @@ export class MindMapView extends ItemView {
 		if (isSecondary && isTopDown) {
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + child.rect.height + offsetY;
-			if (parent.source.type === "root") {
-				px = cx;
-				py = cy + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + offsetY;
 		} else if (isSecondary) {
 			cx = child.rect.x + child.rect.width + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				px = cx + DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				py = cy;
-			} else {
-				px = parent.rect.x + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		} else if (isTopDown) {
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + offsetY;
-			if (parent.source.type === "root") {
-				px = cx;
-				py = cy - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + parent.rect.height + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + parent.rect.height + offsetY;
 		} else {
 			cx = child.rect.x + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				px = cx - DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				py = cy;
-			} else {
-				px = parent.rect.x + parent.rect.width + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
 		const minX = Math.min(px, cx);
@@ -2431,6 +2970,7 @@ export class MindMapView extends ItemView {
 		const lineStyle = this.mapSettings.branchLineStyle;
 
 		const nowVisible = new Set<string>();
+		const nowVisibleBranches = new Set<string>();
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
 			if (
@@ -2439,25 +2979,41 @@ export class MindMapView extends ItemView {
 			) {
 				nowVisible.add(node.source.id);
 			}
+			// A branch is culled on its own geometry, never on its child's. A
+			// branch crosses the viewport whenever it spans it — zooming in on a
+			// parent puts its children outside the viewport long before the
+			// branches reaching them leave it, and panning past a parent does the
+			// same from the other end.
+			if (
+				node.parent &&
+				node.parent.source.type !== "root" &&
+				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
+			) {
+				nowVisibleBranches.add(node.source.id);
+			}
 		}
 
 		// Remove nodes that left the viewport (but never cull the node being edited)
 		for (const id of this.renderedNodeIds) {
 			if (!nowVisible.has(id) && id !== this.editingNodeId) {
-				// Remove node group
 				const el = this.nodesGroup.querySelector(
 					`.osmosis-node-group[data-node-id="${id}"]`,
 				);
 				el?.remove();
-				// Remove branch line
-				const line = this.branchLinesGroup.querySelector(
-					`.osmosis-branch-line[data-child-id="${id}"]`,
-				);
-				line?.remove();
 			}
 		}
 
-		// Add nodes that entered the viewport
+		// Remove branch lines that left the viewport. A tapered *and* patterned
+		// branch is two paths under the one child id, so take every match.
+		for (const id of this.renderedBranchIds) {
+			if (!nowVisibleBranches.has(id)) {
+				this.branchLinesGroup
+					.querySelectorAll(`.osmosis-branch-line[data-child-id="${id}"]`)
+					.forEach((line) => { line.remove(); });
+			}
+		}
+
+		// Add nodes and branches that entered the viewport
 		const renderPromises: Promise<void>[] = [];
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
@@ -2466,17 +3022,20 @@ export class MindMapView extends ItemView {
 				renderPromises.push(
 					this.drawNode(this.nodesGroup, node, offsetX, offsetY),
 				);
-				// Draw branch line whenever the child node is visible
-				if (node.parent) {
-					this.drawBranchLine(
-						this.branchLinesGroup,
-						node.parent,
-						node,
-						offsetX,
-						offsetY,
-						lineStyle,
-					);
-				}
+			}
+			if (
+				node.parent &&
+				nowVisibleBranches.has(id) &&
+				!this.renderedBranchIds.has(id)
+			) {
+				this.drawBranchLine(
+					this.branchLinesGroup,
+					node.parent,
+					node,
+					offsetX,
+					offsetY,
+					lineStyle,
+				);
 			}
 		}
 		await Promise.all(renderPromises);
@@ -2485,6 +3044,7 @@ export class MindMapView extends ItemView {
 		this.applySpatialState();
 
 		this.renderedNodeIds = nowVisible;
+		this.renderedBranchIds = nowVisibleBranches;
 	}
 
 	private screenToSvg(
@@ -2492,6 +3052,18 @@ export class MindMapView extends ItemView {
 		clientY: number,
 	): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
+		if (this.viewportHost) {
+			// getScreenCTM() reports the SVG's *own* user space, which on this
+			// path no longer includes the pan/zoom — that lives in a CSS
+			// transform above it. Invert the transform instead; the maths is
+			// unit-tested against the viewBox mapping it replaces.
+			return clientToUser(
+				this.viewBox,
+				this.viewportHost.getBoundingClientRect(),
+				clientX,
+				clientY,
+			);
+		}
 		const ctm = this.svg.getScreenCTM();
 		if (!ctm) return { x: 0, y: 0 };
 		const inv = ctm.inverse();
@@ -3435,39 +4007,59 @@ export class MindMapView extends ItemView {
 		}
 		if (selectedSrcs.length === 0) return;
 
-		// All ranges are spliced out of one file; refuse a mixed-file selection.
-		if (!this.ensureSameFileEdit(selectedSrcs)) return;
-		const file = this.getNodeFile(selectedSrcs[0]!);
-		if (!file) return;
-
-		const ranges = selectedSrcs
-			.map((src) => ({
-				start: src.range.start,
-				end: this.subtreeEnd(src),
-			}))
-			.sort((a, b) => b.start - a.start);
-
-		let content = await this.app.vault.read(file);
-
-		for (const range of ranges) {
-			let deleteStart = range.start;
-			let deleteEnd = range.end;
-
-			if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
-				deleteStart--;
-			} else if (
-				deleteEnd < content.length &&
-				content[deleteEnd] === "\n"
-			) {
-				deleteEnd++;
-			}
-
-			content = content.slice(0, deleteStart) + content.slice(deleteEnd);
+		// A mixed host+embedded selection is allowed (design decision O4): each
+		// file gets its own splice, and the whole thing is one undo step. Ranges
+		// only make sense against their own file's bytes, so group before
+		// splicing rather than refusing the selection.
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const byPath = new Map<string, OsmosisNode[]>();
+		for (const src of selectedSrcs) {
+			const path = fileOf(src);
+			const group = byPath.get(path);
+			if (group) group.push(src);
+			else byPath.set(path, [src]);
 		}
 
 		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		await this.writeNodeFile(selectedSrcs[0]!, content);
+
+		this.beginEditGroup();
+		try {
+			for (const [path, nodes] of byPath) {
+				const file = this.fileAtPath(path);
+				if (!file) continue;
+
+				// Descending order so each splice leaves the earlier offsets valid.
+				const ranges = nodes
+					.map((src) => ({
+						start: src.range.start,
+						end: this.subtreeEnd(src),
+					}))
+					.sort((a, b) => b.start - a.start);
+
+				let content = await this.app.vault.read(file);
+				for (const range of ranges) {
+					let deleteStart = range.start;
+					let deleteEnd = range.end;
+
+					if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
+						deleteStart--;
+					} else if (
+						deleteEnd < content.length &&
+						content[deleteEnd] === "\n"
+					) {
+						deleteEnd++;
+					}
+
+					content = content.slice(0, deleteStart) + content.slice(deleteEnd);
+				}
+				await this.writeFileTracked(file, content);
+			}
+		} finally {
+			this.endEditGroup();
+			await this.resyncFromParent();
+		}
 		this.selectFirstNode();
 	}
 
@@ -3481,10 +4073,6 @@ export class MindMapView extends ItemView {
 
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node?.parent) return;
-
-		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
 
 		const parentSrc = node.parent.source;
 		const siblings = parentSrc.children;
@@ -3505,8 +4093,45 @@ export class MindMapView extends ItemView {
 
 		// Collect all selected subtree texts in order
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
-		if (!this.ensureSameFileEdit([...selectedSrcs, swapSrc])) return;
+		// The selection is spliced out of one file; a selection that itself spans
+		// the seam has no single origin. (The *neighbor* may now live elsewhere.)
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(selectedSrcs[0]!);
+		const swapPath = fileOf(swapSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+
+		if (swapPath !== originPath) {
+			// At a seam the swap degrades to a move-past: the selection relocates
+			// into the neighbor's note and the neighbor stays put. A true swap
+			// would drag the neighbor across the boundary as well — two moves in
+			// opposite directions from one keypress, one of them pulling a line
+			// out of a note the user never selected.
+			//
+			// The destination is the neighbor's own file, so the offsets are its
+			// own coordinates (`range.start` / `subtreeEnd`) — never the
+			// host-folded `nodeHostStart` / `subtreeHostEnd`, which would answer
+			// in the file that *contains* the embed instead.
+			const site: edit.InsertSite = {
+				path: swapPath,
+				offset:
+					direction < 0 ? swapSrc.range.start : this.subtreeEnd(swapSrc),
+				neighbor: swapSrc,
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				() => ({ type: swapSrc.type, depth: swapSrc.depth }),
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
+			return;
+		}
+
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 		const content = await this.app.vault.read(file);
 		const blockStart = selectedSrcs[0]!.range.start;
 		const blockEnd = this.subtreeEnd(
@@ -3521,7 +4146,7 @@ export class MindMapView extends ItemView {
 		// Swap block with target.
 		// Replace the entire range spanning both nodes (including any gap
 		// and surrounding blank lines) with the swapped texts joined by "\n".
-		// normalizeHeadingSpacing (called by writeNodeFile) will re-add proper
+		// normalizeHeadingSpacing (called by the write) will re-add proper
 		// blank lines around headings and top-level code fences.
 		const rangeStart = Math.min(blockStart, swapStart);
 		const rangeEnd = Math.max(blockEnd, swapEnd);
@@ -3550,11 +4175,23 @@ export class MindMapView extends ItemView {
 			updated = head + blockText + "\n" + swapText + tail;
 		}
 
-		const movedContents = selectedSrcs.map((s) => s.content);
-		await this.writeNodeFile(src, updated);
+		await this.writeFileAtPath(originPath, updated);
 
 		// Re-select all moved nodes
 		this.reselectMultiAfterMove(movedContents);
+	}
+
+	/** Pre-order position of every node in the current tree (its rendered order). */
+	private treeOrderIndex(): Map<string, number> {
+		const order = new Map<string, number>();
+		if (!this.currentTree) return order;
+		let next = 0;
+		const walk = (n: OsmosisNode): void => {
+			order.set(n.id, next++);
+			for (const child of n.children) walk(child);
+		};
+		walk(this.currentTree.root);
+		return order;
 	}
 
 	/**
@@ -3615,17 +4252,44 @@ export class MindMapView extends ItemView {
 		if (!prevSibling) return;
 
 		const firstSrc = siblings[firstIdx]!;
-		const file = this.getNodeFile(firstSrc);
-		if (!file) return;
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
-		if (
-			!this.ensureSameFileEdit([
-				...selectedIndices.map((i) => siblings[i]!),
-				prevSibling,
-			])
-		)
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(firstSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const indentContext = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => ({
+			type: this.inferIndentType(prevSibling, nodeSrc),
+			depth: this.inferIndentDepth(prevSibling, nodeSrc),
+		});
+
+		if (fileOf(prevSibling) !== originPath) {
+			// Indenting under a sibling that lives in another note — the last
+			// expanded child of an embed — moves the block into that note,
+			// appended after the sibling's subtree. No neighbor is needed: the
+			// site is "child of prevSibling", and inferIndentDepth already reads
+			// the destination's coordinates off prevSibling itself (its own
+			// source depth + 1), not off the host.
+			const site: edit.InsertSite = {
+				path: fileOf(prevSibling),
+				offset: this.subtreeEnd(prevSibling),
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				indentContext,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
 			return;
+		}
 
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 		const content = await this.app.vault.read(file);
 
 		// Collect block of selected subtrees
@@ -3635,16 +4299,14 @@ export class MindMapView extends ItemView {
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
-		for (const idx of selectedIndices) {
-			const nodeSrc = siblings[idx]!;
+		for (const nodeSrc of selectedSrcs) {
 			const nodeText = content.slice(
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			const newType = this.inferIndentType(prevSibling, nodeSrc);
-			const newDepth = this.inferIndentDepth(prevSibling, nodeSrc);
+			const context = indentContext(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
 			);
 		}
 		const reindented = reindentedParts.join("\n");
@@ -3668,8 +4330,7 @@ export class MindMapView extends ItemView {
 			reindented +
 			withoutBlock.slice(insertPos);
 
-		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
-		await this.writeNodeFile(firstSrc, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -3748,19 +4409,41 @@ export class MindMapView extends ItemView {
 
 		const firstSrc = siblings[selectedIndices[0]!]!;
 		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
+		const parentSrc = parentNode.source;
+		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
 
-		const file = this.getNodeFile(firstSrc);
-		if (!file) return;
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const originPath = fileOf(firstSrc);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const context = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => this.outdentContext(nodeSrc, parentSrc);
 
-		// Outdenting inserts the block relative to the parent's subtree, so the
-		// parent must live in the same file as the moved nodes.
-		if (
-			!this.ensureSameFileEdit([
-				...selectedIndices.map((i) => siblings[i]!),
-				parentNode.source,
-			])
-		)
+		if (fileOf(parentSrc) !== originPath) {
+			// A top-level expanded child's tree parent is the local node that held
+			// the `![[…]]`, so outdenting is a true move out of the source note and
+			// into the host, just past that parent's subtree. The offset is in the
+			// parent's *own* file — `subtreeEnd`, which already folds any embed the
+			// parent contains back to that file's `![[…]]` line.
+			const site: edit.InsertSite = {
+				path: fileOf(parentSrc),
+				offset: this.subtreeEnd(parentSrc),
+			};
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				context,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
 			return;
+		}
+
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
 
 		const content = await this.app.vault.read(file);
 		const blockStart = firstSrc.range.start;
@@ -3768,34 +4451,14 @@ export class MindMapView extends ItemView {
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
-		for (const idx of selectedIndices) {
-			const nodeSrc = siblings[idx]!;
+		for (const nodeSrc of selectedSrcs) {
 			const nodeText = content.slice(
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			// Becoming a sibling of parent — preserve node's own list type
-			// Only switch type for heading transitions
-			let newType: OsmosisNode["type"];
-			if (nodeSrc.type === "heading" && parentNode.source.type === "heading") {
-				newType = "heading";
-			} else if (
-				(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
-				nodeSrc.depth === 0 &&
-				parentNode.source.type === "heading"
-			) {
-				// Depth-0 list item directly under a heading: promote to paragraph
-				// (progressive: bullet → paragraph → heading on successive outdents)
-				newType = "paragraph";
-			} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
-				// Nested list items keep their own type when outdenting
-				newType = nodeSrc.type;
-			} else {
-				newType = parentNode.source.type;
-			}
-			const newDepth = parentNode.source.depth;
+			const { type, depth } = context(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, type, depth),
 			);
 		}
 		const reindented = reindentedParts.join("\n");
@@ -3807,7 +4470,7 @@ export class MindMapView extends ItemView {
 		}
 
 		// Insert after parent's subtree
-		const parentEnd = this.subtreeEnd(parentNode.source);
+		const parentEnd = this.subtreeEnd(parentSrc);
 
 		const withoutBlock =
 			content.slice(0, removeStart) + content.slice(blockEnd);
@@ -3825,9 +4488,40 @@ export class MindMapView extends ItemView {
 			reindented +
 			withoutBlock.slice(adjustedParentEnd);
 
-		const movedContents = selectedIndices.map((i) => siblings[i]!.content);
-		await this.writeNodeFile(firstSrc, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
+	}
+
+	/**
+	 * Type and depth a node takes on when outdented to become its parent's
+	 * sibling. Shared by the same-file splice and the cross-file move so a node
+	 * promoted *out* of an embed lands at the level it would have landed at had
+	 * both lines lived in one file.
+	 */
+	private outdentContext(
+		nodeSrc: OsmosisNode,
+		parentSrc: OsmosisNode,
+	): { type: OsmosisNode["type"]; depth: number } {
+		// Becoming a sibling of parent — preserve node's own list type.
+		// Only switch type for heading transitions.
+		let type: OsmosisNode["type"];
+		if (nodeSrc.type === "heading" && parentSrc.type === "heading") {
+			type = "heading";
+		} else if (
+			(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
+			nodeSrc.depth === 0 &&
+			parentSrc.type === "heading"
+		) {
+			// Depth-0 list item directly under a heading: promote to paragraph
+			// (progressive: bullet → paragraph → heading on successive outdents)
+			type = "paragraph";
+		} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
+			// Nested list items keep their own type when outdenting
+			type = nodeSrc.type;
+		} else {
+			type = parentSrc.type;
+		}
+		return { type, depth: parentSrc.depth };
 	}
 
 	/**
@@ -3840,34 +4534,57 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
 
-		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
 
-		const content = await this.app.vault.read(file);
-
-		// Collect subtree texts for all selected nodes, sorted by document position
+		// Copying is read-only, so a mixed host+embedded selection just means
+		// reading more than one file. Order by the map's own document order —
+		// within a file that is document order, and across the seam it is the
+		// order the lines are rendered in.
+		const order = this.treeOrderIndex();
 		const selected = [...this.selectedNodeIds]
 			.map((id) => this.nodeMap.get(id))
 			.filter((n): n is LayoutNode => n !== undefined)
-			.sort((a, b) => a.source.range.start - b.source.range.start);
+			.sort(
+				(a, b) =>
+					(order.get(a.source.id) ?? 0) - (order.get(b.source.id) ?? 0),
+			);
 
-		// Every selected subtree is sliced from `file`; a mixed-file selection
-		// would slice one file's bytes at another's offsets.
-		if (!this.ensureSameFileEdit(selected.map((n) => n.source))) return;
-
-		const texts: string[] = [];
+		const contents = new Map<string, string>();
+		const items: ClipboardItem[] = [];
 		for (const sel of selected) {
+			const path = fileOf(sel.source);
+			let content = contents.get(path);
+			if (content === undefined) {
+				const file = this.fileAtPath(path);
+				if (!file) continue;
+				content = await this.app.vault.read(file);
+				contents.set(path, content);
+			}
 			const start = sel.source.range.start;
 			const end = this.subtreeEnd(sel.source);
-			texts.push(content.slice(start, end));
+			// Record each item's own shape while the live nodes are still in
+			// hand — a cut deletes them before the paste needs them.
+			items.push({
+				type: sel.source.type,
+				depth: sel.source.depth,
+				content: sel.source.content,
+				blockId: sel.source.blockId,
+				text: content.slice(start, end),
+			});
 		}
 
-		this.clipboardText = texts.join("\n");
-		this.clipboardNodeType = src.type;
-		this.clipboardNodeDepth = src.depth;
+		this.clipboardItems = items;
+		this.clipboardText = items.map((item) => item.text).join("\n");
 		this.clipboardIsCut = isCut;
 		this.clipboardSourceIds = new Set(this.selectedNodeIds);
+
+		// Identity travels with the clipboard. A mixed host+embedded selection has
+		// no single origin to migrate from, so it pastes as plain text.
+		const paths = new Set(selected.map((sel) => fileOf(sel.source)));
+		this.clipboardSourcePath = paths.size === 1 ? [...paths][0]! : null;
+		this.clipboardBlockIds = edit.collectBlockIds(this.clipboardText);
+		this.clipboardSchedules = {};
 
 		// Also put plain text on system clipboard for external paste
 		await navigator.clipboard.writeText(this.clipboardText);
@@ -3879,58 +4596,107 @@ export class MindMapView extends ItemView {
 			} else {
 				await this.deleteNode(node);
 			}
+
+			// Capture the schedule *after* the delete: reading it flushes pending
+			// ratings, which rewrites the frontmatter and would have shifted the
+			// offsets the splice above depends on.
+			if (this.clipboardSourcePath) {
+				this.clipboardSchedules = await this.readMovedScheduleEntries(
+					this.clipboardSourcePath,
+					this.clipboardBlockIds,
+				);
+			}
 		}
 	}
 
 	/**
-	 * Paste clipboard content as sibling(s) below the selected node.
+	 * Paste clipboard content as a direct child of the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!this.assertEditable()) return;
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardText)
+		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
 			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
 		if (!node) return;
 
 		const src = node.source;
-		const file = this.getNodeFile(src);
-		if (!file) return;
+		// Routed by containing file, not `getNodeFile`: on an unexpanded embed the
+		// latter names the embed's target while `src.range` still indexes the host.
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+		const destPath = fileOf(src);
+		const destFile = this.fileAtPath(destPath);
+		if (!destFile) return;
 
-		const content = await this.app.vault.read(file);
-		const insertPos = this.subtreeEnd(src);
+		const content = await this.app.vault.read(destFile);
+		// Not `subtreeEnd`: for a heading that is the end of its *last
+		// sub-heading's* content, which markdown reads as a child of that
+		// sub-heading rather than of the node the user selected.
+		const insertPos = edit.childInsertOffset(src);
 
-		// Adjust pasted text depth if target differs from source
-		let pasteText = this.clipboardText;
-		if (this.clipboardNodeType && this.clipboardNodeDepth !== null) {
-			const depthDelta = src.depth - this.clipboardNodeDepth;
-			if (depthDelta !== 0 || this.clipboardNodeType !== src.type) {
-				pasteText = this.adjustPasteDepth(
-					pasteText,
-					this.clipboardNodeType,
-					depthDelta,
+		// Re-level each copied item *independently* against the target. Taking
+		// the delta from the target's own depth is one trap — pasting a bullet
+		// onto `## Heading` would indent it to the heading's level and bury it
+		// inside whatever list came before. Shifting a mixed clipboard by a
+		// single delta is the other: a heading and a bullet copied together need
+		// different treatment, and one of them lands wrong. `reindentSubtree`
+		// returns code blocks, tables, and blockquotes unchanged, so an atomic
+		// block's bytes are never reshaped.
+		let pasteText = this.clipboardItems
+			.map((item) => {
+				const context = edit.inferChildContext(src, item);
+				return edit.reindentSubtree(
+					item.text,
+					item,
+					context.type,
+					context.depth,
 				);
-			}
+			})
+			.join("\n");
+
+		const originPath = this.clipboardSourcePath;
+		// A cut moves identity; a copy duplicates a line, and a duplicated line is
+		// a new line — strip its block IDs so it doesn't inherit the original's
+		// card, and let Osmosis mint a fresh ID on demand. Text from outside
+		// Osmosis (no source path) pastes exactly as before.
+		if (originPath !== null && !this.clipboardIsCut) {
+			pasteText = edit.stripBlockIds(pasteText);
 		}
 
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			pasteText +
-			content.slice(insertPos);
-		await this.writeNodeFile(src, updated);
-	}
+		// Separator-aware: the offset can now sit *before* a heading line, where
+		// the newline the old formula appended belongs on the other side.
+		const updated = edit.insertAt(content, insertPos, pasteText).text;
 
-	/**
-	 * Adjust the depth of pasted text line-by-line, preserving content.
-	 * Delegates to the tested pure transform in `mindmap-edit`.
-	 */
-	private adjustPasteDepth(
-		text: string,
-		sourceType: OsmosisNode["type"],
-		depthDelta: number,
-	): string {
-		return edit.adjustPasteDepth(text, sourceType, depthDelta);
+		const migrates =
+			originPath !== null &&
+			this.clipboardIsCut &&
+			originPath !== destPath &&
+			this.clipboardBlockIds.size > 0;
+		if (migrates) {
+			// Cut across the seam: the write and the schedule migration are one
+			// gesture, so they undo as one step (see `moveAcrossFiles`).
+			this.beginEditGroup();
+			try {
+				await this.writeFileTracked(destFile, updated);
+				await this.migrateBlockIdentity(
+					originPath,
+					destPath,
+					this.clipboardBlockIds,
+					this.clipboardSchedules,
+				);
+			} finally {
+				this.endEditGroup();
+				await this.resyncFromParent();
+			}
+		} else {
+			await this.writeFileAtPath(destPath, updated);
+		}
+
+		// A cut's identity lands exactly once: pasting the same clipboard again
+		// duplicates the line, so it takes the copy path and gets fresh IDs.
+		this.clipboardIsCut = false;
+		this.clipboardSchedules = {};
 	}
 
 	/**
@@ -4555,6 +5321,17 @@ export class MindMapView extends ItemView {
 		indicator.setAttribute("display", "none");
 		this.svg.appendChild(indicator);
 		this.dropIndicator = indicator;
+
+		// …and the label naming the destination note when the drop would write to
+		// a different one. Decisions #1/#2 rule out a modal, so naming the file
+		// mid-drag is the only warning before a line leaves the note it lives in.
+		const label = document.createElementNS(SVG_NS, "text");
+		label.setAttribute("class", "osmosis-drop-indicator-label");
+		label.setAttribute("display", "none");
+		this.svg.appendChild(label);
+		this.dropIndicatorLabel = label;
+
+		this.dragFileOf = this.containingFileOf();
 	}
 
 	private updateDrag(e: MouseEvent): void {
@@ -4694,6 +5471,65 @@ export class MindMapView extends ItemView {
 				this.dropIndicator.setAttribute("display", "none");
 			}
 		}
+		this.updateCrossNoteCue(
+			bestTarget,
+			dragNode.source,
+			indicatorX2,
+			indicatorY,
+		);
+	}
+
+	/**
+	 * Mark the drop indicator when the resolved destination is a *different* note
+	 * than the dragged node lives in, and name that note beside it.
+	 *
+	 * A cross-boundary move edits a file the user is not looking at, and moving
+	 * content *out* of a source note removes it from every place that note is
+	 * embedded. Neither gets a confirmation, by design — so the label is the one
+	 * chance to see where the bytes are about to land before committing.
+	 */
+	private updateCrossNoteCue(
+		target: { parentId: string; index: number } | null,
+		dragSrc: OsmosisNode,
+		x: number,
+		y: number,
+	): void {
+		const label = this.dropIndicatorLabel;
+		let destPath: string | null = null;
+
+		if (target && this.dragFileOf && this.currentTree) {
+			const targetParent = this.findNodeById(
+				this.currentTree.root,
+				target.parentId,
+			);
+			if (targetParent) {
+				const site = edit.resolveInsertSite(
+					targetParent,
+					target.index,
+					this.dragFileOf,
+				);
+				if (site.path !== this.dragFileOf(dragSrc)) destPath = site.path;
+			}
+		}
+
+		this.dropIndicator?.toggleClass(
+			"osmosis-drop-indicator--cross-note",
+			destPath !== null,
+		);
+		if (!label) return;
+		if (!destPath) {
+			label.setAttribute("display", "none");
+			return;
+		}
+		const destFile = this.app.vault.getFileByPath(destPath);
+		const name =
+			destFile instanceof TFile
+				? destFile.basename
+				: (destPath.split("/").pop() ?? destPath).replace(/\.md$/, "");
+		label.textContent = `→ ${name}`;
+		label.setAttribute("x", String(x + 8));
+		label.setAttribute("y", String(y - 4));
+		label.removeAttribute("display");
 	}
 
 	private isDescendant(ancestor: LayoutNode, node: LayoutNode): boolean {
@@ -4744,21 +5580,6 @@ export class MindMapView extends ItemView {
 		);
 		if (!targetParent) return;
 
-		// Refuse drops that cross a file boundary (e.g. an embedded node onto a
-		// local parent, or between two different embeds). Node ranges are
-		// per-file, so slicing/splicing across files corrupts the destination —
-		// most visibly the `![[embed]]` line itself.
-		if (!edit.sameEditTarget(dragNode.source, targetParent)) {
-			new Notice("Osmosis: can't move a node across an embed boundary");
-			return;
-		}
-
-		// Read (and later write) the file the dragged node actually lives in —
-		// the parent note for local nodes, the source note for embedded ones.
-		const file = this.getNodeFile(dragNode.source);
-		if (!file) return;
-		const content = await this.app.vault.read(file);
-
 		// Collect all selected siblings (multi-select support, like Alt+Arrow)
 		const parentSrc = dragNode.parent.source;
 		const siblings = parentSrc.children;
@@ -4778,12 +5599,48 @@ export class MindMapView extends ItemView {
 			else return;
 		}
 
-		// Collect block range spanning all selected subtrees
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
-		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(
-			selectedSrcs[selectedSrcs.length - 1]!,
-		);
+
+		// The whole selection is sliced out of one file's bytes. A multi-select
+		// that itself spans the seam has no single origin to splice, so it stays
+		// refused even though a single-origin move across the seam now works.
+		if (!this.ensureSameFileEdit(selectedSrcs)) return;
+
+		const fileOf = this.containingFileOf();
+		if (!fileOf) return;
+
+		// Where the drop actually writes — which may be a different note than the
+		// one the dragged node lives in.
+		const site = edit.resolveInsertSite(targetParent, dropTarget.index, fileOf);
+		const originPath = fileOf(selectedSrcs[0]!);
+		const movedContents = selectedSrcs.map((s) => s.content);
+		const dropContext = (nodeSrc: OsmosisNode): {
+			type: OsmosisNode["type"];
+			depth: number;
+		} => {
+			const type = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
+			return {
+				type,
+				depth: this.inferDropDepth(targetParent, dropTarget.index, type),
+			};
+		};
+
+		if (site.path !== originPath) {
+			const moved = await this.moveAcrossFiles(
+				selectedSrcs,
+				site,
+				originPath,
+				dropContext,
+			);
+			if (moved) this.reselectMultiAfterMove(movedContents);
+			return;
+		}
+
+		// Same-file move: one splice, so the removal shifts the insert offset and
+		// the two orders below keep that arithmetic straight.
+		const file = this.fileAtPath(originPath);
+		if (!file) return;
+		const content = await this.app.vault.read(file);
 
 		// Re-indent each selected node's subtree individually
 		const reindentedParts: string[] = [];
@@ -4792,112 +5649,31 @@ export class MindMapView extends ItemView {
 				nodeSrc.range.start,
 				this.subtreeEnd(nodeSrc),
 			);
-			const newType = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
-			const newDepth = this.inferDropDepth(
-				targetParent,
-				dropTarget.index,
-				newType,
-			);
+			const context = dropContext(nodeSrc);
 			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
+				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
 			);
 		}
-		let dragText = reindentedParts.join("\n");
+		const dragText = reindentedParts.join("\n");
 
-		// Determine insertion offset in the markdown. Use host-file offsets: a
-		// reference child may be transcluded content (its own `range` indexes
-		// the source note), so an embed collapses to its `![[…]]` line's host
-		// span rather than splicing a source offset into this file.
-		let insertOffset: number;
-		if (dropTarget.index >= targetParent.children.length) {
-			// Append after last child's subtree
-			if (targetParent.children.length > 0) {
-				const lastChild =
-					targetParent.children[targetParent.children.length - 1];
-				if (lastChild) {
-					insertOffset = this.subtreeHostEnd(lastChild);
-				} else {
-					insertOffset = this.subtreeEnd(targetParent);
-				}
-			} else {
-				insertOffset = targetParent.range.end;
-			}
-		} else {
-			// Insert before the child at dropTarget.index
-			const targetChild = targetParent.children[dropTarget.index];
-			if (targetChild) {
-				insertOffset = this.nodeHostStart(targetChild);
-			} else {
-				insertOffset = this.subtreeEnd(targetParent);
-			}
-		}
-
-		// Build new content: remove old, insert at new position
-		// Must handle the case where removal shifts the insert position
-		let removeStart = blockStart;
-		let removeEnd = blockEnd;
-
-		// Consume all surrounding blank lines at the removal site so they
-		// don't accumulate on repeated moves. normalizeHeadingSpacing will
-		// re-add proper spacing around headings and top-level code fences.
-		while (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-		while (removeEnd < content.length && content[removeEnd] === "\n") {
-			removeEnd++;
-		}
-		// Re-add exactly one \n as separator between surrounding content
-		if (removeStart > 0 && removeEnd < content.length) {
-			removeStart++; // preserve one \n from the leading newlines
-		}
+		const span = edit.widenRemoval(content, edit.subtreeSpan(selectedSrcs));
 
 		let updated: string;
-		if (removeStart < insertOffset) {
-			// Dragging forward: remove first, then adjust insert position
-			const afterRemove =
-				content.slice(0, removeStart) + content.slice(removeEnd);
-			const adjustedInsert = insertOffset - (removeEnd - removeStart);
-			const prefix =
-				adjustedInsert > 0 && afterRemove[adjustedInsert - 1] !== "\n"
-					? "\n"
-					: "";
-			const suffix =
-				adjustedInsert < afterRemove.length &&
-				afterRemove[adjustedInsert] !== "\n"
-					? "\n"
-					: "";
-			updated =
-				afterRemove.slice(0, adjustedInsert) +
-				prefix +
-				dragText +
-				suffix +
-				afterRemove.slice(adjustedInsert);
+		if (span.start < site.offset) {
+			// Dragging forward: remove first, then adjust the insert offset.
+			const afterRemove = edit.removeSpan(content, span);
+			const adjusted = site.offset - (span.end - span.start);
+			updated = edit.insertAt(afterRemove, adjusted, dragText).text;
 		} else {
-			// Dragging backward: insert first, then remove (with adjusted position)
-			const prefix =
-				insertOffset > 0 && content[insertOffset - 1] !== "\n"
-					? "\n"
-					: "";
-			const suffix =
-				insertOffset < content.length && content[insertOffset] !== "\n"
-					? "\n"
-					: "";
-			const afterInsert =
-				content.slice(0, insertOffset) +
-				prefix +
-				dragText +
-				suffix +
-				content.slice(insertOffset);
-			const shift = prefix.length + dragText.length + suffix.length;
-			updated =
-				afterInsert.slice(0, removeStart + shift) +
-				afterInsert.slice(removeEnd + shift);
+			// Dragging backward: insert first, then remove at the shifted span.
+			const inserted = edit.insertAt(content, site.offset, dragText);
+			updated = edit.removeSpan(inserted.text, {
+				start: span.start + inserted.shift,
+				end: span.end + inserted.shift,
+			});
 		}
 
-		const movedContents = selectedSrcs.map((s) => s.content);
-		// writeNodeFile renumbers and routes to the correct file (parent note
-		// or embedded source) based on the dragged node.
-		await this.writeNodeFile(dragNode.source, updated);
+		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
 	}
 
@@ -4905,6 +5681,7 @@ export class MindMapView extends ItemView {
 		this.isDragging = false;
 		this.dragNodeId = null;
 		this.dropTarget = null;
+		this.dragFileOf = null;
 		this.contentEl.removeClass("osmosis-dragging");
 
 		if (this.dragGhost) {
@@ -4914,6 +5691,10 @@ export class MindMapView extends ItemView {
 		if (this.dropIndicator) {
 			this.dropIndicator.remove();
 			this.dropIndicator = null;
+		}
+		if (this.dropIndicatorLabel) {
+			this.dropIndicatorLabel.remove();
+			this.dropIndicatorLabel = null;
 		}
 	}
 
@@ -5584,8 +6365,13 @@ export class MindMapView extends ItemView {
 		this.editingNodeId = nodeId;
 		this.selectNode(nodeId);
 
-		// Get the node's screen position from the shape element
-		const screenRect = shapeEl.getBoundingClientRect();
+		// Measure the node before hiding it: the overlay is sized from the
+		// node's own rendered text, so it inherits the depth-based typography
+		// and any per-node style override rather than Obsidian's editor font.
+		this.editMetrics = {
+			...this.nodeTextMetrics(group),
+			maxNodeWidth: this.nodeWrapWidth(node),
+		};
 
 		// Hide the in-SVG content while the overlay is active
 		const fo = group.querySelector("foreignObject");
@@ -5604,11 +6390,6 @@ export class MindMapView extends ItemView {
 				: null;
 		if (vk) vk.overlaysContent = true;
 
-		// Scale font size to match the current zoom level so text appears
-		// the same size as the rendered node content
-		const baseFontSize = 13;
-		const scaledFontSize = baseFontSize * this.zoom;
-
 		const isMobile = Platform.isMobile;
 
 		// Create container div for the embedded editor
@@ -5616,62 +6397,40 @@ export class MindMapView extends ItemView {
 		container.className = "osmosis-edit-overlay";
 
 		if (isMobile) {
-			// Lock the SVG to position:fixed so it escapes Obsidian's layout
-			// resize when the virtual keyboard opens. The SVG keeps its
-			// pre-keyboard pixel dimensions and is unaffected by parent shrinking.
-			if (this.svg) {
-				const svgRect = this.svg.getBoundingClientRect();
-				const s = this.svg.style;
+			// Lock the map to position:fixed so it escapes Obsidian's layout
+			// resize when the virtual keyboard opens, keeping its pre-keyboard
+			// pixel dimensions and staying unaffected by parent shrinking. On
+			// the transform path this has to be the host, not the SVG: the SVG
+			// is mid-transform, so its client rect is the *panned* box rather
+			// than the viewport, and pinning it would also lift its clipping.
+			const pinned = this.viewportHost ?? this.svg;
+			if (pinned) {
+				const rect = pinned.getBoundingClientRect();
+				const s = pinned.style;
 				s.position = "fixed";
-				s.left = `${svgRect.left}px`;
-				s.top = `${svgRect.top}px`;
-				s.width = `${svgRect.width}px`;
-				s.height = `${svgRect.height}px`;
+				s.left = `${rect.left}px`;
+				s.top = `${rect.top}px`;
+				s.width = `${rect.width}px`;
+				s.height = `${rect.height}px`;
 				s.zIndex = "9998";
 			}
 
-			const availableH =
-				window.visualViewport?.height ?? window.innerHeight;
-
 			// Mobile: use fixed positioning on document.body to escape
 			// Obsidian's layout resize when the keyboard opens.
-			container.setCssStyles({
-				position: "fixed",
-				left: `${screenRect.left}px`,
-				top: `${screenRect.top}px`,
-				minWidth: `${screenRect.width}px`,
-				minHeight: `${screenRect.height}px`,
-				maxWidth: `${window.innerWidth - screenRect.left - 8}px`,
-				maxHeight: `${availableH - 10}px`,
-				fontSize: `${scaledFontSize}px`,
-				zIndex: "10000",
-			});
 			document.body.appendChild(container);
 		} else {
 			// Desktop: absolute positioning inside container
-			const containerRect = this.contentEl.getBoundingClientRect();
-			const availableWidth = containerRect.right - screenRect.left - 16;
-			container.setCssStyles({
-				position: "absolute",
-				left: `${screenRect.left - containerRect.left}px`,
-				top: `${screenRect.top - containerRect.top}px`,
-				minWidth: `${screenRect.width}px`,
-				minHeight: `${screenRect.height}px`,
-				maxWidth: `${availableWidth}px`,
-				maxHeight: `${containerRect.height}px`,
-				fontSize: `${scaledFontSize}px`,
-				zIndex: "1000",
-			});
 			this.contentEl.appendChild(container);
 		}
 
 		this.editContainer = container;
+		this.positionEditOverlay();
 
 		// Add save/cancel buttons floating above the editor
 		const cancelBtn = createEl("button");
 		cancelBtn.className = "osmosis-edit-btn osmosis-edit-cancel";
 		cancelBtn.setAttribute("aria-label", "Cancel editing");
-		cancelBtn.textContent = "Cancel";
+		setIcon(cancelBtn, "x");
 		cancelBtn.addEventListener("pointerdown", (e) => {
 			e.preventDefault(); // Prevent blur
 			e.stopPropagation();
@@ -5680,7 +6439,7 @@ export class MindMapView extends ItemView {
 		const saveBtn = createEl("button");
 		saveBtn.className = "osmosis-edit-btn osmosis-edit-save";
 		saveBtn.setAttribute("aria-label", "Save changes");
-		saveBtn.textContent = "Save";
+		setIcon(saveBtn, "check");
 		saveBtn.addEventListener("pointerdown", (e) => {
 			e.preventDefault(); // Prevent blur
 			e.stopPropagation();
@@ -5689,20 +6448,16 @@ export class MindMapView extends ItemView {
 		container.appendChild(cancelBtn);
 		container.appendChild(saveBtn);
 
-		// Stack buttons vertically when container is too narrow for side-by-side
-		if (screenRect.width < 160) {
-			container.classList.add("osmosis-edit-narrow");
-		}
-
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
 
-		// For checkbox nodes, strip the [ ]/[x] prefix for editing
-		let editValue = node.source.content;
-		if (node.source.metadata?.checkbox) {
-			editValue = editValue.replace(/^\[[ xX]\]\s*/, "");
-		}
+		// Edit the node's source line — bullet/heading/checkbox markers and all
+		// — so every markdown element is reachable from the map. Its leading
+		// indentation and trailing block ID stay hidden; both are restored on
+		// save (see `nodeEditText` / `restoreEditedLine`).
+		const editValue = edit.nodeEditText(node.source);
+		const selStart = edit.editSelectionStart(editValue, node.source.content);
 
 		// Try to instantiate the embedded Obsidian editor; fall back to textarea
 		try {
@@ -5731,16 +6486,21 @@ export class MindMapView extends ItemView {
 				},
 				extensions: [
 					autoResizeExtension(() => this.resizeEditContainer()),
+					// The overlay stops widening at the node's wrap width, so
+					// long lines have to wrap here exactly as they do in the node.
+					EditorView.lineWrapping,
 				],
 			});
 
 			this.editEditor = editor;
 
-			// Focus the CM6 editor and select all text
+			// Focus the CM6 editor and select the node's text, leaving the
+			// structural prefix in place so typing over it doesn't strip the
+			// bullet / heading marker the line is made of.
 			editor.editor.cm.focus();
 			const doc = editor.editor.cm.state.doc;
 			editor.editor.cm.dispatch({
-				selection: EditorSelection.range(0, doc.length),
+				selection: EditorSelection.range(selStart, doc.length),
 			});
 		} catch (err) {
 			console.warn(
@@ -5749,27 +6509,14 @@ export class MindMapView extends ItemView {
 			);
 			container.remove();
 			this.editContainer = null;
-			this.createFallbackTextarea(
-				node,
-				nodeId,
-				screenRect,
-				scaledFontSize,
-				isMobile,
-			);
+			this.createFallbackTextarea(editValue, selStart, nodeId, isMobile);
 		}
 
 		// On mobile, reposition editor above keyboard if it would be hidden
 		const cleanups: Array<() => void> = [];
 		if (isMobile) {
-			const repositionAboveKeyboard = () => {
-				if (!this.editContainer) return;
-				const availableH =
-					window.visualViewport?.height ?? window.innerHeight;
-				const elRect = this.editContainer.getBoundingClientRect();
-				if (elRect.bottom > availableH - 10) {
-					this.editContainer.style.top = `${availableH - elRect.height - 10}px`;
-				}
-			};
+			const repositionAboveKeyboard = () =>
+				this.clampOverlayAboveKeyboard();
 			if (vk) {
 				vk.addEventListener("geometrychange", repositionAboveKeyboard);
 				cleanups.push(() =>
@@ -5815,6 +6562,145 @@ export class MindMapView extends ItemView {
 		lockScroll();
 	}
 
+	/**
+	 * Font size and line height of a node's rendered content, in map units.
+	 * Read off the live element so depth-based typography and per-node style
+	 * overrides come along for free.
+	 */
+	private nodeTextMetrics(group: Element): {
+		fontSize: number;
+		lineHeight: number;
+	} {
+		const wrapper = group.querySelector(".osmosis-node-content");
+		const fallback = { fontSize: 13, lineHeight: 13 * 1.3 };
+		if (!(wrapper instanceof HTMLElement)) return fallback;
+
+		const computed = window.getComputedStyle(wrapper);
+		const fontSize = parseFloat(computed.fontSize);
+		if (!Number.isFinite(fontSize)) return fallback;
+		// `line-height: normal` parses as NaN — fall back to the CSS ratio.
+		const lineHeight = parseFloat(computed.lineHeight);
+		return {
+			fontSize,
+			lineHeight: Number.isFinite(lineHeight) ? lineHeight : fontSize * 1.3,
+		};
+	}
+
+	/** The width a node's text wraps at, in map units. */
+	private nodeWrapWidth(node: LayoutNode): number {
+		// A node with an explicit width wraps at that width; everything else
+		// grows until it hits the map's max node width.
+		const customWidth =
+			lookupNodeStyle(this.osmosisStyleFrontmatter, node)?.width ??
+			this.mapSettings.baseStyle?.width;
+		if (customWidth !== undefined) return node.rect.width;
+		return (
+			this.mapSettings.maxNodeWidth ??
+			this.plugin.settings.defaultMaxNodeWidth
+		);
+	}
+
+	/**
+	 * Place the edit overlay over its node and size its text for the current
+	 * zoom. Called when editing starts and again from `updateViewBox`, so the
+	 * overlay tracks the node through pans and zooms rather than staying
+	 * pinned where the node was when editing began.
+	 */
+	private positionEditOverlay(): void {
+		const container = this.editContainer;
+		const metrics = this.editMetrics;
+		if (!container || !metrics || !this.editingNodeId || !this.svg) return;
+
+		const group = this.svg.querySelector(
+			`[data-node-id="${this.editingNodeId}"]`,
+		);
+		const shapeEl = group?.querySelector(".osmosis-node");
+		if (!shapeEl) return;
+		const nodeRect = shapeEl.getBoundingClientRect();
+
+		// Mobile positions against the visual viewport (the overlay is fixed on
+		// document.body); desktop against the view's own content box.
+		const isMobile = Platform.isMobile;
+		const hostRect = this.contentEl.getBoundingClientRect();
+		const host = isMobile
+			? {
+					left: 0,
+					top: 0,
+					right: window.innerWidth,
+					bottom: window.visualViewport?.height ?? window.innerHeight,
+				}
+			: hostRect;
+
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const geom = edit.editOverlayGeometry({
+			nodeRect: {
+				left: nodeRect.left,
+				top: nodeRect.top,
+				width: nodeRect.width,
+				height: nodeRect.height,
+			},
+			viewport: {
+				left: host.left,
+				top: host.top,
+				right: host.right - EDIT_OVERLAY_MARGIN,
+				bottom: host.bottom - EDIT_OVERLAY_MARGIN,
+			},
+			zoom: this.zoom,
+			fontSize: metrics.fontSize,
+			lineHeight: metrics.lineHeight,
+			paddingX: cfg.nodePaddingX,
+			paddingY: cfg.nodePaddingY,
+			maxNodeWidth: metrics.maxNodeWidth,
+		});
+
+		const originX = isMobile ? 0 : hostRect.left;
+		const originY = isMobile ? 0 : hostRect.top;
+		container.setCssStyles({
+			position: isMobile ? "fixed" : "absolute",
+			left: `${geom.left - originX}px`,
+			top: `${geom.top - originY}px`,
+			minWidth: `${geom.minWidth}px`,
+			minHeight: `${geom.minHeight}px`,
+			maxWidth: `${geom.maxWidth}px`,
+			maxHeight: `${geom.maxHeight}px`,
+			zIndex: isMobile ? "10000" : "1000",
+		});
+		// Typography is applied as custom properties so the CSS can force it
+		// onto CodeMirror's own elements (see styles.css).
+		container.style.setProperty(
+			"--osmosis-edit-font-size",
+			`${geom.fontSize}px`,
+		);
+		container.style.setProperty(
+			"--osmosis-edit-line-height",
+			`${geom.lineHeight}px`,
+		);
+		container.style.setProperty(
+			"--osmosis-edit-padding",
+			`${geom.paddingY}px ${geom.paddingX}px`,
+		);
+
+		// The last auto-resize froze an explicit width for the *previous* zoom;
+		// drop it and let the editor re-derive one at the new text size.
+		container.style.removeProperty("width");
+		container.classList.toggle(
+			"osmosis-edit-narrow",
+			geom.minWidth < EDIT_BUTTONS_MIN_WIDTH,
+		);
+		this.resizeEditContainer();
+		if (isMobile) this.clampOverlayAboveKeyboard();
+	}
+
+	/** Keep the overlay above the mobile virtual keyboard. */
+	private clampOverlayAboveKeyboard(): void {
+		if (!this.editContainer) return;
+		const availableH = window.visualViewport?.height ?? window.innerHeight;
+		const elRect = this.editContainer.getBoundingClientRect();
+		if (elRect.bottom > availableH - EDIT_OVERLAY_MARGIN) {
+			this.editContainer.style.top = `${availableH - elRect.height - EDIT_OVERLAY_MARGIN}px`;
+		}
+	}
+
 	/** Auto-resize the edit container to fit the editor's content.
 	 *  Called via the autoResizeExtension on doc changes. We use
 	 *  requestMeasure to avoid layout thrash — just request CM6 to
@@ -5831,8 +6717,12 @@ export class MindMapView extends ItemView {
 		for (let i = 1; i <= doc.lines; i++) {
 			maxChars = Math.max(maxChars, doc.line(i).length);
 		}
-		// Content width = longest line + padding (8px each side + 4px buffer + border)
-		const contentWidth = maxChars * charWidth + 24;
+		// Content width = longest line + the node's padding at the current zoom
+		// (+ 4px buffer + 2px border each side)
+		const contentWidth =
+			maxChars * charWidth +
+			DEFAULT_LAYOUT_CONFIG.nodePaddingX * 2 * this.zoom +
+			8;
 
 		const minWidth = parseFloat(this.editContainer.style.minWidth) || 0;
 		const maxWidth =
@@ -5841,17 +6731,19 @@ export class MindMapView extends ItemView {
 		this.editContainer.style.width = `${newWidth}px`;
 
 		// Toggle stacked button layout when container is narrow
-		this.editContainer.classList.toggle("osmosis-edit-narrow", newWidth < 160);
+		this.editContainer.classList.toggle(
+			"osmosis-edit-narrow",
+			newWidth < EDIT_BUTTONS_MIN_WIDTH,
+		);
 
 		cm.requestMeasure();
 	}
 
 	/** Fallback: create a plain textarea if the embedded editor fails */
 	private createFallbackTextarea(
-		node: LayoutNode,
+		editValue: string,
+		selStart: number,
 		nodeId: string,
-		screenRect: DOMRect,
-		scaledFontSize: number,
 		isMobile: boolean,
 	): void {
 		const container = createDiv();
@@ -5859,37 +6751,13 @@ export class MindMapView extends ItemView {
 
 		const input = createEl("textarea");
 		input.className = "osmosis-node-input osmosis-fallback-textarea";
-		input.value = node.source.content;
+		input.value = editValue;
 		input.rows = 1;
-		input.setCssStyles({
-			width: "100%",
-			height: "100%",
-			fontSize: `${scaledFontSize}px`,
-		});
+		input.setCssStyles({ width: "100%", height: "100%" });
 		container.appendChild(input);
 
-		if (isMobile) {
-			container.setCssStyles({
-				position: "fixed",
-				left: `${screenRect.left}px`,
-				top: `${screenRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
-				zIndex: "10000",
-			});
-			document.body.appendChild(container);
-		} else {
-			const containerRect = this.contentEl.getBoundingClientRect();
-			container.setCssStyles({
-				position: "absolute",
-				left: `${screenRect.left - containerRect.left}px`,
-				top: `${screenRect.top - containerRect.top}px`,
-				width: `${screenRect.width}px`,
-				height: `${screenRect.height}px`,
-				zIndex: "1000",
-			});
-			this.contentEl.appendChild(container);
-		}
+		if (isMobile) document.body.appendChild(container);
+		else this.contentEl.appendChild(container);
 
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -5914,22 +6782,25 @@ export class MindMapView extends ItemView {
 		});
 
 		this.editContainer = container;
+		this.positionEditOverlay();
 
 		input.focus({ preventScroll: true });
-		input.select();
+		input.setSelectionRange(selStart, editValue.length);
 	}
 
 	private stopEditing(save: boolean): void {
 		if (!this.editingNodeId || !this.svg) return;
 
 		const nodeId = this.editingNodeId;
-		// Get content from embedded editor or fallback textarea
-		let newContent = "";
+		// Get the edited line from the embedded editor or fallback textarea.
+		// This is the node's whole source line — markers included, block ID
+		// excluded (see `nodeEditText`) — not just its label text.
+		let newLine = "";
 		if (this.editEditor) {
-			newContent = this.editEditor.value;
+			newLine = this.editEditor.value;
 		} else if (this.editContainer) {
 			const textarea = this.editContainer.querySelector("textarea");
-			newContent = textarea?.value ?? "";
+			newLine = textarea?.value ?? "";
 		}
 		this.editingNodeId = null;
 
@@ -5950,10 +6821,12 @@ export class MindMapView extends ItemView {
 			this.editContainer.remove();
 			this.editContainer = null;
 		}
+		this.editMetrics = null;
 
-		// Restore SVG from fixed positioning used during mobile editing
-		if (this.svg) {
-			const s = this.svg.style;
+		// Restore the map from fixed positioning used during mobile editing
+		const pinned = this.viewportHost ?? this.svg;
+		if (pinned) {
+			const s = pinned.style;
 			s.position = "";
 			s.left = "";
 			s.top = "";
@@ -5972,18 +6845,12 @@ export class MindMapView extends ItemView {
 		const node = this.nodeMap.get(nodeId);
 		if (!node) return;
 
-		// Re-add checkbox prefix if this was a checkbox node
-		if (save && node.source.metadata?.checkbox) {
-			const prefix = (node.source.metadata.checked as boolean) ? "[x] " : "[ ] ";
-			newContent = prefix + newContent;
-		}
-
-		if (save && newContent !== node.source.content) {
+		if (save && newLine !== edit.nodeEditText(node.source)) {
 			// Store range.start so render() can re-select the node after
 			// the SVG is rebuilt (node IDs change when content changes).
 			this.pendingSelectionRangeStart = node.source.range.start;
 			// Write change back to markdown (triggers re-render)
-			void this.renameNode(node, newContent);
+			void this.renameNode(node, newLine);
 		}
 
 		// Clear cursor-sync highlight to avoid stale dashed outline
@@ -6052,10 +6919,10 @@ export class MindMapView extends ItemView {
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
 		const source = isRedo ? this.redoStack : this.undoStack;
-		const edit = source.pop();
-		if (!edit) return;
-		(isRedo ? this.undoStack : this.redoStack).push(edit);
-		void this.applySnapshot(edit.path, isRedo ? edit.after : edit.before);
+		const snapshot = source.pop();
+		if (!snapshot) return;
+		(isRedo ? this.undoStack : this.redoStack).push(snapshot);
+		void this.applySnapshot(snapshot.edits, isRedo);
 	}
 
 	/** Undo the last map edit. Public entry point for the properties sidebar,
@@ -6089,6 +6956,28 @@ export class MindMapView extends ItemView {
 		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
 	}
 
+	/**
+	 * Open an edit group: every {@link recordEdit} until {@link endEditGroup}
+	 * accumulates into one undo step instead of pushing its own. Files may be
+	 * written more than once inside a group; the group keeps the first `before`
+	 * and the last `after` for each path, so the net change is what gets undone.
+	 */
+	private beginEditGroup(): void {
+		this.editGroup = new Map();
+	}
+
+	/** Close an edit group, pushing its accumulated writes as one undo step. */
+	private endEditGroup(): void {
+		const group = this.editGroup;
+		this.editGroup = null;
+		if (!group) return;
+		const edits = edit.collapseEditGroup(group);
+		if (edits.length === 0) return;
+		this.undoStack.push({ edits });
+		this.enforceUndoLimits();
+		this.redoStack.length = 0;
+	}
+
 	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
 	private recordEdit(path: string, before: string, after: string): void {
 		if (before === after) return;
@@ -6102,15 +6991,19 @@ export class MindMapView extends ItemView {
 			}
 			return;
 		}
-		this.undoStack.push({ path, before, after });
+		if (this.editGroup) {
+			edit.mergeEdit(this.editGroup, { path, before, after });
+			return;
+		}
+		this.undoStack.push({ edits: [{ path, before, after }] });
 		this.enforceUndoLimits();
 		// A fresh edit invalidates any redo history.
 		this.redoStack.length = 0;
 	}
 
-	/** In-memory byte estimate for one snapshot (UTF-16; path length negligible). */
+	/** In-memory byte estimate for one snapshot (summed across its files). */
 	private static snapshotBytes(snap: MapEditSnapshot): number {
-		return (snap.before.length + snap.after.length) * 2;
+		return edit.editBytes(snap.edits);
 	}
 
 	/**
@@ -6173,45 +7066,55 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Restore a file to a snapshot's content (undo/redo target). Re-renders from
-	 * the restored content — reloading frontmatter and clearing the size cache so
-	 * both text and style changes are reflected. Handles the current file and a
-	 * transcluded source file, mirroring the two write paths.
+	 * Restore every file in a snapshot (undo/redo target). Re-renders from the
+	 * restored content — reloading frontmatter and clearing the size cache so both
+	 * text and style changes are reflected. Handles the current file and
+	 * transcluded source files, mirroring the write paths.
+	 *
+	 * A multi-file group is applied in reverse order when undoing, forward when
+	 * redoing — the same reasoning as the move itself (see `moveAcrossFiles`):
+	 * the file that *gains* content is written before the one that loses it, so a
+	 * failure partway leaves the content duplicated rather than gone.
 	 */
-	private async applySnapshot(path: string, content: string): Promise<void> {
-		const file = this.app.vault.getFileByPath(path);
-		if (!(file instanceof TFile)) return;
-		this.suppressNextReload = true;
-		this.cache.invalidate(path);
-		await this.app.vault.modify(file, content);
+	private async applySnapshot(edits: FileEdit[], isRedo: boolean): Promise<void> {
+		const ordered = isRedo ? edits : [...edits].reverse();
+		let restoredCurrent: string | null = null;
 
-		if (this.currentFile && path === this.currentFile.path) {
-			this.currentTree = this.cache.get(path, content);
-			this.reloadFrontmatterFromContent(content);
+		for (const fileEdit of ordered) {
+			const file = this.app.vault.getFileByPath(fileEdit.path);
+			if (!(file instanceof TFile)) continue;
+			const content = isRedo ? fileEdit.after : fileEdit.before;
+			this.suppressNextReload = true;
+			this.cache.invalidate(fileEdit.path);
+			await this.app.vault.modify(file, content);
+			if (fileEdit.path === this.currentFile?.path) restoredCurrent = content;
+		}
+
+		if (!this.currentFile) return;
+
+		if (restoredCurrent !== null) {
+			this.currentTree = this.cache.get(this.currentFile.path, restoredCurrent);
+			this.reloadFrontmatterFromContent(restoredCurrent);
 			// Recompute derived map settings (theme/layout/background/branch line/…)
 			// from the restored frontmatter, mirroring the load flow — otherwise a
 			// map-level style undo/redo restores the file but not the live layout.
 			this.loadMapSettings();
 			this.nodeSizeCache.clear();
-			// Re-expand transclusions so an undo/redo of a local edit that
-			// carried an embed keeps it rendered, not collapsed to a bare
-			// `![[…]]` placeholder (mirrors writeMarkdown / the source branch).
-			await this.transclusionResolver.expandTree(
-				this.currentTree,
-				this.lazyTransclusionIds,
-			);
-			await this.render();
-		} else if (this.currentFile) {
-			// Restored a transcluded source; re-read and re-expand the parent.
+		} else {
+			// Only transcluded sources changed; re-read the parent so the
+			// re-expansion below picks them up.
 			const parentContent = await this.app.vault.read(this.currentFile);
 			this.cache.invalidate(this.currentFile.path);
 			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
-			await this.transclusionResolver.expandTree(
-				this.currentTree,
-				this.lazyTransclusionIds,
-			);
-			await this.render();
 		}
+
+		// Re-expand transclusions so an undo/redo that carried an embed keeps it
+		// rendered, not collapsed to a bare `![[…]]` placeholder.
+		await this.transclusionResolver.expandTree(
+			this.currentTree,
+			this.lazyTransclusionIds,
+		);
+		await this.render();
 	}
 
 	/**
@@ -6259,7 +7162,18 @@ export class MindMapView extends ItemView {
 		await this.app.vault.modify(sourceFile, newContent);
 		this.recordEdit(sourceFilePath, before, newContent);
 
-		// Re-read and re-expand the current (parent) file to pick up the change
+		await this.resyncFromParent();
+	}
+
+	/**
+	 * Rebuild the map from the current (parent) file on disk and re-render.
+	 *
+	 * The tail every write to a *different* file than the map's own shares: the
+	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
+	 * has to be re-read and re-expanded for the change to appear.
+	 */
+	private async resyncFromParent(): Promise<void> {
+		if (!this.currentFile) return;
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
 		this.currentTree = this.cache.get(this.currentFile.path, parentContent);
@@ -6271,12 +7185,299 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Rename a node: replace the line in markdown with updated content.
+	 * Write one file as part of a multi-file gesture: normalize, record the undo
+	 * entry, and stop. Unlike {@link writeMarkdown} / {@link writeTranscludedMarkdown}
+	 * it does **not** rebuild or render — a grouped gesture writes several files
+	 * and re-syncs once at the end (see {@link moveAcrossFiles}), so rendering per
+	 * write would flash the half-applied state through the map.
+	 *
+	 * Normalization mirrors `writeNodeFile` → `writeMarkdown`: renumber ordered
+	 * lists, then normalize heading spacing, so a cross-file move produces the
+	 * same spacing and numbering a same-file move would.
+	 */
+	private async writeFileTracked(file: TFile, content: string): Promise<void> {
+		const normalized = this.normalizeHeadingSpacing(
+			this.renumberOrderedLists(content),
+		);
+		const before = await this.app.vault.read(file);
+		this.suppressNextReload = true;
+		this.cache.invalidate(file.path);
+		await this.app.vault.modify(file, normalized);
+		this.recordEdit(file.path, before, normalized);
+	}
+
+	/**
+	 * Move a contiguous run of siblings out of one note and into another — the
+	 * primitive behind every gesture that crosses an embed boundary.
+	 *
+	 * **Write order is a safety property, not a preference.** The destination is
+	 * written first: if that fails, the origin still holds the content and the
+	 * vault is exactly as it was. Only once the bytes exist in the destination is
+	 * the origin spliced, so the worst failure duplicates the content instead of
+	 * destroying it — and the duplicate is already inside the undo group, so one
+	 * Ctrl+Z reverts it.
+	 *
+	 * The subtree text is sliced **verbatim** so `^os-…` block IDs survive, then
+	 * re-indented into the destination's own coordinates. When the insert lands
+	 * beside an existing line, that neighbor supplies type and depth: the drop's
+	 * tree parent is expressed in the *origin's* file, and feeding host depth into
+	 * a source note indents the line wrongly. `fallbackContext` covers the sites
+	 * with no neighbor (appending inside an embed, reparenting onto one), where
+	 * the target parent does live in the destination file and its own child rules
+	 * already apply.
+	 *
+	 * @returns true when the move landed; false after a bail (with a notice shown).
+	 */
+	private async moveAcrossFiles(
+		originNodes: OsmosisNode[],
+		site: edit.InsertSite,
+		originPath: string,
+		fallbackContext: (src: OsmosisNode) => {
+			type: OsmosisNode["type"];
+			depth: number;
+		},
+	): Promise<boolean> {
+		const originFile = this.app.vault.getFileByPath(originPath);
+		const destFile = this.app.vault.getFileByPath(site.path);
+		if (!(originFile instanceof TFile) || !(destFile instanceof TFile)) {
+			new Notice("Osmosis: the destination note is no longer available");
+			return false;
+		}
+
+		this.beginEditGroup();
+		try {
+			let originText: string;
+			let destText: string;
+			try {
+				originText = await this.app.vault.read(originFile);
+				destText = await this.app.vault.read(destFile);
+			} catch {
+				new Notice("Osmosis: the destination note is no longer available");
+				return false;
+			}
+
+			// Extract verbatim (block IDs intact), then re-indent for the destination.
+			const parts: string[] = [];
+			for (const src of originNodes) {
+				const text = originText.slice(
+					src.range.start,
+					this.subtreeEnd(src),
+				);
+				const context = site.neighbor
+					? edit.inferSiblingContext(site.neighbor, src)
+					: fallbackContext(src);
+				parts.push(
+					this.reindentSubtree(text, src, context.type, context.depth),
+				);
+			}
+			const block = parts.join("\n");
+
+			try {
+				await this.writeFileTracked(
+					destFile,
+					edit.insertAt(destText, site.offset, block).text,
+				);
+			} catch {
+				new Notice(
+					`Osmosis: couldn't write ${destFile.basename} — move cancelled`,
+				);
+				return false;
+			}
+
+			try {
+				const span = edit.subtreeSpan(originNodes);
+				await this.writeFileTracked(
+					originFile,
+					edit.removeSpan(originText, edit.widenRemoval(originText, span)),
+				);
+			} catch {
+				new Notice(
+					`Osmosis: moved into ${destFile.basename} but couldn't update ${originFile.basename} — undo to revert`,
+				);
+				return false;
+			}
+
+			// Identity follows the bytes (design decision #3): the block IDs now
+			// living in the destination take their schedule with them, inside this
+			// same group so one Ctrl+Z restores both. The IDs are read from the
+			// moved text rather than the tree — a subtree carrying an embed folds
+			// to its `![[…]]` line, and the transcluded IDs behind it stay in
+			// their own note.
+			const movedIds = edit.collectBlockIds(block);
+			const entries = await this.readMovedScheduleEntries(
+				originPath,
+				movedIds,
+			);
+			await this.migrateBlockIdentity(
+				originPath,
+				site.path,
+				movedIds,
+				entries,
+			);
+			return true;
+		} finally {
+			this.endEditGroup();
+			// Re-sync even after a bail: the view must reflect what is actually on
+			// disk, which after a partial write is not what it showed before.
+			await this.resyncFromParent();
+		}
+	}
+
+	/**
+	 * The `osmosis-schedule` entries a note holds for `blockIds`, read straight
+	 * from its own bytes rather than the metadata cache — which lags our own
+	 * writes by an event loop.
+	 *
+	 * Pending ratings are flushed first, so a card rated seconds ago migrates
+	 * with its newest schedule and leaves nothing staged to be re-written into
+	 * the note it just left. That flush rewrites the frontmatter and shifts
+	 * every body offset with it, so this must only be called once no further
+	 * offset-based splice into `path` is pending.
+	 */
+	private async readMovedScheduleEntries(
+		path: string,
+		blockIds: ReadonlySet<string>,
+	): Promise<Record<string, unknown>> {
+		if (blockIds.size === 0) return {};
+		const file = this.fileAtPath(path);
+		if (!file) return {};
+
+		await this.plugin.scheduleStore.flushPath(path);
+		const content = await this.app.vault.read(file);
+		return edit.partitionScheduleEntries(
+			frontmatterValue(content, SCHEDULE_FRONTMATTER_KEY),
+			blockIds,
+		).moved;
+	}
+
+	/**
+	 * Carry line-card identity across a note boundary: write the moved lines'
+	 * schedule entries into the destination's frontmatter, drop them from the
+	 * origin's, and re-key the in-memory cards. Without it the debounced sync
+	 * orphans the origin's card two seconds later and mints the destination's
+	 * as brand new, with no review history.
+	 *
+	 * Called from inside an open edit group *after* the content writes land, so
+	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
+	 * and schedule together. {@link processFrontMatterTracked} is what makes
+	 * that true; `ScheduleStore` writes on its own debounce and bypasses
+	 * `recordEdit`, so its writes would fall outside the group.
+	 *
+	 * Best-effort by design: the bytes have already moved, so a frontmatter
+	 * failure is reported and left for the debounced sync to re-derive rather
+	 * than rolled back (undo still reverts the whole gesture).
+	 */
+	private async migrateBlockIdentity(
+		originPath: string,
+		destPath: string,
+		blockIds: ReadonlySet<string>,
+		entries: Record<string, unknown>,
+	): Promise<void> {
+		if (blockIds.size === 0 || originPath === destPath) return;
+
+		if (Object.keys(entries).length > 0) {
+			const originFile = this.fileAtPath(originPath);
+			const destFile = this.fileAtPath(destPath);
+			try {
+				if (destFile) {
+					await this.processFrontMatterTracked(destFile, (fm) => {
+						const { retained: existing } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							EMPTY_BLOCK_IDS,
+						);
+						fm[SCHEDULE_FRONTMATTER_KEY] = { ...existing, ...entries };
+					});
+				}
+				if (originFile) {
+					await this.processFrontMatterTracked(originFile, (fm) => {
+						const { retained } = edit.partitionScheduleEntries(
+							fm[SCHEDULE_FRONTMATTER_KEY],
+							blockIds,
+						);
+						if (Object.keys(retained).length > 0) {
+							fm[SCHEDULE_FRONTMATTER_KEY] = retained;
+						} else {
+							delete fm[SCHEDULE_FRONTMATTER_KEY];
+						}
+					});
+				}
+			} catch (error) {
+				console.error("Osmosis: failed to migrate schedule frontmatter", error);
+				new Notice(
+					"Osmosis: the lines moved, but their review history couldn't follow",
+				);
+			}
+		}
+
+		this.plugin.cardSync.handleBlockMove(originPath, destPath, blockIds);
+		this.plugin.refreshDashboard();
+	}
+
+	/**
+	 * Every note the current tree draws bytes from, besides the map's own — the
+	 * files whose changes invalidate the offsets this map's nodes carry.
+	 */
+	private transcludedPaths(): Set<string> {
+		const paths = new Set<string>();
+		if (!this.currentTree) return paths;
+		const visit = (node: OsmosisNode): void => {
+			if (node.sourceFile !== undefined) paths.add(node.sourceFile);
+			for (const child of node.children) visit(child);
+		};
+		visit(this.currentTree.root);
+		return paths;
+	}
+
+	/**
+	 * A {@link edit.FileOf} over the currently rendered tree: which file each
+	 * node's `range` indexes. Null when there is nothing loaded.
+	 */
+	private containingFileOf(): edit.FileOf | null {
+		if (!this.currentTree || !this.currentFile) return null;
+		const hostPath = this.currentFile.path;
+		const map = edit.buildContainingFileMap(this.currentTree.root, hostPath);
+		return (n) => map.get(n.id) ?? hostPath;
+	}
+
+	/**
+	 * Resolve a containing-file path to the `TFile` whose bytes an edit reads and
+	 * writes.
+	 *
+	 * Prefer this over {@link getNodeFile} wherever a node's `range` is about to
+	 * be sliced or spliced. `getNodeFile` keys off `sourceFile`, which on an
+	 * *unexpanded* embed — lazy-loaded or cyclic — names the embed's target while
+	 * the node's own range still indexes the file holding the `![[…]]` line.
+	 * Routing such a node by `sourceFile` splices host offsets into the target.
+	 */
+	private fileAtPath(path: string): TFile | null {
+		const file = this.app.vault.getFileByPath(path);
+		return file instanceof TFile ? file : null;
+	}
+
+	/** Write a whole file identified by path, then rebuild and re-render. */
+	private async writeFileAtPath(path: string, updated: string): Promise<void> {
+		const renumbered = this.renumberOrderedLists(updated);
+		if (path === this.currentFile?.path) {
+			await this.writeMarkdown(renumbered);
+		} else {
+			await this.writeTranscludedMarkdown(path, renumbered);
+		}
+	}
+
+	/**
+	 * Rename a node: replace its line in markdown with the edited line.
 	 * For transcluded nodes, writes to the source file (not the parent note).
+	 *
+	 * `newLine` is the source line as the user edited it, structural markers and
+	 * all, so changing `- item` to `## item` (or dropping the marker entirely)
+	 * is just a rename — no re-serialization from type/depth, which is what used
+	 * to pin a node to the kind it was parsed as. The write path re-normalizes
+	 * heading spacing and ordered-list numbering, so a line that changes kind
+	 * still lands as well-formed markdown.
 	 */
 	private async renameNode(
 		node: LayoutNode,
-		newContent: string,
+		newLine: string,
 	): Promise<void> {
 		if (!this.currentFile) return;
 		const src = node.source;
@@ -6284,17 +7485,12 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		// Preserve the trailing block ID (line-card identity / style anchor) —
-		// `content`/`newContent` have it stripped, so it must be re-threaded.
-		const newLine = this.serializeLine(
-			src.type,
-			src.depth,
-			newContent,
-			src.blockId,
-		);
+		// Restore what the edit box withheld: the node's indentation and its
+		// trailing block ID (line-card identity / style anchor).
+		const line = edit.restoreEditedLine(src, newLine);
 		const updated =
 			content.slice(0, src.range.start) +
-			newLine +
+			line +
 			content.slice(src.range.end);
 		await this.writeNodeFile(src, updated);
 	}
@@ -6371,7 +7567,9 @@ export class MindMapView extends ItemView {
 
 	/**
 	 * Add a child node under the given parent.
-	 * Inserts a new line after the parent's subtree.
+	 * Inserts a new line at the parent's child boundary — for a heading, before
+	 * its first sub-heading, since anything past that reads as the sub-heading's
+	 * content rather than the selected node's.
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
@@ -6382,34 +7580,11 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// Determine child type and depth
-		let childType: OsmosisNode["type"];
-		let childDepth: number;
-
-		if (src.type === "heading") {
-			// Child of heading: bullet at depth 0
-			childType = "bullet";
-			childDepth = 0;
-		} else if (src.type === "bullet") {
-			childType = "bullet";
-			childDepth = src.depth + 1;
-		} else if (src.type === "ordered") {
-			childType = "ordered";
-			childDepth = src.depth + 1;
-		} else {
-			childType = "bullet";
-			childDepth = 0;
-		}
-
+		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
 		const newLine = this.serializeLine(childType, childDepth, "");
-		const insertPos = this.subtreeEnd(src);
+		const insertPos = edit.childInsertOffset(src);
 
-		// Insert after the subtree with a newline
-		const updated =
-			content.slice(0, insertPos) +
-			"\n" +
-			newLine +
-			content.slice(insertPos);
+		const updated = edit.insertAt(content, insertPos, newLine).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -6658,7 +7833,8 @@ export class MindMapView extends ItemView {
 	): Promise<Map<string, { width: number; height: number }>> {
 		const sizes = new Map<string, { width: number; height: number }>();
 		const cfg = DEFAULT_LAYOUT_CONFIG;
-		const effectiveMaxNodeWidth = this.mapSettings.maxNodeWidth ?? cfg.maxNodeWidth;
+		const effectiveMaxNodeWidth =
+			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
 		// Reduce max content width for shapes with insets so text wraps before
 		// the shape boundary clips it.
 		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
@@ -6744,7 +7920,7 @@ export class MindMapView extends ItemView {
 				// Render osmosis fences as cards (front+back) instead of code blocks
 				const osmosisCard = this.getOsmosisCardContent(node);
 				if (osmosisCard) {
-					await this.renderOsmosisCardInto(cell, osmosisCard.front, osmosisCard.back, sourcePath);
+					await this.renderOsmosisCardInto(cell, osmosisCard, sourcePath);
 				} else if (this.renderComponent) {
 					await MarkdownRenderer.render(
 						this.app,
@@ -6981,6 +8157,7 @@ export class MindMapView extends ItemView {
 		svg.setAttribute("width", "100%");
 		svg.setAttribute("height", "100%");
 		svg.addClass("osmosis-mindmap-svg");
+		if (this.panByTransform) svg.addClass("osmosis-mindmap-svg-transformed");
 
 		// Initialize viewBox: use actual container dimensions so culling works from the start.
 		// The user sees the top-left portion of the map; pan/zoom to explore.
@@ -6992,12 +8169,25 @@ export class MindMapView extends ItemView {
 			this.zoom = 1;
 		}
 
-		svg.setAttribute(
-			"viewBox",
-			`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
-		);
+		// On the transform path the SVG carries no viewBox at all: without one,
+		// one user unit is one CSS pixel and the origin is the element's
+		// top-left, which is exactly the coordinate system the transform below
+		// is written against. The transform itself is applied once the host is
+		// in the document and has a box to measure.
+		if (!this.panByTransform) {
+			svg.setAttribute(
+				"viewBox",
+				`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
+			);
+		}
 
 		this.svg = svg;
+		// The previous host went out with container.empty() and the new one is
+		// not built until the nodes have rendered, below. Node rendering is
+		// awaited, so a pointer or resize event can land in between: leave the
+		// viewport unset for that window rather than measuring a detached box,
+		// which degrades to a no-op pan instead of a jump.
+		this.viewportHost = null;
 
 		// Create groups for layering: branch lines behind nodes
 		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
@@ -7020,21 +8210,34 @@ export class MindMapView extends ItemView {
 
 		// Only render nodes visible in the current viewport
 		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
 		const renderPromises: Promise<void>[] = [];
 
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
-			if (!this.isNodeInViewport(node, offsetX, offsetY)) continue;
 
-			this.renderedNodeIds.add(node.source.id);
-			renderPromises.push(
-				this.drawNode(nodesGroup, node, offsetX, offsetY),
-			);
+			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+				this.renderedNodeIds.add(node.source.id);
+				renderPromises.push(
+					this.drawNode(nodesGroup, node, offsetX, offsetY),
+				);
+			}
 
+			// A branch is tested on its own geometry, so a branch that spans the
+			// viewport is drawn even when neither node it joins is inside it.
+			//
+			// Top-level nodes hang off the virtual root, which is never drawn
+			// (see the `continue` above, and OsmosisTree.root). A branch line to
+			// it therefore had nothing to reach and was drawn as a fixed-length
+			// stub — a line poking out of the side of the map's first node, and
+			// out of every top-level node in a note with no single heading above
+			// them.
 			if (
 				node.parent &&
+				node.parent.source.type !== "root" &&
 				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
 			) {
+				this.renderedBranchIds.add(node.source.id);
 				this.drawBranchLine(
 					branchLinesGroup,
 					node.parent,
@@ -7047,7 +8250,21 @@ export class MindMapView extends ItemView {
 		}
 
 		await Promise.all(renderPromises);
-		container.appendChild(svg);
+		if (this.panByTransform) {
+			const host = container.createDiv({ cls: "osmosis-mindmap-host" });
+			host.appendChild(svg);
+			this.viewportHost = host;
+			// The host is in the document now, so it has a box to measure —
+			// place the map. This is the transform path's equivalent of the
+			// viewBox attribute set above, not a viewport change, so it stays
+			// clear of updateViewBox()'s culling and overlay side effects.
+			svg.style.transform = viewBoxTransform(
+				this.viewBox,
+				host.getBoundingClientRect(),
+			);
+		} else {
+			container.appendChild(svg);
+		}
 	}
 
 	private async drawNode(
@@ -7166,12 +8383,17 @@ export class MindMapView extends ItemView {
 			// Use inline style on shape element — SVG attributes are overridden by CSS class rules
 			const shapeStyles: string[] = [];
 			if (style.fill) shapeStyles.push(`fill: ${style.fill}`);
-			if (style.border?.color) shapeStyles.push(`stroke: ${style.border.color}`);
-			if (style.border?.width) shapeStyles.push(`stroke-width: ${String(style.border.width)}`);
-			if (style.border?.style === "dashed") shapeStyles.push("stroke-dasharray: 4 2");
-			else if (style.border?.style === "dotted") shapeStyles.push("stroke-dasharray: 1 2");
-			else if (style.border?.style === "none") shapeStyles.push("stroke: none");
-			else if (style.border?.style === "solid") shapeStyles.push("stroke-dasharray: none");
+			// The border goes on as custom properties, not as `stroke` and
+			// friends: styles.css reads them back through `var()`, so selection
+			// and cursor-sync stay able to repaint a themed border by
+			// specificity. Declared inline, `stroke` would outrank every
+			// selector and only `!important` could beat it.
+			if (style.border?.color) shapeStyles.push(`--osmosis-node-stroke: ${style.border.color}`);
+			if (style.border?.width) shapeStyles.push(`--osmosis-node-stroke-width: ${String(style.border.width)}`);
+			if (style.border?.style === "dashed") shapeStyles.push("--osmosis-node-dash: 4 2");
+			else if (style.border?.style === "dotted") shapeStyles.push("--osmosis-node-dash: 1 2");
+			else if (style.border?.style === "none") shapeStyles.push("--osmosis-node-stroke: none");
+			else if (style.border?.style === "solid") shapeStyles.push("--osmosis-node-dash: none");
 			if (shapeStyles.length > 0) shapeEl.setAttribute("style", shapeStyles.join("; "));
 			const textStyles: string[] = [];
 			if (style.text?.color) textStyles.push(`color: ${style.text.color}`);
@@ -7217,13 +8439,7 @@ export class MindMapView extends ItemView {
 				}
 			} else if (osmosisCard) {
 				// Render osmosis fence as card (front + divider + back)
-				await this.renderOsmosisCardInto(
-					wrapper,
-					osmosisCard.front,
-					osmosisCard.back,
-					sourcePath,
-					XHTML_NS,
-				);
+				await this.renderOsmosisCardInto(wrapper, osmosisCard, sourcePath, XHTML_NS);
 			} else if (this.renderComponent) {
 				await MarkdownRenderer.render(
 					this.app,
@@ -7415,52 +8631,28 @@ export class MindMapView extends ItemView {
 			// Child attachment: bottom-center
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + child.rect.height + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx;
-				py = cy + stubLength;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + offsetY;
 		} else if (isSecondary) {
 			// Secondary in horizontal: child is to the left of parent
 			// Child attachment: center-right
 			cx = child.rect.x + child.rect.width + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx + stubLength;
-				py = cy;
-			} else {
-				px = parent.rect.x + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		} else if (isTopDown) {
 			// Primary in top-down: child is below parent
 			// Child attachment: top-center
 			cx = child.rect.x + child.rect.width / 2 + offsetX;
 			cy = child.rect.y + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx;
-				py = cy - stubLength;
-			} else {
-				px = parent.rect.x + parent.rect.width / 2 + offsetX;
-				py = parent.rect.y + parent.rect.height + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width / 2 + offsetX;
+			py = parent.rect.y + parent.rect.height + offsetY;
 		} else {
 			// Primary side (default): center-left of child
 			cx = child.rect.x + offsetX;
 			cy = child.rect.y + child.rect.height / 2 + offsetY;
-			if (parent.source.type === "root") {
-				const stubLength = DEFAULT_LAYOUT_CONFIG.horizontalSpacing / 2;
-				px = cx - stubLength;
-				py = cy;
-			} else {
-				px = parent.rect.x + parent.rect.width + offsetX;
-				py = parent.rect.y + parent.rect.height / 2 + offsetY;
-			}
+			px = parent.rect.x + parent.rect.width + offsetX;
+			py = parent.rect.y + parent.rect.height / 2 + offsetY;
 		}
 
 		// Apply branch line styles: per-node overrides > class > map-level > theme > default

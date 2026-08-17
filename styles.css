@@ -17,7 +17,7 @@ Uses Obsidian CSS variables for theme compatibility.
 	cursor: grabbing;
 }
 
-/* Mobile editing: SVG gets position:fixed inline to escape Obsidian's
+/* Mobile editing: the map gets position:fixed inline to escape Obsidian's
    layout resize when the keyboard opens. No CSS overrides needed here. */
 
 .osmosis-mindmap-svg {
@@ -26,16 +26,47 @@ Uses Obsidian CSS variables for theme compatibility.
 	height: 100%;
 }
 
-.osmosis-node {
-	fill: var(--background-secondary);
-	stroke: var(--background-modifier-border);
-	stroke-width: 1;
+/* ── iOS: pan and zoom as a CSS transform ──────────────────────────────────
+   WKWebView re-transforms SVG geometry on a viewBox change but leaves any
+   composited layer inside a <foreignObject> exactly where it first painted,
+   so node bodies strand on screen while the map moves out from under them.
+   A CSS transform on an ancestor *is* honoured for descendant layers, so on
+   iOS the map moves that way instead — the same shape Obsidian's own Canvas
+   uses, where `.canvas` is transform-origin: 0 0 inside a clipping
+   `.canvas-wrapper`. src/mindmap-viewport.ts has the mechanism and the maths.
+
+   These two rules are structural, not cosmetic: the host must clip because
+   the SVG no longer can (the visible region is no longer its own viewport),
+   and the origin must be the top-left corner because that is the corner the
+   transform is computed against. */
+.osmosis-mindmap-host {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
 }
 
+.osmosis-mindmap-svg-transformed {
+	overflow: visible;
+	transform-origin: 0 0;
+}
+
+/* The border a theme resolves for a node arrives as custom properties on the
+   shape element rather than as inline `stroke` declarations (see `drawNode`).
+   A custom property feeds the cascade instead of short-circuiting it, so the
+   selection and cursor-sync rules further down can repaint a themed border
+   through specificity alone; written inline, `stroke` would outrank every
+   selector and only `!important` could beat it. */
+.osmosis-node {
+	fill: var(--background-secondary);
+	stroke: var(--osmosis-node-stroke, var(--background-modifier-border));
+	stroke-width: var(--osmosis-node-stroke-width, 1);
+	stroke-dasharray: var(--osmosis-node-dash, none);
+}
+
+/* Only the fill differs — the stroke comes from `.osmosis-node`, which is on
+   this same element. */
 .osmosis-node-heading {
 	fill: var(--background-primary-alt);
-	stroke: var(--background-modifier-border);
-	stroke-width: 1;
 }
 
 /* Shape: underline — bottom line only, no background fill */
@@ -46,7 +77,9 @@ Uses Obsidian CSS variables for theme compatibility.
 /* Shape: none — fully invisible background */
 .osmosis-node-group[data-shape="none"] > .osmosis-node {
 	fill: none;
-	stroke: none;
+	/* A themed border still shows through on this shape, exactly as it did when
+	   the theme wrote `stroke` inline and outranked the rule. */
+	stroke: var(--osmosis-node-stroke, none);
 }
 
 .osmosis-node-content {
@@ -154,11 +187,13 @@ Uses Obsidian CSS variables for theme compatibility.
 }
 
 /* Hide Obsidian's copy button inside mind map nodes (non-functional in SVG
-   foreignObject). !important: Obsidian core toggles this button's display from
-   its own rules, which we cannot outrank by specificity alone. */
+   foreignObject). Obsidian reveals it from a rule of its own that is qualified
+   by both `.markdown-rendered` and the hovered `pre`, so the second selector
+   here spells out the same ancestry — the node wrapper carries
+   `.markdown-rendered` too — to come out one element heavier and win. */
 .osmosis-node-content .copy-code-button,
-.osmosis-node-content button.copy-code-button {
-	display: none !important;
+.osmosis-node-content.markdown-rendered pre .copy-code-button {
+	display: none;
 }
 
 /* Code block language label */
@@ -207,23 +242,6 @@ pre.osmosis-code-block {
 	transition: transform 80ms ease-out, opacity 80ms ease-out;
 }
 
-/* Selection — !important is required here: per-node theme colors are written as
-   inline style attributes by the renderer, and inline styles outrank every
-   selector. This is the only way to show selection state on a themed node. */
-.osmosis-node-selected > .osmosis-node {
-	stroke: var(--interactive-accent) !important;
-	stroke-width: 2 !important;
-	stroke-dasharray: none !important;
-}
-
-/* Cursor sync highlight (editor cursor → map node).
-   !important for the same reason as selection above: inline theme styles. */
-.osmosis-node-cursor-synced > .osmosis-node {
-	stroke: var(--text-accent) !important;
-	stroke-width: 2 !important;
-	stroke-dasharray: 4 2 !important;
-}
-
 /* Rubber-band selection */
 .osmosis-rubber-band {
 	fill: var(--interactive-accent);
@@ -234,11 +252,12 @@ pre.osmosis-code-block {
 	pointer-events: none;
 }
 
-/* Drag-and-drop. !important: applied to the view's content element so the
-   grabbing cursor holds across every descendant that sets its own cursor
-   (nodes, buttons, resize handles) for the duration of the drag. */
+/* Drag-and-drop. This class lands on the view's content element, which is the
+   same element as `.osmosis-mindmap-container` — so it is that rule's `cursor:
+   grab` this has to beat, and being declared later at equal specificity is
+   enough. */
 .osmosis-dragging {
-	cursor: grabbing !important;
+	cursor: grabbing;
 }
 
 .osmosis-drag-ghost {
@@ -250,6 +269,19 @@ pre.osmosis-code-block {
 	stroke: var(--interactive-accent);
 	stroke-width: 3;
 	stroke-dasharray: 6 3;
+	pointer-events: none;
+}
+
+/* Drop lands in a different note: solid line plus the destination's name. */
+.osmosis-drop-indicator--cross-note {
+	stroke: var(--text-accent);
+	stroke-dasharray: none;
+}
+
+.osmosis-drop-indicator-label {
+	fill: var(--text-accent);
+	font-size: 12px;
+	font-weight: 600;
 	pointer-events: none;
 }
 
@@ -289,17 +321,25 @@ pre.osmosis-code-block {
 	user-select: none;
 }
 
+/*
+ * The three transclusion-state borders below take second place to a themed
+ * border, which is what they did when the theme wrote `stroke` inline and no
+ * selector could reach past it. Reading the same custom properties, with the
+ * state's own colour as the fallback, keeps that order intact now that the
+ * theme goes through the cascade like everything else.
+ */
+
 /* Unresolved transclusion */
 .osmosis-node-group-transclusion.osmosis-node-unresolved > .osmosis-node {
-	stroke: var(--text-faint);
-	stroke-dasharray: 4 2;
+	stroke: var(--osmosis-node-stroke, var(--text-faint));
+	stroke-dasharray: var(--osmosis-node-dash, 4 2);
 }
 
 /* Cyclic transclusion indicator */
 .osmosis-node-cyclic > .osmosis-node {
-	stroke: var(--text-warning);
-	stroke-width: 2;
-	stroke-dasharray: 6 3;
+	stroke: var(--osmosis-node-stroke, var(--text-warning));
+	stroke-width: var(--osmosis-node-stroke-width, 2);
+	stroke-dasharray: var(--osmosis-node-dash, 6 3);
 }
 
 .osmosis-cycle-indicator {
@@ -310,9 +350,31 @@ pre.osmosis-code-block {
 
 /* Transcluded branch visual distinction (opt-in via settings) */
 .osmosis-node-transcluded > .osmosis-node {
-	stroke: var(--text-accent);
-	stroke-dasharray: 3 2;
+	stroke: var(--osmosis-node-stroke, var(--text-accent));
+	stroke-dasharray: var(--osmosis-node-dash, 3 2);
 	stroke-opacity: 0.6;
+}
+
+/*
+ * Selection and cursor sync are the two states that must be visible whatever
+ * else a node is — themed, transcluded, unresolved, cyclic — so they are
+ * declared here, after every rule they have to outrank, and pair their state
+ * class with `.osmosis-node-group` (both sit on the group element) to match the
+ * heaviest of them. This is the ordering `!important` used to stand in for.
+ */
+
+.osmosis-node-group.osmosis-node-selected > .osmosis-node {
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: none;
+}
+
+/* Editor cursor → map node. After selection, so a node that is both reads as
+   synced. */
+.osmosis-node-group.osmosis-node-cursor-synced > .osmosis-node {
+	stroke: var(--text-accent);
+	stroke-width: 2;
+	stroke-dasharray: 4 2;
 }
 
 /* Inline editing — overlay positioned outside the SVG */
@@ -330,42 +392,42 @@ pre.osmosis-code-block {
 	overflow: visible;
 }
 
-/* Save/Cancel buttons float above the editor container */
+/* Save/Cancel icon buttons float above the editor container */
 .osmosis-edit-btn {
 	position: absolute;
 	top: -32px;
 	display: flex;
 	align-items: center;
-	gap: 4px;
+	justify-content: center;
+	width: 28px;
 	height: 28px;
-	padding: 0 10px;
+	padding: 0;
 	border: none;
 	border-radius: 4px;
 	background: var(--background-secondary);
-	color: var(--text-muted);
-	font-size: 13px;
+	color: var(--icon-color);
 	cursor: pointer;
-	white-space: nowrap;
 }
 
+/* An opaque shade, not --background-modifier-hover: that one is a translucent
+   overlay meant to sit on a solid surface, and these buttons float over the
+   map, so it makes the button look see-through instead of highlighted. */
 .osmosis-edit-btn:hover {
-	color: var(--text-normal);
+	background: var(--background-secondary-alt);
+	color: var(--icon-color-hover);
+}
+
+.osmosis-edit-btn .svg-icon {
+	width: 18px;
+	height: 18px;
 }
 
 .osmosis-edit-cancel {
 	left: 0;
 }
 
-.osmosis-edit-cancel:hover {
-	color: var(--text-error);
-}
-
 .osmosis-edit-save {
 	right: 0;
-}
-
-.osmosis-edit-save:hover {
-	color: var(--interactive-accent);
 }
 
 /* Stack buttons vertically on right side when container is narrow */
@@ -382,25 +444,61 @@ pre.osmosis-code-block {
 	top: -32px;
 }
 
-/* Hide CM6 chrome not needed in node editing. !important: CodeMirror injects
-   these rules into the document at runtime, so source order cannot be relied on. */
-.osmosis-edit-overlay .cm-gutters,
-.osmosis-edit-overlay .cm-lineNumbers,
-.osmosis-edit-overlay .cm-foldGutter {
-	display: none !important;
+/*
+ * The rules below fight CodeMirror's and Obsidian's own editor styling, and
+ * each repeats `.osmosis-edit-overlay` to do it. The repeat is deliberate: a
+ * class counted twice is a selector one class heavier than the two-class rules
+ * those stylesheets use for the same elements, which is what it takes to win
+ * without `!important`. It selects exactly the same elements as writing the
+ * class once, so nothing else about these rules changes.
+ */
+
+/* Hide CM6 chrome not needed in node editing. CodeMirror injects its own rules
+   into the document at runtime, so source order cannot be relied on. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-gutters,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-lineNumbers,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-foldGutter {
+	display: none;
 }
 
-/* Match node text styling */
+/* Match node text styling. The overlay carries the node's own font size and
+   padding, scaled to the current zoom, as custom properties (see
+   `positionEditOverlay`), so the editor reads as the node it covers rather
+   than as an Obsidian editor.
+   Both CodeMirror and Obsidian set absolute font sizes here — on .cm-editor and
+   on the heading line classes. A node ignores those (its text size comes from
+   its heading depth), so the overlay must ignore them too. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-editor,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-content,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-line,
+.osmosis-edit-overlay.osmosis-edit-overlay .osmosis-fallback-textarea {
+	font-size: var(--osmosis-edit-font-size, 13px);
+	line-height: var(--osmosis-edit-line-height, 17px);
+}
+
 .osmosis-edit-overlay .cm-content {
-	padding: 4px 8px;
-	font-size: inherit;
-	line-height: 1.3;
+	padding: var(--osmosis-edit-padding, 4px 8px);
 }
 
-/* Remove CM6 default focus outline (container already has border).
-   !important: CodeMirror's own injected .cm-focused rule sets this outline. */
-.osmosis-edit-overlay .cm-focused {
-	outline: none !important;
+/* Strip the editor's note-level vertical chrome: Obsidian pads the
+   scroller/sizer for a full note and gives source-mode heading lines
+   (.HyperMD-header-N) their reading-view heading spacing. In a box sized to a
+   single node that reads as an unexplained gap above the text.
+   Only the block axis is touched — a list line's inline padding is the hanging
+   indent its `- ` marker sits in, and zeroing it drags the marker out of the
+   box, where .cm-editor's overflow clips it. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-scroller,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-sizer,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-contentContainer,
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-line {
+	margin-block: 0;
+	padding-block: 0;
+}
+
+/* Remove CM6 default focus outline (container already has border) — CodeMirror's
+   own injected .cm-focused rule sets it. */
+.osmosis-edit-overlay.osmosis-edit-overlay .cm-focused {
+	outline: none;
 }
 
 /* Ensure the editor fills its container */
@@ -416,9 +514,8 @@ pre.osmosis-code-block {
 	background: transparent;
 	color: var(--text-normal);
 	font-family: var(--font-text);
-	padding: 4px 8px;
+	padding: var(--osmosis-edit-padding, 4px 8px);
 	box-sizing: border-box;
-	line-height: 1.3;
 	word-wrap: break-word;
 	overflow-wrap: break-word;
 	white-space: pre-wrap;
@@ -521,12 +618,16 @@ pre.osmosis-code-block {
 	border: none;
 }
 
+/* Holds the name alone: `sidebarSetting` lifts the description out of here and
+   onto the row, so this wrapper is simply the first cell. Obsidian's own
+   right margin on it would double the grid's column gap. */
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-info {
-	display: contents;
+	grid-area: 1 / 1;
+	min-width: 0;
+	margin-right: 0;
 }
 
 .workspace-leaf-content[data-type="osmosis-properties"] .setting-item-name {
-	grid-area: 1 / 1;
 	font-size: var(--font-ui-small);
 	line-height: 1.4;
 }
@@ -1112,29 +1213,54 @@ hr.osmosis-map-style-divider {
 
 /* ─── Utility ────────────────────────────────────────────── */
 
-/* Single-purpose visibility utility. !important is intentional: it is applied
-   on top of components that set their own display (flex/grid), and must win
-   regardless of which component it is toggled on. */
-.osmosis-hidden {
-	display: none !important;
+/* Single-purpose visibility utility, toggled on top of components that set
+   their own display (flex/grid). The class is repeated so the selector counts
+   two classes and outranks any of those single-class component rules, whichever
+   one it lands on and wherever that rule sits in this file. */
+.osmosis-hidden.osmosis-hidden {
+	display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════
    Sequential Study Modal
    ═══════════════════════════════════════════════════════════ */
 
+/* A flex column capped at 85vh, with the card as the only row that scrolls.
+   `max-height` rather than a fixed height, so a one-line card still gets a
+   compact modal; the cap only binds once the content would leave the screen,
+   and then the card absorbs it instead of the modal growing a scrollbar of its
+   own. Two scrollbars — one on `.modal-content`, one on the card — is what a
+   long card with two images produced, and between them the Show answer button
+   could be scrolled out of reach. */
 .osmosis-study-modal {
+	display: flex;
+	flex-direction: column;
 	width: 600px;
 	max-width: 90vw;
 	max-height: 85vh;
 }
 
 .osmosis-study-modal .modal-content {
-	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
 	/* Reserve room at the top for the absolutely-positioned icon row + ×
 	   close button so the progress bar doesn't slide underneath them. */
 	padding-top: 28px;
 	padding-bottom: 8px;
+}
+
+/* `flex: none` on everything around the card, so a card taller than the modal
+   shrinks itself rather than squeezing the progress bar or pushing the flip and
+   rating buttons off the bottom. Those must stay reachable at every card
+   length — they are how the session is driven. */
+.osmosis-study-modal .osmosis-study-progress,
+.osmosis-study-modal .osmosis-study-breadcrumb,
+.osmosis-study-modal .osmosis-study-actions,
+.osmosis-study-modal > .modal-content > .osmosis-study-complete {
+	flex: none;
 }
 
 /* Mobile: leave a comfortable thumb gap between the rating/flip buttons and
@@ -1266,6 +1392,224 @@ hr.osmosis-map-style-divider {
 	margin-top: 4px;
 }
 
+/* Image occlusion: the picture with its masks painted over it.
+
+   The wrapper shrinks to fit the image and the mask layer is pinned to the
+   wrapper's edges, so the SVG's 0–1 viewBox always maps onto exactly the
+   rendered image — no measurement, and masks stay put when the image is
+   resized or given a `|300` suffix. */
+.osmosis-occlusion {
+	/* The docs site's button palette: Material "amber" accent for the group
+	   being asked, because gold is the one that grabs the eye, and "deep purple"
+	   primary for its siblings. Same two colours as .osmosis-btn--primary and
+	   its hover state. */
+	--osmosis-occlusion-mask: #7e56c2;
+	--osmosis-occlusion-target: #ffaa00;
+	position: relative;
+	display: inline-block;
+	max-width: 100%;
+	line-height: 0;
+}
+
+/* object-fit is `fill` — not the `contain` that study-card images get — to pair
+   with the overlay's preserveAspectRatio="none". Should anything ever hand the
+   image a box that is not its own aspect ratio, picture and masks then stretch
+   identically instead of the picture letterboxing away from its masks. */
+.osmosis-occlusion .osmosis-occlusion-image {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	object-fit: fill;
+}
+
+/* While anything on the diagram is covered, the picture must not be tappable.
+   Obsidian opens an image viewer on a click that lands on an `img`, and that
+   viewer clones the image alone — the masks are a sibling SVG, so they do not
+   come with it and the pop-up is the *unmasked* picture, i.e. the answer laid
+   over the card being asked. Taking the image out of hit testing hands the tap
+   to the wrapper instead, which is where every study surface already listens for
+   a reveal, so tapping a masked diagram uncovers it rather than zooming it.
+   Selected on the wrapper rather than the image, because `overlayMasks` wraps
+   images the note itself rendered, which carry none of our classes. */
+.osmosis-occlusion.is-covered > img {
+	pointer-events: none;
+}
+
+/* Also a size container, for the same reason the annotation layer is one: it is
+   pinned to the wrapper with `inset: 0`, so its size is the image's own box and
+   never comes from its contents. That is what lets a stroke be a fraction of
+   the picture without measuring anything. */
+.osmosis-occlusion-masks {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	container-type: size;
+	pointer-events: none;
+}
+
+/* Strokes are set non-scaling because the viewBox is stretched to the image's
+   aspect ratio — a plain stroke would come out thicker on one axis.
+   Non-scaling, though, means a *fixed* thickness at the picture's layout size,
+   and a mind-map node lays its diagram out small and then magnifies the whole
+   node with the map's zoom transform. A fixed 1.5px outline computed against a
+   thumbnail and blown up reads as a heavy border. So the width is a fraction of
+   the picture (cqmin — the shorter axis, so a tall diagram is treated like a
+   wide one), which non-scaling-stroke then keeps uniform across both axes. On a
+   typical 800×200 diagram this resolves to the 1.5px it always was. */
+.osmosis-occlusion-mask {
+	fill: var(--osmosis-occlusion-mask);
+	stroke: rgba(0, 0, 0, 0.55);
+	stroke-width: 0.75cqmin;
+	vector-effect: non-scaling-stroke;
+}
+
+.osmosis-occlusion-mask.is-target {
+	fill: var(--osmosis-occlusion-target);
+}
+
+/* The answer side: the target's pixels are uncovered, but still ringed so the
+   eye lands on the region that was being asked about. */
+.osmosis-occlusion-mask.is-revealed {
+	fill: none;
+	stroke: var(--osmosis-occlusion-target);
+	stroke-width: 1.5cqmin;
+}
+
+/* Where container queries are missing, fall back to the fixed thicknesses these
+   strokes had before they were proportional — heavy in a small node, but a
+   stroke-width the browser cannot resolve computes to 0 and the ring vanishes
+   entirely, which is the one outcome that loses information. */
+@supports not (container-type: size) {
+	.osmosis-occlusion-mask {
+		stroke-width: 1.5;
+	}
+
+	.osmosis-occlusion-mask.is-revealed {
+		stroke-width: 3;
+	}
+}
+
+/* The editor keeps the fixed thicknesses, and this is not an inconsistency.
+   Everywhere else the picture is *shown*, so an outline is part of it and has to
+   be a fraction of it. In the editor the picture is *worked on*: zoom is a
+   magnifier for placing an edge precisely, and chrome that thickens as you
+   magnify hides the very edge you zoomed in to find. A proportional stroke came
+   out four times fatter at 4× — the mask stopped being a mask and became a blob
+   with a border. Constant on screen is also what every grip here already does:
+   HANDLE_GRAB_PX and ROTATE_HANDLE_PX are pixel sizes converted into the
+   canvas's units per zoom, so the outlines now match the handles drawn on them. */
+.osmosis-occlusion-canvas .osmosis-occlusion-mask {
+	stroke-width: 1.5;
+}
+
+.osmosis-occlusion-canvas .osmosis-occlusion-mask.is-revealed {
+	stroke-width: 3;
+}
+
+/* Text annotations are positioned HTML rather than SVG <text>. The mask overlay
+   is deliberately stretched by preserveAspectRatio="none" — that is what makes
+   normalised coordinates land without measuring anything — and glyphs drawn in
+   it would be stretched with it. This layer sits outside that overlay, so its
+   labels render at their true shape.
+
+   The layer is also a *size container*, which is what lets a label be sized as a
+   fraction of the picture with nothing measured: cqw/cqh resolve against this
+   element, and this element is pinned to the wrapper, which is the image's own
+   box. Putting `container-type: size` here is safe precisely because the layer
+   is absolutely positioned — its size comes from `inset: 0`, never from its
+   content, so the size containment it brings costs nothing. It could NOT go on
+   `.osmosis-occlusion` itself, which has to shrink to fit the image or every
+   mask lands wrong. */
+.osmosis-occlusion-annotations {
+	position: absolute;
+	inset: 0;
+	container-type: size;
+	pointer-events: none;
+}
+
+/* Rotated about the box's centre, and sized from the box's height, so a label
+   keeps its size on the diagram at any zoom and on any surface. No aspect
+   compensation, unlike a mask — a CSS rotate() here is already in screen space.
+
+   The font is 70% of the box height: with 0.1em of padding above and below and
+   a 1.2 line height that fills the box almost exactly, so the resize handles
+   drawn on the stored box hug the chip the user can see. */
+.osmosis-occlusion-annotation {
+	position: absolute;
+	left: var(--osmosis-annotation-x, 0%);
+	top: var(--osmosis-annotation-y, 0%);
+	width: var(--osmosis-annotation-w, 25%);
+	height: var(--osmosis-annotation-h, 8%);
+	transform: rotate(var(--osmosis-annotation-rotation, 0deg));
+	transform-origin: 50% 50%;
+	display: flex;
+	align-items: center;
+	padding: 0 0.3em;
+	/* In `em`, so the corner is a fraction of the label's own text like its
+	   padding is. A fixed `--radius-s` is computed against the picture's layout
+	   size, so on a mind-map thumbnail — magnified afterwards by the map's zoom
+	   — a 4px corner rounds a small chip into a pill. */
+	border-radius: 0.35em;
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+	font-size: calc(var(--osmosis-annotation-size, 8cqh) * 0.7);
+	line-height: 1.2;
+	overflow: hidden;
+}
+
+/* The editor's off-screen measuring chip: a label with nothing constraining its
+   width, so `offsetWidth` reports what the text and padding actually need. It is
+   added and removed within one task and never paints, but is hidden regardless
+   so a stray one could not show. */
+.osmosis-occlusion-annotation-probe {
+	visibility: hidden;
+	width: max-content;
+	max-width: none;
+}
+
+/* The text sits in its own child: a flex parent cannot ellipsis the anonymous
+   item its own text would become. */
+.osmosis-occlusion-annotation-text {
+	width: 100%;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Only the font size needs container units — position and box are percentages of
+   the layer, which work everywhere. So where container queries are unavailable
+   the label still lands and turns correctly; it just falls back to the fixed UI
+   size labels had before they were resizable, rather than collapsing to an empty
+   chip. `isDesktopOnly` is false, so an old mobile webview has to degrade to
+   something readable. */
+@supports not (container-type: size) {
+	.osmosis-occlusion-annotation {
+		height: auto;
+		padding: 1px 4px;
+		font-size: var(--font-ui-small);
+	}
+}
+
+.osmosis-occlusion-prose {
+	line-height: var(--line-height-normal);
+	margin-bottom: 8px;
+}
+
+.osmosis-occlusion-prose > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-occlusion-prose > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-occlusion-missing {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
 .osmosis-study-progress {
 	display: flex;
 	align-items: center;
@@ -1295,10 +1639,16 @@ hr.osmosis-map-style-divider {
 	white-space: nowrap;
 }
 
+/* The one scroll surface in the modal. `flex: 1` with an explicit `min-height`
+   is what lets it shrink below its content — a flex item's default
+   `min-height: auto` refuses to — and the floor keeps a short card from
+   collapsing to nothing. It replaces a `max-height: calc(85vh - 120px)`, whose
+   120px was a guess at the surrounding chrome: when the chrome was taller than
+   that, the card fitted its cap and `.modal-content` scrolled as well. */
 .osmosis-study-card {
 	padding: 16px;
+	flex: 1;
 	min-height: 120px;
-	max-height: calc(85vh - 120px);
 	overflow-y: auto;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
@@ -1353,6 +1703,18 @@ hr.osmosis-map-style-divider {
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	flex-shrink: 0;
+}
+
+/* `setIcon` drops a bare <svg> into the button and leaves its size to
+   Obsidian's `--icon-size`, which resolves against the surrounding context.
+   That context is missing on iOS — the top bar is mounted on `modalEl`, outside
+   the content area that carries it — and an <svg> flex item with no resolved
+   size collapses to a dot inside a 42px circle. `--icon-m` is a fixed token, so
+   pinning it here is the size desktop already computes, just stated outright. */
+.osmosis-study-icon-btn svg {
+	width: var(--icon-m);
+	height: var(--icon-m);
 	flex-shrink: 0;
 }
 
@@ -1541,6 +1903,41 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	padding: 8px;
 }
 
+/* Desktop puts icons in the view header, so 8px is only ever read as padding.
+   Mobile puts a full-width title bar there instead, and at 8px the operator
+   row reads as part of that bar rather than as the top of the deck list.
+   Material's 16dp step is the first that separates them into two regions. */
+.is-mobile .osmosis-dashboard {
+	padding-top: 16px;
+}
+
+.osmosis-dash-operators {
+	display: flex;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+
+.osmosis-dash-operator {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	flex: 1;
+	padding: 6px 8px;
+	cursor: pointer;
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-dash-operator-icon {
+	display: flex;
+	align-items: center;
+}
+
+.osmosis-dash-operator-icon svg {
+	width: 16px;
+	height: 16px;
+}
+
 .osmosis-dash-header {
 	margin-bottom: 12px;
 }
@@ -1550,7 +1947,9 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	align-items: center;
 	justify-content: space-between;
 	width: 100%;
-	padding: 8px 12px;
+	/* Right padding matches the deck rows' so this button's counts land in the
+	   same columns as the tree's. */
+	padding: 8px 8px 8px 12px;
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 	border: none;
@@ -1615,21 +2014,43 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	white-space: nowrap;
 }
 
+.osmosis-dash-col-headers {
+	display: flex;
+	justify-content: flex-end;
+	gap: 4px;
+	padding: 0 8px;
+	margin-bottom: 4px;
+}
+
+.osmosis-dash-col-header {
+	width: 24px;
+	text-align: center;
+	font-size: 9px;
+	font-weight: 600;
+	color: var(--text-faint);
+}
+
 .osmosis-dash-counts {
 	display: flex;
-	gap: 6px;
+	gap: 4px;
 	margin-left: auto;
 	flex-shrink: 0;
 }
 
+/* Fixed width, not min-width: the columns only line up across rows if a
+   three-digit count occupies the same box as a one-digit one. Kept as narrow
+   as three digits allow — every pixel here comes out of the deck name, which
+   is what actually has to be readable in a phone-width sidebar. */
 .osmosis-dash-new,
 .osmosis-dash-learn,
-.osmosis-dash-due {
-	font-size: 11px;
+.osmosis-dash-due,
+.osmosis-dash-total {
+	font-size: 10px;
 	font-weight: 600;
-	padding: 1px 5px;
+	padding: 1px 2px;
 	border-radius: 3px;
-	min-width: 16px;
+	width: 24px;
+	box-sizing: border-box;
 	text-align: center;
 }
 
@@ -1648,6 +2069,18 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	background: hsla(140, 50%, 42%, 0.12);
 }
 
+.osmosis-dash-total {
+	color: var(--text-muted);
+	background: var(--background-modifier-border);
+}
+
+/* The border-grey total pill disappears against the accent-filled "Study all"
+   button, so it gets a translucent treatment there instead. */
+.osmosis-dash-btn .osmosis-dash-total {
+	color: var(--text-on-accent);
+	background: rgba(255, 255, 255, 0.2);
+}
+
 .osmosis-dash-zero {
 	color: var(--text-faint);
 	background: none;
@@ -1656,6 +2089,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 /* ═══════════════════════════════════════════════════════════
    Contextual Study (Reading View)
    ═══════════════════════════════════════════════════════════ */
+
+/* A fence holding the height it last rendered to, for the frame between Obsidian
+   rebuilding the code block — which rating a card causes, since the schedule it
+   writes lives in the note's frontmatter — and the deferred render filling it
+   again. Without it the note loses the card's whole height for a frame and the
+   reader is left further down the page than they were. `min-height`, so a card
+   that comes back taller is never clipped by its own reservation. */
+.osmosis-fence-held {
+	min-height: var(--osmosis-fence-height, 0);
+}
 
 .osmosis-contextual-card {
 	border: 1px solid var(--background-modifier-border);
@@ -1825,6 +2268,20 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	flex: 1;
 }
 
+/* "2/3" on an occluded fence being studied in place. Its groups are asked one at
+   a time, and without a count the only thing distinguishing the second question
+   from the first is which mask is amber — which says nothing about how many are
+   left. Sits where the undo button does on an ordinary card; a stepped card has
+   none, since undoing one group's rating mid-sequence has nowhere to put the
+   user back. */
+.osmosis-contextual-step {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+	margin-right: 8px;
+}
+
 .osmosis-contextual-exclude-toggle {
 	cursor: pointer;
 	color: var(--text-muted);
@@ -1886,6 +2343,15 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	justify-content: center;
 	margin-top: 0;
 	animation: osmosis-fade-in 0.2s;
+	/* The bubble is the one part of the map that is painted while the map is
+	   moving under it: it appears mid-session and then rides along on every
+	   pan. Its fade-in gives it a compositing layer for 0.2s and then hands the
+	   layer back, and on iOS the repaints after that under-damaged its left
+	   edge — the leftmost button, Again, smeared a trail of red slivers across
+	   the map until a selection forced a full repaint. Asking for the layer
+	   outright keeps it for the bubble's whole life, so a pan moves the bubble
+	   instead of redrawing it. */
+	will-change: transform;
 }
 
 
@@ -1989,4 +2455,1491 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 /* Individual toolbar buttons/dividers hidden in reading mode */
 .osmosis-toolbar-btn-hidden {
 	display: none;
+}
+
+/* ── Review log shard summary ──────────────────────────────── */
+/* Replaces the fence body when a shard is opened as a note. Deliberately
+   inert-looking: it is a generated file, not something to interact with. */
+.osmosis-shard-summary {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	padding: var(--size-4-3);
+	background: var(--background-secondary);
+}
+
+.osmosis-shard-title {
+	font-weight: var(--font-semibold);
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-shard-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-4);
+}
+
+.osmosis-shard-fact {
+	display: flex;
+	flex-direction: column;
+}
+
+.osmosis-shard-fact-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.osmosis-shard-fact-value {
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-shard-note {
+	margin-top: var(--size-4-2);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Operator views (browse, stats)
+   ═══════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════
+   Card browser (Bases view)
+   ═══════════════════════════════════════════════════════════ */
+
+/* A flex column rather than `height: 100%` on both levels: the scroller has to
+   take exactly the height left over, and a percentage of a container Bases
+   sizes itself leaves a dead band at the bottom of the leaf. */
+.osmosis-browse {
+	/* Shared by the sticky group header and the table header that clears it. */
+	--osmosis-browse-group-header-h: 30px;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+	/* iOS: a flick that runs out of list should stop, not start scrolling the
+	   pane behind it. */
+	overscroll-behavior: contain;
+}
+
+/* Bases pads its view container and reserves a scrollbar gutter, on the
+   assumption the view inside scrolls the whole container. This one does not —
+   it owns its own scroller — so that padding became a dead band along the
+   bottom of the leaf. Scoped to this view so no other Bases view is touched. */
+.bases-view.osmosis-browse {
+	padding: 0;
+	scrollbar-gutter: auto;
+}
+
+/* The scroll container is the view, not the page: a base sits inside Bases'
+   own chrome, so the table has to scroll under a fixed toolbar rather than
+   growing the leaf. */
+.osmosis-browse-scroll {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: var(--size-4-2) var(--size-4-3);
+}
+
+.osmosis-browse-empty {
+	padding: var(--size-4-4);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* ── Search and action toolbar ─────────────────────────────── */
+
+/* One line, never wrapping: the search box gives up width to the buttons, and
+   past the point where even that runs out the bar scrolls sideways rather than
+   growing a second row and pushing the cards down. */
+.osmosis-browse-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: nowrap;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-2);
+	background: var(--background-secondary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	overflow-x: auto;
+}
+
+.osmosis-browse-toolbar-actions {
+	display: flex;
+	align-items: center;
+	flex: 1;
+	gap: var(--size-4-1);
+}
+
+/* The search box is the only thing here that can shrink, so it absorbs whatever
+   the buttons need. It keeps a usable minimum and stops there. */
+.osmosis-browse-search {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 1 1 180px;
+	min-width: 90px;
+	max-width: 320px;
+}
+
+.osmosis-browse-search-icon {
+	position: absolute;
+	left: var(--size-4-1);
+	display: flex;
+	color: var(--text-faint);
+	pointer-events: none;
+}
+
+.osmosis-browse-search-icon .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* Two classes deep to outrank Obsidian's own `input[type="text"]` padding,
+   which is what was letting the icon sit on top of the placeholder. */
+.osmosis-browse-search .osmosis-browse-search-input {
+	width: 100%;
+	height: 28px;
+	padding-left: 26px;
+	padding-right: 26px;
+	font-size: var(--font-ui-smaller);
+}
+
+/* Only once there is something to clear — an X over an empty box is a button
+   that does nothing, and on a phone it is a button in the way. */
+.osmosis-browse-search-clear {
+	position: absolute;
+	right: 2px;
+	display: none;
+	padding: 2px;
+	color: var(--text-muted);
+}
+
+.osmosis-browse-search.has-query .osmosis-browse-search-clear {
+	display: flex;
+}
+
+.osmosis-browse-search-clear .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* The count is a number rather than "3 selected": on a phone the words cost
+   more room than the whole action set does. The tooltip carries the noun. */
+.osmosis-browse-toolbar-count {
+	flex: none;
+	min-width: 20px;
+	padding: 0 var(--size-4-1);
+	border-radius: var(--radius-s);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-medium);
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+/* A flexible gap, not a divider: this is what holds Delete away from the three
+   actions that only touch scheduling, so the one that edits notes is never the
+   button next to the one you meant to press. */
+.osmosis-browse-toolbar-gap {
+	flex: 1;
+	min-width: var(--size-4-3);
+}
+
+.osmosis-browse-toolbar-history {
+	display: flex;
+	align-items: center;
+	flex: none;
+	gap: var(--size-4-1);
+	margin-left: var(--size-4-1);
+	padding-left: var(--size-4-1);
+	border-left: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-browse-action {
+	flex: none;
+	padding: var(--size-4-1);
+}
+
+/* Dimmed rather than gone. An action that vanishes when it does not apply moves
+   every button beside it and takes with it the only hint that the browser can
+   do the thing at all. */
+.osmosis-browse-action:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.osmosis-browse-action:disabled:hover {
+	background: transparent;
+}
+
+/* Delete is the only action that edits note content, so it carries the warning
+   colour even while dimmed — the gap alone should not be the whole signal.
+   Hover keeps the ordinary surface: a filled red swatch swallowed the icon it
+   was meant to be drawing attention to. */
+.osmosis-browse-action-warning {
+	color: var(--text-error);
+}
+
+.osmosis-browse-action-warning:not(:disabled):hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-error);
+}
+
+/* ── Selected rows ─────────────────────────────────────────── */
+
+/* Click selects and double click opens, so a drag across a row is a selection
+   gesture rather than a text one. Left un-suppressed, Shift+click would paint a
+   text range across every row it spanned on top of the selection it made. */
+.osmosis-browse-row,
+.osmosis-browse-tile,
+.osmosis-browse-group-header {
+	user-select: none;
+}
+
+/* Selection is carried by the row's background, and hover by a lighter one, so
+   the two read as the same surface at two strengths rather than as two
+   different things happening to the row. */
+.osmosis-browse-row.is-selected,
+.osmosis-browse-row.is-selected:hover {
+	background: var(--text-selection);
+}
+
+/* A tile already has a border and a background of its own, so it takes the
+   accent on the border instead — a filled tile would fight its own content. */
+.osmosis-browse-tile.is-selected,
+.osmosis-browse-tile.is-selected:hover {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+/* The header's own state, so a note whose cards are all selected is legible
+   without counting rows. `is-partial` marks some-but-not-all, which is what the
+   checkbox's indeterminate state used to say.
+
+   Both marks are inset shadows rather than a border, because the header's own
+   rule sets `padding` as a shorthand further down and a real border would move
+   the title sideways as the state changed. */
+.osmosis-browse-group-header {
+	cursor: pointer;
+}
+
+.osmosis-browse-group-header:hover .osmosis-browse-group-title {
+	color: var(--text-accent);
+}
+
+.osmosis-browse-group-header.is-selected {
+	background: var(--text-selection);
+	box-shadow: inset 2px 0 0 var(--interactive-accent);
+}
+
+.osmosis-browse-group-header.is-partial {
+	box-shadow: inset 2px 0 0 var(--background-modifier-border-hover);
+}
+
+/* Deck entry for the browser's Change deck action (PromptModal). */
+.osmosis-prompt-input {
+	width: 100%;
+	margin-bottom: var(--size-4-2);
+}
+
+/* ── Bases groupBy, rendered as an outer level ─────────────── */
+
+.osmosis-browse-basegroup {
+	margin-bottom: var(--size-4-5);
+}
+
+/* Fixed height, because the table header below it sticks to exactly this
+   offset — the two are a stack, and a group header that grew would sit on top
+   of the column labels instead of above them. */
+.osmosis-browse-basegroup-header {
+	position: sticky;
+	top: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	height: var(--osmosis-browse-group-header-h);
+	background: var(--background-primary);
+	border-bottom: 2px solid var(--background-modifier-border);
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+/* Only inside a Bases group does the table header need to clear anything.
+   Ungrouped, there is no group header and it sticks to the top as usual. */
+.osmosis-browse-basegroup .osmosis-browse-table th {
+	top: var(--osmosis-browse-group-header-h);
+}
+
+/* ── Table layout ──────────────────────────────────────────── */
+
+/* Fixed layout is what lets Front and Back absorb the leftover width and
+   ellipsize; under `auto` the numeric columns win and squeeze them to nothing.
+   `min-width` is the other half of that: once the pane is narrower than the
+   fixed columns plus a readable Front and Back, the table scrolls sideways
+   rather than crushing the two columns the view exists to show. That is what
+   happens in a split pane or with both side panels open. */
+.osmosis-browse-table {
+	width: 100%;
+	min-width: 1240px;
+	table-layout: fixed;
+	border-collapse: collapse;
+	font-size: var(--font-ui-small);
+}
+
+/* Once columns have been dragged, their sum *is* the table width, so the
+   default minimum has to get out of the way — otherwise narrowing a column
+   would be undone by the table stretching the rest to make up the difference. */
+.osmosis-browse-table.is-sized {
+	min-width: 0;
+}
+
+/* The whole table takes the resize cursor during a drag, so it does not flicker
+   back to the default the moment the pointer leaves the 6px grip. */
+.osmosis-browse-table.is-resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* ── Sortable headers ──────────────────────────────────────── */
+
+.osmosis-browse-th-sortable {
+	cursor: pointer;
+}
+
+.osmosis-browse-th-sortable:hover {
+	color: var(--text-normal);
+}
+
+/* Pinned to the cell's trailing edge, clear of the resize grip, and carrying the
+   header's own background so a label too long for a narrowed column runs under
+   it rather than through it. In normal flow the header clips its overflow, so
+   the mark would be the first thing to disappear as a column got smaller —
+   exactly backwards, since it is the part that says how the table is ordered. */
+.osmosis-browse-th-sort {
+	position: absolute;
+	top: 0;
+	right: 8px;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: 1px;
+	height: 100%;
+	padding-left: 3px;
+	background: var(--background-primary);
+	color: var(--text-accent);
+}
+
+.osmosis-browse-th-sort .svg-icon {
+	width: 13px;
+	height: 13px;
+}
+
+/* The level number only appears past one sort column, where the arrows alone
+   cannot say which column breaks the other's ties. */
+.osmosis-browse-th-level {
+	font-size: 9px;
+	font-weight: var(--font-bold);
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+}
+
+/* ── Column resize grips ───────────────────────────────────── */
+
+/* Kept inside the header cell rather than straddling the boundary, because the
+   cell clips its overflow to ellipsize long labels and would cut off half of an
+   overhanging grip. `touch-action: none` so a drag on a phone resizes the column
+   instead of scrolling the table under it. */
+.osmosis-browse-resize {
+	position: absolute;
+	top: 0;
+	right: 0;
+	z-index: 1;
+	width: 8px;
+	height: 100%;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.osmosis-browse-resize::after {
+	content: "";
+	position: absolute;
+	top: 20%;
+	right: 3px;
+	width: 2px;
+	height: 60%;
+	background: var(--background-modifier-border-hover);
+	opacity: 0;
+	transition: opacity 100ms ease-in-out;
+}
+
+.osmosis-browse-resize:hover::after,
+.osmosis-browse-resize.is-dragging::after {
+	opacity: 1;
+}
+
+.osmosis-browse-resize.is-dragging::after {
+	background: var(--interactive-accent);
+}
+
+.osmosis-browse-col-index { width: 44px; }
+.osmosis-browse-col-type { width: 96px; }
+.osmosis-browse-col-deck { width: 120px; }
+.osmosis-browse-col-state { width: 88px; }
+.osmosis-browse-col-due { width: 96px; }
+.osmosis-browse-col-stability { width: 68px; }
+.osmosis-browse-col-difficulty { width: 74px; }
+.osmosis-browse-col-reps { width: 56px; }
+.osmosis-browse-col-lapses { width: 62px; }
+.osmosis-browse-col-note { width: 120px; }
+.osmosis-browse-col-id { width: 110px; }
+
+.osmosis-browse-table th {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	background: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding: var(--size-4-1) var(--size-4-2);
+	text-align: left;
+	font-weight: var(--font-medium);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+/* `overflow: hidden` is not optional here. Under fixed layout a cell whose
+   content exceeds its column paints straight over the next one — which is how
+   a long deck path came to sit on top of the State badge. */
+.osmosis-browse-table td {
+	padding: var(--size-4-1) var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.osmosis-browse-table th {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Row numbers are for counting and referring to, so they line up as digits and
+   recede — they are not data about the card. */
+.osmosis-browse-cell-index {
+	text-align: right;
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-cell-stability,
+.osmosis-browse-cell-difficulty,
+.osmosis-browse-cell-reps,
+.osmosis-browse-cell-lapses {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-cell-id,
+.osmosis-browse-cell-note,
+.osmosis-browse-cell-deck {
+	color: var(--text-muted);
+}
+
+.osmosis-browse-row {
+	cursor: pointer;
+}
+
+.osmosis-browse-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* ── Grouped layout (cards) ────────────────────────────────── */
+
+.osmosis-browse-group {
+	margin-bottom: var(--size-4-4);
+}
+
+.osmosis-browse-group-header {
+	display: flex;
+	align-items: baseline;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-browse-group-title {
+	font-weight: var(--font-medium);
+}
+
+.osmosis-browse-group-decks {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Pushed to the far edge so the count lands in the same place on every group
+   header, whatever the note is called. */
+.osmosis-browse-group-count {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-browse-tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+	gap: var(--size-4-2);
+}
+
+/* Height comes from the view's slider. Tiles are a uniform height so the grid
+   stays a grid — a card with an image and one with a word have to occupy the
+   same box or the rows stagger. */
+.osmosis-browse-tile {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	height: var(--osmosis-tile-height, 200px);
+	padding: var(--size-4-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	cursor: pointer;
+	overflow: hidden;
+}
+
+.osmosis-browse-tile:hover {
+	border-color: var(--background-modifier-border-hover);
+}
+
+/* Takes the tile's leftover height and clips, so the meta row stays pinned to
+   the bottom whatever the content does. */
+.osmosis-browse-tile-body {
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	font-size: var(--font-ui-small);
+}
+
+/* The same front-rule-back shape the card has in study, so a tile is
+   recognisable as the card it is. */
+.osmosis-browse-tile-divider {
+	height: 1px;
+	margin: var(--size-4-2) 0;
+	background: var(--background-modifier-border);
+}
+
+.osmosis-browse-tile-back {
+	color: var(--text-muted);
+}
+
+.osmosis-browse-tile-meta {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	margin-top: auto;
+}
+
+.osmosis-browse-tile-due {
+	margin-left: auto;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Rendered markdown ─────────────────────────────────────── */
+
+/* Card content is rendered markdown, not text, so it arrives with block
+   spacing meant for a note. Strip the outer margins so a card's first line
+   sits where the row expects it. */
+.osmosis-browse-md > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-browse-md > :last-child {
+	margin-bottom: 0;
+}
+
+/* Media scales to its container rather than its intrinsic size — a full-width
+   screenshot inside a 220px tile would otherwise define the grid. */
+.osmosis-browse-md img,
+.osmosis-browse-md video,
+.osmosis-browse-md .internal-embed {
+	max-width: 100%;
+	height: auto;
+}
+
+/* The single-line variant, for table cells: markdown still
+   renders (so cloze highlights and emphasis read correctly) but it is forced
+   onto one line and clipped, rather than growing the row. */
+.osmosis-browse-md-inline {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-browse-md-inline p,
+.osmosis-browse-md-inline ul,
+.osmosis-browse-md-inline ol,
+.osmosis-browse-md-inline li,
+.osmosis-browse-md-inline h1,
+.osmosis-browse-md-inline h2,
+.osmosis-browse-md-inline h3,
+.osmosis-browse-md-inline h4,
+.osmosis-browse-md-inline h5,
+.osmosis-browse-md-inline h6,
+.osmosis-browse-md-inline blockquote {
+	display: inline;
+	margin: 0;
+	padding: 0;
+	border: none;
+	font-size: inherit;
+	font-weight: inherit;
+	line-height: inherit;
+}
+
+.osmosis-browse-md-inline pre,
+.osmosis-browse-md-inline code {
+	display: inline;
+	margin: 0;
+	padding: 0 4px;
+	white-space: nowrap;
+	font-size: var(--font-ui-smaller);
+}
+
+/* An image in a one-line row is an icon, whatever its real size. */
+.osmosis-browse-md-inline img {
+	max-height: 1.4em;
+	vertical-align: text-bottom;
+}
+
+/* ── Badges and card state ─────────────────────────────────── */
+
+.osmosis-browse-badge,
+.osmosis-browse-state {
+	padding: 0 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+}
+
+.osmosis-browse-badge {
+	background: var(--background-modifier-border);
+	color: var(--text-muted);
+}
+
+/* State colours are the dashboard's deck-count palette exactly, so a card
+   reading "learning" here is the same orange as the Learn column there.
+   Changing one of these means changing both. */
+.osmosis-browse-state-new {
+	color: var(--interactive-accent);
+	background: rgba(var(--interactive-accent-rgb, 99, 135, 255), 0.12);
+}
+
+.osmosis-browse-state-learning,
+.osmosis-browse-state-relearning {
+	color: hsl(30, 75%, 50%);
+	background: hsla(30, 75%, 50%, 0.12);
+}
+
+.osmosis-browse-state-review {
+	color: hsl(140, 50%, 42%);
+	background: hsla(140, 50%, 42%, 0.12);
+}
+
+/* Suspended cards stay legible rather than being hidden — the browser is the
+   one surface that lists them, and it is where they get unsuspended. */
+.osmosis-browse-suspended {
+	opacity: 0.55;
+	font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Stats dashboard
+   ═══════════════════════════════════════════════════════════ */
+
+/* Categorical series palette.
+   These are literal hexes rather than Obsidian's --color-* variables on
+   purpose: the slot ORDER is the colour-vision-safety mechanism, and it was
+   validated pair by pair against both surfaces. Obsidian's palette shifts with
+   every community theme, which would silently invalidate that. Chart chrome
+   (grid, ink, surface) still uses theme variables, so the charts sit correctly
+   on any theme — only the data hues are pinned.
+   Worst adjacent CVD dE: 9.1 light / 8.4 dark. Worst normal-vision: 19.6 / 19.3. */
+.osmosis-stats-view {
+	--osmosis-series-new: #2a78d6;
+	--osmosis-series-learning: #eb6834;
+	--osmosis-series-young: #1baf7a;
+	--osmosis-series-mature: #eda100;
+	--osmosis-series-relearning: #e87ba4;
+	--osmosis-series-excluded: var(--background-modifier-border);
+
+	/* Sequential ramp for the calendar heatmap: one hue, light to dark.
+	   Step 0 is a surface tone, so an empty year reads as empty. */
+	--osmosis-heat-0: var(--background-modifier-border);
+	--osmosis-heat-1: #b7d3f6;
+	--osmosis-heat-2: #6da7ec;
+	--osmosis-heat-3: #2a78d6;
+	--osmosis-heat-4: #184f95;
+
+	padding: var(--size-4-4);
+	overflow-y: auto;
+}
+
+.theme-dark .osmosis-stats-view {
+	--osmosis-series-new: #3987e5;
+	--osmosis-series-learning: #d95926;
+	--osmosis-series-young: #199e70;
+	--osmosis-series-mature: #c98500;
+	--osmosis-series-relearning: #d55181;
+
+	--osmosis-heat-1: #184f95;
+	--osmosis-heat-2: #256abf;
+	--osmosis-heat-3: #3987e5;
+	--osmosis-heat-4: #86b6ef;
+}
+
+/* ── Scope bar ─────────────────────────────────────────────── */
+
+.osmosis-stats-scopebar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-4);
+	margin-bottom: var(--size-4-4);
+	padding-bottom: var(--size-4-3);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-stats-scope-field {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	min-width: 0;
+}
+
+/* A native <select> takes its intrinsic width from its widest <option>, not from
+   the option currently showing, so a single long deck path stretched the deck
+   field past the width of a phone screen and set the whole view scrolling
+   sideways. Pin the width and let the closed control ellipsise instead; the
+   popup still renders full labels, since that list is drawn by the OS. */
+.osmosis-stats-deck-select {
+	width: 14em;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* The in-panel segmented control carries a bottom margin. `align-items: center`
+   centres the margin box, so in the scope bar that margin lifts the buttons
+   half its height above the deck dropdown beside them. */
+.osmosis-stats-scopebar .osmosis-stats-segmented {
+	margin-bottom: 0;
+}
+
+.osmosis-stats-scope-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.osmosis-stats-loading {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* ── Panels ────────────────────────────────────────────────── */
+
+/* Vertical masonry, via multi-column rather than grid.
+   CSS grid cannot do this: row height is set by the tallest item in the row, so
+   a short panel beside a tall chart leaves dead space no alignment property can
+   reclaim — `align-items: start` shrinks the panel but not the row. Multi-column
+   flows panels down each column and packs them tight, at the cost of reading
+   order becoming down-then-across.
+   `columns` takes a width, not a count, so the column count still adapts: half a
+   window is the design target, since these live in a splittable tab. */
+.osmosis-stats-grid {
+	columns: 340px;
+	column-gap: var(--size-4-4);
+}
+
+.osmosis-stats-panel {
+	/* Never let a panel be split across a column break. */
+	break-inside: avoid;
+	/* Multi-column ignores margin collapse, so this is the only vertical gap. */
+	margin-bottom: var(--size-4-4);
+	min-width: 0;
+	padding: var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+}
+
+.osmosis-stats-panel-title {
+	margin: 0 0 2px;
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-panel-caption,
+.osmosis-stats-subtitle,
+.osmosis-stats-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-panel-caption {
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-subtitle {
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-note {
+	margin-top: var(--size-4-2);
+	font-style: italic;
+}
+
+.osmosis-stats-summary {
+	margin: var(--size-4-1) 0 var(--size-4-2);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+}
+
+/* Anchors the hover tooltip, which is positioned against this box. */
+.osmosis-stats-plot {
+	position: relative;
+	min-width: 0;
+}
+
+.osmosis-stats-empty {
+	padding: var(--size-4-3) 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+/* ── Charts ────────────────────────────────────────────────── */
+
+.osmosis-stats-svg {
+	display: block;
+	max-width: 100%;
+	overflow: visible;
+}
+
+/* The heatmap is the one chart that cannot reflow — a year is 53 columns wide
+   whatever the pane is — so it scrolls inside its own box. The plot that holds
+   one is marked by `calendarHeatmap` rather than matched with `:has()`, which
+   invalidates far too broadly for a view that redraws on every resize. */
+.osmosis-stats-heatmap {
+	max-width: none;
+}
+
+.osmosis-stats-plot-scrolls {
+	overflow-x: auto;
+}
+
+.osmosis-stats-axis-label {
+	fill: var(--text-faint);
+	font-size: 10px;
+	font-family: var(--font-interface);
+}
+
+/* Hairline, solid, one step off the surface — recessive by construction.
+   Named `gridline`, not `grid`: `.osmosis-stats-grid` is the panel container
+   above, and a `display: grid` landing on an SVG <line> stops it drawing. */
+.osmosis-stats-gridline {
+	stroke: var(--background-modifier-border);
+	stroke-width: 1;
+}
+
+.osmosis-stats-baseline {
+	stroke: var(--background-modifier-border-hover);
+	stroke-width: 1;
+}
+
+.osmosis-stats-cumulative {
+	fill: none;
+	stroke: var(--text-faint);
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Slices are separated by a surface-coloured stroke, the pie's version of the
+   stacked bar's 2px gap. Never a border — that would be ink that isn't data. */
+.osmosis-stats-slice {
+	stroke: var(--background-primary);
+	stroke-width: 2;
+}
+
+.osmosis-stats-hit {
+	fill: transparent;
+}
+
+.osmosis-stats-bar,
+.osmosis-stats-cell,
+.osmosis-stats-slice {
+	cursor: default;
+}
+
+.osmosis-stats-bar:hover,
+.osmosis-stats-cell:hover,
+.osmosis-stats-slice:hover {
+	opacity: 0.82;
+}
+
+/* ── Tooltip ───────────────────────────────────────────────── */
+
+.osmosis-stats-tooltip {
+	position: absolute;
+	z-index: var(--layer-tooltip);
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+/* ── Legend ────────────────────────────────────────────────── */
+
+/* Every legend row carries its value. That is the identity channel for
+   colour-blind readers and the relief for the lighter hues, which sit below
+   3:1 against a light surface. */
+.osmosis-stats-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-1) var(--size-4-3);
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-legend-item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: var(--font-ui-smaller);
+}
+
+.osmosis-stats-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+	flex-shrink: 0;
+}
+
+.osmosis-stats-legend-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-legend-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── Stat tiles ────────────────────────────────────────────── */
+
+.osmosis-stats-tiles {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-4);
+	margin: var(--size-4-2) 0;
+}
+
+.osmosis-stats-tile-label {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+/* Proportional figures, not tabular: these are standalone display numbers,
+   and tabular digits read loose at this size. */
+.osmosis-stats-tile-value {
+	font-size: var(--font-ui-large);
+	font-weight: var(--font-semibold);
+	line-height: 1.2;
+}
+
+/* ── Controls ──────────────────────────────────────────────── */
+
+.osmosis-stats-segmented,
+.osmosis-stats-stepper {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px;
+	margin-bottom: var(--size-4-2);
+}
+
+.osmosis-stats-seg {
+	padding: 2px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.osmosis-stats-seg:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-seg-active {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.osmosis-stats-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: var(--size-4-2);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.osmosis-stats-panel {
+	position: relative;
+}
+
+/* ── Drag handle ───────────────────────────────────────────── */
+
+/* Quiet until the panel is hovered: seventeen permanent grips would read as
+   chrome on what is meant to be a page of graphs. */
+.osmosis-stats-drag {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1px;
+	border-radius: var(--radius-s);
+	color: var(--text-faint);
+	opacity: 0;
+	cursor: grab;
+	transition: opacity 100ms ease-in-out;
+	/* The grip owns its pointer for the whole gesture; without this the page
+	   scrolls out from under a touch drag. */
+	touch-action: none;
+}
+
+.osmosis-stats-panel:hover .osmosis-stats-drag,
+.osmosis-stats-drag:focus-visible {
+	opacity: 1;
+}
+
+/* No hover to reveal them, so the grips are always visible — and big enough to
+   hit with a fingertip. */
+@media (hover: none) {
+	.osmosis-stats-drag {
+		padding: 5px;
+		opacity: 1;
+	}
+}
+
+.osmosis-stats-drag:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+}
+
+.osmosis-stats-drag:active {
+	cursor: grabbing;
+}
+
+.osmosis-stats-drag .svg-icon {
+	width: 16px;
+	height: 16px;
+}
+
+/* Keeps a long title clear of the grip. */
+.osmosis-stats-panel-title {
+	padding-right: var(--size-4-6);
+}
+
+/* The panel a drag left behind. What follows the pointer is the browser's drag
+   ghost on desktop, and the clone below on touch. */
+.osmosis-stats-panel-dragging {
+	opacity: 0.4;
+}
+
+/* Touch only: the hold has armed, and moving now drags. */
+.osmosis-stats-panel-held {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 2px 8px var(--background-modifier-box-shadow);
+}
+
+/* Where the panel will land. Nothing moves until the drop, so this line is the
+   only prediction the reader gets — the multi-column repack cannot be previewed
+   without reparenting the panel, which aborts the drag. */
+.osmosis-stats-drop-above {
+	box-shadow: inset 0 3px 0 0 var(--interactive-accent);
+}
+
+.osmosis-stats-drop-below {
+	box-shadow: inset 0 -3px 0 0 var(--interactive-accent);
+}
+
+/* The panel that follows a finger. Transparent to hit testing, so the panel
+   underneath can still be found. */
+.osmosis-stats-drag-clone {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: var(--layer-popover);
+	max-height: 220px;
+	padding: var(--size-4-3);
+	overflow: hidden;
+	border: 1px solid var(--interactive-accent);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+	box-shadow: 0 4px 12px var(--background-modifier-box-shadow);
+	opacity: 0.9;
+	pointer-events: none;
+}
+
+/* ── Breakdown table ───────────────────────────────────────── */
+
+.osmosis-stats-table {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	margin-top: var(--size-4-2);
+}
+
+.osmosis-stats-row {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: baseline;
+	gap: var(--size-4-3);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-row-label {
+	color: var(--text-muted);
+}
+
+.osmosis-stats-row-value {
+	color: var(--text-normal);
+	font-variant-numeric: tabular-nums;
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-stats-row-sub {
+	min-width: 5.5em;
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+	text-align: right;
+}
+
+/* ── Recall comparison rows ────────────────────────────────── */
+
+.osmosis-stats-recall-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 60px auto auto;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: 3px 6px;
+	border-radius: var(--radius-s);
+	font-size: var(--font-ui-small);
+}
+
+.osmosis-stats-recall-row:nth-child(odd) {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-stats-recall-row .osmosis-stats-row-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The unfilled track is a recessive step of the surface, so the fill reads as
+   magnitude across the whole row rather than as a floating block. */
+.osmosis-stats-meter {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.osmosis-stats-meter-fill {
+	height: 100%;
+	border-radius: 3px;
+}
+
+/* ── Image occlusion editor ──────────────────────────────────────
+
+   The canvas reuses .osmosis-occlusion and .osmosis-occlusion-image, so the
+   layout contract the study renderer depends on — wrapper shrink-wrapped to the
+   image, overlay pinned to its edges, 0–1 viewBox stretched across it — is the
+   same one shapes are drawn against. A shape drawn here therefore lands on the
+   same pixels when the card is studied, with no measurement on either side. */
+/* The canvas is the whole point of this modal, so it takes most of the window.
+
+   A flex column with a definite height, and the content pane below it likewise:
+   that is what gives the stage a real height to fit the image into, and it is
+   what stops the modal growing a scrollbar of its own. Two scrollbars — one on
+   the modal, one on the stage — is what capping the image instead of sizing it
+   produced, and neither of them should ever be needed at rest. */
+.osmosis-occlusion-modal {
+	display: flex;
+	flex-direction: column;
+	width: min(1200px, 96vw);
+	/* Both, so Obsidian's own cap on `.modal` cannot leave the height and the
+	   cap disagreeing about how much room the stage actually has. */
+	height: min(900px, 88vh);
+	max-height: 88vh;
+	min-width: 0;
+}
+
+.osmosis-occlusion-modal .modal-content {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	margin: 0;
+}
+
+/* `flex: none` on everything around the stage, so a cramped window shrinks the
+   picture rather than squashing the controls: the stage is the one row with
+   room to give. */
+.osmosis-occlusion-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex-wrap: wrap;
+	flex: none;
+	margin-bottom: 10px;
+}
+
+.osmosis-occlusion-modal .modal-button-container {
+	flex: none;
+}
+
+.osmosis-occlusion-tools {
+	display: flex;
+	gap: 2px;
+}
+
+.osmosis-occlusion-tool {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 6px;
+}
+
+.osmosis-occlusion-tool.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.osmosis-occlusion-field {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* Takes whatever height the toolbar, hint, and buttons leave, and is the one
+   thing in the modal that ever scrolls — and only once the user has zoomed in,
+   since zoom 1 fits the whole image inside it.
+
+   No padding: the stage's own content box is what the fit is measured against,
+   so keeping it free of padding means the measurement needs no constant that
+   has to be kept in step with this file. `safe center` because a centred item
+   that overflows its scroll container has its leading edge pushed into
+   territory the scrollbar cannot reach; `safe` gives that case up on centring
+   and keeps the whole canvas reachable. */
+.osmosis-occlusion-stage {
+	display: flex;
+	align-items: safe center;
+	justify-content: safe center;
+	flex: 1;
+	min-height: 0;
+	min-width: 0;
+	overflow: auto;
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+}
+
+/* Zoom *sets* the wrapper's width rather than capping the image's.
+   `max-width`/`max-height` only ever constrain, so on a large window the image
+   was already inside both caps and raising them did nothing — zoom looked dead.
+   Where a cap did bind, the picture grew but this wrapper did not, and the
+   overlay pinned to it desynced from the image: masks left sitting off the
+   features they were drawn on.
+
+   `--osmosis-occlusion-fit` is the width at which the whole picture fits the
+   stage, measured in TypeScript because CSS cannot express "contain" for a box
+   that must stay exactly the image's box. Zoom multiplies it, so zoom 1 shows
+   everything whatever the aspect ratio, and Zoom to fit returns to precisely
+   that. `max-width: none` overrides the shared wrapper rule, which would
+   otherwise clamp the box back to 100% the moment zoom passed 1. */
+.osmosis-occlusion-canvas {
+	display: block;
+	flex: none;
+	width: calc(var(--osmosis-occlusion-fit, 100%) * var(--osmosis-occlusion-zoom, 1));
+	max-width: none;
+}
+
+.osmosis-occlusion-canvas .osmosis-occlusion-image {
+	width: 100%;
+	height: auto;
+	max-width: none;
+	max-height: none;
+	user-select: none;
+}
+
+/* Unlike the study overlay, this one is the pointer target — every draw, move,
+   and resize gesture arrives here. */
+/* `user-select` does the job `preventDefault()` on pointerdown used to: it stops
+   a drag selecting the modal's text, without suppressing the compatibility mouse
+   events that `dblclick` — closing a polygon, inserting a vertex — is built out
+   of. */
+.osmosis-occlusion-editor-layer {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+	user-select: none;
+	cursor: crosshair;
+}
+
+/* `touch-action: none` is what lets one finger draw, and it also means the
+   browser will not scroll the stage for us — hence the Pan tool, and the
+   two-finger gestures the modal implements itself. */
+.osmosis-occlusion-editor-layer.is-panning {
+	cursor: grab;
+}
+
+.osmosis-occlusion-editor-layer.is-panning:active {
+	cursor: grabbing;
+}
+
+/* Editing masks are translucent so the picture underneath stays visible while
+   shapes are placed — the answer is exactly what the user is aiming at. */
+.osmosis-occlusion-mask.is-editing {
+	fill: var(--osmosis-occlusion-mask);
+	fill-opacity: 0.55;
+}
+
+.osmosis-occlusion-mask.is-selected {
+	fill: var(--osmosis-occlusion-target);
+	stroke: var(--text-on-accent);
+	stroke-width: 2;
+}
+
+/* The translucency toggle: masks drawn solid, so the canvas previews what the
+   card will actually hide. Editing is translucent by default because you are
+   aiming at the thing underneath; this is for checking coverage once you have. */
+.osmosis-occlusion-canvas.is-opaque .osmosis-occlusion-mask.is-editing {
+	fill-opacity: 1;
+}
+
+.osmosis-occlusion-mask.is-preview {
+	fill-opacity: 0.3;
+	stroke-dasharray: 4 3;
+}
+
+.osmosis-occlusion-handle {
+	fill: var(--background-primary);
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+}
+
+/* The rotation grip and its stem. Both sit inside the group that carries the
+   shape's own transform, so they swing round with it and are grabbed exactly
+   where they are drawn. */
+.osmosis-occlusion-rotate {
+	fill: var(--background-primary);
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+	cursor: grab;
+	pointer-events: auto;
+}
+
+.osmosis-occlusion-rotate-stem {
+	stroke: var(--interactive-accent);
+	stroke-width: 1;
+	vector-effect: non-scaling-stroke;
+	pointer-events: none;
+}
+
+/* Polygon vertices. Drawn as ellipses sized in per-axis normalised units for the
+   same reason the box handles are rects: the 0–1 space is stretched to the
+   image's aspect ratio, so a circle in it would come out as the wrong ellipse. */
+.osmosis-occlusion-vertex {
+	fill: var(--interactive-accent);
+	stroke: var(--background-primary);
+	stroke-width: 2;
+	vector-effect: non-scaling-stroke;
+}
+
+/* The polygon still being drawn: an open path, so it never reads as a finished
+   mask before it is one. */
+.osmosis-occlusion-draft {
+	fill: none;
+	stroke: var(--interactive-accent);
+	stroke-width: 2;
+	stroke-dasharray: 4 3;
+	vector-effect: non-scaling-stroke;
+}
+
+/* Only the labels take the pointer; the layer itself stays transparent to it, so
+   a drag starting on bare image reaches the mask overlay underneath.
+
+   `touch-action: none` for the same reason the overlay takes it, and it has to be
+   repeated here: touch-action is resolved on the element the finger actually
+   lands on, and a label is HTML sitting *above* the overlay rather than part of
+   it. Without it the browser claimed a label drag as a scroll gesture a few
+   pixels in and fired `pointercancel`, so a label could be nudged and no further
+   — while a shape, whose drag lands on the overlay, moved freely. Pointer
+   capture cannot rescue this: the gesture is already gone by the time it would
+   matter. `user-select` likewise mirrors the overlay, so a drag does not select
+   the label's own text. */
+.osmosis-occlusion-annotations.is-editing .osmosis-occlusion-annotation {
+	pointer-events: auto;
+	cursor: move;
+	touch-action: none;
+	user-select: none;
+	border: 1px solid var(--background-modifier-border);
+}
+
+.osmosis-occlusion-annotation.is-selected {
+	border-color: var(--interactive-accent);
+	box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.osmosis-occlusion-annotation-input {
+	position: absolute;
+	left: var(--osmosis-annotation-x, 0%);
+	top: var(--osmosis-annotation-y, 0%);
+	width: 12em;
+	max-width: 60%;
+	padding: 1px 4px;
+	font-size: var(--font-ui-small);
+	pointer-events: auto;
+}
+
+.osmosis-occlusion-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	flex: none;
+	margin-top: 8px;
 }

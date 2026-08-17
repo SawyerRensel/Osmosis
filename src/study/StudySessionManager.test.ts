@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { CardStore } from "../store/CardStore";
 import { FSRSScheduler } from "../database/FSRSScheduler";
-import { StudySessionManager } from "./StudySessionManager";
-import type { Card } from "../database/types";
+import { StudySessionManager, priorIntervalSeconds } from "./StudySessionManager";
+import type { Card, StudyMode } from "../database/types";
+import type { ReviewLogEntry } from "../store/ReviewLog";
 
 let store: CardStore;
 let scheduler: FSRSScheduler;
@@ -160,7 +161,13 @@ describe("FSRS integration", () => {
 
 describe("StudySessionManager schedule-write routing", () => {
 	interface FenceCall { cardId: string; kind: "write" | "remove" }
-	interface LineCall { notePath: string; blockId: string; kind: "set" | "remove" | "disable" | "enable" }
+	/** `group` is recorded only when one was passed, so plain line cards keep asserting flat. */
+	interface LineCall {
+		notePath: string;
+		blockId: string;
+		kind: "set" | "remove" | "disable" | "enable";
+		group?: string;
+	}
 
 	function makeManager() {
 		const fenceCalls: FenceCall[] = [];
@@ -177,14 +184,34 @@ describe("StudySessionManager schedule-write routing", () => {
 			},
 		};
 		const scheduleStore = {
-			setSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "set" });
+			setSchedule: (notePath: string, blockId: string, _schedule: unknown, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "set", ...(group !== undefined && { group }) });
 			},
-			removeSchedule: (notePath: string, blockId: string) => {
-				lineCalls.push({ notePath, blockId, kind: "remove" });
+			removeSchedule: (notePath: string, blockId: string, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "remove", ...(group !== undefined && { group }) });
 			},
-			setDisabled: (notePath: string, blockId: string, disabled: boolean) => {
-				lineCalls.push({ notePath, blockId, kind: disabled ? "disable" : "enable" });
+			setDisabled: (notePath: string, blockId: string, disabled: boolean, group?: string) => {
+				lineCalls.push({
+					notePath,
+					blockId,
+					kind: disabled ? "disable" : "enable",
+					...(group !== undefined && { group }),
+				});
+			},
+		};
+		const logged: ReviewLogEntry[] = [];
+		const reviewLog = {
+			record: (entry: ReviewLogEntry) => {
+				logged.push(entry);
+			},
+			discardBuffered: (cardId: string) => {
+				for (let i = logged.length - 1; i >= 0; i--) {
+					if (logged[i]?.c === cardId) {
+						logged.splice(i, 1);
+						return true;
+					}
+				}
+				return false;
 			},
 		};
 
@@ -193,9 +220,11 @@ describe("StudySessionManager schedule-write routing", () => {
 			scheduler,
 			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			"sequential",
 			scheduleStore,
+			reviewLog,
 		);
-		return { manager, fenceCalls, lineCalls };
+		return { manager, fenceCalls, lineCalls, logged };
 	}
 
 	it("routes line-card ratings to the schedule store, not the fence writer", async () => {
@@ -212,6 +241,45 @@ describe("StudySessionManager schedule-write routing", () => {
 		expect(fenceCalls).toHaveLength(0);
 		expect(lineCalls).toEqual([
 			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
+		]);
+	});
+
+	it("routes an occluded line card's rating to its per-group frontmatter entry", async () => {
+		// It carries cardType "occlusion" but still lives on a line, so the block
+		// ID is what decides the carrier. Routing on the type instead sent it to
+		// the fence writer, which had no fence called `os-elev001-c2` to write to
+		// and silently lost the review.
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		store.addCard(makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		}));
+
+		await manager.recordReview("notes/bridges.md#^os-elev001-c2", 3);
+
+		expect(fenceCalls).toHaveLength(0);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "set", group: "c2" },
+		]);
+	});
+
+	it("excludes an occluded line card through its group entry", async () => {
+		const { manager, lineCalls } = makeManager();
+		const card = makeCard({
+			id: "notes/bridges.md#^os-elev001-c2",
+			notePath: "notes/bridges.md",
+			cardType: "occlusion",
+			blockId: "os-elev001",
+			occlusionGroup: "c2",
+		});
+		store.addCard(card);
+
+		expect(manager.setLineCardDisabled(card, true)).toBe(true);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "disable", group: "c2" },
 		]);
 	});
 
@@ -258,5 +326,300 @@ describe("StudySessionManager schedule-write routing", () => {
 		expect(lineCalls).toEqual([
 			{ notePath: "notes/bio.md", blockId: "os-a1b2c3", kind: "set" },
 		]);
+	});
+});
+
+describe("StudySessionManager fence-write staging", () => {
+	interface StageCall { notePath: string; cardId: string; kind: "stage" | "stage-remove" }
+	interface WriteCall { path: string; cardId: string; kind: "write" | "remove" }
+
+	function makeManager(mode: StudyMode) {
+		const staged: StageCall[] = [];
+		const written: WriteCall[] = [];
+
+		const fenceWriter = {
+			stageSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage" });
+			},
+			stageRemoveSchedule: (notePath: string, cardId: string) => {
+				staged.push({ notePath, cardId, kind: "stage-remove" });
+			},
+			writeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "write" });
+				return Promise.resolve();
+			},
+			removeSchedule: (file: { path: string }, cardId: string) => {
+				written.push({ path: file.path, cardId, kind: "remove" });
+				return Promise.resolve();
+			},
+		};
+
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			mode,
+		);
+		return { manager, staged, written };
+	}
+
+	// The bug this staging exists for: a fence keeps its schedule inside its own
+	// source, so writing one mid-session rewrites the block reading view is
+	// displaying and scrolls the reader off the card they just answered.
+	it("stages a contextual rating instead of rewriting the note being read", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+		]);
+	});
+
+	it("still applies the rating to the store while the write is staged", async () => {
+		const { manager } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+
+		expect(store.getCard("abc12345")?.reps).toBe(1);
+		expect(store.getCard("abc12345")?.due).toBeGreaterThan(Date.now());
+	});
+
+	// Nothing is displaying the note's source in these surfaces, so a review
+	// belongs on disk the moment it happens.
+	for (const mode of ["sequential", "spatial"] as const) {
+		it(`writes a ${mode} rating through immediately`, async () => {
+			const { manager, staged, written } = makeManager(mode);
+			store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+			await manager.recordReview("abc12345", 3);
+
+			expect(staged).toHaveLength(0);
+			expect(written).toEqual([
+				{ path: "notes/diagrams.md", cardId: "abc12345", kind: "write" },
+			]);
+		});
+	}
+
+	// An undo that wrote through would be overwritten by the staged rating it
+	// was undoing, the moment that rating flushed.
+	it("stages a contextual undo alongside the rating it reverts", async () => {
+		const { manager, staged, written } = makeManager("contextual");
+		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
+
+		await manager.recordReview("abc12345", 3);
+		await manager.revertReview("abc12345", null);
+
+		expect(written).toHaveLength(0);
+		expect(staged).toEqual([
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage" },
+			{ notePath: "notes/diagrams.md", cardId: "abc12345", kind: "stage-remove" },
+		]);
+	});
+});
+
+describe("StudySessionManager review logging", () => {
+	interface Harness {
+		manager: StudySessionManager;
+		logged: ReviewLogEntry[];
+	}
+
+	/** A manager wired to a capturing review log, in the given study mode. */
+	function makeManager(mode: StudyMode = "sequential"): Harness {
+		const logged: ReviewLogEntry[] = [];
+		const reviewLog = {
+			record: (entry: ReviewLogEntry) => {
+				logged.push(entry);
+			},
+			discardBuffered: (cardId: string) => {
+				for (let i = logged.length - 1; i >= 0; i--) {
+					if (logged[i]?.c === cardId) {
+						logged.splice(i, 1);
+						return true;
+					}
+				}
+				return false;
+			},
+		};
+
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			{
+				writeSchedule: () => Promise.resolve(),
+				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
+			} as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			mode,
+			undefined,
+			reviewLog,
+		);
+		return { manager, logged };
+	}
+
+	it("logs exactly one entry per answer", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		await manager.recordReview("os-a1", 3);
+		await manager.recordReview("os-a1", 2);
+
+		expect(logged).toHaveLength(2);
+		expect(logged.map((e) => e.r)).toEqual([3, 2]);
+	});
+
+	it("records the card, rating, and resulting state", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		const schedule = await manager.recordReview("os-a1", 4, { now: 1_754_500_000_000 });
+
+		expect(logged[0]).toMatchObject({
+			t: 1_754_500_000_000,
+			c: "os-a1",
+			r: 4,
+			s: schedule.state,
+			st: schedule.stability,
+			d: schedule.difficulty,
+		});
+	});
+
+	it("records the interval granted, in seconds", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+		const now = 1_754_500_000_000;
+
+		const schedule = await manager.recordReview("os-a1", 3, { now });
+
+		expect(logged[0]?.iv).toBe(Math.round((schedule.due - now) / 1000));
+	});
+
+	it("records elapsed time on screen", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		await manager.recordReview("os-a1", 3, { elapsedMs: 4200 });
+
+		expect(logged[0]?.e).toBe(4200);
+	});
+
+	it("records zero elapsed time when the surface did not supply it", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		await manager.recordReview("os-a1", 3);
+
+		expect(logged[0]?.e).toBe(0);
+	});
+
+	it("attributes the answer to the manager's study mode", async () => {
+		for (const mode of ["sequential", "contextual", "spatial"] as const) {
+			const { manager, logged } = makeManager(mode);
+			store.addCard(makeCard({ id: "os-a1" }));
+
+			await manager.recordReview("os-a1", 3);
+
+			expect(logged[0]?.m).toBe(mode);
+		}
+	});
+
+	it("logs a brand-new card's first answer", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-new" })); // no schedule fields
+
+		await manager.recordReview("os-new", 3);
+
+		expect(logged).toHaveLength(1);
+		expect(logged[0]?.c).toBe("os-new");
+	});
+
+	it("drops the entry when the answer is undone", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		await manager.recordReview("os-a1", 1);
+		await manager.revertReview("os-a1", null);
+
+		expect(logged).toEqual([]);
+	});
+
+	it("drops only the undone answer, not earlier ones", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+		store.addCard(makeCard({ id: "os-b2" }));
+
+		await manager.recordReview("os-a1", 3);
+		await manager.recordReview("os-b2", 1);
+		await manager.revertReview("os-b2", null);
+
+		expect(logged.map((e) => e.c)).toEqual(["os-a1"]);
+	});
+
+	it("works without a review log attached", async () => {
+		const manager = new StudySessionManager(
+			store,
+			scheduler,
+			{
+				writeSchedule: () => Promise.resolve(),
+				removeSchedule: () => Promise.resolve(),
+				stageSchedule: () => undefined,
+				stageRemoveSchedule: () => undefined,
+			} as unknown as import("../store/FenceWriter").FenceWriter,
+			(notePath) => ({ path: notePath } as import("obsidian").TFile),
+			"sequential",
+		);
+		store.addCard(makeCard({ id: "os-a1" }));
+
+		await expect(manager.recordReview("os-a1", 3)).resolves.toBeDefined();
+	});
+});
+
+describe("priorIntervalSeconds", () => {
+	it("is zero for a card with no schedule", () => {
+		expect(priorIntervalSeconds(undefined)).toBe(0);
+		expect(priorIntervalSeconds({ id: "os-a1" } as Card)).toBe(0);
+	});
+
+	it("is due minus lastReview when both are present", () => {
+		const due = Date.parse("2026-08-01T09:00:00Z");
+		const card = {
+			id: "os-a1",
+			due,
+			lastReview: due - 4 * 86_400_000,
+		} as Card;
+
+		expect(priorIntervalSeconds(card)).toBe(4 * 86_400);
+	});
+
+	// `serializeScheduleEntry` omits `lastReview` when it is null, so a card can
+	// carry a real `due` and no `lastReview`. Falling back to 0 here filed a
+	// scheduled card as brand new and dropped its review out of the retention
+	// and recall panels, which filter on this value.
+	it("falls back to stability when lastReview is missing", () => {
+		const card = {
+			id: "os-a1",
+			due: Date.parse("2026-08-01T09:00:00Z"),
+			stability: 4.21,
+			state: "review",
+		} as Card;
+
+		expect(priorIntervalSeconds(card)).toBe(Math.round(4.21 * 86_400));
+	});
+
+	it("treats a mature stability as mature", () => {
+		const card = { id: "os-a1", due: Date.now(), stability: 30 } as Card;
+		expect(priorIntervalSeconds(card)).toBeGreaterThanOrEqual(21 * 86_400);
+	});
+
+	it("never returns a negative interval", () => {
+		const due = Date.parse("2026-08-01T09:00:00Z");
+		const card = { id: "os-a1", due, lastReview: due + 86_400_000 } as Card;
+		expect(priorIntervalSeconds(card)).toBe(0);
 	});
 });

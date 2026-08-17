@@ -9,6 +9,68 @@ All notable changes to Osmosis will be documented in this page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] - 2026-08-17
+
+### Added
+
+#### Image Occlusion
+- **Image occlusion flashcards.** Right-click any image (or run **Create image occlusion**) to open a canvas editor and mask parts of the picture. Rectangle, ellipse, polygon, and text-annotation tools, plus select, rotate (++shift++ to snap to 15°), duplicate, delete, group, ungroup, align, zoom, translucency toggle, pan, and multi-level undo/redo
+- **A shape group is a card**, exactly like a cloze group: masks sharing a group hide and reveal together and are scheduled independently. Two modes — **Hide all, guess 1** and **Hide 1, guess 1**
+- Masks live where the card's data already lives: in the `osmosis` fence header bound to its embed by a `{label}`, or under `occlude:` in the note's `osmosis-schedule`. Coordinates are normalised 0–1, so masks survive resizing, retina variants, and the `|300` suffix
+- Occluded images on a plain line tag themselves with a block ID and opt the note in on save
+- Embeds inside `osmosis` fences are rewritten when the image is renamed — Obsidian's own rename can't see inside a code fence
+- Occlusion cards study in all three modes, with the revealed group ringed on the answer
+
+#### Dashboard, Browser, and Statistics
+- **The Osmosis dashboard is now a hub**: an operator bar with **Browse** and **Stats** above the deck tree, plus a **Total** column (new + learn + due — what's waiting now, not the deck's card count)
+- **Osmosis Browser** — every card in the vault as a Bases view, in a table or card layout. Twelve resizable, sortable columns; deferred markdown rendering of fronts and backs; filters for card state, due window, card type, and suspended cards; in-toolbar search over front, back, deck, and ID
+- **Browser mutations** — suspend/unsuspend, reset (clears scheduling, keeps history), change deck, and delete, over click, ++ctrl++/++shift++, and long-press selections. Session-level undo/redo, with commands for both. Deleting a line card strips its block ID and never touches your prose
+- **Statistics dashboard** — 17 panels: Today, Future due, Calendar heatmap, Reviews, Review time, Card counts, Review intervals, Card stability, Card difficulty, Card retrievability, Study mode, Hourly breakdown, Answer buttons, True retention, **Recall by study mode**, **Recall by card type**, and **Weakest notes**. Deck, study-mode, and history scope controls apply to every panel; drag a panel by its grip to reorder, on desktop or touch
+- Colour-vision-safe series palette validated pair by pair in both themes
+
+#### Study
+- **Every card type is now studiable in every mode.** Contextual and spatial study play the store's cards rather than re-deriving them, so a multi-cloze fence asks one question per group, a bidirectional fence asks both directions, and occlusion steps per group — everywhere, with every rating recorded against the card that was asked
+- Peek and Study appear in a note's header for **any** card, not just line cards
+- A cloze reveals **in place**; basic and bidirectional cards stack. Cards that aren't due render normally during a session — context, not targets
+
+#### Flashcard Authoring
+- **Rapid Flashcard Mode** — a toggle (note ⋯ menu, or **Toggle rapid flashcard mode**) that turns plain typing into cards: one blank line ends the front, two commit the card. Multi-line fronts and backs, code blocks on either side (the fence is sized to fit), and it will never swallow an `osmosis` fence written moments earlier
+- The **Insert card** commands and Rapid Flashcard Mode now add `osmosis-cards: true` to the note, so a card typed into a fresh note is a real card
+
+#### Review History
+- **An append-only review log**, one Markdown shard per month per device, in `Osmosis/Reviews` by default. Every answer records rating, resulting state, granted and prior interval, stability, difficulty, time on screen, and study mode
+- Markdown rather than `.jsonl` so Obsidian Sync carries it with no per-device configuration; one writer per file so two devices can never conflict; read by a bounded-memory streaming pass that stays fast over years of history
+- New settings: **Review log folder** and **Device name**
+
+#### Mind Mapping
+- **Node editing shows the real Markdown.** The edit box opens on the line's source — list markers, heading hashes, ordered numbers, checkboxes, embeds — so a bullet can be retyped as a heading without leaving the map. The trailing block ID and the leading indentation stay hidden and are restored on save, so a line that changes kind keeps its card
+- The edit box scales to the current zoom, wraps like its node, and follows pan and zoom
+- **Exclude folders** and **Exclude tags** settings, which beat every opt-in
+
+### Changed
+
+- Derived card schedules **nest under their group key** (`r:`, `c1:`, `c2:`) with camelCase fields, matching frontmatter, instead of flat prefixed keys (`r-due:`, `c1-due:`). Both spellings are read; a card is converted the next time its schedule is written
+- The mind map's ribbon icon is gone. The dashboard is the single ribbon entry (:lucide-brain-circuit:), and maps open from the note header, the file menu, or the command palette — all of which know which note to map
+- Reading view no longer hides card answers outside a session; hiding belongs to Peek and Study
+- `exclude: true` fences still generate their card, so a suspended card can be found and unsuspended in the browser
+- Resetting one cloze group no longer strips its siblings' schedules
+
+### Fixed
+
+- **Mind map nodes ghosted or vanished while panning on iOS.** WebKit strands composited content inside a `<foreignObject>` when the SVG `viewBox` changes; the map now pans with a CSS transform there, the way Obsidian's own Canvas does
+- Branch lines crossing the viewport are kept when their nodes leave it, instead of being culled with them
+- Tapping to reveal an occluded image no longer opens Obsidian's image viewer
+- The mind map header button uses Obsidian's own view-action class, so it sits and spaces like every other header icon
+- The stats deck dropdown no longer stretches arbitrarily wide on mobile
+- The mind map edit overlay no longer opens at the wrong size or drifts when the map is zoomed
+- `injectFenceIdsIntoContent` could sever an occlusion block when adding a missing `id:`
+
+## [0.0.3] - 2026-07-25
+
+### Changed
+
+- README rewritten around the documentation site, and the plugin description tightened. No functional changes
+
 ## [0.0.2] - 2026-07-25
 
 ### Added
@@ -41,7 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Group numbers you write are preserved verbatim on card IDs, so adding a cloze later never renumbers existing schedules. Unlabeled clozes are numbered above the highest labeled one, in source order
 
 #### Study Sessions
-- **Intra-session learning and relearning steps.** Cards rated *Again*, or still working through their learning steps, reappear within the same session after a timer-based delay, matching Anki's behavior. When only pending timers remain, a "Waiting for next card" countdown appears
+- **Intra-session learning and relearning steps.** Cards rated *Again*, or still working through their learning steps, reappear within the same session after a timer-based delay, as standard spaced-repetition schedulers do. When only pending timers remain, a "Waiting for next card" countdown appears
 - New **Learning steps** and **Relearning steps** settings (e.g. `1m, 10m`); step position persists in the fence's scheduling metadata
 - **Multi-level undo** in sequential and contextual study via ++ctrl+z++ or the undo button — reverts ratings (restoring the previous FSRS schedule) as well as excludes
 - **Exclude card** toggle in both sequential (++e++) and contextual study, written as `exclude:` fence metadata, with eye / eye-off icons
@@ -168,7 +230,7 @@ Initial release of Osmosis — an Obsidian plugin that unifies mind mapping, fla
 - Deck assignments via frontmatter
 
 #### Study Modes
-- **Sequential study**: Classic Anki-style card-by-card review modal with rating buttons
+- **Sequential study**: Classic card-by-card review modal with rating buttons
 - **Spatial study**: Study cards directly on the mind map with flip-to-reveal
 - **Contextual study**: Study inline within the note view
 - Dashboard with deck overview and study statistics

@@ -1,15 +1,30 @@
 import type { TFile } from "obsidian";
 import type { FSRSScheduler, FSRSRating } from "../database/FSRSScheduler";
-import type { Card, ScheduleData } from "../database/types";
+import type { Card, ScheduleData, StudyMode } from "../database/types";
 import type { CardStore } from "../store/CardStore";
-import type { FenceWriter } from "../store/FenceWriter";
+import type { FenceWriter, ScheduleFields } from "../store/FenceWriter";
+import type { ReviewLogEntry } from "../store/ReviewLog";
 import type { DeckScope, StudyCard, DeckCounts } from "./types";
 
 /** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
 export interface LineScheduleWriter {
-	setSchedule(notePath: string, blockId: string, schedule: ScheduleData): void;
-	removeSchedule(notePath: string, blockId: string): void;
-	setDisabled(notePath: string, blockId: string, disabled: boolean): void;
+	setSchedule(notePath: string, blockId: string, schedule: ScheduleData, group?: string): void;
+	removeSchedule(notePath: string, blockId: string, group?: string): void;
+	setDisabled(notePath: string, blockId: string, disabled: boolean, group?: string): void;
+}
+
+/** Destination for review-history entries (the append-only review log). */
+export interface ReviewLogWriter {
+	record(entry: ReviewLogEntry): void;
+	discardBuffered(cardId: string): boolean;
+}
+
+/** Per-answer detail only the calling study surface can supply. */
+export interface ReviewContext {
+	/** Answer time, epoch ms. Defaults to now. */
+	now?: number;
+	/** How long the card was on screen before being answered, ms. */
+	elapsedMs?: number;
 }
 
 /**
@@ -22,7 +37,15 @@ export class StudySessionManager {
 		private readonly scheduler: FSRSScheduler,
 		private readonly fenceWriter: FenceWriter,
 		private readonly resolveFile: (notePath: string) => TFile | null,
+		/**
+		 * Study surface every answer through this manager is attributed to in
+		 * the review log. Fixed per instance rather than passed per call: each
+		 * surface builds its own manager and has exactly one mode, so this is
+		 * one less thing a new call site can forget.
+		 */
+		private readonly mode: StudyMode,
 		private readonly scheduleStore?: LineScheduleWriter,
+		private readonly reviewLog?: ReviewLogWriter,
 	) {}
 
 	/**
@@ -72,10 +95,21 @@ export class StudySessionManager {
 	async recordReview(
 		cardId: string,
 		rating: FSRSRating,
-		now?: number,
+		context?: ReviewContext,
 	): Promise<ScheduleData> {
-		const ts = now ?? Date.now();
+		const ts = context?.now ?? Date.now();
 		const card = this.store.getCard(cardId);
+
+		// The interval the card is sitting on, before this answer replaces it —
+		// what every maturity split on the stats dashboard reads.
+		//
+		// It has to be captured *here*. `updateSchedule` below mutates the stored
+		// card in place, so by the time the log entry is built `card.due` is
+		// already the interval this answer produced. Reading it from `card`
+		// rather than from `currentSchedule` for a second reason: a card with no
+		// schedule gets a synthetic one below, whose interval would read as a
+		// real prior interval it never had.
+		const priorIv = priorIntervalSeconds(card);
 
 		// Build current schedule from card data
 		const currentSchedule: ScheduleData = card && card.due !== undefined
@@ -113,23 +147,37 @@ export class StudySessionManager {
 				this.scheduleStore?.setSchedule(card.notePath, card.blockId, {
 					...update.schedule,
 					lastReview: update.schedule.lastReview ?? ts,
-				});
+				}, card.occlusionGroup);
 			} else {
-				const file = this.resolveFile(card.notePath);
-				if (file) {
-					void this.fenceWriter.writeSchedule(file, cardId, {
-						stability: update.schedule.stability,
-						difficulty: update.schedule.difficulty,
-						due: update.schedule.due,
-						lastReview: update.schedule.lastReview ?? ts,
-						reps: update.schedule.reps,
-						lapses: update.schedule.lapses,
-						state: update.schedule.state,
-						learningSteps: update.schedule.learningSteps,
-					});
-				}
+				this.persistFenceSchedule(card.notePath, cardId, {
+					stability: update.schedule.stability,
+					difficulty: update.schedule.difficulty,
+					due: update.schedule.due,
+					lastReview: update.schedule.lastReview ?? ts,
+					reps: update.schedule.reps,
+					lapses: update.schedule.lapses,
+					state: update.schedule.state,
+					learningSteps: update.schedule.learningSteps,
+				});
 			}
 		}
+
+		// Review *history*, separate from the state above. Everything written so
+		// far is a snapshot this answer overwrote; the log is the only place the
+		// fact that a review happened at this moment survives, and it cannot be
+		// reconstructed later from reps or lastReview.
+		this.reviewLog?.record({
+			t: ts,
+			c: cardId,
+			r: rating,
+			s: update.schedule.state,
+			iv: Math.max(0, Math.round((update.schedule.due - ts) / 1000)),
+			pi: priorIv,
+			st: update.schedule.stability,
+			d: update.schedule.difficulty,
+			e: Math.max(0, Math.round(context?.elapsedMs ?? 0)),
+			m: this.mode,
+		});
 
 		return update.schedule;
 	}
@@ -142,6 +190,11 @@ export class StudySessionManager {
 		cardId: string,
 		previousSchedule: ScheduleData | null,
 	): Promise<void> {
+		// An undo that arrives before the log buffer flushed takes the entry
+		// back out. Once it has reached a shard it stays: the shard is
+		// append-only, and a review that got that far did happen.
+		this.reviewLog?.discardBuffered(cardId);
+
 		const card = this.store.getCard(cardId);
 
 		if (previousSchedule) {
@@ -159,21 +212,18 @@ export class StudySessionManager {
 
 			if (card) {
 				if (isLineCard(card)) {
-					this.scheduleStore?.setSchedule(card.notePath, card.blockId, previousSchedule);
+					this.scheduleStore?.setSchedule(card.notePath, card.blockId, previousSchedule, card.occlusionGroup);
 				} else {
-					const file = this.resolveFile(card.notePath);
-					if (file) {
-						void this.fenceWriter.writeSchedule(file, cardId, {
-							stability: previousSchedule.stability,
-							difficulty: previousSchedule.difficulty,
-							due: previousSchedule.due,
-							lastReview: previousSchedule.lastReview ?? Date.now(),
-							reps: previousSchedule.reps,
-							lapses: previousSchedule.lapses,
-							state: previousSchedule.state,
-							learningSteps: previousSchedule.learningSteps,
-						});
-					}
+					this.persistFenceSchedule(card.notePath, cardId, {
+						stability: previousSchedule.stability,
+						difficulty: previousSchedule.difficulty,
+						due: previousSchedule.due,
+						lastReview: previousSchedule.lastReview ?? Date.now(),
+						reps: previousSchedule.reps,
+						lapses: previousSchedule.lapses,
+						state: previousSchedule.state,
+						learningSteps: previousSchedule.learningSteps,
+					});
 				}
 			}
 		} else {
@@ -182,12 +232,9 @@ export class StudySessionManager {
 
 			if (card) {
 				if (isLineCard(card)) {
-					this.scheduleStore?.removeSchedule(card.notePath, card.blockId);
+					this.scheduleStore?.removeSchedule(card.notePath, card.blockId, card.occlusionGroup);
 				} else {
-					const file = this.resolveFile(card.notePath);
-					if (file) {
-						void this.fenceWriter.removeSchedule(file, cardId);
-					}
+					this.persistFenceRemoval(card.notePath, cardId);
 				}
 			}
 		}
@@ -203,7 +250,7 @@ export class StudySessionManager {
 	setLineCardDisabled(card: Card, disabled: boolean): boolean {
 		if (!isLineCard(card)) return false;
 		this.store.setDisabled(card.id, disabled);
-		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled);
+		this.scheduleStore?.setDisabled(card.notePath, card.blockId, disabled, card.occlusionGroup);
 		return true;
 	}
 
@@ -230,6 +277,44 @@ export class StudySessionManager {
 
 	// ── Private Helpers ───────────────────────────────────────
 
+	/**
+	 * Persist a fence card's new schedule — now, or at the end of the session.
+	 *
+	 * A fence carries its schedule *inside itself*, so writing one during
+	 * contextual study rewrites the very block reading view is displaying: the
+	 * section re-renders, the card is rebuilt, and the reader is scrolled off
+	 * the diagram they just answered. Contextual therefore stages the write and
+	 * flushes it when study stops, exactly as line cards have always done
+	 * through `ScheduleStore`.
+	 *
+	 * Sequential and mind-map study keep writing eagerly. Nothing is displaying
+	 * the note's source there, so there is nothing to disturb, and a review that
+	 * reaches disk the moment it happens is worth more than one that waits.
+	 */
+	private persistFenceSchedule(notePath: string, cardId: string, schedule: ScheduleFields): void {
+		if (this.mode === "contextual") {
+			this.fenceWriter.stageSchedule(notePath, cardId, schedule);
+			return;
+		}
+		const file = this.resolveFile(notePath);
+		if (file) void this.fenceWriter.writeSchedule(file, cardId, schedule);
+	}
+
+	/**
+	 * Persist a fence card's schedule *removal* — an undone review on a card
+	 * that was new. Staged alongside the ratings in contextual study rather than
+	 * written through: a removal that jumped the queue would be overwritten by
+	 * the staged rating it was undoing when that finally flushed.
+	 */
+	private persistFenceRemoval(notePath: string, cardId: string): void {
+		if (this.mode === "contextual") {
+			this.fenceWriter.stageRemoveSchedule(notePath, cardId);
+			return;
+		}
+		const file = this.resolveFile(notePath);
+		if (file) void this.fenceWriter.removeSchedule(file, cardId);
+	}
+
 	private getDueCards(scope: DeckScope, now: number): Card[] {
 		switch (scope.type) {
 			case "single":
@@ -253,7 +338,46 @@ export class StudySessionManager {
 	}
 }
 
-/** A line card whose schedule lives in osmosis-schedule frontmatter. */
+/**
+ * A card whose schedule lives in osmosis-schedule frontmatter.
+ *
+ * The block ID is the test, not the card type: an occluded line card fans out
+ * into one card *per shape group* and those carry `cardType: "occlusion"` while
+ * still living on their line. Demanding `cardType === "line"` here sent their
+ * reviews down the fence branch, where `writeSchedule` looked for a fence
+ * called `os-elev001-c2`, found none, and dropped the schedule without a word.
+ * Every other router in the codebase already keys on `blockId` alone.
+ */
 function isLineCard(card: Card): card is Card & { blockId: string } {
-	return card.cardType === "line" && card.blockId !== undefined;
+	return card.blockId !== undefined;
+}
+
+/** Seconds in a day — the unit `stability` is measured in. */
+const SECONDS_PER_DAY = 86_400;
+
+/**
+ * The interval a card was sitting on before an answer replaced it, in seconds.
+ * Written to each log entry as `pi`, and read by every maturity split on the
+ * stats dashboard.
+ *
+ * `due - lastReview` is the real interval and is used whenever both are there.
+ * But **`lastReview` is optional on a scheduled card**: `serializeScheduleEntry`
+ * omits it from frontmatter when it is null, and a hand-authored
+ * `osmosis-schedule` block may never have carried it. Returning 0 in that case
+ * logged a genuinely scheduled card as though it were brand new, which silently
+ * dropped the review out of the retention and recall panels — they filter on
+ * this value — while `currentSchedule` built a real schedule from the very same
+ * card, because it tests `due` alone. The two tests have to agree on what "has a
+ * prior schedule" means, and `due` is that test.
+ *
+ * Stability is the fallback rather than an invented constant because it is what
+ * FSRS derived the interval from in the first place, so it is the closest
+ * recoverable estimate of the number that went missing.
+ */
+export function priorIntervalSeconds(card: Card | undefined): number {
+	if (card?.due === undefined) return 0;
+	if (card.lastReview !== undefined) {
+		return Math.max(0, Math.round((card.due - card.lastReview) / 1000));
+	}
+	return Math.max(0, Math.round((card.stability ?? 0) * SECONDS_PER_DAY));
 }

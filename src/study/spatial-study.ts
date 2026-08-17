@@ -16,8 +16,9 @@
  *   host and source files.
  */
 
-import type { Card } from "../database/types";
+import type { Card, CardOcclusion } from "../database/types";
 import { lineCardId } from "../card-gen/line-cards";
+import { groupNumber } from "../card-gen/occlusion";
 
 /**
  * Structural view of a laid-out map node — matches `LayoutNode` so the
@@ -29,12 +30,19 @@ export interface SpatialNodeLike {
 }
 
 /**
- * A card that participates in line study: line type with a block ID, and not
+ * A card that participates in line study: one that lives on a line, and is not
  * disabled. Disabled ("excluded") line cards are fully out — peek and study,
  * both surfaces — so this single guard drops them from every filter below.
+ *
+ * **The block ID is the signal, not `cardType`.** An occluded line card fans
+ * out into one card *per shape group*, each carrying `cardType: "occlusion"`
+ * while still sitting on its line. Testing the type instead dropped those from
+ * every filter here, so a note whose only cards were occluded images got no
+ * study or peek button at all. Nothing else in the codebase mints a `blockId`
+ * for a card that is not on a line.
  */
 function isLineCard(card: Card): boolean {
-	return card.cardType === "line" && card.blockId !== undefined && !card.disabled;
+	return card.blockId !== undefined && !card.disabled;
 }
 
 /**
@@ -72,29 +80,275 @@ export function dueOrNewLineCardBlockIds(cards: readonly Card[], now: number): S
 }
 
 /**
- * Card IDs of every line card in the set, regardless of schedule.
+ * The suffix a fence's derived cards carry: `-c1` for a cloze or shape group,
+ * `-r` for the reverse of a bidirectional card. Stripping it yields the fence's
+ * own ID, which is the key a map node can be matched on.
+ */
+const DERIVED_SUFFIX_REGEX = /-(?:c\d+|r)$/;
+
+/**
+ * Whether a card came from an ```osmosis fence rather than a tagged line.
+ *
+ * A line card is identified by its `blockId`; a fence card has none, because a
+ * fence carries its identity in its own `id:` header instead.
+ */
+function isFenceCard(card: Card): boolean {
+	return card.blockId === undefined && !card.disabled;
+}
+
+/**
+ * The fence a card belongs to: its ID with any derived-card suffix removed.
+ *
+ * One fence is one map node but often several cards — three shape groups, two
+ * cloze deletions, a bidirectional pair — so the node has to key on the fence,
+ * exactly as a line keys on its block rather than on the cards sitting on it.
+ * `cardIdsForFenceKey` goes back the other way.
+ *
+ * A hand-written `id:` ending in `-c1` or `-r` would be read as a derived card
+ * of some other fence. Generated IDs never look like that, and the cost of the
+ * collision is two nodes revealing together rather than anything being lost.
+ */
+export function fenceKey(card: Card): string {
+	return card.id.replace(DERIVED_SUFFIX_REGEX, "");
+}
+
+/**
+ * The fence key a map node carries, or null when the node is not an ```osmosis
+ * fence or has no identity yet.
+ *
+ * Read from the node's own text rather than looked up, because that is where a
+ * fence's identity lives: `id:` in the header, which "Generate IDs" writes
+ * there, or the legacy `<!--osmosis-id:…-->` comment on the opening line. A
+ * fence that has neither is not yet a card the store knows about, so a node for
+ * it is correctly no target.
+ */
+export function fenceKeyFromNode(content: string): string | null {
+	const lines = content.split("\n");
+	const opening = lines[0] ?? "";
+	if (!/^\s*(`{3,}|~{3,})osmosis\b/.test(opening)) return null;
+
+	const legacy = /<!--osmosis-id:([a-zA-Z0-9]+)-->/.exec(opening);
+	if (legacy) return legacy[1]!;
+
+	// Metadata is the run of consecutive `key: value` lines below the opener.
+	for (const raw of lines.slice(1)) {
+		const line = raw.trim();
+		if (line === "") break;
+		const id = /^id\s*:\s*(.+)$/i.exec(line);
+		if (id) return id[1]!.trim();
+		if (!/^\w[\w-]*\s*:\s*.*$/.test(line)) break;
+	}
+	return null;
+}
+
+/** Fence keys of every fence card in the set, regardless of schedule. */
+export function allFenceCardKeys(cards: readonly Card[]): Set<string> {
+	const keys = new Set<string>();
+	for (const card of cards) {
+		if (isFenceCard(card)) keys.add(fenceKey(card));
+	}
+	return keys;
+}
+
+/** Fence keys of the fence cards the scheduler would study now. */
+export function dueOrNewFenceCardKeys(cards: readonly Card[], now: number): Set<string> {
+	const keys = new Set<string>();
+	for (const card of cards) {
+		if (isFenceCard(card) && isDueOrNew(card, now)) keys.add(fenceKey(card));
+	}
+	return keys;
+}
+
+/**
+ * The cards a fence key stands for. A node reveals its fence as a whole and
+ * takes one rating for it, so that rating has to reach every card the fence
+ * derived — the same rule an occluded line follows.
+ */
+export function cardIdsForFenceKey(cards: readonly Card[], key: string): string[] {
+	return cards.filter((card) => isFenceCard(card) && fenceKey(card) === key).map((card) => card.id);
+}
+
+/**
+ * The cards a fence key stands for, in the order a study surface asks them:
+ * the fence's own card, then its cloze or shape groups by number, then the
+ * reverse of a bidirectional pair.
+ *
+ * Sorted rather than taken in store order, because the store hands its note
+ * index back in insertion order and an incremental re-sync re-adds an edited
+ * card at the end — so a fence would start asking `c2` before `c1` purely
+ * because `c1` was the group whose wording changed.
+ */
+export function cardsForFenceKey(cards: readonly Card[], key: string): Card[] {
+	return cards
+		.filter((card) => isFenceCard(card) && fenceKey(card) === key)
+		.sort((a, b) => askRank(a.id, key) - askRank(b.id, key));
+}
+
+/**
+ * The questions a fence asks in place this session: its cards in ask order,
+ * narrowed to the ones the scheduler would ask now.
+ *
+ * This is to a fence what `occlusionSteps` is to a diagram — the sequence, kept
+ * pure so the surface that draws it and the surface that counts it derive it the
+ * same way. It lives here rather than widening `OcclusionStep`, because a cloze
+ * or bidirectional step has no `diagram` or `group` and making those optional
+ * would weaken the type the mask renderer depends on.
+ *
+ * Filtering by time is what keeps a fence honest about its size: a three-group
+ * cloze fence with one group due is one question, not three — the same rule an
+ * occluded diagram and a mind map node already follow.
+ */
+export function dueCardsForFenceKey(cards: readonly Card[], key: string, now: number): Card[] {
+	return cardsForFenceKey(cards, key).filter((card) => isDueOrNew(card, now));
+}
+
+/**
+ * `<id>` first, then `<id>-cN` by group number, then `<id>-r`.
+ *
+ * `key` is whatever the cards hang off — a fence ID or a line key — so the same
+ * ranking orders an occluded line's `…#^block/c1`, `/c2` as well: the separator
+ * is dropped with the first character of the suffix either way.
+ */
+function askRank(id: string, key: string): number {
+	const suffix = id.slice(key.length);
+	if (suffix === "") return 0;
+	if (suffix === "-r") return Number.MAX_SAFE_INTEGER;
+	return groupNumber(suffix.slice(1));
+}
+
+/**
+ * Line keys of every line card in the set, regardless of schedule.
  * Same filter as `allLineCardBlockIds`, keyed collision-safely for maps
  * that mix cards from several notes (transclusion).
+ *
+ * **A line key, not a card ID.** They are the same string for an ordinary line
+ * card, but an occluded one fans out into a card *per shape group* (`…-c1`,
+ * `…-c2`) while still sitting on one line — and a map node *is* a line. Keying
+ * on the card ID meant no node key ever matched, so occluded nodes were never
+ * hidden by peek or study even though the header buttons counted them. Use
+ * `cardIdsForLineKey` to get back to the cards a key stands for.
  */
 export function allLineCardIds(cards: readonly Card[]): Set<string> {
 	const ids = new Set<string>();
 	for (const card of cards) {
-		if (isLineCard(card)) ids.add(card.id);
+		if (isLineCard(card)) ids.add(lineCardId(card.notePath, card.blockId!));
 	}
 	return ids;
 }
 
 /**
- * Card IDs of the line cards the scheduler would study now. Same filter
+ * Line keys of the line cards the scheduler would study now. Same filter
  * as `dueOrNewLineCardBlockIds`, keyed collision-safely for maps that
  * mix cards from several notes (transclusion).
  */
 export function dueOrNewLineCardIds(cards: readonly Card[], now: number): Set<string> {
 	const ids = new Set<string>();
 	for (const card of cards) {
-		if (isLineCard(card) && isDueOrNew(card, now)) ids.add(card.id);
+		if (isLineCard(card) && isDueOrNew(card, now)) ids.add(lineCardId(card.notePath, card.blockId!));
 	}
 	return ids;
+}
+
+/**
+ * The cards a line key stands for: one for an ordinary line card, one per shape
+ * group for an occluded one.
+ *
+ * Both in-place surfaces reveal a whole line at once and take a single rating
+ * for it, so that rating has to reach every card the line carries. Looking the
+ * key up as a card ID instead found nothing for an occluded line and dropped
+ * the review silently — the schedule never moved, and the card came back next
+ * session as though it had never been answered.
+ */
+export function cardIdsForLineKey(cards: readonly Card[], key: string): string[] {
+	return cards
+		.filter((card) => isLineCard(card) && lineCardId(card.notePath, card.blockId!) === key)
+		.map((card) => card.id);
+}
+
+/**
+ * The occluded diagram on the line a key names, or null when it carries none.
+ *
+ * Every card the line fans out into holds the whole shape set, so the first one
+ * answers it. Resolving through the *line key* is the whole point: an occluded
+ * line's cards are `…#^block/c1`, `…/c2`, `…/c3`, so looking the key up as a
+ * card ID finds nothing and the caller concludes there are no masks — which is
+ * how the mind map came to blank an occluded node behind a "?" and then reveal
+ * it unmasked.
+ */
+export function occlusionForLineKey(cards: readonly Card[], key: string): CardOcclusion | null {
+	for (const card of cards) {
+		if (isLineCard(card) && lineCardId(card.notePath, card.blockId!) === key && card.occlusion) {
+			return card.occlusion;
+		}
+	}
+	return null;
+}
+
+/**
+ * The key of the *node* a card is laid out on: its line key, or — for a fence
+ * card — the fence key. This is what `MindMapView.nodeCardKey` derives from the
+ * other end, off the node's own text.
+ */
+function nodeKeyForCard(card: Card): string {
+	return card.blockId === undefined ? fenceKey(card) : lineCardId(card.notePath, card.blockId);
+}
+
+/**
+ * The units of work spatial *study* asks for on one node.
+ *
+ * One key per **due card**, in ask order. A node that carries a single card is
+ * still a single unit of work — that key is simply the card's own ID, which for
+ * an ordinary line or a basic fence is the node key itself. Everything that
+ * fanned out is several: an occluded diagram's shape groups, a cloze's groups,
+ * the two directions of a bidirectional pair. They are separate cards with
+ * separate schedules, and spatial study is a card player — it has a target, a
+ * rating and a completion count — so it steps through them one at a time
+ * exactly as sequential and the note do, and the banner counts cards rather
+ * than nodes.
+ *
+ * This is deliberately *not* what the note surfaces do *outside* a session.
+ * Plain reading view and peek paint every group at once with no target, because
+ * a reader looking at a passage in a note is not answering one of the questions
+ * it carries. Stepping happens inside a session and nowhere else.
+ *
+ * Only the cards the scheduler would ask now are returned, so a node with one
+ * due group out of three is one unit of work, not three.
+ *
+ * Splitting used to be reserved for a node whose due cards were *all* occlusion
+ * cards, ordered by `occlusion.target`. That left a three-group cloze node
+ * asking one question where sequential asks three, never asked a bidirectional
+ * node its reverse, and spread the single rating it did take across every card
+ * the node carried. Ordering is `askRank`'s job now, because a cloze or
+ * bidirectional card has no `occlusion.target` to sort on; an occluded node's
+ * cards sort identically under it, so its behaviour is unchanged.
+ */
+export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: number): string[] {
+	const due = cards.filter(
+		(card) => !card.disabled && nodeKeyForCard(card) === nodeKey && isDueOrNew(card, now),
+	);
+	if (due.length === 0) return [nodeKey];
+	return due
+		.slice()
+		.sort((a, b) => askRank(a.id, nodeKey) - askRank(b.id, nodeKey))
+		.map((card) => card.id);
+}
+
+/**
+ * The cards a spatial target key stands for.
+ *
+ * Three key shapes reach here: a line key (`…#^block`), a fence key (`bridge`),
+ * and — once `spatialStudyKeys` has split a node — a single card's own ID
+ * (`bridge-c1`, `bridge-r`, `…#^block/c1`). The last is checked first, because
+ * both of the other lookups would find nothing for a suffixed ID and silently
+ * drop the review, which is exactly how rating an occluded line came to record
+ * nothing. It is checked first for an *unsuffixed* ID too: the forward card of a
+ * bidirectional fence is named after the fence, and falling through would hand
+ * its rating to the reverse card as well.
+ */
+export function cardIdsForSpatialKey(cards: readonly Card[], key: string): string[] {
+	const own = cards.find((card) => card.id === key && !card.disabled);
+	if (own) return [own.id];
+	return key.includes("#^") ? cardIdsForLineKey(cards, key) : cardIdsForFenceKey(cards, key);
 }
 
 /**

@@ -9,7 +9,36 @@ Double-click a node (or press ++f2++) to enter edit mode. Press ++escape++ to ca
 !!! note "Editing mode required"
     Everything on this page needs the map to be in **editing** mode. If nodes won't move or edit, the map is probably in [reading mode](index.md#reading-mode) — press ++ctrl+e++ or click the :lucide-book-open: header icon to switch back.
 
-![Drag and drop node repositioning](../assets/media/osmosis_mind_map_drag_and_drop_node_repositioning.png)
+![Dragging a node — the dashed line marks where it will land](../assets/media/osmosis_mindmap_view_interactive_editing_drag_and_drop.png)
+
+## Editing a Node's Markdown
+
+The edit box opens on the line's **actual source**, not a cleaned-up label. The
+list marker, the heading hashes, the ordered number, the checkbox, an
+`![[embed]]` — all of it is there and all of it is editable, so you can retype
+`- Grinder types` as `## Grinder types` without going back to the note.
+
+Two things stay hidden, because neither is text you'd want to edit here:
+
+- **The trailing block ID** (`^os-a1b2c3`) — it's the card's identity and the
+  node's [style anchor](styling.md#per-node-style-selectors), and it's
+  re-attached when you save. It survives a line that changes kind mid-edit, so
+  converting a bullet into a heading keeps its card and its history.
+- **The leading indentation** — depth belongs to the map's structure, and you
+  change it with indent/outdent rather than by typing tabs.
+
+Typing to rename a selected node replaces the text but leaves the marker, so
+"add child, then type" still produces a bullet. ++ctrl+a++ selects everything,
+marker included.
+
+The edit box tracks the map: it opens at the node's own size, scaled to the
+current zoom, wraps where the node wraps, and follows a pan or zoom while it's
+open.
+
+!!! note "Converting a line doesn't re-indent its children"
+    Retyping `- Parent` as `## Parent` converts that line only. Heading spacing
+    and list numbering are normalized on save either way, but the nesting is
+    yours to manage.
 
 ## Toolbar
 

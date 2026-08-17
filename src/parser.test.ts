@@ -132,6 +132,45 @@ describe("OsmosisParser", () => {
 			expect(h1?.children[0]?.type).toBe("transclusion");
 		});
 
+		it("nests an indented transclusion under the list item enclosing it", () => {
+			// An unindented embed belongs to the heading, but an indented one is
+			// nested content of its list item — and must not end the list, or
+			// every item after it detaches too. Pasting a heading whose subtree
+			// contains an embed onto a bullet produces exactly this shape.
+			const md = [
+				"## Edge Cases",
+				"- Network gaps",
+				"\t- Bike Network",
+				"\t\t![[bike-lanes]]",
+				"\t\t- Fare integration study",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const edgeCases = tree.root.children[0];
+			expect(edgeCases?.children).toHaveLength(1);
+
+			const bikeNetwork = edgeCases?.children[0]?.children[0];
+			expect(bikeNetwork?.content).toBe("Bike Network");
+			expect(bikeNetwork?.children.map((c) => c.type)).toEqual([
+				"transclusion",
+				"bullet",
+			]);
+		});
+
+		it("keeps an unindented transclusion on the heading, ending the list", () => {
+			const md = [
+				"## Edge Cases",
+				"- Network gaps",
+				"\t- Bike Network",
+				"![[bike-lanes]]",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const edgeCases = tree.root.children[0];
+			expect(edgeCases?.children.map((c) => c.type)).toEqual([
+				"bullet",
+				"transclusion",
+			]);
+		});
+
 		it("treats wiki-link image embeds as paragraphs", () => {
 			const md = "![[photo.png]]";
 			const tree = parser.parse(md, "test.md");
@@ -236,6 +275,62 @@ describe("OsmosisParser", () => {
 			const md = "Hello\nWorld";
 			const tree = parser.parse(md, "test.md");
 			expect(tree.root.range).toEqual({ start: 0, end: md.length });
+		});
+	});
+
+	describe("raw source text", () => {
+		/**
+		 * `raw` is what the mind map's inline editor opens on, so the guarantee
+		 * that matters is byte-exactness: slicing `range` out of the source must
+		 * give back `raw`, plus the block ID it deliberately withholds.
+		 */
+		const rawsOf = (md: string): string[] => {
+			const out: string[] = [];
+			const walk = (n: { raw?: string; children: unknown[] }): void => {
+				out.push(n.raw ?? "<missing>");
+				for (const c of n.children) walk(c as never);
+			};
+			for (const child of parser.parse(md, "test.md").root.children) walk(child);
+			return out;
+		};
+
+		it("keeps every structural marker `content` drops", () => {
+			const md = "## Title\n\n- Alpha\n\t- [x] Beta\n3. Gamma\n\n![[Other Note]]";
+			expect(rawsOf(md)).toEqual([
+				"## Title",
+				"- Alpha",
+				"\t- [x] Beta",
+				"3. Gamma",
+				"![[Other Note]]",
+			]);
+		});
+
+		it("preserves space indentation and `*` bullets verbatim", () => {
+			// Both normalize to tabs and `-` when re-serialized from type/depth;
+			// `raw` is the user's own bytes.
+			expect(rawsOf("* Alpha\n  * Beta")).toEqual(["* Alpha", "  * Beta"]);
+		});
+
+		it("is the node's range minus its trailing block ID", () => {
+			const md = "- Alpha ^os-abc123";
+			const tree = parser.parse(md, "test.md");
+			const n = tree.root.children[0];
+			expect(md.slice(n?.range.start, n?.range.end)).toBe("- Alpha ^os-abc123");
+			expect(n?.raw).toBe("- Alpha");
+			expect(n?.blockId).toBe("os-abc123");
+		});
+
+		it("equals content for multiline blocks, which are already verbatim", () => {
+			const md = "> [!note] Title\n> Body\n\n| a | b |\n| - | - |\n\n```js\nx\n```";
+			const tree = parser.parse(md, "test.md");
+			for (const n of tree.root.children) {
+				expect(n.raw).toBe(n.content);
+			}
+			expect(tree.root.children.map((n) => n.type)).toEqual([
+				"blockquote",
+				"table",
+				"codeblock",
+			]);
 		});
 	});
 
