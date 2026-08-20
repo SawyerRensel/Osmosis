@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: In-Progress
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: 2026-08-14T06:09:46.812Z
-date_modified: 2026-08-17T13:51:10.000Z
+date_modified: 2026-08-17T19:55:53.448Z
 date_start_scheduled: 2026-08-17T13:51:10.000Z
 date_start_actual: 2026-08-17T13:51:10.000Z
 date_end_scheduled:
@@ -40,9 +40,9 @@ color:
 
 *Provide a clear and concise description of what documentation is missing, incorrect, or needs improvement.*
 
-- [ ] Create/Remove/Update Documentation to reflect all changes made to the release branch. 
-	- [ ] Create screenshots/screen recordings where needed
-- [ ] Update README to reflect changes
+- [x] Create/Remove/Update Documentation to reflect all changes made to the release branch. 
+	- [x] Create screenshots/screen recordings where needed
+- [x] Update README to reflect changes
 - [x] Address feedback from branch code review from Community Plugins listing and commit changes.
 	- [x] CSS lint — see [What was implemented: CSS lint](#what-was-implemented-css-lint)
 
