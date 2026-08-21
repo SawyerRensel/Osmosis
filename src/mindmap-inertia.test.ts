@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
+	PAN_MAX_VELOCITY,
+	PAN_MIN_FLING_VELOCITY,
 	PAN_MIN_VELOCITY,
 	RUBBER_BAND_COEFFICIENT,
 	SAMPLE_WINDOW_MS,
@@ -10,6 +12,7 @@ import {
 	clampRange,
 	estimateVelocity,
 	integrateDecay,
+	launchVelocity,
 	overshoot,
 	pruneSamples,
 	rubberBand,
@@ -117,6 +120,51 @@ describe("integrateDecay", () => {
 
 	it("is inert for a non-positive frame", () => {
 		expect(integrateDecay(5, PAN_FRICTION, 0)).toEqual({ velocity: 5, delta: 0 });
+	});
+});
+
+describe("launchVelocity", () => {
+	const rest = { x: 0, y: 0 };
+
+	it("does not coast a gentle placement", () => {
+		const gentle = PAN_MIN_FLING_VELOCITY * 0.9;
+		expect(launchVelocity({ x: gentle, y: 0 }, rest, 200)).toEqual(rest);
+	});
+
+	it("judges the fling by total speed, not by either axis alone", () => {
+		// Neither axis clears the threshold on its own; the diagonal does.
+		const each = PAN_MIN_FLING_VELOCITY * 0.8;
+		const v = launchVelocity({ x: each, y: each }, rest, 200);
+		expect(v.x).toBeCloseTo(each, 6);
+		expect(v.y).toBeCloseTo(each, 6);
+	});
+
+	it("adds what is left of an interrupted coast to a flick that agrees with it", () => {
+		const v = launchVelocity({ x: 2, y: 0 }, { x: 2, y: 0 }, 0);
+		expect(v.x).toBeCloseTo(4, 6);
+	});
+
+	it("drops a carry the new flick disagrees with", () => {
+		const v = launchVelocity({ x: -2, y: 0 }, { x: 2, y: 0 }, 0);
+		expect(v.x).toBeCloseTo(-2, 6);
+	});
+
+	it("expires the carry across the time the finger was held", () => {
+		const held = 1000;
+		const v = launchVelocity({ x: 1, y: 0 }, { x: 2, y: 0 }, held);
+		expect(v.x).toBeCloseTo(1 + 2 * Math.exp(-PAN_FRICTION * held), 6);
+		// Long enough and the interrupted coast is worth nothing.
+		expect(launchVelocity({ x: 1, y: 0 }, { x: 2, y: 0 }, 20000).x).toBeCloseTo(1, 3);
+	});
+
+	it("stops the map dead when the touch that caught it does not flick", () => {
+		expect(launchVelocity(rest, { x: 5, y: 5 }, 50)).toEqual(rest);
+	});
+
+	it("caps a stack of flings", () => {
+		let v = rest;
+		for (let i = 0; i < 20; i++) v = launchVelocity({ x: 4, y: 0 }, v, 0);
+		expect(v.x).toBe(PAN_MAX_VELOCITY);
 	});
 });
 

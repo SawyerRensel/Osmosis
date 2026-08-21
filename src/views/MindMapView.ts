@@ -45,6 +45,7 @@ import {
 	clampRange,
 	estimateVelocity,
 	integrateDecay,
+	launchVelocity,
 	pruneSamples,
 	springStep,
 	springTarget,
@@ -109,6 +110,7 @@ const LONG_PRESS_MS = 400; // ms before touch-on-node becomes drag
 const DOUBLE_TAP_MS = 300; // max ms between taps for double-tap
 const DOUBLE_TAP_DISTANCE = 20; // max px drift between two taps
 const PINCH_TAIL_MS = 300; // max ms a pinch's last finger may linger and still fling
+const PINCH_PAN_SLOP = 16; // px the pinch centre may wander before it also pans
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
@@ -357,6 +359,10 @@ export class MindMapView extends ItemView {
 	private pinchStartDistance: number | null = null;
 	private pinchStartZoom = 1;
 	private pinchCenter = { x: 0, y: 0 };
+	/** Where the pinch centre started, for the two-finger pan slop. */
+	private pinchStartCenter = { x: 0, y: 0 };
+	/** True once the pinch centre has wandered far enough to also pan. */
+	private pinchPanActive = false;
 	private lastPointerType = "mouse";
 
 	// Touch inertia (`src/mindmap-inertia.ts` holds the maths).
@@ -377,6 +383,24 @@ export class MindMapView extends ItemView {
 	/** Coast velocity: finger px/ms for pan, ln(zoom)/ms for zoom. */
 	private panVelocity = { x: 0, y: 0 };
 	private zoomVelocity = 0;
+	/**
+	 * The coast this touch interrupted, and when it interrupted it. A flick in
+	 * the same direction inherits what is left of it, so throwing the map
+	 * repeatedly builds speed instead of restarting at each flick's own.
+	 */
+	private carryVelocity = { x: 0, y: 0 };
+	private touchDownTime = 0;
+	/**
+	 * This touch landed on a moving map. Its job was to stop it, so it does not
+	 * also count as a tap — stopping a coast must not clear the selection.
+	 */
+	private stoppedInertiaOnDown = false;
+	/**
+	 * A background pan that has not yet cleared its slop. Until it does the map
+	 * holds still, so the finger settling before a second one joins it for a
+	 * pinch cannot slide the map first.
+	 */
+	private panPending = false;
 	/** Screen point the coasting zoom scales about — the last pinch centre. */
 	private zoomAnchor = { x: 0, y: 0 };
 	private inertiaRafId: number | null = null;
@@ -3130,7 +3154,14 @@ export class MindMapView extends ItemView {
 
 	private handlePointerDown = (e: PointerEvent): void => {
 		this.lastPointerType = e.pointerType;
-		// A finger on the map stops a coast dead, like any scroll view.
+		// A finger on the map stops a coast dead, like any scroll view. What the
+		// coast still had left is kept for the length of this touch: a flick that
+		// follows inherits it, a tap or a slow drag lets it expire.
+		if (this.activePointers.size === 0) {
+			this.stoppedInertiaOnDown = this.inertiaRafId !== null;
+			this.carryVelocity = { ...this.panVelocity };
+			this.touchDownTime = performance.now();
+		}
 		this.stopInertia();
 		this.panSamples = [];
 		this.zoomSamples = [];
@@ -3238,6 +3269,9 @@ export class MindMapView extends ItemView {
 		// Middle-click or left-click/touch on background: pan
 		if (e.button === 1 || (e.button === 0 && !nodeId)) {
 			this.isPanning = true;
+			// A finger has to travel before it pans; a mouse button is
+			// unambiguous and keeps its 1:1 grab from the first pixel.
+			this.panPending = e.pointerType === "touch";
 			this.panStart = { x: e.clientX, y: e.clientY };
 			e.preventDefault();
 			e.stopPropagation();
@@ -3274,6 +3308,7 @@ export class MindMapView extends ItemView {
 			this.pinchTail = null;
 			this.pinchTailZoomVelocity = 0;
 			this.isPanning = true;
+			this.panPending = false;
 			this.panStart = { x: e.clientX, y: e.clientY };
 		}
 
@@ -3307,6 +3342,7 @@ export class MindMapView extends ItemView {
 						// tap-drag can never restructure the map.
 						this.dragNodeId = null;
 						this.isPanning = true;
+						this.panPending = false;
 						this.panStart = { x: e.clientX, y: e.clientY };
 					} else {
 						// Long-press triggered + movement → start drag
@@ -3336,6 +3372,21 @@ export class MindMapView extends ItemView {
 		}
 
 		if (!this.isPanning || !this.svg) return;
+
+		// Hold still until the finger has clearly committed to a drag, then take
+		// the slop off the start point so the map doesn't jump the moment it does.
+		if (this.panPending) {
+			const px = e.clientX - this.panStart.x;
+			const py = e.clientY - this.panStart.y;
+			if (Math.sqrt(px * px + py * py) < DRAG_THRESHOLD) {
+				e.stopPropagation();
+				return;
+			}
+			this.panPending = false;
+			this.panStart = { x: e.clientX, y: e.clientY };
+			e.stopPropagation();
+			return;
+		}
 
 		e.stopPropagation();
 		const svgCurrent = this.screenToSvg(e.clientX, e.clientY);
@@ -3438,15 +3489,25 @@ export class MindMapView extends ItemView {
 		this.dragNodeId = null;
 		const wasPanning = this.isPanning;
 		this.isPanning = false;
+		this.panPending = false;
 
 		// Fling the pan onward, or spring back if the drag ended past a bound.
 		if (e.pointerType === "touch" && wasPanning) {
 			this.startPanInertia();
 		}
 		this.panRaw = null;
+		this.carryVelocity = { x: 0, y: 0 };
 
 		// Don't interfere with active editing (e.g. double-tap just started editing)
 		if (e.pointerType === "touch" && this.editingNodeId) return;
+
+		// This touch came down on a moving map to stop it. That is the whole of
+		// what it did — it is not also a tap, so it neither clears the selection
+		// nor arms a double-tap, exactly like catching a scrolling list.
+		if (e.pointerType === "touch" && this.stoppedInertiaOnDown) {
+			this.stoppedInertiaOnDown = false;
+			return;
+		}
 
 		// Touch: synthesize tap
 		if (e.pointerType === "touch") {
@@ -3544,6 +3605,8 @@ export class MindMapView extends ItemView {
 			x: (p1.x + p2.x) / 2,
 			y: (p1.y + p2.y) / 2,
 		};
+		this.pinchStartCenter = { ...this.pinchCenter };
+		this.pinchPanActive = false;
 	}
 
 	private updatePinch(): void {
@@ -3575,14 +3638,25 @@ export class MindMapView extends ItemView {
 		this.viewBox.h *= scale;
 		this.zoom = newZoom;
 
-		// Pan if pinch center moved
-		const svgOldCenter = this.screenToSvg(
-			this.pinchCenter.x,
-			this.pinchCenter.y,
-		);
-		const svgNewCenter = this.screenToSvg(newCenter.x, newCenter.y);
-		this.viewBox.x -= svgNewCenter.x - svgOldCenter.x;
-		this.viewBox.y -= svgNewCenter.y - svgOldCenter.y;
+		// Pan if the pinch centre moved — but only once it has moved enough to
+		// mean it. Two fingers closing on a target never travel symmetrically, so
+		// an unslopped centroid drags the map sideways through every zoom. The
+		// slop is spent once: after it, the pan tracks the centroid frame by
+		// frame, so a deliberate two-finger drag still feels 1:1.
+		if (!this.pinchPanActive) {
+			const dx = newCenter.x - this.pinchStartCenter.x;
+			const dy = newCenter.y - this.pinchStartCenter.y;
+			this.pinchPanActive = Math.sqrt(dx * dx + dy * dy) >= PINCH_PAN_SLOP;
+		}
+		if (this.pinchPanActive) {
+			const svgOldCenter = this.screenToSvg(
+				this.pinchCenter.x,
+				this.pinchCenter.y,
+			);
+			const svgNewCenter = this.screenToSvg(newCenter.x, newCenter.y);
+			this.viewBox.x -= svgNewCenter.x - svgOldCenter.x;
+			this.viewBox.y -= svgNewCenter.y - svgOldCenter.y;
+		}
 
 		this.pinchCenter = newCenter;
 		this.recordZoomSample();
@@ -3625,7 +3699,12 @@ export class MindMapView extends ItemView {
 
 	/** Coast a flicked pan — or spring back, if the drag ended past a bound. */
 	private startPanInertia(): void {
-		this.panVelocity = estimateVelocity(this.panSamples, performance.now());
+		const now = performance.now();
+		this.panVelocity = launchVelocity(
+			estimateVelocity(this.panSamples, now),
+			this.carryVelocity,
+			now - this.touchDownTime,
+		);
 		this.panSamples = [];
 		this.startInertia();
 	}
@@ -3793,6 +3872,8 @@ export class MindMapView extends ItemView {
 		this.pinchTail = null;
 		this.pinchTailZoomVelocity = 0;
 		this.isPanning = false;
+		this.panPending = false;
+		this.carryVelocity = { x: 0, y: 0 };
 		this.isRubberBanding = false;
 		this.dragNodeId = null;
 		this.pinchStartDistance = null;

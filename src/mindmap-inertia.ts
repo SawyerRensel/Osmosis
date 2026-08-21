@@ -37,11 +37,32 @@ export const SAMPLE_WINDOW_MS = 100;
  */
 export const STALE_SAMPLE_MS = 60;
 
-/** Pan deceleration rate; 1/PAN_FRICTION ms is the velocity time constant. */
-export const PAN_FRICTION = 0.0025;
+/**
+ * Pan deceleration rate; 1/PAN_FRICTION ms is the velocity time constant.
+ *
+ * This is UIKit's `UIScrollView.DecelerationRate.normal` — 0.998 of the velocity
+ * survives each millisecond — written as the continuous rate `-ln(0.998)` so it
+ * survives a dropped frame. A flick therefore travels `velocity / PAN_FRICTION`
+ * px: exactly linear in how hard it was thrown.
+ */
+export const PAN_FRICTION = 0.002;
 
-/** Pan coast ends below this speed, in screen px/ms (20 px/s). */
-export const PAN_MIN_VELOCITY = 0.02;
+/**
+ * A release slower than this doesn't coast at all — the map stops under the
+ * finger. Momentum is for throwing the map across the screen; a short
+ * positioning drag that ends gently should land where it was let go rather than
+ * drifting on for another half a screen.
+ */
+export const PAN_MIN_FLING_VELOCITY = 0.25;
+
+/** Pan coast ends below this speed, in screen px/ms (50 px/s). */
+export const PAN_MIN_VELOCITY = 0.05;
+
+/**
+ * Ceiling on an accumulated fling, in screen px/ms. Well above anything a hand
+ * produces in one throw; it exists so a stack of flings cannot run away.
+ */
+export const PAN_MAX_VELOCITY = 12;
 
 /**
  * Zoom deceleration rate, applied to log-scale velocity. Lower than the pan's
@@ -93,6 +114,39 @@ export function estimateVelocity(samples: Sample[], now: number): Vec {
 	const dt = last.t - first.t;
 	if (dt <= 0) return { x: 0, y: 0 };
 	return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
+}
+
+/**
+ * The velocity a fling launches at: the flick that ended the drag, plus
+ * whatever momentum the same touch interrupted on its way down.
+ *
+ * Flicking again while the map is still coasting *adds* to it, the way a scroll
+ * view does — repeated throws in one direction keep gaining speed instead of
+ * each one restarting from its own flick. Three constraints keep that honest:
+ *
+ * - The carried velocity decays across `heldMs`, the time the finger spent on
+ *   the glass, at the same rate the coast would have. Stopping the map, holding
+ *   it, then flicking gets no free momentum.
+ * - It is only carried when the new flick agrees with it in direction, so a
+ *   flick back the other way turns the map around instead of fighting itself.
+ * - A release below `PAN_MIN_FLING_VELOCITY` is a placement, not a throw: it
+ *   coasts nowhere, and drops the carry with it, which is what makes a tap on a
+ *   moving map stop it dead.
+ */
+export function launchVelocity(flick: Vec, carry: Vec, heldMs: number): Vec {
+	if (Math.hypot(flick.x, flick.y) < PAN_MIN_FLING_VELOCITY) {
+		return { x: 0, y: 0 };
+	}
+	const decay = Math.exp(-PAN_FRICTION * Math.max(heldMs, 0));
+	const combine = (flicked: number, carried: number): number => {
+		const kept = carried * decay;
+		const total = Math.sign(flicked) === Math.sign(kept) ? flicked + kept : flicked;
+		return Math.max(-PAN_MAX_VELOCITY, Math.min(PAN_MAX_VELOCITY, total));
+	};
+	return {
+		x: combine(flick.x, carry.x),
+		y: combine(flick.y, carry.y),
+	};
 }
 
 /** Drop samples that have aged out of the velocity window. */
