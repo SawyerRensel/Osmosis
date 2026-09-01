@@ -1,6 +1,6 @@
 ---
-title: Lines with no spaces are a block
-summary: Would be particularly helpful for rendering media like images in the same node in Mind Map View without it needing to be on the same line
+title: Support auto playback for media on front/back
+summary: Would be convenient for pronouncing latin names of muscle groups, for example.
 tags:
   - task
 calendar:
@@ -9,13 +9,13 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Ideas
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-17T16:15:46.951Z
-date_modified: 2026-08-20T02:30:55.071Z
-date_start_scheduled:
+date_created: "2026-08-24T18:10:49.036Z"
+date_modified: "2026-08-24T18:10:49.036Z"
+date_start_scheduled: "2026-08-28T16:00:00.000Z"
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
