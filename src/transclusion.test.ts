@@ -206,6 +206,78 @@ describe("TransclusionResolver", () => {
 			expect(bulletNode.isTranscluded).toBe(false);
 		});
 
+		it("strips a wiki-link alias before resolving", async () => {
+			// `![[Note|alias]]` — the pipe is display text, never part of the
+			// path, and passing it through resolved to nothing and drew the
+			// dashed "unresolved" node.
+			const app = mockApp({ "World Wide Web": { path: "Topics/World Wide Web.md" } });
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "World Wide Web|the web" });
+			const tree = makeTree([node]);
+
+			await resolver.resolveTree(tree);
+
+			expect(node.sourceFile).toBe("Topics/World Wide Web.md");
+			expect(node.metadata?.resolved).toBe(true);
+		});
+
+		it("percent-decodes a markdown-style embed path", async () => {
+			// Obsidian writes markdown links like URLs, so a note whose title has
+			// spaces arrives encoded and never matched a vault path.
+			const app = mockApp({
+				"Topics/World Wide Web.md": { path: "Topics/World Wide Web.md" },
+			});
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({
+				type: "transclusion",
+				content: "Topics/World%20Wide%20Web.md",
+			});
+			const tree = makeTree([node]);
+
+			await resolver.resolveTree(tree);
+
+			expect(node.sourceFile).toBe("Topics/World Wide Web.md");
+		});
+
+		it("resolves a `../` path against the embedding note's folder", async () => {
+			const app = mockApp({
+				"Topics/World Wide Web.md": { path: "Topics/World Wide Web.md" },
+			});
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({
+				type: "transclusion",
+				content: "../../Topics/World%20Wide%20Web.md",
+			});
+			const tree = makeTree(
+				[node],
+				"Programming/Full Stack Engineering/Full Stack Engineering.md",
+			);
+
+			await resolver.resolveTree(tree);
+
+			expect(node.sourceFile).toBe("Topics/World Wide Web.md");
+		});
+
+		it("prefers a literal path over its percent-decoded spelling", async () => {
+			// A file genuinely named with "%20" still wins: the decoded form is a
+			// fallback, not a rewrite.
+			const app = mockApp({
+				"Odd%20Name.md": { path: "Odd%20Name.md" },
+				"Odd Name.md": { path: "Odd Name.md" },
+			});
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "Odd%20Name.md" });
+			const tree = makeTree([node]);
+
+			await resolver.resolveTree(tree);
+
+			expect(node.sourceFile).toBe("Odd%20Name.md");
+		});
+
 		it("resolves multiple transclusion nodes in the same tree", async () => {
 			const app = mockApp({
 				"note-a": { path: "note-a.md" },
@@ -315,6 +387,99 @@ describe("TransclusionResolver", () => {
 			for (const deep of headingC!.children) {
 				expect(deep.sourceFile).toBe("c.md");
 			}
+		});
+
+		it("expands an embed at the top level of an embedded note", async () => {
+			// A→B→C where C's embed is not nested under a heading in B, so it is
+			// B's *own* top-level child. The recursion only ever descended into
+			// each expanded child's children, so this one was walked past and
+			// stayed an unexpanded node.
+			const app = mockApp(
+				{
+					"b": { path: "b.md" },
+					"b.md": { path: "b.md" },
+					"c": { path: "c.md" },
+					"c.md": { path: "c.md" },
+				},
+				{
+					"b.md": "![[c]]",
+					"c.md": "# From C\n- Deep item",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			const node = makeNode({ type: "transclusion", content: "b" });
+			const tree = makeTree([node], "a.md");
+
+			await resolver.expandTree(tree);
+
+			expect(tree.root.children.map((c) => c.type)).toEqual(["heading"]);
+			const headingC = tree.root.children[0]!;
+			expect(headingC.content).toBe("From C");
+			expect(headingC.sourceFile).toBe("c.md");
+		});
+
+		it("expands an embed carried by a list item inside another embed", async () => {
+			// The reported bug: a host embeds ARPANET, whose own list carries
+			// `- ![[TCP-IP]]`. The inner embed used to stay inside the bullet's
+			// text, so the whole of TCP-IP rendered as that one bullet's label.
+			const app = mockApp(
+				{
+					"ARPANET": { path: "ARPANET.md" },
+					"ARPANET.md": { path: "ARPANET.md" },
+					"TCP-IP": { path: "TCP-IP.md" },
+					"TCP-IP.md": { path: "TCP-IP.md" },
+				},
+				{
+					"ARPANET.md": "- US DoD funded in 1969\n- ![[TCP-IP]]",
+					"TCP-IP.md": "# TCP-IP\n- Standardized data transfer",
+				},
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// The host's own `![[ARPANET]]` line occupies offsets 40..53.
+			const node = makeNode({
+				type: "transclusion",
+				content: "ARPANET",
+				range: { start: 40, end: 53 },
+			});
+			const tree = makeTree([node]);
+
+			await resolver.expandTree(tree);
+
+			expect(tree.root.children.map((c) => c.type)).toEqual(["bullet", "heading"]);
+			const tcpip = tree.root.children[1]!;
+			expect(tcpip.content).toBe("TCP-IP");
+			expect(tcpip.sourceFile).toBe("TCP-IP.md");
+			expect(tcpip.children[0]?.content).toBe("Standardized data transfer");
+
+			// TCP-IP was hoisted two embeds up: it is a child of the host's root
+			// now, so its host span is the host's `![[ARPANET]]` line — not the
+			// `- ![[TCP-IP]]` line, whose offsets index ARPANET.md and would be
+			// read against the wrong file's bytes by any edit here.
+			expect(tcpip.embedHostRange).toEqual({ start: 40, end: 53 });
+			expect(tree.root.children[0]?.embedHostRange).toEqual({ start: 40, end: 53 });
+		});
+
+		it("expands a list item's trailing embed under the item", async () => {
+			const app = mockApp(
+				{ "TCP-IP": { path: "TCP-IP.md" }, "TCP-IP.md": { path: "TCP-IP.md" } },
+				{ "TCP-IP.md": "- Standardized data transfer" },
+			);
+			const resolver = new TransclusionResolver(app, cache);
+
+			// Parse the host for real: the item's node and its embed child are
+			// both the parser's work, and only their combination is the fix.
+			const hostTree = cache.get("host.md", "- See also ![[TCP-IP]]");
+			await resolver.expandTree(hostTree);
+
+			const item = hostTree.root.children[0]!;
+			expect(item.content).toBe("See also");
+			expect(item.children).toHaveLength(1);
+			expect(item.children[0]?.content).toBe("Standardized data transfer");
+			expect(item.children[0]?.sourceFile).toBe("TCP-IP.md");
+			// Host span is the `![[…]]` alone — "See also" is the item's own text.
+			expect(item.children[0]?.embedHostRange).toEqual({ start: 11, end: 22 });
 		});
 
 		it("gives duplicate embeds of the same note independent nodes and unique ids", async () => {

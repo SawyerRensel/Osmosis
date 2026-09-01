@@ -99,9 +99,33 @@ export class TransclusionResolver {
 		visited: Set<string>,
 		skipIds?: Set<string>,
 	): Promise<void> {
-		// Process children, replacing transclusion nodes with expanded content
+		node.children = await this.expandChildren(
+			node.children,
+			sourceFilePath,
+			visited,
+			skipIds,
+		);
+	}
+
+	/**
+	 * Expand a sibling list: every transclusion in it is replaced in place by
+	 * its content, everything else keeps its position and is descended into.
+	 *
+	 * This runs over an *array* rather than a node's children because that array
+	 * is also what an expansion itself produces. Descending only into
+	 * `node.children` meant a transclusion sitting at the top level of an
+	 * embedded note — which is what `- ![[Note]]` becomes — was walked past
+	 * rather than expanded, and the embed inside the embed stayed a single
+	 * unexpanded node.
+	 */
+	private async expandChildren(
+		children: OsmosisNode[],
+		sourceFilePath: string,
+		visited: Set<string>,
+		skipIds?: Set<string>,
+	): Promise<OsmosisNode[]> {
 		const newChildren: OsmosisNode[] = [];
-		for (const child of node.children) {
+		for (const child of children) {
 			if (child.type === "transclusion") {
 				// Lazy loading: skip expansion for nodes in skipIds (just resolve link)
 				if (skipIds?.has(child.id)) {
@@ -125,7 +149,7 @@ export class TransclusionResolver {
 				await this.expandNode(child, sourceFilePath, visited, skipIds);
 			}
 		}
-		node.children = newChildren;
+		return newChildren;
 	}
 
 	/**
@@ -172,6 +196,18 @@ export class TransclusionResolver {
 		// Mark all children as transcluded from this source
 		this.markChildrenTranscluded(children, resolvedFile.path);
 
+		// Expand nested transclusions before stamping the host range, because
+		// expansion changes *which* nodes end up at this level: an embed at the
+		// top of the embedded note is replaced here by its own content, and
+		// those nodes are the ones that come to sit under this embed's parent.
+		const childVisited = new Set(visited);
+		childVisited.add(resolvedFile.path);
+		const expanded = await this.expandChildren(
+			children,
+			resolvedFile.path,
+			childVisited,
+		);
+
 		// Record the host-file span of the `![[…]]` line on each top-level
 		// child. In the containing file the embed is a single atomic unit
 		// occupying just this line; edits *there* (move/copy/delete of a local
@@ -179,22 +215,20 @@ export class TransclusionResolver {
 		// instead of mistaking the children's source-file offsets for host
 		// offsets. `node.range` is the embed line; its trailing `^id` line, if
 		// any, is covered by `blockIdLineEnd`.
+		//
+		// This overwrites any host range an inner expansion set: a node hoisted
+		// up to this level by one is no longer bounded by the inner `![[…]]`
+		// line in *its* file, but by this one — a node's `embedHostRange` always
+		// indexes the file its tree parent lives in.
 		const embedHostRange = {
 			start: node.range.start,
 			end: node.blockIdLineEnd ?? node.range.end,
 		};
-		for (const child of children) {
+		for (const child of expanded) {
 			child.embedHostRange = embedHostRange;
 		}
 
-		// Recurse into expanded content for nested transclusions
-		const childVisited = new Set(visited);
-		childVisited.add(resolvedFile.path);
-		for (const child of children) {
-			await this.expandNode(child, resolvedFile.path, childVisited);
-		}
-
-		return children;
+		return expanded;
 	}
 
 	/**
@@ -212,39 +246,44 @@ export class TransclusionResolver {
 			return null;
 		}
 
-		const pathPart = linkTarget.split("#")[0];
+		const pathPart = embedTargetPath(linkTarget);
 		if (!pathPart) {
 			this.markUnresolved(node, "Link contains only a fragment");
 			return null;
 		}
 
-		// Try wiki-link resolution (handles shortest-path matching)
-		const resolved = this.app.metadataCache.getFirstLinkpathDest(
-			pathPart,
-			sourceFilePath,
-		);
-		if (resolved) {
-			this.markResolved(node, resolved.path);
-			return resolved;
-		}
-
-		// Fallback: direct vault path lookup
-		const directFile = this.app.vault.getFileByPath(pathPart);
-		if (directFile) {
-			this.markResolved(node, directFile.path);
-			return directFile;
-		}
-
-		// Try with .md extension
-		if (!pathPart.endsWith(".md")) {
-			const withExt = this.app.vault.getFileByPath(`${pathPart}.md`);
-			if (withExt) {
-				this.markResolved(node, withExt.path);
-				return withExt;
+		for (const candidate of linkCandidates(pathPart, sourceFilePath)) {
+			const file = this.lookup(candidate, sourceFilePath);
+			if (file) {
+				this.markResolved(node, file.path);
+				return file;
 			}
 		}
 
 		this.markUnresolved(node, `File not found: ${linkTarget}`);
+		return null;
+	}
+
+	/**
+	 * Try one candidate path through every lookup Obsidian offers: wiki-link
+	 * resolution first (it handles shortest-path matching), then the vault's own
+	 * path index, then the same path with the extension a wiki link omits.
+	 */
+	private lookup(candidate: string, sourceFilePath: string): ResolvedFile | null {
+		const resolved = this.app.metadataCache.getFirstLinkpathDest(
+			candidate,
+			sourceFilePath,
+		);
+		if (resolved) return resolved;
+
+		const directFile = this.app.vault.getFileByPath(candidate);
+		if (directFile) return directFile;
+
+		if (!candidate.endsWith(".md")) {
+			const withExt = this.app.vault.getFileByPath(`${candidate}.md`);
+			if (withExt) return withExt;
+		}
+
 		return null;
 	}
 
@@ -289,6 +328,70 @@ export class TransclusionResolver {
 			unresolvedReason: reason,
 		};
 	}
+}
+
+/**
+ * The file path an embed's link target names, with everything that is not a
+ * path removed: a `|alias` (or `|300` sizing) and a `#heading` / `#^block`
+ * fragment. Neither is part of a filename, and passing them through was enough
+ * to make `![[Note|alias]]` resolve to nothing and draw the dashed
+ * "unresolved" node.
+ *
+ * A fragment-only link (`![[#Section]]`, a same-file embed) yields "" and is
+ * reported as unresolved rather than silently embedding the wrong file. The
+ * fragment itself is dropped, so `![[Note#Section]]` still embeds the whole of
+ * Note — sectioning an embed is not implemented.
+ */
+export function embedTargetPath(target: string): string {
+	return (target.split("|")[0] ?? "").split("#")[0]?.trim() ?? "";
+}
+
+/**
+ * The paths to try for an embed target, in order of decreasing literalness.
+ *
+ * Markdown-style embeds are written by Obsidian the way a URL is — percent-
+ * encoded and relative to the note (`![](../../Topics/World%20Wide%20Web.md)`)
+ * — while the vault indexes plain paths from its root. So each candidate is
+ * also tried decoded, and each of those resolved against the embedding note's
+ * folder to consume any `./` and `../`.
+ *
+ * The literal path goes first so that a file genuinely named `Note%20Name.md`
+ * still wins over its decoded spelling, and duplicates are dropped so an
+ * ordinary wiki link costs exactly one lookup.
+ */
+export function linkCandidates(pathPart: string, sourceFilePath: string): string[] {
+	const decoded = decodePercent(pathPart);
+	const candidates = [pathPart, decoded];
+	for (const candidate of [pathPart, decoded]) {
+		candidates.push(resolveRelative(candidate, sourceFilePath));
+	}
+	return [...new Set(candidates)].filter((c) => c !== "");
+}
+
+/** Percent-decode a path, leaving a malformed escape sequence as it was. */
+function decodePercent(path: string): string {
+	if (!path.includes("%")) return path;
+	try {
+		return decodeURIComponent(path);
+	} catch {
+		return path;
+	}
+}
+
+/**
+ * Resolve a path against the folder of the note that embeds it, consuming `.`
+ * and `..` segments. Vault paths are root-relative with `/` separators, so this
+ * is plain segment arithmetic — no platform path module involved.
+ */
+function resolveRelative(path: string, sourceFilePath: string): string {
+	const slash = sourceFilePath.lastIndexOf("/");
+	const segments = slash === -1 ? [] : sourceFilePath.slice(0, slash).split("/");
+	for (const segment of path.split("/")) {
+		if (segment === "" || segment === ".") continue;
+		if (segment === "..") segments.pop();
+		else segments.push(segment);
+	}
+	return segments.join("/");
 }
 
 /**

@@ -171,6 +171,146 @@ describe("OsmosisParser", () => {
 			]);
 		});
 
+		it("makes a list item that is only an embed the transclusion itself", () => {
+			// `- ![[TCP-IP]]` is a bullet carrying an embed, which Obsidian renders
+			// as the embedded note under the marker. Left as a bullet, its whole
+			// content reached MarkdownRenderer and the embedded note collapsed
+			// into one mind-map node instead of expanding into its own.
+			const md = [
+				"# ARPANET",
+				"- US DoD funded in 1969",
+				"- ![[TCP-IP]]",
+				"- Adopted in 1980s",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const heading = tree.root.children[0];
+			expect(heading?.children.map((c) => c.type)).toEqual([
+				"bullet",
+				"transclusion",
+				"bullet",
+			]);
+			const embed = heading?.children[1];
+			expect(embed?.content).toBe("TCP-IP");
+			// The bullet marker survives in `raw`, so an inline edit of the node
+			// opens on the line the file actually holds.
+			expect(embed?.raw).toBe("- ![[TCP-IP]]");
+		});
+
+		it("nests an embed-only list item under the item enclosing it", () => {
+			const md = [
+				"- Outer",
+				"\t- ![[TCP-IP]]",
+				"\t- Sibling after",
+			].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const outer = tree.root.children[0];
+			expect(outer?.content).toBe("Outer");
+			// The embed takes the item's place — same parent, same order — and
+			// the items after it stay in the list rather than detaching.
+			expect(outer?.children.map((c) => c.type)).toEqual([
+				"transclusion",
+				"bullet",
+			]);
+			expect(outer?.children[0]?.depth).toBe(1);
+		});
+
+		it("splits a list item's text from a trailing embed", () => {
+			const md = "- See also ![[TCP-IP]]";
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			expect(item?.type).toBe("bullet");
+			expect(item?.content).toBe("See also");
+			// The item keeps the whole line as `raw` — editing the node still
+			// edits every byte of it — while the child's range covers only the
+			// `![[…]]` span inside that line.
+			expect(item?.raw).toBe("- See also ![[TCP-IP]]");
+			const embed = item?.children[0];
+			expect(embed?.type).toBe("transclusion");
+			expect(embed?.content).toBe("TCP-IP");
+			expect(embed?.range).toEqual({ start: 11, end: 22 });
+			expect(md.slice(11, 22)).toBe("![[TCP-IP]]");
+		});
+
+		it("puts a list item's embed child ahead of its indented children", () => {
+			const md = ["- See also ![[TCP-IP]]", "\t- Nested note"].join("\n");
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			// The embed is on the item's own line, so it precedes anything
+			// indented beneath it in document order.
+			expect(item?.children.map((c) => c.type)).toEqual([
+				"transclusion",
+				"bullet",
+			]);
+		});
+
+		it("leaves an embed in the middle of a list item inline", () => {
+			// A sentence with an embed inside it is not a carrier — splitting it
+			// would leave "The protocol" and lose the reading order.
+			const md = "- The ![[TCP-IP]] protocol";
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			expect(item?.type).toBe("bullet");
+			expect(item?.content).toBe("The ![[TCP-IP]] protocol");
+			expect(item?.children).toHaveLength(0);
+		});
+
+		it("keeps a checkbox item, lifting its embed to a child", () => {
+			// Turning the item into a transclusion would drop the checked state,
+			// which is the item's own content, not the embed's.
+			const md = "- [x] ![[TCP-IP]]";
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			expect(item?.type).toBe("bullet");
+			expect(item?.metadata?.checkbox).toBe(true);
+			expect(item?.metadata?.checked).toBe(true);
+			expect(item?.children[0]?.type).toBe("transclusion");
+			expect(item?.children[0]?.content).toBe("TCP-IP");
+		});
+
+		it("makes an ordered item that is only an embed a transclusion", () => {
+			const md = "1. ![[TCP-IP]]";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children[0]?.type).toBe("transclusion");
+			expect(tree.root.children[0]?.content).toBe("TCP-IP");
+		});
+
+		it("lifts a markdown-style embed out of a list item", () => {
+			const md = "- ![](Topics/TCP-IP.md)";
+			const tree = parser.parse(md, "test.md");
+			expect(tree.root.children[0]?.type).toBe("transclusion");
+			expect(tree.root.children[0]?.content).toBe("Topics/TCP-IP.md");
+		});
+
+		it("leaves an ordinary link in a list item alone", () => {
+			// No leading `!`: a link is text, not an embed.
+			const md = "- See [TCP-IP](Topics/TCP-IP.md)";
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			expect(item?.type).toBe("bullet");
+			expect(item?.content).toBe("See [TCP-IP](Topics/TCP-IP.md)");
+			expect(item?.children).toHaveLength(0);
+		});
+
+		it("keeps a media embed in a list item as part of the item", () => {
+			// MarkdownRenderer draws these correctly already; expanding them as
+			// notes is what `isMediaEmbed` exists to prevent.
+			const md = "- ![[pine_tree.webp|186]]";
+			const tree = parser.parse(md, "test.md");
+			const item = tree.root.children[0];
+			expect(item?.type).toBe("bullet");
+			expect(item?.content).toBe("![[pine_tree.webp|186]]");
+			expect(item?.children).toHaveLength(0);
+		});
+
+		it("keeps a block ID on an embed-only list item", () => {
+			const md = "- ![[TCP-IP]] ^os-a1b2c3";
+			const tree = parser.parse(md, "test.md");
+			const embed = tree.root.children[0];
+			expect(embed?.type).toBe("transclusion");
+			expect(embed?.content).toBe("TCP-IP");
+			expect(embed?.blockId).toBe("os-a1b2c3");
+		});
+
 		it("treats wiki-link image embeds as paragraphs", () => {
 			const md = "![[photo.png]]";
 			const tree = parser.parse(md, "test.md");
