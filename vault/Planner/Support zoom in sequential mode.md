@@ -9,6 +9,7 @@ context:
 people:
 location:
 related:
+  - "[[Larger zoomable images during review]]"
 status: Ideas
 priority:
 progress_current:
@@ -52,3 +53,13 @@ color:
 ## What would "better" look like?
 
 *Describe your ideal outcome. How should it work differently?*
+
+
+
+---
+
+Image zoom during review is split out into
+[[Larger zoomable images during review]], raised by
+[issue #34](https://github.com/SawyerRensel/Osmosis/issues/34). This note stays
+the owner of zooming **text** in sequential mode. If the two end up sharing a
+gesture layer, fold them together.
