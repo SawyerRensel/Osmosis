@@ -156,6 +156,17 @@ describe("serializeLine preserves the trailing block ID", () => {
 		expect(serializeLine("paragraph", 0, "Alpha")).toBe("Alpha");
 	});
 
+	it("indents a transclusion to its depth", () => {
+		// Indentation is what nests an embed under the list item above it, so a
+		// move that re-serializes one at depth 2 has to write the tabs back or
+		// the embed pops out of the list it was in.
+		expect(serializeLine("transclusion", 0, "Note")).toBe("![[Note]]");
+		expect(serializeLine("transclusion", 2, "Note")).toBe("\t\t![[Note]]");
+		expect(serializeLine("transclusion", 1, "Note", "os-abc")).toBe(
+			"\t![[Note]] ^os-abc",
+		);
+	});
+
 	it("never inlines an ID onto multiline block bodies", () => {
 		// table/blockquote carry their ID on a separate `^id` line, not inline.
 		expect(serializeLine("table", 0, "| a | b |", "os-x")).toBe("| a | b |");

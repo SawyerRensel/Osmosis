@@ -45,7 +45,13 @@ export function serializeLine(
 		case "paragraph":
 			return `${content}${suffix}`;
 		case "transclusion":
-			return `![[${content}]]${suffix}`;
+			// Indentation is what nests an embed under the list item above it
+			// (the parser reads an indented `![[…]]` as that item's content), so
+			// a re-serialized embed has to keep it or a move pops it out of the
+			// list. A list item that was *only* an embed (`- ![[Note]]`) comes
+			// back bare: the bullet carried nothing else, and at the same depth
+			// the line re-parses to the same place in the tree.
+			return `${"\t".repeat(depth)}![[${content}]]${suffix}`;
 		case "table":
 			return content;
 		case "blockquote":

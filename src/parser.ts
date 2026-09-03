@@ -316,6 +316,25 @@ export class OsmosisParser {
 					parent.children.push(node);
 				}
 			}
+
+			// A list item's trailing embed is content of the item, on the item's
+			// own line and therefore ahead of anything indented beneath it. As a
+			// transclusion child it gets expanded into nodes by the resolver
+			// instead of being rendered as part of the item's label.
+			if (parsed.embed !== undefined) {
+				node.children.push(
+					this.createNode(
+						"transclusion",
+						parsed.depth,
+						parsed.embed.target,
+						{
+							start: line.start + parsed.embed.start,
+							end: line.start + parsed.embed.end,
+						},
+						parsed.raw.slice(parsed.embed.start, parsed.embed.end),
+					),
+				);
+			}
 		}
 
 		// Flush any pending table at end of document
@@ -421,33 +440,36 @@ export class OsmosisParser {
 		const bulletMatch = /^[-*]\s+(.*)$/.exec(trimmed);
 		if (bulletMatch?.[1] !== undefined) {
 			const content = bulletMatch[1];
+			const contentStart = indentStr.length + trimmed.length - content.length;
 			// Detect checkbox syntax: [ ], [x], [X]
 			const checkboxMatch = /^\[([ xX])\]\s*(.*)$/.exec(content);
 			if (checkboxMatch) {
-				return {
+				return this.liftListItemEmbed({
 					type: "bullet",
 					depth: nestingDepth,
 					content,
 					checkbox: true,
 					checked: checkboxMatch[1] !== " ",
-				};
+				}, contentStart);
 			}
-			return {
+			return this.liftListItemEmbed({
 				type: "bullet",
 				depth: nestingDepth,
 				content,
-			};
+			}, contentStart);
 		}
 
 		// Ordered list: 1. item (any number)
 		const orderedMatch = /^(\d+)\.\s+(.*)$/.exec(trimmed);
 		if (orderedMatch?.[1] !== undefined && orderedMatch[2] !== undefined) {
-			return {
+			const content = orderedMatch[2];
+			const contentStart = indentStr.length + trimmed.length - content.length;
+			return this.liftListItemEmbed({
 				type: "ordered",
 				depth: nestingDepth,
-				content: orderedMatch[2],
+				content,
 				listNumber: parseInt(orderedMatch[1], 10),
-			};
+			}, contentStart);
 		}
 
 		// Paragraph (everything else)
@@ -456,6 +478,70 @@ export class OsmosisParser {
 			depth: 0,
 			content: text.trim(),
 		};
+	}
+
+	/**
+	 * Lift a trailing note embed out of a list item's text.
+	 *
+	 * A list item that ends in `![[Note]]` is a *carrier* for the embed, not a
+	 * line of text that happens to contain a link: Obsidian renders the whole
+	 * embedded note beneath the bullet marker. The mind map has to expand it the
+	 * same way. Left in the item's `content`, the embed reached MarkdownRenderer
+	 * as that one item's label and the entire embedded note — its own lists, its
+	 * cards — collapsed into a single node, which is the bug this fixes.
+	 *
+	 * An item that is *only* an embed becomes the transclusion node itself: the
+	 * bullet carries nothing else, so keeping it would leave an empty `•` node
+	 * parented over the expansion. An item with text in front keeps its own node
+	 * and takes the embed as a child, whose `range` is the `![[…]]` span *inside*
+	 * the line — so an edit that targets the embed touches only those bytes.
+	 *
+	 * Two things deliberately do not split:
+	 * - A checkbox item, whose checked state is its own and would be lost by
+	 *   turning the item into a transclusion. It splits into item + child only.
+	 * - A *non-trailing* embed. `- The ![[TCP-IP]] protocol` is a sentence with
+	 *   an embed inside it; cutting it in two would mangle the text, and inline
+	 *   is how Obsidian reads it too.
+	 *
+	 * Media embeds never split — `- ![[photo.png]]` is an image in a list item,
+	 * which MarkdownRenderer already draws correctly (see {@link isMediaEmbed}).
+	 *
+	 * @param contentStart - Offset of `parsed.content` within the source line, so
+	 *                       the lifted embed's span is in line coordinates.
+	 */
+	private liftListItemEmbed(
+		parsed: Omit<ParsedLine, "raw">,
+		contentStart: number,
+	): Omit<ParsedLine, "raw"> {
+		const found = this.findEmbed(parsed.content);
+		if (found === null) return parsed;
+		if (parsed.content.slice(found.end).trim() !== "") return parsed;
+		if (this.isMediaEmbed(found.target)) return parsed;
+
+		const text = parsed.content.slice(0, found.start).trimEnd();
+		if (text === "" && parsed.checkbox !== true) {
+			return { type: "transclusion", depth: parsed.depth, content: found.target };
+		}
+		return {
+			...parsed,
+			content: text,
+			embed: {
+				target: found.target,
+				start: contentStart + found.start,
+				end: contentStart + found.end,
+			},
+		};
+	}
+
+	/**
+	 * First `![[…]]` or `![](…)` embed in a string, with its span in that string.
+	 * Ordinary links (`[text](url)`) are not embeds and never match.
+	 */
+	private findEmbed(text: string): EmbedRef | null {
+		const match = /!\[\[([^\]]+)\]\]|!\[[^\]]*\]\(([^)]+)\)/.exec(text);
+		const target = match?.[1] ?? match?.[2];
+		if (match === undefined || match === null || target === undefined) return null;
+		return { target, start: match.index, end: match.index + match[0].length };
 	}
 
 	/** File extensions for media embeds that should NOT be expanded as note transclusions. */
@@ -642,4 +728,17 @@ interface ParsedLine {
 	checked?: boolean;
 	/** Trailing Obsidian block ID (without caret), stripped from content. */
 	blockId?: string;
+	/**
+	 * A note embed lifted out of a list item's text, spanned in the line's own
+	 * coordinates. `buildTree` turns it into a transclusion child of the item's
+	 * node. See {@link OsmosisParser.liftListItemEmbed}.
+	 */
+	embed?: EmbedRef;
+}
+
+/** An `![[…]]` / `![](…)` embed: its link target and its span in the text scanned. */
+interface EmbedRef {
+	target: string;
+	start: number;
+	end: number;
 }
