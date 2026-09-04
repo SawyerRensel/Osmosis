@@ -41,6 +41,7 @@ import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
+import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
 
@@ -1495,8 +1496,7 @@ export default class OsmosisPlugin extends Plugin {
 				await this.app.fileManager.processFrontMatter(
 					file,
 					(fm: Record<string, unknown>) => {
-						const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-						fm["osmosis-styles"] = osmosis;
+						const osmosis = styleMappingFor(fm);
 
 						// Copy each override into frontmatter (don't overwrite existing values)
 						for (const [key, value] of Object.entries(overrides)) {

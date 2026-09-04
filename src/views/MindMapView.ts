@@ -29,7 +29,7 @@ import type { BranchLineStyle, BranchLinePattern, BranchLineTaper, MapSettings }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
-import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
+import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, isCorruptStyleFrontmatter, styleMappingFor, readStyleMapping, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
@@ -231,6 +231,30 @@ export class MindMapView extends ItemView {
 	// when the map switches to a different file.
 	private readonly undoStack: MapEditSnapshot[] = [];
 	private readonly redoStack: MapEditSnapshot[] = [];
+
+	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
+	// draws identically afterwards — but the frontmatter block grew, which
+	// shifts every body offset the tree's ranges index. Re-syncing on the spot
+	// meant a rating cost a full re-parse of the host note, a re-read and deep
+	// clone of every embedded note, and a teardown-and-rebuild of the whole SVG
+	// — the visible "blink", and on a large map with many transcluded notes
+	// enough repeated work to take Obsidian down mid-session. So the paths are
+	// noted here instead and reconciled at the two moments the offsets are
+	// actually about to be read: before a structural edit, and at session end.
+	private staleParsePaths = new Set<string>();
+	private treeStale = false;
+
+	// Notes already reported as having unreadable `osmosis-styles`. Keyed by
+	// path so the notice fires once per note rather than on every re-parse.
+	private readonly reportedCorruptStylePaths = new Set<string>();
+
+	// Serializes render passes. `render()` unloads the previous render Component
+	// and empties the container partway through; two overlapping passes tear
+	// down each other's DOM while the other is still awaiting measurement.
+	private renderChain: Promise<void> = Promise.resolve();
+	// Set by `onClose`. A pass already queued on the chain when the view goes
+	// away must not paint into a container that has been torn down.
+	private closed = false;
 
 	// Live-edit session (e.g. a color-picker drag). While active, self-writes
 	// neither trigger a reload — which would tear down an open picker mid-drag —
@@ -516,7 +540,7 @@ export class MindMapView extends ItemView {
 		this.scope = new Scope(this.app.scope);
 		this.scope.register([], "F2", (e: KeyboardEvent) => {
 			if (!this.editingNodeId && this.selectedNodeId) {
-				this.startEditing(this.selectedNodeId);
+				void this.startEditing(this.selectedNodeId);
 				e.preventDefault();
 				return false;
 			}
@@ -654,6 +678,42 @@ export class MindMapView extends ItemView {
 		if (!this.isReadingMode) return true;
 		new Notice("Reading mode: map editing is off");
 		return false;
+	}
+
+	/**
+	 * The gate every *structural* mutation goes through: the reading-mode check
+	 * above, plus settling any re-sync deferred by {@link markTreeStale}.
+	 *
+	 * These edits splice the file by the byte ranges held on the tree, so they
+	 * are exactly the callers that cannot run against offsets a schedule flush
+	 * has moved. Doing it here rather than inside the write helpers is
+	 * deliberate: by the time a helper is called the new content has already been
+	 * computed from the stale ranges, and re-syncing then would be too late.
+	 */
+	private async assertEditableFresh(): Promise<boolean> {
+		if (!this.assertEditable()) return false;
+		await this.ensureTreeFresh();
+		return true;
+	}
+
+	/**
+	 * {@link assertEditableFresh} for a caller that already holds the node it is
+	 * about to edit — a context-menu item, a toolbar button, a keyboard action.
+	 * Returns the node's place in the layout the guard leaves behind, or null
+	 * when the edit must not go ahead.
+	 *
+	 * Re-resolving is the point. Settling a deferred re-sync re-parses the file
+	 * and re-runs the layout, so a `LayoutNode` captured beforehand is an orphan
+	 * of the previous pass carrying exactly the offsets the frontmatter write
+	 * moved — splicing by them is the corruption this whole change exists to
+	 * avoid. Node IDs derive from content, which a schedule flush does not
+	 * touch, so the same node comes back under the same key; a node that does
+	 * not come back is gone from the map and the edit is dropped.
+	 */
+	private async assertEditableNode(node: LayoutNode): Promise<LayoutNode | null> {
+		if (!await this.assertEditableFresh()) return null;
+		const id = node.source.id;
+		return this.currentLayout?.nodes.find((n) => n.source.id === id) ?? null;
 	}
 
 	// ── Spatial Study Mode ──────────────────────────────────
@@ -980,7 +1040,13 @@ export class MindMapView extends ItemView {
 		node: LayoutNode,
 		action: "add" | "remove" | "disable" | "enable",
 	): Promise<void> {
-		const src = node.source;
+		// The line span below is derived from byte offsets, so the tree has to
+		// agree with the file — see `ensureTreeFresh`. Not gated on reading mode:
+		// card membership is a study concern, editable from either view.
+		await this.ensureTreeFresh();
+		const fresh = this.currentLayout?.nodes.find((n) => n.source.id === node.source.id);
+		if (!fresh) return;
+		const src = fresh.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
@@ -1178,7 +1244,16 @@ export class MindMapView extends ItemView {
 		// review-log entries out now (plan §3). Peek records nothing, so there
 		// is nothing to flush.
 		if (wasStudy) {
-			void this.plugin.scheduleStore.flush();
+			// The flush is the last thing that will move the file's offsets, so
+			// it is also where the re-syncs deferred all session get settled —
+			// after it lands, not before, or the writes it is about to make would
+			// leave the tree stale again. One re-parse for the whole session.
+			void this.plugin.scheduleStore.flush().then(
+				() => this.ensureTreeFresh(),
+				(error: unknown) => {
+					console.error("Osmosis: schedule flush at study-session end failed", error);
+				},
+			);
 			void this.plugin.reviewLog.flush();
 		}
 	}
@@ -1774,13 +1849,13 @@ export class MindMapView extends ItemView {
 						return;
 					}
 					// Our own schedule flush only touches frontmatter, which the
-					// map doesn't render — so re-sync rather than reload, keeping
-					// study state and undo history instead of tearing them down
-					// mid-session. Re-sync it must: the frontmatter it grows
-					// shifts every body offset, and the tree's ranges are what
-					// structural edits splice with.
+					// map doesn't render — so neither reload nor re-sync now.
+					// The frontmatter it grows does shift every body offset, and
+					// the tree's ranges are what structural edits splice with, so
+					// the debt is recorded and paid by `ensureTreeFresh` before
+					// the next edit reads those offsets.
 					if (this.plugin.scheduleStore.isWriting(file.path)) {
-						void this.resyncFromParent();
+						this.markTreeStale(file.path);
 						return;
 					}
 					void this.loadFile(file);
@@ -1799,6 +1874,14 @@ export class MindMapView extends ItemView {
 					return;
 				}
 				if (!this.transcludedPaths().has(file.path)) return;
+				// Same deferral as the host note, and the case that matters most:
+				// a session's transcluded cards are spread over many notes, each
+				// with its own debounce timer, so rating them used to fire an
+				// uncoalesced full rebuild per note rather than one per burst.
+				if (this.plugin.scheduleStore.isWriting(file.path)) {
+					this.markTreeStale(file.path);
+					return;
+				}
 				this.cache.invalidate(file.path);
 				void this.resyncFromParent();
 			}),
@@ -1835,6 +1918,7 @@ export class MindMapView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.closed = true;
 		this.toolRibbon?.destroy();
 		this.toolRibbon = null;
 		this.resizeObserver?.disconnect();
@@ -1866,6 +1950,8 @@ export class MindMapView extends ItemView {
 		this.spatialPendingNodeId = null;
 		this.spatialBanner = null;
 		this.spatialSessionManager = null;
+		this.treeStale = false;
+		this.staleParsePaths.clear();
 		this.contentEl.empty();
 		this.currentFile = null;
 		this.currentTree = null;
@@ -1910,6 +1996,10 @@ export class MindMapView extends ItemView {
 			this.redoStack.length = 0;
 		}
 		this.currentFile = file;
+		// A full load re-reads every file the map is built from, which is the
+		// debt `markTreeStale` records — so it is paid off here by definition.
+		this.treeStale = false;
+		this.staleParsePaths.clear();
 		const content = await this.app.vault.read(file);
 		this.reloadFrontmatterFromContent(content);
 		this.loadMapSettings();
@@ -2066,8 +2156,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 
 				if (variantName) {
 					osmosis["activeVariant"] = variantName;
@@ -2110,8 +2199,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
 				const variant = variants[variantName] ?? {};
@@ -2151,8 +2239,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const variants = (osmosis["variants"] as Record<string, Record<string, NodeStyle>>) ?? {};
 				osmosis["variants"] = variants;
 				variants[variantName] = {};
@@ -2185,7 +2272,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+				const osmosis = readStyleMapping(fm);
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
 				if (!variants || !variants[oldName]) return;
@@ -2222,7 +2309,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+				const osmosis = readStyleMapping(fm);
 				if (!osmosis) return;
 				const variants = osmosis["variants"] as Record<string, Record<string, NodeStyle>> | undefined;
 				if (!variants) return;
@@ -2271,8 +2358,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
 
@@ -2382,8 +2468,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const styles = (osmosis["styles"] as Record<string, NodeStyle>) ?? {};
 				osmosis["styles"] = styles;
 
@@ -2452,8 +2537,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
 				osmosis["classes"] = classes;
 
@@ -2492,8 +2576,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 
 				// Remove the class definition
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
@@ -2557,8 +2640,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 
 				// Rename the class definition
 				const classes = (osmosis["classes"] as Record<string, NodeStyle>) ?? {};
@@ -2618,7 +2700,7 @@ export class MindMapView extends ItemView {
 			await this.processFrontMatterTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
-					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+					const osmosis = readStyleMapping(fm);
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
 					if (!styles) return;
@@ -2671,7 +2753,7 @@ export class MindMapView extends ItemView {
 			await this.processFrontMatterTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
-					const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+					const osmosis = readStyleMapping(fm);
 					if (!osmosis) return;
 					const styles = osmosis["styles"] as Record<string, NodeStyle> | undefined;
 					if (!styles) return;
@@ -2745,7 +2827,7 @@ export class MindMapView extends ItemView {
 		await this.processFrontMatterTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
-				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+				const osmosis = readStyleMapping(fm);
 				if (!osmosis) return;
 				const classes = osmosis["classes"] as Record<string, NodeStyle> | undefined;
 				if (!classes) return;
@@ -2791,7 +2873,7 @@ export class MindMapView extends ItemView {
 	 *  Replaces target overrides entirely: keys absent from the clipboard
 	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
 	private async pasteNodeStyle(): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.clipboardNodeStyle) {
 			new Notice("No style to paste");
 			return;
@@ -2858,12 +2940,38 @@ export class MindMapView extends ItemView {
 		}
 		try {
 			const parsed: unknown = parseYaml(match[1]);
-			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
-				parsed as Record<string, unknown> | undefined,
-			);
+			const fm = parsed as Record<string, unknown> | undefined;
+			this.reportCorruptStyles(fm);
+			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(fm);
 		} catch {
 			this.osmosisStyleFrontmatter = undefined;
 		}
+	}
+
+	/**
+	 * Say so, once per file, when `osmosis-styles` holds something unreadable.
+	 *
+	 * Losing every style on a map is not a small thing, and until now it
+	 * happened in total silence — the map simply came back unstyled and the user
+	 * was left to guess whether they had imagined styling it. The value is left
+	 * on disk: it is the only remaining evidence of what went wrong, and the
+	 * next style write replaces it anyway (see `styleMappingFor`).
+	 */
+	private reportCorruptStyles(fm: Record<string, unknown> | undefined): void {
+		const path = this.currentFile?.path;
+		if (path === undefined || !isCorruptStyleFrontmatter(fm)) return;
+		if (this.reportedCorruptStylePaths.has(path)) return;
+		this.reportedCorruptStylePaths.add(path);
+		console.warn(
+			`Osmosis: "osmosis-styles" in ${path} is not a mapping and was ignored;`,
+			"per-note styling for this map is unavailable until it is restyled.",
+			fm?.["osmosis-styles"],
+		);
+		new Notice(
+			"Osmosis: this note's saved mind map styles are corrupt and were ignored. " +
+			"Restyling the map will replace them.",
+			10000,
+		);
 	}
 
 	// ─── Viewport ────────────────────────────────────────────
@@ -3199,7 +3307,7 @@ export class MindMapView extends ItemView {
 				nodeId === this.lastTapNodeId
 			) {
 				this.cancelLongPress();
-				this.startEditing(nodeId);
+				void this.startEditing(nodeId);
 				e.preventDefault();
 				e.stopPropagation();
 				return;
@@ -3982,7 +4090,7 @@ export class MindMapView extends ItemView {
 		if ((e.target as Element).closest("a")) return;
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
-			this.startEditing(nodeId);
+			void this.startEditing(nodeId);
 		}
 	};
 
@@ -4370,7 +4478,7 @@ export class MindMapView extends ItemView {
 	 * Processes nodes from end-of-document to start to preserve offsets.
 	 */
 	private async deleteSelectedNodes(): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.currentFile || this.selectedNodeIds.size === 0) return;
 
 		// Collect the selected nodes, then their ranges (descending, to process
@@ -4443,7 +4551,7 @@ export class MindMapView extends ItemView {
 	 * direction: -1 = up, 1 = down.
 	 */
 	private async moveNodeUpDown(direction: number): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -4609,7 +4717,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings become children of the previous sibling.
 	 */
 	private async indentNode(): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -4714,7 +4822,7 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings promote together.
 	 */
 	private async outdentNode(): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -4903,7 +5011,15 @@ export class MindMapView extends ItemView {
 	 * Copy (or cut) selected node subtrees to the internal clipboard.
 	 */
 	private async copySelectedNodes(isCut: boolean): Promise<void> {
-		if (isCut && !this.assertEditable()) return;
+		// Only a cut is a mutation, so only a cut is gated on reading mode — but
+		// both slice the file by the tree's ranges, so both need those ranges to
+		// match the bytes on disk. A plain copy against stale offsets picks up
+		// text shifted by however much the frontmatter grew.
+		if (isCut) {
+			if (!await this.assertEditableFresh()) return;
+		} else {
+			await this.ensureTreeFresh();
+		}
 		if (!this.currentFile || !this.selectedNodeId) return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -4988,7 +5104,7 @@ export class MindMapView extends ItemView {
 	 * Paste clipboard content as a direct child of the selected node.
 	 */
 	private async pasteNodes(): Promise<void> {
-		if (!this.assertEditable()) return;
+		if (!await this.assertEditableFresh()) return;
 		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
 			return;
 
@@ -5080,10 +5196,11 @@ export class MindMapView extends ItemView {
 	 * Supports multi-select: all selected siblings get parented under the new node.
 	 */
 	private async insertParentNode(node: LayoutNode): Promise<void> {
-		if (!this.assertEditable()) return;
+		const target = await this.assertEditableNode(node);
+		if (!target) return;
 		if (!this.currentFile) return;
 
-		const src = node.source;
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 
@@ -5094,8 +5211,11 @@ export class MindMapView extends ItemView {
 		let blockEnd: number;
 		let blockText: string;
 
-		if (this.selectedNodeIds.size > 1 && node.parent) {
-			const siblings = node.parent.source.children;
+		// `target.parent`, not `node.parent`: the sibling ranges spliced below
+		// come off it, and the pre-guard node's parent belongs to the layout the
+		// freshness check may have just replaced.
+		if (this.selectedNodeIds.size > 1 && target.parent) {
+			const siblings = target.parent.source.children;
 			const selectedIndices = this.getSelectedSiblingIndices(siblings);
 			if (selectedIndices.length === 0) return;
 
@@ -5165,9 +5285,10 @@ export class MindMapView extends ItemView {
 	 * Duplicate the selected node(s) (and their subtrees) as siblings below.
 	 */
 	private async duplicateNode(node: LayoutNode): Promise<void> {
-		if (!this.assertEditable()) return;
+		const target = await this.assertEditableNode(node);
+		if (!target) return;
 		if (!this.currentFile) return;
-		const src = node.source;
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 
@@ -5937,6 +6058,10 @@ export class MindMapView extends ItemView {
 
 		this.cleanupDrag();
 
+		// A drag can span the seconds a schedule flush needs, so settle before
+		// reading any range: everything below is resolved from IDs afterwards.
+		await this.ensureTreeFresh();
+
 		if (
 			!dragNodeId ||
 			!dropTarget ||
@@ -6373,7 +6498,7 @@ export class MindMapView extends ItemView {
 				break;
 			case "F2":
 				if (this.selectedNodeId) {
-					this.startEditing(this.selectedNodeId);
+					void this.startEditing(this.selectedNodeId);
 					e.preventDefault();
 				}
 				break;
@@ -6719,8 +6844,11 @@ export class MindMapView extends ItemView {
 
 	// ─── Inline Editing ──────────────────────────────────────
 
-	private startEditing(nodeId: string): void {
-		if (!this.assertEditable()) return;
+	private async startEditing(nodeId: string): Promise<void> {
+		if (!await this.assertEditableFresh()) return;
+		// Looked up after the guard, not before: settling a deferred re-sync
+		// rebuilds `nodeMap`, and the node captured beforehand would be an
+		// orphan from the previous layout.
 		const node = this.nodeMap.get(nodeId);
 		if (!node || !this.svg) return;
 
@@ -7547,6 +7675,40 @@ export class MindMapView extends ItemView {
 	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
 	 * has to be re-read and re-expanded for the change to appear.
 	 */
+	/**
+	 * Note that a file the map is built from changed underneath it in a way that
+	 * does not affect what is drawn — today, only a debounced schedule flush,
+	 * which rewrites frontmatter and nothing else.
+	 *
+	 * The map is left exactly as it is. What is owed is a re-parse: the tree's
+	 * ranges index byte offsets in the file, and a frontmatter block that grew by
+	 * a line has moved every one of them. {@link ensureTreeFresh} settles the
+	 * debt before anything reads those offsets.
+	 */
+	private markTreeStale(path: string): void {
+		this.staleParsePaths.add(path);
+		this.treeStale = true;
+	}
+
+	/**
+	 * Pay off any deferred re-sync, so the caller can trust `currentTree`'s
+	 * offsets against the bytes on disk.
+	 *
+	 * Every map mutation awaits this first (see {@link assertEditableFresh}), as
+	 * does the end of a study session. Cheap and a no-op in the common case —
+	 * nothing is owed unless a schedule flush landed since the last re-sync.
+	 */
+	private async ensureTreeFresh(): Promise<void> {
+		if (!this.treeStale) return;
+		// Cleared before the await, not after: a flush that lands *during* the
+		// re-sync must re-arm the flag rather than be swallowed by it.
+		this.treeStale = false;
+		const paths = [...this.staleParsePaths];
+		this.staleParsePaths.clear();
+		for (const path of paths) this.cache.invalidate(path);
+		await this.resyncFromParent();
+	}
+
 	private async resyncFromParent(): Promise<void> {
 		if (!this.currentFile) return;
 		const parentContent = await this.app.vault.read(this.currentFile);
@@ -7855,7 +8017,19 @@ export class MindMapView extends ItemView {
 		newLine: string,
 	): Promise<void> {
 		if (!this.currentFile) return;
-		const src = node.source;
+		// `startEditing` settled the tree before opening the editor, but a
+		// debounced schedule flush can land in the seconds the editor is open and
+		// move every offset in the file under it. Settle again and re-resolve the
+		// node: IDs are derived from content, which a frontmatter-only write
+		// leaves alone, so the same node comes back with corrected ranges.
+		let target = node;
+		if (this.treeStale) {
+			await this.ensureTreeFresh();
+			const fresh = this.nodeMap.get(node.source.id);
+			if (!fresh) return;
+			target = fresh;
+		}
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 
@@ -7924,7 +8098,12 @@ export class MindMapView extends ItemView {
 	/**
 	 * Toggle the checked state of a checkbox node in the source file.
 	 */
-	private async toggleCheckboxNode(src: OsmosisNode): Promise<void> {
+	private async toggleCheckboxNode(node: OsmosisNode): Promise<void> {
+		// Settle first, then re-resolve: the splice below is by byte offset, and
+		// the caller's node predates any re-sync this triggers.
+		await this.ensureTreeFresh();
+		const src = this.currentLayout?.nodes.find((n) => n.source.id === node.id)?.source;
+		if (!src) return;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
@@ -7948,9 +8127,10 @@ export class MindMapView extends ItemView {
 	 * For transcluded parents, writes to the source file.
 	 */
 	private async addChildNode(parentNode: LayoutNode): Promise<void> {
-		if (!this.assertEditable()) return;
+		const target = await this.assertEditableNode(parentNode);
+		if (!target) return;
 		if (!this.currentFile) return;
-		const src = parentNode.source;
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
@@ -7974,9 +8154,10 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, writes to the source file.
 	 */
 	private async addSiblingNode(node: LayoutNode): Promise<void> {
-		if (!this.assertEditable()) return;
+		const target = await this.assertEditableNode(node);
+		if (!target) return;
 		if (!this.currentFile) return;
-		const src = node.source;
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
@@ -8017,9 +8198,10 @@ export class MindMapView extends ItemView {
 	 * For transcluded nodes, deletes from the source file.
 	 */
 	private async deleteNode(node: LayoutNode): Promise<void> {
-		if (!this.assertEditable()) return;
+		const target = await this.assertEditableNode(node);
+		if (!target) return;
 		if (!this.currentFile) return;
-		const src = node.source;
+		const src = target.source;
 		const file = this.getNodeFile(src);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
@@ -8075,7 +8257,7 @@ export class MindMapView extends ItemView {
 			if (isEmpty) {
 				this.selectNode(id);
 				this.scrollToSelectedNode();
-				this.startEditing(id);
+				void this.startEditing(id);
 				return;
 			}
 		}
@@ -8093,7 +8275,27 @@ export class MindMapView extends ItemView {
 		return -this.currentLayout.bounds.y1 + LAYOUT_PADDING;
 	}
 
-	private async render(): Promise<void> {
+	/**
+	 * Repaint the map, one pass at a time.
+	 *
+	 * Passes are queued rather than run concurrently. {@link renderPass} unloads
+	 * the previous render `Component` and empties the container partway through,
+	 * after an `await` on node measurement — so two passes overlapping means the
+	 * second tears down the DOM and the Markdown-render component the first is
+	 * still filling, leaving detached nodes and a half-built SVG. Callers await
+	 * the same promise they always did and still see a finished `nodeMap`.
+	 *
+	 * The chain absorbs a rejection so one failed pass cannot wedge every later
+	 * one; the pass's own promise still rejects for its caller.
+	 */
+	private render(): Promise<void> {
+		const next = this.renderChain.then(() => this.renderPass());
+		this.renderChain = next.catch(() => undefined);
+		return next;
+	}
+
+	private async renderPass(): Promise<void> {
+		if (this.closed) return;
 		const container = this.contentEl;
 
 		// Clean up previous render component

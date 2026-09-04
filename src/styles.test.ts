@@ -12,6 +12,9 @@ import {
 	lookupVariantStyle,
 	getClassScope,
 	parseOsmosisStyleFrontmatter,
+	styleMappingFor,
+	readStyleMapping,
+	isCorruptStyleFrontmatter,
 	buildMapSettingsFromFrontmatter,
 	mergeNodeStyle,
 	DEFAULT_MAP_SETTINGS,
@@ -478,6 +481,17 @@ describe("parseOsmosisStyleFrontmatter", () => {
 		expect(parseOsmosisStyleFrontmatter({ "osmosis-styles": 42 })).toBeUndefined();
 	});
 
+	// The shape a stringified style object takes on a round trip through YAML:
+	// `[object Object]` is unquoted, so it parses as a flow sequence. An array
+	// passes `typeof === "object"`, so it used to be accepted and then read as
+	// though the note simply had no styles set.
+	it("returns undefined when osmosis-styles is an array", () => {
+		expect(
+			parseOsmosisStyleFrontmatter({ "osmosis-styles": ["object Object"] }),
+		).toBeUndefined();
+		expect(parseOsmosisStyleFrontmatter({ "osmosis-styles": [] })).toBeUndefined();
+	});
+
 	it("parses theme string", () => {
 		const result = parseOsmosisStyleFrontmatter({
 			"osmosis-styles": { theme: "Ocean" },
@@ -911,5 +925,75 @@ describe("buildMapSettingsFromFrontmatter", () => {
 		expect(effective.horizontalSpacing).toBe(120);
 		expect(effective.direction).toBe("left-right"); // default
 		expect(effective.branchLineStyle).toBe("curved"); // default
+	});
+});
+
+// ─── styleMappingFor / readStyleMapping / isCorruptStyleFrontmatter ──────
+
+describe("styleMappingFor", () => {
+	it("installs a fresh mapping when the key is missing", () => {
+		const fm: Record<string, unknown> = { title: "Note" };
+		const styles = styleMappingFor(fm);
+		styles["theme"] = "Ocean";
+		expect(fm["osmosis-styles"]).toEqual({ theme: "Ocean" });
+	});
+
+	it("returns the existing mapping so writes merge onto it", () => {
+		const existing = { theme: "Ocean" };
+		const fm: Record<string, unknown> = { "osmosis-styles": existing };
+		const styles = styleMappingFor(fm);
+		expect(styles).toBe(existing);
+		styles["background"] = "#111";
+		expect(fm["osmosis-styles"]).toEqual({ theme: "Ocean", background: "#111" });
+	});
+
+	// The bug this exists to stop: assigning style keys onto the corrupt array
+	// left the frontmatter holding a list with properties bolted onto it, which
+	// no reader could make sense of — so every later style write was lost too.
+	it("replaces a corrupt array rather than assigning keys onto it", () => {
+		const fm: Record<string, unknown> = { "osmosis-styles": ["object Object"] };
+		const styles = styleMappingFor(fm);
+		styles["theme"] = "Ocean";
+		expect(Array.isArray(fm["osmosis-styles"])).toBe(false);
+		expect(fm["osmosis-styles"]).toEqual({ theme: "Ocean" });
+	});
+
+	it("replaces a scalar", () => {
+		const fm: Record<string, unknown> = { "osmosis-styles": "[object Object]" };
+		styleMappingFor(fm)["theme"] = "Ocean";
+		expect(fm["osmosis-styles"]).toEqual({ theme: "Ocean" });
+	});
+});
+
+describe("readStyleMapping", () => {
+	it("reads a mapping", () => {
+		expect(readStyleMapping({ "osmosis-styles": { theme: "Ocean" } })).toEqual({
+			theme: "Ocean",
+		});
+	});
+
+	it("treats a missing or corrupt value as absent, and does not write", () => {
+		const fm: Record<string, unknown> = { "osmosis-styles": ["object Object"] };
+		expect(readStyleMapping(fm)).toBeUndefined();
+		expect(readStyleMapping({})).toBeUndefined();
+		// A read must not repair — that is `styleMappingFor`'s job, and only
+		// when there is a real style to put in the corrupt value's place.
+		expect(fm["osmosis-styles"]).toEqual(["object Object"]);
+	});
+});
+
+describe("isCorruptStyleFrontmatter", () => {
+	it("is false for absent, null, and valid mappings", () => {
+		expect(isCorruptStyleFrontmatter(undefined)).toBe(false);
+		expect(isCorruptStyleFrontmatter(null)).toBe(false);
+		expect(isCorruptStyleFrontmatter({ title: "Note" })).toBe(false);
+		expect(isCorruptStyleFrontmatter({ "osmosis-styles": null })).toBe(false);
+		expect(isCorruptStyleFrontmatter({ "osmosis-styles": { theme: "Ocean" } })).toBe(false);
+	});
+
+	it("is true for the array and scalar corruption signatures", () => {
+		expect(isCorruptStyleFrontmatter({ "osmosis-styles": ["object Object"] })).toBe(true);
+		expect(isCorruptStyleFrontmatter({ "osmosis-styles": "[object Object]" })).toBe(true);
+		expect(isCorruptStyleFrontmatter({ "osmosis-styles": 42 })).toBe(true);
 	});
 });

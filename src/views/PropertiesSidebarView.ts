@@ -5,7 +5,7 @@ import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, MapLayout, BalanceMode, LayoutSide } from "../styles";
-import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
@@ -307,8 +307,7 @@ export class PropertiesSidebarView extends ItemView {
 			file,
 			mindMap,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 
 				// Only store if different from default
 				if (value === DEFAULT_MAP_SETTINGS[key] || value === undefined) {
@@ -503,8 +502,7 @@ export class PropertiesSidebarView extends ItemView {
 							file,
 							mindMap,
 							(fm: Record<string, unknown>) => {
-								const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-								fm["osmosis-styles"] = osmosis;
+								const osmosis = styleMappingFor(fm);
 
 								// Clear style overrides so the new theme's values take effect
 								delete osmosis["baseStyle"];
@@ -1546,8 +1544,7 @@ export class PropertiesSidebarView extends ItemView {
 			file,
 			mindMap,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 				const base: NodeStyle = (osmosis["baseStyle"] as NodeStyle) ?? {};
 				mergeNodeStyle(base, update);
 				osmosis["baseStyle"] = base;
@@ -1578,7 +1575,7 @@ export class PropertiesSidebarView extends ItemView {
 			file,
 			mindMap,
 			(fm: Record<string, unknown>) => {
-				const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+				const osmosis = readStyleMapping(fm);
 				if (!osmosis) return;
 				const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
 
@@ -1923,7 +1920,7 @@ export class PropertiesSidebarView extends ItemView {
 							file,
 							mindMap,
 							(fm: Record<string, unknown>) => {
-								const osmosis = fm["osmosis-styles"] as Record<string, unknown> | undefined;
+								const osmosis = readStyleMapping(fm);
 								if (!osmosis) return;
 								const baseStyle = osmosis["baseStyle"] as NodeStyle | undefined;
 								if (baseStyle) {
@@ -2206,8 +2203,7 @@ export class PropertiesSidebarView extends ItemView {
 			file,
 			mindMap,
 			(fm: Record<string, unknown>) => {
-				const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-				fm["osmosis-styles"] = osmosis;
+				const osmosis = styleMappingFor(fm);
 
 				if (value === undefined || value === "") {
 					delete osmosis[key];
