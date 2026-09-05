@@ -370,6 +370,10 @@ export class MindMapView extends ItemView {
 	// Branch lines are culled on their own geometry, keyed by child node id
 	private renderedBranchIds = new Set<string>();
 	private cullRafId: number | null = null;
+	// A cull pass is mid-flight; a further request arrived while it was.
+	// See `runCullUpdate` — passes must not overlap.
+	private cullRunning = false;
+	private cullQueued = false;
 	private branchLinesGroup: SVGGElement | null = null;
 	private nodesGroup: SVGGElement | null = null;
 
@@ -1941,6 +1945,10 @@ export class MindMapView extends ItemView {
 			cancelAnimationFrame(this.cullRafId);
 			this.cullRafId = null;
 		}
+		// A pass already awaiting its draws checks `nodesGroup` before
+		// committing, so it lands as a no-op; clearing the queue stops it
+		// looping for another.
+		this.cullQueued = false;
 
 		this.spatialMode = "off";
 		this.spatialTargets.clear();
@@ -3135,8 +3143,47 @@ export class MindMapView extends ItemView {
 		if (this.cullRafId !== null) return;
 		this.cullRafId = window.requestAnimationFrame(() => {
 			this.cullRafId = null;
-			void this.updateVisibleNodes();
+			void this.runCullUpdate();
 		});
+	}
+
+	/**
+	 * Run cull passes one at a time, coalescing everything that asks for one
+	 * while a pass is in flight into a single follow-up.
+	 *
+	 * **Passes must not overlap.** {@link updateVisibleNodes} decides what to
+	 * draw from `renderedNodeIds` but only assigns it *after* awaiting the
+	 * draws, and `drawNode` awaits `MarkdownRenderer`. A second pass entering
+	 * that window reads the pre-pass set, concludes that everything the first
+	 * pass is currently drawing is still missing, and draws it again — two
+	 * `<g data-node-id="…">` for one node. The removal loop below takes every
+	 * match now, but a duplicate that is still on screen is not removed by
+	 * anything, so the next pass to bring it back in duplicates it again.
+	 *
+	 * The window is not rare: `updateViewBox` schedules a pass, and a pan, a
+	 * pinch and every frame of inertia call it. On mobile a pass over
+	 * image-bearing nodes comfortably outlasts a frame, so a fling used to
+	 * duplicate a slice of the map per frame — unbounded SVG growth that took
+	 * Obsidian down on Android partway through a study session.
+	 *
+	 * The `do`/`while` is what keeps a fling smooth: requests that arrive
+	 * during a pass collapse into one more pass against the latest viewBox,
+	 * rather than one queued pass each.
+	 */
+	private async runCullUpdate(): Promise<void> {
+		if (this.cullRunning) {
+			this.cullQueued = true;
+			return;
+		}
+		this.cullRunning = true;
+		try {
+			do {
+				this.cullQueued = false;
+				await this.updateVisibleNodes();
+			} while (this.cullQueued);
+		} finally {
+			this.cullRunning = false;
+		}
 	}
 
 	/** Add/remove DOM nodes based on current viewport */
@@ -3149,6 +3196,10 @@ export class MindMapView extends ItemView {
 		)
 			return;
 
+		// Held across the await below so the pass can tell whether the SVG it
+		// has been drawing into is still the live one — see the commit check
+		// at the end.
+		const nodesGroup = this.nodesGroup;
 		const { nodes } = this.currentLayout;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
@@ -3178,13 +3229,15 @@ export class MindMapView extends ItemView {
 			}
 		}
 
-		// Remove nodes that left the viewport (but never cull the node being edited)
+		// Remove nodes that left the viewport (but never cull the node being
+		// edited). Every match, not the first: one node id can have acquired
+		// more than one group from overlapping passes (see `runCullUpdate`), and
+		// leaving the extras behind is what let them accumulate.
 		for (const id of this.renderedNodeIds) {
 			if (!nowVisible.has(id) && id !== this.editingNodeId) {
-				const el = this.nodesGroup.querySelector(
-					`.osmosis-node-group[data-node-id="${id}"]`,
-				);
-				el?.remove();
+				nodesGroup
+					.querySelectorAll(`.osmosis-node-group[data-node-id="${id}"]`)
+					.forEach((el) => { el.remove(); });
 			}
 		}
 
@@ -3205,7 +3258,7 @@ export class MindMapView extends ItemView {
 			const id = node.source.id;
 			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
 				renderPromises.push(
-					this.drawNode(this.nodesGroup, node, offsetX, offsetY),
+					this.drawNode(nodesGroup, node, offsetX, offsetY),
 				);
 			}
 			if (
@@ -3224,6 +3277,15 @@ export class MindMapView extends ItemView {
 			}
 		}
 		await Promise.all(renderPromises);
+
+		// A full render pass can land while the draws above are awaiting: it
+		// empties the container and builds a fresh SVG, and its own
+		// `renderedNodeIds` describes that DOM exactly. Committing this pass's
+		// set over it would leave the bookkeeping describing a DOM that no
+		// longer exists — every node it lists as absent gets drawn a second
+		// time. The nodes drawn above went into the old, now-detached group and
+		// go away with it.
+		if (this.nodesGroup !== nodesGroup) return;
 
 		// Re-apply spatial study state to newly rendered nodes
 		this.applySpatialState();
