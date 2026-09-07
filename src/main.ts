@@ -509,25 +509,49 @@ export default class OsmosisPlugin extends Plugin {
 			});
 		});
 
-		// Incremental sync on file changes (debounced)
-		const debouncedSync = debounce((file: TFile) => {
-			this.cardSync.syncFile(file).then(() => {
+		// Incremental sync on file changes (debounced).
+		//
+		// The files are accumulated in a map rather than passed as the debounced
+		// function's argument, because `debounce` keeps only the *last* call's
+		// arguments. A burst that touches several notes — a study session flushes
+		// schedule frontmatter into every transcluded note it rated — used to
+		// sync whichever note happened to be written last and silently drop the
+		// rest, leaving their cards stale in the store until something else
+		// touched them.
+		//
+		// Keyed by path so repeated writes to one note collapse, and each file's
+		// failure is caught on its own so one bad note cannot cost the whole
+		// batch its refresh.
+		const pendingSync = new Map<string, TFile>();
+		const debouncedSync = debounce(() => {
+			const files = [...pendingSync.values()];
+			pendingSync.clear();
+			void Promise.all(
+				files.map((file) =>
+					this.cardSync.syncFile(file).catch((error: unknown) => {
+						console.error(`Osmosis: incremental card sync failed for ${file.path}`, error);
+					}),
+				),
+			).then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
-			}).catch((error: unknown) => {
-				console.error("Osmosis: incremental card sync/refresh failed", error);
 			});
 		}, 2000, true);
 
+		const queueSync = (file: TFile): void => {
+			pendingSync.set(file.path, file);
+			debouncedSync();
+		};
+
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (this.isNoteFile(file)) debouncedSync(file);
+				if (this.isNoteFile(file)) queueSync(file);
 			}),
 		);
 
 		this.registerEvent(
 			this.app.vault.on("create", (file) => {
-				if (this.isNoteFile(file)) debouncedSync(file);
+				if (this.isNoteFile(file)) queueSync(file);
 			}),
 		);
 

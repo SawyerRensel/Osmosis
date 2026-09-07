@@ -72,8 +72,10 @@ const SCHEDULE_FIELD_KEYS = [
  * caller; this store coalesces them and flushes the `osmosis-schedule`
  * frontmatter key via `FileManager.processFrontMatter` after a debounce
  * window, so rapid ratings during a study session cause one file write
- * instead of many. `flush()` forces pending writes out immediately
- * (study-session end, plugin unload).
+ * instead of many. The window opens with the first staged entry and is not
+ * extended by later ones (see {@link ScheduleStore.armTimer}), so a write is
+ * never more than one window behind the reader. `flush()` forces pending
+ * writes out immediately (study-session end, plugin unload).
  */
 export class ScheduleStore {
 	/** Staged schedule writes per note path. `null` value = remove the entry's schedule. */
@@ -207,8 +209,19 @@ export class ScheduleStore {
 		this.armTimer(notePath);
 	}
 
+	/**
+	 * Open the flush window for a note, if one is not already open.
+	 *
+	 * Deliberately **not** a reset-on-every-call debounce. A study session rates
+	 * card after card in the same note, and re-arming on each rating pushed the
+	 * write out again every time — so an unbroken streak wrote nothing at all
+	 * until the reader paused, and everything staged in between was lost if the
+	 * app went away first. Arming from the *first* staged entry and leaving the
+	 * timer alone still coalesces a burst into one write, but bounds the wait at
+	 * {@link flushDelayMs} however fast the ratings come.
+	 */
 	private armTimer(notePath: string): void {
-		this.clearTimer(notePath);
+		if (this.timers.has(notePath)) return;
 		this.timers.set(
 			notePath,
 			window.setTimeout(() => {

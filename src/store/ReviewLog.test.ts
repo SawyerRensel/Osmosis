@@ -895,6 +895,27 @@ describe("ReviewLog writes", () => {
 		expect(parseEntry(lines[1] ?? "")).toMatchObject({ c: "os-a1" });
 	});
 
+	it("does not re-queue entries that already reached disk", async () => {
+		const cache = new FakeCacheStore();
+		const { log, fs } = makeLog({ cache });
+		// A localStorage quota error is the realistic version of this: the
+		// rollup fold runs *after* the append, so by the time it throws the
+		// entry is on disk. Re-buffering it would append it a second time.
+		cache.save = () => {
+			throw new Error("QuotaExceededError");
+		};
+
+		log.record(entry({ t: AUG_7, c: "os-a1" }));
+		await log.flush();
+		expect(fs.appends).toHaveLength(0);
+		expect(parseShard(fs.files.get(`${FOLDER}/2026-08.pixel-10a.md`) ?? "").entries).toHaveLength(1);
+
+		// Nothing is left buffered, so a later flush writes nothing at all.
+		await log.flush();
+		expect(fs.appends).toHaveLength(0);
+		expect(parseShard(fs.files.get(`${FOLDER}/2026-08.pixel-10a.md`) ?? "").entries).toHaveLength(1);
+	});
+
 	it("wraps a new shard in Markdown, and never closes the fence", async () => {
 		const { log, fs } = makeLog();
 		log.record(entry({ t: AUG_7, c: "os-a1" }));

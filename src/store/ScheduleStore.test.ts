@@ -369,16 +369,48 @@ describe("ScheduleStore", () => {
 		expect(Object.keys(map).sort()).toEqual(["os-a1b2c3", "os-d4e5f6"]);
 	});
 
-	it("each staged write resets the debounce timer", async () => {
+	it("a later write does not extend the window opened by the first", async () => {
 		const h = makeHarness();
 		h.store.setSchedule("note.md", "os-a1b2c3", baseSchedule);
 		await vi.advanceTimersByTimeAsync(1500);
 		h.store.setSchedule("note.md", "os-a1b2c3", { ...baseSchedule, reps: 4 });
-		await vi.advanceTimersByTimeAsync(1500);
-		expect(h.processFrontMatter).not.toHaveBeenCalled();
 
+		// The window belongs to the first entry, so it closes 2000 ms after
+		// *that* one — not 2000 ms after the write above.
 		await vi.advanceTimersByTimeAsync(500);
 		expect(h.writeCounts.get("note.md")).toBe(1);
+		const map = h.frontmatters.get("note.md")?.[SCHEDULE_FRONTMATTER_KEY] as Record<
+			string,
+			{ reps: number }
+		>;
+		expect(map["os-a1b2c3"]?.reps).toBe(4);
+	});
+
+	it("an unbroken rating streak still writes within one window", async () => {
+		const h = makeHarness();
+		// A rating every 500 ms forever: under a reset-on-every-call debounce
+		// this wrote nothing at all until the reader paused.
+		for (let rep = 1; rep <= 10; rep++) {
+			h.store.setSchedule("note.md", "os-a1b2c3", { ...baseSchedule, reps: rep });
+			await vi.advanceTimersByTimeAsync(500);
+		}
+
+		// Two closed windows inside a 5 s streak. Under the old debounce this
+		// was 0: the streak outran the timer and nothing reached disk until it
+		// stopped. The newest rating may still be staged — a write is at most
+		// one window behind the reader, which is the guarantee being asserted.
+		expect(h.writeCounts.get("note.md")).toBe(2);
+	});
+
+	it("re-arms for entries staged after a window closed", async () => {
+		const h = makeHarness();
+		h.store.setSchedule("note.md", "os-a1b2c3", baseSchedule);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(h.writeCounts.get("note.md")).toBe(1);
+
+		h.store.setSchedule("note.md", "os-d4e5f6", baseSchedule);
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(h.writeCounts.get("note.md")).toBe(2);
 	});
 
 	it("flush() writes immediately and cancels the timer", async () => {
