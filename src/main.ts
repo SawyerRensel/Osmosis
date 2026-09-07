@@ -42,6 +42,8 @@ import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
 import { styleMappingFor } from "./styles";
+// TEMPORARY — study-mode crash instrumentation. Revert with `src/debug-trace.ts`.
+import { flushTrace, startTrace, stopTrace, trace, tracePath } from "./debug-trace";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
 
@@ -142,6 +144,10 @@ export default class OsmosisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+
+		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
+		// After `loadSettings` because the trace lands in the review log folder.
+		startTrace(this.app.vault.adapter, this.settings.reviewLogFolder, platformDeviceLabel(Platform));
 
 		// In-memory card store — replaces SQLite database
 		this.cardStore = new CardStore();
@@ -276,6 +282,17 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Open mind map view",
 			callback: () => {
 				void this.activateMindMapView();
+			},
+		});
+
+		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
+		this.addCommand({
+			id: "flush-debug-trace",
+			name: "Flush debug trace",
+			callback: () => {
+				void flushTrace().then(() => {
+					new Notice(`Osmosis: debug trace written to ${tracePath()}`);
+				});
 			},
 		});
 
@@ -511,9 +528,13 @@ export default class OsmosisPlugin extends Plugin {
 
 		// Incremental sync on file changes (debounced)
 		const debouncedSync = debounce((file: TFile) => {
+			// TEMPORARY — study-mode crash instrumentation. Revert before merging.
+			const started = performance.now();
+			trace("sync-file-start", { path: file.path });
 			this.cardSync.syncFile(file).then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
+				trace("sync-file-end", { path: file.path, durMs: Math.round(performance.now() - started) });
 			}).catch((error: unknown) => {
 				console.error("Osmosis: incremental card sync/refresh failed", error);
 			});
@@ -779,6 +800,8 @@ export default class OsmosisPlugin extends Plugin {
 		// ...and any buffered review-log entries, so closing Obsidian mid-session
 		// does not lose the reviews it holds
 		void this.reviewLog.flush();
+		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
+		void stopTrace();
 	}
 
 	/**
