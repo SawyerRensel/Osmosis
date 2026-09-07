@@ -1320,9 +1320,14 @@ export class MindMapView extends ItemView {
 			// The card on screen while it is being asked. Null once the node has
 			// answered them all, and the node goes back to its own text.
 			const step = asking === null ? null : this.spatialStepCards.get(asking) ?? null;
-			this.applySpatialHidden(nodeId, !answered, occlusion, step, cards);
 
+			// Looked up once and passed down, matching `applyFenceHidden`'s shape.
+			// `applySpatialHidden` used to repeat this same whole-SVG attribute
+			// scan for the node it had just been handed, so every target node cost
+			// two walks of the tree — per animation frame, for the whole of a pan.
 			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
+			if (group) this.applySpatialHidden(group, nodeId, !answered, occlusion, step, cards);
+
 			// Toggled, not just added: rating one group resets the node to ask the
 			// next, and a node that kept the revealed class would stay lit up while
 			// its next question was on screen.
@@ -1366,16 +1371,13 @@ export class MindMapView extends ItemView {
 	 * reveals as a whole.
 	 */
 	private applySpatialHidden(
+		group: Element,
 		nodeId: string,
 		hidden: boolean,
 		occlusion: CardOcclusion | null,
 		step: Card | null,
 		cards: readonly Card[],
 	): void {
-		if (!this.svg) return;
-		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group) return;
-
 		// A fence node is never blanked. Its front is the question — prose, a
 		// cloze with its blanks, a masked diagram — and hiding the whole node
 		// would take the question away with the answer, leaving a "?" that asks
@@ -9162,6 +9164,21 @@ export class MindMapView extends ItemView {
 			} else if (osmosisCard) {
 				// Render osmosis fence as card (front + divider + back)
 				await this.renderOsmosisCardInto(wrapper, osmosisCard, sourcePath, XHTML_NS);
+
+				// This branch used to be the one that never wrote the cache — the
+				// `set` sat in the branch below only — so every draw of every
+				// fence node re-ran `MarkdownRenderer.render`, twice over for a
+				// two-sided card, each time a cull pass brought it back on screen.
+				//
+				// An occluded fence stays out on purpose. `renderOcclusion` hangs
+				// a one-shot `load` listener on its `<img>` to memoise the
+				// picture's natural size, and a clone carries neither the listener
+				// nor the width/height attributes it exists to supply — so a
+				// cached draw would reproduce exactly the no-intrinsic-size
+				// collapse those attributes were added to prevent.
+				if (!isCheckboxNode && !osmosisCard.occlusions) {
+					this.cacheNodeHtml(cacheKey, wrapper);
+				}
 			} else if (this.renderComponent) {
 				await MarkdownRenderer.render(
 					this.app,
@@ -9219,16 +9236,7 @@ export class MindMapView extends ItemView {
 
 				// Cache the rendered wrapper content for future cloning
 				// (skip checkbox nodes — their checked state makes caching incorrect)
-				if (!isCheckboxNode) {
-					const cacheEntry = document.createElementNS(
-						XHTML_NS,
-						"div",
-					) as HTMLDivElement;
-					for (const child of Array.from(wrapper.childNodes)) {
-						cacheEntry.appendChild(child.cloneNode(true));
-					}
-					this.nodeHtmlCache.set(cacheKey, cacheEntry);
-				}
+				if (!isCheckboxNode) this.cacheNodeHtml(cacheKey, wrapper);
 			}
 		}
 
@@ -9265,6 +9273,21 @@ export class MindMapView extends ItemView {
 		}
 
 		svg.appendChild(group);
+	}
+
+	/**
+	 * Keep a copy of a node's rendered markdown, to clone on its next draw.
+	 *
+	 * A cull pass redraws whatever comes back into view, so an uncached node
+	 * re-runs `MarkdownRenderer.render` every time it reappears — and the render
+	 * lands in `renderComponent`, which only unloads on a full render pass.
+	 */
+	private cacheNodeHtml(cacheKey: string, wrapper: Element): void {
+		const cacheEntry = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		for (const child of Array.from(wrapper.childNodes)) {
+			cacheEntry.appendChild(child.cloneNode(true));
+		}
+		this.nodeHtmlCache.set(cacheKey, cacheEntry);
 	}
 
 	private drawCollapseToggle(
