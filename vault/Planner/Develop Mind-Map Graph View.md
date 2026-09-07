@@ -61,3 +61,5 @@ What if we took the best of traditional mind mapping + the best of Obsidian's gr
 ## Reference Attachments/Screenshots
 
 *Attach any reference files, screenshots, sketches, or examples.*
+
+- Obsidian TagRoutes Plugin 
