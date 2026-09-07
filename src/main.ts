@@ -131,6 +131,22 @@ export default class OsmosisPlugin extends Plugin {
 	lineReveal!: LineRevealProcessor;
 	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
 	contextualStudy!: ContextualStudyProcessor;
+	/**
+	 * Resolves once the startup vault scan has filled the card store.
+	 *
+	 * `syncAll` walks every markdown file in the vault, and a view the workspace
+	 * restored is on screen well before it finishes. Anything that reads the
+	 * store to decide *whether there is work to do* — rather than to display
+	 * whatever it currently holds — has to wait for this, or it decides against
+	 * an empty store.
+	 *
+	 * Resolves on failure too: a scan that threw must not leave study
+	 * permanently unavailable.
+	 */
+	cardStoreReady!: Promise<void>;
+	/** True once {@link cardStoreReady} has settled, so callers can stay synchronous. */
+	isCardStoreReady = false;
+	private resolveCardStoreReady!: () => void;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 	/**
@@ -142,6 +158,14 @@ export default class OsmosisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+
+		// Armed before anything can await it — the startup scan below settles it.
+		this.cardStoreReady = new Promise<void>((resolve) => {
+			this.resolveCardStoreReady = () => {
+				this.isCardStoreReady = true;
+				resolve();
+			};
+		});
 
 		// In-memory card store — replaces SQLite database
 		this.cardStore = new CardStore();
@@ -506,6 +530,8 @@ export default class OsmosisPlugin extends Plugin {
 				// A throw here would otherwise vanish AND leave header chrome
 				// and dashboard stale until the next workspace event
 				console.error("Osmosis: startup card sync/refresh failed", error);
+			}).finally(() => {
+				this.resolveCardStoreReady();
 			});
 		});
 

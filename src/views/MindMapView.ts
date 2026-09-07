@@ -1111,11 +1111,41 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
+	 * Hold a study or peek entry until the startup vault scan has filled the
+	 * card store, then retry it.
+	 *
+	 * The store is filled by a scan of every markdown file in the vault, and a
+	 * map the workspace restored is on screen long before that finishes. Both
+	 * entry points ask the store whether there is anything to study, so on a
+	 * cold start they asked an empty one and reported nothing due on a map full
+	 * of due cards — the symptom this bug was filed for, whose workaround was to
+	 * edit any note and kick an incremental sync. Everything else on the map
+	 * merely *displays* what the store holds and corrects itself as it fills;
+	 * only these two make a decision that cannot be taken back.
+	 *
+	 * @returns true when the caller must return — the entry has been deferred.
+	 */
+	private deferUntilCardsLoaded(start: () => void): boolean {
+		if (this.plugin.isCardStoreReady) return false;
+		new Notice("Osmosis is still scanning the vault — this will start in a moment.");
+		const startedOn = this.currentFile;
+		void this.plugin.cardStoreReady.then(() => {
+			// The reader may have closed the view or moved to another map while
+			// the scan ran; starting a session under them would be worse than
+			// doing nothing.
+			if (this.closed || this.currentFile !== startedOn) return;
+			start();
+		});
+		return true;
+	}
+
+	/**
 	 * Start a study session over the due-or-new line cards on the map,
 	 * optionally scoped to one branch ("Study this branch"). The map stays
 	 * fully expanded — only the target nodes are hidden.
 	 */
 	private enterSpatialStudy(scope?: LayoutNode): void {
+		if (this.deferUntilCardsLoaded(() => { this.enterSpatialStudy(scope); })) return;
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
 		const notePath = this.currentFile?.path;
@@ -1156,6 +1186,7 @@ export class MindMapView extends ItemView {
 	 * any order, record nothing (mirrors reading view's peek mode).
 	 */
 	private enterSpatialPeek(): void {
+		if (this.deferUntilCardsLoaded(() => { this.enterSpatialPeek(); })) return;
 		if (this.spatialMode !== "off") this.exitSpatialMode();
 
 		const cards = this.mapCards();
