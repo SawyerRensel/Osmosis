@@ -8655,8 +8655,9 @@ export class MindMapView extends ItemView {
 					);
 				}
 
-				// Replace video platform links with embedded iframes
-				this.replaceVideoEmbeds(cell);
+				// Replace video platform links with embedded iframes. Sized, not
+				// loaded — this cell exists to be measured and discarded.
+				this.replaceVideoEmbeds(cell, undefined, false);
 
 				// Inject checkbox for task-list items (affects size measurement)
 				if (node.metadata?.checkbox) {
@@ -8839,7 +8840,17 @@ export class MindMapView extends ItemView {
 	 * Post-render: replace links to video platforms with embedded iframes.
 	 * Works in both the measurement div and the actual SVG foreignObject.
 	 */
-	private replaceVideoEmbeds(container: HTMLElement, ns?: string): void {
+	/**
+	 * Swap video-platform links for players.
+	 *
+	 * `loadPlayer` is false for the offscreen measurement pass, which needs the
+	 * player's *box* and nothing else. The element stays an `<iframe>` because
+	 * the rule that sizes it is `iframe.osmosis-video-embed` — a placeholder of
+	 * any other tag would measure wrong — but without a `src` it costs no
+	 * network, no player and no compositing for a node that is about to be
+	 * measured and thrown away.
+	 */
+	private replaceVideoEmbeds(container: HTMLElement, ns?: string, loadPlayer = true): void {
 		const links = container.querySelectorAll("a");
 		for (const link of Array.from(links)) {
 			const href = link.getAttribute("href") ?? "";
@@ -8850,7 +8861,7 @@ export class MindMapView extends ItemView {
 						? (document.createElementNS(ns, "iframe") as HTMLIFrameElement)
 						: createEl("iframe");
 					if (ns) iframe.setAttribute("xmlns", ns);
-					iframe.setAttribute("src", toEmbed(match));
+					if (loadPlayer) iframe.setAttribute("src", toEmbed(match));
 					iframe.setAttribute("frameborder", "0");
 					iframe.setAttribute("allowfullscreen", "true");
 					iframe.setAttribute(
