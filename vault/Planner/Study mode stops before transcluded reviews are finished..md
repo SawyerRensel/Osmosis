@@ -9,6 +9,7 @@ context:
 people:
 location:
 related:
+  - "[[Obsidian's WebView renderer holds 0.6-1.4 GB on this vault]]"
 status: In-Progress
 priority:
 progress_current:
@@ -1171,7 +1172,20 @@ fixing.
 
 Defect 8 is a genuine footprint problem and the largest remaining risk on
 mobile, but it is **not** what caused this crash and it is much bigger than the
-rest. It may deserve its own task after all — decide once 1–7 are done.
+rest. **Split out** into
+[[Obsidian's WebView renderer holds 0.6-1.4 GB on this vault]], which carries
+the `dumpsys` measurements, the `performance.memory` caveat and the candidate
+levers. This task closes on 1–7.
+
+Order agreed with the user for 1–7, impact first, one build and one round of
+phone testing per group:
+
+| Round | Defects | Why first |
+|---|---|---|
+| A | 6, 3, 4 | Data integrity — these lose or duplicate review data |
+| B | 5 | The user-visible symptom reported in this very bug report |
+| C | 1, 2 | Hot-path cost; invisible but cheap |
+| D | 7 | Latent — no YouTube embeds on the map today |
 
 ### Decisions worth remembering
 
