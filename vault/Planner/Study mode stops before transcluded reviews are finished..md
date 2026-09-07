@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Obsidian's WebView renderer holds 0.6-1.4 GB on this vault]]"
-status: In-Progress
+status: Done
 priority:
 progress_current:
 progress_total:
 date_created: "2026-09-01T17:04:08.290Z"
-date_modified: "2026-09-03T20:48:03.215Z"
+date_modified: "2026-09-07T17:21:23-04:00"
 date_start_scheduled: "2026-09-03T22:30:00"
 date_start_actual: "2026-09-03T22:30:00"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-09-07T17:21:23-04:00"
+date_end_actual: "2026-09-07T17:21:23-04:00"
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -1137,7 +1137,7 @@ task rather than being split into new tickets, so nothing gets re-derived later.
 The task is therefore not done at the fix; it is done when the tree is clean and
 the real defects below are dealt with.
 
-### Must happen before anything merges
+### Must happen before anything merges — **all done**, see "What was implemented"
 
 1. **Strip the instrumentation.** Delete `src/debug-trace.ts` and every call
    site. `grep -rn "TEMPORARY — study-mode crash instrumentation" src/` finds
@@ -1187,6 +1187,10 @@ phone testing per group:
 | C | 1, 2 | Hot-path cost; invisible but cheap |
 | D | 7 | Latent — no YouTube embeds on the map today |
 
+**All four rounds shipped.** Defect 7 was cut back to its measurable half after
+the user asked what the benefit was — the answer is in "Decisions worth
+remembering" below.
+
 ### Decisions worth remembering
 
 - **`performance.memory` is quantized on this Android device** — it reported a
@@ -1204,6 +1208,139 @@ phone testing per group:
 - **When the user says "it's always the same spot", that is data.** It was
   dismissed twice as a base-rate artefact and it was the single most
   discriminating fact available.
+
+# What was implemented
+
+## Where it shipped
+
+Branch `fix/study-mode-transclusion-crash`, seven commits past the crash fix.
+**No PR is open** — the user has not asked for one, so the branch is finished
+but unmerged. Whoever opens it should base it on the current release branch and
+fill `pull_request` above.
+
+| Commit | What |
+|---|---|
+| `d27dfdf` | The crash fix — cancel the anchor's default action on the touch path |
+| `b749674` | Strip the instrumentation |
+| `69c92ff` | Split defect 8 into its own note |
+| `74bf254` | Defects 6, 3, 4 — data integrity |
+| `0af57a2` | Defect 5 — the reported symptom |
+| `af499a8` | Defects 1, 2 — hot-path cost |
+| `051f30f` | Defect 7 — the measurable half |
+
+Every round was confirmed on the user's Android device before it was committed.
+
+## The cause
+
+**A live `<a>` default action on the touch path.** `handleClick` opened with
+`if (this.lastPointerType === "touch") return;`, and its anchor handling —
+`preventDefault()` then `openLinkText` — sat *below* that early return.
+`handleTouchTap`, the pointerup path a phone actually takes, had no anchor
+handling at all. So on desktop a link inside a node was cancelled and routed
+through Obsidian; on a phone **nothing cancelled it and the anchor navigated the
+document away**, taking the renderer with it.
+
+It landed on Django, Ruby-on-Rails and Spring because those are the only nodes
+on the map whose entire content is a bare internal link. Every other card has
+prose around its link, so a tap usually lands on text; on those three the anchor
+fills the node and a tap can hardly miss it — and in study mode tapping the node
+*is* the interaction.
+
+That is why the crash was **positional and instantaneous**, why no JS counter
+ever moved, why `onunload` never ran, why trailing review-log entries were lost
+with a healthy main thread, and why desktop was never affected. Ten rounds and
+seven falsified hypotheses reached it; the measurements that killed each are
+above and should not be re-run.
+
+## The fix
+
+Five lines, touch-only, split deliberately across two handlers:
+
+- `openNodeLink()` — extracted, so both input paths share one implementation.
+- `handleTouchTap` (pointerup) **performs** the navigation, and is skipped in
+  study mode where a tap is a reveal.
+- `handleClick`'s touch branch **cancels** the browser's own navigation.
+
+## Decisions worth remembering
+
+Each of these is something a future session could plausibly "simplify" and
+thereby reintroduce a bug.
+
+- **The two link handlers cannot be merged.** A touch `pointerdown` on a node
+  calls `preventDefault()`, which in Chromium can suppress the click entirely —
+  so the click handler is a reliable place to *cancel* the browser's default but
+  not a reliable place to *perform* ours. Merging them was tried; it regressed
+  link-opening outside study mode within a day.
+- **`ScheduleStore.armTimer` must not re-arm.** It is a leading-armed window on
+  purpose, not a reset-on-every-call debounce. Restoring the `clearTimer` call
+  at the top brings back "a rating streak writes nothing until you pause".
+- **`ReviewLog`'s append is the commit point.** Anything added after it inside
+  `appendToShard` must swallow its own errors. Letting a post-append step throw
+  again makes `writeBuffer`'s catch duplicate entries already on disk.
+- **Occluded fences stay out of `nodeHtmlCache`.** `renderOcclusion` hangs a
+  one-shot `load` listener on its `<img>` to memoise the picture's natural size,
+  and `cloneNode` carries neither that listener nor the `width`/`height`
+  attributes it exists to supply. Caching them reproduces the no-intrinsic-size
+  collapse those attributes were added to prevent.
+- **Video embeds are still live on the draw path, and that is a decision.** A
+  click-to-load facade was designed and rejected: the vault holds ~22 video
+  links across 20 notes, about one per note, so the saving is roughly one iframe
+  on maps that are rarely opened, against a permanent extra tap on every video.
+  Only the offscreen measurement pass was changed. **Unlike defects 1–6, this
+  one was never measured** — it was found by reading code in round 9 and was
+  carried in the table with more weight than it earned.
+- **`performance.memory` is quantized on this Android device** — see the
+  decisions list above, and
+  [[Obsidian's WebView renderer holds 0.6-1.4 GB on this vault]].
+- **Shard the debug trace per device** if instrumentation is ever rebuilt. A
+  shared filename in a synced vault let Sync discard the phone's records and
+  cost at least one wasted round. `ReviewLog.platformDeviceLabel()` is the
+  pattern.
+
+## Surface map
+
+| File | Change |
+|---|---|
+| `src/views/MindMapView.ts` | The crash fix (`openNodeLink`, `handleTouchTap`, `handleClick`); instrumentation removed; `mapCards()` hoist kept and `applySpatialStateInner` folded back in; node group looked up once and passed to `applySpatialHidden`; `cacheNodeHtml` helper written from both render branches; `deferUntilCardsLoaded` guard on study and peek; `replaceVideoEmbeds` gains `loadPlayer`; `resyncFromParent`'s doc comment un-orphaned |
+| `src/main.ts` | Instrumentation removed; `cardStoreReady` / `isCardStoreReady` armed in `onload` and settled by the startup scan; `debouncedSync` drains a `Map` of pending files |
+| `src/store/ScheduleStore.ts` | `armTimer` opens a window from the first staged entry instead of re-arming; instrumentation removed |
+| `src/store/ReviewLog.ts` | `foldIntoCache` wrapped so a cache failure cannot roll back a committed append; instrumentation removed |
+| `src/store/ScheduleStore.test.ts` | Replaced the reset-on-every-call test; added streak and re-arm coverage |
+| `src/store/ReviewLog.test.ts` | Added the "does not re-queue entries that already reached disk" case |
+| `src/debug-trace.ts` | Deleted |
+
+Also deleted, none of it tracked: `vault/Osmosis/Reviews/debug-trace.md` and
+`debug-trace.mobile-android.md`, and `ref/bugreport-stallion-CP2A*` (593 MB,
+three directories). Everything of value from the bug reports is quoted in rounds
+7 and 8 above.
+
+## Test fixture
+
+`vault/tests/transclusion_study_issue/` (mirrored in
+`e2e/fixtures/transclusion_study_issue/`), committed in `b727f22`. It reproduces
+the map's shape — a host note transcluding ~15 topic notes, including the three
+bare-link leaves under `Web Frameworks` that the crash landed on.
+
+**It does not reproduce the crash**, and that asymmetry was itself a clue: the
+fixture's image embeds point at `../../media/…` outside the fixture and do not
+resolve, so the fixture map carries no images and a much smaller footprint. The
+crash only ever reproduced on the user's production vault, on the phone.
+
+The working copy under `vault/tests/transclusion_study_issue/**` is the user's
+**live review data** and accumulates schedule churn. Never reset it and never
+stage it.
+
+## Follow-ups
+
+- [[Obsidian's WebView renderer holds 0.6-1.4 GB on this vault]] — defect 8,
+  split out. Real, measured, unresolved, and the largest remaining mobile risk.
+  Its first step is to re-measure: every number in it predates the `mapCards()`
+  hoist and the seven fixes above.
+- Defect 7's draw path, knowingly left as described under "Decisions worth
+  remembering". No ticket — the reasoning is here so it is not re-derived.
+- `styles.css` has the rule `.osmosis-node-content iframe.osmosis-video-embed`
+  declared twice in a row (lines 177 and 181). Pre-existing, noticed while
+  reading, deliberately not touched.
 
 ## Superseded — device-side evidence plan (kept for the record)
 
