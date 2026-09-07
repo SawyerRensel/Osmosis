@@ -1,6 +1,4 @@
 import type { FSRSRating } from "../database/FSRSScheduler";
-// TEMPORARY — study-mode crash instrumentation. Revert with `src/debug-trace.ts`.
-import { trace } from "../debug-trace";
 import type { CardState, StudyMode } from "../database/types";
 
 /**
@@ -883,9 +881,6 @@ export class ReviewLog {
 		if (this.buffer.length === 0) return;
 		const pending = this.buffer;
 		this.buffer = [];
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		const traceStarted = performance.now();
-		trace("review-log-write-start", { entries: pending.length });
 
 		// Group by target shard: a session running past midnight on the last of
 		// the month writes into two.
@@ -909,8 +904,6 @@ export class ReviewLog {
 				this.buffer.push(...entries);
 			}
 		}
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		trace("review-log-write-end", { durMs: Math.round(performance.now() - traceStarted) });
 	}
 
 	private async appendToShard(
@@ -1060,18 +1053,7 @@ export class ReviewLog {
 			size: stat?.size ?? 0,
 			days: mergeRollups([cached?.days ?? {}, aggregateRollup(entries)]),
 		};
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// `cacheStore.save` is a synchronous JSON.stringify + localStorage write
-		// of every shard's daily rollups, and it runs on every flush — i.e. every
-		// ~2 s during study, in the window the crash lands in. Its cost grows
-		// with review history, which is the "worse the longer you've used it"
-		// shape this bug has. Measured, not assumed.
-		const started = performance.now();
 		this.cacheStore.save(this.cache);
-		trace("rollup-cache-save", {
-			shards: Object.keys(this.cache.shards).length,
-			durMs: Math.round(performance.now() - started),
-		});
 	}
 
 	/** Create the log folder, and any missing parent, if it isn't there. */

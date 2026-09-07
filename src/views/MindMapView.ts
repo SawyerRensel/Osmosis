@@ -14,8 +14,6 @@ import {
 	type ViewStateResult,
 } from "obsidian";
 import { ParseCache } from "../cache";
-// TEMPORARY — study-mode crash instrumentation. Revert with `src/debug-trace.ts`.
-import { setTraceSampler, trace, traceBurst, tracePath } from "../debug-trace";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
@@ -378,23 +376,6 @@ export class MindMapView extends ItemView {
 	private cullQueued = false;
 	private branchLinesGroup: SVGGElement | null = null;
 	private nodesGroup: SVGGElement | null = null;
-
-	// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-	// Round 1 killed the `isWriting` hypothesis: no resync ever runs during
-	// study. These count the work that *does* accumulate per unit of session,
-	// so round 2 can tell a DOM leak from a slow frame instead of guessing.
-	// Round 2 measured the DOM flat and the orphan-group defect absent, and put
-	// `cullPasses` under suspicion instead: 154 of them in the 4.7 s before the
-	// crash. `spatialMs` / `mapCardsCalls` cost the work each one does.
-	private traceCounters = {
-		renderPasses: 0,
-		cullPasses: 0,
-		drawNodes: 0,
-		mdRenders: 0,
-		spatialCalls: 0,
-		spatialMs: 0,
-		mapCardsCalls: 0,
-	};
 
 	// Touch/pointer state
 	private activePointers = new Map<number, { x: number; y: number }>();
@@ -1102,8 +1083,6 @@ export class MindMapView extends ItemView {
 	 * is a pure lookup.
 	 */
 	private mapCards(): Card[] {
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		this.traceCounters.mapCardsCalls++;
 		const notePath = this.currentFile?.path;
 		if (notePath === undefined) return [];
 		const paths = new Set<string>([notePath]);
@@ -1162,12 +1141,6 @@ export class MindMapView extends ItemView {
 		}
 
 		this.spatialMode = "study";
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Sampled on the heartbeat, not just on taps: both crashes so far landed
-		// on a tap, and round 3 showed a session can die with no user action
-		// recorded at all.
-		trace("study-enter", { targets: nodeKeys.size, cards: cards.length });
-		setTraceSampler(() => { this.traceCensus("tick"); });
 		this.setSpatialTargets(nodeKeys, cards, now);
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
@@ -1237,11 +1210,6 @@ export class MindMapView extends ItemView {
 	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
 	private exitSpatialMode(): void {
 		const wasStudy = this.spatialMode === "study";
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		if (wasStudy) {
-			this.traceCensus("study-exit");
-			setTraceSampler(null);
-		}
 		this.spatialMode = "off";
 		this.spatialStudyActionEl?.removeClass("is-active");
 		this.spatialPeekActionEl?.removeClass("is-active");
@@ -1302,28 +1270,12 @@ export class MindMapView extends ItemView {
 	 */
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Called once per cull pass, and a cull pass runs per animation frame
-		// during a pan. Each iteration below does two `querySelector` attribute
-		// scans of the whole SVG and can rebuild `mapCards()`. If this is the
-		// mechanism, `spatialMs` will be a large fraction of session wall-clock.
-		this.traceCounters.spatialCalls++;
-		const traceStarted = performance.now();
-		try {
-			this.applySpatialStateInner();
-		} finally {
-			this.traceCounters.spatialMs += performance.now() - traceStarted;
-		}
-	}
-
-	private applySpatialStateInner(): void {
 		// Built once per pass, not once per node. `mapCards()` walks every node
 		// to collect source paths and then allocates a fresh array per source
 		// file plus one for the result — and this pass runs per animation frame
-		// during a pan, over ~150 nodes. Rebuilding it per node produced ~12,000
-		// rebuilds in 12 s of study on the user's map: cheap in CPU (5.6 % of
-		// wall clock, measured) but a firehose of short-lived allocation, which
-		// is what actually kills the renderer. See the task note, round 8.
+		// during a pan, over ~150 nodes. Rebuilding it per node measured ~12,000
+		// rebuilds in 12 s of study on a 150-node map: cheap in CPU (5.6 % of
+		// wall clock) but a firehose of short-lived allocation for no gain.
 		const cards = this.mapCards();
 		for (const [nodeId, node] of this.nodeMap) {
 			const nodeKey = this.nodeCardKey(node);
@@ -1585,39 +1537,18 @@ export class MindMapView extends ItemView {
 	 * be answered before the next reveal.
 	 */
 	private handleSpatialClick(nodeId: string): boolean {
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Every early return below is a tap that reveals *nothing* and falls
-		// through to `selectNode`. Round 3's fatal tap emitted no `reveal`, so it
-		// took one of these — this says which.
-		if (this.spatialMode === "off") {
-			trace("spatial-click", { nodeId, outcome: "mode-off" });
-			return false;
-		}
+		if (this.spatialMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
 		const nodeKey = node ? this.nodeCardKey(node) : null;
 		const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
-		if (!node || !keys) {
-			trace("spatial-click", { nodeId, outcome: "not-a-target", hasNode: !!node, nodeKey });
-			return false;
-		}
+		if (!node || !keys) return false;
 		// The next group the node has to ask — undefined once it has asked them all.
 		const key = keys.find((k) => !this.spatialRevealed.has(k));
-		if (key === undefined) {
-			trace("spatial-click", { nodeId, outcome: "already-revealed", keys: keys.length });
-			return false;
-		}
+		if (key === undefined) return false;
 
 		// Study: one rating at a time — the open bubble must be answered first
-		if (this.spatialMode === "study" && this.spatialPendingRating !== null) {
-			trace("spatial-click", { nodeId, outcome: "rating-open" });
-			return true;
-		}
+		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
 
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Round 2's crash followed a tap that emitted no record at all: a reveal
-		// is not a rating, and only ratings were traced. This is that blind spot.
-		trace("reveal", { nodeId, key, revealed: this.spatialRevealed.size });
-		const traceStarted = performance.now();
 		this.spatialRevealed.add(key);
 		if (this.spatialMode === "study") {
 			this.spatialPendingRating = key;
@@ -1631,9 +1562,6 @@ export class MindMapView extends ItemView {
 		// must reveal together (once the answer is visible anywhere, keeping
 		// the twin hidden would be a fake test). Also creates the bubble.
 		this.applySpatialState();
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		trace("reveal-end", { durMs: Math.round(performance.now() - traceStarted) });
-		this.traceCensus("reveal");
 		return true;
 	}
 
@@ -1698,21 +1626,6 @@ export class MindMapView extends ItemView {
 		// (plan §11).
 		const cardIds = this.cardsForKey(cardId);
 		if (cardIds.length > 0) {
-			// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-			// Anchors the trace to the user's own account of the session: this is
-			// the tap, everything after it is what the tap set in motion.
-			trace("rate", {
-				key: cardId,
-				rating,
-				cards: cardIds.length,
-				rated: this.spatialRated.size,
-				targets: this.spatialTargets.size,
-			});
-			this.traceCensus("rate");
-			// Every crash has landed 1–2 s after a rating. Sample that window at
-			// 50 ms with an immediate flush, so the last record before death is
-			// close enough to say whether anything ramped or it was instant.
-			traceBurst(() => { this.traceCensus("burst", true); });
 			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
 			for (const id of cardIds) {
 				await this.spatialSessionManager.recordReview(id, rating, { elapsedMs });
@@ -1925,23 +1838,6 @@ export class MindMapView extends ItemView {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (!(file instanceof TFile)) return;
-				// TEMPORARY — study-mode crash instrumentation. Revert before
-				// merging. Round 1 answered the question this was built for:
-				// `isWriting` reads true every time, so the cheap branch is
-				// always taken. Kept for round 2 as a timeline anchor, minus
-				// the trace file's own writes, which were 12 of round 1's
-				// records and pure noise.
-				if (file.path === tracePath()) return;
-				trace("modify", {
-					path: file.path,
-					isWriting: this.plugin.scheduleStore.isWriting(file.path),
-					isHost: file === this.currentFile,
-					isTransc: this.transcludedPaths().has(file.path),
-					liveEdit: this.liveEditActive,
-					editGroup: this.editGroup !== null,
-					suppress: this.suppressNextReload,
-					spatial: this.spatialMode,
-				});
 				if (file === this.currentFile) {
 					if (this.liveEditActive) {
 						// A live-edit session (color-picker drag) drives rendering
@@ -1971,12 +1867,9 @@ export class MindMapView extends ItemView {
 					// the debt is recorded and paid by `ensureTreeFresh` before
 					// the next edit reads those offsets.
 					if (this.plugin.scheduleStore.isWriting(file.path)) {
-						trace("modify-branch", { path: file.path, branch: "host-stale" });
 						this.markTreeStale(file.path);
 						return;
 					}
-					// TEMPORARY — a full reload of the host note. Revert before merging.
-					trace("modify-branch", { path: file.path, branch: "host-reload" });
 					void this.loadFile(file);
 					return;
 				}
@@ -1998,13 +1891,9 @@ export class MindMapView extends ItemView {
 				// with its own debounce timer, so rating them used to fire an
 				// uncoalesced full rebuild per note rather than one per burst.
 				if (this.plugin.scheduleStore.isWriting(file.path)) {
-					trace("modify-branch", { path: file.path, branch: "transcluded-stale" });
 					this.markTreeStale(file.path);
 					return;
 				}
-				// TEMPORARY — this is the expensive branch attempt 1 was meant to
-				// stop taking. Revert before merging.
-				trace("modify-branch", { path: file.path, branch: "transcluded-resync" });
 				this.cache.invalidate(file.path);
 				void this.resyncFromParent();
 			}),
@@ -3314,10 +3203,6 @@ export class MindMapView extends ItemView {
 			!this.branchLinesGroup
 		)
 			return;
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Counted rather than traced: this runs per animation frame during a
-		// pan, so a record each would flood the file and skew what it measures.
-		this.traceCounters.cullPasses++;
 
 		// Held across the await below so the pass can tell whether the SVG it
 		// has been drawing into is still the live one — see the commit check
@@ -3838,11 +3723,6 @@ export class MindMapView extends ItemView {
 	// ─── Touch gesture helpers ──────────────────────────────
 
 	private handleTouchTap(e: PointerEvent, nodeId: string | null): void {
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// Round 4's `tap` record never fired: it went on `handleClick`, the
-		// *mouse* path. This is the one a phone actually takes.
-		trace("tap", { nodeId, spatial: this.spatialMode, touch: true });
-
 		// A tap on a link follows it, exactly as a click does on desktop.
 		//
 		// This lives on pointerup rather than in `handleClick` because a touch
@@ -4301,10 +4181,6 @@ export class MindMapView extends ItemView {
 
 		// Check if clicking a node
 		const nodeId = this.getClickedNodeId(e);
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// The first thing that runs on a tap, so a crash mid-tap still leaves a
-		// record of the tap having started.
-		trace("tap", { nodeId, spatial: this.spatialMode });
 		if (nodeId) {
 			// Spatial study mode: reveal hidden nodes on click
 			if (this.handleSpatialClick(nodeId)) return;
@@ -7907,13 +7783,6 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Rebuild the map from the current (parent) file on disk and re-render.
-	 *
-	 * The tail every write to a *different* file than the map's own shares: the
-	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
-	 * has to be re-read and re-expanded for the change to appear.
-	 */
-	/**
 	 * Note that a file the map is built from changed underneath it in a way that
 	 * does not affect what is drawn — today, only a debounced schedule flush,
 	 * which rewrites frontmatter and nothing else.
@@ -7923,44 +7792,6 @@ export class MindMapView extends ItemView {
 	 * a line has moved every one of them. {@link ensureTreeFresh} settles the
 	 * debt before anything reads those offsets.
 	 */
-	/**
-	 * TEMPORARY — study-mode crash instrumentation. Revert before merging.
-	 *
-	 * A census of the DOM the map is holding, plus the counters above.
-	 * `performance.memory` only measures the JS heap, and round 1 showed it flat
-	 * at 239 MB against a 2 GB ceiling — so if the renderer is being killed for
-	 * memory it is *native* memory, which means DOM. `groupChildren` climbing
-	 * away from `renderedIds` is the orphan-node-group defect; `foreignObjects`
-	 * or `domNodes` climbing while both stay flat is leaked markdown render
-	 * output, which fence nodes produce on every draw because they never
-	 * populate `nodeHtmlCache`.
-	 */
-	private traceCensus(at: string, light = false): void {
-		trace("census", {
-			at,
-			...this.traceCounters,
-			groupChildren: this.nodesGroup?.childElementCount ?? 0,
-			renderedIds: this.renderedNodeIds.size,
-			branchIds: this.renderedBranchIds.size,
-			htmlCache: this.nodeHtmlCache.size,
-			// The two whole-tree walks are skipped in `light` mode: burst
-			// sampling runs 20×/s, and a census that costs more than what it
-			// measures would change the answer.
-			foreignObjects: light ? undefined : this.nodesGroup?.getElementsByTagName("foreignObject").length ?? 0,
-			domNodes: light ? undefined : document.getElementsByTagName("*").length,
-			imgs: light ? undefined : this.svg?.getElementsByTagName("img").length ?? 0,
-			// The map pans by CSS transform, not viewBox, so the composited layer
-			// is the SVG's own box times the scale. Round 3 died abruptly with a
-			// responsive main thread and a *shrinking* DOM, which is what a
-			// compositor/native allocation looks like from JS — a layer big
-			// enough to OOM the renderer would show up here and nowhere else.
-			vbW: Math.round(this.viewBox.w),
-			vbH: Math.round(this.viewBox.h),
-			svgW: Math.round(this.svg?.getBoundingClientRect().width ?? 0),
-			svgH: Math.round(this.svg?.getBoundingClientRect().height ?? 0),
-		});
-	}
-
 	private markTreeStale(path: string): void {
 		this.staleParsePaths.add(path);
 		this.treeStale = true;
@@ -7976,8 +7807,6 @@ export class MindMapView extends ItemView {
 	 */
 	private async ensureTreeFresh(): Promise<void> {
 		if (!this.treeStale) return;
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		trace("ensure-tree-fresh", { paths: this.staleParsePaths.size });
 		// Cleared before the await, not after: a flush that lands *during* the
 		// re-sync must re-arm the flag rather than be swallowed by it.
 		this.treeStale = false;
@@ -7987,13 +7816,15 @@ export class MindMapView extends ItemView {
 		await this.resyncFromParent();
 	}
 
+	/**
+	 * Rebuild the map from the current (parent) file on disk and re-render.
+	 *
+	 * The tail every write to a *different* file than the map's own shares: the
+	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
+	 * has to be re-read and re-expanded for the change to appear.
+	 */
 	private async resyncFromParent(): Promise<void> {
 		if (!this.currentFile) return;
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		// `resyncFromParent` is `void`-called from the modify handler, so
-		// overlapping start/end pairs in the trace mean concurrent rebuilds.
-		const started = performance.now();
-		trace("resync-start", { path: this.currentFile.path });
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
 		this.currentTree = this.cache.get(this.currentFile.path, parentContent);
@@ -8002,7 +7833,6 @@ export class MindMapView extends ItemView {
 			this.lazyTransclusionIds,
 		);
 		await this.render();
-		trace("resync-end", { durMs: Math.round(performance.now() - started) });
 	}
 
 	/**
@@ -8580,9 +8410,6 @@ export class MindMapView extends ItemView {
 
 	private async renderPass(): Promise<void> {
 		if (this.closed) return;
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		this.traceCounters.renderPasses++;
-		const traceStarted = performance.now();
 		const container = this.contentEl;
 
 		// Clean up previous render component
@@ -8680,10 +8507,6 @@ export class MindMapView extends ItemView {
 		// Re-attach toolbar (container.empty() removes it)
 		this.toolRibbon?.attach();
 		this.updateToolbarState();
-
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		trace("render-pass", { durMs: Math.round(performance.now() - traceStarted) });
-		this.traceCensus("render-end");
 	}
 
 	/**
@@ -9141,8 +8964,6 @@ export class MindMapView extends ItemView {
 		offsetX: number,
 		offsetY: number,
 	): Promise<void> {
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		this.traceCounters.drawNodes++;
 		const x = node.rect.x + offsetX;
 		const y = node.rect.y + offsetY;
 		const { width, height } = node.rect;
@@ -9309,17 +9130,8 @@ export class MindMapView extends ItemView {
 				}
 			} else if (osmosisCard) {
 				// Render osmosis fence as card (front + divider + back)
-				// TEMPORARY — study-mode crash instrumentation. Revert before
-				// merging. This branch never writes `nodeHtmlCache` (the `set`
-				// below is inside the *other* branch), so every draw of every
-				// fence node re-renders markdown into the long-lived
-				// `renderComponent` — which only unloads on a full renderPass,
-				// and round 1 showed those never happen during study.
-				this.traceCounters.mdRenders++;
 				await this.renderOsmosisCardInto(wrapper, osmosisCard, sourcePath, XHTML_NS);
 			} else if (this.renderComponent) {
-				// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-				this.traceCounters.mdRenders++;
 				await MarkdownRenderer.render(
 					this.app,
 					displayContent,

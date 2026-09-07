@@ -1,6 +1,4 @@
 import type { FileManager, TFile } from "obsidian";
-// TEMPORARY — study-mode crash instrumentation. Revert with `src/debug-trace.ts`.
-import { trace } from "../debug-trace";
 import type { CardState, OcclusionSet, ScheduleData } from "../database/types";
 import { occlusionSetToYamlValue, parseOcclusionSet } from "../card-gen/occlusion";
 
@@ -243,9 +241,6 @@ export class ScheduleStore {
 		if (!file) return; // note deleted — drop the pending entries
 
 		this.writingPaths.add(notePath);
-		// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-		const started = performance.now();
-		trace("sched-write-open", { path: notePath, entries: schedule?.size ?? 0 });
 		try {
 			await this.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 				applyScheduleEntries(
@@ -264,10 +259,6 @@ export class ScheduleStore {
 			if (occlusion) this.restage(this.pendingOcclusion, notePath, occlusion);
 		} finally {
 			this.writingPaths.delete(notePath);
-			// TEMPORARY — study-mode crash instrumentation. Revert before merging.
-			// The `isWriting` window closes here. Any `modify` for this path
-			// logged after this line saw the flag already gone.
-			trace("sched-write-close", { path: notePath, durMs: Math.round(performance.now() - started) });
 		}
 	}
 
