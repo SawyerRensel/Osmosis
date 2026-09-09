@@ -35,6 +35,7 @@ children:
 blocked_by:
 cover:
 color:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/37
 ---
 
 # Bug Report
@@ -1213,10 +1214,9 @@ remembering" below.
 
 ## Where it shipped
 
-Branch `fix/study-mode-transclusion-crash`, seven commits past the crash fix.
-**No PR is open** — the user has not asked for one, so the branch is finished
-but unmerged. Whoever opens it should base it on the current release branch and
-fill `pull_request` above.
+[PR #37](https://github.com/SawyerRensel/Osmosis/pull/37), from
+`fix/study-mode-transclusion-crash` into **`release/0.0.6`**, merged as
+`b1b18f6`.
 
 | Commit | What |
 |---|---|
@@ -1316,19 +1316,20 @@ three directories). Everything of value from the bug reports is quoted in rounds
 
 ## Test fixture
 
-`vault/tests/transclusion_study_issue/` (mirrored in
-`e2e/fixtures/transclusion_study_issue/`), committed in `b727f22`. It reproduces
-the map's shape — a host note transcluding ~15 topic notes, including the three
-bare-link leaves under `Web Frameworks` that the crash landed on.
+`e2e/fixtures/transclusion_study_issue/` — the master copy, 25 files, committed
+in `b727f22`. It reproduces the map's shape: a host note transcluding ~15 topic
+notes, including the three bare-link leaves under `Web Frameworks` that the
+crash landed on.
+
+The `vault/tests/transclusion_study_issue/` working copy was **removed in
+`e0eadc1`** at close-out, because it had accumulated a session's worth of the
+user's live schedule churn. Copy it back out of `e2e/fixtures/` to use it, and
+reload Obsidian afterwards — see the reset hazard in `CLAUDE.md`.
 
 **It does not reproduce the crash**, and that asymmetry was itself a clue: the
 fixture's image embeds point at `../../media/…` outside the fixture and do not
 resolve, so the fixture map carries no images and a much smaller footprint. The
 crash only ever reproduced on the user's production vault, on the phone.
-
-The working copy under `vault/tests/transclusion_study_issue/**` is the user's
-**live review data** and accumulates schedule churn. Never reset it and never
-stage it.
 
 ## Follow-ups
 
