@@ -52,6 +52,7 @@ import {
 	type Range,
 	type Sample,
 } from "../mindmap-inertia";
+import { exceedsDragThreshold, panSwallowsTap } from "../mindmap-gesture";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -101,9 +102,6 @@ const EDIT_BUTTONS_MIN_WIDTH = 72; // px the overlay needs to hold both icon but
 
 // Animation constants
 const COLLAPSE_ANIMATION_MS = 80;
-
-// Drag constants
-const DRAG_THRESHOLD = 5; // pixels before drag starts
 
 // Touch constants
 const LONG_PRESS_MS = 400; // ms before touch-on-node becomes drag
@@ -429,6 +427,11 @@ export class MindMapView extends ItemView {
 	 * pinch cannot slide the map first.
 	 */
 	private panPending = false;
+	/**
+	 * This gesture cleared its slop and moved the map. It is therefore a pan and
+	 * not also a tap, which matters in peek/study where a tap is a reveal.
+	 */
+	private panCommitted = false;
 	/** Screen point the coasting zoom scales about — the last pinch centre. */
 	private zoomAnchor = { x: 0, y: 0 };
 	private inertiaRafId: number | null = null;
@@ -3372,6 +3375,7 @@ export class MindMapView extends ItemView {
 			this.stoppedInertiaOnDown = this.inertiaRafId !== null;
 			this.carryVelocity = { ...this.panVelocity };
 			this.touchDownTime = performance.now();
+			this.panCommitted = false;
 		}
 		this.stopInertia();
 		this.panSamples = [];
@@ -3512,7 +3516,7 @@ export class MindMapView extends ItemView {
 		if (this.pinchTail) {
 			const dx = e.clientX - this.pinchTail.x;
 			const dy = e.clientY - this.pinchTail.y;
-			if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) {
+			if (!exceedsDragThreshold(dx, dy, e.pointerType)) {
 				e.stopPropagation();
 				return;
 			}
@@ -3520,6 +3524,7 @@ export class MindMapView extends ItemView {
 			this.pinchTailZoomVelocity = 0;
 			this.isPanning = true;
 			this.panPending = false;
+			this.panCommitted = true;
 			this.panStart = { x: e.clientX, y: e.clientY };
 		}
 
@@ -3542,11 +3547,11 @@ export class MindMapView extends ItemView {
 		if (this.dragNodeId && !this.isDragging) {
 			const dx = e.clientX - this.dragStartScreen.x;
 			const dy = e.clientY - this.dragStartScreen.y;
-			const dist = Math.sqrt(dx * dx + dy * dy);
+			const past = exceedsDragThreshold(dx, dy, e.pointerType);
 
 			if (e.pointerType === "touch") {
 				// Movement cancels long-press; if not triggered, convert to pan
-				if (dist >= DRAG_THRESHOLD) {
+				if (past) {
 					this.cancelLongPress();
 					if (!this.longPressTriggered || this.isReadingMode) {
 						// Reading mode: node drags always pan — a stray
@@ -3554,6 +3559,7 @@ export class MindMapView extends ItemView {
 						this.dragNodeId = null;
 						this.isPanning = true;
 						this.panPending = false;
+						this.panCommitted = true;
 						this.panStart = { x: e.clientX, y: e.clientY };
 					} else {
 						// Long-press triggered + movement → start drag
@@ -3562,7 +3568,7 @@ export class MindMapView extends ItemView {
 					e.stopPropagation();
 				}
 			} else {
-				if (dist >= DRAG_THRESHOLD) {
+				if (past) {
 					if (this.isReadingMode) {
 						// Reading mode: dragging a node pans the viewport
 						this.dragNodeId = null;
@@ -3589,11 +3595,12 @@ export class MindMapView extends ItemView {
 		if (this.panPending) {
 			const px = e.clientX - this.panStart.x;
 			const py = e.clientY - this.panStart.y;
-			if (Math.sqrt(px * px + py * py) < DRAG_THRESHOLD) {
+			if (!exceedsDragThreshold(px, py, e.pointerType)) {
 				e.stopPropagation();
 				return;
 			}
 			this.panPending = false;
+			this.panCommitted = true;
 			this.panStart = { x: e.clientX, y: e.clientY };
 			e.stopPropagation();
 			return;
@@ -3699,8 +3706,10 @@ export class MindMapView extends ItemView {
 		const dragCandidateId = this.dragNodeId;
 		this.dragNodeId = null;
 		const wasPanning = this.isPanning;
+		const panCommitted = this.panCommitted;
 		this.isPanning = false;
 		this.panPending = false;
+		this.panCommitted = false;
 
 		// Fling the pan onward, or spring back if the drag ended past a bound.
 		if (e.pointerType === "touch" && wasPanning) {
@@ -3717,6 +3726,21 @@ export class MindMapView extends ItemView {
 		// nor arms a double-tap, exactly like catching a scrolling list.
 		if (e.pointerType === "touch" && this.stoppedInertiaOnDown) {
 			this.stoppedInertiaOnDown = false;
+			return;
+		}
+
+		// A pan that moved the map is not also a tap. It ends over whatever node
+		// the finger happens to be resting on, and in peek/study a tap on a node
+		// is a reveal — so a drag meant to move the map flipped the card it
+		// landed on. Outside those modes the tap only moves the selection, which
+		// is harmless, so it still lands.
+		if (
+			panSwallowsTap({
+				pointerType: e.pointerType,
+				panCommitted,
+				spatialMode: this.spatialMode,
+			})
+		) {
 			return;
 		}
 
@@ -4101,6 +4125,7 @@ export class MindMapView extends ItemView {
 		this.pinchTailZoomVelocity = 0;
 		this.isPanning = false;
 		this.panPending = false;
+		this.panCommitted = false;
 		this.carryVelocity = { x: 0, y: 0 };
 		this.isRubberBanding = false;
 		this.dragNodeId = null;
