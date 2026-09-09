@@ -41,6 +41,7 @@ import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
+import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
 
@@ -130,6 +131,22 @@ export default class OsmosisPlugin extends Plugin {
 	lineReveal!: LineRevealProcessor;
 	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
 	contextualStudy!: ContextualStudyProcessor;
+	/**
+	 * Resolves once the startup vault scan has filled the card store.
+	 *
+	 * `syncAll` walks every markdown file in the vault, and a view the workspace
+	 * restored is on screen well before it finishes. Anything that reads the
+	 * store to decide *whether there is work to do* — rather than to display
+	 * whatever it currently holds — has to wait for this, or it decides against
+	 * an empty store.
+	 *
+	 * Resolves on failure too: a scan that threw must not leave study
+	 * permanently unavailable.
+	 */
+	cardStoreReady!: Promise<void>;
+	/** True once {@link cardStoreReady} has settled, so callers can stay synchronous. */
+	isCardStoreReady = false;
+	private resolveCardStoreReady!: () => void;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 	/**
@@ -141,6 +158,14 @@ export default class OsmosisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+
+		// Armed before anything can await it — the startup scan below settles it.
+		this.cardStoreReady = new Promise<void>((resolve) => {
+			this.resolveCardStoreReady = () => {
+				this.isCardStoreReady = true;
+				resolve();
+			};
+		});
 
 		// In-memory card store — replaces SQLite database
 		this.cardStore = new CardStore();
@@ -505,28 +530,54 @@ export default class OsmosisPlugin extends Plugin {
 				// A throw here would otherwise vanish AND leave header chrome
 				// and dashboard stale until the next workspace event
 				console.error("Osmosis: startup card sync/refresh failed", error);
+			}).finally(() => {
+				this.resolveCardStoreReady();
 			});
 		});
 
-		// Incremental sync on file changes (debounced)
-		const debouncedSync = debounce((file: TFile) => {
-			this.cardSync.syncFile(file).then(() => {
+		// Incremental sync on file changes (debounced).
+		//
+		// The files are accumulated in a map rather than passed as the debounced
+		// function's argument, because `debounce` keeps only the *last* call's
+		// arguments. A burst that touches several notes — a study session flushes
+		// schedule frontmatter into every transcluded note it rated — used to
+		// sync whichever note happened to be written last and silently drop the
+		// rest, leaving their cards stale in the store until something else
+		// touched them.
+		//
+		// Keyed by path so repeated writes to one note collapse, and each file's
+		// failure is caught on its own so one bad note cannot cost the whole
+		// batch its refresh.
+		const pendingSync = new Map<string, TFile>();
+		const debouncedSync = debounce(() => {
+			const files = [...pendingSync.values()];
+			pendingSync.clear();
+			void Promise.all(
+				files.map((file) =>
+					this.cardSync.syncFile(file).catch((error: unknown) => {
+						console.error(`Osmosis: incremental card sync failed for ${file.path}`, error);
+					}),
+				),
+			).then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
-			}).catch((error: unknown) => {
-				console.error("Osmosis: incremental card sync/refresh failed", error);
 			});
 		}, 2000, true);
 
+		const queueSync = (file: TFile): void => {
+			pendingSync.set(file.path, file);
+			debouncedSync();
+		};
+
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if (this.isNoteFile(file)) debouncedSync(file);
+				if (this.isNoteFile(file)) queueSync(file);
 			}),
 		);
 
 		this.registerEvent(
 			this.app.vault.on("create", (file) => {
-				if (this.isNoteFile(file)) debouncedSync(file);
+				if (this.isNoteFile(file)) queueSync(file);
 			}),
 		);
 
@@ -1495,8 +1546,7 @@ export default class OsmosisPlugin extends Plugin {
 				await this.app.fileManager.processFrontMatter(
 					file,
 					(fm: Record<string, unknown>) => {
-						const osmosis = (fm["osmosis-styles"] as Record<string, unknown>) ?? {};
-						fm["osmosis-styles"] = osmosis;
+						const osmosis = styleMappingFor(fm);
 
 						// Copy each override into frontmatter (don't overwrite existing values)
 						for (const [key, value] of Object.entries(overrides)) {

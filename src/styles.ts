@@ -568,6 +568,81 @@ export function lookupNodeStyle(
 }
 
 /**
+ * Whether a raw `osmosis-styles` frontmatter value is the mapping the rest of
+ * this module expects — as opposed to a scalar, or an array.
+ *
+ * The array case is not hypothetical. A value that reaches the file as the
+ * *string* `[object Object]` — anything that stringified a style object on the
+ * way in, including Obsidian's own coercion when the property is registered as
+ * `multitext` in `.obsidian/types.json` — is unquoted YAML, so the next parse
+ * reads it as a flow sequence and the next write serializes it back as a list:
+ *
+ * ```yaml
+ * osmosis-styles:
+ *   - object Object
+ * ```
+ *
+ * An array satisfies `typeof === "object"`, so the old check accepted it and
+ * every lookup below quietly returned nothing: the map rendered unstyled with
+ * no error, and each subsequent style write assigned string keys onto the array
+ * rather than onto a mapping, compounding the damage. Treating it as absent is
+ * what lets {@link styleMappingFor} put a clean object in its place.
+ */
+function isStyleMapping(raw: unknown): raw is Record<string, unknown> {
+	return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
+/**
+ * Whether `osmosis-styles` holds something this plugin cannot have written —
+ * the signature of the corruption described in {@link isStyleMapping}.
+ *
+ * Reported once per file load rather than repaired on sight: a map that has
+ * lost its styling should say so, and silently deleting the evidence would take
+ * away the one clue that anything went wrong.
+ */
+export function isCorruptStyleFrontmatter(
+	frontmatter: Record<string, unknown> | undefined | null,
+): boolean {
+	if (!frontmatter) return false;
+	const raw = frontmatter["osmosis-styles"];
+	if (raw === undefined || raw === null) return false;
+	return !isStyleMapping(raw);
+}
+
+/**
+ * The `osmosis-styles` mapping to write into, installed on the frontmatter if
+ * it is missing — or if what is there is not a mapping at all.
+ *
+ * Every style write goes through this instead of
+ * `(fm["osmosis-styles"] as Record<string, unknown>) ?? {}`, which happily
+ * handed back an array (see {@link isStyleMapping}) for the caller to assign
+ * keys onto — so a corrupt value did not merely lose the existing styles, it
+ * swallowed every new one written afterwards. Replacing it here rather than on
+ * load keeps the repair tied to a write that has something valid to put in its
+ * place.
+ */
+export function styleMappingFor(
+	frontmatter: Record<string, unknown>,
+): Record<string, unknown> {
+	const raw = frontmatter["osmosis-styles"];
+	const styles = isStyleMapping(raw) ? raw : {};
+	frontmatter["osmosis-styles"] = styles;
+	return styles;
+}
+
+/**
+ * The `osmosis-styles` mapping for a *read*, or undefined when there is none to
+ * read — including when the value is corrupt, which callers treat exactly as
+ * "this note has no styles" rather than reading keys off an array.
+ */
+export function readStyleMapping(
+	frontmatter: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+	const raw = frontmatter["osmosis-styles"];
+	return isStyleMapping(raw) ? raw : undefined;
+}
+
+/**
  * Parse and validate the `osmosis` key from note frontmatter.
  *
  * Returns undefined if the key is missing or not an object.
@@ -580,9 +655,9 @@ export function parseOsmosisStyleFrontmatter(
 	if (!frontmatter) return undefined;
 
 	const raw = frontmatter["osmosis-styles"];
-	if (!raw || typeof raw !== "object") return undefined;
+	if (!isStyleMapping(raw)) return undefined;
 
-	const obj = raw as Record<string, unknown>;
+	const obj = raw;
 	const result: OsmosisStyleFrontmatter = {};
 
 	if (typeof obj["theme"] === "string") result.theme = obj["theme"];

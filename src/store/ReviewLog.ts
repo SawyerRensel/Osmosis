@@ -901,6 +901,12 @@ export class ReviewLog {
 				console.error("Osmosis: failed to write review log entries", error);
 				// Re-buffer so the next flush or unload retries. No timer —
 				// that would spin. Only the failed group is re-queued.
+				//
+				// Safe to retry because nothing that reaches here committed:
+				// `appendToShard` swallows everything it does *after* the
+				// append, so a throw means the entries never landed. Widening
+				// that — letting a post-append step throw again — would make
+				// this line duplicate entries already on disk.
 				this.buffer.push(...entries);
 			}
 		}
@@ -932,7 +938,18 @@ export class ReviewLog {
 			await this.fs.write(path, `${shardPreamble(month, label)}${header}\n${lines}`);
 		}
 
-		await this.foldIntoCache(path, name, entries, before);
+		// The append above is the commit point — those entries are on disk. The
+		// rollup cache is derived data, so a failure folding into it must not
+		// propagate: `writeBuffer`'s catch re-buffers the whole batch, which
+		// would append the same entries a second time and leave duplicate
+		// timestamps in the shard. Drop the cache entry instead and let
+		// `getRollup()` rebuild it from the file.
+		try {
+			await this.foldIntoCache(path, name, entries, before);
+		} catch (error) {
+			console.error("Osmosis: failed to fold review log entries into the rollup cache", error);
+			delete this.cache.shards[name];
+		}
 	}
 
 	/**

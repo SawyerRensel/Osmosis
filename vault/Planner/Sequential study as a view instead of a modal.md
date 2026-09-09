@@ -12,12 +12,12 @@ related:
   - "[[Larger zoomable images during review]]"
   - "[[Anchor rating buttons under the revealed occlusion shape]]"
   - "[[Support zoom in sequential mode]]"
-status: Ideas
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-09-03T01:47:54.000Z"
-date_modified: "2026-09-03T01:47:54.000Z"
+date_created: 2026-09-03T01:47:54.000Z
+date_modified: 2026-09-04T00:47:05.025Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

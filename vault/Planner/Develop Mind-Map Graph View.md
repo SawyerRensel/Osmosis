@@ -1,5 +1,5 @@
 ---
-title: Develop Mind-Map Graph View
+title: Spaced Repetition for Graph View with content-level connections
 summary: What if we combined Mind Mapping with Obsidian's Graph View?
 tags:
   - task
@@ -9,13 +9,13 @@ context:
 people:
 location:
 related:
-status: Ideas
+status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: "2026-08-03T17:30:27.346Z"
-date_modified: "2026-08-03T17:31:11.530Z"
-date_start_scheduled: "2026-08-06T21:29:43.106Z"
+date_created: 2026-08-03T17:30:27.346Z
+date_modified: 2026-09-04T13:36:48.779Z
+date_start_scheduled: 2026-08-06T21:29:43.106Z
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
@@ -42,7 +42,9 @@ color:
 
 *Describe the new tool, script, or capability you're requesting.*
 
-Now, kind of the marriage between the graph view and a mind map, where the mainly the graph these structure, so it doesn't just reveal around so that every time you open it, you see the same thing.  But make it three. So we can actually see the molecules above clock. Right. So next?  Yeah, it's got to figure out how to do that optimally
+Traditional mind mapping has it all wrong.  Hierarchical, structured maps are arbitrary elevations of merely *one* particular "thing", but human learning is unstructured.  It's a messy, dynamic network.  Why don't we study it that way?
+
+What if we took the best of traditional mind mapping + the best of Obsidian's graph view + spaced repetition?  What if a note was truly spatial where every line/block of content is rendered as a node in 3D space just like how we render the content of a note as a 2D mindmap?  What if links between content formed a 3D web of knowledge?  What if learning and studying and spaced repetition were less about memorizing little chunks of isolated facts or organizing them under a temporal arbitrary hierarchy of understanding and instead more about exploring connections and traversing paths of the mind?  What if learning was like taking a ball of yarn through the Minotaur's lair and *studying* was like walking the line back and committing the connections and paths to memory?
 
 ## What problem does this solve?
 
@@ -59,3 +61,5 @@ Now, kind of the marriage between the graph view and a mind map, where the mainl
 ## Reference Attachments/Screenshots
 
 *Attach any reference files, screenshots, sketches, or examples.*
+
+- Obsidian TagRoutes Plugin 

@@ -1,6 +1,6 @@
 ---
-title: Lines with no spaces are a block
-summary: Would be particularly helpful for rendering media like images in the same node in Mind Map View without it needing to be on the same line
+title: Heatmap overlay on Mind Map View
+summary: Shows how well you remember each node
 tags:
   - task
 calendar:
@@ -9,12 +9,12 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Ideas
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-17T16:15:46.951Z
-date_modified: 2026-09-05T15:41:03.800Z
+date_created: "2026-09-04T18:30:05.031Z"
+date_modified: "2026-09-04T18:30:05.031Z"
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:
