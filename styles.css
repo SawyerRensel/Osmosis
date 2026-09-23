@@ -1462,12 +1462,15 @@ hr.osmosis-map-style-divider {
    node with the map's zoom transform. A fixed 1.5px outline computed against a
    thumbnail and blown up reads as a heavy border. So the width is a fraction of
    the picture (cqmin — the shorter axis, so a tall diagram is treated like a
-   wide one), which non-scaling-stroke then keeps uniform across both axes. On a
-   typical 800×200 diagram this resolves to the 1.5px it always was. */
+   wide one), which non-scaling-stroke then keeps uniform across both axes.
+   The fraction only ever *thins* a stroke, never thickens it: capped at the
+   editor's 1.5px, where outlines look right. Uncapped, it grew with the picture
+   — a diagram filling a study modal or a phone screen came out several times
+   the editor's weight. */
 .osmosis-occlusion-mask {
 	fill: var(--osmosis-occlusion-mask);
 	stroke: rgba(0, 0, 0, 0.55);
-	stroke-width: 0.75cqmin;
+	stroke-width: min(0.75cqmin, 1.5px);
 	vector-effect: non-scaling-stroke;
 }
 
@@ -1476,24 +1479,27 @@ hr.osmosis-map-style-divider {
 }
 
 /* The answer side: the target's pixels are uncovered, but still ringed so the
-   eye lands on the region that was being asked about. */
+   eye lands on the region that was being asked about. A stroke straddles the
+   shape's edge, so half of it lies over the answer. The colour is what draws
+   the eye, not the weight, so the ring is kept thin enough that the inward half
+   cannot hide anything: at most 2px, 1px of it inside the shape. */
 .osmosis-occlusion-mask.is-revealed {
 	fill: none;
 	stroke: var(--osmosis-occlusion-target);
-	stroke-width: 1.5cqmin;
+	stroke-width: min(1cqmin, 2px);
 }
 
-/* Where container queries are missing, fall back to the fixed thicknesses these
-   strokes had before they were proportional — heavy in a small node, but a
-   stroke-width the browser cannot resolve computes to 0 and the ring vanishes
-   entirely, which is the one outcome that loses information. */
+/* Where container queries are missing, fall back to the caps as fixed
+   thicknesses — heavy in a small node, but a stroke-width the browser cannot
+   resolve computes to 0 and the ring vanishes entirely, which is the one
+   outcome that loses information. */
 @supports not (container-type: size) {
 	.osmosis-occlusion-mask {
 		stroke-width: 1.5;
 	}
 
 	.osmosis-occlusion-mask.is-revealed {
-		stroke-width: 3;
+		stroke-width: 2;
 	}
 }
 
