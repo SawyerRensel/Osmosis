@@ -52,7 +52,7 @@ import {
 	type Range,
 	type Sample,
 } from "../mindmap-inertia";
-import { exceedsDragThreshold, panSwallowsTap } from "../mindmap-gesture";
+import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
 import { ToolRibbon } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -1813,6 +1813,12 @@ export class MindMapView extends ItemView {
 			openProperties: () => {
 				void this.plugin.activatePropertiesSidebar();
 			},
+			openNodeMenu: (btn) => {
+				const rect = btn.getBoundingClientRect();
+				this.showNodeMenu(this.selectedNodeId, (menu) =>
+					menu.showAtPosition({ x: rect.left, y: rect.top }),
+				);
+			},
 		});
 
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
@@ -3428,7 +3434,15 @@ export class MindMapView extends ItemView {
 			if (target.closest(".osmosis-resize-handle")) {
 				const handleNodeId = target.closest("[data-node-id]")?.getAttribute("data-node-id") ?? null;
 				const handleNode = handleNodeId ? this.nodeMap.get(handleNodeId) : null;
-				if (handleNodeId && handleNode) {
+				// A finger cannot hover, so until the node is selected the
+				// handle is invisible — an 8px target no one can see, sitting
+				// on the edge of every node, catching drags meant as pans.
+				// Selecting the node reveals it and arms it. A mouse reveals it
+				// by hovering, which is deliberate enough on its own.
+				const armed =
+					e.pointerType !== "touch" ||
+					(handleNodeId !== null && this.selectedNodeIds.has(handleNodeId));
+				if (handleNodeId && handleNode && armed) {
 					this.resizingNodeId = handleNodeId;
 					this.resizeStartX = e.clientX;
 					this.resizeStartWidth = handleNode.rect.width;
@@ -3442,7 +3456,21 @@ export class MindMapView extends ItemView {
 		// Left-click / touch on a node: prepare for potential drag
 		if (e.button === 0 && nodeId && !this.editingNodeId) {
 			const target = e.target as Element;
-			if (target.closest(".osmosis-collapse-toggle")) return;
+			if (target.closest(".osmosis-collapse-toggle")) {
+				// A mouse folds on click and cannot pan off a node anyway.
+				if (e.pointerType !== "touch") return;
+
+				// A finger is coarse and the toggle is 14px wide, so a press
+				// that lands on one is as likely to be a pan starting badly as
+				// a fold. Start the pan here and let the fold happen on release,
+				// if the map never moved — see `handleTouchTap`.
+				this.isPanning = true;
+				this.panPending = true;
+				this.panStart = { x: e.clientX, y: e.clientY };
+				e.preventDefault();
+				e.stopPropagation();
+				return;
+			}
 
 			this.dragNodeId = nodeId;
 			this.dragStartScreen = { x: e.clientX, y: e.clientY };
@@ -3454,7 +3482,12 @@ export class MindMapView extends ItemView {
 					this.longPressTriggered = true;
 					// Enter touch selection mode and select this node
 					this.touchSelectionMode = true;
-					if (this.dragNodeId) {
+					// A hold on a node that is already selected grabs the whole
+					// selection, ready to drag it. Toggling here would drop that
+					// node back out, and the drag would then move it alone,
+					// leaving the rest of the selection behind. Membership is
+					// toggled by a plain tap instead.
+					if (this.dragNodeId && !this.selectedNodeIds.has(this.dragNodeId)) {
 						this.toggleNodeInSelection(this.dragNodeId);
 					}
 					if (navigator.vibrate) navigator.vibrate(50);
@@ -3547,38 +3580,29 @@ export class MindMapView extends ItemView {
 		if (this.dragNodeId && !this.isDragging) {
 			const dx = e.clientX - this.dragStartScreen.x;
 			const dy = e.clientY - this.dragStartScreen.y;
-			const past = exceedsDragThreshold(dx, dy, e.pointerType);
 
-			if (e.pointerType === "touch") {
-				// Movement cancels long-press; if not triggered, convert to pan
-				if (past) {
-					this.cancelLongPress();
-					if (!this.longPressTriggered || this.isReadingMode) {
-						// Reading mode: node drags always pan — a stray
-						// tap-drag can never restructure the map.
-						this.dragNodeId = null;
-						this.isPanning = true;
-						this.panPending = false;
-						this.panCommitted = true;
-						this.panStart = { x: e.clientX, y: e.clientY };
-					} else {
-						// Long-press triggered + movement → start drag
-						this.startDrag(this.dragNodeId);
-					}
-					e.stopPropagation();
+			if (exceedsDragThreshold(dx, dy, e.pointerType)) {
+				// Movement ends the long press, whether or not it had fired
+				if (e.pointerType === "touch") this.cancelLongPress();
+
+				if (
+					nodeDragPans({
+						pointerType: e.pointerType,
+						longPressTriggered: this.longPressTriggered,
+						isReadingMode: this.isReadingMode,
+						spatialMode: this.spatialMode,
+					})
+				) {
+					this.dragNodeId = null;
+					this.isPanning = true;
+					this.panPending = false;
+					this.panCommitted = true;
+					this.panStart = { x: e.clientX, y: e.clientY };
+				} else {
+					this.startDrag(this.dragNodeId);
 				}
-			} else {
-				if (past) {
-					if (this.isReadingMode) {
-						// Reading mode: dragging a node pans the viewport
-						this.dragNodeId = null;
-						this.isPanning = true;
-						this.panCommitted = true;
-						this.panStart = { x: e.clientX, y: e.clientY };
-					} else {
-						this.startDrag(this.dragNodeId);
-					}
-				}
+
+				if (e.pointerType === "touch") e.stopPropagation();
 			}
 		}
 
@@ -3733,19 +3757,11 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
-		// A pan that moved the map is not also a tap. It ends over whatever node
-		// the finger happens to be resting on, and in peek/study a tap on a node
-		// is a reveal — so a drag meant to move the map flipped the card it
-		// landed on. Outside those modes the tap only moves the selection, which
-		// is harmless, so it still lands.
-		if (
-			panSwallowsTap({
-				panCommitted: this.panCommitted,
-				spatialMode: this.spatialMode,
-			})
-		) {
-			return;
-		}
+		// A gesture that moved the map is a pan and nothing else. It ends
+		// wherever the finger happens to be resting, so reading that as a tap
+		// selects, folds, opens or reveals by accident — and a pan that ends on
+		// the background would throw away a selection built up before it.
+		if (this.panCommitted) return;
 
 		// Touch: synthesize tap
 		if (e.pointerType === "touch") {
@@ -3782,6 +3798,10 @@ export class MindMapView extends ItemView {
 
 	// ─── Touch gesture helpers ──────────────────────────────
 
+	/**
+	 * A deliberate tap: `handlePointerUp` has already ruled out everything that
+	 * merely ended with a finger resting on the map, a pan above all.
+	 */
 	private handleTouchTap(e: PointerEvent, nodeId: string | null): void {
 		// A tap on a link follows it, exactly as a click does on desktop.
 		//
@@ -4218,22 +4238,12 @@ export class MindMapView extends ItemView {
 			}
 			return;
 		}
-		if (this.isPanning || this.isDragging) return;
-
-		// A mouse drag that panned is not also a click. The guard above cannot
-		// see it: pointerup clears `isPanning` before the browser dispatches
-		// this click. It only bites when press and release land inside one node
-		// — a click spanning two elements is dispatched on their common
-		// ancestor, which belongs to no node — but in reading mode that is an
-		// ordinary way to drag the map, and in peek/study it revealed the node.
-		if (
-			panSwallowsTap({
-				panCommitted: this.panCommitted,
-				spatialMode: this.spatialMode,
-			})
-		) {
-			return;
-		}
+		// `isPanning` is already false by the time a click is dispatched, since
+		// pointerup clears it first; `panCommitted` survives until the next
+		// press, and is what actually catches a drag that panned. Otherwise a
+		// mouse drag beginning and ending inside one node would select, fold or
+		// reveal it, and one on the background would clear the selection.
+		if (this.isPanning || this.isDragging || this.panCommitted) return;
 
 		// Check if clicking a collapse toggle
 		const target = e.target as Element;
@@ -4288,9 +4298,28 @@ export class MindMapView extends ItemView {
 		if (this.editingNodeId) return;
 
 		e.preventDefault();
-		const nodeId = this.getClickedNodeId(e);
 
-		// If right-clicking a node that isn't selected, select it first
+		// A long press on a phone arrives here as a context-menu event, and the
+		// menu it opened swallowed the press on its way to becoming a node
+		// drag — the hold is the only way to move a node with a finger. Touch
+		// reaches the same menu through the ribbon's "More actions" button.
+		if (this.lastPointerType === "touch") return;
+
+		this.showNodeMenu(this.getClickedNodeId(e), (menu) =>
+			menu.showAtMouseEvent(e),
+		);
+	};
+
+	/**
+	 * Build the node menu (or the background menu, when `nodeId` is null) and
+	 * hand it to `show`, which anchors it: at the pointer for a right-click, at
+	 * the button for the ribbon.
+	 */
+	private showNodeMenu(
+		nodeId: string | null,
+		show: (menu: Menu) => void,
+	): void {
+		// If acting on a node that isn't selected, select it first
 		if (nodeId && nodeId !== this.selectedNodeId) {
 			this.selectNode(nodeId);
 		}
@@ -4430,8 +4459,8 @@ export class MindMapView extends ItemView {
 			);
 		}
 
-		menu.showAtMouseEvent(e);
-	};
+		show(menu);
+	}
 
 	// ─── Collapse ────────────────────────────────────────────
 

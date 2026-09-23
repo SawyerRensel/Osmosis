@@ -299,6 +299,13 @@ pre.osmosis-code-block {
 	opacity: 0.7;
 }
 
+/* A selected node shows its handle too. Touch has no hover, and a handle a
+   finger cannot see is one it cannot mean to grab, so selection is what both
+   reveals the handle and arms it. */
+.osmosis-node-group.osmosis-node-selected .osmosis-resize-handle {
+	opacity: 0.7;
+}
+
 /* Collapse toggle */
 .osmosis-collapse-toggle {
 	cursor: pointer;

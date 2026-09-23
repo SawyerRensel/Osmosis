@@ -4,7 +4,7 @@ import {
 	TOUCH_DRAG_THRESHOLD,
 	dragThreshold,
 	exceedsDragThreshold,
-	panSwallowsTap,
+	nodeDragPans,
 } from "./mindmap-gesture";
 
 describe("dragThreshold", () => {
@@ -33,22 +33,52 @@ describe("exceedsDragThreshold", () => {
 	});
 });
 
-describe("panSwallowsTap", () => {
-	it("swallows the tap that ends a committed pan in peek and study", () => {
-		for (const spatialMode of ["peek", "study"] as const) {
-			expect(panSwallowsTap({ panCommitted: true, spatialMode })).toBe(true);
-		}
-	});
+describe("nodeDragPans", () => {
+	const editing = { isReadingMode: false, spatialMode: "off" } as const;
 
-	it("leaves a tap alone when the pointer never committed to a pan", () => {
+	it("moves the node once a finger has held the press", () => {
 		expect(
-			panSwallowsTap({ panCommitted: false, spatialMode: "study" }),
+			nodeDragPans({ ...editing, pointerType: "touch", longPressTriggered: true }),
 		).toBe(false);
 	});
 
-	it("leaves normal editing taps alone", () => {
-		expect(panSwallowsTap({ panCommitted: true, spatialMode: "off" })).toBe(
-			false,
-		);
+	it("pans when a finger drags a node without holding it first", () => {
+		expect(
+			nodeDragPans({ ...editing, pointerType: "touch", longPressTriggered: false }),
+		).toBe(true);
+	});
+
+	it("moves the node from the first pixel under a mouse", () => {
+		expect(
+			nodeDragPans({ ...editing, pointerType: "mouse", longPressTriggered: false }),
+		).toBe(false);
+	});
+
+	it("always pans in reading mode, held or not", () => {
+		for (const pointerType of ["touch", "mouse"]) {
+			expect(
+				nodeDragPans({
+					pointerType,
+					longPressTriggered: true,
+					isReadingMode: true,
+					spatialMode: "off",
+				}),
+			).toBe(true);
+		}
+	});
+
+	it("always pans in peek and study, so a review cannot restructure the note", () => {
+		for (const spatialMode of ["peek", "study"] as const) {
+			for (const pointerType of ["touch", "mouse"]) {
+				expect(
+					nodeDragPans({
+						pointerType,
+						longPressTriggered: true,
+						isReadingMode: false,
+						spatialMode,
+					}),
+				).toBe(true);
+			}
+		}
 	});
 });
