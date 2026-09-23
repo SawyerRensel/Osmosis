@@ -12,7 +12,8 @@ interface ButtonDef {
 	id: string;
 	icon: string;
 	label: string;
-	action: () => void;
+	/** Receives its own button, which menu-opening actions anchor to. */
+	action: (btn: HTMLButtonElement) => void;
 	/** Button requires a node to be selected */
 	needsSelection?: boolean;
 	/** Button mutates the map — hidden in reading mode */
@@ -55,6 +56,7 @@ export class ToolRibbon {
 			redo: () => void;
 			refresh: () => void;
 			openProperties: () => void;
+			openNodeMenu: (btn: HTMLElement) => void;
 		},
 	) {
 		this.el = createDiv();
@@ -102,6 +104,11 @@ export class ToolRibbon {
 				{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", action: actions.refresh },
 				{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: actions.openProperties },
 			],
+			[
+				// A phone has no right-click, and a long press there has to stay
+				// free for dragging a node, so this is how touch opens the menu.
+				{ id: "node-menu", icon: "more-vertical", label: "More actions", action: actions.openNodeMenu },
+			],
 		];
 
 		for (let gi = 0; gi < groups.length; gi++) {
@@ -128,7 +135,7 @@ export class ToolRibbon {
 				btn.addEventListener("click", (e) => {
 					e.preventDefault();
 					e.stopPropagation();
-					def.action();
+					def.action(btn);
 				});
 				this.buttons.set(def.id, btn);
 				this.el.appendChild(btn);

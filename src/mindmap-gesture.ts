@@ -29,22 +29,20 @@ export function exceedsDragThreshold(
 }
 
 /**
- * Whether the pointerup that ends a pan should be swallowed rather than
- * synthesized into a tap.
+ * Whether a drag that began on a node moves the map rather than the node.
  *
- * A touch pan ends over whatever node the finger happens to be on, and in
- * peek/study a tap on a node is a reveal — so a drag meant to move the map
- * flipped the card it landed on. Outside those modes the synthesized tap only
- * moves the selection, which is harmless and long-standing, so it stays.
+ * Reading mode and peek/study always pan: a stray drag must not be able to
+ * restructure the note, and during a review it must not flip a card either. In
+ * edit mode a mouse drags the node from the first pixel, while a finger pans
+ * unless the press was held long enough to mean it — a phone has no second
+ * button, so the hold is what distinguishes moving the map from moving a node.
  */
-export function panSwallowsTap(opts: {
+export function nodeDragPans(opts: {
 	pointerType: string;
-	panCommitted: boolean;
+	longPressTriggered: boolean;
+	isReadingMode: boolean;
 	spatialMode: SpatialMode;
 }): boolean {
-	return (
-		opts.pointerType === "touch" &&
-		opts.panCommitted &&
-		opts.spatialMode !== "off"
-	);
+	if (opts.isReadingMode || opts.spatialMode !== "off") return true;
+	return opts.pointerType === "touch" && !opts.longPressTriggered;
 }
