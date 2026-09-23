@@ -29,22 +29,18 @@ export function exceedsDragThreshold(
 }
 
 /**
- * Whether the pointerup that ends a pan should be swallowed rather than
- * synthesized into a tap.
+ * Whether the tap or click that ends a pan should be swallowed.
  *
- * A touch pan ends over whatever node the finger happens to be on, and in
- * peek/study a tap on a node is a reveal — so a drag meant to move the map
- * flipped the card it landed on. Outside those modes the synthesized tap only
- * moves the selection, which is harmless and long-standing, so it stays.
+ * A pan ends wherever the pointer happens to be resting, and in peek/study a
+ * tap on a node is a reveal — so a drag meant to move the map flipped the card
+ * it landed on. A finger does this on any drag; a mouse only when the drag
+ * begins and ends inside one node, since a click otherwise lands on the common
+ * ancestor of the two. Outside those modes the tap only moves the selection,
+ * which is harmless and long-standing, so it stays.
  */
 export function panSwallowsTap(opts: {
-	pointerType: string;
 	panCommitted: boolean;
 	spatialMode: SpatialMode;
 }): boolean {
-	return (
-		opts.pointerType === "touch" &&
-		opts.panCommitted &&
-		opts.spatialMode !== "off"
-	);
+	return opts.panCommitted && opts.spatialMode !== "off";
 }

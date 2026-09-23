@@ -36,43 +36,19 @@ describe("exceedsDragThreshold", () => {
 describe("panSwallowsTap", () => {
 	it("swallows the tap that ends a committed pan in peek and study", () => {
 		for (const spatialMode of ["peek", "study"] as const) {
-			expect(
-				panSwallowsTap({
-					pointerType: "touch",
-					panCommitted: true,
-					spatialMode,
-				}),
-			).toBe(true);
+			expect(panSwallowsTap({ panCommitted: true, spatialMode })).toBe(true);
 		}
 	});
 
-	it("leaves a tap alone when the finger never committed to a pan", () => {
+	it("leaves a tap alone when the pointer never committed to a pan", () => {
 		expect(
-			panSwallowsTap({
-				pointerType: "touch",
-				panCommitted: false,
-				spatialMode: "study",
-			}),
+			panSwallowsTap({ panCommitted: false, spatialMode: "study" }),
 		).toBe(false);
 	});
 
 	it("leaves normal editing taps alone", () => {
-		expect(
-			panSwallowsTap({
-				pointerType: "touch",
-				panCommitted: true,
-				spatialMode: "off",
-			}),
-		).toBe(false);
-	});
-
-	it("ignores the mouse, whose click path guards itself", () => {
-		expect(
-			panSwallowsTap({
-				pointerType: "mouse",
-				panCommitted: true,
-				spatialMode: "study",
-			}),
-		).toBe(false);
+		expect(panSwallowsTap({ panCommitted: true, spatialMode: "off" })).toBe(
+			false,
+		);
 	});
 });

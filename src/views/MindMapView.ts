@@ -3573,6 +3573,7 @@ export class MindMapView extends ItemView {
 						// Reading mode: dragging a node pans the viewport
 						this.dragNodeId = null;
 						this.isPanning = true;
+						this.panCommitted = true;
 						this.panStart = { x: e.clientX, y: e.clientY };
 					} else {
 						this.startDrag(this.dragNodeId);
@@ -3607,6 +3608,8 @@ export class MindMapView extends ItemView {
 		}
 
 		e.stopPropagation();
+		// Past the slop, so the map is about to move under the pointer.
+		this.panCommitted = true;
 		const svgCurrent = this.screenToSvg(e.clientX, e.clientY);
 		const svgStart = this.screenToSvg(this.panStart.x, this.panStart.y);
 		const dx = svgCurrent.x - svgStart.x;
@@ -3706,10 +3709,11 @@ export class MindMapView extends ItemView {
 		const dragCandidateId = this.dragNodeId;
 		this.dragNodeId = null;
 		const wasPanning = this.isPanning;
-		const panCommitted = this.panCommitted;
 		this.isPanning = false;
 		this.panPending = false;
-		this.panCommitted = false;
+		// `panCommitted` deliberately survives this handler: the browser's click
+		// arrives after pointerup, and `handleClick` needs to know the gesture
+		// panned. The next pointerdown clears it.
 
 		// Fling the pan onward, or spring back if the drag ended past a bound.
 		if (e.pointerType === "touch" && wasPanning) {
@@ -3736,8 +3740,7 @@ export class MindMapView extends ItemView {
 		// is harmless, so it still lands.
 		if (
 			panSwallowsTap({
-				pointerType: e.pointerType,
-				panCommitted,
+				panCommitted: this.panCommitted,
 				spatialMode: this.spatialMode,
 			})
 		) {
@@ -4216,6 +4219,21 @@ export class MindMapView extends ItemView {
 			return;
 		}
 		if (this.isPanning || this.isDragging) return;
+
+		// A mouse drag that panned is not also a click. The guard above cannot
+		// see it: pointerup clears `isPanning` before the browser dispatches
+		// this click. It only bites when press and release land inside one node
+		// — a click spanning two elements is dispatched on their common
+		// ancestor, which belongs to no node — but in reading mode that is an
+		// ordinary way to drag the map, and in peek/study it revealed the node.
+		if (
+			panSwallowsTap({
+				panCommitted: this.panCommitted,
+				spatialMode: this.spatialMode,
+			})
+		) {
+			return;
+		}
 
 		// Check if clicking a collapse toggle
 		const target = e.target as Element;
