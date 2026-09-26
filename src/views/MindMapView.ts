@@ -53,7 +53,7 @@ import {
 	type Sample,
 } from "../mindmap-inertia";
 import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
-import { ToolRibbon } from "./ToolRibbon";
+import { ToolRibbon, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
 	autoResizeExtension,
@@ -585,6 +585,15 @@ export class MindMapView extends ItemView {
 		});
 		for (const key of ["[", "]"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				this.handleKeyDown(e);
+				return false;
+			});
+		}
+		// Alt+Arrow moves nodes. Claim it here, or a user hotkey on the same
+		// keys (e.g. "Move line up") takes it first and nothing moves.
+		for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+			this.scope.register(["Alt"], key, (e: KeyboardEvent) => {
+				if (this.editingNodeId) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
@@ -3055,12 +3064,21 @@ export class MindMapView extends ItemView {
 
 	/** Notify the toolbar of current selection/editing state. */
 	private updateToolbarState(): void {
-		this.toolRibbon?.updateState({
+		this.toolRibbon?.updateState(this.toolbarState());
+	}
+
+	private toolbarState(): ToolbarState {
+		return {
 			hasSelection: this.selectedNodeId !== null,
 			isEditing: this.editingNodeId !== null,
 			hasFile: this.currentFile !== null,
 			isReadingMode: this.isReadingMode,
-		});
+		};
+	}
+
+	/** Run a toolbar button for its command (see `checkCallback` semantics). */
+	runToolbarCommand(def: ButtonDef, checking: boolean): boolean {
+		return this.toolRibbon?.trigger(def, this.toolbarState(), checking) ?? false;
 	}
 
 	/** Fit the entire mind map into the visible viewport with padding. */
