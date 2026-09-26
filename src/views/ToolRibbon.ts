@@ -8,16 +8,107 @@ export interface ToolbarState {
 	isReadingMode: boolean;
 }
 
-interface ButtonDef {
+export interface ToolbarActions {
+	fitToView: () => void;
+	zoomIn: () => void;
+	zoomOut: () => void;
+	centerOnRoot: () => void;
+	foldAll: () => void;
+	unfoldAll: () => void;
+	insertParent: () => void;
+	addSibling: () => void;
+	addChild: () => void;
+	moveUp: () => void;
+	moveDown: () => void;
+	moveLeft: () => void;
+	moveRight: () => void;
+	deleteNode: () => void;
+	copy: () => void;
+	cut: () => void;
+	paste: () => void;
+	copyStyle: () => void;
+	pasteStyle: () => void;
+	undo: () => void;
+	redo: () => void;
+	refresh: () => void;
+	openProperties: () => void;
+	openNodeMenu: (btn: HTMLElement) => void;
+}
+
+export interface ButtonDef {
 	id: string;
 	icon: string;
 	label: string;
-	/** Receives its own button, which menu-opening actions anchor to. */
-	action: (btn: HTMLButtonElement) => void;
+	/** Name of the matching Obsidian command, so it can be given a hotkey. Omitted when a command already exists elsewhere. */
+	command?: string;
+	/** The action to run. It receives its own button, which menu-opening actions anchor to. */
+	action: keyof ToolbarActions;
 	/** Button requires a node to be selected */
 	needsSelection?: boolean;
 	/** Button mutates the map — hidden in reading mode */
 	editOnly?: boolean;
+}
+
+/** The toolbar's buttons, in display order, one inner array per divider-separated group. */
+export const TOOLBAR_GROUPS: ButtonDef[][] = [
+	[
+		{ id: "fit", icon: "maximize", label: "Fit to view", command: "Fit mind map to view", action: "fitToView" },
+		{ id: "zoom-in", icon: "zoom-in", label: "Zoom in", command: "Zoom in on mind map", action: "zoomIn" },
+		{ id: "zoom-out", icon: "zoom-out", label: "Zoom out", command: "Zoom out of mind map", action: "zoomOut" },
+		{ id: "center", icon: "home", label: "Center on root", command: "Center mind map on root", action: "centerOnRoot" },
+	],
+	[
+		{ id: "fold-all", icon: "chevrons-down-up", label: "Collapse all", command: "Collapse all under node", action: "foldAll", needsSelection: true },
+		{ id: "unfold-all", icon: "chevrons-up-down", label: "Expand all", command: "Expand all under node", action: "unfoldAll", needsSelection: true },
+	],
+	[
+		{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", command: "Insert parent node", action: "insertParent", needsSelection: true, editOnly: true },
+		{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", command: "Add sibling node", action: "addSibling", needsSelection: true, editOnly: true },
+		{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", command: "Add child node", action: "addChild", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "move-up", icon: "arrow-up", label: "Move up", command: "Move node up", action: "moveUp", needsSelection: true, editOnly: true },
+		{ id: "move-down", icon: "arrow-down", label: "Move down", command: "Move node down", action: "moveDown", needsSelection: true, editOnly: true },
+		{ id: "move-left", icon: "arrow-left", label: "Move left", command: "Move node left", action: "moveLeft", needsSelection: true, editOnly: true },
+		{ id: "move-right", icon: "arrow-right", label: "Move right", command: "Move node right", action: "moveRight", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "delete", icon: "trash-2", label: "Delete", command: "Delete node", action: "deleteNode", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "copy", icon: "copy", label: "Copy", command: "Copy node", action: "copy", needsSelection: true },
+		{ id: "cut", icon: "scissors", label: "Cut", command: "Cut node", action: "cut", needsSelection: true, editOnly: true },
+		{ id: "paste", icon: "clipboard-paste", label: "Paste", command: "Paste node", action: "paste", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "copy-style", icon: "pipette", label: "Copy style", command: "Copy node style", action: "copyStyle", needsSelection: true, editOnly: true },
+		{ id: "paste-style", icon: "paint-bucket", label: "Paste style", command: "Paste node style", action: "pasteStyle", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "undo", icon: "undo-2", label: "Undo", command: "Undo mind map edit", action: "undo", editOnly: true },
+		{ id: "redo", icon: "redo-2", label: "Redo", command: "Redo mind map edit", action: "redo", editOnly: true },
+	],
+	[
+		{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", command: "Refresh mind map", action: "refresh" },
+		// "Open mind map properties" is already a command (main.ts).
+		{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: "openProperties" },
+	],
+	[
+		// A phone has no right-click, and a long press there has to stay
+		// free for dragging a node, so this is how touch opens the menu.
+		{ id: "node-menu", icon: "more-vertical", label: "More actions", command: "Open node menu", action: "openNodeMenu" },
+	],
+];
+
+/**
+ * Whether a button's action may run in the given state — the same rule that
+ * disables or hides the button itself.
+ */
+export function canRunToolbarAction(def: ButtonDef, state: ToolbarState): boolean {
+	if (state.isEditing) return false;
+	if (def.needsSelection && !state.hasSelection) return false;
+	if (def.editOnly && state.isReadingMode) return false;
+	return true;
 }
 
 /**
@@ -32,85 +123,12 @@ export class ToolRibbon {
 
 	constructor(
 		private container: HTMLElement,
-		actions: {
-			fitToView: () => void;
-			zoomIn: () => void;
-			zoomOut: () => void;
-			centerOnRoot: () => void;
-			foldAll: () => void;
-			unfoldAll: () => void;
-			insertParent: () => void;
-			addSibling: () => void;
-			addChild: () => void;
-			moveUp: () => void;
-			moveDown: () => void;
-			moveLeft: () => void;
-			moveRight: () => void;
-			deleteNode: () => void;
-			copy: () => void;
-			cut: () => void;
-			paste: () => void;
-			copyStyle: () => void;
-			pasteStyle: () => void;
-			undo: () => void;
-			redo: () => void;
-			refresh: () => void;
-			openProperties: () => void;
-			openNodeMenu: (btn: HTMLElement) => void;
-		},
+		private actions: ToolbarActions,
 	) {
 		this.el = createDiv();
 		this.el.className = "osmosis-toolbar";
 
-		const groups: ButtonDef[][] = [
-			[
-				{ id: "fit", icon: "maximize", label: "Fit to view", action: actions.fitToView },
-				{ id: "zoom-in", icon: "zoom-in", label: "Zoom in", action: actions.zoomIn },
-				{ id: "zoom-out", icon: "zoom-out", label: "Zoom out", action: actions.zoomOut },
-				{ id: "center", icon: "home", label: "Center on root", action: actions.centerOnRoot },
-			],
-			[
-				{ id: "fold-all", icon: "chevrons-down-up", label: "Collapse all", action: actions.foldAll, needsSelection: true },
-				{ id: "unfold-all", icon: "chevrons-up-down", label: "Expand all", action: actions.unfoldAll, needsSelection: true },
-			],
-			[
-				{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", action: actions.insertParent, needsSelection: true, editOnly: true },
-				{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", action: actions.addSibling, needsSelection: true, editOnly: true },
-				{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", action: actions.addChild, needsSelection: true, editOnly: true },
-			],
-			[
-				{ id: "move-up", icon: "arrow-up", label: "Move up", action: actions.moveUp, needsSelection: true, editOnly: true },
-				{ id: "move-down", icon: "arrow-down", label: "Move down", action: actions.moveDown, needsSelection: true, editOnly: true },
-				{ id: "move-left", icon: "arrow-left", label: "Move left", action: actions.moveLeft, needsSelection: true, editOnly: true },
-				{ id: "move-right", icon: "arrow-right", label: "Move right", action: actions.moveRight, needsSelection: true, editOnly: true },
-			],
-			[
-				{ id: "delete", icon: "trash-2", label: "Delete", action: actions.deleteNode, needsSelection: true, editOnly: true },
-			],
-			[
-				{ id: "copy", icon: "copy", label: "Copy", action: actions.copy, needsSelection: true },
-				{ id: "cut", icon: "scissors", label: "Cut", action: actions.cut, needsSelection: true, editOnly: true },
-				{ id: "paste", icon: "clipboard-paste", label: "Paste", action: actions.paste, needsSelection: true, editOnly: true },
-			],
-			[
-				{ id: "copy-style", icon: "pipette", label: "Copy style", action: actions.copyStyle, needsSelection: true, editOnly: true },
-				{ id: "paste-style", icon: "paint-bucket", label: "Paste style", action: actions.pasteStyle, needsSelection: true, editOnly: true },
-			],
-			[
-				{ id: "undo", icon: "undo-2", label: "Undo", action: actions.undo, editOnly: true },
-				{ id: "redo", icon: "redo-2", label: "Redo", action: actions.redo, editOnly: true },
-			],
-			[
-				{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", action: actions.refresh },
-				{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: actions.openProperties },
-			],
-			[
-				// A phone has no right-click, and a long press there has to stay
-				// free for dragging a node, so this is how touch opens the menu.
-				{ id: "node-menu", icon: "more-vertical", label: "More actions", action: actions.openNodeMenu },
-			],
-		];
-
+		const groups = TOOLBAR_GROUPS;
 		for (let gi = 0; gi < groups.length; gi++) {
 			const group = groups[gi];
 			if (!group) continue;
@@ -135,7 +153,7 @@ export class ToolRibbon {
 				btn.addEventListener("click", (e) => {
 					e.preventDefault();
 					e.stopPropagation();
-					def.action(btn);
+					this.runAction(def, btn);
 				});
 				this.buttons.set(def.id, btn);
 				this.el.appendChild(btn);
@@ -216,6 +234,22 @@ export class ToolRibbon {
 				visibleSinceLastDivider++;
 			}
 		}
+	}
+
+	/**
+	 * Run a button's action on behalf of its command, under the rule that
+	 * governs the button. With `checking`, only report whether it would run.
+	 */
+	trigger(def: ButtonDef, state: ToolbarState, checking: boolean): boolean {
+		const btn = this.buttons.get(def.id);
+		if (!btn || !canRunToolbarAction(def, state)) return false;
+		if (!checking) this.runAction(def, btn);
+		return true;
+	}
+
+	private runAction(def: ButtonDef, btn: HTMLButtonElement): void {
+		const action: (btn: HTMLButtonElement) => void = this.actions[def.action];
+		action(btn);
 	}
 
 	destroy(): void {

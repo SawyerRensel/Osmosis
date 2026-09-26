@@ -12,6 +12,7 @@ import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
+import { TOOLBAR_GROUPS } from "./views/ToolRibbon";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
@@ -313,6 +314,21 @@ export default class OsmosisPlugin extends Plugin {
 				return true;
 			},
 		});
+
+		// One command per mind map toolbar button, so each can take a hotkey.
+		// None ships with one: the view's built-in keys already cover them.
+		for (const def of TOOLBAR_GROUPS.flat()) {
+			if (!def.command) continue;
+			this.addCommand({
+				id: `mindmap-${def.id}`,
+				name: def.command,
+				icon: def.icon,
+				checkCallback: (checking) => {
+					const view = this.app.workspace.getActiveViewOfType(MindMapView);
+					return view?.runToolbarCommand(def, checking) ?? false;
+				},
+			});
+		}
 
 		this.addCommand({
 			id: "open-properties-sidebar",
