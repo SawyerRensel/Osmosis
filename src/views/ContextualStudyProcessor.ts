@@ -110,6 +110,7 @@ export class ContextualStudyProcessor {
 	private readonly trackedFences: {
 		el: HTMLElement;
 		sourcePath: string;
+		fenceId: string;
 		restart: () => void;
 	}[] = [];
 	/**
@@ -201,18 +202,30 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Remember a fence so `refresh` can restart it, dropping any entry whose
-	 * element has since left the document.
+	 * Remember a fence so `refresh` can restart it, dropping any earlier entry
+	 * for the same fence that this render has replaced.
 	 *
-	 * Pruning on every render rather than on a schedule is enough: a note that is
-	 * re-rendered replaces its own entries, and one that is closed stops producing
-	 * them — so the list is bounded by what is actually on screen.
+	 * **Out of the document is not gone.** Reading view keeps only the sections
+	 * near the viewport attached; one scrolled far enough away is detached and
+	 * later put back as-is, without re-running this processor. Pruning every
+	 * detached entry — as this once did — dropped exactly those fences, so
+	 * starting study never reached them and they came back drawn for reading,
+	 * both sides showing. A phone's narrow screen detaches most of a long note,
+	 * which is why it showed there first.
+	 *
+	 * So an entry is dropped only once superseded: the same fence of the same
+	 * note rendered again while the old element is out of the document. An
+	 * attached one is left alone, since that is the same note open in a second
+	 * pane. `LineRevealProcessor.trackLine` keeps its lines by the same rule.
 	 */
-	private trackFence(el: HTMLElement, sourcePath: string, restart: () => void): void {
+	private trackFence(el: HTMLElement, sourcePath: string, fenceId: string, restart: () => void): void {
 		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
-			if (!this.trackedFences[i]!.el.isConnected) this.trackedFences.splice(i, 1);
+			const entry = this.trackedFences[i]!;
+			if (entry.sourcePath === sourcePath && entry.fenceId === fenceId && !entry.el.isConnected) {
+				this.trackedFences.splice(i, 1);
+			}
 		}
-		this.trackedFences.push({ el, sourcePath, restart });
+		this.trackedFences.push({ el, sourcePath, fenceId, restart });
 	}
 
 	/**
@@ -226,10 +239,13 @@ export class ContextualStudyProcessor {
 	 * place, so pressing the peek eye does not rebuild the picture and scroll the
 	 * reader away from it — the very jump peek used to cause on a fence and never
 	 * on a line.
+	 *
+	 * Detached fences are restarted too: they are the ones scrolled out of view,
+	 * and they will be put back exactly as drawn — see `trackFence`.
 	 */
 	refresh(notePath: string): void {
 		for (const entry of [...this.trackedFences]) {
-			if (entry.sourcePath !== notePath || !entry.el.isConnected) continue;
+			if (entry.sourcePath !== notePath) continue;
 			entry.restart();
 		}
 	}
@@ -394,7 +410,7 @@ export class ContextualStudyProcessor {
 		// Entering or leaving peek or study changes what this card should be
 		// showing, and does not re-run this processor. Redraw in place rather than
 		// rebuilding, so the note does not jump under the reader.
-		this.trackFence(container, sourcePath, () => {
+		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
 		});
@@ -651,7 +667,7 @@ export class ContextualStudyProcessor {
 			if (e.target === container) reveal();
 		});
 
-		this.trackFence(container, sourcePath, () => {
+		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
 		});
