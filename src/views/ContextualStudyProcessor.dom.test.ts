@@ -659,4 +659,46 @@ describe("a fence in plain reading mode", () => {
 		expect(visible(el, ".osmosis-contextual-hidden")).toBe(false);
 		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
 	});
+
+	/**
+	 * Reading view keeps only the sections near the viewport in the document. One
+	 * scrolled far enough away is detached — kept, not rebuilt — and put back
+	 * as-is when the reader returns, without re-running the code block processor.
+	 * A narrow phone screen detaches most of a long note. Starting study then has
+	 * to reach the fences that are off screen, or they come back still drawn for
+	 * reading, both sides showing.
+	 */
+	it("hides the back of a fence that was scrolled out of the document when study started", () => {
+		let mode: "off" | "study" = "off";
+		const cards = [basicCard("basic1"), basicCard("basic2")];
+		const plugin = {
+			app: {},
+			cardStore: { getCardsByNote: () => cards },
+			lineReveal: {
+				revealMode: () => mode,
+				isFenceTarget: (_path: string, fenceId: string) =>
+					mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
+			},
+		} as unknown as OsmosisPlugin;
+		const processor = new ContextualStudyProcessor(plugin);
+		const render = (source: string): HTMLElement => {
+			const el = document.body.createDiv();
+			(processor as unknown as {
+				renderCard: (s: string, e: HTMLElement, p: string) => void;
+			}).renderCard(source, el, NOTE);
+			return el;
+		};
+
+		const offScreen = render(BASIC);
+		offScreen.remove();
+		// Another fence rendering while the first is away, as scrolling does.
+		render(BASIC.replace("basic1", "basic2"));
+
+		mode = "study";
+		processor.refresh(NOTE);
+		document.body.appendChild(offScreen);
+
+		expect(visible(offScreen, ".osmosis-contextual-hidden")).toBe(true);
+		expect(visible(offScreen, ".osmosis-contextual-revealed")).toBe(false);
+	});
 });
