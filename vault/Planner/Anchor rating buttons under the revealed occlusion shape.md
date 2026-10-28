@@ -1,6 +1,6 @@
 ---
 title: Anchor rating buttons under the revealed occlusion shape
-summary: On an occlusion card, put Again/Hard/Good/Easy directly beneath the shape just revealed, the way spatial study anchors them beneath a node
+summary: On an occlusion card, put Again/Hard/Good/Easy directly beneath the shape just revealed, in a similar way to how spatial study anchors them beneath a node
 tags:
   - task
 calendar:
@@ -12,16 +12,17 @@ related:
   - "[[Sequential study as a view instead of a modal]]"
   - "[[Larger zoomable images during review]]"
   - "[[Peek mode image occlusion click each shape to reveal]]"
-status: Ideas
+status: Done
 priority:
 progress_current:
 progress_total:
-date_created: "2026-09-03T01:47:54.000Z"
-date_modified: "2026-09-03T01:47:54.000Z"
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_created: 2026-09-03T01:47:54.000Z
+date_modified: 2026-10-28T01:57:03.000Z
+date_start_scheduled: 2026-10-28T01:13:02.000Z
+date_start_actual: 2026-10-28T01:13:02.000Z
+date_end_scheduled: 2026-10-28T01:57:03.000Z
+date_end_actual: 2026-10-28T01:57:03.000Z
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/44
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -166,3 +167,91 @@ rules at `styles.css:1795+`. Reuse the class; do not invent a third look.
 - Manual: reveal each group in turn on phone and desktop; buttons land under the
   shape, stay on screen, and rate the right card; `1`–`4` still work; the fixed
   bar still appears for ordinary cards.
+
+---
+
+## What was implemented
+
+### Where it shipped
+
+[PR #44](https://github.com/SawyerRensel/Osmosis/pull/44), branch
+`feature/occlusion-anchored-rating` → `release/0.0.6`.
+
+### The cause
+
+Every surface put its rating control after the *whole* diagram: sequential in
+its fixed bar, the note-view fence card in its bottom row, an occluded line in
+a bubble inserted after the line. On a tall page that is a scroll away from a
+group revealed near the top. The answer itself already revealed in place; only
+the control was far away.
+
+### The fix
+
+- `ratingAnchor(shapes, target, aspect)` in `src/study/occlusion-geometry.ts`
+  unions the target group's boxes (rotated shapes by their drawn corners) and
+  returns a normalised centre + edge + `below`/`above`, or `null` to fall back.
+- `mountRatingAnchor(container, occlusion)` in `OcclusionRenderer.ts` puts an
+  empty slot inside the `.osmosis-occlusion` wrapper, positioned by CSS
+  variables as percentages of the image's box. `paintMasks` now leaves that slot
+  alone, so the post-load aspect repaint cannot take the buttons with it;
+  `removeRatingAnchors` takes it down.
+- Note view uses it: `ContextualStudyProcessor.renderOcclusionCard` (fence) and
+  `LineRevealProcessor.showRatingBubble` (occluded line in study). Both fall
+  back to their old placement on `null`.
+
+### Decisions worth remembering
+
+- **Sequential keeps its fixed bar.** Anchoring was built there first and
+  rejected in manual testing — Sawyer wants the bar where it always is. Don't
+  re-add it.
+- **Spatial is unchanged** — the bubble already sits under the node, and a
+  diagram in a node is small.
+- **Fallback thresholds**: union area > 0.25 or height > 0.5 → no anchor.
+  Flip above when < 0.1 of the image remains below; the height limit makes
+  "room above" guaranteed, so there is no second check.
+- **Horizontal clamp is CSS, not TypeScript** — only CSS knows the buttons'
+  width. `left: clamp(0, x − W/2, max(0, 100% − W))` with W = 240px; an image
+  narrower than the buttons pins them to its left edge and lets them overflow
+  right.
+- **The buttons do not scale with the picture** — position in %, size in px.
+
+### Extra scope found in testing
+
+- **Sequential stretched occlusion images.** `.osmosis-study-card img` caps at
+  `max-height: 50vh`, but the occlusion `<img>` carries a `width` attribute
+  (reserving its box), so the cap shortened the height while the width held:
+  bitmaps squished under their masks, SVGs letterboxed inside a box the masks
+  still spanned. Fix: `width: auto` on occlusion images in the study card, with
+  the embed's `|300` passed as `--osmosis-occlusion-width` for a ceiling.
+- **Mask outlines were heavy in a zoomed mind map.** The stroke was
+  `min(0.75cqmin, 1.5px)` — a px cap at the node's *layout* size that the map's
+  zoom transform then magnified. Now uncapped and proportional:
+  `max(0.15cqmin, 0.5px)` (ring `max(0.2cqmin, 0.75px)`) — 1.5px / 2px on a
+  ~1000px picture. This deliberately reverses the earlier "cap at the editor's
+  1.5px" decision; the editor canvas keeps its fixed widths.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/study/occlusion-geometry.ts` | `ratingAnchor`, thresholds, `drawnBox` |
+| `src/study/occlusion-geometry.test.ts` | Anchor tests: centre, group union, flip, edges, scattered, tall, empty, ellipse/poly, rotation |
+| `src/views/OcclusionRenderer.ts` | `mountRatingAnchor`, `removeRatingAnchors`; repaint keeps the slot; `--osmosis-occlusion-width` |
+| `src/views/OcclusionRenderer.dom.test.ts` | Slot placement, flip, fallback, replace, survives repaint |
+| `src/views/ContextualStudyProcessor.ts` | Fence card anchors its rating |
+| `src/views/LineRevealProcessor.ts` | Occluded line anchors its bubble; slot removed with it |
+| `styles.css` | Anchor slot rules; sequential aspect fix; proportional strokes |
+| `CLAUDE.md` | `npm run build` may copy into `.build-targets.local` vaults |
+
+### Test fixture
+
+`e2e/fixtures/occlusion-anchored-rating.md` + `e2e/fixtures/inspection-sheet.svg`
+(a tall 600×1700 page; copy the SVG to `vault/media/`). Groups at top-left,
+centre, bottom edge, right edge, and one scattered group; a `|150` copy; an
+occluded line; an ordinary control card. Removed from `vault/` after testing.
+
+### Follow-ups
+
+None filed. Not done: the bubble covers whatever sits just below the shape
+(no translucency or offset tuning was tried — not raised in testing).
+
