@@ -96,6 +96,8 @@ export interface CardOcclusion {
 	target: string;
 	/** Text labels drawn over the image, identical on front and back. */
 	annotations?: OcclusionAnnotation[];
+	/** Display width from the embed's `|300` / `|300x200` suffix, in CSS px. */
+	width?: number;
 }
 
 /** FSRS card states. */

@@ -112,6 +112,11 @@ describe("renderOcclusion", () => {
 		expect(container.querySelectorAll(".osmosis-occlusion-mask")).toHaveLength(3);
 	});
 
+	it("draws the image at the embed's |width, as the note does", () => {
+		const img = render("front", { ...occlusion, width: 300 }).querySelector("img");
+		expect(img?.getAttribute("width")).toBe("300");
+	});
+
 	it("marks the target and leaves the siblings plain", () => {
 		const container = render("front");
 		const masks = Array.from(container.querySelectorAll(".osmosis-occlusion-mask"));

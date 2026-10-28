@@ -3,6 +3,7 @@ import type { CardState, OcclusionSet } from "../database/types";
 import {
 	cardOcclusion,
 	findFirstEmbed,
+	findFirstEmbedWidth,
 	findLabeledEmbeds,
 	groupNumber,
 	occlusionGroups,
@@ -957,7 +958,7 @@ function buildOcclusionCards(
 	const content = contentLines.join("\n");
 	const cards: GeneratedCard[] = [];
 
-	for (const { label, target, body } of bindEmbeds(content, occlusions)) {
+	for (const { label, target, width, body } of bindEmbeds(content, occlusions)) {
 		const set = occlusions.get(label)!;
 		for (const group of occlusionGroups(set)) {
 			const derived = metadata.derivedSchedules?.get(group);
@@ -969,7 +970,7 @@ function buildOcclusionCards(
 				deck: metadata.deck,
 				sourceLine: fenceStartLine,
 				typeIn: metadata.typeIn,
-				occlusion: cardOcclusion(target, set, group),
+				occlusion: cardOcclusion(target, set, group, width),
 				...suspension,
 				...spreadSchedule(derived),
 			});
@@ -999,7 +1000,7 @@ function buildOcclusionCards(
 function bindEmbeds(
 	content: string,
 	occlusions: ReadonlyMap<string, OcclusionSet>,
-): Array<{ label: string; target: string; body: string }> {
+): Array<{ label: string; target: string; width?: number; body: string }> {
 	// Bare `occlude:` — the line-card spelling, also accepted in a fence that
 	// holds a single embed, so the two carriers stay legible the same way.
 	const bare = occlusions.get("");
@@ -1007,10 +1008,10 @@ function bindEmbeds(
 		const target = findFirstEmbed(content);
 		return target === null
 			? []
-			: [{ label: "", target, body: stripEmbedLabels(content) }];
+			: [{ label: "", target, width: findFirstEmbedWidth(content), body: stripEmbedLabels(content) }];
 	}
 
-	const bound: Array<{ label: string; target: string; body: string }> = [];
+	const bound: Array<{ label: string; target: string; width?: number; body: string }> = [];
 	const used = new Set<string>();
 	for (const embed of findLabeledEmbeds(content)) {
 		const set = occlusions.get(embed.label);
@@ -1019,6 +1020,7 @@ function bindEmbeds(
 		bound.push({
 			label: embed.label,
 			target: embed.target,
+			width: embed.width,
 			body: stripEmbedLabels(content),
 		});
 	}

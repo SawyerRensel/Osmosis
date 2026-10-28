@@ -92,6 +92,8 @@ export interface LabeledEmbed {
 	label: string;
 	/** Link target as written, e.g. "diagrams/bridge.png". */
 	target: string;
+	/** Display width from a `|300` sizing suffix, when the embed has one. */
+	width?: number;
 }
 
 /**
@@ -108,7 +110,8 @@ export function findLabeledEmbeds(content: string): LabeledEmbed[] {
 		const target = match[1] ?? match[3];
 		const label = match[2] ?? match[4];
 		if (target !== undefined && label !== undefined) {
-			found.push({ label, target: target.trim() });
+			const width = embedWidth(match[0]);
+			found.push({ label, target: target.trim(), ...(width !== undefined ? { width } : {}) });
 		}
 	}
 	return found;
@@ -121,6 +124,26 @@ export function findFirstEmbed(content: string): string | null {
 	if (!match) return null;
 	const target = match[1] ?? match[2];
 	return target === undefined ? null : target.trim();
+}
+
+/** The display width of the first image embed in the content — see {@link embedWidth}. */
+export function findFirstEmbedWidth(content: string): number | undefined {
+	ANY_EMBED_REGEX.lastIndex = 0;
+	const match = ANY_EMBED_REGEX.exec(content);
+	return match ? embedWidth(match[0]) : undefined;
+}
+
+/**
+ * The width an embed's sizing suffix asks for, the way Obsidian reads it:
+ * `![[bridge.png|300]]`, `![[bridge.png|300x200]]`, `![300](bridge.png)` or
+ * `![alt|300](bridge.png)`. Only the width is kept — the picture's own aspect
+ * ratio sets its height, so the masks over it can never be stretched off it.
+ */
+export function embedWidth(embed: string): number | undefined {
+	const match = /^!\[\[[^\]]*\|\s*(\d+)(?:x\d+)?\s*\]\]/.exec(embed)
+		?? /^!\[(?:[^\]]*\|)?\s*(\d+)(?:x\d+)?\s*\]\(/.exec(embed);
+	const width = match ? parseInt(match[1]!, 10) : NaN;
+	return width > 0 ? width : undefined;
 }
 
 /**
@@ -678,8 +701,10 @@ export function cardOcclusion(
 	image: string,
 	set: OcclusionSet,
 	target: string,
+	width?: number,
 ): CardOcclusion {
 	const occlusion: CardOcclusion = { image, mode: set.mode, shapes: set.shapes, target };
+	if (width !== undefined) occlusion.width = width;
 	// Annotations ride along on every card the set derives: they label the
 	// picture rather than any one group, so they read the same on all of them.
 	if (set.annotations && set.annotations.length > 0) occlusion.annotations = set.annotations;
@@ -702,7 +727,7 @@ export function occludeLineCard(card: GeneratedCard, set: OcclusionSet): Generat
 		...card,
 		id: `${card.id}-${group}`,
 		card_type: "occlusion",
-		occlusion: cardOcclusion(image, set, group),
+		occlusion: cardOcclusion(image, set, group, findFirstEmbedWidth(card.back)),
 		occlusionGroup: group,
 	}));
 }
@@ -820,7 +845,7 @@ export function fenceDiagrams(
 	for (const embed of findLabeledEmbeds(raw)) {
 		const set = sets.get(embed.label);
 		if (set) {
-			diagrams.push(cardOcclusion(embed.target, set, ""));
+			diagrams.push(cardOcclusion(embed.target, set, "", embed.width));
 			occluded.add(embed.label);
 		}
 	}
@@ -835,7 +860,7 @@ export function fenceDiagrams(
 	const image = findFirstEmbed(raw);
 	if (!set || image === null) return { diagrams: [], prose: "" };
 	return {
-		diagrams: [cardOcclusion(image, set, "")],
+		diagrams: [cardOcclusion(image, set, "", findFirstEmbedWidth(raw))],
 		prose: stripEmbedLabels(stripEmbeds(raw)).trim(),
 	};
 }

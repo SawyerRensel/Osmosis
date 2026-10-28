@@ -3,6 +3,7 @@ import type { OcclusionSet, OcclusionShape } from "../database/types";
 import { generateExplicitCards } from "./explicit";
 import {
 	cardOcclusion,
+	embedWidth,
 	enclosingOsmosisFence,
 	ensureFenceIdentity,
 	fenceEmbedLine,
@@ -437,9 +438,9 @@ describe("embed labels", () => {
 		]);
 	});
 
-	it("reads the target past a sizing suffix", () => {
+	it("reads the target past a sizing suffix, keeping the width", () => {
 		expect(findLabeledEmbeds("![[bridge.png|300]]{a}")).toEqual([
-			{ label: "a", target: "bridge.png" },
+			{ label: "a", target: "bridge.png", width: 300 },
 		]);
 	});
 
@@ -569,6 +570,15 @@ describe("fence cards", () => {
 		}
 	});
 
+	it("gives each diagram its own embed's |width", () => {
+		const sized = generateExplicitCards(twoDiagramFence.replace(
+			"![[span-elevation.png]]{b}",
+			"![[span-elevation.png|240]]{b}",
+		));
+		expect(sized.find((c) => c.id === "bridge-c1")!.occlusion!.width).toBeUndefined();
+		expect(sized.find((c) => c.id === "bridge-c3")!.occlusion!.width).toBe(240);
+	});
+
 	it("does not move masks between images when the embeds are reordered", () => {
 		const reordered = twoDiagramFence.replace(
 			"![[bridge-cross-section.png]]{a}\n![[span-elevation.png]]{b}",
@@ -694,6 +704,12 @@ describe("line cards", () => {
 
 	it("keeps the block ID intact, so the line is still locatable in the note", () => {
 		expect(occludeLineCard(lineCard, set).every((c) => c.blockId === "os-ek322j")).toBe(true);
+	});
+
+	it("carries the line's |300 width onto every card it derives", () => {
+		const sized = { ...lineCard, back: "![[network-map.png|300]]" };
+		expect(occludeLineCard(sized, set).map((c) => c.occlusion!.width)).toEqual([300, 300]);
+		expect(occludeLineCard(lineCard, set)[0]!.occlusion!.width).toBeUndefined();
 	});
 
 	it("takes the image from the line itself — no label needed", () => {
@@ -1233,5 +1249,21 @@ describe("rotation", () => {
 	it("derives one card per group regardless of angle", () => {
 		// Rotation is presentation; it must not touch the group→card collapse.
 		expect(occlusionGroups(tilted)).toEqual(["c1", "c2", "c3"]);
+	});
+});
+
+describe("embedWidth", () => {
+	it.each([
+		["![[bridge.png|300]]", 300],
+		["![[bridge.png|300x200]]", 300],
+		["![[bridge.png|300]]{a}", 300],
+		["![300](bridge.png)", 300],
+		["![a bridge|300](bridge%20map.png)", 300],
+		["![[bridge.png]]", undefined],
+		["![[bridge.png|a caption]]", undefined],
+		["![a bridge](bridge.png)", undefined],
+		["![[bridge.png|0]]", undefined],
+	])("%s → %s", (embed, width) => {
+		expect(embedWidth(embed)).toBe(width);
 	});
 });
