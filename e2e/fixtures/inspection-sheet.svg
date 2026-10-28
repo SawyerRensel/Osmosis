@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 1700" width="600" height="1700">
+  <!-- Deliberately tall, like the scanned page in issue #34: on a sheet this
+       shape a rating bar at the foot of the surface is a scroll away from a line
+       revealed near the top. -->
+  <rect width="600" height="1700" fill="#fbfaf6"/>
+  <text x="36" y="118" font-family="sans-serif" font-size="30" font-weight="bold" fill="#2b2a27">Inspection sheet — Span 4</text>
+  <text x="530" y="530" font-family="sans-serif" font-size="22" fill="#2b2a27">OK</text>
+  <text x="36" y="300" font-family="sans-serif" font-size="22" fill="#2b2a27">1. Bearing plate — east abutment</text>
+  <line x1="36" y1="314" x2="564" y2="314" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="352" font-family="sans-serif" font-size="22" fill="#2b2a27">2. Bearing plate — west abutment</text>
+  <line x1="36" y1="366" x2="564" y2="366" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="404" font-family="sans-serif" font-size="22" fill="#2b2a27">3. Expansion joint gap</text>
+  <line x1="36" y1="418" x2="564" y2="418" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="456" font-family="sans-serif" font-size="22" fill="#2b2a27">4. Deck drainage outlets</text>
+  <line x1="36" y1="470" x2="564" y2="470" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="508" font-family="sans-serif" font-size="22" fill="#2b2a27">5. Parapet anchor bolts</text>
+  <line x1="36" y1="522" x2="564" y2="522" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="560" font-family="sans-serif" font-size="22" fill="#2b2a27">6. Main girder flange</text>
+  <line x1="36" y1="574" x2="564" y2="574" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="612" font-family="sans-serif" font-size="22" fill="#2b2a27">7. Main girder web</text>
+  <line x1="36" y1="626" x2="564" y2="626" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="664" font-family="sans-serif" font-size="22" fill="#2b2a27">8. Cross-frame bracing</text>
+  <line x1="36" y1="678" x2="564" y2="678" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="716" font-family="sans-serif" font-size="22" fill="#2b2a27">9. Pier cap concrete</text>
+  <line x1="36" y1="730" x2="564" y2="730" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="768" font-family="sans-serif" font-size="22" fill="#2b2a27">10. Pier column cover</text>
+  <line x1="36" y1="782" x2="564" y2="782" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="820" font-family="sans-serif" font-size="22" fill="#2b2a27">11. Scour depth at pier 2</text>
+  <line x1="36" y1="834" x2="564" y2="834" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="872" font-family="sans-serif" font-size="22" fill="#2b2a27">12. Scour depth at pier 3</text>
+  <line x1="36" y1="886" x2="564" y2="886" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="924" font-family="sans-serif" font-size="22" fill="#2b2a27">13. Approach slab settlement</text>
+  <line x1="36" y1="938" x2="564" y2="938" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="976" font-family="sans-serif" font-size="22" fill="#2b2a27">14. Guardrail transition</text>
+  <line x1="36" y1="990" x2="564" y2="990" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1028" font-family="sans-serif" font-size="22" fill="#2b2a27">15. Lighting column base</text>
+  <line x1="36" y1="1042" x2="564" y2="1042" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1080" font-family="sans-serif" font-size="22" fill="#2b2a27">16. Paint system condition</text>
+  <line x1="36" y1="1094" x2="564" y2="1094" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1132" font-family="sans-serif" font-size="22" fill="#2b2a27">17. Weld at splice S4</text>
+  <line x1="36" y1="1146" x2="564" y2="1146" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1184" font-family="sans-serif" font-size="22" fill="#2b2a27">18. Weld at splice S7</text>
+  <line x1="36" y1="1198" x2="564" y2="1198" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1236" font-family="sans-serif" font-size="22" fill="#2b2a27">19. Cable hanger H12</text>
+  <line x1="36" y1="1250" x2="564" y2="1250" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1288" font-family="sans-serif" font-size="22" fill="#2b2a27">20. Cable hanger H18</text>
+  <line x1="36" y1="1302" x2="564" y2="1302" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1340" font-family="sans-serif" font-size="22" fill="#2b2a27">21. Load posting signage</text>
+  <line x1="36" y1="1354" x2="564" y2="1354" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1392" font-family="sans-serif" font-size="22" fill="#2b2a27">22. Sidewalk surface</text>
+  <line x1="36" y1="1406" x2="564" y2="1406" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1444" font-family="sans-serif" font-size="22" fill="#2b2a27">23. Utility conduit hangers</text>
+  <line x1="36" y1="1458" x2="564" y2="1458" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1496" font-family="sans-serif" font-size="22" fill="#2b2a27">24. Inspection access ladder</text>
+  <line x1="36" y1="1510" x2="564" y2="1510" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="36" y="1548" font-family="sans-serif" font-size="22" fill="#2b2a27">25. Overall rating</text>
+  <line x1="36" y1="1562" x2="564" y2="1562" stroke="#d8d3c6" stroke-width="1"/>
+  <text x="360" y="1610" font-family="sans-serif" font-size="22" font-style="italic" fill="#2b2a27">Signed: J. Inspector</text>
+</svg>

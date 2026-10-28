@@ -306,6 +306,13 @@ How do I fix this while maintaining the intended behavior?
 
 **Important**: Build output goes to `vault/`. This is the same vault used for both manual testing and Playwright E2E tests.
 
+**Extra build targets**: `esbuild.config.mjs` also copies the production build
+into every plugin directory listed in the gitignored `.build-targets.local`,
+some of which are the user's own vaults outside this repo. That is intended —
+the user tests in those vaults too. Claude is allowed to run `npm run build`
+as-is; do not work around it by building into `vault/` alone, or the user
+ends up testing a stale plugin.
+
 **If build fails**:
 ```
 My build failed with this error:

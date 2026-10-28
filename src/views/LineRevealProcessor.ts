@@ -15,7 +15,7 @@ import {
 } from "../study/spatial-study";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
-import { overlayMasks, renderOcclusion } from "./OcclusionRenderer";
+import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -375,13 +375,16 @@ export class LineRevealProcessor {
 			line.placeholder.classList.toggle("osmosis-line-locked", locked);
 			line.placeholder.classList.toggle("osmosis-line-next", state.mode === "study" && blockId === next);
 
-			const bubble = line.container.querySelector(":scope > .osmosis-line-rating");
+			// Under the line, or floated over its diagram — see `showRatingBubble`.
+			const bubble = line.container.querySelector(":scope > .osmosis-line-rating")
+				?? line.placeholder.querySelector(".osmosis-line-rating");
 			if (state.pendingRating === blockId && state.revealed.has(blockId)) {
 				// Re-create the bubble if a re-render (e.g. debounced
 				// frontmatter flush) destroyed it mid-rating
 				if (!bubble) this.showRatingBubble(notePath, blockId, line);
 			} else if (bubble) {
 				bubble.remove();
+				removeRatingAnchors(line.placeholder);
 			}
 		}
 	}
@@ -480,6 +483,19 @@ export class LineRevealProcessor {
 				void this.rate(notePath, blockId, rating);
 			});
 			bubble.appendChild(btn);
+		}
+
+		// An occluded line being stepped through floats the bubble under the group
+		// just revealed, as the fence card does: under the line would put it below
+		// the whole picture, a scroll away on a tall one. A scattered group, or a line
+		// with no step to point at, keeps the bubble under the line.
+		const step = this.currentStep(this.stateFor(notePath), blockId);
+		const slot = line.occlusion && step
+			? mountRatingAnchor(line.placeholder, { ...line.occlusion, target: step.group })
+			: null;
+		if (slot) {
+			slot.appendChild(bubble);
+			return;
 		}
 
 		const back = line.container.querySelector(":scope > .osmosis-line-back");

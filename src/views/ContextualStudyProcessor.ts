@@ -3,7 +3,7 @@ import type OsmosisPlugin from "../main";
 import { fenceDiagrams, fenceEmbedLine, stripEmbedLabels } from "../card-gen/occlusion";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, CardOcclusion, ScheduleData } from "../database/types";
-import { renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
+import { mountRatingAnchor, removeRatingAnchors, renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
@@ -596,6 +596,7 @@ export class ContextualStudyProcessor {
 			revealKey = step === null ? parsed.cardId : `${parsed.cardId}#${step.group}`;
 			const revealed = finished || this.revealedCardIds.has(revealKey);
 
+			removeRatingAnchors(container);
 			slots.forEach((slot, slotIndex) => {
 				const occlusion = occlusions[slotIndex]!;
 				if (step === null) {
@@ -637,7 +638,16 @@ export class ContextualStudyProcessor {
 			}
 			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
 			if (revealed && step?.cardId != null) {
-				this.showRating(ratingSlot, step.cardId, parsed.cardId, sourcePath, advance);
+				// Floated under the group just revealed, so a tall diagram does
+				// not put its answer and its rating a scroll apart; a scattered
+				// group keeps the row. Note view only: sequential keeps its fixed
+				// bar by choice.
+				const slot = slots[step.diagram];
+				const occlusion = occlusions[step.diagram];
+				const anchored = slot && occlusion
+					? mountRatingAnchor(slot, { ...occlusion, target: step.group })
+					: null;
+				this.showRating(anchored ?? ratingSlot, step.cardId, parsed.cardId, sourcePath, advance);
 			}
 			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
