@@ -1,6 +1,6 @@
 ---
-title: Spaced Repetition for Graph View with content-level connections
-summary: What if we combined Mind Mapping with Obsidian's Graph View?
+title: Spaced Repetition for 3D Graph View with content-level connections
+summary: "What if we combined Mind Mapping with Obsidian's Graph View? or better, yet Three.js graph view?  https://github.com/vasturiano/3d-force-graph"
 tags:
   - task
 calendar:
@@ -13,9 +13,9 @@ status: To-Do
 priority:
 progress_current:
 progress_total:
-date_created: 2026-08-03T17:30:27.346Z
-date_modified: 2026-09-04T13:36:48.779Z
-date_start_scheduled: 2026-08-06T21:29:43.106Z
+date_created: "2026-08-03T17:30:27.346Z"
+date_modified: "2026-10-22T23:25:39.350Z"
+date_start_scheduled: "2026-08-06T21:29:43.106Z"
 date_start_actual:
 date_end_scheduled:
 date_end_actual:
@@ -62,4 +62,4 @@ What if we took the best of traditional mind mapping + the best of Obsidian's gr
 
 *Attach any reference files, screenshots, sketches, or examples.*
 
-- Obsidian TagRoutes Plugin 
+- Obsidian TagRoutes Plugin
