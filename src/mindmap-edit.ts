@@ -644,6 +644,158 @@ export function reindentSubtree(
 }
 
 /**
+ * Re-nest a subtree whose node was retyped by an inline edit — a list item
+ * renamed to `### Heading`, or a heading renamed to `- item`. Splicing the
+ * edited line alone leaves the children indented for the node's old kind, which
+ * re-parses as the wrong tree: an indented `#### Sub` is not a heading at all.
+ *
+ * `text` is the node's whole subtree as it is in the file (its own line first);
+ * `line` is the edited line, indentation and block ID already restored.
+ * Returns the replacement subtree, or null when the edit doesn't cross between
+ * list and heading and the line can simply be spliced in.
+ *
+ * - List → heading: the heading moves to column 0 and every descendant loses
+ *   the item's child indentation, so its children become top-level items under
+ *   the heading. The prefix is stripped verbatim (tabs or spaces, whatever the
+ *   file uses), so code inside a fence keeps its relative indentation.
+ * - Heading → list: the heading's own content — everything up to its first
+ *   sub-heading — is indented one level under the new item. Blank lines in it
+ *   go (fences excepted), since a blank line ends the nesting. Sub-headings are
+ *   left alone: a list item cannot contain a heading.
+ */
+export function retypeSubtree(
+	text: string,
+	oldType: OsmosisNode["type"],
+	line: string,
+): string | null {
+	const isHeadingLine = (l: string): boolean => /^#{1,6}(\s|$)/.test(l);
+	const isListLine = (l: string): boolean => /^\s*(?:[-*+]|\d+[.)])(\s|$)/.test(l);
+	const rest = text.split("\n").slice(1);
+
+	if ((oldType === "bullet" || oldType === "ordered") && isHeadingLine(line.trimStart())) {
+		const prefix = /^[\t ]*/.exec(rest.find((l) => l.trim() !== "") ?? "")?.[0] ?? "";
+		const body = rest.map((l) => {
+			if (l.trim() === "") return l;
+			return l.startsWith(prefix) ? l.slice(prefix.length) : l.trimStart();
+		});
+		return [line.trimStart(), ...body].join("\n");
+	}
+
+	if (oldType === "heading" && isListLine(line)) {
+		const fenced = fencedLineMask(rest);
+		const body: string[] = [];
+		let i = 0;
+		for (; i < rest.length; i++) {
+			const l = rest[i]!;
+			if (!fenced[i] && isHeadingLine(l)) break;
+			if (l.trim() === "" && !fenced[i]) continue;
+			body.push(l.trim() === "" ? l : "\t" + l);
+		}
+		// Keep the blank line that separated the content from the next heading.
+		const tail = rest.slice(i);
+		return [line, ...body, ...(tail.length > 0 ? ["", ...tail] : [])].join("\n");
+	}
+
+	return null;
+}
+
+/**
+ * Apply a list ↔ heading rename to the file, moving the node to where its new
+ * kind keeps the rest of the tree intact. Returns the new file content, or null
+ * when the edit is not a list/heading crossing (see {@link retypeSubtree}).
+ *
+ * Markdown fixes a section's order: a heading owns everything below it until a
+ * heading of its level or higher, so a parent's list items must all come before
+ * its first sub-heading. Retyping a node in place silently re-parents whatever
+ * follows — `- Herbs` below a new `### Vegetables` becomes Vegetables' child,
+ * and a new `- Flowers` below `### Vegetables` lands inside that section. So:
+ *
+ * - List → heading: the block moves after the last following non-heading
+ *   sibling. A nested item first leaves its list — a heading cannot sit inside
+ *   one — so it is placed as if it were the top-level item containing it, and
+ *   becomes that item's sibling.
+ * - Heading → list: the block (sub-headings included — a list item cannot own
+ *   them, so they pass to the old parent) moves before the first preceding
+ *   heading sibling.
+ *
+ * `ancestors` runs from the node's parent up to the root. Only nodes in the
+ * node's own file are positioned against; another file's content has no byte
+ * order relative to this one.
+ */
+export function retypeInFile(
+	content: string,
+	node: OsmosisNode,
+	ancestors: readonly OsmosisNode[],
+	line: string,
+): string | null {
+	const start = node.range.start;
+	const end = subtreeEnd(node);
+	const block = retypeSubtree(content.slice(start, end), node.type, line);
+	if (block === null) return null;
+
+	// The span of `other` in the node's file, or null when it lives elsewhere.
+	const spanOf = (other: OsmosisNode): Range | null => {
+		if (node.embedHostRange) {
+			// Top level of an embed: only that embed's own nodes share a file.
+			return other.embedHostRange === node.embedHostRange
+				? { start: other.range.start, end: subtreeEnd(other) }
+				: null;
+		}
+		if (!node.isTranscluded && other.embedHostRange) return other.embedHostRange;
+		if (sameEditTarget(node, other) && !other.embedHostRange) {
+			return { start: other.range.start, end: subtreeEnd(other) };
+		}
+		return null;
+	};
+
+	// The node itself, or for a nested item, the top-level list item holding it:
+	// whichever sits directly under a heading or the root.
+	let placed = node;
+	let parent: OsmosisNode | null = ancestors[0] ?? null;
+	for (let i = 0; parent && parent.type !== "heading" && parent.type !== "root"; i++) {
+		placed = parent;
+		parent = ancestors[i + 1] ?? null;
+	}
+	if (placed !== node && !spanOf(placed)) {
+		return content.slice(0, start) + block + content.slice(end);
+	}
+
+	const siblings: Array<Range & { heading: boolean }> = [];
+	for (const sib of parent?.children ?? []) {
+		if (sib === placed) continue;
+		const span = spanOf(sib);
+		if (span) siblings.push({ ...span, heading: sib.type === "heading" });
+	}
+
+	// Cut the node's block along with one adjacent newline.
+	let cutStart = start;
+	let cutEnd = end;
+	if (cutEnd < content.length && content[cutEnd] === "\n") cutEnd++;
+	else if (cutStart > 0 && content[cutStart - 1] === "\n") cutStart--;
+	const cut = content.slice(0, cutStart) + content.slice(cutEnd);
+	// An offset in `content` mapped into `cut`.
+	const inCut = (offset: number): number =>
+		offset >= cutEnd ? offset - (cutEnd - cutStart) : Math.min(offset, cutStart);
+
+	if (node.type !== "heading") {
+		const placedStart = placed === node ? start : spanOf(placed)!.start;
+		const ends = siblings.filter((s) => !s.heading && s.start > placedStart).map((s) => s.end);
+		if (placed !== node) ends.push(subtreeEnd(placed));
+		if (ends.length === 0) return content.slice(0, start) + block + content.slice(end);
+		const target = inCut(Math.max(...ends));
+		return cut.slice(0, target) + "\n" + block + cut.slice(target);
+	}
+
+	const before = siblings.filter((s) => s.heading && s.start < start);
+	if (before.length === 0) return content.slice(0, start) + block + content.slice(end);
+	// Land on the line after the previous content, ahead of the blank line(s)
+	// that separate it from the heading.
+	let target = inCut(Math.min(...before.map((s) => s.start)));
+	while (target >= 2 && cut[target - 1] === "\n" && cut[target - 2] === "\n") target--;
+	return cut.slice(0, target) + block + "\n" + cut.slice(target);
+}
+
+/**
  * Renumber ordered list items so consecutive siblings at the same depth
  * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.
  */
