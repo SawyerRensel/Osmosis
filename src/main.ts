@@ -591,11 +591,17 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 		);
 
-		this.registerEvent(
-			this.app.vault.on("create", (file) => {
-				if (this.isNoteFile(file)) queueSync(file);
-			}),
-		);
+		// Registered only once layout is ready: Obsidian also fires `create` for
+		// every existing file while the vault loads, which would queue the whole
+		// vault for a second, all-at-once sync on top of `syncAll` — the startup
+		// freeze. Files that exist at load are `syncAll`'s job.
+		this.app.workspace.onLayoutReady(() => {
+			this.registerEvent(
+				this.app.vault.on("create", (file) => {
+					if (this.isNoteFile(file)) queueSync(file);
+				}),
+			);
+		});
 
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
