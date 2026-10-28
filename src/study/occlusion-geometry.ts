@@ -926,6 +926,85 @@ export function nextGroup(used: Iterable<string>): string {
 	return `c${String(highest + 1)}`;
 }
 
+// ── Rating anchor ─────────────────────────────────────────────
+
+/**
+ * Where an occlusion card's rating buttons float on the answer side: the
+ * horizontal centre and the edge of the revealed group they hang from, both
+ * normalised like everything else here. The renderer turns them straight into
+ * percentages of the wrapper, so the buttons follow the shape through any
+ * resize with nothing measured. The horizontal clamp into the image's box is
+ * left to CSS, because only it knows how wide the buttons came out.
+ */
+export interface RatingAnchor {
+	x: number;
+	y: number;
+	/** `below` hangs the buttons from `y`; `above` stands them on it. */
+	placement: "below" | "above";
+}
+
+/**
+ * Past these, the revealed group is too spread out for "under the shape" to
+ * mean anything — two masks in opposite corners union to most of the picture —
+ * and the caller falls back to its fixed rating bar. Height gets its own limit
+ * because a tall group puts its bottom edge far from its top, which is the very
+ * travel the anchor exists to remove.
+ */
+export const RATING_ANCHOR_MAX_AREA = 0.25;
+export const RATING_ANCHOR_MAX_HEIGHT = 0.5;
+
+/**
+ * Below this much free image under the group, the buttons go above it instead,
+ * as a tooltip flips at the edge of the screen. Normalised rather than pixels:
+ * the image's rendered size is exactly what this module never measures.
+ */
+export const RATING_ANCHOR_FLIP_SPACE = 0.1;
+
+/**
+ * Where to anchor the rating buttons under `target`'s shapes, or null when they
+ * belong in the fixed bar — the group has no shapes, or is scattered.
+ *
+ * The group is boxed as drawn: a rotated shape contributes its rotated corners,
+ * which is why the image's `aspect` is needed — see `rotatePoint`.
+ */
+export function ratingAnchor(
+	shapes: readonly OcclusionShape[],
+	target: string,
+	aspect = 1,
+): RatingAnchor | null {
+	const boxes = shapes.filter((s) => s.group === target).map((s) => drawnBox(s, aspect));
+	if (boxes.length === 0) return null;
+
+	const box = unionBox(boxes);
+	if (box.w * box.h > RATING_ANCHOR_MAX_AREA || box.h > RATING_ANCHOR_MAX_HEIGHT) return null;
+
+	const x = clamp01(box.x + box.w / 2);
+	const top = clamp01(box.y);
+	const bottom = clamp01(box.y + box.h);
+	// The height limit above guarantees a group this low has room over it.
+	if (1 - bottom < RATING_ANCHOR_FLIP_SPACE) return { x, y: top, placement: "above" };
+	return { x, y: bottom, placement: "below" };
+}
+
+/** A shape's axis-aligned bounds as painted, rotation included. */
+function drawnBox(shape: OcclusionShape, aspect: number): Box {
+	const box = shapeBox(shape);
+	const rotation = shapeRotation(shape);
+	if (rotation === 0) return box;
+	const center = boxCenter(box);
+	const corners = [
+		{ x: box.x, y: box.y },
+		{ x: box.x + box.w, y: box.y },
+		{ x: box.x, y: box.y + box.h },
+		{ x: box.x + box.w, y: box.y + box.h },
+	].map((p) => rotatePoint(p, center, rotation, aspect));
+	const xs = corners.map((p) => p.x);
+	const ys = corners.map((p) => p.y);
+	const x = Math.min(...xs);
+	const y = Math.min(...ys);
+	return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+}
+
 /** Every group label a shape list uses, in first-appearance order. */
 export function usedGroups(shapes: readonly OcclusionShape[]): string[] {
 	const seen = new Set<string>();

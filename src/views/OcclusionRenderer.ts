@@ -1,6 +1,7 @@
 import type { App } from "obsidian";
 import type { CardOcclusion, OcclusionAnnotation } from "../database/types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
+import { ratingAnchor } from "../study/occlusion-geometry";
 import { maskElements, needsAspect, type MaskElement, type OcclusionSide } from "../study/occlusion-masks";
 
 /**
@@ -92,6 +93,9 @@ function createImage(wrapper: HTMLElement, src: string, alt: string, width?: num
 		attr.height = String(known.height);
 	}
 	const img = wrapper.createEl("img", { cls: "osmosis-occlusion-image", attr });
+	// Again as a property, for a surface that has to override the attribute to
+	// keep the picture's proportions — see `.osmosis-study-card` in styles.css.
+	if (width !== undefined) img.setCssProps({ "--osmosis-occlusion-width": `${String(width)}px` });
 
 	if (known === undefined) {
 		img.addEventListener("load", () => {
@@ -125,6 +129,44 @@ export function repaintOcclusion(
 ): void {
 	const img = container.querySelector("img");
 	if (img) overlayMasks(img, occlusion, side);
+}
+
+/** Class of the slot `mountRatingAnchor` floats a card's rating buttons in. */
+const RATING_ANCHOR_CLASS = "osmosis-occlusion-rating-anchor";
+
+/**
+ * An empty slot floating just under the revealed group of `occlusion`, for the
+ * caller to put its rating buttons in — or null when there is nowhere sensible
+ * to float it, and the caller should use its usual rating row instead. See
+ * `ratingAnchor` for when that is.
+ *
+ * `container` is whatever `renderOcclusion` or `overlayMasks` drew into; the
+ * slot goes inside the diagram's wrapper, positioned in percentages of it, so
+ * it follows the shape through any resize the masks survive. A slot already
+ * there is replaced, so a surface that re-mounts on every redraw never stacks
+ * two.
+ */
+export function mountRatingAnchor(container: HTMLElement, occlusion: CardOcclusion): HTMLElement | null {
+	const wrapper = container.hasClass("osmosis-occlusion")
+		? container
+		: container.querySelector<HTMLElement>(".osmosis-occlusion");
+	if (wrapper === null) return null;
+
+	const anchor = ratingAnchor(occlusion.shapes, occlusion.target, imageAspect(wrapper.querySelector("img")));
+	if (anchor === null) return null;
+
+	removeRatingAnchors(wrapper);
+	const slot = wrapper.createDiv({ cls: [RATING_ANCHOR_CLASS, `is-${anchor.placement}`] });
+	slot.setCssProps({
+		"--osmosis-anchor-x": `${String(anchor.x * 100)}%`,
+		"--osmosis-anchor-y": `${String(anchor.y * 100)}%`,
+	});
+	return slot;
+}
+
+/** Take down every rating slot `mountRatingAnchor` put inside `root`. */
+export function removeRatingAnchors(root: ParentNode): void {
+	for (const slot of Array.from(root.querySelectorAll(`.${RATING_ANCHOR_CLASS}`))) slot.remove();
 }
 
 /** Class marking a wrapper this module put *around* someone else's image. */
@@ -183,7 +225,10 @@ export function removeMaskOverlays(root: ParentNode): void {
 function paintMasks(wrapper: HTMLElement, occlusion: CardOcclusion, side: OcclusionSide): void {
 	const img = wrapper.querySelector("img");
 	for (const child of Array.from(wrapper.children)) {
-		if (child !== img) child.remove();
+		// The rating anchor belongs to the surface that mounted it, which takes it
+		// down itself; a repaint — the post-load one in `awaitAspect` included —
+		// must not take the buttons with it.
+		if (child !== img && !child.hasClass(RATING_ANCHOR_CLASS)) child.remove();
 	}
 
 	// SVG attributes go on with setAttribute rather than through the helper's

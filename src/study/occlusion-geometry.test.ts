@@ -29,6 +29,7 @@ import {
 	moveBoxes,
 	nextGroup,
 	polyFromPoints,
+	ratingAnchor,
 	resizeAnchored,
 	resizeBox,
 	ROTATION_SNAP,
@@ -1115,5 +1116,74 @@ describe("withVertexMoved, rotated", () => {
 		const moved = withVertexMoved(shape, 0, { x: 1.4, y: -0.2 });
 
 		expect((moved as Extract<OcclusionShape, { kind: "poly" }>).points[0]).toEqual([1.4, -0.2]);
+	});
+});
+
+describe("ratingAnchor", () => {
+	const rect = (group: string, x: number, y: number, w: number, h: number): OcclusionShape =>
+		({ group, kind: "rect", x, y, w, h });
+
+	it("centres under a single-shape group", () => {
+		const anchor = ratingAnchor([rect("c1", 0.4, 0.2, 0.2, 0.1)], "c1");
+
+		expect(anchor?.placement).toBe("below");
+		expect(anchor?.x).toBeCloseTo(0.5, 10);
+		expect(anchor?.y).toBeCloseTo(0.3, 10);
+	});
+
+	it("boxes the whole target group and ignores its siblings", () => {
+		const shapes = [
+			rect("c1", 0.1, 0.1, 0.1, 0.05),
+			rect("c2", 0.6, 0.8, 0.2, 0.1),
+			rect("c1", 0.3, 0.2, 0.1, 0.05),
+		];
+		const anchor = ratingAnchor(shapes, "c1");
+
+		expect(anchor?.x).toBeCloseTo(0.25, 10);
+		expect(anchor?.y).toBeCloseTo(0.25, 10);
+	});
+
+	it("flips above a group at the bottom edge", () => {
+		const anchor = ratingAnchor([rect("c1", 0.7, 0.85, 0.2, 0.1)], "c1");
+
+		expect(anchor).toEqual({ x: expect.closeTo(0.8, 10) as number, y: 0.85, placement: "above" });
+	});
+
+	it("reports the shape's own centre at a side edge — the clamp is CSS's job", () => {
+		expect(ratingAnchor([rect("c1", 0, 0.4, 0.04, 0.05)], "c1")?.x).toBeCloseTo(0.02, 10);
+		expect(ratingAnchor([rect("c1", 0.96, 0.4, 0.04, 0.05)], "c1")?.x).toBeCloseTo(0.98, 10);
+	});
+
+	it("falls back for a group scattered across the picture", () => {
+		const shapes = [rect("c1", 0.05, 0.05, 0.1, 0.05), rect("c1", 0.85, 0.85, 0.1, 0.05)];
+
+		expect(ratingAnchor(shapes, "c1")).toBeNull();
+	});
+
+	it("falls back for a group taller than half the picture, however narrow", () => {
+		const shapes = [rect("c1", 0.1, 0.1, 0.05, 0.05), rect("c1", 0.1, 0.8, 0.05, 0.05)];
+
+		expect(ratingAnchor(shapes, "c1")).toBeNull();
+	});
+
+	it("falls back when the target group has no shapes", () => {
+		expect(ratingAnchor([rect("c1", 0.4, 0.2, 0.2, 0.1)], "c9")).toBeNull();
+	});
+
+	it("boxes ellipses and polygons by their extent", () => {
+		const ellipse: OcclusionShape = { group: "c1", kind: "ellipse", x: 0.5, y: 0.5, rx: 0.1, ry: 0.05 };
+		const poly: OcclusionShape = { group: "c2", kind: "poly", points: [[0.2, 0.1], [0.4, 0.2], [0.3, 0.3]] };
+
+		expect(ratingAnchor([ellipse], "c1")?.y).toBeCloseTo(0.55, 10);
+		expect(ratingAnchor([poly], "c2")?.x).toBeCloseTo(0.3, 10);
+		expect(ratingAnchor([poly], "c2")?.y).toBeCloseTo(0.3, 10);
+	});
+
+	it("hangs from a rotated shape's drawn edge, not its stored one", () => {
+		// A wide, short bar turned upright on a square image now stands tall.
+		const bar: OcclusionShape = { ...rect("c1", 0.3, 0.45, 0.2, 0.04), rotation: 90 };
+
+		expect(ratingAnchor([bar], "c1")?.y).toBeCloseTo(0.57, 10);
+		expect(ratingAnchor([rect("c1", 0.3, 0.45, 0.2, 0.04)], "c1")?.y).toBeCloseTo(0.49, 10);
 	});
 });

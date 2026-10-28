@@ -3,7 +3,14 @@ import { describe, it, expect, beforeAll } from "vitest";
 import type { App } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
-import { overlayMasks, removeMaskOverlays, renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
+import {
+	mountRatingAnchor,
+	overlayMasks,
+	removeMaskOverlays,
+	removeRatingAnchors,
+	renderOcclusion,
+	repaintOcclusion,
+} from "./OcclusionRenderer";
 
 /**
  * Smoke tests that the mask overlay actually draws.
@@ -381,6 +388,78 @@ describe("overlayMasks", () => {
  * proportions and hands them to `maskElements`, painting at square until the
  * picture has loaded and repainting once it has.
  */
+describe("mountRatingAnchor", () => {
+	it("floats a slot inside the wrapper, just under the target group", () => {
+		const container = render("back");
+		const slot = mountRatingAnchor(container, occlusion);
+
+		expect(slot?.parentElement?.classList.contains("osmosis-occlusion")).toBe(true);
+		expect(slot?.classList.contains("is-below")).toBe(true);
+		// c1 is x 0.31–0.45, y 0.22–0.28: centred on 0.38, hanging from 0.28.
+		expect(parseFloat(slot!.style.getPropertyValue("--osmosis-anchor-x"))).toBeCloseTo(38, 6);
+		expect(parseFloat(slot!.style.getPropertyValue("--osmosis-anchor-y"))).toBeCloseTo(28, 6);
+	});
+
+	it("flips above a group at the bottom of the picture", () => {
+		const low: CardOcclusion = {
+			...occlusion,
+			shapes: [{ group: "c1", kind: "rect", x: 0.4, y: 0.92, w: 0.1, h: 0.05 }],
+		};
+		const slot = mountRatingAnchor(render("back", low), low);
+
+		expect(slot?.classList.contains("is-above")).toBe(true);
+	});
+
+	it("declines a scattered group, so the caller keeps its own rating row", () => {
+		const scattered: CardOcclusion = {
+			...occlusion,
+			shapes: [
+				{ group: "c1", kind: "rect", x: 0.02, y: 0.02, w: 0.1, h: 0.05 },
+				{ group: "c1", kind: "rect", x: 0.85, y: 0.9, w: 0.1, h: 0.05 },
+			],
+		};
+		const container = render("back", scattered);
+
+		expect(mountRatingAnchor(container, scattered)).toBeNull();
+		expect(container.querySelector(".osmosis-occlusion-rating-anchor")).toBeNull();
+	});
+
+	it("declines when there is no diagram to float over", () => {
+		const container = document.createElement("div");
+		renderOcclusion(app, container, { ...occlusion, image: "missing.png" }, "back", "notes/bridges.md");
+
+		expect(mountRatingAnchor(container, occlusion)).toBeNull();
+	});
+
+	it("replaces rather than stacks when mounted again", () => {
+		const container = render("back");
+		mountRatingAnchor(container, occlusion);
+		mountRatingAnchor(container, occlusion);
+
+		expect(container.querySelectorAll(".osmosis-occlusion-rating-anchor")).toHaveLength(1);
+	});
+
+	it("survives a repaint, which belongs to the masks and not the buttons", () => {
+		const container = render("back");
+		const slot = mountRatingAnchor(container, occlusion);
+
+		repaintOcclusion(container, occlusion, "back");
+
+		expect(slot?.parentElement?.classList.contains("osmosis-occlusion")).toBe(true);
+		expect(container.querySelectorAll(".osmosis-occlusion-masks")).toHaveLength(1);
+	});
+
+	it("comes down when its surface takes it down", () => {
+		const container = render("back");
+		mountRatingAnchor(container, occlusion);
+
+		removeRatingAnchors(container);
+
+		expect(container.querySelector(".osmosis-occlusion-rating-anchor")).toBeNull();
+		expect(container.querySelector("img")).not.toBeNull();
+	});
+});
+
 describe("rotation", () => {
 	/** A deliberately wide image, where a shear would be unmistakable. */
 	const WIDE = { width: 1600, height: 800 };

@@ -1429,6 +1429,18 @@ hr.osmosis-map-style-divider {
 	object-fit: fill;
 }
 
+/* The study modal caps its images at 50vh, and an occluded one carries `width`
+   and `height` attributes to reserve its box before it decodes. The attribute
+   width then holds while the cap shortens the height, so the box loses the
+   picture's proportions: a bitmap is stretched under its masks, and an SVG
+   letterboxes inside a box its masks still span. With `width: auto` the browser
+   applies the cap to both sides together, keeping the ratio the attributes
+   give it; the embed's own `|300` comes back as a ceiling on the width. */
+.osmosis-study-card .osmosis-occlusion .osmosis-occlusion-image {
+	width: auto;
+	max-width: min(100%, var(--osmosis-occlusion-width, 100%));
+}
+
 /* While anything on the diagram is covered, the picture must not be tappable.
    Obsidian opens an image viewer on a click that lands on an `img`, and that
    viewer clones the image alone — the masks are a sibling SVG, so they do not
@@ -1459,18 +1471,19 @@ hr.osmosis-map-style-divider {
    aspect ratio — a plain stroke would come out thicker on one axis.
    Non-scaling, though, means a *fixed* thickness at the picture's layout size,
    and a mind-map node lays its diagram out small and then magnifies the whole
-   node with the map's zoom transform. A fixed 1.5px outline computed against a
-   thumbnail and blown up reads as a heavy border. So the width is a fraction of
-   the picture (cqmin — the shorter axis, so a tall diagram is treated like a
-   wide one), which non-scaling-stroke then keeps uniform across both axes.
-   The fraction only ever *thins* a stroke, never thickens it: capped at the
-   editor's 1.5px, where outlines look right. Uncapped, it grew with the picture
-   — a diagram filling a study modal or a phone screen came out several times
-   the editor's weight. */
+   node with the map's zoom transform, so any fixed width — or any cap in px —
+   reads as a heavy border once the map is zoomed in. The width is therefore a
+   plain fraction of the picture (cqmin — the shorter axis, so a tall diagram is
+   treated like a wide one), which non-scaling-stroke then keeps uniform across
+   both axes. It is uncapped on purpose: an outline is part of the picture, so it
+   is as thick relative to the diagram on every surface — mind map, study modal,
+   note — as the editor's 1.5px is on a picture about 1000px across.
+   The floor only keeps a thumbnail's ring from thinning out of sight; it is
+   small enough that a magnified node still reads as a fine line. */
 .osmosis-occlusion-mask {
 	fill: var(--osmosis-occlusion-mask);
 	stroke: rgba(0, 0, 0, 0.55);
-	stroke-width: min(0.75cqmin, 1.5px);
+	stroke-width: max(0.15cqmin, 0.5px);
 	vector-effect: non-scaling-stroke;
 }
 
@@ -1481,15 +1494,15 @@ hr.osmosis-map-style-divider {
 /* The answer side: the target's pixels are uncovered, but still ringed so the
    eye lands on the region that was being asked about. A stroke straddles the
    shape's edge, so half of it lies over the answer. The colour is what draws
-   the eye, not the weight, so the ring is kept thin enough that the inward half
-   cannot hide anything: at most 2px, 1px of it inside the shape. */
+   the eye, not the weight, so the ring is kept thin — 2px on a picture 1000px
+   across, scaling with it — so the inward half cannot hide anything. */
 .osmosis-occlusion-mask.is-revealed {
 	fill: none;
 	stroke: var(--osmosis-occlusion-target);
-	stroke-width: min(1cqmin, 2px);
+	stroke-width: max(0.2cqmin, 0.75px);
 }
 
-/* Where container queries are missing, fall back to the caps as fixed
+/* Where container queries are missing, fall back to the editor's fixed
    thicknesses — heavy in a small node, but a stroke-width the browser cannot
    resolve computes to 0 and the ring vanishes entirely, which is the one
    outcome that loses information. */
@@ -2365,6 +2378,53 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	   outright keeps it for the bubble's whole life, so a pan moves the bubble
 	   instead of redrawing it. */
 	will-change: transform;
+}
+
+/* Rating buttons floated over an occlusion diagram, just under the group just
+   revealed (`mountRatingAnchor`). Positioned in percentages of the wrapper —
+   the image's own box — so the buttons follow the shape through any resize with
+   nothing measured, while their own size stays in px and never scales with the
+   picture. `left` centres them on the group and clamps them inside the image;
+   on an image narrower than the buttons it pins them to the image's left edge
+   and lets them run past the right, which the surrounding surface has room for.
+   Button colours come from .osmosis-contextual-rating. */
+.osmosis-occlusion-rating-anchor {
+	--osmosis-anchor-width: 240px;
+	position: absolute;
+	z-index: 1;
+	width: var(--osmosis-anchor-width);
+	left: clamp(
+		0px,
+		calc(var(--osmosis-anchor-x, 50%) - var(--osmosis-anchor-width) / 2),
+		max(0px, calc(100% - var(--osmosis-anchor-width)))
+	);
+	/* The wrapper sets line-height 0 for the image, and a line placeholder's
+	   letter-spacing would otherwise reach the button labels. */
+	line-height: var(--line-height-normal);
+	letter-spacing: normal;
+	cursor: default;
+}
+
+.osmosis-occlusion-rating-anchor.is-below {
+	top: calc(var(--osmosis-anchor-y, 100%) + 6px);
+}
+
+.osmosis-occlusion-rating-anchor.is-above {
+	top: calc(var(--osmosis-anchor-y, 0%) - 6px);
+	transform: translateY(-100%);
+}
+
+.osmosis-occlusion-rating-anchor > .osmosis-contextual-rating {
+	margin: 0;
+	padding: 4px;
+	border-radius: 6px;
+	background: var(--background-primary);
+	box-shadow: var(--shadow-s);
+	animation: osmosis-fade-in 0.2s;
+}
+
+.osmosis-occlusion-rating-anchor > .osmosis-contextual-rating button {
+	flex: 1;
 }
 
 
