@@ -54,7 +54,7 @@ export function renderOcclusion(
 	}
 
 	const wrapper = container.createDiv({ cls: "osmosis-occlusion" });
-	createImage(wrapper, src, occlusion.image);
+	createImage(wrapper, src, occlusion.image, occlusion.width);
 
 	paintMasks(wrapper, occlusion, side);
 }
@@ -79,14 +79,19 @@ const naturalSizes = new Map<string, { width: number; height: number }>();
  * size this module measured on a previous render, so the first render of a
  * picture is unchanged — and there is nothing to jump on a first render anyway.
  */
-function createImage(wrapper: HTMLElement, src: string, alt: string): HTMLImageElement {
+function createImage(wrapper: HTMLElement, src: string, alt: string, width?: number): HTMLImageElement {
 	const known = naturalSizes.get(src);
-	const img = wrapper.createEl("img", {
-		cls: "osmosis-occlusion-image",
-		attr: known === undefined
-			? { src, alt }
-			: { src, alt, width: String(known.width), height: String(known.height) },
-	});
+	const attr: Record<string, string> = { src, alt };
+	// The embed's `|300` width wins, as it does in the note; its height follows
+	// from the picture's proportions whenever those are already known.
+	if (width !== undefined) {
+		attr.width = String(width);
+		if (known !== undefined) attr.height = String(Math.round(width * known.height / known.width));
+	} else if (known !== undefined) {
+		attr.width = String(known.width);
+		attr.height = String(known.height);
+	}
+	const img = wrapper.createEl("img", { cls: "osmosis-occlusion-image", attr });
 
 	if (known === undefined) {
 		img.addEventListener("load", () => {

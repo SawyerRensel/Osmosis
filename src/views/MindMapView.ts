@@ -4721,9 +4721,14 @@ export class MindMapView extends ItemView {
 		// Collect the selected nodes, then their ranges (descending, to process
 		// from end so earlier offsets stay valid).
 		const selectedSrcs: OsmosisNode[] = [];
+		// Parents to fall back on for the selection afterwards, in selection
+		// order. One that was itself deleted simply won't be in the new map.
+		const parentIds: string[] = [];
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
-			if (node) selectedSrcs.push(node.source);
+			if (!node) continue;
+			selectedSrcs.push(node.source);
+			if (node.parent && node.parent.source.type !== "root") parentIds.push(node.parent.source.id);
 		}
 		if (selectedSrcs.length === 0) return;
 
@@ -4780,7 +4785,11 @@ export class MindMapView extends ItemView {
 			this.endEditGroup();
 			await this.resyncFromParent();
 		}
-		this.selectFirstNode();
+		// Select a surviving parent, else the first node — without panning to
+		// it: deleting must leave the viewport where the user had it.
+		const survivor = parentIds.find((id) => this.nodeMap.has(id))
+			?? this.currentLayout?.nodes.find((n) => n.source.type !== "root")?.source.id;
+		if (survivor) this.selectNode(survivor);
 	}
 
 	/**
@@ -8274,11 +8283,28 @@ export class MindMapView extends ItemView {
 		// Restore what the edit box withheld: the node's indentation and its
 		// trailing block ID (line-card identity / style anchor).
 		const line = edit.restoreEditedLine(src, newLine);
-		const updated =
-			content.slice(0, src.range.start) +
-			line +
-			content.slice(src.range.end);
-		await this.writeNodeFile(src, updated);
+		// A list item renamed to a heading (or back) takes its children with it,
+		// and moves to where its new kind keeps its parent; any other rename is
+		// just the one line.
+		const ancestors: OsmosisNode[] = [];
+		for (let p = target.parent; p; p = p.parent) ancestors.push(p.source);
+		const retyped = edit.retypeInFile(content, src, ancestors, line);
+		if (retyped === null) {
+			await this.writeNodeFile(src, content.slice(0, src.range.start) + line + content.slice(src.range.end));
+			return;
+		}
+		// The node may have moved, so its old offset no longer finds it; match
+		// it by its new kind and unchanged text instead.
+		this.pendingSelectionRangeStart = null;
+		await this.writeNodeFile(src, retyped);
+		const type = src.type === "heading" ? undefined : "heading";
+		for (const [id, layoutNode] of this.nodeMap) {
+			const s = layoutNode.source;
+			if (s.content === src.content && (type ? s.type === type : s.type !== "heading")) {
+				this.selectNode(id);
+				break;
+			}
+		}
 	}
 
 	/**
@@ -8464,14 +8490,16 @@ export class MindMapView extends ItemView {
 			node.parent?.source.type !== "root" ? node.parent?.source.id : null;
 		await this.writeNodeFile(src, updated);
 
-		// Try to select something reasonable after deletion
+		// Try to select something reasonable after deletion — without panning to
+		// it: deleting a node must leave the viewport where the user had it.
 		if (parentId) {
 			const parentNode = this.nodeMap.get(parentId);
 			if (parentNode) {
 				this.selectNode(parentId);
 			}
 		} else {
-			this.selectFirstNode();
+			const first = this.currentLayout?.nodes.find((n) => n.source.type !== "root");
+			if (first) this.selectNode(first.source.id);
 		}
 	}
 
@@ -8586,7 +8614,18 @@ export class MindMapView extends ItemView {
 			nodeShapes,
 			this.buildNodeSidesMap(),
 		);
+		// The SVG draws layout space shifted by -bounds (see getOffsetX/Y), so an
+		// edit that moves the map's top-left bound — deleting the widest node on
+		// a left-side map, say — would slide the whole drawing under a fixed
+		// viewBox. Move the viewBox by the same amount so content stays put.
+		const prevOffset = this.currentLayout
+			? { x: this.getOffsetX(), y: this.getOffsetY() }
+			: null;
 		this.currentLayout = layout;
+		if (prevOffset && this.svg) {
+			this.viewBox.x += this.getOffsetX() - prevOffset.x;
+			this.viewBox.y += this.getOffsetY() - prevOffset.y;
+		}
 
 		// Build node map for keyboard nav
 		this.nodeMap.clear();

@@ -32,7 +32,10 @@ import {
 	nodeIndent,
 	reattachBlockId,
 	editSelectionStart,
+	retypeSubtree,
+	retypeInFile,
 } from "./mindmap-edit";
+import { normalizeBlockSpacing } from "./markdown-spacing";
 import type { FileEdit } from "./mindmap-edit";
 
 const parser = new OsmosisParser();
@@ -1609,5 +1612,140 @@ describe("editOverlayGeometry", () => {
 		const g = geom({ nodeRect: { left: 960, top: 50, width: 200, height: 20 } });
 		expect(g.maxWidth).toBe(200);
 		expect(g.maxHeight).toBeGreaterThanOrEqual(g.minHeight);
+	});
+});
+
+describe("retypeSubtree re-nests children when a rename crosses list/heading", () => {
+	/** Replay `renameNode`: splice the edited line (or retyped subtree) in. */
+	function rename(md: string, content: string, editedLine: string): string {
+		const src = findByContent(parser.parse(md, "t.md").root, content);
+		const line = restoreEditedLine(src, editedLine);
+		const end = subtreeEnd(src);
+		const retyped = retypeSubtree(md.slice(src.range.start, end), src.type, line);
+		return retyped === null
+			? md.slice(0, src.range.start) + line + md.slice(src.range.end)
+			: md.slice(0, src.range.start) + retyped + md.slice(end);
+	}
+
+	it("dedents a top-level item's children when it becomes a heading", () => {
+		const md = "## Top\n\n- item\n\t- child\n\t\t- gc\n- other";
+		const out = rename(md, "item", "### item");
+		expect(out).toBe("## Top\n\n### item\n- child\n\t- gc\n- other");
+		const item = findByContent(parser.parse(out, "t.md").root, "item");
+		expect(item.type).toBe("heading");
+		expect(findByContent(item, "child").depth).toBe(0);
+	});
+
+	it("parents grandchildren under a sub-heading made from a former child", () => {
+		// The reported sequence: item → ###, then its former child → ####.
+		let md = "## Top\n\n- item\n\t- child\n\t\t- gc";
+		md = rename(md, "item", "### item");
+		md = rename(md, "child", "#### child");
+		const child = findByContent(parser.parse(md, "t.md").root, "child");
+		expect(child.type).toBe("heading");
+		expect(child.depth).toBe(4);
+		expect(child.children.map((c) => c.content)).toEqual(["gc"]);
+		expect(findByContent(child, "gc").depth).toBe(0);
+	});
+
+	it("moves a nested item's heading to column 0 and keeps its block ID", () => {
+		const md = "- parent\n\t- item ^abc123\n\t\t- child";
+		const out = rename(md, "item", "### item");
+		expect(out).toBe("- parent\n### item ^abc123\n- child");
+	});
+
+	it("strips space indentation verbatim", () => {
+		const md = "- item\n    - child\n        - gc";
+		expect(rename(md, "item", "## item")).toBe("## item\n- child\n    - gc");
+	});
+
+	it("keeps fenced code's relative indentation when stripping the prefix", () => {
+		const text = "- item\n\t```\n\tcode\n\t  more\n\t```";
+		expect(retypeSubtree(text, "bullet", "## item")).toBe("## item\n```\ncode\n  more\n```");
+	});
+
+	it("indents a heading's content under the new list item, up to its first sub-heading", () => {
+		const md = "## Top\n\n### item\n\n- child\n\t- gc\n\n#### sub\n\n- deep";
+		const out = rename(md, "item", "- item");
+		expect(out).toBe("## Top\n\n- item\n\t- child\n\t\t- gc\n\n#### sub\n\n- deep");
+		const item = findByContent(parser.parse(out, "t.md").root, "item");
+		expect(item.type).toBe("bullet");
+		expect(item.children.map((c) => c.content)).toEqual(["child"]);
+	});
+
+	it("leaves a same-kind rename to the one-line splice", () => {
+		expect(retypeSubtree("- a\n\t- b", "bullet", "- renamed")).toBeNull();
+		expect(retypeSubtree("## a\n- b", "heading", "### a")).toBeNull();
+	});
+});
+
+describe("retypeInFile moves a retyped node to where it keeps its parent", () => {
+	/** Replay `renameNode` + `writeMarkdown`: retype, then normalize spacing. */
+	function rename(md: string, content: string, editedLine: string): string {
+		const root = parser.parse(md, "t.md").root;
+		const src = findByContent(root, content);
+		const ancestors: OsmosisNode[] = [];
+		for (let p = findParent(root, src); p; p = findParent(root, p)) ancestors.push(p);
+		const out = retypeInFile(md, src, ancestors, restoreEditedLine(src, editedLine));
+		expect(out).not.toBeNull();
+		return normalizeBlockSpacing(out!).content;
+	}
+
+	function findParent(node: OsmosisNode, target: OsmosisNode): OsmosisNode | null {
+		for (const child of node.children) {
+			if (child === target) return node;
+			const found = findParent(child, target);
+			if (found) return found;
+		}
+		return null;
+	}
+
+	/** Each node's children, as `content` lists, for asserting the tree shape. */
+	function childrenOf(md: string, content: string): string[] {
+		return findByContent(parser.parse(md, "t.md").root, content).children.map((c) => c.content);
+	}
+
+	const garden =
+		"# Garden\n\n## Beds\n\n- Vegetables\n\t- Tomatoes\n\t- Peppers\n- Herbs\n\t- Basil\n\n### Flowers\n\n- Annuals\n\n#### Perennials\n\n- Lavender";
+
+	it("moves a new heading below its remaining list siblings, so they keep their parent", () => {
+		const out = rename(garden, "Vegetables", "### Vegetables");
+		expect(childrenOf(out, "Beds")).toEqual(["Herbs", "Vegetables", "Flowers"]);
+		expect(childrenOf(out, "Vegetables")).toEqual(["Tomatoes", "Peppers"]);
+		expect(childrenOf(out, "Herbs")).toEqual(["Basil"]);
+	});
+
+	it("retypes in place when no list sibling follows", () => {
+		const out = rename(garden, "Herbs", "### Herbs");
+		expect(childrenOf(out, "Beds")).toEqual(["Vegetables", "Herbs", "Flowers"]);
+		expect(childrenOf(out, "Herbs")).toEqual(["Basil"]);
+	});
+
+	it("moves a new list item above its heading siblings, so it doesn't land in their section", () => {
+		const md = rename(garden, "Vegetables", "### Vegetables");
+		const out = rename(md, "Flowers", "- Flowers");
+		expect(childrenOf(out, "Beds")).toEqual(["Herbs", "Flowers", "Perennials", "Vegetables"]);
+		expect(childrenOf(out, "Flowers")).toEqual(["Annuals"]);
+		expect(childrenOf(out, "Vegetables")).toEqual(["Tomatoes", "Peppers"]);
+	});
+
+	it("round-trips: list → heading → list keeps the whole tree", () => {
+		const there = rename(garden, "Vegetables", "### Vegetables");
+		const back = rename(there, "Vegetables", "- Vegetables");
+		expect(childrenOf(back, "Beds")).toEqual(["Herbs", "Vegetables", "Flowers"]);
+		expect(childrenOf(back, "Vegetables")).toEqual(["Tomatoes", "Peppers"]);
+	});
+
+	it("lifts a nested item out of its list, leaving its list siblings where they were", () => {
+		const md = "## Beds\n\n- Vegetables\n\t- Tomatoes\n\t\t- Cherry\n\t- Peppers\n- Herbs";
+		const out = rename(md, "Tomatoes", "### Tomatoes");
+		expect(childrenOf(out, "Beds")).toEqual(["Vegetables", "Herbs", "Tomatoes"]);
+		expect(childrenOf(out, "Vegetables")).toEqual(["Peppers"]);
+		expect(childrenOf(out, "Tomatoes")).toEqual(["Cherry"]);
+	});
+
+	it("returns null for a rename that doesn't cross list/heading", () => {
+		const src = findByContent(parser.parse(garden, "t.md").root, "Herbs");
+		expect(retypeInFile(garden, src, [], "- Herbal")).toBeNull();
 	});
 });
