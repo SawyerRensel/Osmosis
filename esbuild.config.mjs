@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "node:module";
-import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readdirSync, existsSync, readFileSync } from "node:fs";
 
 const banner =
 `/*
@@ -13,6 +13,11 @@ if you want to view the source, please visit the github repository of this plugi
 const prod = (process.argv[2] === "production");
 const outdir = "vault/.obsidian/plugins/Osmosis";
 const outfile = `${outdir}/main.js`;
+
+// Local vaults to copy build files to
+const localVaults = existsSync(".build-targets.local")
+	? readFileSync(".build-targets.local", "utf8").split("\n").map(s => s.trim()).filter(Boolean)
+	: [];
 
 // Ensure output directory exists
 mkdirSync(outdir, { recursive: true });
@@ -79,7 +84,20 @@ if (prod) {
 		// demo directory may not exist
 	}
 
+	// Copy to local Vaults
+	for (const dir of localVaults) {
+		try {
+			mkdirSync(dir, { recursive: true });
+			copyFileSync(outfile, `${dir}/main.js`);
+			copyFileSync("manifest.json", `${dir}/manifest.json`);
+			copyFileSync("styles.css", `${dir}/styles.css`);
+		} catch (err) {
+			console.warn(`Could not copy build to ${dir}: ${err.message}`);
+		}
+	}
+
 	process.exit(0);
+
 } else {
 	await context.watch();
 }

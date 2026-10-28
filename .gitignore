@@ -48,3 +48,6 @@ vault/Osmosis/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Local build targets
+.build-targets.local
