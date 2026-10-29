@@ -37,6 +37,8 @@ a front typed here absorbs it. Expected, and worth seeing once.
 ## 4. Right below an existing fence
 
 ```osmosis
+id: 1b9067e2
+
 Existing card
 ***
 Its answer
