@@ -44,6 +44,10 @@ const context = await esbuild.context({
 		"@lezer/lr",
 		...builtinModules,
 	],
+	// See the stub's header: the 3D graph renders with WebGL only.
+	alias: {
+		"three/webgpu": "./src/views/three-webgpu-stub.ts",
+	},
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
