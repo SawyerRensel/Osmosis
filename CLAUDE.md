@@ -768,6 +768,22 @@ Always include:
 
 ---
 
+## Agent skills
+
+### Issue tracker
+
+Issues are Planner task notes in `vault/Planner/`, not GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage roles map to the Planner note's `status` value (Ideas / To-Do / In-Progress / In-Review / Cancelled). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root (created lazily). See `docs/agents/domain.md`.
+
+---
+
 ## Task Tracking with Planner
 
 Project and task management lives in **`vault/Planner/`**, one markdown note per
