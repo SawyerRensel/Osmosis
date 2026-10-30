@@ -23,6 +23,13 @@ export default tseslint.config(
 	},
 	...obsidianmd.configs.recommended,
 	{
+		// "3D" is an initialism; the rule's acronym list doesn't know it and
+		// would rewrite it to "3d". The other option repeats the recommended one.
+		rules: {
+			"obsidianmd/ui/sentence-case": ["warn", { enforceCamelCaseLower: true, ignoreWords: ["3D"] }],
+		},
+	},
+	{
 		// These files polyfill Obsidian's DOM helpers so views can be
 		// smoke-tested under jsdom. They have to call the raw DOM API these two
 		// rules exist to steer plugin code away from — they are the thing the

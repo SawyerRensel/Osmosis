@@ -4016,3 +4016,78 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	flex: none;
 	margin-top: 8px;
 }
+
+/* ── 3D graph view ───────────────────────────────────────── */
+
+.osmosis-graph3d.view-content {
+	position: relative;
+	padding: 0;
+	overflow: hidden;
+}
+
+.osmosis-graph3d-stage {
+	position: absolute;
+	inset: 0;
+}
+
+.osmosis-graph3d-header {
+	position: absolute;
+	top: var(--size-4-2);
+	left: var(--size-4-2);
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	padding: var(--size-4-1) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.osmosis-graph3d-empty {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--size-4-4);
+	text-align: center;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.osmosis-graph3d-empty.is-hidden {
+	display: none;
+}
+
+/* Flight speed, shown briefly while the wheel changes it. */
+.osmosis-graph3d-speed {
+	position: absolute;
+	right: var(--size-4-2);
+	bottom: var(--size-4-2);
+	z-index: 1;
+	padding: var(--size-4-1) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 200ms ease;
+}
+
+.osmosis-graph3d-speed.is-visible {
+	opacity: 1;
+}
+
+/* Resolves theme variables to rgb() for the WebGL scene; never visible. */
+.osmosis-graph3d-probe {
+	position: absolute;
+	visibility: hidden;
+	background-color: var(--background-primary);
+	color: var(--text-normal);
+}

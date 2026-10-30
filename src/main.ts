@@ -18,6 +18,7 @@ import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
+import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
@@ -278,6 +279,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
+		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
 		// note-level querying, sorting and `.base` persistence, and a second
@@ -329,6 +331,17 @@ export default class OsmosisPlugin extends Plugin {
 				},
 			});
 		}
+
+		this.addCommand({
+			id: "open-graph3d",
+			name: "Open 3D graph for current note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "md") return false;
+				if (!checking) void this.openGraph3D(file);
+				return true;
+			},
+		});
 
 		this.addCommand({
 			id: "open-properties-sidebar",
@@ -402,6 +415,13 @@ export default class OsmosisPlugin extends Plugin {
 							} else {
 								void this.activateMindMapView();
 							}
+						});
+				});
+				menu.addItem((item) => {
+					item.setTitle("3D graph")
+						.setIcon("orbit")
+						.onClick(() => {
+							void this.openGraph3D(file);
 						});
 				});
 				menu.addItem((item) => {
@@ -945,6 +965,13 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
+	/** Apply the 3D graph navigation settings to every open 3D graph. */
+	refreshOpenGraph3DControls(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D)) {
+			if (leaf.view instanceof Graph3DView) leaf.view.applyControlSettings();
+		}
+	}
+
 	private async activateMindMapView(): Promise<void> {
 		const { workspace } = this.app;
 
@@ -960,6 +987,13 @@ export default class OsmosisPlugin extends Plugin {
 			active: true,
 		});
 		void workspace.revealLeaf(leaf);
+	}
+
+	/** A 3D graph opens in its own tab, centred on `file`. */
+	private async openGraph3D(file: TFile): Promise<void> {
+		const leaf = this.app.workspace.getLeaf("tab");
+		await leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { focus: file.path }, active: true });
+		void this.app.workspace.revealLeaf(leaf);
 	}
 
 	async activatePropertiesSidebar(): Promise<void> {
@@ -1536,6 +1570,10 @@ export default class OsmosisPlugin extends Plugin {
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
+		// Replaced by graph3dOneFingerDrag before release, with a new default.
+		// Any saveSettings() wrote the old default here, so it is dropped rather
+		// than carried over.
+		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

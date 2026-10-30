@@ -6,6 +6,11 @@ import type { MindMapDefaultMode } from "./reading-mode";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
+/** What a desktop left-drag orbits and the wheel zooms toward in the 3D graph. */
+export type Graph3DDesktopPivot = "cursor" | "center";
+/** What a one-finger drag does in the 3D graph on a touch screen. */
+export type Graph3DTouchDrag = "point" | "center" | "look";
+
 /** Auto-suggest for vault folder paths. */
 class FolderSuggest extends AbstractInputSuggest<string> {
 	getSuggestions(query: string): string[] {
@@ -139,6 +144,12 @@ export interface OsmosisSettings {
 	/** Hard ceiling on undo/redo history memory per mind map, in MB; the oldest
 	 *  edits drop when either this or undoMaxSteps is reached first (default: 20). */
 	undoMaxMemoryMB: number;
+
+	// ── 3D Graph ────────────────────────────────────────────
+	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
+	graph3dDesktopPivot: Graph3DDesktopPivot;
+	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
+	graph3dOneFingerDrag: Graph3DTouchDrag;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -183,6 +194,10 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Mind map editing defaults
 	undoMaxSteps: 50,
 	undoMaxMemoryMB: 20,
+
+	// 3D graph defaults
+	graph3dDesktopPivot: "cursor",
+	graph3dOneFingerDrag: "point",
 };
 
 /** Reject non-integer or negative daily card limits with an inline message. */
@@ -217,6 +232,9 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 		if (key === "defaultMaxNodeWidth") {
 			this.plugin.remeasureOpenMindMaps();
+		}
+		if (key === "graph3dDesktopPivot" || key === "graph3dOneFingerDrag") {
+			this.plugin.refreshOpenGraph3DControls();
 		}
 	}
 
@@ -300,6 +318,37 @@ export class OsmosisSettingTab extends PluginSettingTab {
 							min: 1,
 							step: 1,
 							validate: validatePositiveInt,
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "3D graph",
+				items: [
+					{
+						name: "Mouse orbit and zoom",
+						desc: "On desktop, what dragging with the left mouse button orbits around and what the scroll wheel zooms toward. The point under the cursor is the nearest node, if there is one close by. Pressing a flight key (W, A, S, D, Q, E) during a drag looks around from the camera until you release the button, and the scroll wheel then sets the flight speed.",
+						control: {
+							type: "dropdown",
+							key: "graph3dDesktopPivot",
+							options: {
+								cursor: "Point under the cursor",
+								center: "View center",
+							},
+						},
+					},
+					{
+						name: "One-finger drag",
+						desc: "On touch screens, what dragging with one finger does. The point under your finger is the nearest node, if there is one close by. Pinch zooms toward the point between your fingers, and two-finger drag pans.",
+						control: {
+							type: "dropdown",
+							key: "graph3dOneFingerDrag",
+							options: {
+								point: "Orbit the point under your finger",
+								center: "Orbit the view center",
+								look: "Look around",
+							},
 						},
 					},
 				],
