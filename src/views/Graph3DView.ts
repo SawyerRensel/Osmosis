@@ -3,6 +3,7 @@ import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { buildGraph, noteNodeId, type GraphNode, type NoteInput } from "../graph3d/model";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
+import { placeNodes } from "../graph3d/positions";
 import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneTheme } from "./Graph3DScene";
 
@@ -35,6 +36,8 @@ export class Graph3DView extends ItemView {
 	private depthSlider: SliderComponent | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
+	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
+	private readonly prefetched = new Map<string, { mtime: number; text: string }>();
 
 	private readonly scheduleReload = debounce(() => void this.reload(), 750, true);
 
@@ -173,6 +176,7 @@ export class Graph3DView extends ItemView {
 		this.scene = null;
 		this.stageEl = null;
 		this.cache.clear();
+		this.prefetched.clear();
 	}
 
 	/** Re-read the navigation settings, after they change in Osmosis settings. */
@@ -228,7 +232,7 @@ export class Graph3DView extends ItemView {
 		this.emptyEl?.toggleClass("is-hidden", focus !== null);
 		if (focus === null) {
 			this.horizon = null;
-			scene.setData({ nodes: [], edges: [] });
+			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
 		}
 
@@ -240,7 +244,8 @@ export class Graph3DView extends ItemView {
 				const file = vault.getFileByPath(path);
 				if (!(file instanceof TFile)) return null;
 				try {
-					const markdown = await vault.cachedRead(file);
+					const prefetched = this.prefetched.get(path);
+					const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
 					return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
 				} catch (error) {
 					console.error(`Osmosis: 3D graph could not read ${path}`, error);
@@ -256,8 +261,30 @@ export class Graph3DView extends ItemView {
 			(linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null,
 		);
 		this.horizon = horizon;
-		scene.setData(model);
+		scene.setData(model, placeNodes(model, scene.positions(), horizon.via));
 		if (flyToFocus) scene.flyTo(noteNodeId(focus), true);
+		this.prefetch(horizon.prefetch, seq);
+	}
+
+	/**
+	 * Read ahead the notes one hop past the loaded area, and forget the ones
+	 * that no longer are. Only the text: parsing waits until a hop loads them.
+	 */
+	private prefetch(ring: ReadonlySet<string>, seq: number): void {
+		for (const path of this.prefetched.keys()) if (!ring.has(path)) this.prefetched.delete(path);
+		for (const path of ring) {
+			const file = this.app.vault.getFileByPath(path);
+			if (file === null || this.prefetched.get(path)?.mtime === file.stat.mtime) continue;
+			// Taken before the read, so an edit made during it shows as stale.
+			const mtime = file.stat.mtime;
+			this.app.vault.cachedRead(file).then(
+				(text) => {
+					if (seq === this.loadSeq) this.prefetched.set(path, { mtime, text });
+				},
+				// The hop that needs this note will read it, and report a failure, itself.
+				() => undefined,
+			);
+		}
 	}
 
 	/**

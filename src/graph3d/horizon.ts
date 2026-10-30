@@ -26,6 +26,8 @@ export interface Horizon {
 	loaded: Set<string>;
 	/** Notes exactly `depth + 1` hops out: link cache read, nothing parsed. */
 	prefetch: Set<string>;
+	/** For every note but the focus, the note one hop nearer that reached it. */
+	via: Map<string, string>;
 }
 
 export interface LoadedDiff {
@@ -62,6 +64,7 @@ export function computeHorizon(adjacency: NoteAdjacency, focus: string, depth: n
 	const hops = new Map<string, number>([[focus, 0]]);
 	const loaded = new Set<string>([focus]);
 	const prefetch = new Set<string>();
+	const via = new Map<string, string>();
 	let frontier = [focus];
 	for (let hop = 1; hop <= depth + 1 && frontier.length > 0; hop++) {
 		const next: string[] = [];
@@ -69,13 +72,14 @@ export function computeHorizon(adjacency: NoteAdjacency, focus: string, depth: n
 			for (const neighbour of adjacency.get(path) ?? []) {
 				if (hops.has(neighbour)) continue;
 				hops.set(neighbour, hop);
+				via.set(neighbour, path);
 				(hop <= depth ? loaded : prefetch).add(neighbour);
 				next.push(neighbour);
 			}
 		}
 		frontier = next;
 	}
-	return { focus, hops, loaded, prefetch };
+	return { focus, hops, loaded, prefetch, via };
 }
 
 /** What changes when the loaded set moves from `previous` to `next`. */

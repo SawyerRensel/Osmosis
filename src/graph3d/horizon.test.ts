@@ -20,6 +20,13 @@ describe("computeHorizon", () => {
 		expect(horizon.hops.has("E.md")).toBe(false);
 	});
 
+	it("records the nearer note that reached each note", () => {
+		const horizon = computeHorizon(noteAdjacency(CHAIN), "B.md", 2);
+		expect(horizon.via.get("A.md")).toBe("B.md");
+		expect(horizon.via.get("D.md")).toBe("C.md");
+		expect(horizon.via.has("B.md")).toBe(false);
+	});
+
 	it("counts backlinks as hops", () => {
 		const horizon = computeHorizon(noteAdjacency(CHAIN), "C.md", 1);
 		expect([...horizon.loaded].sort()).toEqual(["B.md", "C.md", "D.md"]);

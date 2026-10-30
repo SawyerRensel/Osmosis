@@ -6,7 +6,26 @@
  */
 
 import ForceGraph3D, { type ForceGraph3DInstance, type LinkObject, type NodeObject } from "3d-force-graph";
-import { FogExp2, Group, Raycaster, Vector2, Vector3, type PerspectiveCamera, type Ray } from "three";
+import {
+	BufferAttribute,
+	BufferGeometry,
+	Color,
+	DynamicDrawUsage,
+	FogExp2,
+	Group,
+	InstancedBufferAttribute,
+	InstancedMesh,
+	LineBasicMaterial,
+	LineSegments,
+	Matrix4,
+	MeshLambertMaterial,
+	Raycaster,
+	SphereGeometry,
+	Vector2,
+	Vector3,
+	type PerspectiveCamera,
+	type Ray,
+} from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import SpriteText from "three-spritetext";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
@@ -14,6 +33,8 @@ import { chooseLabelled, type LabelBudget } from "../graph3d/lod";
 import { edgeColor, edgeDistance, nodeColor, nodeSize, spriteLabel } from "../graph3d/appearance";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
+import type { Placed } from "../graph3d/positions";
+import { chargeStrengths } from "../graph3d/settle";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -32,13 +53,25 @@ import type { Graph3DDesktopPivot, Graph3DTouchDrag } from "../settings";
 interface EngineNode extends NodeObject {
 	id: string;
 	graph: GraphNode;
-	/** The object 3d-force-graph draws beside its sphere; labels hang off it. */
-	group?: Group;
+	color: Color;
+	radius: number;
+	/** 0–1: fading in on arrival, out on departure. */
+	opacity: number;
+	fade?: { from: number; to: number; start: number };
+	/** Left the loaded area: fading out, then dropped from the graph data. */
+	departing: boolean;
 	label?: SpriteText;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
 	kind: GraphEdgeKind;
+}
+
+/** d3's many-body force, as much of it as the scene wraps. */
+interface ManyBodyForce {
+	(alpha: number): void;
+	initialize(nodes: EngineNode[], ...args: unknown[]): void;
+	strength(strength: (node: EngineNode) => number): unknown;
 }
 
 export interface SceneTheme {
@@ -118,6 +151,12 @@ const FLIGHT_MIN_SPEED = 40;
 const FLIGHT_MS = 1000;
 /** Ticks after new data before the layout has spread out enough to aim at. */
 const SETTLE_TICKS = 80;
+/** d3's default many-body strength; see `settle.ts` for which nodes it acts on. */
+const CHARGE = -30;
+const FADE_MS = 500;
+const LINK_OPACITY = 0.45;
+/** A press that moves less than this, in px, is a click rather than a drag. */
+const CLICK_SLOP_PX = 6;
 
 /**
  * Flight speed multiplier, set with the wheel while flying. Like Unreal's
@@ -141,7 +180,24 @@ export class Graph3DScene {
 	private readonly fog: FogExp2;
 	private readonly budget: LabelBudget;
 	private nodes: EngineNode[] = [];
+	private links: EngineLink[] = [];
 	private readonly labelled = new Set<string>();
+	/** Many-body strength per node; nodes not in it are left out of the force. */
+	private charge = new Map<string, number>();
+	/** Spheres at full opacity, and those fading in or out; each one draw call. */
+	private solid: SphereLayer;
+	private fading: SphereLayer;
+	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
+	private readonly labels = new Group();
+	/** Screen-up in world space when labels were last placed: they stand above their nodes as seen, from any angle. */
+	private readonly labelUp = new Vector3();
+	private readonly screenUp = new Vector3();
+	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
+	/** Node positions or opacities changed since the layers were last written. */
+	private dirty = false;
+	/** A left-button or one-finger press that may yet be a click. */
+	private press: { pointerId: number; x: number; y: number; touch: boolean } | null = null;
+	private hover: { x: number; y: number } | null = null;
 	private textColor = "#ffffff";
 	private frame = 0;
 	private lastFrame = 0;
@@ -171,7 +227,7 @@ export class Graph3DScene {
 	private speedTimer = 0;
 	readonly heldKeys = new Set<string>();
 
-	constructor(private readonly container: HTMLElement, options: SceneOptions) {
+	constructor(private readonly container: HTMLElement, private readonly options: SceneOptions) {
 		this.budget = LABEL_BUDGET[options.isMobile ? "mobile" : "desktop"];
 		this.graph = new ForceGraph3D(container, { controlType: "orbit" }) as unknown as ForceGraph3DInstance<EngineNode, EngineLink>;
 		this.fog = new FogExp2(0x000000, MIST / MIST_MIN_DISTANCE);
@@ -199,48 +255,139 @@ export class Graph3DScene {
 
 		const linkForce = this.graph.d3Force("link") as { distance(fn: (link: EngineLink) => number): unknown } | undefined;
 		linkForce?.distance((link) => edgeDistance(link.kind));
+		// Settled nodes are pinned, and the many-body force skips most of them
+		// (see settle.ts), which is what keeps a tick cheap in a large world.
+		const charge = this.graph.d3Force("charge") as ManyBodyForce;
+		charge.strength((node) => this.charge.get(node.id) ?? 0);
+		const settleCharge = Object.assign((alpha: number) => charge(alpha), {
+			initialize: (nodes: EngineNode[], ...args: unknown[]) => charge.initialize(nodes.filter((n) => this.charge.has(n.id)), ...args),
+		});
+		this.graph.d3Force("charge", settleCharge as never);
+		// Centring shifts every free node each tick to keep the mean at the
+		// origin, so arrivals would drift against a pinned world.
+		this.graph.d3Force("center", null);
 
+		// The engine only simulates. Spheres and edges are drawn here, instanced
+		// and merged: drawn one object each, 6,826 nodes took 13,652 draw calls.
+		// Clicks are picked here too (see nodeNear).
 		this.graph
 			.showNavInfo(false)
-			.nodeRelSize(NODE_REL_SIZE)
-			.nodeVal((node) => nodeSize(node.graph))
-			.nodeColor((node) => nodeColor(node.graph))
-			.nodeOpacity(0.95)
-			.nodeLabel(() => "")
-			.nodeThreeObjectExtend(true)
-			.nodeThreeObject((node) => this.groupFor(node))
-			.linkColor((link) => edgeColor(link.kind))
-			.linkOpacity(0.45)
-			// Pressing a node orbits it instead; the layout places nodes itself.
-			.enableNodeDrag(false)
-			.onNodeClick((node) => {
-				if (!this.stoppedCoastOnDown) options.onNodeClick(node.graph);
+			.nodeVisibility(false)
+			.linkVisibility(false)
+			.enablePointerInteraction(false)
+			.onEngineTick(() => {
+				this.ticksSinceData++;
+				this.dirty = true;
 			})
-			.onEngineTick(() => this.ticksSinceData++);
+			.onEngineStop(() => this.settle());
+
+		this.solid = sphereLayer(new MeshLambertMaterial(), 0);
+		this.fading = sphereLayer(fadingMaterial(), 0);
+		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
+		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
+		this.edges.frustumCulled = false;
+		this.graph.scene().add(this.solid, this.fading, this.edges, this.labels);
 
 		this.frame = window.requestAnimationFrame(this.tick);
 	}
 
 	/**
 	 * Show a new model. Nodes already on screen keep their engine objects, and
-	 * with them their positions, so a hop doesn't scatter the world.
+	 * with them their positions. New ones start where `placement` puts them
+	 * (see `placeNodes`), and fade in.
+	 * Nodes that left fade out, with their edges, before they're dropped.
 	 */
-	setData(model: GraphModel): void {
+	setData(model: GraphModel, placement: ReadonlyMap<string, Placed>): void {
+		const now = performance.now();
 		const previous = new Map(this.nodes.map((node) => [node.id, node]));
 		this.nodes = model.nodes.map((graph) => {
 			const existing = previous.get(graph.id);
-			if (existing === undefined) return { id: graph.id, graph };
+			if (existing === undefined) {
+				const node = this.createNode(graph, placement.get(graph.id));
+				this.fadeTo(node, 1, now);
+				return node;
+			}
 			previous.delete(graph.id);
 			existing.graph = graph;
+			existing.color.setStyle(nodeColor(graph));
 			if (existing.label !== undefined) existing.label.text = this.labelText(graph);
+			if (existing.departing) {
+				existing.departing = false;
+				this.fadeTo(existing, 1, now);
+			}
 			return existing;
 		});
-		for (const departed of previous.values()) this.removeLabel(departed);
-		this.ticksSinceData = 0;
-		this.graph.graphData({
-			nodes: this.nodes,
-			links: model.edges.map((edge) => ({ kind: edge.kind, source: edge.source, target: edge.target })),
+		for (const left of previous.values()) {
+			if (left.opacity <= 0) {
+				this.removeLabel(left);
+				continue;
+			}
+			left.departing = true;
+			this.fadeTo(left, 0, now);
+			this.nodes.push(left);
+		}
+
+		const ids = new Set(this.nodes.map((node) => node.id));
+		const lingering = this.links.filter((link) => {
+			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
+			return (source.departing || target.departing) && ids.has(source.id) && ids.has(target.id);
 		});
+		this.links = [...model.edges.map((edge) => ({ kind: edge.kind, source: edge.source, target: edge.target })), ...lingering];
+		this.ticksSinceData = 0;
+		this.pushData();
+	}
+
+	/** Where every node in the scene is now, for placing the next model around it. */
+	positions(): Map<string, Placed> {
+		const positions = new Map<string, Placed>();
+		for (const node of this.nodes) {
+			if (node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			positions.set(node.id, { x: node.x, y: node.y, z: node.z, pinned: node.fx !== undefined });
+		}
+		return positions;
+	}
+
+	private createNode(graph: GraphNode, place: Placed | undefined): EngineNode {
+		const node: EngineNode = {
+			id: graph.id,
+			graph,
+			color: new Color(nodeColor(graph)),
+			radius: Math.cbrt(nodeSize(graph)) * NODE_REL_SIZE,
+			opacity: 0,
+			departing: false,
+		};
+		if (place !== undefined) {
+			node.x = place.x;
+			node.y = place.y;
+			node.z = place.z;
+			if (place.pinned) [node.fx, node.fy, node.fz] = [place.x, place.y, place.z];
+		}
+		// Note cores always carry their title; other labels come and go by distance.
+		if (graph.kind === "note") this.addLabel(node);
+		return node;
+	}
+
+	private fadeTo(node: EngineNode, to: number, now: number): void {
+		node.fade = { from: node.opacity, to, start: now };
+		this.dirty = true;
+	}
+
+	/** Hand the engine the current nodes and links, with the many-body force limited to what is still settling. */
+	private pushData(): void {
+		this.charge = chargeStrengths(
+			this.nodes.filter((node) => !node.departing).map((node) => ({ ...node.graph, pinned: node.fx !== undefined })),
+			CHARGE,
+		);
+		this.dirty = true;
+		this.graph.graphData({ nodes: this.nodes, links: this.links });
+	}
+
+	/** The simulation has cooled: pin whatever was still free where it stopped. */
+	private settle(): void {
+		for (const node of this.nodes) {
+			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
+		}
 	}
 
 	setTheme(theme: SceneTheme): void {
@@ -273,12 +420,13 @@ export class Graph3DScene {
 
 	private startPendingFlight(): void {
 		if (this.pendingFlight === null) return;
-		if (this.pendingFlightWaits && this.ticksSinceData < SETTLE_TICKS) return;
 		const node = this.nodes.find((n) => n.id === this.pendingFlight);
 		if (node === undefined) {
 			this.pendingFlight = null;
 			return;
 		}
+		// A pinned node is already where it will stay.
+		if (this.pendingFlightWaits && node.fx === undefined && this.ticksSinceData < SETTLE_TICKS) return;
 		if (node.x === undefined || node.y === undefined || node.z === undefined) return;
 		this.pendingFlight = null;
 		const target = new Vector3(node.x, node.y, node.z);
@@ -300,6 +448,14 @@ export class Graph3DScene {
 		window.clearTimeout(this.speedTimer);
 		for (const node of this.nodes) this.removeLabel(node);
 		this.nodes = [];
+		this.links = [];
+		for (const layer of [this.solid, this.fading]) {
+			layer.geometry.dispose();
+			layer.material.dispose();
+			layer.dispose();
+		}
+		this.edges.geometry.dispose();
+		this.edges.material.dispose();
 		const renderer = this.graph.renderer();
 		this.graph._destructor();
 		renderer.dispose();
@@ -307,22 +463,14 @@ export class Graph3DScene {
 		this.container.empty();
 	}
 
-	private groupFor(node: EngineNode): Group {
-		if (node.group !== undefined) return node.group;
-		node.group = new Group();
-		// Note cores always carry their title; other labels come and go by distance.
-		if (node.graph.kind === "note") this.addLabel(node);
-		return node.group;
-	}
-
 	private addLabel(node: EngineNode): void {
-		if (node.group === undefined || node.label !== undefined) return;
+		if (node.label !== undefined) return;
 		const isCore = node.graph.kind === "note";
 		const label = new SpriteText(this.labelText(node.graph), isCore ? 7 : 3.5, this.textColor);
-		const radius = Math.cbrt(nodeSize(node.graph)) * NODE_REL_SIZE;
-		label.position.y = radius + (isCore ? 6 : 3);
-		node.group.add(label);
+		label.material.opacity = node.opacity;
+		this.labels.add(label);
 		node.label = label;
+		this.dirty = true;
 		if (!isCore) this.labelled.add(node.id);
 	}
 
@@ -345,13 +493,14 @@ export class Graph3DScene {
 		const camera = this.graph.camera().position;
 		const distances = [];
 		for (const node of this.nodes) {
-			if (node.graph.kind === "note" || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			if (node.graph.kind === "note" || node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
 			distances.push({ id: node.id, distance: Math.hypot(node.x - camera.x, node.y - camera.y, node.z - camera.z) });
 		}
 		const wanted = chooseLabelled(distances, this.labelled, this.budget);
 		let added = 0;
 		for (const node of this.nodes) {
-			if (node.graph.kind === "note") continue;
+			// A departing node's label fades out with it.
+			if (node.graph.kind === "note" || node.departing) continue;
 			if (!wanted.has(node.id)) this.removeLabel(node);
 			else if (node.label === undefined && added < LABELS_PER_PASS) {
 				this.addLabel(node);
@@ -417,7 +566,7 @@ export class Graph3DScene {
 			// until every finger has lifted.
 			if (this.touches.size === 2) this.startPinch();
 			if (this.touches.size !== 1) {
-				this.drag = null;
+				this.drag = this.press = null;
 				return;
 			}
 		} else if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) {
@@ -432,9 +581,16 @@ export class Graph3DScene {
 			pivot: this.aimPoint(e.clientX, e.clientY, touch),
 			look: touch && this.controlSettings.touchDrag === "look",
 		};
+		this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
 	};
 
 	private readonly onPointerMove = (e: PointerEvent): void => {
+		const press = this.press;
+		if (press?.pointerId === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) this.press = null;
+		// The pointer cursor over a node is resolved once a frame, in tick().
+		if (e.pointerType === "mouse" && e.buttons === 0 && e.target === this.graph.renderer().domElement) {
+			this.hover = { x: e.clientX, y: e.clientY };
+		}
 		const finger = this.touches.get(e.pointerId);
 		if (finger !== undefined) {
 			finger.x = e.clientX;
@@ -459,6 +615,12 @@ export class Graph3DScene {
 
 	private readonly onPointerUp = (e: PointerEvent): void => {
 		this.touches.delete(e.pointerId);
+		const press = this.press;
+		if (press?.pointerId === e.pointerId) {
+			this.press = null;
+			const node = this.stoppedCoastOnDown ? null : this.nodeNear(press.x, press.y, PICK_SLOP_PX[press.touch ? "touch" : "mouse"]);
+			if (node !== null) this.options.onNodeClick(node.graph);
+		}
 		if (this.pinch?.ids.includes(e.pointerId) === true) this.endPinch(this.pinch);
 		const drag = this.drag;
 		if (drag?.pointerId !== e.pointerId) return;
@@ -632,15 +794,21 @@ export class Graph3DScene {
 		const camera = this.graph.camera();
 		const node = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
 		if (node !== null) {
-			this.lastDepth = node.distanceTo(camera.position);
-			return node;
+			const centre = new Vector3(node.x, node.y, node.z);
+			this.lastDepth = centre.distanceTo(camera.position);
+			return centre;
 		}
 		const depth = this.lastDepth ?? camera.position.distanceTo(this.orbitControls().target);
 		return this.rayThrough(x, y).at(depth, new Vector3());
 	}
 
-	/** The centre of the node nearest client point (`x`, `y`) on screen, within `slop` px of its edge and the mist. */
-	private nodeNear(x: number, y: number, slop: number): Vector3 | null {
+	/**
+	 * The node nearest client point (`x`, `y`) on screen, within `slop` px of
+	 * its edge and inside the mist. Nodes on their way out don't count. This
+	 * is also how a click finds its node: the engine's own picking is off,
+	 * since it can't see into the instanced spheres.
+	 */
+	private nodeNear(x: number, y: number, slop: number): EngineNode | null {
 		const camera = this.graph.camera() as PerspectiveCamera;
 		const rect = this.graph.renderer().domElement.getBoundingClientRect();
 		const forward = camera.getWorldDirection(new Vector3());
@@ -648,23 +816,24 @@ export class Graph3DScene {
 		const scale = rect.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
 		// exp(-(density·d)²) is 2% at density·d = 2: anything further is lost in the mist.
 		const reach = 2 / this.fog.density;
-		const centres: Vector3[] = [];
+		const candidates: EngineNode[] = [];
 		const onScreen: ScreenNode[] = [];
+		const point = new Vector3();
 		for (const node of this.nodes) {
-			if (node.x === undefined || node.y === undefined || node.z === undefined) continue;
-			const centre = new Vector3(node.x, node.y, node.z);
-			const distance = centre.clone().sub(camera.position).dot(forward);
+			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			point.set(node.x, node.y, node.z).sub(camera.position);
+			const distance = point.dot(forward);
 			if (distance <= 0 || distance > reach) continue;
-			const ndc = centre.clone().project(camera);
-			centres.push(centre);
+			point.add(camera.position).project(camera);
+			candidates.push(node);
 			onScreen.push({
-				x: rect.left + ((ndc.x + 1) / 2) * rect.width,
-				y: rect.top + ((1 - ndc.y) / 2) * rect.height,
-				radius: (Math.cbrt(nodeSize(node.graph)) * NODE_REL_SIZE * scale) / distance,
+				x: rect.left + ((point.x + 1) / 2) * rect.width,
+				y: rect.top + ((1 - point.y) / 2) * rect.height,
+				radius: (node.radius * scale) / distance,
 				distance,
 			});
 		}
-		return centres[pickNode(onScreen, x, y, slop)] ?? null;
+		return candidates[pickNode(onScreen, x, y, slop)] ?? null;
 	}
 
 	/** The ray from the camera through client point (`x`, `y`). */
@@ -701,5 +870,170 @@ export class Graph3DScene {
 			this.lastLabelPass = now;
 			this.updateLabels();
 		}
+		this.stepFades(now);
+		const wrote = this.dirty;
+		if (this.dirty) {
+			this.dirty = false;
+			this.writeLayers();
+		}
+		this.screenUp.set(0, 1, 0).applyQuaternion(this.graph.camera().quaternion);
+		if (wrote || !this.screenUp.equals(this.labelUp)) {
+			this.labelUp.copy(this.screenUp);
+			this.placeLabels();
+		}
+		if (this.hover !== null) {
+			const node = this.drag === null ? this.nodeNear(this.hover.x, this.hover.y, PICK_SLOP_PX.mouse) : null;
+			this.graph.renderer().domElement.style.cursor = node === null ? "" : "pointer";
+			this.hover = null;
+		}
 	};
+
+	/** Advance every fade; once the nodes that left have faded out, drop them from the graph. */
+	private stepFades(now: number): void {
+		let gone = false;
+		for (const node of this.nodes) {
+			const fade = node.fade;
+			if (fade === undefined) continue;
+			const t = Math.min(1, (now - fade.start) / FADE_MS);
+			node.opacity = fade.from + (fade.to - fade.from) * t;
+			if (node.label !== undefined) node.label.material.opacity = node.opacity;
+			this.dirty = true;
+			if (t < 1) continue;
+			node.fade = undefined;
+			if (node.departing) gone = true;
+		}
+		if (!gone) return;
+		const left = new Set<string>();
+		for (const node of this.nodes) {
+			if (!node.departing || node.fade !== undefined) continue;
+			this.removeLabel(node);
+			left.add(node.id);
+		}
+		this.nodes = this.nodes.filter((node) => !left.has(node.id));
+		this.links = this.links.filter((link) => !left.has((link.source as EngineNode).id) && !left.has((link.target as EngineNode).id));
+		this.pushData();
+	}
+
+	/**
+	 * Write node positions, colours and opacities into the instanced spheres
+	 * and the merged edge buffer. Nodes at
+	 * full opacity go in the opaque layer; fading ones in the transparent one.
+	 */
+	private writeLayers(): void {
+		if (this.solid.instanceMatrix.count < this.nodes.length) {
+			this.solid = this.replaceLayer(this.solid, sphereLayer(this.solid.material, this.nodes.length * 2));
+			this.fading = this.replaceLayer(this.fading, sphereLayer(this.fading.material, this.nodes.length * 2));
+		}
+		const opacities = this.fading.geometry.getAttribute("instanceOpacity") as InstancedBufferAttribute;
+		const matrix = new Matrix4();
+		let solid = 0;
+		let fading = 0;
+		for (const node of this.nodes) {
+			if (node.x === undefined || node.y === undefined || node.z === undefined || node.opacity <= 0) continue;
+			matrix.makeScale(node.radius, node.radius, node.radius).setPosition(node.x, node.y, node.z);
+			if (node.opacity >= 1) {
+				this.solid.setMatrixAt(solid, matrix);
+				this.solid.setColorAt(solid++, node.color);
+			} else {
+				this.fading.setMatrixAt(fading, matrix);
+				this.fading.setColorAt(fading, node.color);
+				opacities.setX(fading++, node.opacity);
+			}
+		}
+		for (const [layer, count] of [[this.solid, solid], [this.fading, fading]] as const) {
+			layer.count = count;
+			layer.instanceMatrix.needsUpdate = true;
+			if (layer.instanceColor !== null) layer.instanceColor.needsUpdate = true;
+		}
+		opacities.needsUpdate = true;
+		this.writeEdges();
+	}
+
+	/**
+	 * Stand each label just above its node on screen. Lifting along world y
+	 * instead would sink a label behind its node seen from below, and over it
+	 * seen from above.
+	 */
+	private placeLabels(): void {
+		for (const node of this.nodes) {
+			if (node.label === undefined || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			const lift = node.radius + (node.graph.kind === "note" ? 6 : 3);
+			node.label.position.set(node.x, node.y, node.z).addScaledVector(this.labelUp, lift);
+		}
+	}
+
+	private writeEdges(): void {
+		const geometry = this.edges.geometry;
+		let positions = geometry.getAttribute("position") as BufferAttribute | undefined;
+		let colors = geometry.getAttribute("color") as BufferAttribute | undefined;
+		if (positions === undefined || colors === undefined || positions.count < this.links.length * 2) {
+			const capacity = Math.max(64, this.links.length * 4);
+			geometry.dispose();
+			positions = new BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
+			colors = new BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(DynamicDrawUsage);
+			geometry.setAttribute("position", positions);
+			geometry.setAttribute("color", colors);
+		}
+		let vertex = 0;
+		for (const link of this.links) {
+			// Links hold IDs until the engine's next digest swaps in the nodes.
+			const source = link.source as EngineNode | string;
+			const target = link.target as EngineNode | string;
+			if (typeof source === "string" || typeof target === "string") continue;
+			if (source.x === undefined || target.x === undefined) continue;
+			const alpha = LINK_OPACITY * Math.min(source.opacity, target.opacity);
+			if (alpha <= 0) continue;
+			let color = this.edgeColors.get(link.kind);
+			if (color === undefined) this.edgeColors.set(link.kind, (color = new Color(edgeColor(link.kind))));
+			for (const end of [source, target]) {
+				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
+				colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
+			}
+		}
+		geometry.setDrawRange(0, vertex);
+		positions.needsUpdate = true;
+		colors.needsUpdate = true;
+	}
+
+	/** Swap a sphere layer for a larger one, keeping its material. */
+	private replaceLayer(old: SphereLayer, layer: SphereLayer): SphereLayer {
+		old.removeFromParent();
+		old.geometry.dispose();
+		old.dispose();
+		this.graph.scene().add(layer);
+		return layer;
+	}
+}
+
+const SPHERE_SEGMENTS = 12;
+
+type SphereLayer = InstancedMesh<SphereGeometry, MeshLambertMaterial>;
+
+/**
+ * Unit spheres, one instance per node, scaled to each node's radius. It's
+ * never frustum-culled: three.js computes an instanced mesh's bounds once,
+ * and these nodes move.
+ */
+function sphereLayer(material: MeshLambertMaterial, capacity: number): SphereLayer {
+	const geometry = new SphereGeometry(1, SPHERE_SEGMENTS, SPHERE_SEGMENTS / 2 + 2);
+	geometry.setAttribute("instanceOpacity", new InstancedBufferAttribute(new Float32Array(capacity), 1).setUsage(DynamicDrawUsage));
+	const layer = new InstancedMesh(geometry, material, capacity);
+	layer.instanceMatrix.setUsage(DynamicDrawUsage);
+	layer.count = 0;
+	layer.frustumCulled = false;
+	return layer;
+}
+
+/** A transparent sphere material whose opacity comes per instance, from `instanceOpacity`. */
+function fadingMaterial(): MeshLambertMaterial {
+	const material = new MeshLambertMaterial({ transparent: true, depthWrite: false });
+	material.onBeforeCompile = (shader) => {
+		shader.vertexShader = shader.vertexShader
+			.replace("#include <common>", "#include <common>\nattribute float instanceOpacity;\nvarying float vInstanceOpacity;")
+			.replace("#include <begin_vertex>", "#include <begin_vertex>\nvInstanceOpacity = instanceOpacity;");
+		shader.fragmentShader = shader.fragmentShader
+			.replace("#include <common>", "#include <common>\nvarying float vInstanceOpacity;")
+			.replace("vec4 diffuseColor = vec4( diffuse, opacity );", "vec4 diffuseColor = vec4( diffuse, opacity * vInstanceOpacity );");
+	};
+	return material;
 }
