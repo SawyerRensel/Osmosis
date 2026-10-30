@@ -9,13 +9,13 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Progress
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-29T01:03:06.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-10-29T10:43:23.000Z"
+date_start_scheduled: "2026-10-29T10:43:23.000Z"
+date_start_actual: "2026-10-29T10:43:23.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
