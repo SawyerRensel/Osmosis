@@ -99,7 +99,9 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 - **Tests**: `toggleCheckboxLine` cases; a pure `heldDiff(prev: ReadonlySet<string>, next: ReadonlySet<string>)` if the hold diff isn't trivial inline.
 - **Manual test**: tick a checkbox in `Deck Checklist`-style content (needs a `- [ ]` line in a 3D fixture; add one to a new fixture note rather than editing an existing one); undo it in 3D with Ctrl+Z; open the same note in a mind map, edit there, undo from 3D and vice versa; blocked during study.
 
-### Slice 3: Inline editing in the near tier (and retype)
+### Slice 3: Inline editing in the near tier (and retype) (built, see "Slice 3" in the batch notes below)
+
+*Corrections made while building:* (1) the trigger is not a `dblclick` listener: `Graph3DScene.click()` remembers the last click's node and treats a second click within 400 ms and 8 px (32 px for a finger) as the double, so a double tap works on touch and the first click's camera flight cannot make the second land on another node. (2) `normalizeWrite` is extracted and tested but 2D does not call it (it already composes the same two steps in `writeNodeFile` + `writeMarkdown`; rewiring it was a 2D change for no gain). (3) The editor is on `document.body`, fixed, on desktop too, not in the view root, so it has one coordinate system and clears the corner controls. Slice 4 onwards: `renameInFile` and the editor are reusable; a new line from slice 5 opens the editor via `Graph3DView.beginEdit(node)`.
 
 - Trigger, in edit mode only: F2 or Enter on the focused line node, or a double-click / double-tap on a line plate or panel (`dblclick` on the canvas → `nodeNear`).
 - Editor: `EmbeddableMarkdownEditor` (`src/editor/EmbeddableMarkdownEditor.ts`), the same one 2D uses, in an overlay `div.osmosis-graph3d-edit` absolutely positioned in the view root at the node's projected screen position (unscaled, readable size; width ≈ the panel's on-screen width, clamped). The panel stays under it; hide the panel's body while editing. Ctrl/Cmd+Enter or blur saves, Escape cancels (2D: `startEditing` / `stopEditing`).
@@ -227,3 +229,67 @@ Nothing has run in Obsidian. Lint, the full unit suite (2,240 tests) and the bui
 ### Not verified
 
 Nothing has run in Obsidian: the checkbox hit-test against real rendered panels (checkbox element class and rect under the panel's CSS scale), the placement carry (whether the new node really lands on the old one's spot), and every cross-view undo path. Lint, the full suite (2,257 tests) and the build pass.
+
+## Slice 3 (inline editing and retype)
+
+**Built** on `feature/3d-graph-phase-7`, code commit `8433d61`, on top of slice 2. Not pushed, no PR, not tested in Obsidian. **Slices 4-6 remain.**
+
+### What it does
+
+- **Edit mode now gates.** In edit mode, a double click or double tap on a line plate or panel, or F2 / Enter with a line focused, opens the editor. Outside edit mode nothing changes (two clicks are still two hops). Notes, tags, attachments and ghosts are not editable. While Relational study runs, `beginEdit` shows the study notice and does nothing.
+- **The editor** (`src/views/Graph3DEdit.ts`, `Graph3DEditor`) is the same `EmbeddableMarkdownEditor` the mind map uses, in `div.osmosis-edit-overlay.osmosis-graph3d-edit` on `document.body`, `position: fixed`, so the mind map's CSS for the box, the CodeMirror resets and the save and cancel buttons all apply. It opens on `nodeEditText(line)` (markers in; indentation and trailing `^id` out), selecting from `editSelectionStart`. Ctrl/Cmd+Enter or the check button or a blur (100 ms later, as in 2D) saves; Escape or the x button cancels. A textarea fallback exists as in 2D.
+- **Placement** is pure (`editBoxGeometry`): the node's on-screen left, top and width (from `Graph3DScene.nodeScreenBox`: the live panel's rect, else the projected plate), width clamped to 240-560 px, kept inside the view's box (desktop) or the visible viewport (phone), with 36 px above for the buttons. The text is `--font-text-size`, unscaled. The panel under it is hidden (`.is-editing` on the panel box) while editing.
+- **While open:** `setEditing` cancels any flight (and the pending one); the flight keys already ignore a CodeMirror target (`isEditableTarget`); `reload()` returns at once and stores one `queuedReload` (merged `flyToFocus` / `subpath`) that runs when the editor closes, so a hop made by clicking the canvas (which also blurs the editor) saves first, then moves.
+- **Save** (`saveEdit`): `freshLine` re-reads the file and finds the line by ID (gone: Notice, edit dropped), then `renameInFile(content, line, ancestorsOf(root, id), text)`, then `normalizeWrite`, then `commitEdit`. No write when the bytes did not change. `commitEdit` re-selects the line at its new start, found with `locateLine` (the restored line's nearest occurrence in the written text, since spacing normalisation or a retype can move it) rather than the old offset.
+- **Retype** is the same code path: changing `- ` to `## ` in the editor makes `renameInFile` return `retyped: true` with the subtree moved by `retypeInFile`. No "Turn into..." menu.
+- **Mobile.** On a phone the box is clamped to `visualViewport`, `navigator.virtualKeyboard.overlaysContent` is switched on for the edit and off after (the mind map's recipe), and `visualViewport` resize and VirtualKeyboard `geometrychange` re-run `fitEditTop`, so the box rises above the keyboard. Save and cancel are on-screen buttons, since there is no Ctrl+Enter or Escape. The box is above the joysticks and corner toggles (`z-index: 10000`). A double tap is detected with a 32 px slop.
+
+### Pure functions extracted or added
+
+- `renameInFile(content, src, ancestors, newLine): { text, retyped }` and `normalizeWrite(content)` in `src/mindmap-edit.ts`. `MindMapView.renameNode` now calls `renameInFile` (same bytes, same `retyped` branch; the post-retype re-selection stays in the view). Pinned in `mindmap-edit.test.ts` before and after: replaces only the line and keeps `^id`, nested indentation, no-op when unchanged, retype equals `retypeInFile`. `normalizeWrite` equals `normalizeBlockSpacing(renumberOrderedLists(x))`, idempotent.
+- `ancestorsOf`, `locateLine`, `editBoxGeometry`, `fitEditTop` in `src/graph3d/edit.ts`, with tests (including a list item retyped to a heading from a fresh parse).
+
+### Decisions worth remembering
+
+- **Double click is detected in the scene's `click()`, not a `dblclick` listener**, and it uses the node of the *first* click. The first click flies the camera, so the second would land elsewhere; this also makes double tap work on touch where `dblclick` is unreliable. `onNodeDoubleClick` returns whether the view took it; only then does the scene skip the normal click.
+- **A reload waits while the editor is open** instead of rebuilding under it. Cost: a schedule flush or metadata `resolve` during a long edit shows at the next close.
+- **Closing the view drops an open edit** (`close(false)`); an edit that already blurred away has its save in flight. Leaving edit mode, or starting study, saves it.
+- **`normalizeWrite` on a content edit can rewrite other bytes** (blank lines around headings, ordered numbering), exactly as every 2D edit does, so an undo of a content edit restores the whole file. A tick (slice 2) still writes the bare splice.
+- **The editor is not scaled or tracked to the camera.** It is placed once at open; moving the camera (orbit, wheel) blurs it and saves. The same as the mind map's blur behaviour.
+- **`freshLine` now also returns the parse root**, because `retypeInFile` compares the ancestors by identity with the siblings, so both must come from one tree.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/mindmap-edit.ts` | `renameInFile`, `normalizeWrite` (imports `markdown-spacing`) |
+| `src/mindmap-edit.test.ts` | 6 tests for them |
+| `src/views/MindMapView.ts` | `renameNode` calls `renameInFile` |
+| `src/graph3d/edit.ts` | `ancestorsOf`, `locateLine`, `editBoxGeometry`, `fitEditTop` |
+| `src/graph3d/edit.test.ts` | 13 tests for them |
+| `src/views/Graph3DEdit.ts` (new) | `Graph3DEditor`: the overlay, buttons, textarea fallback, phone viewport and keyboard handling |
+| `src/views/Graph3DNear.ts` | `nodeAt`, `panelRect`, `setEditing` (hides the panel) |
+| `src/views/Graph3DScene.ts` | `onNodeDoubleClick` option, double-click detection in `click()`, `nodeScreenBox`, `setEditing` |
+| `src/views/Graph3DView.ts` | F2 and Enter keys, `beginEdit` / `openEditor` / `finishEdit` / `saveEdit`, reload queueing, `freshLine` returns `root` |
+| `styles.css` | `.osmosis-graph3d-edit` (fixed, z-index, readable type vars), `.osmosis-graph3d-near-panel.is-editing` |
+
+### Fixture
+
+`e2e/fixtures/graph3d/Chart Table Notes.md` (copied to `vault/tests/graph3d/`): a bullet list with nested items, a line with `^wind-shift`, an ordered list, and a heading to retype under. It links to `Tide Cards`. Reload Obsidian (Ctrl+R) before testing.
+
+### Manual test (Sawyer)
+
+1. **2D sanity.** Open `vault/tests/mindmap/move-nodes.md` as a mind map. Double-click a node, change its text, Ctrl+Enter: saved. Retype one (`- ` to `## `): the subtree moves with it. Ctrl+Z undoes each. Alt+Up still moves a node, and Ctrl+Z restores it.
+2. **Open the editor.** Open `Chart Table Notes.md`, run "Open 3D graph for current note". Without edit mode, double-clicking a line just hops twice. Turn on the pencil, fly close to "Anchored in the lee of the island", double-click it. Expected: an editor box opens over it with `- Anchored in the lee of the island`, the label selected, the panel hidden under it, Save and Cancel buttons above. Type, press Ctrl+Enter: the box closes, the node shows the new text, stays selected and in place. Open the note in a tab: only that line changed.
+3. **Keys.** Click a line (it becomes focused), press F2 and then, after Escape, Enter: the editor opens each time. Escape cancels and writes nothing. WASD must not fly while typing. Outside edit mode, F2 and Enter do nothing.
+4. **Block ID.** Edit "Wind veered north-west by noon": the `^wind-shift` must still be at the end of the line in the file, and the two nested children untouched.
+5. **Retype.** Edit "Fresh water" and change `- ` to `### `: the heading and its two children move so the children stay under it (open the note to check), and the 3D node keeps its place and focus. Change it back.
+6. **Ordered list.** Edit "Rest: third watch": numbers stay 1, 2, 3.
+7. **Undo.** Ctrl+Z in the 3D view undoes each edit above in turn (the file in a tab matches); Ctrl+Shift+Z redoes. Open the note as a mind map in another tab, edit a node there, then Ctrl+Z from the 3D tab: the mind map's edit reverts. Edit in 3D and Ctrl+Z in the mind map tab: reverts.
+8. **Blur and hop.** Open the editor, change the text, then click empty space or another node: it saves, then the hop happens.
+9. **Study gate.** Start Relational study: the pencil turns off; double-click does nothing as edit.
+10. **Phone.** On a phone (or tablet), turn on the pencil and double-tap a line. The editor opens above the on-screen keyboard and not under the joysticks or the toolbar toggle; the check button saves, the x cancels.
+
+### Not verified
+
+Nothing has run in Obsidian: the `EmbeddableMarkdownEditor` mounted on `document.body` outside any view (the mind map does the same on a phone but not on a desktop); `nodeScreenBox` against real panel rects; the double-tap threshold on a real touch screen; the VirtualKeyboard and `visualViewport` fitting on Android and iOS (iOS has no VirtualKeyboard API, so it relies on `visualViewport` alone); that Enter/F2 on the view `Scope` reach the handler while the 3D canvas has focus; the placement carry after a retype. Lint, the full suite (2,276 tests) and the build pass.
