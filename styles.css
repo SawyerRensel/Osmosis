@@ -4084,10 +4084,41 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	opacity: 1;
 }
 
+/* Perf readout (Graph3DPerf.ts), behind a toggle in the bottom-left corner. */
+.osmosis-graph3d-perf {
+	position: absolute;
+	left: var(--size-4-2);
+	bottom: var(--size-4-2);
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: var(--size-4-1);
+}
+
+.osmosis-graph3d-perf-readout {
+	padding: var(--size-4-1) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	white-space: pre;
+	cursor: pointer;
+}
+
+.osmosis-graph3d-perf-readout.is-hidden {
+	display: none;
+}
+
 /* Resolves theme variables to rgb() for the WebGL scene; never visible. */
 .osmosis-graph3d-probe {
 	position: absolute;
 	visibility: hidden;
 	background-color: var(--background-primary);
 	color: var(--text-normal);
+	/* The label plates' fill and font. */
+	border-top-color: var(--background-secondary);
+	font-family: var(--font-interface);
 }

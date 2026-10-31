@@ -9,6 +9,7 @@ import ForceGraph3D, { type ForceGraph3DInstance, type LinkObject, type NodeObje
 import {
 	BufferAttribute,
 	BufferGeometry,
+	CanvasTexture,
 	Color,
 	DynamicDrawUsage,
 	FogExp2,
@@ -21,13 +22,16 @@ import {
 	MeshLambertMaterial,
 	Raycaster,
 	SphereGeometry,
+	Sprite,
+	SpriteMaterial,
+	SRGBColorSpace,
 	Vector2,
 	Vector3,
 	type PerspectiveCamera,
 	type Ray,
 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import SpriteText from "three-spritetext";
+import { Graph3DPerf } from "./Graph3DPerf";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { chooseLabelled, type LabelBudget } from "../graph3d/lod";
 import { edgeColor, edgeDistance, nodeColor, nodeSize, spriteLabel } from "../graph3d/appearance";
@@ -60,7 +64,9 @@ interface EngineNode extends NodeObject {
 	fade?: { from: number; to: number; start: number };
 	/** Left the loaded area: fading out, then dropped from the graph data. */
 	departing: boolean;
-	label?: SpriteText;
+	label?: Sprite;
+	/** 0–1: how far the label plate has faded in, and the sphere shrunk away under it. */
+	labelAlpha: number;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
@@ -77,6 +83,10 @@ interface ManyBodyForce {
 export interface SceneTheme {
 	background: string;
 	text: string;
+	/** Label plate fill. */
+	plate: string;
+	/** Label font family. */
+	font: string;
 }
 
 export interface SceneControls {
@@ -138,13 +148,20 @@ const MIST_EASE = 0.25;
 const FLIGHT_SCALE_STEP = 1.25;
 const FLIGHT_SCALE_LIMIT = 8;
 const SPEED_READOUT_MS = 1200;
+/** Every node gets a plate at any distance, up to the cap, which keeps the
+ *  nearest: each plate is its own canvas texture (~0.3 MB). */
 const LABEL_BUDGET: Record<"desktop" | "mobile", LabelBudget> = {
-	desktop: { enter: 240, exit: 280, max: 150 },
-	mobile: { enter: 180, exit: 210, max: 60 },
+	desktop: { enter: Infinity, exit: Infinity, max: 150 },
+	mobile: { enter: Infinity, exit: Infinity, max: 60 },
 };
-/** Sprites are a canvas texture each; creating too many in one frame stutters. */
+/** Plates are a canvas texture each; creating too many in one frame stutters. */
 const LABELS_PER_PASS = 12;
 const LABEL_PASS_MS = 150;
+/** Plate heights in world units: note titles, and every other label. */
+const CORE_PLATE_HEIGHT = 10;
+const LINE_PLATE_HEIGHT = 5;
+/** How long a new label takes to fade in over its sphere. */
+const LABEL_FADE_MS = 200;
 /** Flight speed as a fraction of the camera's distance to its orbit target, per second. */
 const FLIGHT_SPEED = 0.9;
 const FLIGHT_MIN_SPEED = 40;
@@ -189,16 +206,15 @@ export class Graph3DScene {
 	private fading: SphereLayer;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
 	private readonly labels = new Group();
-	/** Screen-up in world space when labels were last placed: they stand above their nodes as seen, from any angle. */
-	private readonly labelUp = new Vector3();
-	private readonly screenUp = new Vector3();
 	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
 	/** Node positions or opacities changed since the layers were last written. */
 	private dirty = false;
+	/** Only sphere sizes changed (a label plate fading over its sphere): the edges needn't be rewritten. */
+	private spheresDirty = false;
 	/** A left-button or one-finger press that may yet be a click. */
 	private press: { pointerId: number; x: number; y: number; touch: boolean } | null = null;
 	private hover: { x: number; y: number } | null = null;
-	private textColor = "#ffffff";
+	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif" };
 	private frame = 0;
 	private lastFrame = 0;
 	private lastLabelPass = 0;
@@ -224,6 +240,7 @@ export class Graph3DScene {
 	/** The touch now down stopped a coast, and so is not also a tap that hops. */
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
+	private readonly perf: Graph3DPerf;
 	private speedTimer = 0;
 	readonly heldKeys = new Set<string>();
 
@@ -286,7 +303,10 @@ export class Graph3DScene {
 		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
+		// Label plates draw after the edges, so lines run under them.
+		this.labels.renderOrder = 1;
 		this.graph.scene().add(this.solid, this.fading, this.edges, this.labels);
+		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.labels);
 
 		this.frame = window.requestAnimationFrame(this.tick);
 	}
@@ -308,9 +328,10 @@ export class Graph3DScene {
 				return node;
 			}
 			previous.delete(graph.id);
+			const relabel = this.labelText(existing.graph) !== this.labelText(graph) || nodeColor(existing.graph) !== nodeColor(graph);
 			existing.graph = graph;
 			existing.color.setStyle(nodeColor(graph));
-			if (existing.label !== undefined) existing.label.text = this.labelText(graph);
+			if (relabel) this.redrawLabel(existing);
 			if (existing.departing) {
 				existing.departing = false;
 				this.fadeTo(existing, 1, now);
@@ -355,6 +376,7 @@ export class Graph3DScene {
 			radius: Math.cbrt(nodeSize(graph)) * NODE_REL_SIZE,
 			opacity: 0,
 			departing: false,
+			labelAlpha: 0,
 		};
 		if (place !== undefined) {
 			node.x = place.x;
@@ -391,10 +413,10 @@ export class Graph3DScene {
 	}
 
 	setTheme(theme: SceneTheme): void {
-		this.textColor = theme.text;
+		this.theme = theme;
 		this.graph.backgroundColor(theme.background);
 		this.fog.color.setStyle(theme.background);
-		for (const node of this.nodes) if (node.label !== undefined) node.label.color = theme.text;
+		for (const node of this.nodes) this.redrawLabel(node);
 	}
 
 	setControls(settings: SceneControls): void {
@@ -446,6 +468,7 @@ export class Graph3DScene {
 		window.removeEventListener("pointercancel", this.onPointerUp);
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
+		this.perf.destroy();
 		for (const node of this.nodes) this.removeLabel(node);
 		this.nodes = [];
 		this.links = [];
@@ -463,15 +486,17 @@ export class Graph3DScene {
 		this.container.empty();
 	}
 
-	private addLabel(node: EngineNode): void {
-		if (node.label !== undefined) return;
+	private addLabel(node: EngineNode): Sprite {
+		if (node.label !== undefined) return node.label;
 		const isCore = node.graph.kind === "note";
-		const label = new SpriteText(this.labelText(node.graph), isCore ? 7 : 3.5, this.textColor);
-		label.material.opacity = node.opacity;
+		const label = plateSprite(this.labelText(node.graph), isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT, this.theme, nodeColor(node.graph));
+		label.visible = false;
+		if (node.x !== undefined && node.y !== undefined && node.z !== undefined) label.position.set(node.x, node.y, node.z);
 		this.labels.add(label);
 		node.label = label;
 		this.dirty = true;
 		if (!isCore) this.labelled.add(node.id);
+		return label;
 	}
 
 	private labelText(node: GraphNode): string {
@@ -481,11 +506,23 @@ export class Graph3DScene {
 	private removeLabel(node: EngineNode): void {
 		const label = node.label;
 		if (label === undefined) return;
-		label.removeFromParent();
-		label.material.map?.dispose();
-		label.material.dispose();
+		disposeLabel(label);
 		node.label = undefined;
+		node.labelAlpha = 0;
 		this.labelled.delete(node.id);
+		this.dirty = true;
+	}
+
+	/** Draw a node's plate again (new text, colour or theme), keeping its place in the fade. */
+	private redrawLabel(node: EngineNode): void {
+		const old = node.label;
+		if (old === undefined) return;
+		node.label = undefined;
+		const label = this.addLabel(node);
+		label.position.copy(old.position);
+		label.material.opacity = old.material.opacity;
+		label.visible = old.visible;
+		disposeLabel(old);
 	}
 
 	/** Middle-tier labels follow the camera: the nearest nodes inside the budget get one. */
@@ -497,7 +534,9 @@ export class Graph3DScene {
 			distances.push({ id: node.id, distance: Math.hypot(node.x - camera.x, node.y - camera.y, node.z - camera.z) });
 		}
 		const wanted = chooseLabelled(distances, this.labelled, this.budget);
+		const start = performance.now();
 		let added = 0;
+		let missing = 0;
 		for (const node of this.nodes) {
 			// A departing node's label fades out with it.
 			if (node.graph.kind === "note" || node.departing) continue;
@@ -505,8 +544,9 @@ export class Graph3DScene {
 			else if (node.label === undefined && added < LABELS_PER_PASS) {
 				this.addLabel(node);
 				added++;
-			}
+			} else if (node.label === undefined) missing++;
 		}
+		this.perf.labelPass(start, wanted.size, missing, added, performance.now() - start);
 	}
 
 	/** Translate the camera and its orbit target together, so flying and orbiting share one set of controls. */
@@ -831,6 +871,9 @@ export class Graph3DScene {
 				y: rect.top + ((1 - point.y) / 2) * rect.height,
 				radius: (node.radius * scale) / distance,
 				distance,
+				plate: node.label !== undefined && node.labelAlpha > 0.5
+					? { halfWidth: (node.label.scale.x * scale) / distance / 2, halfHeight: (node.label.scale.y * scale) / distance / 2 }
+					: undefined,
 			});
 		}
 		return candidates[pickNode(onScreen, x, y, slop)] ?? null;
@@ -858,6 +901,7 @@ export class Graph3DScene {
 			this.heldKeys.clear();
 			return;
 		}
+		const tickStart = performance.now();
 		const seconds = this.lastFrame === 0 ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000);
 		this.lastFrame = now;
 		this.startPendingFlight();
@@ -871,21 +915,23 @@ export class Graph3DScene {
 			this.updateLabels();
 		}
 		this.stepFades(now);
-		const wrote = this.dirty;
+		this.fadeInLabels(seconds);
 		if (this.dirty) {
 			this.dirty = false;
+			this.spheresDirty = false;
 			this.writeLayers();
-		}
-		this.screenUp.set(0, 1, 0).applyQuaternion(this.graph.camera().quaternion);
-		if (wrote || !this.screenUp.equals(this.labelUp)) {
-			this.labelUp.copy(this.screenUp);
+			this.writeEdges();
 			this.placeLabels();
+		} else if (this.spheresDirty) {
+			this.spheresDirty = false;
+			this.writeLayers();
 		}
 		if (this.hover !== null) {
 			const node = this.drag === null ? this.nodeNear(this.hover.x, this.hover.y, PICK_SLOP_PX.mouse) : null;
 			this.graph.renderer().domElement.style.cursor = node === null ? "" : "pointer";
 			this.hover = null;
 		}
+		this.perf.frame(now, performance.now() - tickStart);
 	};
 
 	/** Advance every fade; once the nodes that left have faded out, drop them from the graph. */
@@ -896,7 +942,6 @@ export class Graph3DScene {
 			if (fade === undefined) continue;
 			const t = Math.min(1, (now - fade.start) / FADE_MS);
 			node.opacity = fade.from + (fade.to - fade.from) * t;
-			if (node.label !== undefined) node.label.material.opacity = node.opacity;
 			this.dirty = true;
 			if (t < 1) continue;
 			node.fade = undefined;
@@ -915,9 +960,9 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Write node positions, colours and opacities into the instanced spheres
-	 * and the merged edge buffer. Nodes at
-	 * full opacity go in the opaque layer; fading ones in the transparent one.
+	 * Write node positions, colours and opacities into the instanced spheres.
+	 * Nodes at full opacity go in the opaque layer; fading ones in the
+	 * transparent one.
 	 */
 	private writeLayers(): void {
 		if (this.solid.instanceMatrix.count < this.nodes.length) {
@@ -929,8 +974,10 @@ export class Graph3DScene {
 		let solid = 0;
 		let fading = 0;
 		for (const node of this.nodes) {
-			if (node.x === undefined || node.y === undefined || node.z === undefined || node.opacity <= 0) continue;
-			matrix.makeScale(node.radius, node.radius, node.radius).setPosition(node.x, node.y, node.z);
+			// A shown label plate takes the sphere's place.
+			const radius = node.radius * (1 - node.labelAlpha);
+			if (node.x === undefined || node.y === undefined || node.z === undefined || node.opacity <= 0 || radius <= 0) continue;
+			matrix.makeScale(radius, radius, radius).setPosition(node.x, node.y, node.z);
 			if (node.opacity >= 1) {
 				this.solid.setMatrixAt(solid, matrix);
 				this.solid.setColorAt(solid++, node.color);
@@ -946,19 +993,28 @@ export class Graph3DScene {
 			if (layer.instanceColor !== null) layer.instanceColor.needsUpdate = true;
 		}
 		opacities.needsUpdate = true;
-		this.writeEdges();
 	}
 
-	/**
-	 * Stand each label just above its node on screen. Lifting along world y
-	 * instead would sink a label behind its node seen from below, and over it
-	 * seen from above.
-	 */
+	/** Centre each label plate on its node: the plate is the node, once shown. */
 	private placeLabels(): void {
 		for (const node of this.nodes) {
 			if (node.label === undefined || node.x === undefined || node.y === undefined || node.z === undefined) continue;
-			const lift = node.radius + (node.graph.kind === "note" ? 6 : 3);
-			node.label.position.set(node.x, node.y, node.z).addScaledVector(this.labelUp, lift);
+			node.label.position.set(node.x, node.y, node.z);
+		}
+	}
+
+	/** Fade each new label in, shrinking the sphere under it to match. */
+	private fadeInLabels(seconds: number): void {
+		const step = (seconds * 1000) / LABEL_FADE_MS;
+		for (const node of this.nodes) {
+			const label = node.label;
+			if (label === undefined) continue;
+			if (node.labelAlpha < 1) {
+				node.labelAlpha = Math.min(1, node.labelAlpha + step);
+				this.spheresDirty = true;
+			}
+			label.material.opacity = node.opacity * node.labelAlpha;
+			label.visible = label.material.opacity > 0;
 		}
 	}
 
@@ -1036,4 +1092,52 @@ function fadingMaterial(): MeshLambertMaterial {
 			.replace("vec4 diffuseColor = vec4( diffuse, opacity );", "vec4 diffuseColor = vec4( diffuse, opacity * vInstanceOpacity );");
 	};
 	return material;
+}
+
+/** Text size on a plate's canvas, in px. Plates scale in the world, so this sets how sharp they stay up close. */
+const PLATE_FONT_PX = 90;
+
+/**
+ * A label plate: the text on a rounded, filled background, outlined in the
+ * node's colour, drawn once into its own canvas. `height` is the plate's
+ * height in world units.
+ */
+function plateSprite(text: string, height: number, theme: SceneTheme, border: string): Sprite {
+	const canvas = createEl("canvas");
+	const context = canvas.getContext("2d");
+	const font = `${PLATE_FONT_PX}px ${theme.font}`;
+	const padX = PLATE_FONT_PX * 0.4;
+	const padY = PLATE_FONT_PX * 0.25;
+	const stroke = PLATE_FONT_PX * 0.07;
+	if (context !== null) {
+		context.font = font;
+		canvas.width = Math.ceil(context.measureText(text).width + 2 * padX);
+		canvas.height = Math.ceil(PLATE_FONT_PX * 1.25 + 2 * padY);
+		// Resizing a canvas resets its context.
+		context.font = font;
+		context.beginPath();
+		context.roundRect(stroke / 2, stroke / 2, canvas.width - stroke, canvas.height - stroke, canvas.height * 0.3);
+		context.fillStyle = theme.plate;
+		context.fill();
+		context.lineWidth = stroke;
+		context.strokeStyle = border;
+		context.stroke();
+		context.fillStyle = theme.text;
+		context.textAlign = "center";
+		context.textBaseline = "middle";
+		context.fillText(text, canvas.width / 2, canvas.height / 2);
+	}
+	const texture = new CanvasTexture(canvas);
+	texture.colorSpace = SRGBColorSpace;
+	// Plates draw after the edges and never hide each other by depth (only
+	// spheres in front do), so a nearer plate always covers a farther one.
+	const sprite = new Sprite(new SpriteMaterial({ map: texture, transparent: true, depthWrite: false, opacity: 0 }));
+	sprite.scale.set((height * canvas.width) / canvas.height, height, 1);
+	return sprite;
+}
+
+function disposeLabel(label: Sprite): void {
+	label.removeFromParent();
+	label.material.map?.dispose();
+	label.material.dispose();
 }

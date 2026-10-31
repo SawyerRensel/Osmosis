@@ -36,7 +36,6 @@
   "dependencies": {
     "3d-force-graph": "1.80.1",
     "three": "0.186.1",
-    "three-spritetext": "1.10.0",
     "ts-fsrs": "^5.2.3"
   }
 }

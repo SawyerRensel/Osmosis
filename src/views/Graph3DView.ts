@@ -1,4 +1,4 @@
-import { ItemView, Platform, Scope, SliderComponent, TFile, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Platform, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { buildGraph, noteNodeId, type GraphNode, type NoteInput } from "../graph3d/model";
@@ -30,10 +30,13 @@ export class Graph3DView extends ItemView {
 	private horizon: Horizon | null = null;
 	private focusPath: string | null = null;
 	private depth = GRAPH3D_DEFAULT_DEPTH;
+	/** Whether notes linking to a loaded note count as hops; off, the graph follows outgoing links only, like the mind map. */
+	private backlinks = false;
 	private follow = false;
 	private loadSeq = 0;
 	private followActionEl: HTMLElement | null = null;
 	private depthSlider: SliderComponent | null = null;
+	private backlinksToggle: ToggleComponent | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
@@ -71,6 +74,7 @@ export class Graph3DView extends ItemView {
 		const state = super.getState();
 		state.focus = this.focusPath;
 		state.depth = this.depth;
+		state.backlinks = this.backlinks;
 		state.follow = this.follow;
 		return state;
 	}
@@ -79,7 +83,9 @@ export class Graph3DView extends ItemView {
 		if (typeof state?.focus === "string") this.focusPath = state.focus;
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(1, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
+		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
 		this.depthSlider?.setValue(this.depth);
+		this.backlinksToggle?.setValue(this.backlinks);
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
 		await super.setState(state, result);
@@ -98,6 +104,15 @@ export class Graph3DView extends ItemView {
 			.setValue(this.depth)
 			.onChange((value) => {
 				this.depth = value;
+				this.app.workspace.requestSaveLayout();
+				void this.reload();
+			});
+		header.createSpan({ cls: "osmosis-graph3d-header-label", text: "Backlinks" });
+		this.backlinksToggle = new ToggleComponent(header)
+			.setValue(this.backlinks)
+			.onChange((value) => {
+				if (value === this.backlinks) return;
+				this.backlinks = value;
 				this.app.workspace.requestSaveLayout();
 				void this.reload();
 			});
@@ -238,7 +253,7 @@ export class Graph3DView extends ItemView {
 
 		const { metadataCache, vault } = this.app;
 		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks);
-		const horizon = computeHorizon(this.adjacency, focus, this.depth);
+		const horizon = computeHorizon(this.adjacency, focus, this.depth, this.backlinks);
 		const notes = await Promise.all(
 			[...horizon.loaded].map(async (path): Promise<NoteInput | null> => {
 				const file = vault.getFileByPath(path);
@@ -294,9 +309,9 @@ export class Graph3DView extends ItemView {
 	 */
 	private readTheme(): SceneTheme {
 		const probe = this.contentEl.createDiv({ cls: "osmosis-graph3d-probe" });
-		const background = getComputedStyle(probe).backgroundColor;
-		const text = getComputedStyle(probe).color;
+		const style = getComputedStyle(probe);
+		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily };
 		probe.remove();
-		return { background, text };
+		return theme;
 	}
 }
