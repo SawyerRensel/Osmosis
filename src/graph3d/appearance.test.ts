@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { noteHue, spriteLabel } from "./appearance";
+import { edgeDistance, linkDistance, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
 	it("keeps short plain text as it is", () => {
@@ -46,5 +46,32 @@ describe("noteHue", () => {
 			expect(hue).toBeGreaterThanOrEqual(0);
 			expect(hue).toBeLessThan(360);
 		}
+	});
+});
+
+describe("plateExtent", () => {
+	it("is half the plate's diagonal, so it clears the plate whichever way the link leaves it", () => {
+		expect(plateExtent({ width: 6, height: 8 })).toBe(5);
+		expect(plateExtent({ width: 50, height: 5 })).toBeCloseTo(25.12, 2);
+	});
+});
+
+describe("linkDistance", () => {
+	it("keeps the kind's base distance between two point-sized ends", () => {
+		for (const kind of ["hierarchy", "link", "embed", "property", "tag", "attachment"] as const) {
+			expect(linkDistance(kind, 0, 0)).toBe(edgeDistance(kind));
+		}
+	});
+
+	it("adds each end's extent to the base distance", () => {
+		expect(linkDistance("hierarchy", 25, 0)).toBe(edgeDistance("hierarchy") + 25);
+		expect(linkDistance("hierarchy", 0, 25)).toBe(edgeDistance("hierarchy") + 25);
+		expect(linkDistance("link", 30, 12)).toBe(edgeDistance("link") + 42);
+	});
+
+	it("grows with either end's plate", () => {
+		const small = linkDistance("hierarchy", 5, 5);
+		expect(linkDistance("hierarchy", 20, 5)).toBeGreaterThan(small);
+		expect(linkDistance("hierarchy", 5, 20)).toBeGreaterThan(small);
 	});
 });

@@ -90,3 +90,22 @@ export function edgeDistance(kind: GraphEdgeKind): number {
 			return 80;
 	}
 }
+
+/**
+ * How far a plate reaches from its centre: half its diagonal. Plates face the
+ * camera and a link can leave one in any direction, so this is the distance
+ * that clears the plate whichever way it points.
+ */
+export function plateExtent(plate: { width: number; height: number }): number {
+	return Math.hypot(plate.width, plate.height) / 2;
+}
+
+/**
+ * Rest length of a link between two plates: the kind's distance (see
+ * `edgeDistance`) measured between the plates' edges rather than their
+ * centres, so a parent's children sit clear of it and of each other however
+ * wide their labels are. See `vault/Planner/3D Graph - Plate-aware spacing.md`.
+ */
+export function linkDistance(kind: GraphEdgeKind, sourceExtent: number, targetExtent: number): number {
+	return edgeDistance(kind) + sourceExtent + targetExtent;
+}

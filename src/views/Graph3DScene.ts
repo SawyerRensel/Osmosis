@@ -24,7 +24,7 @@ import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
-import { edgeColor, edgeDistance, nodeColor, spriteLabel } from "../graph3d/appearance";
+import { edgeColor, linkDistance, nodeColor, plateExtent, spriteLabel } from "../graph3d/appearance";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
@@ -60,6 +60,17 @@ interface EngineNode extends NodeObject {
 
 interface EngineLink extends LinkObject<EngineNode> {
 	kind: GraphEdgeKind;
+}
+
+/** d3's link force, as much of it as the scene sets. */
+interface LinkForce {
+	distance(distance: (link: EngineLink) => number): unknown;
+}
+
+/** A link's rest length from its kind and the plates at its ends (d3 has resolved both ends to nodes by then). */
+function plateLinkDistance(link: EngineLink): number {
+	const [source, target] = [link.source as EngineNode, link.target as EngineNode];
+	return linkDistance(link.kind, plateExtent(source.shape), plateExtent(target.shape));
 }
 
 /** d3's many-body force, as much of it as the scene wraps. */
@@ -181,6 +192,7 @@ export class Graph3DScene {
 	private readonly fog: FogExp2;
 	private nodes: EngineNode[] = [];
 	private links: EngineLink[] = [];
+	private readonly linkForce: LinkForce | undefined;
 	/** Many-body strength per node; nodes not in it are left out of the force. */
 	private charge = new Map<string, number>();
 	private readonly plates: Graph3DPlates;
@@ -250,8 +262,11 @@ export class Graph3DScene {
 		container.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
 		this.speedEl = container.createDiv({ cls: "osmosis-graph3d-speed" });
 
-		const linkForce = this.graph.d3Force("link") as { distance(fn: (link: EngineLink) => number): unknown } | undefined;
-		linkForce?.distance((link) => edgeDistance(link.kind));
+		// Links are measured between plate edges, not centres, so wide labels
+		// don't pile up around their parent. d3 caches each link's distance when
+		// the data changes; setTheme re-applies it when plates are re-measured.
+		this.linkForce = this.graph.d3Force("link") as LinkForce | undefined;
+		this.linkForce?.distance(plateLinkDistance);
 		// Settled nodes are pinned, and the many-body force skips most of them
 		// (see settle.ts), which is what keeps a tick cheap in a large world.
 		const charge = this.graph.d3Force("charge") as ManyBodyForce;
@@ -398,6 +413,7 @@ export class Graph3DScene {
 		// A new font means a new glyph atlas, so every plate is laid out again.
 		this.plates.setColors(theme);
 		for (const node of this.nodes) node.shape = this.shapeFor(node.graph);
+		this.linkForce?.distance(plateLinkDistance);
 		this.dirty = true;
 		this.layoutDirty = true;
 	}
