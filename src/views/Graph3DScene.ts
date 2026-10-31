@@ -31,6 +31,7 @@ import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } 
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
+import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flight";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -217,6 +218,10 @@ export class Graph3DScene {
 	private paused = false;
 	private pendingFlight: string | null = null;
 	private pendingFlightWaits = false;
+	/** The flight under way, aimed at its node wherever the node is now. */
+	private flight: { node: EngineNode; flight: Flight } | null = null;
+	/** After a flight, the camera moves with its node until the node settles, or the user takes over. */
+	private follow: { node: EngineNode; at: Vec3 } | null = null;
 	private ticksSinceData = 0;
 	private controlSettings: SceneControls;
 	private drag: RotateDrag | null = null;
@@ -368,6 +373,8 @@ export class Graph3DScene {
 		}
 
 		const ids = new Set(this.nodes.map((node) => node.id));
+		if (this.flight !== null && !ids.has(this.flight.node.id)) this.flight = null;
+		if (this.follow !== null && !ids.has(this.follow.node.id)) this.follow = null;
 		const lingering = this.links.filter((link) => {
 			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
 			return (source.departing || target.departing) && ids.has(source.id) && ids.has(target.id);
@@ -456,6 +463,10 @@ export class Graph3DScene {
 	 * tick, so the flight waits for it. With `afterLayout`, it also waits for
 	 * the layout to spread out after new data, or the camera aims at where the
 	 * node was mid-explosion and the node drifts out of view.
+	 *
+	 * The flight then tracks the node, since a hop to another note re-heats the
+	 * layout and moves any node not yet settled, the clicked one included (see
+	 * `steerFlight`).
 	 */
 	flyTo(id: string, afterLayout = false): void {
 		this.pendingFlight = id;
@@ -474,13 +485,56 @@ export class Graph3DScene {
 		if (this.pendingFlightWaits && node.fx === undefined && this.ticksSinceData < SETTLE_TICKS) return;
 		if (node.x === undefined || node.y === undefined || node.z === undefined) return;
 		this.pendingFlight = null;
-		const target = new Vector3(node.x, node.y, node.z);
-		const camera = this.graph.camera();
-		const direction = camera.position.clone().sub(target);
-		if (direction.lengthSq() === 0) direction.set(0, 0, 1);
 		const distance = node.graph.kind === "note" ? 160 : 70;
-		const position = target.clone().add(direction.normalize().multiplyScalar(distance));
-		this.graph.cameraPosition(position, target, FLIGHT_MS);
+		const position = { x: node.x, y: node.y, z: node.z };
+		this.flight = { node, flight: startFlight(this.graph.camera().position, this.orbitControls().target, position, distance, performance.now()) };
+		this.follow = null;
+	}
+
+	/**
+	 * One frame of the flight: the camera eases toward where its node is now.
+	 * Once there, it keeps moving with the node until the node is pinned
+	 * (the layout has cooled), so a node still settling stays centred.
+	 */
+	private steerFlight(now: number): void {
+		const camera = this.graph.camera();
+		const controls = this.orbitControls();
+		const flight = this.flight;
+		if (flight !== null) {
+			const { node } = flight;
+			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) {
+				this.flight = null;
+				return;
+			}
+			const at = { x: node.x, y: node.y, z: node.z };
+			const pose = flightPose(flight.flight, at, now, FLIGHT_MS);
+			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
+			controls.update();
+			if (pose.done) {
+				this.flight = null;
+				if (node.fx === undefined) this.follow = { node, at };
+			}
+			return;
+		}
+		const follow = this.follow;
+		if (follow === null) return;
+		const { node } = follow;
+		if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) {
+			this.follow = null;
+			return;
+		}
+		const move = new Vector3(node.x - follow.at.x, node.y - follow.at.y, node.z - follow.at.z);
+		camera.position.add(move);
+		controls.target.add(move);
+		controls.update();
+		follow.at = { x: node.x, y: node.y, z: node.z };
+		if (node.fx !== undefined) this.follow = null;
+	}
+
+	/** The user moved the view: a flight or follow under way gives way. */
+	private cancelFlight(): void {
+		this.flight = this.follow = null;
 	}
 
 	destroy(): void {
@@ -528,6 +582,7 @@ export class Graph3DScene {
 			forward += axis[2];
 		}
 		if (right === 0 && up === 0 && forward === 0) return;
+		this.cancelFlight();
 
 		const camera = this.graph.camera() as PerspectiveCamera;
 		const controls = this.orbitControls();
@@ -557,6 +612,7 @@ export class Graph3DScene {
 	 */
 	private readonly onPointerDown = (e: PointerEvent): void => {
 		const touch = e.pointerType === "touch";
+		this.cancelFlight();
 		if (this.touches.size === 0) {
 			// A finger on a coasting view stops it, and that is all it does:
 			// not also a tap that hops. What the orbit coast had left carries
@@ -641,6 +697,7 @@ export class Graph3DScene {
 	private readonly onWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 		e.stopPropagation();
+		this.cancelFlight();
 		if (this.drag?.look === true && !this.drag.touch) {
 			flightScale = Math.min(FLIGHT_SCALE_LIMIT, Math.max(1 / FLIGHT_SCALE_LIMIT, flightScale * FLIGHT_SCALE_STEP ** wheelNotches(e)));
 			this.showSpeed();
@@ -872,6 +929,7 @@ export class Graph3DScene {
 		const seconds = this.lastFrame === 0 ? 0 : Math.min(0.1, (now - this.lastFrame) / 1000);
 		this.lastFrame = now;
 		this.startPendingFlight();
+		this.steerFlight(now);
 		this.fly(seconds);
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		const controls = this.orbitControls();
