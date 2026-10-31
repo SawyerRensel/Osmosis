@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-31T22:40:00.000Z"
+date_modified: "2026-10-31T22:30:00.000Z"
 date_start_scheduled: "2026-10-31T22:05:13.000Z"
 date_start_actual: "2026-10-31T22:05:13.000Z"
 date_end_scheduled:
@@ -84,7 +84,9 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 
 ### Slice 1: Extract the edit pipeline and a shared per-file history (built, see batch notes below)
 
-### Slice 2: 3D edit plumbing, undo/redo, panel checkboxes, edit-mode toggle
+### Slice 2: 3D edit plumbing, undo/redo, panel checkboxes, edit-mode toggle (built, see "Slice 2" in the batch notes below)
+
+*Corrections made while building, for later slices:* (1) a checkbox line's `content` keeps its `[ ] ` / `[x] `, so **ticking changes the line's parse ID** (and its graph node ID, unless it has a `^id`); every edit therefore re-selects and re-places its line by `range.start`, which `Graph3DView.commitEdit` and `place()` now do for all later slices. (2) `pipeline.owner` is a field (`editOwner`), set per write, not derived. (3) A toggle writes the one-line splice without `renumberOrderedLists`/`normalizeBlockSpacing`, so it can't touch other bytes; slice 3 introduces `normalizeWrite` for content edits.
 
 - `Graph3DView`:
   - Build `this.edits = new EditPipeline(app, plugin.editHistory, () => this.editOwner, (path) => { this.cache.invalidate(path); this.prefetched.delete(path); })`. No suppress flag: the 3D view *wants* to reload after its own writes.
@@ -172,3 +174,56 @@ None new: slice 1 changes no 3D behaviour. The 2D regression pass uses existing 
 ### Not verified
 
 Nothing has run in Obsidian. Lint, the full unit suite (2,240 tests) and the build pass. Unverified: every 2D undo path end to end (text, structure, style, colour-picker drag, cross-seam move), and two map tabs on one note sharing a history.
+
+## Slice 2 (3D edit plumbing, undo/redo, checkboxes, edit mode)
+
+**Built** on `feature/3d-graph-phase-7`, code commit `396f711`, on top of slice 1. Not pushed, no PR, not tested in Obsidian. **Slices 3-6 remain.**
+
+### What it does
+
+- **Undo/redo in 3D.** `Mod+Z`, `Mod+Shift+Z`, `Mod+Y` on the view's `Scope`. The key into the shared history is the focused node's note (`scene.focusedNode()?.path`), else the note last edited (`lastEditPath`), else the focus note. Restored files reload the loaded area. Typing in a text box or editor keeps its own undo (`isEditableTarget`).
+- **Holds.** After each `reload()`, `syncHolds(horizon.loaded)` holds the history of every loaded note and releases notes that left (`heldDiff`); `onClose` releases all. With the mind map also holding a note the count is 2, so the history lives until both let go.
+- **Panel checkboxes.** Panels are inert, so `Graph3DNear.checkboxAt(x, y, slop)` hit-tests `input.task-list-item-checkbox` inside the front panel (`panelAt`, extracted from `linkAt`); only a checkbox line's own panel counts. `Graph3DScene.click()` tries it before `linkAt` (plain taps only; a held Shift/Ctrl/Cmd stays pan and link behaviour) and calls `onCheckboxClick`. The view fresh-reads the file, re-parses with its `ParseCache`, finds the line again by `OsmosisNode.id`, splices `toggleCheckboxLine`, and writes through the `EditPipeline`. Works outside edit mode.
+- **Edit-mode toggle.** Pencil header action, `is-active` like study, `editMode` flag, off by default, not saved. It gates nothing yet (slices 3-6 read it); turning it on has no visible effect in this slice.
+- **Study gate.** While `Graph3DStudy.active`: edit-mode toggle, checkbox ticks, undo and redo each show `Notice("Relational study: editing is off")` and do nothing. Starting a session (`toggleStudy`, or any `redraw()` while active) turns edit mode off.
+- **Typing check** widened to `isEditableTarget` (INPUT, TEXTAREA, `isContentEditable`), used for flight keys, study keys and undo.
+
+### Decisions worth remembering
+
+- **Ticking changes a line's ID** (`[x] ` is part of `content`), so the node would respawn beside its parent and lose focus. `commitEdit` records `{ path, start, from }` and the next `reload()` (`place()`) copies the old node's placement to the new ID and re-focuses it via `setFocusId(lineNodeAt(...))`. `edited` is set only after the write resolves, so a reload already in flight can't consume it. The old node still cross-fades out as any departing node does. This is general: slices 3-6 reuse `commitEdit`.
+- **Ticks are not reach-gated** like links (`LINK_REACH`): a panel only exists when its text is readable, and undo exists. Easy to add if Sawyer finds stray ticks.
+- **No `normalizeBlockSpacing` on a toggle** (2D's `writeNodeFile` does it): a tick is a single in-line splice, so there is nothing to normalise, and rewriting other bytes on a tick would be a surprise.
+- **Touch slop** for the checkbox is 14 px, mouse 4 px, since the box is a few pixels wide at panel scale.
+- **Undo does not restore the camera or the selection**; it re-selects the focused line by its start offset when its note was restored.
+- **Edit mode is a flag only** in this slice, so the manual test cannot show it doing anything.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/mindmap-edit.ts` | `toggleCheckboxLine(lineText, checked)` extracted from `MindMapView.toggleCheckboxNode` |
+| `src/mindmap-edit.test.ts` | 4 `toggleCheckboxLine` cases (tick, untick either case, first box only, no-op) |
+| `src/views/MindMapView.ts` | `toggleCheckboxNode` calls `edit.toggleCheckboxLine` |
+| `src/graph3d/edit.ts` (new) | `findNodeById`, `lineNodeAt`, `heldDiff`, `isEditableTarget` |
+| `src/graph3d/edit.test.ts` (new) | 13 tests, including a toggle spliced against shifted fresh bytes and a parent checkbox with a `^id` and children |
+| `src/views/Graph3DNear.ts` | `panelAt` (shared), `checkboxAt` |
+| `src/views/Graph3DScene.ts` | `onCheckboxClick` option, `focusedNode()`, `setFocusId()`, checkbox hit before link in `click()` |
+| `src/views/Graph3DView.ts` | `EditPipeline`, holds, undo/redo keys, edit-mode action, study gate, `freshLine`, `commitEdit`, `toggleCheckbox`, `place()` |
+
+### Fixture
+
+`e2e/fixtures/graph3d/Dock Tasks.md` and `Haul-out Tasks.md` (copied to `vault/tests/graph3d/`): task lines (open, done, nested, one with a `^nav-lights` ID), plain bullets, and a link from Dock Tasks to Haul-out Tasks. Reload Obsidian (Ctrl+R) before testing.
+
+### Manual test (Sawyer)
+
+1. **2D sanity.** Open `vault/tests/mindmap/move-nodes.md` as a mind map, move a node (Alt+Up), Ctrl+Z restores it, Ctrl+Shift+Z redoes it. Close the map.
+2. **Tick.** Open `vault/tests/graph3d/Dock Tasks.md`, run "Open 3D graph for current note", depth 2. Fly up to "Check the fenders" until its live panel shows. Click the checkbox. Expected: the box ticks, the file now has `- [x] Check the fenders` (open it in a note tab to check), and the node stays where it was and stays selected. Click again: unticks. Try a fingertip-sized tap on a phone. Also the `^nav-lights` line: the `^nav-lights` ID must survive and the two nested tasks must be untouched.
+3. **Undo.** Tick two boxes in Dock Tasks, press Ctrl+Z twice (both revert, in order), Ctrl+Shift+Z (or Ctrl+Y) redoes one. Tick a box in Haul-out Tasks (a different loaded note), then Ctrl+Z: it reverts and is not mixed up with Dock Tasks' edits.
+4. **Across views.** Open `Dock Tasks.md` as a mind map in a second tab (note view), tick a checkbox there, switch to the 3D tab and press Ctrl+Z: it reverts the mind map's tick (the 3D view reloads). Then tick in 3D and press Ctrl+Z in the mind map tab: it reverts the 3D tick.
+5. **Typing keeps its undo.** Open the Overlays menu, type in a slider's number field if any, or any text box; Ctrl+Z there must not undo a note edit.
+6. **Edit-mode toggle.** The pencil header action highlights when on, off again on a second click. Start Relational study: the pencil turns off; clicking it shows "Relational study: editing is off"; clicking a checkbox and pressing Ctrl+Z show the same notice and change nothing.
+7. **Normal navigation unchanged.** WASD flight, clicks that hop, Mod-clicking links, still as before. Clicking a checkbox with Shift held does not tick it.
+
+### Not verified
+
+Nothing has run in Obsidian: the checkbox hit-test against real rendered panels (checkbox element class and rect under the panel's CSS scale), the placement carry (whether the new node really lands on the old one's spot), and every cross-view undo path. Lint, the full suite (2,257 tests) and the build pass.
