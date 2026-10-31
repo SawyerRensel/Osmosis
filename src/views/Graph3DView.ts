@@ -18,6 +18,12 @@ export const GRAPH3D_DEFAULT_DEPTH = 2;
 /** Each hop multiplies the loaded area, so phones get a shallower ceiling. */
 const MAX_DEPTH = Platform.isMobile ? 3 : 5;
 const FLIGHT_KEYS = ["w", "a", "s", "d", "q", "e"];
+/**
+ * Whether the walk and fly joysticks are on. Kept per device (Obsidian's
+ * vault-scoped localStorage), not in synced settings: a phone that walks with
+ * them shouldn't turn them on for a laptop that has keys.
+ */
+const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
 
 /**
  * The 3D graph: every line of the notes within N hops of the focus note, as
@@ -152,6 +158,8 @@ export class Graph3DView extends ItemView {
 			onNodeClick: (node) => this.hop(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
+			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
+			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 		});
 		this.scene.setTheme(this.readTheme());
 		// The stage can be 0×0 when the view opens (in a background tab, say),

@@ -4109,12 +4109,20 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
-/* Flight speed, shown briefly while the wheel changes it. */
-.osmosis-graph3d-speed {
+/* Bottom-right corner: the joystick toggle, with the flight speed readout to its left. */
+.osmosis-graph3d-corner {
 	position: absolute;
 	right: var(--size-4-2);
 	bottom: var(--size-4-2);
 	z-index: 1;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	pointer-events: none;
+}
+
+/* Flight speed, shown briefly while the wheel changes it. */
+.osmosis-graph3d-speed {
 	padding: var(--size-4-1) var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -4128,6 +4136,60 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-graph3d-speed.is-visible {
 	opacity: 1;
+}
+
+/* Walk and fly joysticks (Graph3DSticks.ts). */
+.osmosis-graph3d-sticks-toggle {
+	pointer-events: auto;
+}
+
+.osmosis-graph3d-sticks-toggle.is-active {
+	color: var(--text-accent);
+}
+
+.osmosis-graph3d-sticks-toggle.is-hidden {
+	display: none;
+}
+
+/* Raised clear of the perf gauge (bottom-left) and the joystick toggle (bottom-right). */
+.osmosis-graph3d-stick {
+	position: absolute;
+	bottom: calc(var(--size-4-2) + 48px);
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 120px;
+	height: 120px;
+	border: 2px solid var(--background-modifier-border);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--background-secondary) 45%, transparent);
+	/* The stick owns every touch that starts on it: no scrolling, zooming or sidebar swipes. */
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.osmosis-graph3d-stick.is-left {
+	left: var(--size-4-4);
+}
+
+.osmosis-graph3d-stick.is-right {
+	right: var(--size-4-4);
+}
+
+.osmosis-graph3d-stick.is-hidden {
+	display: none;
+}
+
+.osmosis-graph3d-stick-knob {
+	width: 52px;
+	height: 52px;
+	border: 1px solid var(--background-modifier-border-hover);
+	border-radius: 50%;
+	background: var(--interactive-normal);
+	box-shadow: var(--shadow-s);
+	pointer-events: none;
 }
 
 /* Perf readout (Graph3DPerf.ts), behind a toggle in the bottom-left corner. */

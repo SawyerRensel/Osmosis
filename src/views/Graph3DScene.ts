@@ -28,6 +28,7 @@ import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { Graph3DPerf } from "./Graph3DPerf";
+import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
@@ -41,6 +42,7 @@ import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flight";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
+import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -151,6 +153,9 @@ export interface SceneOptions {
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
+	/** Whether the walk and fly joysticks start shown, and where a toggle goes to be remembered. */
+	sticks: boolean;
+	onSticksToggle: (shown: boolean) => void;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -238,7 +243,7 @@ const CLICK_SLOP_PX = 6;
 let flightScale = 1;
 
 /** Flight keys and the camera-space direction each one moves. */
-export const FLIGHT_KEYS: Record<string, [right: number, up: number, forward: number]> = {
+export const FLIGHT_KEYS: Record<string, FlightAxes> = {
 	w: [0, 0, 1],
 	s: [0, 0, -1],
 	a: [-1, 0, 0],
@@ -308,6 +313,7 @@ export class Graph3DScene {
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
 	private readonly perf: Graph3DPerf;
+	private readonly sticks: Graph3DSticks;
 	private speedTimer = 0;
 	readonly heldKeys = new Set<string>();
 
@@ -344,7 +350,10 @@ export class Graph3DScene {
 		window.addEventListener("pointercancel", this.onPointerUp);
 		// Capture phase, so it runs before OrbitControls' wheel listener on the canvas and can stop it.
 		container.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
-		this.speedEl = container.createDiv({ cls: "osmosis-graph3d-speed" });
+		// The bottom-right corner: the joystick toggle, and the flight speed beside it.
+		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
+		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
+		this.sticks = new Graph3DSticks(container, corner, options.sticks, options.onSticksToggle);
 
 		// Links are measured between plate edges, not centres, so wide labels
 		// don't pile up around their parent. d3 caches each link's distance when
@@ -704,18 +713,19 @@ export class Graph3DScene {
 		return node.kind === "note" ? node.label : spriteLabel(node.label);
 	}
 
-	/** Translate the camera and its orbit target together, so flying and orbiting share one set of controls. */
+	/**
+	 * Translate the camera and its orbit target together, so flying and
+	 * orbiting share one set of controls. The flight keys and the move stick
+	 * steer it; the stick's push sets the throttle (see `flightAxes`).
+	 */
 	private fly(seconds: number): void {
-		let right = 0;
-		let up = 0;
-		let forward = 0;
+		const keys: FlightAxes = [0, 0, 0];
 		for (const key of this.heldKeys) {
 			const axis = FLIGHT_KEYS[key];
 			if (axis === undefined) continue;
-			right += axis[0];
-			up += axis[1];
-			forward += axis[2];
+			for (let i = 0; i < 3; i++) keys[i]! += axis[i]!;
 		}
+		const [right, up, forward] = flightAxes(keys, stickMove(this.sticks.move));
 		if (right === 0 && up === 0 && forward === 0) return;
 		this.cancelFlight();
 
@@ -730,10 +740,20 @@ export class Graph3DScene {
 			.addScaledVector(side, right)
 			.addScaledVector(lift, up)
 			.addScaledVector(look, forward)
-			.normalize()
 			.multiplyScalar(speed * seconds);
 		camera.position.add(step);
 		controls.target.add(step);
+	}
+
+	/** Turn the camera in place with the look stick, as mouse-look does. */
+	private lookAround(seconds: number): void {
+		const { yaw, pitch } = stickLook(this.sticks.look, seconds);
+		if (yaw === 0 && pitch === 0) return;
+		this.cancelFlight();
+		const camera = this.graph.camera();
+		const controls = this.orbitControls();
+		rotateAboutPivot(camera.position, controls.target, camera.position.clone(), yaw, pitch, camera.up);
+		controls.update();
 	}
 
 	private orbitControls(): OrbitControls {
@@ -1096,6 +1116,7 @@ export class Graph3DScene {
 		this.startPendingFlight();
 		this.steerFlight(now);
 		this.fly(seconds);
+		this.lookAround(seconds);
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		const controls = this.orbitControls();
 		const targetDistance = this.graph.camera().position.distanceTo(controls.target);
