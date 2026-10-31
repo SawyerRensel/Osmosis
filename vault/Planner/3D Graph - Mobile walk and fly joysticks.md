@@ -51,7 +51,7 @@ Requested by Sawyer in the Batch 1 manual test, 2026-10-31, after testing on a p
 
 ## Open question for Sawyer
 
-Sawyer specified left = look, right = move. Most console games use the opposite (left = move, right = look). Build it as specified, with the mapping in one place so it's trivial to swap.
+Sawyer first specified left = look, right = move, then swapped it after trying it on a phone: **left = move, right = look**, as most console games have it. The mapping is in one place (`STICK_ROLES`).
 
 ## What problem does this solve?
 
@@ -63,7 +63,7 @@ Built on `feature/3d-graph-joysticks` (stacked on `feature/3d-graph-phase-5`), c
 
 ### Approach
 
-- A gamepad toggle in the viewport's **bottom-right corner** shows or hides two thumb sticks. **Left = look, right = move**, as specified. The mapping is `STICK_ROLES` in `src/graph3d/joysticks.ts`, the only place to change to swap them.
+- A gamepad toggle in the viewport's **bottom-right corner** shows or hides two thumb sticks. **Left = move, right = look** (swapped from the first build by [[3D Graph - Mobile viewport layout and study panel polish]]; the original ticket had them backwards by Sawyer's own account). The mapping is `STICK_ROLES` in `src/graph3d/joysticks.ts`, the only place to change to swap them.
 - **No parallel flight code.** The move stick feeds the same `fly()` the W/A/S/D keys drive, so it uses the same speed (camera→target distance × `FLIGHT_SPEED` × `flightScale`). The look stick turns the camera in place with `rotateAboutPivot` about the camera, which is what mouse-look does. Both call `cancelFlight()` when they move, as the keys already did.
 - **Analog.** `stickDeflection` applies a radial deadzone (12% of the radius), rescales the rest of the travel to 0–1 so motion starts from zero instead of jumping, then squares it: a small push is slow and fine, and the rim is full rate. Look is 2 rad/s (about 115°/s) at full deflection. `flightAxes` combines keys and stick: held keys are normalised to full speed as before, the stick's push is added, and the total is capped at full speed. With no stick input, `fly()` behaves exactly as before. The old `.normalize()` became `flightAxes`; the side, lift and look vectors are orthonormal, so lengths carry through.
 - **Isolation.** Each stick is its own DOM element over the canvas. The scene's `pointerdown` listener is on the canvas only, so a touch that starts on a stick never becomes a press, drag, pinch or momentum sample. The window-level move and up listeners key everything by `pointerId`, and the stick's pointer is never registered in `touches`, `drag`, `press` or `pinch`, so they ignore it. Each stick captures its own pointer (`setPointerCapture`), so one thumb on each stick works at once, and a third finger on the canvas still orbits, or two fingers pinch, as usual. With the sticks off they are `display: none` and every deflection is zero, so the existing gestures run unchanged.
@@ -95,7 +95,7 @@ Reuses the existing `vault/tests/graph3d/` sailing notes (e.g. open the 3D graph
 
 ### Manual test
 
-1. **Phone:** open the 3D graph on `vault/tests/graph3d/Sailing Basics.md`. A gamepad button sits bottom-right. Tap it: two circles appear, above the perf gauge and the button. Push the right stick up to fly forward. A light push is slow, a full push is fast, and sideways strafes. The left stick turns the view: right turns right, up looks up. Hold both at once to fly in a curve.
+1. **Phone:** open the 3D graph on `vault/tests/graph3d/Sailing Basics.md`. A gamepad button sits bottom-right. Tap it: two circles appear, above the perf gauge and the button. Push the left stick up to fly forward. A light push is slow, a full push is fast, and sideways strafes. The right stick turns the view: right turns right, up looks up. Hold both at once to fly in a curve.
 2. With a thumb on a stick, the view must not orbit or pan, and nothing should coast after you let go. With a thumb on one stick, a finger dragged on the canvas still orbits.
 3. Tap the toggle off: one-finger orbit, pinch, two-finger pan and flick momentum feel exactly as before. Close and reopen the view: the toggle state is remembered on that device only.
 4. **Desktop without a touchscreen:** no gamepad button. W/A/S/D, mouse-look and wheel flight speed behave as before, and the speed readout still appears bottom-right.
