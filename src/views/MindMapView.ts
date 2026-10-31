@@ -20,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import { nodePathAt } from "../mindmap-links";
 import {
 	computeLayout,
@@ -153,8 +154,6 @@ function frontmatterValue(content: string, key: string): unknown {
 	}
 }
 
-type FileEdit = edit.FileEdit;
-
 /**
  * A fence node rendered as a card.
  *
@@ -172,16 +171,6 @@ interface OsmosisCardContent {
 	 * it. See `applyFenceHidden`.
 	 */
 	isCloze?: boolean;
-}
-
-/**
- * A single reversible map edit. Usually one file, but a move across an embed
- * boundary rewrites both the origin and the destination note, and those must
- * undo together as one step rather than leaving the content duplicated after a
- * single Ctrl+Z.
- */
-interface MapEditSnapshot {
-	edits: FileEdit[];
 }
 
 /**
@@ -240,13 +229,16 @@ export class MindMapView extends ItemView {
 	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
 
-	// Undo/redo history. Map edits write to disk directly (vault.modify /
+	// Undo/redo. Map edits write to disk directly (vault.modify /
 	// processFrontMatter), bypassing CodeMirror, so there is no editor history to
-	// forward to — the map keeps its own snapshot stack of file content before
-	// and after each edit, covering both text/structure and style writes. Cleared
-	// when the map switches to a different file.
-	private readonly undoStack: MapEditSnapshot[] = [];
-	private readonly redoStack: MapEditSnapshot[] = [];
+	// forward to. Every write goes through `edits`, which records it in the
+	// plugin's shared per-file history (`src/edit-history.ts`), covering both
+	// text/structure and style writes. The map holds its own note's history while
+	// it shows that note (`historyKey`); switching notes or closing the map lets
+	// go of it, which clears it unless another view still holds it.
+	private readonly edits: EditPipeline;
+	private historyKey: string | null = null;
+	private releaseHistory: (() => void) | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
 	// draws identically afterwards — but the frontmatter block grew, which
@@ -272,18 +264,11 @@ export class MindMapView extends ItemView {
 	// away must not paint into a container that has been torn down.
 	private closed = false;
 
-	// Live-edit session (e.g. a color-picker drag). While active, self-writes
-	// neither trigger a reload — which would tear down an open picker mid-drag —
-	// nor push individual undo entries; instead the whole session collapses into
-	// one before→after snapshot recorded when it ends.
-	private liveEditActive = false;
-	private liveEditSnapshot: FileEdit | null = null;
-
-	// Edit group: a multi-file gesture (a move across an embed boundary, with the
-	// identity migration that follows it) whose writes collapse into one undo
-	// step. Also gates reload-on-modify for its duration — `suppressNextReload`
-	// covers a single write, and a group can write the host more than once.
-	private editGroup: Map<string, FileEdit> | null = null;
+	// Live-edit sessions (a color-picker drag) and edit groups (a move across
+	// an embed boundary) live on `edits.recorder`, which collapses each into one
+	// undo step. Both also gate reload-on-modify while open: self-writes neither
+	// tear down an open picker mid-drag nor reload between a group's writes,
+	// which a single `suppressNextReload` can't cover.
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -558,6 +543,15 @@ export class MindMapView extends ItemView {
 		this.transclusionResolver = new TransclusionResolver(
 			this.app,
 			this.cache,
+		);
+		this.edits = new EditPipeline(
+			this.app,
+			this.plugin.editHistory,
+			() => this.historyKey,
+			(path) => {
+				this.suppressNextReload = true;
+				this.cache.invalidate(path);
+			},
 		);
 
 		// Register a scope so Obsidian routes key events to this view when focused,
@@ -1970,7 +1964,7 @@ export class MindMapView extends ItemView {
 			this.app.vault.on("modify", (file) => {
 				if (!(file instanceof TFile)) return;
 				if (file === this.currentFile) {
-					if (this.liveEditActive) {
+					if (this.edits.recorder.live) {
 						// A live-edit session (color-picker drag) drives rendering
 						// directly via applyMapSettings/render; ignore our own writes
 						// so a stray reload can't tear down the open picker mid-drag.
@@ -1979,7 +1973,7 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
-					if (this.editGroup) {
+					if (this.edits.recorder.grouping) {
 						// Same reasoning as a live edit: a grouped gesture can
 						// write this file more than once (content splice, then
 						// the frontmatter that carries card identity across),
@@ -2011,7 +2005,7 @@ export class MindMapView extends ItemView {
 				// offsets writes into the wrong bytes. A debounced schedule flush
 				// is the common case: it renders identically and still moves every
 				// line in the file.
-				if (this.liveEditActive || this.editGroup || this.editingNodeId) return;
+				if (this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
 				if (this.suppressNextReload) {
 					this.suppressNextReload = false;
 					return;
@@ -2062,6 +2056,9 @@ export class MindMapView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.closed = true;
+		this.releaseHistory?.();
+		this.releaseHistory = null;
+		this.historyKey = null;
 		this.toolRibbon?.destroy();
 		this.toolRibbon = null;
 		this.resizeObserver?.disconnect();
@@ -2135,12 +2132,14 @@ export class MindMapView extends ItemView {
 			this.exitSpatialMode();
 		}
 
-		// Clear caches and undo history when switching to a different file
+		// Clear caches and let go of the old note's undo history when switching
+		// to a different file. The history is dropped unless another view holds it.
 		if (file !== this.currentFile) {
 			this.nodeSizeCache.clear();
 			this.nodeHtmlCache.clear();
-			this.undoStack.length = 0;
-			this.redoStack.length = 0;
+			this.releaseHistory?.();
+			this.historyKey = file.path;
+			this.releaseHistory = this.plugin.editHistory.hold(file.path);
 		}
 		this.currentFile = file;
 		// A full load re-reads every file the map is built from, which is the
@@ -7787,21 +7786,18 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Undo or redo the last map edit from the view's own snapshot history.
+	 * Undo or redo the last map edit to this map's note, from the shared history.
 	 *
 	 * Map edits write to disk via vault.modify / processFrontMatter, bypassing
 	 * CodeMirror, so there is no editor undo stack to forward to — this restores
-	 * the recorded before/after content instead. Self-contained: it does not see
-	 * edits made in a separate Markdown editor, and no-ops when the relevant stack
-	 * is empty.
+	 * the recorded before/after content instead. It sees edits any Osmosis view
+	 * made to this note (see `src/edit-history.ts`), but not edits made in a
+	 * separate Markdown editor, and no-ops when there is nothing to undo.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
-		const source = isRedo ? this.redoStack : this.undoStack;
-		const snapshot = source.pop();
-		if (!snapshot) return;
-		(isRedo ? this.undoStack : this.redoStack).push(snapshot);
-		void this.applySnapshot(snapshot.edits, isRedo);
+		if (this.historyKey === null) return;
+		void this.applySnapshot(this.edits.step(this.historyKey, isRedo));
 	}
 
 	/** Undo the last map edit. Public entry point for the properties sidebar,
@@ -7822,86 +7818,27 @@ export class MindMapView extends ItemView {
 	 * until {@link endLiveEdit}.
 	 */
 	beginLiveEdit(): void {
-		this.liveEditActive = true;
-		this.liveEditSnapshot = null;
+		this.edits.recorder.beginLive();
 	}
 
-	/** End a live-edit session, recording one snapshot for the whole burst. */
+	/** End a live-edit session, recording one undo step for the whole burst. */
 	endLiveEdit(): void {
-		if (!this.liveEditActive) return;
-		this.liveEditActive = false;
-		const snap = this.liveEditSnapshot;
-		this.liveEditSnapshot = null;
-		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
+		this.edits.recorder.endLive();
 	}
 
 	/**
-	 * Open an edit group: every {@link recordEdit} until {@link endEditGroup}
-	 * accumulates into one undo step instead of pushing its own. Files may be
-	 * written more than once inside a group; the group keeps the first `before`
-	 * and the last `after` for each path, so the net change is what gets undone.
+	 * Open an edit group: every write until {@link endEditGroup} accumulates
+	 * into one undo step instead of pushing its own. Files may be written more
+	 * than once inside a group; the group keeps the first `before` and the last
+	 * `after` for each path, so the net change is what gets undone.
 	 */
 	private beginEditGroup(): void {
-		this.editGroup = new Map();
+		this.edits.recorder.beginGroup();
 	}
 
 	/** Close an edit group, pushing its accumulated writes as one undo step. */
 	private endEditGroup(): void {
-		const group = this.editGroup;
-		this.editGroup = null;
-		if (!group) return;
-		const edits = edit.collapseEditGroup(group);
-		if (edits.length === 0) return;
-		this.undoStack.push({ edits });
-		this.enforceUndoLimits();
-		this.redoStack.length = 0;
-	}
-
-	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
-	private recordEdit(path: string, before: string, after: string): void {
-		if (before === after) return;
-		if (this.liveEditActive) {
-			// Coalescing: keep the pre-session content as the baseline and track
-			// the latest result; endLiveEdit records the single net change.
-			if (!this.liveEditSnapshot) {
-				this.liveEditSnapshot = { path, before, after };
-			} else if (this.liveEditSnapshot.path === path) {
-				this.liveEditSnapshot.after = after;
-			}
-			return;
-		}
-		if (this.editGroup) {
-			edit.mergeEdit(this.editGroup, { path, before, after });
-			return;
-		}
-		this.undoStack.push({ edits: [{ path, before, after }] });
-		this.enforceUndoLimits();
-		// A fresh edit invalidates any redo history.
-		this.redoStack.length = 0;
-	}
-
-	/** In-memory byte estimate for one snapshot (summed across its files). */
-	private static snapshotBytes(snap: MapEditSnapshot): number {
-		return edit.editBytes(snap.edits);
-	}
-
-	/**
-	 * Trim undo history to the configured step and memory limits, oldest first,
-	 * applying whichever is reached first. Only the growing undoStack is capped
-	 * (redoStack is transient — cleared on any fresh edit). At least the most
-	 * recent entry is always kept so a just-made edit stays undoable.
-	 */
-	private enforceUndoLimits(): void {
-		const maxSteps = Math.max(1, this.plugin.settings.undoMaxSteps);
-		while (this.undoStack.length > maxSteps) this.undoStack.shift();
-
-		const maxBytes = Math.max(1, this.plugin.settings.undoMaxMemoryMB) * 1024 * 1024;
-		let total = 0;
-		for (const snap of this.undoStack) total += MindMapView.snapshotBytes(snap);
-		while (this.undoStack.length > 1 && total > maxBytes) {
-			const removed = this.undoStack.shift();
-			if (removed) total -= MindMapView.snapshotBytes(removed);
-		}
+		this.edits.recorder.endGroup();
 	}
 
 	/**
@@ -7915,10 +7852,7 @@ export class MindMapView extends ItemView {
 		file: TFile,
 		fn: (fm: Record<string, unknown>) => void,
 	): Promise<void> {
-		const before = await this.app.vault.read(file);
-		await this.app.fileManager.processFrontMatter(file, fn);
-		const after = await this.app.vault.read(file);
-		this.recordEdit(file.path, before, after);
+		const after = await this.edits.processFrontMatter(file, fn);
 
 		// processFrontMatter inserts or grows the frontmatter block, shifting
 		// every body offset. Rebuild currentTree from the new content so a
@@ -7945,28 +7879,17 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Restore every file in a snapshot (undo/redo target). Re-renders from the
-	 * restored content — reloading frontmatter and clearing the size cache so both
-	 * text and style changes are reflected. Handles the current file and
-	 * transcluded source files, mirroring the write paths.
-	 *
-	 * A multi-file group is applied in reverse order when undoing, forward when
-	 * redoing — the same reasoning as the move itself (see `moveAcrossFiles`):
-	 * the file that *gains* content is written before the one that loses it, so a
-	 * failure partway leaves the content duplicated rather than gone.
+	 * Re-render after an undo/redo (`EditPipeline.step`) has restored its files.
+	 * Re-renders from the restored content — reloading frontmatter and clearing
+	 * the size cache so both text and style changes are reflected. Handles the
+	 * current file and transcluded source files, mirroring the write paths.
 	 */
-	private async applySnapshot(edits: FileEdit[], isRedo: boolean): Promise<void> {
-		const ordered = isRedo ? edits : [...edits].reverse();
+	private async applySnapshot(step: Promise<RestoredFile[] | null>): Promise<void> {
+		const restored = await step;
+		if (restored === null) return;
 		let restoredCurrent: string | null = null;
-
-		for (const fileEdit of ordered) {
-			const file = this.app.vault.getFileByPath(fileEdit.path);
-			if (!(file instanceof TFile)) continue;
-			const content = isRedo ? fileEdit.after : fileEdit.before;
-			this.suppressNextReload = true;
-			this.cache.invalidate(fileEdit.path);
-			await this.app.vault.modify(file, content);
-			if (fileEdit.path === this.currentFile?.path) restoredCurrent = content;
+		for (const file of restored) {
+			if (file.path === this.currentFile?.path) restoredCurrent = file.content;
 		}
 
 		if (!this.currentFile) return;
@@ -8002,11 +7925,7 @@ export class MindMapView extends ItemView {
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
 		newContent = this.normalizeHeadingSpacing(newContent);
-		const before = await this.app.vault.read(this.currentFile);
-		this.suppressNextReload = true;
-		this.cache.invalidate(this.currentFile.path);
-		await this.app.vault.modify(this.currentFile, newContent);
-		this.recordEdit(this.currentFile.path, before, newContent);
+		await this.edits.write(this.currentFile, newContent);
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
@@ -8035,11 +7954,7 @@ export class MindMapView extends ItemView {
 		if (!(sourceFile instanceof TFile)) return;
 
 		newContent = this.normalizeHeadingSpacing(newContent);
-		const before = await this.app.vault.read(sourceFile);
-		this.suppressNextReload = true;
-		this.cache.invalidate(sourceFilePath);
-		await this.app.vault.modify(sourceFile, newContent);
-		this.recordEdit(sourceFilePath, before, newContent);
+		await this.edits.write(sourceFile, newContent);
 
 		await this.resyncFromParent();
 	}
@@ -8112,11 +8027,7 @@ export class MindMapView extends ItemView {
 		const normalized = this.normalizeHeadingSpacing(
 			this.renumberOrderedLists(content),
 		);
-		const before = await this.app.vault.read(file);
-		this.suppressNextReload = true;
-		this.cache.invalidate(file.path);
-		await this.app.vault.modify(file, normalized);
-		this.recordEdit(file.path, before, normalized);
+		await this.edits.write(file, normalized);
 	}
 
 	/**
@@ -8274,7 +8185,7 @@ export class MindMapView extends ItemView {
 	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
 	 * and schedule together. {@link processFrontMatterTracked} is what makes
 	 * that true; `ScheduleStore` writes on its own debounce and bypasses
-	 * `recordEdit`, so its writes would fall outside the group.
+	 * the edit pipeline, so its writes would fall outside the group.
 	 *
 	 * Best-effort by design: the bytes have already moved, so a frontmatter
 	 * failure is reported and left for the debounced sync to re-derive rather

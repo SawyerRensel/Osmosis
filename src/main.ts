@@ -44,6 +44,7 @@ import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
+import { EditHistory } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
@@ -129,6 +130,11 @@ export default class OsmosisPlugin extends Plugin {
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
 	mutationHistory!: MutationHistory;
+	/** Undo/redo for map edits, one history per file, shared by the mind map and the 3D graph. */
+	readonly editHistory = new EditHistory(() => ({
+		maxSteps: this.settings.undoMaxSteps,
+		maxMemoryMB: this.settings.undoMaxMemoryMB,
+	}));
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
