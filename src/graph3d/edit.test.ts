@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
-import { toggleCheckboxLine } from "../mindmap-edit";
+import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { findNodeById, heldDiff, isEditableTarget, lineNodeAt } from "./edit";
+import { ancestorsOf, editBoxGeometry, findNodeById, fitEditTop, heldDiff, isEditableTarget, lineNodeAt, locateLine } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -101,5 +101,98 @@ describe("isEditableTarget", () => {
 		expect(isEditableTarget(target({ tagName: "CANVAS", isContentEditable: false }))).toBe(false);
 		expect(isEditableTarget(target({}))).toBe(false);
 		expect(isEditableTarget(null)).toBe(false);
+	});
+});
+
+describe("ancestorsOf", () => {
+	it("lists parents nearest first, ending at the root", () => {
+		const root = parser.parse(note, "Rig.md").root;
+		const fender = root.children[0]!.children[1]!.children[0]!;
+		const up = ancestorsOf(root, fender.id);
+		expect(up).toHaveLength(3);
+		expect(up[0]!.content).toBe("[x] Coil the sheet");
+		expect(up[1]!.content).toBe("Rigging");
+		expect(up[2]).toBe(root);
+	});
+
+	it("is empty for the root and for an unknown id", () => {
+		const root = parser.parse(note, "Rig.md").root;
+		expect(ancestorsOf(root, root.id)).toEqual([]);
+		expect(ancestorsOf(root, "nope")).toEqual([]);
+	});
+
+	it("feeds renameInFile: a list item turned into a heading is retyped", () => {
+		const md = "## Rigging\n\n- Halyard\n\t- Shackle\n- Sheet\n";
+		const root = parser.parse(md, "Rig.md").root;
+		const halyard = root.children[0]!.children[0]!;
+		const out = renameInFile(md, halyard, ancestorsOf(root, halyard.id), "### Halyard");
+		expect(out.retyped).toBe(true);
+		const moved = parser.parse(normalizeWrite(out.text), "Rig.md").root.children[0]!;
+		expect(moved.children.map((c) => c.content)).toEqual(["Sheet", "Halyard"]);
+		expect(moved.children[1]!.children.map((c) => c.content)).toEqual(["Shackle"]);
+	});
+});
+
+describe("locateLine", () => {
+	it("finds the line where normalised spacing moved it", () => {
+		const out = "- one\n\n## Heading\n\n- two\n";
+		expect(locateLine(out, "## Heading", 6)).toBe(out.indexOf("## Heading"));
+	});
+
+	it("picks the occurrence nearest the hint among duplicates", () => {
+		const text = "- same\n- other\n- same\n";
+		expect(locateLine(text, "- same", 14)).toBe(text.lastIndexOf("- same"));
+		expect(locateLine(text, "- same", 1)).toBe(0);
+	});
+
+	it("falls back to the hint when the line is gone verbatim or empty", () => {
+		expect(locateLine("2. a\n", "3. a", 0)).toBe(0);
+		expect(locateLine("x\n", "", 1)).toBe(1);
+	});
+});
+
+describe("editBoxGeometry", () => {
+	const bounds = { left: 0, top: 0, right: 1000, bottom: 700 };
+
+	it("keeps the node's left, top and width when they fit", () => {
+		expect(editBoxGeometry({ left: 100, top: 200, width: 300, height: 40 }, bounds)).toEqual({ left: 100, top: 200, width: 300, maxHeight: 492 });
+	});
+
+	it("widens a tiny far plate and narrows a huge panel to a readable range", () => {
+		expect(editBoxGeometry({ left: 100, top: 200, width: 12, height: 4 }, bounds).width).toBe(240);
+		expect(editBoxGeometry({ left: 100, top: 200, width: 2000, height: 400 }, bounds).width).toBe(560);
+	});
+
+	it("stays inside the bounds, with room for the buttons above", () => {
+		const box = editBoxGeometry({ left: 950, top: -50, width: 300, height: 40 }, bounds);
+		expect(box.left).toBe(1000 - 8 - 300);
+		expect(box.top).toBe(8 + 36);
+		const low = editBoxGeometry({ left: 10, top: 900, width: 300, height: 40 }, bounds);
+		expect(low.top).toBe(700 - 8 - 48);
+	});
+
+	it("shrinks to a phone-width viewport", () => {
+		const phone = { left: 0, top: 0, right: 360, bottom: 400 };
+		const box = editBoxGeometry({ left: 20, top: 100, width: 100, height: 20 }, phone);
+		expect(box.width).toBe(240);
+		expect(box.left + box.width).toBeLessThanOrEqual(360 - 8);
+		const narrow = editBoxGeometry({ left: 0, top: 100, width: 100, height: 20 }, { left: 0, top: 0, right: 200, bottom: 400 });
+		expect(narrow.width).toBe(184);
+	});
+});
+
+describe("fitEditTop", () => {
+	const bounds = { left: 0, top: 0, right: 360, bottom: 400 };
+
+	it("leaves a box that fits where it is", () => {
+		expect(fitEditTop(100, 60, bounds)).toBe(100);
+	});
+
+	it("lifts a box the keyboard or its own growth pushed past the bottom", () => {
+		expect(fitEditTop(300, 120, bounds)).toBe(400 - 8 - 120);
+	});
+
+	it("never rises above the room the buttons need", () => {
+		expect(fitEditTop(300, 900, bounds)).toBe(8 + 36);
 	});
 });

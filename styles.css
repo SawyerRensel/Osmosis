@@ -4409,3 +4409,17 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	opacity: 0;
 	pointer-events: none;
 }
+
+/* Inline editing in the 3D graph (Graph3DEdit.ts): the mind map's edit box (.osmosis-edit-overlay supplies the look and the CodeMirror resets), but placed in screen space on document.body and at a readable size, whatever the camera distance. Above the view's own corner controls. */
+.osmosis-edit-overlay.osmosis-graph3d-edit {
+	position: fixed;
+	z-index: 10000;
+	--osmosis-edit-font-size: var(--font-text-size, 16px);
+	--osmosis-edit-line-height: 1.45;
+	--osmosis-edit-padding: 6px 10px;
+}
+
+/* The panel under the editor is hidden while its text is being edited. */
+.osmosis-graph3d-near-panel.is-editing {
+	visibility: hidden;
+}

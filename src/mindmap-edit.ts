@@ -17,6 +17,7 @@
 
 import type { OsmosisNode, Range } from "./types";
 import { extractTrailingBlockId, stripTrailingBlockId } from "./block-id";
+import { normalizeBlockSpacing } from "./markdown-spacing";
 
 /**
  * Serialize a node type/depth/content back to a single markdown line.
@@ -802,6 +803,39 @@ export function retypeInFile(
 	let target = inCut(Math.min(...before.map((s) => s.start)));
 	while (target >= 2 && cut[target - 1] === "\n" && cut[target - 2] === "\n") target--;
 	return cut.slice(0, target) + block + "\n" + cut.slice(target);
+}
+
+/**
+ * Replace a node's line in `content` with the line the inline editor produced,
+ * as the mind map's rename does. `newLine` is the editor's text (see
+ * {@link nodeEditText}); the indentation and block ID it withheld are put back.
+ *
+ * A list item renamed to a heading (or back) takes its children with it and
+ * moves to where its new kind keeps its parent ({@link retypeInFile}), and
+ * `retyped` says so; any other rename is just the one line. `ancestors` runs
+ * from the node's parent up to the root.
+ */
+export function renameInFile(
+	content: string,
+	src: OsmosisNode,
+	ancestors: readonly OsmosisNode[],
+	newLine: string,
+): { text: string; retyped: boolean } {
+	const line = restoreEditedLine(src, newLine);
+	const retyped = retypeInFile(content, src, ancestors, line);
+	if (retyped === null) {
+		return { text: content.slice(0, src.range.start) + line + content.slice(src.range.end), retyped: false };
+	}
+	return { text: retyped, retyped: true };
+}
+
+/**
+ * What a node edit writes for the text it produced: ordered lists renumbered,
+ * then block spacing normalised. Both views' write paths apply these two in
+ * this order (the mind map in `writeNodeFile` then `writeMarkdown`).
+ */
+export function normalizeWrite(content: string): string {
+	return normalizeBlockSpacing(renumberOrderedLists(content)).content;
 }
 
 /**

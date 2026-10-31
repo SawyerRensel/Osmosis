@@ -35,6 +35,8 @@ import {
 	retypeSubtree,
 	retypeInFile,
 	toggleCheckboxLine,
+	renameInFile,
+	normalizeWrite,
 } from "./mindmap-edit";
 import { normalizeBlockSpacing } from "./markdown-spacing";
 import type { FileEdit } from "./mindmap-edit";
@@ -1769,5 +1771,60 @@ describe("toggleCheckboxLine", () => {
 	it("leaves a line with no matching box alone", () => {
 		expect(toggleCheckboxLine("- plain", false)).toBe("- plain");
 		expect(toggleCheckboxLine("- [ ] open", true)).toBe("- [ ] open");
+	});
+});
+
+describe("renameInFile (what MindMapView.renameNode writes)", () => {
+	const md = "## Rigging\n\n- Halyard ^rig-1\n\t- Shackle\n- Sheet\n\n## Mooring\n\n- Cleat\n";
+
+	function rename(content: string, newLine: string) {
+		const root = parser.parse(md, "t.md").root;
+		const src = findByContent(root, content);
+		const ancestors: OsmosisNode[] = [];
+		const walk = (n: OsmosisNode, trail: OsmosisNode[]): boolean => {
+			if (n === src) { ancestors.push(...trail.slice().reverse()); return true; }
+			return n.children.some((c) => walk(c, [...trail, n]));
+		};
+		walk(root, []);
+		return { src, ...renameInFile(md, src, ancestors, newLine) };
+	}
+
+	it("replaces just the one line, keeping the block id the box withheld", () => {
+		const out = rename("Halyard", "- Main halyard");
+		expect(out.retyped).toBe(false);
+		expect(out.text).toBe(md.replace("- Halyard ^rig-1", "- Main halyard ^rig-1"));
+	});
+
+	it("keeps a nested item's indentation", () => {
+		const out = rename("Shackle", "- Bow shackle");
+		expect(out.text).toBe(md.replace("\t- Shackle", "\t- Bow shackle"));
+	});
+
+	it("is byte-identical when the text is unchanged", () => {
+		const root = parser.parse(md, "t.md").root;
+		const src = findByContent(root, "Halyard");
+		expect(renameInFile(md, src, [], nodeEditText(src)).text).toBe(md);
+	});
+
+	it("reports a retype and moves the block, as retypeInFile does", () => {
+		const out = rename("Halyard", "### Halyard");
+		expect(out.retyped).toBe(true);
+		const root = parser.parse(md, "t.md").root;
+		const src = findByContent(root, "Halyard");
+		const rigging = root.children[0]!;
+		expect(out.text).toBe(retypeInFile(md, src, [rigging, root], restoreEditedLine(src, "### Halyard")));
+	});
+});
+
+describe("normalizeWrite", () => {
+	it("renumbers ordered lists, then normalises block spacing", () => {
+		const md = "- one\n## Heading\n1. a\n1. b\n";
+		expect(normalizeWrite(md)).toBe(normalizeBlockSpacing(renumberOrderedLists(md)).content);
+		expect(normalizeWrite(md)).toBe("- one\n\n## Heading\n\n1. a\n2. b\n");
+	});
+
+	it("is idempotent", () => {
+		const once = normalizeWrite("Text\n## H\n- a\n");
+		expect(normalizeWrite(once)).toBe(once);
 	});
 });

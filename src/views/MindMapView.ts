@@ -8321,23 +8321,22 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		// Restore what the edit box withheld: the node's indentation and its
-		// trailing block ID (line-card identity / style anchor).
-		const line = edit.restoreEditedLine(src, newLine);
-		// A list item renamed to a heading (or back) takes its children with it,
-		// and moves to where its new kind keeps its parent; any other rename is
-		// just the one line.
+		// `renameInFile` restores what the edit box withheld (the node's
+		// indentation and its trailing block ID: line-card identity / style
+		// anchor). A list item renamed to a heading (or back) takes its children
+		// with it, and moves to where its new kind keeps its parent; any other
+		// rename is just the one line.
 		const ancestors: OsmosisNode[] = [];
 		for (let p = target.parent; p; p = p.parent) ancestors.push(p.source);
-		const retyped = edit.retypeInFile(content, src, ancestors, line);
-		if (retyped === null) {
-			await this.writeNodeFile(src, content.slice(0, src.range.start) + line + content.slice(src.range.end));
+		const { text: renamed, retyped } = edit.renameInFile(content, src, ancestors, newLine);
+		if (!retyped) {
+			await this.writeNodeFile(src, renamed);
 			return;
 		}
 		// The node may have moved, so its old offset no longer finds it; match
 		// it by its new kind and unchanged text instead.
 		this.pendingSelectionRangeStart = null;
-		await this.writeNodeFile(src, retyped);
+		await this.writeNodeFile(src, renamed);
 		const type = src.type === "heading" ? undefined : "heading";
 		for (const [id, layoutNode] of this.nodeMap) {
 			const s = layoutNode.source;

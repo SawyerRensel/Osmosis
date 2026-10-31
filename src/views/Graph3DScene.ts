@@ -154,6 +154,8 @@ export interface SceneOptions {
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
 	/** A click on a task checkbox in a near-tier panel (it is the checkbox line's own box); the view toggles it. */
 	onCheckboxClick: (node: GraphNode) => void;
+	/** A second click or tap on a node, close in time and place to the first. True when the view took it (it opened an editor), so the scene does nothing more with it. */
+	onNodeDoubleClick: (node: GraphNode) => boolean;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
@@ -203,6 +205,9 @@ const LOOK_RATE = Math.PI;
 const PICK_SLOP_PX = { mouse: 16, touch: 32 };
 /** How far outside a task checkbox's drawn box a press still ticks it: the box is a few pixels wide at panel scale. */
 const CHECKBOX_SLOP_PX = { mouse: 4, touch: 14 };
+/** Two clicks this close in time and place are a double click (a double tap uses the wider distance). */
+const DOUBLE_CLICK_MS = 400;
+const DOUBLE_CLICK_PX = { mouse: 8, touch: 32 };
 /** The orbit target stays at least this far ahead, so a zoom that passes through it keeps going. */
 const MIN_DEPTH = 10;
 /** Seconds for the mist to settle when the zoom re-aims at a nearer or farther depth, so it doesn't pop. */
@@ -292,6 +297,8 @@ export class Graph3DScene {
 	private layoutDirty = false;
 	/** A left-button or one-finger press that may yet be a click. */
 	private press: { pointerId: number; x: number; y: number; touch: boolean } | null = null;
+	/** The last click on a node, to tell a double click. The node is kept, since the first click flies the camera away from where the second lands. */
+	private lastClick: { at: number; x: number; y: number; node: GraphNode } | null = null;
 	private hover: { x: number; y: number } | null = null;
 	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif" };
 	private frame = 0;
@@ -655,6 +662,35 @@ export class Graph3DScene {
 		this.focusId = id;
 	}
 
+	/**
+	 * Where node `id` is on screen (client pixels): its live panel's box, or its
+	 * plate's. Null when it is gone or behind the camera. The inline editor opens
+	 * over it.
+	 */
+	nodeScreenBox(id: string): { left: number; top: number; width: number; height: number } | null {
+		const node = this.nodes.find((n) => n.id === id);
+		if (node === undefined || node.x === undefined || node.y === undefined || node.z === undefined) return null;
+		const panel = this.near.panelRect(id);
+		if (panel !== null) return panel;
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const rect = this.graph.renderer().domElement.getBoundingClientRect();
+		const point = new Vector3(node.x, node.y, node.z).sub(camera.position);
+		const distance = point.dot(camera.getWorldDirection(new Vector3()));
+		if (distance <= 0) return null;
+		point.add(camera.position).project(camera);
+		const scale = rect.height / (2 * Math.tan((camera.fov * Math.PI) / 360)) / distance;
+		const width = node.shape.width * scale;
+		const height = node.shape.height * scale;
+		return { left: rect.left + ((point.x + 1) / 2) * rect.width - width / 2, top: rect.top + ((1 - point.y) / 2) * rect.height - height / 2, width, height };
+	}
+
+	/** Start or stop editing node `id` in place: its panel is hidden under the editor, and a flight under way stops. */
+	setEditing(id: string | null): void {
+		this.near.setEditing(id);
+		this.pendingFlight = null;
+		this.cancelFlight();
+	}
+
 	private startPendingFlight(): void {
 		if (this.pendingFlight === null) return;
 		const node = this.nodes.find((n) => n.id === this.pendingFlight);
@@ -901,6 +937,7 @@ export class Graph3DScene {
 			this.options.onCheckboxClick(box.node);
 			return;
 		}
+		if (!e.shiftKey && !e.ctrlKey && !e.metaKey && this.doubleClicked(x, y, touch)) return;
 		const link = this.near.linkAt(x, y);
 		const focus = this.focusId === null ? undefined : this.nodes.find((node) => node.id === this.focusId);
 		const linkNode = link === null ? undefined : this.nodes.find((node) => node.id === link.node.id);
@@ -924,6 +961,20 @@ export class Graph3DScene {
 		}
 		const node = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
 		if (node !== null) this.options.onNodeClick(node.graph);
+	}
+
+	/**
+	 * Whether this click is the second of a double click on a node that the view
+	 * took (see `onNodeDoubleClick`). Otherwise remembers the click for the next.
+	 */
+	private doubleClicked(x: number, y: number, touch: boolean): boolean {
+		const hit = this.near.nodeAt(x, y) ?? this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"])?.graph ?? null;
+		const now = performance.now();
+		const prev = this.lastClick;
+		this.lastClick = hit === null ? null : { at: now, x, y, node: hit };
+		if (prev === null || now - prev.at > DOUBLE_CLICK_MS || Math.hypot(x - prev.x, y - prev.y) > DOUBLE_CLICK_PX[touch ? "touch" : "mouse"]) return false;
+		this.lastClick = null;
+		return this.options.onNodeDoubleClick(prev.node);
 	}
 
 	/** The wheel zooms toward what is under the cursor, or sets the flight speed while flying. */

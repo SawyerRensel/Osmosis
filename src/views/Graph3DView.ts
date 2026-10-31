@@ -1,19 +1,20 @@
 import { ItemView, MarkdownRenderer, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
-import { toggleCheckboxLine } from "../mindmap-edit";
+import { editSelectionStart, nodeEditText, normalizeWrite, renameInFile, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
-import { findNodeById, heldDiff, isEditableTarget, lineNodeAt } from "../graph3d/edit";
+import { ancestorsOf, findNodeById, heldDiff, isEditableTarget, lineNodeAt, locateLine } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { memoryStrengths, nodeTags, overlayNodeColor, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
 import type { PanelLink } from "./Graph3DNear";
+import { Graph3DEditor } from "./Graph3DEdit";
 import { Graph3DOverlaysMenu } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
 import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
@@ -103,6 +104,12 @@ export class Graph3DView extends ItemView {
 			this.prefetched.delete(path);
 		},
 	);
+	/** The inline editor over the node being edited. While it is open, reloads wait (see `reload`). */
+	private readonly editor = new Graph3DEditor(this.app, () => this.contentEl);
+	/** An editor is being prepared (its line is being read), so a second request must not start another. */
+	private opening = false;
+	/** A reload that was asked for while the editor was open, run when it closes. */
+	private queuedReload: { flyToFocus: boolean; subpath: string } | null = null;
 	/** The note the write in progress is filed under in the history (see `commitEdit`). */
 	private editOwner: string | null = null;
 	/** The note last edited, so undo still finds it after the edited line's ID, and the focus with it, changed. */
@@ -150,6 +157,15 @@ export class Graph3DView extends ItemView {
 		this.scope.register(["Mod"], "z", stepKey(false));
 		this.scope.register(["Mod", "Shift"], "z", stepKey(true));
 		this.scope.register(["Mod"], "y", stepKey(true));
+		// In edit mode, F2 or Enter edits the focused line (a button or a text box keeps its own Enter).
+		const editKey = (e: KeyboardEvent) => {
+			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
+			const node = this.scene?.focusedNode() ?? null;
+			if (node === null || !this.beginEdit(node)) return undefined;
+			return false;
+		};
+		this.scope.register([], "F2", editKey);
+		this.scope.register([], "Enter", editKey);
 	}
 
 	getViewType(): string {
@@ -251,6 +267,7 @@ export class Graph3DView extends ItemView {
 			onNodeClick: (node) => this.clickNode(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
+			onNodeDoubleClick: (node) => this.beginEdit(node),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
@@ -307,6 +324,8 @@ export class Graph3DView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		// An edit still open when the view closes is dropped; one that blurred away already began saving.
+		this.editor.close(false);
 		this.scheduleReload.cancel();
 		this.loadSeq++;
 		this.study?.destroy();
@@ -322,6 +341,7 @@ export class Graph3DView extends ItemView {
 		this.prefetched.clear();
 		this.model = null;
 		this.editActionEl = null;
+		this.queuedReload = null;
 		for (const release of this.holds.values()) release();
 		this.holds.clear();
 	}
@@ -438,6 +458,8 @@ export class Graph3DView extends ItemView {
 	private setEditMode(on: boolean): void {
 		this.editMode = on;
 		this.editActionEl?.toggleClass("is-active", on);
+		// Leaving edit mode (or starting a study session) saves the line being edited.
+		if (!on) this.editor.close(true);
 	}
 
 	/**
@@ -481,13 +503,14 @@ export class Graph3DView extends ItemView {
 	 * flush can move every offset since, so an edit never splices by the
 	 * model's offsets. Null when the line has gone.
 	 */
-	private async freshLine(node: GraphNode): Promise<{ file: TFile; content: string; line: OsmosisNode } | null> {
+	private async freshLine(node: GraphNode): Promise<{ file: TFile; content: string; line: OsmosisNode; root: OsmosisNode } | null> {
 		const id = node.source?.id;
 		const file = node.kind === "line" && node.path !== undefined ? this.app.vault.getFileByPath(node.path) : null;
 		if (file === null || id === undefined) return null;
 		const content = await this.app.vault.read(file);
-		const line = findNodeById(this.cache.get(file.path, content).root, id);
-		return line === null ? null : { file, content, line };
+		const { root } = this.cache.get(file.path, content);
+		const line = findNodeById(root, id);
+		return line === null ? null : { file, content, line, root };
 	}
 
 	/**
@@ -502,6 +525,88 @@ export class Graph3DView extends ItemView {
 		// Marked only now, so a reload that was already under way can't take it.
 		this.edited = { path: file.path, start, from: node.id };
 		void this.reload();
+	}
+
+	/**
+	 * Open the inline editor on `node` if edit mode is on and it is a line.
+	 * True when the gesture is taken, so a double click does not also hop.
+	 */
+	private beginEdit(node: GraphNode): boolean {
+		if (!this.editMode || node.kind !== "line" || node.source === undefined) return false;
+		if (this.editBlocked()) return false;
+		void this.openEditor(node);
+		return true;
+	}
+
+	/**
+	 * Read the line fresh, then open the editor over the node's panel or plate.
+	 * The text is `nodeEditText`, as in the mind map: markers in, indentation
+	 * and block ID out (both come back on save).
+	 */
+	private async openEditor(node: GraphNode): Promise<void> {
+		if (this.opening || this.editor.isOpen) return;
+		this.opening = true;
+		try {
+			const fresh = await this.freshLine(node);
+			const scene = this.scene;
+			if (fresh === null || scene === null) {
+				if (fresh === null) new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const anchor = scene.nodeScreenBox(node.id);
+			if (anchor === null) return;
+			const text = nodeEditText(fresh.line);
+			const view = this.contentEl.getBoundingClientRect();
+			scene.setEditing(node.id);
+			this.editor.open({
+				file: fresh.file,
+				text,
+				selectionStart: editSelectionStart(text, fresh.line.content),
+				anchor,
+				view: { left: view.left, top: view.top, right: view.right, bottom: view.bottom },
+				done: (edited) => void this.finishEdit(node, text, edited),
+			});
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not open the editor", error);
+			new Notice("Osmosis: could not edit that line");
+		} finally {
+			this.opening = false;
+		}
+	}
+
+	/** The editor closed: `edited` is its text on save, null on cancel. Writes what changed, then lets a reload that waited run. */
+	private async finishEdit(node: GraphNode, original: string, edited: string | null): Promise<void> {
+		this.scene?.setEditing(null);
+		try {
+			if (edited !== null && edited !== original) await this.saveEdit(node, edited);
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not save an edit", error);
+			new Notice("Osmosis: could not save that edit");
+		} finally {
+			const queued = this.queuedReload;
+			this.queuedReload = null;
+			if (queued !== null) void this.reload(queued.flyToFocus, queued.subpath);
+		}
+	}
+
+	/**
+	 * Write the edited text into the line's note, as the mind map's rename
+	 * does: the line is found again in the file's fresh bytes, `renameInFile`
+	 * restores its indentation and block ID (and, if its markers changed
+	 * between list and heading, moves its subtree), and the file is
+	 * renumbered and spaced like any 2D write.
+	 */
+	private async saveEdit(node: GraphNode, edited: string): Promise<void> {
+		const fresh = await this.freshLine(node);
+		if (fresh === null) {
+			new Notice("Osmosis: that line changed before the edit saved");
+			return;
+		}
+		const { file, content, line, root } = fresh;
+		const { text } = renameInFile(content, line, ancestorsOf(root, line.id), edited);
+		const out = normalizeWrite(text);
+		if (out === content) return;
+		await this.commitEdit(file, out, node, locateLine(out, restoreEditedLine(line, edited), line.range.start));
 	}
 
 	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */
@@ -696,9 +801,14 @@ export class Graph3DView extends ItemView {
 	 * on that line instead.
 	 */
 	private async reload(flyToFocus = false, subpath = ""): Promise<void> {
-		const seq = ++this.loadSeq;
 		const scene = this.scene;
 		if (scene === null) return;
+		// A reload can drop the node being edited, and a hop moves the view out from under the editor: wait for it to close.
+		if (this.editor.isOpen) {
+			this.queuedReload = { flyToFocus: flyToFocus || (this.queuedReload?.flyToFocus ?? false), subpath: subpath || (this.queuedReload?.subpath ?? "") };
+			return;
+		}
+		const seq = ++this.loadSeq;
 		const focus = this.focusPath;
 		this.emptyEl?.toggleClass("is-hidden", focus !== null);
 		if (focus === null) {

@@ -114,6 +114,8 @@ export class Graph3DNear {
 	private density = 0;
 	/** Off (the Overlays menu's labels on plates only), no panel is chosen and the open ones fade out. */
 	private enabled = true;
+	/** The node being edited over, whose panel stays hidden. */
+	private editing: string | null = null;
 	private readonly point = new Vector3();
 	private readonly platePoint = new Vector3();
 	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
@@ -225,6 +227,25 @@ export class Graph3DNear {
 		return front === null ? undefined : byId.get(front);
 	}
 
+	/** The node whose panel is drawn on top at client point (`x`, `y`), if any. */
+	nodeAt(x: number, y: number): GraphNode | null {
+		return this.panelAt(x, y)?.node.graph ?? null;
+	}
+
+	/** Where node `id`'s live panel is on screen (client pixels), or null when it has none. */
+	panelRect(id: string): { left: number; top: number; width: number; height: number } | null {
+		const panel = this.panels.get(id);
+		if (panel === undefined || panel.target !== 1 || !panel.rendered) return null;
+		const { left, top, width, height } = panel.box.getBoundingClientRect();
+		return { left, top, width, height };
+	}
+
+	/** Hide node `id`'s panel while its text is being edited over it (null shows every panel). */
+	setEditing(id: string | null): void {
+		this.editing = id;
+		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === id);
+	}
+
 	/** The link at client point (`x`, `y`) in the panel drawn on top there, if any. */
 	linkAt(x: number, y: number): PanelLink | null {
 		const panel = this.panelAt(x, y);
@@ -296,6 +317,7 @@ export class Graph3DNear {
 		const object = new CSS2DObject(anchor);
 		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity };
 		this.boxes.set(box, panel);
+		box.classList.toggle("is-editing", node.id === this.editing);
 		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
 		object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
