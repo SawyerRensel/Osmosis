@@ -17,6 +17,8 @@ export interface ScreenNode {
 	y: number;
 	radius: number;
 	distance: number;
+	/** A node shown as a label plate is picked by the plate's rectangle (half extents in px), not the circle. */
+	plate?: { halfWidth: number; halfHeight: number };
 }
 
 /**
@@ -36,7 +38,9 @@ export function pickNode(nodes: readonly ScreenNode[], x: number, y: number, slo
 	let bestGap = Infinity;
 	let bestDistance = Infinity;
 	nodes.forEach((node, i) => {
-		const gap = Math.max(0, Math.hypot(node.x - x, node.y - y) - node.radius);
+		const gap = node.plate === undefined
+			? Math.max(0, Math.hypot(node.x - x, node.y - y) - node.radius)
+			: Math.hypot(Math.max(0, Math.abs(node.x - x) - node.plate.halfWidth), Math.max(0, Math.abs(node.y - y) - node.plate.halfHeight));
 		if (gap > slop) return;
 		if (gap < bestGap || (gap === bestGap && node.distance < bestDistance)) {
 			best = i;

@@ -23,6 +23,15 @@ describe("pickNode", () => {
 		expect(pickNode([node(8, 0, 2, 100), node(-20, 0, 15, 400)], 0, 0, 10)).toBe(1);
 	});
 
+	it("picks a label plate anywhere on its rectangle", () => {
+		const plate: ScreenNode = { ...node(100, 100, 2, 300), plate: { halfWidth: 60, halfHeight: 10 } };
+		// 55 px right of centre: on the plate, though far outside its 2 px circle.
+		expect(pickNode([plate], 155, 104, 0)).toBe(0);
+		// 8 px below the plate's edge.
+		expect(pickNode([plate], 100, 118, 6)).toBe(-1);
+		expect(pickNode([plate], 100, 118, 10)).toBe(0);
+	});
+
 	it("prefers the nearer node when the cursor is on two", () => {
 		expect(pickNode([node(0, 0, 10, 500), node(3, 0, 10, 200), node(-3, 0, 10, 900)], 0, 0, 10)).toBe(1);
 	});

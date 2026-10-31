@@ -1574,6 +1574,9 @@ export default class OsmosisPlugin extends Plugin {
 		// Any saveSettings() wrote the old default here, so it is dropped rather
 		// than carried over.
 		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");
+		// Saved 3D graph node positions, dropped before release: a vault's
+		// shape keeps changing, so each session settles it afresh.
+		Reflect.deleteProperty(this.settings, "graph3dPositions");
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

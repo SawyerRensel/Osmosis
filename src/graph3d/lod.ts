@@ -2,9 +2,10 @@
  * Detail tiers for the 3D graph, chosen by camera distance. See the `# Spec`
  * section of `vault/Planner/Develop Mind-Map Graph View.md` ("Detail tiers").
  *
- * Phase 2 has two tiers below the note cores, which are always labelled: far
- * (a sphere only) and middle (a sphere plus a text sprite). The near tier and
- * its own budget arrive in Phase 4.
+ * Below the note cores, which are always labelled, a node is either far (a
+ * sphere only) or middle (a label plate, which takes the sphere's place). The
+ * scene sets no distance limit, so the cap alone decides: the nearest nodes
+ * get plates. The near tier and its own budget arrive in Phase 4.
  */
 
 export interface NodeDistance {
@@ -15,7 +16,7 @@ export interface NodeDistance {
 export interface LabelBudget {
 	/** An unlabelled node gains its label inside this distance. */
 	enter: number;
-	/** A labelled node keeps its label out to this distance (> `enter`), so a
+	/** A labelled node keeps its label out to this distance (>= `enter`), so a
 	 *  node resting on the boundary doesn't flicker. */
 	exit: number;
 	/** At most this many labels at once; the nearest win. */
