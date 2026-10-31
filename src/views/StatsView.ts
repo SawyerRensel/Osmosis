@@ -82,6 +82,7 @@ const MODE_SERIES: readonly Series[] = [
 	{ key: "sequential", label: "Sequential", color: COLOR.new },
 	{ key: "contextual", label: "Contextual", color: COLOR.learning },
 	{ key: "spatial", label: "Spatial", color: COLOR.young },
+	{ key: "relational", label: "Relational", color: COLOR.mature },
 ];
 
 const MATURITY_SERIES: readonly Series[] = [
@@ -816,6 +817,7 @@ export class StatsView extends ItemView {
 				{ key: "sequential", label: "Sequential" },
 				{ key: "contextual", label: "Contextual" },
 				{ key: "spatial", label: "Spatial" },
+				{ key: "relational", label: "Relational" },
 			],
 			this.modeFilter,
 			(key) => {

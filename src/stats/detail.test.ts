@@ -80,7 +80,7 @@ describe("DetailAccumulator — volume", () => {
 			entry({ m: "contextual" }),
 			entry({ m: "sequential" }),
 		]);
-		expect(stats.modeTotals).toEqual({ sequential: 1, contextual: 2, spatial: 0 });
+		expect(stats.modeTotals).toEqual({ sequential: 1, contextual: 2, spatial: 0, relational: 0 });
 	});
 
 	it("collects every card it counted, for the mode-filtered card graphs", () => {
@@ -92,7 +92,7 @@ describe("DetailAccumulator — volume", () => {
 		const stats = accumulate([]);
 		expect(stats.rollup).toEqual({});
 		expect(stats.reviewedCards.size).toBe(0);
-		expect(stats.modeTotals).toEqual({ sequential: 0, contextual: 0, spatial: 0 });
+		expect(stats.modeTotals).toEqual({ sequential: 0, contextual: 0, spatial: 0, relational: 0 });
 	});
 });
 
@@ -314,7 +314,9 @@ describe("DetailAccumulator — recall", () => {
 		const stats = accumulate([
 			entry({ c: "a", t: at(3), pi: GRAD * 5, r: 3, m: "contextual" }),
 			entry({ c: "b", t: at(3), pi: GRAD * 5, r: 1, m: "spatial" }),
+			entry({ c: "c", t: at(3), pi: GRAD * 5, r: 4, m: "relational" }),
 		]);
+		expect(stats.byMode.get("relational")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
 		expect(stats.byMode.get("contextual")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
 		expect(stats.byMode.get("spatial")).toMatchObject({ reviewed: 1, passed: 0, rate: 0 });
 		expect(stats.byMode.has("sequential")).toBe(false);

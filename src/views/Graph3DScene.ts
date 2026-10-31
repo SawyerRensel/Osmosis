@@ -472,6 +472,12 @@ export class Graph3DScene {
 		return positions;
 	}
 
+	/** Where the camera is now, for picking what is nearest it. */
+	viewpoint(): Vec3 {
+		const { x, y, z } = this.graph.camera().position;
+		return { x, y, z };
+	}
+
 	private createNode(graph: GraphNode, place: Placed | undefined): EngineNode {
 		const node: EngineNode = {
 			id: graph.id,

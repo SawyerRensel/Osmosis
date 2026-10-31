@@ -4109,6 +4109,51 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
+/* Relational study panel (Graph3DStudy.ts): top right, clear of the header. Rating colours come from .osmosis-contextual-rating. */
+.osmosis-graph3d-study {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-1);
+	max-width: min(340px, calc(100% - 2 * var(--size-4-2)));
+	padding: var(--size-4-2) var(--size-4-3);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+}
+
+.is-phone .osmosis-graph3d-study {
+	top: auto;
+	bottom: calc(var(--size-4-2) * 2 + var(--icon-size, 18px) + var(--size-4-3));
+	left: var(--size-4-2);
+	max-width: none;
+}
+
+.osmosis-graph3d-study-title {
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+
+.osmosis-graph3d-study-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--size-4-2);
+}
+
+.osmosis-graph3d-study-rating {
+	margin-top: 0;
+}
+
+.osmosis-graph3d-study-hint {
+	color: var(--text-faint);
+}
+
 /* Bottom-right corner: the joystick toggle, with the flight speed readout to its left. */
 .osmosis-graph3d-corner {
 	position: absolute;

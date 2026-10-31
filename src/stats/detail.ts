@@ -74,6 +74,7 @@ export class DetailAccumulator {
 		sequential: 0,
 		contextual: 0,
 		spatial: 0,
+		relational: 0,
 	};
 	private readonly hours: HourBucket[] = Array.from({ length: 24 }, (_, hour) => ({
 		hour,

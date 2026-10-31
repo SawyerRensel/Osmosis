@@ -11,6 +11,9 @@ import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
 import type { PanelLink } from "./Graph3DNear";
 import { Graph3DOverlaysMenu } from "./Graph3DOverlays";
+import { Graph3DStudy } from "./Graph3DStudy";
+import { nearestTarget } from "../graph3d/study";
+import type { FSRSRating } from "../database/FSRSScheduler";
 
 export const VIEW_TYPE_GRAPH3D = "osmosis-graph3d";
 
@@ -18,6 +21,8 @@ export const GRAPH3D_DEFAULT_DEPTH = 2;
 /** Each hop multiplies the loaded area, so phones get a shallower ceiling. */
 const MAX_DEPTH = Platform.isMobile ? 3 : 5;
 const FLIGHT_KEYS = ["w", "a", "s", "d", "q", "e"];
+/** Relational study's rating keys, as in every other study surface. */
+const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
 /**
  * Whether the walk and fly joysticks are on. Kept per device (Obsidian's
  * vault-scoped localStorage), not in synced settings: a phone that walks with
@@ -48,6 +53,9 @@ export class Graph3DView extends ItemView {
 	private follow = false;
 	private loadSeq = 0;
 	private followActionEl: HTMLElement | null = null;
+	private studyActionEl: HTMLElement | null = null;
+	/** Relational study, while the view is open; its session runs only while `active`. */
+	private study: Graph3DStudy | null = null;
 	private depthSlider: SliderComponent | null = null;
 	private backlinksToggle: ToggleComponent | null = null;
 	private overlaysMenu: Graph3DOverlaysMenu | null = null;
@@ -72,6 +80,16 @@ export class Graph3DView extends ItemView {
 			this.scope.register([], key, (e: KeyboardEvent) => {
 				if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return undefined;
 				this.scene?.heldKeys.add(key);
+				return false;
+			});
+		}
+		// Study keys act only during a session, and otherwise pass the key on.
+		const typing = (e: KeyboardEvent): boolean => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+		this.scope.register([], " ", (e: KeyboardEvent) => (this.study?.active === true && !typing(e) && this.study.reveal() ? false : undefined));
+		for (const rating of RATING_KEYS) {
+			this.scope.register([], String(rating), (e: KeyboardEvent) => {
+				if (this.study?.active !== true || typing(e)) return undefined;
+				void this.study.rate(rating);
 				return false;
 			});
 		}
@@ -142,12 +160,18 @@ export class Graph3DView extends ItemView {
 
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
+		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
 
 		this.emptyEl = root.createDiv({
 			cls: "osmosis-graph3d-empty",
 			text: "Open a note and run \"Open 3D graph for current note\".",
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
+		this.study = new Graph3DStudy(root, this.plugin(), {
+			redraw: () => this.redraw(),
+			hop: (node) => this.hop(node),
+			nearest: (ids) => this.nearest(ids),
+		});
 
 		const { Graph3DScene } = await import("./Graph3DScene");
 		// The view may have closed while the engine module loaded.
@@ -155,7 +179,7 @@ export class Graph3DView extends ItemView {
 		this.scene = new Graph3DScene(this.stageEl, {
 			controls: this.controlSettings(),
 			overlays: this.sceneOverlays(),
-			onNodeClick: (node) => this.hop(node),
+			onNodeClick: (node) => this.clickNode(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
@@ -214,6 +238,8 @@ export class Graph3DView extends ItemView {
 	async onClose(): Promise<void> {
 		this.scheduleReload.cancel();
 		this.loadSeq++;
+		this.study?.destroy();
+		this.study = null;
 		this.scene?.destroy();
 		this.scene = null;
 		this.overlaysMenu = null;
@@ -303,6 +329,39 @@ export class Graph3DView extends ItemView {
 		this.app.workspace.requestSaveLayout();
 		const file = this.app.workspace.getActiveFile();
 		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) this.setFocus(file.path, true);
+	}
+
+	private toggleStudy(): void {
+		if (this.study === null) return;
+		if (this.study.active) this.study.stop();
+		else this.study.start();
+		this.studyActionEl?.toggleClass("is-active", this.study.active);
+	}
+
+	/** Hand the scene the current model again, as the study session shows it now. */
+	private redraw(): void {
+		this.studyActionEl?.toggleClass("is-active", this.study?.active === true);
+		const { scene, model, horizon } = this;
+		if (scene === null || model === null || horizon === null) return;
+		scene.setData(this.study?.decorate(model) ?? model, placeNodes(model, scene.positions(), horizon.via));
+	}
+
+	/** The node among `ids` nearest the camera. */
+	private nearest(ids: readonly string[]): string | null {
+		const scene = this.scene;
+		if (scene === null) return null;
+		const positions = scene.positions();
+		const candidates = ids.flatMap((id) => {
+			const at = positions.get(id);
+			return at === undefined ? [] : [{ id, ...at }];
+		});
+		return nearestTarget(scene.viewpoint(), candidates);
+	}
+
+	/** A click or tap on a node: in a study session, arriving at (or revealing) a hidden card. */
+	private clickNode(node: GraphNode): void {
+		this.study?.clicked(node);
+		this.hop(node);
 	}
 
 	/** Click or tap: fly to the node, and recentre the loaded area on its note. */
@@ -417,7 +476,7 @@ export class Graph3DView extends ItemView {
 		this.horizon = horizon;
 		this.model = model;
 		scene.setColoring(this.coloring(model));
-		scene.setData(model, placeNodes(model, scene.positions(), horizon.via));
+		scene.setData(this.study?.decorate(model) ?? model, placeNodes(model, scene.positions(), horizon.via));
 		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.prefetch(horizon.prefetch, seq);
 	}
