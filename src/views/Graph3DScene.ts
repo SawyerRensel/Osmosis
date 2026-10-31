@@ -29,6 +29,7 @@ import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
+import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -295,6 +296,17 @@ export class Graph3DScene {
 
 		this.plates = new Graph3DPlates(this.theme);
 		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
+		// Edges dim with the plates. They blend over the background, so fading
+		// their alpha is the same mix toward it; each fragment uses its own depth.
+		edgeMaterial.onBeforeCompile = (shader) => {
+			shader.uniforms.uFocus = this.plates.focus;
+			shader.vertexShader = shader.vertexShader
+				.replace("void main() {", "varying float vFocusDepth;\nvoid main() {")
+				.replace("#include <fog_vertex>", "#include <fog_vertex>\nvFocusDepth = -mvPosition.z;");
+			shader.fragmentShader = shader.fragmentShader
+				.replace("void main() {", `varying float vFocusDepth;\n${FOCUS_DIM_GLSL}\nvoid main() {`)
+				.replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= 1.0 - focusDim(vFocusDepth);");
+		};
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
@@ -847,8 +859,14 @@ export class Graph3DScene {
 		this.fly(seconds);
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		const controls = this.orbitControls();
-		const mist = MIST / Math.max(MIST_MIN_DISTANCE, this.graph.camera().position.distanceTo(controls.target));
-		this.fog.density += (mist - this.fog.density) * (1 - Math.exp(-seconds / MIST_EASE));
+		const targetDistance = this.graph.camera().position.distanceTo(controls.target);
+		const ease = 1 - Math.exp(-seconds / MIST_EASE);
+		const mist = MIST / Math.max(MIST_MIN_DISTANCE, targetDistance);
+		this.fog.density += (mist - this.fog.density) * ease;
+		// Focus dimming follows the orbit target's view depth, eased like the mist.
+		const focus = this.plates.focus;
+		const focusDepth = this.viewDepth(controls.target);
+		focus.value = focus.value === 0 ? focusDepth : focus.value + (focusDepth - focus.value) * ease;
 		this.stepFades(now);
 		if (this.dirty) {
 			this.dirty = false;

@@ -12,7 +12,9 @@
  *   covers a farther one with no sorting. Glyphs blend over their own plate,
  *   which is always drawn first, and use a polygon offset to win the depth tie.
  * - **Fading:** an opaque plate can't fade with alpha, so arrival and
- *   departure mix it toward the background colour (as the mist does).
+ *   departure mix it toward the background colour (as the mist does). Focus
+ *   dimming (`../graph3d/focus.ts`) folds into the same mix, from the depth of
+ *   the plate's centre, so a whole plate and its text dim together.
  */
 
 import {
@@ -30,6 +32,7 @@ import {
 	type IUniform,
 } from "three";
 import { GlyphPacker, PLATE_RADIUS, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
+import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 
 /** Glyphs are rasterised at this size, in rows this tall, on square pages this wide (all px). */
 const FONT_PX = 48;
@@ -185,6 +188,7 @@ varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
+${FOCUS_DIM_GLSL}
 #include <fog_pars_vertex>
 void main() {
 	vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
@@ -192,7 +196,7 @@ void main() {
 	vHalf = aSize * 0.5;
 	mvPosition.xy += vLocal;
 	vColor = aColor;
-	vOpacity = aOpacity;
+	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
 }
 `;
@@ -228,12 +232,13 @@ attribute vec4 aRect;
 attribute vec4 aUv;
 varying vec2 vUv;
 varying float vOpacity;
+${FOCUS_DIM_GLSL}
 #include <fog_pars_vertex>
 void main() {
 	vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
 	mvPosition.xy += aRect.xy + position.xy * aRect.zw;
 	vUv = aUv.xy + (position.xy + 0.5) * aUv.zw;
-	vOpacity = aOpacity;
+	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
 }
 `;
@@ -326,6 +331,8 @@ export class Graph3DPlates {
 		uText: { value: new Color() },
 		uBackground: { value: new Color() },
 	};
+	/** View depth of the focus, for focus dimming. The scene eases it each frame and shares it with the edges. */
+	readonly focus: IUniform<number> = { value: 0 };
 	private font = "";
 
 	constructor(colors: PlateColors) {
@@ -337,7 +344,7 @@ export class Graph3DPlates {
 			// With the renderer's multisampling, the shader's edge coverage becomes a smooth edge.
 			alphaToCoverage: true,
 		});
-		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground });
+		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground, uFocus: this.focus });
 		this.plates = new QuadLayer(material, PLATE_ATTRIBUTES);
 		this.group.add(this.plates.mesh);
 		this.atlas = new GlyphAtlas("");
@@ -465,6 +472,7 @@ export class Graph3DPlates {
 			uAtlas: { value: this.atlas.pages[page]!.texture },
 			uText: this.uniforms.uText,
 			uBackground: this.uniforms.uBackground,
+			uFocus: this.focus,
 		});
 		const layer = new QuadLayer(material, GLYPH_ATTRIBUTES);
 		this.glyphs.push(layer);
