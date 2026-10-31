@@ -9,7 +9,9 @@ import {
 	Scope,
 	Notice,
 	Menu,
+	parseLinktext,
 	parseYaml,
+	resolveSubpath,
 	setIcon,
 	type ViewStateResult,
 } from "obsidian";
@@ -18,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { nodePathAt } from "../mindmap-links";
 import {
 	computeLayout,
 	LayoutNode,
@@ -115,6 +118,21 @@ const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
 // Identity migration constants
 const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
+
+/** A viewport saved by `getEphemeralState`, as history hands it back. */
+interface SavedViewport {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	zoom: number;
+}
+
+function isViewport(value: unknown): value is SavedViewport {
+	if (!value || typeof value !== "object") return false;
+	const v = value as Record<string, unknown>;
+	return ["x", "y", "w", "h", "zoom"].every((k) => typeof v[k] === "number");
+}
 
 /**
  * Read one key out of a file's YAML frontmatter block, straight from its raw
@@ -613,9 +631,15 @@ export class MindMapView extends ItemView {
 
 	getState(): Record<string, unknown> {
 		const state = super.getState();
-		// Persist only the mode — never `file`, which would auto-pin restored
-		// views via setState. collapsedIds stay unpersisted (they churn).
+		// `file` is what Back/Forward and a restored workspace reload the map
+		// from; without it a map revisited through history comes back blank.
+		// `pinned` travels with it so restoring an unpinned map doesn't pin it.
+		// collapsedIds stay unpersisted (they churn).
 		state.readingMode = this.isReadingMode;
+		if (this.currentFile) {
+			state.file = this.currentFile.path;
+			state.pinned = this.isPinned;
+		}
 		return state;
 	}
 
@@ -626,14 +650,70 @@ export class MindMapView extends ItemView {
 		if (typeof state?.file === "string") {
 			const file = this.app.vault.getFileByPath(state.file);
 			if (file instanceof TFile) {
-				// Pin so the map stays on this file
-				this.isPinned = true;
-				this.pinActionEl?.addClass("is-active");
+				// Callers that name a file mean "show this one" — pin unless the
+				// state says otherwise, so the map stays on it.
+				this.isPinned = state.pinned !== false;
+				this.pinActionEl?.toggleClass("is-active", this.isPinned);
+				const switching = file !== this.currentFile;
+				// Record the map we're leaving, so Back returns to it. A link jump
+				// within the same note is recorded too: Back undoes the jump.
+				if (switching || state.linkJump === true) result.history = true;
 				await this.loadFile(file);
+				// The old viewport means nothing on another note's map; history
+				// and link targets re-place it through setEphemeralState.
+				if (switching) this.fitToView();
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 			}
 		}
 		await super.setState(state, result);
+	}
+
+	getEphemeralState(): Record<string, unknown> {
+		const state = super.getEphemeralState();
+		state.viewport = { ...this.viewBox, zoom: this.zoom };
+		return state;
+	}
+
+	setEphemeralState(state: unknown): void {
+		super.setEphemeralState(state);
+		if (!state || typeof state !== "object") return;
+		const { subpath, viewport } = state as { subpath?: unknown; viewport?: unknown };
+		if (typeof subpath === "string" && subpath) {
+			void this.revealSubpath(subpath);
+		} else if (isViewport(viewport)) {
+			this.stopInertia();
+			const { zoom, ...viewBox } = viewport;
+			this.viewBox = viewBox;
+			this.zoom = zoom;
+			this.updateViewBox();
+		}
+	}
+
+	/**
+	 * Center on and select the node a `#heading` or `#^block` subpath names in
+	 * the open note, expanding any collapsed ancestors so it is drawn.
+	 */
+	private async revealSubpath(subpath: string): Promise<void> {
+		if (!this.currentFile || !this.currentTree) return;
+		const cache = this.app.metadataCache.getFileCache(this.currentFile);
+		const target = cache ? resolveSubpath(cache, subpath) : null;
+		const path = target ? nodePathAt(this.currentTree.root, target.start.offset) : [];
+		const node = path[path.length - 1];
+		if (!node) {
+			new Notice(`Couldn't find "${subpath}" in ${this.currentFile.basename}`);
+			return;
+		}
+
+		let expanded = false;
+		for (const ancestor of path.slice(0, -1)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		if (expanded) await this.render();
+
+		const layoutNode = this.nodeMap.get(node.id);
+		if (!layoutNode) return;
+		this.selectNode(node.id);
+		this.centerOnNode(layoutNode);
 	}
 
 	private togglePin(): void {
@@ -3130,7 +3210,12 @@ export class MindMapView extends ItemView {
 		// Root node is virtual; center on its first child if possible
 		const target = root.children.length > 0 ? root.children[0] : null;
 		if (!target) return;
+		this.centerOnNode(target);
+	}
 
+	/** Center the viewport on a node, keeping the zoom. */
+	private centerOnNode(target: LayoutNode): void {
+		this.stopInertia();
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
 		const nx = target.rect.x + offsetX + target.rect.width / 2;
@@ -3833,7 +3918,7 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode === "off") {
 			const link = (e.target as Element).closest("a");
 			if (link) {
-				this.openNodeLink(link);
+				this.openNodeLink(link, e);
 				return;
 			}
 		}
@@ -4219,22 +4304,66 @@ export class MindMapView extends ItemView {
 		return group?.getAttribute("data-node-id") ?? null;
 	}
 
+	/** The note a node's text lives in — the embedded note for a transcluded node. */
+	private nodeFile(node: OsmosisNode): TFile | null {
+		return node.sourceFile
+			? this.app.vault.getFileByPath(node.sourceFile)
+			: this.currentFile;
+	}
+
 	/**
-	 * Follow a link inside a node, the way Obsidian would.
+	 * Follow a link inside a node.
 	 *
 	 * Shared by both input paths. Cancelling the anchor's default action is only
 	 * half the job — without this the link would simply do nothing, which is
 	 * what the touch path did after the navigation fix.
+	 *
+	 * A link to a note stays in the mind map: a plain click opens the target's
+	 * map in this tab, Mod-click in a new tab, and either centers on the linked
+	 * heading or block. Mod+Alt-click opens the note in Note View in a new tab;
+	 * non-Markdown and unresolved targets go to Obsidian as before.
 	 */
-	private openNodeLink(anchor: Element): void {
+	private openNodeLink(anchor: Element, e: MouseEvent): void {
 		const href = anchor.getAttribute("href");
 		if (!href) return;
-		if (anchor.classList.contains("internal-link")) {
-			const dataHref = anchor.getAttribute("data-href") ?? href;
-			void this.app.workspace.openLinkText(dataHref, this.currentFile?.path ?? "");
-		} else {
+		if (!anchor.classList.contains("internal-link")) {
 			window.open(href);
+			return;
 		}
+		const linktext = anchor.getAttribute("data-href") ?? href;
+		const nodeId = anchor.closest(".osmosis-node-group")?.getAttribute("data-node-id");
+		const layoutNode = nodeId ? this.nodeMap.get(nodeId) : undefined;
+		const source = layoutNode ? this.nodeFile(layoutNode.source) : this.currentFile;
+		const sourcePath = source?.path ?? "";
+
+		const mod = Platform.isMacOS ? e.metaKey : e.ctrlKey;
+		if (mod && e.altKey) {
+			void this.app.workspace.openLinkText(linktext, sourcePath, "tab");
+			return;
+		}
+
+		const { path, subpath } = parseLinktext(linktext);
+		const file = path
+			? this.app.metadataCache.getFirstLinkpathDest(path, sourcePath)
+			: source;
+		if (!file || file.extension !== "md") {
+			void this.app.workspace.openLinkText(linktext, sourcePath, mod ? "tab" : false);
+			return;
+		}
+
+		const leaf = mod ? this.app.workspace.getLeaf("tab") : this.leaf;
+		// Following a link pins the map to its target, or it would snap back to
+		// the paired note on the next click there. A jump within the open note
+		// leaves the pin as it was.
+		const pinned = leaf !== this.leaf || file !== this.currentFile || this.isPinned;
+		void leaf.setViewState(
+			{
+				type: VIEW_TYPE_MINDMAP,
+				state: { file: file.path, pinned, linkJump: true },
+				active: true,
+			},
+			{ subpath },
+		);
 	}
 
 	private handleClick = (e: MouseEvent): void => {
@@ -4279,7 +4408,7 @@ export class MindMapView extends ItemView {
 		if (anchor) {
 			e.preventDefault();
 			e.stopPropagation();
-			this.openNodeLink(anchor);
+			this.openNodeLink(anchor, e);
 			return;
 		}
 
@@ -7213,6 +7342,7 @@ export class MindMapView extends ItemView {
 			const editor = new EmbeddableMarkdownEditor(this.app, container, {
 				value: editValue,
 				cls: "osmosis-node-editor",
+				file: this.nodeFile(node.source),
 				onEnter: () => false, // Let Enter insert newline (default CM behavior)
 				onSubmit: () => {
 					// Ctrl+Enter saves
