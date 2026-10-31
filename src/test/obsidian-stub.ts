@@ -213,3 +213,12 @@ interface MenuItemStub {
 	setSection(section: string): MenuItemStub;
 	onClick(cb: () => unknown): MenuItemStub;
 }
+
+/** Records the messages it was asked to show, so a test can assert on a notice. */
+export class Notice {
+	static readonly shown: string[] = [];
+
+	constructor(message: string) {
+		Notice.shown.push(message);
+	}
+}

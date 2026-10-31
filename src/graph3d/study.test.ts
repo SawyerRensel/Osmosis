@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Card } from "../database/types";
 import type { OsmosisNode } from "../types";
 import type { GraphNode } from "./model";
-import { HIDDEN_LABEL, nearestTarget, nodeCardKey, nodeStep, studyNode, studyTargets } from "./study";
+import { HIDDEN_LABEL, nearestTarget, nodeCardKey, nodeStep, studyNode, studyTargets, targetNodeFor } from "./study";
 
 const NOW = Date.UTC(2026, 9, 31, 12, 0, 0);
 const PAST = NOW - 86_400_000;
@@ -70,6 +70,31 @@ describe("studyTargets", () => {
 			card({ id: `${NOTE}#^os-off`, blockId: "os-off", disabled: true, due: PAST }),
 		];
 		expect(studyTargets([occluded, disabled], cards, NOW, new Set()).size).toBe(0);
+	});
+});
+
+describe("targetNodeFor", () => {
+	it("finds a fence's node again after writing its schedule gave the node a new ID", () => {
+		const cards = [
+			card({ id: "rr-sound-c1", cardType: "explicit_cloze", due: PAST }),
+			card({ id: "rr-sound-c2", cardType: "explicit_cloze", due: PAST }),
+		];
+		const before = fence("rr-sound");
+		// Same fence, same `id:`, but its text (a schedule is part of it) and so its parse ID changed.
+		const after: GraphNode = { ...fence("rr-sound"), id: `line:${NOTE}#rewritten` };
+		const key = nodeCardKey(before)!;
+		const [firstTargets, secondTargets] = [studyTargets([before], cards, NOW, new Set()), studyTargets([after], cards, NOW, new Set(["rr-sound-c1"]))];
+		expect(targetNodeFor([before], firstTargets, key)).toBe(before.id);
+		expect(targetNodeFor([after], secondTargets, key)).toBe(after.id);
+		expect(after.id).not.toBe(before.id);
+	});
+
+	it("finds a line by its card key, and nothing that is not a target", () => {
+		const [a, b] = [line("os-a"), line("os-b")];
+		const targets = new Map([[b.id, ["k"]]]);
+		expect(targetNodeFor([a, b], targets, nodeCardKey(b)!)).toBe(b.id);
+		expect(targetNodeFor([a, b], targets, nodeCardKey(a)!)).toBeNull();
+		expect(targetNodeFor([a, b], targets, "missing")).toBeNull();
 	});
 });
 

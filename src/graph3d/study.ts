@@ -41,7 +41,7 @@ export function nodeCardKey(node: GraphNode): string | null {
  * showing, as unstudied context, rather than hidden behind a "?" that would
  * ask the reader to recall a whole diagram.
  */
-function askable(card: Card): boolean {
+export function askable(card: Card): boolean {
 	return card.occlusion === undefined;
 }
 
@@ -69,6 +69,23 @@ export function studyTargets(nodes: readonly GraphNode[], cards: readonly Card[]
 		if (keys.length > 0) targets.set(node.id, keys);
 	}
 	return targets;
+}
+
+/**
+ * The target node that carries the card key `key`, or null when none does.
+ *
+ * A study session tracks the card it is on by this key rather than by node ID.
+ * A fence's node ID is a hash of its text, and the text includes its schedule,
+ * so writing a rating into the fence gives the node a new ID: the node is
+ * re-created a moment later, and a session holding the old ID would lose its
+ * current card (and need an extra click for a cloze's second blank). The key
+ * (a line's `path#^block`, a fence's own `id:`) survives the rewrite.
+ */
+export function targetNodeFor(nodes: readonly GraphNode[], targets: ReadonlyMap<string, readonly string[]>, key: string): string | null {
+	for (const node of nodes) {
+		if (targets.has(node.id) && nodeCardKey(node) === key) return node.id;
+	}
+	return null;
 }
 
 /** Where a target node is in its questions: the key on screen, and whether its answer is showing. */

@@ -42,6 +42,7 @@ import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flight";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
+import { threadSegments } from "../graph3d/trails";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import {
 	MAX_FRAME_MS,
@@ -230,6 +231,8 @@ const LINK_OPACITY = 0.45;
 const PARTICLE_SPEED = 25;
 const PARTICLE_SIZE = 1.6;
 const PARTICLE_OPACITY = 0.9;
+/** The travelled thread of a due-driven study path: warm, and fully opaque, so it stands out from the edges. */
+const THREAD_COLOR = "#ffb347";
 /** Bloom: strength, radius, and the luminance a pixel needs before it glows. */
 const BLOOM = { strength: 0.8, radius: 0.5, threshold: 0.6 };
 /** A press that moves less than this, in px, is a click rather than a drag. */
@@ -264,6 +267,9 @@ export class Graph3DScene {
 	/** Live Markdown panels over the nearest plates. */
 	private readonly near: Graph3DNear;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
+	/** The study path's thread, and the nodes it runs through (null: a stop not loaded now). */
+	private readonly thread: LineSegments<BufferGeometry, LineBasicMaterial>;
+	private threadIds: readonly (string | null)[] = [];
 	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
 	/** One particle per drawn edge, when the overlay is on. */
 	private readonly particles: Points<BufferGeometry, PointsMaterial>;
@@ -393,13 +399,15 @@ export class Graph3DScene {
 		dimWithFocus(edgeMaterial, this.plates.focus);
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
+		this.thread = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: THREAD_COLOR, transparent: true, depthWrite: false }));
+		this.thread.frustumCulled = false;
 		const particleMaterial = new PointsMaterial({ size: PARTICLE_SIZE, vertexColors: true, transparent: true, depthWrite: false });
 		dimWithFocus(particleMaterial, this.plates.focus, true);
 		this.particles = new Points(new BufferGeometry(), particleMaterial);
 		this.particles.frustumCulled = false;
 		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
-		this.graph.scene().add(this.edges, this.particles, this.plates.group, this.near.group);
+		this.graph.scene().add(this.edges, this.thread, this.particles, this.plates.group, this.near.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
 		this.setOverlays(options.overlays);
 
@@ -470,6 +478,16 @@ export class Graph3DScene {
 			positions.set(node.id, { x: node.x, y: node.y, z: node.z, pinned: node.fx !== undefined });
 		}
 		return positions;
+	}
+
+	/**
+	 * Draw a thread through these nodes, in order: a segment between each
+	 * consecutive pair that are both in the scene. A `null` is a stop that is
+	 * not loaded, and breaks the thread there. It follows the nodes as they move.
+	 */
+	setThread(ids: readonly (string | null)[]): void {
+		this.threadIds = ids;
+		this.dirty = true;
 	}
 
 	/** Where the camera is now, for picking what is nearest it. */
@@ -700,6 +718,8 @@ export class Graph3DScene {
 		this.plates.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
+		this.thread.geometry.dispose();
+		this.thread.material.dispose();
 		this.particles.geometry.dispose();
 		this.particles.material.dispose();
 		const renderer = this.graph.renderer();
@@ -1140,6 +1160,7 @@ export class Graph3DScene {
 			this.plates.write(this.nodes, this.layoutDirty);
 			this.layoutDirty = false;
 			this.writeEdges();
+			this.writeThread();
 		}
 		if (this.overlays.particles) this.writeParticles(now);
 		if (this.hover !== null) {
@@ -1204,6 +1225,27 @@ export class Graph3DScene {
 		geometry.setDrawRange(0, vertex);
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
+	}
+
+	private writeThread(): void {
+		const geometry = this.thread.geometry;
+		let positions = geometry.getAttribute("position") as BufferAttribute | undefined;
+		if (this.threadIds.length === 0 && (positions === undefined || geometry.drawRange.count === 0)) return;
+		const byId = new Map(this.nodes.map((node) => [node.id, node]));
+		const segments = threadSegments<Vec3>(this.threadIds, (id) => {
+			const node = byId.get(id);
+			if (node === undefined || node.departing || node.x === undefined || node.y === undefined || node.z === undefined) return null;
+			return { x: node.x, y: node.y, z: node.z };
+		});
+		if (positions === undefined || positions.count < segments.length * 2) {
+			geometry.dispose();
+			positions = new BufferAttribute(new Float32Array(Math.max(32, segments.length * 4) * 3), 3).setUsage(DynamicDrawUsage);
+			geometry.setAttribute("position", positions);
+		}
+		let vertex = 0;
+		for (const end of segments.flat()) positions.setXYZ(vertex++, end.x, end.y, end.z);
+		geometry.setDrawRange(0, vertex);
+		positions.needsUpdate = true;
 	}
 
 	/** Whether the Overlays menu shows an edge of `kind` between these nodes. */

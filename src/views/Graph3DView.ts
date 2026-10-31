@@ -194,6 +194,11 @@ export class Graph3DView extends ItemView {
 			redraw: () => this.redraw(),
 			hop: (node) => this.hop(node),
 			nearest: (ids) => this.nearest(ids),
+			focusPath: () => this.focusPath,
+			loadedNotes: () => [...(this.horizon?.loaded ?? [])],
+			hopsFrom: (path) => this.hopsFrom(path),
+			goTo: (path, find) => void this.goTo(path, find),
+			thread: (ids) => this.scene?.setThread(ids),
 		});
 
 		const { Graph3DScene } = await import("./Graph3DScene");
@@ -394,6 +399,32 @@ export class Graph3DView extends ItemView {
 			return at === undefined ? [] : [{ id, ...at }];
 		});
 		return nearestTarget(scene.viewpoint(), candidates);
+	}
+
+	/** Hop distance from `path` to every note it reaches. Links count in both directions: a route is flown, not followed. */
+	private hopsFrom(path: string): ReadonlyMap<string, number> {
+		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+		return computeHorizon(this.adjacency, path, Number.MAX_SAFE_INTEGER - 1, true).hops;
+	}
+
+	/**
+	 * Fly to the node `find` picks from the model. When that node is not in the
+	 * model shown now (its note is beyond the loaded area), recentre the loaded
+	 * area on `path` first, then fly once the reload has landed.
+	 */
+	private async goTo(path: string, find: (model: GraphModel) => string | null): Promise<void> {
+		const id = this.model === null ? null : find(this.model);
+		const node = id === null ? undefined : this.model?.nodes.find((n) => n.id === id);
+		if (node !== undefined) {
+			this.hop(node);
+			return;
+		}
+		this.focusPath = path;
+		this.updateHeader();
+		this.app.workspace.requestSaveLayout();
+		await this.reload();
+		const landed = this.model === null ? null : find(this.model);
+		if (landed !== null) this.scene?.flyTo(landed, true);
 	}
 
 	/** A click or tap on a node: in a study session, arriving at (or revealing) a hidden card. */
