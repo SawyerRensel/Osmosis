@@ -70,11 +70,11 @@ Obsidian's mobile navbar (back/forward/search/+/tabs/menu) floats over the botto
 - **Phone:** the Again/Hard/Good/Easy buttons span the full width of the panel, with taller touch targets.
 - **Tablet:** they don't need the full width, but give them more room for thumbs than now.
 - **Remove the Stop button** from the panel. The graduation-cap header action already starts and stops a session.
-- **Remove the "Relational study: free exploration" title line.** See the open question below.
+- **Remove the "Relational study: free exploration" title line** (confirmed by Sawyer).
 - Keep the panel clear of the mobile toolbar when the toolbar is shown.
 
-## Open question for Sawyer
-Sawyer said "we also don't need the relational study free exploration." The likely reading is that the panel's **title line** "Relational study: free exploration" can go, since the panel is self-evident. The other reading is dropping the free-exploration *path* itself, but Phase 6 slice 2 adds a path-mode selector where free exploration is one option. Build the first reading and confirm with Sawyer.
+## Settled: what "free exploration" referred to
+Sawyer confirmed (2026-10-31) that "we also don't need the relational study free exploration" meant the panel's **title line** "Relational study: free exploration" above the rating buttons. Free exploration stays as a study path.
 
 ## Conventions
 Batch workflow: see `/home/user/.claude/projects/-home-user-Osmosis/batch/subagent-brief.md`. Lay out the corners for desktop too (gauge top left, overlays top right). The mobile toolbar toggle is mobile only.
