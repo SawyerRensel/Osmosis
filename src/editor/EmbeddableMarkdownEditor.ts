@@ -3,6 +3,7 @@ import {
 	Constructor,
 	MarkdownFileInfo,
 	Scope,
+	TFile,
 } from "obsidian";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
 import { EditorSelection, Extension, Prec } from "@codemirror/state";
@@ -18,7 +19,7 @@ interface ScrollableMarkdownEditor {
 	editor: { cm: EditorView };
 	editorEl: HTMLElement;
 	activeCM: EditorView | null;
-	owner: { editMode: unknown; editor: unknown };
+	owner: { editMode: unknown; editor: unknown; file: TFile | null };
 	_loaded: boolean;
 	set(value: string): void;
 	onUpdate(update: ViewUpdate, changed: boolean): void;
@@ -69,7 +70,7 @@ function getEditorBase(): Constructor<ScrollableMarkdownEditor> {
 			editor: { cm: EditorView } = null!;
 			editorEl: HTMLElement = createDiv();
 			activeCM: EditorView | null = null;
-			owner: { editMode: unknown; editor: unknown } = { editMode: null, editor: null };
+			owner: { editMode: unknown; editor: unknown; file: TFile | null } = { editMode: null, editor: null, file: null };
 			_loaded = false;
 			set(_value: string): void { /* noop */ }
 			onUpdate(_update: ViewUpdate, _changed: boolean): void { /* noop */ }
@@ -92,6 +93,11 @@ export interface MarkdownEditorProps {
 	value?: string;
 	/** CSS class to add to editor element */
 	cls?: string;
+	/**
+	 * The note being edited. Link autocomplete reads it off the editor's owner
+	 * to resolve same-note links — without it `[[#` lists no headings.
+	 */
+	file?: TFile | null;
 	/** Placeholder text when empty */
 	placeholder?: string;
 	/** Handler for Enter key (return false to use default behavior) */
@@ -116,6 +122,7 @@ const defaultProperties: Required<MarkdownEditorProps> = {
 	cursorLocation: undefined as unknown as { anchor: number; head: number },
 	value: "",
 	cls: "",
+	file: null,
 	placeholder: "",
 	onEnter: () => false,
 	onEscape: () => { /* noop */ },
@@ -144,6 +151,7 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 			app,
 			onMarkdownScroll: () => { /* noop */ },
 			getMode: () => "source",
+			file: options.file ?? null,
 		});
 
 		this.options = { ...defaultProperties, ...options };
