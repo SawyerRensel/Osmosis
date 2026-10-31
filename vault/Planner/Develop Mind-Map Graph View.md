@@ -110,7 +110,7 @@ Studying in 3D is a **new study mode**, not a new card type. It works like 2D sp
 | Travel | **Both:** click or tap to fly to a node, *and* free flight (WASD + mouse on desktop; orbit, pinch and tap on mobile) |
 | Entry points | **Both:** a standalone view opened from a note, *and* a 2D/3D toggle inside the Mind Map view |
 | Follow active note | **Optional, off by default.** The view stays put until you hop; a pin/follow toggle makes it follow the editor |
-| Node positions | **Saved, in plugin data** (`data.json`), so the world keeps its shape between sessions |
+| Node positions | **Not saved** (reversed 2026-10-30, after building it in Phase 3). Positions live only as long as the view; each session settles afresh. Saving wrote a lot of data on large maps, and the world should adapt organically as notes change rather than be set in stone |
 | Background | **Follow Obsidian's theme:** mist into darkness in dark mode, into white in light mode |
 | Colour | **All four modes** (note, memory strength, tag, node type), **by note as default**, chosen from a Blender-style **Overlays menu** |
 | Near nodes | **Face the camera** (CSS2D billboards) |
@@ -122,7 +122,6 @@ Studying in 3D is a **new study mode**, not a new card type. It works like 2D sp
 | Mobile | **In v1**, with touch controls and lower detail budgets; tested on iOS and Android before shipping |
 | Memory | The Android WebView memory note is **not** a constraint (it came from a crash that turned out to have another cause). Still write memory-conscious code |
 | Tag and attachment hops | **Shown, but they don't count as hops.** They appear when connected to a loaded note but never pull in further notes |
-| Saved-position key | **Cluster plus offsets.** Each note's cluster position is keyed by path; line offsets are keyed within it. An edited line with no block ID re-settles near its parent while the note stays put |
 | Authored trails | **Vault notes.** A trail is a Markdown note listing its stops as links |
 | Study mode name | **`relational`**, next to `sequential`, `contextual`, `spatial` |
 | Due-driven routing | **The horizon follows you.** Due cards anywhere within the configured depth of the start note are included, and the loaded area streams along as you travel |
@@ -175,10 +174,7 @@ This vault has 241 wikilinks, but only 1 block reference and 1 heading reference
   - **Unloaded:** everything else.
 - **On a hop:** recompute the search from the new focus and diff the loaded sets. Departing nodes fade out, then leave the graph data and free their DOM. Arriving nodes fade in.
 - **Stability:** the world must not rearrange itself as you walk. Settled nodes are pinned (`fx/fy/fz`). Only new arrivals are simulated, against the pinned structure, and they're pinned once they cool. A newly loaded note is seeded next to the loaded neighbour that pulled it in.
-- **Saved positions** (plugin data) use cluster plus offsets:
-  - Each note's cluster position is keyed by file path. It's always stable, and it's updated on rename and pruned on delete.
-  - Each line's offset from its note core is keyed by `blockId` where one exists, otherwise by `OsmosisNode.id`.
-  - After an edit, a line whose `id` no longer matches loses only its own offset. It re-settles near its parent while the rest of the note stays put.
+- **No saved positions.** Positions last only as long as the view. Within it, an edited line gets a new content ID, so it alone re-settles near its parent while the rest of the note stays put.
 - **Every line, always.** There is no folding fallback for long notes, so the engine has to scale. That means instanced meshes for the far tier, a single sprite atlas for the middle tier, and simulating only unpinned nodes. Measure on the largest note in the vault.
 
 ## Detail tiers
@@ -188,7 +184,7 @@ The tier is chosen by **camera distance**, inside the loaded area:
 | Tier | Render | Notes |
 |---|---|---|
 | Near | Live Obsidian DOM through `MarkdownRenderer.render()` in a `CSS2DObject` | Callouts, code, video, audio, embeds. Capped by a budget (**Proposed:** 24 nodes on desktop, 12 on mobile; the nearest win). Media pauses when its node leaves this tier |
-| Middle | Text sprite of the line's first words | GPU-drawn |
+| Middle | A label plate with the line's first words, centred on the node, replacing its sphere | GPU-drawn. No decluttering: a nearer plate covers a farther one (Sawyer, 2026-10-31). Capped by count while each plate is its own canvas; see [[3D Graph - Plates for every node]] |
 | Far | A glowing point or sphere | Coloured by the active colour mode. Instanced if counts demand it |
 | Beyond | Mist | — |
 
@@ -257,7 +253,7 @@ Each phase ends with a build, a fixture, and Sawyer's manual test before the nex
 
 1. **Graph model (pure):** nodes and edges from parse trees plus link caches; link-position-to-line resolution; the hop search; loaded-set diffing. Unit-tested.
 2. **View shell:** the `ItemView`, a `3d-force-graph` mount, far and middle tiers, mist, theme following, hop navigation, depth control, desktop and mobile touch.
-3. **Streaming and stability:** fade in and out, prefetch ring, pin-on-settle, saved positions.
+3. **Streaming and stability:** fade in and out, prefetch ring, pin-on-settle.
 4. **Near tier:** live DOM Markdown, media lifecycle, budget, hysteresis.
 5. **Overlays menu.**
 6. **3D study mode:** the `relational` `StudyMode` and stats, then free exploration → due-driven → authored trails.
@@ -293,14 +289,14 @@ All nine questions from the first draft were settled on 2026-10-28; their answer
 | `src/graph3d/model.ts` (new) | Node and edge construction, link-to-line resolution |
 | `src/graph3d/horizon.ts` (new) | Hop search, rings, loaded-set diffing |
 | `src/graph3d/lod.ts` (new) | Tier choice with hysteresis and budgets |
-| `src/graph3d/positions.ts` (new) | Pinning and saved-position keying and pruning |
+| `src/graph3d/positions.ts` (new) | Seeding new nodes beside what they hang off |
 | `src/graph3d/trails.ts` (new) | Due-driven ordering and authored trail model |
 | `src/views/Graph3DView.ts` (new) | The `ItemView`: mount, render, navigation, overlays, study panel |
 | `src/views/MindMapView.ts` | 2D/3D toggle; edit pipeline and undo history moved out |
 | `src/` edit pipeline module (new, name open) | Shared edit application and per-file undo/redo, used by both views |
 | `src/graph3d/trail-note.ts` (new) | Parse and serialize authored trail notes |
 | `src/main.ts` | Register the view, commands, menus |
-| `src/settings.ts` | Depth defaults and maximums, whole-vault opt-in, saved positions, overlay state |
+| `src/settings.ts` | Depth defaults and maximums, whole-vault opt-in, overlay state |
 | `src/database/types.ts`, `src/store/ReviewLog.ts`, `src/stats/*` | New `StudyMode` |
 | `styles.css` | Viewport header, overlays menu, study panel, near-tier panels |
 
@@ -312,7 +308,7 @@ All nine questions from the first draft were settled on 2026-10-28; their answer
   - tag and attachment hubs not extending the horizon
   - loaded-set diffs on a hop
   - tier choice with hysteresis and budgets
-  - saved-position keying and pruning across edits and renames
+  - seeding new nodes, and an edited line re-settling alone
   - due-driven ordering
   - trail note parsing and serialization
   - the shared undo history across views
