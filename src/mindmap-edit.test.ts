@@ -34,6 +34,7 @@ import {
 	editSelectionStart,
 	retypeSubtree,
 	retypeInFile,
+	toggleCheckboxLine,
 } from "./mindmap-edit";
 import { normalizeBlockSpacing } from "./markdown-spacing";
 import type { FileEdit } from "./mindmap-edit";
@@ -1747,5 +1748,26 @@ describe("retypeInFile moves a retyped node to where it keeps its parent", () =>
 	it("returns null for a rename that doesn't cross list/heading", () => {
 		const src = findByContent(parser.parse(garden, "t.md").root, "Herbs");
 		expect(retypeInFile(garden, src, [], "- Herbal")).toBeNull();
+	});
+});
+
+describe("toggleCheckboxLine", () => {
+	it("ticks an unchecked box", () => {
+		expect(toggleCheckboxLine("- [ ] Rig the mainsail", false)).toBe("- [x] Rig the mainsail");
+	});
+
+	it("unticks a checked box, either case", () => {
+		expect(toggleCheckboxLine("- [x] Rig the mainsail", true)).toBe("- [ ] Rig the mainsail");
+		expect(toggleCheckboxLine("- [X] Rig the mainsail", true)).toBe("- [ ] Rig the mainsail");
+	});
+
+	it("flips only the first box and keeps indentation and a block id", () => {
+		expect(toggleCheckboxLine("\t- [ ] Coil [ ] the line ^coil", false)).toBe("\t- [x] Coil [ ] the line ^coil");
+		expect(toggleCheckboxLine("- [x] See [x] below", true)).toBe("- [ ] See [x] below");
+	});
+
+	it("leaves a line with no matching box alone", () => {
+		expect(toggleCheckboxLine("- plain", false)).toBe("- plain");
+		expect(toggleCheckboxLine("- [ ] open", true)).toBe("- [ ] open");
 	});
 });

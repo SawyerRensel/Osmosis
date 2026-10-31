@@ -207,11 +207,11 @@ export class Graph3DNear {
 	}
 
 	/**
-	 * The link at client point (`x`, `y`) in the panel drawn on top there, if
-	 * any. Panels never take the pointer, so this hit-tests them as drawn: a
-	 * nearer panel covers a farther one, and a nearer plate is cut out of both.
+	 * The panel drawn on top at client point (`x`, `y`), if any. Panels never
+	 * take the pointer, so this hit-tests them as drawn: a nearer panel covers a
+	 * farther one, and a nearer plate is cut out of both.
 	 */
-	linkAt(x: number, y: number): PanelLink | null {
+	private panelAt(x: number, y: number): Panel | undefined {
 		const origin = this.renderer.domElement.getBoundingClientRect();
 		const drawn: DrawnPanel[] = [];
 		const byId = new Map<string, Panel>();
@@ -222,7 +222,12 @@ export class Graph3DNear {
 			byId.set(panel.node.id, panel);
 		}
 		const front = frontPanelAt(x - origin.left, y - origin.top, drawn, this.drawnPlates);
-		const panel = front === null ? undefined : byId.get(front);
+		return front === null ? undefined : byId.get(front);
+	}
+
+	/** The link at client point (`x`, `y`) in the panel drawn on top there, if any. */
+	linkAt(x: number, y: number): PanelLink | null {
+		const panel = this.panelAt(x, y);
 		if (panel === undefined) return null;
 		for (const anchor of Array.from(panel.body.querySelectorAll("a"))) {
 			// A link that wraps has a box per line.
@@ -232,6 +237,22 @@ export class Graph3DNear {
 			// Tags (`#tag`) and other in-page anchors aren't links to follow.
 			if (href === null || href === "" || (!internal && !/^[a-z][a-z\d+.-]*:/i.test(href))) return null;
 			return { node: panel.node.graph, href, external: !internal, sourcePath: panel.node.graph.path ?? "" };
+		}
+		return null;
+	}
+
+	/**
+	 * The node whose task checkbox is at client point (`x`, `y`), in the panel
+	 * drawn on top there. `slop` widens the box on every side, for a fingertip.
+	 * Only a checkbox line's own box counts. A panel is inert, so the click is
+	 * the scene's to turn into a toggle.
+	 */
+	checkboxAt(x: number, y: number, slop: number): { node: GraphNode } | null {
+		const panel = this.panelAt(x, y);
+		if (panel?.node.graph.source?.metadata?.checkbox !== true) return null;
+		for (const box of Array.from(panel.body.querySelectorAll("input.task-list-item-checkbox"))) {
+			const rect = box.getBoundingClientRect();
+			if (rectContains({ left: rect.left - slop, top: rect.top - slop, right: rect.right + slop, bottom: rect.bottom + slop }, x, y)) return { node: panel.node.graph };
 		}
 		return null;
 	}

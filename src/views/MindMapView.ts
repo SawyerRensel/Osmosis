@@ -8413,9 +8413,7 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 		const lineText = content.slice(src.range.start, src.range.end);
 		const isChecked = src.metadata?.checked as boolean;
-		const toggled = isChecked
-			? lineText.replace(/\[x\]/i, "[ ]")
-			: lineText.replace("[ ]", "[x]");
+		const toggled = edit.toggleCheckboxLine(lineText, isChecked);
 		const updated =
 			content.slice(0, src.range.start) +
 			toggled +

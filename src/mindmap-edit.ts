@@ -143,6 +143,15 @@ export function reattachBlockId(
 }
 
 /**
+ * A checkbox line with its box flipped: `[ ]` becomes `[x]` and either case of
+ * `[x]` becomes `[ ]`, the first box only. `checked` is the state the line has
+ * now, as the parser read it.
+ */
+export function toggleCheckboxLine(lineText: string, checked: boolean): string {
+	return checked ? lineText.replace(/\[x\]/i, "[ ]") : lineText.replace("[ ]", "[x]");
+}
+
+/**
  * Where the editable *text* starts inside the line the editor opens on — the
  * offset it selects from, so "select all and type" replaces the label rather
  * than the markup that makes the node what it is.

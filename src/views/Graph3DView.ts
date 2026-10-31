@@ -1,10 +1,14 @@
 import { ItemView, MarkdownRenderer, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
+import { EditPipeline } from "../edit-pipeline";
+import { toggleCheckboxLine } from "../mindmap-edit";
+import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
-import { placeNodes } from "../graph3d/positions";
+import { findNodeById, heldDiff, isEditableTarget, lineNodeAt } from "../graph3d/edit";
+import { placeNodes, type Placed } from "../graph3d/positions";
 import { memoryStrengths, nodeTags, overlayNodeColor, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -86,6 +90,27 @@ export class Graph3DView extends ItemView {
 	private colorBy: Graph3DOverlays["colorBy"] | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
+	/** Whether the view is in edit mode: its edit gestures act, and flight keys stay off the structural ones. Off by default and not saved. */
+	private editMode = false;
+	private editActionEl: HTMLElement | null = null;
+	/** Every 3D write goes through here, into the history shared with the mind map. */
+	private readonly edits = new EditPipeline(
+		this.app,
+		this.plugin().editHistory,
+		() => this.editOwner,
+		(path) => {
+			this.cache.invalidate(path);
+			this.prefetched.delete(path);
+		},
+	);
+	/** The note the write in progress is filed under in the history (see `commitEdit`). */
+	private editOwner: string | null = null;
+	/** The note last edited, so undo still finds it after the edited line's ID, and the focus with it, changed. */
+	private lastEditPath: string | null = null;
+	/** A line an edit just changed, for the next reload to keep selected and in place (its ID changed, its start did not). */
+	private edited: { path: string; start: number; from: string } | null = null;
+	/** Releases for the histories of the notes loaded now: a note's undo history lives while some view holds it. */
+	private readonly holds = new Map<string, () => void>();
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
 	private readonly prefetched = new Map<string, { mtime: number; text: string }>();
 
@@ -101,13 +126,13 @@ export class Graph3DView extends ItemView {
 		this.scope = new Scope(this.app.scope);
 		for (const key of FLIGHT_KEYS) {
 			this.scope.register([], key, (e: KeyboardEvent) => {
-				if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return undefined;
+				if (isEditableTarget(e.target)) return undefined;
 				this.scene?.heldKeys.add(key);
 				return false;
 			});
 		}
 		// Study keys act only during a session, and otherwise pass the key on.
-		const typing = (e: KeyboardEvent): boolean => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+		const typing = (e: KeyboardEvent): boolean => isEditableTarget(e.target);
 		this.scope.register([], " ", (e: KeyboardEvent) => (this.study?.active === true && !typing(e) && this.study.reveal() ? false : undefined));
 		for (const rating of RATING_KEYS) {
 			this.scope.register([], String(rating), (e: KeyboardEvent) => {
@@ -116,6 +141,15 @@ export class Graph3DView extends ItemView {
 				return false;
 			});
 		}
+		// Undo and redo act on the edits any view made to the focused note. Typing in a text box or editor keeps its own.
+		const stepKey = (isRedo: boolean) => (e: KeyboardEvent) => {
+			if (typing(e)) return undefined;
+			void this.step(isRedo);
+			return false;
+		};
+		this.scope.register(["Mod"], "z", stepKey(false));
+		this.scope.register(["Mod", "Shift"], "z", stepKey(true));
+		this.scope.register(["Mod"], "y", stepKey(true));
 	}
 
 	getViewType(): string {
@@ -187,6 +221,8 @@ export class Graph3DView extends ItemView {
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
 		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
+		this.editActionEl = this.addAction("pencil", "Edit mode", () => this.toggleEditMode());
+		this.editActionEl.toggleClass("is-active", this.editMode);
 
 		this.emptyEl = root.createDiv({
 			cls: "osmosis-graph3d-empty",
@@ -214,6 +250,7 @@ export class Graph3DView extends ItemView {
 			overlays: this.sceneOverlays(),
 			onNodeClick: (node) => this.clickNode(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
+			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
@@ -284,6 +321,9 @@ export class Graph3DView extends ItemView {
 		this.cache.clear();
 		this.prefetched.clear();
 		this.model = null;
+		this.editActionEl = null;
+		for (const release of this.holds.values()) release();
+		this.holds.clear();
 	}
 
 	/** Re-read the navigation settings and overlays, after they change in Osmosis settings or an Overlays menu. */
@@ -383,16 +423,144 @@ export class Graph3DView extends ItemView {
 	private toggleStudy(): void {
 		if (this.study === null) return;
 		if (this.study.active) this.study.stop();
-		else this.study.start();
+		else {
+			this.setEditMode(false);
+			this.study.start();
+		}
 		this.studyActionEl?.toggleClass("is-active", this.study.active);
+	}
+
+	private toggleEditMode(): void {
+		if (!this.editMode && this.editBlocked()) return;
+		this.setEditMode(!this.editMode);
+	}
+
+	private setEditMode(on: boolean): void {
+		this.editMode = on;
+		this.editActionEl?.toggleClass("is-active", on);
+	}
+
+	/**
+	 * Whether a relational study session forbids editing now, telling the user
+	 * if so. A session hides due cards' text in place, so an editor on a hidden
+	 * node would show the answer, and its nodes are keyed by IDs an edit changes.
+	 */
+	private editBlocked(): boolean {
+		if (this.study?.active !== true) return false;
+		new Notice("Relational study: editing is off");
+		return true;
+	}
+
+	/**
+	 * Undo or redo the newest edit to the focused node's note, whichever view
+	 * made it. Files come back by `vault.modify`, so the loaded area reloads.
+	 */
+	private async step(isRedo: boolean): Promise<void> {
+		if (this.editBlocked()) return;
+		const focused = this.scene?.focusedNode() ?? null;
+		const key = focused?.path ?? this.lastEditPath ?? this.focusPath;
+		if (key === null) return;
+		try {
+			const restored = await this.edits.step(key, isRedo);
+			if (restored === null) return;
+			const start = focused?.source?.range.start;
+			if (focused?.path !== undefined && start !== undefined && restored.some((file) => file.path === focused.path)) {
+				this.edited = { path: focused.path, start, from: focused.id };
+			}
+			this.lastEditPath = key;
+			void this.reload();
+		} catch (error) {
+			console.error("Osmosis: 3D graph undo failed", error);
+			new Notice("Osmosis: could not " + (isRedo ? "redo" : "undo") + " that edit");
+		}
+	}
+
+	/**
+	 * `node`'s line as it is on disk now: the file's fresh bytes, parsed, and the
+	 * line found again by ID. The model comes from a cached read and a schedule
+	 * flush can move every offset since, so an edit never splices by the
+	 * model's offsets. Null when the line has gone.
+	 */
+	private async freshLine(node: GraphNode): Promise<{ file: TFile; content: string; line: OsmosisNode } | null> {
+		const id = node.source?.id;
+		const file = node.kind === "line" && node.path !== undefined ? this.app.vault.getFileByPath(node.path) : null;
+		if (file === null || id === undefined) return null;
+		const content = await this.app.vault.read(file);
+		const line = findNodeById(this.cache.get(file.path, content).root, id);
+		return line === null ? null : { file, content, line };
+	}
+
+	/**
+	 * Write `content` to `file` as an edit of `node`'s line, filed under the
+	 * line's note in the shared history. Then reload the loaded area, keeping
+	 * the line selected and where it was: an edit changes its ID, not its start.
+	 */
+	private async commitEdit(file: TFile, content: string, node: GraphNode, start: number): Promise<void> {
+		this.editOwner = file.path;
+		this.lastEditPath = file.path;
+		await this.edits.write(file, content);
+		// Marked only now, so a reload that was already under way can't take it.
+		this.edited = { path: file.path, start, from: node.id };
+		void this.reload();
+	}
+
+	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */
+	private async toggleCheckbox(node: GraphNode): Promise<void> {
+		if (this.editBlocked()) return;
+		try {
+			const fresh = await this.freshLine(node);
+			if (fresh === null || fresh.line.metadata?.checkbox !== true) return;
+			const { file, content, line } = fresh;
+			const { start, end } = line.range;
+			const toggled = toggleCheckboxLine(content.slice(start, end), line.metadata?.checked === true);
+			await this.commitEdit(file, content.slice(0, start) + toggled + content.slice(end), node, start);
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not toggle a checkbox", error);
+			new Notice("Osmosis: could not change that checkbox");
+		}
+	}
+
+	/**
+	 * Hold the history of every note now loaded, and let go of those that left,
+	 * so an edit stays undoable while its note is on screen and no longer.
+	 */
+	private syncHolds(loaded: ReadonlySet<string>): void {
+		const { acquire, release } = heldDiff(new Set(this.holds.keys()), loaded);
+		for (const path of release) {
+			this.holds.get(path)?.();
+			this.holds.delete(path);
+		}
+		for (const path of acquire) this.holds.set(path, this.plugin().editHistory.hold(path));
+	}
+
+	/**
+	 * Where every node of `model` starts: where it is now, and a line an edit
+	 * just changed where its old self was (the edit gave it a new ID), so it
+	 * stays put instead of re-settling beside its parent. Consumes `edited`:
+	 * the changed line is also selected again.
+	 */
+	private place(scene: Graph3DScene, model: GraphModel, via: ReadonlyMap<string, string>): Map<string, Placed> {
+		const positions = scene.positions();
+		const { edited } = this;
+		this.edited = null;
+		if (edited !== null) {
+			const id = lineNodeAt(model, edited.path, edited.start);
+			const from = positions.get(edited.from);
+			if (id !== null) {
+				if (from !== undefined && !positions.has(id)) positions.set(id, from);
+				scene.setFocusId(id);
+			}
+		}
+		return placeNodes(model, positions, via);
 	}
 
 	/** Hand the scene the current model again, as the study session shows it now. */
 	private redraw(): void {
 		this.studyActionEl?.toggleClass("is-active", this.study?.active === true);
+		if (this.study?.active === true) this.setEditMode(false);
 		const { scene, model, horizon } = this;
 		if (scene === null || model === null || horizon === null) return;
-		scene.setData(this.study?.decorate(model) ?? model, placeNodes(model, scene.positions(), horizon.via));
+		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via));
 	}
 
 	/** The node among `ids` nearest the camera. */
@@ -536,6 +704,7 @@ export class Graph3DView extends ItemView {
 		if (focus === null) {
 			this.horizon = null;
 			this.model = null;
+			this.syncHolds(new Set());
 			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
 		}
@@ -567,7 +736,8 @@ export class Graph3DView extends ItemView {
 		this.horizon = horizon;
 		this.model = model;
 		scene.setColoring(this.coloring(model));
-		scene.setData(this.study?.decorate(model) ?? model, placeNodes(model, scene.positions(), horizon.via));
+		this.syncHolds(horizon.loaded);
+		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via));
 		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.prefetch(horizon.prefetch, seq);
 	}

@@ -152,6 +152,8 @@ export interface SceneOptions {
 	onNodeClick: (node: GraphNode) => void;
 	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
+	/** A click on a task checkbox in a near-tier panel (it is the checkbox line's own box); the view toggles it. */
+	onCheckboxClick: (node: GraphNode) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
@@ -199,6 +201,8 @@ const ORBIT_RATE = 2 * Math.PI;
 const LOOK_RATE = Math.PI;
 /** How far from a node's edge, in screen px, a press or a zoom still aims at that node. */
 const PICK_SLOP_PX = { mouse: 16, touch: 32 };
+/** How far outside a task checkbox's drawn box a press still ticks it: the box is a few pixels wide at panel scale. */
+const CHECKBOX_SLOP_PX = { mouse: 4, touch: 14 };
 /** The orbit target stays at least this far ahead, so a zoom that passes through it keeps going. */
 const MIN_DEPTH = 10;
 /** Seconds for the mist to settle when the zoom re-aims at a nearer or farther depth, so it doesn't pop. */
@@ -641,6 +645,16 @@ export class Graph3DScene {
 		this.startPendingFlight();
 	}
 
+	/** The node last flown to, the one edits and undo act on; null when it is gone from the graph. */
+	focusedNode(): GraphNode | null {
+		return this.focusId === null ? null : (this.nodes.find((node) => node.id === this.focusId)?.graph ?? null);
+	}
+
+	/** Make `id` the focused node without flying to it: re-selecting a node whose ID an edit changed. */
+	setFocusId(id: string | null): void {
+		this.focusId = id;
+	}
+
 	private startPendingFlight(): void {
 		if (this.pendingFlight === null) return;
 		const node = this.nodes.find((n) => n.id === this.pendingFlight);
@@ -881,6 +895,12 @@ export class Graph3DScene {
 
 	/** A click or tap: follow the link under it, or hop to its node. See `linkClickAction`. */
 	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
+		// A plain tap on a task checkbox ticks it. Held modifiers belong to pan and to links.
+		const box = e.shiftKey || e.ctrlKey || e.metaKey ? null : this.near.checkboxAt(x, y, CHECKBOX_SLOP_PX[touch ? "touch" : "mouse"]);
+		if (box !== null) {
+			this.options.onCheckboxClick(box.node);
+			return;
+		}
 		const link = this.near.linkAt(x, y);
 		const focus = this.focusId === null ? undefined : this.nodes.find((node) => node.id === this.focusId);
 		const linkNode = link === null ? undefined : this.nodes.find((node) => node.id === link.node.id);
