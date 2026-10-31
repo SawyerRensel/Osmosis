@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Focus dimming]]"
   - "[[3D Graph - Plate-aware spacing]]"
   - "[[3D Graph Phase 4 - Near tier]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-10-31T11:19:43.000Z"
-date_modified: "2026-10-31T11:19:43.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-10-31T13:00:00.000Z"
+date_start_scheduled: "2026-10-31T12:00:00.000Z"
+date_start_actual: "2026-10-31T12:00:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -113,3 +113,52 @@ Zoom in until the nearest 150 nodes become plates.
 - lint → test → build → manual-test instructions → stop for Sawyer before committing.
 - Branch `feature/3d-graph-plates…` cut from `feature/3d-graph-view` once Phase 3 merges. Commit code by path; task notes get their own commit.
 - Remove the perf readout before the PR, unless a later task still needs it.
+
+## Batch implementation notes (awaiting manual test)
+
+Built on `feature/3d-graph-plates` (cut from `feature/3d-graph-view`), commit `2ff3422`. Not pushed, no PR. Lint, unit tests (2071) and build pass. Nothing has been seen running in Obsidian yet.
+
+### Approach
+
+The design above, as written. Every node gets a `PlateShape` when it enters the scene (`Graph3DPlates.shape()`), laid out by the pure `layoutPlate` from per-character advances that `measureText` gives with the theme font. A character is drawn once, in white, into a 1024 px atlas page (48 px font, 64 px rows, 4 px padding, mipmaps), packed by the pure `GlyphPacker`. Drawing uses `1 + pages` draw calls: one `InstancedBufferGeometry` mesh of plate backgrounds, and one glyph mesh per atlas page. Most vaults should need a single page.
+
+- **Backgrounds:** opaque `ShaderMaterial` with `depthWrite`. The rounded rectangle and its outline come from a signed distance. Edge pixels are discarded, and `alphaToCoverage` smooths the edge with the renderer's MSAA.
+- **Glyphs:** `transparent` with depth test, but no depth write, and `polygonOffset` (-1/-4) to win the tie with their own plate. They alpha-blend, which is safe: a glyph only ever lies over its own plate, which the opaque pass has already drawn, and a farther plate's glyphs fail the depth test against a nearer plate.
+- **Fading and mist:** each instance mixes toward the background colour by `opacity`, and three's `FogExp2` chunks are included, so the mist works as before. At `opacity` 0 the vertex shader moves the quad off screen.
+- **Per-frame cost:** `write(nodes, layout)`. With `layout` set (nodes came, went, were relabelled, or the theme changed), every attribute is rewritten. A simulating tick or fade rewrites only centre and opacity, with plain index writes.
+
+### Decisions worth remembering
+
+- **Camera `near` is 1, not 0.1.** 3d-force-graph's default 0.1, with far = 125,000, leaves about 0.6 world units of depth resolution at distance 1,000. That's too coarse for opaque plates to order by depth without z-fighting. The orbit target stays at least `MIN_DEPTH` (10) ahead, so nothing is looked at closer than 1.
+- **Plates are pulled to 97% of their depth** (`PLATE_PULL`), scaled toward the camera so their screen size doesn't change. Without this, an edge leaving a node toward the camera draws across that node's own text, because plates now depth-test against lines instead of always drawing over them. One factor for every plate preserves their depth order. This partly answers the open "edges stop at the plate's edge" question.
+- **Text cap by width, not by character count alone:** note titles are cut at 30 em and line plates at 20 em, with "…". Line labels still go through `spriteLabel`'s 32-character cut first. The width cap mainly catches wide scripts (CJK), which the character cut misjudged. Before this change, note titles were never cut.
+- **Nodes keep their `nodes`-array order in the instance buffers**, and faded-out nodes are collapsed rather than skipped, so a fade never forces a full rewrite.
+- **Removed:** sphere layers, `labelAlpha`, `LABEL_BUDGET`, `LABELS_PER_PASS`, `chooseLabelled`, `lod.ts` and `lod.test.ts`, `plateSprite`, `nodeSize`, `ScreenNode.radius` and the circle hit path, and `SceneOptions.isMobile`, which only the budget used. `three-spritetext` was already gone.
+- **Perf readout is kept** (Sawyer asked for it to stay). It now shows plates, glyph instances, atlas pages and MB, instance-buffer MB, and "last plating" (how many plates the last `setData` laid out, and how long it took).
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/plates.ts` | New, pure: `layoutPlate` (advances, spaces, surrogate pairs, width truncation, plate size), `GlyphPacker` (row packing, reuse, new pages), plate proportion constants |
+| `src/graph3d/plates.test.ts` | New: 14 tests |
+| `src/views/Graph3DPlates.ts` | New: `GlyphAtlas`, the instanced plate and glyph meshes and their shaders, `shape()`, `write()`, `stats()` |
+| `src/views/Graph3DScene.ts` | Spheres, sprites and label budget replaced by `Graph3DPlates`; `EngineNode.shape`; camera near 1; picking by plate |
+| `src/views/Graph3DPerf.ts` | Reads `Graph3DPlates.stats()`; `plated()` replaces `labelPass()` |
+| `src/views/Graph3DView.ts` | Dropped the `isMobile` scene option |
+| `src/graph3d/depth.ts` / `depth.test.ts` | `ScreenNode` is a plate rectangle only |
+| `src/graph3d/appearance.ts` | Removed unused `nodeSize` |
+| `src/graph3d/lod.ts` / `lod.test.ts` | Deleted |
+| `e2e/fixtures/graph3d/Knot Names Abroad.md` → `vault/tests/graph3d/` | New fixture |
+
+### Fixture
+
+`vault/tests/graph3d/Knot Names Abroad.md` links to `[[Knots]]`. It has accented Latin, Japanese and Chinese, guillemets, emoji, and an over-long line that should end in "…". It's a new file, so no existing fixture was rewritten.
+
+### Not verified (needs Sawyer)
+
+- Everything visual: sharpness up close (whether 48 px glyphs are enough), outline thickness, the glyphs' vertical centring, the edge smoothing from alpha-to-coverage, and whether the polygon offset holds at long distances.
+- Emoji draw as a silhouette in the text colour: the atlas keeps only alpha. ZWJ and combining sequences split into separate glyphs.
+- The font must already be loaded when glyphs are first measured. A web font that loads later stays mismeasured until the next theme change.
+- No measurements yet: GPU MB, draw calls, frame time, plating time on the stress web and on Sawyer's vault. On a simulating tick, the per-glyph centre rewrite is the likely cost on the stress web (~700k glyphs). If it's slow, the next step is a plate-index attribute that fetches the centre from a data texture.
+- The parent spec's "Detail tiers" table still describes the far tier as spheres. It was left for Sawyer to update.
