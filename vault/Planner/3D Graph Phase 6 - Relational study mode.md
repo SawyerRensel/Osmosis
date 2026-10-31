@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-31T16:40:00.000Z"
+date_modified: "2026-10-31T21:56:04.000Z"
 date_start_scheduled: "2026-10-31T16:05:29.000Z"
 date_start_actual: "2026-10-31T16:05:29.000Z"
 date_end_scheduled:
@@ -69,13 +69,13 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 
 ## Slice plan
 
-The phase is too big for one session, so it ships in three slices, each testable on its own, in dependency order. **Status `In-Review` covers slice 1 only;** slices 2 and 3 are still to build, on branches stacked after `feature/3d-graph-phase-6`.
+The phase is too big for one session, so it ships in three slices, each testable on its own, in dependency order. **Status `In-Review` covers slices 1 and 2;** slice 3 is still to build, on a branch stacked after `feature/3d-graph-mobile-polish`.
 
 1. **Slice 1: the mode, stats, and free exploration** (built, awaiting manual test). The `relational` `StudyMode` everywhere stats list modes. A "Relational study" header action starts a session; due line and fence cards in the loaded area are hidden in place and follow the loaded area as you hop; click a `?` to arrive, click again (or Space) to reveal, rate 1–4 on the shared FSRS schedules; "Next" flies to the nearest hidden card.
-2. **Slice 2: due-driven path with the travelled thread.**
+2. **Slice 2: due-driven path with the travelled thread** (built, awaiting manual test).
    - Pure `src/graph3d/trails.ts` (the spec's planned file): order the due cards within the configured depth of the *start note* (not only the loaded area) along graph paths, by hop distance over `NoteAdjacency` (`horizon.ts`) from where you stand, ties broken by most overdue then by note order. Unit-test the ordering.
    - Collecting cards beyond the loaded area: card store `getCardsByNote` for every note in `computeHorizon(adjacency, start, depth, backlinks).loaded`, at session start; nodes for them don't exist until a hop loads their note, so the session must `setFocus(note)` first and then `flyTo` the card's line once the reload lands (`reload(true, "^blockId")` already lands on a block subpath; a fence needs its node ID, found in the new model with `nodeCardKey`).
-   - A path-mode selector in the study panel (`Graph3DStudy.renderPanel`): Free / Due-driven / Trail. `next()` is the extension point: free picks `nearest`, due-driven takes the next stop in the order.
+   - A path-mode selector in the study panel (`Graph3DStudy.renderPanel`): Free / Due-driven (Trail joins in slice 3; no dead button until then). `next()` is the extension point: free picks `nearest`, due-driven takes the next stop in the order.
    - The thread: a persistent polyline through the node positions visited this session, drawn by the scene (a new `LineSegments`/`Line` in `Graph3DScene`, like `edges`, disposed in `destroy`), kept across hops while its nodes are loaded. Expose `scene.setThread(ids: string[])`.
 3. **Slice 3: authored trails, and occlusion parity.**
    - `src/graph3d/trail-note.ts`: parse and serialize a trail note: a vault note whose stops are links in order (`[[Note#^id]]`, `[[Note#Heading]]`, `[[Note]]`), one per list item; propose frontmatter `osmosis-trail: true` to mark it. Unit-test parse and serialize round trips. A stop with no due card is visited and shown, not rated.
@@ -127,3 +127,50 @@ Slice 1 of 3 (see the slice plan above). Branch `feature/3d-graph-phase-6`, stac
 6. Restart study: rated cards are no longer hidden (not due).
 
 **Could not verify:** anything on screen (I can't run Obsidian): the panel layout on a phone, that Space/1–4 reach the view's scope while the canvas has focus, and how a fence node behaves when its schedule is written into it mid-session (its parse ID changes, so the node is re-created and re-settles; a revealed card stays current through that, but a stepping cloze fence may lose "current" after its first rating and need a click again).
+
+### Slice 2: the due-driven path and the travelled thread
+
+Branch `feature/3d-graph-mobile-polish` (stacked on `feature/3d-graph-phase-6`). Built after the mobile polish, so the panel has no title or Stop button.
+
+**First, the slice-1 risk, confirmed and fixed.** Slice 1 flagged that writing a cloze fence's schedule gives its node a new ID and the session might lose "current". Reading the code: the fence's node ID is `line:${path}#${parseId}`, the parse ID hashes the fence text, and the text includes the schedule, so the `ScheduleStore` flush (about 2 s after a rating) rewrites the fence, `resolve` fires, the view reloads (750 ms debounce) and the node comes back under a new ID. `Graph3DStudy` held `current` as a node ID, so `decorate` found it gone and fell back to "a revealed card, else null": after rating a cloze's first blank, Space did nothing and the node needed a click (arrive) and a second click (reveal). A jsdom test reproduces this against the old class (it fails there, passes now). Fix: the session now tracks the current card by its **card key** (`nodeCardKey`: a line's `path#^block`, a fence's own `id:`), which a rewrite does not change; `decorate` finds the node again with the new pure `targetNodeFor` on every model. The key is kept when no node carries it (the card may be about to load), and re-adopted when it appears. Lines were never affected (their IDs come from block IDs).
+
+**Approach.**
+- **Stops** (`src/graph3d/trails.ts`, pure): `routeStops(cards, now)` makes one stop per due-or-new node (a line, or a fence with all its due cards in ask order), reusing `dueOrNewLineCardIds`, `dueOrNewFenceCardKeys`, `spatialStudyKeys` and the `askable` filter (now exported from `study.ts`; occlusion stays out until slice 3). `nextStop(stops, rated, hops, skip)` picks by note-hop distance from where you stand, then most overdue (a new card counts as due now, so it comes after overdue ones), then note path and line. `hops` is `computeHorizon(adjacency, standing, huge, true).hops`, so unreachable notes come last.
+- **The route** is collected when you choose "Due-driven": every note in `horizon.loaded` at that moment (the notes within the configured depth of the start note), their cards read from the card store. Nodes for notes beyond the loaded area don't exist yet, so `Next` calls `host.goTo(path, find)`: if the stop's node is in the model it is a plain hop; otherwise the view makes `path` the focus, awaits the reload, then `flyTo`s the node found by card key (fences included; no node ID is needed up front).
+- **Only route cards are hidden** in this path (`decorate` restricts the card lookup to route notes in the model), so a loaded note outside the route is left showing. Free exploration is unchanged.
+- **The thread**: `Graph3DStudy.visited` holds the start note's node ID, then each stop's card key (also a card you arrive at by clicking). `threadNodeIds` resolves them against the model on every `decorate`, `null` for a stop not loaded, and `scene.setThread(ids)` draws a `LineSegments` (amber `#ffb347`) between consecutive resolved pairs, rewritten whenever the scene is dirty so it follows settling nodes. A `null` breaks the thread instead of bridging. It is disposed in `destroy`, cleared when study stops or you go back to Free.
+- **Panel**: a path row of two thumb-sized buttons (Free, Due-driven; the active one is `mod-cta`) between the progress line and the action row, hidden while a revealed card awaits its rating. Due-driven's progress reads "N reviewed . M to go" over the whole route (Free's reads "hidden here").
+
+**Decisions worth remembering.**
+- **"Start note" is the focus when you choose Due-driven**, and the route set is fixed from then on. The horizon follows you only in that the loaded area moves with each flight; it does not grow the route. Reason: a route that re-collects at every hop never ends and can't show "M to go". Choose Free then Due-driven again to re-collect from where you stand.
+- **Ordering uses links in both directions** even with Backlinks off: a route is flown, not followed, and a dead-end note (like Current Cards) would otherwise make everything behind it unreachable.
+- **The route is a snapshot of the card store** taken at selection; finished stops are tracked by the session's `rated` set, as in free exploration (an Again-rated card is not asked twice in a session).
+- **Next skips the current stop** (it stays on the route for later), and is disabled when no other stop is left.
+- **Nothing auto-advances**: after rating, you press Next. Matches free exploration; an auto-fly would also pull the camera while you read the revealed answer.
+- **`setThread` takes `(string | null)[]`**, not `string[]` as the slice plan wrote, for the gap marker.
+- No Trail button until slice 3.
+
+**Surface map**
+
+| File | Change |
+|---|---|
+| `src/graph3d/trails.ts` (new) | `routeStops`, `nextStop`, `stopDone`, `cardsToGo`, `threadNodeIds`, `threadSegments` |
+| `src/graph3d/trails.test.ts` (new) | Ordering (distance, overdue, note order, unreachable, skip, a walked route), stops, thread resolution and segments |
+| `src/graph3d/study.ts`, `.test.ts` | `targetNodeFor` (the current-card fix); `askable` exported |
+| `src/views/Graph3DStudy.ts` | `currentKey`; path state, route collection, `setPath`, `nextOnRoute`, `arrive`, thread sync; path row in the panel; new host methods |
+| `src/views/Graph3DStudy.dom.test.ts` (new) | jsdom: current card through a fence rewrite; route collection, hop order, beyond-loaded flights, thread, route-only hiding |
+| `src/views/Graph3DView.ts` | Host methods `focusPath`, `loadedNotes`, `hopsFrom`, `goTo`, `thread` |
+| `src/views/Graph3DScene.ts` | `setThread`, `writeThread`, the thread `LineSegments` (disposed in `destroy`) |
+| `src/test/obsidian-stub.ts` | `Notice` stub (records messages) |
+
+**Fixture:** `e2e/fixtures/graph3d/{Route Planning,Tide Cards,Current Cards,Buoy Cards}.md`, copied to `vault/tests/graph3d/`. `Route Planning` (start; `os-rp1` due 2026-10-21, `os-rp2` new) links to `Tide Cards` (`os-td1` due 2026-10-11, `os-td2` due 2026-10-26) and `Buoy Cards` (`os-by1` due 2026-10-28; `os-by2` not due until 2027: the control). `Tide Cards` links to `Current Cards` (`os-cu1` due 2026-10-01), which links to nothing. Nothing links back, so with Backlinks off, flying the route leaves the loaded area. Expected route at depth 2: rp1, rp2, td1, td2, cu1, by1 (the last needs the area to reload around `Buoy Cards`).
+
+**Manual test.** Reload Obsidian (Ctrl+R) so the new notes are indexed. Open `tests/graph3d/Route Planning.md`, run "Open 3D graph for current note" (depth 2), click the graduation-cap header action.
+1. The panel shows Free (highlighted) and Due-driven. Choose Due-driven: "0 reviewed . 6 to go"; the six due lines read `?`, `os-by2` ("A green buoy...") reads normally.
+2. Press Next: the camera flies to the oldest due line in Route Planning. Click it again (or Space), rate 3. Next goes to the other Route Planning line (the new card).
+3. Next again: flies to Tide Cards (the loaded area recentres), and an amber line runs from the start note through the stops to it. Rate it, Next: the second Tide line; Next: Current Cards (Route Planning is no longer loaded, so the thread stops at the edge); Next: Buoy Cards, the area reloads around it and the thread resumes only between loaded stops.
+4. At the end the hint says the route is finished and Next is disabled. Click Free: the thread disappears; hidden cards behave as in slice 1.
+5. The slice-1 risk: in `Rules of the Road.md`, in Free, arrive at `rr-sounds`, reveal, rate the first blank, wait about 3 s for the rewrite, then press Space: it should reveal the second blank without clicking again.
+6. Stop (header action): the schedule changes are on disk (`os-rp1` moved), Stats shows Relational.
+
+**Could not verify** (nothing was seen in Obsidian): that the thread is visible enough as a 1 px line (WebGL ignores line width; if it is too faint, widen it with a thin tube or a second offset line); that the amber reads against every theme; the real timing of the fence-rewrite reload against the new current-card tracking; the Backlinks-on case (ordering already counts both directions, but the loaded area then differs); and Next with a stop whose note was renamed or deleted mid-session (its node never loads, and Next then picks the same stop again until you rate or skip it by choosing another).
