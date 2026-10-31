@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-31T21:56:04.000Z"
+date_modified: "2026-10-31T22:20:00.000Z"
 date_start_scheduled: "2026-10-31T16:05:29.000Z"
 date_start_actual: "2026-10-31T16:05:29.000Z"
 date_end_scheduled:
@@ -69,7 +69,7 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 
 ## Slice plan
 
-The phase is too big for one session, so it ships in three slices, each testable on its own, in dependency order. **Status `In-Review` covers slices 1 and 2;** slice 3 is still to build, on a branch stacked after `feature/3d-graph-mobile-polish`.
+The phase is too big for one session, so it ships in three slices, each testable on its own, in dependency order. **Status `In-Review` covers all three slices** (slice 3 is stacked on `feature/3d-graph-mobile-polish`, after slice 2).
 
 1. **Slice 1: the mode, stats, and free exploration** (built, awaiting manual test). The `relational` `StudyMode` everywhere stats list modes. A "Relational study" header action starts a session; due line and fence cards in the loaded area are hidden in place and follow the loaded area as you hop; click a `?` to arrive, click again (or Space) to reveal, rate 1–4 on the shared FSRS schedules; "Next" flies to the nearest hidden card.
 2. **Slice 2: due-driven path with the travelled thread** (built, awaiting manual test).
@@ -77,7 +77,7 @@ The phase is too big for one session, so it ships in three slices, each testable
    - Collecting cards beyond the loaded area: card store `getCardsByNote` for every note in `computeHorizon(adjacency, start, depth, backlinks).loaded`, at session start; nodes for them don't exist until a hop loads their note, so the session must `setFocus(note)` first and then `flyTo` the card's line once the reload lands (`reload(true, "^blockId")` already lands on a block subpath; a fence needs its node ID, found in the new model with `nodeCardKey`).
    - A path-mode selector in the study panel (`Graph3DStudy.renderPanel`): Free / Due-driven (Trail joins in slice 3; no dead button until then). `next()` is the extension point: free picks `nearest`, due-driven takes the next stop in the order.
    - The thread: a persistent polyline through the node positions visited this session, drawn by the scene (a new `LineSegments`/`Line` in `Graph3DScene`, like `edges`, disposed in `destroy`), kept across hops while its nodes are loaded. Expose `scene.setThread(ids: string[])`.
-3. **Slice 3: authored trails, and occlusion parity.**
+3. **Slice 3: authored trails, and occlusion parity** (built, awaiting manual test).
    - `src/graph3d/trail-note.ts`: parse and serialize a trail note: a vault note whose stops are links in order (`[[Note#^id]]`, `[[Note#Heading]]`, `[[Note]]`), one per list item; propose frontmatter `osmosis-trail: true` to mark it. Unit-test parse and serialize round trips. A stop with no due card is visited and shown, not rated.
    - The trail path mode: pick a trail note (a `FuzzySuggestModal` over notes with the marker), then walk its stops with the same flight as due-driven; the thread draws the trail.
    - Occlusion cards: slice 1 leaves them *showing* (`askable` in `src/graph3d/study.ts` filters out any card with `occlusion`). Parity needs the 2D masks over the image in the near-tier panel: reuse `overlayMasks` / `removeMaskOverlays` (`src/views/OcclusionRenderer.ts`) on the panel's `<img>` in `Graph3DNear`, with `front`/`back` per asked group as `MindMapView.applySpatialHidden` does, then drop the `askable` filter.
@@ -174,3 +174,60 @@ Branch `feature/3d-graph-mobile-polish` (stacked on `feature/3d-graph-phase-6`).
 6. Stop (header action): the schedule changes are on disk (`os-rp1` moved), Stats shows Relational.
 
 **Could not verify** (nothing was seen in Obsidian): that the thread is visible enough as a 1 px line (WebGL ignores line width; if it is too faint, widen it with a thin tube or a second offset line); that the amber reads against every theme; the real timing of the fence-rewrite reload against the new current-card tracking; the Backlinks-on case (ordering already counts both directions, but the loaded area then differs); and Next with a stop whose note was renamed or deleted mid-session (its node never loads, and Next then picks the same stop again until you rate or skip it by choosing another).
+
+### Slice 3: authored trails and occlusion parity
+
+Branch `feature/3d-graph-mobile-polish`, on top of slice 2. This is the last slice of Phase 6.
+
+**Trails.**
+- **The note.** `src/graph3d/trail-note.ts` (pure): `parseTrail(text)` reads the first wikilink of every list item (bulleted or numbered, nested too) after the frontmatter, skipping prose, embeds, empty links and code fences, into `{ target, subpath }` (`subpath` is everything after the first `#`: `^os-rr1`, `Lights and sounds`, or `""`). `serializeTrail(stops, title?)` writes the marker plus one item per stop and reads back to the same stops. `isTrail(frontmatter)` is the `osmosis-trail: true` test.
+- **The steps.** `trailSteps` in `trails.ts` (pure) resolves each stop to a note (a link that resolves to nothing is dropped and counted) and attaches the due or new card at a `^block` stop (reusing `routeStops`), else `null`: the stop is visited and shown, not rated.
+- **The path.** A third "Trail" button in the path row opens `Graph3DTrailPicker` (a `FuzzySuggestModal` over notes with the marker; a Notice if the vault has none) and starts walking from the top. `Graph3DStudy` keeps `trail`, `trailAt` (a cursor, -1 before the first stop) and `trailKeys`. "Next" is `nextOnTrail`: advance the cursor, `host.goTo(path, model => linkTargetNode(model, path, subpath))` (the model's own subpath resolver, so a heading, a block or the note core lands the same way a link click does, and a note beyond the loaded area is loaded first as in due-driven), and make the stop's card the current one if it has one. The thread is the stops walked so far, resolved on every model; one whose note is not loaded breaks it. Only the trail's own cards are hidden (`trailKeys`), though other cards in the same notes may be due. Progress reads "N reviewed . stop k of n"; Next is disabled at the last stop; the idle hint says when a stop is "shown, not rated".
+
+**Occlusion parity.** `askable` is gone (it only filtered occlusion cards), so line and fence occlusion cards are targets like any other. `studyNode` now gives such a node `masks: { occlusion, side }` (new optional `GraphNode.masks`): side `front` while hidden (the asked group covered, the siblings as the diagram's mode says), `back` once revealed (ringed), `GraphNode.label` is `?` while hidden. In `Graph3DNear` a panel whose node has `masks` draws the diagram with the existing `renderOcclusion` (new `renderDiagram` constructor argument, supplied by the view, which has the app) instead of rendering Markdown; revealing or moving to the next group repaints the masks in place with `repaintOcclusion`, so the image never reloads. `nearMarkdown` returns a stand-in `![](image)` for a masked node, which keys a refill when the diagram changes and lets `panelBoxEm` size it as the image it is. A node whose groups are all rated drops out of the targets and shows its own text again.
+
+**Decisions worth remembering.**
+- **The marker is `osmosis-trail: true`**, as the slice plan proposed (a judgment call, easy to rename in `TRAIL_MARKER`).
+- **Trail order is a cursor, not `nextStop`.** `nextStop` orders by hop distance, which is the opposite of an authored order; the trail reuses `goTo`, the thread and the current-card-by-key tracking, but not the ordering.
+- **A trail cannot ask a fence.** A fence has no block ID to link to; its key is its `id:`. Link a heading above it for a visit-only stop. Left out rather than inventing link syntax.
+- **Next does not require a rating.** Pressing it on an unrated card moves on and leaves the card hidden, as in due-driven.
+- **`serializeTrail` has no caller yet.** The spec asked for it with round-trip tests; nothing in the UI writes a trail (no feature beyond the ask).
+- **The masked plate says `?`** like every other hidden card, even for a line that 2D would leave showing its image. Far away you see `?`, up close the masked diagram. 2D never blanks an occluded line because there the masks are the whole node.
+- **The masked panel shows only the asked diagram.** A fence that holds prose or a second, unmasked diagram (like `surface-parts`) shows just the asked diagram in its panel, not the whole fence as the 2D map does, because the panel is drawn by `renderOcclusion` from the card's `occlusion`, not rendered from Markdown (an embed rendered by `MarkdownRenderer` has no guaranteed `img` at the moment the render promise resolves, and `renderOcclusion` is what the other three surfaces use).
+- CSS: `.osmosis-graph3d-near-body .osmosis-occlusion .osmosis-occlusion-image { width: auto }`, the same fix `.osmosis-study-card` has, so the panel's 15 em height cap keeps the picture's proportions and the masks stay on their regions.
+
+**Surface map**
+
+| File | Change |
+|---|---|
+| `src/graph3d/trail-note.ts`, `.test.ts` (new) | `parseTrail`, `serializeTrail`, `stopLink`, `isTrail`, `TRAIL_MARKER`; round trips, fences, embeds, frontmatter |
+| `src/graph3d/trails.ts`, `.test.ts` | `TrailStep`, `trailSteps`; `routeStops` keeps occlusion cards |
+| `src/graph3d/study.ts`, `.test.ts` | `askable` removed; `studyNode` sets `masks` for occlusion cards |
+| `src/graph3d/model.ts` | `GraphNode.masks` |
+| `src/graph3d/near.ts`, `.test.ts` | `nearMarkdown` stand-in for a masked node |
+| `src/views/Graph3DNear.ts` | `NearDiagramRenderer`; masked panels draw and repaint the diagram |
+| `src/views/Graph3DScene.ts` | `renderDiagram` option, passed to `Graph3DNear` |
+| `src/views/Graph3DStudy.ts`, `.dom.test.ts` | Trail path, cursor, thread, hiding only trail cards; host `pickTrail`, `resolveLink`; tests for the trail and a two-group occluded line |
+| `src/views/Graph3DTrailPicker.ts` (new) | `FuzzySuggestModal` over trail notes |
+| `src/views/Graph3DView.ts` | `trailNotes`, `pickTrail`, host wiring, `renderDiagram` |
+| `styles.css` | Occluded image in a near panel keeps its proportions |
+
+**Fixtures.**
+- Trail: `e2e/fixtures/graph3d/Harbour Trail.md` -> `vault/tests/graph3d/Harbour Trail.md`. Six stops over existing graph3d fixtures: `[[Sailing Basics]]` (plain note), `Rules of the Road#^os-rr1` (due line), `Rules of the Road#Lights and sounds` (heading), `Buoy Cards#^os-by2` (not due until 2027: visited and shown), `Tide Cards#^os-td1` (due), `Route Planning#^os-rp2` (new).
+- Occlusion: no new fixture; the existing `vault/tests/flashcard/occlusion-surfaces.md` (master `e2e/fixtures/occlusion-surfaces.md`, images in `vault/media/`) has a two-group fence and a three-group line, all overdue or new.
+
+**Manual test.** Reload Obsidian (Ctrl+R) so the new note is indexed.
+
+*Trail.* Open `tests/graph3d/Harbour Trail.md`, run "Open 3D graph for current note" (depth 1 loads every stop's note), click the graduation-cap header action.
+1. The path row reads Free, Due-driven, Trail. Click Trail: a picker lists `Harbour Trail` (and any other note with `osmosis-trail: true`). Choose it: "0 reviewed . stop 0 of 6". `os-rr1`, `os-td1` and `os-rp2` read `?`; the other due cards in those notes (e.g. `os-rp1`, the Rules of the Road fences) stay showing.
+2. Next: flies to Sailing Basics; the hint says no card is due, shown not rated; there is no Reveal. Next: flies to `os-rr1`; click it or press Space, then rate 3 ("1 reviewed"). Next: the "Lights and sounds" heading. Next: `os-by2` ("A green buoy..."): shown, not rated, never `?`. Next: `os-td1`, then `os-rp2` and "stop 6 of 6"; the hint says the trail is finished and Next is disabled.
+3. An amber thread runs through the stops walked so far.
+4. Start from another note with a small depth (e.g. open the graph from `Weather` at depth 1) and choose the trail: stops beyond the loaded area are flown to by loading their note first, and the thread breaks where a note is not loaded.
+5. Choose Free: the thread goes. Dismiss the picker (Esc): the path is unchanged.
+
+*Occlusion.* Open `tests/flashcard/occlusion-surfaces.md` (reset it from `e2e/fixtures/` and Ctrl+R if you have rated it before), open its 3D graph, start study in Free.
+6. The `os-elevat1` line (the span elevation) and the `surface-parts` fence read `?` on their plates. Fly close: their panels show the diagram with the asked group covered in purple/amber and the siblings covered too.
+7. Click the line twice (or Space): the group is ringed (answer side), with Again/Hard/Good/Easy. Rate: the same node asks the next group, covered again (c1 -> c2 -> c3). After the last it goes back to its normal look. The fence asks `c1` then `c2` the same way.
+8. Stop and check Stats: Relational has the ratings.
+
+**Could not verify** (nothing was seen in Obsidian): that `renderOcclusion` finds the image in the 3D near-tier panel (it needs `getFirstLinkpathDest` to resolve the embed target from the node's note); that the masks line up with the picture inside the 15 em height cap (the CSS fix mirrors the study card's); the panel's cross-fade with the DOM image still decoding; a masked panel on a phone; that a fence's second panel group appears after the schedule rewrite re-creates its node; and the picker on a phone. The panel only draws the asked diagram, so a fence's prose and unmasked sibling are not shown there. Fences cannot be trail stops.
