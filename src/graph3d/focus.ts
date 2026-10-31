@@ -47,3 +47,14 @@ float focusDim(float depth) {
 		: ${glsl(FOCUS_DIM_FRONT)} * smoothstep(0.0, 1.0, -offset / ${glsl(FOCUS_RAMP_FRONT)});
 }
 `;
+
+/**
+ * How much of a node's own colour survives at view `depth` (0–1), as the
+ * plate shaders compute it: its arrival/departure `opacity`, less the focus
+ * dim, less the `FogExp2` mist of `density`. The near tier's DOM panels use it
+ * so they fade into the mist exactly with the plates underneath them.
+ */
+export function plateVisibility(opacity: number, depth: number, focus: number, density: number): number {
+	const mist = density * depth;
+	return opacity * (1 - focusDim(depth, focus)) * Math.exp(-mist * mist);
+}

@@ -4122,3 +4122,66 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	border-top-color: var(--background-secondary);
 	font-family: var(--font-interface);
 }
+
+/*
+ * Near tier (Graph3DNear.ts): live Markdown panels over the nearest plates.
+ * The renderer's layer passes the pointer through to the canvas, so a drag
+ * over a panel still orbits; only media controls take it.
+ */
+.osmosis-graph3d-near {
+	/* Its own stacking context, so the panels' depth z-indexes stay under the header and readouts. */
+	z-index: 0;
+	left: 0;
+	pointer-events: none;
+}
+
+/* A zero-size point at the node; the panel is centred on it and scaled each frame. */
+.osmosis-graph3d-near-anchor {
+	width: 0;
+	height: 0;
+}
+
+.osmosis-graph3d-near-panel {
+	position: absolute;
+	left: 0;
+	top: 0;
+	box-sizing: border-box;
+	width: max-content;
+	max-width: 360px;
+	max-height: 480px;
+	overflow: hidden;
+	padding: 0.25em 0.4em;
+	/* Matches the plate: its fill and text colour (the outline is set inline). */
+	background-color: var(--background-secondary);
+	color: var(--text-normal);
+	line-height: 1.25;
+	transform-origin: 50% 50%;
+}
+
+.osmosis-graph3d-near-body > :first-child,
+.osmosis-graph3d-near-body > :first-child > :first-child {
+	margin-top: 0;
+}
+
+.osmosis-graph3d-near-body > :last-child,
+.osmosis-graph3d-near-body > :last-child > :last-child {
+	margin-bottom: 0;
+}
+
+.osmosis-graph3d-near-body img,
+.osmosis-graph3d-near-body video {
+	max-width: 100%;
+}
+
+.osmosis-graph3d-near-body :is(video, audio, iframe) {
+	pointer-events: auto;
+}
+
+/* Mixes the panel toward the background as the mist and focus dim mix its plate. */
+.osmosis-graph3d-near-veil {
+	position: absolute;
+	inset: 0;
+	background-color: var(--background-primary);
+	opacity: 0;
+	pointer-events: none;
+}

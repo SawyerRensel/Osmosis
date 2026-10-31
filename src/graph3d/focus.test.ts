@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { FOCUS_DIM_BEHIND, FOCUS_DIM_FRONT, FOCUS_DIM_GLSL, focusDim } from "./focus";
+import { FOCUS_DIM_BEHIND, FOCUS_DIM_FRONT, FOCUS_DIM_GLSL, focusDim, plateVisibility } from "./focus";
 
 describe("focusDim", () => {
 	it("is 0 at the focus", () => {
@@ -51,5 +51,21 @@ describe("focusDim", () => {
 	it("puts the same constants in the shader", () => {
 		expect(FOCUS_DIM_GLSL).toContain(FOCUS_DIM_BEHIND.toFixed(4));
 		expect(FOCUS_DIM_GLSL).toContain(FOCUS_DIM_FRONT.toFixed(4));
+	});
+});
+
+describe("plateVisibility", () => {
+	it("is the opacity at the focus with no mist", () => {
+		expect(plateVisibility(0.6, 100, 100, 0)).toBeCloseTo(0.6);
+	});
+
+	it("folds in the focus dim and the FogExp2 mist", () => {
+		const density = 0.002;
+		const expected = (1 - focusDim(300, 100)) * Math.exp(-((density * 300) ** 2));
+		expect(plateVisibility(1, 300, 100, density)).toBeCloseTo(expected);
+	});
+
+	it("is 0 for a node faded out", () => {
+		expect(plateVisibility(0, 100, 100, 0.001)).toBe(0);
 	});
 });

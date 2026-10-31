@@ -23,6 +23,7 @@ import {
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
+import { Graph3DNear, type NearMarkdownRenderer } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, plateExtent, spriteLabel } from "../graph3d/appearance";
 import { rotateAboutPivot } from "../graph3d/pivot";
@@ -98,6 +99,8 @@ export interface SceneControls {
 export interface SceneOptions {
 	controls: SceneControls;
 	onNodeClick: (node: GraphNode) => void;
+	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
+	renderMarkdown: NearMarkdownRenderer;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -197,6 +200,8 @@ export class Graph3DScene {
 	/** Many-body strength per node; nodes not in it are left out of the force. */
 	private charge = new Map<string, number>();
 	private readonly plates: Graph3DPlates;
+	/** Live Markdown panels over the nearest plates. */
+	private readonly near: Graph3DNear;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
 	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
 	/** Node positions or opacities changed since the plates and edges were last written. */
@@ -236,7 +241,14 @@ export class Graph3DScene {
 	readonly heldKeys = new Set<string>();
 
 	constructor(private readonly container: HTMLElement, private readonly options: SceneOptions) {
-		this.graph = new ForceGraph3D(container, { controlType: "orbit" }) as unknown as ForceGraph3DInstance<EngineNode, EngineLink>;
+		// The near tier's CSS2D renderer has to be handed over at construction:
+		// the engine sizes it and draws it after the canvas every frame.
+		this.near = new Graph3DNear(options.renderMarkdown, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
+		this.graph = new ForceGraph3D(container, {
+			controlType: "orbit",
+			// CSS2DRenderer is a renderer by shape, not by type.
+			extraRenderers: [this.near.renderer as never],
+		}) as unknown as ForceGraph3DInstance<EngineNode, EngineLink>;
 		const camera = this.graph.camera() as PerspectiveCamera;
 		camera.near = CAMERA_NEAR;
 		camera.updateProjectionMatrix();
@@ -310,7 +322,7 @@ export class Graph3DScene {
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
-		this.graph.scene().add(this.edges, this.plates.group);
+		this.graph.scene().add(this.edges, this.plates.group, this.near.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
 
 		this.frame = window.requestAnimationFrame(this.tick);
@@ -480,6 +492,7 @@ export class Graph3DScene {
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
+		this.near.destroy();
 		this.nodes = [];
 		this.links = [];
 		this.plates.dispose();
@@ -846,7 +859,10 @@ export class Graph3DScene {
 		if (shown === this.paused) {
 			this.paused = !shown;
 			if (shown) this.graph.resumeAnimation();
-			else this.graph.pauseAnimation();
+			else {
+				this.graph.pauseAnimation();
+				this.near.pauseMedia();
+			}
 		}
 		if (!shown) {
 			this.heldKeys.clear();
@@ -868,6 +884,7 @@ export class Graph3DScene {
 		const focusDepth = this.viewDepth(controls.target);
 		focus.value = focus.value === 0 ? focusDepth : focus.value + (focusDepth - focus.value) * ease;
 		this.stepFades(now);
+		this.near.update(this.nodes, this.graph.camera() as PerspectiveCamera, focus.value, this.fog.density, seconds);
 		if (this.dirty) {
 			this.dirty = false;
 			this.plates.write(this.nodes, this.layoutDirty);

@@ -1,4 +1,4 @@
-import { ItemView, Platform, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Platform, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { buildGraph, noteNodeId, type GraphNode, type NoteInput } from "../graph3d/model";
@@ -132,6 +132,7 @@ export class Graph3DView extends ItemView {
 		this.scene = new Graph3DScene(this.stageEl, {
 			controls: this.controlSettings(),
 			onNodeClick: (node) => this.hop(node),
+			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 		});
 		this.scene.setTheme(this.readTheme());
 		// The stage can be 0×0 when the view opens (in a background tab, say),
