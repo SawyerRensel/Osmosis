@@ -1,4 +1,4 @@
-import { Setting, setIcon } from "obsidian";
+import { Setting, setIcon, setTooltip, type SliderComponent, type ToggleComponent } from "obsidian";
 import {
 	MIST_LIMIT,
 	OVERLAY_EDGE_KINDS,
@@ -33,25 +33,43 @@ const LABEL_MODES: Record<LabelMode, string> = {
 	none: "Hidden",
 };
 
+/** The loaded area's depth and backlinks: they live in the view's state, so the menu only shows and sends them. */
+export interface GraphReach {
+	depth: number;
+	backlinks: boolean;
+}
+
 /**
  * The 3D graph's Overlays menu, in the spirit of Blender's viewport Overlays
- * and Shading popovers: a button in the viewport header that opens a panel of
- * settings under it. Taps work as clicks, so it needs nothing extra on mobile.
- * Every change goes out whole through `onChange`; the menu never saves.
+ * and Shading popovers: an icon button in the viewport's top-right corner that
+ * opens a panel of settings under it. It also holds the graph's Depth and
+ * Backlinks, which were a strip in the viewport. Taps work as clicks, so it
+ * needs nothing extra on mobile. Every change goes out whole through
+ * `onChange` (or `onReach`); the menu never saves.
  */
 export class Graph3DOverlaysMenu {
 	private readonly button: HTMLElement;
 	private readonly panel: HTMLElement;
 	/** The settings as this menu last showed or sent them. */
 	current: Graph3DOverlays;
+	private depthSlider: SliderComponent | null = null;
+	private backlinksToggle: ToggleComponent | null = null;
 
-	constructor(header: HTMLElement, overlays: Graph3DOverlays, private readonly onChange: (overlays: Graph3DOverlays) => void) {
+	constructor(
+		root: HTMLElement,
+		overlays: Graph3DOverlays,
+		private reach: GraphReach,
+		private readonly maxDepth: number,
+		private readonly onChange: (overlays: Graph3DOverlays) => void,
+		private readonly onReach: (reach: GraphReach) => void,
+	) {
 		this.current = overlays;
-		this.button = header.createEl("button", { cls: "osmosis-graph3d-overlays-button", attr: { "aria-label": "Overlays" } });
-		setIcon(this.button.createSpan(), "layers");
-		this.button.createSpan({ text: "Overlays" });
+		const corner = root.createDiv({ cls: "osmosis-graph3d-overlays-corner" });
+		this.button = corner.createEl("button", { cls: "osmosis-graph3d-overlays-button clickable-icon", attr: { "aria-label": "Overlays" } });
+		setIcon(this.button, "layers");
+		setTooltip(this.button, "Overlays");
 		this.button.addEventListener("click", () => this.toggle());
-		this.panel = header.createDiv({ cls: "osmosis-graph3d-overlays is-hidden" });
+		this.panel = corner.createDiv({ cls: "osmosis-graph3d-overlays is-hidden" });
 	}
 
 	get isOpen(): boolean {
@@ -68,13 +86,24 @@ export class Graph3DOverlaysMenu {
 		this.button.toggleClass("is-active", open);
 		// Built on opening, so it always shows the settings as they are now.
 		if (open) this.build();
-		else this.panel.empty();
+		else {
+			this.panel.empty();
+			this.depthSlider = null;
+			this.backlinksToggle = null;
+		}
 	}
 
 	/** Show settings changed elsewhere (another 3D graph's menu). */
 	show(overlays: Graph3DOverlays): void {
 		this.current = overlays;
 		if (this.isOpen) this.build();
+	}
+
+	/** Show the depth and backlinks the view now has (restored state, or a saved layout). */
+	showReach(reach: GraphReach): void {
+		this.reach = reach;
+		this.depthSlider?.setValue(reach.depth);
+		this.backlinksToggle?.setValue(reach.backlinks);
 	}
 
 	private change(patch: Partial<Graph3DOverlays>): void {
@@ -86,6 +115,29 @@ export class Graph3DOverlaysMenu {
 		const panel = this.panel;
 		panel.empty();
 		const overlays = this.current;
+
+		const depth = new Setting(panel).setName("Depth").setDesc(depthLabel(this.reach.depth));
+		depth.addSlider((slider) => {
+			this.depthSlider = slider;
+			slider
+				.setLimits(1, this.maxDepth, 1)
+				.setValue(this.reach.depth)
+				.onChange((value) => {
+					depth.setDesc(depthLabel(value));
+					this.reach = { ...this.reach, depth: value };
+					this.onReach(this.reach);
+				});
+		});
+		new Setting(panel)
+			.setName("Backlinks")
+			.setDesc("Count notes that link to a loaded note as hops, not only the notes it links to.")
+			.addToggle((toggle) => {
+				this.backlinksToggle = toggle;
+				toggle.setValue(this.reach.backlinks).onChange((value) => {
+					this.reach = { ...this.reach, backlinks: value };
+					this.onReach(this.reach);
+				});
+			});
 
 		new Setting(panel).setName("Color by").addDropdown((dropdown) =>
 			dropdown
@@ -136,6 +188,10 @@ export class Graph3DOverlaysMenu {
 				.onChange((value) => this.change({ labels: value as LabelMode })),
 		);
 	}
+}
+
+function depthLabel(depth: number): string {
+	return depth === 1 ? "1 hop from the focus note" : `${String(depth)} hops from the focus note`;
 }
 
 function mistLabel(mist: number): string {

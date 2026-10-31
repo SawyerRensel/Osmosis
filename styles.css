@@ -4030,43 +4030,48 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	inset: 0;
 }
 
-.osmosis-graph3d-header {
-	position: absolute;
-	top: var(--size-4-2);
-	left: var(--size-4-2);
-	z-index: 1;
-	display: flex;
-	align-items: center;
-	gap: var(--size-4-2);
-	padding: var(--size-4-1) var(--size-4-3);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	background: var(--background-secondary);
-	font-size: var(--font-ui-small);
-	color: var(--text-muted);
+/*
+ * Viewport corners: perf gauge top left, Overlays top right, Obsidian's mobile
+ * toolbar toggle bottom left, joystick toggle and speed bottom right.
+ * --osmosis-graph3d-lift is how far Obsidian's floating mobile toolbar rises
+ * from the bottom of the viewport, so what sits at the bottom stays clear of it.
+ */
+.osmosis-graph3d {
+	--osmosis-graph3d-lift: 0px;
 }
 
-/* Overlays menu (Graph3DOverlays.ts): a header button and the panel it opens under the header. */
+body.is-mobile:not(.osmosis-graph3d-hide-toolbar) .osmosis-graph3d {
+	--osmosis-graph3d-lift: 84px;
+}
+
+/* Hides Obsidian's mobile toolbar while a 3D graph that asks for it is the active view (set in Graph3DView.ts). */
+body.osmosis-graph3d-hide-toolbar .mobile-navbar {
+	display: none;
+}
+
+/* Overlays menu (Graph3DOverlays.ts): an icon button, and the panel it opens under it. Above the perf readout, so it stays reachable. */
+.osmosis-graph3d-overlays-corner {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 2;
+}
+
 .osmosis-graph3d-overlays-button {
 	display: flex;
 	align-items: center;
-	gap: var(--size-4-1);
-	font-size: var(--font-ui-small);
+	justify-content: center;
+	margin-left: auto;
 }
 
 .osmosis-graph3d-overlays-button.is-active {
 	color: var(--text-accent);
 }
 
-.osmosis-graph3d-overlays-button svg {
-	width: var(--icon-s);
-	height: var(--icon-s);
-}
-
 .osmosis-graph3d-overlays {
 	position: absolute;
 	top: calc(100% + var(--size-4-1));
-	left: 0;
+	right: 0;
 	width: min(320px, calc(100vw - 2 * var(--size-4-4)));
 	max-height: 60vh;
 	overflow-y: auto;
@@ -4109,34 +4114,29 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
-/* Relational study panel (Graph3DStudy.ts): top right, clear of the header. Rating colours come from .osmosis-contextual-rating. */
+/*
+ * Relational study panel (Graph3DStudy.ts): bottom centre, clear of the corner
+ * controls and of Obsidian's mobile toolbar when it is shown. Rating colours come
+ * from .osmosis-contextual-rating. Its rows are flex rows of thumb-sized buttons,
+ * so a later control (a path mode selector) is one more row.
+ */
 .osmosis-graph3d-study {
 	position: absolute;
-	top: var(--size-4-2);
-	right: var(--size-4-2);
+	bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+	left: 50%;
+	transform: translateX(-50%);
 	z-index: 1;
 	display: flex;
 	flex-direction: column;
-	gap: var(--size-4-1);
-	max-width: min(340px, calc(100% - 2 * var(--size-4-2)));
+	gap: var(--size-4-2);
+	width: max-content;
+	max-width: min(420px, calc(100% - 2 * var(--size-4-2)));
 	padding: var(--size-4-2) var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
 	background: var(--background-secondary);
 	font-size: var(--font-ui-small);
 	color: var(--text-muted);
-}
-
-.is-phone .osmosis-graph3d-study {
-	top: auto;
-	bottom: calc(var(--size-4-2) * 2 + var(--icon-size, 18px) + var(--size-4-3));
-	left: var(--size-4-2);
-	max-width: none;
-}
-
-.osmosis-graph3d-study-title {
-	font-weight: var(--font-semibold);
-	color: var(--text-normal);
 }
 
 .osmosis-graph3d-study-actions {
@@ -4152,6 +4152,47 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 .osmosis-graph3d-study-hint {
 	color: var(--text-faint);
+}
+
+/* Tablet: more room for a thumb than the desktop buttons, but not the full width. */
+.is-tablet .osmosis-graph3d-study-actions > button,
+.is-tablet .osmosis-graph3d-study-rating button {
+	min-height: 48px;
+	min-width: 84px;
+	padding: 0 var(--size-4-5);
+	font-size: var(--font-ui-medium);
+}
+
+/* Phone: the panel spans the viewport and its buttons span the panel, tall enough for a thumb. */
+.is-phone .osmosis-graph3d-study {
+	left: var(--size-4-2);
+	right: var(--size-4-2);
+	transform: none;
+	width: auto;
+	max-width: none;
+}
+
+.is-phone .osmosis-graph3d-study-actions {
+	flex-wrap: nowrap;
+}
+
+.is-phone .osmosis-graph3d-study-actions > button,
+.is-phone .osmosis-graph3d-study-rating button {
+	flex: 1;
+	min-height: 56px;
+	padding: 0 var(--size-4-2);
+	font-size: var(--font-ui-medium);
+}
+
+.is-phone .osmosis-graph3d-study-rating {
+	flex: 1;
+	gap: var(--size-4-2);
+}
+
+/* With the joysticks up, the panel rides above them, so its buttons aren't under a stick. */
+.is-phone .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study,
+.is-tablet .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study {
+	bottom: calc(var(--size-4-2) * 2 + max(48px, var(--osmosis-graph3d-lift)) + 120px);
 }
 
 /* Bottom-right corner: the joystick toggle, with the flight speed readout to its left. */
@@ -4196,10 +4237,10 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
-/* Raised clear of the perf gauge (bottom-left) and the joystick toggle (bottom-right). */
+/* Raised clear of the corner toggles, and of Obsidian's mobile toolbar when it is shown. */
 .osmosis-graph3d-stick {
 	position: absolute;
-	bottom: calc(var(--size-4-2) + 48px);
+	bottom: calc(var(--size-4-2) + max(48px, var(--osmosis-graph3d-lift)));
 	z-index: 1;
 	display: flex;
 	align-items: center;
@@ -4237,11 +4278,28 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	pointer-events: none;
 }
 
-/* Perf readout (Graph3DPerf.ts), behind a toggle in the bottom-left corner. */
-.osmosis-graph3d-perf {
+/* Obsidian's mobile toolbar toggle (Graph3DView.ts), bottom left, phones and tablets only. */
+.osmosis-graph3d-toolbar-toggle {
 	position: absolute;
 	left: var(--size-4-2);
 	bottom: var(--size-4-2);
+	z-index: 1;
+}
+
+.osmosis-graph3d-toolbar-toggle.is-active {
+	color: var(--text-accent);
+}
+
+.osmosis-graph3d-toolbar-toggle.is-hidden {
+	display: none;
+}
+
+/* Perf readout (Graph3DPerf.ts), behind a toggle in the top-left corner; the readout opens downward. */
+.osmosis-graph3d-perf {
+	position: absolute;
+	left: var(--size-4-2);
+	top: var(--size-4-2);
+	max-width: calc(100% - 4 * var(--size-4-4));
 	z-index: 1;
 	display: flex;
 	flex-direction: column;
@@ -4258,6 +4316,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
 	white-space: pre;
+	overflow-x: auto;
 	cursor: pointer;
 }
 

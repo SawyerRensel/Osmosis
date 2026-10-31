@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { CENTRED, STICK_DEADZONE, STICK_LOOK_RATE, STICK_ROLES, flightAxes, stickDeflection, stickLook, stickMove } from "./joysticks";
 
 describe("STICK_ROLES", () => {
-	it("looks with the left stick and moves with the right, as Sawyer asked", () => {
-		expect(STICK_ROLES).toEqual({ left: "look", right: "move" });
+	it("moves with the left stick and looks with the right, as Sawyer settled after trying it on a phone", () => {
+		expect(STICK_ROLES).toEqual({ left: "move", right: "look" });
 	});
 });
 

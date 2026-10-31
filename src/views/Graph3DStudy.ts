@@ -4,6 +4,8 @@
  * neighbourhood around you, reveal it and rate it. Ratings go through
  * `plugin.createSessionManager("relational")`, so they move the same FSRS
  * schedules every other mode uses, and the review log counts them separately.
+ * The view's graduation-cap header action starts and ends a session; the
+ * panel has no Stop button of its own.
  *
  * This slice has one path mode, **free exploration**: every due card in the
  * loaded area is hidden, and the area follows you as you hop. "Next" flies to
@@ -206,7 +208,6 @@ export class Graph3DStudy {
 		if (panel === null) return;
 		panel.empty();
 		const hidden = [...this.targets.values()].reduce((sum, keys) => sum + keys.length, 0);
-		panel.createDiv({ cls: "osmosis-graph3d-study-title", text: "Relational study: free exploration" });
 		panel.createDiv({
 			cls: "osmosis-graph3d-study-progress",
 			text: `${String(this.reviewed)} reviewed · ${String(hidden)} hidden here`,
@@ -224,7 +225,6 @@ export class Graph3DStudy {
 			next.disabled = hidden === 0 || (hidden === 1 && step !== null);
 			next.addEventListener("click", () => this.next());
 		}
-		row.createEl("button", { text: "Stop" }).addEventListener("click", () => this.stop());
 		panel.createDiv({
 			cls: "osmosis-graph3d-study-hint",
 			text: step === null ? (hidden === 0 ? "No due cards here: hop on to look further." : "Fly to a ? and click it, or press Next.") : step.revealed ? "Rate it: keys 1–4." : "Recall it, then reveal: space, or click it again.",

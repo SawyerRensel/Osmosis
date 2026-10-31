@@ -1,5 +1,5 @@
 /**
- * Perf readout for the 3D graph, behind a toggle in the viewport's bottom-left
+ * Perf readout for the 3D graph, behind a toggle in the viewport's top-left
  * corner (hidden by default).
  *
  * Click the readout to hide or show every plate, to compare frame cost with
@@ -35,12 +35,13 @@ export class Graph3DPerf {
 
 	constructor(container: HTMLElement, private readonly renderer: WebGLRenderer, private readonly plates: Graph3DPlates) {
 		this.corner = container.createDiv({ cls: "osmosis-graph3d-perf" });
-		this.el = this.corner.createDiv({ cls: "osmosis-graph3d-perf-readout is-hidden" });
-		this.el.addEventListener("click", this.togglePlates);
 		this.toggleEl = this.corner.createDiv({ cls: "osmosis-graph3d-perf-toggle clickable-icon" });
 		setIcon(this.toggleEl, "gauge");
 		setTooltip(this.toggleEl, "Performance readout");
 		this.toggleEl.addEventListener("click", this.toggleReadout);
+		// Below the toggle: the corner is the viewport's top left, so the readout opens downward.
+		this.el = this.corner.createDiv({ cls: "osmosis-graph3d-perf-readout is-hidden" });
+		this.el.addEventListener("click", this.togglePlates);
 		// The engine renders on its own animation loop; time each call there.
 		this.render = renderer.render.bind(renderer);
 		renderer.render = (scene, camera) => {

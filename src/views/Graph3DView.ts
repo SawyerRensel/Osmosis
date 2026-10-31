@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Platform, parseLinktext, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
@@ -29,6 +29,25 @@ const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
  * them shouldn't turn them on for a laptop that has keys.
  */
 const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
+/**
+ * Whether Obsidian's mobile toolbar (the floating navbar) is hidden while a 3D
+ * graph is the active view. Per device, like the joysticks: it is a preference
+ * about this phone's screen, and the same graph opened on a laptop has no
+ * toolbar to hide. Off by default, so a first-time user sees the app as usual.
+ */
+const HIDE_TOOLBAR_STORAGE_KEY = "osmosis-graph3d-hide-toolbar";
+/** Body class that hides the toolbar (`.mobile-navbar`), set only while a 3D graph that asks for it is the active view. */
+export const HIDE_TOOLBAR_CLASS = "osmosis-graph3d-hide-toolbar";
+
+/**
+ * Put the body class in line with the active view: on only while it is a 3D
+ * graph that hides the toolbar, so Obsidian's toolbar is never left hidden
+ * elsewhere. `except` is a view that is closing and no longer counts.
+ */
+export function syncMobileToolbar(app: App, except: Graph3DView | null = null): void {
+	const active = app.workspace.getActiveViewOfType(Graph3DView);
+	document.body.toggleClass(HIDE_TOOLBAR_CLASS, Platform.isMobile && active !== null && active !== except && active.hidesToolbar);
+}
 
 /**
  * The 3D graph: every line of the notes within N hops of the focus note, as
@@ -56,8 +75,9 @@ export class Graph3DView extends ItemView {
 	private studyActionEl: HTMLElement | null = null;
 	/** Relational study, while the view is open; its session runs only while `active`. */
 	private study: Graph3DStudy | null = null;
-	private depthSlider: SliderComponent | null = null;
-	private backlinksToggle: ToggleComponent | null = null;
+	/** Whether this view hides Obsidian's mobile toolbar while it is the active view. */
+	hidesToolbar = false;
+	private toolbarToggleEl: HTMLElement | null = null;
 	private overlaysMenu: Graph3DOverlaysMenu | null = null;
 	/** The colour mode the scene is coloured in now, to tell when the menu changed it. */
 	private colorBy: Graph3DOverlays["colorBy"] | null = null;
@@ -118,8 +138,7 @@ export class Graph3DView extends ItemView {
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(1, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
 		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
-		this.depthSlider?.setValue(this.depth);
-		this.backlinksToggle?.setValue(this.backlinks);
+		this.overlaysMenu?.showReach({ depth: this.depth, backlinks: this.backlinks });
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
 		await super.setState(state, result);
@@ -132,31 +151,35 @@ export class Graph3DView extends ItemView {
 		root.empty();
 		root.addClass("osmosis-graph3d");
 
-		const header = root.createDiv({ cls: "osmosis-graph3d-header" });
-		header.createSpan({ cls: "osmosis-graph3d-header-label", text: "Depth" });
-		this.depthSlider = new SliderComponent(header)
-			.setLimits(1, MAX_DEPTH, 1)
-			.setValue(this.depth)
-			.onChange((value) => {
-				this.depth = value;
+		this.overlaysMenu = new Graph3DOverlaysMenu(
+			root,
+			this.plugin().settings.graph3dOverlays,
+			{ depth: this.depth, backlinks: this.backlinks },
+			MAX_DEPTH,
+			(overlays) => this.plugin().setGraph3DOverlays(overlays),
+			({ depth, backlinks }) => {
+				const reloads = depth !== this.depth || backlinks !== this.backlinks;
+				this.depth = depth;
+				this.backlinks = backlinks;
 				this.app.workspace.requestSaveLayout();
-				void this.reload();
-			});
-		header.createSpan({ cls: "osmosis-graph3d-header-label", text: "Backlinks" });
-		this.backlinksToggle = new ToggleComponent(header)
-			.setValue(this.backlinks)
-			.onChange((value) => {
-				if (value === this.backlinks) return;
-				this.backlinks = value;
-				this.app.workspace.requestSaveLayout();
-				void this.reload();
-			});
-
-		this.overlaysMenu = new Graph3DOverlaysMenu(header, this.plugin().settings.graph3dOverlays, (overlays) => this.plugin().setGraph3DOverlays(overlays));
+				if (reloads) void this.reload();
+			},
+		);
 		// A press anywhere else in the view, the canvas included, closes the menu.
 		this.registerDomEvent(root, "pointerdown", (e) => {
 			if (this.overlaysMenu?.isOpen === true && !this.overlaysMenu.contains(e.target)) this.overlaysMenu.toggle(false);
 		});
+
+		// Bottom-left corner, phones and tablets only: hides Obsidian's own toolbar, which floats over the viewport.
+		this.hidesToolbar = Platform.isMobile && this.app.loadLocalStorage(HIDE_TOOLBAR_STORAGE_KEY) === true;
+		this.toolbarToggleEl = root.createDiv({ cls: "osmosis-graph3d-toolbar-toggle clickable-icon" });
+		this.toolbarToggleEl.toggleClass("is-hidden", !Platform.isMobile);
+		setIcon(this.toolbarToggleEl, "panel-bottom");
+		this.toolbarToggleEl.addEventListener("click", () => this.toggleToolbar());
+		this.showToolbarToggle();
+		// The toolbar comes back whenever another view becomes active, and goes again when this one does.
+		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncMobileToolbar(this.app)));
+		syncMobileToolbar(this.app);
 
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
@@ -240,6 +263,8 @@ export class Graph3DView extends ItemView {
 		this.loadSeq++;
 		this.study?.destroy();
 		this.study = null;
+		this.toolbarToggleEl = null;
+		syncMobileToolbar(this.app, this);
 		this.scene?.destroy();
 		this.scene = null;
 		this.overlaysMenu = null;
@@ -329,6 +354,19 @@ export class Graph3DView extends ItemView {
 		this.app.workspace.requestSaveLayout();
 		const file = this.app.workspace.getActiveFile();
 		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) this.setFocus(file.path, true);
+	}
+
+	private toggleToolbar(): void {
+		this.hidesToolbar = !this.hidesToolbar;
+		this.app.saveLocalStorage(HIDE_TOOLBAR_STORAGE_KEY, this.hidesToolbar);
+		this.showToolbarToggle();
+		syncMobileToolbar(this.app);
+	}
+
+	private showToolbarToggle(): void {
+		this.toolbarToggleEl?.toggleClass("is-active", this.hidesToolbar);
+		this.toolbarToggleEl?.setAttr("aria-pressed", String(this.hidesToolbar));
+		if (this.toolbarToggleEl !== null) setTooltip(this.toolbarToggleEl, this.hidesToolbar ? "Show Obsidian's toolbar" : "Hide Obsidian's toolbar");
 	}
 
 	private toggleStudy(): void {

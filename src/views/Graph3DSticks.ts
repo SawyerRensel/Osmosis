@@ -1,7 +1,7 @@
 /**
  * Two on-screen thumb joysticks for walking and flying through the 3D graph on
  * a touch screen, behind a toggle in the viewport's bottom-right corner. What
- * each stick does is `STICK_ROLES`; the maths is `src/graph3d/joysticks.ts`;
+ * each stick does is `STICK_ROLES` (left moves, right looks); the maths is `src/graph3d/joysticks.ts`;
  * `Graph3DScene` reads `look` and `move` every frame.
  *
  * Each stick is its own element over the canvas, so a touch that starts on one

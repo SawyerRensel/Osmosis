@@ -18,7 +18,7 @@ import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
-import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
+import { Graph3DView, HIDE_TOOLBAR_CLASS, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
@@ -864,6 +864,8 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	onunload() {
+		// Never leave Obsidian's mobile toolbar hidden behind a plugin that is gone
+		document.body.removeClass(HIDE_TOOLBAR_CLASS);
 		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();

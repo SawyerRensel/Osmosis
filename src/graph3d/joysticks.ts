@@ -12,10 +12,12 @@ export type StickSide = "left" | "right";
 export type StickRole = "look" | "move";
 
 /**
- * Which stick does what. Sawyer asked for left = look, right = move; most
- * console games use the opposite. Swap them here and nowhere else.
+ * Which stick does what: left moves (WASD), right looks, as most console games
+ * have it. (The first build had them the other way round, as the ticket
+ * specified; Sawyer swapped them after trying it on a phone.) Swap them here
+ * and nowhere else.
  */
-export const STICK_ROLES: Readonly<Record<StickSide, StickRole>> = { left: "look", right: "move" };
+export const STICK_ROLES: Readonly<Record<StickSide, StickRole>> = { left: "move", right: "look" };
 
 /** Fraction of the stick's radius a thumb can wander from centre without moving anything. */
 export const STICK_DEADZONE = 0.12;
