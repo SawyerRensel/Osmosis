@@ -218,7 +218,10 @@ void main() {
 	float coverage = clamp(0.5 - d / aa, 0.0, 1.0);
 	if (coverage <= 0.0) discard;
 	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)};
-	float border = smoothstep(-stroke - aa * 0.5, -stroke + aa * 0.5, d);
+	// An outline thinner than a pixel is drawn a pixel wide and that much fainter,
+	// so a distant plate's border doesn't shimmer as it lands between pixels.
+	float band = max(stroke, aa);
+	float border = smoothstep(-band - aa * 0.5, -band + aa * 0.5, d) * (stroke / band);
 	gl_FragColor = vec4(mix(uBackground, mix(uFill, vColor, border), vOpacity), coverage);
 	#include <fog_fragment>
 	#include <colorspace_fragment>

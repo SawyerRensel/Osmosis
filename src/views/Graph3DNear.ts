@@ -12,7 +12,10 @@
  *   it would as a world object. Its largest size (`PANEL_MAX_EM`) is capped
  *   and the scene spaces nodes for it (`panelBoxEm`), so panels side by side
  *   leave their edges showing between them.
- * - **Stacked by depth:** a nearer panel covers a farther one, by view depth.
+ * - **Stacked by depth:** a nearer panel covers a farther one, by view depth,
+ *   and a plate nearer than a panel is cut out of it with a CSS mask
+ *   (`../graph3d/occlusion.ts`), so the plate on the canvas shows through as
+ *   if the panel were in the depth buffer too.
  * - **One mist:** a background-coloured veil over each panel mixes it toward
  *   the background exactly as the plate shader mixes the plate
  *   (`plateVisibility`), so the DOM and WebGL fade as one. A separate
@@ -31,6 +34,7 @@ import { NEAR_BUDGET, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } 
 import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
+import { holeMask, panelHoles, type ScreenPlate } from "../graph3d/occlusion";
 
 /** Renders `markdown` into `el`, as `MarkdownRenderer.render` does, with `component` owning its children. */
 export type NearMarkdownRenderer = (markdown: string, el: HTMLElement, sourcePath: string, component: Component) => Promise<void>;
@@ -68,6 +72,11 @@ interface Panel {
 	/** Cross-fade into the tier, 0–1, heading for `target`. */
 	fade: number;
 	target: 0 | 1;
+	/** The box's laid-out size in px, before its scale (`ResizeObserver`). */
+	width: number;
+	height: number;
+	/** The mask last written, to skip unchanged writes. */
+	mask: string;
 }
 
 export class Graph3DNear {
@@ -83,6 +92,20 @@ export class Graph3DNear {
 	private focus = 0;
 	private density = 0;
 	private readonly point = new Vector3();
+	private readonly platePoint = new Vector3();
+	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
+	private sources: readonly NearSource[] = [];
+	private screenPlates: ScreenPlate[] | null = null;
+	private readonly boxes = new Map<Element, Panel>();
+	private readonly sizes = new ResizeObserver((entries) => {
+		for (const entry of entries) {
+			const panel = this.boxes.get(entry.target);
+			const size = entry.borderBoxSize[0];
+			if (panel === undefined || size === undefined) continue;
+			panel.width = size.inlineSize;
+			panel.height = size.blockSize;
+		}
+	});
 
 	/** `lineEmWorld` is how many world units one em of plate text is. */
 	constructor(private readonly render: NearMarkdownRenderer, lineEmWorld: number) {
@@ -103,6 +126,8 @@ export class Graph3DNear {
 	update(nodes: readonly NearSource[], camera: PerspectiveCamera, focus: number, density: number, seconds: number): void {
 		this.focus = focus;
 		this.density = density;
+		this.sources = nodes;
+		this.screenPlates = null;
 		camera.updateMatrixWorld();
 		const pxPerUnitAt1 = this.pxPerUnitAt1(camera);
 		const probes: NearProbe[] = [];
@@ -164,6 +189,10 @@ export class Graph3DNear {
 		for (const panel of this.panels.values()) this.removePanel(panel);
 		this.panels.clear();
 		this.cache.clear();
+		this.sizes.disconnect();
+		this.boxes.clear();
+		this.sources = [];
+		this.screenPlates = null;
 		this.renderer.domElement.remove();
 	}
 
@@ -178,7 +207,9 @@ export class Graph3DNear {
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });
 		const object = new CSS2DObject(anchor);
-		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1 };
+		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "" };
+		this.boxes.set(box, panel);
+		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
 		object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
 		this.group.add(object);
@@ -186,17 +217,60 @@ export class Graph3DNear {
 		return panel;
 	}
 
-	/** Scale the panel to its depth and veil it by the mist, as the CSS2D renderer positions it. */
+	/** Scale the panel to its depth, cut out the plates in front of it and veil it by the mist, as the CSS2D renderer positions it. */
 	private place(panel: Panel, camera: Camera): void {
-		const depth = -this.point.copy(panel.object.position).applyMatrix4(camera.matrixWorldInverse).z;
-		const scale = panelScale(depth, this.pxPerUnitAt1(camera as PerspectiveCamera), this.pxPerUnit);
+		const point = this.point.copy(panel.object.position).applyMatrix4(camera.matrixWorldInverse);
+		const depth = -point.z;
+		const pxPerUnitAt1 = this.pxPerUnitAt1(camera as PerspectiveCamera);
+		const scale = panelScale(depth, pxPerUnitAt1, this.pxPerUnit);
 		// Stack by view depth, as the plates' depth buffer does. Left to itself the CSS2D
 		// renderer stacks by straight-line distance to the camera, which puts a panel near
 		// the screen's edge behind a farther one in the middle. It sorts by `renderOrder`
 		// first (higher on top) after this runs, and WebGL ignores it on a CSS2DObject.
 		panel.object.renderOrder = -depth;
 		panel.box.setCssStyles({ transform: `translate(-50%, -50%) scale(${scale})` });
+		point.applyMatrix4(camera.projectionMatrix);
+		const size = this.renderer.getSize();
+		const plates = (this.screenPlates ??= this.platesOnScreen(camera as PerspectiveCamera, pxPerUnitAt1));
+		const holes = panelHoles(
+			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width, height: panel.height, scale, depth },
+			plates,
+		);
+		const mask = holeMask(holes);
+		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
+		if (key !== panel.mask) {
+			panel.mask = key;
+			panel.box.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
+		}
 		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density)) });
+	}
+
+	/**
+	 * Every plate drawn this frame, where it is on screen. A plate is drawn,
+	 * and covers what is behind it, whenever it is placed and not faded right
+	 * out, however far the mist or the focus dim has mixed it toward the
+	 * background. Plates are pulled toward the camera (`PLATE_PULL`) but scaled
+	 * to keep their size on screen, so this is where they land.
+	 */
+	private platesOnScreen(camera: PerspectiveCamera, pxPerUnitAt1: number): ScreenPlate[] {
+		const plates: ScreenPlate[] = [];
+		const { width, height } = this.renderer.getSize();
+		const point = this.platePoint;
+		for (const node of this.sources) {
+			if (node.opacity <= 0 || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+			const depth = -point.z;
+			if (depth <= camera.near) continue;
+			const pxPerUnit = pxPerUnitAt1 / depth;
+			const halfWidth = (node.shape.width / 2) * pxPerUnit;
+			const halfHeight = (node.shape.height / 2) * pxPerUnit;
+			point.applyMatrix4(camera.projectionMatrix);
+			const x = ((point.x + 1) / 2) * width;
+			const y = ((1 - point.y) / 2) * height;
+			if (x + halfWidth < 0 || x - halfWidth > width || y + halfHeight < 0 || y - halfHeight > height) continue;
+			plates.push({ id: node.id, x, y, halfWidth, halfHeight, radius: 2 * halfHeight * PLATE_RADIUS, depth });
+		}
+		return plates;
 	}
 
 	/** Render `markdown` into the panel, from the cache when it can be. */
@@ -260,6 +334,8 @@ export class Graph3DNear {
 		this.cacheBody(panel);
 		releaseMedia(panel.body);
 		panel.component.unload();
+		this.sizes.unobserve(panel.box);
+		this.boxes.delete(panel.box);
 		// CSS2DObject removes its element from the page when it leaves the scene.
 		this.group.remove(panel.object);
 	}

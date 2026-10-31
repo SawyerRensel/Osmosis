@@ -4157,6 +4157,8 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	color: var(--text-normal);
 	line-height: 1.25;
 	transform-origin: 50% 50%;
+	/* Plates nearer than the panel are cut out of it with mask layers, set inline (src/graph3d/occlusion.ts). */
+	mask-repeat: no-repeat;
 }
 
 .osmosis-graph3d-near-body > :first-child,
