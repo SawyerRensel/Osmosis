@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Plates for every node]]"
   - "[[3D Graph - Plate-aware spacing]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-10-31T11:19:43.000Z"
 date_modified: "2026-10-31T11:19:43.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-10-31T12:00:00.000Z"
+date_start_actual: "2026-10-31T12:00:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -79,3 +79,40 @@ Orbit until the cluster separates.
 
 - lint → test → build → manual-test instructions → stop for Sawyer before committing.
 - Tune the two maxima and the ramp length with Sawyer. Record the values chosen, and why, in "What was implemented".
+
+## Batch implementation notes (awaiting manual test)
+
+Built on `feature/3d-graph-focus-dimming` (cut from `feature/3d-graph-plate-spacing`), commit 1080cec. Not pushed, no PR.
+
+### Approach
+
+- `focusDim(depth, focus)` in `src/graph3d/focus.ts` is the curve; `FOCUS_DIM_GLSL` is the same curve as a GLSL function, generated from the same constants so they can't drift.
+- **Curve:** `offset = (depth − focus) / focus`. Behind: `0.70 · smoothstep(offset / 1)`, so it reaches 70% one focus depth behind (twice the camera→focus distance). In front: `0.30 · smoothstep(−offset / 1)`, reaching 30% at the camera. Smoothstep (3t²−2t³) is flat at the focus, so the focused node and its immediate neighbours stay full brightness and nothing pops at the boundary.
+- **Focus** = view depth of `controls.target` (`viewDepth()`, projection on the camera's forward axis, min `MIN_DEPTH`), eased each frame with the mist's `MIST_EASE` (0.25 s) exponential. It lives in one shared uniform, `Graph3DPlates.focus` (`uFocus`), used by the plate material, every glyph-page material and the edge material.
+- **Plates/glyphs:** the vertex shader computes `vOpacity = aOpacity · (1 − focusDim(viewDepth of plate centre))`, so dim folds into the existing mix toward `uBackground`, before the fog. Zero CPU work per frame: no attribute writes.
+- **Edges:** `LineBasicMaterial.onBeforeCompile` adds `vFocusDepth` and multiplies `diffuseColor.a` by `1 − focusDim`. Edges are alpha-blended over the background, so lowering alpha is the same mix.
+
+### Decisions
+
+- **Per-plate, not per-fragment, dim** for plates: a plate and its text dim as one, so text doesn't fade partway across a wide plate. Edges dim per fragment so a link fades along its length into a dimmed cluster; at its ends it matches the plates it joins.
+- **Ramp lengths relative to the focus depth**, not absolute units, so the plate-aware spacing's bigger clusters and any zoom level behave the same.
+- **Ceilings 70% / 30%** as the ticket said; the mist does the rest, so the far background never vanishes. Untuned: change the four constants at the top of `focus.ts` if manual testing says so.
+- **First frame** seeds the focus directly instead of easing up from 0 (which would flash everything dim).
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/focus.ts` | New: constants, `focusDim`, `FOCUS_DIM_GLSL` |
+| `src/graph3d/focus.test.ts` | New: 0 at focus, monotonic both sides, capped, scales with focus, shader carries the constants |
+| `src/views/Graph3DPlates.ts` | Shared `focus` uniform; plate and glyph vertex shaders fold the dim into `vOpacity` |
+| `src/views/Graph3DScene.ts` | Eases `focus` from the orbit target each tick; edge material dims through `onBeforeCompile` |
+
+### Fixture
+
+No new fixture: `vault/tests/graph3d/` (Sailing Basics and its linked notes) already has clusters dense enough to show front/behind; Sawyer's own vault and the stress web are better for the "busy node" case.
+
+### Not verified
+
+- The shaders were not compiled in a real WebGL context (no Obsidian or GLSL validator here). If plates or edges disappear, check the console for a shader compile error first.
+- The visual tuning: whether 70/30 and a one-focus-depth ramp read well.
