@@ -35,17 +35,6 @@ export function nodeCardKey(node: GraphNode): string | null {
 }
 
 /**
- * Whether relational study can ask this card yet. Occlusion cards need their
- * masks painted over the image in a near-tier panel, which is a later slice of
- * the phase (see the task note's "Slice plan"); until then they are left
- * showing, as unstudied context, rather than hidden behind a "?" that would
- * ask the reader to recall a whole diagram.
- */
-export function askable(card: Card): boolean {
-	return card.occlusion === undefined;
-}
-
-/**
  * The hidden nodes of a study pass: node ID → the keys it still has to ask,
  * one per due card in ask order (`spatialStudyKeys`).
  *
@@ -64,7 +53,7 @@ export function studyTargets(nodes: readonly GraphNode[], cards: readonly Card[]
 		// The node has a due card, so every key is a due card's own ID.
 		const keys = spatialStudyKeys(cards, nodeKey, now).filter((key) => {
 			const card = byId.get(key);
-			return !rated.has(key) && card !== undefined && askable(card);
+			return !rated.has(key) && card !== undefined;
 		});
 		if (keys.length > 0) targets.set(node.id, keys);
 	}
@@ -109,6 +98,10 @@ function isCloze(card: Card): boolean {
  * it keeps its place, colour and links; only what it says changes.
  *
  * - **A hidden line** says `?` on its plate and its panel.
+ * - **An occlusion card** (a line or a fence, `card.occlusion`) says `?` on its
+ *   plate only while hidden; its near-tier panel draws the diagram with the
+ *   asked group covered (`masks`, side `front`), and ringed once revealed (side
+ *   `back`), as 2D spatial study does (`applySpatialHidden`).
  * - **A fence** never blanks, as in 2D: its front is the question. Hidden, its
  *   panel shows the asked card's front; revealed, a cloze's back (the passage
  *   filled in replaces it), any other kind front, a rule, then back.
@@ -120,6 +113,9 @@ function isCloze(card: Card): boolean {
 export function studyNode(node: GraphNode, step: NodeStep, card: Card | undefined): GraphNode {
 	const source = node.source;
 	if (source === undefined) return node;
+	if (card?.occlusion !== undefined) {
+		return { ...node, label: step.revealed ? node.label : HIDDEN_LABEL, masks: { occlusion: card.occlusion, side: step.revealed ? "back" : "front" } };
+	}
 	const fence = source.blockId === undefined && card !== undefined;
 	if (!fence) {
 		if (step.revealed) return node;

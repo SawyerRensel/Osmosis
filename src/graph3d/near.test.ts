@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, unembed } from "./near";
+import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
 
@@ -45,6 +46,17 @@ describe("nearMarkdown", () => {
 	it("embeds media attachments and skips the rest", () => {
 		expect(nearMarkdown({ id: "file:a.svg", kind: "attachment", label: "a.svg", path: "tests/a.svg" })).toBe("![[tests/a.svg]]");
 		expect(nearMarkdown({ id: "file:a.pdf", kind: "attachment", label: "a.pdf", path: "a.pdf" })).toBeNull();
+	});
+
+	it("stands in for an occlusion card's diagram, keyed by the image and sized as one", () => {
+		const occlusion: CardOcclusion = { image: "diagrams/span (1).svg", shapes: [], target: "c1", mode: "hide-all-guess-one" };
+		const covered: GraphNode = { ...line("![[span.svg]] ^os-span"), masks: { occlusion, side: "front" } };
+		const revealed: GraphNode = { ...covered, masks: { occlusion, side: "back" } };
+		const other: GraphNode = { ...covered, masks: { occlusion: { ...occlusion, image: "other.svg" }, side: "front" } };
+		// Revealing keeps the text, so the panel only repaints; another diagram refills it.
+		expect(nearMarkdown(revealed)).toBe(nearMarkdown(covered));
+		expect(nearMarkdown(other)).not.toBe(nearMarkdown(covered));
+		expect(panelBoxEm(covered)?.height).toBeGreaterThanOrEqual(PANEL_MEDIA_MAX_EM);
 	});
 
 	it("gives note cores, tags and ghosts no panel", () => {

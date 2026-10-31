@@ -4391,6 +4391,12 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	object-fit: contain;
 }
 
+/* An occluded diagram (relational study) keeps its proportions under the cap above: the masks span the image's own box, so a height cap with the width held would stretch picture and masks apart (the study card does the same). */
+.osmosis-graph3d-near-body .osmosis-occlusion .osmosis-occlusion-image {
+	width: auto;
+	max-width: min(100%, var(--osmosis-occlusion-width, 100%));
+}
+
 .osmosis-graph3d-near-body :is(video, audio, iframe) {
 	pointer-events: auto;
 }

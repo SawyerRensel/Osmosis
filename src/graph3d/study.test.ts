@@ -61,7 +61,7 @@ describe("studyTargets", () => {
 		expect(studyTargets([node], cards, NOW, new Set(["rr-sound-c1", "rr-sound-c2"])).has(node.id)).toBe(false);
 	});
 
-	it("leaves occlusion cards and disabled cards showing", () => {
+	it("hides occlusion cards (their masks are the near panel's job) and leaves disabled cards showing", () => {
 		const occluded = line("os-diagram");
 		const disabled = line("os-off");
 		const occlusion = { image: "chart.png", shapes: [], target: "1", mode: "hide-all-guess-one" } as unknown as Card["occlusion"];
@@ -69,7 +69,7 @@ describe("studyTargets", () => {
 			card({ id: `${NOTE}#^os-diagram/c1`, blockId: "os-diagram", cardType: "occlusion", occlusion, due: PAST }),
 			card({ id: `${NOTE}#^os-off`, blockId: "os-off", disabled: true, due: PAST }),
 		];
-		expect(studyTargets([occluded, disabled], cards, NOW, new Set()).size).toBe(0);
+		expect([...studyTargets([occluded, disabled], cards, NOW, new Set())]).toEqual([[occluded.id, [`${NOTE}#^os-diagram/c1`]]]);
 	});
 });
 
@@ -107,6 +107,17 @@ describe("nodeStep", () => {
 });
 
 describe("studyNode", () => {
+	it("paints an occlusion card's masks instead of blanking its panel: covered while hidden, ringed once revealed", () => {
+		const node = line("os-diagram");
+		const occlusion = { image: "chart.png", shapes: [], target: "c1", mode: "hide-all-guess-one" } as unknown as NonNullable<Card["occlusion"]>;
+		const asked = card({ id: `${NOTE}#^os-diagram/c1`, blockId: "os-diagram", cardType: "occlusion", occlusion });
+		const hidden = studyNode(node, { asking: asked.id, revealed: false }, asked);
+		expect(hidden).toMatchObject({ id: node.id, label: HIDDEN_LABEL, masks: { occlusion, side: "front" } });
+		// The text is left alone: the panel draws the image from `masks`, not from this.
+		expect(hidden.source?.raw).toBe(node.source?.raw);
+		expect(studyNode(node, { asking: asked.id, revealed: true }, asked)).toMatchObject({ label: node.label, masks: { occlusion, side: "back" } });
+	});
+
 	it("blanks a hidden line, keeping its identity", () => {
 		const node = line("os-a");
 		const shown = studyNode(node, { asking: `${NOTE}#^os-a`, revealed: false }, card({ id: `${NOTE}#^os-a`, blockId: "os-a" }));

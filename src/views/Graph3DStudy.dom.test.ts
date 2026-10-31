@@ -53,7 +53,7 @@ interface Harness {
 	rated: string[];
 }
 
-function harness(cards: Card[], loaded: string[], hops: Record<string, number>): Harness {
+function harness(cards: Card[], loaded: string[], hops: Record<string, number>, trail?: { path: string; text: string }): Harness {
 	const rated: string[] = [];
 	const root = document.createElement("div");
 	document.body.appendChild(root);
@@ -91,6 +91,8 @@ function harness(cards: Card[], loaded: string[], hops: Record<string, number>):
 		thread(ids: readonly (string | null)[]) {
 			host.threads.push([...ids]);
 		},
+		pickTrail: () => Promise.resolve(trail ?? null),
+		resolveLink: (target: string) => ({ "Harbour Rules": HOME, "Crew Drills": DRILLS, Knots: FAR })[target] ?? null,
 	};
 	const study = new Graph3DStudy(root, plugin, host);
 	const show = (model: GraphModel): GraphModel => study.decorate((shown = model));
@@ -132,6 +134,34 @@ describe("the current card through a fence rewrite", () => {
 	});
 });
 
+describe("occlusion cards", () => {
+	it("asks an occluded line one group at a time: masks front, then back, then the next group", async () => {
+		const occlusion = (target: string): NonNullable<Card["occlusion"]> => ({ image: "span.svg", shapes: [], target, mode: "hide-all-guess-one" });
+		const cards = [
+			card({ id: `${HOME}#^os-span/c1`, blockId: "os-span", cardType: "occlusion", occlusion: occlusion("c1"), due: NOW - DAY }),
+			card({ id: `${HOME}#^os-span/c2`, blockId: "os-span", cardType: "occlusion", occlusion: occlusion("c2"), due: NOW - DAY }),
+		];
+		const { study, show, rated } = harness(cards, [HOME], {});
+		const span = lineNode(HOME, "os-span");
+		const masksOf = (): { target: string; side: string } | null => {
+			const masks = show(model([note(HOME), span])).nodes.find((n) => n.id === span.id)?.masks;
+			return masks === undefined ? null : { target: masks.occlusion.target, side: masks.side };
+		};
+		study.start();
+		expect(masksOf()).toEqual({ target: "c1", side: "front" });
+		study.clicked(span);
+		study.reveal();
+		expect(masksOf()).toEqual({ target: "c1", side: "back" });
+		await study.rate(3);
+		// The first group is rated: the same node goes on to ask the second, covered again.
+		expect(rated).toEqual([`${HOME}#^os-span/c1`]);
+		expect(masksOf()).toEqual({ target: "c2", side: "front" });
+		study.reveal();
+		await study.rate(3);
+		expect(masksOf()).toBeNull();
+	});
+});
+
 describe("the due-driven path", () => {
 	const cards = [
 		card({ id: `${HOME}#^os-home`, blockId: "os-home", due: NOW - DAY, sourceLine: 5 }),
@@ -142,11 +172,11 @@ describe("the due-driven path", () => {
 	// The route is collected from the notes within depth of the start (HOME and DRILLS); FAR is out of reach.
 	const loaded = [HOME, DRILLS];
 
-	it("offers the two paths and no dead third, and starts on free", () => {
+	it("offers the three paths, and starts on free", () => {
 		const { study, show, panel } = harness(cards, loaded, hops);
 		study.start();
 		show(model([note(HOME)]));
-		expect(buttons(panel())).toEqual(["Free", "Due-driven", "Next"]);
+		expect(buttons(panel())).toEqual(["Free", "Due-driven", "Trail", "Next"]);
 		expect(panel().querySelector(".osmosis-graph3d-study-paths .mod-cta")?.textContent).toBe("Free");
 	});
 
@@ -198,5 +228,88 @@ describe("the due-driven path", () => {
 		press(panel(), "Free");
 		expect(show(wide).nodes.find((n) => n.id === far.id)?.label).toBe("?");
 		expect(host.threads[host.threads.length - 1]).toEqual([]);
+	});
+});
+
+describe("the trail path", () => {
+	const text = ["---", "osmosis-trail: true", "---", "", "- [[Knots]]", "- [[Harbour Rules#^os-home]]", "- [[Crew Drills#^os-later]]", "- [[Crew Drills#Docking]]", "- [[Missing Note]]"].join("\n");
+	const cards = [
+		card({ id: `${HOME}#^os-home`, blockId: "os-home", due: NOW - DAY }),
+		card({ id: `${HOME}#^os-other`, blockId: "os-other", due: NOW - DAY }),
+		card({ id: `${DRILLS}#^os-later`, notePath: DRILLS, blockId: "os-later", due: NOW + 30 * DAY }),
+	];
+	const home = model([note(HOME), lineNode(HOME, "os-home"), lineNode(HOME, "os-other")]);
+
+	/** Choose the trail, and let the picker's promise settle. */
+	async function choose(h: Harness): Promise<void> {
+		press(h.panel(), "Trail");
+		await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+	}
+
+	it("walks the stops in the author's order, rating only the stop with a due card", async () => {
+		const h = harness(cards, [HOME], {}, { path: "tests/Harbour Trail.md", text });
+		h.study.start();
+		h.show(home);
+		await choose(h);
+		h.show(home);
+		// Four stops: the unresolved link is skipped.
+		expect(h.panel().querySelector(".osmosis-graph3d-study-progress")?.textContent).toBe("0 reviewed · stop 0 of 4");
+		expect(h.panel().querySelector(".osmosis-graph3d-study-paths .mod-cta")?.textContent).toBe("Trail");
+		// Only the trail's card is hidden; the other due card in the same note stays showing.
+		const shown = h.show(home);
+		expect(shown.nodes.find((n) => n.id === `line:${HOME}#^os-home`)?.label).toBe("?");
+		expect(shown.nodes.find((n) => n.id === `line:${HOME}#^os-other`)?.label).toBe("os-other");
+
+		press(h.panel(), "Next"); // [[Knots]]: a plain note, shown and not rated.
+		expect(h.host.goTos).toEqual([FAR]);
+		h.show(home);
+		expect(h.panel().textContent).toContain("it is shown, not rated");
+		expect(buttons(h.panel())).not.toContain("Reveal");
+
+		press(h.panel(), "Next"); // The due card.
+		expect(h.host.goTos).toEqual([FAR, HOME]);
+		h.show(home);
+		expect(h.study.reveal()).toBe(true);
+		await h.study.rate(3);
+		expect(h.rated).toEqual([`${HOME}#^os-home`]);
+
+		press(h.panel(), "Next"); // A block whose card is not due.
+		expect(h.host.goTos).toEqual([FAR, HOME, DRILLS]);
+		h.show(model([note(DRILLS), lineNode(DRILLS, "os-later")]));
+		expect(h.study.reveal()).toBe(false);
+		expect(h.panel().textContent).toContain("it is shown, not rated");
+
+		press(h.panel(), "Next"); // A heading in the same note: the last stop.
+		expect(h.panel().querySelector(".osmosis-graph3d-study-progress")?.textContent).toBe("1 reviewed · stop 4 of 4");
+		expect(h.panel().textContent).toContain("The trail is finished.");
+		expect(buttonsOf(h.panel()).find((b) => b.textContent === "Next")?.disabled).toBe(true);
+	});
+
+	it("draws the thread through the stops walked, breaking where a note is not loaded", async () => {
+		const h = harness(cards, [HOME], {}, { path: "tests/Harbour Trail.md", text });
+		h.study.start();
+		h.show(home);
+		await choose(h);
+		press(h.panel(), "Next");
+		press(h.panel(), "Next");
+		h.show(home);
+		// Knots is not in the model, so the thread starts with a gap; the card is.
+		expect(h.host.threads[h.host.threads.length - 1]).toEqual([null, `line:${HOME}#^os-home`]);
+		h.show(model([note(FAR), note(HOME), lineNode(HOME, "os-home")]));
+		expect(h.host.threads[h.host.threads.length - 1]).toEqual([`note:${FAR}`, `line:${HOME}#^os-home`]);
+	});
+
+	it("keeps the path you were on when the picker is dismissed or the note lists no stops", async () => {
+		const dismissed = harness(cards, [HOME], {});
+		dismissed.study.start();
+		dismissed.show(home);
+		await choose(dismissed);
+		expect(dismissed.panel().querySelector(".osmosis-graph3d-study-paths .mod-cta")?.textContent).toBe("Free");
+
+		const empty = harness(cards, [HOME], {}, { path: "tests/Empty.md", text: "---\nosmosis-trail: true\n---\nNothing listed." });
+		empty.study.start();
+		empty.show(home);
+		await choose(empty);
+		expect(empty.panel().querySelector(".osmosis-graph3d-study-paths .mod-cta")?.textContent).toBe("Free");
 	});
 });

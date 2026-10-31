@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
@@ -12,6 +12,9 @@ import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./G
 import type { PanelLink } from "./Graph3DNear";
 import { Graph3DOverlaysMenu } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
+import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
+import { isTrail } from "../graph3d/trail-note";
+import { renderOcclusion } from "./OcclusionRenderer";
 import { nearestTarget } from "../graph3d/study";
 import type { FSRSRating } from "../database/FSRSScheduler";
 
@@ -199,6 +202,8 @@ export class Graph3DView extends ItemView {
 			hopsFrom: (path) => this.hopsFrom(path),
 			goTo: (path, find) => void this.goTo(path, find),
 			thread: (ids) => this.scene?.setThread(ids),
+			pickTrail: () => this.pickTrail(),
+			resolveLink: (target, from) => this.app.metadataCache.getFirstLinkpathDest(target, from)?.path ?? null,
 		});
 
 		const { Graph3DScene } = await import("./Graph3DScene");
@@ -210,6 +215,7 @@ export class Graph3DView extends ItemView {
 			onNodeClick: (node) => this.clickNode(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
+			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 		});
@@ -425,6 +431,22 @@ export class Graph3DView extends ItemView {
 		await this.reload();
 		const landed = this.model === null ? null : find(this.model);
 		if (landed !== null) this.scene?.flyTo(landed, true);
+	}
+
+	/** The trail notes in the vault: Markdown notes marked `osmosis-trail: true`. */
+	private trailNotes(): TFile[] {
+		return this.app.vault.getMarkdownFiles().filter((file) => isTrail(this.app.metadataCache.getFileCache(file)?.frontmatter));
+	}
+
+	/** Ask which trail note to walk, and read it. Null when the vault has none, or the picker is dismissed. */
+	private async pickTrail(): Promise<{ path: string; text: string } | null> {
+		const trails = this.trailNotes();
+		if (trails.length === 0) {
+			new Notice("No trail notes found. Add `osmosis-trail: true` to a note's properties and list its stops as links.");
+			return null;
+		}
+		const file = await new Graph3DTrailPicker(this.app, trails).pick();
+		return file === null ? null : { path: file.path, text: await this.app.vault.cachedRead(file) };
 	}
 
 	/** A click or tap on a node: in a study session, arriving at (or revealing) a hidden card. */

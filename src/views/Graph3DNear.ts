@@ -27,6 +27,9 @@
  */
 
 import { Component, Platform } from "obsidian";
+import type { CardOcclusion } from "../database/types";
+import type { OcclusionSide } from "../study/occlusion-masks";
+import { repaintOcclusion } from "./OcclusionRenderer";
 import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
@@ -49,6 +52,9 @@ export interface PanelLink {
 
 /** Renders `markdown` into `el`, as `MarkdownRenderer.render` does, with `component` owning its children. */
 export type NearMarkdownRenderer = (markdown: string, el: HTMLElement, sourcePath: string, component: Component) => Promise<void>;
+
+/** Draws an occluded diagram into `el`, as `renderOcclusion` does (from the view, which has the app). `sourcePath` is the note the embed is written in. */
+export type NearDiagramRenderer = (el: HTMLElement, occlusion: CardOcclusion, side: OcclusionSide, sourcePath: string) => void;
 
 /** What the near tier reads from a scene node. */
 export interface NearSource {
@@ -88,6 +94,8 @@ interface Panel {
 	height: number;
 	/** The mask last written, to skip unchanged writes. */
 	mask: string;
+	/** An occlusion card's diagram as last painted (group and side), or "" for an ordinary panel. */
+	diagram: string;
 	/** View depth as last drawn. */
 	depth: number;
 }
@@ -125,7 +133,7 @@ export class Graph3DNear {
 	});
 
 	/** `lineEmWorld` is how many world units one em of plate text is. */
-	constructor(private readonly render: NearMarkdownRenderer, lineEmWorld: number) {
+	constructor(private readonly render: NearMarkdownRenderer, private readonly renderDiagram: NearDiagramRenderer, lineEmWorld: number) {
 		this.pxPerUnit = NEAR_FONT_PX / lineEmWorld;
 		this.renderer.domElement.addClass("osmosis-graph3d-near");
 	}
@@ -175,6 +183,7 @@ export class Graph3DNear {
 				panel.node = node;
 				panel.target = 1;
 				if (panel.markdown !== text) this.fill(panel, text);
+				else this.repaintDiagram(panel);
 			}
 		}
 		const step = seconds / NEAR_FADE_S;
@@ -264,7 +273,7 @@ export class Graph3DNear {
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });
 		const object = new CSS2DObject(anchor);
-		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", depth: Infinity };
+		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity };
 		this.boxes.set(box, panel);
 		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
@@ -351,6 +360,16 @@ export class Graph3DNear {
 			boxShadow: `inset 0 0 0 0.07em ${color.getStyle()}`,
 		});
 		const sourcePath = panel.node.graph.path ?? "";
+		const masks = panel.node.graph.masks;
+		panel.diagram = "";
+		if (masks !== undefined) {
+			// An occlusion card under study: the diagram with its masks, drawn straight away. It
+			// stays out of the cache (an image is never cached), and a rating repaints it in place.
+			panel.diagram = diagramKey(masks.occlusion, masks.side);
+			this.renderDiagram(panel.body, masks.occlusion, masks.side, sourcePath);
+			panel.rendered = true;
+			return;
+		}
 		const key = `${sourcePath}\n${markdown}`;
 		const cached = this.cache.get(key);
 		if (cached !== undefined) {
@@ -371,6 +390,16 @@ export class Graph3DNear {
 			},
 			(error: unknown) => console.error("Osmosis: 3D graph could not render a near panel", error),
 		);
+	}
+
+	/** Another group asked, or the answer revealed: repaint the masks over the same image, which is never rebuilt, so it does not flash. */
+	private repaintDiagram(panel: Panel): void {
+		const masks = panel.node.graph.masks;
+		if (masks === undefined) return;
+		const key = diagramKey(masks.occlusion, masks.side);
+		if (key === panel.diagram) return;
+		panel.diagram = key;
+		repaintOcclusion(panel.body, masks.occlusion, masks.side);
 	}
 
 	/**
@@ -397,6 +426,11 @@ export class Graph3DNear {
 		// CSS2DObject removes its element from the page when it leaves the scene.
 		this.group.remove(panel.object);
 	}
+}
+
+/** What a painted diagram depends on: the group asked and the side shown. */
+function diagramKey(occlusion: CardOcclusion, side: OcclusionSide): string {
+	return `${occlusion.image}|${occlusion.target}|${side}`;
 }
 
 function pauseMedia(root: HTMLElement): void {

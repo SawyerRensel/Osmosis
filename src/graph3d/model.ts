@@ -14,6 +14,8 @@
  */
 
 import type { CachedMetadata } from "obsidian";
+import type { CardOcclusion } from "../database/types";
+import type { OcclusionSide } from "../study/occlusion-masks";
 import type { OsmosisNode, OsmosisTree } from "../types";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
@@ -29,6 +31,12 @@ export interface GraphNode {
 	path?: string;
 	/** The parse node: the tree's root for a note, the line itself for a line. */
 	source?: OsmosisNode;
+	/**
+	 * Relational study only (`studyNode`): the occluded diagram this node is
+	 * asking about, and which side of it to paint. The near-tier panel draws the
+	 * image with its masks instead of the node's text.
+	 */
+	masks?: { occlusion: CardOcclusion; side: OcclusionSide };
 }
 
 /**

@@ -51,13 +51,18 @@ export function unembed(markdown: string): string {
  * only its plate. Lines render their source with its markers (`- `, `## `,
  * `> [!note]`), so a heading reads as a heading and a callout as a callout,
  * with embeds turned into links (`unembed`). Media attachments render as their
- * embed. Note cores, tags and ghosts are already fully said by their plate.
+ * embed. Note cores, tags and ghosts are already fully said by their plate. A
+ * line under occlusion study (`masks`) gets a stand-in for its diagram.
  */
 export function nearMarkdown(node: GraphNode): string | null {
 	if (node.kind === "attachment") {
 		return node.path !== undefined && MEDIA_EXTENSIONS.has(extension(node.path)) ? `![[${node.path}]]` : null;
 	}
 	if (node.kind !== "line" || node.source === undefined) return null;
+	// An occlusion card under study: the panel draws the diagram itself (`Graph3DNear`),
+	// and this stands in for it, so a different diagram refills the panel, the same one
+	// with another side only repaints, and `panelBoxEm` sizes it as the image it is.
+	if (node.masks !== undefined) return `![](${encodeURIComponent(node.masks.occlusion.image).replace(/[()]/g, "")})`;
 	const markdown = unembed(dedent(node.source.raw ?? node.source.content)).trim();
 	return markdown === "" ? null : markdown;
 }

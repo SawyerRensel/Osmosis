@@ -30,7 +30,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
-import { Graph3DNear, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
+import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
 import { DEFAULT_OVERLAYS, edgeShown, linkStrengthScale, type Graph3DOverlays } from "../graph3d/overlays";
@@ -154,6 +154,8 @@ export interface SceneOptions {
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
+	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
+	renderDiagram: NearDiagramRenderer;
 	/** Whether the walk and fly joysticks start shown, and where a toggle goes to be remembered. */
 	sticks: boolean;
 	onSticksToggle: (shown: boolean) => void;
@@ -326,7 +328,7 @@ export class Graph3DScene {
 	constructor(private readonly container: HTMLElement, private readonly options: SceneOptions) {
 		// The near tier's CSS2D renderer has to be handed over at construction:
 		// the engine sizes it and draws it after the canvas every frame.
-		this.near = new Graph3DNear(options.renderMarkdown, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
+		this.near = new Graph3DNear(options.renderMarkdown, options.renderDiagram, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
 		this.graph = new ForceGraph3D(container, {
 			controlType: "orbit",
 			// CSS2DRenderer is a renderer by shape, not by type.

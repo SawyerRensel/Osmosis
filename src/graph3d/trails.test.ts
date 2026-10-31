@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Card } from "../database/types";
 import type { GraphNode } from "./model";
-import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, threadSegments, type RouteStop } from "./trails";
+import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, threadSegments, trailSteps, type RouteStop } from "./trails";
 
 const NOW = Date.UTC(2026, 9, 31, 12, 0, 0);
 const DAY = 86_400_000;
@@ -17,7 +17,7 @@ function stop(overrides: Partial<RouteStop> & { key: string }): RouteStop {
 }
 
 describe("routeStops", () => {
-	it("makes one stop per due or new node across notes, and skips future, disabled and occlusion cards", () => {
+	it("makes one stop per due or new node across notes, and skips future and disabled cards, keeping occlusion cards", () => {
 		const occlusion = { image: "chart.png", shapes: [], target: "1", mode: "hide-all-guess-one" } as unknown as Card["occlusion"];
 		const stops = routeStops(
 			[
@@ -30,7 +30,8 @@ describe("routeStops", () => {
 			],
 			NOW,
 		);
-		expect(stops.map((s) => s.key).sort()).toEqual([`${A}#^os-due`, `${A}#^os-new`, `${B}#^os-drill`].sort());
+		expect(stops.map((s) => s.key).sort()).toEqual([`${A}#^os-due`, `${A}#^os-new`, `${A}#^os-map`, `${B}#^os-drill`].sort());
+		expect(stops.find((s) => s.key === `${A}#^os-map`)?.keys).toEqual([`${A}#^os-map/c1`]);
 		expect(stops.find((s) => s.key === `${A}#^os-new`)).toMatchObject({ path: A, due: NOW, line: 2 });
 		expect(stops.find((s) => s.key === `${B}#^os-drill`)).toMatchObject({ path: B, due: NOW - 3 * DAY, line: 9 });
 	});
@@ -138,5 +139,46 @@ describe("threadSegments", () => {
 		expect(threadSegments(["a", "a", "b"], at)).toEqual([["a", "b"]]);
 		expect(threadSegments([], at)).toEqual([]);
 		expect(threadSegments(["a"], at)).toEqual([]);
+	});
+});
+
+describe("trailSteps", () => {
+	const files: Record<string, string> = { "Harbour Rules": A, "Crew Drills": B };
+	const resolve = (target: string): string | null => files[target] ?? null;
+	const cards = [
+		card({ id: `${A}#^os-due`, blockId: "os-due", due: NOW - DAY }),
+		card({ id: `${A}#^os-later`, blockId: "os-later", due: NOW + DAY }),
+		card({ id: `${B}#^os-drill`, notePath: B, blockId: "os-drill" }),
+	];
+	const cardsOf = (path: string): Card[] => cards.filter((c) => c.notePath === path);
+
+	it("keeps the author's order, and a stop only holds the due or new card its block names", () => {
+		const { steps, unresolved } = trailSteps(
+			[
+				{ target: "Crew Drills", subpath: "^os-drill" },
+				{ target: "Harbour Rules", subpath: "^os-due" },
+				{ target: "Harbour Rules", subpath: "^os-later" },
+				{ target: "Harbour Rules", subpath: "Docking" },
+				{ target: "Crew Drills", subpath: "" },
+			],
+			"Trail.md",
+			resolve,
+			cardsOf,
+			NOW,
+		);
+		expect(unresolved).toEqual([]);
+		expect(steps.map((s) => [s.path, s.subpath, s.stop?.key ?? null])).toEqual([
+			[B, "^os-drill", `${B}#^os-drill`],
+			[A, "^os-due", `${A}#^os-due`],
+			[A, "^os-later", null], // Not due: visited and shown, not rated.
+			[A, "Docking", null],
+			[B, "", null],
+		]);
+	});
+
+	it("drops a link to no note, and reads [[#Heading]] as the trail note itself", () => {
+		const { steps, unresolved } = trailSteps([{ target: "Missing", subpath: "" }, { target: "", subpath: "Start" }], "Trail.md", resolve, cardsOf, NOW);
+		expect(unresolved).toEqual([{ target: "Missing", subpath: "" }]);
+		expect(steps).toEqual([{ path: "Trail.md", subpath: "Start", stop: null }]);
 	});
 });

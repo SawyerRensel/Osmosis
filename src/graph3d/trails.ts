@@ -8,10 +8,12 @@
  * its `keys` are what `Graph3DStudy` rates one by one.
  */
 
+import { lineCardId } from "../card-gen/line-cards";
 import type { Card } from "../database/types";
 import { dueOrNewFenceCardKeys, dueOrNewLineCardIds, spatialStudyKeys } from "../study/spatial-study";
 import type { GraphNode } from "./model";
-import { askable, nodeCardKey } from "./study";
+import { nodeCardKey } from "./study";
+import type { TrailStop } from "./trail-note";
 
 export interface RouteStop {
 	/** The node's card key (`nodeCardKey`): stable when a rating rewrites a fence. */
@@ -28,7 +30,7 @@ export interface RouteStop {
 
 /**
  * Every stop in `cards`: the line and fence nodes with a due or new card that
- * relational study can ask. Cards of several notes may be mixed.
+ * relational study can ask (occlusion cards included). Cards of several notes may be mixed.
  */
 export function routeStops(cards: readonly Card[], now: number): RouteStop[] {
 	const byNote = new Map<string, Card[]>();
@@ -42,10 +44,7 @@ export function routeStops(cards: readonly Card[], now: number): RouteStop[] {
 		const byId = new Map(noteCards.map((card) => [card.id, card]));
 		const nodeKeys = new Set([...dueOrNewLineCardIds(noteCards, now), ...dueOrNewFenceCardKeys(noteCards, now)]);
 		for (const key of nodeKeys) {
-			const keys = spatialStudyKeys(noteCards, key, now).filter((id) => {
-				const card = byId.get(id);
-				return card !== undefined && askable(card);
-			});
+			const keys = spatialStudyKeys(noteCards, key, now).filter((id) => byId.has(id));
 			if (keys.length === 0) continue;
 			const asked = keys.map((id) => byId.get(id)!);
 			stops.push({
@@ -120,4 +119,46 @@ export function threadSegments<T>(ids: readonly (string | null)[], at: (id: stri
 		if (a !== null && b !== null) segments.push([a, b]);
 	}
 	return segments;
+}
+
+/** One stop of an authored trail, resolved to a note. */
+export interface TrailStep {
+	/** The note the stop's link resolves to. */
+	path: string;
+	/** The link's subpath (`^block`, a heading, or `""`): where `linkTargetNode` lands in the note. */
+	subpath: string;
+	/** The due or new card at the stop, rated when you reach it; null when none is due, and the stop is visited and shown. */
+	stop: RouteStop | null;
+}
+
+/**
+ * An authored trail's stops as steps to walk, in the author's order. A stop whose
+ * link resolves to no note is left out and returned in `unresolved`. Only a
+ * block-ID stop can hold a card (a line card): a heading or a plain note is
+ * shown, not rated, and so is a block whose card is not due. Fences have no
+ * block ID to link to, so a trail cannot ask them.
+ *
+ * `resolve` is the link resolver (`getFirstLinkpathDest`); `from` is the trail
+ * note, which `[[#Heading]]` names; `cardsOf` is the card store.
+ */
+export function trailSteps(
+	stops: readonly TrailStop[],
+	from: string,
+	resolve: (target: string, from: string) => string | null,
+	cardsOf: (path: string) => readonly Card[],
+	now: number,
+): { steps: TrailStep[]; unresolved: TrailStop[] } {
+	const steps: TrailStep[] = [];
+	const unresolved: TrailStop[] = [];
+	for (const stop of stops) {
+		const path = stop.target === "" ? from : resolve(stop.target, from);
+		if (path === null) {
+			unresolved.push(stop);
+			continue;
+		}
+		const key = stop.subpath.startsWith("^") ? lineCardId(path, stop.subpath.slice(1)) : null;
+		const due = key === null ? undefined : routeStops(cardsOf(path), now).find((candidate) => candidate.key === key);
+		steps.push({ path, subpath: stop.subpath, stop: due ?? null });
+	}
+	return { steps, unresolved };
 }
