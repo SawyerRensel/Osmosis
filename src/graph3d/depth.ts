@@ -11,14 +11,13 @@
  * Pure: the scene projects its nodes and passes screen coordinates in.
  */
 
-/** A node as seen from the camera: its centre and radius in screen px, and how far ahead of the camera it is. */
+/** A node's plate as seen from the camera: its centre and half extents in screen px, and how far ahead of the camera it is. */
 export interface ScreenNode {
 	x: number;
 	y: number;
-	radius: number;
+	halfWidth: number;
+	halfHeight: number;
 	distance: number;
-	/** A node shown as a label plate is picked by the plate's rectangle (half extents in px), not the circle. */
-	plate?: { halfWidth: number; halfHeight: number };
 }
 
 /**
@@ -30,7 +29,7 @@ export const MIN_DOLLY = 200;
 
 /**
  * The index of the node to aim at from screen point (`x`, `y`), or -1 when no
- * node's edge is within `slop` px. The node whose edge is nearest wins; when
+ * node's plate is within `slop` px. The plate whose edge is nearest wins; when
  * the cursor is on several, the one nearest the camera does.
  */
 export function pickNode(nodes: readonly ScreenNode[], x: number, y: number, slop: number): number {
@@ -38,9 +37,7 @@ export function pickNode(nodes: readonly ScreenNode[], x: number, y: number, slo
 	let bestGap = Infinity;
 	let bestDistance = Infinity;
 	nodes.forEach((node, i) => {
-		const gap = node.plate === undefined
-			? Math.max(0, Math.hypot(node.x - x, node.y - y) - node.radius)
-			: Math.hypot(Math.max(0, Math.abs(node.x - x) - node.plate.halfWidth), Math.max(0, Math.abs(node.y - y) - node.plate.halfHeight));
+		const gap = Math.hypot(Math.max(0, Math.abs(node.x - x) - node.halfWidth), Math.max(0, Math.abs(node.y - y) - node.halfHeight));
 		if (gap > slop) return;
 		if (gap < bestGap || (gap === bestGap && node.distance < bestDistance)) {
 			best = i;

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { MIN_DOLLY, dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "./depth";
 
-const node = (x: number, y: number, radius: number, distance: number): ScreenNode => ({ x, y, radius, distance });
+/** A square plate of half extent `half` px. */
+const node = (x: number, y: number, half: number, distance: number): ScreenNode => ({ x, y, halfWidth: half, halfHeight: half, distance });
 
 describe("pickNode", () => {
 	it("picks the node under the cursor", () => {
@@ -9,7 +10,7 @@ describe("pickNode", () => {
 	});
 
 	it("picks a node the cursor narrowly missed", () => {
-		// 12 px from the centre of a 4 px node: an 8 px gap.
+		// 12 px from the centre of a plate 4 px across each way: an 8 px gap.
 		expect(pickNode([node(100, 100, 4, 300)], 112, 100, 10)).toBe(0);
 	});
 
@@ -23,9 +24,9 @@ describe("pickNode", () => {
 		expect(pickNode([node(8, 0, 2, 100), node(-20, 0, 15, 400)], 0, 0, 10)).toBe(1);
 	});
 
-	it("picks a label plate anywhere on its rectangle", () => {
-		const plate: ScreenNode = { ...node(100, 100, 2, 300), plate: { halfWidth: 60, halfHeight: 10 } };
-		// 55 px right of centre: on the plate, though far outside its 2 px circle.
+	it("picks a plate anywhere on its rectangle", () => {
+		const plate: ScreenNode = { x: 100, y: 100, halfWidth: 60, halfHeight: 10, distance: 300 };
+		// 55 px right of centre: still on the wide plate.
 		expect(pickNode([plate], 155, 104, 0)).toBe(0);
 		// 8 px below the plate's edge.
 		expect(pickNode([plate], 100, 118, 6)).toBe(-1);

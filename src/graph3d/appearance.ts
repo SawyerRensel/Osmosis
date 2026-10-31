@@ -54,22 +54,6 @@ export function nodeColor(node: GraphNode): string {
 	}
 }
 
-/** Relative size: the note core is the largest, so lines visibly orbit it. */
-export function nodeSize(node: GraphNode): number {
-	switch (node.kind) {
-		case "note":
-			return 12;
-		case "tag":
-			return 4;
-		case "attachment":
-			return 3;
-		case "ghost":
-			return 2;
-		case "line":
-			return 1;
-	}
-}
-
 export function edgeColor(kind: GraphEdgeKind): string {
 	switch (kind) {
 		case "hierarchy":

@@ -2,12 +2,13 @@
  * Perf readout for the 3D graph, behind a toggle in the viewport's bottom-left
  * corner (hidden by default).
  *
- * Click the readout to hide or show every label, to compare frame cost with
+ * Click the readout to hide or show every plate, to compare frame cost with
  * and without them.
  */
 
 import { setIcon, setTooltip } from "obsidian";
-import type { Group, Sprite, WebGLRenderer } from "three";
+import type { WebGLRenderer } from "three";
+import type { Graph3DPlates } from "./Graph3DPlates";
 
 const REFRESH_MS = 500;
 /** Frames, renders and passes older than this drop out of the averages. */
@@ -27,20 +28,15 @@ export class Graph3DPerf {
 	private frames: Timed[] = [];
 	private ticks: Timed[] = [];
 	private renders: Timed[] = [];
-	private passes: Timed[] = [];
 	private lastFrame = 0;
 	private lastRefresh = 0;
-	private wanted = 0;
-	private missing = 0;
-	private backlogSince: number | null = null;
-	private lastFill: { ms: number; peak: number } | null = null;
-	private backlogPeak = 0;
-	private created = 0;
+	/** The last time new data needed plates: how many, and how long laying them out took. */
+	private lastPlating: { count: number; ms: number } | null = null;
 
-	constructor(container: HTMLElement, private readonly renderer: WebGLRenderer, private readonly labels: Group) {
+	constructor(container: HTMLElement, private readonly renderer: WebGLRenderer, private readonly plates: Graph3DPlates) {
 		this.corner = container.createDiv({ cls: "osmosis-graph3d-perf" });
 		this.el = this.corner.createDiv({ cls: "osmosis-graph3d-perf-readout is-hidden" });
-		this.el.addEventListener("click", this.toggleLabels);
+		this.el.addEventListener("click", this.togglePlates);
 		this.toggleEl = this.corner.createDiv({ cls: "osmosis-graph3d-perf-toggle clickable-icon" });
 		setIcon(this.toggleEl, "gauge");
 		setTooltip(this.toggleEl, "Performance readout");
@@ -58,21 +54,9 @@ export class Graph3DPerf {
 		};
 	}
 
-	/** One label pass: how many labels are wanted, how many still lack one after it, and its cost. */
-	labelPass(now: number, wanted: number, missing: number, created: number, ms: number): void {
-		if (!this.shown) return;
-		this.wanted = wanted;
-		this.missing = missing;
-		this.created += created;
-		if (created > 0) this.passes.push({ at: now, ms });
-		if (missing > 0) {
-			this.backlogSince ??= now;
-			this.backlogPeak = Math.max(this.backlogPeak, missing + created);
-		} else if (this.backlogSince !== null) {
-			this.lastFill = { ms: now - this.backlogSince, peak: this.backlogPeak };
-			this.backlogSince = null;
-			this.backlogPeak = 0;
-		}
+	/** New data was shown: `count` plates were laid out, in `ms`. */
+	plated(count: number, ms: number): void {
+		if (count > 0) this.lastPlating = { count, ms };
 	}
 
 	frame(now: number, tickMs: number): void {
@@ -82,40 +66,31 @@ export class Graph3DPerf {
 		this.ticks.push({ at: now, ms: tickMs });
 		if (now - this.lastRefresh < REFRESH_MS) return;
 		this.lastRefresh = now;
-		for (const list of [this.frames, this.ticks, this.renders, this.passes]) {
+		for (const list of [this.frames, this.ticks, this.renders]) {
 			while (list.length > 0 && now - list[0]!.at > WINDOW_MS) list.shift();
 		}
-		if (this.shown) this.el.setText(this.report(now));
+		if (this.shown) this.el.setText(this.report());
 	}
 
-	private report(now: number): string {
+	private report(): string {
 		const info = this.renderer.info;
 		const avg = (list: Timed[]) => (list.length === 0 ? 0 : list.reduce((sum, t) => sum + t.ms, 0) / list.length);
 		const max = (list: Timed[]) => list.reduce((m, t) => Math.max(m, t.ms), 0);
-		let bytes = 0;
-		let sprites = 0;
-		for (const child of this.labels.children) {
-			const image = (child as Sprite).material.map?.image as { width: number; height: number } | undefined;
-			if (image === undefined) continue;
-			sprites++;
-			// RGBA, plus a third again for the mipmap chain.
-			bytes += image.width * image.height * 4 * (4 / 3);
-		}
-		const fill = this.backlogSince !== null
-			? `filling ${((now - this.backlogSince) / 1000).toFixed(1)} s…`
-			: this.lastFill === null ? "—" : `${(this.lastFill.ms / 1000).toFixed(2)} s for ${this.lastFill.peak}`;
+		const plates = this.plates.stats();
+		const mb = (bytes: number) => (bytes / 1048576).toFixed(1);
+		const plating = this.lastPlating === null ? "—" : `${this.lastPlating.count} in ${this.lastPlating.ms.toFixed(1)} ms`;
 		return [
 			`fps ${this.frames.length}  frame avg ${avg(this.frames).toFixed(1)} / worst ${max(this.frames).toFixed(1)} ms`,
 			`cpu: tick ${avg(this.ticks).toFixed(2)} ms  render ${avg(this.renders).toFixed(2)} ms (max ${max(this.renders).toFixed(1)})`,
 			`draw calls ${info.render.calls}  triangles ${info.render.triangles}  textures ${info.memory.textures}`,
-			`labels ${sprites}${this.labels.visible ? "" : " (hidden)"}  ~${(bytes / 1048576).toFixed(1)} MB GPU`,
-			`middle tier: wanted ${this.wanted}  missing ${this.missing}  created ${this.created}`,
-			`creation pass avg ${avg(this.passes).toFixed(1)} / max ${max(this.passes).toFixed(1)} ms  last fill ${fill}`,
+			`plates ${plates.plates}  glyphs ${plates.glyphs}${this.plates.group.visible ? "" : " (hidden)"}`,
+			`atlas ${plates.pages} page(s) ~${mb(plates.atlasBytes)} MB  instances ~${mb(plates.instanceBytes)} MB GPU`,
+			`last plating ${plating}`,
 		].join("\n");
 	}
 
-	private readonly toggleLabels = (): void => {
-		this.labels.visible = !this.labels.visible;
+	private readonly togglePlates = (): void => {
+		this.plates.group.visible = !this.plates.group.visible;
 	};
 
 	private readonly toggleReadout = (): void => {
@@ -126,14 +101,13 @@ export class Graph3DPerf {
 		this.frames = [];
 		this.ticks = [];
 		this.renders = [];
-		this.passes = [];
 		this.lastFrame = 0;
 		this.lastRefresh = 0;
 	};
 
 	destroy(): void {
 		this.renderer.render = this.render;
-		this.el.removeEventListener("click", this.toggleLabels);
+		this.el.removeEventListener("click", this.togglePlates);
 		this.toggleEl.removeEventListener("click", this.toggleReadout);
 		this.corner.remove();
 	}

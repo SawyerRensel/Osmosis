@@ -130,7 +130,6 @@ export class Graph3DView extends ItemView {
 		// The view may have closed while the engine module loaded.
 		if (this.stageEl === null) return;
 		this.scene = new Graph3DScene(this.stageEl, {
-			isMobile: Platform.isMobile,
 			controls: this.controlSettings(),
 			onNodeClick: (node) => this.hop(node),
 		});
