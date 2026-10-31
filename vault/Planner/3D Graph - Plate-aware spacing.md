@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Plates for every node]]"
   - "[[3D Graph - Focus dimming]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-10-31T11:19:43.000Z"
 date_modified: "2026-10-31T11:19:43.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-10-31T12:00:00.000Z"
+date_start_actual: "2026-10-31T12:00:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -81,3 +81,40 @@ None. Zoom in further, which doesn't separate overlapping plates.
 ## Conventions
 
 - lint → test → build → manual-test instructions → stop for Sawyer before committing.
+
+## Batch implementation notes (awaiting manual test)
+
+Built on `feature/3d-graph-plate-spacing`, stacked on `feature/3d-graph-plates` (which is itself not yet manually tested), commit `131434a`. Not pushed, no PR. Lint, unit tests (2075) and build pass. Nothing has been seen running in Obsidian.
+
+### Approach
+
+Step 1 of the design only: plate-sized link lengths. `linkDistance(kind, sourceExtent, targetExtent) = edgeDistance(kind) + sourceExtent + targetExtent`, with `plateExtent(plate) = hypot(width, height) / 2`. The scene passes it to d3's link force through `plateLinkDistance`, which reads `EngineNode.shape` at both ends. Plates are measured synchronously when a node enters the scene (`Graph3DPlates.shape()`), so no text-length estimate was needed.
+
+Rough sizes, from `CORE_PLATE_HEIGHT` 10 and `LINE_PLATE_HEIGHT` 5 (1.75 em plate, so 1 em ≈ 2.9 units on a line plate, ≈ 5.7 on a note plate): a short line plate ("Fenders out") reaches about 10 units, a full 20 em line plate about 30, a note title capped at 30 em up to about 90. So a heading → line link that was 18 is now roughly 40–80, and a long note title pushes its headings out by up to ~90 more.
+
+### Decisions worth remembering
+
+- **Extent is half the diagonal, not half the width.** Plates face the camera and a link can leave in any direction, so the diagonal is the only radius that clears the plate from every angle. It overstates the vertical case (a 50 × 5 plate reaches 25 even straight up). If siblings now look too far apart, a softer extent (for example the plate's half width times ~0.7) is the knob; the base distances in `edgeDistance()` were left unchanged on purpose, so the kind's distance is now an edge-to-edge gap.
+- **No collision force.** The open question (do siblings spread apart, not just outward?) is answered by geometry: n siblings at radius r share a sphere of area 4πr², so going from r = 18 to r ≈ 60 gives each about 11× the room, and the charge spreads them over it. Collision would add a per-node calculation every tick, which this batch couldn't time (no Obsidian here). It stays step 2, only if Sawyer still sees piles after this and the perf readout says the tick can afford it.
+- **Per-tick cost is zero.** d3 computes each link's distance once, when the link force is initialised (every `graphData()` call, i.e. each `setData`). `setTheme` re-applies the distance function, because a theme change re-measures every plate without new graph data. That only affects nodes still free; pinned ones stay where they settled.
+- **Charge, seeding and `settle.ts` were not touched.** New lines still seed 10 units from their parent (`SEED_SPREAD`) and expand to the longer rest length. If arrivals look explosive, `SEED_SPREAD` could follow the link distance; not done without seeing it.
+- **Camera fly distances (160 for a note, 70 for a line) were not changed**, though clusters are now larger. Worth a look during manual testing.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/appearance.ts` | New `plateExtent` and `linkDistance` |
+| `src/graph3d/appearance.test.ts` | 4 new tests: extent is the half-diagonal, base distance kept for point ends, each end's extent added, grows with either end |
+| `src/views/Graph3DScene.ts` | Link force uses `plateLinkDistance`; stored as `linkForce` and re-applied in `setTheme` |
+| `e2e/fixtures/graph3d/Deck Checklist.md` → `vault/tests/graph3d/` | New fixture |
+
+### Fixture
+
+`vault/tests/graph3d/Deck Checklist.md`: one heading ("Before casting off") with 24 sibling lines of mixed length, and links to `[[Knots]]` and `[[Rigging]]`. It is a new file, so no existing fixture was rewritten.
+
+### Not verified (needs Sawyer)
+
+- Everything visual: whether the busy heading's siblings are readable and mostly non-overlapping, and whether the whole graph now feels too spread out (note titles add the most).
+- No measurements: simulation step time and first-load time on the stress web before/after. Expected unchanged per tick, since only rest lengths changed; settling may take a few more ticks because nodes travel farther from their seed.
+- Walking hops never rearranging settled nodes: unchanged code path (pinning), but not seen.
