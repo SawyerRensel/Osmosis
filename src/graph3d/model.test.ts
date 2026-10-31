@@ -7,6 +7,7 @@ import {
 	tagNodeId,
 	attachmentNodeId,
 	ghostNodeId,
+	linkTargetNode,
 	type GraphModel,
 	type LinkCacheLike,
 	type LinkResolver,
@@ -271,5 +272,33 @@ describe("buildGraph: tags", () => {
 		]);
 		expect(edgesFrom(model, noteNodeId("C.md"))).toEqual([{ kind: "tag", target: tagNodeId("rope") }]);
 		expect(model.nodes.find((n) => n.id === tagNodeId("sailing"))?.label).toBe("#sailing");
+	});
+});
+
+describe("linkTargetNode", () => {
+	const md = "# Rigging\n\n## Sheets  and Lines\n\n- Halyard ^halyard\n\n## Sheets and lines\n";
+	const model = buildGraph([note("Boat.md", md)], resolverFor(["Boat.md"]));
+
+	it("lands on the note core with no subpath", () => {
+		expect(linkTargetNode(model, "Boat.md", "")).toBe(noteNodeId("Boat.md"));
+	});
+
+	it("lands on the first heading matching the last segment, ignoring case and spacing", () => {
+		const id = linkTargetNode(model, "Boat.md", "Rigging#sheets and lines");
+		const node = model.nodes.find((n) => n.id === id);
+		expect(node?.label).toBe("Sheets  and Lines");
+	});
+
+	it("lands on a block's line", () => {
+		expect(linkTargetNode(model, "Boat.md", "^halyard")).toBe("line:Boat.md#^halyard");
+	});
+
+	it("falls back to the core for a missing heading or block", () => {
+		expect(linkTargetNode(model, "Boat.md", "Anchoring")).toBe(noteNodeId("Boat.md"));
+		expect(linkTargetNode(model, "Boat.md", "^nope")).toBe(noteNodeId("Boat.md"));
+	});
+
+	it("is null for a note that isn't loaded", () => {
+		expect(linkTargetNode(model, "Other.md", "")).toBeNull();
 	});
 });

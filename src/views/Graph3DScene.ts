@@ -5,6 +5,7 @@
  * evaluated at plugin startup, only when a 3D graph view first opens.
  */
 
+import { Platform } from "obsidian";
 import ForceGraph3D, { type ForceGraph3DInstance, type LinkObject, type NodeObject } from "3d-force-graph";
 import {
 	BufferAttribute,
@@ -23,7 +24,7 @@ import {
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
-import { Graph3DNear, type NearMarkdownRenderer } from "./Graph3DNear";
+import { Graph3DNear, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, spriteLabel } from "../graph3d/appearance";
 import { panelBoxEm } from "../graph3d/near";
@@ -33,6 +34,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flight";
+import { linkClickAction, type LinkClick } from "../graph3d/links";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -108,6 +110,8 @@ export interface SceneControls {
 export interface SceneOptions {
 	controls: SceneControls;
 	onNodeClick: (node: GraphNode) => void;
+	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
+	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 }
@@ -226,6 +230,8 @@ export class Graph3DScene {
 	private paused = false;
 	private pendingFlight: string | null = null;
 	private pendingFlightWaits = false;
+	/** The node last flown to: the focused node, whose links (and its neighbours') fire on a click. */
+	private focusId: string | null = null;
 	/** The flight under way, aimed at its node wherever the node is now. */
 	private flight: { node: EngineNode; flight: Flight } | null = null;
 	/** After a flight, the camera moves with its node until the node settles, or the user takes over. */
@@ -485,6 +491,7 @@ export class Graph3DScene {
 	flyTo(id: string, afterLayout = false): void {
 		this.pendingFlight = id;
 		this.pendingFlightWaits = afterLayout;
+		this.focusId = id;
 		this.startPendingFlight();
 	}
 
@@ -645,7 +652,11 @@ export class Graph3DScene {
 				this.drag = this.press = null;
 				return;
 			}
-		} else if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) {
+		} else if (e.button !== 0) {
+			return;
+		} else if (e.shiftKey || e.ctrlKey || e.metaKey) {
+			// Still a press that may be a click: Mod-click on a link opens it.
+			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
 			return;
 		}
 		this.samples = [];
@@ -694,8 +705,7 @@ export class Graph3DScene {
 		const press = this.press;
 		if (press?.pointerId === e.pointerId) {
 			this.press = null;
-			const node = this.stoppedCoastOnDown ? null : this.nodeNear(press.x, press.y, PICK_SLOP_PX[press.touch ? "touch" : "mouse"]);
-			if (node !== null) this.options.onNodeClick(node.graph);
+			if (!this.stoppedCoastOnDown) this.click(press.x, press.y, press.touch, e);
 		}
 		if (this.pinch?.ids.includes(e.pointerId) === true) this.endPinch(this.pinch);
 		const drag = this.drag;
@@ -706,6 +716,33 @@ export class Graph3DScene {
 		const velocity = launchVelocity(estimateVelocity(this.samples, now), this.carry, now - this.touchDownAt);
 		if (velocity.x !== 0 || velocity.y !== 0) this.orbitCoast = { drag, velocity };
 	};
+
+	/** A click or tap: follow the link under it, or hop to its node. See `linkClickAction`. */
+	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
+		const link = this.near.linkAt(x, y);
+		const focus = this.focusId === null ? undefined : this.nodes.find((node) => node.id === this.focusId);
+		const linkNode = link === null ? undefined : this.nodes.find((node) => node.id === link.node.id);
+		const action = linkClickAction({
+			click: true,
+			link,
+			isFocus: link !== null && link.node.id === this.focusId,
+			focusDistance: focus !== undefined && linkNode !== undefined ? worldDistance(focus, linkNode) : Infinity,
+			mod: Platform.isMacOS ? e.metaKey : e.ctrlKey,
+			alt: e.altKey,
+			panKey: e.shiftKey || e.ctrlKey || e.metaKey,
+		});
+		if (action === "none") return;
+		if (action !== "hop") {
+			this.options.onLinkClick(link!, action);
+			return;
+		}
+		if (link !== null) {
+			this.options.onNodeClick(link.node);
+			return;
+		}
+		const node = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
+		if (node !== null) this.options.onNodeClick(node.graph);
+	}
 
 	/** The wheel zooms toward what is under the cursor, or sets the flight speed while flying. */
 	private readonly onWheel = (e: WheelEvent): void => {
@@ -1026,4 +1063,10 @@ export class Graph3DScene {
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
 	}
+}
+
+/** Straight-line distance between two placed nodes; `Infinity` while either has no position. */
+function worldDistance(a: EngineNode, b: EngineNode): number {
+	if (a.x === undefined || a.y === undefined || a.z === undefined || b.x === undefined || b.y === undefined || b.z === undefined) return Infinity;
+	return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }

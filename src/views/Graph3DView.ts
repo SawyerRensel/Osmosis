@@ -1,11 +1,13 @@
-import { ItemView, MarkdownRenderer, Platform, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Platform, parseLinktext, Scope, SliderComponent, TFile, ToggleComponent, debounce, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
-import { buildGraph, noteNodeId, type GraphNode, type NoteInput } from "../graph3d/model";
+import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
+import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { placeNodes } from "../graph3d/positions";
 import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneTheme } from "./Graph3DScene";
+import type { PanelLink } from "./Graph3DNear";
 
 export const VIEW_TYPE_GRAPH3D = "osmosis-graph3d";
 
@@ -28,6 +30,8 @@ export class Graph3DView extends ItemView {
 	private readonly cache = new ParseCache(200);
 	private adjacency: NoteAdjacency | null = null;
 	private horizon: Horizon | null = null;
+	/** The graph last shown, for finding a link's target node. */
+	private model: GraphModel | null = null;
 	private focusPath: string | null = null;
 	private depth = GRAPH3D_DEFAULT_DEPTH;
 	/** Whether notes linking to a loaded note count as hops; off, the graph follows outgoing links only, like the mind map. */
@@ -89,7 +93,8 @@ export class Graph3DView extends ItemView {
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
 		await super.setState(state, result);
-		await this.reload(true);
+		// A heading or block to land on, from a Mod-click on a link in another 3D graph. Not kept in getState.
+		await this.reload(true, typeof state?.subpath === "string" ? state.subpath : "");
 	}
 
 	async onOpen(): Promise<void> {
@@ -132,6 +137,7 @@ export class Graph3DView extends ItemView {
 		this.scene = new Graph3DScene(this.stageEl, {
 			controls: this.controlSettings(),
 			onNodeClick: (node) => this.hop(node),
+			onLinkClick: (link, action) => this.followLink(link, action),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 		});
 		this.scene.setTheme(this.readTheme());
@@ -192,6 +198,7 @@ export class Graph3DView extends ItemView {
 		this.stageEl = null;
 		this.cache.clear();
 		this.prefetched.clear();
+		this.model = null;
 	}
 
 	/** Re-read the navigation settings, after they change in Osmosis settings. */
@@ -221,11 +228,55 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
-	private setFocus(path: string, flyToCore: boolean): void {
+	/**
+	 * Follow a link clicked in a near-tier panel, as the mind map does
+	 * (`MindMapView.openNodeLink`) but staying in 3D: a plain click hops to the
+	 * target, the line a heading or block link names, loading its note first
+	 * when it isn't loaded; Mod opens it in a new 3D graph tab; Mod+Alt in a
+	 * note view in a new tab. A plain click never replaces this view: what has
+	 * no node here (an unresolved link, a file not shown) opens in a new tab.
+	 */
+	private followLink(link: PanelLink, action: Exclude<LinkClick, "none" | "hop">): void {
+		if (action === "external") {
+			window.open(link.href);
+			return;
+		}
+		const { workspace, metadataCache } = this.app;
+		if (action === "open-note") {
+			void workspace.openLinkText(link.href, link.sourcePath, "tab");
+			return;
+		}
+		const { path, subpath: hash } = parseLinktext(link.href);
+		const subpath = hash.replace(/^#/, "");
+		const file = path === "" ? this.app.vault.getFileByPath(link.sourcePath) : metadataCache.getFirstLinkpathDest(path, link.sourcePath);
+		if (file === null || file.extension !== "md") {
+			// Attachments and unresolved links are nodes too, when a loaded note reaches them.
+			const id = file === null ? ghostNodeId(path) : attachmentNodeId(file.path);
+			const node = action === "follow" ? this.model?.nodes.find((n) => n.id === id) : undefined;
+			if (node !== undefined) this.hop(node);
+			else void workspace.openLinkText(link.href, link.sourcePath, "tab");
+			return;
+		}
+		if (action === "follow-tab") {
+			void workspace.getLeaf("tab").setViewState({
+				type: VIEW_TYPE_GRAPH3D,
+				state: { focus: file.path, depth: this.depth, backlinks: this.backlinks, subpath },
+				active: true,
+			});
+			return;
+		}
+		const id = this.model === null ? null : linkTargetNode(this.model, file.path, subpath);
+		const node = id === null ? undefined : this.model?.nodes.find((n) => n.id === id);
+		if (node !== undefined) this.hop(node);
+		else this.setFocus(file.path, true, subpath);
+	}
+
+	/** With `flyToFocus`, fly to the new focus note's core, or to the line `subpath` names in it. */
+	private setFocus(path: string, flyToFocus: boolean, subpath = ""): void {
 		this.focusPath = path;
 		this.updateHeader();
 		this.app.workspace.requestSaveLayout();
-		void this.reload(flyToCore);
+		void this.reload(flyToFocus, subpath);
 	}
 
 	private updateHeader(): void {
@@ -237,9 +288,10 @@ export class Graph3DView extends ItemView {
 	 * Recompute the horizon from the focus and show every loaded note. With
 	 * `flyToFocus`, the camera then stands at the focus note's core: the
 	 * engine's default framing is far enough out that the mist hides most of
-	 * the loaded area.
+	 * the loaded area. A `subpath` (a heading or block, without its `#`) lands
+	 * on that line instead.
 	 */
-	private async reload(flyToFocus = false): Promise<void> {
+	private async reload(flyToFocus = false, subpath = ""): Promise<void> {
 		const seq = ++this.loadSeq;
 		const scene = this.scene;
 		if (scene === null) return;
@@ -247,6 +299,7 @@ export class Graph3DView extends ItemView {
 		this.emptyEl?.toggleClass("is-hidden", focus !== null);
 		if (focus === null) {
 			this.horizon = null;
+			this.model = null;
 			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
 		}
@@ -276,8 +329,9 @@ export class Graph3DView extends ItemView {
 			(linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null,
 		);
 		this.horizon = horizon;
+		this.model = model;
 		scene.setData(model, placeNodes(model, scene.positions(), horizon.via));
-		if (flyToFocus) scene.flyTo(noteNodeId(focus), true);
+		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.prefetch(horizon.prefetch, seq);
 	}
 

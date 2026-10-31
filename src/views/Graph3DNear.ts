@@ -35,6 +35,17 @@ import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
 import { holeMask, panelHoles, type ScreenPlate } from "../graph3d/occlusion";
+import { frontPanelAt, rectContains, type DrawnPanel } from "../graph3d/links";
+
+/** A link under a click, in a near-tier panel. */
+export interface PanelLink {
+	/** The node whose panel holds the link. */
+	node: GraphNode;
+	/** The link target as written (`data-href` for internal links), and the note it is resolved from. */
+	href: string;
+	external: boolean;
+	sourcePath: string;
+}
 
 /** Renders `markdown` into `el`, as `MarkdownRenderer.render` does, with `component` owning its children. */
 export type NearMarkdownRenderer = (markdown: string, el: HTMLElement, sourcePath: string, component: Component) => Promise<void>;
@@ -77,6 +88,8 @@ interface Panel {
 	height: number;
 	/** The mask last written, to skip unchanged writes. */
 	mask: string;
+	/** View depth as last drawn. */
+	depth: number;
 }
 
 export class Graph3DNear {
@@ -96,6 +109,8 @@ export class Graph3DNear {
 	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
 	private sources: readonly NearSource[] = [];
 	private screenPlates: ScreenPlate[] | null = null;
+	/** The plates of the last frame drawn, for clicks between frames. */
+	private drawnPlates: ScreenPlate[] = [];
 	private readonly boxes = new Map<Element, Panel>();
 	private readonly sizes = new ResizeObserver((entries) => {
 		for (const entry of entries) {
@@ -180,6 +195,36 @@ export class Graph3DNear {
 		}
 	}
 
+	/**
+	 * The link at client point (`x`, `y`) in the panel drawn on top there, if
+	 * any. Panels never take the pointer, so this hit-tests them as drawn: a
+	 * nearer panel covers a farther one, and a nearer plate is cut out of both.
+	 */
+	linkAt(x: number, y: number): PanelLink | null {
+		const origin = this.renderer.domElement.getBoundingClientRect();
+		const drawn: DrawnPanel[] = [];
+		const byId = new Map<string, Panel>();
+		for (const panel of this.panels.values()) {
+			if (panel.target !== 1 || !panel.rendered || panel.fade === 0) continue;
+			const rect = panel.box.getBoundingClientRect();
+			drawn.push({ id: panel.node.id, rect: { left: rect.left - origin.left, top: rect.top - origin.top, right: rect.right - origin.left, bottom: rect.bottom - origin.top }, depth: panel.depth });
+			byId.set(panel.node.id, panel);
+		}
+		const front = frontPanelAt(x - origin.left, y - origin.top, drawn, this.drawnPlates);
+		const panel = front === null ? undefined : byId.get(front);
+		if (panel === undefined) return null;
+		for (const anchor of Array.from(panel.body.querySelectorAll("a"))) {
+			// A link that wraps has a box per line.
+			if (!Array.from(anchor.getClientRects()).some((rect) => rectContains(rect, x, y))) continue;
+			const internal = anchor.classList.contains("internal-link");
+			const href = (internal ? anchor.getAttribute("data-href") : null) ?? anchor.getAttribute("href");
+			// Tags (`#tag`) and other in-page anchors aren't links to follow.
+			if (href === null || href === "" || (!internal && !/^[a-z][a-z\d+.-]*:/i.test(href))) return null;
+			return { node: panel.node.graph, href, external: !internal, sourcePath: panel.node.graph.path ?? "" };
+		}
+		return null;
+	}
+
 	/** The view went into the background: nothing keeps playing there. */
 	pauseMedia(): void {
 		for (const panel of this.panels.values()) pauseMedia(panel.body);
@@ -193,6 +238,7 @@ export class Graph3DNear {
 		this.boxes.clear();
 		this.sources = [];
 		this.screenPlates = null;
+		this.drawnPlates = [];
 		this.renderer.domElement.remove();
 	}
 
@@ -207,7 +253,7 @@ export class Graph3DNear {
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });
 		const object = new CSS2DObject(anchor);
-		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "" };
+		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", depth: Infinity };
 		this.boxes.set(box, panel);
 		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
@@ -228,10 +274,11 @@ export class Graph3DNear {
 		// the screen's edge behind a farther one in the middle. It sorts by `renderOrder`
 		// first (higher on top) after this runs, and WebGL ignores it on a CSS2DObject.
 		panel.object.renderOrder = -depth;
+		panel.depth = depth;
 		panel.box.setCssStyles({ transform: `translate(-50%, -50%) scale(${scale})` });
 		point.applyMatrix4(camera.projectionMatrix);
 		const size = this.renderer.getSize();
-		const plates = (this.screenPlates ??= this.platesOnScreen(camera as PerspectiveCamera, pxPerUnitAt1));
+		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera as PerspectiveCamera, pxPerUnitAt1));
 		const holes = panelHoles(
 			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width, height: panel.height, scale, depth },
 			plates,

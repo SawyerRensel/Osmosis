@@ -166,14 +166,9 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 		const target = indexes.get(targetPath);
 		if (target === undefined) return null;
 		// An unmatched subpath falls back to the note, as following it in Obsidian does.
-		if (subpath.startsWith("^")) return target.byBlockId.get(subpath.slice(1)) ?? target.coreId;
-		if (subpath !== "") {
-			// `#A#B` names heading B under A; the last segment identifies it.
-			const segments = subpath.split("#").filter((s) => s.trim() !== "");
-			const last = segments[segments.length - 1];
-			if (last !== undefined) return target.byHeading.get(normalizeHeading(last)) ?? target.coreId;
-		}
-		return target.coreId;
+		const key = subpathKey(subpath);
+		if (key === null) return target.coreId;
+		return ("blockId" in key ? target.byBlockId.get(key.blockId) : target.byHeading.get(key.heading)) ?? target.coreId;
 	};
 
 	// Pass 2: cross-note edges, from the link cache.
@@ -211,6 +206,36 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 	}
 
 	return { nodes: [...nodes.values()], edges: [...edges.values()] };
+}
+
+/**
+ * What a link's subpath (the part after `#`, without it) names: a block ID, or
+ * a heading normalized for lookup. `#A#B` names heading B under A; the last
+ * segment identifies it. `null` for no subpath.
+ */
+function subpathKey(subpath: string): { blockId: string } | { heading: string } | null {
+	if (subpath.startsWith("^")) return { blockId: subpath.slice(1) };
+	const segments = subpath.split("#").filter((s) => s.trim() !== "");
+	const last = segments[segments.length - 1];
+	return last === undefined ? null : { heading: normalizeHeading(last) };
+}
+
+/**
+ * The node a link into the loaded note at `path` lands on, as `buildGraph`
+ * resolves it: the line with the block ID or heading `subpath` names (without
+ * its `#`), else the note's core. `null` when the note isn't loaded.
+ */
+export function linkTargetNode(model: GraphModel, path: string, subpath: string): string | null {
+	const coreId = noteNodeId(path);
+	if (!model.nodes.some((node) => node.id === coreId)) return null;
+	const key = subpathKey(subpath);
+	if (key === null) return coreId;
+	// The first match in source order, as buildGraph's index keeps.
+	const line = model.nodes.find((node) => {
+		if (node.kind !== "line" || node.path !== path || node.source === undefined) return false;
+		return "blockId" in key ? node.source.blockId === key.blockId : node.source.type === "heading" && normalizeHeading(node.source.content) === key.heading;
+	});
+	return line?.id ?? coreId;
 }
 
 /**
