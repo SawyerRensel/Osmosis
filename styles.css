@@ -4147,8 +4147,9 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	top: 0;
 	box-sizing: border-box;
 	width: max-content;
-	max-width: 360px;
-	max-height: 480px;
+	/* PANEL_MAX_EM in src/graph3d/near.ts: the scene spaces nodes for a panel this big. */
+	max-width: 20em;
+	max-height: 30em;
 	overflow: hidden;
 	padding: 0.25em 0.4em;
 	/* Matches the plate: its fill and text colour (the outline is set inline). */
@@ -4171,6 +4172,9 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 .osmosis-graph3d-near-body img,
 .osmosis-graph3d-near-body video {
 	max-width: 100%;
+	/* PANEL_MEDIA_MAX_EM in src/graph3d/near.ts; contain keeps the aspect of an embed sized with |width. */
+	max-height: 15em;
+	object-fit: contain;
 }
 
 .osmosis-graph3d-near-body :is(video, audio, iframe) {

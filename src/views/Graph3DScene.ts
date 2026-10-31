@@ -25,7 +25,8 @@ import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearMarkdownRenderer } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
-import { edgeColor, linkDistance, nodeColor, plateExtent, spriteLabel } from "../graph3d/appearance";
+import { edgeColor, linkDistance, nodeColor, nodeExtent, spriteLabel } from "../graph3d/appearance";
+import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
@@ -59,6 +60,8 @@ interface EngineNode extends NodeObject {
 	departing: boolean;
 	/** The node's label plate, which is how the node is drawn. */
 	shape: PlateShape;
+	/** How far the node reaches for spacing: its plate or its near-tier panel, whichever is bigger (`nodeExtent`). */
+	extent: number;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
@@ -70,10 +73,15 @@ interface LinkForce {
 	distance(distance: (link: EngineLink) => number): unknown;
 }
 
-/** A link's rest length from its kind and the plates at its ends (d3 has resolved both ends to nodes by then). */
+/** A link's rest length from its kind and the plates or panels at its ends (d3 has resolved both ends to nodes by then). */
 function plateLinkDistance(link: EngineLink): number {
 	const [source, target] = [link.source as EngineNode, link.target as EngineNode];
-	return linkDistance(link.kind, plateExtent(source.shape), plateExtent(target.shape));
+	return linkDistance(link.kind, source.extent, target.extent);
+}
+
+/** A node's spacing extent, from its plate and the panel the near tier would lay out for it (at line-plate text size, as `Graph3DNear` does). */
+function extentFor(node: EngineNode): number {
+	return nodeExtent(node.shape, panelBoxEm(node.graph), Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
 }
 
 /** d3's many-body force, as much of it as the scene wraps. */
@@ -359,6 +367,7 @@ export class Graph3DScene {
 				existing.shape = this.shapeFor(graph);
 				plated++;
 			}
+			existing.extent = extentFor(existing);
 			if (existing.departing) {
 				existing.departing = false;
 				this.fadeTo(existing, 1, now);
@@ -403,7 +412,9 @@ export class Graph3DScene {
 			opacity: 0,
 			departing: false,
 			shape: this.shapeFor(graph),
+			extent: 0,
 		};
+		node.extent = extentFor(node);
 		if (place !== undefined) {
 			node.x = place.x;
 			node.y = place.y;
@@ -443,7 +454,10 @@ export class Graph3DScene {
 		this.fog.color.setStyle(theme.background);
 		// A new font means a new glyph atlas, so every plate is laid out again.
 		this.plates.setColors(theme);
-		for (const node of this.nodes) node.shape = this.shapeFor(node.graph);
+		for (const node of this.nodes) {
+			node.shape = this.shapeFor(node.graph);
+			node.extent = extentFor(node);
+		}
 		this.linkForce?.distance(plateLinkDistance);
 		this.dirty = true;
 		this.layoutDirty = true;

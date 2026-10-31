@@ -9,7 +9,10 @@
  * - **Sized like the plate:** a panel is laid out at a fixed text size and
  *   scaled each frame by its depth, so its text is the size of the plate text
  *   under it and it grows and shrinks with the world, never covering more than
- *   it would as a world object.
+ *   it would as a world object. Its largest size (`PANEL_MAX_EM`) is capped
+ *   and the scene spaces nodes for it (`panelBoxEm`), so panels side by side
+ *   leave their edges showing between them.
+ * - **Stacked by depth:** a nearer panel covers a farther one, by view depth.
  * - **One mist:** a background-coloured veil over each panel mixes it toward
  *   the background exactly as the plate shader mixes the plate
  *   (`plateVisibility`), so the DOM and WebGL fade as one. A separate
@@ -187,6 +190,11 @@ export class Graph3DNear {
 	private place(panel: Panel, camera: Camera): void {
 		const depth = -this.point.copy(panel.object.position).applyMatrix4(camera.matrixWorldInverse).z;
 		const scale = panelScale(depth, this.pxPerUnitAt1(camera as PerspectiveCamera), this.pxPerUnit);
+		// Stack by view depth, as the plates' depth buffer does. Left to itself the CSS2D
+		// renderer stacks by straight-line distance to the camera, which puts a panel near
+		// the screen's edge behind a farther one in the middle. It sorts by `renderOrder`
+		// first (higher on top) after this runs, and WebGL ignores it on a CSS2DObject.
+		panel.object.renderOrder = -depth;
 		panel.box.setCssStyles({ transform: `translate(-50%, -50%) scale(${scale})` });
 		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density)) });
 	}

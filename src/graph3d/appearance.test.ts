@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { edgeDistance, linkDistance, noteHue, plateExtent, spriteLabel } from "./appearance";
+import { edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
 	it("keeps short plain text as it is", () => {
@@ -73,5 +73,17 @@ describe("linkDistance", () => {
 		const small = linkDistance("hierarchy", 5, 5);
 		expect(linkDistance("hierarchy", 20, 5)).toBeGreaterThan(small);
 		expect(linkDistance("hierarchy", 5, 20)).toBeGreaterThan(small);
+	});
+});
+
+describe("nodeExtent", () => {
+	it("is the plate's extent when there is no panel, or a smaller one", () => {
+		const plate = { width: 30, height: 5 };
+		expect(nodeExtent(plate, null, 3)).toBe(plateExtent(plate));
+		expect(nodeExtent(plate, { width: 4, height: 1 }, 3)).toBe(plateExtent(plate));
+	});
+
+	it("is the panel's half-diagonal in world units when the panel is bigger", () => {
+		expect(nodeExtent({ width: 30, height: 5 }, { width: 20, height: 15 }, 2)).toBe(25);
 	});
 });

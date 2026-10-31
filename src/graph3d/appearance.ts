@@ -101,6 +101,19 @@ export function plateExtent(plate: { width: number; height: number }): number {
 }
 
 /**
+ * How far a node reaches from its centre, for spacing: its plate, or its
+ * near-tier panel (`panelBoxEm`, in ems of panel text, `emWorld` world units
+ * each) if that is bigger. An image or code panel can reach three or four
+ * times as far as the plate under it, and it reaches that far only once its
+ * node has long since settled, so the room has to be made at layout time. See
+ * `vault/Planner/3D Graph - Near-tier panels overlap and hide their edges.md`.
+ */
+export function nodeExtent(plate: { width: number; height: number }, panelEm: { width: number; height: number } | null, emWorld: number): number {
+	const panel = panelEm === null ? 0 : plateExtent({ width: panelEm.width * emWorld, height: panelEm.height * emWorld });
+	return Math.max(plateExtent(plate), panel);
+}
+
+/**
  * Rest length of a link between two plates: the kind's distance (see
  * `edgeDistance`) measured between the plates' edges rather than their
  * centres, so a parent's children sit clear of it and of each other however

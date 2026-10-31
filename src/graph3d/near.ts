@@ -61,3 +61,76 @@ export function nearMarkdown(node: GraphNode): string | null {
 	const markdown = unembed(dedent(node.source.raw ?? node.source.content)).trim();
 	return markdown === "" ? null : markdown;
 }
+
+/** Widest and tallest a panel is laid out, in ems of panel text: the widest line plate (`LINE_PLATE_MAX_EM`), and 30 lines. Mirrored by `.osmosis-graph3d-near-panel` in `styles.css`. */
+export const PANEL_MAX_EM = { width: 20, height: 30 } as const;
+/** Tallest an image or video is drawn in a panel, in ems. Mirrored in `styles.css`. */
+export const PANEL_MEDIA_MAX_EM = 15;
+
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "ogg", "flac", "3gp"]);
+/** Panel padding either side, in ems (`.osmosis-graph3d-near-panel`). */
+const PAD_X = 0.4;
+const PAD_Y = 0.25;
+/** A rough average advance per character, in ems: prose, and monospace code at Obsidian's smaller code size. */
+const PROSE_EM_PER_CHAR = 0.5;
+const CODE_EM_PER_CHAR = 0.55;
+/** Line heights, in ems: prose, a heading, a code line, a table row. */
+const PROSE_ROW = 1.5;
+const HEADING_ROW = 2.2;
+const CODE_ROW = 1.4;
+const TABLE_ROW = 2;
+/** Obsidian's audio player, in ems. */
+const AUDIO_EM = { width: 20, height: 3.5 } as const;
+
+/**
+ * How big a node's near panel can get, in ems of panel text, estimated from
+ * its Markdown before anything renders. The scene spaces nodes by this as
+ * well as by their plate (`3D Graph - Near-tier panels overlap and hide their
+ * edges.md`), because positions settle long before a panel first renders, and
+ * settled nodes never move. It leans large: a gap too wide costs a little
+ * room, a gap too narrow puts one panel over its neighbour's edges.
+ *
+ * `null` for a node that never gets a panel (`nearMarkdown`).
+ */
+export function panelBoxEm(node: GraphNode): { width: number; height: number } | null {
+	const markdown = nearMarkdown(node);
+	if (markdown === null) return null;
+	if (node.kind === "attachment") {
+		return AUDIO_EXTENSIONS.has(extension(node.path ?? "")) ? { ...AUDIO_EM } : { width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 2 * PAD_Y };
+	}
+	let width = 0;
+	let height = 0;
+	let code = false;
+	for (const raw of markdown.split("\n")) {
+		const line = raw.replace(/^\s*(>\s?)*/, "");
+		let w: number;
+		let rows = 1;
+		let row = PROSE_ROW;
+		if (/^(```|~~~)/.test(line)) {
+			code = !code;
+			w = 0;
+			row = CODE_ROW;
+		} else if (code) {
+			w = raw.length * CODE_EM_PER_CHAR;
+			row = CODE_ROW;
+		} else if (/!\[[^\]]*\]\([^)]*\)/.test(line)) {
+			// A Markdown image (embeds became links in `nearMarkdown`).
+			w = PANEL_MAX_EM.width;
+			row = PANEL_MEDIA_MAX_EM;
+		} else if (/^\|/.test(line)) {
+			if (/^\|[\s:|-]*$/.test(line)) continue;
+			w = line.length * PROSE_EM_PER_CHAR;
+			row = TABLE_ROW;
+		} else {
+			w = line.length * PROSE_EM_PER_CHAR;
+			if (/^#{1,6}\s|^\[!/.test(line)) row = HEADING_ROW;
+			rows = Math.max(1, Math.ceil(w / (PANEL_MAX_EM.width - 2 * PAD_X)));
+		}
+		width = Math.max(width, w);
+		height += rows * row;
+	}
+	return {
+		width: Math.min(PANEL_MAX_EM.width, width + 2 * PAD_X),
+		height: Math.min(PANEL_MAX_EM.height, height + 2 * PAD_Y),
+	};
+}
