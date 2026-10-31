@@ -1,6 +1,7 @@
 /**
- * How 3D graph nodes and edges look: sprite label text and colours. Colour is
- * by note for now; the Overlays menu (Phase 5) adds the other colour modes.
+ * How 3D graph nodes and edges look: sprite label text and colours. These are
+ * the colours by note; the Overlays menu's other colour modes are in
+ * `overlays.ts`.
  */
 
 import type { GraphEdgeKind, GraphNode } from "./model";

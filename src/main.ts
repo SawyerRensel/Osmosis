@@ -19,6 +19,7 @@ import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSide
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
+import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
@@ -863,6 +864,7 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	onunload() {
+		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
 		// ...and any fence schedules a contextual session was still holding, so
@@ -966,6 +968,19 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	/** Apply the 3D graph navigation settings to every open 3D graph. */
+	/**
+	 * Take a change from a 3D graph's Overlays menu: every open 3D graph shows
+	 * it at once. Saved straight to data.json, and debounced, since a slider
+	 * fires on every step; `saveSettings()` would also re-sync every card.
+	 */
+	setGraph3DOverlays(overlays: Graph3DOverlays): void {
+		this.settings.graph3dOverlays = overlays;
+		this.saveOverlays();
+		this.refreshOpenGraph3DControls();
+	}
+
+	private readonly saveOverlays = debounce(() => void this.saveData(this.settings), 500, true);
+
 	refreshOpenGraph3DControls(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D)) {
 			if (leaf.view instanceof Graph3DView) leaf.view.applyControlSettings();
@@ -1577,6 +1592,7 @@ export default class OsmosisPlugin extends Plugin {
 		// Saved 3D graph node positions, dropped before release: a vault's
 		// shape keeps changing, so each session settles it afresh.
 		Reflect.deleteProperty(this.settings, "graph3dPositions");
+		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

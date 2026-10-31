@@ -5,9 +5,12 @@ import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, 
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { placeNodes } from "../graph3d/positions";
+import { memoryStrengths, nodeTags, overlayNodeColor, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
+import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
-import type { Graph3DScene, SceneControls, SceneTheme } from "./Graph3DScene";
+import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
 import type { PanelLink } from "./Graph3DNear";
+import { Graph3DOverlaysMenu } from "./Graph3DOverlays";
 
 export const VIEW_TYPE_GRAPH3D = "osmosis-graph3d";
 
@@ -41,6 +44,9 @@ export class Graph3DView extends ItemView {
 	private followActionEl: HTMLElement | null = null;
 	private depthSlider: SliderComponent | null = null;
 	private backlinksToggle: ToggleComponent | null = null;
+	private overlaysMenu: Graph3DOverlaysMenu | null = null;
+	/** The colour mode the scene is coloured in now, to tell when the menu changed it. */
+	private colorBy: Graph3DOverlays["colorBy"] | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
@@ -122,6 +128,12 @@ export class Graph3DView extends ItemView {
 				void this.reload();
 			});
 
+		this.overlaysMenu = new Graph3DOverlaysMenu(header, this.plugin().settings.graph3dOverlays, (overlays) => this.plugin().setGraph3DOverlays(overlays));
+		// A press anywhere else in the view, the canvas included, closes the menu.
+		this.registerDomEvent(root, "pointerdown", (e) => {
+			if (this.overlaysMenu?.isOpen === true && !this.overlaysMenu.contains(e.target)) this.overlaysMenu.toggle(false);
+		});
+
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
 
@@ -136,6 +148,7 @@ export class Graph3DView extends ItemView {
 		if (this.stageEl === null) return;
 		this.scene = new Graph3DScene(this.stageEl, {
 			controls: this.controlSettings(),
+			overlays: this.sceneOverlays(),
 			onNodeClick: (node) => this.hop(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
@@ -195,20 +208,85 @@ export class Graph3DView extends ItemView {
 		this.loadSeq++;
 		this.scene?.destroy();
 		this.scene = null;
+		this.overlaysMenu = null;
+		this.colorBy = null;
 		this.stageEl = null;
 		this.cache.clear();
 		this.prefetched.clear();
 		this.model = null;
 	}
 
-	/** Re-read the navigation settings, after they change in Osmosis settings. */
+	/** Re-read the navigation settings and overlays, after they change in Osmosis settings or an Overlays menu. */
 	applyControlSettings(): void {
 		this.scene?.setControls(this.controlSettings());
+		this.scene?.setOverlays(this.sceneOverlays());
+		const overlays = this.plugin().settings.graph3dOverlays;
+		// This view's own menu already shows what it sent; rebuilding it would end a slider drag.
+		if (this.overlaysMenu !== null && this.overlaysMenu.current !== overlays) this.overlaysMenu.show(overlays);
+		if (overlays.colorBy !== this.colorBy && this.model !== null) this.scene?.setColoring(this.coloring(this.model));
+	}
+
+	private plugin(): OsmosisPlugin {
+		return this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 	}
 
 	private controlSettings(): SceneControls {
-		const { settings } = this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
+		const { settings } = this.plugin();
 		return { desktopPivot: settings.graph3dDesktopPivot, touchDrag: settings.graph3dOneFingerDrag };
+	}
+
+	private sceneOverlays(): SceneOverlays {
+		const { colorBy: _colorBy, ...overlays } = this.plugin().settings.graph3dOverlays;
+		return overlays;
+	}
+
+	/**
+	 * How to colour `model`'s nodes in the current colour mode. Tags and memory
+	 * strength are read here, once per model, and only in the mode that shows
+	 * them. Memory strength is as of now: a review elsewhere shows at the next
+	 * reload (a hop, an edit, or changing the colour mode).
+	 */
+	private coloring(model: GraphModel): (node: GraphNode) => string {
+		const mode = this.plugin().settings.graph3dOverlays.colorBy;
+		this.colorBy = mode;
+		const context: ColorContext = {
+			tags: mode === "tag" ? nodeTags(model) : new Map(),
+			strengths: mode === "memory" ? this.memoryStrengths(model) : new Map(),
+		};
+		return (node) => overlayNodeColor(node, mode, context);
+	}
+
+	/** FSRS retrievability of the line cards on `model`'s lines (see `memoryStrengths`). Disabled cards don't count. */
+	private memoryStrengths(model: GraphModel): Map<string, number | null> {
+		const plugin = this.plugin();
+		const now = Date.now();
+		const scheduler = new FSRSScheduler({ learningSteps: plugin.settings.learningSteps, relearningSteps: plugin.settings.relearningSteps });
+		const byNote = new Map<string, Map<string, (number | null)[]>>();
+		return memoryStrengths(model, (path, blockId) => {
+			let cards = byNote.get(path);
+			if (cards === undefined) {
+				cards = new Map();
+				for (const card of plugin.cardStore.getCardsByNote(path)) {
+					if (card.blockId === undefined || card.disabled === true) continue;
+					const strength = scheduler.retrievability(
+						{
+							stability: card.stability ?? 0,
+							difficulty: card.difficulty ?? 0,
+							due: card.due ?? now,
+							lastReview: card.lastReview ?? null,
+							reps: card.reps ?? 0,
+							lapses: card.lapses ?? 0,
+							state: card.state ?? "new",
+							learningSteps: card.learningSteps ?? 0,
+						},
+						now,
+					);
+					cards.set(card.blockId, [...(cards.get(card.blockId) ?? []), strength]);
+				}
+				byNote.set(path, cards);
+			}
+			return cards.get(blockId) ?? [];
+		});
 	}
 
 	private toggleFollow(): void {
@@ -330,6 +408,7 @@ export class Graph3DView extends ItemView {
 		);
 		this.horizon = horizon;
 		this.model = model;
+		scene.setColoring(this.coloring(model));
 		scene.setData(model, placeNodes(model, scene.positions(), horizon.via));
 		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.prefetch(horizon.prefetch, seq);

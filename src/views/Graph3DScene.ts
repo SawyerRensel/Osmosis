@@ -15,18 +15,24 @@ import {
 	FogExp2,
 	LineBasicMaterial,
 	LineSegments,
+	Points,
+	PointsMaterial,
 	Raycaster,
 	Vector2,
 	Vector3,
+	type Material,
 	type PerspectiveCamera,
 	type Ray,
 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
-import { edgeColor, linkDistance, nodeColor, nodeExtent, spriteLabel } from "../graph3d/appearance";
+import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
+import { DEFAULT_OVERLAYS, edgeShown, linkStrengthScale, type Graph3DOverlays } from "../graph3d/overlays";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
@@ -68,11 +74,38 @@ interface EngineNode extends NodeObject {
 
 interface EngineLink extends LinkObject<EngineNode> {
 	kind: GraphEdgeKind;
+	/** 0–1: where along the edge its particle starts, so particles don't march in step. */
+	phase: number;
 }
 
 /** d3's link force, as much of it as the scene sets. */
 interface LinkForce {
 	distance(distance: (link: EngineLink) => number): unknown;
+	strength(strength: (link: EngineLink) => number): unknown;
+}
+
+/** A link end's node ID, before or after the engine swaps the node object in. */
+function endId(end: EngineLink["source"]): string {
+	return typeof end === "object" && end !== null ? end.id : String(end);
+}
+
+/**
+ * Patch a line or point material to dim with the focus as the plates do. They
+ * blend over the background, so fading their alpha is the same mix toward it;
+ * each fragment uses its own depth. `round` cuts square points into discs.
+ */
+function dimWithFocus(material: Material, focus: { value: number }, round = false): void {
+	// three.js keys compiled programs by this function's source, which `round` doesn't change.
+	material.customProgramCacheKey = () => (round ? "osmosis-focus-round" : "osmosis-focus");
+	material.onBeforeCompile = (shader) => {
+		shader.uniforms.uFocus = focus;
+		shader.vertexShader = shader.vertexShader
+			.replace("void main() {", "varying float vFocusDepth;\nvoid main() {")
+			.replace("#include <fog_vertex>", "#include <fog_vertex>\nvFocusDepth = -mvPosition.z;");
+		shader.fragmentShader = shader.fragmentShader
+			.replace("void main() {", `varying float vFocusDepth;\n${FOCUS_DIM_GLSL}\nvoid main() {${round ? "\nif (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;" : ""}`)
+			.replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= 1.0 - focusDim(vFocusDepth);");
+	};
 }
 
 /** A link's rest length from its kind and the plates or panels at its ends (d3 has resolved both ends to nodes by then). */
@@ -107,8 +140,12 @@ export interface SceneControls {
 	touchDrag: Graph3DTouchDrag;
 }
 
+/** The Overlays menu's options the engine applies; the colour mode reaches it as `setColoring`. */
+export type SceneOverlays = Omit<Graph3DOverlays, "colorBy">;
+
 export interface SceneOptions {
 	controls: SceneControls;
+	overlays: SceneOverlays;
 	onNodeClick: (node: GraphNode) => void;
 	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
@@ -184,6 +221,12 @@ const SETTLE_TICKS = 80;
 const CHARGE = -30;
 const FADE_MS = 500;
 const LINK_OPACITY = 0.45;
+/** Link particles: world units a second, and their size in world units (a line plate is 5 tall). */
+const PARTICLE_SPEED = 25;
+const PARTICLE_SIZE = 1.6;
+const PARTICLE_OPACITY = 0.9;
+/** Bloom: strength, radius, and the luminance a pixel needs before it glows. */
+const BLOOM = { strength: 0.8, radius: 0.5, threshold: 0.6 };
 /** A press that moves less than this, in px, is a click rather than a drag. */
 const CLICK_SLOP_PX = 6;
 
@@ -217,6 +260,15 @@ export class Graph3DScene {
 	private readonly near: Graph3DNear;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
 	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
+	/** One particle per drawn edge, when the overlay is on. */
+	private readonly particles: Points<BufferGeometry, PointsMaterial>;
+	private overlays: SceneOverlays = DEFAULT_OVERLAYS;
+	/** Node colour in the active colour mode (the Overlays menu's "Colour by"). */
+	private colorOf: (node: GraphNode) => string = nodeColor;
+	/** Links per node, for d3's default link strength, which the force balance scales. */
+	private degree = new Map<string, number>();
+	/** Bloom's post-processing passes, while bloom is on. */
+	private bloomPasses: (UnrealBloomPass | OutputPass)[] = [];
 	/** Node positions or opacities changed since the plates and edges were last written. */
 	private dirty = false;
 	/** Nodes came, went, or changed text or colour: every plate attribute must be rewritten. */
@@ -299,6 +351,7 @@ export class Graph3DScene {
 		// the data changes; setTheme re-applies it when plates are re-measured.
 		this.linkForce = this.graph.d3Force("link") as LinkForce | undefined;
 		this.linkForce?.distance(plateLinkDistance);
+		this.linkForce?.strength(this.linkStrength);
 		// Settled nodes are pinned, and the many-body force skips most of them
 		// (see settle.ts), which is what keeps a tick cheap in a large world.
 		const charge = this.graph.d3Force("charge") as ManyBodyForce;
@@ -327,22 +380,19 @@ export class Graph3DScene {
 
 		this.plates = new Graph3DPlates(this.theme);
 		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
-		// Edges dim with the plates. They blend over the background, so fading
-		// their alpha is the same mix toward it; each fragment uses its own depth.
-		edgeMaterial.onBeforeCompile = (shader) => {
-			shader.uniforms.uFocus = this.plates.focus;
-			shader.vertexShader = shader.vertexShader
-				.replace("void main() {", "varying float vFocusDepth;\nvoid main() {")
-				.replace("#include <fog_vertex>", "#include <fog_vertex>\nvFocusDepth = -mvPosition.z;");
-			shader.fragmentShader = shader.fragmentShader
-				.replace("void main() {", `varying float vFocusDepth;\n${FOCUS_DIM_GLSL}\nvoid main() {`)
-				.replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= 1.0 - focusDim(vFocusDepth);");
-		};
+		// Edges dim with the plates.
+		dimWithFocus(edgeMaterial, this.plates.focus);
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
+		const particleMaterial = new PointsMaterial({ size: PARTICLE_SIZE, vertexColors: true, transparent: true, depthWrite: false });
+		dimWithFocus(particleMaterial, this.plates.focus, true);
+		this.particles = new Points(new BufferGeometry(), particleMaterial);
+		this.particles.frustumCulled = false;
+		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
-		this.graph.scene().add(this.edges, this.plates.group, this.near.group);
+		this.graph.scene().add(this.edges, this.particles, this.plates.group, this.near.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
+		this.setOverlays(options.overlays);
 
 		this.frame = window.requestAnimationFrame(this.tick);
 	}
@@ -368,7 +418,7 @@ export class Graph3DScene {
 			previous.delete(graph.id);
 			const relabel = this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
 			existing.graph = graph;
-			existing.color.setStyle(nodeColor(graph));
+			existing.color.setStyle(this.colorOf(graph));
 			if (relabel) {
 				existing.shape = this.shapeFor(graph);
 				plated++;
@@ -394,7 +444,10 @@ export class Graph3DScene {
 			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
 			return (source.departing || target.departing) && ids.has(source.id) && ids.has(target.id);
 		});
-		this.links = [...model.edges.map((edge) => ({ kind: edge.kind, source: edge.source, target: edge.target })), ...lingering];
+		this.links = [
+			...model.edges.map((edge) => ({ kind: edge.kind, source: edge.source, target: edge.target, phase: noteHue(`${edge.source}>${edge.target}`) / 360 })),
+			...lingering,
+		];
 		this.ticksSinceData = 0;
 		this.pushData();
 		this.perf.plated(plated, performance.now() - now);
@@ -414,7 +467,7 @@ export class Graph3DScene {
 		const node: EngineNode = {
 			id: graph.id,
 			graph,
-			color: new Color(nodeColor(graph)),
+			color: new Color(this.colorOf(graph)),
 			opacity: 0,
 			departing: false,
 			shape: this.shapeFor(graph),
@@ -441,6 +494,10 @@ export class Graph3DScene {
 			this.nodes.filter((node) => !node.departing).map((node) => ({ ...node.graph, pinned: node.fx !== undefined })),
 			CHARGE,
 		);
+		this.degree.clear();
+		for (const link of this.links) {
+			for (const id of [endId(link.source), endId(link.target)]) this.degree.set(id, (this.degree.get(id) ?? 0) + 1);
+		}
 		this.dirty = true;
 		this.layoutDirty = true;
 		this.graph.graphData({ nodes: this.nodes, links: this.links });
@@ -471,6 +528,60 @@ export class Graph3DScene {
 
 	setControls(settings: SceneControls): void {
 		this.controlSettings = settings;
+	}
+
+	/**
+	 * Apply the Overlays menu. Nothing here moves a node: hidden edges still
+	 * pull (visibility is drawing only), and a new force balance re-weights
+	 * the links, which shapes only what is still settling, since settled
+	 * nodes are pinned.
+	 */
+	setOverlays(overlays: SceneOverlays): void {
+		const reweigh = overlays.forceBalance !== this.overlays.forceBalance;
+		this.overlays = overlays;
+		if (reweigh) this.linkForce?.strength(this.linkStrength);
+		this.setBloom(overlays.bloom);
+		this.particles.visible = overlays.particles;
+		this.plates.setLabelsVisible(overlays.labels !== "none");
+		this.near.setEnabled(overlays.labels === "all");
+		this.dirty = true;
+	}
+
+	/** Colour every node with `colorOf` from now on: the Overlays menu's colour mode, with what it reads (tags, memory strength). */
+	setColoring(colorOf: (node: GraphNode) => string): void {
+		this.colorOf = colorOf;
+		for (const node of this.nodes) node.color.setStyle(colorOf(node.graph));
+		this.near.refreshColors();
+		this.dirty = true;
+		this.layoutDirty = true;
+	}
+
+	/** d3's default link strength (one over the fewer links at either end), scaled by the force balance. */
+	private readonly linkStrength = (link: EngineLink): number => {
+		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
+		return linkStrengthScale(link.kind, this.overlays.forceBalance) / Math.max(1, fewer);
+	};
+
+	/**
+	 * Bloom is a post-processing pass, added only while it is on: its render
+	 * targets cost memory and every frame a full-screen blur. The output pass
+	 * after it converts to the screen's colour space, which rendering to the
+	 * canvas directly did by itself.
+	 */
+	private setBloom(on: boolean): void {
+		if (on === this.bloomPasses.length > 0) return;
+		const composer = this.graph.postProcessingComposer();
+		if (on) {
+			// The composer sizes each pass as it is added.
+			this.bloomPasses = [new UnrealBloomPass(new Vector2(1, 1), BLOOM.strength, BLOOM.radius, BLOOM.threshold), new OutputPass()];
+			for (const pass of this.bloomPasses) composer.addPass(pass);
+			return;
+		}
+		for (const pass of this.bloomPasses) {
+			composer.removePass(pass);
+			pass.dispose();
+		}
+		this.bloomPasses = [];
 	}
 
 	resize(width: number, height: number): void {
@@ -567,12 +678,15 @@ export class Graph3DScene {
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
+		this.setBloom(false);
 		this.near.destroy();
 		this.nodes = [];
 		this.links = [];
 		this.plates.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
+		this.particles.geometry.dispose();
+		this.particles.material.dispose();
 		const renderer = this.graph.renderer();
 		this.graph._destructor();
 		renderer.dispose();
@@ -986,7 +1100,7 @@ export class Graph3DScene {
 		const controls = this.orbitControls();
 		const targetDistance = this.graph.camera().position.distanceTo(controls.target);
 		const ease = 1 - Math.exp(-seconds / MIST_EASE);
-		const mist = MIST / Math.max(MIST_MIN_DISTANCE, targetDistance);
+		const mist = (MIST * this.overlays.mist) / Math.max(MIST_MIN_DISTANCE, targetDistance);
 		this.fog.density += (mist - this.fog.density) * ease;
 		// Focus dimming follows the orbit target's view depth, eased like the mist.
 		const focus = this.plates.focus;
@@ -1000,6 +1114,7 @@ export class Graph3DScene {
 			this.layoutDirty = false;
 			this.writeEdges();
 		}
+		if (this.overlays.particles) this.writeParticles(now);
 		if (this.hover !== null) {
 			const node = this.drag === null ? this.nodeNear(this.hover.x, this.hover.y, PICK_SLOP_PX.mouse) : null;
 			this.graph.renderer().domElement.style.cursor = node === null ? "" : "pointer";
@@ -1050,16 +1165,66 @@ export class Graph3DScene {
 			const target = link.target as EngineNode | string;
 			if (typeof source === "string" || typeof target === "string") continue;
 			if (source.x === undefined || target.x === undefined) continue;
+			if (!this.edgeDrawn(link.kind, source, target)) continue;
 			const alpha = LINK_OPACITY * Math.min(source.opacity, target.opacity);
 			if (alpha <= 0) continue;
-			let color = this.edgeColors.get(link.kind);
-			if (color === undefined) this.edgeColors.set(link.kind, (color = new Color(edgeColor(link.kind))));
+			const color = this.edgeColor(link.kind);
 			for (const end of [source, target]) {
 				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
 				colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
 			}
 		}
 		geometry.setDrawRange(0, vertex);
+		positions.needsUpdate = true;
+		colors.needsUpdate = true;
+	}
+
+	/** Whether the Overlays menu shows an edge of `kind` between these nodes. */
+	private edgeDrawn(kind: GraphEdgeKind, source: EngineNode, target: EngineNode): boolean {
+		return edgeShown(kind, source.graph.kind === "ghost" || target.graph.kind === "ghost", this.overlays.edges);
+	}
+
+	private edgeColor(kind: GraphEdgeKind): Color {
+		let color = this.edgeColors.get(kind);
+		if (color === undefined) this.edgeColors.set(kind, (color = new Color(edgeColor(kind))));
+		return color;
+	}
+
+	/**
+	 * One frame of link particles: a particle on every drawn edge, running from
+	 * source to target at one speed in world units, so the direction of each
+	 * link shows. Rewritten every frame while the overlay is on.
+	 */
+	private writeParticles(now: number): void {
+		const geometry = this.particles.geometry;
+		let positions = geometry.getAttribute("position") as BufferAttribute | undefined;
+		let colors = geometry.getAttribute("color") as BufferAttribute | undefined;
+		if (positions === undefined || colors === undefined || positions.count < this.links.length) {
+			const capacity = Math.max(64, this.links.length * 2);
+			geometry.dispose();
+			positions = new BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
+			colors = new BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(DynamicDrawUsage);
+			geometry.setAttribute("position", positions);
+			geometry.setAttribute("color", colors);
+		}
+		const travelled = (now / 1000) * PARTICLE_SPEED;
+		let count = 0;
+		for (const link of this.links) {
+			const source = link.source as EngineNode | string;
+			const target = link.target as EngineNode | string;
+			if (typeof source === "string" || typeof target === "string") continue;
+			if (source.x === undefined || source.y === undefined || source.z === undefined) continue;
+			if (target.x === undefined || target.y === undefined || target.z === undefined) continue;
+			if (!this.edgeDrawn(link.kind, source, target)) continue;
+			const alpha = PARTICLE_OPACITY * Math.min(source.opacity, target.opacity);
+			if (alpha <= 0) continue;
+			const length = Math.max(1, Math.hypot(target.x - source.x, target.y - source.y, target.z - source.z));
+			const t = (travelled / length + link.phase) % 1;
+			positions.setXYZ(count, source.x + (target.x - source.x) * t, source.y + (target.y - source.y) * t, source.z + (target.z - source.z) * t);
+			const color = this.edgeColor(link.kind);
+			colors.setXYZW(count++, color.r, color.g, color.b, alpha);
+		}
+		geometry.setDrawRange(0, count);
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
 	}

@@ -337,6 +337,7 @@ export class Graph3DPlates {
 	/** View depth of the focus, for focus dimming. The scene eases it each frame and shares it with the edges. */
 	readonly focus: IUniform<number> = { value: 0 };
 	private font = "";
+	private labelsVisible = true;
 
 	constructor(colors: PlateColors) {
 		const material = new ShaderMaterial({
@@ -369,6 +370,12 @@ export class Graph3DPlates {
 		this.atlas = new GlyphAtlas(font);
 		for (const layer of this.glyphs) layer.dispose();
 		this.glyphs.length = 0;
+	}
+
+	/** Show or hide the text on every plate (the Overlays menu's labels); the plates keep their size. */
+	setLabelsVisible(visible: boolean): void {
+		this.labelsVisible = visible;
+		for (const layer of this.glyphs) layer.mesh.visible = visible;
 	}
 
 	/** Lay `text` out on a plate `height` world units tall, cut at `maxEm` ems wide. */
@@ -478,6 +485,7 @@ export class Graph3DPlates {
 			uFocus: this.focus,
 		});
 		const layer = new QuadLayer(material, GLYPH_ATTRIBUTES);
+		layer.mesh.visible = this.labelsVisible;
 		this.glyphs.push(layer);
 		this.group.add(layer.mesh);
 	}

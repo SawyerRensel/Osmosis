@@ -3,6 +3,7 @@ import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
+import { DEFAULT_OVERLAYS, type Graph3DOverlays } from "./graph3d/overlays";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
@@ -150,6 +151,8 @@ export interface OsmosisSettings {
 	graph3dDesktopPivot: Graph3DDesktopPivot;
 	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
 	graph3dOneFingerDrag: Graph3DTouchDrag;
+	/** The 3D graph's Overlays menu, shared by every 3D graph view (see `src/graph3d/overlays.ts`). */
+	graph3dOverlays: Graph3DOverlays;
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -198,6 +201,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// 3D graph defaults
 	graph3dDesktopPivot: "cursor",
 	graph3dOneFingerDrag: "point",
+	graph3dOverlays: DEFAULT_OVERLAYS,
 };
 
 /** Reject non-integer or negative daily card limits with an inline message. */

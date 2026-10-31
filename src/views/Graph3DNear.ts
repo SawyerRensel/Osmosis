@@ -104,6 +104,8 @@ export class Graph3DNear {
 	private readonly pxPerUnit: number;
 	private focus = 0;
 	private density = 0;
+	/** Off (the Overlays menu's labels on plates only), no panel is chosen and the open ones fade out. */
+	private enabled = true;
 	private readonly point = new Vector3();
 	private readonly platePoint = new Vector3();
 	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
@@ -148,7 +150,7 @@ export class Graph3DNear {
 		const probes: NearProbe[] = [];
 		const markdown = new Map<string, { node: NearSource; text: string }>();
 		const point = this.point;
-		for (const node of nodes) {
+		for (const node of this.enabled ? nodes : []) {
 			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
 			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
 			const depth = -point.z;
@@ -223,6 +225,15 @@ export class Graph3DNear {
 			return { node: panel.node.graph, href, external: !internal, sourcePath: panel.node.graph.path ?? "" };
 		}
 		return null;
+	}
+
+	setEnabled(enabled: boolean): void {
+		this.enabled = enabled;
+	}
+
+	/** Re-draw each open panel's outline in its node's colour, after the colour mode changes. */
+	refreshColors(): void {
+		for (const panel of this.panels.values()) panel.box.setCssStyles({ boxShadow: `inset 0 0 0 0.07em ${panel.node.color.getStyle()}` });
 	}
 
 	/** The view went into the background: nothing keeps playing there. */
