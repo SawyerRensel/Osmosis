@@ -7,7 +7,7 @@ import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
-import { ancestorsOf, findNodeById, heldDiff, isEditableTarget, lineNodeAt, locateLine } from "../graph3d/edit";
+import { ancestorsOf, appendToLine, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { memoryStrengths, nodeTags, overlayNodeColor, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
@@ -114,8 +114,8 @@ export class Graph3DView extends ItemView {
 	private editOwner: string | null = null;
 	/** The note last edited, so undo still finds it after the edited line's ID, and the focus with it, changed. */
 	private lastEditPath: string | null = null;
-	/** A line an edit just changed, for the next reload to keep selected and in place (its ID changed, its start did not). */
-	private edited: { path: string; start: number; from: string } | null = null;
+	/** Lines an edit just changed, for the next reload to keep in place (their IDs changed, their starts did not); the first is selected again. */
+	private edited: { path: string; start: number; from: string }[] = [];
 	/** Releases for the histories of the notes loaded now: a note's undo history lives while some view holds it. */
 	private readonly holds = new Map<string, () => void>();
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
@@ -164,6 +164,8 @@ export class Graph3DView extends ItemView {
 			if (node === null || !this.beginEdit(node)) return undefined;
 			return false;
 		};
+		// Escape drops a link drag in progress; otherwise the key goes on.
+		this.scope.register([], "Escape", () => (this.scene?.cancelLinkDrag() === true ? false : undefined));
 		this.scope.register([], "F2", editKey);
 		this.scope.register([], "Enter", editKey);
 	}
@@ -268,12 +270,14 @@ export class Graph3DView extends ItemView {
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.beginEdit(node),
+			onLinkDrop: (from, to) => void this.linkLines(from, to),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 		});
 		this.scene.setTheme(this.readTheme());
+		this.scene.setLinkMode(this.editMode);
 		// The stage can be 0×0 when the view opens (in a background tab, say),
 		// and a leaf being shown again isn't always a resize event.
 		const stage = this.stageEl;
@@ -458,6 +462,7 @@ export class Graph3DView extends ItemView {
 	private setEditMode(on: boolean): void {
 		this.editMode = on;
 		this.editActionEl?.toggleClass("is-active", on);
+		this.scene?.setLinkMode(on);
 		// Leaving edit mode (or starting a study session) saves the line being edited.
 		if (!on) this.editor.close(true);
 	}
@@ -487,7 +492,7 @@ export class Graph3DView extends ItemView {
 			if (restored === null) return;
 			const start = focused?.source?.range.start;
 			if (focused?.path !== undefined && start !== undefined && restored.some((file) => file.path === focused.path)) {
-				this.edited = { path: focused.path, start, from: focused.id };
+				this.edited = [{ path: focused.path, start, from: focused.id }];
 			}
 			this.lastEditPath = key;
 			void this.reload();
@@ -523,7 +528,7 @@ export class Graph3DView extends ItemView {
 		this.lastEditPath = file.path;
 		await this.edits.write(file, content);
 		// Marked only now, so a reload that was already under way can't take it.
-		this.edited = { path: file.path, start, from: node.id };
+		this.edited = [{ path: file.path, start, from: node.id }];
 		void this.reload();
 	}
 
@@ -609,6 +614,80 @@ export class Graph3DView extends ItemView {
 		await this.commitEdit(file, out, node, locateLine(out, restoreEditedLine(line, edited), line.range.start));
 	}
 
+	/**
+	 * Line `from` was dropped on node `to` in edit mode: add a link to `to` at
+	 * the end of `from`'s line. `to` is a line (linked by its heading text, or
+	 * by a block ID that is stamped on it if it has none) or a note. Both ends
+	 * are found again in fresh bytes. Within one note, both splices are taken
+	 * on one string and written once; across notes it is an edit group (the
+	 * target's note first, so a failure leaves a harmless ID rather than a link
+	 * to nothing), which one undo reverts.
+	 */
+	private async linkLines(from: GraphNode, to: GraphNode): Promise<void> {
+		if (this.editBlocked()) return;
+		try {
+			const a = await this.freshLine(from);
+			const toFile = to.path === undefined ? null : this.app.vault.getFileByPath(to.path);
+			if (a === null || toFile === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			if (to.kind === "note" && to.path === a.file.path) {
+				new Notice("Osmosis: that line is already in that note");
+				return;
+			}
+			const sameNote = to.path === a.file.path;
+			const b = to.kind !== "line" ? null : sameNote ? { content: a.content, line: findNodeById(a.root, to.source?.id ?? ""), root: a.root } : await this.freshLine(to);
+			if (to.kind === "line" && (b === null || b.line === null)) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const target = b?.line ?? null;
+			const sub = linkSubpath(target, b?.root ?? a.root, b?.content ?? "");
+			if (sub === null) {
+				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+				return;
+			}
+			const text = this.app.fileManager.generateMarkdownLink(toFile, a.file.path, sub.subpath);
+			const start = a.line.range.start;
+			this.editOwner = a.file.path;
+			this.lastEditPath = a.file.path;
+			let edited: typeof this.edited;
+			if (sameNote) {
+				const out = linkInNote(a.content, a.line, target, text, sub.stamp);
+				if (out === null) {
+					new Notice("Osmosis: can't add a link to that kind of line");
+					return;
+				}
+				await this.edits.write(a.file, out.content);
+				edited = [{ path: a.file.path, start: out.aStart, from: from.id }];
+				if (out.bStart !== null && sub.stamp !== null) edited.push({ path: toFile.path, start: out.bStart, from: to.id });
+			} else {
+				const appended = appendToLine(a.content, a.line, text);
+				if (appended === null) {
+					new Notice("Osmosis: can't add a link to that kind of line");
+					return;
+				}
+				const stamped = target !== null && b !== null && sub.stamp !== null ? stampBlockId(b.content, target, sub.stamp) : null;
+				this.edits.recorder.beginGroup();
+				try {
+					if (stamped !== null) await this.edits.write(toFile, stamped);
+					await this.edits.write(a.file, appended);
+				} finally {
+					this.edits.recorder.endGroup();
+				}
+				edited = [{ path: a.file.path, start, from: from.id }];
+				if (stamped !== null && target !== null) edited.push({ path: toFile.path, start: target.range.start, from: to.id });
+			}
+			// Marked only now, so a reload that was already under way can't take it.
+			this.edited = edited;
+			void this.reload();
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not link those lines", error);
+			new Notice("Osmosis: could not add that link");
+		}
+	}
+
 	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */
 	private async toggleCheckbox(node: GraphNode): Promise<void> {
 		if (this.editBlocked()) return;
@@ -647,15 +726,14 @@ export class Graph3DView extends ItemView {
 	private place(scene: Graph3DScene, model: GraphModel, via: ReadonlyMap<string, string>): Map<string, Placed> {
 		const positions = scene.positions();
 		const { edited } = this;
-		this.edited = null;
-		if (edited !== null) {
-			const id = lineNodeAt(model, edited.path, edited.start);
-			const from = positions.get(edited.from);
-			if (id !== null) {
-				if (from !== undefined && !positions.has(id)) positions.set(id, from);
-				scene.setFocusId(id);
-			}
-		}
+		this.edited = [];
+		edited.forEach((line, i) => {
+			const id = lineNodeAt(model, line.path, line.start);
+			const from = positions.get(line.from);
+			if (id === null) return;
+			if (from !== undefined && !positions.has(id)) positions.set(id, from);
+			if (i === 0) scene.setFocusId(id);
+		});
 		return placeNodes(model, positions, via);
 	}
 

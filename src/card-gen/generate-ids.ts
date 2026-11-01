@@ -49,12 +49,12 @@ export interface GenerateIdsPlan {
 }
 
 const EXCLUDE_COMMENT_REGEX = /<!--\s*osmosis-exclude\s*-->/;
-const OSMOSIS_FENCE_REGEX = /^(`{3,})osmosis$/;
+export const OSMOSIS_FENCE_REGEX = /^(`{3,})osmosis$/;
 const FENCE_METADATA_REGEX = /^\w[\w-]*\s*:\s*.+$/;
 const PREVIEW_MAX_LENGTH = 60;
 
 /** Line prefixes that start a new markdown block (not a paragraph continuation). */
-const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\||\s*!\[|\s*>)/;
+export const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\||\s*!\[|\s*>)/;
 
 /**
  * Plan block-ID insertions for a note. Returns the transformed content and

@@ -246,6 +246,11 @@ export class Graph3DNear {
 		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === id);
 	}
 
+	/** Mark node `id`'s panel as the drop target of a link drag (null clears it). */
+	setLinkTarget(id: string | null): void {
+		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-link-target", panelId === id);
+	}
+
 	/** The link at client point (`x`, `y`) in the panel drawn on top there, if any. */
 	linkAt(x: number, y: number): PanelLink | null {
 		const panel = this.panelAt(x, y);

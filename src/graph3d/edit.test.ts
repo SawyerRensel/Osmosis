@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, editBoxGeometry, findNodeById, fitEditTop, heldDiff, isEditableTarget, lineNodeAt, locateLine } from "./edit";
+import { ancestorsOf, appendToLine, editBoxGeometry, findNodeById, fitEditTop, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -194,5 +194,144 @@ describe("fitEditTop", () => {
 
 	it("never rises above the room the buttons need", () => {
 		expect(fitEditTop(300, 900, bounds)).toBe(8 + 36);
+	});
+});
+
+describe("linkSubpath", () => {
+	const md = "## Rigging\n\n- Check the halyard\n- Coil the sheet ^coil\n\n## Rigging\n\n- Later\n\n## Why: sails\n";
+	const root = parser.parse(md, "Rig.md").root;
+	const [firstHeading, secondHeading, colonHeading] = root.children;
+
+	it("is the note itself for a null target", () => {
+		expect(linkSubpath(null, root, md)).toEqual({ subpath: "", stamp: null });
+	});
+
+	it("links a heading by its text, stamping nothing", () => {
+		expect(linkSubpath(firstHeading!, root, md)).toEqual({ subpath: "#Rigging", stamp: null });
+	});
+
+	it("falls back to a block ID for a heading an earlier one shares its text with", () => {
+		const link = linkSubpath(secondHeading!, root, md)!;
+		expect(link.subpath).toBe(`#^${link.stamp}`);
+		expect(link.stamp).toMatch(/^os-[a-z0-9]{6}$/);
+	});
+
+	it("falls back to a block ID for a heading with punctuation a link would mangle", () => {
+		expect(linkSubpath(colonHeading!, root, md)?.stamp).not.toBeNull();
+	});
+
+	it("uses the ID a line already has", () => {
+		const coil = firstHeading!.children[1]!;
+		expect(linkSubpath(coil, root, md)).toEqual({ subpath: "#^coil", stamp: null });
+	});
+
+	it("generates an ID that no block in the note uses", () => {
+		const bullet = firstHeading!.children[0]!;
+		const link = linkSubpath(bullet, root, md)!;
+		expect(link.stamp).not.toBe("coil");
+		expect(link.subpath).toBe(`#^${link.stamp}`);
+	});
+
+	it("refuses an embed, a card fence, and a paragraph line that runs on", () => {
+		const text = "Para one\nstill para one\n\n![[Other]]\n\n```osmosis\nQ\n```\n";
+		const tree = parser.parse(text, "X.md").root;
+		const embed = tree.children.find((n) => n.type === "transclusion");
+		const fence = tree.children.find((n) => n.type === "codeblock");
+		const para = tree.children.find((n) => n.type === "paragraph");
+		expect(embed).toBeDefined();
+		expect(fence).toBeDefined();
+		expect(linkSubpath(embed!, tree, text)).toBeNull();
+		expect(linkSubpath(fence!, tree, text)).toBeNull();
+		expect(para && linkSubpath(para, tree, text)).toBeNull();
+	});
+});
+
+describe("stampBlockId", () => {
+	it("adds ' ^id' at the end of a bullet and a heading", () => {
+		const md = "## Rigging\n\n- Check the halyard\n";
+		const tree = parser.parse(md, "Rig.md").root;
+		const heading = tree.children[0]!;
+		expect(stampBlockId(md, heading.children[0]!, "os-aaaaaa")).toBe("## Rigging\n\n- Check the halyard ^os-aaaaaa\n");
+		expect(stampBlockId(md, heading, "os-aaaaaa")).toBe("## Rigging ^os-aaaaaa\n\n- Check the halyard\n");
+	});
+
+	it("puts a multiline block's ID on its own line after it, where the parser reads it", () => {
+		const md = "| a | b |\n| - | - |\n| 1 | 2 |\n\n- next\n";
+		const table = parser.parse(md, "T.md").root.children[0]!;
+		expect(table.type).toBe("table");
+		const out = stampBlockId(md, table, "os-bbbbbb");
+		expect(out).toBe("| a | b |\n| - | - |\n| 1 | 2 |\n^os-bbbbbb\n\n- next\n");
+		expect(parser.parse(out, "T.md").root.children[0]!.blockId).toBe("os-bbbbbb");
+	});
+
+	it("stamps a code block and a blockquote the same way", () => {
+		const md = "```js\nlet a = 1;\n```\n\n> quoted\n> lines\n";
+		const [code, quote] = parser.parse(md, "C.md").root.children;
+		const out = stampBlockId(stampBlockId(md, quote!, "os-cccccc"), code!, "os-dddddd");
+		expect(out).toBe("```js\nlet a = 1;\n```\n^os-dddddd\n\n> quoted\n> lines\n^os-cccccc\n");
+	});
+
+	it("is read back as the node's block ID", () => {
+		const md = "- one\n- two\n";
+		const two = parser.parse(md, "L.md").root.children[1]!;
+		expect(parser.parse(stampBlockId(md, two, "os-eeeeee"), "L.md").root.children[1]!.blockId).toBe("os-eeeeee");
+	});
+});
+
+describe("appendToLine", () => {
+	it("adds the text at the end of a line", () => {
+		const md = "- Check the halyard\n- Coil\n";
+		expect(appendToLine(md, parser.parse(md, "R.md").root.children[0]!, "[[Other]]")).toBe("- Check the halyard [[Other]]\n- Coil\n");
+	});
+
+	it("adds it before a trailing block ID", () => {
+		const md = "- Check the halyard ^halyard\n";
+		expect(appendToLine(md, parser.parse(md, "R.md").root.children[0]!, "[[Other#^x]]")).toBe("- Check the halyard [[Other#^x]] ^halyard\n");
+	});
+
+	it("keeps a nested line's indentation and ignores trailing spaces", () => {
+		const md = "- Parent\n\t- Child   \n";
+		const child = parser.parse(md, "R.md").root.children[0]!.children[0]!;
+		expect(appendToLine(md, child, "[[Other]]")).toBe("- Parent\n\t- Child [[Other]]   \n");
+	});
+
+	it("works on a heading", () => {
+		const md = "## Rigging\n";
+		expect(appendToLine(md, parser.parse(md, "R.md").root.children[0]!, "[[Other]]")).toBe("## Rigging [[Other]]\n");
+	});
+
+	it("refuses a multiline block and an embed", () => {
+		const md = "```js\nx\n```\n\n> q\n\n![[Embed]]\n";
+		for (const node of parser.parse(md, "R.md").root.children) expect(appendToLine(md, node, "[[Other]]")).toBeNull();
+	});
+});
+
+describe("linkInNote", () => {
+	const md = "- Alpha\n- Beta\n- Gamma ^g\n";
+	const [alpha, beta, gamma] = parser.parse(md, "L.md").root.children;
+
+	it("links forward: the later line is stamped first, so the earlier splice lands where it should", () => {
+		const out = linkInNote(md, alpha!, beta!, "[[#^os-b]]", "os-b")!;
+		expect(out.content).toBe("- Alpha [[#^os-b]]\n- Beta ^os-b\n- Gamma ^g\n");
+		expect(out.content.slice(out.aStart, out.aStart + 7)).toBe("- Alpha");
+		expect(out.content.slice(out.bStart!, out.bStart! + 6)).toBe("- Beta");
+	});
+
+	it("links backward: the target above the source is stamped, and the source's start moves", () => {
+		const out = linkInNote(md, beta!, alpha!, "[[#^os-a]]", "os-a")!;
+		expect(out.content).toBe("- Alpha ^os-a\n- Beta [[#^os-a]]\n- Gamma ^g\n");
+		expect(out.content.slice(out.aStart, out.aStart + 6)).toBe("- Beta");
+		expect(out.bStart).toBe(0);
+	});
+
+	it("stamps nothing when the target already has an ID, or is the note", () => {
+		expect(linkInNote(md, alpha!, gamma!, "[[#^g]]", null)!.content).toBe("- Alpha [[#^g]]\n- Beta\n- Gamma ^g\n");
+		expect(linkInNote(md, alpha!, null, "[[Note]]", null)).toMatchObject({ bStart: null });
+	});
+
+	it("is null when the source cannot take text", () => {
+		const text = "```js\nx\n```\n\n- one\n";
+		const [code, one] = parser.parse(text, "L.md").root.children;
+		expect(linkInNote(text, code!, one!, "[[#^x]]", "x")).toBeNull();
 	});
 });

@@ -87,7 +87,7 @@ function normalizeTag(tag: string): string {
 	return tag.replace(/^#/, "").toLowerCase();
 }
 
-function normalizeHeading(text: string): string {
+export function normalizeHeading(text: string): string {
 	return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
 

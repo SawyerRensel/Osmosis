@@ -13,6 +13,7 @@ import {
 	Color,
 	DynamicDrawUsage,
 	FogExp2,
+	Line,
 	LineBasicMaterial,
 	LineSegments,
 	Points,
@@ -156,6 +157,8 @@ export interface SceneOptions {
 	onCheckboxClick: (node: GraphNode) => void;
 	/** A second click or tap on a node, close in time and place to the first. True when the view took it (it opened an editor), so the scene does nothing more with it. */
 	onNodeDoubleClick: (node: GraphNode) => boolean;
+	/** A link drag released on another node: line `from` is dropped onto `to`, a line or a note. */
+	onLinkDrop: (from: GraphNode, to: GraphNode) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
@@ -175,6 +178,23 @@ interface RotateDrag {
 	pivot: Vector3;
 	/** Turn the camera in place instead of orbiting. Once set, it holds until the drag ends. */
 	look: boolean;
+}
+
+/** A link drag in progress (edit mode): line `from` pulled toward whatever it is dropped on. */
+interface LinkDrag {
+	pointerId: number;
+	touch: boolean;
+	from: EngineNode;
+	/** Where the press began, and where the pointer is now (client px). */
+	startX: number;
+	startY: number;
+	x: number;
+	y: number;
+	/** Moved past the click slop: it is a drag now, not a click. */
+	active: boolean;
+	/** The node it would drop on now, and the colour that node's plate had before it was highlighted. */
+	over: EngineNode | null;
+	overColor: Color | null;
 }
 
 /** Two fingers zooming and panning together. */
@@ -316,6 +336,13 @@ export class Graph3DScene {
 	private controlSettings: SceneControls;
 	private drag: RotateDrag | null = null;
 	private pinch: Pinch | null = null;
+	/** Edit mode is on: a press on a line starts a link drag instead of an orbit. */
+	private linkMode = false;
+	private linkDrag: LinkDrag | null = null;
+	/** The rubber band from the dragged line to the pointer. */
+	private linkLine: Line<BufferGeometry, LineBasicMaterial> | null = null;
+	/** The node whose editor is open: a press then is the editor's blur, not a drag. */
+	private editingId: string | null = null;
 	private readonly touches = new Map<number, { x: number; y: number }>();
 	/** Distance from the camera of the last point aimed at; a press or zoom over empty space reuses it. */
 	private lastDepth: number | null = null;
@@ -686,9 +713,23 @@ export class Graph3DScene {
 
 	/** Start or stop editing node `id` in place: its panel is hidden under the editor, and a flight under way stops. */
 	setEditing(id: string | null): void {
+		this.editingId = id;
 		this.near.setEditing(id);
 		this.pendingFlight = null;
 		this.cancelFlight();
+	}
+
+	/** Edit mode on or off. Off, a link drag in progress is dropped. */
+	setLinkMode(on: boolean): void {
+		this.linkMode = on;
+		if (!on) this.endLinkDrag();
+	}
+
+	/** Escape: drop a link drag in progress without linking. True when there was one. */
+	cancelLinkDrag(): boolean {
+		const active = this.linkDrag?.active === true;
+		this.endLinkDrag();
+		return active;
 	}
 
 	private startPendingFlight(): void {
@@ -760,6 +801,7 @@ export class Graph3DScene {
 		window.removeEventListener("pointermove", this.onPointerMove);
 		window.removeEventListener("pointerup", this.onPointerUp);
 		window.removeEventListener("pointercancel", this.onPointerUp);
+		this.endLinkDrag();
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
@@ -859,7 +901,10 @@ export class Graph3DScene {
 			this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
 			// A second finger is a pinch: the drag stops, and stays stopped
 			// until every finger has lifted.
-			if (this.touches.size === 2) this.startPinch();
+			if (this.touches.size === 2) {
+				this.endLinkDrag();
+				this.startPinch();
+			}
 			if (this.touches.size !== 1) {
 				this.drag = this.press = null;
 				return;
@@ -872,6 +917,15 @@ export class Graph3DScene {
 			return;
 		}
 		this.samples = [];
+		// Edit mode: a press on a line pulls a link out of it. On empty space, or a note, tag or file, it still orbits.
+		const from = this.linkMode && !this.stoppedCoastOnDown && this.editingId === null ? this.pickedNode(e.clientX, e.clientY, touch) : null;
+		if (from?.graph.kind === "line") {
+			this.drag = null;
+			this.linkDrag = { pointerId: e.pointerId, touch, from, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, active: false, over: null, overColor: null };
+			// Still a press that may be a click, until the pointer moves.
+			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
+			return;
+		}
 		this.drag = {
 			pointerId: e.pointerId,
 			touch,
@@ -899,6 +953,13 @@ export class Graph3DScene {
 			if (this.pinch.ids.includes(e.pointerId)) this.movePinch(this.pinch);
 			return;
 		}
+		const link = this.linkDrag;
+		if (link?.pointerId === e.pointerId) {
+			link.x = e.clientX;
+			link.y = e.clientY;
+			if (!link.active && Math.hypot(e.clientX - link.startX, e.clientY - link.startY) > CLICK_SLOP_PX) link.active = true;
+			return;
+		}
 		const drag = this.drag;
 		if (drag === null || e.pointerId !== drag.pointerId) return;
 		const dx = e.clientX - drag.x;
@@ -920,6 +981,14 @@ export class Graph3DScene {
 			if (!this.stoppedCoastOnDown) this.click(press.x, press.y, press.touch, e);
 		}
 		if (this.pinch?.ids.includes(e.pointerId) === true) this.endPinch(this.pinch);
+		const link = this.linkDrag;
+		if (link?.pointerId === e.pointerId) {
+			// A cancelled pointer (the system took the touch) links nothing.
+			const target = link.active && e.type !== "pointercancel" ? this.dropTarget(e.clientX, e.clientY, link) : null;
+			this.endLinkDrag();
+			if (target !== null) this.options.onLinkDrop(link.from.graph, target.graph);
+			return;
+		}
 		const drag = this.drag;
 		if (drag?.pointerId !== e.pointerId) return;
 		this.drag = null;
@@ -928,6 +997,76 @@ export class Graph3DScene {
 		const velocity = launchVelocity(estimateVelocity(this.samples, now), this.carry, now - this.touchDownAt);
 		if (velocity.x !== 0 || velocity.y !== 0) this.orbitCoast = { drag, velocity };
 	};
+
+	/** The node drawn at client point (`x`, `y`): the front panel's, else the nearest plate. */
+	private pickedNode(x: number, y: number, touch: boolean): EngineNode | null {
+		const panel = this.near.nodeAt(x, y);
+		if (panel !== null) return this.nodes.find((node) => node.id === panel.id) ?? null;
+		return this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
+	}
+
+	/** The node a link drag released at (`x`, `y`) would link to: a line or a note other than the dragged line. */
+	private dropTarget(x: number, y: number, link: LinkDrag): EngineNode | null {
+		const node = this.pickedNode(x, y, link.touch);
+		if (node === null || node === link.from || (node.graph.kind !== "line" && node.graph.kind !== "note")) return null;
+		return node;
+	}
+
+	/**
+	 * Each frame of an active link drag: highlight the node under the pointer
+	 * (its plate's outline, or its panel's) and draw the band from the dragged
+	 * line to the pointer, at the dragged line's depth, or to the target's centre.
+	 */
+	private stepLinkDrag(): void {
+		const link = this.linkDrag;
+		if (link === null || !link.active) return;
+		const over = this.dropTarget(link.x, link.y, link);
+		if (over !== link.over) {
+			if (link.over !== null && link.overColor !== null) link.over.color.copy(link.overColor);
+			link.over = over;
+			link.overColor = over === null ? null : over.color.clone();
+			over?.color.setStyle(this.theme.text);
+			this.near.setLinkTarget(over?.id ?? null);
+			this.dirty = this.layoutDirty = true;
+		}
+		const from = new Vector3(link.from.x ?? 0, link.from.y ?? 0, link.from.z ?? 0);
+		const end =
+			over !== null && over.x !== undefined && over.y !== undefined && over.z !== undefined
+				? new Vector3(over.x, over.y, over.z)
+				: this.rayThrough(link.x, link.y).at(Math.max(MIN_DEPTH, from.distanceTo(this.graph.camera().position)), new Vector3());
+		if (this.linkLine === null) {
+			const geometry = new BufferGeometry().setFromPoints([from, end]);
+			const material = new LineBasicMaterial({ color: link.from.color, depthTest: false, depthWrite: false, transparent: true, fog: false });
+			this.linkLine = new Line(geometry, material);
+			this.linkLine.frustumCulled = false;
+			this.linkLine.renderOrder = 10;
+			this.graph.scene().add(this.linkLine);
+		}
+		const position = this.linkLine.geometry.getAttribute("position") as BufferAttribute;
+		position.setXYZ(0, from.x, from.y, from.z);
+		position.setXYZ(1, end.x, end.y, end.z);
+		position.needsUpdate = true;
+		this.graph.renderer().domElement.setCssProps({ cursor: "crosshair" });
+	}
+
+	/** End a link drag without dropping: put the highlight back, remove the band and the cursor. */
+	private endLinkDrag(): void {
+		const link = this.linkDrag;
+		this.linkDrag = null;
+		if (link === null) return;
+		if (link.over !== null && link.overColor !== null) {
+			link.over.color.copy(link.overColor);
+			this.dirty = this.layoutDirty = true;
+		}
+		this.near.setLinkTarget(null);
+		if (this.linkLine !== null) {
+			this.graph.scene().remove(this.linkLine);
+			this.linkLine.geometry.dispose();
+			this.linkLine.material.dispose();
+			this.linkLine = null;
+		}
+		this.graph.renderer().domElement.setCssProps({ cursor: "" });
+	}
 
 	/** A click or tap: follow the link under it, or hop to its node. See `linkClickAction`. */
 	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
@@ -1236,6 +1375,7 @@ export class Graph3DScene {
 			this.writeThread();
 		}
 		if (this.overlays.particles) this.writeParticles(now);
+		this.stepLinkDrag();
 		if (this.hover !== null) {
 			const node = this.drag === null ? this.nodeNear(this.hover.x, this.hover.y, PICK_SLOP_PX.mouse) : null;
 			this.graph.renderer().domElement.style.cursor = node === null ? "" : "pointer";

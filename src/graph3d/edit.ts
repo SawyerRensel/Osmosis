@@ -4,8 +4,11 @@
  * Editing.md` for the plan.
  */
 
+import { extractTrailingBlockId, generateBlockId } from "../block-id";
+import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
+import { collectBlockIds } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
-import type { GraphModel } from "./model";
+import { normalizeHeading, type GraphModel } from "./model";
 
 /**
  * The node with parse ID `id` under `root`, depth first. The 3D model is built
@@ -136,4 +139,119 @@ export function editBoxGeometry(anchor: Box, bounds: EditBounds): { left: number
  */
 export function fitEditTop(top: number, height: number, bounds: EditBounds): number {
 	return Math.max(bounds.top + EDIT_MARGIN + EDIT_BUTTON_ROOM, Math.min(top, bounds.bottom - EDIT_MARGIN - height));
+}
+
+/** A node type that is several lines, whose block ID goes on a line after it. */
+const MULTILINE_TYPES: ReadonlySet<OsmosisNode["type"]> = new Set(["codeblock", "table", "blockquote"]);
+
+/** One insertion into a note's text. */
+interface Insertion {
+	offset: number;
+	text: string;
+}
+
+/** What a link to a line is written as: the part after the note name, and the block ID the target needs stamped (null when it has one, or links by heading). */
+export interface LinkSubpath {
+	subpath: string;
+	stamp: string | null;
+}
+
+/** Characters that break a heading link (`#` `|` `^` `[` `]` are link syntax) or make the heading's plain text differ from its source. Such a heading is linked by block ID. */
+const UNSAFE_HEADING = /[#|^[\]\\*_`~=$<>%:]/;
+
+/** Whether a link to `node` can be anchored by a block ID: not a card fence, an embed, or a paragraph line that runs on into the next. */
+function canStamp(content: string, node: OsmosisNode): boolean {
+	if (node.type === "transclusion") return false;
+	if (node.type === "codeblock") {
+		const first = node.content.split("\n", 1)[0] ?? "";
+		return !OSMOSIS_FENCE_REGEX.test(first.replace(/\s*<!--.*?-->/g, "").trim());
+	}
+	if (node.type === "paragraph") {
+		// A block ID only counts at the end of the paragraph.
+		const next = content.slice(node.range.end + 1).split("\n", 1)[0];
+		return !(content[node.range.end] === "\n" && next !== undefined && next.trim() !== "" && !STRUCTURAL_LINE_REGEX.test(next));
+	}
+	return true;
+}
+
+/** Whether the first heading in `root` with `text`'s plain text is `node`: the one a `#Heading` link resolves to. */
+function isFirstHeadingWith(root: OsmosisNode, text: string, node: OsmosisNode): boolean {
+	const key = normalizeHeading(text);
+	const stack: OsmosisNode[] = [root];
+	while (stack.length > 0) {
+		const next = stack.pop()!;
+		if (next.type === "heading" && normalizeHeading(next.content) === key) return next === node;
+		for (let i = next.children.length - 1; i >= 0; i--) stack.push(next.children[i]!);
+	}
+	return false;
+}
+
+/**
+ * How to link to `target`, a line of the note whose text is `content` (parsed
+ * to `root`), or to its note when `target` is null. A heading links by its
+ * text (`#Heading`, the idiomatic link), unless that text is not plain or an
+ * earlier heading shares it. Any other line links by block ID (`#^id`): the one
+ * it has, else a new one to stamp (`stamp`, unique in `content`). Null when
+ * the line cannot carry an ID (a card fence, an embed, a paragraph line with
+ * more lines below it).
+ */
+export function linkSubpath(target: OsmosisNode | null, root: OsmosisNode, content: string): LinkSubpath | null {
+	if (target === null) return { subpath: "", stamp: null };
+	const text = target.content.trim();
+	if (target.type === "heading" && text !== "" && !UNSAFE_HEADING.test(text) && isFirstHeadingWith(root, text, target)) {
+		return { subpath: `#${text}`, stamp: null };
+	}
+	if (target.blockId !== undefined) return { subpath: `#^${target.blockId}`, stamp: null };
+	if (!canStamp(content, target)) return null;
+	const id = generateBlockId(collectBlockIds(content));
+	return { subpath: `#^${id}`, stamp: id };
+}
+
+/** Where a block ID for `node` goes: on its own line after a multiline block, at the end of any other line. */
+function stampInsertion(node: OsmosisNode, id: string): Insertion {
+	return { offset: node.range.end, text: MULTILINE_TYPES.has(node.type) ? `\n^${id}` : ` ^${id}` };
+}
+
+/** Where link text goes on `node`'s line: at its end, before a trailing block ID. Null for a line that cannot take one (several lines, an embed). */
+function appendInsertion(content: string, node: OsmosisNode, text: string): Insertion | null {
+	if (MULTILINE_TYPES.has(node.type) || node.type === "transclusion" || node.type === "root") return null;
+	const line = content.slice(node.range.start, node.range.end);
+	const head = extractTrailingBlockId(line)?.stripped ?? line.trimEnd();
+	return { offset: node.range.start + head.length, text: ` ${text}` };
+}
+
+const insertAll = (content: string, edits: readonly Insertion[]): string =>
+	[...edits].sort((a, b) => b.offset - a.offset).reduce((out, edit) => out.slice(0, edit.offset) + edit.text + out.slice(edit.offset), content);
+
+/** `content` with block ID `id` stamped on `node`: ` ^id` at the end of a one-line node, a `^id` line after a code block, table or quote. */
+export function stampBlockId(content: string, node: OsmosisNode, id: string): string {
+	return insertAll(content, [stampInsertion(node, id)]);
+}
+
+/** `content` with ` text` added at the end of `node`'s line, before a trailing ` ^id`. Null when the line cannot take it (code block, table, quote, embed). */
+export function appendToLine(content: string, node: OsmosisNode, text: string): string | null {
+	const edit = appendInsertion(content, node, text);
+	return edit === null ? null : insertAll(content, [edit]);
+}
+
+/** A link written within one note: the new text, and where each end starts in it (both inserts can move the other line down). */
+export interface LinkInNote {
+	content: string;
+	aStart: number;
+	/** Null when the target is the note itself. */
+	bStart: number | null;
+}
+
+/**
+ * Add `linkText` to line `a` and stamp `stamp` on line `b` (null: none) in
+ * one string, so one write does both. Both splices are taken against the same
+ * bytes and applied later offset first. Null when `a` cannot take the text.
+ */
+export function linkInNote(content: string, a: OsmosisNode, b: OsmosisNode | null, linkText: string, stamp: string | null): LinkInNote | null {
+	const append = appendInsertion(content, a, linkText);
+	if (append === null) return null;
+	const stampEdit = b !== null && stamp !== null ? stampInsertion(b, stamp) : null;
+	const edits = stampEdit === null ? [append] : [append, stampEdit];
+	const shift = (start: number): number => start + edits.reduce((sum, edit) => sum + (edit.offset <= start ? edit.text.length : 0), 0);
+	return { content: insertAll(content, edits), aStart: shift(a.range.start), bStart: b === null ? null : shift(b.range.start) };
 }
