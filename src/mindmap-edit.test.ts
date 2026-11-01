@@ -44,6 +44,8 @@ import {
 	indentSiblings,
 	outdentSiblings,
 	insertParent,
+	dropContext,
+	moveWithinFile,
 	inferChildType,
 	inferChildDepth,
 	inferIndentType,
@@ -2009,5 +2011,55 @@ describe("the structural type rules", () => {
 
 	it("indentSubtreeHeadings raises h1-h5 and leaves h6 and other lines", () => {
 		expect(indentSubtreeHeadings("## A\n- x\n###### Z")).toBe("### A\n- x\n###### Z");
+	});
+});
+
+/**
+ * The mind map's same-file drop (`executeDrop`), extracted for the 3D graph's
+ * "Move under / Move after". Before the extraction, the new functions were run
+ * against a verbatim copy of the old 2D code for every node and every gap of
+ * every fixture with up to 120 nodes (145,714 drops): identical text. These
+ * literals were captured from that code.
+ */
+describe("moveWithinFile and dropContext (2D drag-and-drop)", () => {
+	const md = ["# Deck", "", "- Coil the lines", "\t- Bow line", "\t- Stern line", "- Rig the fenders ^os-fend01", "", "## Galley", "", "1. Light the stove", "2. Boil water", ""].join("\n");
+	const drop = (moving: string, target: string, index: number): { text: string; start: number } => {
+		const root = parser.parse(md, "f.md").root;
+		const src = findByContent(root, moving);
+		const parent = findByContent(root, target);
+		const site = resolveInsertSite(parent, index, () => "f.md");
+		return moveWithinFile(md, [src], site.offset, (n) => dropContext(parent, index, n));
+	};
+
+	it("moves forward under another line, keeping the block ID", () => {
+		const out = drop("Rig the fenders", "Coil the lines", 2);
+		expect(out.text).toBe("# Deck\n\n- Coil the lines\n\t- Bow line\n\t- Stern line\n\t- Rig the fenders ^os-fend01\n## Galley\n\n1. Light the stove\n2. Boil water\n");
+		expect(out.text.startsWith("\t- Rig the fenders", out.start)).toBe(true);
+	});
+
+	it("moves backward, out from under its parent", () => {
+		const out = drop("Stern line", "Deck", 0);
+		expect(out.text).toBe("# Deck\n\n- Stern line\n- Coil the lines\n\t- Bow line\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n2. Boil water\n");
+		expect(out.start).toBe(8);
+	});
+
+	it("carries a subtree to the end of another section", () => {
+		const out = drop("Coil the lines", "Galley", 2);
+		expect(out.text).toBe("# Deck\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n2. Boil water\n- Coil the lines\n\t- Bow line\n\t- Stern line\n");
+		expect(out.text.startsWith("- Coil the lines\n\t- Bow line", out.start)).toBe(true);
+	});
+
+	it("nests a bullet under an ordered item as a bullet one deeper", () => {
+		const out = drop("Bow line", "Light the stove", 0);
+		expect(out.text).toBe("# Deck\n\n- Coil the lines\n\t- Stern line\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n\t- Bow line\n2. Boil water\n");
+		expect(out.start).toBe(99);
+	});
+
+	it("promotes a line dropped between headings to a heading at their level", () => {
+		const root = parser.parse(md, "f.md").root;
+		const deck = findByContent(root, "Deck");
+		expect(dropContext(deck, 3, findByContent(root, "Coil the lines"))).toEqual({ type: "heading", depth: 2 });
+		expect(dropContext(deck, 0, findByContent(root, "Coil the lines"))).toEqual({ type: "bullet", depth: 0 });
+		expect(dropContext(findByContent(root, "Coil the lines"), 0, findByContent(root, "Galley"))).toEqual({ type: "bullet", depth: 1 });
 	});
 });

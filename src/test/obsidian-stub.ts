@@ -222,3 +222,23 @@ export class Notice {
 		Notice.shown.push(message);
 	}
 }
+
+/**
+ * A vault file, reduced to its identity. Real `TFile`s come from the vault;
+ * a test builds one with `Object.assign(new TFile(), { path, basename })` so
+ * the `instanceof TFile` checks in edit code pass for its fake vault.
+ */
+export class TFile {
+	path = "";
+	basename = "";
+	extension = "md";
+}
+
+/**
+ * Parses only the JSON subset of YAML (a flow mapping on one line). Tests that
+ * go through frontmatter write it as JSON, which is valid YAML, so the real
+ * parser would read it the same way.
+ */
+export function parseYaml(text: string): unknown {
+	return JSON.parse(text) as unknown;
+}

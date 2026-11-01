@@ -1182,6 +1182,107 @@ export function insertParent(content: string, src: OsmosisNode, span: Range): Sp
 	};
 }
 
+// ─── Drag and drop ───────────────────────────────────────
+//
+// The mind map's drop rules and its same-file move, shared with the 3D graph's
+// "Move under / Move after". A drop's destination is a (parent, index) gap;
+// `resolveInsertSite` turns it into a file and an offset.
+
+/**
+ * The type a node takes on when dropped at `dropIndex` under `targetParent`.
+ * Unlike indent (which makes children), a drop places the node as a sibling of
+ * the children there: between heading siblings a non-heading is promoted to a
+ * heading, and a list item keeps its own type.
+ */
+export function inferDropType(
+	targetParent: OsmosisNode,
+	dropIndex: number,
+	movingNode: OsmosisNode,
+): OsmosisNode["type"] {
+	if (targetParent.type === "heading" || targetParent.type === "root") {
+		// Check if neighboring siblings at the drop position are headings
+		const neighbor =
+			targetParent.children[dropIndex] ??
+			targetParent.children[dropIndex - 1];
+		if (neighbor?.type === "heading") return "heading";
+	}
+	// List items preserve their own type
+	if (movingNode.type === "bullet" || movingNode.type === "ordered") {
+		return movingNode.type;
+	}
+	return inferChildType(targetParent);
+}
+
+/** The depth a dropped node of type `dropType` takes: its heading neighbours' level, else a child's depth. */
+export function inferDropDepth(
+	targetParent: OsmosisNode,
+	dropIndex: number,
+	dropType: OsmosisNode["type"],
+): number {
+	if (dropType === "heading") {
+		const neighbor =
+			targetParent.children[dropIndex] ??
+			targetParent.children[dropIndex - 1];
+		if (neighbor?.type === "heading") return neighbor.depth;
+		return Math.min(6, targetParent.depth + 1);
+	}
+	return inferChildDepth(targetParent);
+}
+
+/** The type and depth `movingNode` is re-levelled to when dropped at `dropIndex` under `targetParent`. */
+export function dropContext(
+	targetParent: OsmosisNode,
+	dropIndex: number,
+	movingNode: OsmosisNode,
+): { type: OsmosisNode["type"]; depth: number } {
+	const type = inferDropType(targetParent, dropIndex, movingNode);
+	return { type, depth: inferDropDepth(targetParent, dropIndex, type) };
+}
+
+/**
+ * Move a run of siblings (and their subtrees) to `offset` in their own file: a
+ * drop that stays in one note. Each subtree is re-levelled by `context`. One
+ * splice, so the removal shifts the insert offset; the two orders below keep
+ * that arithmetic straight. `start` is where the moved block begins in `text`.
+ */
+export function moveWithinFile(
+	content: string,
+	selected: readonly OsmosisNode[],
+	offset: number,
+	context: (src: OsmosisNode) => { type: OsmosisNode["type"]; depth: number },
+): Spliced {
+	// Re-indent each selected node's subtree individually
+	const reindentedParts: string[] = [];
+	for (const nodeSrc of selected) {
+		const nodeText = content.slice(nodeSrc.range.start, subtreeEnd(nodeSrc));
+		const ctx = context(nodeSrc);
+		reindentedParts.push(reindentSubtree(nodeText, nodeSrc, ctx.type, ctx.depth));
+	}
+	const dragText = reindentedParts.join("\n");
+
+	const span = widenRemoval(content, subtreeSpan(selected));
+	const prefixAt = (text: string, at: number): number => (at > 0 && text[at - 1] !== "\n" ? 1 : 0);
+
+	if (span.start < offset) {
+		// Dragging forward: remove first, then adjust the insert offset.
+		const afterRemove = removeSpan(content, span);
+		const adjusted = offset - (span.end - span.start);
+		return {
+			text: insertAt(afterRemove, adjusted, dragText).text,
+			start: adjusted + prefixAt(afterRemove, adjusted),
+		};
+	}
+	// Dragging backward: insert first, then remove at the shifted span.
+	const inserted = insertAt(content, offset, dragText);
+	return {
+		text: removeSpan(inserted.text, {
+			start: span.start + inserted.shift,
+			end: span.end + inserted.shift,
+		}),
+		start: offset + prefixAt(content, offset),
+	};
+}
+
 /**
  * Renumber ordered list items so consecutive siblings at the same depth
  * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.

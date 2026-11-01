@@ -75,7 +75,7 @@ export class EditPipeline {
 	/**
 	 * Write back every file in an entry. A multi-file entry is applied in
 	 * reverse when undoing and forward when redoing, the same reasoning as the
-	 * move itself (see `MindMapView.moveAcrossFiles`): the file that *gains*
+	 * move itself (see `moveAcrossFiles` in `edit-moves.ts`): the file that *gains*
 	 * content is written before the one that loses it, so a failure partway
 	 * leaves the content duplicated rather than gone. A file no longer in the
 	 * vault is skipped.

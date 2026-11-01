@@ -6,7 +6,7 @@
 
 import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
-import { collectBlockIds, deleteSubtree, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, outdentSiblings, subtreeEnd } from "../mindmap-edit";
+import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, subtreeEnd, type Spliced } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
 import { normalizeHeading, type GraphModel } from "./model";
@@ -388,4 +388,66 @@ export function carryPairs(old: OsmosisNode, root: OsmosisNode, start: number): 
 	const after = preorder(now);
 	if (before.length !== after.length) return [{ from: old, to: now }];
 	return before.map((from, i) => ({ from, to: after[i]! }));
+}
+
+/**
+ * Where a line dropped on a node goes when it is moved rather than linked:
+ * under the node (its last child), after it (its next sibling), or, dropped
+ * on a note's core, to the end of that note.
+ */
+export type MovePlace = "under" | "after" | "end";
+
+/** A drop's destination as the mind map expresses it: the gap before child `index` of `parent`. */
+export interface MoveGap {
+	parent: OsmosisNode;
+	index: number;
+}
+
+/**
+ * The gap a move of `moving` to `place` relative to `target` fills, in
+ * `target`'s note (`root`). `target` is null for "end" (a drop on the note's
+ * core). Null when "after" has nowhere to go (`target` is not in `root`).
+ *
+ * "End" is the end of the file. A heading goes after the note's last top-level
+ * section. Any other line goes after the last section's content, at its top
+ * level, so it keeps its own type: at the root's end the drop rules would turn
+ * it into a heading beside the note's last one.
+ */
+export function moveGap(root: OsmosisNode, target: OsmosisNode | null, place: MovePlace, moving: OsmosisNode): MoveGap | null {
+	if (place === "end" || target === null) {
+		let parent = root;
+		if (moving.type !== "heading") {
+			for (let last = parent.children.at(-1); last?.type === "heading"; last = parent.children.at(-1)) parent = last;
+		}
+		return { parent, index: parent.children.length };
+	}
+	if (place === "under") return { parent: target, index: target.children.length };
+	const parent = ancestorsOf(root, target.id)[0];
+	if (parent === undefined) return null;
+	return { parent, index: parent.children.indexOf(target) + 1 };
+}
+
+/**
+ * Why `line` (a node of `root`) cannot move to `gap` in its own note: the gap
+ * is inside the line's own subtree, or the line already fills it (the mind
+ * map's drop never offers either). Null when it can.
+ */
+export function moveRefusal(root: OsmosisNode, line: OsmosisNode, gap: MoveGap): "inside" | "unchanged" | null {
+	if (preorder(line).includes(gap.parent)) return "inside";
+	const parent = ancestorsOf(root, line.id)[0];
+	if (parent !== gap.parent) return null;
+	const index = parent.children.indexOf(line);
+	return gap.index === index || gap.index === index + 1 ? "unchanged" : null;
+}
+
+/**
+ * Move `line` (a node of `root`, parsed from `content`) and its subtree to
+ * `gap` in the same note, as the mind map's drop does: re-levelled by the
+ * drop rules, one splice. `start` is where the moved line starts in `text`
+ * (before `normalizeWrite`). Null when `moveRefusal` refuses it.
+ */
+export function moveInNote(content: string, root: OsmosisNode, line: OsmosisNode, gap: MoveGap): Spliced | null {
+	if (moveRefusal(root, line, gap) !== null) return null;
+	const site = resolveInsertSite(gap.parent, gap.index, () => "");
+	return moveWithinFile(content, [line], site.offset, (src) => dropContext(gap.parent, gap.index, src));
 }

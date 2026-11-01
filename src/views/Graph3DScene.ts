@@ -158,8 +158,8 @@ export interface SceneOptions {
 	onNodeDoubleClick: (node: GraphNode) => boolean;
 	/** A click or tap on the canvas while the inline editor is open: the view saves the edit, then the click goes on as usual. */
 	onClickWhileEditing: () => void;
-	/** A link drag released on another node: line `from` is dropped onto `to`, a line or a note. */
-	onLinkDrop: (from: GraphNode, to: GraphNode) => void;
+	/** A link drag released on another node at client (`x`, `y`): line `from` is dropped onto `to`, a line or a note. */
+	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
 	/** Edit mode: a right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line, at client (`x`, `y`). */
 	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
@@ -1071,7 +1071,7 @@ export class Graph3DScene {
 			// A cancelled pointer (the system took the touch) links nothing.
 			const target = link.active && e.type !== "pointercancel" ? this.dropTarget(e.clientX, e.clientY, link) : null;
 			this.endLinkDrag();
-			if (target !== null) this.options.onLinkDrop(link.from.graph, target.graph);
+			if (target !== null) this.options.onLinkDrop(link.from.graph, target.graph, e.clientX, e.clientY);
 			return;
 		}
 		const drag = this.drag;

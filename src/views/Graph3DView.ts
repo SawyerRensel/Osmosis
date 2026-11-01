@@ -1,13 +1,14 @@
 import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
-import { editSelectionStart, nodeEditText, normalizeWrite, renameInFile, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
+import { moveAcrossFiles, type MoveContext } from "../edit-moves";
+import { dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
-import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, planStructural, stampBlockId, type StructuralAction } from "../graph3d/edit";
+import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { memoryStrengths, nodeTags, overlayNodeColor, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
@@ -298,7 +299,7 @@ export class Graph3DView extends ItemView {
 			onNodeDoubleClick: (node) => this.beginEdit(node),
 			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
-			onLinkDrop: (from, to) => void this.linkLines(from, to),
+			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
@@ -731,6 +732,118 @@ export class Graph3DView extends ItemView {
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not link those lines", error);
 			new Notice("Osmosis: could not add that link");
+		}
+	}
+
+	/**
+	 * Line `from` was dropped on node `to` in edit mode: a menu at the drop
+	 * point offers a link to `to` (slice 4's gesture) or a move of the line,
+	 * with its subtree, under or after `to`, or to the end of `to`'s note. A
+	 * menu rather than a modifier key, so a phone gets every choice; Escape or
+	 * a click elsewhere writes nothing.
+	 */
+	private showDropMenu(from: GraphNode, to: GraphNode, x: number, y: number): void {
+		if (this.editBlocked()) return;
+		const menu = new Menu();
+		if (to.kind !== "note" || to.path !== from.path) {
+			menu.addItem((item) => item.setTitle("Add link").setIcon("link").onClick(() => void this.linkLines(from, to)));
+		}
+		const move = (title: string, icon: string, place: MovePlace): void => {
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void this.moveLine(from, to, place)));
+		};
+		if (to.kind === "line") {
+			move("Move under", "corner-down-right", "under");
+			move("Move after", "arrow-down", "after");
+		} else {
+			move("Move to end of note", "arrow-down-to-line", "end");
+		}
+		// After the release's own click has gone by, so it cannot close the menu.
+		window.setTimeout(() => menu.showAtPosition({ x, y }), 0);
+	}
+
+	/**
+	 * What the shared cross-note move needs from this view: its pipeline, the
+	 * mind map's write normalisation, and a frontmatter write that also drops
+	 * the note's stale parse.
+	 */
+	private moveContext(): MoveContext {
+		return {
+			app: this.app,
+			edits: this.edits,
+			write: (file, content) => this.edits.write(file, normalizeWrite(content)),
+			processFrontMatter: async (file, fn) => {
+				await this.edits.processFrontMatter(file, fn);
+				this.cache.invalidate(file.path);
+				this.prefetched.delete(file.path);
+			},
+			plugin: this.plugin(),
+		};
+	}
+
+	/**
+	 * Move `from`'s line and its subtree to `place` relative to `to`, as the
+	 * mind map's drag and drop does. Within one note it is one write. Into
+	 * another note it is the mind map's own cross-note move (`edit-moves.ts`):
+	 * the destination is written first, the block IDs' review history follows
+	 * them, and one undo restores both notes. The moved line is selected; a
+	 * line whose ID changed (a new note, or a new depth) arrives beside its new
+	 * parent rather than keeping its old place.
+	 */
+	private async moveLine(from: GraphNode, to: GraphNode, place: MovePlace): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const a = await this.freshLine(from);
+			const destFile = to.path === undefined ? null : this.app.vault.getFileByPath(to.path);
+			if (a === null || destFile === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const sameNote = destFile.path === a.file.path;
+			const destContent = sameNote ? a.content : await this.app.vault.read(destFile);
+			const destRoot = sameNote ? a.root : this.cache.get(destFile.path, destContent).root;
+			const target = to.kind === "line" ? findNodeById(destRoot, to.source?.id ?? "") : null;
+			const gap = to.kind === "line" && target === null ? null : moveGap(destRoot, target, place, a.line);
+			if (gap === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			if (sameNote) {
+				const refusal = moveRefusal(a.root, a.line, gap);
+				if (refusal !== null) {
+					new Notice(refusal === "inside" ? "Osmosis: a line can't move under itself" : "Osmosis: the line is already there");
+					return;
+				}
+				const plan = moveInNote(a.content, a.root, a.line, gap);
+				if (plan === null) return;
+				const out = normalizeWrite(plan.text);
+				if (out === a.content) return;
+				const start = mapStart(plan.text, out, plan.start);
+				await this.commitLines(a.file, out, start === null ? [] : [{ path: a.file.path, start }]);
+				return;
+			}
+			this.editOwner = a.file.path;
+			this.lastEditPath = destFile.path;
+			// As in `commitLines`: a reload already under way must not place the moved lines before `edited` does.
+			this.loadSeq++;
+			const site = resolveInsertSite(gap.parent, gap.index, () => destFile.path);
+			const moved = await moveAcrossFiles(this.moveContext(), [a.line], site, a.file.path, (src) => dropContext(gap.parent, gap.index, src));
+			let start: number | null = null;
+			if (moved !== null) {
+				const out = normalizeWrite(moved.text);
+				start = mapStart(moved.text, out, moved.start);
+				// Moving review history rewrote the destination's frontmatter only, so the body moved by its change in size.
+				const now = await this.app.vault.read(destFile);
+				if (start !== null) start += now.length - out.length;
+			}
+			// Marked only now, so a reload that was already under way can't take it.
+			this.edited = start === null ? [] : [{ path: destFile.path, start }];
+			void this.reload();
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not move that line", error);
+			new Notice("Osmosis: could not move that line");
+		} finally {
+			this.structuring = false;
 		}
 	}
 

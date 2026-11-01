@@ -21,6 +21,8 @@ import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
+import * as moves from "../edit-moves";
+import type { MoveContext } from "../edit-moves";
 import { nodePathAt } from "../mindmap-links";
 import {
 	computeLayout,
@@ -69,7 +71,6 @@ import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { fenceDiagrams } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
-import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
 import {
 	allFenceCardKeys,
 	allLineCardIds,
@@ -117,9 +118,6 @@ const PINCH_PAN_SLOP = 16; // px the pinch centre may wander before it also pans
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 
-// Identity migration constants
-const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
-
 /** A viewport saved by `getEphemeralState`, as history hands it back. */
 interface SavedViewport {
 	x: number;
@@ -133,25 +131,6 @@ function isViewport(value: unknown): value is SavedViewport {
 	if (!value || typeof value !== "object") return false;
 	const v = value as Record<string, unknown>;
 	return ["x", "y", "w", "h", "zoom"].every((k) => typeof v[k] === "number");
-}
-
-/**
- * Read one key out of a file's YAML frontmatter block, straight from its raw
- * markdown. Used where the metadata cache can't be trusted — right after our
- * own write, it still holds the pre-write frontmatter.
- */
-function frontmatterValue(content: string, key: string): unknown {
-	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-	if (!match?.[1]) return undefined;
-	try {
-		const parsed: unknown = parseYaml(match[1]);
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			return undefined;
-		}
-		return (parsed as Record<string, unknown>)[key];
-	} catch {
-		return undefined;
-	}
 }
 
 /**
@@ -5303,7 +5282,8 @@ export class MindMapView extends ItemView {
 			// ratings, which rewrites the frontmatter and would have shifted the
 			// offsets the splice above depends on.
 			if (this.clipboardSourcePath) {
-				this.clipboardSchedules = await this.readMovedScheduleEntries(
+				this.clipboardSchedules = await moves.readMovedScheduleEntries(
+					this.moveContext(),
 					this.clipboardSourcePath,
 					this.clipboardBlockIds,
 				);
@@ -5381,7 +5361,8 @@ export class MindMapView extends ItemView {
 			this.beginEditGroup();
 			try {
 				await this.writeFileTracked(destFile, updated);
-				await this.migrateBlockIdentity(
+				await moves.migrateBlockIdentity(
+					this.moveContext(),
 					originPath,
 					destPath,
 					this.clipboardBlockIds,
@@ -6294,13 +6275,7 @@ export class MindMapView extends ItemView {
 		const dropContext = (nodeSrc: OsmosisNode): {
 			type: OsmosisNode["type"];
 			depth: number;
-		} => {
-			const type = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
-			return {
-				type,
-				depth: this.inferDropDepth(targetParent, dropTarget.index, type),
-			};
-		};
+		} => edit.dropContext(targetParent, dropTarget.index, nodeSrc);
 
 		if (site.path !== originPath) {
 			const moved = await this.moveAcrossFiles(
@@ -6318,37 +6293,12 @@ export class MindMapView extends ItemView {
 		const file = this.fileAtPath(originPath);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const context = dropContext(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
-			);
-		}
-		const dragText = reindentedParts.join("\n");
-
-		const span = edit.widenRemoval(content, edit.subtreeSpan(selectedSrcs));
-
-		let updated: string;
-		if (span.start < site.offset) {
-			// Dragging forward: remove first, then adjust the insert offset.
-			const afterRemove = edit.removeSpan(content, span);
-			const adjusted = site.offset - (span.end - span.start);
-			updated = edit.insertAt(afterRemove, adjusted, dragText).text;
-		} else {
-			// Dragging backward: insert first, then remove at the shifted span.
-			const inserted = edit.insertAt(content, site.offset, dragText);
-			updated = edit.removeSpan(inserted.text, {
-				start: span.start + inserted.shift,
-				end: span.end + inserted.shift,
-			});
-		}
+		const updated = edit.moveWithinFile(
+			content,
+			selectedSrcs,
+			site.offset,
+			dropContext,
+		).text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -6413,50 +6363,6 @@ export class MindMapView extends ItemView {
 		movingNode: OsmosisNode,
 	): number {
 		return edit.inferIndentDepth(newParent, movingNode);
-	}
-
-	/**
-	 * Determine the new type for a drag-and-drop operation.
-	 * Unlike indent (which makes children), D&D places nodes as siblings.
-	 * When dropping between heading siblings, non-heading nodes promote to headings.
-	 * List items (bullet/ordered) preserve their own type.
-	 */
-	private inferDropType(
-		targetParent: OsmosisNode,
-		dropIndex: number,
-		movingNode: OsmosisNode,
-	): OsmosisNode["type"] {
-		if (targetParent.type === "heading" || targetParent.type === "root") {
-			// Check if neighboring siblings at the drop position are headings
-			const neighbor =
-				targetParent.children[dropIndex] ??
-				targetParent.children[dropIndex - 1];
-			if (neighbor?.type === "heading") return "heading";
-		}
-		// List items preserve their own type
-		if (movingNode.type === "bullet" || movingNode.type === "ordered") {
-			return movingNode.type;
-		}
-		return this.inferChildType(targetParent);
-	}
-
-	/**
-	 * Determine the new depth for a drag-and-drop operation.
-	 * Matches the depth of neighboring siblings at the drop position.
-	 */
-	private inferDropDepth(
-		targetParent: OsmosisNode,
-		dropIndex: number,
-		dropType: OsmosisNode["type"],
-	): number {
-		if (dropType === "heading") {
-			const neighbor =
-				targetParent.children[dropIndex] ??
-				targetParent.children[dropIndex - 1];
-			if (neighbor?.type === "heading") return neighbor.depth;
-			return Math.min(6, targetParent.depth + 1);
-		}
-		return this.inferChildDepth(targetParent);
 	}
 
 	/**
@@ -7803,24 +7709,25 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Move a contiguous run of siblings out of one note and into another — the
-	 * primitive behind every gesture that crosses an embed boundary.
-	 *
-	 * **Write order is a safety property, not a preference.** The destination is
-	 * written first: if that fails, the origin still holds the content and the
-	 * vault is exactly as it was. Only once the bytes exist in the destination is
-	 * the origin spliced, so the worst failure duplicates the content instead of
-	 * destroying it — and the duplicate is already inside the undo group, so one
-	 * Ctrl+Z reverts it.
-	 *
-	 * The subtree text is sliced **verbatim** so `^os-…` block IDs survive, then
-	 * re-indented into the destination's own coordinates. When the insert lands
-	 * beside an existing line, that neighbor supplies type and depth: the drop's
-	 * tree parent is expressed in the *origin's* file, and feeding host depth into
-	 * a source note indents the line wrongly. `fallbackContext` covers the sites
-	 * with no neighbor (appending inside an embed, reparenting onto one), where
-	 * the target parent does live in the destination file and its own child rules
-	 * already apply.
+	 * What the shared cross-note move (`src/edit-moves.ts`) needs from this map:
+	 * its pipeline, its write normalisation, the frontmatter write that also
+	 * re-parses the tree, and the re-sync that runs once the group has closed.
+	 */
+	private moveContext(): MoveContext {
+		return {
+			app: this.app,
+			edits: this.edits,
+			write: (file, content) => this.writeFileTracked(file, content),
+			processFrontMatter: (file, fn) => this.processFrontMatterTracked(file, fn),
+			plugin: this.plugin,
+			settle: () => this.resyncFromParent(),
+		};
+	}
+
+	/**
+	 * Move a contiguous run of siblings out of one note and into another, then
+	 * re-sync the map. See `moveAcrossFiles` in `src/edit-moves.ts` for the
+	 * write order and the identity migration, which are safety properties.
 	 *
 	 * @returns true when the move landed; false after a bail (with a notice shown).
 	 */
@@ -7833,180 +7740,14 @@ export class MindMapView extends ItemView {
 			depth: number;
 		},
 	): Promise<boolean> {
-		const originFile = this.app.vault.getFileByPath(originPath);
-		const destFile = this.app.vault.getFileByPath(site.path);
-		if (!(originFile instanceof TFile) || !(destFile instanceof TFile)) {
-			new Notice("Osmosis: the destination note is no longer available");
-			return false;
-		}
-
-		this.beginEditGroup();
-		try {
-			let originText: string;
-			let destText: string;
-			try {
-				originText = await this.app.vault.read(originFile);
-				destText = await this.app.vault.read(destFile);
-			} catch {
-				new Notice("Osmosis: the destination note is no longer available");
-				return false;
-			}
-
-			// Extract verbatim (block IDs intact), then re-indent for the destination.
-			const parts: string[] = [];
-			for (const src of originNodes) {
-				const text = originText.slice(
-					src.range.start,
-					this.subtreeEnd(src),
-				);
-				const context = site.neighbor
-					? edit.inferSiblingContext(site.neighbor, src)
-					: fallbackContext(src);
-				parts.push(
-					this.reindentSubtree(text, src, context.type, context.depth),
-				);
-			}
-			const block = parts.join("\n");
-
-			try {
-				await this.writeFileTracked(
-					destFile,
-					edit.insertAt(destText, site.offset, block).text,
-				);
-			} catch {
-				new Notice(
-					`Osmosis: couldn't write ${destFile.basename} — move cancelled`,
-				);
-				return false;
-			}
-
-			try {
-				const span = edit.subtreeSpan(originNodes);
-				await this.writeFileTracked(
-					originFile,
-					edit.removeSpan(originText, edit.widenRemoval(originText, span)),
-				);
-			} catch {
-				new Notice(
-					`Osmosis: moved into ${destFile.basename} but couldn't update ${originFile.basename} — undo to revert`,
-				);
-				return false;
-			}
-
-			// Identity follows the bytes (design decision #3): the block IDs now
-			// living in the destination take their schedule with them, inside this
-			// same group so one Ctrl+Z restores both. The IDs are read from the
-			// moved text rather than the tree — a subtree carrying an embed folds
-			// to its `![[…]]` line, and the transcluded IDs behind it stay in
-			// their own note.
-			const movedIds = edit.collectBlockIds(block);
-			const entries = await this.readMovedScheduleEntries(
-				originPath,
-				movedIds,
-			);
-			await this.migrateBlockIdentity(
-				originPath,
-				site.path,
-				movedIds,
-				entries,
-			);
-			return true;
-		} finally {
-			this.endEditGroup();
-			// Re-sync even after a bail: the view must reflect what is actually on
-			// disk, which after a partial write is not what it showed before.
-			await this.resyncFromParent();
-		}
-	}
-
-	/**
-	 * The `osmosis-schedule` entries a note holds for `blockIds`, read straight
-	 * from its own bytes rather than the metadata cache — which lags our own
-	 * writes by an event loop.
-	 *
-	 * Pending ratings are flushed first, so a card rated seconds ago migrates
-	 * with its newest schedule and leaves nothing staged to be re-written into
-	 * the note it just left. That flush rewrites the frontmatter and shifts
-	 * every body offset with it, so this must only be called once no further
-	 * offset-based splice into `path` is pending.
-	 */
-	private async readMovedScheduleEntries(
-		path: string,
-		blockIds: ReadonlySet<string>,
-	): Promise<Record<string, unknown>> {
-		if (blockIds.size === 0) return {};
-		const file = this.fileAtPath(path);
-		if (!file) return {};
-
-		await this.plugin.scheduleStore.flushPath(path);
-		const content = await this.app.vault.read(file);
-		return edit.partitionScheduleEntries(
-			frontmatterValue(content, SCHEDULE_FRONTMATTER_KEY),
-			blockIds,
-		).moved;
-	}
-
-	/**
-	 * Carry line-card identity across a note boundary: write the moved lines'
-	 * schedule entries into the destination's frontmatter, drop them from the
-	 * origin's, and re-key the in-memory cards. Without it the debounced sync
-	 * orphans the origin's card two seconds later and mints the destination's
-	 * as brand new, with no review history.
-	 *
-	 * Called from inside an open edit group *after* the content writes land, so
-	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
-	 * and schedule together. {@link processFrontMatterTracked} is what makes
-	 * that true; `ScheduleStore` writes on its own debounce and bypasses
-	 * the edit pipeline, so its writes would fall outside the group.
-	 *
-	 * Best-effort by design: the bytes have already moved, so a frontmatter
-	 * failure is reported and left for the debounced sync to re-derive rather
-	 * than rolled back (undo still reverts the whole gesture).
-	 */
-	private async migrateBlockIdentity(
-		originPath: string,
-		destPath: string,
-		blockIds: ReadonlySet<string>,
-		entries: Record<string, unknown>,
-	): Promise<void> {
-		if (blockIds.size === 0 || originPath === destPath) return;
-
-		if (Object.keys(entries).length > 0) {
-			const originFile = this.fileAtPath(originPath);
-			const destFile = this.fileAtPath(destPath);
-			try {
-				if (destFile) {
-					await this.processFrontMatterTracked(destFile, (fm) => {
-						const { retained: existing } = edit.partitionScheduleEntries(
-							fm[SCHEDULE_FRONTMATTER_KEY],
-							EMPTY_BLOCK_IDS,
-						);
-						fm[SCHEDULE_FRONTMATTER_KEY] = { ...existing, ...entries };
-					});
-				}
-				if (originFile) {
-					await this.processFrontMatterTracked(originFile, (fm) => {
-						const { retained } = edit.partitionScheduleEntries(
-							fm[SCHEDULE_FRONTMATTER_KEY],
-							blockIds,
-						);
-						if (Object.keys(retained).length > 0) {
-							fm[SCHEDULE_FRONTMATTER_KEY] = retained;
-						} else {
-							delete fm[SCHEDULE_FRONTMATTER_KEY];
-						}
-					});
-				}
-			} catch (error) {
-				console.error("Osmosis: failed to migrate schedule frontmatter", error);
-				new Notice(
-					"Osmosis: the lines moved, but their review history couldn't follow",
-				);
-			}
-		}
-
-		this.plugin.cardSync.handleBlockMove(originPath, destPath, blockIds);
-		this.plugin.refreshDashboard();
+		const moved = await moves.moveAcrossFiles(
+			this.moveContext(),
+			originNodes,
+			site,
+			originPath,
+			fallbackContext,
+		);
+		return moved !== null;
 	}
 
 	/**

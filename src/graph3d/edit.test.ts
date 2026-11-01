@@ -3,7 +3,7 @@ import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
+import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -434,5 +434,56 @@ describe("carryPairs", () => {
 		const now = parser.parse("- B\n", "T.md").root;
 		expect(carryPairs(b, now, 0)).toHaveLength(1);
 		expect(carryPairs(b, now, 99)).toEqual([]);
+	});
+});
+
+describe("moving a line (Move under / Move after / Move to end of note)", () => {
+	const note = ["# Deck", "", "- Coil the lines", "\t- Bow line", "\t- Stern line", "- Rig the fenders ^os-fend01", "", "## Galley", "", "1. Light the stove", "2. Boil water", ""].join("\n");
+	const root = parser.parse(note, "Deck.md").root;
+	const at = (content: string): OsmosisNode => preorder(root).find((n) => n.content === content)!;
+
+	it("finds the gap: last child under, next sibling after", () => {
+		const fenders = at("Rig the fenders");
+		expect(moveGap(root, at("Coil the lines"), "under", fenders)).toEqual({ parent: at("Coil the lines"), index: 2 });
+		expect(moveGap(root, at("Bow line"), "after", fenders)).toEqual({ parent: at("Coil the lines"), index: 1 });
+		expect(moveGap(root, at("Deck"), "after", fenders)).toEqual({ parent: root, index: 1 });
+	});
+
+	it("puts a line at the end of the last section's content, and a heading after the last top-level section", () => {
+		expect(moveGap(root, null, "end", at("Coil the lines"))).toEqual({ parent: at("Galley"), index: 2 });
+		expect(moveGap(root, null, "end", at("Galley"))).toEqual({ parent: root, index: 1 });
+		const list = parser.parse("- Stow the boat hook\n- Coil the lines\n", "List.md").root;
+		expect(moveGap(list, null, "end", at("Bow line"))).toEqual({ parent: list, index: 2 });
+	});
+
+	it("refuses a move into the line's own subtree, or onto the place it already holds", () => {
+		const coil = at("Coil the lines");
+		expect(moveRefusal(root, coil, { parent: coil, index: 2 })).toBe("inside");
+		expect(moveRefusal(root, coil, moveGap(root, at("Bow line"), "after", coil)!)).toBe("inside");
+		expect(moveRefusal(root, at("Bow line"), moveGap(root, at("Stern line"), "after", at("Bow line"))!)).toBeNull();
+		expect(moveRefusal(root, at("Stern line"), moveGap(root, at("Bow line"), "after", at("Stern line"))!)).toBe("unchanged");
+		expect(moveRefusal(root, at("Stern line"), moveGap(root, coil, "under", at("Stern line"))!)).toBe("unchanged");
+		expect(moveRefusal(root, at("Boil water"), moveGap(root, null, "end", at("Boil water"))!)).toBe("unchanged");
+		expect(moveInNote(note, root, coil, { parent: coil, index: 0 })).toBeNull();
+	});
+
+	it("moves under a line with the mind map's drop bytes, and says where the line went", () => {
+		const out = moveInNote(note, root, at("Rig the fenders"), moveGap(root, at("Coil the lines"), "under", at("Rig the fenders"))!)!;
+		expect(out.text).toBe("# Deck\n\n- Coil the lines\n\t- Bow line\n\t- Stern line\n\t- Rig the fenders ^os-fend01\n## Galley\n\n1. Light the stove\n2. Boil water\n");
+		const written = normalizeWrite(out.text);
+		const start = mapStart(out.text, written, out.start)!;
+		expect(written.startsWith("\t- Rig the fenders ^os-fend01", start)).toBe(true);
+	});
+
+	it("moves after a line in another section, re-levelled to fit there", () => {
+		const out = moveInNote(note, root, at("Stern line"), moveGap(root, at("Light the stove"), "after", at("Stern line"))!)!;
+		expect(out.text).toBe("# Deck\n\n- Coil the lines\n\t- Bow line\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n- Stern line\n2. Boil water\n");
+		expect(out.text.startsWith("- Stern line", out.start)).toBe(true);
+	});
+
+	it("moves a subtree to the end of its note", () => {
+		const out = moveInNote(note, root, at("Coil the lines"), moveGap(root, null, "end", at("Coil the lines"))!)!;
+		expect(out.text).toBe("# Deck\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n2. Boil water\n- Coil the lines\n\t- Bow line\n\t- Stern line\n");
+		expect(out.text.startsWith("- Coil the lines\n\t- Bow line\n\t- Stern line", out.start)).toBe(true);
 	});
 });
