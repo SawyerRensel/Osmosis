@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-31T22:30:00.000Z"
+date_modified: "2026-10-31T23:10:00.000Z"
 date_start_scheduled: "2026-10-31T22:05:13.000Z"
 date_start_actual: "2026-10-31T22:05:13.000Z"
 date_end_scheduled:
@@ -111,7 +111,9 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 - Mobile: the 2D editor's VirtualKeyboard handling (`overlaysContent`, fixed positioning) applies; reuse it.
 - **Manual test**: edit a bullet, a heading, a line with a `^id` (the ID must survive), a `- ` → `## ` retype; undo each in 3D and in 2D.
 
-### Slice 4: Drag-to-link
+### Slice 4: Drag-to-link (built, see "Slice 4" in the batch notes below)
+
+*Corrections made while building:* (1) only a **line** starts a link drag; a note core, tag or file still orbits, since a note has no line to append to. Notes are valid *targets*. (2) Stamping a block ID changes the target's **graph node ID** (`line:path#^id` replaces `line:path#hash`; the parse ID does not change), so `Graph3DView.edited` is now a list and `place()` carries the placement of both ends, selecting the first (the dragged line). (3) A heading falls back to a block ID when its text has link syntax or markdown punctuation, or an earlier heading shares it; a card fence, an embed and a paragraph line that runs on into the next cannot carry an ID and are refused with a Notice. (4) The drop is by a `LinkDrag` in the scene, not by `dblclick` or the click path, so slice 3's double-click and slice 2's checkbox tick are untouched: a press that never moves past the 6 px click slop is still a click.
 
 - In edit mode, `Graph3DScene.onPointerDown` on a line or note node (`nodeNear`, mouse or one finger) starts a `linkDrag` instead of a rotation; on empty space it still orbits. While dragging: a temporary `THREE.Line` from A to the pointer's aim point (depthTest off, the outline colour), and the hovered drop target highlighted (`nodeNear` each move). Release on B ≠ A → `options.onLinkDrop(a, b)`. Escape or release on nothing cancels. `cancelFlight()` on start.
 - View, `linkLines(a, b)`, with pure helpers in `src/graph3d/edit.ts` (tests for each):
@@ -293,3 +295,64 @@ Nothing has run in Obsidian: the checkbox hit-test against real rendered panels 
 ### Not verified
 
 Nothing has run in Obsidian: the `EmbeddableMarkdownEditor` mounted on `document.body` outside any view (the mind map does the same on a phone but not on a desktop); `nodeScreenBox` against real panel rects; the double-tap threshold on a real touch screen; the VirtualKeyboard and `visualViewport` fitting on Android and iOS (iOS has no VirtualKeyboard API, so it relies on `visualViewport` alone); that Enter/F2 on the view `Scope` reach the handler while the 3D canvas has focus; the placement carry after a retype. Lint, the full suite (2,276 tests) and the build pass.
+
+## Slice 4 (drag-to-link)
+
+**Built** on `feature/3d-graph-phase-7`, code commit `b91c98d`, on top of slice 3. Not pushed, no PR, not tested in Obsidian. **Slices 5-6 remain.**
+
+### What it does
+
+- **Gesture.** In edit mode, a mouse press (no modifier) or a one-finger touch on a **line** (its front panel, else the nearest plate within the pick slop) starts a `LinkDrag` instead of an orbit; on empty space, a note core, a tag or a file it still orbits. Until the pointer moves 6 px it is still a press that may be a click, so single click (hop), double click (edit, slice 3) and checkbox tick (slice 2) behave as before. Past 6 px it is a drag: `press` is cleared and nothing hops.
+- **While dragging** (`stepLinkDrag`, each frame): a `THREE.Line` from the dragged line to the pointer (at the dragged line's depth) or, over a target, to its centre; depth test off, colour = the dragged plate's outline colour. The hovered drop target (a line or a note, not the dragged line) is highlighted: its plate outline turns the theme text colour (`layoutDirty`, restored on end) and its near-tier panel gets `.is-link-target` (an accent inset ring, `!important` because the outline is an inline `box-shadow`). Cursor is `crosshair`.
+- **Drop.** Release on a different line or note: `onLinkDrop(from, to)` to the view. Release on nothing, on itself, on a tag or file, a second finger landing (pinch), `pointercancel`, leaving edit mode or Escape (a view-`Scope` key that only acts while a drag is active) all cancel with no write.
+- **Write** (`Graph3DView.linkLines`): fresh-read A (`freshLine`), find B again (same note: in A's tree; other note: `freshLine`). `linkSubpath` decides the link (heading text, existing `^id`, or a new unique `os-xxxxxx` to stamp); the link text is `app.fileManager.generateMarkdownLink(fileB, A's path, subpath)`, so the user's wikilink/Markdown setting is honoured. Same note: `linkInNote` takes both splices on one string, later offset first, one `edits.write`. Different notes: `recorder.beginGroup()`, write B's note (stamp) first, then A's, `endGroup()` in `finally`, filed under A's note, so one Ctrl+Z restores both.
+- After the write: `edited` carries A (selected again) and, if it was stamped, B to their new IDs, then `reload()`; the new edge appears after the metadata `resolve` reload.
+- **Gates.** `editBlocked()` (relational study) at the drop. Study already turns edit mode off, which cancels a drag. A drag cannot start while the inline editor is open (the press is the editor's blur).
+
+### Pure functions (`src/graph3d/edit.ts`, 20 new tests)
+
+`linkSubpath(target | null, root, content)`, `stampBlockId(content, node, id)`, `appendToLine(content, node, text)`, `linkInNote(content, a, b, linkText, stamp)` (also returns the final starts of both lines, since either insert can push the other down). `normalizeHeading` (model.ts), `OSMOSIS_FENCE_REGEX` and `STRUCTURAL_LINE_REGEX` (generate-ids.ts) are now exported, unchanged otherwise.
+
+### Judgment calls for Sawyer
+
+- **PROPOSED, kept as the plan says:** headings link by heading text (`[[Note#Heading]]`), not a stamped ID. Change `linkSubpath` if you want IDs everywhere. A heading with punctuation (`#|^[]\*_`~=$<>%:`) or a duplicate title falls back to an ID anyway.
+- **Only lines start a drag.** A note core cannot be dragged to link (no line to append to); it orbits. The plan's wording ("a line or note node") was ambiguous; notes are targets only.
+- **A line dropped on its own note's core** shows "that line is already in that note" and writes nothing.
+- **No alias on the link** (`[[Note#^os-abc123]]`, not `[[Note#^os-abc123|text]]`), and no duplicate check: dragging the same pair twice appends the link twice.
+- **Multiline source lines** (code block, table, blockquote) and embeds cannot take a link: Notice, no write. As targets, a blockquote or table gets its `^id` on its own line right after (no blank line), as "Generate IDs" does.
+- **Pointer highlight uses plate colour, not an extra mesh**, so on a large graph the highlight toggle rewrites all plate attributes once per target change.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/edit.ts` | `linkSubpath`, `stampBlockId`, `appendToLine`, `linkInNote` |
+| `src/graph3d/edit.test.ts` | 20 tests for them (heading, existing ID, duplicate heading, refusals, multiline stamp read back by the parser, forward and backward same-note offsets) |
+| `src/graph3d/model.ts`, `src/card-gen/generate-ids.ts` | exports only |
+| `src/views/Graph3DScene.ts` | `LinkDrag`, `setLinkMode`, `cancelLinkDrag`, `onLinkDrop`, `pickedNode`, `dropTarget`, `stepLinkDrag`, `endLinkDrag`; pointer down/move/up/pinch hooks; `editingId` |
+| `src/views/Graph3DNear.ts` | `setLinkTarget` |
+| `src/views/Graph3DView.ts` | `linkLines`; `edited` is a list; `setLinkMode` on edit-mode change; Escape key |
+| `styles.css` | `.is-link-target` |
+
+### Fixture
+
+`e2e/fixtures/graph3d/Mooring Plan.md` and `Harbour Berths.md` (copied to `vault/tests/graph3d/`), linked to each other: bullets with and without `^id` (`^spring-line`, `^berth-fifteen`), headings, a three-line blockquote (multiline), nested bullets. Reload Obsidian (Ctrl+R) before testing.
+
+### Manual test (Sawyer)
+
+1. **Setup.** Open `Mooring Plan.md`, run "Open 3D graph for current note", depth 2 (both notes load). Turn on the pencil. Zoom close enough that lines are readable.
+2. **Bullet without ID to a bullet in the other note.** Drag "Doubled bow line" onto "Berth fourteen has a short finger". While dragging: a line follows the pointer, the target highlights, cursor is a crosshair. Release. Expected: "Doubled bow line" now ends with `[[Harbour Berths#^os-xxxxxx]]` and "Berth fourteen..." ends with ` ^os-xxxxxx` (open both notes to check). Both nodes keep their place, the dragged one is selected, and a link edge appears after a second or so.
+3. **Onto a bullet with an ID.** Drag "Hold the bow until the engine is warm" onto "Berth fifteen takes a long keel": the link uses `#^berth-fifteen`, the target is not changed. Drag a line with `^spring-line` onto something: the link goes before its `^spring-line`.
+4. **Onto a heading.** Drag a bullet onto "Visitor pontoon": the link is `[[Harbour Berths#Visitor pontoon]]` and the heading is untouched.
+5. **Onto a note core.** Drag a bullet onto the "Harbour Berths" core: `[[Harbour Berths]]`. Drag a bullet onto its own note's core: Notice, no change.
+6. **Within one note.** Drag "Doubled bow line" onto "Fender boards on the quay side", then the reverse; check offsets (both lines intact, ID stamped on the target).
+7. **Multiline.** Drag a bullet onto the blockquote: `^os-xxxxxx` on its own line after the quote, link `#^os-xxxxxx`. Drag the blockquote onto a bullet: Notice, no change.
+8. **Undo.** After step 2, one Ctrl+Z (3D view focused) restores both files; Ctrl+Shift+Z redoes. Also undo from a mind map tab on `Mooring Plan`.
+9. **Cancel.** Start a drag and press Escape; start one and release on empty space, on the dragged line, on a tag or file. Nothing written.
+10. **No collisions.** In edit mode: a plain click on a node still hops; a double click still opens the editor; clicking a checkbox still ticks it; orbit on empty space and on a note core still works; Shift-drag still pans; WASD and the joysticks still fly. Outside edit mode a press on a line still orbits.
+11. **Touch.** One-finger drag from a line onto another links; a drag from empty space orbits; a second finger during a link drag cancels it into a pinch; a tap on a line still hops.
+12. **Study.** Starting Relational study turns edit mode off; no drag.
+
+### Not verified
+
+Nothing has run in Obsidian: the real `generateMarkdownLink` output (same-note links, the user's Markdown-links setting), the plate highlight and the band's look and draw order against real plates and panels (DOM panels always draw over the band), the 6 px slop on a real touch screen, and the placement carry after a stamp changes the target's graph ID. Lint, the full suite (2,296 tests) and the build pass.
