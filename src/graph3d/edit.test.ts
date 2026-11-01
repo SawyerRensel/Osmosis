@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
+import type { OsmosisNode } from "../types";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, appendToLine, bandOffset, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId, visibleBand } from "./edit";
+import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -333,5 +334,105 @@ describe("linkInNote", () => {
 		const text = "```js\nx\n```\n\n- one\n";
 		const [code, one] = parser.parse(text, "L.md").root.children;
 		expect(linkInNote(text, code!, one!, "[[#^x]]", "x")).toBeNull();
+	});
+});
+
+describe("planStructural", () => {
+	const md = "# Harbour\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n\n## Fuel\n\n- Diesel\n";
+	const tree = parser.parse(md, "Harbour.md").root;
+	const lineOf = (content: string): OsmosisNode => preorder(tree).find((n) => n.content === content)!;
+	/** The plan run through `normalizeWrite` and parsed back: the text, and the line it selects (and what it is). */
+	const run = (action: StructuralAction, content: string) => {
+		const plan = planStructural(action, md, tree, lineOf(content));
+		if (plan === null) return null;
+		const text = normalizeWrite(plan.text);
+		const selected = plan.select === null ? null : mapStart(plan.text, text, plan.select);
+		const root = parser.parse(text, "Harbour.md").root;
+		return { plan, text, selected, node: selected === null ? null : nodeAtStart(root, selected), root };
+	};
+
+	it("child and sibling select a new empty line of the right kind", () => {
+		const child = run("child", "Stern line")!;
+		expect(child.plan.fresh).toBe(true);
+		expect(child.node).toMatchObject({ type: "bullet", depth: 1, content: "" });
+		expect(child.text).toContain("\t- Breast\n\t- \n");
+		const sibling = run("sibling", "Spring")!;
+		expect(sibling.node).toMatchObject({ type: "bullet", depth: 1, content: "" });
+		const heading = run("sibling", "Moorings")!;
+		expect(heading.node).toMatchObject({ type: "heading", depth: 2, content: "" });
+	});
+
+	it("parent selects a new empty line and keeps the old one as its child", () => {
+		const out = run("parent", "Bow line")!;
+		expect(out.plan.fresh).toBe(true);
+		expect(out.node).toMatchObject({ type: "bullet", depth: 0, content: "" });
+		expect(out.node?.children.map((c) => c.content)).toEqual(["Bow line"]);
+		expect(out.plan.moved?.node.content).toBe("Bow line");
+	});
+
+	it("delete selects the parent, or the note when the parent is the root", () => {
+		const nested = run("delete", "Spring")!;
+		expect(nested.node?.content).toBe("Stern line");
+		expect(nested.text).not.toContain("Spring");
+		const top = run("delete", "Harbour")!;
+		expect(top.plan.select).toBeNull();
+		expect(top.text).toBe("");
+	});
+
+	it("up, down, indent and outdent keep the line selected where it went", () => {
+		const down = run("down", "Bow line")!;
+		expect(down.node?.content).toBe("Bow line");
+		expect(down.root.children[0]!.children[0]!.children.map((c) => c.content)).toEqual(["Stern line", "Bow line"]);
+		const up = run("up", "Fuel")!;
+		expect(up.node?.content).toBe("Fuel");
+		const indent = run("indent", "Stern line")!;
+		expect(indent.node).toMatchObject({ content: "Stern line", depth: 1 });
+		expect(indent.node?.children.map((c) => c.content)).toEqual(["Spring", "Breast"]);
+		const outdent = run("outdent", "Spring")!;
+		expect(outdent.node).toMatchObject({ content: "Spring", depth: 0 });
+	});
+
+	it("does nothing where the mind map does nothing", () => {
+		expect(run("up", "Bow line")).toBeNull();
+		expect(run("down", "Fuel")).toBeNull();
+		expect(run("indent", "Bow line")).toBeNull();
+		expect(run("outdent", "Harbour")).toBeNull();
+	});
+});
+
+describe("mapStart", () => {
+	it("follows a line through blank lines added and dropped, and renumbering", () => {
+		const before = "# A\n## B\n\n\n- x\n2. y\n";
+		const after = "# A\n\n## B\n\n- x\n1. y\n";
+		expect(mapStart(before, after, before.indexOf("- x"))).toBe(after.indexOf("- x"));
+		expect(mapStart(before, after, before.indexOf("2. y"))).toBe(after.indexOf("1. y"));
+		expect(mapStart(before, after, 0)).toBe(0);
+	});
+
+	it("is null on a blank line or when the text is shorter", () => {
+		expect(mapStart("a\n\nb", "a\n\nb", 2)).toBeNull();
+		expect(mapStart("a\nb", "a", 2)).toBeNull();
+	});
+});
+
+describe("carryPairs", () => {
+	it("pairs a re-levelled subtree line by line", () => {
+		const before = "- A\n- B\n\t- B1\n\t\t- B2\n";
+		const after = "- A\n\t- B\n\t\t- B1\n\t\t\t- B2\n";
+		const b = parser.parse(before, "T.md").root.children[1]!;
+		const now = parser.parse(after, "T.md").root;
+		const pairs = carryPairs(b, now, after.indexOf("\t- B\n"));
+		expect(pairs.map((p) => [p.from.content, p.to.content, p.from.id === p.to.id])).toEqual([
+			["B", "B", false],
+			["B1", "B1", false],
+			["B2", "B2", false],
+		]);
+	});
+
+	it("pairs only the line when the shapes differ, and nothing when no line starts there", () => {
+		const b = parser.parse("- B\n\t- B1\n", "T.md").root.children[0]!;
+		const now = parser.parse("- B\n", "T.md").root;
+		expect(carryPairs(b, now, 0)).toHaveLength(1);
+		expect(carryPairs(b, now, 99)).toEqual([]);
 	});
 });

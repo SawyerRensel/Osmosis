@@ -160,6 +160,8 @@ export interface SceneOptions {
 	onClickWhileEditing: () => void;
 	/** A link drag released on another node: line `from` is dropped onto `to`, a line or a note. */
 	onLinkDrop: (from: GraphNode, to: GraphNode) => void;
+	/** Edit mode: a right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line, at client (`x`, `y`). */
+	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
@@ -267,6 +269,8 @@ const PARTICLE_OPACITY = 0.9;
 const THREAD_COLOR = "#ffb347";
 /** A press that moves less than this, in px, is a click rather than a drag. */
 const CLICK_SLOP_PX = 6;
+/** A finger held this long on a line in edit mode, without moving past the click slop, opens its context menu instead of being a tap. */
+const LONG_PRESS_MS = 500;
 
 /**
  * Flight speed multiplier, set with the wheel while flying. Like Unreal's
@@ -336,6 +340,10 @@ export class Graph3DScene {
 	/** Edit mode is on: a press on a line starts a link drag instead of an orbit. */
 	private linkMode = false;
 	private linkDrag: LinkDrag | null = null;
+	/** A right-button press in edit mode that has not moved past the slop: released, it opens the context menu. (Moving it is OrbitControls' pan.) */
+	private menuPress: { pointerId: number; x: number; y: number } | null = null;
+	/** A finger down on a line in edit mode, waiting out `LONG_PRESS_MS` to open the context menu. */
+	private longPress: { pointerId: number; x: number; y: number; timer: number } | null = null;
 	/** The rubber band from the dragged line to the pointer. */
 	private linkLine: Line<BufferGeometry, LineBasicMaterial> | null = null;
 	/** The node whose editor is open: a press then orbits rather than linking, and leaves the editor its focus. */
@@ -391,6 +399,7 @@ export class Graph3DScene {
 		const canvas = this.graph.renderer().domElement;
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		container.addEventListener("mousedown", this.onMouseDown);
+		container.addEventListener("contextmenu", this.onContextMenuEvent);
 		window.addEventListener("pointermove", this.onPointerMove);
 		window.addEventListener("pointerup", this.onPointerUp);
 		window.addEventListener("pointercancel", this.onPointerUp);
@@ -739,10 +748,37 @@ export class Graph3DScene {
 		return true;
 	}
 
+	/**
+	 * Move a line that has just arrived (still free) to a link's length from its
+	 * parent, in a random direction: a new line is seeded 10 units from its
+	 * parent, inside its plate, and opening an editor pins it where it is.
+	 */
+	seedClear(id: string): void {
+		const node = this.nodes.find((n) => n.id === id);
+		if (node?.x === undefined || node.y === undefined || node.z === undefined || node.fx !== undefined) return;
+		const link = this.links.find((l) => l.kind === "hierarchy" && (typeof l.target === "object" ? l.target.id : l.target) === id);
+		const parentId = link === undefined ? undefined : typeof link.source === "object" ? link.source.id : link.source;
+		const parent = this.nodes.find((n) => n.id === parentId);
+		if (parent?.x === undefined || parent.y === undefined || parent.z === undefined) return;
+		const distance = linkDistance("hierarchy", parent.extent, node.extent);
+		// A uniform direction on the sphere.
+		const z = 2 * Math.random() - 1;
+		const angle = 2 * Math.PI * Math.random();
+		const ring = Math.sqrt(1 - z * z);
+		node.x = parent.x + distance * ring * Math.cos(angle);
+		node.y = parent.y + distance * ring * Math.sin(angle);
+		node.z = parent.z + distance * z;
+		this.dirty = true;
+	}
+
 	/** Edit mode on or off. Off, a link drag in progress is dropped. */
 	setLinkMode(on: boolean): void {
 		this.linkMode = on;
-		if (!on) this.endLinkDrag();
+		if (!on) {
+			this.endLinkDrag();
+			this.clearLongPress();
+			this.menuPress = null;
+		}
 	}
 
 	/** Escape: drop a link drag in progress without linking. True when there was one. */
@@ -819,6 +855,8 @@ export class Graph3DScene {
 		window.cancelAnimationFrame(this.frame);
 		this.graph.renderer().domElement.removeEventListener("pointerdown", this.onPointerDown);
 		this.container.removeEventListener("mousedown", this.onMouseDown);
+		this.container.removeEventListener("contextmenu", this.onContextMenuEvent);
+		this.clearLongPress();
 		window.removeEventListener("pointermove", this.onPointerMove);
 		window.removeEventListener("pointerup", this.onPointerUp);
 		window.removeEventListener("pointercancel", this.onPointerUp);
@@ -923,6 +961,7 @@ export class Graph3DScene {
 			// until every finger has lifted.
 			if (this.touches.size === 2) {
 				this.endLinkDrag();
+				this.clearLongPress();
 				this.startPinch();
 			}
 			if (this.touches.size !== 1) {
@@ -930,6 +969,7 @@ export class Graph3DScene {
 				return;
 			}
 		} else if (e.button !== 0) {
+			if (e.button === 2 && this.linkMode && this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
 			return;
 		} else if (e.shiftKey || e.ctrlKey || e.metaKey) {
 			// Still a press that may be a click: Mod-click on a link opens it.
@@ -944,6 +984,7 @@ export class Graph3DScene {
 			this.linkDrag = { pointerId: e.pointerId, touch, from, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, active: false, over: null, overColor: null };
 			// Still a press that may be a click, until the pointer moves.
 			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
+			if (touch) this.startLongPress(e.pointerId, e.clientX, e.clientY, from);
 			return;
 		}
 		this.drag = {
@@ -972,6 +1013,10 @@ export class Graph3DScene {
 	private readonly onPointerMove = (e: PointerEvent): void => {
 		const press = this.press;
 		if (press?.pointerId === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) this.press = null;
+		const menu = this.menuPress;
+		if (menu?.pointerId === e.pointerId && Math.hypot(e.clientX - menu.x, e.clientY - menu.y) > CLICK_SLOP_PX) this.menuPress = null;
+		const hold = this.longPress;
+		if (hold?.pointerId === e.pointerId && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > CLICK_SLOP_PX) this.clearLongPress();
 		// The pointer cursor over a node is resolved once a frame, in tick().
 		if (e.pointerType === "mouse" && e.buttons === 0 && e.target === this.graph.renderer().domElement) {
 			this.hover = { x: e.clientX, y: e.clientY };
@@ -1007,6 +1052,14 @@ export class Graph3DScene {
 
 	private readonly onPointerUp = (e: PointerEvent): void => {
 		this.touches.delete(e.pointerId);
+		if (this.longPress?.pointerId === e.pointerId) this.clearLongPress();
+		const menu = this.menuPress;
+		if (menu?.pointerId === e.pointerId) {
+			// A right-click that never moved: the context menu of the line under it. (A cancelled pointer opens nothing.)
+			this.menuPress = null;
+			const node = e.type === "pointerup" && e.button === 2 ? this.pickedNode(menu.x, menu.y, false) : null;
+			if (node?.graph.kind === "line") this.options.onContextMenu(node.graph, e.clientX, e.clientY);
+		}
 		const press = this.press;
 		if (press?.pointerId === e.pointerId) {
 			this.press = null;
@@ -1029,6 +1082,29 @@ export class Graph3DScene {
 		const velocity = launchVelocity(estimateVelocity(this.samples, now), this.carry, now - this.touchDownAt);
 		if (velocity.x !== 0 || velocity.y !== 0) this.orbitCoast = { drag, velocity };
 	};
+
+	/** The browser's own context menu stays off the canvas in edit mode: the right button there is ours (a pan, or the node menu). */
+	private readonly onContextMenuEvent = (e: Event): void => {
+		if (this.linkMode && e.target === this.graph.renderer().domElement) e.preventDefault();
+	};
+
+	/** A finger went down on `node` in edit mode: held still for `LONG_PRESS_MS`, it opens the node's context menu and the release is no click. */
+	private startLongPress(pointerId: number, x: number, y: number, node: EngineNode): void {
+		this.clearLongPress();
+		const timer = window.setTimeout(() => {
+			this.longPress = null;
+			if (!this.linkMode || this.editingId !== null || this.pinch !== null || this.linkDrag?.active === true) return;
+			this.press = null;
+			this.endLinkDrag();
+			this.options.onContextMenu(node.graph, x, y);
+		}, LONG_PRESS_MS);
+		this.longPress = { pointerId, x, y, timer };
+	}
+
+	private clearLongPress(): void {
+		if (this.longPress !== null) window.clearTimeout(this.longPress.timer);
+		this.longPress = null;
+	}
 
 	/** The node drawn at client point (`x`, `y`): the front panel's, else the nearest plate. */
 	private pickedNode(x: number, y: number, touch: boolean): EngineNode | null {

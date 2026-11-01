@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
 import { editSelectionStart, nodeEditText, normalizeWrite, renameInFile, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
@@ -7,7 +7,7 @@ import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
-import { ancestorsOf, appendToLine, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId } from "../graph3d/edit";
+import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, planStructural, stampBlockId, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { memoryStrengths, nodeTags, overlayNodeColor, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
@@ -118,8 +118,14 @@ export class Graph3DView extends ItemView {
 	private editOwner: string | null = null;
 	/** The note last edited, so undo still finds it after the edited line's ID, and the focus with it, changed. */
 	private lastEditPath: string | null = null;
-	/** Lines an edit just changed, for the next reload to keep in place (their IDs changed, their starts did not); the first is selected again. */
-	private edited: { path: string; start: number; from: string }[] = [];
+	/** Lines an edit just changed, for the next reload to keep in place: each is at `start` in its note now, and `from` is the node it was (a new line has none); the first is selected again. */
+	private edited: { path: string; start: number; from?: string }[] = [];
+	/** A structural edit made a new empty line, which the next reload opens the editor on once it is in the scene. */
+	private pendingEdit: { path: string; start: number } | null = null;
+	/** A structural edit left no line to select (a delete under the root): the next reload selects this node, the note's core. */
+	private selectAfter: string | null = null;
+	/** A structural edit is being worked out and written, so a key repeating on the same line starts no second one over it. */
+	private structuring = false;
 	/** Releases for the histories of the notes loaded now: a note's undo history lives while some view holds it. */
 	private readonly holds = new Map<string, () => void>();
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
@@ -161,7 +167,7 @@ export class Graph3DView extends ItemView {
 		this.scope.register(["Mod"], "z", stepKey(false));
 		this.scope.register(["Mod", "Shift"], "z", stepKey(true));
 		this.scope.register(["Mod"], "y", stepKey(true));
-		// In edit mode, F2 or Enter edits the focused line (a button or a text box keeps its own Enter).
+		// In edit mode, F2 edits the focused line (a button or a text box keeps its own keys).
 		const editKey = (e: KeyboardEvent) => {
 			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
 			const node = this.scene?.focusedNode() ?? null;
@@ -171,7 +177,23 @@ export class Graph3DView extends ItemView {
 		// Escape drops a link drag in progress; otherwise the key goes on.
 		this.scope.register([], "Escape", () => (this.scene?.cancelLinkDrag() === true ? false : undefined));
 		this.scope.register([], "F2", editKey);
-		this.scope.register([], "Enter", editKey);
+		// In edit mode, the mind map's structural keys act on the focused line.
+		const structuralKey = (action: StructuralAction) => (e: KeyboardEvent) => {
+			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
+			const node = this.scene?.focusedNode() ?? null;
+			if (node === null || node.kind !== "line") return undefined;
+			void this.structural(action, node);
+			return false;
+		};
+		this.scope.register([], "Tab", structuralKey("child"));
+		this.scope.register([], "Enter", structuralKey("sibling"));
+		this.scope.register(["Mod"], "Enter", structuralKey("parent"));
+		this.scope.register([], "Delete", structuralKey("delete"));
+		this.scope.register([], "Backspace", structuralKey("delete"));
+		this.scope.register(["Alt"], "ArrowUp", structuralKey("up"));
+		this.scope.register(["Alt"], "ArrowDown", structuralKey("down"));
+		this.scope.register(["Alt"], "ArrowLeft", structuralKey("outdent"));
+		this.scope.register(["Alt"], "ArrowRight", structuralKey("indent"));
 	}
 
 	getViewType(): string {
@@ -274,6 +296,7 @@ export class Graph3DView extends ItemView {
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.beginEdit(node),
+			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to) => void this.linkLines(from, to),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
@@ -532,13 +555,23 @@ export class Graph3DView extends ItemView {
 	 * the line selected and where it was: an edit changes its ID, not its start.
 	 */
 	private async commitEdit(file: TFile, content: string, node: GraphNode, start: number): Promise<void> {
+		await this.commitLines(file, content, [{ path: file.path, start, from: node.id }]);
+	}
+
+	/**
+	 * Write `content` to `file` as one edit, filed under the note in the shared
+	 * history, then reload with `edited` (see the field) to keep in place.
+	 * `then` is set once the write has landed, for the reload to act on.
+	 */
+	private async commitLines(file: TFile, content: string, edited: typeof this.edited, then?: () => void): Promise<void> {
 		this.editOwner = file.path;
 		this.lastEditPath = file.path;
 		// A reload already under way could read the new bytes and seed the line's successor beside its parent before `edited` says where it goes: drop it; the reload below replaces it.
 		this.loadSeq++;
 		await this.edits.write(file, content);
 		// Marked only now, so a reload that was already under way can't take it.
-		this.edited = [{ path: file.path, start, from: node.id }];
+		this.edited = edited;
+		then?.();
 		void this.reload();
 	}
 
@@ -701,6 +734,79 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
+	/**
+	 * Do the mind map's structural edit `action` on `node`'s line: the same
+	 * bytes (`planStructural` wraps the functions `MindMapView` calls), found
+	 * against the file's fresh bytes, written once and filed in the shared
+	 * history. A new line opens the editor at once; a line that moved or was
+	 * re-levelled (its IDs change with its depth, and all its descendants'
+	 * with it) keeps its place, and so does everything under it.
+	 */
+	private async structural(action: StructuralAction, node: GraphNode, fromMenu = false): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const fresh = await this.freshLine(node);
+			if (fresh === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const { file, content, line, root } = fresh;
+			const plan = planStructural(action, content, root, line);
+			if (plan === null) {
+				if (fromMenu) new Notice("Osmosis: nothing to do there");
+				return;
+			}
+			const out = normalizeWrite(plan.text);
+			if (out === content) return;
+			// Spacing normalisation can shift every offset: follow lines by count.
+			const at = (start: number | null): number | null => (start === null ? null : mapStart(plan.text, out, start));
+			const selected = at(plan.select);
+			const edited: typeof this.edited = [];
+			if (selected !== null && (plan.fresh || plan.moved === null)) edited.push({ path: file.path, start: selected });
+			const movedAt = plan.moved === null ? null : at(plan.moved.start);
+			if (plan.moved !== null && movedAt !== null) {
+				const graphIds = new Map<string, string>();
+				for (const n of this.model?.nodes ?? []) if (n.kind === "line" && n.path === file.path && n.source !== undefined) graphIds.set(n.source.id, n.id);
+				for (const { from, to } of carryPairs(plan.moved.node, this.cache.get(file.path, out).root, movedAt)) {
+					edited.push({ path: file.path, start: to.range.start, from: graphIds.get(from.id) });
+				}
+			}
+			await this.commitLines(file, out, edited, () => {
+				this.pendingEdit = plan.fresh && selected !== null ? { path: file.path, start: selected } : null;
+				this.selectAfter = plan.select === null ? noteNodeId(file.path) : null;
+			});
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not make that edit", error);
+			new Notice("Osmosis: could not make that edit");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
+	/** The context menu of a line (right-click, or a long press on touch) in edit mode: edit it, or any structural edit. */
+	private showNodeMenu(node: GraphNode, x: number, y: number): void {
+		if (!this.editMode || node.kind !== "line" || this.editor.isOpen || this.editBlocked()) return;
+		this.scene?.setFocusId(node.id);
+		const menu = new Menu();
+		const add = (title: string, icon: string, action: StructuralAction): void => {
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void this.structural(action, node, true)));
+		};
+		menu.addItem((item) => item.setTitle("Edit text").setIcon("pencil").onClick(() => void this.beginEdit(node)));
+		menu.addSeparator();
+		add("Add child", "arrow-right-from-line", "child");
+		add("Add sibling", "arrow-down-from-line", "sibling");
+		add("Insert parent", "arrow-right-to-line", "parent");
+		menu.addSeparator();
+		add("Move up", "arrow-up", "up");
+		add("Move down", "arrow-down", "down");
+		add("Indent", "indent-increase", "indent");
+		add("Outdent", "indent-decrease", "outdent");
+		menu.addSeparator();
+		menu.addItem((item) => item.setTitle("Delete").setIcon("trash-2").setWarning(true).onClick(() => void this.structural("delete", node, true)));
+		menu.showAtPosition({ x, y });
+	}
+
 	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */
 	private async toggleCheckbox(node: GraphNode): Promise<void> {
 		if (this.editBlocked()) return;
@@ -742,11 +848,13 @@ export class Graph3DView extends ItemView {
 		this.edited = [];
 		edited.forEach((line, i) => {
 			const id = lineNodeAt(model, line.path, line.start);
-			const from = positions.get(line.from);
+			const from = line.from === undefined ? undefined : positions.get(line.from);
 			if (id === null) return;
 			if (from !== undefined && !positions.has(id)) positions.set(id, from);
 			if (i === 0) scene.setFocusId(id);
 		});
+		if (this.selectAfter !== null) scene.setFocusId(this.selectAfter);
+		this.selectAfter = null;
 		return placeNodes(model, positions, via);
 	}
 
@@ -945,7 +1053,20 @@ export class Graph3DView extends ItemView {
 		this.syncHolds(horizon.loaded);
 		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via));
 		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
+		this.openPending(scene, model);
 		this.prefetch(horizon.prefetch, seq);
+	}
+
+	/** A structural edit made a new empty line: now that it is in the scene, clear of its parent, edit it. */
+	private openPending(scene: Graph3DScene, model: GraphModel): void {
+		const pending = this.pendingEdit;
+		this.pendingEdit = null;
+		if (pending === null) return;
+		const id = lineNodeAt(model, pending.path, pending.start);
+		const node = id === null ? undefined : model.nodes.find((n) => n.id === id);
+		if (node === undefined) return;
+		scene.seedClear(node.id);
+		this.beginEdit(node);
 	}
 
 	/**

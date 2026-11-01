@@ -4990,47 +4990,7 @@ export class MindMapView extends ItemView {
 		const file = this.fileAtPath(originPath);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
-		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(
-			selectedSrcs[selectedSrcs.length - 1]!,
-		);
-		const blockText = content.slice(blockStart, blockEnd);
-
-		const swapStart = swapSrc.range.start;
-		const swapEnd = this.subtreeEnd(swapSrc);
-		const swapText = content.slice(swapStart, swapEnd);
-
-		// Swap block with target.
-		// Replace the entire range spanning both nodes (including any gap
-		// and surrounding blank lines) with the swapped texts joined by "\n".
-		// normalizeHeadingSpacing (called by the write) will re-add proper
-		// blank lines around headings and top-level code fences.
-		const rangeStart = Math.min(blockStart, swapStart);
-		const rangeEnd = Math.max(blockEnd, swapEnd);
-
-		// Strip trailing blank lines before the swap range
-		let headEnd = rangeStart;
-		while (headEnd > 0 && content[headEnd - 1] === "\n") {
-			headEnd--;
-		}
-		const head = headEnd > 0 ? content.slice(0, headEnd) + "\n" : "";
-
-		// Strip leading blank lines after the swap range
-		let tailPos = rangeEnd;
-		while (tailPos < content.length && content[tailPos] === "\n") {
-			tailPos++;
-		}
-		const tail =
-			tailPos < content.length
-				? "\n" + content.slice(tailPos)
-				: content.slice(rangeEnd);
-
-		let updated: string;
-		if (blockStart < swapStart) {
-			updated = head + swapText + "\n" + blockText + tail;
-		} else {
-			updated = head + blockText + "\n" + swapText + tail;
-		}
+		const updated = edit.moveSiblings(content, selectedSrcs, swapSrc).text;
 
 		await this.writeFileAtPath(originPath, updated);
 
@@ -5149,43 +5109,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// Collect block of selected subtrees
-		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
-		const blockStart = firstSrc.range.start;
-		const blockEnd = this.subtreeEnd(lastSrc);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const context = indentContext(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
-			);
-		}
-		const reindented = reindentedParts.join("\n");
-
-		// Remove block from current position
-		let removeStart = blockStart;
-		if (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-
-		// Insert at end of previous sibling's subtree
-		const insertPos = this.subtreeEnd(prevSibling);
-		const prefix =
-			insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
-
-		const withoutBlock =
-			content.slice(0, removeStart) + content.slice(blockEnd);
-		const updated =
-			withoutBlock.slice(0, insertPos) +
-			prefix +
-			reindented +
-			withoutBlock.slice(insertPos);
+		const updated = edit.indentSiblings(content, selectedSrcs, prevSibling).text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -5212,44 +5136,17 @@ export class MindMapView extends ItemView {
 			if (selectedIndices.length === 0) return;
 
 			const firstSrc = siblings[selectedIndices[0]!]!;
-
-			// Determine promotion target type and depth
-			let newType: OsmosisNode["type"];
-			let newDepth: number;
-			if (firstSrc.type === "bullet" || firstSrc.type === "ordered") {
-				newType = "paragraph";
-				newDepth = 0;
-			} else if (firstSrc.type === "paragraph") {
-				newType = "heading";
-				// Match neighboring heading siblings, default to h1
-				newDepth = this.inferRootHeadingLevel(parentNode.source, selectedIndices[0]!);
-			} else {
-				return; // headings and other types can't promote further at root
-			}
-
-			const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
 			const file = this.getNodeFile(firstSrc);
 			if (!file) return;
 
 			const content = await this.app.vault.read(file);
-			const blockStart = firstSrc.range.start;
-			const blockEnd = this.subtreeEnd(lastSrc);
-
-			const reindentedParts: string[] = [];
-			for (const idx of selectedIndices) {
-				const nodeSrc = siblings[idx]!;
-				const nodeText = content.slice(
-					nodeSrc.range.start,
-					this.subtreeEnd(nodeSrc),
-				);
-				reindentedParts.push(
-					this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
-				);
-			}
-			const reindented = reindentedParts.join("\n");
-
-			const updated =
-				content.slice(0, blockStart) + reindented + content.slice(blockEnd);
+			const promoted = edit.outdentSiblings(
+				content,
+				parentNode.source,
+				selectedIndices.map((i) => siblings[i]!),
+			);
+			if (!promoted) return; // headings and other types can't promote further at root
+			const updated = promoted.text;
 
 			const movedContents = selectedIndices.map((i) => siblings[i]!.content);
 			await this.writeNodeFile(firstSrc, updated);
@@ -5265,7 +5162,6 @@ export class MindMapView extends ItemView {
 		if (selectedIndices.length === 0) return;
 
 		const firstSrc = siblings[selectedIndices[0]!]!;
-		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
 		const parentSrc = parentNode.source;
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
 		if (!this.ensureSameFileEdit(selectedSrcs)) return;
@@ -5303,47 +5199,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const blockStart = firstSrc.range.start;
-		const blockEnd = this.subtreeEnd(lastSrc);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const { type, depth } = context(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, type, depth),
-			);
-		}
-		const reindented = reindentedParts.join("\n");
-
-		// Remove block from current position
-		let removeStart = blockStart;
-		if (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-
-		// Insert after parent's subtree
-		const parentEnd = this.subtreeEnd(parentSrc);
-
-		const withoutBlock =
-			content.slice(0, removeStart) + content.slice(blockEnd);
-		const removedLength = blockEnd - removeStart;
-		const adjustedParentEnd = parentEnd - removedLength;
-
-		const prefix =
-			adjustedParentEnd > 0 &&
-			withoutBlock[adjustedParentEnd - 1] !== "\n"
-				? "\n"
-				: "";
-		const updated =
-			withoutBlock.slice(0, adjustedParentEnd) +
-			prefix +
-			reindented +
-			withoutBlock.slice(adjustedParentEnd);
+		const updated = edit.outdentSiblings(content, parentSrc, selectedSrcs)!.text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -5359,26 +5215,7 @@ export class MindMapView extends ItemView {
 		nodeSrc: OsmosisNode,
 		parentSrc: OsmosisNode,
 	): { type: OsmosisNode["type"]; depth: number } {
-		// Becoming a sibling of parent — preserve node's own list type.
-		// Only switch type for heading transitions.
-		let type: OsmosisNode["type"];
-		if (nodeSrc.type === "heading" && parentSrc.type === "heading") {
-			type = "heading";
-		} else if (
-			(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
-			nodeSrc.depth === 0 &&
-			parentSrc.type === "heading"
-		) {
-			// Depth-0 list item directly under a heading: promote to paragraph
-			// (progressive: bullet → paragraph → heading on successive outdents)
-			type = "paragraph";
-		} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
-			// Nested list items keep their own type when outdenting
-			type = nodeSrc.type;
-		} else {
-			type = parentSrc.type;
-		}
-		return { type, depth: parentSrc.depth };
+		return edit.outdentContext(nodeSrc, parentSrc);
 	}
 
 	/**
@@ -5583,7 +5420,6 @@ export class MindMapView extends ItemView {
 		// Collect selected siblings sorted by position
 		let blockStart: number;
 		let blockEnd: number;
-		let blockText: string;
 
 		// `target.parent`, not `node.parent`: the sibling ranges spliced below
 		// come off it, and the pre-guard node's parent belongs to the layout the
@@ -5608,51 +5444,18 @@ export class MindMapView extends ItemView {
 			blockStart = src.range.start;
 			blockEnd = this.subtreeEnd(src);
 		}
-		blockText = content.slice(blockStart, blockEnd);
-
-		// Create the new parent line at the same type/depth as the first selected node
-		const newParentLine = this.serializeLine(src.type, src.depth, "");
-
-		// Indent all selected subtrees by 1 level
-		let indentedSubtree: string;
-		if (src.type === "heading") {
-			indentedSubtree = this.indentSubtreeHeadings(blockText);
-		} else {
-			indentedSubtree = blockText
-				.split("\n")
-				.map((line) => (line.trim() === "" ? line : "\t" + line))
-				.join("\n");
-		}
-
-		// Replace: [newParentLine]\n[indentedSubtree]
-		const updated =
-			content.slice(0, blockStart) +
-			newParentLine +
-			"\n" +
-			indentedSubtree +
-			content.slice(blockEnd);
+		// A new parent line at the same type/depth as the node, over the block
+		// indented one level.
+		const updated = edit.insertParent(content, src, {
+			start: blockStart,
+			end: blockEnd,
+		}).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
 
 		// Start editing the new (empty) parent node
 		this.startEditingNewNode(selectedId, false);
-	}
-
-	/**
-	 * Increase all heading levels in a subtree by 1 (e.g., ## → ###).
-	 */
-	private indentSubtreeHeadings(text: string): string {
-		return text
-			.split("\n")
-			.map((line) => {
-				const headingMatch = line.match(/^(#{1,5})\s/);
-				if (headingMatch && headingMatch[1]) {
-					return "#" + line;
-				}
-				return line;
-			})
-			.join("\n");
 	}
 
 	/**
@@ -6582,30 +6385,11 @@ export class MindMapView extends ItemView {
 	}
 
 	private inferChildType(parent: OsmosisNode): OsmosisNode["type"] {
-		if (parent.type === "heading" || parent.type === "root")
-			return "bullet";
-		return parent.type;
+		return edit.inferChildType(parent);
 	}
 
 	private inferChildDepth(parent: OsmosisNode): number {
-		if (parent.type === "heading" || parent.type === "root") return 0;
-		return parent.depth + 1;
-	}
-
-	/**
-	 * Infer heading level when promoting a root child to a heading.
-	 * Matches the nearest heading sibling's level, defaulting to h1.
-	 */
-	private inferRootHeadingLevel(root: OsmosisNode, index: number): number {
-		const siblings = root.children;
-		// Check neighbors outward from the index
-		for (let dist = 1; dist < siblings.length; dist++) {
-			for (const i of [index - dist, index + dist]) {
-				const sib = siblings[i];
-				if (sib?.type === "heading") return sib.depth;
-			}
-		}
-		return 1;
+		return edit.inferChildDepth(parent);
 	}
 
 	/**
@@ -6617,13 +6401,7 @@ export class MindMapView extends ItemView {
 		newParent: OsmosisNode,
 		movingNode: OsmosisNode,
 	): OsmosisNode["type"] {
-		if (
-			movingNode.type === "heading" &&
-			(newParent.type === "heading" || newParent.type === "root")
-		) {
-			return "heading";
-		}
-		return this.inferChildType(newParent);
+		return edit.inferIndentType(newParent, movingNode);
 	}
 
 	/**
@@ -6634,13 +6412,7 @@ export class MindMapView extends ItemView {
 		newParent: OsmosisNode,
 		movingNode: OsmosisNode,
 	): number {
-		if (
-			movingNode.type === "heading" &&
-			(newParent.type === "heading" || newParent.type === "root")
-		) {
-			return Math.min(6, newParent.depth + 1);
-		}
-		return this.inferChildDepth(newParent);
+		return edit.inferIndentDepth(newParent, movingNode);
 	}
 
 	/**
@@ -8436,11 +8208,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
-		const newLine = this.serializeLine(childType, childDepth, "");
-		const insertPos = edit.childInsertOffset(src);
-
-		const updated = edit.insertAt(content, insertPos, newLine).text;
+		const updated = edit.insertChild(content, src).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -8463,29 +8231,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// If sibling of a checkbox, create a new unchecked checkbox
-		const newContent = src.metadata?.checkbox ? "[ ] " : "";
-		const insertPos = this.subtreeEnd(src);
-
-		let insertText: string;
-		if (
-			src.type === "paragraph" ||
-			src.type === "codeblock" ||
-			src.type === "table" ||
-			src.type === "blockquote"
-		) {
-			// Paragraphs, code blocks, tables, and blockquotes need a blank line separator
-			// Use a zero-width space as placeholder (not stripped by trim())
-			insertText = "\n\n\u200B";
-		} else {
-			const newLine = this.serializeLine(src.type, src.depth, newContent);
-			insertText = "\n" + newLine;
-		}
-
-		const updated =
-			content.slice(0, insertPos) +
-			insertText +
-			content.slice(insertPos);
+		const updated = edit.insertSibling(content, src).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -8507,21 +8253,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const start = src.range.start;
-		const end = this.subtreeEnd(src);
-
-		// Also consume the preceding or following newline to avoid blank lines
-		let deleteStart = start;
-		let deleteEnd = end;
-
-		if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
-			deleteStart--;
-		} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
-			deleteEnd++;
-		}
-
-		const updated =
-			content.slice(0, deleteStart) + content.slice(deleteEnd);
+		const updated = edit.deleteSubtree(content, src);
 
 		// Select the parent or sibling after deletion
 		const parentId =

@@ -838,6 +838,350 @@ export function normalizeWrite(content: string): string {
 	return normalizeBlockSpacing(renumberOrderedLists(content)).content;
 }
 
+// ─── Structural edits within one file ────────────────────
+//
+// What the mind map does for Tab, Enter, Ctrl+Enter, Delete and the Alt-arrows,
+// as pure text-in, text-out computations, so the 3D graph writes the same bytes.
+// Each returns the file's text *before* `normalizeWrite`, with `start`: where
+// the line the edit is about begins in that text (the new line, or the first
+// line of the block that moved). The mind map's cross-file branches (a move
+// across an embed seam) stay in the view.
+
+/** A structural edit's result: the new text, and where the edit's line starts in it. */
+export interface Spliced {
+	text: string;
+	start: number;
+	/** Insert parent only: where the block that moved under the new line starts. */
+	moved?: number;
+}
+
+/** The type a child takes on under `parent` when it is indented there or dropped there. */
+export function inferChildType(parent: OsmosisNode): OsmosisNode["type"] {
+	if (parent.type === "heading" || parent.type === "root") return "bullet";
+	return parent.type;
+}
+
+/** The depth a child takes on under `parent`. */
+export function inferChildDepth(parent: OsmosisNode): number {
+	if (parent.type === "heading" || parent.type === "root") return 0;
+	return parent.depth + 1;
+}
+
+/**
+ * Heading level a root child takes when promoted to a heading: the nearest
+ * heading sibling's, outward from `index`, else h1.
+ */
+export function inferRootHeadingLevel(root: OsmosisNode, index: number): number {
+	const siblings = root.children;
+	for (let dist = 1; dist < siblings.length; dist++) {
+		for (const i of [index - dist, index + dist]) {
+			const sib = siblings[i];
+			if (sib?.type === "heading") return sib.depth;
+		}
+	}
+	return 1;
+}
+
+/**
+ * The type a node takes on when indented under a new parent. Headings under
+ * headings stay headings (deeper); anything else becomes a child of the parent.
+ */
+export function inferIndentType(newParent: OsmosisNode, movingNode: OsmosisNode): OsmosisNode["type"] {
+	if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+		return "heading";
+	}
+	return inferChildType(newParent);
+}
+
+/** The depth a node takes on when indented under a new parent. Headings get parent depth + 1. */
+export function inferIndentDepth(newParent: OsmosisNode, movingNode: OsmosisNode): number {
+	if (movingNode.type === "heading" && (newParent.type === "heading" || newParent.type === "root")) {
+		return Math.min(6, newParent.depth + 1);
+	}
+	return inferChildDepth(newParent);
+}
+
+/**
+ * Type and depth a node takes on when outdented to become its parent's
+ * sibling. Shared by the same-file splice and the cross-file move so a node
+ * promoted *out* of an embed lands at the level it would have landed at had
+ * both lines lived in one file.
+ */
+export function outdentContext(
+	nodeSrc: OsmosisNode,
+	parentSrc: OsmosisNode,
+): { type: OsmosisNode["type"]; depth: number } {
+	// Becoming a sibling of parent — preserve node's own list type.
+	// Only switch type for heading transitions.
+	let type: OsmosisNode["type"];
+	if (nodeSrc.type === "heading" && parentSrc.type === "heading") {
+		type = "heading";
+	} else if (
+		(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
+		nodeSrc.depth === 0 &&
+		parentSrc.type === "heading"
+	) {
+		// Depth-0 list item directly under a heading: promote to paragraph
+		// (progressive: bullet → paragraph → heading on successive outdents)
+		type = "paragraph";
+	} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
+		// Nested list items keep their own type when outdenting
+		type = nodeSrc.type;
+	} else {
+		type = parentSrc.type;
+	}
+	return { type, depth: parentSrc.depth };
+}
+
+/** Increase every heading level in a subtree's text by 1 (## → ###); h6 stays. */
+export function indentSubtreeHeadings(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => {
+			const headingMatch = line.match(/^(#{1,5})\s/);
+			if (headingMatch && headingMatch[1]) {
+				return "#" + line;
+			}
+			return line;
+		})
+		.join("\n");
+}
+
+/**
+ * Add an empty child under `parent`: a new line at the parent's child
+ * boundary (for a heading, before its first sub-heading).
+ */
+export function insertChild(content: string, parent: OsmosisNode): Spliced {
+	const { type, depth } = inferChildContext(parent);
+	const newLine = serializeLine(type, depth, "");
+	const insertPos = childInsertOffset(parent);
+	const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? 1 : 0;
+	return { text: insertAt(content, insertPos, newLine).text, start: insertPos + prefix };
+}
+
+/**
+ * Add an empty sibling after `src`'s subtree, at its level; a sibling of a
+ * checkbox is an unchecked checkbox. Paragraphs and the multiline kinds need a
+ * blank line between, and a zero-width space as the placeholder (`trim()` keeps it).
+ */
+export function insertSibling(content: string, src: OsmosisNode): Spliced {
+	const newContent = src.metadata?.checkbox ? "[ ] " : "";
+	const insertPos = subtreeEnd(src);
+	let insertText: string;
+	let lead: number;
+	if (
+		src.type === "paragraph" ||
+		src.type === "codeblock" ||
+		src.type === "table" ||
+		src.type === "blockquote"
+	) {
+		insertText = "\n\n​";
+		lead = 2;
+	} else {
+		insertText = "\n" + serializeLine(src.type, src.depth, newContent);
+		lead = 1;
+	}
+	return {
+		text: content.slice(0, insertPos) + insertText + content.slice(insertPos),
+		start: insertPos + lead,
+	};
+}
+
+/**
+ * Delete `src` and its subtree, also consuming the newline before it (else the
+ * one after) so no blank line is left behind.
+ */
+export function deleteSubtree(content: string, src: OsmosisNode): string {
+	const start = src.range.start;
+	const end = subtreeEnd(src);
+
+	let deleteStart = start;
+	let deleteEnd = end;
+
+	if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
+		deleteStart--;
+	} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
+		deleteEnd++;
+	}
+
+	return content.slice(0, deleteStart) + content.slice(deleteEnd);
+}
+
+/**
+ * Swap a run of adjacent siblings with the sibling beside it (Alt+Up/Down):
+ * `selected` in document order, `swap` the neighbour. The whole range spanning
+ * both, gaps and surrounding blank lines included, is rewritten with the two
+ * texts joined by "\n"; `normalizeWrite` re-adds the blank lines around headings
+ * and top-level code fences.
+ */
+export function moveSiblings(content: string, selected: readonly OsmosisNode[], swap: OsmosisNode): Spliced {
+	const blockStart = selected[0]!.range.start;
+	const blockEnd = subtreeEnd(selected[selected.length - 1]!);
+	const blockText = content.slice(blockStart, blockEnd);
+
+	const swapStart = swap.range.start;
+	const swapEnd = subtreeEnd(swap);
+	const swapText = content.slice(swapStart, swapEnd);
+
+	const rangeStart = Math.min(blockStart, swapStart);
+	const rangeEnd = Math.max(blockEnd, swapEnd);
+
+	// Strip trailing blank lines before the swap range
+	let headEnd = rangeStart;
+	while (headEnd > 0 && content[headEnd - 1] === "\n") {
+		headEnd--;
+	}
+	const head = headEnd > 0 ? content.slice(0, headEnd) + "\n" : "";
+
+	// Strip leading blank lines after the swap range
+	let tailPos = rangeEnd;
+	while (tailPos < content.length && content[tailPos] === "\n") {
+		tailPos++;
+	}
+	const tail =
+		tailPos < content.length
+			? "\n" + content.slice(tailPos)
+			: content.slice(rangeEnd);
+
+	if (blockStart < swapStart) {
+		return { text: head + swapText + "\n" + blockText + tail, start: head.length + swapText.length + 1 };
+	}
+	return { text: head + blockText + "\n" + swapText + tail, start: head.length };
+}
+
+/**
+ * Indent a run of adjacent siblings under the sibling before them (Alt+Right):
+ * each subtree is re-levelled for its new parent and appended after
+ * `prevSibling`'s subtree.
+ */
+export function indentSiblings(content: string, selected: readonly OsmosisNode[], prevSibling: OsmosisNode): Spliced {
+	const blockStart = selected[0]!.range.start;
+	const blockEnd = subtreeEnd(selected[selected.length - 1]!);
+
+	// Re-indent each selected node's subtree individually
+	const reindented = selected
+		.map((nodeSrc) =>
+			reindentSubtree(
+				content.slice(nodeSrc.range.start, subtreeEnd(nodeSrc)),
+				nodeSrc,
+				inferIndentType(prevSibling, nodeSrc),
+				inferIndentDepth(prevSibling, nodeSrc),
+			),
+		)
+		.join("\n");
+
+	// Remove block from current position
+	let removeStart = blockStart;
+	if (removeStart > 0 && content[removeStart - 1] === "\n") {
+		removeStart--;
+	}
+
+	// Insert at end of previous sibling's subtree
+	const insertPos = subtreeEnd(prevSibling);
+	const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
+
+	const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
+	return {
+		text: withoutBlock.slice(0, insertPos) + prefix + reindented + withoutBlock.slice(insertPos),
+		start: insertPos + prefix.length,
+	};
+}
+
+/**
+ * Outdent a run of adjacent siblings of `parent` (Alt+Left). A child of the
+ * root promotes in place instead — list item to paragraph to heading — and null
+ * says it can't (a heading or other type at the root). Otherwise the subtrees
+ * are re-levelled and placed after the parent's subtree.
+ */
+export function outdentSiblings(content: string, parent: OsmosisNode, selected: readonly OsmosisNode[]): Spliced | null {
+	const first = selected[0]!;
+	const blockStart = first.range.start;
+	const blockEnd = subtreeEnd(selected[selected.length - 1]!);
+	const subtreeText = (nodeSrc: OsmosisNode): string => content.slice(nodeSrc.range.start, subtreeEnd(nodeSrc));
+
+	if (parent.type === "root") {
+		let newType: OsmosisNode["type"];
+		let newDepth: number;
+		if (first.type === "bullet" || first.type === "ordered") {
+			newType = "paragraph";
+			newDepth = 0;
+		} else if (first.type === "paragraph") {
+			newType = "heading";
+			// Match neighboring heading siblings, default to h1
+			newDepth = inferRootHeadingLevel(parent, parent.children.indexOf(first));
+		} else {
+			return null; // headings and other types can't promote further at root
+		}
+		const reindented = selected
+			.map((nodeSrc) => reindentSubtree(subtreeText(nodeSrc), nodeSrc, newType, newDepth))
+			.join("\n");
+		return {
+			text: content.slice(0, blockStart) + reindented + content.slice(blockEnd),
+			start: blockStart,
+		};
+	}
+
+	// Re-indent each selected node's subtree individually
+	const reindented = selected
+		.map((nodeSrc) => {
+			const { type, depth } = outdentContext(nodeSrc, parent);
+			return reindentSubtree(subtreeText(nodeSrc), nodeSrc, type, depth);
+		})
+		.join("\n");
+
+	// Remove block from current position
+	let removeStart = blockStart;
+	if (removeStart > 0 && content[removeStart - 1] === "\n") {
+		removeStart--;
+	}
+
+	// Insert after parent's subtree
+	const parentEnd = subtreeEnd(parent);
+
+	const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
+	const removedLength = blockEnd - removeStart;
+	const adjustedParentEnd = parentEnd - removedLength;
+
+	const prefix =
+		adjustedParentEnd > 0 && withoutBlock[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
+	return {
+		text:
+			withoutBlock.slice(0, adjustedParentEnd) +
+			prefix +
+			reindented +
+			withoutBlock.slice(adjustedParentEnd),
+		start: adjustedParentEnd + prefix.length,
+	};
+}
+
+/**
+ * Put an empty parent above `span` (Ctrl+Enter): a line of `src`'s type and
+ * depth, with the block under it indented one level (headings go a level
+ * deeper). `src` is the node the gesture is on; `span` the block it takes in,
+ * which is more than `src`'s subtree for a multi-selection.
+ */
+export function insertParent(content: string, src: OsmosisNode, span: Range): Spliced {
+	const blockText = content.slice(span.start, span.end);
+	const newParentLine = serializeLine(src.type, src.depth, "");
+
+	// Indent all selected subtrees by 1 level
+	let indentedSubtree: string;
+	if (src.type === "heading") {
+		indentedSubtree = indentSubtreeHeadings(blockText);
+	} else {
+		indentedSubtree = blockText
+			.split("\n")
+			.map((line) => (line.trim() === "" ? line : "\t" + line))
+			.join("\n");
+	}
+
+	return {
+		text: content.slice(0, span.start) + newParentLine + "\n" + indentedSubtree + content.slice(span.end),
+		start: span.start,
+		moved: span.start + newParentLine.length + 1,
+	};
+}
+
 /**
  * Renumber ordered list items so consecutive siblings at the same depth
  * are numbered sequentially (1, 2, 3, ...). Skips code fence contents.

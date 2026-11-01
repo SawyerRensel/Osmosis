@@ -6,7 +6,7 @@
 
 import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
-import { collectBlockIds } from "../mindmap-edit";
+import { collectBlockIds, deleteSubtree, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, outdentSiblings, subtreeEnd } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
 import { normalizeHeading, type GraphModel } from "./model";
@@ -266,4 +266,126 @@ export function linkInNote(content: string, a: OsmosisNode, b: OsmosisNode | nul
 	const edits = stampEdit === null ? [append] : [append, stampEdit];
 	const shift = (start: number): number => start + edits.reduce((sum, edit) => sum + (edit.offset <= start ? edit.text.length : 0), 0);
 	return { content: insertAll(content, edits), aStart: shift(a.range.start), bStart: b === null ? null : shift(b.range.start) };
+}
+
+/** The structural edits the 3D graph offers on a line, the mind map's own. */
+export type StructuralAction = "child" | "sibling" | "parent" | "delete" | "up" | "down" | "indent" | "outdent";
+
+/** What a structural edit does to a note: its new text, and which lines to select, edit and keep in place after it. */
+export interface StructuralPlan {
+	/** The note's new text, before `normalizeWrite`. */
+	text: string;
+	/** Where the line to select starts in `text`; null: the note's core (a delete under the root has no line left to select). */
+	select: number | null;
+	/** The selected line is new and empty, so the editor opens on it at once. */
+	fresh: boolean;
+	/** An existing line whose subtree moved or was re-levelled (its IDs change with its depth), and where it starts in `text`. */
+	moved: { node: OsmosisNode; start: number } | null;
+}
+
+/**
+ * What `action` does to `line`, a node of `root`, in `content`, or null when
+ * there is nothing to do (no sibling to move past, nothing to indent under, a
+ * heading already at the root). The same computation the mind map makes, one
+ * node at a time.
+ */
+export function planStructural(action: StructuralAction, content: string, root: OsmosisNode, line: OsmosisNode): StructuralPlan | null {
+	const ancestors = ancestorsOf(root, line.id);
+	const parent = ancestors[0];
+	if (parent === undefined) return null;
+	const siblings = parent.children;
+	const index = siblings.indexOf(line);
+	const moved = (edit: { text: string; start: number }): StructuralPlan => ({ text: edit.text, select: edit.start, fresh: false, moved: { node: line, start: edit.start } });
+	switch (action) {
+		case "child": {
+			const edit = insertChild(content, line);
+			return { text: edit.text, select: edit.start, fresh: true, moved: null };
+		}
+		case "sibling": {
+			const edit = insertSibling(content, line);
+			return { text: edit.text, select: edit.start, fresh: true, moved: null };
+		}
+		case "parent": {
+			const edit = insertParent(content, line, { start: line.range.start, end: subtreeEnd(line) });
+			return { text: edit.text, select: edit.start, fresh: true, moved: { node: line, start: edit.moved ?? edit.start } };
+		}
+		case "delete":
+			// The parent stays where it was: everything removed is after its first line.
+			return { text: deleteSubtree(content, line), select: parent.type === "root" ? null : parent.range.start, fresh: false, moved: null };
+		case "up":
+		case "down": {
+			const neighbour = siblings[index + (action === "up" ? -1 : 1)];
+			return index === -1 || neighbour === undefined ? null : moved(moveSiblings(content, [line], neighbour));
+		}
+		case "indent": {
+			const previous = siblings[index - 1];
+			return index < 1 || previous === undefined ? null : moved(indentSiblings(content, [line], previous));
+		}
+		case "outdent": {
+			const out = outdentSiblings(content, parent, [line]);
+			return out === null ? null : moved(out);
+		}
+	}
+}
+
+/**
+ * Where the line that starts at `start` in `before` starts in `after`, the same
+ * text once `normalizeWrite` has renumbered lists and added or dropped blank
+ * lines: the same non-blank line, by count. Null when `start` is not on a
+ * non-blank line, or `after` has fewer.
+ */
+export function mapStart(before: string, after: string, start: number): number | null {
+	const lineStart = start === 0 ? 0 : before.lastIndexOf("\n", start - 1) + 1;
+	const lineEnd = before.indexOf("\n", lineStart);
+	if (before.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim() === "") return null;
+	let nonBlank = 0;
+	for (const line of before.slice(0, lineStart).split("\n")) if (line.trim() !== "") nonBlank++;
+	let seen = 0;
+	let at = 0;
+	for (const line of after.split("\n")) {
+		if (line.trim() !== "") {
+			if (seen === nonBlank) return at + (start - lineStart);
+			seen++;
+		}
+		at += line.length + 1;
+	}
+	return null;
+}
+
+/** The node under `root` whose line starts at `start`, or null. */
+export function nodeAtStart(root: OsmosisNode, start: number): OsmosisNode | null {
+	const stack: OsmosisNode[] = [root];
+	while (stack.length > 0) {
+		const node = stack.pop()!;
+		if (node.type !== "root" && node.range.start === start) return node;
+		for (let i = node.children.length - 1; i >= 0; i--) stack.push(node.children[i]!);
+	}
+	return null;
+}
+
+/** `node` and its descendants, depth first, in document order. */
+export function preorder(node: OsmosisNode): OsmosisNode[] {
+	const out: OsmosisNode[] = [];
+	const stack: OsmosisNode[] = [node];
+	while (stack.length > 0) {
+		const next = stack.pop()!;
+		out.push(next);
+		for (let i = next.children.length - 1; i >= 0; i--) stack.push(next.children[i]!);
+	}
+	return out;
+}
+
+/**
+ * Each line of `old`'s subtree with the line it became, where the subtree now
+ * starts at `start` in `root` (the note as written). A re-levelled subtree has
+ * the same lines in the same order, so they pair off; if the shapes differ the
+ * subtree's own line is all that is paired. Empty when nothing starts at `start`.
+ */
+export function carryPairs(old: OsmosisNode, root: OsmosisNode, start: number): { from: OsmosisNode; to: OsmosisNode }[] {
+	const now = nodeAtStart(root, start);
+	if (now === null) return [];
+	const before = preorder(old);
+	const after = preorder(now);
+	if (before.length !== after.length) return [{ from: old, to: now }];
+	return before.map((from, i) => ({ from, to: after[i]! }));
 }
