@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-31T23:10:00.000Z"
+date_modified: "2026-11-01T02:38:30.000Z"
 date_start_scheduled: "2026-10-31T22:05:13.000Z"
 date_start_actual: "2026-10-31T22:05:13.000Z"
 date_end_scheduled:
@@ -124,7 +124,9 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
   - Same note: compute both splices on one string, later offset first, one `edits.write`. Different notes: an edit group: stamp B's note first, then write A's.
 - **Manual test**: drag a bullet onto a bullet in another note (gets `^id`, link appears in A, edge appears after reload), onto a heading, onto a note core, within one note; one Ctrl+Z undoes both files; desktop and touch.
 
-### Slice 5: Structural edits within a note
+### Slice 5: Structural edits within a note (built, see "Slice 5" in the batch notes below)
+
+*Corrections made while building:* (1) **Enter is now "add sibling", not "edit"**: slice 3 bound F2 and Enter to the inline editor, but this slice's key list (the mind map's) gives Enter to add sibling, so F2 alone edits in edit mode. (2) The structural functions take a *run* of sibling nodes (the mind map's multi-select) and return `{ text, start }`; 3D passes one. (3) A long press on a line is 500 ms within the 6 px click slop; right-click is handled from the pointer events, not the `contextmenu` event.
 
 - Keys in edit mode, on the focused node: Tab = add child, Enter = add sibling, Ctrl/Cmd+Enter = insert parent, Delete/Backspace = delete subtree, Alt+Up/Down = move among siblings, Alt+Left/Right = outdent/indent. A new node opens the slice-3 inline editor at once (2D: `startEditingNewNode`).
 - Plus a node context menu (right-click without drag; long-press on touch in edit mode) listing the same actions, so phones can reach them.
@@ -235,6 +237,8 @@ Nothing has run in Obsidian: the checkbox hit-test against real rendered panels 
 ## Slice 3 (inline editing and retype)
 
 **Built** on `feature/3d-graph-phase-7`, code commit `8433d61`, on top of slice 2. Not pushed, no PR, not tested in Obsidian. **Slices 4-6 remain.**
+
+*Overturned later:* this slice's editor-placement decision (placed once on `document.body`, unscaled, a camera move blurs and saves) was reversed by [[3D Graph - Editor anchoring and overlays fixes]]: the editor now lives in the scene stage and tracks its plate every frame.
 
 ### What it does
 
@@ -356,3 +360,86 @@ Nothing has run in Obsidian: the `EmbeddableMarkdownEditor` mounted on `document
 ### Not verified
 
 Nothing has run in Obsidian: the real `generateMarkdownLink` output (same-note links, the user's Markdown-links setting), the plate highlight and the band's look and draw order against real plates and panels (DOM panels always draw over the band), the 6 px slop on a real touch screen, and the placement carry after a stamp changes the target's graph ID. Lint, the full suite (2,296 tests) and the build pass.
+
+## Slice 5 (structural edits within a note)
+
+**Built** on `feature/3d-graph-phase-7-structural` (stacked on `fix/3d-graph-editor-anchoring`, which sits on `feature/3d-graph-phase-7`), code commit `95613e5`. Not pushed, no PR, not tested in Obsidian. **Slice 6 remains.**
+
+### What it does
+
+In edit mode, with a line focused (click it first; `Graph3DScene.focusedNode()`), the mind map's keys act on it:
+
+| Key | Action |
+|---|---|
+| Tab | Add child |
+| Enter | Add sibling (**Enter no longer opens the editor; F2 does**) |
+| Ctrl/Cmd+Enter | Insert parent |
+| Delete / Backspace | Delete the line and its subtree |
+| Alt+Up / Alt+Down | Move among siblings |
+| Alt+Left / Alt+Right | Outdent / indent |
+
+The same actions (plus "Edit text") are in a context menu on a line: **right-click** without dragging on desktop, **long press** on touch. A new line (child, sibling, parent) opens the slice-3 editor on it at once, and the camera flies in if its text would be unreadably small (`Graph3DScene.setEditing`). Keys pass through to Obsidian outside edit mode, in a text box or editor, or with a button focused. The study gate (`editBlocked()`) applies; one structural edit is in flight at a time (`structuring`), so a held key does not stack writes.
+
+### Approach
+
+- **Extracted from `MindMapView`, test-first against 2D.** The same-file branch of each action became a pure function in `src/mindmap-edit.ts`: `insertChild`, `insertSibling`, `deleteSubtree`, `moveSiblings`, `indentSiblings`, `outdentSiblings` (also the root-child promotion list item → paragraph → heading) and `insertParent`, with the type rules they need (`inferChildType/Depth`, `inferIndentType/Depth`, `outdentContext`, `inferRootHeadingLevel`, `indentSubtreeHeadings`). Before touching 2D I copied today's logic verbatim into a throwaway module and checked the extracted functions against it for every node of every markdown file under `vault/tests/mindmap`, `vault/tests/graph3d` and `e2e/fixtures` (4,275 nodes, 138 files, each action, single and two-node selections): identical output. The throwaway was deleted; the permanent tests in `mindmap-edit.test.ts` pin 25 of those outputs as literals (captured from the 2D code, not hand-written). Then `MindMapView` was made to call them. The cross-file branches (a move across an embed seam), the selection and the writes stay in the view; the 2D private `inferChildType`, `inferChildDepth`, `inferIndentType`, `inferIndentDepth` and `outdentContext` remain as one-line delegates because the drop code and the cross-file branches still call them.
+- **Each function returns where its line starts** (`Spliced.start`; insert parent also `moved`, where the block went), because 3D has to find the line again.
+- **`planStructural(action, content, root, line)`** (`src/graph3d/edit.ts`) wraps them for one node: it finds the parent and siblings from a fresh parse (`ancestorsOf`) and returns `{ text, select, fresh, moved }` or null where 2D does nothing (no sibling to move past, nothing to indent under, a heading at the root).
+- **Following lines through normalisation.** The result goes through `normalizeWrite`, which adds and drops blank lines and renumbers, so every offset shifts. `mapStart(before, after, start)` maps a line start by counting non-blank lines (normalisation never adds or removes one).
+- **Keeping placement.** Indent, outdent and insert parent change a subtree's depth, and a parse ID contains depth, so every descendant gets a new graph ID and would respawn beside its parent. `carryPairs(old, root, start)` pairs the old subtree with the re-parsed one in document order (the same lines, so they zip; if the counts differ only the subtree's own line is paired) and `Graph3DView.edited` gets one entry per pair; `place()` copies each old position (and pinned state) to its successor. Up/down keep their IDs.
+- **Selection after.** New line: selected and edited. Moves: the moved line. Delete: the parent line, or the note's core when the parent was the root (`selectAfter`).
+- **A new line opens its editor from `reload()`**: `pendingEdit` is set after the write lands, and once `scene.setData` has put the node in the scene the view calls `openPending` → `scene.seedClear(id)` → `beginEdit(node)`.
+
+### Decisions worth remembering
+
+- **`seedClear`.** `placeNodes` seeds a new line 10 units from its parent, inside the parent's plate, and `setEditing` pins the edited node where it is (the anchoring fix), so a new line would have been pinned overlapping its parent for good. `Graph3DScene.seedClear` moves a just-arrived free node to `linkDistance("hierarchy", parent.extent, node.extent)` from its parent in a random direction before the editor pins it. Only new lines opened this way; no other node moves.
+- **Context menu: 500 ms (`LONG_PRESS_MS`) and the 6 px click slop**, the same slop that turns a press into a link drag (slice 4), so the two are mutually exclusive: a finger that creeps past 6 px becomes a link drag and cancels the timer; one that holds still opens the menu, clears `press` (so the release is no click or double click) and ends the pending link drag. Only touch long-presses on a **line**; a note core, tag or empty space still orbits. A second finger (pinch), a lift, a pointer cancel, leaving edit mode and the editor opening all cancel it.
+- **Right-click** is read from the pointer events (button 2 down, up without moving 6 px, same line under the press), not the `contextmenu` event, because on macOS and Linux that event fires on press, before we know whether it is a pan (OrbitControls pans with the right button). The native context menu is suppressed on the canvas in edit mode only.
+- **The menu's target is the line pressed**, which also becomes the focused node (`setFocusId`, no flight). Menu items that cannot apply (move up on a first child) show a Notice; the same key presses do nothing silently, as in 2D.
+- **Direction keys are fixed**: Alt+Left outdents and Alt+Right indents, as the plan says. The 2D map flips them by its layout direction.
+- **An empty line left by cancel stays** (as in 2D): a new bullet whose editor is cancelled is an empty `- ` in the file, and its plate has zero width, so it is invisible in 3D. Undo (Ctrl+Z) removes it. I did not add a delete-on-cancel; say if you want one.
+- **Reordering is invisible in space.** Moving a line among its siblings changes the file but not the picture (settled nodes never move, and sibling order is not spatial). Indent/outdent change the hierarchy edge only.
+- **No multi-select.** The functions take a run of siblings and 2D still passes its multi-selection; 3D passes one line.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/mindmap-edit.ts` | `Spliced`, `insertChild`, `insertSibling`, `deleteSubtree`, `moveSiblings`, `indentSiblings`, `outdentSiblings`, `insertParent`, `inferChildType`, `inferChildDepth`, `inferRootHeadingLevel`, `inferIndentType`, `inferIndentDepth`, `outdentContext`, `indentSubtreeHeadings` |
+| `src/mindmap-edit.test.ts` | 25 literal 2D outputs, `start`/`moved` per function, the type rules (17 tests plus the table) |
+| `src/views/MindMapView.ts` | `addChildNode`, `addSiblingNode`, `deleteNode`, `moveNodeUpDown`, `indentNode`, `outdentNode`, `insertParentNode` call the extracted functions; the private infer helpers delegate; `inferRootHeadingLevel`, `indentSubtreeHeadings` removed from the class |
+| `src/graph3d/edit.ts` | `StructuralAction`, `StructuralPlan`, `planStructural`, `mapStart`, `nodeAtStart`, `preorder`, `carryPairs` |
+| `src/graph3d/edit.test.ts` | 9 tests for those |
+| `src/views/Graph3DScene.ts` | `onContextMenu` option, `LONG_PRESS_MS`, `menuPress`, `longPress`, `startLongPress`, `clearLongPress`, `onContextMenuEvent`, `seedClear` |
+| `src/views/Graph3DView.ts` | Structural keys (Enter moved off the editor), `structural`, `showNodeMenu`, `commitLines` (`commitEdit` calls it), `pendingEdit` / `openPending`, `selectAfter`, `edited.from` optional |
+| `e2e/fixtures/graph3d/Watch Bill.md`, `vault/tests/graph3d/Watch Bill.md` | new fixture |
+
+### Fixture
+
+`Watch Bill.md` (copied to `vault/tests/graph3d/`): headings, a nested bullet list with a `^log-wind` ID, a checkbox, an ordered list, a paragraph. A new file, so there is no reset hazard; still reload Obsidian (Ctrl+R) first. For the 2D regression pass use `vault/tests/mindmap/move-nodes.md` and the same fixture opened as a mind map.
+
+### Manual test (Sawyer)
+
+**2D regression first (every extracted action), on `vault/tests/mindmap/move-nodes.md` as a mind map.** Select "Alpha child 2", then:
+1. Tab: an empty child appears under it and the editor opens; type "x", Ctrl+Enter. Ctrl+Z removes it.
+2. Enter: an empty sibling below its subtree, editor open. Escape leaves an empty bullet; Ctrl+Z removes it.
+3. Ctrl+Enter: an empty parent appears above it, and the node (with "test 1", "test 2") is indented under it. On the "Alpha" heading instead: an empty `## ` above it and Alpha becomes `###`. Undo each.
+4. Delete on "test 1": it goes with no blank line left; the parent ("Alpha child 2") is selected. Undo.
+5. Alt+Up / Alt+Down on "Beta" (a heading) and on "Alpha child 1": swapped with the neighbour, subtrees intact. Alt+Right on "Alpha child 2": it nests under "Alpha child 1". Alt+Left on "test 1": it comes out beside "Alpha child 2". Alt+Left on a depth-0 bullet under a heading: it becomes a plain paragraph; again: a heading.
+6. Select two siblings (Shift+Down) and repeat Alt+Right, Alt+Left, Alt+Down and Ctrl+Enter: both move together. A node under a transcluded note (`vault/tests/mindmap/seam-transit-map.md`): Alt+Up/Alt+Right across the seam still moves it into the other note.
+7. Right-click a node: Add child / Add sibling / Insert parent / Delete still work.
+
+**3D.** Open `Watch Bill.md`, run "Open 3D graph for current note", depth 1, turn on the pencil, click "Log the wind" (it becomes focused), fly close enough to read it.
+8. Tab: an empty child is created (open the note in a tab: `\t- ` under "Log the wind", after "Shift of more than forty degrees"), the editor opens on its plate, clear of the parent's plate; type "Gust log", Ctrl+Enter: the plate shows it. "Log the wind" keeps its `^log-wind`. Ctrl+Z (3D view focused) removes it; Ctrl+Shift+Z puts it back.
+9. Enter on "Log the wind": a sibling after its two children (a bullet at the same level); the editor opens; Escape. The empty bullet stays in the file. Undo removes it. On the checkbox line, Enter makes `- [ ] `. On the "Deck" heading, Enter makes an empty `## ` after the whole section. On "Standing orders for the night watch.", Enter makes a blank-separated paragraph placeholder.
+10. Ctrl+Enter on "Check the anchor light": an empty `- ` appears above it, and it is indented under it; its plate has not moved. On "Galley": a new heading above, Galley becomes `###`, and its three items stay put.
+11. Delete / Backspace on "Gusts over twenty knots": gone, "Log the wind" selected. On "Deck": the whole section goes. On "Watch Bill" (the top heading): everything below goes, the note core is selected. Undo each.
+12. Alt+Down on "Check the anchor light": swaps with "Log the wind" in the file (check the note); the picture does not move. Alt+Up on the first item: nothing. Alt+Right on "Log the wind": nests under "Check the anchor light"; its two children go down with it and the plates stay where they were (only the hierarchy edge changes). Alt+Left on "Gusts over twenty knots": becomes a sibling of "Log the wind". Alt+Left on "Check the anchor light" under "Deck": becomes a plain paragraph; again: a heading. Numbers in "Galley" stay 1, 2, 3 after moving "Light the stove" up.
+13. Right-click "Plot a fix every hour" without moving: the menu (Edit text, Add child, Add sibling, Insert parent, Move up/down, Indent, Outdent, Delete) opens at the pointer and the line is focused. Each item does what its key does. Right-drag still pans, with no menu. Right-click on empty space: nothing. Outside edit mode: no menu, the browser's own menu as before.
+14. Phone: pencil on, hold a finger still on a line for half a second: the menu opens, and releasing does not hop or open the editor. A tap still hops, a double tap still edits, a drag from a line still links, a drag from empty space still orbits, a second finger cancels the hold.
+15. Undo across views: make an Alt+Right in 3D, switch to the mind map of the same note (a second tab), Ctrl+Z there: it reverts. Make an Alt+Down in the mind map, Ctrl+Z in the 3D tab: it reverts, and the 3D view reloads.
+16. Keys outside edit mode (Tab, Enter, Delete) do nothing in 3D, and none act while the Overlays menu's text boxes or the editor have focus. Relational study: the menu and keys show the study notice.
+
+### Not verified
+
+Nothing has run in Obsidian. Lint, the full suite (2,345 tests) and the build pass. Unverified: the 2D map in Obsidian after the extraction (only unit-tested; the differential check ran the extracted functions against a verbatim copy of the old logic, not the live view); right-button press/release on macOS and Linux (`pointerup` with `button === 2` after OrbitControls' pointer capture); the 500 ms hold on a real touch screen and Android's own long-press `contextmenu` (suppressed on the canvas); Obsidian `Menu` positioning at a pointer over a WebGL canvas; the icon names `indent-increase`, `indent-decrease` (a missing icon just shows no glyph); `seedClear` placement against dense neighbours; the carried placement after indent/outdent/insert parent; and that `mapStart`'s non-blank-line count holds for every `normalizeBlockSpacing` rule.
