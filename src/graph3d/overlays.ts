@@ -26,7 +26,6 @@ export interface Graph3DOverlays {
 	forceBalance: number;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;
-	bloom: boolean;
 	/** A particle runs along each drawn edge, source to target. */
 	particles: boolean;
 	labels: LabelMode;
@@ -36,10 +35,10 @@ export const MIST_LIMIT = 4;
 
 export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	colorBy: "note",
-	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: true, unresolved: true },
+	// Attachments are off: an attachment is already part of the note that embeds it.
+	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: false, unresolved: true },
 	forceBalance: 0.5,
 	mist: 1,
-	bloom: false,
 	particles: false,
 	labels: "all",
 };
@@ -49,7 +48,8 @@ const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
 
 /**
  * Overlay settings as saved in plugin data, checked field by field: anything
- * missing or malformed (an older or hand-edited data.json) takes its default.
+ * missing or malformed (an older or hand-edited data.json) takes its default,
+ * and anything no longer offered (Bloom) is dropped.
  */
 export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 	const value = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
@@ -66,7 +66,6 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		edges,
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
-		bloom: typeof value.bloom === "boolean" ? value.bloom : DEFAULT_OVERLAYS.bloom,
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,
 	};
@@ -75,6 +74,27 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 /** Whether an edge is drawn: its kind is shown, and, when it reaches an unresolved link, so are those. */
 export function edgeShown(kind: GraphEdgeKind, toGhost: boolean, edges: Readonly<Record<OverlayEdgeKind, boolean>>): boolean {
 	return edges[kind] && (!toGhost || edges.unresolved);
+}
+
+/**
+ * The model as the Overlays menu shows it. With Attachments off, an attachment
+ * node that only attachment edges reach is left out with them, since the
+ * attachment is the node (unresolved links are different: their edges hide,
+ * the ghost nodes stay). An attachment a property also links to stays, with
+ * that edge.
+ */
+export function visibleModel(model: GraphModel, edges: Readonly<Record<OverlayEdgeKind, boolean>>): GraphModel {
+	if (edges.attachment) return model;
+	const kept = new Set<string>();
+	for (const edge of model.edges) {
+		if (edge.kind !== "attachment") kept.add(edge.source).add(edge.target);
+	}
+	const hidden = new Set(model.nodes.filter((node) => node.kind === "attachment" && !kept.has(node.id)).map((node) => node.id));
+	if (hidden.size === 0) return model;
+	return {
+		nodes: model.nodes.filter((node) => !hidden.has(node.id)),
+		edges: model.edges.filter((edge) => !hidden.has(edge.source) && !hidden.has(edge.target)),
+	};
 }
 
 /** The weakest a link gets at either end of the force slider: loose, but still holding its ends together. */

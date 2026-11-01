@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, appendToLine, editBoxGeometry, findNodeById, fitEditTop, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId } from "./edit";
+import { ancestorsOf, appendToLine, bandOffset, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId, visibleBand } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -151,49 +151,49 @@ describe("locateLine", () => {
 	});
 });
 
-describe("editBoxGeometry", () => {
-	const bounds = { left: 0, top: 0, right: 1000, bottom: 700 };
+describe("editorAnchor", () => {
+	const size = { width: 1000, height: 600 };
 
-	it("keeps the node's left, top and width when they fit", () => {
-		expect(editBoxGeometry({ left: 100, top: 200, width: 300, height: 40 }, bounds)).toEqual({ left: 100, top: 200, width: 300, maxHeight: 492 });
+	it("centres on the projected node, in stage px", () => {
+		expect(editorAnchor({ x: 0, y: 0 }, 100, 1, size, 800, 8)).toEqual({ x: 500, y: 300, scale: 1 });
+		const corner = editorAnchor({ x: -1, y: 1 }, 100, 1, size, 800, 8);
+		expect([corner?.x, corner?.y]).toEqual([0, 0]);
 	});
 
-	it("widens a tiny far plate and narrows a huge panel to a readable range", () => {
-		expect(editBoxGeometry({ left: 100, top: 200, width: 12, height: 4 }, bounds).width).toBe(240);
-		expect(editBoxGeometry({ left: 100, top: 200, width: 2000, height: 400 }, bounds).width).toBe(560);
+	it("scales as a panel does, smaller with depth", () => {
+		expect(editorAnchor({ x: 0, y: 0 }, 200, 1, size, 800, 8)?.scale).toBe(0.5);
+		expect(editorAnchor({ x: 0, y: 0 }, 50, 1, size, 800, 8)?.scale).toBe(2);
 	});
 
-	it("stays inside the bounds, with room for the buttons above", () => {
-		const box = editBoxGeometry({ left: 950, top: -50, width: 300, height: 40 }, bounds);
-		expect(box.left).toBe(1000 - 8 - 300);
-		expect(box.top).toBe(8 + 36);
-		const low = editBoxGeometry({ left: 10, top: 900, width: 300, height: 40 }, bounds);
-		expect(low.top).toBe(700 - 8 - 48);
-	});
-
-	it("shrinks to a phone-width viewport", () => {
-		const phone = { left: 0, top: 0, right: 360, bottom: 400 };
-		const box = editBoxGeometry({ left: 20, top: 100, width: 100, height: 20 }, phone);
-		expect(box.width).toBe(240);
-		expect(box.left + box.width).toBeLessThanOrEqual(360 - 8);
-		const narrow = editBoxGeometry({ left: 0, top: 100, width: 100, height: 20 }, { left: 0, top: 0, right: 200, bottom: 400 });
-		expect(narrow.width).toBe(184);
+	it("is null for a node behind the camera or at its near plane", () => {
+		expect(editorAnchor({ x: 0, y: 0 }, -5, 1, size, 800, 8)).toBeNull();
+		expect(editorAnchor({ x: 0, y: 0 }, 1, 1, size, 800, 8)).toBeNull();
 	});
 });
 
-describe("fitEditTop", () => {
-	const bounds = { left: 0, top: 0, right: 360, bottom: 400 };
-
-	it("leaves a box that fits where it is", () => {
-		expect(fitEditTop(100, 60, bounds)).toBe(100);
+describe("visibleBand", () => {
+	it("is the visual viewport when there is no keyboard to subtract", () => {
+		expect(visibleBand({ offsetTop: 0, height: 700 }, 800, null)).toEqual({ top: 0, bottom: 700 });
+		expect(visibleBand(null, 800, { top: 0, height: 0 })).toEqual({ top: 0, bottom: 800 });
 	});
 
-	it("lifts a box the keyboard or its own growth pushed past the bottom", () => {
-		expect(fitEditTop(300, 120, bounds)).toBe(400 - 8 - 120);
+	it("stops above a keyboard that overlays the page", () => {
+		expect(visibleBand({ offsetTop: 0, height: 800 }, 800, { top: 480, height: 320 })).toEqual({ top: 0, bottom: 480 });
+	});
+});
+
+describe("bandOffset", () => {
+	it("is 0 when the whole stage shows", () => {
+		expect(bandOffset(40, 760, { top: 0, bottom: 800 })).toBe(0);
 	});
 
-	it("never rises above the room the buttons need", () => {
-		expect(fitEditTop(300, 900, bounds)).toBe(8 + 36);
+	it("lifts the picture's centre to the middle of what the keyboard leaves", () => {
+		// Stage 40–800, centre 420; visible 40–480, centre 260.
+		expect(bandOffset(40, 760, { top: 0, bottom: 480 })).toBe(160);
+	});
+
+	it("is 0 when almost none of the stage shows", () => {
+		expect(bandOffset(40, 760, { top: 0, bottom: 60 })).toBe(0);
 	});
 });
 

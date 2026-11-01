@@ -4093,6 +4093,11 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	padding: var(--size-4-2) 0;
 }
 
+/* Obsidian gives a setting row a large rounded box; here it is a small radius, as in Obsidian's own settings rows. The class is repeated to outweigh Obsidian's rule without !important. */
+.osmosis-graph3d-overlays.osmosis-graph3d-overlays .setting-item {
+	border-radius: var(--radius-s);
+}
+
 .osmosis-graph3d-overlays .setting-item-heading {
 	padding-top: var(--size-4-3);
 }
@@ -4410,13 +4415,44 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	pointer-events: none;
 }
 
-/* Inline editing in the 3D graph (Graph3DEdit.ts): the mind map's edit box (.osmosis-edit-overlay supplies the look and the CodeMirror resets), but placed in screen space on document.body and at a readable size, whatever the camera distance. Above the view's own corner controls. */
-.osmosis-edit-overlay.osmosis-graph3d-edit {
-	position: fixed;
-	z-index: 10000;
-	--osmosis-edit-font-size: var(--font-text-size, 16px);
-	--osmosis-edit-line-height: 1.45;
-	--osmosis-edit-padding: 6px 10px;
+/*
+ * Inline editing in the 3D graph (Graph3DEdit.ts). The anchor is a zero-size
+ * point at the node that the near tier moves every frame; the box is laid out
+ * like the node's panel (font size, minimum size and corners set inline) and
+ * scaled with it, so it sits on the plate and moves, scales and hides with it.
+ * The mind map's edit box (.osmosis-edit-overlay) supplies the accent border
+ * and the CodeMirror resets. Above the near-tier panels, under the corner
+ * controls, which come after it in the stage.
+ */
+.osmosis-graph3d-edit {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 0;
+	height: 0;
+	z-index: 1;
+}
+
+.osmosis-edit-overlay.osmosis-graph3d-edit-box {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: max-content;
+	/* PANEL_MAX_EM, as a panel: a long line wraps at the width the scene spaces nodes for. */
+	max-width: 20em;
+	transform-origin: 50% 50%;
+	/* The plate's fill, as a panel has. */
+	background-color: var(--background-secondary);
+	--osmosis-edit-font-size: 1em;
+	--osmosis-edit-line-height: 1.25;
+	--osmosis-edit-padding: 0.25em 0.4em;
+}
+
+/* The buttons keep their own size and are placed over the box's corners each frame (transform, inline). */
+.osmosis-graph3d-edit .osmosis-edit-btn {
+	top: 0;
+	left: 0;
+	right: auto;
 }
 
 /* The panel under the editor is hidden while its text is being edited. */

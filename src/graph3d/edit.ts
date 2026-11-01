@@ -8,6 +8,7 @@ import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
 import { collectBlockIds } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
+import { panelScale } from "./lod";
 import { normalizeHeading, type GraphModel } from "./model";
 
 /**
@@ -93,52 +94,63 @@ export function locateLine(text: string, line: string, hint: number): number {
 	return best === -1 ? hint : best;
 }
 
-/** A rectangle in client pixels. */
-export interface Box {
-	left: number;
-	top: number;
-	width: number;
-	height: number;
+/** Where the inline editor sits this frame, in the stage's px: centred on (`x`, `y`), scaled like a near-tier panel, and how much of it shows (0–1). */
+export interface EditorPlace {
+	x: number;
+	y: number;
+	scale: number;
+	opacity: number;
 }
 
-/** The room the inline editor may use, in client pixels. */
-export interface EditBounds {
-	left: number;
+/**
+ * Where a panel-sized box sits over a node: `ndc` is the node's projected
+ * position (−1 to 1, y up), `depth` its view depth, `size` the canvas in px.
+ * The scale is the near tier's (`panelScale`), so text laid out at panel size
+ * lands at the plate's text size. Null when the node is not in front of the
+ * camera's near plane.
+ */
+export function editorAnchor(
+	ndc: { x: number; y: number },
+	depth: number,
+	near: number,
+	size: { width: number; height: number },
+	pxPerUnitAt1: number,
+	pxPerUnit: number,
+): { x: number; y: number; scale: number } | null {
+	if (depth <= near) return null;
+	return { x: ((ndc.x + 1) / 2) * size.width, y: ((1 - ndc.y) / 2) * size.height, scale: panelScale(depth, pxPerUnitAt1, pxPerUnit) };
+}
+
+/** A band of the window, top to bottom in client px: what the on-screen keyboard leaves visible. */
+export interface VisibleBand {
 	top: number;
-	right: number;
 	bottom: number;
 }
 
-const EDIT_MIN_WIDTH = 240;
-const EDIT_MAX_WIDTH = 560;
-const EDIT_MARGIN = 8;
-/** Above the box: the save and cancel buttons float 32 px over it. */
-const EDIT_BUTTON_ROOM = 36;
-const EDIT_MIN_HEIGHT = 48;
-
-const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
-
 /**
- * Where the inline editor sits over a node. It is not scaled with the camera:
- * the text has to be readable however far the node is, so it only takes the
- * node's on-screen left, top and width (within a readable range) and is kept
- * inside `bounds`, with room above for its buttons.
+ * The visible band: the visual viewport (`visualViewport`, absent on old
+ * WebViews), less the on-screen keyboard where the VirtualKeyboard API reports
+ * one that overlays the page (`boundingRect`; zero height while it is down).
  */
-export function editBoxGeometry(anchor: Box, bounds: EditBounds): { left: number; top: number; width: number; maxHeight: number } {
-	const room = bounds.right - bounds.left - 2 * EDIT_MARGIN;
-	const width = clamp(anchor.width, Math.min(EDIT_MIN_WIDTH, room), Math.min(EDIT_MAX_WIDTH, room));
-	const left = clamp(anchor.left, bounds.left + EDIT_MARGIN, bounds.right - EDIT_MARGIN - width);
-	const top = clamp(anchor.top, bounds.top + EDIT_MARGIN + EDIT_BUTTON_ROOM, bounds.bottom - EDIT_MARGIN - EDIT_MIN_HEIGHT);
-	return { left, top, width, maxHeight: bounds.bottom - EDIT_MARGIN - top };
+export function visibleBand(viewport: { offsetTop: number; height: number } | null, windowHeight: number, keyboard: { top: number; height: number } | null): VisibleBand {
+	const top = viewport?.offsetTop ?? 0;
+	const bottom = top + (viewport?.height ?? windowHeight);
+	return { top, bottom: keyboard !== null && keyboard.height > 0 ? Math.min(bottom, keyboard.top) : bottom };
 }
 
+/** Less of the stage than this showing is not worth centring on. */
+const MIN_BAND_PX = 48;
+
 /**
- * The top of an editor `height` tall that was placed at `top`, moved up if it
- * now runs past `bounds` (it grew as text was typed, or the on-screen keyboard
- * shrank the visible area), but never above the room its buttons need.
+ * How far (px) to shift the camera's picture up so its centre, where the line
+ * being edited is, lands mid-way down the part of the stage `band` leaves
+ * visible. 0 when all of the stage shows, or too little of it does.
  */
-export function fitEditTop(top: number, height: number, bounds: EditBounds): number {
-	return Math.max(bounds.top + EDIT_MARGIN + EDIT_BUTTON_ROOM, Math.min(top, bounds.bottom - EDIT_MARGIN - height));
+export function bandOffset(stageTop: number, stageHeight: number, band: VisibleBand): number {
+	const top = Math.max(stageTop, band.top);
+	const bottom = Math.min(stageTop + stageHeight, band.bottom);
+	if (bottom - top < MIN_BAND_PX) return 0;
+	return Math.round(stageTop + stageHeight / 2 - (top + bottom) / 2);
 }
 
 /** A node type that is several lines, whose block ID goes on a line after it. */

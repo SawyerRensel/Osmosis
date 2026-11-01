@@ -14,6 +14,7 @@ import {
 	overlayNodeColor,
 	sliderFromMist,
 	typeColor,
+	visibleModel,
 } from "./overlays";
 
 const line = (id: string, path: string, source: Partial<OsmosisNode> = {}): GraphNode => ({
@@ -46,7 +47,8 @@ describe("normalizeOverlays", () => {
 		expect(overlays.edges).not.toHaveProperty("unknown");
 		expect(overlays.forceBalance).toBe(1);
 		expect(overlays.mist).toBe(1);
-		expect(overlays.bloom).toBe(true);
+		// Bloom was removed: an old saved value loads and is dropped.
+		expect(overlays).not.toHaveProperty("bloom");
 		expect(overlays.particles).toBe(false);
 		expect(overlays.labels).toBe("plates");
 	});
@@ -54,6 +56,44 @@ describe("normalizeOverlays", () => {
 	it("does not share the default edges object", () => {
 		normalizeOverlays(undefined).edges.link = false;
 		expect(DEFAULT_OVERLAYS.edges.link).toBe(true);
+	});
+});
+
+describe("default overlays", () => {
+	it("start with attachments off and everything else on", () => {
+		expect(DEFAULT_OVERLAYS.edges.attachment).toBe(false);
+		expect(Object.entries(DEFAULT_OVERLAYS.edges).filter(([, shown]) => !shown)).toEqual([["attachment", false]]);
+	});
+});
+
+describe("visibleModel", () => {
+	const core = (path: string): GraphNode => ({ id: `note:${path}`, kind: "note", label: path, path });
+	const file = (path: string): GraphNode => ({ id: `file:${path}`, kind: "attachment", label: path, path });
+	const ghost: GraphNode = { id: "ghost:Missing", kind: "ghost", label: "Missing" };
+	const model: GraphModel = {
+		nodes: [core("A.md"), line("l1", "A.md"), file("chart.png"), file("cover.png"), ghost],
+		edges: [
+			{ kind: "hierarchy", source: "note:A.md", target: "l1" },
+			{ kind: "attachment", source: "l1", target: "file:chart.png" },
+			{ kind: "attachment", source: "l1", target: "file:cover.png" },
+			{ kind: "property", source: "note:A.md", target: "file:cover.png" },
+			{ kind: "link", source: "l1", target: "ghost:Missing" },
+		],
+	};
+
+	it("shows everything with attachments on", () => {
+		expect(visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: true })).toBe(model);
+	});
+
+	it("drops an attachment only attachment edges reach, with its edges, and keeps one a property links to", () => {
+		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: false, unresolved: false });
+		expect(shown.nodes.map((node) => node.id)).toEqual(["note:A.md", "l1", "file:cover.png", "ghost:Missing"]);
+		expect(shown.edges.map((edge) => `${edge.kind}>${edge.target}`)).toEqual([
+			"hierarchy>l1",
+			"attachment>file:cover.png",
+			"property>file:cover.png",
+			"link>ghost:Missing",
+		]);
 	});
 });
 

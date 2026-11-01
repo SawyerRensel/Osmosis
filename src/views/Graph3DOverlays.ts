@@ -156,11 +156,13 @@ export class Graph3DOverlaysMenu {
 		new Setting(panel).setName("Forces").setHeading();
 		new Setting(panel)
 			.setName("Hierarchy ⟷ organic")
-			.setDesc("Left keeps each note's mind-map shape; right lets links shape the web. Settled nodes stay put: it shapes notes as they arrive.")
+			.setDesc("Left keeps each note's mind-map shape; right lets links shape the web. Moving it re-settles the loaded notes as you drag.")
 			.addSlider((slider) =>
 				slider
 					.setLimits(0, 1, 0.05)
 					.setValue(overlays.forceBalance)
+					// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+					.setInstant(true)
 					.onChange((value) => this.change({ forceBalance: value })),
 			);
 
@@ -176,7 +178,6 @@ export class Graph3DOverlaysMenu {
 					this.change({ mist: mistFromSlider(value) });
 				});
 		});
-		new Setting(panel).setName("Bloom").addToggle((toggle) => toggle.setValue(overlays.bloom).onChange((value) => this.change({ bloom: value })));
 		new Setting(panel)
 			.setName("Link particles")
 			.setDesc("A particle runs along each edge, from source to target.")

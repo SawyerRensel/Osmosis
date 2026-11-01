@@ -33,7 +33,8 @@ import { repaintOcclusion } from "./OcclusionRenderer";
 import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
-import { NEAR_BUDGET, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } from "../graph3d/lod";
+import { NEAR_BUDGET, NEAR_ENTER_SCALE, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } from "../graph3d/lod";
+import { editorAnchor, type EditorPlace } from "../graph3d/edit";
 import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
@@ -48,6 +49,18 @@ export interface PanelLink {
 	href: string;
 	external: boolean;
 	sourcePath: string;
+}
+
+/**
+ * The inline editor, which the near tier keeps over the plate being edited:
+ * laid out like a panel (`setPlate`) and moved and scaled with it every frame
+ * (`place`). See `Graph3DEdit.ts`.
+ */
+export interface TrackedEditor {
+	/** The panel box the editor lays out in, in px before its scale: the plate's size, corners and text size, as a panel has them. */
+	setPlate(plate: { minWidth: number; minHeight: number; radius: number; fontSize: number }): void;
+	/** Where it is this frame, in the stage's px; null while the node is behind the camera. */
+	place(at: EditorPlace | null): void;
 }
 
 /** Renders `markdown` into `el`, as `MarkdownRenderer.render` does, with `component` owning its children. */
@@ -116,6 +129,8 @@ export class Graph3DNear {
 	private enabled = true;
 	/** The node being edited over, whose panel stays hidden. */
 	private editing: string | null = null;
+	/** The inline editor over it, and the node it follows. */
+	private edit: { editor: TrackedEditor; node: NearSource } | null = null;
 	private readonly point = new Vector3();
 	private readonly platePoint = new Vector3();
 	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
@@ -206,8 +221,42 @@ export class Graph3DNear {
 			panel.object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
 			panel.object.element.setCssStyles({ opacity: String(panel.fade) });
 		}
+		this.placeEditor(camera, pxPerUnitAt1);
 	}
 
+	/**
+	 * Move the inline editor onto its plate for this frame, as a panel would sit
+	 * there: centred on the node, scaled by its depth, and fading into the mist
+	 * with the plate. The focus dim is left out, so the line being typed stays
+	 * readable wherever the orbit target is. Behind the camera it hides (by
+	 * opacity, not `display`, which would take the keyboard focus and save it).
+	 */
+	private placeEditor(camera: PerspectiveCamera, pxPerUnitAt1: number): void {
+		const edit = this.edit;
+		if (edit === null) return;
+		const { node } = edit;
+		if (node.x === undefined || node.y === undefined || node.z === undefined) {
+			edit.editor.place(null);
+			return;
+		}
+		const point = this.point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+		const depth = -point.z;
+		point.applyMatrix4(camera.projectionMatrix);
+		const size = this.renderer.getSize();
+		const at = editorAnchor({ x: point.x, y: point.y }, depth, camera.near, size, pxPerUnitAt1, this.pxPerUnit);
+		edit.editor.place(at === null ? null : { ...at, opacity: plateVisibility(node.opacity, depth, depth, this.density) });
+	}
+
+	/** Whether node's text would show at least at the size a panel enters the near tier, on screen: an editor opened there is readable without moving the camera. */
+	readable(node: NearSource, camera: PerspectiveCamera): boolean {
+		if (node.x === undefined || node.y === undefined || node.z === undefined) return false;
+		camera.updateMatrixWorld();
+		const point = this.point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
+		const depth = -point.z;
+		point.applyMatrix4(camera.projectionMatrix);
+		const at = editorAnchor({ x: point.x, y: point.y }, depth, camera.near, this.renderer.getSize(), this.pxPerUnitAt1(camera), this.pxPerUnit);
+		return at !== null && at.scale >= NEAR_ENTER_SCALE && Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1;
+	}
 	/**
 	 * The panel drawn on top at client point (`x`, `y`), if any. Panels never
 	 * take the pointer, so this hit-tests them as drawn: a nearer panel covers a
@@ -232,18 +281,17 @@ export class Graph3DNear {
 		return this.panelAt(x, y)?.node.graph ?? null;
 	}
 
-	/** Where node `id`'s live panel is on screen (client pixels), or null when it has none. */
-	panelRect(id: string): { left: number; top: number; width: number; height: number } | null {
-		const panel = this.panels.get(id);
-		if (panel === undefined || panel.target !== 1 || !panel.rendered) return null;
-		const { left, top, width, height } = panel.box.getBoundingClientRect();
-		return { left, top, width, height };
-	}
-
-	/** Hide node `id`'s panel while its text is being edited over it (null shows every panel). */
-	setEditing(id: string | null): void {
-		this.editing = id;
-		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === id);
+	/**
+	 * Edit `node`'s text in `editor`, kept over its plate from now on, with the
+	 * node's own panel hidden under it. Null stops: every panel shows again.
+	 */
+	setEditing(node: NearSource | null, editor: TrackedEditor | null): void {
+		this.editing = node?.id ?? null;
+		this.edit = node === null || editor === null ? null : { editor, node };
+		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === this.editing);
+		if (node === null || editor === null) return;
+		const plateHeight = node.shape.height * this.pxPerUnit;
+		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, minHeight: plateHeight, radius: plateHeight * PLATE_RADIUS, fontSize: NEAR_FONT_PX });
 	}
 
 	/** Mark node `id`'s panel as the drop target of a link drag (null clears it). */
@@ -301,6 +349,7 @@ export class Graph3DNear {
 		for (const panel of this.panels.values()) this.removePanel(panel);
 		this.panels.clear();
 		this.cache.clear();
+		this.edit = null;
 		this.sizes.disconnect();
 		this.boxes.clear();
 		this.sources = [];

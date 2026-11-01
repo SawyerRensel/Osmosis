@@ -9,7 +9,7 @@ import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, stampBlockId } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
-import { memoryStrengths, nodeTags, overlayNodeColor, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
+import { memoryStrengths, nodeTags, overlayNodeColor, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
@@ -89,6 +89,8 @@ export class Graph3DView extends ItemView {
 	private overlaysMenu: Graph3DOverlaysMenu | null = null;
 	/** The colour mode the scene is coloured in now, to tell when the menu changed it. */
 	private colorBy: Graph3DOverlays["colorBy"] | null = null;
+	/** Whether the model shown now has its attachment nodes (see `visibleModel`), to reload when the menu changes it. */
+	private attachmentsShown: boolean | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
 	/** Whether the view is in edit mode: its edit gestures act, and flight keys stay off the structural ones. Off by default and not saved. */
@@ -105,10 +107,12 @@ export class Graph3DView extends ItemView {
 		},
 	);
 	/** The inline editor over the node being edited. While it is open, reloads wait (see `reload`). */
-	private readonly editor = new Graph3DEditor(this.app, () => this.contentEl);
+	private readonly editor = new Graph3DEditor(this.app);
 	/** An editor is being prepared (its line is being read), so a second request must not start another. */
 	private opening = false;
-	/** A reload that was asked for while the editor was open, run when it closes. */
+	/** Edits closed and still being written: reloads wait for these too, so a hop made by the click that saved one lands after the save. */
+	private saving = 0;
+	/** A reload that was asked for while the editor was open or saving, run when it is done. */
 	private queuedReload: { flyToFocus: boolean; subpath: string } | null = null;
 	/** The note the write in progress is filed under in the history (see `commitEdit`). */
 	private editOwner: string | null = null;
@@ -270,6 +274,7 @@ export class Graph3DView extends ItemView {
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.beginEdit(node),
+			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to) => void this.linkLines(from, to),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
@@ -340,6 +345,7 @@ export class Graph3DView extends ItemView {
 		this.scene = null;
 		this.overlaysMenu = null;
 		this.colorBy = null;
+		this.attachmentsShown = null;
 		this.stageEl = null;
 		this.cache.clear();
 		this.prefetched.clear();
@@ -358,6 +364,8 @@ export class Graph3DView extends ItemView {
 		// This view's own menu already shows what it sent; rebuilding it would end a slider drag.
 		if (this.overlaysMenu !== null && this.overlaysMenu.current !== overlays) this.overlaysMenu.show(overlays);
 		if (overlays.colorBy !== this.colorBy && this.model !== null) this.scene?.setColoring(this.coloring(this.model));
+		// Attachments off leaves attachment nodes out of the model, so turning it either way rebuilds it.
+		if (this.attachmentsShown !== null && overlays.edges.attachment !== this.attachmentsShown) void this.reload();
 	}
 
 	private plugin(): OsmosisPlugin {
@@ -526,6 +534,8 @@ export class Graph3DView extends ItemView {
 	private async commitEdit(file: TFile, content: string, node: GraphNode, start: number): Promise<void> {
 		this.editOwner = file.path;
 		this.lastEditPath = file.path;
+		// A reload already under way could read the new bytes and seed the line's successor beside its parent before `edited` says where it goes: drop it; the reload below replaces it.
+		this.loadSeq++;
 		await this.edits.write(file, content);
 		// Marked only now, so a reload that was already under way can't take it.
 		this.edited = [{ path: file.path, start, from: node.id }];
@@ -544,9 +554,10 @@ export class Graph3DView extends ItemView {
 	}
 
 	/**
-	 * Read the line fresh, then open the editor over the node's panel or plate.
-	 * The text is `nodeEditText`, as in the mind map: markers in, indentation
-	 * and block ID out (both come back on save).
+	 * Read the line fresh, then open the editor on the node's plate, where the
+	 * near tier keeps it as the camera moves. The text is `nodeEditText`, as in
+	 * the mind map: markers in, indentation and block ID out (both come back on
+	 * save). On a phone the camera centres the line above the keyboard.
 	 */
 	private async openEditor(node: GraphNode): Promise<void> {
 		if (this.opening || this.editor.isOpen) return;
@@ -558,19 +569,19 @@ export class Graph3DView extends ItemView {
 				if (fresh === null) new Notice("Osmosis: that line has changed; try again");
 				return;
 			}
-			const anchor = scene.nodeScreenBox(node.id);
-			if (anchor === null) return;
+			const stage = this.stageEl;
+			if (stage === null) return;
 			const text = nodeEditText(fresh.line);
-			const view = this.contentEl.getBoundingClientRect();
-			scene.setEditing(node.id);
 			this.editor.open({
+				host: stage,
 				file: fresh.file,
 				text,
 				selectionStart: editSelectionStart(text, fresh.line.content),
-				anchor,
-				view: { left: view.left, top: view.top, right: view.right, bottom: view.bottom },
+				onVisibleBand: (band) => this.scene?.setVisibleBand(band),
 				done: (edited) => void this.finishEdit(node, text, edited),
 			});
+			// Gone from the scene since the read (it can't be while the editor is open: reloads wait).
+			if (!scene.setEditing(node.id, this.editor, Platform.isMobile)) this.editor.close(false);
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not open the editor", error);
 			new Notice("Osmosis: could not edit that line");
@@ -582,12 +593,14 @@ export class Graph3DView extends ItemView {
 	/** The editor closed: `edited` is its text on save, null on cancel. Writes what changed, then lets a reload that waited run. */
 	private async finishEdit(node: GraphNode, original: string, edited: string | null): Promise<void> {
 		this.scene?.setEditing(null);
+		this.saving++;
 		try {
 			if (edited !== null && edited !== original) await this.saveEdit(node, edited);
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not save an edit", error);
 			new Notice("Osmosis: could not save that edit");
 		} finally {
+			this.saving--;
 			const queued = this.queuedReload;
 			this.queuedReload = null;
 			if (queued !== null) void this.reload(queued.flyToFocus, queued.subpath);
@@ -881,8 +894,8 @@ export class Graph3DView extends ItemView {
 	private async reload(flyToFocus = false, subpath = ""): Promise<void> {
 		const scene = this.scene;
 		if (scene === null) return;
-		// A reload can drop the node being edited, and a hop moves the view out from under the editor: wait for it to close.
-		if (this.editor.isOpen) {
+		// A reload can drop the node being edited, or build the edited line's successor before the save marks where it goes: wait for the editor to close and its save to land.
+		if (this.editor.isOpen || this.saving > 0) {
 			this.queuedReload = { flyToFocus: flyToFocus || (this.queuedReload?.flyToFocus ?? false), subpath: subpath || (this.queuedReload?.subpath ?? "") };
 			return;
 		}
@@ -917,9 +930,14 @@ export class Graph3DView extends ItemView {
 		// A newer reload (another hop, an edit) started while these were read.
 		if (seq !== this.loadSeq) return;
 
-		const model = buildGraph(
-			notes.filter((note): note is NoteInput => note !== null),
-			(linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null,
+		const { edges } = this.plugin().settings.graph3dOverlays;
+		this.attachmentsShown = edges.attachment;
+		const model = visibleModel(
+			buildGraph(
+				notes.filter((note): note is NoteInput => note !== null),
+				(linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null,
+			),
+			edges,
 		);
 		this.horizon = horizon;
 		this.model = model;

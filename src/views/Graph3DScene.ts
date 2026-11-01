@@ -26,12 +26,10 @@ import {
 	type Ray,
 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
-import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink } from "./Graph3DNear";
+import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
 import { DEFAULT_OVERLAYS, edgeShown, linkStrengthScale, type Graph3DOverlays } from "../graph3d/overlays";
@@ -45,6 +43,7 @@ import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flig
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
+import { bandOffset, type VisibleBand } from "../graph3d/edit";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -157,6 +156,8 @@ export interface SceneOptions {
 	onCheckboxClick: (node: GraphNode) => void;
 	/** A second click or tap on a node, close in time and place to the first. True when the view took it (it opened an editor), so the scene does nothing more with it. */
 	onNodeDoubleClick: (node: GraphNode) => boolean;
+	/** A click or tap on the canvas while the inline editor is open: the view saves the edit, then the click goes on as usual. */
+	onClickWhileEditing: () => void;
 	/** A link drag released on another node: line `from` is dropped onto `to`, a line or a note. */
 	onLinkDrop: (from: GraphNode, to: GraphNode) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
@@ -264,8 +265,6 @@ const PARTICLE_SIZE = 1.6;
 const PARTICLE_OPACITY = 0.9;
 /** The travelled thread of a due-driven study path: warm, and fully opaque, so it stands out from the edges. */
 const THREAD_COLOR = "#ffb347";
-/** Bloom: strength, radius, and the luminance a pixel needs before it glows. */
-const BLOOM = { strength: 0.8, radius: 0.5, threshold: 0.6 };
 /** A press that moves less than this, in px, is a click rather than a drag. */
 const CLICK_SLOP_PX = 6;
 
@@ -309,8 +308,6 @@ export class Graph3DScene {
 	private colorOf: (node: GraphNode) => string = nodeColor;
 	/** Links per node, for d3's default link strength, which the force balance scales. */
 	private degree = new Map<string, number>();
-	/** Bloom's post-processing passes, while bloom is on. */
-	private bloomPasses: (UnrealBloomPass | OutputPass)[] = [];
 	/** Node positions or opacities changed since the plates and edges were last written. */
 	private dirty = false;
 	/** Nodes came, went, or changed text or colour: every plate attribute must be rewritten. */
@@ -341,8 +338,10 @@ export class Graph3DScene {
 	private linkDrag: LinkDrag | null = null;
 	/** The rubber band from the dragged line to the pointer. */
 	private linkLine: Line<BufferGeometry, LineBasicMaterial> | null = null;
-	/** The node whose editor is open: a press then is the editor's blur, not a drag. */
+	/** The node whose editor is open: a press then orbits rather than linking, and leaves the editor its focus. */
 	private editingId: string | null = null;
+	/** Phone: the part of the window the on-screen keyboard leaves visible while editing; the picture is shifted to centre on it. */
+	private band: VisibleBand | null = null;
 	private readonly touches = new Map<number, { x: number; y: number }>();
 	/** Distance from the camera of the last point aimed at; a press or zoom over empty space reuses it. */
 	private lastDepth: number | null = null;
@@ -391,6 +390,7 @@ export class Graph3DScene {
 		this.controlSettings = options.controls;
 		const canvas = this.graph.renderer().domElement;
 		canvas.addEventListener("pointerdown", this.onPointerDown);
+		container.addEventListener("mousedown", this.onMouseDown);
 		window.addEventListener("pointermove", this.onPointerMove);
 		window.addEventListener("pointerup", this.onPointerUp);
 		window.addEventListener("pointercancel", this.onPointerUp);
@@ -604,16 +604,17 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Apply the Overlays menu. Nothing here moves a node: hidden edges still
-	 * pull (visibility is drawing only), and a new force balance re-weights
-	 * the links, which shapes only what is still settling, since settled
-	 * nodes are pinned.
+	 * Apply the Overlays menu. Hidden edges still pull (visibility is drawing
+	 * only). A new force balance re-weights the links and re-settles the loaded
+	 * nodes (`reshape`): the one place settled nodes are let go on purpose.
 	 */
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance;
 		this.overlays = overlays;
-		if (reweigh) this.linkForce?.strength(this.linkStrength);
-		this.setBloom(overlays.bloom);
+		if (reweigh) {
+			this.linkForce?.strength(this.linkStrength);
+			this.reshape();
+		}
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
 		this.near.setEnabled(overlays.labels === "all");
@@ -636,29 +637,54 @@ export class Graph3DScene {
 	};
 
 	/**
-	 * Bloom is a post-processing pass, added only while it is on: its render
-	 * targets cost memory and every frame a full-screen blur. The output pass
-	 * after it converts to the screen's colour space, which rendering to the
-	 * canvas directly did by itself.
+	 * The Hierarchy ⟷ organic slider moved: let every loaded node go and
+	 * re-settle under the new link weights, so the change shows at once.
+	 *
+	 * DELIBERATE EXCEPTION to "settled nodes never move" (Sawyer, 2026-11-01):
+	 * it happens only here, in answer to the user moving this slider. Hops,
+	 * edits and data updates still keep settled nodes where they are. The line
+	 * being edited stays pinned. The camera rides along with the focused node
+	 * until the layout cools and `settle` pins everything again.
 	 */
-	private setBloom(on: boolean): void {
-		if (on === this.bloomPasses.length > 0) return;
-		const composer = this.graph.postProcessingComposer();
-		if (on) {
-			// The composer sizes each pass as it is added.
-			this.bloomPasses = [new UnrealBloomPass(new Vector2(1, 1), BLOOM.strength, BLOOM.radius, BLOOM.threshold), new OutputPass()];
-			for (const pass of this.bloomPasses) composer.addPass(pass);
-			return;
+	private reshape(): void {
+		let any = false;
+		for (const node of this.nodes) {
+			if (node.departing || node.id === this.editingId) continue;
+			node.fx = node.fy = node.fz = undefined;
+			any = true;
 		}
-		for (const pass of this.bloomPasses) {
-			composer.removePass(pass);
-			pass.dispose();
+		if (!any) return;
+		const focus = this.nodes.find((node) => node.id === this.focusId);
+		if (this.flight === null && focus?.x !== undefined && focus.y !== undefined && focus.z !== undefined) {
+			this.follow = { node: focus, at: { x: focus.x, y: focus.y, z: focus.z } };
 		}
-		this.bloomPasses = [];
+		// Recomputes the many-body force for nodes that are all free again, and reheats the simulation.
+		this.pushData();
 	}
 
 	resize(width: number, height: number): void {
 		if (width > 0 && height > 0) this.graph.width(width).height(height);
+		this.applyViewOffset();
+	}
+
+	/**
+	 * Phone, while editing: `band` is the part of the window the on-screen
+	 * keyboard leaves visible (null when the editor closes). The picture shifts
+	 * up so its centre, where the line being edited is, sits mid-way down that
+	 * part: an off-centre projection (`setViewOffset`), so picking, panels and
+	 * the editor, which all project through the camera, stay lined up.
+	 */
+	setVisibleBand(band: VisibleBand | null): void {
+		this.band = band;
+		this.applyViewOffset();
+	}
+
+	private applyViewOffset(): void {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const rect = this.container.getBoundingClientRect();
+		const offset = this.band === null ? 0 : bandOffset(rect.top, rect.height, this.band);
+		if (offset !== 0 && rect.width > 0 && rect.height > 0) camera.setViewOffset(rect.width, rect.height, 0, offset, rect.width, rect.height);
+		else if (camera.view?.enabled === true) camera.clearViewOffset();
 	}
 
 	/**
@@ -690,33 +716,27 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Where node `id` is on screen (client pixels): its live panel's box, or its
-	 * plate's. Null when it is gone or behind the camera. The inline editor opens
-	 * over it.
+	 * Start editing node `id` in place, with `editor` kept over its plate every
+	 * frame by the near tier (its panel hidden under it), or stop (null). False
+	 * when the node is not in the scene, so there is nothing to edit over.
+	 *
+	 * The node is pinned where it is, so a layout still settling can't carry it
+	 * off while it is edited, and the edit's own reload puts its successor on
+	 * the same spot (`Graph3DView.place`). A flight elsewhere stops. With
+	 * `centre` (a phone, where the keyboard takes half the screen), or when the
+	 * text would be too small to read, the camera flies to the node.
 	 */
-	nodeScreenBox(id: string): { left: number; top: number; width: number; height: number } | null {
-		const node = this.nodes.find((n) => n.id === id);
-		if (node === undefined || node.x === undefined || node.y === undefined || node.z === undefined) return null;
-		const panel = this.near.panelRect(id);
-		if (panel !== null) return panel;
-		const camera = this.graph.camera() as PerspectiveCamera;
-		const rect = this.graph.renderer().domElement.getBoundingClientRect();
-		const point = new Vector3(node.x, node.y, node.z).sub(camera.position);
-		const distance = point.dot(camera.getWorldDirection(new Vector3()));
-		if (distance <= 0) return null;
-		point.add(camera.position).project(camera);
-		const scale = rect.height / (2 * Math.tan((camera.fov * Math.PI) / 360)) / distance;
-		const width = node.shape.width * scale;
-		const height = node.shape.height * scale;
-		return { left: rect.left + ((point.x + 1) / 2) * rect.width - width / 2, top: rect.top + ((1 - point.y) / 2) * rect.height - height / 2, width, height };
-	}
-
-	/** Start or stop editing node `id` in place: its panel is hidden under the editor, and a flight under way stops. */
-	setEditing(id: string | null): void {
-		this.editingId = id;
-		this.near.setEditing(id);
+	setEditing(id: string | null, editor: TrackedEditor | null = null, centre = false): boolean {
+		const node = id === null ? undefined : this.nodes.find((n) => n.id === id && !n.departing);
+		if (id !== null && (node?.x === undefined || node.y === undefined || node.z === undefined)) return false;
 		this.pendingFlight = null;
 		this.cancelFlight();
+		this.editingId = node?.id ?? null;
+		this.near.setEditing(node ?? null, editor);
+		if (node === undefined) return true;
+		if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
+		if (centre || !this.near.readable(node, this.graph.camera() as PerspectiveCamera)) this.flyTo(node.id);
+		return true;
 	}
 
 	/** Edit mode on or off. Off, a link drag in progress is dropped. */
@@ -798,6 +818,7 @@ export class Graph3DScene {
 	destroy(): void {
 		window.cancelAnimationFrame(this.frame);
 		this.graph.renderer().domElement.removeEventListener("pointerdown", this.onPointerDown);
+		this.container.removeEventListener("mousedown", this.onMouseDown);
 		window.removeEventListener("pointermove", this.onPointerMove);
 		window.removeEventListener("pointerup", this.onPointerUp);
 		window.removeEventListener("pointercancel", this.onPointerUp);
@@ -805,7 +826,6 @@ export class Graph3DScene {
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
-		this.setBloom(false);
 		this.near.destroy();
 		this.nodes = [];
 		this.links = [];
@@ -935,6 +955,18 @@ export class Graph3DScene {
 			look: touch && this.controlSettings.touchDrag === "look",
 		};
 		this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
+	};
+
+	/**
+	 * While the inline editor is open, a press anywhere else in the stage (the
+	 * canvas, a joystick, a corner control) keeps the focus in the editor, so
+	 * orbiting, panning or zooming never blurs it, which would save it. A click
+	 * still saves it, from `click`.
+	 */
+	private readonly onMouseDown = (e: MouseEvent): void => {
+		if (this.editingId === null) return;
+		if (e.target instanceof Element && e.target.closest(".osmosis-graph3d-edit") !== null) return;
+		e.preventDefault();
 	};
 
 	private readonly onPointerMove = (e: PointerEvent): void => {
@@ -1070,6 +1102,7 @@ export class Graph3DScene {
 
 	/** A click or tap: follow the link under it, or hop to its node. See `linkClickAction`. */
 	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
+		if (this.editingId !== null) this.options.onClickWhileEditing();
 		// A plain tap on a task checkbox ticks it. Held modifiers belong to pan and to links.
 		const box = e.shiftKey || e.ctrlKey || e.metaKey ? null : this.near.checkboxAt(x, y, CHECKBOX_SLOP_PX[touch ? "touch" : "mouse"]);
 		if (box !== null) {
