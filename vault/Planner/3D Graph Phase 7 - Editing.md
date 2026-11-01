@@ -13,7 +13,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-11-01T02:38:30.000Z"
+date_modified: "2026-11-01T12:20:38.000Z"
 date_start_scheduled: "2026-10-31T22:05:13.000Z"
 date_start_actual: "2026-10-31T22:05:13.000Z"
 date_end_scheduled:
@@ -133,7 +133,9 @@ One phase of [[Develop Mind-Map Graph View]]. **Read that note's `# Spec` sectio
 - Extract each content computation from `MindMapView` into pure functions in `mindmap-edit.ts`, test-first against today's 2D output, then make 2D call them: `addChildNode` → `insertChild(content, src)`, `addSiblingNode` → `insertSibling(content, src)`, `deleteNode` → `deleteSubtree(content, src)`, `moveNodeUpDown` / `indentNode` / `outdentNode` / `insertParentNode` likewise. `inferChildContext`, `childInsertOffset`, `subtreeEnd`, `insertAt`, `reindentSubtree` already exist there.
 - **Manual test**: each action in 3D and the matching one in 2D (regression), undo across views.
 
-### Slice 6: Move or reparent, within a note and across notes
+### Slice 6: Move or reparent, within a note and across notes (built, see "Slice 6" in the batch notes below)
+
+*Corrections made while building:* (1) **the gesture is a drop menu on every platform**, not Shift-drop: releasing a link drag on a node opens a menu at the drop point (Add link / Move under / Move after; on a note core, Add link / Move to end of note). (2) Same note uses the mind map's *drop* (extracted as `moveWithinFile` + `dropContext`), not the slice-5 up/down/indent functions, which cannot reach an arbitrary target. (3) A moved line is not carried to its old place: whatever got a new ID arrives beside its new parent.
 
 - Gesture: in edit mode, drop A on B with Shift held (desktop), or pick from a small `Menu` that opens on drop when the drag lasted longer than a long-press on touch: "Link to B" / "Move under B" / "Move after B". *Proposed;* record the final choice.
 - Same note: the slice-5 move functions. Across notes: extract `moveAcrossFiles`, `readMovedScheduleEntries` and `migrateBlockIdentity` from `MindMapView` into a shared obsidian-side module (`src/edit-moves.ts`) that takes an `EditPipeline` (for `write` / `processFrontMatter` and the group) plus `scheduleStore` and the card store, then make 2D's `executeDrop` / `pasteNodes` call it. This is the second-riskiest change after slice 1: the write order (destination first) and the identity migration are safety properties; keep their comments.
@@ -443,3 +445,69 @@ The same actions (plus "Edit text") are in a context menu on a line: **right-cli
 ### Not verified
 
 Nothing has run in Obsidian. Lint, the full suite (2,345 tests) and the build pass. Unverified: the 2D map in Obsidian after the extraction (only unit-tested; the differential check ran the extracted functions against a verbatim copy of the old logic, not the live view); right-button press/release on macOS and Linux (`pointerup` with `button === 2` after OrbitControls' pointer capture); the 500 ms hold on a real touch screen and Android's own long-press `contextmenu` (suppressed on the canvas); Obsidian `Menu` positioning at a pointer over a WebGL canvas; the icon names `indent-increase`, `indent-decrease` (a missing icon just shows no glyph); `seedClear` placement against dense neighbours; the carried placement after indent/outdent/insert parent; and that `mapStart`'s non-blank-line count holds for every `normalizeBlockSpacing` rule.
+
+## Slice 6 (move or reparent, within a note and across notes)
+
+**Built** on `feature/3d-graph-phase-7-structural`, code commit `3d06eb8`, on top of slice 5. Not pushed, no PR, not tested in Obsidian. **This is the last slice: Phase 7 is complete pending Sawyer's manual test** of all six slices (and of [[3D Graph - Editor anchoring and overlays fixes]]).
+
+### What it does
+
+- **Gesture.** In edit mode, drag a line onto another node as in slice 4. On release a menu opens at the drop point: **Add link** (slice 4's link, unchanged), **Move under** (the line and its subtree become the target's last child), **Move after** (its next sibling). Dropped on a note's core: **Add link** (not offered for the line's own note) and **Move to end of note**. Escape or a click elsewhere closes it with no write.
+- **Same note**: one write, the mind map's drop bytes (`moveInNote` → `moveWithinFile`, re-levelled by `dropContext`), then `normalizeWrite`. Refused with a Notice: a move under itself or its own descendants, and a move to the place it already holds.
+- **Across notes**: the mind map's own cross-note move, now shared (`moveAcrossFiles` in `src/edit-moves.ts`): destination written first, then the origin, then the moved block IDs' `osmosis-schedule` entries go from the origin's frontmatter to the destination's and the cards are re-keyed (`cardSync.handleBlockMove`), all in one edit group, so one Ctrl+Z (from either note) restores both notes, text and schedule.
+- After either: the moved line is selected; the loaded area reloads.
+
+### Approach
+
+- **Extraction, 2D first.** `moveAcrossFiles`, `readMovedScheduleEntries`, `migrateBlockIdentity` (and the `frontmatterValue` helper) moved from `MindMapView` into `src/edit-moves.ts` unchanged, comments included (the write order and the identity migration are safety properties). The view supplies a `MoveContext`: its pipeline (the group), its write (2D: `writeFileTracked`, 3D: `normalizeWrite` + `edits.write`), its frontmatter write (2D: `processFrontMatterTracked`, which also re-parses the tree, exactly as before), the plugin's schedule store / card sync / dashboard, and `settle` (2D: `resyncFromParent`, run in the same `finally` after the group closes; not run on the early "note gone" bail, as before). `MindMapView.moveAcrossFiles` is now a thin wrapper, so its four callers (Alt-arrows across a seam, `executeDrop`) are untouched; cut uses `moves.readMovedScheduleEntries`, `pasteNodes` uses `moves.migrateBlockIdentity`. The function now returns where the block landed (`MovedBlock`) instead of a boolean; the wrapper maps it back.
+- **2D's same-file drop** became `moveWithinFile(content, selected, offset, context)` and `inferDropType` / `inferDropDepth` / `dropContext` in `mindmap-edit.ts`; `executeDrop` calls them and the private copies are gone. Before switching 2D over, a throwaway test ran the new functions against a verbatim copy of the old code for every node and every (parent, index) gap of every fixture with up to 120 nodes (145,714 drops): identical text, and `start` always on the moved line (except the "already there" gaps 2D never calls, which 3D refuses). Literal outputs are pinned in `mindmap-edit.test.ts`.
+- **The cross-note move is pinned against a fake vault** (`edit-moves.test.ts`, using the real `EditPipeline` and `EditHistory`): exact bytes and schedule migration, the write order (destination, origin, flush, destination frontmatter, origin frontmatter, cards, dashboard, settle), one undo restoring both, a failed destination write leaving both notes alone, a failed origin write leaving a duplicate that undo removes, no frontmatter writes for lines without IDs. `MindMapView` itself cannot load under vitest, so these test the moved code, not the view.
+
+### Judgment calls
+
+- **Drop menu everywhere, not Shift-drop.** Phones have no modifiers, and Shift at *press* already pans; Shift at *release* was free, but two different gestures (and a timing rule on touch: "a menu if the drag lasted longer than a long press") would be harder to learn than one menu. Cost: **linking now takes a second click** (Add link). If that is too slow on desktop, an easy follow-up is "Shift held at release links at once". The menu opens one tick after the release so the release's own click cannot close it.
+- **Moves don't keep their place.** A moved line whose ID changed (always across notes; within a note when its depth changes) fades out where it was and arrives beside its new parent, selected. Slice 5's indent/outdent keep placement, but a drag *to* a node says "put it there". A same-note move that keeps the line's ID (same type and depth) leaves it where it is, like Alt+Up, since settled nodes never move.
+- **"Move to end of note"**: a non-heading goes after the last section's content at its top level, keeping its type (`- x` at the file's end). The drop rule at the root's end would have made it a heading beside the note's last heading. A heading goes after the last top-level section (the drop rule decides its level).
+- **Under a heading** uses the mind map's rule for the gap after its last child: if that child is a sub-heading, the moved line becomes a heading at that level (still inside the target). Same as dropping there in 2D.
+- **One line at a time** (no multi-select in 3D); the functions take a run like 2D's.
+- **The obsidian test stub gained `TFile` and `parseYaml`** (JSON-subset only; the tests write frontmatter as one-line JSON, which is valid YAML).
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/edit-moves.ts` (new) | `MoveContext`, `MovedBlock`, `moveAcrossFiles`, `readMovedScheduleEntries`, `migrateBlockIdentity` (moved from `MindMapView`) |
+| `src/edit-moves.test.ts` (new) | 11 tests against a fake vault |
+| `src/mindmap-edit.ts` | `inferDropType`, `inferDropDepth`, `dropContext`, `moveWithinFile` |
+| `src/mindmap-edit.test.ts` | 5 tests with literal 2D drop outputs |
+| `src/views/MindMapView.ts` | `moveContext()`; `moveAcrossFiles` wraps the shared one; cut/paste call the shared readers; `executeDrop` calls `moveWithinFile`/`dropContext`; `frontmatterValue`, `EMPTY_BLOCK_IDS`, private `inferDropType`/`inferDropDepth` removed |
+| `src/graph3d/edit.ts` | `MovePlace`, `MoveGap`, `moveGap`, `moveRefusal`, `moveInNote` |
+| `src/graph3d/edit.test.ts` | 6 tests for them |
+| `src/views/Graph3DScene.ts` | `onLinkDrop` also passes the drop point |
+| `src/views/Graph3DView.ts` | `showDropMenu`, `moveContext`, `moveLine` |
+| `src/edit-pipeline.ts` | comment points at `edit-moves.ts` |
+| `src/test/obsidian-stub.ts` | `TFile`, `parseYaml` |
+| `e2e/fixtures/graph3d/Sail Locker.md`, `Rigging Spares.md` (+ copies in `vault/tests/graph3d/`) | new fixture pair |
+
+### Fixture
+
+`Sail Locker.md` (two carded lines, `^os-sl1` with a child and `^os-sl2`, with `osmosis-schedule` entries back-dated) links to `Rigging Spares.md` (bullets, a nested bullet, a `## Spare lines` section, no frontmatter). New files, so no reset hazard; still reload Obsidian (Ctrl+R) first. To repeat a test, copy both back from `e2e/fixtures/graph3d/` and reload.
+
+### Manual test (Sawyer)
+
+**3D**, open `Sail Locker.md`, "Open 3D graph for current note", depth 1 or 2 (both notes load), pencil on, zoom until lines read.
+1. **Across notes, carded.** Drag "The storm jib lives in the red bag" onto "Shackles" in Rigging Spares; release: a menu (Add link / Move under / Move after). Pick **Move under**. Expected: Rigging Spares now has `	- The storm jib lives in the red bag ^os-sl1` and `		- Check the hanks each spring` after "Two snap shackles…"; its frontmatter gained `osmosis-schedule` with `os-sl1` (same due/stability/reps); Sail Locker lost the two lines and its `os-sl1` entry (`os-sl2` stays). The line appears near Shackles, selected. The card keeps its history (Osmosis dashboard / study: not a new card).
+2. **One undo.** Ctrl+Z (3D focused): both notes back exactly, both frontmatters. Ctrl+Shift+Z redoes both. Also try undo from a mind map tab on either note.
+3. **Move after / end.** Drag "The spare main…" onto "Blocks" → Move after: a sibling after Blocks, `os-sl2` follows. Drag "Sail ties…" onto the Rigging Spares core → Move to end of note: `- Sail ties hang on the locker door` at the end, under "Spare lines", still a bullet.
+4. **Same note** (undo steps 1–3 first, so Sail Locker is whole again). Drag "Repair tape…" onto "Sail ties…" → Move under: nested under it, one write, one undo. Drag "The storm jib…" onto its own child → Move under: Notice "a line can't move under itself". Drag "Sail ties" onto "The spare main" → Move after (already there): Notice.
+5. **Link still works.** Drop a line on another → Add link: as slice 4. Drop on its own note's core: only "Move to end of note". Escape or a click away from the menu: no write.
+6. **Phone.** One-finger drag from a line onto another line: the menu opens at the finger; tap an item.
+
+**2D regression** (the extraction):
+7. Open `vault/tests/mindmap/seam-transit-map.md` as a mind map. Drag a node from inside the embedded note's expansion onto a host node (and the reverse): it moves across the seam; a carded line's `osmosis-schedule` entry moves with it (check both notes' frontmatter); one Ctrl+Z restores both. Alt+Up / Alt+Right across the seam still move.
+8. Cut (Ctrl+X) a carded line inside the embed, select a host node, paste (Ctrl+V): it lands and its schedule follows; one Ctrl+Z.
+9. Ordinary same-note drags in `vault/tests/mindmap/move-nodes.md`: forward, backward, onto a heading, multi-select; each undoes.
+
+### Not verified
+
+Nothing has run in Obsidian. Lint, the full suite (2,367 tests) and the build pass. Unverified: Obsidian's `Menu` at a pointer after a drag release (whether it stays open; it is deferred one tick), on touch especially; the real `processFrontMatter` output in the destination (YAML layout of the migrated entries) and the selection offset after it (computed from the frontmatter's change in size); that the moved line lands visibly near its new parent in a dense area; and the 2D seam paths end to end (unit-tested only through the extracted functions).
