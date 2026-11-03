@@ -44,6 +44,7 @@ import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
+import { frameDistance } from "../graph3d/liftoff";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -722,6 +723,52 @@ export class Graph3DScene {
 	/** Make `id` the focused node without flying to it: re-selecting a node whose ID an edit changed. */
 	setFocusId(id: string | null): void {
 		this.focusId = id;
+	}
+
+	/** A line plate's height in world units, for the 2D/3D toggle's scale (`graph3d/liftoff.ts`). */
+	get linePlateHeight(): number {
+		return LINE_PLATE_HEIGHT;
+	}
+
+	/**
+	 * The 2D/3D toggle's lift-off: stand the camera square over `target`,
+	 * looking down -z with y up, back far enough to see `height` world units of
+	 * the z = 0 plane edge to edge: the view the mind map showed. No flight; the
+	 * mist is set for the new distance at once. The camera then rides along
+	 * with node `followId` while the lifting layout carries it, until it
+	 * settles, as it does after a forces change (`reshape`).
+	 */
+	standOver(target: Vec3, height: number, followId: string | null): void {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const controls = this.orbitControls();
+		const distance = frameDistance(height, camera.fov);
+		this.pendingFlight = null;
+		this.cancelFlight();
+		camera.up.set(0, 1, 0);
+		camera.position.set(target.x, target.y, target.z + distance);
+		controls.target.set(target.x, target.y, target.z);
+		controls.update();
+		this.lastDepth = distance;
+		this.fog.density = (MIST * this.overlays.mist) / Math.max(MIST_MIN_DISTANCE, distance);
+		const node = followId === null ? undefined : this.nodes.find((n) => n.id === followId);
+		if (node?.x !== undefined && node.y !== undefined && node.z !== undefined && node.fx === undefined) {
+			this.follow = { node, at: { x: node.x, y: node.y, z: node.z } };
+		}
+		this.dirty = true;
+	}
+
+	/**
+	 * How tall, in screen px, a line plate is drawn at node `id`'s depth (at
+	 * the orbit target's when `id` is null or gone), for the 2D/3D toggle to
+	 * land the mind map at the same scale. Null while the view has no size.
+	 */
+	linePlatePixels(id: string | null): number | null {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const height = this.container.clientHeight;
+		if (height <= 0) return null;
+		const node = id === null ? undefined : this.nodes.find((n) => n.id === id && !n.departing);
+		const at = node?.x !== undefined && node.y !== undefined && node.z !== undefined ? new Vector3(node.x, node.y, node.z) : this.orbitControls().target;
+		return (LINE_PLATE_HEIGHT * height) / (2 * this.viewDepth(at) * Math.tan((camera.fov * Math.PI) / 360));
 	}
 
 	/**

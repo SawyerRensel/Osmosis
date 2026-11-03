@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EditHistory, EditRecorder, type HistoryLimits } from "./edit-history";
+import { EditHistory, EditRecorder, holdAcross, type HistoryLimits } from "./edit-history";
 import type { FileEdit } from "./mindmap-edit";
 
 const LOOSE: HistoryLimits = { maxSteps: 50, maxMemoryMB: 20 };
@@ -255,5 +255,39 @@ describe("EditHistory: shared between views", () => {
 		recorder("Harbour.md").record("Knots.md", "k1", "k2");
 		release();
 		expect(history.undo("Knots.md")).toEqual({ ok: false, reason: "empty" });
+	});
+});
+
+/** The 2D/3D toggle swaps a leaf's view: the outgoing view lets go of its notes around when the incoming one takes them. */
+describe("holdAcross", () => {
+	it("keeps a history alive when the old view lets go before the new one holds", async () => {
+		const { history, recorder } = setup();
+		const releaseMap = history.hold("Harbour.md");
+		recorder("Harbour.md").record("Harbour.md", "a", "b");
+		let releaseGraph: () => void = () => undefined;
+		await holdAcross(history, ["Harbour.md"], async () => {
+			releaseMap();
+			await Promise.resolve();
+			releaseGraph = history.hold("Harbour.md");
+		});
+		expect(history.undo("Harbour.md")).toEqual({ ok: true, edits: [edit("Harbour.md", "a", "b")] });
+		releaseGraph();
+	});
+
+	it("is needed: without it, that order drops the history", () => {
+		const { history, recorder } = setup();
+		const releaseMap = history.hold("Harbour.md");
+		recorder("Harbour.md").record("Harbour.md", "a", "b");
+		releaseMap();
+		history.hold("Harbour.md");
+		expect(history.undo("Harbour.md")).toEqual({ ok: false, reason: "empty" });
+	});
+
+	it("lets go afterwards, even when the swap fails", async () => {
+		const { history, recorder } = setup();
+		recorder("Harbour.md").record("Harbour.md", "a", "b");
+		await expect(holdAcross(history, ["Harbour.md", "Harbour.md"], () => Promise.reject(new Error("no leaf")))).rejects.toThrow("no leaf");
+		// Its hold was the only one (taken once, though named twice), so letting go dropped the history.
+		expect(history.undo("Harbour.md")).toEqual({ ok: false, reason: "empty" });
 	});
 });

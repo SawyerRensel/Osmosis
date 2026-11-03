@@ -33,6 +33,8 @@ export interface ToolbarActions {
 	refresh: () => void;
 	openProperties: () => void;
 	openNodeMenu: (btn: HTMLElement) => void;
+	/** The 2D/3D toggle: show the note as a 3D graph in the same leaf. Its command also brings a 3D graph back (main.ts). */
+	toggle3D: () => void;
 }
 
 export interface ButtonDef {
@@ -51,6 +53,9 @@ export interface ButtonDef {
 
 /** The toolbar's buttons, in display order, one inner array per divider-separated group. */
 export const TOOLBAR_GROUPS: ButtonDef[][] = [
+	[
+		{ id: "toggle-3d", icon: "orbit", label: "Switch to 3D graph", command: "Toggle between 2D mind map and 3D graph", action: "toggle3D" },
+	],
 	[
 		{ id: "fit", icon: "maximize", label: "Fit to view", command: "Fit mind map to view", action: "fitToView" },
 		{ id: "zoom-in", icon: "zoom-in", label: "Zoom in", command: "Zoom in on mind map", action: "zoomIn" },

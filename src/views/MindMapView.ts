@@ -24,6 +24,8 @@ import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
 import { nodePathAt } from "../mindmap-links";
+import { readMapState, writeMapState } from "../mindmap-state";
+import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../graph3d/liftoff";
 import {
 	computeLayout,
 	LayoutNode,
@@ -218,6 +220,8 @@ export class MindMapView extends ItemView {
 	private readonly edits: EditPipeline;
 	private historyKey: string | null = null;
 	private releaseHistory: (() => void) | null = null;
+	/** The 3D graph's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
+	private graph3dState: Record<string, unknown> | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
 	// draws identically afterwards — but the frontmatter block grew, which
@@ -603,29 +607,24 @@ export class MindMapView extends ItemView {
 	}
 
 	getState(): Record<string, unknown> {
-		const state = super.getState();
-		// `file` is what Back/Forward and a restored workspace reload the map
-		// from; without it a map revisited through history comes back blank.
-		// `pinned` travels with it so restoring an unpinned map doesn't pin it.
-		// collapsedIds stay unpersisted (they churn).
-		state.readingMode = this.isReadingMode;
-		if (this.currentFile) {
-			state.file = this.currentFile.path;
-			state.pinned = this.isPinned;
-		}
-		return state;
+		// `file` and `pinned` are what history and a restored workspace reload
+		// the map from (see `mindmap-state.ts`).
+		return Object.assign(super.getState(), writeMapState(this.currentFile?.path ?? null, this.isPinned, this.isReadingMode));
 	}
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
-		if (typeof state?.readingMode === "boolean") {
-			this.setReadingMode(state.readingMode);
+		const saved = readMapState(state);
+		// The 3D graph's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
+		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.graph3dState = state.graph3d as Record<string, unknown>;
+		if (saved.readingMode !== null) {
+			this.setReadingMode(saved.readingMode);
 		}
-		if (typeof state?.file === "string") {
-			const file = this.app.vault.getFileByPath(state.file);
+		if (saved.file !== null) {
+			const file = this.app.vault.getFileByPath(saved.file);
 			if (file instanceof TFile) {
 				// Callers that name a file mean "show this one" — pin unless the
 				// state says otherwise, so the map stays on it.
-				this.isPinned = state.pinned !== false;
+				this.isPinned = saved.pinned;
 				this.pinActionEl?.toggleClass("is-active", this.isPinned);
 				const switching = file !== this.currentFile;
 				// Record the map we're leaving, so Back returns to it. A link jump
@@ -635,10 +634,83 @@ export class MindMapView extends ItemView {
 				// The old viewport means nothing on another note's map; history
 				// and link targets re-place it through setEphemeralState.
 				if (switching) this.fitToView();
+				// The 3D graph's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
+				const landing = readLanding(state.landing);
+				if (landing !== null) await this.land(landing);
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 			}
 		}
 		await super.setState(state, result);
+	}
+
+	/**
+	 * The toolbar's 2D/3D toggle: show this note as a 3D graph in this leaf,
+	 * lifting off from the map as it is drawn now (see `graph3d/liftoff.ts`).
+	 * A peek or study session ends first, flushing its ratings. The note's undo
+	 * history is held across the swap. Its embedded notes' are not: nothing
+	 * holds them now, and an entry is dropped only when the last holder of one
+	 * of its files lets go, so holding them for the swap could only drop them.
+	 */
+	private async switchTo3D(): Promise<void> {
+		const file = this.currentFile;
+		const tree = this.currentTree;
+		const layout = this.currentLayout;
+		if (!file || !tree || !layout) return;
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+		const fileOf = edit.buildContainingFileMap(tree.root, file.path);
+		const dx = this.getOffsetX();
+		const dy = this.getOffsetY();
+		const boxOf = (node: LayoutNode): MapBox => ({
+			path: fileOf.get(node.source.id) ?? file.path,
+			start: node.source.range.start,
+			root: node.source.type === "root",
+			x: node.rect.x + dx,
+			y: node.rect.y + dy,
+			width: node.rect.width,
+			height: node.rect.height,
+		});
+		const selected = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : undefined;
+		const focus = selected ? boxOf(selected) : null;
+		const liftOff: LiftOff = {
+			boxes: layout.nodes.map(boxOf),
+			viewport: { ...this.viewBox },
+			focus: focus && { path: focus.path, start: focus.start, root: focus.root },
+		};
+		const state = { ...this.graph3dState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
+		await this.plugin.swapLeafView(this.leaf, "3d", state, [file.path]);
+	}
+
+	/**
+	 * Land a hand-over from the 3D graph's toggle: select the line it had
+	 * focused (expanding what hides it) and centre on it, at the zoom that
+	 * draws a line as tall as its plate was on screen. With no line, the zoom
+	 * still carries and the map centres on its root.
+	 */
+	private async land({ focus, platePx }: Landing): Promise<void> {
+		if (!this.currentTree || !this.currentFile) return;
+		const chain = landingChain(this.currentTree.root, this.currentFile.path, focus);
+		let expanded = false;
+		for (const ancestor of chain.slice(0, -1)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		if (expanded) await this.render();
+
+		const rect = this.contentEl.getBoundingClientRect();
+		const zoomed = platePx !== null && this.currentLayout !== null && rect.width > 0 && rect.height > 0;
+		if (zoomed && this.currentLayout) {
+			const lines = this.currentLayout.nodes.filter((n) => n.source.type !== "root").map((n) => n.rect);
+			this.zoom = landingZoom(platePx, lines, MIN_ZOOM, MAX_ZOOM);
+			this.viewBox.w = rect.width / this.zoom;
+			this.viewBox.h = rect.height / this.zoom;
+		}
+		const target = chain[chain.length - 1];
+		const layoutNode = target ? this.nodeMap.get(target.id) : undefined;
+		if (target && layoutNode) {
+			this.selectNode(target.id);
+			this.centerOnNode(layoutNode);
+		} else if (zoomed) {
+			this.centerOnRoot();
+		}
 	}
 
 	getEphemeralState(): Record<string, unknown> {
@@ -1881,6 +1953,7 @@ export class MindMapView extends ItemView {
 					menu.showAtPosition({ x: rect.left, y: rect.top }),
 				);
 			},
+			toggle3D: () => void this.switchTo3D(),
 		});
 
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)

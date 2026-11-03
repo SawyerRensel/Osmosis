@@ -44,7 +44,7 @@ import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
-import { EditHistory } from "./edit-history";
+import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { DeckScope } from "./study/types";
@@ -334,7 +334,12 @@ export default class OsmosisPlugin extends Plugin {
 				icon: def.icon,
 				checkCallback: (checking) => {
 					const view = this.app.workspace.getActiveViewOfType(MindMapView);
-					return view?.runToolbarCommand(def, checking) ?? false;
+					if (view) return view.runToolbarCommand(def, checking);
+					// The 2D/3D toggle also takes a 3D graph back to its mind map.
+					const graph = def.action === "toggle3D" ? this.app.workspace.getActiveViewOfType(Graph3DView) : null;
+					if (!graph) return false;
+					if (!checking) void graph.switchTo2D();
+					return true;
 				},
 			});
 		}
@@ -1010,6 +1015,22 @@ export default class OsmosisPlugin extends Plugin {
 			active: true,
 		});
 		void workspace.revealLeaf(leaf);
+	}
+
+	/**
+	 * The mind map's 2D/3D toggle: show the other view in `leaf`, with `state`.
+	 * The outgoing view lets go of its notes' undo histories when it closes,
+	 * which may be before the incoming one takes them, so `keep` is held
+	 * across the swap (see `holdAcross`).
+	 */
+	async swapLeafView(leaf: WorkspaceLeaf, to: "2d" | "3d", state: Record<string, unknown>, keep: Iterable<string>): Promise<void> {
+		const type = to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP;
+		try {
+			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
+		} catch (error) {
+			console.error("Osmosis: 2D/3D toggle failed", error);
+			new Notice("Osmosis: could not switch views");
+		}
 	}
 
 	/** A 3D graph opens in its own tab, centred on `file`. */

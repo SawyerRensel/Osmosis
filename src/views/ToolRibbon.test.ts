@@ -39,3 +39,22 @@ describe("TOOLBAR_GROUPS commands", () => {
 		expect(defs.filter((d) => !d.command).map((d) => d.id)).toEqual(["open-properties"]);
 	});
 });
+
+describe("TOOLBAR_GROUPS layout", () => {
+	// Pinned before the 2D/3D toggle was added (its group is the first), so a change to any other button shows here.
+	it("keeps its buttons, groups and command names", () => {
+		expect(TOOLBAR_GROUPS.map((group) => group.map((d) => `${d.id}:${d.command ?? "-"}`))).toEqual([
+			["toggle-3d:Toggle between 2D mind map and 3D graph"],
+			["fit:Fit mind map to view", "zoom-in:Zoom in on mind map", "zoom-out:Zoom out of mind map", "center:Center mind map on root"],
+			["fold-all:Collapse all under node", "unfold-all:Expand all under node"],
+			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],
+			["move-up:Move node up", "move-down:Move node down", "move-left:Move node left", "move-right:Move node right"],
+			["delete:Delete node"],
+			["copy:Copy node", "cut:Cut node", "paste:Paste node"],
+			["copy-style:Copy node style", "paste-style:Paste node style"],
+			["undo:Undo mind map edit", "redo:Redo mind map edit"],
+			["refresh:Refresh mind map", "open-properties:-"],
+			["node-menu:Open node menu"],
+		]);
+	});
+});

@@ -10,6 +10,8 @@ import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
+import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
+import { readMapState, writeMapState } from "../mindmap-state";
 import { memoryStrengths, nodeTags, overlayNodeColor, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -129,6 +131,12 @@ export class Graph3DView extends ItemView {
 	private structuring = false;
 	/** Releases for the histories of the notes loaded now: a note's undo history lives while some view holds it. */
 	private readonly holds = new Map<string, () => void>();
+	/** The mind map's picture, handed over by its 2D/3D toggle: the next reload lifts off from it (see `graph3d/liftoff.ts`). */
+	private liftOff: LiftOff | null = null;
+	/** The mind map's own state (pinned, reading mode) from the toggle that opened this view, handed back on the toggle to 2D. */
+	private mapState: { pinned: boolean; readingMode: boolean } | null = null;
+	/** The save of the edit closed last, for the toggle to 2D to wait on. */
+	private saved: Promise<void> = Promise.resolve();
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
 	private readonly prefetched = new Map<string, { mtime: number; text: string }>();
 
@@ -220,6 +228,15 @@ export class Graph3DView extends ItemView {
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(1, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
 		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
+		// From the mind map's 2D/3D toggle: its picture to lift off from, and its own state to hand back. Neither is kept in getState.
+		const liftOff = readLiftOff(state?.liftOff);
+		if (liftOff !== null) this.liftOff = liftOff;
+		if (state?.map !== undefined) {
+			const map = readMapState(state.map);
+			this.mapState = { pinned: map.pinned, readingMode: map.readingMode ?? false };
+		}
+		// Hold the focus note's history from here, not from the first reload, which can wait on the engine loading: a mind map handing this leaf over may let go of it first.
+		if (this.focusPath !== null && !this.holds.has(this.focusPath)) this.holds.set(this.focusPath, this.plugin().editHistory.hold(this.focusPath));
 		this.overlaysMenu?.showReach({ depth: this.depth, backlinks: this.backlinks });
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
@@ -263,6 +280,7 @@ export class Graph3DView extends ItemView {
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncMobileToolbar(this.app)));
 		syncMobileToolbar(this.app);
 
+		this.addAction("brain-circuit", "Switch to 2D mind map", () => void this.switchTo2D());
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
 		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
@@ -612,7 +630,9 @@ export class Graph3DView extends ItemView {
 				text,
 				selectionStart: editSelectionStart(text, fresh.line.content),
 				onVisibleBand: (band) => this.scene?.setVisibleBand(band),
-				done: (edited) => void this.finishEdit(node, text, edited),
+				done: (edited) => {
+					this.saved = this.finishEdit(node, text, edited);
+				},
 			});
 			// Gone from the scene since the read (it can't be while the editor is open: reloads wait).
 			if (!scene.setEditing(node.id, this.editor, Platform.isMobile)) this.editor.close(false);
@@ -955,8 +975,10 @@ export class Graph3DView extends ItemView {
 	 * stays put instead of re-settling beside its parent. Consumes `edited`:
 	 * the changed line is also selected again.
 	 */
-	private place(scene: Graph3DScene, model: GraphModel, via: ReadonlyMap<string, string>): Map<string, Placed> {
+	private place(scene: Graph3DScene, model: GraphModel, via: ReadonlyMap<string, string>, seeds?: ReadonlyMap<string, Placed>): Map<string, Placed> {
 		const positions = scene.positions();
+		// The lift-off's seeds, for nodes not in the scene yet (the first load after the toggle, when none are).
+		for (const [id, seed] of seeds ?? []) if (!positions.has(id)) positions.set(id, seed);
 		const { edited } = this;
 		this.edited = [];
 		edited.forEach((line, i) => {
@@ -1092,6 +1114,34 @@ export class Graph3DView extends ItemView {
 		else this.setFocus(file.path, true, subpath);
 	}
 
+	/**
+	 * The 2D/3D toggle (this view's header action, and the mind map's toggle
+	 * command): show the focused node's note as a mind map in this leaf,
+	 * landing on the focused line at the scale its plate is drawn now (see
+	 * `graph3d/liftoff.ts`). An open edit saves first, as a blur does; a study
+	 * session ends, flushing its ratings; a link drag is dropped. The note's
+	 * undo history is held across the swap.
+	 */
+	async switchTo2D(): Promise<void> {
+		this.scene?.cancelLinkDrag();
+		if (this.editor.isOpen) this.editor.close(true);
+		await this.saved;
+		if (this.study?.active === true) this.toggleStudy();
+		const scene = this.scene;
+		const node = scene?.focusedNode() ?? null;
+		const nodePath = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : undefined;
+		const path = nodePath ?? this.focusPath;
+		if (path === null) {
+			new Notice("Open a note in the 3D graph first");
+			return;
+		}
+		const focus = node?.kind === "line" && nodePath !== undefined && node.source !== undefined ? { path: nodePath, start: node.source.range.start, root: false } : null;
+		const landing: Landing = { focus, platePx: scene?.linePlatePixels(node?.id ?? null) ?? null };
+		const map = this.mapState ?? { pinned: true, readingMode: false };
+		const state = { ...writeMapState(path, map.pinned, map.readingMode), landing, graph3d: { depth: this.depth, backlinks: this.backlinks, follow: this.follow } };
+		await this.plugin().swapLeafView(this.leaf, "2d", state, [path]);
+	}
+
 	/** With `flyToFocus`, fly to the new focus note's core, or to the line `subpath` names in it. */
 	private setFocus(path: string, flyToFocus: boolean, subpath = ""): void {
 		this.focusPath = path;
@@ -1164,8 +1214,16 @@ export class Graph3DView extends ItemView {
 		this.model = model;
 		scene.setColoring(this.coloring(model));
 		this.syncHolds(horizon.loaded);
-		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via));
-		if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
+		// Once, after the mind map's toggle: its nodes start flat where it drew them, free, and the camera looks at them from where the map did.
+		const liftOff = this.liftOff;
+		this.liftOff = null;
+		const seeds = liftOff === null ? undefined : liftOffSeeds(model, liftOff, scene.linePlateHeight);
+		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via, seeds));
+		if (liftOff !== null) {
+			const focusId = liftOffFocus(model, liftOff) ?? noteNodeId(focus);
+			scene.setFocusId(focusId);
+			scene.standOver({ x: 0, y: 0, z: 0 }, liftOffFrame(liftOff, scene.linePlateHeight), focusId);
+		} else if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.openPending(scene, model);
 		this.prefetch(horizon.prefetch, seq);
 	}

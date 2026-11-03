@@ -237,3 +237,18 @@ export class EditRecorder {
 		this.history.push(this.owner() ?? first.path, edits);
 	}
 }
+
+/**
+ * Hold `keys`' histories while `during` runs, then let go. A leaf swapping
+ * one view for another (the mind map's 2D/3D toggle) closes the outgoing view,
+ * which releases its holds, around the time the incoming one takes its own;
+ * holding across the swap keeps the history alive whichever happens first.
+ */
+export async function holdAcross<T>(history: EditHistory, keys: Iterable<string>, during: () => Promise<T>): Promise<T> {
+	const releases = [...new Set(keys)].map((key) => history.hold(key));
+	try {
+		return await during();
+	} finally {
+		for (const release of releases) release();
+	}
+}
