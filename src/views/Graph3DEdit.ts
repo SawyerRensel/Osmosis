@@ -4,7 +4,7 @@ import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView } from "@codemirror/view";
 import { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
-import { visibleBand, type EditorPlace, type VisibleBand } from "../graph3d/edit";
+import { fitEditWidth, visibleBand, type EditorPlace, type VisibleBand } from "../graph3d/edit";
 import type { TrackedEditor } from "./Graph3DNear";
 
 /** Delay before a blur saves, so a click on the editor's own buttons lands first (as in the mind map). */
@@ -12,6 +12,9 @@ const BLUR_SAVE_MS = 100;
 /** The save and cancel buttons: their size, and the gap between them and the box. */
 const BUTTON_PX = 28;
 const BUTTON_GAP_PX = 4;
+
+/** A canvas context to measure text with, shared by every editor (made on first use). */
+let measurer: CanvasRenderingContext2D | null = null;
 
 /** The Chromium VirtualKeyboard API: not in the TypeScript lib. */
 interface VirtualKeyboardLike {
@@ -63,6 +66,10 @@ export class Graph3DEditor implements TrackedEditor {
 	private height = 0;
 	/** Where it was last placed, to re-place the buttons when the box grows. */
 	private placed: EditorPlace | null = null;
+	/** The fallback textarea, when the embedded editor failed. */
+	private textarea: HTMLTextAreaElement | null = null;
+	/** CodeMirror's measure-cycle key for `fitWidth`, so a burst of keystrokes measures once. */
+	private readonly fitKey = {};
 	private cleanup: Array<() => void> = [];
 
 	constructor(private readonly app: App) {}
@@ -113,9 +120,11 @@ export class Graph3DEditor implements TrackedEditor {
 						if (this.editor === editor) this.close(true);
 					}, BLUR_SAVE_MS);
 				},
+				onChange: () => this.fitWidth(),
 				extensions: [EditorView.lineWrapping],
 			});
 			this.editor = editor;
+			this.fitWidth();
 			editor.editor.cm.focus();
 			editor.editor.cm.dispatch({ selection: EditorSelection.range(request.selectionStart, editor.editor.cm.state.doc.length) });
 		} catch (error) {
@@ -136,7 +145,7 @@ export class Graph3DEditor implements TrackedEditor {
 		this.editor?.destroy();
 		this.editor = null;
 		for (const undo of this.cleanup.splice(0).reverse()) undo();
-		this.anchor = this.box = this.cancelButton = this.saveButton = null;
+		this.anchor = this.box = this.cancelButton = this.saveButton = this.textarea = null;
 		this.placed = null;
 		request.done(text);
 	}
@@ -148,6 +157,55 @@ export class Graph3DEditor implements TrackedEditor {
 			minHeight: `${plate.minHeight}px`,
 			borderRadius: `${plate.radius}px`,
 		});
+		this.fitWidth();
+	}
+
+	/**
+	 * Size the box to its text, as a plate is sized: it widens as you type, up
+	 * to its max width (20em, the panel's), and only then wraps. CodeMirror
+	 * lends a shrink-to-fit box none of its text's width (the mind map's
+	 * overlay sets an explicit width for the same reason), so `max-content`
+	 * alone left the box at its empty width, wrapping every character. The
+	 * text is measured with the font it is drawn in; everything between the
+	 * box's edge and the text (border, padding) is read off the layout. Runs in
+	 * CodeMirror's measure cycle, so the width lands before the frame paints.
+	 */
+	private fitWidth(): void {
+		const box = this.box;
+		if (box === null) return;
+		const cm = this.editor?.editor.cm;
+		if (cm === undefined) {
+			const textarea = this.textarea;
+			if (textarea !== null) box.setCssStyles({ width: `${this.measureWidth(box, textarea, textarea, textarea.value)}px` });
+			return;
+		}
+		cm.requestMeasure({
+			key: this.fitKey,
+			read: (view) => {
+				const line = view.contentDOM.querySelector<HTMLElement>(".cm-line") ?? view.contentDOM;
+				// A heading's text is drawn bold in its own span.
+				const font = line.querySelector<HTMLElement>(".cm-header") ?? line;
+				return this.measureWidth(box, line, font, view.state.doc.toString());
+			},
+			write: (width) => {
+				if (this.box === box) box.setCssStyles({ width: `${width}px` });
+			},
+		});
+	}
+
+	/** The box's width for `text`: `line` is an element its text is laid out in, `font` one with the font it is drawn in. */
+	private measureWidth(box: HTMLElement, line: HTMLElement, font: HTMLElement, text: string): number {
+		measurer ??= createEl("canvas").getContext("2d");
+		const lineStyle = getComputedStyle(line);
+		const textWidth = line.clientWidth - parseFloat(lineStyle.paddingLeft) - parseFloat(lineStyle.paddingRight);
+		const boxStyle = getComputedStyle(box);
+		const min = parseFloat(boxStyle.minWidth) || 0;
+		const max = parseFloat(boxStyle.maxWidth) || Infinity;
+		if (measurer === null) return max;
+		const fontStyle = getComputedStyle(font);
+		measurer.font = `${fontStyle.fontStyle} ${fontStyle.fontWeight} ${fontStyle.fontSize} ${fontStyle.fontFamily}`;
+		const context = measurer;
+		return fitEditWidth(text.split("\n"), (l) => context.measureText(l).width, box.offsetWidth - textWidth, min, max);
 	}
 
 	place(at: EditorPlace | null): void {
@@ -187,6 +245,8 @@ export class Graph3DEditor implements TrackedEditor {
 		input.rows = 1;
 		input.setCssStyles({ width: "100%" });
 		box.appendChild(input);
+		this.textarea = input;
+		input.addEventListener("input", () => this.fitWidth());
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) this.close(true);
 			else if (e.key === "Escape") this.close(false);
@@ -204,6 +264,7 @@ export class Graph3DEditor implements TrackedEditor {
 		});
 		input.focus({ preventScroll: true });
 		input.setSelectionRange(request.selectionStart, request.text.length);
+		this.fitWidth();
 	}
 
 	/** On a phone: overlay the keyboard instead of resizing the page, and report the visible band whenever it changes. */

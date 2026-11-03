@@ -609,7 +609,9 @@ export class Graph3DView extends ItemView {
 	 * Read the line fresh, then open the editor on the node's plate, where the
 	 * near tier keeps it as the camera moves. The text is `nodeEditText`, as in
 	 * the mind map: markers in, indentation and block ID out (both come back on
-	 * save). On a phone the camera centres the line above the keyboard.
+	 * save). The camera stays put (`Graph3DScene.setEditing`): on desktop it
+	 * only turns to a line off screen; on a phone it pans the line above the
+	 * keyboard.
 	 */
 	private async openEditor(node: GraphNode): Promise<void> {
 		if (this.opening || this.editor.isOpen) return;

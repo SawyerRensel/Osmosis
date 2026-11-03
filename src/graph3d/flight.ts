@@ -60,6 +60,20 @@ export function flightPose(flight: Flight, node: Vec3, now: number, duration: nu
 	};
 }
 
+/** A short eased camera move between two poses that track no node: an edit's turn or pan (`graph3d/framing.ts`). */
+export interface Glide {
+	from: { position: Vec3; target: Vec3 };
+	to: { position: Vec3; target: Vec3 };
+	start: number;
+}
+
+/** The camera pose `now` into `glide`, easing out over `duration` ms. */
+export function glidePose(glide: Glide, now: number, duration: number): FlightPose {
+	const t = Math.min(1, Math.max(0, (now - glide.start) / duration));
+	const eased = easeOutQuad(t);
+	return { position: lerp(glide.from.position, glide.to.position, eased), target: lerp(glide.from.target, glide.to.target, eased), done: t >= 1 };
+}
+
 const easeOutQuad = (t: number): number => t * (2 - t);
 
 function lerp(a: Vec3, b: Vec3, t: number): Vec3 {

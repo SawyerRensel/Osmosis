@@ -121,6 +121,21 @@ export function editorAnchor(
 	return { x: ((ndc.x + 1) / 2) * size.width, y: ((1 - ndc.y) / 2) * size.height, scale: panelScale(depth, pxPerUnitAt1, pxPerUnit) };
 }
 
+/** Px past the widest line the inline editor box keeps, for the caret and rounding, so a line that fits does not wrap. */
+const EDIT_WIDTH_SLACK_PX = 4;
+
+/**
+ * The inline editor box's width in px, sized to its text as a plate is: its
+ * widest line (`measure`, the text's laid-out width), plus `chrome` (everything
+ * between the box's edge and its text: border, padding) and a little slack,
+ * kept within `min` (the plate's width) and `max` (the panel's 20em), past
+ * which the text wraps. `min` wins over `max`, as in CSS.
+ */
+export function fitEditWidth(lines: readonly string[], measure: (line: string) => number, chrome: number, min: number, max: number): number {
+	const widest = lines.reduce((width, line) => Math.max(width, measure(line)), 0);
+	return Math.max(min, Math.min(max, Math.ceil(widest + chrome + EDIT_WIDTH_SLACK_PX)));
+}
+
 /** A band of the window, top to bottom in client px: what the on-screen keyboard leaves visible. */
 export interface VisibleBand {
 	top: number;

@@ -4437,6 +4437,7 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	position: absolute;
 	left: 0;
 	top: 0;
+	/* Until the editor measures its text: from then on `fitWidth` (Graph3DEdit.ts) sets the width inline, since CodeMirror lends a shrink-to-fit box none of its text's width. */
 	width: max-content;
 	/* PANEL_MAX_EM, as a panel: a long line wraps at the width the scene spaces nodes for. */
 	max-width: 20em;

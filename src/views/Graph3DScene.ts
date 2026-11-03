@@ -39,7 +39,8 @@ import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } 
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { flightPose, startFlight, type Flight, type Vec3 } from "../graph3d/flight";
+import { flightPose, glidePose, startFlight, type Flight, type Glide, type Vec3 } from "../graph3d/flight";
+import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
@@ -256,6 +257,10 @@ const CAMERA_NEAR = 1;
 const FLIGHT_SPEED = 0.9;
 const FLIGHT_MIN_SPEED = 40;
 const FLIGHT_MS = 1000;
+/** An edit's turn or pan (`glide`): short, since it covers little ground. */
+const GLIDE_MS = 400;
+/** Px to spare between an edited line's plate and the edge of the view, when the camera turns to show it. */
+const EDIT_MARGIN_PX = 48;
 /** Ticks after new data before the layout has spread out enough to aim at. */
 const SETTLE_TICKS = 80;
 /** d3's default many-body strength; see `settle.ts` for which nodes it acts on. */
@@ -334,6 +339,8 @@ export class Graph3DScene {
 	private flight: { node: EngineNode; flight: Flight } | null = null;
 	/** After a flight, the camera moves with its node until the node settles, or the user takes over. */
 	private follow: { node: EngineNode; at: Vec3 } | null = null;
+	/** An edit's turn (desktop) or pan (phone) under way, to a fixed pose. */
+	private glide: Glide | null = null;
 	private ticksSinceData = 0;
 	private controlSettings: SceneControls;
 	private drag: RotateDrag | null = null;
@@ -778,9 +785,15 @@ export class Graph3DScene {
 	 *
 	 * The node is pinned where it is, so a layout still settling can't carry it
 	 * off while it is edited, and the edit's own reload puts its successor on
-	 * the same spot (`Graph3DView.place`). A flight elsewhere stops. With
-	 * `centre` (a phone, where the keyboard takes half the screen), or when the
-	 * text would be too small to read, the camera flies to the node.
+	 * the same spot (`Graph3DView.place`). A flight elsewhere stops.
+	 *
+	 * The camera trusts the view (Sawyer, 2026-11-03): it never flies or zooms
+	 * for an edit, however small the text. On desktop it stays put unless the
+	 * line is off screen, and then only turns where it stands, just far enough
+	 * to show it. With `centre` (a phone, where the keyboard takes half the
+	 * screen) it pans the line onto the view's centre, which the keyboard offset
+	 * puts above the keyboard (`setVisibleBand`), turning first only if the line
+	 * is behind it.
 	 */
 	setEditing(id: string | null, editor: TrackedEditor | null = null, centre = false): boolean {
 		const node = id === null ? undefined : this.nodes.find((n) => n.id === id && !n.departing);
@@ -789,16 +802,51 @@ export class Graph3DScene {
 		this.cancelFlight();
 		this.editingId = node?.id ?? null;
 		this.near.setEditing(node ?? null, editor);
-		if (node === undefined) return true;
+		if (node?.x === undefined || node.y === undefined || node.z === undefined) return true;
 		if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
-		if (centre || !this.near.readable(node, this.graph.camera() as PerspectiveCamera)) this.flyTo(node.id);
+		this.showEdited(node, { x: node.x, y: node.y, z: node.z }, centre);
 		return true;
+	}
+
+	/** The camera's turn (desktop) or pan (phone) for an edit at `at`; nothing when it is in view on desktop. */
+	private showEdited(node: EngineNode, at: Vec3, centre: boolean): void {
+		const pose = this.cameraPose();
+		const inset = this.plateInset(node, at, pose);
+		// A phone pans onto the line, so only a line behind the camera needs a turn first.
+		const target = centre ? (project(pose, at).depth > 0 ? null : turnToSee(pose, at, { x: 0, y: 0 })) : turnToSee(pose, at, inset);
+		const turned = target === null ? pose : { ...pose, target };
+		const pan = centre ? panOnto(turned, at) : { x: 0, y: 0, z: 0 };
+		if (target === null && pan.x === 0 && pan.y === 0 && pan.z === 0) return;
+		const add = (a: Vec3) => ({ x: a.x + pan.x, y: a.y + pan.y, z: a.z + pan.z });
+		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: add(turned.position), target: add(turned.target) }, start: performance.now() };
+	}
+
+	/** The inset that keeps `node`'s plate, at `at`, wholly in view with a margin. */
+	private plateInset(node: EngineNode, at: Vec3, pose: CameraPose): Inset {
+		const distance = Math.hypot(at.x - pose.position.x, at.y - pose.position.y, at.z - pose.position.z);
+		return plateInset({ x: node.shape.width / 2, y: node.shape.height / 2 }, distance, EDIT_MARGIN_PX, { width: this.container.clientWidth, height: this.container.clientHeight }, pose.fov);
+	}
+
+	/** The camera as the framing geometry (`graph3d/framing.ts`) sees it. */
+	private cameraPose(): CameraPose {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const target = this.orbitControls().target;
+		return {
+			position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+			target: { x: target.x, y: target.y, z: target.z },
+			up: { x: camera.up.x, y: camera.up.y, z: camera.up.z },
+			fov: camera.fov,
+			aspect: camera.aspect,
+		};
 	}
 
 	/**
 	 * Move a line that has just arrived (still free) to a link's length from its
-	 * parent, in a random direction: a new line is seeded 10 units from its
-	 * parent, inside its plate, and opening an editor pins it where it is.
+	 * parent, beside it in the plane of the screen, where the screen is freest
+	 * (`seedBeside`): a new line is seeded 10 units from its parent, inside its
+	 * plate, and opening an editor pins it where it is. Seeding a new line is not
+	 * moving a settled one, and it puts the line where the user is looking, so
+	 * the camera can stay still.
 	 */
 	seedClear(id: string): void {
 		const node = this.nodes.find((n) => n.id === id);
@@ -808,13 +856,16 @@ export class Graph3DScene {
 		const parent = this.nodes.find((n) => n.id === parentId);
 		if (parent?.x === undefined || parent.y === undefined || parent.z === undefined) return;
 		const distance = linkDistance("hierarchy", parent.extent, node.extent);
-		// A uniform direction on the sphere.
-		const z = 2 * Math.random() - 1;
-		const angle = 2 * Math.PI * Math.random();
-		const ring = Math.sqrt(1 - z * z);
-		node.x = parent.x + distance * ring * Math.cos(angle);
-		node.y = parent.y + distance * ring * Math.sin(angle);
-		node.z = parent.z + distance * z;
+		const others: Vec3[] = [];
+		for (const n of this.nodes) {
+			if (n === node || n === parent || n.departing || n.x === undefined || n.y === undefined || n.z === undefined) continue;
+			others.push({ x: n.x, y: n.y, z: n.z });
+		}
+		const at = { x: parent.x, y: parent.y, z: parent.z };
+		const pose = this.cameraPose();
+		const inset = this.plateInset(node, at, pose);
+		const seed = seedBeside(pose, at, distance, others, inset);
+		[node.x, node.y, node.z] = [seed.x, seed.y, seed.z];
 		this.dirty = true;
 	}
 
@@ -849,17 +900,27 @@ export class Graph3DScene {
 		const distance = node.graph.kind === "note" ? 160 : 70;
 		const position = { x: node.x, y: node.y, z: node.z };
 		this.flight = { node, flight: startFlight(this.graph.camera().position, this.orbitControls().target, position, distance, performance.now()) };
-		this.follow = null;
+		this.follow = this.glide = null;
 	}
 
 	/**
-	 * One frame of the flight: the camera eases toward where its node is now.
-	 * Once there, it keeps moving with the node until the node is pinned
-	 * (the layout has cooled), so a node still settling stays centred.
+	 * One frame of an edit's glide (to a fixed pose), or of the flight: the
+	 * camera eases toward where its node is now. Once there, it keeps moving
+	 * with the node until the node is pinned (the layout has cooled), so a node
+	 * still settling stays centred.
 	 */
 	private steerFlight(now: number): void {
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
+		const glide = this.glide;
+		if (glide !== null) {
+			const pose = glidePose(glide, now, GLIDE_MS);
+			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
+			controls.update();
+			if (pose.done) this.glide = null;
+			return;
+		}
 		const flight = this.flight;
 		if (flight !== null) {
 			const { node } = flight;
@@ -895,7 +956,7 @@ export class Graph3DScene {
 
 	/** The user moved the view: a flight or follow under way gives way. */
 	private cancelFlight(): void {
-		this.flight = this.follow = null;
+		this.flight = this.follow = this.glide = null;
 	}
 
 	destroy(): void {

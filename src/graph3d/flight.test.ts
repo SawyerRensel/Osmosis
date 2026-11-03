@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flightPose, startFlight, type Vec3 } from "./flight";
+import { flightPose, glidePose, startFlight, type Vec3 } from "./flight";
 
 const DURATION = 1000;
 
@@ -59,5 +59,23 @@ describe("flightPose", () => {
 		const half = flightPose(flight, node, DURATION / 2, DURATION).position.x;
 		expect(half).toBeGreaterThan(end / 2);
 		expect(half).toBeLessThan(end);
+	});
+});
+
+describe("glidePose", () => {
+	const glide = { from: { position: { x: 0, y: 0, z: 100 }, target: { x: 0, y: 0, z: 0 } }, to: { position: { x: 10, y: 0, z: 100 }, target: { x: 10, y: 0, z: 0 } }, start: 0 };
+
+	it("starts at the first pose and ends at the second", () => {
+		expectNear(glidePose(glide, 0, DURATION).position, glide.from.position);
+		const end = glidePose(glide, DURATION, DURATION);
+		expectNear(end.position, glide.to.position);
+		expectNear(end.target, glide.to.target);
+		expect(end.done).toBe(true);
+	});
+
+	it("eases out: more than half way at half time", () => {
+		const half = glidePose(glide, DURATION / 2, DURATION);
+		expect(half.position.x).toBeCloseTo(7.5, 9);
+		expect(half.done).toBe(false);
 	});
 });

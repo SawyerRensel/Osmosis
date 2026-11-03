@@ -33,7 +33,7 @@ import { repaintOcclusion } from "./OcclusionRenderer";
 import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
-import { NEAR_BUDGET, NEAR_ENTER_SCALE, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } from "../graph3d/lod";
+import { NEAR_BUDGET, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } from "../graph3d/lod";
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
 import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
@@ -247,16 +247,6 @@ export class Graph3DNear {
 		edit.editor.place(at === null ? null : { ...at, opacity: plateVisibility(node.opacity, depth, depth, this.density) });
 	}
 
-	/** Whether node's text would show at least at the size a panel enters the near tier, on screen: an editor opened there is readable without moving the camera. */
-	readable(node: NearSource, camera: PerspectiveCamera): boolean {
-		if (node.x === undefined || node.y === undefined || node.z === undefined) return false;
-		camera.updateMatrixWorld();
-		const point = this.point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
-		const depth = -point.z;
-		point.applyMatrix4(camera.projectionMatrix);
-		const at = editorAnchor({ x: point.x, y: point.y }, depth, camera.near, this.renderer.getSize(), this.pxPerUnitAt1(camera), this.pxPerUnit);
-		return at !== null && at.scale >= NEAR_ENTER_SCALE && Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1;
-	}
 	/**
 	 * The panel drawn on top at client point (`x`, `y`), if any. Panels never
 	 * take the pointer, so this hit-tests them as drawn: a nearer panel covers a

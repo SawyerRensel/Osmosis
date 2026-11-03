@@ -3,7 +3,7 @@ import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
+import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, fitEditWidth, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -485,5 +485,31 @@ describe("moving a line (Move under / Move after / Move to end of note)", () => 
 		const out = moveInNote(note, root, at("Coil the lines"), moveGap(root, null, "end", at("Coil the lines"))!)!;
 		expect(out.text).toBe("# Deck\n- Rig the fenders ^os-fend01\n\n## Galley\n\n1. Light the stove\n2. Boil water\n- Coil the lines\n\t- Bow line\n\t- Stern line\n");
 		expect(out.text.startsWith("- Coil the lines\n\t- Bow line\n\t- Stern line", out.start)).toBe(true);
+	});
+});
+
+describe("fitEditWidth", () => {
+	// Ten px a character.
+	const measure = (line: string): number => line.length * 10;
+
+	it("fits the widest line, its chrome and the slack", () => {
+		expect(fitEditWidth(["Reef early", "Reef the main before the squall"], measure, 20, 0, 1000)).toBe(310 + 20 + 4);
+	});
+
+	it("grows as the text does, a character at a time", () => {
+		const widths = ["R", "Re", "Ree", "Reef"].map((text) => fitEditWidth([text], measure, 20, 0, 1000));
+		expect(widths).toEqual([34, 44, 54, 64]);
+	});
+
+	it("keeps the plate's width for short or empty text", () => {
+		expect(fitEditWidth([""], measure, 20, 120, 320)).toBe(120);
+	});
+
+	it("stops at the max width, where the editor wraps", () => {
+		expect(fitEditWidth(["x".repeat(80)], measure, 20, 0, 320)).toBe(320);
+	});
+
+	it("lets the minimum win over the maximum, as CSS does", () => {
+		expect(fitEditWidth(["x"], measure, 20, 400, 320)).toBe(400);
 	});
 });
