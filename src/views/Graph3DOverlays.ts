@@ -12,6 +12,7 @@ import {
 	type LabelMode,
 	type OverlayEdgeKind,
 } from "../graph3d/overlays";
+import { FLAT_DEPTH_RANGE, flatDepth } from "../graph3d/flatten";
 
 const COLOR_MODES: Record<ColorMode, string> = {
 	note: "Note",
@@ -168,6 +169,19 @@ export class Graph3DOverlaysMenu {
 					.setInstant(true)
 					.onChange((value) => this.change({ forceBalance: value })),
 			);
+		const flatten = new Setting(panel).setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
+		flatten.addSlider((slider) =>
+			slider
+				// One step per flat depth: off, then 4, 3, 2, 1.
+				.setLimits(0, 1, 1 / FLAT_DEPTH_RANGE)
+				.setValue(overlays.flatten)
+				// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+				.setInstant(true)
+				.onChange((value) => {
+					flatten.setDesc(flattenLabel(value));
+					this.change({ flatten: value });
+				}),
+		);
 
 		new Setting(panel).setName("Camera").setHeading();
 		const travel = new Setting(panel).setName("Travel speed").setDesc(travelLabel(overlays.travelSpeed));
@@ -213,6 +227,16 @@ function depthLabel(depth: number): string {
 
 function travelLabel(speed: number): string {
 	return `×${speed < 1 ? speed.toFixed(2) : speed.toFixed(1)}. How fast the camera flies when you follow a link, hop to a plate, or go to a search result.`;
+}
+
+function flattenLabel(flatten: number): string {
+	const depth = flatDepth(flatten);
+	const lead = !Number.isFinite(depth)
+		? "Off: every branch spreads in 3D."
+		: depth <= 1
+			? "Everything under each note's title lies flat."
+			: `Lines deeper than outline depth ${String(Math.floor(depth))} lie flat.`;
+	return `${lead} A flat branch is drawn as the mind map draws it, facing out from its note. Moving it re-settles the loaded notes as you drag.`;
 }
 
 function mistLabel(mist: number): string {

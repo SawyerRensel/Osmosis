@@ -24,6 +24,8 @@ export interface Graph3DOverlays {
 	edges: Record<OverlayEdgeKind, boolean>;
 	/** 0 is all hierarchy, 1 all organic; at 0.5 every link pulls as d3 would by default. */
 	forceBalance: number;
+	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). */
+	flatten: number;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;
 	/** A particle runs along each drawn edge, source to target. */
@@ -41,6 +43,8 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	// Attachments are off: an attachment is already part of the note that embeds it.
 	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: false, unresolved: true },
 	forceBalance: 0.5,
+	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
+	flatten: 0.75,
 	mist: 1,
 	particles: false,
 	labels: "all",
@@ -69,6 +73,7 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		colorBy: COLOR_MODES.includes(value.colorBy as ColorMode) ? (value.colorBy as ColorMode) : DEFAULT_OVERLAYS.colorBy,
 		edges,
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
+		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,

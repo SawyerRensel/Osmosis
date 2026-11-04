@@ -38,6 +38,7 @@ import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
+import { branchOf, FlatLayouts, flatCharges, flatDepth, flattenStep, sameBranch, type FlatBranch } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -309,6 +310,13 @@ export class Graph3DScene {
 	private readonly linkForce: LinkForce | undefined;
 	/** Many-body strength per node; nodes not in it are left out of the force. */
 	private charge = new Map<string, number>();
+	/** Each note's 2D layout at plate sizes, for its flat branches (see `graph3d/flatten.ts`). */
+	private readonly flatLayouts = new FlatLayouts();
+	/** The flat branches of the loaded nodes at the flatten slider's depth, and the branch root of each member. */
+	private flatBranches: FlatBranch[] = [];
+	private flatOf = new Map<string, string>();
+	/** The nodes not departing, by ID, for the flatten force. */
+	private live = new Map<string, EngineNode>();
 	private readonly plates: Graph3DPlates;
 	/** Live Markdown panels over the nearest plates. */
 	private readonly near: Graph3DNear;
@@ -440,6 +448,10 @@ export class Graph3DScene {
 			initialize: (nodes: EngineNode[], ...args: unknown[]) => charge.initialize(nodes.filter((n) => this.charge.has(n.id)), ...args),
 		});
 		this.graph.d3Force("charge", settleCharge as never);
+		// Added last, so it runs after the other forces each tick: it lays flat
+		// branches out in their planes, rigidly, and hands their pull to their roots.
+		const keep = 1 - this.graph.d3VelocityDecay();
+		this.graph.d3Force("flatten", (() => flattenStep(this.flatBranches, (id) => this.live.get(id), keep)) as never);
 		// Centring shifts every free node each tick to keep the mean at the
 		// origin, so arrivals would drift against a pinned world.
 		this.graph.d3Force("center", null);
@@ -503,6 +515,8 @@ export class Graph3DScene {
 			existing.color.setStyle(this.colorOf(graph));
 			if (relabel) {
 				existing.shape = this.shapeFor(graph);
+				// Flat branches are laid out at plate sizes.
+				this.flatLayouts.clear();
 				plated++;
 			}
 			existing.extent = extentFor(existing);
@@ -587,11 +601,19 @@ export class Graph3DScene {
 		this.dirty = true;
 	}
 
-	/** Hand the engine the current nodes and links, with the many-body force limited to what is still settling. */
+	/**
+	 * Hand the engine the current nodes and links, with the many-body force
+	 * limited to what is still settling, and the flat branches at the flatten
+	 * slider's depth (their members leave the many-body force to their roots).
+	 */
 	private pushData(): void {
-		this.charge = chargeStrengths(
-			this.nodes.filter((node) => !node.departing).map((node) => ({ ...node.graph, pinned: node.fx !== undefined })),
-			CHARGE,
+		const live = this.nodes.filter((node) => !node.departing);
+		this.live = new Map(live.map((node) => [node.id, node]));
+		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize);
+		this.flatOf = branchOf(this.flatBranches);
+		this.charge = flatCharges(
+			chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE),
+			this.flatBranches,
 		);
 		this.degree.clear();
 		for (const link of this.links) {
@@ -601,6 +623,19 @@ export class Graph3DScene {
 		this.layoutDirty = true;
 		this.graph.graphData({ nodes: this.nodes, links: this.links });
 	}
+
+	/**
+	 * A node's footprint in a flat branch: its plate, or the near-tier panel it
+	 * would get if that is bigger, so panels side by side in one plane don't
+	 * cover each other (as `extentFor` spaces 3D links).
+	 */
+	private readonly flatSize = (graph: GraphNode): { width: number; height: number } => {
+		const node = this.live.get(graph.id);
+		const plate = node?.shape ?? { width: 0, height: LINE_PLATE_HEIGHT };
+		const panel = panelBoxEm(graph);
+		const em = Graph3DNear.emWorld(LINE_PLATE_HEIGHT);
+		return { width: Math.max(plate.width, (panel?.width ?? 0) * em), height: Math.max(plate.height, (panel?.height ?? 0) * em) };
+	};
 
 	/** The simulation has cooled: pin whatever was still free where it stopped. */
 	private settle(): void {
@@ -620,6 +655,7 @@ export class Graph3DScene {
 			node.shape = this.shapeFor(node.graph);
 			node.extent = extentFor(node);
 		}
+		this.flatLayouts.clear();
 		this.linkForce?.distance(plateLinkDistance);
 		this.dirty = true;
 		this.layoutDirty = true;
@@ -631,16 +667,17 @@ export class Graph3DScene {
 
 	/**
 	 * Apply the Overlays menu. Hidden edges still pull (visibility is drawing
-	 * only). A new force balance re-weights the links and re-settles the loaded
-	 * nodes (`reshape`): the one place settled nodes are let go on purpose.
+	 * only). A new force balance re-weights the links, and a new flatten
+	 * position re-cuts the flat branches; either re-settles the loaded nodes
+	 * (`reshape`): the one place settled nodes are let go on purpose.
 	 */
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance;
+		const reflatten = overlays.flatten !== this.overlays.flatten;
 		this.overlays = overlays;
-		if (reweigh) {
-			this.linkForce?.strength(this.linkStrength);
-			this.reshape();
-		}
+		if (reweigh) this.linkForce?.strength(this.linkStrength);
+		// pushData (in reshape) re-cuts the branches, and the engine re-reads every link's strength.
+		if (reweigh || reflatten) this.reshape();
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
 		this.near.setEnabled(overlays.labels === "all");
@@ -656,19 +693,26 @@ export class Graph3DScene {
 		this.layoutDirty = true;
 	}
 
-	/** d3's default link strength (one over the fewer links at either end), scaled by the force balance. */
+	/**
+	 * d3's default link strength (one over the fewer links at either end),
+	 * scaled by the force balance. An edge inside a flat branch doesn't pull:
+	 * the branch is rigid (`graph3d/flatten.ts`).
+	 */
 	private readonly linkStrength = (link: EngineLink): number => {
+		if (sameBranch(this.flatOf, endId(link.source), endId(link.target))) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
 		return linkStrengthScale(link.kind, this.overlays.forceBalance) / Math.max(1, fewer);
 	};
 
 	/**
-	 * The Hierarchy ⟷ organic slider moved: let every loaded node go and
-	 * re-settle under the new link weights, so the change shows at once.
+	 * The Hierarchy ⟷ organic slider or the flatten slider moved: let every
+	 * loaded node go and re-settle under the new link weights or flat
+	 * branches, so the change shows at once.
 	 *
-	 * DELIBERATE EXCEPTION to "settled nodes never move" (Sawyer, 2026-11-01):
-	 * it happens only here, in answer to the user moving this slider. Hops,
-	 * edits and data updates still keep settled nodes where they are. The line
+	 * DELIBERATE EXCEPTION to "settled nodes never move" (Sawyer, 2026-11-01
+	 * for the Hierarchy ⟷ organic slider, 2026-11-03 for the flatten slider):
+	 * it happens only here, in answer to the user moving one of those two
+	 * sliders. Hops, edits and data updates still keep settled nodes where they are. The line
 	 * being edited stays pinned. The camera rides along with the focused node
 	 * until the layout cools and `settle` pins everything again.
 	 */

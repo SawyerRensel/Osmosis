@@ -57,6 +57,13 @@ describe("normalizeOverlays", () => {
 		expect(overlays.labels).toBe("plates");
 	});
 
+	it("flattens moderately by default, for new and existing users, and clamps a saved flatten", () => {
+		expect(normalizeOverlays({ forceBalance: 0.2 }).flatten).toBe(0.75);
+		expect(normalizeOverlays({ flatten: 0 }).flatten).toBe(0);
+		expect(normalizeOverlays({ flatten: 3 }).flatten).toBe(1);
+		expect(normalizeOverlays({ flatten: "flat" }).flatten).toBe(0.75);
+	});
+
 	it("does not share the default edges object", () => {
 		normalizeOverlays(undefined).edges.link = false;
 		expect(DEFAULT_OVERLAYS.edges.link).toBe(true);
