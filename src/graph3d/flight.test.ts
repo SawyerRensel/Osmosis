@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flightPose, glidePose, startFlight, type Vec3 } from "./flight";
+import { flightPose, glidePose, startFlight, startTrip, tripDuration, tripEnd, tripPose, TRIP_MAX_MS, TRIP_MIN_MS, type Vec3 } from "./flight";
 
 const DURATION = 1000;
 
@@ -77,5 +77,99 @@ describe("glidePose", () => {
 		const half = glidePose(glide, DURATION / 2, DURATION);
 		expect(half.position.x).toBeCloseTo(7.5, 9);
 		expect(half.done).toBe(false);
+	});
+});
+
+describe("tripDuration", () => {
+	it("is slow, scaled by distance, and clamped to 1.5-4 s at the default speed", () => {
+		expect(tripDuration(0, 1)).toBe(TRIP_MIN_MS);
+		expect(tripDuration(100, 1)).toBeGreaterThan(TRIP_MIN_MS);
+		expect(tripDuration(100, 1)).toBeLessThan(TRIP_MAX_MS);
+		expect(tripDuration(100000, 1)).toBe(TRIP_MAX_MS);
+	});
+
+	it("divides by the travel speed", () => {
+		expect(tripDuration(100, 2)).toBeCloseTo(tripDuration(100, 1) / 2, 6);
+		expect(tripDuration(100, 0.25)).toBeCloseTo(tripDuration(100, 1) * 4, 6);
+	});
+});
+
+describe("trip", () => {
+	const from = { x: 0, y: 0, z: 0 };
+	const to = { x: 200, y: 0, z: 0 };
+	const camera = { x: -20, y: 50, z: 60 };
+	const target = { x: 0, y: 0, z: 0 };
+
+	it("ends on the edge's line, the stand-off short of the far end, looking at it", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const pose = tripPose(trip, from, to, trip.duration);
+		expectNear(pose.position, { x: 130, y: 0, z: 0 });
+		expectNear(pose.target, to);
+		expectNear(tripEnd(from, to, 70), { x: 130, y: 0, z: 0 });
+		expect(pose.done).toBe(true);
+	});
+
+	it("starts where the camera was", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const pose = tripPose(trip, from, to, 0);
+		expectNear(pose.position, camera);
+		expectNear(pose.target, target);
+		expect(pose.done).toBe(false);
+	});
+
+	it("rides along the line: off it at the start, on it from 60% of the way", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const early = tripPose(trip, from, to, trip.duration * 0.2).position;
+		const late = tripPose(trip, from, to, trip.duration * 0.7).position;
+		expect(Math.hypot(early.y, early.z)).toBeGreaterThan(1);
+		expect(Math.hypot(late.y, late.z)).toBeCloseTo(0, 6);
+	});
+
+	it("moves forward along the edge and never overshoots", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		let last = -Infinity;
+		for (let i = 0; i <= 20; i++) {
+			const x = tripPose(trip, from, to, (trip.duration * i) / 20).position.x;
+			expect(x).toBeGreaterThanOrEqual(last);
+			expect(x).toBeLessThanOrEqual(130 + 1e-9);
+			last = x;
+		}
+	});
+
+	it("eases in and out: slow at both ends", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const step = (a: number, b: number): number => Math.abs(tripPose(trip, from, to, trip.duration * b).position.x - tripPose(trip, from, to, trip.duration * a).position.x);
+		expect(step(0, 0.1)).toBeLessThan(step(0.45, 0.55));
+		expect(step(0.9, 1)).toBeLessThan(step(0.45, 0.55));
+	});
+
+	it("lands on where the ends are now, if they moved during the ride", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const movedFrom = { x: 0, y: 40, z: 0 };
+		const movedTo = { x: 0, y: 40, z: 300 };
+		const pose = tripPose(trip, movedFrom, movedTo, trip.duration);
+		expectNear(pose.target, movedTo);
+		expectNear(pose.position, { x: 0, y: 40, z: 230 });
+	});
+
+	it("looks ahead of the camera along the edge once under way", () => {
+		const trip = startTrip(camera, target, from, to, 70, 0, 1);
+		const pose = tripPose(trip, from, to, trip.duration * 0.8);
+		expect(pose.target.x - pose.position.x).toBeCloseTo(70, 6);
+		expect(pose.target.y).toBeCloseTo(0, 6);
+	});
+
+	it("takes longer for a farther camera, and scales with speed", () => {
+		const near = startTrip({ x: 100, y: 0, z: 0 }, target, from, to, 70, 0, 1);
+		const far = startTrip({ x: -400, y: 0, z: 0 }, target, from, to, 70, 0, 1);
+		expect(far.duration).toBeGreaterThan(near.duration);
+		expect(startTrip(camera, target, from, to, 70, 0, 4).duration).toBeCloseTo(startTrip(camera, target, from, to, 70, 0, 1).duration / 4, 6);
+	});
+
+	it("copes with an edge of no length", () => {
+		const trip = startTrip(camera, target, from, from, 70, 0, 1);
+		const pose = tripPose(trip, from, from, trip.duration);
+		expectNear(pose.target, from);
+		expect(Number.isFinite(pose.position.x)).toBe(true);
 	});
 });

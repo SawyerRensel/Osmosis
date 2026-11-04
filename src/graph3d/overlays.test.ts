@@ -13,6 +13,8 @@ import {
 	normalizeOverlays,
 	overlayNodeColor,
 	sliderFromMist,
+	sliderFromTravel,
+	travelFromSlider,
 	typeColor,
 	visibleModel,
 } from "./overlays";
@@ -40,7 +42,9 @@ describe("normalizeOverlays", () => {
 			bloom: true,
 			particles: 1,
 			labels: "plates",
+			travelSpeed: 2,
 		});
+		expect(overlays.travelSpeed).toBe(2);
 		expect(overlays.colorBy).toBe("memory");
 		expect(overlays.edges.tag).toBe(false);
 		expect(overlays.edges.link).toBe(true);
@@ -126,6 +130,23 @@ describe("mist slider", () => {
 		expect(mistFromSlider(0)).toBe(1);
 		expect(mistFromSlider(-2)).toBe(0.25);
 		expect(sliderFromMist(4)).toBe(2);
+	});
+});
+
+describe("travel speed", () => {
+	it("defaults to 1 and clamps a saved value to 0.25-4", () => {
+		expect(DEFAULT_OVERLAYS.travelSpeed).toBe(1);
+		expect(normalizeOverlays({ travelSpeed: 100 }).travelSpeed).toBe(4);
+		expect(normalizeOverlays({ travelSpeed: 0 }).travelSpeed).toBe(0.25);
+		expect(normalizeOverlays({ travelSpeed: "fast" }).travelSpeed).toBe(1);
+		expect(normalizeOverlays({ travelSpeed: Number.NaN }).travelSpeed).toBe(1);
+	});
+
+	it("maps log₂ slider positions to speeds and back", () => {
+		expect(travelFromSlider(0)).toBe(1);
+		expect(travelFromSlider(-2)).toBe(0.25);
+		expect(travelFromSlider(2)).toBe(4);
+		expect(sliderFromTravel(0.5)).toBe(-1);
 	});
 });
 

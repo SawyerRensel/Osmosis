@@ -2,8 +2,11 @@ import { Setting, setIcon, setTooltip, type SliderComponent, type ToggleComponen
 import {
 	MIST_LIMIT,
 	OVERLAY_EDGE_KINDS,
+	TRAVEL_LIMIT,
 	mistFromSlider,
 	sliderFromMist,
+	sliderFromTravel,
+	travelFromSlider,
 	type ColorMode,
 	type Graph3DOverlays,
 	type LabelMode,
@@ -166,6 +169,19 @@ export class Graph3DOverlaysMenu {
 					.onChange((value) => this.change({ forceBalance: value })),
 			);
 
+		new Setting(panel).setName("Camera").setHeading();
+		const travel = new Setting(panel).setName("Travel speed").setDesc(travelLabel(overlays.travelSpeed));
+		travel.addSlider((slider) => {
+			const limit = Math.log2(TRAVEL_LIMIT);
+			slider
+				.setLimits(-limit, limit, 0.25)
+				.setValue(sliderFromTravel(overlays.travelSpeed))
+				.onChange((value) => {
+					travel.setDesc(travelLabel(travelFromSlider(value)));
+					this.change({ travelSpeed: travelFromSlider(value) });
+				});
+		});
+
 		new Setting(panel).setName("Lookdev").setHeading();
 		const mist = new Setting(panel).setName("Mist density").setDesc(mistLabel(overlays.mist));
 		mist.addSlider((slider) => {
@@ -193,6 +209,10 @@ export class Graph3DOverlaysMenu {
 
 function depthLabel(depth: number): string {
 	return depth === 1 ? "1 hop from the focus note" : `${String(depth)} hops from the focus note`;
+}
+
+function travelLabel(speed: number): string {
+	return `×${speed < 1 ? speed.toFixed(2) : speed.toFixed(1)}. How fast the camera flies when you follow a link, hop to a plate, or go to a search result.`;
 }
 
 function mistLabel(mist: number): string {

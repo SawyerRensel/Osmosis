@@ -60,6 +60,82 @@ export function flightPose(flight: Flight, node: Vec3, now: number, duration: nu
 	};
 }
 
+/**
+ * A ride along an edge (follow a link): the camera moves from where it is onto
+ * the line through the edge's two ends, then along it toward the far end,
+ * `standOff` short of it, looking ahead. Both ends are re-read each frame, as
+ * a flight re-reads its node.
+ */
+export interface Trip {
+	fromPosition: Vec3;
+	fromTarget: Vec3;
+	/** How far short of the far end the camera stops: the usual viewing distance. */
+	standOff: number;
+	start: number;
+	/** In ms, already scaled by the travel speed. */
+	duration: number;
+}
+
+/** A trip takes this long at least, and this long at most, at travel speed 1. */
+export const TRIP_MIN_MS = 1500;
+export const TRIP_MAX_MS = 4000;
+const TRIP_BASE_MS = 1200;
+/** Each world unit the camera has to cover adds this many ms. */
+const TRIP_MS_PER_UNIT = 12;
+
+/** How long a trip over `distance` world units takes at `speed` (1 is the default pace; 2 is twice as fast). */
+export function tripDuration(distance: number, speed: number): number {
+	return Math.min(TRIP_MAX_MS, Math.max(TRIP_MIN_MS, TRIP_BASE_MS + distance * TRIP_MS_PER_UNIT)) / speed;
+}
+
+/** The camera pose a trip ends on: `standOff` before `to` along the edge from `from`. */
+export function tripEnd(from: Vec3, to: Vec3, standOff: number): Vec3 {
+	const [dir, length] = direction(from, to);
+	const back = length === 0 ? 0 : standOff;
+	return { x: to.x - dir.x * back, y: to.y - dir.y * back, z: to.z - dir.z * back };
+}
+
+export function startTrip(camera: Vec3, target: Vec3, from: Vec3, to: Vec3, standOff: number, now: number, speed: number): Trip {
+	const end = tripEnd(from, to, standOff);
+	const distance = Math.hypot(end.x - camera.x, end.y - camera.y, end.z - camera.z);
+	return { fromPosition: { ...camera }, fromTarget: { ...target }, standOff, start: now, duration: tripDuration(distance, speed) };
+}
+
+/**
+ * The camera pose `now` into `trip`, the edge running from `from` to `to`
+ * where they are now. Along the edge the camera eases in and out; its sideways
+ * offset from the edge's line is gone by 60% of the way, and its gaze moves
+ * from the old target to a point `standOff` ahead on the line, which by the end
+ * is `to`.
+ */
+export function tripPose(trip: Trip, from: Vec3, to: Vec3, now: number): FlightPose {
+	const t = Math.min(1, Math.max(0, (now - trip.start) / trip.duration));
+	const [dir, length] = direction(from, to);
+	const toCamera = { x: trip.fromPosition.x - from.x, y: trip.fromPosition.y - from.y, z: trip.fromPosition.z - from.z };
+	const along0 = toCamera.x * dir.x + toCamera.y * dir.y + toCamera.z * dir.z;
+	const standOff = length === 0 ? 0 : trip.standOff;
+	const along1 = length - standOff;
+	const along = along0 + (along1 - along0) * smooth(t);
+	const sideways = 1 - smooth(Math.min(1, t / 0.6));
+	const at = (s: number): Vec3 => ({ x: from.x + dir.x * s, y: from.y + dir.y * s, z: from.z + dir.z * s });
+	const online = at(along);
+	const position = {
+		x: online.x + (toCamera.x - dir.x * along0) * sideways,
+		y: online.y + (toCamera.y - dir.y * along0) * sideways,
+		z: online.z + (toCamera.z - dir.z * along0) * sideways,
+	};
+	return { position, target: lerp(trip.fromTarget, at(along + standOff), smooth(Math.min(1, t * 2.5))), done: t >= 1 };
+}
+
+/** The unit vector from `a` to `b` (+z when they coincide), and the distance. */
+function direction(a: Vec3, b: Vec3): [Vec3, number] {
+	const length = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+	if (length === 0) return [{ x: 0, y: 0, z: 1 }, 0];
+	return [{ x: (b.x - a.x) / length, y: (b.y - a.y) / length, z: (b.z - a.z) / length }, length];
+}
+
+const smooth = (t: number): number => t * t * (3 - 2 * t);
+
 /** A short eased camera move between two poses that track no node: an edit's turn or pan (`graph3d/framing.ts`). */
 export interface Glide {
 	from: { position: Vec3; target: Vec3 };

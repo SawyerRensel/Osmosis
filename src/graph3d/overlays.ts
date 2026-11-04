@@ -29,9 +29,12 @@ export interface Graph3DOverlays {
 	/** A particle runs along each drawn edge, source to target. */
 	particles: boolean;
 	labels: LabelMode;
+	/** How fast every camera flight goes (travel speed): `1 / TRAVEL_LIMIT` to `TRAVEL_LIMIT`, 1 being the default pace. */
+	travelSpeed: number;
 }
 
 export const MIST_LIMIT = 4;
+export const TRAVEL_LIMIT = 4;
 
 export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	colorBy: "note",
@@ -41,6 +44,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	mist: 1,
 	particles: false,
 	labels: "all",
+	travelSpeed: 1,
 };
 
 const COLOR_MODES: readonly ColorMode[] = ["note", "memory", "tag", "type"];
@@ -68,6 +72,7 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,
+		travelSpeed: number(value.travelSpeed, DEFAULT_OVERLAYS.travelSpeed, 1 / TRAVEL_LIMIT, TRAVEL_LIMIT),
 	};
 }
 
@@ -115,6 +120,10 @@ export function linkStrengthScale(kind: GraphEdgeKind, balance: number): number 
 /** Mist slider position (log₂ of the multiplier, so ×½ and ×2 sit evenly either side of ×1) to multiplier, and back. */
 export const mistFromSlider = (position: number): number => 2 ** position;
 export const sliderFromMist = (mist: number): number => Math.log2(mist);
+
+/** Travel speed slider position (log₂, so ×½ and ×2 sit evenly either side of ×1) to speed, and back. */
+export const travelFromSlider = (position: number): number => 2 ** position;
+export const sliderFromTravel = (speed: number): number => Math.log2(speed);
 
 /**
  * What the colour modes need from outside the model: each node's tag (see

@@ -39,7 +39,8 @@ import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } 
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { flightPose, glidePose, startFlight, type Flight, type Glide, type Vec3 } from "../graph3d/flight";
+import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
+import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
@@ -152,6 +153,8 @@ export interface SceneOptions {
 	controls: SceneControls;
 	overlays: SceneOverlays;
 	onNodeClick: (node: GraphNode) => void;
+	/** A ride along an edge (follow a link) reached its plate. The view treats it as a hop, but not as a click on the plate. */
+	onNodeArrived: (node: GraphNode) => void;
 	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
 	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
 	/** A click on a task checkbox in a near-tier panel (it is the checkbox line's own box); the view toggles it. */
@@ -253,6 +256,9 @@ const LINE_PLATE_MAX_EM = 20;
  * looked at closer than this anyway (the orbit target stays `MIN_DEPTH` ahead).
  */
 const CAMERA_NEAR = 1;
+/** How far from a plate a flight or a ride along an edge stops: a note's core, and every other node. */
+const NOTE_STAND_OFF = 160;
+const LINE_STAND_OFF = 70;
 /** Flight speed as a fraction of the camera's distance to its orbit target, per second. */
 const FLIGHT_SPEED = 0.9;
 const FLIGHT_MIN_SPEED = 40;
@@ -336,7 +342,9 @@ export class Graph3DScene {
 	/** The node last flown to: the focused node, whose links (and its neighbours') fire on a click. */
 	private focusId: string | null = null;
 	/** The flight under way, aimed at its node wherever the node is now. */
-	private flight: { node: EngineNode; flight: Flight } | null = null;
+	private flight: { node: EngineNode; flight: Flight; duration: number } | null = null;
+	/** A ride along an edge toward `to` (follow a link), aimed at the edge's two ends wherever they are now. */
+	private ride: { from: EngineNode; to: EngineNode; trip: Trip } | null = null;
 	/** After a flight, the camera moves with its node until the node settles, or the user takes over. */
 	private follow: { node: EngineNode; at: Vec3 } | null = null;
 	/** An edit's turn (desktop) or pan (phone) under way, to a fixed pose. */
@@ -514,6 +522,7 @@ export class Graph3DScene {
 		const ids = new Set(this.nodes.map((node) => node.id));
 		if (this.flight !== null && !ids.has(this.flight.node.id)) this.flight = null;
 		if (this.follow !== null && !ids.has(this.follow.node.id)) this.follow = null;
+		if (this.ride !== null && (!ids.has(this.ride.from.id) || !ids.has(this.ride.to.id))) this.ride = null;
 		const lingering = this.links.filter((link) => {
 			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
 			return (source.departing || target.departing) && ids.has(source.id) && ids.has(target.id);
@@ -719,6 +728,7 @@ export class Graph3DScene {
 		this.pendingFlight = id;
 		this.pendingFlightWaits = afterLayout;
 		this.focusId = id;
+		this.ride = null;
 		this.startPendingFlight();
 	}
 
@@ -897,10 +907,14 @@ export class Graph3DScene {
 		if (this.pendingFlightWaits && node.fx === undefined && this.ticksSinceData < SETTLE_TICKS) return;
 		if (node.x === undefined || node.y === undefined || node.z === undefined) return;
 		this.pendingFlight = null;
-		const distance = node.graph.kind === "note" ? 160 : 70;
+		const distance = node.graph.kind === "note" ? NOTE_STAND_OFF : LINE_STAND_OFF;
 		const position = { x: node.x, y: node.y, z: node.z };
-		this.flight = { node, flight: startFlight(this.graph.camera().position, this.orbitControls().target, position, distance, performance.now()) };
-		this.follow = this.glide = null;
+		this.flight = {
+			node,
+			flight: startFlight(this.graph.camera().position, this.orbitControls().target, position, distance, performance.now()),
+			duration: FLIGHT_MS / this.overlays.travelSpeed,
+		};
+		this.follow = this.glide = this.ride = null;
 	}
 
 	/**
@@ -921,6 +935,23 @@ export class Graph3DScene {
 			if (pose.done) this.glide = null;
 			return;
 		}
+		const ride = this.ride;
+		if (ride !== null) {
+			const { from, to } = ride;
+			if (from.departing || to.departing || !placed(from) || !placed(to)) {
+				this.ride = null;
+				return;
+			}
+			const pose = tripPose(ride.trip, { x: from.x, y: from.y, z: from.z }, { x: to.x, y: to.y, z: to.z }, now);
+			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
+			controls.update();
+			if (pose.done) {
+				this.ride = null;
+				this.options.onNodeArrived(to.graph);
+			}
+			return;
+		}
 		const flight = this.flight;
 		if (flight !== null) {
 			const { node } = flight;
@@ -929,7 +960,7 @@ export class Graph3DScene {
 				return;
 			}
 			const at = { x: node.x, y: node.y, z: node.z };
-			const pose = flightPose(flight.flight, at, now, FLIGHT_MS);
+			const pose = flightPose(flight.flight, at, now, flight.duration);
 			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
 			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
 			controls.update();
@@ -956,7 +987,27 @@ export class Graph3DScene {
 
 	/** The user moved the view: a flight or follow under way gives way. */
 	private cancelFlight(): void {
+		this.flight = this.follow = this.glide = this.ride = null;
+	}
+
+	/**
+	 * Follow a link: ride the camera along `edge` to its end away from the
+	 * focused node (with neither end focused, the one farther from the camera),
+	 * stopping at the usual viewing distance. Arriving is reported as
+	 * `onNodeArrived`. See `startTrip`.
+	 */
+	private rideAlong(source: EngineNode, target: EngineNode): void {
+		if (!placed(source) || !placed(target)) return;
+		const camera = this.graph.camera().position;
+		const a = { x: source.x, y: source.y, z: source.z };
+		const b = { x: target.x, y: target.y, z: target.z };
+		const toEnd = farEnd({ a, b, aId: source.id, bId: target.id }, this.focusId, camera) === "b";
+		const [from, to] = toEnd ? [source, target] : [target, source];
+		const standOff = to.graph.kind === "note" ? NOTE_STAND_OFF : LINE_STAND_OFF;
+		const trip = startTrip(camera, this.orbitControls().target, toEnd ? a : b, toEnd ? b : a, standOff, performance.now(), this.overlays.travelSpeed);
+		this.pendingFlight = null;
 		this.flight = this.follow = this.glide = null;
+		this.ride = { from, to, trip };
 	}
 
 	destroy(): void {
@@ -1315,8 +1366,16 @@ export class Graph3DScene {
 			this.options.onNodeClick(link.node);
 			return;
 		}
-		const node = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
-		if (node !== null) this.options.onNodeClick(node.graph);
+		const slop = PICK_SLOP_PX[touch ? "touch" : "mouse"];
+		const node = this.nodeNear(x, y, slop);
+		if (node !== null) {
+			this.options.onNodeClick(node.graph);
+			return;
+		}
+		// No plate: an edge under the pointer is a link to follow. (A panel over it has the click.)
+		if (this.near.nodeAt(x, y) !== null) return;
+		const edge = this.edgeNear(x, y, slop);
+		if (edge !== null) this.rideAlong(edge.source, edge.target);
 	}
 
 	/**
@@ -1540,6 +1599,43 @@ export class Graph3DScene {
 		return candidates[pickNode(onScreen, x, y, slop)] ?? null;
 	}
 
+	/**
+	 * The drawn edge nearest client point (`x`, `y`) on screen, within `slop` px
+	 * and inside the mist: one the Overlays menu shows, not fading out, with both
+	 * ends placed. See `pickEdge`.
+	 */
+	private edgeNear(x: number, y: number, slop: number): { source: EngineNode; target: EngineNode } | null {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const rect = this.graph.renderer().domElement.getBoundingClientRect();
+		const forward = camera.getWorldDirection(new Vector3());
+		const point = new Vector3();
+		const ends: { source: EngineNode; target: EngineNode }[] = [];
+		const edges: DrawnEdge[] = [];
+		for (const link of this.links) {
+			const [source, target] = [link.source as EngineNode | string, link.target as EngineNode | string];
+			if (typeof source === "string" || typeof target === "string") continue;
+			if (source.departing || target.departing || !placed(source) || !placed(target)) continue;
+			if (!this.edgeDrawn(link.kind, source, target) || Math.min(source.opacity, target.opacity) <= 0) continue;
+			ends.push({ source, target });
+			edges.push({ a: { x: source.x, y: source.y, z: source.z }, b: { x: target.x, y: target.y, z: target.z } });
+		}
+		const hit = pickEdge(
+			edges,
+			{
+				depth: (p) => point.set(p.x, p.y, p.z).sub(camera.position).dot(forward),
+				screen: (p) => {
+					point.set(p.x, p.y, p.z).project(camera);
+					return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height };
+				},
+			},
+			x,
+			y,
+			slop,
+			2 / this.fog.density,
+		);
+		return ends[hit] ?? null;
+	}
+
 	/** The ray from the camera through client point (`x`, `y`). */
 	private rayThrough(x: number, y: number): Ray {
 		const rect = this.graph.renderer().domElement.getBoundingClientRect();
@@ -1727,6 +1823,11 @@ export class Graph3DScene {
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
 	}
+}
+
+/** Whether the simulation has given a node a position yet. */
+function placed(node: EngineNode): node is EngineNode & Vec3 {
+	return node.x !== undefined && node.y !== undefined && node.z !== undefined;
 }
 
 /** Straight-line distance between two placed nodes; `Infinity` while either has no position. */

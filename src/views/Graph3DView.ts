@@ -312,6 +312,7 @@ export class Graph3DView extends ItemView {
 			controls: this.controlSettings(),
 			overlays: this.sceneOverlays(),
 			onNodeClick: (node) => this.clickNode(node),
+			onNodeArrived: (node) => this.hop(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.beginEdit(node),
@@ -1058,7 +1059,10 @@ export class Graph3DView extends ItemView {
 		return file === null ? null : { path: file.path, text: await this.app.vault.cachedRead(file) };
 	}
 
-	/** A click or tap on a node: in a study session, arriving at (or revealing) a hidden card. */
+	/**
+	 * A click or tap on a node: in a study session, arriving at (or revealing) a hidden card.
+	 * (Arriving by a ride along an edge is `hop` alone: the card stays hidden until the plate is clicked.)
+	 */
 	private clickNode(node: GraphNode): void {
 		this.study?.clicked(node);
 		this.hop(node);
