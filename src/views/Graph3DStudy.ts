@@ -48,7 +48,7 @@ export interface StudyHost {
 	nearest(ids: readonly string[]): string | null;
 	/** The note the loaded area is centred on, or null before one is chosen. */
 	focusPath(): string | null;
-	/** The notes in the loaded area: those within the configured depth of the focus. */
+	/** The notes a due-driven route is collected from: those within the configured depth of the focus (at depth 0, within one hop). */
 	loadedNotes(): string[];
 	/** Hop distance from `path` to every note it reaches, over links in either direction. */
 	hopsFrom(path: string): ReadonlyMap<string, number>;

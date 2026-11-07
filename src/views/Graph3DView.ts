@@ -5,9 +5,10 @@ import { moveAcrossFiles, type MoveContext } from "../edit-moves";
 import { dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
-import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type NoteInput } from "../graph3d/model";
+import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
+import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
-import { computeHorizon, noteAdjacency, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
+import { computeHorizon, noteAdjacency, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
@@ -28,7 +29,8 @@ import type { FSRSRating } from "../database/FSRSScheduler";
 
 export const VIEW_TYPE_GRAPH3D = "osmosis-graph3d";
 
-export const GRAPH3D_DEFAULT_DEPTH = 2;
+/** 0: just the focus note and what it transcludes (see `graph3d/transcluded.ts`). */
+export const GRAPH3D_DEFAULT_DEPTH = 0;
 /** Each hop multiplies the loaded area, so phones get a shallower ceiling. */
 const MAX_DEPTH = Platform.isMobile ? 3 : 5;
 const FLIGHT_KEYS = ["w", "a", "s", "d", "q", "e"];
@@ -225,7 +227,7 @@ export class Graph3DView extends ItemView {
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
 		if (typeof state?.focus === "string") this.focusPath = state.focus;
-		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(1, Math.round(state.depth)));
+		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(0, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
 		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
 		// From the mind map's 2D/3D toggle: its picture to lift off from, and its own state to hand back. Neither is kept in getState.
@@ -297,7 +299,7 @@ export class Graph3DView extends ItemView {
 			hop: (node) => this.hop(node),
 			nearest: (ids) => this.nearest(ids),
 			focusPath: () => this.focusPath,
-			loadedNotes: () => [...(this.horizon?.loaded ?? [])],
+			loadedNotes: () => this.routeNotes(),
 			hopsFrom: (path) => this.hopsFrom(path),
 			goTo: (path, find) => void this.goTo(path, find),
 			thread: (ids) => this.scene?.setThread(ids),
@@ -1017,6 +1019,20 @@ export class Graph3DView extends ItemView {
 		return nearestTarget(scene.viewpoint(), candidates);
 	}
 
+	/**
+	 * The notes a due-driven route is collected from: the loaded area, but at
+	 * depth 0 (the focus and what it embeds) also its linked notes, one hop out.
+	 * A route needs somewhere to go, and its stops recentre the graph as it goes.
+	 */
+	private routeNotes(): string[] {
+		const loaded = new Set(this.horizon?.loaded ?? []);
+		if (this.depth === 0 && this.focusPath !== null) {
+			this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+			for (const path of computeHorizon(this.adjacency, this.focusPath, 1, this.backlinks).loaded) loaded.add(path);
+		}
+		return [...loaded];
+	}
+
 	/** Hop distance from `path` to every note it reaches. Links count in both directions: a route is flown, not followed. */
 	private hopsFrom(path: string): ReadonlyMap<string, number> {
 		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
@@ -1189,21 +1205,32 @@ export class Graph3DView extends ItemView {
 
 		const { metadataCache, vault } = this.app;
 		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks);
-		const horizon = computeHorizon(this.adjacency, focus, this.depth, this.backlinks);
-		const notes = await Promise.all(
-			[...horizon.loaded].map(async (path): Promise<NoteInput | null> => {
-				const file = vault.getFileByPath(path);
-				if (!(file instanceof TFile)) return null;
-				try {
-					const prefetched = this.prefetched.get(path);
-					const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
-					return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
-				} catch (error) {
-					console.error(`Osmosis: 3D graph could not read ${path}`, error);
-					return null;
-				}
-			}),
-		);
+		const resolve: LinkResolver = (linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null;
+		const readNote = async (path: string): Promise<NoteInput | null> => {
+			const file = vault.getFileByPath(path);
+			if (!(file instanceof TFile)) return null;
+			try {
+				const prefetched = this.prefetched.get(path);
+				const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
+				return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
+			} catch (error) {
+				console.error(`Osmosis: 3D graph could not read ${path}`, error);
+				return null;
+			}
+		};
+		let horizon: Horizon;
+		let notes: (NoteInput | null)[];
+		if (this.depth === 0) {
+			// The focus note and what it transcludes: its links load nothing, so only the linked notes' text is read ahead.
+			const base = computeHorizon(this.adjacency, focus, 0, false);
+			const focusNote = await readNote(focus);
+			const embedded = focusNote === null ? null : await collectEmbedded(focusNote, readNote, resolve);
+			horizon = embedded === null ? base : withEmbedded(base, embedded.hops, embedded.via);
+			notes = embedded?.notes ?? [];
+		} else {
+			horizon = computeHorizon(this.adjacency, focus, this.depth, this.backlinks);
+			notes = await Promise.all([...horizon.loaded].map(readNote));
+		}
 		// A newer reload (another hop, an edit) started while these were read.
 		if (seq !== this.loadSeq) return;
 
@@ -1212,7 +1239,8 @@ export class Graph3DView extends ItemView {
 		const model = visibleModel(
 			buildGraph(
 				notes.filter((note): note is NoteInput => note !== null),
-				(linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null,
+				resolve,
+				{ contentOnly: this.depth === 0 },
 			),
 			edges,
 		);

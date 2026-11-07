@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeHorizon, diffLoaded, noteAdjacency, type ResolvedLinks } from "./horizon";
+import { computeHorizon, diffLoaded, noteAdjacency, withEmbedded, type ResolvedLinks } from "./horizon";
 
 /** A chain A → B → C → D → E, linked forward only. */
 const CHAIN: ResolvedLinks = {
@@ -98,5 +98,23 @@ describe("diffLoaded", () => {
 	it("is empty when the loaded set is unchanged", () => {
 		const loaded = new Set(["A.md", "B.md"]);
 		expect(diffLoaded(loaded, new Set(loaded))).toEqual({ arriving: [], departing: [] });
+	});
+});
+
+describe("withEmbedded (depth 0)", () => {
+	it("loads the focus alone, with its linked notes as the prefetch ring", () => {
+		const horizon = computeHorizon(noteAdjacency(CHAIN), "B.md", 0, false);
+		expect([...horizon.loaded]).toEqual(["B.md"]);
+		expect([...horizon.prefetch]).toEqual(["C.md"]);
+	});
+
+	it("adds the embedded notes as loaded, not prefetched, with their distance and the note that embedded them", () => {
+		const base = computeHorizon(noteAdjacency(CHAIN), "B.md", 0, false);
+		const horizon = withEmbedded(base, new Map([["B.md", 0], ["C.md", 1], ["X.md", 2]]), new Map([["C.md", "B.md"], ["X.md", "C.md"]]));
+		expect([...horizon.loaded]).toEqual(["B.md", "C.md", "X.md"]);
+		expect([...horizon.prefetch]).toEqual([]);
+		expect(horizon.hops.get("X.md")).toBe(2);
+		expect(horizon.via.get("X.md")).toBe("C.md");
+		expect(horizon.focus).toBe("B.md");
 	});
 });

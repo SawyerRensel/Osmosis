@@ -60,6 +60,22 @@ export type LinkCacheLike = Pick<CachedMetadata, "links" | "embeds" | "tags" | "
 export interface NoteInput {
 	tree: OsmosisTree;
 	cache: LinkCacheLike | null;
+	/**
+	 * Depth 0 only: the part of this note a transclusion renders, as the roots of
+	 * the subtrees to show (a heading section, a block). Without it the whole note
+	 * shows. A partial note gets no core: its roots hang from the `![[…]]` edge.
+	 */
+	only?: ReadonlySet<OsmosisNode>;
+}
+
+export interface BuildOptions {
+	/**
+	 * Depth 0: show only what the loaded notes contain. A plain link, or a
+	 * property, to an attachment or an unresolved target adds no node (embeds
+	 * and tags still do), as a link to a note outside the loaded set already
+	 * adds none.
+	 */
+	contentOnly?: boolean;
 }
 
 /**
@@ -101,7 +117,8 @@ const isNotePath = (path: string): boolean => path.endsWith(".md");
 /** Per-note lookups, built in the same walk that emits the note's lines. */
 interface NoteIndex {
 	path: string;
-	coreId: string;
+	/** Null for a note shown in part (`NoteInput.only`): it has no core. */
+	coreId: string | null;
 	/** Line nodes in source order, for offset lookup. */
 	lines: { node: OsmosisNode; id: string }[];
 	byBlockId: Map<string, string>;
@@ -112,7 +129,7 @@ interface NoteIndex {
  * Build the graph of the given notes. `notes` is the loaded set; `resolve` maps
  * link paths to files.
  */
-export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): GraphModel {
+export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, options: BuildOptions = {}): GraphModel {
 	const nodes = new Map<string, GraphNode>();
 	const edges = new Map<string, GraphEdge>();
 	const indexes = new Map<string, NoteIndex>();
@@ -123,20 +140,25 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 	};
 
 	// Pass 1: every note's core and lines, so pass 2 can target any loaded line.
-	for (const { tree } of notes) {
+	for (const { tree, only } of notes) {
 		const path = tree.filePath;
-		const coreId = noteNodeId(path);
-		nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root });
+		const coreId = only === undefined ? noteNodeId(path) : null;
+		if (coreId !== null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root });
 		const index: NoteIndex = { path, coreId, lines: [], byBlockId: new Map(), byHeading: new Map() };
 		indexes.set(path, index);
 
-		const walk = (parent: OsmosisNode, parentId: string): void => {
+		// `parentId` is null while looking for a partial note's roots: lines above them are skipped.
+		const walk = (parent: OsmosisNode, parentId: string | null): void => {
 			for (const child of parent.children) {
+				if (parentId === null && !only?.has(child)) {
+					walk(child, null);
+					continue;
+				}
 				let id = lineNodeId(path, child, true);
 				// A duplicated block ID is a user error; keep both lines visible.
 				if (nodes.has(id)) id = lineNodeId(path, child, false);
 				nodes.set(id, { id, kind: "line", label: child.content, path, source: child });
-				addEdge("hierarchy", parentId, id);
+				if (parentId !== null) addEdge("hierarchy", parentId, id);
 				index.lines.push({ node: child, id });
 				if (child.blockId !== undefined && !index.byBlockId.has(child.blockId)) {
 					index.byBlockId.set(child.blockId, id);
@@ -154,7 +176,7 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 	}
 
 	/** The node a link lands on, creating attachment and ghost nodes on demand. */
-	const resolveTarget = (link: string, sourcePath: string): string | null => {
+	const resolveTarget = (link: string, sourcePath: string, create = true): string | null => {
 		const hash = link.indexOf("#");
 		const linkpath = hash === -1 ? link : link.slice(0, hash);
 		const subpath = hash === -1 ? "" : link.slice(hash + 1);
@@ -162,11 +184,13 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 		// `[[#Heading]]` points into its own note.
 		const targetPath = linkpath === "" ? sourcePath : resolve(linkpath, sourcePath);
 		if (targetPath === null) {
+			if (!create) return null;
 			const id = ghostNodeId(linkpath);
 			if (!nodes.has(id)) nodes.set(id, { id, kind: "ghost", label: linkpath });
 			return id;
 		}
 		if (!isNotePath(targetPath)) {
+			if (!create) return null;
 			const id = attachmentNodeId(targetPath);
 			if (!nodes.has(id)) nodes.set(id, { id, kind: "attachment", label: noteTitle(targetPath), path: targetPath });
 			return id;
@@ -178,34 +202,41 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
 		if (key === null) return target.coreId;
 		return ("blockId" in key ? target.byBlockId.get(key.blockId) : target.byHeading.get(key.heading)) ?? target.coreId;
 	};
+	const contentOnly = options.contentOnly === true;
 
 	// Pass 2: cross-note edges, from the link cache.
 	for (const { tree, cache } of notes) {
 		if (cache === null) continue;
 		const index = indexes.get(tree.filePath);
 		if (index === undefined) continue;
-		const sourceAt = (offset: number): string => lineAt(index, offset) ?? index.coreId;
+		// Null: a reference outside the part of a partial note that is shown.
+		const sourceAt = (offset: number): string | null => lineAt(index, offset) ?? index.coreId;
 
 		for (const ref of cache.links ?? []) {
-			const target = resolveTarget(ref.link, index.path);
-			if (target === null) continue;
+			const source = sourceAt(ref.position.start.offset);
+			const target = source === null ? null : resolveTarget(ref.link, index.path, !contentOnly);
+			if (source === null || target === null) continue;
 			const kind = nodes.get(target)?.kind === "attachment" ? "attachment" : "link";
-			addEdge(kind, sourceAt(ref.position.start.offset), target);
+			addEdge(kind, source, target);
 		}
 		for (const ref of cache.embeds ?? []) {
-			const target = resolveTarget(ref.link, index.path);
-			if (target === null) continue;
+			const source = sourceAt(ref.position.start.offset);
+			const target = source === null ? null : resolveTarget(ref.link, index.path);
+			if (source === null || target === null) continue;
 			const kind = nodes.get(target)?.kind === "attachment" ? "attachment" : "embed";
-			addEdge(kind, sourceAt(ref.position.start.offset), target);
+			addEdge(kind, source, target);
 		}
 		for (const ref of cache.frontmatterLinks ?? []) {
-			const target = resolveTarget(ref.link, index.path);
-			if (target !== null) addEdge("property", index.coreId, target);
+			const target = index.coreId === null ? null : resolveTarget(ref.link, index.path, !contentOnly);
+			if (target !== null && index.coreId !== null) addEdge("property", index.coreId, target);
 		}
 
 		const tagTargets: [source: string, tag: string][] = [];
-		for (const ref of cache.tags ?? []) tagTargets.push([sourceAt(ref.position.start.offset), ref.tag]);
-		for (const tag of frontmatterTags(cache.frontmatter)) tagTargets.push([index.coreId, tag]);
+		for (const ref of cache.tags ?? []) {
+			const source = sourceAt(ref.position.start.offset);
+			if (source !== null) tagTargets.push([source, ref.tag]);
+		}
+		if (index.coreId !== null) for (const tag of frontmatterTags(cache.frontmatter)) tagTargets.push([index.coreId, tag]);
 		for (const [source, tag] of tagTargets) {
 			const id = tagNodeId(tag);
 			if (!nodes.has(id)) nodes.set(id, { id, kind: "tag", label: `#${tag.replace(/^#/, "")}` });
@@ -221,7 +252,7 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver): 
  * a heading normalized for lookup. `#A#B` names heading B under A; the last
  * segment identifies it. `null` for no subpath.
  */
-function subpathKey(subpath: string): { blockId: string } | { heading: string } | null {
+export function subpathKey(subpath: string): { blockId: string } | { heading: string } | null {
 	if (subpath.startsWith("^")) return { blockId: subpath.slice(1) };
 	const segments = subpath.split("#").filter((s) => s.trim() !== "");
 	const last = segments[segments.length - 1];

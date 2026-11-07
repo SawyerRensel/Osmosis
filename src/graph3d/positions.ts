@@ -73,7 +73,10 @@ export function placeNodes(
 			const puller = via.get(node.path);
 			place = seedNear(at(puller === undefined ? undefined : noteNodeId(puller)), NOTE_SEED_DISTANCE);
 		} else if (node.kind === "line" && node.path !== undefined) {
-			place = seedNear(at(parentOf.get(node.id)) ?? at(noteNodeId(node.path)), SEED_SPREAD);
+			const parent = at(parentOf.get(node.id)) ?? at(noteNodeId(node.path));
+			// A section shown without its note (depth 0 transclusion) hangs from the embed that reached it.
+			const embedder = parent === undefined ? (neighboursOf.get(node.id) ?? []).map(at).find((p) => p !== undefined) : undefined;
+			place = embedder === undefined ? seedNear(parent, SEED_SPREAD) : seedNear(embedder, NOTE_SEED_DISTANCE);
 		} else {
 			const neighbour = (neighboursOf.get(node.id) ?? []).map(at).find((p) => p !== undefined);
 			place = seedNear(neighbour, SEED_SPREAD);

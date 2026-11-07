@@ -124,7 +124,7 @@ export class Graph3DOverlaysMenu {
 		depth.addSlider((slider) => {
 			this.depthSlider = slider;
 			slider
-				.setLimits(1, this.maxDepth, 1)
+				.setLimits(0, this.maxDepth, 1)
 				.setValue(this.reach.depth)
 				.onChange((value) => {
 					depth.setDesc(depthLabel(value));
@@ -222,6 +222,7 @@ export class Graph3DOverlaysMenu {
 }
 
 function depthLabel(depth: number): string {
+	if (depth === 0) return "Only the focus note and the notes it embeds";
 	return depth === 1 ? "1 hop from the focus note" : `${String(depth)} hops from the focus note`;
 }
 

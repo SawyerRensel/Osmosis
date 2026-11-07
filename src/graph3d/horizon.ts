@@ -87,6 +87,27 @@ export function computeHorizon(adjacency: NoteAdjacency, focus: string, depth: n
 	return { focus, hops, loaded, prefetch, via };
 }
 
+/**
+ * Depth 0: the loaded area is the focus plus the notes it transcludes (see
+ * `transcluded.ts`), not the notes it links to. `base` is the depth 0 horizon
+ * from `computeHorizon`: the focus alone, with its linked notes as the
+ * prefetch ring. `hops` and `via` are the embedded notes' distances along embeds
+ * and the note that embedded each.
+ */
+export function withEmbedded(base: Horizon, hops: ReadonlyMap<string, number>, via: ReadonlyMap<string, string>): Horizon {
+	const loaded = new Set(base.loaded);
+	const prefetch = new Set(base.prefetch);
+	const allHops = new Map(base.hops);
+	const allVia = new Map(base.via);
+	for (const [path, hop] of hops) {
+		loaded.add(path);
+		prefetch.delete(path);
+		allHops.set(path, hop);
+	}
+	for (const [path, from] of via) allVia.set(path, from);
+	return { focus: base.focus, hops: allHops, loaded, prefetch, via: allVia };
+}
+
 /** What changes when the loaded set moves from `previous` to `next`. */
 export function diffLoaded(previous: ReadonlySet<string>, next: ReadonlySet<string>): LoadedDiff {
 	return {
