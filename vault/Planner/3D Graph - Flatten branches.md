@@ -16,7 +16,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-03T17:35:29.000Z"
-date_modified: "2026-11-07T13:30:00.000Z"
+date_modified: "2026-11-07T18:10:00.000Z"
 date_start_scheduled: "2026-11-04T02:43:45.000Z"
 date_start_actual: "2026-11-04T02:43:45.000Z"
 date_end_scheduled:
@@ -221,3 +221,70 @@ At every whole depth, every flat line lies in its slice's plane through the core
 6. **Perf:** `vault/tests/graph3d-stress/Stress Hub.md`, depth 2, gauge on: the first settle at the default should be about as smooth as slice 1's. Dragging into 0.5–0.75 on the stress web is heavy (about 85 ms a tick).
 
 **Not verified.** Nothing has run in Obsidian, so none of these have been seen: how the slices and twists look, whether the upright lean reads well, the clash's settle time in the real scene, the camera follow while dragging, and the real first-settle fps (the numbers above are headless, with estimated plate sizes). Lint, the full suite (81 files, 2,470 tests) and the build pass.
+
+### Feedback round 2 (2026-11-07)
+
+**Sawyer's feedback** (screenshots at Hierarchy⟷organic 1.00): (1) forces bunch a note's slices front to back, so a note is unreadable face-on, and mist doesn't help; he chose a fixed, even spread: a ring of slices around the vertical axis through the pivot, like apple wedges cut top to bottom, each slice's angular share weighted by its size, in document order round the ring. (2) Flattened siblings overlap, especially top to bottom and with tall plates (code blocks, images, panels); it doesn't happen at Flatten 0.
+
+**The overlap cause** (written before the redesign).
+- *Hypothesis 1, estimated vs rendered size, the panel cap, units:* the layout takes `flatSize` (the plate, or the `panelBoxEm` panel × `emWorld`, whichever is bigger) through `computeLayout`'s measured-size map, so it uses the same estimate the near tier is laid out from, in world units. A small error is possible on wrapped code, but it can't explain plates a whole width apart. Not the cause.
+- *Hypothesis 2, the frame:* the 2D layout spaces sibling rows along the slice's along axis `v` by the plates' **heights** only (row gap 1.5). That is right only if `v` shows as vertical on screen. But plates billboard upright, so their **width** lies along screen-horizontal whatever the slice's frame. Round 1's `u` ran core → root wherever forces put the root, and `v` was world down laid across `u` (or the twist turned it towards the gap between neighbours). For a slice whose outward axis runs **top to bottom** (a root above or below its core, a third of the sphere of directions), `uprightAlong` has no vertical left and falls back to world −z: the rows run horizontally on screen, spaced by heights, while each plate is 3–5× as wide as it is tall. Siblings land side by side, overlapping by most of a width. Tall plates are panels, which are also 20 em wide, so they overlap the most. At Flatten 0 the collide force spaces plates by their extent in every direction, so it doesn't happen.
+- *Check:* in screenshot 5, Primitive's slice runs down the screen (its children below it) and its seven children (Symbol … Number) sit in one horizontal row in document order, with gaps that follow their subtree heights (Boolean, with two children, has the widest gap), and Symbol and Undefined overlap by most of their width. That is the layout's column spaced by heights, laid horizontally. Confirmed.
+- *Why round 1's numbers missed it:* the "sibling clashes" check compares *slices against slices* (oriented boxes holding each plate's reach). Plates *within* one slice were never compared; the layout was trusted, and it only holds face-on with `v` up the screen.
+- *The fix follows from the spread:* with every slice's outward axis horizontal (the ring) and its along axis world down, rows are stacked by height down the screen from every side of the ring. Mid-ramp sub-slices blend two horizontal directions, so they stay upright too.
+
+Code commit 700f34a on `fix/3d-graph-flatten-spread` (cut from `feature/3d-graph-h1-root` at 7896a14). Not pushed, no PR, not tested in Obsidian. The ticket stays In-Review.
+
+**The spec** (Sawyer, settled): each flat slice of a note gets a fixed outward direction from its pivot, in a ring round world up through the pivot; angular share weighted by branch size, document order round the ring; the slice plane holds the vertical axis and its outward direction; the direction set changes only when the note's branch set does, never per tick or with the camera; no decluttering; settled nodes of other notes don't move; default ≤ ~20 ms a tick on the stress web. The Hierarchy⟷organic slider is unchanged.
+
+**The fix.**
+- `ringDirections(sizes)`: the first slice at world +x, each next one half their two shares further round (shares = size / total), so the ring closes evenly. `FlatLayouts.branches` gives each branch its `dir` (sized by its lines: root, ramp lines and members) and each ramp line with lines under it a `dir` in the ring it would stand in a depth down, where it roots a branch of its own (sized the same way). So at w → 0 a sub-slice already stands where the next whole depth puts it.
+- Every slice's frame is fixed: `u` = its ring direction (level), `v` = world down. A sub-slice's `u` turns from its own `dir` to its branch's by the ramp weight (`subDir`), and stays level.
+- `holdInSlice`: each free head (a root, or a mid-ramp line with lines under it) is held in its slice's half-plane through the core. Its height and distance out stay with the forces; its offset across the plane, and any inward of the vertical axis, are taken out of where it lands this tick. Below `hold` 1 it is an alpha-scaled pull instead, as the ramp pulls.
+- The clash between slices of one note stays, but the part of a push across a slice goes outward instead (where the gap to the next slice is wider), since the hold would cancel it. Without that, 36 of 12,285 sibling slice pairs clashed (503 plate pairs) on the stress web.
+- The twist (`preferredTwist`, `uprightAlong`, `FlatState`) is gone.
+
+**Decisions worth remembering.**
+- **No twist.** A slice twisted about its outward axis no longer holds the vertical axis, which the spec asks for, and a twisted `v` is what laid rows across the screen. `preferredTwist` against neighbours in a level ring would pick upright anyway. It also saves the twist's cost (the flatten force went from 7.7 to 6.8 ms).
+- **Sized by line count, not text.** An edit to a line's text leaves the ring alone; adding or removing a line changes the branch set, so its note's ring shifts a little. Settled (pinned) slices stay where they are; only free ones follow.
+- **Phase: the first slice in document order at world +x.** Fixed, so it never depends on the camera.
+- **The hold eases in over the slider's first depth** (`hold` = min(1, 5 − F)), so a nudge right of Off doesn't snap roots into their planes. Everywhere from 0.25 right it is exact.
+- **Roots keep their height and distance from forces.** Only the across-plane offset is taken out, so links between notes still pull the note's top in 3D (a root can rise or fall in its slice, and the cross-note pull reaches the core through its links).
+- **Leaf ramp lines are still free** (no slice to hold them in), as in round 1.
+- **From above**, a slice's rows lie on top of each other: an upright flat layout seen from straight above can't show them apart. A nearer plate covers a farther one, as everywhere.
+
+**Measurements** (stress web, `e2e/measure-graph3d-ticks.ts` with a new face-on check: plates of one slice that cover each other seen face-on by a level camera, each plate its width across and its height up; also fixed to find H1-root cores with `isNoteRoot`):
+
+| Flatten 0.75 (default) | Mean tick (flatten force) | Face-on overlaps within a slice | Sibling slice clashes: plate pairs (slice pairs) | All clashes | Root → core median, p90, max |
+|---|---|---|---|---|---|
+| Before (round 1, 7896a14) | 15.93 ms (7.69) | **14,977** | 0 (0 of 12,285) | 2,126 | 582, 1,392, 3,284 |
+| Ring, push across the slice kept | 15.15 ms (6.90) | 0 | 503 (36) | 1,371 | 368, 1,316, 5,936 |
+| **After (700f34a)** | **15.28 ms (6.82)** | **0** | **0 (0)** | 1,839 | 399, 1,094, 5,080 |
+
+Within budget (≤ 20 ms). Every flat line lies in its slice's plane through the core (≤ 1e-12), further out than its root, in document order. Not measured this round (three runs allowed): the ramp positions (0.70 cost 85 ms in round 1) and Off.
+
+**Surface map.**
+
+| File | Change |
+|---|---|
+| `src/graph3d/flatten.ts` | `ringDirections`; `FlatBranch.dir`, `FlatBranch.hold`, `FlatSubLine.dir` set in `branches`; `subDir`, `holdInSlice`; frames fixed at (ring direction, world down); clash push redirected outward across a slice; `flattenStep` loses its `FlatState` argument; twist code removed |
+| `src/graph3d/flatten.test.ts` | Ring tests (even spacing, size weighting, document order, lone slice, stability under another note and a text edit, change on a new line, sub-slices at the next depth's directions, the hold easing in); step tests in the new frame (half-plane, keeps its side of the axis, the eased hold, the ramp pull along the slice); the dense-note clash test; **regression:** tall and wide plates with the root straight above its core, no face-on cover (the round-1 code covers 3+ pairs there) |
+| `src/views/Graph3DScene.ts` | `FlatState` dropped |
+| `e2e/measure-graph3d-ticks.ts` | Face-on overlap check, ring-frame plane check, `isNoteRoot` cores, no `FlatState` |
+| `GLOSSARY.md` | Flat branch: document order runs down; Twist replaced by Ring |
+
+**Fixture.** No new one: `vault/tests/graph3d/Signal Flags.md` ("Flags to know": six image items, three code blocks, three tables and a callout as siblings) covers tall plates, with `Galley Handbook.md`, `Passage Plan.md` and `Sailing Basics.md`. Reload Obsidian (Ctrl+R) after pulling the build.
+
+**Manual test (Sawyer).**
+1. **Ring, face-on:** open `Galley Handbook.md`, "Open 3D graph for current note", default Flatten (0.75). Seen from the side, the headings' lists stand round the title like apple wedges cut top to bottom, spread evenly all the way round (the long lists get wider gaps), in document order round the ring. Every list reads top to bottom from every side. Nothing bunches front to back.
+2. **From above:** orbit to look straight down. The slices radiate from the title like spokes, evenly spaced. (Rows of one slice lie on top of each other from straight above; that is expected.)
+3. **Tall-plate siblings:** `Signal Flags.md`, fly up close to "Flags to know" until the panels show. The flags, code blocks, tables and callout stack top to bottom with gaps between them, with none covering another seen face-on. Same for your JavaScript notes (screenshots 5 and 6): Primitive's children stack down the slice, not side by side.
+4. **Sailing Basics** and the **stress web** (`vault/tests/graph3d-stress/Stress Hub.md`, depth 2, perf gauge on): face-on and from above, notes are readable rings; the first settle is about as smooth as before (headless: 15.3 ms a tick).
+5. **Slider sweep:** drag Flatten slowly from 0 to 1 and back. No jumps: just right of Off the roots ease into their slices; at every whole depth the slices sit in the ring; in between, sub-lists ease from their own wedges into their branch's. Every position re-settles live, the camera stays on the focused node.
+6. **Edit while flattened:** in Galley Handbook, pencil on, edit "Rice, two kilos in a sealed tub" (Ctrl+Enter), then Enter to add a line. Nothing else moves; the new line lands in its branch (the note's ring may shift, but only free plates follow). Restore the fixture from `e2e/fixtures/graph3d/` and reload afterwards.
+7. **Other notes stay still:** after it settles, hop to Weather and back, ride the Passage Plan → Navigation edge, run a search. Settled plates of other notes don't move.
+8. **Depth 0:** `Depth Zero.md` (or depth 0 on any note): only the current note, in its ring.
+9. **Overlay toggles:** toggle an overlay kind off and on (and Forces → Links pull): the graph re-settles and the slices stay in their ring.
+10. **2D⟷3D:** lift off from the mind map of `Galley Handbook.md` and land back on the focused line.
+
+**Not verified.** Nothing has run in Obsidian. Unseen: how the ring reads in a real note, whether a note with one very large branch squeezes its small neighbours too close to the core (the clash pushes them outward or up and down, never across), the camera follow while dragging, the ramp positions' cost after this change, and the real fps (numbers above are headless, with estimated plate sizes). Lint, the full suite (82 files, 2,511 tests) and the build pass.
