@@ -20,6 +20,12 @@ describe("chargeStrengths", () => {
 		expect(strengths.has("line:B.md#1")).toBe(false);
 	});
 
+	it("charges a pinned sole H1 root as its note's core", () => {
+		const root: ChargeNode = { id: "note:A.md", kind: "line", path: "A.md", root: true, pinned: true };
+		expect([...chargeStrengths([root, line("A.md", 1, true), line("A.md", 2, true)], -30)]).toEqual([["note:A.md", -90]]);
+		expect(chargeStrengths([root, line("A.md", 1, false)], -30).get("note:A.md")).toBe(-30);
+	});
+
 	it("includes free hubs and leaves pinned ones out", () => {
 		const nodes: ChargeNode[] = [
 			{ id: "tag:rope", kind: "tag", pinned: false },

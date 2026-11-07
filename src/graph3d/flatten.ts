@@ -4,7 +4,8 @@
  * order). The note's top and the edges between notes stay 3D. See
  * `vault/Planner/3D Graph - Flatten branches.md`.
  *
- * Each flat branch is a slice through its note's core, like a slice cut
+ * Each flat branch is a slice through its note's root (its core, or the sole
+ * H1 that replaces it: `soleH1`; "core" below means either), like a slice cut
  * through the centre of an apple: the 2D map's left-to-right axis (`u`)
  * points straight away from the core, so the branch root sits nearest the
  * core and deeper lines sit further out, and document order runs along the
@@ -39,7 +40,7 @@ import { computeLayout, type LayoutNode } from "../layout";
 import type { OsmosisNode } from "../types";
 import { edgeDistance } from "./appearance";
 import type { Vec3 } from "./flight";
-import type { GraphNode } from "./model";
+import { isNoteRoot, type GraphNode } from "./model";
 
 /** Flat depths the slider reaches: at its far left nothing is flat, then from depth `FLAT_DEPTH_RANGE + 1` down to 1 at its far right. */
 export const FLAT_DEPTH_RANGE = 4;
@@ -145,7 +146,6 @@ export class FlatLayouts {
 	branches(nodes: readonly GraphNode[], flat: number, sizeOf: FlatSize): FlatBranch[] {
 		if (!Number.isFinite(flat)) return [];
 		const rootDepth = Math.max(1, Math.floor(flat));
-		const weight = flatWeight(rootDepth + 1, flat);
 		const idOf = new Map<OsmosisNode, string>();
 		const byId = new Map<string, GraphNode>();
 		for (const node of nodes) {
@@ -154,7 +154,12 @@ export class FlatLayouts {
 		}
 		const branches: FlatBranch[] = [];
 		for (const core of nodes) {
-			if (core.kind !== "note" || core.source === undefined) continue;
+			if (!isNoteRoot(core) || core.source === undefined) continue;
+			// A core's source is the parse root, above the title (depth 1). A sole H1 root is the title itself: it pivots its note's slices and is never a branch root.
+			const top = core.source;
+			const topDepth = core.kind === "note" ? 0 : 1;
+			// So under a sole H1, flat depths below 2 root where depth 2 does, fully flat: the slider never loosens a branch on its way to 1.
+			const weight = flatWeight(Math.max(rootDepth, topDepth + 1) + 1, flat);
 			let layout: NoteLayout | undefined;
 			const offset = (node: OsmosisNode, id: string, origin: { x: number; y: number }): FlatMember | null => {
 				const at = layout!.get(node);
@@ -178,7 +183,7 @@ export class FlatLayouts {
 						continue;
 					}
 					if (child.children.length === 0) continue;
-					layout ??= this.layoutOf(core.source!, (source) => {
+					layout ??= this.layoutOf(top, (source) => {
 						const node = byId.get(idOf.get(source) ?? "");
 						return node === undefined ? undefined : sizeOf(node);
 					});
@@ -199,7 +204,7 @@ export class FlatLayouts {
 					if (lines.length > 0) branches.push({ root: id, core: core.id, weight, lines, box: boxOf(points) });
 				}
 			};
-			walk(core.source, 0);
+			walk(top, topDepth);
 		}
 		return branches;
 	}

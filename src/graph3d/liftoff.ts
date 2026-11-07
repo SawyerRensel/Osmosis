@@ -18,7 +18,7 @@
 import { DEFAULT_LAYOUT_CONFIG } from "../layout";
 import { buildContainingFileMap } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
-import { noteNodeId, type GraphModel } from "./model";
+import { isNoteRoot, noteNodeId, type GraphModel } from "./model";
 import type { Placed } from "./positions";
 
 /**
@@ -83,14 +83,14 @@ export function liftOffScale(boxes: readonly MapBox[], plateHeight: number): num
 	return plateHeight / mapLineHeight(boxes);
 }
 
-/** The 3D node a map box (or focus) stands for, by note and start; null when the model has none. */
+/** The 3D node a map box (or focus) stands for, by note and start; null when the model has none. The map's root stands for the note's root: its core, or its sole H1. */
 function nodeIndex(model: GraphModel): (at: MapFocus) => string | null {
 	const lines = new Map<string, string>();
 	const notes = new Set<string>();
 	for (const node of model.nodes) {
 		if (node.path === undefined) continue;
-		if (node.kind === "note") notes.add(node.id);
-		else if (node.kind === "line" && node.source !== undefined) lines.set(`${node.path}\u0000${node.source.range.start}`, node.id);
+		if (isNoteRoot(node)) notes.add(node.id);
+		if (node.kind === "line" && node.source !== undefined) lines.set(`${node.path}\u0000${node.source.range.start}`, node.id);
 	}
 	return (at) => {
 		if (!at.root) return lines.get(`${at.path}\u0000${at.start}`) ?? null;
@@ -103,7 +103,7 @@ function nodeIndex(model: GraphModel): (at: MapFocus) => string | null {
  * Where each node of `model` that the map drew starts: the centre of its box,
  * relative to the centre of the map's viewport, scaled (`liftOffScale`) and
  * flipped so up stays up, at z = 0 give or take `PLANE_JITTER`. A note's core
- * starts behind its map. Every seed is free. Nodes the map didn't draw (a
+ * starts behind its map; a sole H1 root starts at its own box, like any line. Every seed is free. Nodes the map didn't draw (a
  * collapsed branch, other notes) get none, and `placeNodes` seeds them beside
  * what they hang off as usual.
  */
@@ -113,10 +113,11 @@ export function liftOffSeeds(model: GraphModel, liftOff: LiftOff, plateHeight: n
 	const cx = viewport.x + viewport.w / 2;
 	const cy = viewport.y + viewport.h / 2;
 	const find = nodeIndex(model);
+	const lineRoots = new Set(model.nodes.filter((node) => node.root === true).map((node) => node.id));
 	const seeds = new Map<string, Placed>();
 	for (const box of liftOff.boxes) {
 		const id = find(box);
-		if (id === null || seeds.has(id)) continue;
+		if (id === null || seeds.has(id) || (box.root && lineRoots.has(id))) continue;
 		const z = box.root ? -CORE_BEHIND * plateHeight : (2 * random() - 1) * PLANE_JITTER * plateHeight;
 		seeds.set(id, {
 			x: (box.x + box.width / 2 - cx) * scale,

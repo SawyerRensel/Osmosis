@@ -7,7 +7,7 @@
  */
 
 import { noteHue, nodeColor } from "./appearance";
-import type { GraphEdgeKind, GraphModel, GraphNode, GraphNodeKind } from "./model";
+import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type GraphNodeKind } from "./model";
 
 export type ColorMode = "note" | "memory" | "tag" | "type";
 
@@ -257,7 +257,8 @@ export function nodeTags(model: GraphModel): Map<string, string> {
 /**
  * Memory strength per node: a line's is the weakest retrievability among its
  * cards (an occluded line has one per shape group), `null` when it has cards
- * but none reviewed. A note's core shows the mean of its reviewed lines.
+ * but none reviewed. A note's root shows the mean of its reviewed lines: its
+ * core, or its sole H1 when that line has no card of its own.
  * `cardsOf` returns the retrievability of each card on the line with that
  * block ID (`null` for one never reviewed).
  */
@@ -279,7 +280,8 @@ export function memoryStrengths(model: GraphModel, cardsOf: (path: string, block
 		notes.set(node.path, note);
 	}
 	for (const node of model.nodes) {
-		const note = node.kind === "note" && node.path !== undefined ? notes.get(node.path) : undefined;
+		const summary = node.kind === "note" || (isNoteRoot(node) && !strengths.has(node.id));
+		const note = summary && node.path !== undefined ? notes.get(node.path) : undefined;
 		if (note !== undefined) strengths.set(node.id, note.sum / note.count);
 	}
 	return strengths;

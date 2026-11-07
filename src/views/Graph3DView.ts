@@ -5,7 +5,7 @@ import { moveAcrossFiles, type MoveContext } from "../edit-moves";
 import { dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
-import { attachmentNodeId, buildGraph, ghostNodeId, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
+import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
 import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { computeHorizon, noteAdjacency, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
@@ -699,7 +699,8 @@ export class Graph3DView extends ItemView {
 	/**
 	 * Line `from` was dropped on node `to` in edit mode: add a link to `to` at
 	 * the end of `from`'s line. `to` is a line (linked by its heading text, or
-	 * by a block ID that is stamped on it if it has none) or a note. Both ends
+	 * by a block ID that is stamped on it if it has none) or a note's root (a
+	 * core, or a sole H1, which is the note: linked as `[[Note]]`). Both ends
 	 * are found again in fresh bytes. Within one note, both splices are taken
 	 * on one string and written once; across notes it is an edit group (the
 	 * target's note first, so a failure leaves a harmless ID rather than a link
@@ -714,13 +715,14 @@ export class Graph3DView extends ItemView {
 				new Notice("Osmosis: that line has changed; try again");
 				return;
 			}
-			if (to.kind === "note" && to.path === a.file.path) {
+			const toNote = isNoteRoot(to);
+			if (toNote && to.path === a.file.path) {
 				new Notice("Osmosis: that line is already in that note");
 				return;
 			}
 			const sameNote = to.path === a.file.path;
-			const b = to.kind !== "line" ? null : sameNote ? { content: a.content, line: findNodeById(a.root, to.source?.id ?? ""), root: a.root } : await this.freshLine(to);
-			if (to.kind === "line" && (b === null || b.line === null)) {
+			const b = toNote || to.kind !== "line" ? null : sameNote ? { content: a.content, line: findNodeById(a.root, to.source?.id ?? ""), root: a.root } : await this.freshLine(to);
+			if (!toNote && to.kind === "line" && (b === null || b.line === null)) {
 				new Notice("Osmosis: that line has changed; try again");
 				return;
 			}
@@ -775,23 +777,23 @@ export class Graph3DView extends ItemView {
 	 * point offers a link to `to` (slice 4's gesture) or a move of the line,
 	 * with its subtree, under or after `to`, or to the end of `to`'s note. A
 	 * menu rather than a modifier key, so a phone gets every choice; Escape or
-	 * a click elsewhere writes nothing.
+	 * a click elsewhere writes nothing. A sole H1 root is both a heading and
+	 * the note: it offers what a core does (a `[[Note]]` link, the end of the
+	 * note) and "Move under", but not "Move after", which would put the line
+	 * outside the H1 and so give the note back its core.
 	 */
 	private showDropMenu(from: GraphNode, to: GraphNode, x: number, y: number): void {
 		if (this.editBlocked()) return;
 		const menu = new Menu();
-		if (to.kind !== "note" || to.path !== from.path) {
+		if (!isNoteRoot(to) || to.path !== from.path) {
 			menu.addItem((item) => item.setTitle("Add link").setIcon("link").onClick(() => void this.linkLines(from, to)));
 		}
 		const move = (title: string, icon: string, place: MovePlace): void => {
 			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void this.moveLine(from, to, place)));
 		};
-		if (to.kind === "line") {
-			move("Move under", "corner-down-right", "under");
-			move("Move after", "arrow-down", "after");
-		} else {
-			move("Move to end of note", "arrow-down-to-line", "end");
-		}
+		if (to.kind === "line") move("Move under", "corner-down-right", "under");
+		if (to.kind === "line" && !isNoteRoot(to)) move("Move after", "arrow-down", "after");
+		if (isNoteRoot(to)) move("Move to end of note", "arrow-down-to-line", "end");
 		// After the release's own click has gone by, so it cannot close the menu.
 		window.setTimeout(() => menu.showAtPosition({ x, y }), 0);
 	}

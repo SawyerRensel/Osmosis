@@ -331,4 +331,20 @@ describe("memoryStrengths", () => {
 		expect(strengths.get("note:a.md")).toBeCloseTo(0.8);
 		expect(strengths.has("note:b.md")).toBe(false);
 	});
+
+	it("gives a sole H1 root its note's mean, unless the H1 has a card of its own", () => {
+		const model: GraphModel = {
+			nodes: [
+				{ ...line("note:a.md", "a.md"), root: true },
+				line("x", "a.md", { blockId: "os-x" }),
+				{ ...line("note:b.md", "b.md", { blockId: "os-b" }), root: true },
+				line("y", "b.md", { blockId: "os-y" }),
+			],
+			edges: [],
+		};
+		const cards: Record<string, number[]> = { "os-x": [0.4], "os-b": [0.9], "os-y": [0.1] };
+		const strengths = memoryStrengths(model, (_path, blockId) => cards[blockId] ?? []);
+		expect(strengths.get("note:a.md")).toBe(0.4);
+		expect(strengths.get("note:b.md")).toBe(0.9);
+	});
 });

@@ -11,7 +11,7 @@
  * line gets a new content ID, so it alone re-settles near its parent.
  */
 
-import { noteNodeId, type GraphModel } from "./model";
+import { isNoteRoot, noteNodeId, type GraphModel } from "./model";
 
 type Vec3 = [x: number, y: number, z: number];
 
@@ -69,7 +69,8 @@ export function placeNodes(
 			continue;
 		}
 		let place: Placed;
-		if (node.kind === "note" && node.path !== undefined) {
+		// A note's root (its core, or its sole H1) is seeded beside the note that pulled it in.
+		if (isNoteRoot(node) && node.path !== undefined) {
 			const puller = via.get(node.path);
 			place = seedNear(at(puller === undefined ? undefined : noteNodeId(puller)), NOTE_SEED_DISTANCE);
 		} else if (node.kind === "line" && node.path !== undefined) {

@@ -117,18 +117,36 @@ describe("FlatLayouts.branches", () => {
 		expect(steps!.lines[0]!.dy).toBeCloseTo(-steps!.lines[9]!.dy);
 	});
 
-	it("at depth 1 flattens everything under the title into one branch", () => {
-		const branches = layouts.branches(model.nodes, 1, size);
-		expect(branches.map((b) => b.root)).toEqual([id("Passage plan")]);
+	// A line before the title keeps the file-name plate as the note's root, so the title can be a branch root.
+	const cored = buildGraph([{ tree: new OsmosisParser().parse(`Draft\n\n${note}`, "Passage.md"), cache: null }], () => null);
+	const coredId = (text: string): string => cored.nodes.find((n) => n.kind === "line" && n.label === text)!.id;
+
+	it("at depth 1 flattens everything under the title into one branch, when the core is the root", () => {
+		const branches = layouts.branches(cored.nodes, 1, size);
+		expect(branches.map((b) => b.root)).toEqual([coredId("Passage plan")]);
+		expect(branches[0]!.core).toBe(CORE);
 		expect(linesOf(branches[0]!)).toHaveLength(8);
 	});
 
 	it("between whole depths roots at the shallower one, with its children part-way in", () => {
-		const branches = layouts.branches(model.nodes, 1.5, size);
+		const branches = layouts.branches(cored.nodes, 1.5, size);
+		const id = coredId;
 		expect(branches.map((b) => b.root)).toEqual([id("Passage plan")]);
 		expect(branches[0]!.weight).toBe(0.5);
 		expect(branches[0]!.lines.map((l) => l.id)).toEqual([id("Intro line"), id("Crew"), id("Gear")]);
 		expect(branches[0]!.lines[1]!.members.map((m) => m.id)).toEqual([id("One"), id("Two"), id("Three"), id("Sub")]);
+	});
+
+	it("pivots on a sole H1 root, which is never a branch root: below depth 2 it roots where depth 2 does, fully flat", () => {
+		expect(model.nodes.some((n) => n.kind === "note")).toBe(false);
+		for (const flat of [1, 1.5, 2]) {
+			const branches = layouts.branches(model.nodes, flat, size);
+			expect(branches.map((b) => b.root)).toEqual([id("Crew"), id("Gear")]);
+			expect(branches.map((b) => b.core)).toEqual([CORE, CORE]);
+			expect(branches[0]!.weight).toBe(1);
+		}
+		// Above depth 2, weights ease as they do under a core.
+		expect(layouts.branches(model.nodes, 2.5, size)[0]!.weight).toBe(0.5);
 	});
 
 	it("roots branches only at lines with children, and keeps shallower lines 3D", () => {

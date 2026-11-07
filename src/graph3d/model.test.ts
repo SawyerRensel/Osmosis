@@ -8,6 +8,7 @@ import {
 	attachmentNodeId,
 	ghostNodeId,
 	linkTargetNode,
+	isNoteRoot,
 	type GraphModel,
 	type LinkCacheLike,
 	type LinkResolver,
@@ -57,7 +58,8 @@ const target = (): NoteInput => note("Rigging.md", TARGET_MD);
 
 describe("buildGraph: notes and lines", () => {
 	it("makes a core per note, a node per line, and hierarchy edges down the tree", () => {
-		const model = buildGraph([target()], resolverFor([]));
+		const md = ["# Rigging", "- Halyards ^halyard", "# Running Rigging", "- Sheets"].join("\n");
+		const model = buildGraph([note("Rigging.md", md)], resolverFor([]));
 		const core = noteNodeId("Rigging.md");
 
 		expect(model.nodes.find((n) => n.id === core)).toMatchObject({ kind: "note", label: "Rigging", path: "Rigging.md" });
@@ -66,6 +68,7 @@ describe("buildGraph: notes and lines", () => {
 		]);
 		const hierarchy = model.edges.filter((e) => e.kind === "hierarchy");
 		expect(hierarchy).toContainEqual({ kind: "hierarchy", source: core, target: lineId(model, "Rigging") });
+		expect(hierarchy).toContainEqual({ kind: "hierarchy", source: core, target: lineId(model, "Running Rigging") });
 		expect(hierarchy).toContainEqual({ kind: "hierarchy", source: lineId(model, "Rigging"), target: lineId(model, "Halyards") });
 		expect(hierarchy).toContainEqual({ kind: "hierarchy", source: lineId(model, "Running Rigging"), target: lineId(model, "Sheets") });
 		expect(hierarchy).toHaveLength(4);
@@ -86,6 +89,82 @@ describe("buildGraph: notes and lines", () => {
 		const model = buildGraph([note("A.md", "- Same"), note("B.md", "- Same")], resolverFor([]));
 		const ids = model.nodes.filter((n) => n.kind === "line").map((n) => n.id);
 		expect(new Set(ids).size).toBe(2);
+	});
+});
+
+describe("buildGraph: the note's root", () => {
+	const FM = "---\ntags:\n  - sailing\nsee: \"[[Knots]]\"\n---\n";
+	const BASICS = `${FM}\n# Sailing Basics\n\nLearn the ropes first.\n\n- Tie a [[Knots]]\n\t- Check it twice\n`;
+	const KNOTS_MD = "# Knots\n\n- Bowline ^bowline\n";
+	const basics = (md: string): NoteInput =>
+		note("Sailing Basics.md", md, () => ({
+			frontmatter: { tags: ["sailing"], see: "[[Knots]]" },
+			frontmatterLinks: [{ key: "see", link: "Knots", original: "[[Knots]]" }],
+		}));
+	const linker = (link: string): NoteInput => {
+		const md = `- See [[${link}]]`;
+		return note("Log.md", md, (m) => ({ links: [ref(m, `[[${link}]]`, link)] }));
+	};
+	const resolve = resolverFor(["Sailing Basics.md", "Knots.md", "Log.md"]);
+	const ROOT = noteNodeId("Sailing Basics.md");
+
+	it("makes a sole H1 the root: no core, the H1 under the core's ID, with the frontmatter tags, properties and links into the note", () => {
+		const model = buildGraph([basics(BASICS), note("Knots.md", KNOTS_MD), linker("Sailing Basics")], resolve);
+		const root = model.nodes.find((n) => n.id === ROOT);
+		expect(root).toMatchObject({ kind: "line", label: "Sailing Basics", path: "Sailing Basics.md", root: true });
+		expect(isNoteRoot(root!)).toBe(true);
+		expect(model.nodes.filter((n) => n.path === "Sailing Basics.md" && n.kind === "note")).toEqual([]);
+		expect(model.nodes.filter((n) => n.root === true).map((n) => n.id)).toEqual([ROOT, noteNodeId("Knots.md")]);
+		expect(model.edges).toContainEqual({ kind: "tag", source: ROOT, target: tagNodeId("sailing") });
+		expect(model.edges).toContainEqual({ kind: "property", source: ROOT, target: noteNodeId("Knots.md") });
+		expect(model.edges).toContainEqual({ kind: "link", source: lineId(model, "See [[Sailing Basics]]"), target: ROOT });
+		// The H1 heads its note: no hierarchy edge into it, one out to each line under it.
+		expect(model.edges.filter((e) => e.kind === "hierarchy" && e.target === ROOT)).toEqual([]);
+		expect(model.edges).toContainEqual({ kind: "hierarchy", source: ROOT, target: lineId(model, "Learn the ropes first.") });
+		expect(linkTargetNode(model, "Sailing Basics.md", "")).toBe(ROOT);
+		expect(linkTargetNode(model, "Sailing Basics.md", "Sailing Basics")).toBe(ROOT);
+	});
+
+	it("lands a heading link to the sole H1 on the root", () => {
+		const model = buildGraph([basics(BASICS), linker("Sailing Basics#Sailing Basics")], resolve);
+		expect(model.edges).toContainEqual({ kind: "link", source: lineId(model, "See [[Sailing Basics#Sailing Basics]]"), target: ROOT });
+	});
+
+	it("keeps the core as the root with two H1s, or none", () => {
+		for (const md of [`${BASICS}\n# Racing\n\n- Start on time\n`, `${FM}\n## Sailing Basics\n\n- Tie a [[Knots]]\n`, "- Just a list\n"]) {
+			const model = buildGraph([basics(md)], resolve);
+			expect(model.nodes.find((n) => n.id === ROOT)).toMatchObject({ kind: "note", label: "Sailing Basics" });
+			expect(model.nodes.some((n) => n.root === true)).toBe(false);
+			expect(model.edges).toContainEqual({ kind: "tag", source: ROOT, target: tagNodeId("sailing") });
+		}
+	});
+
+	it("keeps the core as the root when anything sits outside the H1: a line before it", () => {
+		const model = buildGraph([basics(`${FM}\nDraft, not reviewed.\n\n# Sailing Basics\n\n- Tie a [[Knots]]\n`)], resolve);
+		expect(model.nodes.find((n) => n.id === ROOT)?.kind).toBe("note");
+		expect(model.edges).toContainEqual({ kind: "hierarchy", source: ROOT, target: lineId(model, "Draft, not reviewed.") });
+		expect(model.edges).toContainEqual({ kind: "hierarchy", source: ROOT, target: lineId(model, "Sailing Basics") });
+	});
+
+	it("keeps the root's ID across edits that keep the H1 sole, its text and block ID included", () => {
+		const ids = (md: string): string[] => buildGraph([basics(md)], resolve).nodes.filter(isNoteRoot).map((n) => n.id);
+		expect(ids(BASICS)).toEqual([ROOT]);
+		expect(ids(BASICS.replace("# Sailing Basics", "# Sailing Fundamentals"))).toEqual([ROOT]);
+		expect(ids(BASICS.replace("# Sailing Basics", "# Sailing Basics ^top"))).toEqual([ROOT]);
+		expect(ids(BASICS.replace("- Check it twice", "- Check it twice\n- Coil the line"))).toEqual([ROOT]);
+	});
+
+	it("hands the ID to the core when a second H1 arrives; the first H1 becomes a line", () => {
+		const model = buildGraph([basics(`${BASICS}\n# Racing\n`)], resolve);
+		expect(model.nodes.find((n) => n.id === ROOT)?.kind).toBe("note");
+		expect(lineId(model, "Sailing Basics")).toMatch(/^line:Sailing Basics\.md#/);
+	});
+
+	it("gives a note shown in part no root, sole H1 or not", () => {
+		const tree = parser.parse(BASICS, "Sailing Basics.md");
+		const h1 = tree.root.children[0]!;
+		const model = buildGraph([{ tree, cache: null, only: new Set([h1.children[0]!]) }], resolve);
+		expect(model.nodes.some(isNoteRoot)).toBe(false);
 	});
 });
 

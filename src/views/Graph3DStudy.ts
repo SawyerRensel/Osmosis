@@ -30,7 +30,7 @@
 import { Notice } from "obsidian";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card } from "../database/types";
-import { linkTargetNode, noteNodeId, type GraphModel, type GraphNode } from "../graph3d/model";
+import { isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode } from "../graph3d/model";
 import { nodeCardKey, nodeStep, studyNode, studyTargets, targetNodeFor } from "../graph3d/study";
 import { parseTrail } from "../graph3d/trail-note";
 import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, trailSteps, type RouteStop, type TrailStep } from "../graph3d/trails";
@@ -175,7 +175,7 @@ export class Graph3DStudy {
 		if (!this.active) return model;
 		// Due-driven hides only the route's cards, so a loaded note outside it is left showing.
 		const paths = model.nodes
-			.filter((node) => node.kind === "note" && node.path !== undefined && (this.path === "free" || this.routeNotes.has(node.path)))
+			.filter((node) => isNoteRoot(node) && node.path !== undefined && (this.path === "free" || this.routeNotes.has(node.path)))
 			.map((node) => node.path!);
 		this.allCards = paths.flatMap((path) => this.plugin.cardStore.getCardsByNote(path));
 		this.cards = new Map(this.allCards.map((card) => [card.id, card]));

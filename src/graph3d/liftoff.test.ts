@@ -44,9 +44,13 @@ describe("liftOffSeeds", () => {
 	const seeds = liftOffSeeds(model, liftOff, PLATE, () => 0.5);
 	const scale = liftOffScale(boxes, PLATE);
 
-	it("seeds every line the map drew, and the note's core", () => {
+	it("seeds every line the map drew; a sole H1 is the note's root, at its own box", () => {
 		const lines = model.nodes.filter((n) => n.kind === "line").map((n) => n.id);
-		expect([...seeds.keys()].sort()).toEqual([...lines, noteNodeId("Passage.md")].sort());
+		expect(lines).toContain(noteNodeId("Passage.md"));
+		expect([...seeds.keys()].sort()).toEqual(lines.sort());
+		const h1 = boxes.find((b) => !b.root && b.start === 0)!;
+		expect(seeds.get(noteNodeId("Passage.md"))!.y).toBeCloseTo(-(h1.y + h1.height / 2 - 300) * scale);
+		expect(seeds.get(noteNodeId("Passage.md"))!.z).toBe(0);
 	});
 
 	it("keeps the map's picture: centred on the viewport, scaled to plate height, y flipped", () => {
@@ -68,8 +72,13 @@ describe("liftOffSeeds", () => {
 		}
 	});
 
-	it("puts the note's core behind the map", () => {
-		expect(seeds.get(noteNodeId("Passage.md"))!.z).toBeLessThan(-PLATE);
+	it("seeds the note's core, behind the map, when the core is the root", () => {
+		const cored = parser.parse(`Draft\n\n${note}`, "Passage.md");
+		const coreModel = buildGraph([{ tree: cored, cache: null }], () => null);
+		const coreBoxes = computeLayout(cored).nodes.map((n) => ({ path: "Passage.md", start: n.source.range.start, root: n.source.type === "root", x: n.rect.x, y: n.rect.y, width: n.rect.width, height: n.rect.height }));
+		const coreSeeds = liftOffSeeds(coreModel, { boxes: coreBoxes, viewport, focus: null }, PLATE, () => 0.5);
+		expect(coreSeeds.get(noteNodeId("Passage.md"))!.z).toBeLessThan(-PLATE);
+		expect(coreSeeds.size).toBe(coreModel.nodes.length);
 	});
 
 	it("scales a line's box to a line plate", () => {

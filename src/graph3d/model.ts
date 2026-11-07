@@ -3,8 +3,11 @@
  * notes. See the `# Spec` section of `vault/Planner/Develop Mind-Map Graph
  * View.md` ("World model").
  *
- * Every parse-tree node is a line node, held to its note's core by hierarchy
- * edges. Links, embeds, frontmatter links and tags come from Obsidian's link
+ * Every parse-tree node is a line node, held to its note's root by hierarchy
+ * edges. A note's root is its core (the file-name plate), or, when the note is
+ * one H1 and everything under it, that H1 (`soleH1`): the core is then not
+ * built, and the H1 takes its ID, its frontmatter tags and properties, and the
+ * links into the note. Links, embeds, frontmatter links and tags come from Obsidian's link
  * cache rather than a re-parse: each cached reference carries its source
  * offset, which places it on the line whose range contains it.
  *
@@ -37,6 +40,11 @@ export interface GraphNode {
 	 * image with its masks instead of the node's text.
 	 */
 	masks?: { occlusion: CardOcclusion; side: OcclusionSide };
+	/**
+	 * A line only: this line is its note's root, standing in for the core
+	 * (`soleH1`). Its ID is the core's, `noteNodeId(path)`. See `isNoteRoot`.
+	 */
+	root?: boolean;
 }
 
 /**
@@ -85,6 +93,24 @@ export interface BuildOptions {
 export type LinkResolver = (linkpath: string, sourcePath: string) => string | null;
 
 export const noteNodeId = (path: string): string => `note:${path}`;
+
+/**
+ * Whether `node` is its note's root: the core (the file-name plate), or the
+ * sole H1 that replaces it. Either way its ID is `noteNodeId(path)`, so hops,
+ * links into the note and positions find it by path.
+ */
+export const isNoteRoot = (node: { kind: GraphNodeKind; root?: boolean }): boolean => node.kind === "note" || node.root === true;
+
+/**
+ * The H1 that is the note's root, when the note is exactly one H1 and
+ * everything under it: the parse root's only child is a level-1 heading.
+ * Frontmatter is not in the tree, so it doesn't count. A line before the H1,
+ * or a second H1, is a second top-level node, and the core stays the root.
+ */
+export function soleH1(root: OsmosisNode): OsmosisNode | null {
+	const only = root.children.length === 1 ? root.children[0] : undefined;
+	return only !== undefined && only.type === "heading" && only.depth === 1 ? only : null;
+}
 export const tagNodeId = (tag: string): string => `tag:${normalizeTag(tag)}`;
 export const attachmentNodeId = (path: string): string => `file:${path}`;
 export const ghostNodeId = (linkpath: string): string => `ghost:${linkpath.toLowerCase()}`;
@@ -117,7 +143,7 @@ const isNotePath = (path: string): boolean => path.endsWith(".md");
 /** Per-note lookups, built in the same walk that emits the note's lines. */
 interface NoteIndex {
 	path: string;
-	/** Null for a note shown in part (`NoteInput.only`): it has no core. */
+	/** The note's root (its core, or its sole H1). Null for a note shown in part (`NoteInput.only`): it has no root. */
 	coreId: string | null;
 	/** Line nodes in source order, for offset lookup. */
 	lines: { node: OsmosisNode; id: string }[];
@@ -139,11 +165,13 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		if (!edges.has(key)) edges.set(key, { kind, source, target });
 	};
 
-	// Pass 1: every note's core and lines, so pass 2 can target any loaded line.
+	// Pass 1: every note's root and lines, so pass 2 can target any loaded line.
 	for (const { tree, only } of notes) {
 		const path = tree.filePath;
 		const coreId = only === undefined ? noteNodeId(path) : null;
-		if (coreId !== null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root });
+		// A sole H1 is the root under the core's ID, so it keeps its place across edits to its text.
+		const h1 = coreId === null ? null : soleH1(tree.root);
+		if (coreId !== null && h1 === null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root });
 		const index: NoteIndex = { path, coreId, lines: [], byBlockId: new Map(), byHeading: new Map() };
 		indexes.set(path, index);
 
@@ -154,11 +182,11 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 					walk(child, null);
 					continue;
 				}
-				let id = lineNodeId(path, child, true);
+				let id = child === h1 && coreId !== null ? coreId : lineNodeId(path, child, true);
 				// A duplicated block ID is a user error; keep both lines visible.
-				if (nodes.has(id)) id = lineNodeId(path, child, false);
-				nodes.set(id, { id, kind: "line", label: child.content, path, source: child });
-				if (parentId !== null) addEdge("hierarchy", parentId, id);
+				if (child !== h1 && nodes.has(id)) id = lineNodeId(path, child, false);
+				nodes.set(id, { id, kind: "line", label: child.content, path, source: child, ...(child === h1 ? { root: true } : {}) });
+				if (parentId !== null && child !== h1) addEdge("hierarchy", parentId, id);
 				index.lines.push({ node: child, id });
 				if (child.blockId !== undefined && !index.byBlockId.has(child.blockId)) {
 					index.byBlockId.set(child.blockId, id);
@@ -262,7 +290,7 @@ export function subpathKey(subpath: string): { blockId: string } | { heading: st
 /**
  * The node a link into the loaded note at `path` lands on, as `buildGraph`
  * resolves it: the line with the block ID or heading `subpath` names (without
- * its `#`), else the note's core. `null` when the note isn't loaded.
+ * its `#`), else the note's root (its core, or its sole H1). `null` when the note isn't loaded.
  */
 export function linkTargetNode(model: GraphModel, path: string, subpath: string): string | null {
 	const coreId = noteNodeId(path);

@@ -30,7 +30,7 @@ import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
-import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
+import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
 import { DEFAULT_OVERLAYS, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
 import { panelBoxEm } from "../graph3d/near";
@@ -257,7 +257,7 @@ const LINE_PLATE_MAX_EM = 20;
  * looked at closer than this anyway (the orbit target stays `MIN_DEPTH` ahead).
  */
 const CAMERA_NEAR = 1;
-/** How far from a plate a flight or a ride along an edge stops: a note's core, and every other node. */
+/** How far from a plate a flight or a ride along an edge stops: a note's root (its core or sole H1: a hop arrives at the note), and every other node. */
 const NOTE_STAND_OFF = 160;
 const LINE_STAND_OFF = 70;
 /** Flight speed as a fraction of the camera's distance to its orbit target, per second. */
@@ -626,7 +626,7 @@ export class Graph3DScene {
 		const shares = flatCharges(this.charge, this.flatBranches);
 		this.noteCores = new Map();
 		for (const node of live) {
-			if (node.graph.kind === "note" && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: shares.get(node.id) ?? 0 });
+			if (isNoteRoot(node.graph) && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: shares.get(node.id) ?? 0 });
 		}
 		this.charged = shares.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
 		this.degree.clear();
@@ -984,7 +984,7 @@ export class Graph3DScene {
 		if (this.pendingFlightWaits && node.fx === undefined && this.ticksSinceData < SETTLE_TICKS) return;
 		if (node.x === undefined || node.y === undefined || node.z === undefined) return;
 		this.pendingFlight = null;
-		const distance = node.graph.kind === "note" ? NOTE_STAND_OFF : LINE_STAND_OFF;
+		const distance = isNoteRoot(node.graph) ? NOTE_STAND_OFF : LINE_STAND_OFF;
 		const position = { x: node.x, y: node.y, z: node.z };
 		this.flight = {
 			node,
@@ -1080,7 +1080,7 @@ export class Graph3DScene {
 		const b = { x: target.x, y: target.y, z: target.z };
 		const toEnd = farEnd({ a, b, aId: source.id, bId: target.id }, this.focusId, camera) === "b";
 		const [from, to] = toEnd ? [source, target] : [target, source];
-		const standOff = to.graph.kind === "note" ? NOTE_STAND_OFF : LINE_STAND_OFF;
+		const standOff = isNoteRoot(to.graph) ? NOTE_STAND_OFF : LINE_STAND_OFF;
 		const trip = startTrip(camera, this.orbitControls().target, toEnd ? a : b, toEnd ? b : a, standOff, performance.now(), this.overlays.travelSpeed);
 		this.pendingFlight = null;
 		this.flight = this.follow = this.glide = null;
