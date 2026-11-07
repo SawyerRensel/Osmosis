@@ -32,7 +32,7 @@ import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import type { GraphEdgeKind, GraphModel, GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
-import { DEFAULT_OVERLAYS, edgeShown, linkStrengthScale, type Graph3DOverlays } from "../graph3d/overlays";
+import { DEFAULT_OVERLAYS, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
@@ -337,6 +337,8 @@ export class Graph3DScene {
 	private colorOf: (node: GraphNode) => string = nodeColor;
 	/** Links per node, for d3's default link strength, which the force balance scales. */
 	private degree = new Map<string, number>();
+	/** The links that pull under the Overlays now (`linkPulls`); `linkStrength` gives every other one none. */
+	private pulling = new Set<EngineLink>();
 	/** Node positions or opacities changed since the plates and edges were last written. */
 	private dirty = false;
 	/** Nodes came, went, or changed text or colour: every plate attribute must be rewritten. */
@@ -542,7 +544,7 @@ export class Graph3DScene {
 
 		const ids = new Set(this.nodes.map((node) => node.id));
 		if (this.flight !== null && !ids.has(this.flight.node.id)) this.flight = null;
-		if (this.follow !== null && !ids.has(this.follow.node.id)) this.follow = null;
+		if (this.follow !== null && (!ids.has(this.follow.node.id) || this.follow.node.departing)) this.follow = null;
 		if (this.ride !== null && (!ids.has(this.ride.from.id) || !ids.has(this.ride.to.id))) this.ride = null;
 		const lingering = this.links.filter((link) => {
 			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
@@ -628,8 +630,13 @@ export class Graph3DScene {
 		}
 		this.charged = shares.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
 		this.degree.clear();
+		this.pulling.clear();
+		const ghosts = new Set(this.nodes.filter((node) => node.graph.kind === "ghost").map((node) => node.id));
 		for (const link of this.links) {
-			for (const id of [endId(link.source), endId(link.target)]) this.degree.set(id, (this.degree.get(id) ?? 0) + 1);
+			const [source, target] = [endId(link.source), endId(link.target)];
+			if (!linkPulls(link.kind, ghosts.has(source) || ghosts.has(target), this.overlays)) continue;
+			this.pulling.add(link);
+			for (const id of [source, target]) this.degree.set(id, (this.degree.get(id) ?? 0) + 1);
 		}
 		this.dirty = true;
 		this.layoutDirty = true;
@@ -678,18 +685,20 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Apply the Overlays menu. Hidden edges still pull (visibility is drawing
-	 * only). A new force balance re-weights the links, and a new flatten
-	 * position re-cuts the flat branches; either re-settles the loaded nodes
-	 * (`reshape`): the one place settled nodes are let go on purpose.
+	 * Apply the Overlays menu. A hidden edge kind no longer pulls (`linkPulls`;
+	 * the Hierarchy toggle only hides the drawing), and "Links pull" off stops
+	 * links pulling. A new force balance re-weights the links, and a new
+	 * flatten position re-cuts the flat branches. Any of these re-settles the
+	 * loaded nodes (`reshape`): the one place settled nodes are let go on purpose.
 	 */
 	setOverlays(overlays: SceneOverlays): void {
-		const reweigh = overlays.forceBalance !== this.overlays.forceBalance;
+		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
 		const reflatten = overlays.flatten !== this.overlays.flatten;
+		const before = this.overlays;
 		this.overlays = overlays;
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
-		// pushData (in reshape) re-cuts the branches, and the engine re-reads every link's strength.
-		if (reweigh || reflatten) this.reshape();
+		// pushData (in reshape) re-cuts the branches and re-reads which links pull, and the engine re-reads every link's strength.
+		if (reweigh || reflatten) this.reshape(!this.focusLeaves(before, overlays));
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
 		this.near.setEnabled(overlays.labels === "all");
@@ -706,31 +715,41 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * d3's default link strength (one over the fewer links at either end),
-	 * scaled by the force balance. An edge inside a rigid piece of a flat
+	 * d3's default link strength (one over the fewer pulling links at either
+	 * end), scaled by the force balance, and none for a link that doesn't pull. An edge inside a rigid piece of a flat
 	 * branch doesn't pull, and one from a ramp line to its root eases off as
 	 * the line is pulled in (`flatLinkScale`).
 	 */
 	private readonly linkStrength = (link: EngineLink): number => {
+		if (!this.pulling.has(link)) return 0;
 		const flat = flatLinkScale(this.flatPlaces, endId(link.source), endId(link.target));
 		if (flat === 0) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
 		return (flat * linkStrengthScale(link.kind, this.overlays.forceBalance)) / Math.max(1, fewer);
 	};
 
+	/** Whether the focused node's plate goes with this change of Overlays (a tag hub, ghost or attachment its toggle takes away). */
+	private focusLeaves(before: SceneOverlays, after: SceneOverlays): boolean {
+		const focus = this.focusId === null ? undefined : this.nodes.find((node) => node.id === this.focusId);
+		return focus !== undefined && kindOwnedOff(focus.graph.kind, after.edges) && !kindOwnedOff(focus.graph.kind, before.edges);
+	}
+
 	/**
-	 * The Hierarchy ⟷ organic slider or the flatten slider moved: let every
-	 * loaded node go and re-settle under the new link weights or flat
-	 * branches, so the change shows at once.
+	 * The Hierarchy ⟷ organic slider, the flatten slider, or a toggle that
+	 * changes which links pull moved: let every loaded node go and re-settle
+	 * under the new link weights or flat branches, so the change shows at once.
 	 *
-	 * DELIBERATE EXCEPTION to "settled nodes never move" (Sawyer, 2026-11-01
-	 * for the Hierarchy ⟷ organic slider, 2026-11-03 for the flatten slider):
-	 * it happens only here, in answer to the user moving one of those two
-	 * sliders. Hops, edits and data updates still keep settled nodes where they are. The line
-	 * being edited stays pinned. The camera rides along with the focused node
-	 * until the layout cools and `settle` pins everything again.
+	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), three in
+	 * all: the force slider (2026-11-01), the flatten slider (2026-11-03), and
+	 * the edge-kind and Links pull toggles (2026-11-07; the Hierarchy edge
+	 * toggle is not one, it only hides the drawing). It happens only here, in
+	 * answer to the user changing one of those. Hops, edits and data updates
+	 * still keep settled nodes where they are. The line being edited stays
+	 * pinned. The camera rides along with the focused node until the layout
+	 * cools and `settle` pins everything again, unless `followFocus` is off
+	 * (the focused plate is leaving: the camera stays where it is).
 	 */
-	private reshape(): void {
+	reshape(followFocus = true): void {
 		let any = false;
 		for (const node of this.nodes) {
 			if (node.departing || node.id === this.editingId) continue;
@@ -739,7 +758,7 @@ export class Graph3DScene {
 		}
 		if (!any) return;
 		const focus = this.nodes.find((node) => node.id === this.focusId);
-		if (this.flight === null && focus?.x !== undefined && focus.y !== undefined && focus.z !== undefined) {
+		if (followFocus && this.flight === null && focus?.x !== undefined && focus.y !== undefined && focus.z !== undefined) {
 			this.follow = { node: focus, at: { x: focus.x, y: focus.y, z: focus.z } };
 		}
 		// Recomputes the many-body force for nodes that are all free again, and reheats the simulation.

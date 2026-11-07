@@ -7,7 +7,7 @@
  */
 
 import { noteHue, nodeColor } from "./appearance";
-import type { GraphEdgeKind, GraphModel, GraphNode } from "./model";
+import type { GraphEdgeKind, GraphModel, GraphNode, GraphNodeKind } from "./model";
 
 export type ColorMode = "note" | "memory" | "tag" | "type";
 
@@ -24,6 +24,8 @@ export interface Graph3DOverlays {
 	edges: Record<OverlayEdgeKind, boolean>;
 	/** 0 is all hierarchy, 1 all organic; at 0.5 every link pulls as d3 would by default. */
 	forceBalance: number;
+	/** Whether links between plates (kind `link`, ghost targets included) pull. Off, they still draw if their edge kind is shown, but exert no force. */
+	linksPull: boolean;
 	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). */
 	flatten: number;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
@@ -43,6 +45,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	// Attachments are off: an attachment is already part of the note that embeds it.
 	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: false, unresolved: true },
 	forceBalance: 0.5,
+	linksPull: true,
 	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
 	flatten: 0.75,
 	mist: 1,
@@ -73,6 +76,7 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		colorBy: COLOR_MODES.includes(value.colorBy as ColorMode) ? (value.colorBy as ColorMode) : DEFAULT_OVERLAYS.colorBy,
 		edges,
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
+		linksPull: typeof value.linksPull === "boolean" ? value.linksPull : DEFAULT_OVERLAYS.linksPull,
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
@@ -87,19 +91,52 @@ export function edgeShown(kind: GraphEdgeKind, toGhost: boolean, edges: Readonly
 }
 
 /**
- * The model as the Overlays menu shows it. With Attachments off, an attachment
- * node that only attachment edges reach is left out with them, since the
- * attachment is the node (unresolved links are different: their edges hide,
- * the ghost nodes stay). An attachment a property also links to stays, with
- * that edge.
+ * Whether an edge pulls. A hidden kind no longer pulls (the Hierarchy toggle
+ * is the exception: it only hides the drawing, since a note's shape is its
+ * hierarchy and flattening depends on it), and neither do links when "Links
+ * pull" is off, ghost targets included.
+ */
+export function linkPulls(kind: GraphEdgeKind, toGhost: boolean, overlays: Pick<Graph3DOverlays, "edges" | "linksPull">): boolean {
+	if (kind === "hierarchy") return true;
+	return edgeShown(kind, toGhost, overlays.edges) && (kind !== "link" || overlays.linksPull);
+}
+
+/** Whether the Overlays change from `before` to `after` changes which edges pull, so the loaded nodes must re-settle. */
+export function pullChanged(before: Pick<Graph3DOverlays, "edges" | "linksPull">, after: Pick<Graph3DOverlays, "edges" | "linksPull">): boolean {
+	if (before.linksPull !== after.linksPull) return true;
+	return OVERLAY_EDGE_KINDS.some((kind) => kind !== "hierarchy" && before.edges[kind] !== after.edges[kind]);
+}
+
+/** The edge toggle that owns a node kind's plates: with it off, plates of that kind that no other shown edge reaches are left out. */
+const OWNING_TOGGLE: Partial<Record<GraphNodeKind, OverlayEdgeKind>> = { attachment: "attachment", tag: "tag", ghost: "unresolved" };
+
+/** Whether the toggles leave out plates of this kind (when no other shown edge reaches them). */
+export function kindOwnedOff(kind: GraphNodeKind, edges: Readonly<Record<OverlayEdgeKind, boolean>>): boolean {
+	const owner = OWNING_TOGGLE[kind];
+	return owner !== undefined && !edges[owner];
+}
+
+/** Which of the toggles that add or remove plates are on: when it changes, the model must be rebuilt (see `visibleModel`). */
+export function modelKey(edges: Readonly<Record<OverlayEdgeKind, boolean>>): string {
+	return [edges.attachment, edges.tag, edges.unresolved].join();
+}
+
+/**
+ * The model as the Overlays menu shows it. A toggle that owns plates takes
+ * them away with its edges: Attachments the attachment nodes, Tags the tag
+ * hubs, Unresolved links the ghosts, since each of those is the node itself.
+ * A node that another shown edge kind still reaches stays (an attachment a
+ * property also links to stays, with that edge).
  */
 export function visibleModel(model: GraphModel, edges: Readonly<Record<OverlayEdgeKind, boolean>>): GraphModel {
-	if (edges.attachment) return model;
-	const kept = new Set<string>();
+	const candidates = model.nodes.filter((node) => kindOwnedOff(node.kind, edges));
+	if (candidates.length === 0) return model;
+	const ghosts = new Set(model.nodes.filter((node) => node.kind === "ghost").map((node) => node.id));
+	const reached = new Set<string>();
 	for (const edge of model.edges) {
-		if (edge.kind !== "attachment") kept.add(edge.source).add(edge.target);
+		if (edgeShown(edge.kind, ghosts.has(edge.source) || ghosts.has(edge.target), edges)) reached.add(edge.source).add(edge.target);
 	}
-	const hidden = new Set(model.nodes.filter((node) => node.kind === "attachment" && !kept.has(node.id)).map((node) => node.id));
+	const hidden = new Set(candidates.filter((node) => !reached.has(node.id)).map((node) => node.id));
 	if (hidden.size === 0) return model;
 	return {
 		nodes: model.nodes.filter((node) => !hidden.has(node.id)),

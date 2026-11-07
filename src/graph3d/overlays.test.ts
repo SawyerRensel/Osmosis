@@ -5,13 +5,16 @@ import { nodeColor } from "./appearance";
 import {
 	DEFAULT_OVERLAYS,
 	edgeShown,
+	linkPulls,
 	linkStrengthScale,
 	memoryColor,
 	memoryStrengths,
 	mistFromSlider,
+	modelKey,
 	nodeTags,
 	normalizeOverlays,
 	overlayNodeColor,
+	pullChanged,
 	sliderFromMist,
 	sliderFromTravel,
 	travelFromSlider,
@@ -64,6 +67,13 @@ describe("normalizeOverlays", () => {
 		expect(normalizeOverlays({ flatten: "flat" }).flatten).toBe(0.75);
 	});
 
+	it("pulls links by default, for new and existing users", () => {
+		expect(DEFAULT_OVERLAYS.linksPull).toBe(true);
+		expect(normalizeOverlays({ forceBalance: 0.2 }).linksPull).toBe(true);
+		expect(normalizeOverlays({ linksPull: false }).linksPull).toBe(false);
+		expect(normalizeOverlays({ linksPull: "no" }).linksPull).toBe(true);
+	});
+
 	it("does not share the default edges object", () => {
 		normalizeOverlays(undefined).edges.link = false;
 		expect(DEFAULT_OVERLAYS.edges.link).toBe(true);
@@ -82,29 +92,110 @@ describe("visibleModel", () => {
 	const file = (path: string): GraphNode => ({ id: `file:${path}`, kind: "attachment", label: path, path });
 	const ghost: GraphNode = { id: "ghost:Missing", kind: "ghost", label: "Missing" };
 	const model: GraphModel = {
-		nodes: [core("A.md"), line("l1", "A.md"), file("chart.png"), file("cover.png"), ghost],
+		nodes: [core("A.md"), line("l1", "A.md"), file("chart.png"), file("cover.png"), ghost, { id: "tag:sailing", kind: "tag", label: "#sailing" }],
 		edges: [
 			{ kind: "hierarchy", source: "note:A.md", target: "l1" },
 			{ kind: "attachment", source: "l1", target: "file:chart.png" },
 			{ kind: "attachment", source: "l1", target: "file:cover.png" },
 			{ kind: "property", source: "note:A.md", target: "file:cover.png" },
 			{ kind: "link", source: "l1", target: "ghost:Missing" },
+			{ kind: "tag", source: "note:A.md", target: "tag:sailing" },
 		],
 	};
 
-	it("shows everything with attachments on", () => {
+	it("shows everything with every owning toggle on", () => {
 		expect(visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: true })).toBe(model);
 	});
 
 	it("drops an attachment only attachment edges reach, with its edges, and keeps one a property links to", () => {
-		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: false, unresolved: false });
-		expect(shown.nodes.map((node) => node.id)).toEqual(["note:A.md", "l1", "file:cover.png", "ghost:Missing"]);
+		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: false });
+		expect(shown.nodes.map((node) => node.id)).toEqual(["note:A.md", "l1", "file:cover.png", "ghost:Missing", "tag:sailing"]);
 		expect(shown.edges.map((edge) => `${edge.kind}>${edge.target}`)).toEqual([
 			"hierarchy>l1",
 			"attachment>file:cover.png",
 			"property>file:cover.png",
 			"link>ghost:Missing",
+			"tag>tag:sailing",
 		]);
+	});
+
+	it("drops an attachment a property reaches too once properties are off", () => {
+		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: false, property: false });
+		expect(shown.nodes.map((node) => node.id)).not.toContain("file:cover.png");
+	});
+
+	it("drops the tag hubs, with their edges, with Tags off", () => {
+		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: true, tag: false });
+		expect(shown.nodes.map((node) => node.id)).not.toContain("tag:sailing");
+		expect(shown.edges.some((edge) => edge.kind === "tag")).toBe(false);
+		expect(shown.nodes).toHaveLength(model.nodes.length - 1);
+	});
+
+	it("drops the ghosts, with their edges, with Unresolved links off", () => {
+		const shown = visibleModel(model, { ...DEFAULT_OVERLAYS.edges, attachment: true, unresolved: false });
+		expect(shown.nodes.map((node) => node.id)).not.toContain("ghost:Missing");
+		expect(shown.edges.map((edge) => edge.target)).not.toContain("ghost:Missing");
+		expect(shown.edges).toHaveLength(model.edges.length - 1);
+	});
+
+	it("keeps a hub another shown edge reaches", () => {
+		const reached: GraphModel = {
+			nodes: [...model.nodes, { id: "tag:other", kind: "tag", label: "other" }],
+			edges: [...model.edges, { kind: "link", source: "l1", target: "tag:other" }],
+		};
+		expect(visibleModel(reached, { ...DEFAULT_OVERLAYS.edges, attachment: true, tag: false }).nodes.map((node) => node.id)).toContain("tag:other");
+	});
+});
+
+describe("modelKey", () => {
+	it("changes only with the toggles that add or remove plates", () => {
+		const base = modelKey(DEFAULT_OVERLAYS.edges);
+		expect(modelKey({ ...DEFAULT_OVERLAYS.edges, link: false, hierarchy: false })).toBe(base);
+		for (const kind of ["attachment", "tag", "unresolved"] as const) expect(modelKey({ ...DEFAULT_OVERLAYS.edges, [kind]: !DEFAULT_OVERLAYS.edges[kind] })).not.toBe(base);
+	});
+});
+
+describe("linkPulls", () => {
+	const on = { edges: DEFAULT_OVERLAYS.edges, linksPull: true };
+
+	it("pulls every shown kind", () => {
+		for (const kind of ["hierarchy", "link", "embed", "property", "tag"] as const) expect(linkPulls(kind, false, on)).toBe(true);
+	});
+
+	it("stops pulling a kind that is hidden, and links into ghosts while Unresolved is off", () => {
+		for (const kind of ["link", "embed", "property", "tag", "attachment"] as const) {
+			expect(linkPulls(kind, false, { ...on, edges: { ...on.edges, [kind]: false } })).toBe(false);
+		}
+		expect(linkPulls("link", true, { ...on, edges: { ...on.edges, unresolved: false } })).toBe(false);
+		expect(linkPulls("link", false, { ...on, edges: { ...on.edges, unresolved: false } })).toBe(true);
+	});
+
+	it("keeps pulling hierarchy with its toggle off: that one only hides the drawing", () => {
+		expect(linkPulls("hierarchy", false, { ...on, edges: { ...on.edges, hierarchy: false } })).toBe(true);
+	});
+
+	it("stops pulling links, ghost targets included, with Links pull off, and leaves other kinds alone", () => {
+		const off = { ...on, linksPull: false };
+		expect(linkPulls("link", false, off)).toBe(false);
+		expect(linkPulls("link", true, off)).toBe(false);
+		expect(linkPulls("embed", false, off)).toBe(true);
+		expect(linkPulls("hierarchy", false, off)).toBe(true);
+	});
+});
+
+describe("pullChanged", () => {
+	const on = { edges: DEFAULT_OVERLAYS.edges, linksPull: true };
+
+	it("is true when an edge kind other than hierarchy, or Links pull, is toggled", () => {
+		expect(pullChanged(on, { ...on, edges: { ...on.edges, tag: false } })).toBe(true);
+		expect(pullChanged(on, { ...on, edges: { ...on.edges, unresolved: false } })).toBe(true);
+		expect(pullChanged(on, { ...on, edges: { ...on.edges, attachment: true } })).toBe(true);
+		expect(pullChanged(on, { ...on, linksPull: false })).toBe(true);
+	});
+
+	it("is false for the Hierarchy toggle and for nothing changing", () => {
+		expect(pullChanged(on, { ...on, edges: { ...on.edges, hierarchy: false } })).toBe(false);
+		expect(pullChanged(on, { ...on })).toBe(false);
 	});
 });
 

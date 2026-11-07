@@ -13,7 +13,7 @@ import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditab
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { memoryStrengths, nodeTags, overlayNodeColor, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
+import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
@@ -94,8 +94,12 @@ export class Graph3DView extends ItemView {
 	private overlaysMenu: Graph3DOverlaysMenu | null = null;
 	/** The colour mode the scene is coloured in now, to tell when the menu changed it. */
 	private colorBy: Graph3DOverlays["colorBy"] | null = null;
-	/** Whether the model shown now has its attachment nodes (see `visibleModel`), to reload when the menu changes it. */
-	private attachmentsShown: boolean | null = null;
+	/** Which of the toggles that add or remove plates (see `modelKey`) the model shown now was built under, to reload when the menu changes one. */
+	private modelShown: string | null = null;
+	/** The model changed because of an Overlays toggle: once it is in the scene, the loaded nodes re-settle, plates that just arrived included (`Graph3DScene.reshape`). */
+	private resettleOnLoad = false;
+	/** The model as built from the notes, before the Overlays leave plates out: tag colours read the tag hubs from it, which Tags off removes. */
+	private fullModel: GraphModel | null = null;
 	private stageEl: HTMLElement | null = null;
 	private emptyEl: HTMLElement | null = null;
 	/** Whether the view is in edit mode: its edit gestures act, and flight keys stay off the structural ones. Off by default and not saved. */
@@ -185,8 +189,13 @@ export class Graph3DView extends ItemView {
 			if (node === null || !this.beginEdit(node)) return undefined;
 			return false;
 		};
-		// Escape drops a link drag in progress; otherwise the key goes on.
-		this.scope.register([], "Escape", () => (this.scene?.cancelLinkDrag() === true ? false : undefined));
+		// Escape drops a link drag in progress, else closes the Overlays menu (which a press on the canvas does not); otherwise the key goes on.
+		this.scope.register([], "Escape", () => {
+			if (this.scene?.cancelLinkDrag() === true) return false;
+			if (this.overlaysMenu?.isOpen !== true) return undefined;
+			this.overlaysMenu.toggle(false);
+			return false;
+		});
 		this.scope.register([], "F2", editKey);
 		// In edit mode, the mind map's structural keys act on the focused line.
 		const structuralKey = (action: StructuralAction) => (e: KeyboardEvent) => {
@@ -266,10 +275,6 @@ export class Graph3DView extends ItemView {
 				if (reloads) void this.reload();
 			},
 		);
-		// A press anywhere else in the view, the canvas included, closes the menu.
-		this.registerDomEvent(root, "pointerdown", (e) => {
-			if (this.overlaysMenu?.isOpen === true && !this.overlaysMenu.contains(e.target)) this.overlaysMenu.toggle(false);
-		});
 
 		// Bottom-left corner, phones and tablets only: hides Obsidian's own toolbar, which floats over the viewport.
 		this.hidesToolbar = Platform.isMobile && this.app.loadLocalStorage(HIDE_TOOLBAR_STORAGE_KEY) === true;
@@ -390,7 +395,9 @@ export class Graph3DView extends ItemView {
 		this.scene = null;
 		this.overlaysMenu = null;
 		this.colorBy = null;
-		this.attachmentsShown = null;
+		this.modelShown = null;
+		this.resettleOnLoad = false;
+		this.fullModel = null;
 		this.stageEl = null;
 		this.cache.clear();
 		this.prefetched.clear();
@@ -409,8 +416,11 @@ export class Graph3DView extends ItemView {
 		// This view's own menu already shows what it sent; rebuilding it would end a slider drag.
 		if (this.overlaysMenu !== null && this.overlaysMenu.current !== overlays) this.overlaysMenu.show(overlays);
 		if (overlays.colorBy !== this.colorBy && this.model !== null) this.scene?.setColoring(this.coloring(this.model));
-		// Attachments off leaves attachment nodes out of the model, so turning it either way rebuilds it.
-		if (this.attachmentsShown !== null && overlays.edges.attachment !== this.attachmentsShown) void this.reload();
+		// Attachments, Tags and Unresolved links off leave their plates out of the model, so turning one either way rebuilds it.
+		if (this.modelShown !== null && modelKey(overlays.edges) !== this.modelShown) {
+			this.resettleOnLoad = true;
+			void this.reload();
+		}
 	}
 
 	private plugin(): OsmosisPlugin {
@@ -437,7 +447,7 @@ export class Graph3DView extends ItemView {
 		const mode = this.plugin().settings.graph3dOverlays.colorBy;
 		this.colorBy = mode;
 		const context: ColorContext = {
-			tags: mode === "tag" ? nodeTags(model) : new Map(),
+			tags: mode === "tag" ? nodeTags(this.fullModel ?? model) : new Map(),
 			strengths: mode === "memory" ? this.memoryStrengths(model) : new Map(),
 		};
 		return (node) => overlayNodeColor(node, mode, context);
@@ -1198,6 +1208,7 @@ export class Graph3DView extends ItemView {
 		if (focus === null) {
 			this.horizon = null;
 			this.model = null;
+			this.fullModel = null;
 			this.syncHolds(new Set());
 			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
@@ -1235,17 +1246,16 @@ export class Graph3DView extends ItemView {
 		if (seq !== this.loadSeq) return;
 
 		const { edges } = this.plugin().settings.graph3dOverlays;
-		this.attachmentsShown = edges.attachment;
-		const model = visibleModel(
-			buildGraph(
-				notes.filter((note): note is NoteInput => note !== null),
-				resolve,
-				{ contentOnly: this.depth === 0 },
-			),
-			edges,
+		this.modelShown = modelKey(edges);
+		const fullModel = buildGraph(
+			notes.filter((note): note is NoteInput => note !== null),
+			resolve,
+			{ contentOnly: this.depth === 0 },
 		);
+		const model = visibleModel(fullModel, edges);
 		this.horizon = horizon;
 		this.model = model;
+		this.fullModel = fullModel;
 		scene.setColoring(this.coloring(model));
 		this.syncHolds(horizon.loaded);
 		// Once, after the mind map's toggle: its nodes start flat where it drew them, free, and the camera looks at them from where the map did.
@@ -1253,6 +1263,10 @@ export class Graph3DView extends ItemView {
 		this.liftOff = null;
 		const seeds = liftOff === null ? undefined : liftOffSeeds(model, liftOff, scene.linePlateHeight);
 		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via, seeds));
+		if (this.resettleOnLoad) {
+			this.resettleOnLoad = false;
+			scene.reshape(!this.focusLeft(scene, model));
+		}
 		if (liftOff !== null) {
 			const focusId = liftOffFocus(model, liftOff) ?? noteNodeId(focus);
 			scene.setFocusId(focusId);
@@ -1260,6 +1274,12 @@ export class Graph3DView extends ItemView {
 		} else if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.openPending(scene, model);
 		this.prefetch(horizon.prefetch, seq);
+	}
+
+	/** Whether the scene's focused plate is not in `model` (a tag hub or ghost an Overlays toggle just took away): the camera stays where it is. */
+	private focusLeft(scene: Graph3DScene, model: GraphModel): boolean {
+		const focus = scene.focusedNode();
+		return focus !== null && !model.nodes.some((node) => node.id === focus.id);
 	}
 
 	/** A structural edit made a new empty line: now that it is in the scene, clear of its parent, edit it. */

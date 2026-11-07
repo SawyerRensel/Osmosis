@@ -48,7 +48,8 @@ export interface GraphReach {
  * and Shading popovers: an icon button in the viewport's top-right corner that
  * opens a panel of settings under it. It also holds the graph's Depth and
  * Backlinks, which were a strip in the viewport. Taps work as clicks, so it
- * needs nothing extra on mobile. Every change goes out whole through
+ * needs nothing extra on mobile. It is sticky: only its own button closes it
+ * (and Escape, from the view), never a press on the canvas. Every change goes out whole through
  * `onChange` (or `onReach`); the menu never saves.
  */
 export class Graph3DOverlaysMenu {
@@ -78,11 +79,6 @@ export class Graph3DOverlaysMenu {
 
 	get isOpen(): boolean {
 		return !this.panel.hasClass("is-hidden");
-	}
-
-	/** Whether `target` is part of the menu, so a press there doesn't close it. */
-	contains(target: EventTarget | null): boolean {
-		return target instanceof Node && (this.panel.contains(target) || this.button.contains(target));
 	}
 
 	toggle(open = !this.isOpen): void {
@@ -169,6 +165,10 @@ export class Graph3DOverlaysMenu {
 					.setInstant(true)
 					.onChange((value) => this.change({ forceBalance: value })),
 			);
+		new Setting(panel)
+			.setName("Links pull")
+			.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
+			.addToggle((toggle) => toggle.setValue(overlays.linksPull).onChange((value) => this.change({ linksPull: value })));
 		const flatten = new Setting(panel).setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
 		flatten.addSlider((slider) =>
 			slider
