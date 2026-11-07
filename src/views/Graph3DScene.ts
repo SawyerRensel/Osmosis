@@ -38,7 +38,7 @@ import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
-import { branchOf, FlatLayouts, flatCharges, flatDepth, flattenStep, sameBranch, type FlatBranch } from "../graph3d/flatten";
+import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, FlatState, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -312,9 +312,14 @@ export class Graph3DScene {
 	private charge = new Map<string, number>();
 	/** Each note's 2D layout at plate sizes, for its flat branches (see `graph3d/flatten.ts`). */
 	private readonly flatLayouts = new FlatLayouts();
-	/** The flat branches of the loaded nodes at the flatten slider's depth, and the branch root of each member. */
+	/** The flat branches of the loaded nodes at the flatten slider's depth, and where each of their lines sits. */
 	private flatBranches: FlatBranch[] = [];
-	private flatOf = new Map<string, string>();
+	private flatPlaces = new Map<string, FlatPlace>();
+	/** Each flat slice's twist, kept from tick to tick and across re-settles (`flattenStep`). */
+	private readonly flatState = new FlatState();
+	/** Each note's core with the many-body strength its flat lines left it, and the charged nodes it pushes (`notePush`). */
+	private noteCores = new Map<string, { body: EngineNode; strength: number }>();
+	private charged: NoteBody[] = [];
 	/** The nodes not departing, by ID, for the flatten force. */
 	private live = new Map<string, EngineNode>();
 	private readonly plates: Graph3DPlates;
@@ -448,10 +453,12 @@ export class Graph3DScene {
 			initialize: (nodes: EngineNode[], ...args: unknown[]) => charge.initialize(nodes.filter((n) => this.charge.has(n.id)), ...args),
 		});
 		this.graph.d3Force("charge", settleCharge as never);
+		// Flat lines leave the many-body force; their notes' cores push other notes for them.
+		this.graph.d3Force("notes", ((alpha: number) => notePush(this.noteCores, this.charged, alpha)) as never);
 		// Added last, so it runs after the other forces each tick: it lays flat
-		// branches out in their planes, rigidly, and hands their pull to their roots.
+		// branches out in their slices, rigidly, and hands their pull to their heads.
 		const keep = 1 - this.graph.d3VelocityDecay();
-		this.graph.d3Force("flatten", (() => flattenStep(this.flatBranches, (id) => this.live.get(id), keep)) as never);
+		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha, this.flatState)) as never);
 		// Centring shifts every free node each tick to keep the mean at the
 		// origin, so arrivals would drift against a pinned world.
 		this.graph.d3Force("center", null);
@@ -604,17 +611,22 @@ export class Graph3DScene {
 	/**
 	 * Hand the engine the current nodes and links, with the many-body force
 	 * limited to what is still settling, and the flat branches at the flatten
-	 * slider's depth (their members leave the many-body force to their roots).
+	 * slider's depth (their rigid lines leave the many-body force, and their
+	 * notes' cores push other notes for them: `notePush`).
 	 */
 	private pushData(): void {
 		const live = this.nodes.filter((node) => !node.departing);
 		this.live = new Map(live.map((node) => [node.id, node]));
 		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize);
-		this.flatOf = branchOf(this.flatBranches);
-		this.charge = flatCharges(
-			chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE),
-			this.flatBranches,
-		);
+		this.flatPlaces = flatIndex(this.flatBranches);
+		this.flatState.prune(this.flatBranches);
+		this.charge = chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
+		const shares = flatCharges(this.charge, this.flatBranches);
+		this.noteCores = new Map();
+		for (const node of live) {
+			if (node.graph.kind === "note" && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: shares.get(node.id) ?? 0 });
+		}
+		this.charged = shares.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
 		this.degree.clear();
 		for (const link of this.links) {
 			for (const id of [endId(link.source), endId(link.target)]) this.degree.set(id, (this.degree.get(id) ?? 0) + 1);
@@ -695,13 +707,15 @@ export class Graph3DScene {
 
 	/**
 	 * d3's default link strength (one over the fewer links at either end),
-	 * scaled by the force balance. An edge inside a flat branch doesn't pull:
-	 * the branch is rigid (`graph3d/flatten.ts`).
+	 * scaled by the force balance. An edge inside a rigid piece of a flat
+	 * branch doesn't pull, and one from a ramp line to its root eases off as
+	 * the line is pulled in (`flatLinkScale`).
 	 */
 	private readonly linkStrength = (link: EngineLink): number => {
-		if (sameBranch(this.flatOf, endId(link.source), endId(link.target))) return 0;
+		const flat = flatLinkScale(this.flatPlaces, endId(link.source), endId(link.target));
+		if (flat === 0) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
-		return linkStrengthScale(link.kind, this.overlays.forceBalance) / Math.max(1, fewer);
+		return (flat * linkStrengthScale(link.kind, this.overlays.forceBalance)) / Math.max(1, fewer);
 	};
 
 	/**

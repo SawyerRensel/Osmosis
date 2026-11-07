@@ -12,7 +12,7 @@ import {
 	type LabelMode,
 	type OverlayEdgeKind,
 } from "../graph3d/overlays";
-import { FLAT_DEPTH_RANGE, flatDepth } from "../graph3d/flatten";
+import { flatDepth, flatWeight } from "../graph3d/flatten";
 
 const COLOR_MODES: Record<ColorMode, string> = {
 	note: "Note",
@@ -172,8 +172,8 @@ export class Graph3DOverlaysMenu {
 		const flatten = new Setting(panel).setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
 		flatten.addSlider((slider) =>
 			slider
-				// One step per flat depth: off, then 4, 3, 2, 1.
-				.setLimits(0, 1, 1 / FLAT_DEPTH_RANGE)
+				// Continuous: lines at the boundary depth are pulled part-way into their slice.
+				.setLimits(0, 1, 0.01)
 				.setValue(overlays.flatten)
 				// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
 				.setInstant(true)
@@ -230,13 +230,17 @@ function travelLabel(speed: number): string {
 }
 
 function flattenLabel(flatten: number): string {
-	const depth = flatDepth(flatten);
-	const lead = !Number.isFinite(depth)
+	const flat = flatDepth(flatten);
+	const ramp = Math.floor(flat) + 1;
+	const weight = flatWeight(ramp, flat);
+	const lead = !Number.isFinite(flat)
 		? "Off: every branch spreads in 3D."
-		: depth <= 1
+		: flat <= 1
 			? "Everything under each note's title lies flat."
-			: `Lines deeper than outline depth ${String(Math.floor(depth))} lie flat.`;
-	return `${lead} A flat branch is drawn as the mind map draws it, facing out from its note. Moving it re-settles the loaded notes as you drag.`;
+			: weight >= 1
+				? `Lines deeper than outline depth ${String(ramp - 1)} lie flat.`
+				: `Lines deeper than outline depth ${String(ramp)} lie flat; lines at depth ${String(ramp)} are pulled ${String(Math.round(weight * 100))}% into their slice.`;
+	return `${lead} A flat branch is drawn as the mind map draws it, in a slice through its note's core. Moving it re-settles the loaded notes as you drag.`;
 }
 
 function mistLabel(mist: number): string {
