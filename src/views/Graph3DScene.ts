@@ -38,7 +38,7 @@ import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
-import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, FlatState, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
+import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -315,8 +315,6 @@ export class Graph3DScene {
 	/** The flat branches of the loaded nodes at the flatten slider's depth, and where each of their lines sits. */
 	private flatBranches: FlatBranch[] = [];
 	private flatPlaces = new Map<string, FlatPlace>();
-	/** Each flat slice's twist, kept from tick to tick and across re-settles (`flattenStep`). */
-	private readonly flatState = new FlatState();
 	/** Each note's core with the many-body strength its flat lines left it, and the charged nodes it pushes (`notePush`). */
 	private noteCores = new Map<string, { body: EngineNode; strength: number }>();
 	private charged: NoteBody[] = [];
@@ -460,7 +458,7 @@ export class Graph3DScene {
 		// Added last, so it runs after the other forces each tick: it lays flat
 		// branches out in their slices, rigidly, and hands their pull to their heads.
 		const keep = 1 - this.graph.d3VelocityDecay();
-		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha, this.flatState)) as never);
+		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha)) as never);
 		// Centring shifts every free node each tick to keep the mean at the
 		// origin, so arrivals would drift against a pinned world.
 		this.graph.d3Force("center", null);
@@ -621,7 +619,6 @@ export class Graph3DScene {
 		this.live = new Map(live.map((node) => [node.id, node]));
 		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize);
 		this.flatPlaces = flatIndex(this.flatBranches);
-		this.flatState.prune(this.flatBranches);
 		this.charge = chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
 		const shares = flatCharges(this.charge, this.flatBranches);
 		this.noteCores = new Map();

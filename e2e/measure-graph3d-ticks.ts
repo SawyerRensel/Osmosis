@@ -20,18 +20,20 @@
 // since it turns to face the camera), the same for any two plates outside one
 // branch, how far branch roots end up from their core (at flat depth 2 when
 // flatten is off), and, at a whole flat depth, that every flat line lies in
-// its slice's plane through the core, further out than its root, in order.
+// its slice's plane through the core, further out than its root, in order,
+// and that no two plates of one slice cover each other seen face-on by a level
+// camera (each plate its width across and its height up, as it billboards).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { forceLink, forceManyBody, forceSimulation } from "d3-force-3d";
 import { OsmosisParser } from "../src/parser";
-import { buildGraph, type GraphEdgeKind, type GraphNode, type LinkCacheLike } from "../src/graph3d/model";
+import { buildGraph, isNoteRoot, type GraphEdgeKind, type GraphNode, type LinkCacheLike } from "../src/graph3d/model";
 import { placeNodes } from "../src/graph3d/positions";
 import { chargeStrengths } from "../src/graph3d/settle";
 import { linkDistance, nodeExtent, spriteLabel } from "../src/graph3d/appearance";
 import { panelBoxEm } from "../src/graph3d/near";
-import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, FlatState, notePush, type FlatBranch } from "../src/graph3d/flatten";
+import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch } from "../src/graph3d/flatten";
 import type { Vec3 } from "../src/graph3d/flight";
 
 const LINE_PLATE_HEIGHT = 5;
@@ -96,7 +98,7 @@ const branches = new FlatLayouts().branches(model.nodes, flatDepth(flatten), (no
 const index = flatIndex(branches);
 const charge = chargeStrengths(bodies.map((b) => ({ ...b, pinned: false })), -30);
 const shares = flatCharges(charge, branches);
-const noteCores = new Map(bodies.filter((b) => b.kind === "note").map((b) => [b.path!, { body: b, strength: shares.get(b.id) ?? 0 }]));
+const noteCores = new Map(bodies.filter((b) => isNoteRoot(b)).map((b) => [b.path!, { body: b, strength: shares.get(b.id) ?? 0 }]));
 const charged = bodies.filter((b) => charge.has(b.id)).map((body) => ({ body, path: body.path }));
 const setup = performance.now() - t0;
 
@@ -117,14 +119,12 @@ const sim = forceSimulation<Body>(bodies, 3)
 		.strength((l: Link) => flatLinkScale(index, endId(l.source), endId(l.target)) / Math.max(1, Math.min(degree.get(endId(l.source)) ?? 1, degree.get(endId(l.target)) ?? 1))))
 	.force("charge", limited)
 	.stop();
-const state = new FlatState();
-const { twists } = state;
 if (shares.size > 0) sim.force("notes", (alpha: number) => notePush(noteCores, charged, alpha));
 let flatTime = 0;
 if (branches.length > 0) {
 	sim.force("flatten", (alpha: number) => {
 		const start = performance.now();
-		flattenStep(branches, (id) => byId.get(id), 0.6, alpha, state);
+		flattenStep(branches, (id) => byId.get(id), 0.6, alpha);
 		flatTime += performance.now() - start;
 	});
 }
@@ -190,9 +190,11 @@ const spokes = spokeBranches.map((branch) => {
 }).sort((a, b) => a - b);
 const pct = (q: number): string => (spokes.length === 0 ? "-" : spokes[Math.min(spokes.length - 1, Math.floor(q * spokes.length))]!.toFixed(0));
 
-// A check, not a timing, for a whole flat depth (weight 1): every line of a branch sits in the plane through its
-// core and root that holds its twist, further out than the root (its outward offset grows with depth), and
+// A check, not a timing, for a whole flat depth (weight 1): a branch's root and every line sit in its slice's
+// plane through its core (world up and its ring direction), every line further out than the root (its outward offset grows with depth), and
 // siblings run along the slice in document order.
+/** A slice's fixed frame: outward along its ring direction, along world down. */
+const frameOf = (branch: FlatBranch): { u: Vec3; v: Vec3 } => ({ u: branch.dir, v: { x: 0, y: -1, z: 0 } });
 let offPlane = 0;
 let inward = 0;
 const reach = Math.max(...bodies.map((b) => Math.hypot(b.x!, b.y!, b.z!)));
@@ -203,14 +205,11 @@ const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
 for (const branch of branches) {
 	if (branch.weight < 1) continue;
 	const [root, core] = [vec(byId.get(branch.root)!), vec(byId.get(branch.core)!)];
-	const r = minus(root, core);
-	const len = Math.hypot(r.x, r.y, r.z) || 1;
-	const u = { x: r.x / len, y: r.y / len, z: r.z / len };
-	const v = twists.get(branch.root)!;
+	const { u, v } = frameOf(branch);
 	const n = { x: u.y * v.z - u.z * v.y, y: u.z * v.x - u.x * v.z, z: u.x * v.y - u.y * v.x };
+	for (const m of [{ id: branch.root }, ...linesOf(branch)]) offPlane = Math.max(offPlane, Math.abs(dot(minus(vec(byId.get(m.id)!), core), n)));
 	for (const m of linesOf(branch)) {
 		const d = minus(vec(byId.get(m.id)!), root);
-		offPlane = Math.max(offPlane, Math.abs(dot(d, n)));
 		if (dot(d, u) <= 0) inward++;
 	}
 	for (let i = 1; i < branch.lines.length; i++) {
@@ -218,11 +217,28 @@ for (const branch of branches) {
 		if (dot(minus(q, p), v) <= 0) misordered++;
 	}
 }
+// Face-on overlap: two plates of one slice that cover each other seen face-on by a level camera. Plates
+// billboard upright, so on screen each spans its width across and its height up, whatever the slice's frame.
+let faceOn = 0;
+for (const branch of branches) {
+	if (branch.weight < 1) continue;
+	const { u, v } = frameOf(branch);
+	const n = { x: u.y * v.z - u.z * v.y, y: u.z * v.x - u.x * v.z, z: u.x * v.y - u.y * v.x };
+	const flat = Math.hypot(n.x, n.z) < 1e-3;
+	const up = flat ? { x: 0, y: 0, z: 1 } : (() => { const k = n.y; const a = { x: -n.x * k, y: 1 - n.y * k, z: -n.z * k }; const l = Math.hypot(a.x, a.y, a.z); return { x: a.x / l, y: a.y / l, z: a.z / l }; })();
+	const right = { x: up.y * n.z - up.z * n.y, y: up.z * n.x - up.x * n.z, z: up.x * n.y - up.y * n.x };
+	const ids = [branch.root, ...linesOf(branch).map((m) => m.id)];
+	for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+		const [a, b] = [byId.get(ids[i]!)!, byId.get(ids[j]!)!];
+		const d = minus(vec(a), vec(b));
+		if (Math.abs(dot(d, right)) < (a.size.width + b.size.width) / 2 - 0.01 && Math.abs(dot(d, up)) < (a.size.height + b.size.height) / 2 - 0.01) faceOn++;
+	}
+}
 const mean = times.reduce((a, b) => a + b, 0) / times.length;
 const members = branches.reduce((n, b) => n + linesOf(b).length, 0);
 console.log(
 	`flatten ${flatten} (flat depth ${flatDepth(flatten)}): ${bodies.length} nodes, ${links.length} edges, ${charge.size} charged, ` +
 	`${branches.length} branches / ${members} members (setup ${setup.toFixed(1)} ms) · tick over ${TICKS}: mean ${mean.toFixed(2)} ms (flatten force ${flatMean.toFixed(2)} ms), ` +
-	`median ${times[TICKS >> 1]!.toFixed(2)} ms, worst ${times[TICKS - 1]!.toFixed(2)} ms · off plane ≤ ${offPlane.toExponential(1)} · inward lines ${inward} · misordered siblings ${misordered} · farthest node ${reach.toFixed(0)}\n` +
+	`median ${times[TICKS >> 1]!.toFixed(2)} ms, worst ${times[TICKS - 1]!.toFixed(2)} ms · off plane ≤ ${offPlane.toExponential(1)} · inward lines ${inward} · misordered siblings ${misordered} · face-on overlapping plate pairs in a slice ${faceOn} · farthest node ${reach.toFixed(0)}\n` +
 	`  shape after ${SHAPE_TICKS} ticks: ${clashes} clashing plate pairs between sibling branches, ${clashing.size} of ${siblingPairs} sibling branch pairs clash; ${anyClashes} plate pairs clash in all (outside one branch) · root to core median ${pct(0.5)}, p90 ${pct(0.9)}, max ${pct(1)}`,
 );

@@ -33,11 +33,11 @@ How far a line sits below its note's title in the note's own heading and list st
 _Avoid_: Hop distance, level
 
 **Flat branch**:
-A branch of a note's outline, below the flat depth, laid out as the 2D mind map lays it out, in a slice through the note's core: the map's left-to-right points straight away from the core (the branch root nearest it, deeper lines further out) and document order runs along the slice.
+A branch of a note's outline, below the flat depth, laid out as the 2D mind map lays it out, in a slice through the note's core: the map's left-to-right points straight away from the core (the branch root nearest it, deeper lines further out) and document order runs down the world. A note's slices stand in its ring.
 _Avoid_: 2D subtree, petal
 
 **Flat depth**:
 The outline depth below which branches lie flat, set by the Overlays menu's flatten slider. It is continuous: between two whole depths, the lines at the deeper one are pulled part-way into their slice. Above it the note spreads in 3D, and cross-note edges always do.
 
-**Twist**:
-How a flat branch's slice is turned about its own outward axis, chosen to keep it clear of the note's other slices.
+**Ring**:
+A note's flat branches standing round the vertical axis through its core, like apple wedges cut top to bottom: each slice has a fixed outward direction, its share of the ring weighted by its size, in document order.

@@ -4,15 +4,16 @@
  * order). The note's top and the edges between notes stay 3D. See
  * `vault/Planner/3D Graph - Flatten branches.md`.
  *
- * Each flat branch is a slice through its note's root (its core, or the sole
- * H1 that replaces it: `soleH1`; "core" below means either), like a slice cut
- * through the centre of an apple: the 2D map's left-to-right axis (`u`)
- * points straight away from the core, so the branch root sits nearest the
- * core and deeper lines sit further out, and document order runs along the
- * slice (`v`), across that axis. The slice may twist about its own axis; the
- * twist is turned to keep it clear of its neighbours, and slices that would
- * still cut into each other are pushed apart (no decluttering: placement
- * alone keeps plates apart).
+ * Each flat branch is a slice through its note's pivot (its core, or the sole
+ * H1 that replaces it: `isNoteRoot`; "core" below means either), like an
+ * apple wedge cut top to bottom: the slices of a note stand in a ring round
+ * the vertical axis through the core, each at a fixed outward direction
+ * (`ringDirections`: shares weighted by size, in document order). The 2D
+ * map's left-to-right axis (`u`) is that direction, so deeper lines sit
+ * further out, and document order runs down the world (`v`), so plates,
+ * which billboard upright, are stacked by their heights from every side of
+ * the ring. Slices that would still cut into each other are pushed apart
+ * within their planes (no decluttering: placement alone keeps plates apart).
  *
  * The flat depth is continuous. Its whole part picks the branch roots (an
  * ordinary 3D node, at outline depth `floor(F)`: the title is 1, what sits
@@ -91,13 +92,42 @@ export interface FlatLine extends FlatMember {
 	box: FlatBox;
 }
 
-/** One flat branch: its root (a 3D node), its note's core, the ramp weight, and its ramp lines in document order, with the whole branch's footprint. */
+/** A ramp line with lines under it: its sub-slice's outward direction in the ring of the next flat depth down, where it roots a branch of its own. */
+export interface FlatSubLine extends FlatLine {
+	dir?: Vec3;
+}
+
+/**
+ * One flat branch: its root (a 3D node), its note's core, the ramp weight,
+ * its slice's fixed outward direction (`ringDirections`), how firmly its
+ * root is held in that slice (`hold`: eases in over the slider's first
+ * depth), and its ramp lines in document order, with the whole branch's
+ * footprint.
+ */
 export interface FlatBranch {
 	root: string;
 	core: string;
 	weight: number;
-	lines: FlatLine[];
+	dir: Vec3;
+	hold: number;
+	lines: FlatSubLine[];
 	box: FlatBox;
+}
+
+/**
+ * Outward directions for a note's slices, in a ring round world up: each
+ * slice's share of the ring is its size over the total, in the order given
+ * (document order), the first at world +x. Neighbours sit half their two
+ * shares apart. A pure function of the sizes, so it changes only when the
+ * note's branch set does, never per tick or with the camera.
+ */
+export function ringDirections(sizes: readonly number[]): Vec3[] {
+	const total = sizes.reduce((sum, size) => sum + size, 0);
+	let angle = 0;
+	return sizes.map((size, i) => {
+		if (i > 0) angle += (Math.PI * (sizes[i - 1]! + size)) / total;
+		return { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
+	});
 }
 
 /** A node's footprint for the flat layout, in world units. */
@@ -153,6 +183,8 @@ export class FlatLayouts {
 			if (node.kind === "line" && node.source !== undefined) idOf.set(node.source, node.id);
 		}
 		const branches: FlatBranch[] = [];
+		// Below the slider's first depth every root is held in its slice; over it the hold eases in, so leaving Off doesn't jump.
+		const hold = Math.min(1, FLAT_DEPTH_RANGE + 1 - flat);
 		for (const core of nodes) {
 			if (!isNoteRoot(core) || core.source === undefined) continue;
 			// A core's source is the parse root, above the title (depth 1). A sole H1 root is the title itself: it pivots its note's slices and is never a branch root.
@@ -160,6 +192,7 @@ export class FlatLayouts {
 			const topDepth = core.kind === "note" ? 0 : 1;
 			// So under a sole H1, flat depths below 2 root where depth 2 does, fully flat: the slider never loosens a branch on its way to 1.
 			const weight = flatWeight(Math.max(rootDepth, topDepth + 1) + 1, flat);
+			const first = branches.length;
 			let layout: NoteLayout | undefined;
 			const offset = (node: OsmosisNode, id: string, origin: { x: number; y: number }): FlatMember | null => {
 				const at = layout!.get(node);
@@ -189,7 +222,7 @@ export class FlatLayouts {
 					});
 					const origin = layout.get(child);
 					if (origin === undefined) continue;
-					const lines: FlatLine[] = [];
+					const lines: FlatSubLine[] = [];
 					const points: FlatMember[] = [{ id, dx: 0, dy: 0, reach: origin.reach, rise: origin.rise }];
 					for (const grandchild of child.children) {
 						const lineId = idOf.get(grandchild);
@@ -201,10 +234,16 @@ export class FlatLayouts {
 						lines.push({ ...slot, members, box: boxOf([{ ...slot, dx: 0, dy: 0 }, ...members]) });
 						points.push(slot, ...members.map((m) => ({ ...m, dx: m.dx + slot.dx, dy: m.dy + slot.dy })));
 					}
-					if (lines.length > 0) branches.push({ root: id, core: core.id, weight, lines, box: boxOf(points) });
+					if (lines.length > 0) branches.push({ root: id, core: core.id, weight, dir: { x: 1, y: 0, z: 0 }, hold, lines, box: boxOf(points) });
 				}
 			};
 			walk(top, topDepth);
+			// The note's ring (each slice weighted by its lines), and the ring its sub-slices would stand in a depth
+			// down, where each roots a branch of its own: a sub-slice turns from that to its branch's as the ramp nears 1.
+			const own = branches.slice(first);
+			ringDirections(own.map((branch) => 1 + branch.lines.reduce((n, line) => n + 1 + line.members.length, 0))).forEach((dir, i) => (own[i]!.dir = dir));
+			const subs = own.flatMap((branch) => branch.lines.filter((line) => line.members.length > 0));
+			ringDirections(subs.map((line) => 1 + line.members.length)).forEach((dir, i) => (subs[i]!.dir = dir));
 		}
 		return branches;
 	}
@@ -378,79 +417,48 @@ function unit(a: Vec3): Vec3 | null {
 	const length = Math.hypot(a.x, a.y, a.z);
 	return length < 1e-9 ? null : scale(a, 1 / length);
 }
-/** `a` with its component along unit `n` taken out, as a unit vector (null if nothing is left). */
-const across = (a: Vec3, n: Vec3): Vec3 | null => unit(add(a, n, -dot(a, n)));
 
-/** The outward axis from `core` to `origin`: the slice's 2D left-to-right. A slice on top of its core points along world x. */
-function outward(core: Vec3, origin: Vec3): Vec3 {
-	return unit(sub(origin, core)) ?? { x: 1, y: 0, z: 0 };
-}
+/** World down: every slice's "along", so document order reads down the screen from every side of the ring. */
+const DOWN: Vec3 = { x: 0, y: -1, z: 0 };
 
-/** The untwisted "along": world down laid across the outward axis, so document order reads top to bottom (world −z for an axis straight up or down). */
-export function uprightAlong(u: Vec3): Vec3 {
-	const along = across({ x: 0, y: -1, z: 0 }, u);
-	return along !== null && Math.abs(dot(along, { x: 0, y: -1, z: 0 })) > 0.1 ? along : across({ x: 0, y: 0, z: -1 }, u)!;
-}
-
-/** Twist: how far a slice turns towards its preferred twist each tick. */
-const TWIST_RATE = 0.1;
-/** Twist: each slice's twist is weighed every this many ticks, by turns (`flattenStep`). */
-const TWIST_STRIDE = 4;
-/**
- * Twist: how far round the core (radians) a neighbour still turns a slice;
- * past it, neighbours are too far off to cut into it. In a note of many
- * slices it shrinks to `TWIST_SPACINGS` times their typical spacing, so a
- * slice weighs a couple of dozen neighbours however many there are.
- */
-const TWIST_REACH = 0.8;
-const TWIST_SPACINGS = 3;
-/** Twist: how strongly a slice prefers to stand upright (document order down the screen) against its neighbours' pull. */
-const TWIST_UPRIGHT = 0.2;
 /** Clash: the share of an overlap between two slices pushed apart each tick (like d3's collide strength). */
 const CLASH_STRENGTH = 0.5;
 /** Ramp: the cap on how much of the way to its slot a ramp line moves a tick, so a stiff pull near weight 1 stays stable. */
 const RAMP_PULL_MAX = 0.5;
 
-/**
- * The twist that keeps a slice with outward axis `u` clearest of its
- * neighbours: the "along" least in line with them on the core's sphere of
- * directions (each neighbour within `reach` weighs about `weight / angle²`,
- * fading to nothing at the reach), leaning upright. It is
- * the least eigenvector of the neighbours' direction tensor, so it turns
- * smoothly as they move. Sign: as `current`.
- */
-export function preferredTwist(u: Vec3, neighbours: readonly { u: Vec3; weight: number }[], current: Vec3, reach = TWIST_REACH): Vec3 {
-	const reachCos = Math.cos(reach);
-	const reachSq = 2 * (1 - reachCos);
-	const e2 = uprightAlong(u);
-	const e1 = cross(e2, u);
-	let [a, b, c, total] = [0, 0, 0, 0];
-	for (const n of neighbours) {
-		const cos = dot(n.u, u);
-		if (cos < reachCos || n.weight <= 0) continue;
-		// The neighbour's direction across `u`, as (p, q) on (e1, e2), over its length: a unit tangent, without allocating.
-		const across2 = 1 - cos * cos;
-		if (across2 < 1e-12) continue;
-		const [p, q] = [dot(n.u, e1), dot(n.u, e2)];
-		// 2(1 − cos θ) is θ² near 0, and fades to nothing at the reach, so a neighbour coming into it doesn't jolt the twist.
-		const w = (n.weight * (1 / Math.max(0.0025, 2 * (1 - cos)) - n.weight / reachSq)) / across2;
-		a += w * p * p;
-		b += w * p * q;
-		c += w * q * q;
-		total += w * across2;
-	}
-	if (total > 0) [a, b, c] = [a / total, b / total, c / total];
-	// Leaning upright: a sideways "along" (e1) counts against it like a neighbour there.
-	a += TWIST_UPRIGHT;
-	const theta = 0.5 * Math.atan2(2 * b, a - c) + Math.PI / 2;
-	const best = add(scale(e1, Math.cos(theta)), e2, Math.sin(theta));
-	return dot(best, current) < 0 ? scale(best, -1) : best;
+/** A sub-slice's outward direction: its own (in the ring a depth down, where it roots a branch) turned towards its branch's by the ramp weight. */
+function subDir(own: Vec3 | undefined, dir: Vec3, weight: number): Vec3 {
+	return own === undefined ? dir : (unit(add(scale(own, 1 - weight), dir, weight)) ?? dir);
 }
 
-/** A sub-slice's frame: its own (outward from the core, and its twist) turned towards its branch's by the ramp weight. */
-function subFrame(ownU: Vec3, ownV: Vec3, u: Vec3, v: Vec3, weight: number): { u: Vec3; v: Vec3 } {
-	const lu = unit(add(scale(ownU, 1 - weight), u, weight)) ?? u;
-	return { u: lu, v: across(add(scale(ownV, 1 - weight), v, weight), lu) ?? across(v, lu) ?? uprightAlong(lu) };
+/**
+ * Hold a free head in its slice: the half-plane through the core `core`
+ * that holds world up and the outward direction `dir`. At `hold` 1 it is
+ * placed there (its offset across the plane, and any inward of the vertical
+ * axis, taken out of where it will be after integration, with no velocity
+ * left across it); below 1 it is pulled there, alpha-scaled as the ramp
+ * pulls, so the hold eases in. Its height and its distance out stay free.
+ */
+function holdInSlice(head: Body, core: Vec3, dir: Vec3, hold: number, keep: number, alpha: number): void {
+	if (!isFree(head) || hold <= 0) return;
+	const normal = { x: -dir.z, y: 0, z: dir.x };
+	const offset = sub(nextPosition(head, keep)!, core);
+	const off = dot(offset, normal);
+	const inward = Math.min(0, dot(offset, dir));
+	if (hold < 1) {
+		const pull = Math.min(RAMP_PULL_MAX, (alpha * hold) / (1 - hold)) / keep;
+		head.vx = (head.vx ?? 0) - (normal.x * off + dir.x * inward) * pull;
+		head.vz = (head.vz ?? 0) - (normal.z * off + dir.z * inward) * pull;
+		return;
+	}
+	const [vn, vd] = [dot({ x: head.vx ?? 0, y: 0, z: head.vz ?? 0 }, normal), inward < 0 ? Math.min(0, dot({ x: head.vx ?? 0, y: 0, z: head.vz ?? 0 }, dir)) : 0];
+	head.vx = (head.vx ?? 0) - normal.x * vn - dir.x * vd;
+	head.vz = (head.vz ?? 0) - normal.z * vn - dir.z * vd;
+	// Where it lands now its velocity no longer crosses the plane.
+	const landed = sub(nextPosition(head, keep)!, core);
+	const [across, out] = [dot(landed, normal), Math.min(0, dot(landed, dir))];
+	head.x! -= normal.x * across + dir.x * out;
+	head.z! -= normal.z * across + dir.z * out;
 }
 
 /** An oriented box: centre, axes and half extents. */
@@ -492,21 +500,15 @@ export function obbOverlap(a: Obb, b: Obb): { depth: number; axis: Vec3 } | null
 
 /** A slice in one tick: a branch as a whole, or a ramp line's sub-slice. */
 interface Slice {
-	/** The twist's key: its head's ID. */
-	key: string;
-	/** Which tick of every `TWIST_STRIDE` its twist is weighed on. */
-	turn: number;
 	core: string;
 	branch: number;
 	head: Body;
 	free: boolean;
-	at: Vec3;
-	u: Vec3;
-	v: Vec3;
+	/** Its outward direction: it is held in the half-plane through the core along it. */
+	dir: Vec3;
 	/** How much it counts against its neighbours: a branch's box is where its ramp lines are heading, so it counts with the ramp weight; a sub-slice's plates are all there, so it counts fully. */
 	weight: number;
-	box: FlatBox;
-	obb?: Obb;
+	obb: Obb;
 	/** A sub-slice's footprint against its own branch's other sub-slices. */
 	kin?: Obb;
 }
@@ -548,45 +550,30 @@ function place(body: Body | undefined, at: Vec3, u: Vec3, v: Vec3, dx: number, d
 /**
  * One tick of the flatten force, run after every other force (`alpha` is
  * d3's, `keep` the share of velocity a tick keeps, 1 − its velocity decay).
- * `state` holds each slice's twist from tick to tick; a pinned slice keeps
- * its twist, so a line arriving in it later lands in the same plane.
+ * Each slice's frame is fixed: outward along its ring direction, along
+ * world down.
  *
  * 1. Each piece's pull goes to its free head (`handPull`).
- * 2. Each free slice turns its twist towards `preferredTwist` (a quarter of
- *    them each tick, by turns: a twist moves slowly, and weighing every
- *    neighbour is most of the step's cost in a note of hundreds of slices).
- * 3. Slices of one note that overlap push their heads apart (`obbOverlap`).
- * 4. Each free ramp line below weight 1 is pulled towards its slot, harder
+ * 2. Slices of one note that overlap push their heads apart (`obbOverlap`).
+ * 3. Each free ramp line below weight 1 is pulled towards its slot, harder
  *    as the weight nears 1; at weight 1 it is placed there.
+ * 4. Each free head (a root, or a ramp line's sub-slice) is held in its
+ *    slice's half-plane through the core (`holdInSlice`).
  * 5. Every free rigid line is placed at its offset in its slice where its
  *    head will be after integration, with no velocity left to carry it off.
- *    A sub-slice's frame turns from its own towards its branch's with the
- *    weight. Pinned lines (settled, or being edited) stay put.
+ *    A sub-slice's direction turns from its own towards its branch's with
+ *    the weight. Pinned lines (settled, or being edited) stay put.
  */
-export function flattenStep(
-	branches: readonly FlatBranch[],
-	bodyOf: (id: string) => Body | undefined,
-	keep: number,
-	alpha: number,
-	state: FlatState,
-): void {
-	const { twists } = state;
-	const turn = state.tick++ % TWIST_STRIDE;
+export function flattenStep(branches: readonly FlatBranch[], bodyOf: (id: string) => Body | undefined, keep: number, alpha: number): void {
 	const slices: Slice[] = [];
 	const tops: (Slice | null)[] = [];
-	const subs: Slice[][] = [];
 	// Each branch's ramp lines and their members' bodies, looked up once a tick.
 	const lineBodies: (Body | undefined)[][] = [];
 	const memberBodies: (Body | undefined)[][][] = [];
-	const twistOf = (key: string, u: Vec3, fallback: () => Vec3 | null): Vec3 => {
-		const saved = twists.get(key) ?? fallback();
-		return (saved === null ? null : across(saved, u)) ?? uprightAlong(u);
-	};
 	branches.forEach((branch, b) => {
 		const root = bodyOf(branch.root);
 		const core = bodyOf(branch.core);
 		tops.push(null);
-		subs.push([]);
 		lineBodies.push([]);
 		memberBodies.push([]);
 		if (root === undefined || core === undefined) return;
@@ -598,96 +585,38 @@ export function flattenStep(
 		if (branch.weight >= 1) handPull(root, [lines, ...members]);
 		else lines.forEach((line, i) => line !== undefined && handPull(line, [members[i]!]));
 		const at = nextPosition(root, keep);
-		const from = nextPosition(core, keep);
-		if (at === null || from === null) return;
-		const u = outward(from, at);
-		const top: Slice = {
-			key: branch.root,
-			turn: slices.length % TWIST_STRIDE,
-			core: branch.core,
-			branch: b,
-			head: root,
-			free: isFree(root),
-			at,
-			u,
-			// A new branch takes its sub-slices' twist, so a ramp eases in rather than flips.
-			v: twistOf(branch.root, u, () => unit(branch.lines.reduce((sum, line) => add(sum, twists.get(line.id) ?? { x: 0, y: 0, z: 0 }), { x: 0, y: 0, z: 0 }))),
-			weight: branch.weight,
-			box: branch.box,
-		};
+		if (at === null || nextPosition(core, keep) === null) return;
+		const w = branch.weight;
+		const top: Slice = { core: branch.core, branch: b, head: root, free: isFree(root), dir: branch.dir, weight: w, obb: obbOf(at, branch.dir, DOWN, branch.box) };
 		tops[b] = top;
 		slices.push(top);
-		if (branch.weight >= 1) return;
+		if (w >= 1) return;
 		branch.lines.forEach((line, i) => {
 			const body = lines[i];
 			const lineAt = body === undefined ? null : nextPosition(body, keep);
 			if (body === undefined || lineAt === null || line.members.length === 0) return;
-			const lu = outward(from, lineAt);
-			const slice: Slice = {
-				key: line.id,
-				turn: slices.length % TWIST_STRIDE,
-				core: branch.core,
-				branch: b,
-				head: body,
-				free: isFree(body),
-				at: lineAt,
-				u: lu,
-				v: twistOf(line.id, lu, () => across(top.v, lu)),
-				weight: 1,
-				box: line.box,
-			};
-			subs[b]![i] = slice;
-			slices.push(slice);
+			const u = subDir(line.dir, branch.dir, w);
+			// Two sub-slices of one branch are being pulled together into its layout, whose rows only keep the plates'
+			// heights apart: they clash on a footprint that eases from every plate's reach to that as the weight nears 1.
+			slices.push({ core: branch.core, branch: b, head: body, free: isFree(body), dir: u, weight: 1, obb: obbOf(lineAt, u, DOWN, line.box), kin: obbOf(lineAt, u, DOWN, line.box, 1 - w) });
 		});
 	});
 
-	// Each note's slices, and whether two of them are a branch and one of its own sub-slices (they never meet: one holds the other).
+	// 2. Clash, between slices of one note whose bounding spheres meet (a sweep along x). A branch never meets its own sub-slices: one holds the other.
+	// A head is held in its slice, so the part of a push across the slice goes outward instead, where the gap to the next slice is wider.
 	const byCore = new Map<string, Slice[]>();
 	for (const slice of slices) (byCore.get(slice.core) ?? byCore.set(slice.core, []).get(slice.core)!).push(slice);
 	const own = (a: Slice, b: Slice): boolean => a.branch === b.branch && (tops[a.branch] === a || tops[b.branch] === b);
-
-	// 2. Twist, against the note's other slices within reach round the core (a sweep along the outward axes' x).
 	for (const group of byCore.values()) {
-		group.sort((p, q) => p.u.x - q.u.x);
-		const reach = Math.min(TWIST_REACH, TWIST_SPACINGS * Math.sqrt((4 * Math.PI) / group.length));
-		const chord = 2 * Math.sin(reach / 2);
-		const near: { u: Vec3; weight: number }[] = [];
-		group.forEach((slice, i) => {
-			if (slice.free && slice.turn === turn) {
-				near.length = 0;
-				for (const step of [-1, 1]) {
-					for (let j = i + step; j >= 0 && j < group.length && Math.abs(group[j]!.u.x - slice.u.x) <= chord; j += step) {
-						if (!own(slice, group[j]!)) near.push(group[j]!);
-					}
-				}
-				const prefer = preferredTwist(slice.u, near, slice.v, reach);
-				slice.v = across(add(slice.v, sub(prefer, slice.v), 1 - (1 - TWIST_RATE) ** TWIST_STRIDE), slice.u) ?? slice.v;
-			}
-			twists.set(slice.key, slice.v);
-		});
-	}
-
-	// 3. Clash, between slices of one note whose bounding spheres meet (a sweep along x). A sub-slice's plates
-	// lie in its turned frame. Two sub-slices of one branch are being pulled together into its layout, whose
-	// rows only keep the plates' heights apart: they clash on a footprint that eases from every plate's reach
-	// to that as the weight nears 1, so they can settle into their slots.
-	for (const slice of slices) {
-		const top = tops[slice.branch]!;
-		const w = branches[slice.branch]!.weight;
-		const frame = top === slice ? slice : subFrame(slice.u, slice.v, top.u, top.v, w);
-		slice.obb = obbOf(slice.at, frame.u, frame.v, slice.box);
-		if (top !== slice) slice.kin = obbOf(slice.at, frame.u, frame.v, slice.box, 1 - w);
-	}
-	for (const group of byCore.values()) {
-		group.sort((p, q) => p.obb!.centre.x - p.obb!.radius - (q.obb!.centre.x - q.obb!.radius));
+		group.sort((p, q) => p.obb.centre.x - p.obb.radius - (q.obb.centre.x - q.obb.radius));
 		for (let i = 0; i < group.length; i++) {
 			const a = group[i]!;
 			for (let j = i + 1; j < group.length; j++) {
 				const b = group[j]!;
-				if (b.obb!.centre.x - b.obb!.radius > a.obb!.centre.x + a.obb!.radius) break;
+				if (b.obb.centre.x - b.obb.radius > a.obb.centre.x + a.obb.radius) break;
 				if ((!a.free && !b.free) || own(a, b)) continue;
 				const kin = a.branch === b.branch;
-				const [oa, ob] = kin ? [a.kin!, b.kin!] : [a.obb!, b.obb!];
+				const [oa, ob] = kin ? [a.kin!, b.kin!] : [a.obb, b.obb];
 				const weight = a.weight * b.weight * (kin ? 1 - branches[a.branch]!.weight : 1);
 				if (weight <= 0 || Math.hypot(oa.centre.x - ob.centre.x, oa.centre.y - ob.centre.y, oa.centre.z - ob.centre.z) >= oa.radius + ob.radius) continue;
 				const hit = obbOverlap(oa, ob);
@@ -696,30 +625,32 @@ export function flattenStep(
 				const [sa, sb] = a.free && b.free ? [push / 2, push / 2] : a.free ? [push, 0] : [0, push];
 				for (const [slice, s] of [[a, -sa], [b, sb]] as const) {
 					if (s === 0) continue;
-					slice.head.vx = (slice.head.vx ?? 0) + hit.axis.x * s;
+					const { dir } = slice;
+					const across = hit.axis.z * dir.x - hit.axis.x * dir.z;
+					const out = Math.abs(across * s);
+					slice.head.vx = (slice.head.vx ?? 0) + (hit.axis.x + dir.z * across) * s + dir.x * out;
 					slice.head.vy = (slice.head.vy ?? 0) + hit.axis.y * s;
-					slice.head.vz = (slice.head.vz ?? 0) + hit.axis.z * s;
+					slice.head.vz = (slice.head.vz ?? 0) + (hit.axis.z - dir.x * across) * s + dir.z * out;
 				}
 			}
 		}
 	}
 
-	// 4 and 5. Ramp and placement, against where each head will be now.
+	// 3, 4 and 5. Ramp, hold and placement, against where each head will be now.
 	branches.forEach((branch, b) => {
 		const top = tops[b];
 		if (top === null || top === undefined) return;
 		const core = nextPosition(bodyOf(branch.core)!, keep)!;
+		const { dir: u, weight: w } = branch;
+		holdInSlice(top.head, core, u, branch.hold, keep, alpha);
 		const at = nextPosition(top.head, keep)!;
-		const u = outward(core, at);
-		const v = across(top.v, u) ?? uprightAlong(u);
-		const w = branch.weight;
 		branch.lines.forEach((line, i) => {
 			const body = lineBodies[b]![i];
 			const members = memberBodies[b]![i]!;
-			const slot = add(add(at, u, line.dx), v, line.dy);
+			const slot = add(add(at, u, line.dx), DOWN, line.dy);
 			if (w >= 1) {
-				place(body, slot, u, v, 0, 0);
-				line.members.forEach((m, j) => place(members[j], slot, u, v, m.dx, m.dy));
+				place(body, slot, u, DOWN, 0, 0);
+				line.members.forEach((m, j) => place(members[j], slot, u, DOWN, m.dx, m.dy));
 				return;
 			}
 			if (body === undefined) return;
@@ -732,27 +663,10 @@ export function flattenStep(
 				body.vz = (body.vz ?? 0) + gap.z * pull;
 			}
 			if (line.members.length === 0) return;
+			const lineU = subDir(line.dir, u, w);
+			holdInSlice(body, core, lineU, branch.hold, keep, alpha);
 			const lineAt = nextPosition(body, keep)!;
-			const subSlice = subs[b]![i];
-			const ownU = outward(core, lineAt);
-			const frame = subFrame(ownU, subSlice !== undefined ? (across(subSlice.v, ownU) ?? v) : v, u, v, w);
-			line.members.forEach((m, j) => place(members[j], lineAt, frame.u, frame.v, m.dx, m.dy));
+			line.members.forEach((m, j) => place(members[j], lineAt, lineU, DOWN, m.dx, m.dy));
 		});
 	});
-}
-
-/** What `flattenStep` keeps from tick to tick: each slice's twist (its "along", by its head's ID), and a tick count. */
-export class FlatState {
-	readonly twists = new Map<string, Vec3>();
-	tick = 0;
-
-	/** Forget the twists of slices `branches` no longer has (their roots and ramp lines). */
-	prune(branches: readonly FlatBranch[]): void {
-		const keys = new Set<string>();
-		for (const branch of branches) {
-			keys.add(branch.root);
-			for (const line of branch.lines) keys.add(line.id);
-		}
-		for (const key of this.twists.keys()) if (!keys.has(key)) this.twists.delete(key);
-	}
 }
