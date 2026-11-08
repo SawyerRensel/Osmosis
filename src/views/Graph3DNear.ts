@@ -129,6 +129,8 @@ export class Graph3DNear {
 	private enabled = true;
 	/** The node being edited over, whose panel stays hidden. */
 	private editing: string | null = null;
+	/** The multi-select: these nodes' panels wear the selection border. */
+	private selected: ReadonlySet<string> = new Set();
 	/** The inline editor over it, and the node it follows. */
 	private edit: { editor: TrackedEditor; node: NearSource } | null = null;
 	private readonly point = new Vector3();
@@ -284,6 +286,12 @@ export class Graph3DNear {
 		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, minHeight: plateHeight, radius: plateHeight * PLATE_RADIUS, fontSize: NEAR_FONT_PX });
 	}
 
+	/** Give the panels of the nodes in `ids` the selection border, and take it from the rest. */
+	setSelected(ids: ReadonlySet<string>): void {
+		this.selected = ids;
+		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-selected", ids.has(panelId));
+	}
+
 	/** Mark node `id`'s panel as the drop target of a link drag (null clears it). */
 	setLinkTarget(id: string | null): void {
 		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-link-target", panelId === id);
@@ -355,6 +363,7 @@ export class Graph3DNear {
 	private createPanel(node: NearSource, markdown: string): Panel {
 		const anchor = createDiv({ cls: "osmosis-graph3d-near-anchor" });
 		const box = anchor.createDiv({ cls: "osmosis-graph3d-near-panel" });
+		box.classList.toggle("is-selected", this.selected.has(node.id));
 		const body = box.createDiv({ cls: "osmosis-graph3d-near-body markdown-rendered" });
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });

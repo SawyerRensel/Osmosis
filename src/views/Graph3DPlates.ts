@@ -75,6 +75,8 @@ export interface PlateSource {
 	/** Outline colour. */
 	color: Color;
 	shape: PlateShape;
+	/** In the multi-select: drawn with the selection border (the theme accent, at least 2 px). */
+	selected?: boolean;
 }
 
 export interface PlateColors {
@@ -82,6 +84,8 @@ export interface PlateColors {
 	text: string;
 	plate: string;
 	font: string;
+	/** The selection border's colour. */
+	accent: string;
 }
 
 interface AtlasGlyph {
@@ -184,10 +188,12 @@ attribute vec3 aCenter;
 attribute vec2 aSize;
 attribute vec3 aColor;
 attribute float aOpacity;
+attribute float aSelected;
 varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
+varying float vSelected;
 ${FOCUS_DIM_GLSL}
 #include <fog_pars_vertex>
 void main() {
@@ -196,6 +202,7 @@ void main() {
 	vHalf = aSize * 0.5;
 	mvPosition.xy += vLocal;
 	vColor = aColor;
+	vSelected = aSelected;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
 }
@@ -204,10 +211,12 @@ void main() {
 const PLATE_FRAGMENT = /* glsl */ `
 uniform vec3 uFill;
 uniform vec3 uBackground;
+uniform vec3 uAccent;
 varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
+varying float vSelected;
 #include <fog_pars_fragment>
 void main() {
 	float height = vHalf.y * 2.0;
@@ -218,11 +227,14 @@ void main() {
 	float coverage = clamp(0.5 - d / aa, 0.0, 1.0);
 	if (coverage <= 0.0) discard;
 	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)};
+	// A selected plate's border is the accent, and never under 2 px, as the mind map's selection is.
+	stroke = mix(stroke, max(stroke * 1.5, 2.0 * aa), vSelected);
+	vec3 edge = mix(vColor, uAccent, vSelected);
 	// An outline thinner than a pixel is drawn a pixel wide and that much fainter,
 	// so a distant plate's border doesn't shimmer as it lands between pixels.
 	float band = max(stroke, aa);
 	float border = smoothstep(-band - aa * 0.5, -band + aa * 0.5, d) * (stroke / band);
-	gl_FragColor = vec4(mix(uBackground, mix(uFill, vColor, border), vOpacity), coverage);
+	gl_FragColor = vec4(mix(uBackground, mix(uFill, edge, border), vOpacity), coverage);
 	#include <fog_fragment>
 	#include <colorspace_fragment>
 }
@@ -263,7 +275,7 @@ void main() {
 `;
 
 /** Instanced attributes and their widths, for each mesh. */
-const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3 } as const;
+const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1 } as const;
 const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4 } as const;
 type PlateAttribute = keyof typeof PLATE_ATTRIBUTES;
 type GlyphAttribute = keyof typeof GLYPH_ATTRIBUTES;
@@ -333,6 +345,7 @@ export class Graph3DPlates {
 		uFill: { value: new Color() },
 		uText: { value: new Color() },
 		uBackground: { value: new Color() },
+		uAccent: { value: new Color() },
 	};
 	/** View depth of the focus, for focus dimming. The scene eases it each frame and shares it with the edges. */
 	readonly focus: IUniform<number> = { value: 0 };
@@ -348,7 +361,7 @@ export class Graph3DPlates {
 			// With the renderer's multisampling, the shader's edge coverage becomes a smooth edge.
 			alphaToCoverage: true,
 		});
-		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground, uFocus: this.focus });
+		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground, uAccent: this.uniforms.uAccent, uFocus: this.focus });
 		this.plates = new QuadLayer(material, PLATE_ATTRIBUTES);
 		this.group.add(this.plates.mesh);
 		this.atlas = new GlyphAtlas("");
@@ -363,6 +376,7 @@ export class Graph3DPlates {
 		this.uniforms.uFill.value.setStyle(colors.plate);
 		this.uniforms.uText.value.setStyle(colors.text);
 		this.uniforms.uBackground.value.setStyle(colors.background);
+		this.uniforms.uAccent.value.setStyle(colors.accent);
 		const font = `${FONT_PX}px ${colors.font}`;
 		if (font === this.font) return;
 		this.font = font;
@@ -407,6 +421,7 @@ export class Graph3DPlates {
 		const plateOpacity = this.plates.array("aOpacity");
 		const plateSize = this.plates.array("aSize");
 		const plateColor = this.plates.array("aColor");
+		const plateSelected = this.plates.array("aSelected");
 		const glyphCursor = this.glyphs.map(() => 0);
 		const glyphArrays = this.glyphs.map((layer) => ({
 			center: layer.array("aCenter"),
@@ -431,6 +446,7 @@ export class Graph3DPlates {
 				plateColor[i * 3] = node.color.r;
 				plateColor[i * 3 + 1] = node.color.g;
 				plateColor[i * 3 + 2] = node.color.b;
+				plateSelected[i] = node.selected === true ? 1 : 0;
 			}
 			for (const glyph of node.shape.glyphs) {
 				const arrays = glyphArrays[glyph.page];
@@ -449,7 +465,7 @@ export class Graph3DPlates {
 			}
 		});
 		this.plates.touch("aCenter", "aOpacity");
-		if (layout) this.plates.touch("aSize", "aColor");
+		if (layout) this.plates.touch("aSize", "aColor", "aSelected");
 		for (const layer of this.glyphs) {
 			layer.touch("aCenter", "aOpacity");
 			if (layout) layer.touch("aRect", "aUv");

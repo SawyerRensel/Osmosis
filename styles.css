@@ -4338,6 +4338,8 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	/* The label plates' fill and font. */
 	border-top-color: var(--background-secondary);
 	font-family: var(--font-interface);
+	/* The selection border (multi-select). */
+	border-bottom-color: var(--interactive-accent);
 }
 
 /*
@@ -4461,7 +4463,22 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	visibility: hidden;
 }
 
+/* A selected node's panel (multi-select): the mind map's 2px accent selection stroke. Before the link target, which wins while a drag is over it. */
+.osmosis-graph3d-near-panel.is-selected {
+	box-shadow: inset 0 0 0 2px var(--interactive-accent) !important;
+}
+
 /* The drop target of a link drag in edit mode (Graph3DScene.linkDrag). !important: the outline is an inline box-shadow in the node's colour. */
 .osmosis-graph3d-near-panel.is-link-target {
 	box-shadow: inset 0 0 0 0.25em var(--interactive-accent) !important;
+}
+
+/* The rubber band of a Shift+drag box select in the 3D graph (Graph3DScene.box). */
+.osmosis-graph3d-box {
+	position: fixed;
+	z-index: 10;
+	pointer-events: none;
+	/* The mind map's rubber band (.osmosis-rubber-band). */
+	border: 1px dashed var(--interactive-accent);
+	background-color: hsla(var(--interactive-accent-hsl), 0.1);
 }

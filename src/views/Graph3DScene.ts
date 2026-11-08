@@ -48,6 +48,7 @@ import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
+import { boxHits, boxRect, toggled, type ScreenPoint } from "../graph3d/selection";
 import { frameDistance } from "../graph3d/liftoff";
 import {
 	MAX_FRAME_MS,
@@ -78,6 +79,8 @@ interface EngineNode extends NodeObject {
 	shape: PlateShape;
 	/** How far the node reaches for spacing: its plate or its near-tier panel, whichever is bigger (`nodeExtent`). */
 	extent: number;
+	/** In the multi-select (`Graph3DScene.selection`): its plate wears the selection border. */
+	selected?: boolean;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
@@ -141,6 +144,8 @@ export interface SceneTheme {
 	plate: string;
 	/** Label font family. */
 	font: string;
+	/** The selection border's colour. */
+	accent: string;
 }
 
 export interface SceneControls {
@@ -351,7 +356,7 @@ export class Graph3DScene {
 	/** The last click on a node, to tell a double click. The node is kept, since the first click flies the camera away from where the second lands. */
 	private lastClick: { at: number; x: number; y: number; node: GraphNode } | null = null;
 	private hover: { x: number; y: number } | null = null;
-	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif" };
+	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif", accent: "#7f6df2" };
 	private frame = 0;
 	private lastFrame = 0;
 	private paused = false;
@@ -359,6 +364,14 @@ export class Graph3DScene {
 	private pendingFlightWaits = false;
 	/** The node last flown to: the focused node, whose links (and its neighbours') fire on a click. */
 	private focusId: string | null = null;
+	/**
+	 * The multi-select: the nodes wearing the selection border, which actions
+	 * on a selection take. Apart from `focusId`, which stays the primary (the
+	 * plate last clicked) that F, history and single-line keys act on.
+	 */
+	private selection = new Set<string>();
+	/** A Shift+drag box select in progress, from (`x0`, `y0`); `el` is its rubber band, drawn once it moves past the click slop. */
+	private box: { pointerId: number; x0: number; y0: number; el: HTMLElement | null } | null = null;
 	/** The flight under way, aimed at its node wherever the node is now. */
 	private flight: { node: EngineNode; flight: Flight; duration: number } | null = null;
 	/** A ride along an edge toward `to` (follow a link), aimed at the edge's two ends wherever they are now. */
@@ -519,6 +532,8 @@ export class Graph3DScene {
 	 */
 	setData(model: GraphModel, placement: ReadonlyMap<string, Placed>): void {
 		const now = performance.now();
+		const modelIds = new Set(model.nodes.map((node) => node.id));
+		for (const id of this.selection) if (!modelIds.has(id)) this.selection.delete(id);
 		let plated = 0;
 		const previous = new Map(this.nodes.map((node) => [node.id, node]));
 		this.nodes = model.nodes.map((graph) => {
@@ -570,6 +585,7 @@ export class Graph3DScene {
 			...lingering,
 		];
 		this.ticksSinceData = 0;
+		this.applySelection();
 		this.pushData();
 		this.perf.plated(plated, performance.now() - now);
 	}
@@ -876,6 +892,45 @@ export class Graph3DScene {
 		this.focusId = id;
 	}
 
+	/** The selected nodes, the primary (`focusedNode`) first, then in scene order. */
+	selectedNodes(): GraphNode[] {
+		const nodes = this.nodes.filter((node) => this.selection.has(node.id) && !node.departing);
+		const primary = nodes.findIndex((node) => node.id === this.focusId);
+		if (primary > 0) nodes.unshift(...nodes.splice(primary, 1));
+		return nodes.map((node) => node.graph);
+	}
+
+	/** Replace the selection with `ids`. */
+	select(ids: Iterable<string>): void {
+		this.selection = new Set(ids);
+		this.applySelection();
+	}
+
+	/** Empty the selection (Escape, a click on empty space). True when something was selected. */
+	clearSelection(): boolean {
+		if (this.selection.size === 0) return false;
+		this.select([]);
+		return true;
+	}
+
+	/** An edit gave selected lines new IDs: each `from` that is selected is replaced by its `to`. */
+	carrySelection(pairs: ReadonlyMap<string, string>): void {
+		let changed = false;
+		for (const [from, to] of pairs) {
+			if (!this.selection.delete(from)) continue;
+			this.selection.add(to);
+			changed = true;
+		}
+		if (changed) this.applySelection();
+	}
+
+	/** Put the selection border on the selected nodes' plates and panels, and take it off the rest. */
+	private applySelection(): void {
+		for (const node of this.nodes) node.selected = this.selection.has(node.id) && !node.departing;
+		this.near.setSelected(this.selection);
+		this.dirty = this.layoutDirty = true;
+	}
+
 	/** A line plate's height in world units, for the 2D/3D toggle's scale (`graph3d/liftoff.ts`). */
 	get linePlateHeight(): number {
 		return LINE_PLATE_HEIGHT;
@@ -1028,10 +1083,11 @@ export class Graph3DScene {
 		}
 	}
 
-	/** Escape: drop a link drag in progress without linking. True when there was one. */
+	/** Escape: drop a link drag (or a box select) in progress without linking (or selecting). True when there was one. */
 	cancelLinkDrag(): boolean {
-		const active = this.linkDrag?.active === true;
+		const active = this.linkDrag?.active === true || this.box?.el != null;
 		this.endLinkDrag();
+		this.endBoxSelect();
 		return active;
 	}
 
@@ -1176,6 +1232,7 @@ export class Graph3DScene {
 		window.removeEventListener("pointerup", this.onPointerUp);
 		window.removeEventListener("pointercancel", this.onPointerUp);
 		this.endLinkDrag();
+		this.endBoxSelect();
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
@@ -1277,12 +1334,58 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Box select, begun by Shift + left press. Reserved: the box-select ticket
-	 * fills this in. Until then Shift+drag does nothing (no orbit, no pan), and
-	 * the press is still a click candidate (`this.press`, set by the caller).
+	 * Box select, begun by Shift + left press: the press is still a click
+	 * candidate (`this.press`, set by the caller; a Shift+click toggles one
+	 * plate). Dragged past the click slop it draws a rubber band, and the
+	 * release adds the plates whose centres are inside it to the selection.
 	 */
-	private beginBoxSelect(_e: PointerEvent): void {
-		// Intentionally empty.
+	private beginBoxSelect(e: PointerEvent): void {
+		this.endBoxSelect();
+		this.box = { pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, el: null };
+	}
+
+	/** Draw the box select's rubber band from its press to (`x`, `y`). */
+	private moveBoxSelect(x: number, y: number): void {
+		const box = this.box;
+		if (box === null) return;
+		if (box.el === null) {
+			if (Math.hypot(x - box.x0, y - box.y0) <= CLICK_SLOP_PX) return;
+			box.el = activeDocument.body.createDiv({ cls: "osmosis-graph3d-box" });
+		}
+		const rect = boxRect(box.x0, box.y0, x, y);
+		box.el.setCssStyles({ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.right - rect.left}px`, height: `${rect.bottom - rect.top}px` });
+	}
+
+	/** End the box select; released at (`x`, `y`) after a drag, add what it boxed to the selection. */
+	private endBoxSelect(x?: number, y?: number): void {
+		const box = this.box;
+		this.box = null;
+		if (box === null || box.el === null) return;
+		box.el.remove();
+		if (x === undefined || y === undefined) return;
+		const hits = boxHits(this.screenCentres(), boxRect(box.x0, box.y0, x, y));
+		if (hits.length === 0) return;
+		for (const id of hits) this.selection.add(id);
+		this.applySelection();
+	}
+
+	/** Every drawn plate's centre on screen: in front of the camera, short of the mist, and not faded out. */
+	private screenCentres(): ScreenPoint[] {
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const rect = this.graph.renderer().domElement.getBoundingClientRect();
+		const forward = camera.getWorldDirection(new Vector3());
+		const reach = 2 / this.fog.density;
+		const point = new Vector3();
+		const out: ScreenPoint[] = [];
+		for (const node of this.nodes) {
+			if (node.departing || node.opacity <= 0 || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			point.set(node.x, node.y, node.z).sub(camera.position);
+			const distance = point.dot(forward);
+			if (distance <= 0 || distance > reach) continue;
+			point.add(camera.position).project(camera);
+			out.push({ id: node.id, x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height });
+		}
+		return out;
 	}
 
 	/**
@@ -1368,6 +1471,7 @@ export class Graph3DScene {
 	};
 
 	private readonly onPointerMove = (e: PointerEvent): void => {
+		if (this.box?.pointerId === e.pointerId) this.moveBoxSelect(e.clientX, e.clientY);
 		const press = this.press;
 		if (press?.pointerId === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) this.press = null;
 		const menu = this.menuPress;
@@ -1417,6 +1521,7 @@ export class Graph3DScene {
 			const node = e.type === "pointerup" && e.button === 2 ? this.pickedNode(menu.x, menu.y, false) : null;
 			if (node !== null && hasMenu(node.graph)) this.options.onContextMenu(node.graph, e.clientX, e.clientY);
 		}
+		if (this.box?.pointerId === e.pointerId) this.endBoxSelect(e.type === "pointerup" ? e.clientX : undefined, e.clientY);
 		const press = this.press;
 		if (press?.pointerId === e.pointerId) {
 			this.press = null;
@@ -1543,6 +1648,16 @@ export class Graph3DScene {
 			return;
 		}
 		if (!e.shiftKey && !e.ctrlKey && !e.metaKey && this.doubleClicked(x, y, touch)) return;
+		const slop = PICK_SLOP_PX[touch ? "touch" : "mouse"];
+		// Shift+click toggles the plate in the selection; one added becomes the primary. No flight, no history step.
+		if (e.shiftKey) {
+			const hit = this.pickedNode(x, y, touch);
+			if (hit === null) return;
+			this.selection = toggled(this.selection, hit.id);
+			if (this.selection.has(hit.id)) this.focusId = hit.id;
+			this.applySelection();
+			return;
+		}
 		const link = this.near.linkAt(x, y);
 		const focus = this.focusId === null ? undefined : this.nodes.find((node) => node.id === this.focusId);
 		const linkNode = link === null ? undefined : this.nodes.find((node) => node.id === link.node.id);
@@ -1560,18 +1675,22 @@ export class Graph3DScene {
 			this.options.onLinkClick(link!, action);
 			return;
 		}
+		// A plain click on a plate selects it alone, as before multi-select.
 		if (link !== null) {
+			this.select([link.node.id]);
 			this.options.onNodeClick(link.node);
 			return;
 		}
-		const slop = PICK_SLOP_PX[touch ? "touch" : "mouse"];
 		const node = this.nodeNear(x, y, slop);
 		if (node !== null) {
+			this.select([node.id]);
 			this.options.onNodeClick(node.graph);
 			return;
 		}
 		// No plate: an edge under the pointer is a link to follow. (A panel over it has the click.)
 		if (this.near.nodeAt(x, y) !== null) return;
+		// Empty space clears the selection.
+		this.clearSelection();
 		const edge = this.edgeNear(x, y, slop);
 		if (edge !== null) this.rideAlong(edge.source, edge.target);
 	}

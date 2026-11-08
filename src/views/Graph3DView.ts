@@ -14,6 +14,7 @@ import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../g
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
+import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -202,10 +203,24 @@ export class Graph3DView extends ItemView {
 			return false;
 		};
 		// Escape drops a link drag in progress, else closes the Overlays menu (which a press on the canvas does not); otherwise the key goes on.
-		this.scope.register([], "Escape", () => {
+		// Then it clears the selection (multi-select).
+		this.scope.register([], "Escape", (e: KeyboardEvent) => {
 			if (this.scene?.cancelLinkDrag() === true) return false;
-			if (this.overlaysMenu?.isOpen !== true) return undefined;
-			this.overlaysMenu.toggle(false);
+			if (this.overlaysMenu?.isOpen === true) {
+				this.overlaysMenu.toggle(false);
+				return false;
+			}
+			// The editor's own Escape (cancel the edit) goes on.
+			if (isEditableTarget(e.target) || this.editor.isOpen) return undefined;
+			return this.scene?.clearSelection() === true ? false : undefined;
+		});
+		// Ctrl/Cmd+C copies the selection as Markdown, when no text box has the keys.
+		this.scope.register(["Mod"], "c", (e: KeyboardEvent) => {
+			// Text selected in a panel is copied as text, as usual.
+			if (isEditableTarget(e.target) || this.editor.isOpen || activeWindow.getSelection()?.isCollapsed === false) return undefined;
+			const nodes = this.scene?.selectedNodes() ?? [];
+			if (nodes.length === 0) return undefined;
+			void this.copySelection(nodes);
 			return false;
 		});
 		this.scope.register([], "F2", editKey);
@@ -220,6 +235,12 @@ export class Graph3DView extends ItemView {
 		// In edit mode, the mind map's structural keys act on the focused line.
 		const structuralKey = (action: StructuralAction) => (e: KeyboardEvent) => {
 			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
+			// Delete with more than one plate selected deletes them all.
+			const selected = this.scene?.selectedNodes() ?? [];
+			if (action === "delete" && selected.length > 1) {
+				void this.deleteSelection(selected);
+				return false;
+			}
 			const node = this.scene?.focusedNode() ?? null;
 			if (node === null || node.kind !== "line") return undefined;
 			void this.structural(action, node);
@@ -974,16 +995,141 @@ export class Graph3DView extends ItemView {
 	}
 
 	/**
+	 * Copy `nodes` as Markdown (`selectionMarkdown`): each note's selected lines
+	 * with their subtrees, re-levelled and in document order, grouped by note
+	 * (the primary's note first). Plates that are not lines (notes, tags,
+	 * files, unresolved links) follow as links or tags.
+	 */
+	private async copySelection(nodes: readonly GraphNode[]): Promise<void> {
+		try {
+			const byPath = new Map<string, string[]>();
+			const others: string[] = [];
+			for (const node of nodes) {
+				const id = node.source?.id;
+				if (node.kind === "line" && node.path !== undefined && id !== undefined) {
+					const ids = byPath.get(node.path) ?? [];
+					ids.push(id);
+					byPath.set(node.path, ids);
+				} else others.push(node.kind === "tag" ? node.label : `[[${node.label}]]`);
+			}
+			const groups: CopyGroup[] = [];
+			for (const [path, ids] of byPath) {
+				const file = this.app.vault.getFileByPath(path);
+				if (file === null) continue;
+				const content = await this.app.vault.read(file);
+				const { root } = this.cache.get(path, content);
+				const lines = ids.map((id) => findNodeById(root, id)).filter((line): line is OsmosisNode => line !== null);
+				if (lines.length > 0) groups.push({ title: file.basename, markdown: linesMarkdown(content, lines) });
+			}
+			if (others.length > 0) groups.push({ title: null, markdown: others.join("\n") });
+			if (groups.length === 0) return;
+			await navigator.clipboard.writeText(selectionMarkdown(groups));
+			new Notice(nodes.length === 1 ? "Copied as Markdown" : `Copied ${nodes.length} selected as Markdown`);
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not copy the selection", error);
+			new Notice("Osmosis: could not copy the selection");
+		}
+	}
+
+	/**
+	 * Delete every selected line with its subtree (as a single delete does),
+	 * across notes, as one undo step. Plates that are not lines are skipped.
+	 * The primary line's parent is selected after, or its note's core if it was
+	 * top level; the loaded nodes re-settle (`commitLines`'s `editLanded`).
+	 */
+	private async deleteSelection(nodes: readonly GraphNode[]): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const byPath = new Map<string, string[]>();
+			for (const node of nodes) {
+				const id = node.source?.id;
+				if (node.kind !== "line" || node.path === undefined || id === undefined || node.root === true) continue;
+				byPath.set(node.path, [...(byPath.get(node.path) ?? []), id]);
+			}
+			if (byPath.size === 0) {
+				new Notice("Osmosis: nothing selected to delete");
+				return;
+			}
+			const primary = nodes[0]!;
+			const writes: { file: TFile; out: string }[] = [];
+			let edited: typeof this.edited = [];
+			let selectAfter: string | null = null;
+			for (const [path, ids] of byPath) {
+				const file = this.app.vault.getFileByPath(path);
+				if (file === null) continue;
+				const content = await this.app.vault.read(file);
+				const { root } = this.cache.get(path, content);
+				const lines = topmostLines(ids.map((id) => findNodeById(root, id)).filter((line): line is OsmosisNode => line !== null));
+				if (lines.length === 0) continue;
+				const text = deleteLines(content, lines);
+				const out = normalizeWrite(text);
+				if (out === content) continue;
+				writes.push({ file, out });
+				// Select the primary's parent once it is gone (or the note's core, under the root).
+				const first = path === primary.path ? (lines.find((line) => line.id === primary.source?.id) ?? lines[0]!) : null;
+				if (first === null || edited.length > 0 || selectAfter !== null) continue;
+				const parent = ancestorsOf(root, first.id)[0];
+				const kept = parent === undefined || parent.type === "root" ? null : findNodeById(this.cache.get(path, text).root, parent.id);
+				const start = kept === null ? null : mapStart(text, out, kept.range.start);
+				const from = parent === undefined ? undefined : this.model?.nodes.find((n) => n.path === path && n.source?.id === parent.id)?.id;
+				if (start === null) selectAfter = noteNodeId(path);
+				else edited = [{ path, start, from }];
+			}
+			if (writes.length === 0) return;
+			this.editOwner = writes[0]!.file.path;
+			this.lastEditPath = writes[0]!.file.path;
+			// As in `commitLines`: a reload already under way must not place lines before `edited` does.
+			this.loadSeq++;
+			this.edits.recorder.beginGroup();
+			try {
+				for (const { file, out } of writes) await this.edits.write(file, out);
+			} finally {
+				this.edits.recorder.endGroup();
+			}
+			this.scene?.clearSelection();
+			// Marked only now, so a reload that was already under way can't take it.
+			this.edited = edited;
+			this.selectAfter = selectAfter;
+			this.editLanded = true;
+			void this.reload();
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not delete the selection", error);
+			new Notice("Osmosis: could not delete those lines");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
+	/**
 	 * The context menu of a line or note plate (right-click, or a long press on
 	 * touch): "Focus this note" (a hop, greyed out in the focus note itself),
 	 * and in edit mode, for a line, edit it or any structural edit.
 	 */
 	private showNodeMenu(node: GraphNode, x: number, y: number): void {
 		if (this.editor.isOpen) return;
+		// A selected plate's menu acts on the whole selection (if more than it is selected); any other plate's on itself.
+		const selection = this.scene?.selectedNodes() ?? [];
+		const group = selection.length > 1 && selection.some((n) => n.id === node.id) ? selection : null;
 		this.scene?.setFocusId(node.id);
 		const menu = new Menu();
 		const path = refocusPath(node, this.focusPath);
 		menu.addItem((item) => item.setTitle("Focus this note").setIcon("locate").setDisabled(path === null).onClick(() => this.hop(node)));
+		menu.addItem((item) =>
+			item
+				.setTitle(group === null ? "Copy as Markdown" : `Copy ${group.length} selected as Markdown`)
+				.setIcon("copy")
+				.onClick(() => void this.copySelection(group ?? [node])),
+		);
+		if (group !== null) {
+			const lines = group.filter((n) => n.kind === "line").length;
+			if (this.editMode && lines > 0 && this.study?.active !== true) {
+				menu.addSeparator();
+				menu.addItem((item) => item.setTitle(`Delete ${lines} selected lines`).setIcon("trash-2").setWarning(true).onClick(() => void this.deleteSelection(group)));
+			}
+			menu.showAtPosition({ x, y });
+			return;
+		}
 		if (!this.editMode || node.kind !== "line" || this.editBlocked()) {
 			menu.showAtPosition({ x, y });
 			return;
@@ -1048,13 +1194,17 @@ export class Graph3DView extends ItemView {
 		for (const [id, seed] of seeds ?? []) if (!positions.has(id)) positions.set(id, seed);
 		const { edited } = this;
 		this.edited = [];
+		// An edited line that was selected stays selected under its new ID.
+		const carried = new Map<string, string>();
 		edited.forEach((line, i) => {
 			const id = lineNodeAt(model, line.path, line.start);
 			const from = line.from === undefined ? undefined : positions.get(line.from);
 			if (id === null) return;
 			if (from !== undefined && !positions.has(id)) positions.set(id, from);
+			if (line.from !== undefined && line.from !== id) carried.set(line.from, id);
 			if (i === 0) scene.setFocusId(id);
 		});
+		scene.carrySelection(carried);
 		if (this.selectAfter !== null) scene.setFocusId(this.selectAfter);
 		this.selectAfter = null;
 		return placeNodes(model, positions, via);
@@ -1457,7 +1607,7 @@ export class Graph3DView extends ItemView {
 	private readTheme(): SceneTheme {
 		const probe = this.contentEl.createDiv({ cls: "osmosis-graph3d-probe" });
 		const style = getComputedStyle(probe);
-		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily };
+		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor };
 		probe.remove();
 		return theme;
 	}
