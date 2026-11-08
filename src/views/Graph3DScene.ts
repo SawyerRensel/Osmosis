@@ -38,7 +38,7 @@ import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
-import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
+import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -315,6 +315,10 @@ export class Graph3DScene {
 	/** The flat branches of the loaded nodes at the flatten slider's depth, and where each of their lines sits. */
 	private flatBranches: FlatBranch[] = [];
 	private flatPlaces = new Map<string, FlatPlace>();
+	/** Each loaded note's ring phase (`ringDirections`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
+	private ringPhases = new Map<string, number>();
+	/** Notes to recapture a ring phase for at the next `pushData`, with the phase to give it (null: face the camera). */
+	private pendingFaces = new Map<string, number | null>();
 	/** Each note's core with the many-body strength its flat lines left it, and the charged nodes it pushes (`notePush`). */
 	private noteCores = new Map<string, { body: EngineNode; strength: number }>();
 	private charged: NoteBody[] = [];
@@ -609,6 +613,36 @@ export class Graph3DScene {
 	}
 
 	/**
+	 * Give each note core a ring phase that has none, or that `faceNote` asked
+	 * to renew, so its first slice points at the camera: where the camera is
+	 * now, which is on the side a flight to the note ends (`startFlight` keeps
+	 * the viewing direction). A core the engine hasn't placed yet is measured
+	 * from where the camera looks. Phases of notes no longer loaded are dropped.
+	 */
+	private capturePhases(live: readonly EngineNode[]): void {
+		const cores = live.filter((node) => isNoteRoot(node.graph));
+		const camera = this.graph.camera().position;
+		for (const core of cores) {
+			const asked = this.pendingFaces.get(core.id);
+			if (asked === undefined && this.ringPhases.has(core.id)) continue;
+			const at = core.x === undefined || core.y === undefined || core.z === undefined ? this.orbitControls().target : { x: core.x, y: core.y, z: core.z };
+			this.ringPhases.set(core.id, asked ?? facingPhase(camera, at));
+		}
+		this.pendingFaces.clear();
+		const loaded = new Set(cores.map((core) => core.id));
+		for (const id of this.ringPhases.keys()) if (!loaded.has(id)) this.ringPhases.delete(id);
+	}
+
+	/**
+	 * The note with core `id` is becoming the focus note: renew its ring phase
+	 * at the next `setData`, from the camera as it is then, or `phase` if given
+	 * (see `capturePhases`). Other notes keep theirs.
+	 */
+	faceNote(id: string, phase: number | null = null): void {
+		this.pendingFaces.set(id, phase);
+	}
+
+	/**
 	 * Hand the engine the current nodes and links, with the many-body force
 	 * limited to what is still settling, and the flat branches at the flatten
 	 * slider's depth (their rigid lines leave the many-body force, and their
@@ -617,7 +651,8 @@ export class Graph3DScene {
 	private pushData(): void {
 		const live = this.nodes.filter((node) => !node.departing);
 		this.live = new Map(live.map((node) => [node.id, node]));
-		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize);
+		this.capturePhases(live);
+		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0);
 		this.flatPlaces = flatIndex(this.flatBranches);
 		this.charge = chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
 		const shares = flatCharges(this.charge, this.flatBranches);

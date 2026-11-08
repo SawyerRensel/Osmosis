@@ -12,6 +12,7 @@ import {
 	flatWeight,
 	notePush,
 	obbOverlap,
+	facingPhase,
 	ringDirections,
 	type Body,
 	type FlatBranch,
@@ -264,6 +265,53 @@ describe("ringDirections", () => {
 
 	it("points a lone slice along +x", () => {
 		expect(ringDirections([7])).toEqual([{ x: 1, y: 0, z: 0 }]);
+	});
+
+	it("starts the ring at a given phase: the first slice points along it, the rest follow clockwise seen from above", () => {
+		const phase = 1;
+		const dirs = ringDirections([3, 3, 3, 3], phase);
+		expect(dirs[0]!.x).toBeCloseTo(Math.cos(phase));
+		expect(dirs[0]!.z).toBeCloseTo(Math.sin(phase));
+		// Seen from above (looking down -y, camera up -z) +x is right and +z is down the screen, so clockwise is from +x towards +z: y-component of (a x b) is negative.
+		for (let i = 1; i < dirs.length; i++) {
+			const [a, b] = [dirs[i - 1]!, dirs[i]!];
+			expect(a.z * b.x - a.x * b.z).toBeLessThan(0);
+		}
+		expect(angleOf(dirs[1]!)).toBeCloseTo((phase + Math.PI / 2) % (2 * Math.PI));
+	});
+
+	it("is stable: the same phase gives the same directions, and a phase of 0 is the default", () => {
+		expect(ringDirections([5, 1, 4], 2.5)).toEqual(ringDirections([5, 1, 4], 2.5));
+		expect(ringDirections([5, 1, 4], 0)).toEqual(ringDirections([5, 1, 4]));
+	});
+
+	describe("facingPhase", () => {
+		it("points the first slice at the camera's side of the pivot, level", () => {
+			const pivot = { x: 10, y: 5, z: -3 };
+			for (const camera of [{ x: 40, y: 80, z: -3 }, { x: 10, y: -2, z: 30 }, { x: -20, y: 5, z: -33 }]) {
+				const [first] = ringDirections([1, 1, 1], facingPhase(camera, pivot));
+				const [dx, dz] = [camera.x - pivot.x, camera.z - pivot.z];
+				expect(first!.x).toBeCloseTo(dx / Math.hypot(dx, dz));
+				expect(first!.z).toBeCloseTo(dz / Math.hypot(dx, dz));
+			}
+		});
+
+		it("falls back to +x with the camera straight above the pivot", () => {
+			const pivot = { x: 4, y: 0, z: 7 };
+			expect(facingPhase({ x: 4, y: 90, z: 7 }, pivot)).toBe(0);
+			expect(ringDirections([2, 2], facingPhase({ x: 4, y: -90, z: 7 }, pivot))[0]).toEqual({ x: 1, y: 0, z: 0 });
+		});
+	});
+
+	it("starts every ring of a note at its phase, the sub-slices' too", () => {
+		const galley = galleyOf(galleyText);
+		const at = (phase: number) => new FlatLayouts().branches(galley.nodes, 2.5, size, () => phase);
+		const [first] = at(2);
+		expect(first!.dir.x).toBeCloseTo(Math.cos(2));
+		expect(first!.dir.z).toBeCloseTo(Math.sin(2));
+		const sub = at(2).flatMap((b) => b.lines.filter((l) => l.members.length > 0))[0]!;
+		expect(sub.dir!.x).toBeCloseTo(Math.cos(2));
+		expect(at(2).map((b) => b.dir)).toEqual(at(2).map((b) => b.dir));
 	});
 
 	it("gives a note's branches their ring, stable under edits that don't change the branch set", () => {

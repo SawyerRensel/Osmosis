@@ -6,6 +6,7 @@ import { dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameIn
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
+import { facingPhase } from "../graph3d/flatten";
 import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { refocusPath } from "../graph3d/refocus";
@@ -123,6 +124,8 @@ export class Graph3DView extends ItemView {
 	private opening = false;
 	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
 	private saving = 0;
+	/** The focus note just changed (or the view just opened): the next reload that shows it renews its ring phase, so its first flat slice faces the camera (`Graph3DScene.faceNote`). Edits and other reloads leave it. */
+	private faceFocus = true;
 	/** A reload that was asked for while the editor was open or saving, run when it is done. */
 	private queuedReload: { flyToFocus: boolean; subpath: string; landOn: string | null } | null = null;
 	/** The first `setState` has run: later ones are steps of the tab's back/forward history (see `navigate`). */
@@ -260,7 +263,10 @@ export class Graph3DView extends ItemView {
 			return;
 		}
 		this.placed = true;
-		if (typeof state?.focus === "string") this.focusPath = state.focus;
+		if (typeof state?.focus === "string") {
+			if (state.focus !== this.focusPath) this.faceFocus = true;
+			this.focusPath = state.focus;
+		}
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(0, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
 		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
@@ -1272,6 +1278,7 @@ export class Graph3DView extends ItemView {
 	 */
 	private setFocus(path: string, flyToFocus: boolean, subpath = "", landOn: string | null = null): Promise<void> {
 		this.focusPath = path;
+		this.faceFocus = true;
 		this.updateHeader();
 		this.app.workspace.requestSaveLayout();
 		return this.reload(flyToFocus, subpath, landOn);
@@ -1369,6 +1376,11 @@ export class Graph3DView extends ItemView {
 		const liftOff = this.liftOff;
 		this.liftOff = null;
 		const seeds = liftOff === null ? undefined : liftOffSeeds(model, liftOff, scene.linePlateHeight);
+		if (this.faceFocus) {
+			this.faceFocus = false;
+			// The lift-off camera stands over the map looking down -z, on the +z side of the notes.
+			scene.faceNote(noteNodeId(focus), liftOff === null ? null : facingPhase({ x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: 0 }));
+		}
 		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via, seeds));
 		if (this.resettleOnLoad) {
 			this.resettleOnLoad = false;

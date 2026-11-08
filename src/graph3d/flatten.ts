@@ -8,7 +8,8 @@
  * H1 that replaces it: `isNoteRoot`; "core" below means either), like an
  * apple wedge cut top to bottom: the slices of a note stand in a ring round
  * the vertical axis through the core, each at a fixed outward direction
- * (`ringDirections`: shares weighted by size, in document order). The 2D
+ * (`ringDirections`: shares weighted by size, in document order, the first
+ * facing the camera as the note became the focus: `facingPhase`). The 2D
  * map's left-to-right axis (`u`) is that direction, so deeper lines sit
  * further out, and document order runs down the world (`v`), so plates,
  * which billboard upright, are stacked by their heights from every side of
@@ -117,17 +118,29 @@ export interface FlatBranch {
 /**
  * Outward directions for a note's slices, in a ring round world up: each
  * slice's share of the ring is its size over the total, in the order given
- * (document order), the first at world +x. Neighbours sit half their two
- * shares apart. A pure function of the sizes, so it changes only when the
- * note's branch set does, never per tick or with the camera.
+ * (document order), the first at angle `phase` (atan2(z, x): 0 is world +x).
+ * Angles grow from +x towards +z, which is clockwise seen from above (looking
+ * down -y, camera up -z). Neighbours sit half their two shares apart. A pure
+ * function of the sizes and the phase, so it changes only when the note's
+ * branch set does or its phase is recaptured (`facingPhase`), never per tick.
  */
-export function ringDirections(sizes: readonly number[]): Vec3[] {
+export function ringDirections(sizes: readonly number[], phase = 0): Vec3[] {
 	const total = sizes.reduce((sum, size) => sum + size, 0);
-	let angle = 0;
+	let angle = phase;
 	return sizes.map((size, i) => {
 		if (i > 0) angle += (Math.PI * (sizes[i - 1]! + size)) / total;
 		return { x: Math.cos(angle), y: 0, z: Math.sin(angle) };
 	});
+}
+
+/**
+ * The ring phase that points a note's first slice at the camera: the angle
+ * of the horizontal part of the pivot-to-camera direction. A camera straight
+ * above or below the pivot has no horizontal direction, and gets 0 (world +x).
+ */
+export function facingPhase(camera: Vec3, pivot: Vec3): number {
+	const [dx, dz] = [camera.x - pivot.x, camera.z - pivot.z];
+	return Math.hypot(dx, dz) < 1e-6 ? 0 : Math.atan2(dz, dx);
 }
 
 /** A node's footprint for the flat layout, in world units. */
@@ -171,9 +184,9 @@ export class FlatLayouts {
 	/**
 	 * Every flat branch of `nodes` at flat depth `flat` (`flatDepth`). Only
 	 * nodes in `nodes` take part: a line must be there, and so must its root
-	 * and core.
+	 * and core. `phaseOf` is a note's ring phase (see `ringDirections`).
 	 */
-	branches(nodes: readonly GraphNode[], flat: number, sizeOf: FlatSize): FlatBranch[] {
+	branches(nodes: readonly GraphNode[], flat: number, sizeOf: FlatSize, phaseOf: (core: GraphNode) => number = () => 0): FlatBranch[] {
 		if (!Number.isFinite(flat)) return [];
 		const rootDepth = Math.max(1, Math.floor(flat));
 		const idOf = new Map<OsmosisNode, string>();
@@ -241,9 +254,10 @@ export class FlatLayouts {
 			// The note's ring (each slice weighted by its lines), and the ring its sub-slices would stand in a depth
 			// down, where each roots a branch of its own: a sub-slice turns from that to its branch's as the ramp nears 1.
 			const own = branches.slice(first);
-			ringDirections(own.map((branch) => 1 + branch.lines.reduce((n, line) => n + 1 + line.members.length, 0))).forEach((dir, i) => (own[i]!.dir = dir));
+			const phase = phaseOf(core);
+			ringDirections(own.map((branch) => 1 + branch.lines.reduce((n, line) => n + 1 + line.members.length, 0)), phase).forEach((dir, i) => (own[i]!.dir = dir));
 			const subs = own.flatMap((branch) => branch.lines.filter((line) => line.members.length > 0));
-			ringDirections(subs.map((line) => 1 + line.members.length)).forEach((dir, i) => (subs[i]!.dir = dir));
+			ringDirections(subs.map((line) => 1 + line.members.length), phase).forEach((dir, i) => (subs[i]!.dir = dir));
 		}
 		return branches;
 	}
