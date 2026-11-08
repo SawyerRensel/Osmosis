@@ -77,7 +77,7 @@ function harness(cards: Card[], loaded: string[], hops: Record<string, number>, 
 		threads: [] as (string | null)[][],
 		focus: HOME,
 		redraw: () => void study.decorate(shown),
-		hop: () => undefined,
+		visit: () => undefined,
 		nearest: (ids: readonly string[]) => ids[0] ?? null,
 		focusPath() {
 			return host.focus;
@@ -228,6 +228,39 @@ describe("the due-driven path", () => {
 		press(panel(), "Free");
 		expect(show(wide).nodes.find((n) => n.id === far.id)?.label).toBe("?");
 		expect(host.threads[host.threads.length - 1]).toEqual([]);
+	});
+
+	it("measures the next stop from the stop you are on, since flying to a loaded stop leaves the focus note", async () => {
+		const SAILS = "tests/Sailing Basics.md";
+		const routeCards = [
+			card({ id: `${HOME}#^os-home`, blockId: "os-home", due: NOW - DAY }),
+			card({ id: `${DRILLS}#^os-drill`, notePath: DRILLS, blockId: "os-drill", due: NOW - 9 * DAY }),
+			card({ id: `${FAR}#^os-far`, notePath: FAR, blockId: "os-far", due: NOW - 2 * DAY }),
+			card({ id: `${SAILS}#^os-sails`, notePath: SAILS, blockId: "os-sails", due: NOW - DAY }),
+		];
+		const all = [HOME, DRILLS, FAR, SAILS];
+		const { study, host, show, panel } = harness(routeCards, all, {});
+		// From HOME, FAR is nearer than SAILS; from DRILLS, SAILS is.
+		const from: Record<string, Record<string, number>> = {
+			[HOME]: { [HOME]: 0, [DRILLS]: 1, [FAR]: 1, [SAILS]: 2 },
+			[DRILLS]: { [DRILLS]: 0, [HOME]: 1, [FAR]: 2, [SAILS]: 1 },
+		};
+		host.hopsFrom = (path) => new Map(Object.entries(from[path] ?? {}));
+		// Every stop is loaded, so going there flies and the focus note stays HOME.
+		host.goTo = (path) => void host.goTos.push(path);
+		const loadedModel = (): GraphModel => model([...all.map(note), ...routeCards.map((c) => lineNode(c.notePath, c.blockId!))]);
+		study.start();
+		show(loadedModel());
+		press(panel(), "Due-driven");
+		for (let i = 0; i < 3; i++) {
+			press(panel(), "Next");
+			show(loadedModel());
+			expect(study.reveal()).toBe(true);
+			await study.rate(3);
+		}
+		// HOME first (where you stand), then DRILLS (as near as FAR from HOME, and more overdue), then SAILS: nearest from DRILLS.
+		expect(host.goTos).toEqual([HOME, DRILLS, SAILS]);
+		expect(host.focus).toBe(HOME);
 	});
 });
 

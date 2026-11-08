@@ -8,6 +8,7 @@ import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
 import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
+import { refocusPath } from "../graph3d/refocus";
 import { computeHorizon, noteAdjacency, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
@@ -119,7 +120,7 @@ export class Graph3DView extends ItemView {
 	private readonly editor = new Graph3DEditor(this.app);
 	/** An editor is being prepared (its line is being read), so a second request must not start another. */
 	private opening = false;
-	/** Edits closed and still being written: reloads wait for these too, so a hop made by the click that saved one lands after the save. */
+	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
 	private saving = 0;
 	/** A reload that was asked for while the editor was open or saving, run when it is done. */
 	private queuedReload: { flyToFocus: boolean; subpath: string } | null = null;
@@ -197,6 +198,14 @@ export class Graph3DView extends ItemView {
 			return false;
 		});
 		this.scope.register([], "F2", editKey);
+		// F makes the selected node's note the focus note: the one deliberate hop besides the plate menu.
+		this.scope.register([], "f", (e: KeyboardEvent) => {
+			if (isEditableTarget(e.target)) return undefined;
+			const node = this.scene?.focusedNode() ?? null;
+			if (node === null || refocusPath(node, this.focusPath) === null) return undefined;
+			this.hop(node);
+			return false;
+		});
 		// In edit mode, the mind map's structural keys act on the focused line.
 		const structuralKey = (action: StructuralAction) => (e: KeyboardEvent) => {
 			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
@@ -301,7 +310,7 @@ export class Graph3DView extends ItemView {
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		this.study = new Graph3DStudy(root, this.plugin(), {
 			redraw: () => this.redraw(),
-			hop: (node) => this.hop(node),
+			visit: (node) => this.visit(node),
 			nearest: (ids) => this.nearest(ids),
 			focusPath: () => this.focusPath,
 			loadedNotes: () => this.routeNotes(),
@@ -319,7 +328,7 @@ export class Graph3DView extends ItemView {
 			controls: this.controlSettings(),
 			overlays: this.sceneOverlays(),
 			onNodeClick: (node) => this.clickNode(node),
-			onNodeArrived: (node) => this.hop(node),
+			onNodeArrived: (node) => this.visit(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.beginEdit(node),
@@ -344,7 +353,7 @@ export class Graph3DView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!this.follow || file?.extension !== "md" || file.path === this.focusPath) return;
-				this.setFocus(file.path, true);
+				void this.setFocus(file.path, true);
 			}),
 		);
 		// `resolve` fires once a file's links are re-indexed, so the horizon
@@ -491,7 +500,7 @@ export class Graph3DView extends ItemView {
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.app.workspace.requestSaveLayout();
 		const file = this.app.workspace.getActiveFile();
-		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) this.setFocus(file.path, true);
+		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.setFocus(file.path, true);
 	}
 
 	private toggleToolbar(): void {
@@ -609,7 +618,7 @@ export class Graph3DView extends ItemView {
 
 	/**
 	 * Open the inline editor on `node` if edit mode is on and it is a line.
-	 * True when the gesture is taken, so a double click does not also hop.
+	 * True when the gesture is taken, so a double click does not also fly.
 	 */
 	private beginEdit(node: GraphNode): boolean {
 		if (!this.editMode || node.kind !== "line" || node.source === undefined) return false;
@@ -934,11 +943,22 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
-	/** The context menu of a line (right-click, or a long press on touch) in edit mode: edit it, or any structural edit. */
+	/**
+	 * The context menu of a line or note plate (right-click, or a long press on
+	 * touch): "Focus this note" (a hop, greyed out in the focus note itself),
+	 * and in edit mode, for a line, edit it or any structural edit.
+	 */
 	private showNodeMenu(node: GraphNode, x: number, y: number): void {
-		if (!this.editMode || node.kind !== "line" || this.editor.isOpen || this.editBlocked()) return;
+		if (this.editor.isOpen) return;
 		this.scene?.setFocusId(node.id);
 		const menu = new Menu();
+		const path = refocusPath(node, this.focusPath);
+		menu.addItem((item) => item.setTitle("Focus this note").setIcon("locate").setDisabled(path === null).onClick(() => this.hop(node)));
+		if (!this.editMode || node.kind !== "line" || this.editBlocked()) {
+			menu.showAtPosition({ x, y });
+			return;
+		}
+		menu.addSeparator();
 		const add = (title: string, icon: string, action: StructuralAction): void => {
 			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void this.structural(action, node, true)));
 		};
@@ -1034,7 +1054,7 @@ export class Graph3DView extends ItemView {
 	/**
 	 * The notes a due-driven route is collected from: the loaded area, but at
 	 * depth 0 (the focus and what it embeds) also its linked notes, one hop out.
-	 * A route needs somewhere to go, and its stops recentre the graph as it goes.
+	 * A route needs somewhere to go, and a stop in a note not loaded recentres the graph on it.
 	 */
 	private routeNotes(): string[] {
 		const loaded = new Set(this.horizon?.loaded ?? []);
@@ -1052,21 +1072,19 @@ export class Graph3DView extends ItemView {
 	}
 
 	/**
-	 * Fly to the node `find` picks from the model. When that node is not in the
-	 * model shown now (its note is beyond the loaded area), recentre the loaded
-	 * area on `path` first, then fly once the reload has landed.
+	 * Fly to the node `find` picks from the model (a study stop), leaving the
+	 * focus note as it is. When that node is not in the model shown now (its
+	 * note is beyond the loaded area), make `path` the focus note first, then
+	 * fly once the reload has landed.
 	 */
 	private async goTo(path: string, find: (model: GraphModel) => string | null): Promise<void> {
 		const id = this.model === null ? null : find(this.model);
 		const node = id === null ? undefined : this.model?.nodes.find((n) => n.id === id);
 		if (node !== undefined) {
-			this.hop(node);
+			this.visit(node);
 			return;
 		}
-		this.focusPath = path;
-		this.updateHeader();
-		this.app.workspace.requestSaveLayout();
-		await this.reload();
+		await this.setFocus(path, false);
 		const landed = this.model === null ? null : find(this.model);
 		if (landed !== null) this.scene?.flyTo(landed, true);
 	}
@@ -1089,31 +1107,44 @@ export class Graph3DView extends ItemView {
 
 	/**
 	 * A click or tap on a node: in a study session, arriving at (or revealing) a hidden card.
-	 * (Arriving by a ride along an edge is `hop` alone: the card stays hidden until the plate is clicked.)
+	 * (Arriving by a ride along an edge is `visit` alone: the card stays hidden until the plate is clicked.)
 	 */
 	private clickNode(node: GraphNode): void {
 		this.study?.clicked(node);
-		this.hop(node);
+		this.visit(node);
 	}
 
-	/** Click or tap: fly to the node, and recentre the loaded area on its note. */
-	private hop(node: GraphNode): void {
+	/**
+	 * Travel, camera only: fly to `node` and select it. The focus note, and so
+	 * the loaded area, stays as it is, whatever note the node is in. Plate
+	 * clicks, edge rides' arrivals, panel links and study stops within the
+	 * loaded area all come here; it is where a camera history would record a visit.
+	 */
+	private visit(node: GraphNode): void {
 		this.scene?.flyTo(node.id);
-		// Tags, attachments and ghosts are destinations, never hops.
-		if ((node.kind === "note" || node.kind === "line") && node.path !== undefined && node.path !== this.focusPath) {
-			this.setFocus(node.path, false);
-		}
+	}
+
+	/**
+	 * A hop, on purpose (the plate menu's "Focus this note", the F key): fly to
+	 * `node` and make its note the focus note, recentring the loaded area on it.
+	 * Tags, attachments and ghosts belong to no note, and are never hops.
+	 */
+	private hop(node: GraphNode): void {
+		const path = refocusPath(node, this.focusPath);
+		this.scene?.flyTo(node.id);
+		if (path !== null) void this.setFocus(path, false);
 	}
 
 	/**
 	 * Follow a link clicked in a near-tier panel, as the mind map does
-	 * (`MindMapView.openNodeLink`) but staying in 3D: a plain click hops to the
-	 * target, the line a heading or block link names, loading its note first
-	 * when it isn't loaded; Mod opens it in a new 3D graph tab; Mod+Alt in a
+	 * (`MindMapView.openNodeLink`) but staying in 3D: a plain click flies to the
+	 * target, the line a heading or block link names, leaving the focus note as
+	 * it is; a target not loaded makes its note the focus note first (a hop,
+	 * since there is nowhere to fly until it is). Mod opens it in a new 3D graph tab; Mod+Alt in a
 	 * note view in a new tab. A plain click never replaces this view: what has
 	 * no node here (an unresolved link, a file not shown) opens in a new tab.
 	 */
-	private followLink(link: PanelLink, action: Exclude<LinkClick, "none" | "hop">): void {
+	private followLink(link: PanelLink, action: Exclude<LinkClick, "none" | "node">): void {
 		if (action === "external") {
 			window.open(link.href);
 			return;
@@ -1130,7 +1161,7 @@ export class Graph3DView extends ItemView {
 			// Attachments and unresolved links are nodes too, when a loaded note reaches them.
 			const id = file === null ? ghostNodeId(path) : attachmentNodeId(file.path);
 			const node = action === "follow" ? this.model?.nodes.find((n) => n.id === id) : undefined;
-			if (node !== undefined) this.hop(node);
+			if (node !== undefined) this.visit(node);
 			else void workspace.openLinkText(link.href, link.sourcePath, "tab");
 			return;
 		}
@@ -1144,8 +1175,8 @@ export class Graph3DView extends ItemView {
 		}
 		const id = this.model === null ? null : linkTargetNode(this.model, file.path, subpath);
 		const node = id === null ? undefined : this.model?.nodes.find((n) => n.id === id);
-		if (node !== undefined) this.hop(node);
-		else this.setFocus(file.path, true, subpath);
+		if (node !== undefined) this.visit(node);
+		else void this.setFocus(file.path, true, subpath);
 	}
 
 	/**
@@ -1176,12 +1207,17 @@ export class Graph3DView extends ItemView {
 		await this.plugin().swapLeafView(this.leaf, "2d", state, [path]);
 	}
 
-	/** With `flyToFocus`, fly to the new focus note's core, or to the line `subpath` names in it. */
-	private setFocus(path: string, flyToFocus: boolean, subpath = ""): void {
+	/**
+	 * Make `path` the focus note and reload the area around it; every focus
+	 * change after the view opens comes here, where a history would record it.
+	 * With `flyToFocus`, fly to the new focus note's core, or to the line
+	 * `subpath` names in it.
+	 */
+	private setFocus(path: string, flyToFocus: boolean, subpath = ""): Promise<void> {
 		this.focusPath = path;
 		this.updateHeader();
 		this.app.workspace.requestSaveLayout();
-		void this.reload(flyToFocus, subpath);
+		return this.reload(flyToFocus, subpath);
 	}
 
 	private updateHeader(): void {

@@ -7,22 +7,22 @@
  * (`frontPanelAt`), then the link inside it. `linkClickAction` decides what
  * the click does. A link fires only on the focused node, the one the camera
  * last flew to, or a node close to it; anywhere else a click on a link is an
- * ordinary hop to its node, so a careless click while navigating never
+ * ordinary click on its node, so a careless click while navigating never
  * leaves for another map.
  */
 
-/** World distance from the focused node within which a node's links fire: about the camera's standoff after a hop to a line, so the neighbourhood in view. */
+/** World distance from the focused node within which a node's links fire: about the camera's standoff after a flight to a line, so the neighbourhood in view. */
 export const LINK_REACH = 60;
 
 /**
  * - `none`: nothing.
- * - `hop`: an ordinary hop: to the link's node on a link, else to the node under the pointer.
- * - `follow`: hop within this graph to the link's target.
+ * - `node`: an ordinary click: on the link's node on a link, else on the node under the pointer.
+ * - `follow`: go within this graph to the link's target.
  * - `follow-tab`: the target in a new 3D graph tab.
  * - `open-note`: the target in a note view, in a new tab.
  * - `external`: an external URL, in the browser.
  */
-export type LinkClick = "none" | "hop" | "follow" | "follow-tab" | "open-note" | "external";
+export type LinkClick = "none" | "node" | "follow" | "follow-tab" | "open-note" | "external";
 
 export interface LinkClickInput {
 	/** The press ended within the click slop of where it began; a drag is never a click. */
@@ -36,7 +36,7 @@ export interface LinkClickInput {
 	/** Ctrl, or Cmd on macOS. */
 	mod: boolean;
 	alt: boolean;
-	/** Shift, Ctrl or Cmd: a press with one is OrbitControls' pan, which never hops. */
+	/** Shift, Ctrl or Cmd: a press with one is OrbitControls' pan, which never flies. */
 	panKey: boolean;
 }
 
@@ -49,8 +49,8 @@ export interface LinkClickInput {
 export function linkClickAction(input: LinkClickInput): LinkClick {
 	if (!input.click) return "none";
 	const { link } = input;
-	if (link === null) return input.panKey ? "none" : "hop";
-	if (!input.isFocus && !(input.focusDistance <= LINK_REACH)) return "hop";
+	if (link === null) return input.panKey ? "none" : "node";
+	if (!input.isFocus && !(input.focusDistance <= LINK_REACH)) return "node";
 	if (link.external) return "external";
 	if (input.mod && input.alt) return "open-note";
 	if (input.mod) return "follow-tab";

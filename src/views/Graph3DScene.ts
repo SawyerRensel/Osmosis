@@ -154,10 +154,10 @@ export interface SceneOptions {
 	controls: SceneControls;
 	overlays: SceneOverlays;
 	onNodeClick: (node: GraphNode) => void;
-	/** A ride along an edge (follow a link) reached its plate. The view treats it as a hop, but not as a click on the plate. */
+	/** A ride along an edge (follow a link) reached its plate. The view selects it, but not as a click on the plate; the focus note stays. */
 	onNodeArrived: (node: GraphNode) => void;
 	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
-	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "hop">) => void;
+	onLinkClick: (link: PanelLink, action: Exclude<LinkClick, "none" | "node">) => void;
 	/** A click on a task checkbox in a near-tier panel (it is the checkbox line's own box); the view toggles it. */
 	onCheckboxClick: (node: GraphNode) => void;
 	/** A second click or tap on a node, close in time and place to the first. True when the view took it (it opened an editor), so the scene does nothing more with it. */
@@ -166,7 +166,7 @@ export interface SceneOptions {
 	onClickWhileEditing: () => void;
 	/** A link drag released on another node at client (`x`, `y`): line `from` is dropped onto `to`, a line or a note. */
 	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
-	/** Edit mode: a right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line, at client (`x`, `y`). */
+	/** A right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line or note plate, at client (`x`, `y`). */
 	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
@@ -257,7 +257,7 @@ const LINE_PLATE_MAX_EM = 20;
  * looked at closer than this anyway (the orbit target stays `MIN_DEPTH` ahead).
  */
 const CAMERA_NEAR = 1;
-/** How far from a plate a flight or a ride along an edge stops: a note's root (its core or sole H1: a hop arrives at the note), and every other node. */
+/** How far from a plate a flight or a ride along an edge stops: a note's root (its core or sole H1: arriving there is arriving at the note), and every other node. */
 const NOTE_STAND_OFF = 160;
 const LINE_STAND_OFF = 70;
 /** Flight speed as a fraction of the camera's distance to its orbit target, per second. */
@@ -391,7 +391,7 @@ export class Graph3DScene {
 	/** The orbit coast a touch interrupted, which a flick that follows adds to. */
 	private carry: Vec = { x: 0, y: 0 };
 	private touchDownAt = 0;
-	/** The touch now down stopped a coast, and so is not also a tap that hops. */
+	/** The touch now down stopped a coast, and so is not also a tap that flies. */
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
 	private readonly perf: Graph3DPerf;
@@ -1181,7 +1181,7 @@ export class Graph3DScene {
 		this.cancelFlight();
 		if (this.touches.size === 0) {
 			// A finger on a coasting view stops it, and that is all it does:
-			// not also a tap that hops. What the orbit coast had left carries
+			// not also a tap that flies. What the orbit coast had left carries
 			// into a flick that follows.
 			this.stoppedCoastOnDown = this.orbitCoast !== null || this.panCoast !== null || this.zoomCoast !== null;
 			this.carry = this.orbitCoast?.velocity ?? { x: 0, y: 0 };
@@ -1202,7 +1202,7 @@ export class Graph3DScene {
 				return;
 			}
 		} else if (e.button !== 0) {
-			if (e.button === 2 && this.linkMode && this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+			if (e.button === 2 && this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
 			return;
 		} else if (e.shiftKey || e.ctrlKey || e.metaKey) {
 			// Still a press that may be a click: Mod-click on a link opens it.
@@ -1229,6 +1229,11 @@ export class Graph3DScene {
 			look: touch && this.controlSettings.touchDrag === "look",
 		};
 		this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
+		// A finger held still on a line or note plate opens its context menu, as in edit mode.
+		if (touch && !this.stoppedCoastOnDown && this.editingId === null) {
+			const held = this.pickedNode(e.clientX, e.clientY, true);
+			if (held !== null && hasMenu(held.graph)) this.startLongPress(e.pointerId, e.clientX, e.clientY, held);
+		}
 	};
 
 	/**
@@ -1288,10 +1293,10 @@ export class Graph3DScene {
 		if (this.longPress?.pointerId === e.pointerId) this.clearLongPress();
 		const menu = this.menuPress;
 		if (menu?.pointerId === e.pointerId) {
-			// A right-click that never moved: the context menu of the line under it. (A cancelled pointer opens nothing.)
+			// A right-click that never moved: the context menu of the plate under it. (A cancelled pointer opens nothing.)
 			this.menuPress = null;
 			const node = e.type === "pointerup" && e.button === 2 ? this.pickedNode(menu.x, menu.y, false) : null;
-			if (node?.graph.kind === "line") this.options.onContextMenu(node.graph, e.clientX, e.clientY);
+			if (node !== null && hasMenu(node.graph)) this.options.onContextMenu(node.graph, e.clientX, e.clientY);
 		}
 		const press = this.press;
 		if (press?.pointerId === e.pointerId) {
@@ -1316,18 +1321,18 @@ export class Graph3DScene {
 		if (velocity.x !== 0 || velocity.y !== 0) this.orbitCoast = { drag, velocity };
 	};
 
-	/** The browser's own context menu stays off the canvas in edit mode: the right button there is ours (a pan, or the node menu). */
+	/** The browser's own context menu stays off the canvas: the right button there is ours (a pan, or the plate menu). */
 	private readonly onContextMenuEvent = (e: Event): void => {
-		if (this.linkMode && e.target === this.graph.renderer().domElement) e.preventDefault();
+		if (e.target === this.graph.renderer().domElement) e.preventDefault();
 	};
 
-	/** A finger went down on `node` in edit mode: held still for `LONG_PRESS_MS`, it opens the node's context menu and the release is no click. */
+	/** A finger went down on `node`: held still for `LONG_PRESS_MS`, it opens the node's context menu and the release is no click (nor a drag). */
 	private startLongPress(pointerId: number, x: number, y: number, node: EngineNode): void {
 		this.clearLongPress();
 		const timer = window.setTimeout(() => {
 			this.longPress = null;
-			if (!this.linkMode || this.editingId !== null || this.pinch !== null || this.linkDrag?.active === true) return;
-			this.press = null;
+			if (this.editingId !== null || this.pinch !== null || this.linkDrag?.active === true) return;
+			this.press = this.drag = null;
 			this.endLinkDrag();
 			this.options.onContextMenu(node.graph, x, y);
 		}, LONG_PRESS_MS);
@@ -1409,7 +1414,7 @@ export class Graph3DScene {
 		this.graph.renderer().domElement.setCssProps({ cursor: "" });
 	}
 
-	/** A click or tap: follow the link under it, or hop to its node. See `linkClickAction`. */
+	/** A click or tap: follow the link under it, or fly to its node. See `linkClickAction`. */
 	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
 		if (this.editingId !== null) this.options.onClickWhileEditing();
 		// A plain tap on a task checkbox ticks it. Held modifiers belong to pan and to links.
@@ -1432,7 +1437,7 @@ export class Graph3DScene {
 			panKey: e.shiftKey || e.ctrlKey || e.metaKey,
 		});
 		if (action === "none") return;
-		if (action !== "hop") {
+		if (action !== "node") {
 			this.options.onLinkClick(link!, action);
 			return;
 		}
@@ -1908,4 +1913,9 @@ function placed(node: EngineNode): node is EngineNode & Vec3 {
 function worldDistance(a: EngineNode, b: EngineNode): number {
 	if (a.x === undefined || a.y === undefined || a.z === undefined || b.x === undefined || b.y === undefined || b.z === undefined) return Infinity;
 	return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+/** Whether a node's plate has a context menu: lines and note cores, which belong to a note (tags, files and ghosts have none). */
+function hasMenu(node: GraphNode): boolean {
+	return node.kind === "line" || node.kind === "note";
 }

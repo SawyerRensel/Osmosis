@@ -9,7 +9,8 @@
  *
  * It has two path modes, picked in the panel:
  * - **Free exploration:** every due card in the loaded area is hidden, and the
- *   area follows you as you hop. "Next" flies to the nearest hidden card.
+ *   area follows you as you hop (on purpose: see `graph3d/refocus.ts`). "Next"
+ *   flies to the nearest hidden card.
  * - **Due-driven:** the cards due within the configured depth of the note you
  *   started the route from (at the moment you chose it) are the route. "Next"
  *   flies to the next stop along graph paths (`nextStop`), loading its note
@@ -42,8 +43,8 @@ import type { StudySessionManager } from "../study/StudySessionManager";
 export interface StudyHost {
 	/** Hand the scene the current model again, through `decorate`. */
 	redraw(): void;
-	/** Fly to a node and recentre the loaded area on its note, as a click does. */
-	hop(node: GraphNode): void;
+	/** Fly to a node, as a click does. The focus note stays as it is. */
+	visit(node: GraphNode): void;
 	/** The node among `ids` nearest the camera, or null. */
 	nearest(ids: readonly string[]): string | null;
 	/** The note the loaded area is centred on, or null before one is chosen. */
@@ -210,7 +211,7 @@ export class Graph3DStudy {
 	/**
 	 * A click on `node` during a session. Arriving at a hidden node makes it the
 	 * current card; clicking the current card again reveals it. The view still
-	 * flies and hops as it would for any click.
+	 * flies to it as it would for any click.
 	 */
 	clicked(node: GraphNode): void {
 		if (!this.active || !this.targets.has(node.id)) return;
@@ -268,7 +269,7 @@ export class Graph3DStudy {
 			return;
 		}
 		this.arrive(node);
-		this.host.hop(node);
+		this.host.visit(node);
 	}
 
 	/**
@@ -342,10 +343,14 @@ export class Graph3DStudy {
 		if (this.stops.length === 0) new Notice("No cards are due within reach of this note. Try a greater depth, or another note.");
 	}
 
-	/** Due-driven "Next": fly to the next stop on the route, and extend the thread to it. */
+	/**
+	 * Due-driven "Next": fly to the next stop on the route, and extend the thread to it.
+	 * Distances count from the stop you are on (from the focus note at the start):
+	 * flying to a loaded stop leaves the focus note behind.
+	 */
 	private nextOnRoute(): void {
-		const focus = this.host.focusPath();
-		const stop = nextStop(this.stops, this.rated, focus === null ? new Map() : this.host.hopsFrom(focus), this.currentKey);
+		const from = this.stops.find((stop) => stop.key === this.currentKey)?.path ?? this.host.focusPath();
+		const stop = nextStop(this.stops, this.rated, from === null ? new Map() : this.host.hopsFrom(from), this.currentKey);
 		if (stop === null) {
 			new Notice("The route is finished: nothing else is due within reach.");
 			return;

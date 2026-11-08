@@ -17,12 +17,12 @@ describe("linkClickAction", () => {
 		expect(linkClickAction({ ...plain, isFocus: false, focusDistance: LINK_REACH })).toBe("follow");
 	});
 
-	it("hops to a far node instead of following its link, whatever the modifiers", () => {
+	it("flies to a far node instead of following its link, whatever the modifiers", () => {
 		const far = { ...plain, isFocus: false, focusDistance: LINK_REACH + 1 };
-		expect(linkClickAction(far)).toBe("hop");
-		expect(linkClickAction({ ...far, mod: true, panKey: true })).toBe("hop");
-		expect(linkClickAction({ ...far, link: { external: true } })).toBe("hop");
-		expect(linkClickAction({ ...plain, isFocus: false, focusDistance: Infinity })).toBe("hop");
+		expect(linkClickAction(far)).toBe("node");
+		expect(linkClickAction({ ...far, mod: true, panKey: true })).toBe("node");
+		expect(linkClickAction({ ...far, link: { external: true } })).toBe("node");
+		expect(linkClickAction({ ...plain, isFocus: false, focusDistance: Infinity })).toBe("node");
 	});
 
 	it("mirrors the mind map's modifiers: Mod opens a new graph tab, Mod+Alt a note view", () => {
@@ -38,9 +38,9 @@ describe("linkClickAction", () => {
 		expect(linkClickAction({ ...plain, link: { external: true }, mod: true, panKey: true })).toBe("external");
 	});
 
-	it("hops to the node under a plain click off any link, and leaves a pan-key click alone", () => {
-		expect(linkClickAction({ ...plain, link: null, isFocus: false, focusDistance: Infinity })).toBe("hop");
-		expect(linkClickAction({ ...plain, link: null, alt: true })).toBe("hop");
+	it("flies to the node under a plain click off any link, and leaves a pan-key click alone", () => {
+		expect(linkClickAction({ ...plain, link: null, isFocus: false, focusDistance: Infinity })).toBe("node");
+		expect(linkClickAction({ ...plain, link: null, alt: true })).toBe("node");
 		expect(linkClickAction({ ...plain, link: null, mod: true, panKey: true })).toBe("none");
 		expect(linkClickAction({ ...plain, link: null, panKey: true })).toBe("none");
 	});

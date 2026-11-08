@@ -13,19 +13,19 @@ A line in the 3D graph between two plates: hierarchy within a note, or link, emb
 _Avoid_: Link (that word means the wikilink an edge may come from), connection line
 
 **Focus note**:
-The note the loaded area is centred on. Hopping to another note's plate makes that note the focus note.
+The note the loaded area is centred on. It changes only by a hop: travelling to another note's plate, by a click or by following a link, leaves it as it is.
 _Avoid_: Current note, root
 
 **Hop**:
-Making another note the focus note by arriving at one of its plates.
+Making another note the focus note on purpose: "Focus this note" in a plate's menu, the F key on the selected plate, or a panel link to a note that is not loaded. The loaded area recentres on it.
 _Avoid_: Jump, navigate
 
 **Follow a link**:
-Clicking an edge to travel slowly along it to the end away from the focused node. Arriving at a plate this way is a hop, but it is not a click on the plate, so a hidden study card stays hidden.
+Clicking an edge to travel slowly along it to the end away from the focused node. Camera only: arriving does not change the focus note, and it is not a click on the plate, so a hidden study card stays hidden.
 _Avoid_: Edge flight, link jump
 
 **Travel speed**:
-How fast every camera flight moves: following a link, hopping, and going to a search result.
+How fast every camera flight moves: following a link, flying to a clicked plate, hopping, and going to a search result.
 _Avoid_: Flight scale (that is the walk/fly speed under the user's own control)
 
 **Outline depth**:

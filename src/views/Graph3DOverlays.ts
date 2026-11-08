@@ -227,7 +227,7 @@ function depthLabel(depth: number): string {
 }
 
 function travelLabel(speed: number): string {
-	return `×${speed < 1 ? speed.toFixed(2) : speed.toFixed(1)}. How fast the camera flies when you follow a link, hop to a plate, or go to a search result.`;
+	return `×${speed < 1 ? speed.toFixed(2) : speed.toFixed(1)}. How fast the camera flies when you follow a link, fly to a plate, or go to a search result.`;
 }
 
 function flattenLabel(flatten: number): string {
