@@ -10,7 +10,7 @@ import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
-import { computeHorizon, noteAdjacency, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
+import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
@@ -1332,12 +1332,19 @@ export class Graph3DView extends ItemView {
 		let horizon: Horizon;
 		let notes: (NoteInput | null)[];
 		if (this.depth === 0) {
-			// The focus note and what it transcludes: its links load nothing, so only the linked notes' text is read ahead.
+			// The focus note and what it transcludes (and, with Backlinks, the notes linking to it): its own links load nothing, so only the linked notes' text is read ahead.
 			const base = computeHorizon(this.adjacency, focus, 0, false);
 			const focusNote = await readNote(focus);
 			const embedded = focusNote === null ? null : await collectEmbedded(focusNote, readNote, resolve);
 			horizon = embedded === null ? base : withEmbedded(base, embedded.hops, embedded.via);
 			notes = embedded?.notes ?? [];
+			if (this.backlinks) {
+				// "What links here": whole notes, one hop from the focus. An embedded one is already in `notes`, in the part its embed shows.
+				horizon = withBacklinkers(horizon, this.adjacency);
+				const have = new Set(notes.flatMap((note) => (note === null ? [] : [note.tree.filePath])));
+				const linking = await Promise.all([...horizon.loaded].filter((path) => !have.has(path)).map(readNote));
+				notes = [...notes, ...linking.filter((note): note is NoteInput => note !== null)];
+			}
 		} else {
 			horizon = computeHorizon(this.adjacency, focus, this.depth, this.backlinks);
 			notes = await Promise.all([...horizon.loaded].map(readNote));

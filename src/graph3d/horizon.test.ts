@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeHorizon, diffLoaded, noteAdjacency, withEmbedded, type ResolvedLinks } from "./horizon";
+import { computeHorizon, diffLoaded, noteAdjacency, withBacklinkers, withEmbedded, type ResolvedLinks } from "./horizon";
 
 /** A chain A → B → C → D → E, linked forward only. */
 const CHAIN: ResolvedLinks = {
@@ -116,5 +116,52 @@ describe("withEmbedded (depth 0)", () => {
 		expect(horizon.hops.get("X.md")).toBe(2);
 		expect(horizon.via.get("X.md")).toBe("C.md");
 		expect(horizon.focus).toBe("B.md");
+	});
+});
+
+describe("withBacklinkers (depth 0 with Backlinks on)", () => {
+	/** A and D link to B; B links to C and E; D links to C too. */
+	const LINKS: ResolvedLinks = {
+		"A.md": { "B.md": 1 },
+		"B.md": { "C.md": 1, "E.md": 1 },
+		"C.md": {},
+		"D.md": { "B.md": 1, "C.md": 1 },
+		"E.md": {},
+	};
+	const adjacency = noteAdjacency(LINKS);
+	const alone = () => withEmbedded(computeHorizon(adjacency, "B.md", 0, false), new Map([["B.md", 0]]), new Map());
+
+	it("with Backlinks off (not applied), the loaded set is the focus and what it embeds", () => {
+		expect([...alone().loaded]).toEqual(["B.md"]);
+	});
+
+	it("adds the notes that link to the focus, one hop out and reached from the focus", () => {
+		const horizon = withBacklinkers(alone(), adjacency);
+		expect([...horizon.loaded].sort()).toEqual(["A.md", "B.md", "D.md"]);
+		expect(horizon.hops.get("A.md")).toBe(1);
+		expect(horizon.via.get("D.md")).toBe("B.md");
+		expect([...horizon.prefetch].sort()).toEqual(["C.md", "E.md"]);
+	});
+
+	it("does not duplicate a note that is both embedded and linking to the focus", () => {
+		const base = withEmbedded(computeHorizon(adjacency, "B.md", 0, false), new Map([["B.md", 0], ["A.md", 1]]), new Map([["A.md", "B.md"]]));
+		const horizon = withBacklinkers(base, adjacency);
+		expect([...horizon.loaded].sort()).toEqual(["A.md", "B.md", "D.md"]);
+		expect(horizon.hops.get("A.md")).toBe(1);
+		expect(horizon.via.get("A.md")).toBe("B.md");
+	});
+
+	it("takes a note the focus links to out of the prefetch ring when it links back", () => {
+		const mutual = noteAdjacency({ "B.md": { "C.md": 1 }, "C.md": { "B.md": 1 } });
+		const horizon = withBacklinkers(computeHorizon(mutual, "B.md", 0, false), mutual);
+		expect([...horizon.loaded].sort()).toEqual(["B.md", "C.md"]);
+		expect([...horizon.prefetch]).toEqual([]);
+	});
+
+	it("walks backward from the focus only, not from an embedded note", () => {
+		const links = noteAdjacency({ ...LINKS, "F.md": { "C.md": 1 } });
+		const base = withEmbedded(computeHorizon(links, "B.md", 0, false), new Map([["B.md", 0], ["C.md", 1]]), new Map([["C.md", "B.md"]]));
+		const horizon = withBacklinkers(base, links);
+		expect([...horizon.loaded].sort()).toEqual(["A.md", "B.md", "C.md", "D.md"]);
 	});
 });

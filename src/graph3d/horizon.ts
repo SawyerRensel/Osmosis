@@ -108,6 +108,28 @@ export function withEmbedded(base: Horizon, hops: ReadonlyMap<string, number>, v
 	return { focus: base.focus, hops: allHops, loaded, prefetch, via: allVia };
 }
 
+/**
+ * Depth 0 with Backlinks on: also load the notes that link to the focus note
+ * ("what links here"), one backward hop from the focus only (not from the notes
+ * it embeds). They load whole, as at depth 1, one hop from the focus. A note
+ * already loaded (embedded) stays as it is, so none is added twice and an
+ * embed's section is not widened; one in the prefetch ring moves out of it.
+ */
+export function withBacklinkers(base: Horizon, adjacency: NoteAdjacency): Horizon {
+	const loaded = new Set(base.loaded);
+	const prefetch = new Set(base.prefetch);
+	const hops = new Map(base.hops);
+	const via = new Map(base.via);
+	for (const path of adjacency.backward.get(base.focus) ?? []) {
+		if (loaded.has(path)) continue;
+		loaded.add(path);
+		prefetch.delete(path);
+		hops.set(path, 1);
+		via.set(path, base.focus);
+	}
+	return { focus: base.focus, hops, loaded, prefetch, via };
+}
+
 /** What changes when the loaded set moves from `previous` to `next`. */
 export function diffLoaded(previous: ReadonlySet<string>, next: ReadonlySet<string>): LoadedDiff {
 	return {
