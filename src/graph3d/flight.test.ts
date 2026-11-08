@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flightPose, glidePose, startFlight, startTrip, tripDuration, tripEnd, tripPose, TRIP_MAX_MS, TRIP_MIN_MS, type Vec3 } from "./flight";
+import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripDuration, tripEnd, tripPose, TRIP_MAX_MS, TRIP_MIN_MS, type Vec3 } from "./flight";
 
 const DURATION = 1000;
 
@@ -171,5 +171,18 @@ describe("trip", () => {
 		const pose = tripPose(trip, from, from, trip.duration);
 		expectNear(pose.target, from);
 		expect(Number.isFinite(pose.position.x)).toBe(true);
+	});
+});
+
+describe("shiftGlide", () => {
+	it("moves both ends with the node, so the pose at any moment keeps its offset", () => {
+		const glide = { from: { position: { x: 0, y: 0, z: 100 }, target: { x: 0, y: 0, z: 0 } }, to: { position: { x: 10, y: 0, z: 100 }, target: { x: 10, y: 0, z: 0 } }, start: 0 };
+		const move = { x: 3, y: -4, z: 5 };
+		const shifted = shiftGlide(glide, move);
+		expect(shifted.start).toBe(0);
+		const [a, b] = [glidePose(glide, 100, DURATION), glidePose(shifted, 100, DURATION)];
+		expect(b.position.x - a.position.x).toBeCloseTo(3);
+		expect(b.position.y - a.position.y).toBeCloseTo(-4);
+		expect(b.target.z - a.target.z).toBeCloseTo(5);
 	});
 });

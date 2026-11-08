@@ -150,6 +150,20 @@ export function glidePose(glide: Glide, now: number, duration: number): FlightPo
 	return { position: lerp(glide.from.position, glide.to.position, eased), target: lerp(glide.from.target, glide.to.target, eased), done: t >= 1 };
 }
 
+/**
+ * `glide` carried along by `move`: the node it shows moved while it was under
+ * way (a re-settle after a structural edit), so both ends move with it and the
+ * camera keeps its offset to the node.
+ */
+export function shiftGlide(glide: Glide, move: Vec3): Glide {
+	const add = (a: Vec3): Vec3 => ({ x: a.x + move.x, y: a.y + move.y, z: a.z + move.z });
+	return {
+		from: { position: add(glide.from.position), target: add(glide.from.target) },
+		to: { position: add(glide.to.position), target: add(glide.to.target) },
+		start: glide.start,
+	};
+}
+
 const easeOutQuad = (t: number): number => t * (2 - t);
 
 function lerp(a: Vec3, b: Vec3, t: number): Vec3 {

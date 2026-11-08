@@ -13,6 +13,7 @@ import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
+import { outlineChanged } from "../graph3d/outline";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -138,6 +139,8 @@ export class Graph3DView extends ItemView {
 	private lastEditPath: string | null = null;
 	/** Lines an edit just changed, for the next reload to keep in place: each is at `start` in its note now, and `from` is the node it was (a new line has none); the first is selected again. */
 	private edited: { path: string; start: number; from?: string }[] = [];
+	/** An edit made in this view (or its undo or redo) was written: the reload that shows it re-settles the loaded nodes if it changed an outline (`outlineChanged`). */
+	private editLanded = false;
 	/** A structural edit made a new empty line, which the next reload opens the editor on once it is in the scene. */
 	private pendingEdit: { path: string; start: number } | null = null;
 	/** A structural edit left no line to select (a delete under the root): the next reload selects this node, the note's core. */
@@ -590,6 +593,7 @@ export class Graph3DView extends ItemView {
 				this.edited = [{ path: focused.path, start, from: focused.id }];
 			}
 			this.lastEditPath = key;
+			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
 			console.error("Osmosis: 3D graph undo failed", error);
@@ -635,6 +639,7 @@ export class Graph3DView extends ItemView {
 		await this.edits.write(file, content);
 		// Marked only now, so a reload that was already under way can't take it.
 		this.edited = edited;
+		this.editLanded = true;
 		then?.();
 		void this.reload();
 	}
@@ -797,6 +802,7 @@ export class Graph3DView extends ItemView {
 			}
 			// Marked only now, so a reload that was already under way can't take it.
 			this.edited = edited;
+			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not link those lines", error);
@@ -907,6 +913,7 @@ export class Graph3DView extends ItemView {
 			}
 			// Marked only now, so a reload that was already under way can't take it.
 			this.edited = start === null ? [] : [{ path: destFile.path, start }];
+			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not move that line", error);
@@ -1367,6 +1374,9 @@ export class Graph3DView extends ItemView {
 			{ contentOnly: this.depth === 0 },
 		);
 		const model = visibleModel(fullModel, edges);
+		// An edit that added, deleted, moved or re-levelled a line makes room for its new shape; rewording one does not.
+		const reshaped = this.editLanded && this.model !== null && outlineChanged(this.model, model);
+		this.editLanded = false;
 		this.horizon = horizon;
 		this.model = model;
 		this.fullModel = fullModel;
@@ -1395,6 +1405,8 @@ export class Graph3DView extends ItemView {
 			scene.flyTo(landing((id) => ids.has(id), focus, landOn), true);
 		} else if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.openPending(scene, model);
+		// After the new line is seeded beside its parent, so the camera tracks it from there.
+		if (reshaped) scene.reshape(true, true);
 		this.prefetch(horizon.prefetch, seq);
 	}
 

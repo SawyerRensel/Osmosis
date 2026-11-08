@@ -40,7 +40,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { flightPose, glidePose, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
+import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
@@ -362,8 +362,14 @@ export class Graph3DScene {
 	private flight: { node: EngineNode; flight: Flight; duration: number } | null = null;
 	/** A ride along an edge toward `to` (follow a link), aimed at the edge's two ends wherever they are now. */
 	private ride: { from: EngineNode; to: EngineNode; trip: Trip } | null = null;
-	/** After a flight, the camera moves with its node until the node settles, or the user takes over. */
-	private follow: { node: EngineNode; at: Vec3 } | null = null;
+	/**
+	 * After a flight, the camera moves with its node until the node settles, or
+	 * the user takes over. A `track` (a re-settle after a structural edit) is
+	 * not given up when the user orbits or zooms: their moves add to it.
+	 */
+	private follow: { node: EngineNode; at: Vec3; track?: boolean } | null = null;
+	/** A structural edit's re-settle is under way (`reshape`): until it cools, an editor opening doesn't pin its line, and the camera tracks the line instead. */
+	private editSettling = false;
 	/** An edit's turn (desktop) or pan (phone) under way, to a fixed pose. */
 	private glide: Glide | null = null;
 	private ticksSinceData = 0;
@@ -546,7 +552,11 @@ export class Graph3DScene {
 
 		const ids = new Set(this.nodes.map((node) => node.id));
 		if (this.flight !== null && !ids.has(this.flight.node.id)) this.flight = null;
-		if (this.follow !== null && (!ids.has(this.follow.node.id) || this.follow.node.departing)) this.follow = null;
+		if (this.follow !== null && (!ids.has(this.follow.node.id) || this.follow.node.departing)) {
+			// A save gives the tracked line a new ID: track its successor, which the view has just focused (`Graph3DView.place`).
+			const next = this.follow.track === true ? this.nodes.find((n) => n.id === this.focusId && !n.departing) : undefined;
+			this.follow = next !== undefined && placed(next) ? { node: next, at: { x: next.x, y: next.y, z: next.z }, track: true } : null;
+		}
 		if (this.ride !== null && (!ids.has(this.ride.from.id) || !ids.has(this.ride.to.id))) this.ride = null;
 		const lingering = this.links.filter((link) => {
 			const [source, target] = [link.source as EngineNode, link.target as EngineNode];
@@ -690,6 +700,7 @@ export class Graph3DScene {
 
 	/** The simulation has cooled: pin whatever was still free where it stopped. */
 	private settle(): void {
+		this.editSettling = false;
 		for (const node of this.nodes) {
 			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
 			if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
@@ -768,30 +779,41 @@ export class Graph3DScene {
 
 	/**
 	 * The Hierarchy ⟷ organic slider, the flatten slider, or a toggle that
-	 * changes which links pull moved: let every loaded node go and re-settle
-	 * under the new link weights or flat branches, so the change shows at once.
+	 * changes which links pull moved, or a structural edit changed an outline
+	 * (`edit`): let every loaded node go and re-settle under the new link
+	 * weights, flat branches or shape, so the change shows at once.
 	 *
-	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), three in
-	 * all: the force slider (2026-11-01), the flatten slider (2026-11-03), and
-	 * the edge-kind and Links pull toggles (2026-11-07; the Hierarchy edge
-	 * toggle is not one, it only hides the drawing). It happens only here, in
-	 * answer to the user changing one of those. Hops, edits and data updates
-	 * still keep settled nodes where they are. The line being edited stays
-	 * pinned. The camera rides along with the focused node until the layout
-	 * cools and `settle` pins everything again, unless `followFocus` is off
-	 * (the focused plate is leaving: the camera stays where it is).
+	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), four in
+	 * all: the force slider (2026-11-01), the flatten slider (2026-11-03), the
+	 * edge-kind and Links pull toggles (2026-11-07; the Hierarchy edge toggle is
+	 * not one, it only hides the drawing), and structural edits (2026-11-08: a
+	 * line added, deleted, moved or re-levelled, judged by `outlineChanged`;
+	 * rewording a line is not one). It happens only here, in answer to the user
+	 * doing one of those. Hops, text edits and data updates still keep settled
+	 * nodes where they are.
+	 *
+	 * For the sliders and toggles the line being edited stays pinned, and the
+	 * camera rides along with the focused node until the layout cools and
+	 * `settle` pins everything again, unless `followFocus` is off (the focused
+	 * plate is leaving: the camera stays where it is). After an edit the edited
+	 * line is let go too, so it is laid out clear of its neighbours (and in its
+	 * flat slice) rather than left where it was seeded. The camera tracks the
+	 * focused node, the edited line, which the user's orbit and zoom don't
+	 * break, so it stays in view however far the re-settle carries it; an
+	 * editor that opens meanwhile moves the track onto its line (`setEditing`).
 	 */
-	reshape(followFocus = true): void {
+	reshape(followFocus = true, edit = false): void {
 		let any = false;
 		for (const node of this.nodes) {
-			if (node.departing || node.id === this.editingId) continue;
+			if (node.departing || (!edit && node.id === this.editingId)) continue;
 			node.fx = node.fy = node.fz = undefined;
 			any = true;
 		}
 		if (!any) return;
-		const focus = this.nodes.find((node) => node.id === this.focusId);
-		if (followFocus && this.flight === null && focus?.x !== undefined && focus.y !== undefined && focus.z !== undefined) {
-			this.follow = { node: focus, at: { x: focus.x, y: focus.y, z: focus.z } };
+		if (edit) this.editSettling = true;
+		const focus = this.nodes.find((node) => node.id === this.focusId && !node.departing);
+		if (followFocus && this.flight === null && focus !== undefined && placed(focus)) {
+			this.follow = { node: focus, at: { x: focus.x, y: focus.y, z: focus.z }, track: edit };
 		}
 		// Recomputes the many-body force for nodes that are all free again, and reheats the simulation.
 		this.pushData();
@@ -904,7 +926,9 @@ export class Graph3DScene {
 	 *
 	 * The node is pinned where it is, so a layout still settling can't carry it
 	 * off while it is edited, and the edit's own reload puts its successor on
-	 * the same spot (`Graph3DView.place`). A flight elsewhere stops.
+	 * the same spot (`Graph3DView.place`). A flight elsewhere stops. While a
+	 * structural edit's re-settle is under way, it is left free to find its
+	 * place, and the camera tracks it instead (see `reshape`).
 	 *
 	 * The camera trusts the view (Sawyer, 2026-11-03): it never flies or zooms
 	 * for an edit, however small the text. On desktop it stays put unless the
@@ -922,7 +946,8 @@ export class Graph3DScene {
 		this.editingId = node?.id ?? null;
 		this.near.setEditing(node ?? null, editor);
 		if (node?.x === undefined || node.y === undefined || node.z === undefined) return true;
-		if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
+		if (this.editSettling && node.fx === undefined) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, track: true };
+		else if (node.fx === undefined) [node.fx, node.fy, node.fz] = [node.x, node.y, node.z];
 		this.showEdited(node, { x: node.x, y: node.y, z: node.z }, centre);
 		return true;
 	}
@@ -985,6 +1010,8 @@ export class Graph3DScene {
 		const inset = this.plateInset(node, at, pose);
 		const seed = seedBeside(pose, at, distance, others, inset);
 		[node.x, node.y, node.z] = [seed.x, seed.y, seed.z];
+		// Seeding is a jump, not a move to follow.
+		if (this.follow?.node === node) this.follow.at = { ...seed };
 		this.dirty = true;
 	}
 
@@ -1035,8 +1062,10 @@ export class Graph3DScene {
 	private steerFlight(now: number): void {
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
-		const glide = this.glide;
-		if (glide !== null) {
+		if (this.glide !== null) {
+			// An edit's turn while its line is tracked: the turn moves with the line.
+			const move = this.follow?.track === true ? this.followMove() : null;
+			const glide = move === null ? this.glide : (this.glide = shiftGlide(this.glide, move));
 			const pose = glidePose(glide, now, GLIDE_MS);
 			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
 			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
@@ -1079,24 +1108,38 @@ export class Graph3DScene {
 			}
 			return;
 		}
-		const follow = this.follow;
-		if (follow === null) return;
-		const { node } = follow;
-		if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) {
-			this.follow = null;
-			return;
-		}
-		const move = new Vector3(node.x - follow.at.x, node.y - follow.at.y, node.z - follow.at.z);
+		const move = this.followMove();
+		if (move === null) return;
 		camera.position.add(move);
 		controls.target.add(move);
 		controls.update();
-		follow.at = { x: node.x, y: node.y, z: node.z };
-		if (node.fx !== undefined) this.follow = null;
+		// A track goes on through the user's orbit (see `reshape`): what they pressed moves with it, so they keep orbiting it.
+		for (const pivot of new Set([this.drag?.pivot, this.orbitCoast?.drag.pivot])) pivot?.add(move);
 	}
 
-	/** The user moved the view: a flight or follow under way gives way. */
+	/**
+	 * How far the followed node moved since the last frame, or null when there
+	 * is no follow. The follow ends once the node is pinned (the layout has
+	 * cooled) or is gone.
+	 */
+	private followMove(): Vector3 | null {
+		const follow = this.follow;
+		if (follow === null) return null;
+		const { node } = follow;
+		if (node.departing || !placed(node)) {
+			this.follow = null;
+			return null;
+		}
+		const move = new Vector3(node.x - follow.at.x, node.y - follow.at.y, node.z - follow.at.z);
+		follow.at = { x: node.x, y: node.y, z: node.z };
+		if (node.fx !== undefined) this.follow = null;
+		return move;
+	}
+
+	/** The user moved the view: a flight or follow under way gives way. A structural edit's track goes on (see `reshape`). */
 	private cancelFlight(): void {
-		this.flight = this.follow = this.glide = this.ride = null;
+		this.flight = this.glide = this.ride = null;
+		if (this.follow?.track !== true) this.follow = null;
 	}
 
 	/**
