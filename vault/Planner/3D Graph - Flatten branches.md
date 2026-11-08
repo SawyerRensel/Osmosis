@@ -16,7 +16,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-03T17:35:29.000Z"
-date_modified: "2026-11-07T18:10:00.000Z"
+date_modified: "2026-11-08T20:16:56.000Z"
 date_start_scheduled: "2026-11-04T02:43:45.000Z"
 date_start_actual: "2026-11-04T02:43:45.000Z"
 date_end_scheduled:
@@ -288,3 +288,53 @@ Within budget (≤ 20 ms). Every flat line lies in its slice's plane through the
 10. **2D⟷3D:** lift off from the mind map of `Galley Handbook.md` and land back on the focused line.
 
 **Not verified.** Nothing has run in Obsidian. Unseen: how the ring reads in a real note, whether a note with one very large branch squeezes its small neighbours too close to the core (the clash pushes them outward or up and down, never across), the camera follow while dragging, the ramp positions' cost after this change, and the real fps (numbers above are headless, with estimated plate sizes). Lint, the full suite (82 files, 2,511 tests) and the build pass.
+
+### Feedback round 3 (2026-11-08): ring start
+
+**Sawyer's feedback:** "Radial slice branch order should generally follow order in Note the more that the view is flattened."
+
+**The grill outcome.** The order already *is* document order (`ringDirections` walks the branches in document order). What was missing: from the outside you cannot tell **where the ring starts or which way it runs**, because the first slice sat at world +x, which has no meaning on screen.
+
+**The spec** (settled). When a note **becomes the focus note**, its ring's first slice points toward the camera (the horizontal part of the pivot-to-camera direction), and the rest follow clockwise seen from above. The phase is then fixed until the next refocus: never per tick, never on camera moves, never on edits. If the camera is straight above or below the pivot, the phase falls back to world +x.
+
+**Clockwise, verified.** The engine is three.js, y up. Seen from above (looking down -y with camera up -z) the right-hand axis is +x and +z runs down the screen, so going from +x towards +z is clockwise. `ringDirections` already advanced its angle (atan2(z, x)) from +x towards +z, so it **already ran clockwise**; only the start moved. A unit test pins the direction (cross product sign).
+
+**The change.**
+- `ringDirections(sizes, phase = 0)`: the first slice at angle `phase`, the rest as before. A pure angle, so it is unit-tested directly.
+- `facingPhase(camera, pivot)`: atan2 of the horizontal part of camera minus pivot; 0 (+x) when that is ~0.
+- `FlatLayouts.branches(nodes, flat, sizeOf, phaseOf)`: `phaseOf(core)` gives the note's phase for both its ring and its sub-slice ring (the two rings share a phase, so the ramp still eases between two rings that start at the same place).
+- `Graph3DScene` keeps `ringPhases` (core ID to phase). `capturePhases` runs in `pushData`: a core with no phase gets one from the camera at that moment; `faceNote(id)` renews one. Phases of notes no longer loaded are dropped.
+- `Graph3DView.faceFocus`: set on open and by every focus change (`setFocus`: F / "Focus this note", panel links to an unloaded note, Follow active note; `navigate` for back/forward, which ends in `setFocus`; `setState` with a different `focus`). `reload` consumes it just before `scene.setData`, so edits and ordinary reloads leave the phase alone, and a reload queued behind the editor still faces when it runs.
+
+**Decisions worth remembering.**
+- **Other notes: captured when first loaded, then kept.** A refocus renews only the new focus note's phase. Alternatives rejected: renewing every loaded note on a refocus would rotate rings that are already settled and being read (and settled plates of other notes must not move); a global phase from the focus note would make notes at the far side of the graph face away from the camera. A note that leaves the loaded area and comes back is captured again (its old phase is dropped).
+- **Measured from the camera at refocus time, not the flight's destination.** `startFlight` keeps the camera's viewing direction (it ends `distance` from the node, on the side the camera is on), so the camera's side of the core at refocus time is the side the flight ends on. Using the camera now, rather than waiting for the flight, means the phase is fixed before the layout settles, so nothing rotates mid-flight. The cost: if the user orbits during the flight, the ring faces where the camera was, not where it ended.
+- **A core the engine has not placed yet** (a note newly loaded without a seed position) is measured from the orbit target, i.e. where the camera looks.
+- **2D/3D lift-off:** the camera stands over the map on the +z side, so the focus note's phase is `facingPhase(+z, origin)`, not the stale 3D camera's.
+- **Landing on a line** (subpath, back/forward to a plate) still faces the camera as seen from the note's core, not from the line: the ring belongs to the note.
+- **Supersedes round 2's "Phase: first slice at world +x".** That decision was made so the ring never depends on the camera. It still never depends on the camera *moving*; it depends on where the camera was once, when the note became the focus.
+- **No per-tick cost change.** The phase is read in `pushData` (per data push, as `branches` already is), not in the tick; nothing was measured.
+
+**Existing tests.** None needed changing: `ringDirections(sizes)` and `branches(...)` without a `phaseOf` default to phase 0, which is the old +x start, so the old ring tests still describe the default.
+
+**Surface map.**
+
+| File | Change |
+|---|---|
+| `src/graph3d/flatten.ts` | `ringDirections` takes a phase; `facingPhase`; `FlatLayouts.branches` takes `phaseOf` |
+| `src/graph3d/flatten.test.ts` | Phase start, clockwise order, stability, `facingPhase` (including straight above and below), sub-slice ring shares the phase |
+| `src/views/Graph3DScene.ts` | `ringPhases`, `pendingFaces`, `capturePhases`, `faceNote`; `pushData` passes `phaseOf` |
+| `src/views/Graph3DView.ts` | `faceFocus` set on open, `setFocus`, and `setState` to a new focus; consumed in `reload` before `setData` |
+
+**Fixture.** No new one: `Galley Handbook.md` and `Sailing Basics.md` in `vault/tests/graph3d/`.
+
+**Manual test (Sawyer).** Reload Obsidian (Ctrl+R) first.
+1. Open `Galley Handbook.md`, "Open 3D graph for current note", Flatten at its far right (1.00). Once the camera has landed, the **first heading's list stands toward you**, and the rest follow **clockwise as seen from above** in document order (look straight down to check). Same for `Sailing Basics.md`.
+2. **Orbit** round the note, zoom, fly: the ring does not rotate, however you move.
+3. **Refocus from another side:** orbit to a different side of the graph, then hop to another note (F on a plate, or a panel link, at depth 1 or more). The new focus note's ring starts facing the camera as it arrives; the note you left keeps its ring as it was.
+4. **Back** (the back button or its key): the note you return to is refocused, so its ring starts facing the camera on arrival, which may be a different side than before. Forward likewise.
+5. **Slider sweep** from 0 to 1 and back: still continuous, no jump; the start slice stays where it was.
+6. **Edit** a line in Galley Handbook (pencil, Ctrl+Enter), and add a line: the ring does not rotate (restore the fixture from `e2e/fixtures/graph3d/` and reload afterwards).
+7. Open the 3D graph while looking straight down on the note (orbit to the top, then refocus): the first slice points along +x.
+
+**Not verified.** Nothing has run in Obsidian. Unseen: whether a note placed by the engine mid-flight shows its first slice well facing when the flight ends (the phase uses the camera at refocus time, not at arrival), and how the ring reads for notes first loaded at depth 2+ from the camera at that moment. Lint, the full suite (84 files, 2,540 tests) and the build pass.
