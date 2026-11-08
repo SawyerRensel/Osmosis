@@ -20,6 +20,10 @@ _Avoid_: Current note, root
 Making another note the focus note on purpose: "Focus this note" in a plate's menu, the F key on the selected plate, or a panel link to a note that is not loaded. The loaded area recentres on it.
 _Avoid_: Jump, navigate
 
+**Visit**:
+Arriving at a plate by travel: a plate click, following a link, a panel link to a loaded plate, or a study stop. Camera only. Each visit to another plate, and each hop, is a step the tab's back and forward buttons walk through.
+_Avoid_: Hop (a hop changes the focus note)
+
 **Follow a link**:
 Clicking an edge to travel slowly along it to the end away from the focused node. Camera only: arriving does not change the focus note, and it is not a click on the plate, so a hidden study card stays hidden.
 _Avoid_: Edge flight, link jump

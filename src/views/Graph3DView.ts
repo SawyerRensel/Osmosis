@@ -9,6 +9,7 @@ import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, 
 import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { refocusPath } from "../graph3d/refocus";
+import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import { computeHorizon, noteAdjacency, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
@@ -123,7 +124,11 @@ export class Graph3DView extends ItemView {
 	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
 	private saving = 0;
 	/** A reload that was asked for while the editor was open or saving, run when it is done. */
-	private queuedReload: { flyToFocus: boolean; subpath: string } | null = null;
+	private queuedReload: { flyToFocus: boolean; subpath: string; landOn: string | null } | null = null;
+	/** The first `setState` has run: later ones are steps of the tab's back/forward history (see `navigate`). */
+	private placed = false;
+	/** The step `setState` took last, for `navigate` to wait on; null when the leaf was busy and never called it. */
+	private arrival: Promise<void> | null = null;
 	/** The note the write in progress is filed under in the history (see `commitEdit`). */
 	private editOwner: string | null = null;
 	/** The note last edited, so undo still finds it after the edited line's ID, and the focus with it, changed. */
@@ -240,10 +245,21 @@ export class Graph3DView extends ItemView {
 		state.depth = this.depth;
 		state.backlinks = this.backlinks;
 		state.follow = this.follow;
+		// The plate the camera is at, so the tab's back/forward entries tell visits within one focus note apart (see `navigate`).
+		state.node = this.scene?.focusedNode()?.id ?? null;
 		return state;
 	}
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
+		// Once open, a new state is a step through the tab's history: a visit or refocus of ours, or back/forward. Depth, backlinks and follow stay as they are.
+		if (this.placed) {
+			const step = stepTo(this.here(), readPlace(state));
+			if (isEntry(step)) result.history = true;
+			// Not awaited: the leaf stays busy until this returns, and drops any step asked for meanwhile.
+			this.arrival = this.travel(step, typeof state?.subpath === "string" ? state.subpath : "", state?.land !== false);
+			return;
+		}
+		this.placed = true;
 		if (typeof state?.focus === "string") this.focusPath = state.focus;
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(0, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
@@ -262,7 +278,8 @@ export class Graph3DView extends ItemView {
 		this.updateHeader();
 		await super.setState(state, result);
 		// A heading or block to land on, from a Mod-click on a link in another 3D graph. Not kept in getState.
-		await this.reload(true, typeof state?.subpath === "string" ? state.subpath : "");
+		// The plate the camera was at, when the tab's forward (or a restored workspace) brings this view back.
+		await this.reload(true, typeof state?.subpath === "string" ? state.subpath : "", readPlace(state).node);
 	}
 
 	async onOpen(): Promise<void> {
@@ -681,7 +698,7 @@ export class Graph3DView extends ItemView {
 			this.saving--;
 			const queued = this.queuedReload;
 			this.queuedReload = null;
-			if (queued !== null) void this.reload(queued.flyToFocus, queued.subpath);
+			if (queued !== null) void this.reload(queued.flyToFocus, queued.subpath, queued.landOn);
 		}
 	}
 
@@ -1084,7 +1101,7 @@ export class Graph3DView extends ItemView {
 			this.visit(node);
 			return;
 		}
-		await this.setFocus(path, false);
+		await this.navigate({ focus: path, node: null }, "", false);
 		const landed = this.model === null ? null : find(this.model);
 		if (landed !== null) this.scene?.flyTo(landed, true);
 	}
@@ -1118,10 +1135,10 @@ export class Graph3DView extends ItemView {
 	 * Travel, camera only: fly to `node` and select it. The focus note, and so
 	 * the loaded area, stays as it is, whatever note the node is in. Plate
 	 * clicks, edge rides' arrivals, panel links and study stops within the
-	 * loaded area all come here; it is where a camera history would record a visit.
+	 * loaded area all come here. A step in the tab's back/forward history.
 	 */
 	private visit(node: GraphNode): void {
-		this.scene?.flyTo(node.id);
+		void this.navigate({ focus: this.focusPath, node: node.id });
 	}
 
 	/**
@@ -1130,9 +1147,48 @@ export class Graph3DView extends ItemView {
 	 * Tags, attachments and ghosts belong to no note, and are never hops.
 	 */
 	private hop(node: GraphNode): void {
-		const path = refocusPath(node, this.focusPath);
-		this.scene?.flyTo(node.id);
-		if (path !== null) void this.setFocus(path, false);
+		void this.navigate({ focus: refocusPath(node, this.focusPath) ?? this.focusPath, node: node.id });
+	}
+
+	/** Where the view stands: its focus note and the plate the camera is at. */
+	private here(): Place {
+		return { focus: this.focusPath, node: this.scene?.focusedNode()?.id ?? null };
+	}
+
+	/**
+	 * Go to `place` as a step in the tab's back/forward history. Core keeps the
+	 * place being left when `setState` reports a step (`result.history`), and
+	 * back/forward hand an old place to `setState` without recording one; a new
+	 * step after going back clears the forward entries. A `subpath` lands on a
+	 * heading or block when `place` has no plate; without `land`, a refocus
+	 * leaves the camera where it is. While the leaf is busy (still opening,
+	 * say) it drops the call, so the step is taken without an entry.
+	 */
+	private async navigate(place: Place, subpath = "", land = true): Promise<void> {
+		this.arrival = null;
+		await this.leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { ...this.getState(), focus: place.focus, node: place.node, subpath, land } });
+		this.arrival ??= this.travel(stepTo(this.here(), place), subpath, land);
+		await this.arrival;
+	}
+
+	/**
+	 * Take a step: fly to another plate (or, if an edit deleted it, its note's
+	 * root), or make another note the focus note and land on the step's plate.
+	 * A plate loaded now is flown to at once, so the camera follows it while
+	 * the reload re-heats the layout, as a hop always has.
+	 */
+	private async travel(step: Step, subpath: string, land: boolean): Promise<void> {
+		const scene = this.scene;
+		if (step.kind === "none" || scene === null) return;
+		const loaded = (id: string): boolean => this.model?.nodes.some((node) => node.id === id) ?? false;
+		if (step.kind === "fly") {
+			if (this.focusPath !== null) scene.flyTo(landing(loaded, this.focusPath, step.node));
+			return;
+		}
+		const node = step.node;
+		const flown = node !== null && loaded(node);
+		if (flown) scene.flyTo(node);
+		await this.setFocus(step.focus, land && node === null, subpath, flown ? null : node);
 	}
 
 	/**
@@ -1176,7 +1232,7 @@ export class Graph3DView extends ItemView {
 		const id = this.model === null ? null : linkTargetNode(this.model, file.path, subpath);
 		const node = id === null ? undefined : this.model?.nodes.find((n) => n.id === id);
 		if (node !== undefined) this.visit(node);
-		else void this.setFocus(file.path, true, subpath);
+		else void this.navigate({ focus: file.path, node: null }, subpath);
 	}
 
 	/**
@@ -1209,15 +1265,16 @@ export class Graph3DView extends ItemView {
 
 	/**
 	 * Make `path` the focus note and reload the area around it; every focus
-	 * change after the view opens comes here, where a history would record it.
-	 * With `flyToFocus`, fly to the new focus note's core, or to the line
-	 * `subpath` names in it.
+	 * change after the view opens comes here. Steps of the tab's history come
+	 * through `navigate`; Follow active note calls this directly and records
+	 * none. With `flyToFocus`, fly to the new focus note's core, or to the
+	 * line `subpath` names in it; `landOn` is a plate to land on instead.
 	 */
-	private setFocus(path: string, flyToFocus: boolean, subpath = ""): Promise<void> {
+	private setFocus(path: string, flyToFocus: boolean, subpath = "", landOn: string | null = null): Promise<void> {
 		this.focusPath = path;
 		this.updateHeader();
 		this.app.workspace.requestSaveLayout();
-		return this.reload(flyToFocus, subpath);
+		return this.reload(flyToFocus, subpath, landOn);
 	}
 
 	private updateHeader(): void {
@@ -1230,14 +1287,19 @@ export class Graph3DView extends ItemView {
 	 * `flyToFocus`, the camera then stands at the focus note's core: the
 	 * engine's default framing is far enough out that the mist hides most of
 	 * the loaded area. A `subpath` (a heading or block, without its `#`) lands
-	 * on that line instead.
+	 * on that line instead. A `landOn` plate (a back/forward step's) is landed
+	 * on whatever `flyToFocus` says, or its note's root if an edit deleted it.
 	 */
-	private async reload(flyToFocus = false, subpath = ""): Promise<void> {
+	private async reload(flyToFocus = false, subpath = "", landOn: string | null = null): Promise<void> {
 		const scene = this.scene;
 		if (scene === null) return;
 		// A reload can drop the node being edited, or build the edited line's successor before the save marks where it goes: wait for the editor to close and its save to land.
 		if (this.editor.isOpen || this.saving > 0) {
-			this.queuedReload = { flyToFocus: flyToFocus || (this.queuedReload?.flyToFocus ?? false), subpath: subpath || (this.queuedReload?.subpath ?? "") };
+			this.queuedReload = {
+				flyToFocus: flyToFocus || (this.queuedReload?.flyToFocus ?? false),
+				subpath: subpath || (this.queuedReload?.subpath ?? ""),
+				landOn: landOn ?? this.queuedReload?.landOn ?? null,
+			};
 			return;
 		}
 		const seq = ++this.loadSeq;
@@ -1309,6 +1371,9 @@ export class Graph3DView extends ItemView {
 			const focusId = liftOffFocus(model, liftOff) ?? noteNodeId(focus);
 			scene.setFocusId(focusId);
 			scene.standOver({ x: 0, y: 0, z: 0 }, liftOffFrame(liftOff, scene.linePlateHeight), focusId);
+		} else if (landOn !== null) {
+			const ids = new Set(model.nodes.map((node) => node.id));
+			scene.flyTo(landing((id) => ids.has(id), focus, landOn), true);
 		} else if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.openPending(scene, model);
 		this.prefetch(horizon.prefetch, seq);
