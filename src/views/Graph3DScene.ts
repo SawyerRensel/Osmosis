@@ -40,6 +40,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
+import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
@@ -376,10 +377,10 @@ export class Graph3DScene {
 	private controlSettings: SceneControls;
 	private drag: RotateDrag | null = null;
 	private pinch: Pinch | null = null;
-	/** Edit mode is on: a press on a line starts a link drag instead of an orbit. */
+	/** Edit mode is on: Alt+drag from a line (or a touch drag from one) pulls out a link; a plain mouse drag still orbits. */
 	private linkMode = false;
 	private linkDrag: LinkDrag | null = null;
-	/** A right-button press in edit mode that has not moved past the slop: released, it opens the context menu. (Moving it is OrbitControls' pan.) */
+	/** A right-button press that has not moved past the shared slop (`movedPastSlop`): released, it opens the context menu. (Moving it is OrbitControls' pan.) */
 	private menuPress: { pointerId: number; x: number; y: number } | null = null;
 	/** A finger down on a line in edit mode, waiting out `LONG_PRESS_MS` to open the context menu. */
 	private longPress: { pointerId: number; x: number; y: number; timer: number } | null = null;
@@ -438,6 +439,8 @@ export class Graph3DScene {
 		const canvas = this.graph.renderer().domElement;
 		canvas.addEventListener("pointerdown", this.onPointerDown);
 		container.addEventListener("mousedown", this.onMouseDown);
+		// Capture phase: Shift+drag must be ours before OrbitControls, on the canvas below, pans with it.
+		container.addEventListener("pointerdown", this.onPointerDownCapture, { capture: true });
 		container.addEventListener("contextmenu", this.onContextMenuEvent);
 		window.addEventListener("pointermove", this.onPointerMove);
 		window.addEventListener("pointerup", this.onPointerUp);
@@ -1166,6 +1169,7 @@ export class Graph3DScene {
 		window.cancelAnimationFrame(this.frame);
 		this.graph.renderer().domElement.removeEventListener("pointerdown", this.onPointerDown);
 		this.container.removeEventListener("mousedown", this.onMouseDown);
+		this.container.removeEventListener("pointerdown", this.onPointerDownCapture, { capture: true });
 		this.container.removeEventListener("contextmenu", this.onContextMenuEvent);
 		this.clearLongPress();
 		window.removeEventListener("pointermove", this.onPointerMove);
@@ -1250,12 +1254,46 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * A left-button or one-finger drag rotates the view, and two fingers pinch
-	 * and pan. Shift, Ctrl or Cmd with the left button is left to
-	 * OrbitControls, which pans.
+	 * Shift + left button is reserved for box select. OrbitControls pans on it,
+	 * so it is taken here, before the canvas, and kept from OrbitControls.
+	 */
+	private readonly onPointerDownCapture = (e: PointerEvent): void => {
+		if (e.target !== this.graph.renderer().domElement || this.gestureOf(e) !== "boxSelect") return;
+		e.stopPropagation();
+		this.onPointerDown(e);
+	};
+
+	/** What the press `e` starts in the current mode (see `gestureFor`). */
+	private gestureOf(e: PointerEvent): PointerGesture {
+		return gestureFor({
+			button: e.button,
+			pointerType: e.pointerType,
+			shiftKey: e.shiftKey,
+			altKey: e.altKey,
+			ctrlKey: e.ctrlKey,
+			metaKey: e.metaKey,
+			editMode: this.linkMode,
+		});
+	}
+
+	/**
+	 * Box select, begun by Shift + left press. Reserved: the box-select ticket
+	 * fills this in. Until then Shift+drag does nothing (no orbit, no pan), and
+	 * the press is still a click candidate (`this.press`, set by the caller).
+	 */
+	private beginBoxSelect(_e: PointerEvent): void {
+		// Intentionally empty.
+	}
+
+	/**
+	 * A left-button or one-finger drag orbits the view, and two fingers pinch
+	 * and pan. Alt + drag from a line (edit mode) pulls out a link, Ctrl or Cmd
+	 * + drag pans (OrbitControls), Shift + drag is box select, and the right
+	 * button pans (OrbitControls) or, released in place, opens the plate menu.
 	 */
 	private readonly onPointerDown = (e: PointerEvent): void => {
 		const touch = e.pointerType === "touch";
+		const gesture = this.gestureOf(e);
 		this.cancelFlight();
 		if (this.touches.size === 0) {
 			// A finger on a coasting view stops it, and that is all it does:
@@ -1279,17 +1317,20 @@ export class Graph3DScene {
 				this.drag = this.press = null;
 				return;
 			}
-		} else if (e.button !== 0) {
-			if (e.button === 2 && this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+		} else if (gesture === "panOrMenu") {
+			if (this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
 			return;
-		} else if (e.shiftKey || e.ctrlKey || e.metaKey) {
+		} else if (gesture === "none") {
+			return;
+		} else if (gesture === "boxSelect" || gesture === "pan") {
 			// Still a press that may be a click: Mod-click on a link opens it.
 			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
+			if (gesture === "boxSelect") this.beginBoxSelect(e);
 			return;
 		}
 		this.samples = [];
-		// Edit mode: a press on a line pulls a link out of it. On empty space, or a note, tag or file, it still orbits.
-		const from = this.linkMode && !this.stoppedCoastOnDown && this.editingId === null ? this.pickedNode(e.clientX, e.clientY, touch) : null;
+		// A link gesture (Alt + drag in edit mode, or a finger there) on a line pulls a link out of it. On empty space, or a note, tag or file, it orbits.
+		const from = gesture === "link" && !this.stoppedCoastOnDown && this.editingId === null ? this.pickedNode(e.clientX, e.clientY, touch) : null;
 		if (from?.graph.kind === "line") {
 			this.drag = null;
 			this.linkDrag = { pointerId: e.pointerId, touch, from, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, active: false, over: null, overColor: null };
@@ -1330,7 +1371,7 @@ export class Graph3DScene {
 		const press = this.press;
 		if (press?.pointerId === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) this.press = null;
 		const menu = this.menuPress;
-		if (menu?.pointerId === e.pointerId && Math.hypot(e.clientX - menu.x, e.clientY - menu.y) > CLICK_SLOP_PX) this.menuPress = null;
+		if (menu?.pointerId === e.pointerId && movedPastSlop(e.clientX - menu.x, e.clientY - menu.y)) this.menuPress = null;
 		const hold = this.longPress;
 		if (hold?.pointerId === e.pointerId && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > CLICK_SLOP_PX) this.clearLongPress();
 		// The pointer cursor over a node is resolved once a frame, in tick().

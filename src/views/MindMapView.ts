@@ -61,6 +61,7 @@ import {
 	type Sample,
 } from "../mindmap-inertia";
 import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
+import { movedPastSlop } from "../pointer-gesture";
 import { ToolRibbon, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
@@ -187,6 +188,14 @@ export class MindMapView extends ItemView {
 	private zoom = 1;
 	private isPanning = false;
 	private panStart = { x: 0, y: 0 };
+	/**
+	 * A mouse right-button press, with the node under it. It pans the map when
+	 * dragged; released without moving past the shared slop, it opens the node
+	 * (or background) context menu on release.
+	 */
+	private contextPress: { nodeId: string | null } | null = null;
+	/** When the context menu last opened on release; the browser's own `contextmenu` event that follows at once (Windows) is not a second request. */
+	private contextOpenedAt = -Infinity;
 	private svg: SVGSVGElement | null = null;
 	/**
 	 * WKWebView strands composited `<foreignObject>` content when the SVG's
@@ -3556,6 +3565,18 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		this.contextPress = null;
+		// Right button (mouse or pen): pan, and open the context menu on release if it never moved. While a node is being edited the browser's own menu stays.
+		if (e.button === 2 && e.pointerType !== "touch" && !this.editingNodeId) {
+			this.contextPress = { nodeId: this.getClickedNodeId(e) };
+			this.isPanning = true;
+			this.panPending = true;
+			this.panStart = { x: e.clientX, y: e.clientY };
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
+
 		if (e.button !== 0 && e.button !== 1) return;
 
 		const nodeId = this.getClickedNodeId(e);
@@ -3774,7 +3795,8 @@ export class MindMapView extends ItemView {
 		if (this.panPending) {
 			const px = e.clientX - this.panStart.x;
 			const py = e.clientY - this.panStart.y;
-			if (!exceedsDragThreshold(px, py, e.pointerType)) {
+			const moved = this.contextPress !== null ? movedPastSlop(px, py) : exceedsDragThreshold(px, py, e.pointerType);
+			if (!moved) {
 				e.stopPropagation();
 				return;
 			}
@@ -3879,6 +3901,15 @@ export class MindMapView extends ItemView {
 
 		if (this.isDragging) {
 			void this.executeDrop();
+			return;
+		}
+
+		// A right-click that never moved: its menu opens now, on release. (A cancelled or left pointer opens nothing.)
+		const contextPress = this.contextPress;
+		this.contextPress = null;
+		if (contextPress !== null && e.type === "pointerup" && e.button === 2 && !this.panCommitted) {
+			this.contextOpenedAt = performance.now();
+			this.showNodeMenu(contextPress.nodeId, (menu) => menu.showAtMouseEvent(e));
 			return;
 		}
 
@@ -4303,6 +4334,7 @@ export class MindMapView extends ItemView {
 		this.isPanning = false;
 		this.panPending = false;
 		this.panCommitted = false;
+		this.contextPress = null;
 		this.carryVelocity = { x: 0, y: 0 };
 		this.isRubberBanding = false;
 		this.dragNodeId = null;
@@ -4496,6 +4528,13 @@ export class MindMapView extends ItemView {
 		if (this.editingNodeId) return;
 
 		e.preventDefault();
+
+		// A right-click opens its menu on release (`handlePointerUp`), so the
+		// press it began, or the release that already did, is not asked twice.
+		// This path is for a menu key, or macOS Ctrl+click, which have no
+		// right-button press of their own.
+		if (this.contextPress !== null) return;
+		if (performance.now() - this.contextOpenedAt < 250) return;
 
 		// A long press on a phone arrives here as a context-menu event, and the
 		// menu it opened swallowed the press on its way to becoming a node
