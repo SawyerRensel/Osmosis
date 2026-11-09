@@ -16,7 +16,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-08T20:35:12.000Z"
-date_modified: "2026-11-08T21:10:00.000Z"
+date_modified: "2026-11-09T12:49:17.000Z"
 date_start_scheduled: "2026-11-08T20:35:12.000Z"
 date_start_actual: "2026-11-08T20:35:12.000Z"
 date_end_scheduled:
@@ -120,7 +120,57 @@ Open `vault/tests/graph3d/Sailing Basics.md` in the 3D graph.
 
 Everything in Obsidian (I cannot see it): the border's look and thickness at distance, that `border-bottom-color` on the probe resolves the accent in every theme, that the fixed-position box lines up with the pointer inside a split pane, that Obsidian's Scope delivers Mod+C to the view while the canvas has focus, and the clipboard write on mobile.
 
+### Part 2: move and link a selection
+
+Commit c204286 on `feature/3d-graph-multi-select-actions` (cut from `feature/3d-graph-multi-select` at dcd93fe). Builds actions 1 and 4, so the whole spec is built now.
+
+**Cause and constraints.** Part 1 left Alt+drag and Alt+←/→ acting on one line, because the edit helpers each handle one line or a run. The mind map's `indentSiblings`, `outdentSiblings`, `moveSiblings` and `moveWithinFile` only take a run of adjacent siblings, and so does `moveAcrossFiles` (one span cut from one origin). `linkLines` writes, reloads and opens its own edit group on every call. A selection can be non-adjacent, nested, and spread over several notes, and it still has to land as one undo step with one re-settle.
+
+**Design.** A pure planner, `src/graph3d/selection-edit.ts`. It takes each note's fresh text and parse, the selected lines (found again by ID) and the target, and returns every changed note's new text plus where each acted-on line now starts. The view (`commitSelection`) normalises each text and writes them all in one edit group, the target's note first. For a cross-note move it then moves the block IDs' review history (`readMovedScheduleEntries` and `migrateBlockIdentity`, as `moveAcrossFiles` does), sets `edited` with the primary first, and sets `editLanded`, so the reload re-settles once with the camera on the primary.
+
+- One splice engine (`splice`) works on each note against its *original* offsets. It cuts every moved line with its subtree (adjacent cuts merge, and each swallows its blank lines, as a move's does) and cuts in-place replacements exactly. Then it makes every insertion, each on its own line, with an offset inside a cut mapped to where the cut was. At one offset, a deeper new parent's lines go first, because they close its subtree. So the planner never re-parses between steps.
+- **Move** (`planSelectionMove`): each line gets `moveGap`, `dropContext` and `resolveInsertSite`, exactly as one line's `moveInNote` / `moveLine` does. So the drop rules re-level it (for example, a list line dropped between headings becomes a heading).
+- **Indent / outdent** (`planSelectionRelevel`): the single-line rules applied to every selected line at once (`inferIndentType/Depth`, `outdentContext`, root promotion as `outdentSiblings` does it).
+- **Link** (`planSelectionLink`): `linkSubpath` once, `appendInsertion` per line, `stampInsertion` on the target once, and `insertAll` per note. `linkLines` itself is untouched; single-line links still use it.
+
+**Decisions worth remembering**
+
+- **The drop menu keeps its exact look:** same items, titles and icons, including the H1-root rule (no "Move after" onto a sole-H1 root). It acts on the selection when the dragged plate is selected and 2+ plates are selected. Dragging an unselected plate still moves or links only that line, and the selection stays. "Add link" is hidden only if no selected line could link (all of them are the target, or sit in the target's own note when the target is the note).
+- **Order:** notes in the order they first appear in the selection (the primary's note first, as Copy does), and each note's lines in document order (`orderedLines`).
+- **A selected line inside another selected line's subtree moves and re-levels once, with its ancestor** (`topmostLines`). **Link is the exception:** every selected line gets its own link, because a link belongs to its line, not its subtree. This departs from the brief's general dedupe rule on purpose.
+- **Skipped, silently:** plates that are not lines (tags, files, ghosts, note cores), and a sole-H1 root, in move and re-level (moving the root would empty the note, as Delete already rules). For links, the target line itself, lines in the target's note when the target is the note, and lines that cannot take a link (code block, table, quote, embed). A notice appears only when nothing at all could be linked.
+- **Move refusal:** if the target, or the gap, is inside a moving line or is one (including dropping onto another selected plate), the whole move is refused: "a line can't move under itself". It does not move the other lines.
+- **Indent:** a run of adjacent selected siblings goes under the sibling before the run, as in 2D. A run that starts at a first child stays put as a whole, and the other runs still indent. **Outdent:** a parent's selected children (adjacent or not) go after its subtree in document order. Under the note root, a list line becomes a paragraph and a paragraph becomes a heading, in place. A heading at the root stays. Alt+↑/↓ (move up/down) still act on the primary alone; the spec asked only for indent and outdent.
+- **The selection menu** (right-click a selected plate, edit mode) gained "Indent N selected lines" and "Outdent N selected lines" above Delete.
+- **Moved lines keep their selection and start where they were** (`edited` carries `from` for each line and its subtree, via `carryPairs`), then the B1 re-settle carries them to their new parents. A single-line move omits `from`, so the line appears beside its new parent. For a selection, keeping it selected was worth the difference.
+- `mapStart` follows each line through `normalizeWrite`. A cross-note move's destination entries shift by the frontmatter growth from the migrated history, as `moveLine` does.
+- A cut that reached the end of a note restores the trailing newline.
+
+**Surface map (part 2)**
+
+| File | Change |
+|---|---|
+| `src/graph3d/selection-edit.ts` | New: `orderedLines`, `planSelectionMove`, `movedOut`, `planSelectionRelevel`, `planSelectionLink`, and the `splice` engine |
+| `src/graph3d/selection-edit.test.ts` | New: 15 unit tests (move under/after/end, within one note and across notes, subtree carry, nested dedupe, document order, the inside refusal, mixed heading and list moves to the end, indent/outdent of non-adjacent lines and runs, a first-child skip, cross-note outdent, root promotion, link-all with one stamp, reuse of an existing ID, a note target) |
+| `src/graph3d/edit.ts` | Exports `Insertion`, `stampInsertion`, `appendInsertion`, `insertAll` (doc comments) |
+| `src/views/Graph3DView.ts` | `showDropMenu` routes to `moveSelection` / `linkSelection` for a selection; Alt+←/→ with 2+ selected → `relevelSelection`; selection menu Indent/Outdent; `readNotes`, `pickLines`, `commitSelection` (one group, history migration, `edited` primary first) |
+
+**Test fixture:** no new fixture: `vault/tests/graph3d/Sailing Basics.md` and `vault/tests/graph3d/Galley Handbook.md`. Galley Handbook's long lists and nested Fresh food branch suit non-adjacent selections. Load at depth 1+ for cross-note cases (Sailing Basics plus a linked note).
+
+**Manual test steps (part 2)**, in edit mode:
+
+1. Open `Galley Handbook.md`. Shift+click "Lentils", "Tea bags" and "Sweetcorn" (Tins). Alt+drag "Tea bags" onto the "Stove" heading plate. The menu looks as it always has: Add link, Move under, Move after. Choose **Move under**: all three end up as the last items under Stove, in document order (Lentils, Tea bags, Sweetcorn). The Tins list renumbers. They stay selected, the graph re-settles **once**, and the camera follows the primary (the plate clicked last). Ctrl/Cmd+Z once: everything is back.
+2. Same selection, Alt+drag onto "Cleaning" → **Move after**: they become H2 headings after Cleaning (the drop rules, as for one line). Undo.
+3. Select "Fruit that keeps" (which has children) and "Apples" (inside it), then Alt+drag onto "Water" → Move under. Fruit that keeps moves once, with Apples, Oranges and Lemons under it.
+4. Cross-note: load Sailing Basics at depth 1+. Select a line in Sailing Basics and a line in another loaded note, then Alt+drag onto a Galley/other-note plate → **Move to end of note** (on the core) or Move under. Both notes change, and one undo restores both. If a moved line was a card with review history, its history follows it.
+5. Select "Apples", "Carrots" and the "Tools" heading, then press **Alt+←**: Apples goes after Fruit that keeps, Carrots after Vegetables that keep, and Tools becomes an H2 after Cooking gear. One undo restores all of it. Press **Alt+→** on "Pasta, four packets" plus "Salt and pepper": each goes under the line before it. Select "Rice…" (a first child) with another line and press Alt+→: Rice stays, and the other indents.
+6. Right-click a selected plate: "Indent N selected lines" and "Outdent N selected lines" do the same.
+7. Link all: select three lines across two notes, Alt+drag one onto a plain list line in a third note → **Add link**. Each selected line ends with the same `[[Note#^id]]`, and the target got **one** ` ^id`. Repeat onto a line that already has a block ID: it is reused, and nothing new is stamped. Onto a heading: `[[Note#Heading]]`. Onto a note core: `[[Note]]`, and lines in that note are skipped. One undo removes every link and the stamp.
+8. The H1-root rule: with a selection, Alt+drag onto a note's sole-H1 root plate. "Move after" is **not** offered; Move under and Move to end of note are.
+9. Regressions: Alt+drag from an **unselected** line (or with only one plate selected) moves or links just that line, exactly as before, and the selection is left alone. Alt+↑/↓ move only the primary. Single-line Alt+←/→ (one plate or none selected) unchanged. Delete, Copy and the other part 1 steps unchanged.
+
+**What I could not verify (part 2):** everything in Obsidian. That includes the history migration on a real cross-note card move, and that the re-settle and camera tracking look right with several lines landing at once.
+
 ## Remaining (not built)
 
-- **Move / indent / outdent together:** Alt+drag of a selection through the drop menu (Move under / to end of note / after) for every selected line in document order, and Alt+←/→ on the selection. The 2D helpers `indentSiblings` / `outdentSiblings` / `moveSiblings` in `src/mindmap-edit.ts` only take adjacent sibling runs; a general selection needs either a per-line sequence re-found by ID after each write, or a new multi-line splice.
-- **Link all to one target:** "Add link" in the drop menu for each selected line, the target stamped once. `linkLines` writes and reloads per call and opens its own edit group, so it needs splitting into a plan step (text per file) and one grouped write.
+Nothing from the spec. Possible follow-ups, not filed: Alt+↑/↓ on a selection (move each run up/down), and a count in the drop menu's titles if acting on the selection without one proves surprising.
