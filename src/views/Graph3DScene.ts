@@ -161,7 +161,7 @@ export type SceneOverlays = Omit<Graph3DOverlays, "colorBy">;
 export interface SceneOptions {
 	controls: SceneControls;
 	overlays: SceneOverlays;
-	onNodeClick: (node: GraphNode) => void;
+	onNodeClick: (node: GraphNode, selectOnly: boolean) => void;
 	/** A ride along an edge (follow a link) reached its plate. The view selects it, but not as a click on the plate; the focus note stays. */
 	onNodeArrived: (node: GraphNode) => void;
 	/** A click on a link in a near-tier panel that fires (see `linkClickAction`). */
@@ -1750,14 +1750,14 @@ export class Graph3DScene {
 		if (link !== null) {
 			this.select([link.node.id]);
 			if (selectsOnly) this.focusId = link.node.id;
-			else this.options.onNodeClick(link.node);
+			this.options.onNodeClick(link.node, selectsOnly);
 			return;
 		}
 		const node = this.nodeNear(x, y, slop);
 		if (node !== null) {
 			this.select([node.id]);
 			if (selectsOnly) this.focusId = node.id;
-			else this.options.onNodeClick(node.graph);
+			this.options.onNodeClick(node.graph, selectsOnly);
 			return;
 		}
 		// No plate: an edge under the pointer is a link to follow. (A panel over it has the click.)

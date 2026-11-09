@@ -404,7 +404,7 @@ export class Graph3DView extends ItemView {
 		this.scene = new Graph3DScene(this.stageEl, {
 			controls: this.controlSettings(),
 			overlays: this.sceneOverlays(),
-			onNodeClick: (node) => this.clickNode(node),
+			onNodeClick: (node, selectOnly) => this.clickNode(node, selectOnly),
 			onNodeArrived: (node) => this.visit(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
@@ -1526,9 +1526,10 @@ export class Graph3DView extends ItemView {
 	 * A click or tap on a node: in a study session, arriving at (or revealing) a hidden card.
 	 * (Arriving by a ride along an edge is `visit` alone: the card stays hidden until the plate is clicked.)
 	 */
-	private clickNode(node: GraphNode): void {
+	private clickNode(node: GraphNode, selectOnly: boolean): void {
 		this.study?.clicked(node);
-		this.visit(node);
+		// "Click selects only" is about the camera: the study action above still runs, but no flight and no history step.
+		if (!selectOnly) this.visit(node);
 	}
 
 	/**
