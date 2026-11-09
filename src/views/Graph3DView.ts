@@ -1,8 +1,8 @@
 import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
-import { moveAcrossFiles, type MoveContext } from "../edit-moves";
-import { dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
+import { migrateBlockIdentity, moveAcrossFiles, readMovedScheduleEntries, type MoveContext } from "../edit-moves";
+import { collectBlockIds, dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
@@ -15,6 +15,7 @@ import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Hori
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
+import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../graph3d/selection-edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -239,6 +240,11 @@ export class Graph3DView extends ItemView {
 			const selected = this.scene?.selectedNodes() ?? [];
 			if (action === "delete" && selected.length > 1) {
 				void this.deleteSelection(selected);
+				return false;
+			}
+			// So do indent and outdent (Alt+→ / Alt+←).
+			if ((action === "indent" || action === "outdent") && selected.length > 1) {
+				void this.relevelSelection(action, selected);
 				return false;
 			}
 			const node = this.scene?.focusedNode() ?? null;
@@ -843,12 +849,16 @@ export class Graph3DView extends ItemView {
 	 */
 	private showDropMenu(from: GraphNode, to: GraphNode, x: number, y: number): void {
 		if (this.editBlocked()) return;
+		// Dragged from a selected plate (with more than it selected), the menu acts on every selected line: the same choices, the same look.
+		const selection = this.scene?.selectedNodes() ?? [];
+		const group = selection.length > 1 && selection.some((n) => n.id === from.id) ? selection : null;
+		const linkable = (n: GraphNode): boolean => n.kind === "line" && n.id !== to.id && (!isNoteRoot(to) || to.path !== n.path);
 		const menu = new Menu();
-		if (!isNoteRoot(to) || to.path !== from.path) {
-			menu.addItem((item) => item.setTitle("Add link").setIcon("link").onClick(() => void this.linkLines(from, to)));
+		if (group === null ? !isNoteRoot(to) || to.path !== from.path : group.some(linkable)) {
+			menu.addItem((item) => item.setTitle("Add link").setIcon("link").onClick(() => void (group === null ? this.linkLines(from, to) : this.linkSelection(group, to))));
 		}
 		const move = (title: string, icon: string, place: MovePlace): void => {
-			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void this.moveLine(from, to, place)));
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void (group === null ? this.moveLine(from, to, place) : this.moveSelection(group, to, place))));
 		};
 		if (to.kind === "line") move("Move under", "corner-down-right", "under");
 		if (to.kind === "line" && !isNoteRoot(to)) move("Move after", "arrow-down", "after");
@@ -1101,6 +1111,205 @@ export class Graph3DView extends ItemView {
 		}
 	}
 
+	/** Every note of `paths`, read fresh and parsed; null when one has gone. */
+	private async readNotes(paths: Iterable<string>): Promise<Map<string, PlanNote & { file: TFile }> | null> {
+		const notes = new Map<string, PlanNote & { file: TFile }>();
+		for (const path of new Set(paths)) {
+			const file = this.app.vault.getFileByPath(path);
+			if (file === null) return null;
+			const content = await this.app.vault.read(file);
+			notes.set(path, { file, content, root: this.cache.get(path, content).root });
+		}
+		return notes;
+	}
+
+	/** The selected line plates `nodes` as lines of `notes`, found again by ID; null when one has gone. */
+	private pickLines(nodes: readonly GraphNode[], notes: ReadonlyMap<string, PlanNote>): PickedLine[] | null {
+		const picked: PickedLine[] = [];
+		for (const node of nodes) {
+			const note = node.path === undefined ? undefined : notes.get(node.path);
+			const line = note === undefined ? null : findNodeById(note.root, node.source?.id ?? "");
+			if (line === null || node.path === undefined) return null;
+			picked.push({ path: node.path, line });
+		}
+		return picked;
+	}
+
+	/**
+	 * Write an action on a selection (`plan`) as one edit group, `first`'s note
+	 * first, so one undo restores every note. A cross-note move (`moved`: the
+	 * text each origin gave up) then carries its block IDs' review history, as
+	 * one line's move does. The lines keep their selection and start where they
+	 * were (`carry`: their subtrees too); the primary's entry goes first, so the
+	 * re-settle (`editLanded`) runs once with the camera on it.
+	 */
+	private async commitSelection(
+		notes: ReadonlyMap<string, PlanNote & { file: TFile }>,
+		plan: SelectionEdit,
+		first: string,
+		primary: GraphNode | undefined,
+		carry: boolean,
+		moved?: { dest: string; out: ReadonlyMap<string, string> },
+	): Promise<void> {
+		const writes = [...plan.texts]
+			.flatMap(([path, text]) => {
+				const note = notes.get(path);
+				const out = normalizeWrite(text);
+				return note === undefined || out === note.content ? [] : [{ path, file: note.file, text, out }];
+			})
+			.sort((a, b) => Number(b.path === first) - Number(a.path === first));
+		if (writes.length === 0) return;
+		const graphId = (path: string, id: string): string | undefined => this.model?.nodes.find((n) => n.kind === "line" && n.path === path && n.source?.id === id)?.id;
+		const entries: { path: string; start: number; from?: string; primary: boolean }[] = [];
+		for (const line of plan.lines) {
+			const write = writes.find((w) => w.path === line.path);
+			const start = write === undefined ? null : mapStart(write.text, write.out, line.start);
+			if (write === undefined || start === null) continue;
+			const pairs = carry ? carryPairs(line.line, this.cache.get(line.path, write.out).root, start) : [{ from: line.line, to: null }];
+			for (const { from, to } of pairs) {
+				entries.push({ path: line.path, start: to?.range.start ?? start, from: graphId(line.origin, from.id), primary: line.origin === primary?.path && from.id === primary.source?.id });
+			}
+		}
+		entries.sort((a, b) => Number(b.primary) - Number(a.primary));
+		this.editOwner = writes[0]!.path;
+		this.lastEditPath = writes[0]!.path;
+		// As in `commitLines`: a reload already under way must not place lines before `edited` does.
+		this.loadSeq++;
+		this.edits.recorder.beginGroup();
+		try {
+			for (const { file, out } of writes) await this.edits.write(file, out);
+			const dest = moved === undefined ? undefined : writes.find((w) => w.path === moved.dest);
+			if (moved !== undefined && moved.out.size > 0) {
+				const context = this.moveContext();
+				for (const [origin, text] of moved.out) {
+					const ids = collectBlockIds(text);
+					await migrateBlockIdentity(context, origin, moved.dest, ids, await readMovedScheduleEntries(context, origin, ids));
+				}
+				// Moving review history rewrote the destination's frontmatter only, so its body moved by its change in size.
+				if (dest !== undefined) {
+					const grew = (await this.app.vault.read(dest.file)).length - dest.out.length;
+					for (const entry of entries) if (entry.path === dest.path) entry.start += grew;
+				}
+			}
+		} finally {
+			this.edits.recorder.endGroup();
+		}
+		// Marked only now, so a reload that was already under way can't take it.
+		this.edited = entries.map(({ path, start, from }) => ({ path, start, from }));
+		this.editLanded = true;
+		void this.reload();
+	}
+
+	/**
+	 * Move every selected line, each with its subtree, to `place` relative to
+	 * `to` (the drop menu, dragged from a selected plate): in document order,
+	 * from any note, one undo step (`planSelectionMove`). Plates that are not
+	 * lines, and a sole H1 root (the note itself), are skipped.
+	 */
+	private async moveSelection(nodes: readonly GraphNode[], to: GraphNode, place: MovePlace): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const lines = nodes.filter((n) => n.kind === "line" && n.root !== true && n.path !== undefined);
+			if (lines.length === 0 || to.path === undefined) {
+				new Notice("Osmosis: no selected lines to move");
+				return;
+			}
+			const notes = await this.readNotes([to.path, ...lines.map((n) => n.path!)]);
+			const dest = notes?.get(to.path);
+			const target = dest === undefined || to.kind !== "line" ? null : findNodeById(dest.root, to.source?.id ?? "");
+			const picked = notes === null ? null : this.pickLines(lines, notes);
+			if (notes === null || picked === null || (to.kind === "line" && target === null)) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const plan = planSelectionMove(notes, picked, { path: to.path, node: target }, place);
+			if (plan === "inside") {
+				new Notice("Osmosis: a line can't move under itself");
+				return;
+			}
+			if (plan === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			await this.commitSelection(notes, plan, to.path, nodes[0], true, { dest: to.path, out: movedOut(notes, picked, to.path) });
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not move the selection", error);
+			new Notice("Osmosis: could not move those lines");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
+	/**
+	 * Indent or outdent every selected line together (Alt+→ / Alt+←, or the
+	 * selection menu), one undo step (`planSelectionRelevel`). A line that
+	 * can't go (a first child, a heading at the root) stays.
+	 */
+	private async relevelSelection(action: "indent" | "outdent", nodes: readonly GraphNode[], fromMenu = false): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const lines = nodes.filter((n) => n.kind === "line" && n.root !== true && n.path !== undefined);
+			const notes = await this.readNotes(lines.map((n) => n.path!));
+			const picked = notes === null ? null : this.pickLines(lines, notes);
+			if (notes === null || picked === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const plan = picked.length === 0 ? null : planSelectionRelevel(action, notes, picked);
+			if (plan === null) {
+				if (fromMenu) new Notice("Osmosis: nothing to do there");
+				return;
+			}
+			await this.commitSelection(notes, plan, nodes[0]?.path ?? picked[0]!.path, nodes[0], true);
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not re-level the selection", error);
+			new Notice("Osmosis: could not make that edit");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
+	/**
+	 * Link every selected line to `to` (the drop menu's "Add link", dragged
+	 * from a selected plate), the target's block ID stamped once and written
+	 * first, one undo step (`planSelectionLink`). The rules of one link hold:
+	 * no line links to itself, nor to its own note.
+	 */
+	private async linkSelection(nodes: readonly GraphNode[], to: GraphNode): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		this.structuring = true;
+		try {
+			const toFile = to.path === undefined ? null : this.app.vault.getFileByPath(to.path);
+			const toLine = to.kind === "line" && !isNoteRoot(to);
+			const lines = nodes.filter((n) => n.kind === "line" && n.path !== undefined);
+			const notes = toFile === null ? null : await this.readNotes([...(toLine ? [toFile.path] : []), ...lines.map((n) => n.path!)]);
+			const toNote = toFile === null ? undefined : notes?.get(toFile.path);
+			const target = toLine && toNote !== undefined ? findNodeById(toNote.root, to.source?.id ?? "") : null;
+			const picked = notes === null ? null : this.pickLines(lines, notes);
+			if (toFile === null || notes === null || picked === null || (toLine && target === null)) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const plan = planSelectionLink(notes, picked, { path: toFile.path, node: target }, (fromPath, subpath) => this.app.fileManager.generateMarkdownLink(toFile, fromPath, subpath));
+			if (plan === null) {
+				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+				return;
+			}
+			if (plan.lines.length === 0) {
+				new Notice("Osmosis: can't add a link to those lines");
+				return;
+			}
+			await this.commitSelection(notes, plan, toFile.path, nodes[0], false);
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not link the selection", error);
+			new Notice("Osmosis: could not add those links");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
 	/**
 	 * The context menu of a line or note plate (right-click, or a long press on
 	 * touch): "Focus this note" (a hop, greyed out in the focus note itself),
@@ -1124,6 +1333,9 @@ export class Graph3DView extends ItemView {
 		if (group !== null) {
 			const lines = group.filter((n) => n.kind === "line").length;
 			if (this.editMode && lines > 0 && this.study?.active !== true) {
+				menu.addSeparator();
+				menu.addItem((item) => item.setTitle(`Indent ${lines} selected lines`).setIcon("indent-increase").onClick(() => void this.relevelSelection("indent", group, true)));
+				menu.addItem((item) => item.setTitle(`Outdent ${lines} selected lines`).setIcon("indent-decrease").onClick(() => void this.relevelSelection("outdent", group, true)));
 				menu.addSeparator();
 				menu.addItem((item) => item.setTitle(`Delete ${lines} selected lines`).setIcon("trash-2").setWarning(true).onClick(() => void this.deleteSelection(group)));
 			}

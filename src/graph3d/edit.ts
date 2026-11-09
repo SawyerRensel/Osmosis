@@ -171,8 +171,8 @@ export function bandOffset(stageTop: number, stageHeight: number, band: VisibleB
 /** A node type that is several lines, whose block ID goes on a line after it. */
 const MULTILINE_TYPES: ReadonlySet<OsmosisNode["type"]> = new Set(["codeblock", "table", "blockquote"]);
 
-/** One insertion into a note's text. */
-interface Insertion {
+/** Text to splice in at an offset of a note's original text. */
+export interface Insertion {
 	offset: number;
 	text: string;
 }
@@ -235,19 +235,20 @@ export function linkSubpath(target: OsmosisNode | null, root: OsmosisNode, conte
 }
 
 /** Where a block ID for `node` goes: on its own line after a multiline block, at the end of any other line. */
-function stampInsertion(node: OsmosisNode, id: string): Insertion {
+export function stampInsertion(node: OsmosisNode, id: string): Insertion {
 	return { offset: node.range.end, text: MULTILINE_TYPES.has(node.type) ? `\n^${id}` : ` ^${id}` };
 }
 
 /** Where link text goes on `node`'s line: at its end, before a trailing block ID. Null for a line that cannot take one (several lines, an embed). */
-function appendInsertion(content: string, node: OsmosisNode, text: string): Insertion | null {
+export function appendInsertion(content: string, node: OsmosisNode, text: string): Insertion | null {
 	if (MULTILINE_TYPES.has(node.type) || node.type === "transclusion" || node.type === "root") return null;
 	const line = content.slice(node.range.start, node.range.end);
 	const head = extractTrailingBlockId(line)?.stripped ?? line.trimEnd();
 	return { offset: node.range.start + head.length, text: ` ${text}` };
 }
 
-const insertAll = (content: string, edits: readonly Insertion[]): string =>
+/** `content` with every insertion made, each at its offset in the original text (later offsets first). */
+export const insertAll = (content: string, edits: readonly Insertion[]): string =>
 	[...edits].sort((a, b) => b.offset - a.offset).reduce((out, edit) => out.slice(0, edit.offset) + edit.text + out.slice(edit.offset), content);
 
 /** `content` with block ID `id` stamped on `node`: ` ^id` at the end of a one-line node, a `^id` line after a code block, table or quote. */
