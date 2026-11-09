@@ -21,7 +21,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-09T17:43:33.000Z"
-date_modified: "2026-11-09T20:15:00.000Z"
+date_modified: "2026-11-09T22:30:00.000Z"
 date_start_scheduled: "2026-11-09T17:43:33.000Z"
 date_start_actual: "2026-11-09T17:43:33.000Z"
 date_end_scheduled:
@@ -128,7 +128,7 @@ Flat slices (the flatten slider).
 
 ## Batch implementation notes (awaiting manual test)
 
-P1 shipped on `feature/3d-graph-planets` in b30dfee (stacked on the round 3+4 work). P2 is on `feature/3d-graph-planets-continents` in 120b83b (see `### P2` at the end of these notes). P3 is not started.
+P1 shipped on `feature/3d-graph-planets` in b30dfee (stacked on the round 3+4 work). P2 is on `feature/3d-graph-planets-continents` in 120b83b (see `### P2`). P3 is on `feature/3d-graph-planets-panels` in d887ec6 (see `### P3` at the end of these notes).
 
 ### Approach
 
@@ -291,3 +291,81 @@ Anything visual (how radial continents look on a sphere, planet sizes), the fron
 #### Facts for P3
 
 - Panels are still off in Planets mode. Nothing P3 needs changed: each plate's frame is still `EngineNode.frame`. Radial continents change where plates lie but not their frames (up is still world +y projected), so tilted panels need no radial special case.
+
+### P3 (tilted near-tier panels)
+
+Shipped on `feature/3d-graph-planets-panels` (cut from `feature/3d-graph-planets-continents` at 6c308b4) in d887ec6. Unit tests and a Node measure only: nothing here has been seen in Obsidian.
+
+#### Approach
+
+- **Both renderers, one tier.** `Graph3DNear` now owns a `CSS3DRenderer` (`renderer3d`) beside its `CSS2DRenderer`, and the scene hands both to 3d-force-graph as `extraRenderers`. `setOverlays` calls `near.setTilted(layout === "planets")`, and panels are enabled in Planets again (`labels === "all"` as elsewhere).
+- **A panel is one kind for its life.** `setTilted` removes every open panel at once; the tier picks them again next frame as the new kind, from the render cache. A layout change re-lays out everything anyway, so the one-frame pop is hidden in it.
+- **Tilted placement (`tilt`, each frame):** the panel's object matrix is `panelMatrix(centre, frame, pxPerUnit)` from `src/graph3d/tilt.ts`: CSS x along the plate's right, CSS up along its up, the face along its normal, one layout px `1 / pxPerUnit` world units, so the panel is world-sized exactly as the CSS2D panel's depth scale makes it. A rigid tilt plus a uniform scale: nothing is distorted. The box drops its CSS2D `scale()` and keeps only `translate(-50%, -50%)`.
+- **Facing away:** `facesEye` is the plate shader's own test (`plateBack`). A back-facing planet plate is skipped when the tier chooses (so it never spends the budget), and an open panel whose plate turns away is hidden at once (`object.visible`, which `CSS3DRenderer` turns into `display: none`) while it fades out of the tier.
+- **Nodes with no frame** in Planets mode (a planet's core, i.e. the root H1; media attachments, which are stars) get a CSS3D panel too, along the camera's frame. So every panel in Planets mode lives in one 3D context and the browser sorts them all.
+
+#### Occlusion holes, and nearer plates
+
+The screen-space hole trick does transfer, with two changes (`tiltedHole`):
+- **In front** means the plate's centre is on the eye's side of the panel's plane, not nearer by view depth. Every other plate of a planet lies inside a panel's tangent plane, so a planet never cuts holes in its own panels however obliquely it is seen; with the old depth test, a neighbour plate on the near slope would have punched a hole in a panel lying over it. Another planet, or a star plate (a tag), between the eye and the panel does cut a hole.
+- **Where** is the plate's four world corners projected from the eye onto the panel's plane, in the panel's layout px, and the hole is their bounding box. Exact when the panel is seen flat-on (the hover view), a little generous when it is slanted. The mask is in the box's own px, so it tilts with the panel.
+- So a tilted panel still draws over WebGL everywhere except where a plate in front of its plane covers it. Two things the holes don't fix: a panel and a plate can intersect (a tilted panel is bigger than its plate and sticks out of the sphere's tangent plane; it can never be under a plate of its own planet, but a neighbouring planet's plate that pierces its plane is all-or-nothing by its centre); and edges (lines) never cut holes, as before.
+- Clicks: a tilted panel's hit test ignores every nearer-by-depth plate and uses the plates it actually cut out (`panel.occluders`), so a click lands on what is drawn. `platesOnScreen` now skips back-facing planet plates (they aren't drawn); Organic and Flat slices have no frames, so nothing changes there.
+
+#### Preserved, and what changed
+
+| Behaviour | In Planets mode |
+| --- | --- |
+| Stacking by view depth | The CSS3D renderer's `preserve-3d` context sorts panels in true 3D (`renderOrder` is not used). `panel.depth` is still the centre's view depth, for hit-test order and the veil |
+| Occlusion holes | Kept, by the plane test above |
+| Clickable links, task checkboxes | Kept: `getBoundingClientRect` / `getClientRects` return the tilted box's bounds, exact when flat-on |
+| Panel detail, Live panels sliders; 24 / 12 budget | Unchanged: `chooseNear` and the settings are shared. The enter scale is still the centre's depth scale (a slanted panel's text is foreshortened on one axis, not counted) |
+| Mist veil, cross-fade, media pause, cache | Unchanged |
+| Inline editor | Still placed flat over the plate, as in the other layouts (not tilted). In the hover view it reads the same; at a slant it does not lie on the plate. Not changed: out of scope |
+
+#### Cost (measured 2026-11-09)
+
+`e2e/measure-near-panels.ts`, run in Node 24 with the real `Graph3DNear.update` and three's real `CSS2DRenderer.render` and `CSS3DRenderer.render` (both every frame, as the engine runs them) over a fake DOM whose styles are plain objects. The scene: a planet of 800 tangent plates and 40 star plates in front of it (so both modes cut holes), the camera hovering over it and turning slowly so every transform changes each frame, 2,000 frames after 200 warm-up, three rounds each. "Panels" is the frame minus the same frame with the tier off.
+
+| Hover distance | Live panels (masked) | CSS2D flat | CSS3D tilted |
+| --- | --- | --- | --- |
+| 120 | 16 (4 / 3) | 434–455 µs a frame (27–28 µs a panel) | 161–179 µs (10–11 µs a panel) |
+| 240 | 24 (3 / 3) | 459–475 µs (19–20 µs a panel) | 217–226 µs (9.1–9.4 µs a panel) |
+
+- The tilted path is about half the script time of the flat one at the full 24-panel budget, mostly because it skips back-facing plates before any matrix work and the CSS3D renderer does no per-object projection or z-index sort (it writes one cached `matrix3d` string per panel). Both are well under 1 ms of a 16.7 ms frame.
+- **Not measured: the browser's share.** Style recalc of the written transforms and masks, compositing of up to 24 3D-transformed layers in one `preserve-3d` context (with its plane sorting), and rasterising text at a slant. That needs the perf gauge (`Graph3DPerf.ts`) in Obsidian with Planets mode on, panels open, compared against Flat slices with as many panels. To run the Node measure: see the header of `e2e/measure-near-panels.ts`.
+
+#### Decisions worth remembering
+
+- **CSS3D, three's own renderer**, rather than a perspective `matrix3d` homography inside the CSS2D layer: the design names CSS3D, and one shared 3D context sorts panels against each other per pixel.
+- **Frame-less panels go CSS3D too in Planets mode** (camera-facing), so the CSS2D layer is empty there and no panel is stacked by DOM-layer order against another.
+- **The plane test, not the depth test, decides holes for tilted panels.** Do not "unify" it back to `panelHoles`' depth test: on a sphere that cuts holes for a panel's own neighbours.
+- **The facing test matches the plate shader**, so a panel never shows where its plate is collapsed.
+
+#### Surface map
+
+| File | Change |
+| --- | --- |
+| `src/graph3d/tilt.ts` | New: `facesEye`, `panelMatrix`, `panelPoint`, `tiltedHole` |
+| `src/graph3d/tilt.test.ts` | New: 8 tests (facing, matrix columns and handedness, matrix vs `panelPoint`, flat-on hole, behind/beside, from behind, own planet never holes at a slant, another planet does) |
+| `src/views/Graph3DNear.ts` | `renderer3d`; `setTilted`; `NearSource.frame`; CSS3D panels (`tilt`, `placeTilted`, `screenBounds`, `worldPlate`); `cutHoles` split out of `place`; back-facing plates skipped; tilted hit test by `occluders` |
+| `src/views/Graph3DScene.ts` | Second extra renderer; panels on in Planets, `setTilted` from the Layout |
+| `e2e/measure-near-panels.ts` | New: the Node cost measure above |
+
+#### Fixture
+
+None new: `vault/tests/graph3d/Sailing Basics.md`, `Galley Handbook.md`, `Navigation.md`, and P2's `Anchor Radial.md` / `Anchor Balance.md`.
+
+#### Manual test (Sawyer)
+
+1. Open `tests/graph3d/Sailing Basics.md` in the 3D graph at depth 2, Overlays labels on "all", Layout Planets. Click a surface plate: in the hover view the nearest lines open as live panels lying flat on their plates, reading straight on, text upright, the same size as the plate text.
+2. Orbit slowly. Panels tilt with the globe, stay on their plates, never stretch. Toward the limb they foreshorten; past it they vanish together with their plates (no mirrored panels from behind).
+3. Orbit so another planet (or the `#seamanship` tag) passes in front of a panel: the plate in front shows through the panel. Panels on one planet never show holes from their own neighbours.
+4. Click a link inside a hovered panel: it follows as before. Tick a task checkbox in a panel if the note has one.
+5. Overlays: Panel detail and Live panels sliders still change how many panels open. Switch Layout to Flat slices and Organic: flat CSS2D panels as before; back to Planets: tilted again.
+6. Open `Anchor Radial.md`: radial continents get tilted panels the same way.
+7. With the perf gauge on, compare frame time in Planets with panels open against Flat slices with as many panels, and note it here.
+
+#### Not verified
+
+Everything visual: text crispness of slanted CSS3D panels (Chrome picks a raster scale for 3D layers), the 3D sorting of panels at a slant, masks under a 3D transform, the camera-facing core panel, and the browser-side frame cost above. Panels on mobile were not looked at.
