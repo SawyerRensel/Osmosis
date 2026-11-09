@@ -46,6 +46,7 @@ import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
+import { easeLook } from "../graph3d/look-ease";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
 import { boxHits, boxRect, toggled, type ScreenPoint } from "../graph3d/selection";
@@ -234,8 +235,11 @@ const MIST = 0.25;
 const MIST_MIN_DISTANCE = 150;
 /** Drag rotation in radians per pixel is this over the canvas height (OrbitControls' own rate). */
 const ORBIT_RATE = 2 * Math.PI;
-/** Looking around turns slower than orbiting, or a small drag swings the whole view. */
-const LOOK_RATE = Math.PI;
+/**
+ * Looking around turns slower than orbiting, or a small drag swings the whole view.
+ * Mouse-look was PI and felt too sensitive; 0.6 PI plus the ease (`easeLook`) settles it.
+ */
+const LOOK_RATE = Math.PI * 0.6;
 /** How far from a node's edge, in screen px, a press or a zoom still aims at that node. */
 const PICK_SLOP_PX = { mouse: 16, touch: 32 };
 /** How far outside a task checkbox's drawn box a press still ticks it: the box is a few pixels wide at panel scale. */
@@ -389,6 +393,8 @@ export class Graph3DScene {
 	private ticksSinceData = 0;
 	private controlSettings: SceneControls;
 	private drag: RotateDrag | null = null;
+	/** Mouse-look drag px not yet turned into camera rotation; `tick` eases the camera through them. */
+	private lookPending = { x: 0, y: 0 };
 	private pinch: Pinch | null = null;
 	/** Edit mode is on: Alt+drag from a line (or a touch drag from one) pulls out a link; a plain mouse drag still orbits. */
 	private linkMode = false;
@@ -949,6 +955,7 @@ export class Graph3DScene {
 		const controls = this.orbitControls();
 		const distance = frameDistance(height, camera.fov);
 		this.pendingFlight = null;
+		this.lookPending = { x: 0, y: 0 };
 		this.cancelFlight();
 		camera.up.set(0, 1, 0);
 		camera.position.set(target.x, target.y, target.z + distance);
@@ -1000,6 +1007,7 @@ export class Graph3DScene {
 		const node = id === null ? undefined : this.nodes.find((n) => n.id === id && !n.departing);
 		if (id !== null && (node?.x === undefined || node.y === undefined || node.z === undefined)) return false;
 		this.pendingFlight = null;
+		this.lookPending = { x: 0, y: 0 };
 		this.cancelFlight();
 		this.editingId = node?.id ?? null;
 		this.near.setEditing(node ?? null, editor);
@@ -1398,6 +1406,7 @@ export class Graph3DScene {
 		const touch = e.pointerType === "touch";
 		const gesture = this.gestureOf(e);
 		this.cancelFlight();
+		this.lookPending = { x: 0, y: 0 };
 		if (this.touches.size === 0) {
 			// A finger on a coasting view stops it, and that is all it does:
 			// not also a tap that flies. What the orbit coast had left carries
@@ -1731,6 +1740,12 @@ export class Graph3DScene {
 
 	/** Turn the view for a drag of (`dx`, `dy`) px. */
 	private rotate(drag: RotateDrag, dx: number, dy: number): void {
+		// Mouse-look is eased: the drag only adds to the pending turn (see `easeLookPending`).
+		if (drag.look && !drag.touch) {
+			this.lookPending.x += dx;
+			this.lookPending.y += dy;
+			return;
+		}
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
 		const pivot = drag.look ? camera.position.clone() : drag.pivot;
@@ -1739,6 +1754,21 @@ export class Graph3DScene {
 		// turns the other way. Orbiting drags the world either way.
 		const sign = drag.look && drag.touch ? 1 : -1;
 		rotateAboutPivot(camera.position, controls.target, pivot, sign * rate * dx, sign * rate * dy, camera.up);
+		controls.update();
+	}
+
+	/** Each frame, turn the camera by an eased share of the mouse-look drag still pending; it goes on gliding after release. */
+	private easeLookPending(seconds: number): void {
+		const p = this.lookPending;
+		if (p.x === 0 && p.y === 0) return;
+		const x = easeLook(p.x, seconds);
+		const y = easeLook(p.y, seconds);
+		p.x = x.remaining;
+		p.y = y.remaining;
+		const camera = this.graph.camera();
+		const controls = this.orbitControls();
+		const rate = LOOK_RATE / Math.max(1, this.container.clientHeight);
+		rotateAboutPivot(camera.position, controls.target, camera.position.clone(), -rate * x.step, -rate * y.step, camera.up);
 		controls.update();
 	}
 
@@ -1985,6 +2015,7 @@ export class Graph3DScene {
 		this.steerFlight(now);
 		this.fly(seconds);
 		this.lookAround(seconds);
+		this.easeLookPending(seconds);
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		const controls = this.orbitControls();
 		const targetDistance = this.graph.camera().position.distanceTo(controls.target);
