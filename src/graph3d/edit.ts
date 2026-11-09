@@ -188,7 +188,7 @@ export interface LinkSubpath {
 const UNSAFE_HEADING = /[#|^[\]\\*_`~=$<>%:]/;
 
 /** Whether a link to `node` can be anchored by a block ID: not a card fence, an embed, or a paragraph line that runs on into the next. */
-function canStamp(content: string, node: OsmosisNode): boolean {
+export function canStamp(content: string, node: OsmosisNode): boolean {
 	if (node.type === "transclusion") return false;
 	if (node.type === "codeblock") {
 		const first = node.content.split("\n", 1)[0] ?? "";

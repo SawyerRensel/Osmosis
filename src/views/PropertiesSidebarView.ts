@@ -2382,8 +2382,7 @@ export class PropertiesSidebarView extends ItemView {
 			const depthOverrides = new Map<number, NodeStyle[]>();
 			for (const [, layoutNode] of nodeMap) {
 				if (layoutNode.source.type === "root") continue;
-				const stableKey = `_n:${layoutNode.source.id}`;
-				const localStyle = fm.styles[stableKey];
+				const localStyle = lookupNodeStyle(fm, layoutNode);
 				if (!localStyle) continue;
 				const depth = layoutNode.source.type === "heading" ? layoutNode.source.depth : 0;
 				if (!depthOverrides.has(depth)) depthOverrides.set(depth, []);
@@ -2418,8 +2417,7 @@ export class PropertiesSidebarView extends ItemView {
 		if (nodeMap && fm) {
 			for (const [, layoutNode] of nodeMap) {
 				if (layoutNode.source.type === "root") continue;
-				const stableKey = `_n:${layoutNode.source.id}`;
-				const localStyle = fm.styles?.[stableKey];
+				const localStyle = lookupNodeStyle(fm, layoutNode);
 				const className = localStyle?.class;
 				if (!className) continue;
 				const classStyle = lookupClassStyle(fm, className, globalClasses);

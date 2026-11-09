@@ -20,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { planStyleKeys } from "../mindmap-style-key";
 import { selectAfterDelete } from "../select-after-delete";
 import { enterSavesEdit } from "../edit-keys";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
@@ -2561,6 +2562,47 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
+		// Key each style by the line's block ID, stamping one first if it has
+		// none, so the style survives edits to the line's text. The stamp and the
+		// style write are one undo step: open a group unless a live edit (colour
+		// drag) or an outer group already collects the writes.
+		const ownGroup = !this.edits.recorder.live && !this.edits.recorder.grouping;
+		if (ownGroup) this.beginEditGroup();
+		try {
+			const selectors = await this.stampStyleBlockIds(overrides);
+			await this.writeNodeStyleOverrides(overrides, selectors);
+		} finally {
+			if (ownGroup) this.endEditGroup();
+		}
+		await this.render();
+	}
+
+	/**
+	 * Stamp a block ID onto every node about to be styled that has none, and
+	 * return the selector each node's style is stored under (see
+	 * `planStyleKeys`). A write that only clears style keys stamps nothing.
+	 */
+	private async stampStyleBlockIds(overrides: Map<string, NodeStyle>): Promise<Map<string, string>> {
+		const file = this.currentFile;
+		if (!file) return new Map();
+		const nodes: OsmosisNode[] = [];
+		for (const [nodeId, style] of overrides) {
+			const source = this.nodeMap.get(nodeId)?.source;
+			if (source && Object.values(style).some((value) => value !== undefined)) nodes.push(source);
+		}
+		const content = await this.app.vault.read(file);
+		const plan = planStyleKeys(content, this.cache.get(file.path, content).root, nodes);
+		if (plan.content !== content) await this.writeFileTracked(file, plan.content);
+		return plan.selectors;
+	}
+
+	/** The write half of {@link applyNodeStyleOverrides}: merge `overrides` into `osmosis-styles` under `selectors`, then refresh the cached styles. */
+	private async writeNodeStyleOverrides(
+		overrides: Map<string, NodeStyle>,
+		selectors: Map<string, string>,
+	): Promise<void> {
+		if (!this.currentFile) return;
+
 		// Capture the written styles so we can update immediately without
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
@@ -2576,7 +2618,7 @@ export class MindMapView extends ItemView {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
 
-					const selector = buildPreferredSelector(layoutNode.source);
+					const selector = selectors.get(nodeId) ?? buildPreferredSelector(layoutNode.source);
 					let existing = styles[selector] ?? {};
 
 					// If the node gained a block ID after an override was written
@@ -2658,7 +2700,6 @@ export class MindMapView extends ItemView {
 		if (sizeAffecting) {
 			this.nodeSizeCache.clear();
 		}
-		await this.render();
 	}
 
 	/**
