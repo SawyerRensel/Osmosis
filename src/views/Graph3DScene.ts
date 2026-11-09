@@ -183,6 +183,8 @@ export interface SceneOptions {
 	/** Whether the walk and fly joysticks start shown, and where a toggle goes to be remembered. */
 	sticks: boolean;
 	onSticksToggle: (shown: boolean) => void;
+	/** Whether a plain plate click only selects the plate, with no flight and no history step. Read at each click, so it is per device and shared by every 3D view. */
+	clickSelectsOnly: () => boolean;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -1743,15 +1745,19 @@ export class Graph3DScene {
 			return;
 		}
 		// A plain click on a plate selects it alone, as before multi-select.
+		// With "Click selects only" the plate becomes the primary and the camera stays: no flight, no history step.
+		const selectsOnly = this.options.clickSelectsOnly();
 		if (link !== null) {
 			this.select([link.node.id]);
-			this.options.onNodeClick(link.node);
+			if (selectsOnly) this.focusId = link.node.id;
+			else this.options.onNodeClick(link.node);
 			return;
 		}
 		const node = this.nodeNear(x, y, slop);
 		if (node !== null) {
 			this.select([node.id]);
-			this.options.onNodeClick(node.graph);
+			if (selectsOnly) this.focusId = node.id;
+			else this.options.onNodeClick(node.graph);
 			return;
 		}
 		// No plate: an edge under the pointer is a link to follow. (A panel over it has the click.)

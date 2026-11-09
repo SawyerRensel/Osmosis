@@ -43,6 +43,12 @@ export interface GraphReach {
 	backlinks: boolean;
 }
 
+/** A per-device toggle the menu shows and sets but does not store (the view keeps it in local storage). */
+export interface DeviceToggle {
+	get: () => boolean;
+	set: (on: boolean) => void;
+}
+
 /**
  * The 3D graph's Overlays menu, in the spirit of Blender's viewport Overlays
  * and Shading popovers: an icon button in the viewport's top-right corner that
@@ -65,6 +71,7 @@ export class Graph3DOverlaysMenu {
 		overlays: Graph3DOverlays,
 		private reach: GraphReach,
 		private readonly maxDepth: number,
+		private readonly clickSelectsOnly: DeviceToggle,
 		private readonly onChange: (overlays: Graph3DOverlays) => void,
 		private readonly onReach: (reach: GraphReach) => void,
 	) {
@@ -195,6 +202,11 @@ export class Graph3DOverlaysMenu {
 					this.change({ travelSpeed: travelFromSlider(value) });
 				});
 		});
+
+		new Setting(panel)
+			.setName("Click selects only")
+			.setDesc("A click on a plate selects it without flying there or adding a back step. Arrow keys, search and links still move the camera. Kept on this device.")
+			.addToggle((toggle) => toggle.setValue(this.clickSelectsOnly.get()).onChange((value) => this.clickSelectsOnly.set(value)));
 
 		new Setting(panel).setName("Lookdev").setHeading();
 		const mist = new Setting(panel).setName("Mist density").setDesc(mistLabel(overlays.mist));

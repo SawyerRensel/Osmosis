@@ -49,6 +49,8 @@ const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
  * them shouldn't turn them on for a laptop that has keys.
  */
 const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
+/** Whether a plain plate click only selects it (Overlays: "Click selects only"). Per device, like the joysticks; off by default. */
+const CLICK_SELECTS_ONLY_STORAGE_KEY = "osmosis-graph3d-click-selects-only";
 /**
  * Whether Obsidian's mobile toolbar (the floating navbar) is hidden while a 3D
  * graph is the active view. Per device, like the joysticks: it is a preference
@@ -346,6 +348,10 @@ export class Graph3DView extends ItemView {
 			this.plugin().settings.graph3dOverlays,
 			{ depth: this.depth, backlinks: this.backlinks },
 			MAX_DEPTH,
+			{
+				get: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
+				set: (on) => this.app.saveLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY, on),
+			},
 			(overlays) => this.plugin().setGraph3DOverlays(overlays),
 			({ depth, backlinks }) => {
 				const reloads = depth !== this.depth || backlinks !== this.backlinks;
@@ -410,6 +416,7 @@ export class Graph3DView extends ItemView {
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
+			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 		});
 		this.scene.setTheme(this.readTheme());
 		this.scene.setLinkMode(this.editMode);
