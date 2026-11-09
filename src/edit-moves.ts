@@ -45,7 +45,7 @@ export interface MovedBlock {
  * markdown. Used where the metadata cache can't be trusted — right after our
  * own write, it still holds the pre-write frontmatter.
  */
-function frontmatterValue(content: string, key: string): unknown {
+export function frontmatterValue(content: string, key: string): unknown {
 	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
 	if (!match?.[1]) return undefined;
 	try {

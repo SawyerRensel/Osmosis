@@ -32,6 +32,27 @@ class FolderSuggest extends AbstractInputSuggest<string> {
 	}
 }
 
+/** Auto-suggest for Markdown note paths. */
+class NoteSuggest extends AbstractInputSuggest<string> {
+	getSuggestions(query: string): string[] {
+		const lq = query.toLowerCase();
+		return this.app.vault.getMarkdownFiles()
+			.map((f) => f.path)
+			.filter((p) => p.toLowerCase().includes(lq))
+			.sort()
+			.slice(0, 100);
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	selectSuggestion(value: string): void {
+		this.setValue(value);
+		this.close();
+	}
+}
+
 /** Auto-suggest for vault tags (without #). */
 class TagSuggest extends AbstractInputSuggest<string> {
 	getSuggestions(query: string): string[] {
@@ -146,6 +167,12 @@ export interface OsmosisSettings {
 	 *  edits drop when either this or undoMaxSteps is reached first (default: 20). */
 	undoMaxMemoryMB: number;
 
+	// ── Convert branch to note ──────────────────────────────
+	/** Folder new notes from "Convert branch to note" go in; empty means the source note's folder (default: ""). */
+	branchNoteFolder: string;
+	/** Note whose frontmatter and body are merged into every converted branch's new note; empty for none (default: ""). */
+	branchNoteTemplate: string;
+
 	// ── 3D Graph ────────────────────────────────────────────
 	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
 	graph3dDesktopPivot: Graph3DDesktopPivot;
@@ -197,6 +224,10 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Mind map editing defaults
 	undoMaxSteps: 50,
 	undoMaxMemoryMB: 20,
+
+	// Convert branch to note defaults
+	branchNoteFolder: "",
+	branchNoteTemplate: "",
 
 	// 3D graph defaults
 	graph3dDesktopPivot: "cursor",
@@ -322,6 +353,38 @@ export class OsmosisSettingTab extends PluginSettingTab {
 							min: 1,
 							step: 1,
 							validate: validatePositiveInt,
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Convert branch to note",
+				items: [
+					{
+						name: "Folder for new notes",
+						desc: "Where \"Convert branch to note\" creates the new note. Leave empty to use the source note's folder.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.branchNoteFolder,
+								placeholder: "Same folder as the source note",
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => raw.trim().replace(/^\/+|\/+$/g, ""),
+								onCommit: (folder) => this.setControlValue("branchNoteFolder", folder),
+							});
+						},
+					},
+					{
+						name: "Template",
+						desc: "A note whose properties and text are merged into each new note: its properties at the top, its text after the branch. Leave empty for none.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.branchNoteTemplate,
+								placeholder: "No template",
+								createSuggest: (input) => new NoteSuggest(this.app, input),
+								normalize: (raw) => raw.trim(),
+								onCommit: (path) => this.setControlValue("branchNoteTemplate", path),
+							});
 						},
 					},
 				],

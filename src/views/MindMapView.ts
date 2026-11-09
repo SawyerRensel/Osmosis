@@ -26,6 +26,7 @@ import { enterSavesEdit } from "../edit-keys";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
+import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
 import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../graph3d/liftoff";
@@ -4627,6 +4628,12 @@ export class MindMapView extends ItemView {
 					item.setTitle("Insert parent").setIcon("arrow-right-to-line")
 						.onClick(() => { if (node) void this.insertParentNode(node); }),
 				);
+				if (node && node.source.type !== "root" && canConvertBranch(node.source)) {
+					menu.addItem((item) =>
+						item.setTitle("Convert branch to note").setIcon("file-output")
+							.onClick(() => void this.convertBranch(node)),
+					);
+				}
 				menu.addSeparator();
 			}
 
@@ -8190,6 +8197,20 @@ export class MindMapView extends ItemView {
 		// Without panning to it: deleting a node must leave the viewport where
 		// the user had it.
 		this.selectNodeAfterDelete(afterId);
+	}
+
+	/**
+	 * Move a node and its subtree into a new note, leaving an `![[embed]]` in
+	 * its place (see `src/convert-branch.ts`). One undo step reverts the map's
+	 * note, the moved styles and history, and the rewritten links; the new note
+	 * itself stays (undo can't delete a file).
+	 */
+	private async convertBranch(node: LayoutNode): Promise<void> {
+		const target = await this.assertEditableNode(node);
+		if (!target || !this.currentFile) return;
+		if (target.source.type === "root" || !canConvertBranch(target.source)) return;
+		const { branchNoteFolder: folder, branchNoteTemplate: template } = this.plugin.settings;
+		await convertBranchToNote(this.moveContext(), { folder, template }, this.currentFile, target.source.id);
 	}
 
 	/**

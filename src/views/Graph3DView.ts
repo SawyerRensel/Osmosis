@@ -1,6 +1,7 @@
 import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
+import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { migrateBlockIdentity, moveAcrossFiles, readMovedScheduleEntries, type MoveContext } from "../edit-moves";
 import { collectBlockIds, dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
@@ -1430,6 +1431,9 @@ export class Graph3DView extends ItemView {
 		add("Add child", "arrow-right-from-line", "child");
 		add("Add sibling", "arrow-down-from-line", "sibling");
 		add("Insert parent", "arrow-right-to-line", "parent");
+		if (!isNoteRoot(node) && node.source !== undefined && canConvertBranch(node.source)) {
+			menu.addItem((item) => item.setTitle("Convert branch to note").setIcon("file-output").onClick(() => void this.convertBranch(node)));
+		}
 		menu.addSeparator();
 		add("Move up", "arrow-up", "up");
 		add("Move down", "arrow-down", "down");
@@ -1438,6 +1442,39 @@ export class Graph3DView extends ItemView {
 		menu.addSeparator();
 		menu.addItem((item) => item.setTitle("Delete").setIcon("trash-2").setWarning(true).onClick(() => void this.structural("delete", node, true)));
 		menu.showAtPosition({ x, y });
+	}
+
+	/**
+	 * Move `node`'s line and its subtree into a new note, an `![[embed]]` left in
+	 * its place (`convertBranchToNote`). The reload selects the embed line, and
+	 * the new note joins the graph through it, as embedded content or (in
+	 * Planets mode) a planet of its own, per the depth rules.
+	 */
+	private async convertBranch(node: GraphNode): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		const file = node.path === undefined ? null : this.app.vault.getFileByPath(node.path);
+		const id = node.source?.id;
+		if (file === null || id === undefined) return;
+		this.structuring = true;
+		try {
+			this.editOwner = file.path;
+			this.lastEditPath = file.path;
+			// As in `commitLines`: a reload already under way must not place lines before `edited` does.
+			this.loadSeq++;
+			const { branchNoteFolder: folder, branchNoteTemplate: template } = this.plugin().settings;
+			const done = await convertBranchToNote(this.moveContext(), { folder, template }, file, id);
+			if (done !== null) {
+				this.edited = [{ path: file.path, start: done.embedStart, from: node.id }];
+				this.editLanded = true;
+				this.selectLanded = true;
+			}
+			void this.reload();
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not convert a branch", error);
+			new Notice("Osmosis: could not convert that branch");
+		} finally {
+			this.structuring = false;
+		}
 	}
 
 	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */
