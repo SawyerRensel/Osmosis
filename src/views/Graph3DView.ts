@@ -223,6 +223,7 @@ export class Graph3DView extends ItemView {
 		// Then it clears the selection (multi-select).
 		this.scope.register([], "Escape", (e: KeyboardEvent) => {
 			if (this.scene?.cancelLinkDrag() === true) return false;
+			if (this.scene?.closeHelp() === true) return false;
 			if (this.overlaysMenu?.isOpen === true) {
 				this.overlaysMenu.toggle(false);
 				return false;

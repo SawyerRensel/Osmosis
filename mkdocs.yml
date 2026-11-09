@@ -108,6 +108,7 @@ nav:
     - mind-mapping/index.md
     - Editing: mind-mapping/editing.md
     - Navigation: mind-mapping/navigation.md
+    - 3D Graph: mind-mapping/graph-3d.md
     - Styling: mind-mapping/styling.md
   - Flashcards:
     - flashcards/index.md

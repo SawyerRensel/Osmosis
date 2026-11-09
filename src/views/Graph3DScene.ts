@@ -26,6 +26,7 @@ import {
 	type Ray,
 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { Graph3DHelp } from "./Graph3DHelp";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
@@ -432,6 +433,7 @@ export class Graph3DScene {
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
 	private readonly perf: Graph3DPerf;
+	private readonly help: Graph3DHelp;
 	private readonly sticks: Graph3DSticks;
 	private speedTimer = 0;
 	readonly heldKeys = new Set<string>();
@@ -473,10 +475,11 @@ export class Graph3DScene {
 		window.addEventListener("pointercancel", this.onPointerUp);
 		// Capture phase, so it runs before OrbitControls' wheel listener on the canvas and can stop it.
 		container.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
-		// The bottom-right corner: the joystick toggle, and the flight speed beside it.
+		// The bottom-left corner: the controls help, the joystick toggle, and the flight speed after them (the CSS lays it out in reverse).
 		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
 		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
 		this.sticks = new Graph3DSticks(container, corner, options.sticks, options.onSticksToggle);
+		this.help = new Graph3DHelp(container, corner);
 
 		// Links are measured between plate edges, not centres, so wide labels
 		// don't pile up around their parent. d3 caches each link's distance when
@@ -1154,6 +1157,11 @@ export class Graph3DScene {
 		}
 	}
 
+	/** Escape: close the controls help. True when it was open. */
+	closeHelp(): boolean {
+		return this.help.close();
+	}
+
 	/** Escape: drop a link drag (or a box select) in progress without linking (or selecting). True when there was one. */
 	cancelLinkDrag(): boolean {
 		const active = this.linkDrag?.active === true || this.box?.el != null;
@@ -1307,6 +1315,7 @@ export class Graph3DScene {
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
+		this.help.destroy();
 		this.near.destroy();
 		this.nodes = [];
 		this.links = [];

@@ -4200,16 +4200,25 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	bottom: calc(var(--size-4-2) * 2 + max(48px, var(--osmosis-graph3d-lift)) + 120px);
 }
 
-/* Bottom-right corner: the joystick toggle, with the flight speed readout to its left. */
+/*
+ * Bottom-left corner: the controls help and joystick toggles, with the flight speed readout to their
+ * right (row-reverse: the DOM lists the readout first). Obsidian's status bar sits bottom right. On
+ * mobile the toolbar toggle owns the corner's far left, so the cluster starts after it.
+ */
 .osmosis-graph3d-corner {
 	position: absolute;
-	right: var(--size-4-2);
+	left: var(--size-4-2);
 	bottom: var(--size-4-2);
 	z-index: 1;
 	display: flex;
+	flex-direction: row-reverse;
 	align-items: center;
 	gap: var(--size-4-2);
 	pointer-events: none;
+}
+
+.is-mobile .osmosis-graph3d-corner {
+	left: calc(var(--size-4-2) + 40px);
 }
 
 /* Flight speed, shown briefly while the wheel changes it. */
@@ -4227,6 +4236,65 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 
 .osmosis-graph3d-speed.is-visible {
 	opacity: 1;
+}
+
+/* Controls help (Graph3DHelp.ts): the "?" in the corner, and the panel that opens above it. */
+.osmosis-graph3d-help-toggle {
+	pointer-events: auto;
+}
+
+.osmosis-graph3d-help-toggle.is-active {
+	color: var(--text-accent);
+}
+
+.osmosis-graph3d-help {
+	position: absolute;
+	left: var(--size-4-2);
+	bottom: calc(var(--size-4-2) * 2 + 40px);
+	z-index: 2;
+	box-sizing: border-box;
+	width: min(440px, calc(100% - 2 * var(--size-4-2)));
+	max-height: calc(100% - 2 * var(--size-4-2) - 56px);
+	overflow-y: auto;
+	padding: var(--size-4-2) var(--size-4-4);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	box-shadow: var(--shadow-s);
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+}
+
+.osmosis-graph3d-help.is-hidden {
+	display: none;
+}
+
+.osmosis-graph3d-help-title {
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-graph3d-help-heading {
+	margin-top: var(--size-4-3);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	text-transform: uppercase;
+	color: var(--text-muted);
+}
+
+.osmosis-graph3d-help-list {
+	display: grid;
+	grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+	gap: var(--size-4-1) var(--size-4-3);
+	margin: var(--size-4-1) 0 0;
+}
+
+.osmosis-graph3d-help-list dt {
+	font-weight: var(--font-medium);
+}
+
+.osmosis-graph3d-help-list dd {
+	margin: 0;
+	color: var(--text-muted);
 }
 
 /* Walk and fly joysticks (Graph3DSticks.ts). */
