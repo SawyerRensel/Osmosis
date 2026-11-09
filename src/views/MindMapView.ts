@@ -76,6 +76,7 @@ import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
 import { fenceDiagrams } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
 import {
@@ -921,7 +922,7 @@ export class MindMapView extends ItemView {
 		};
 	}
 
-	/** Match ==term== or **term** cloze deletions. */
+	/** Match ==term== or **term** cloze deletions. A colour emoji opening a `==` one is part of its body (`cloze-colour.ts`). */
 	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
 
 	/**
@@ -937,7 +938,8 @@ export class MindMapView extends ItemView {
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
+		const front = text.replace(MindMapView.CLOZE_REGEX, (full) =>
+			colourBlank(CLOZE_BLANK, full.startsWith("==") ? parseHighlightToken(full).colour : null));
 		// The `cN:` prefix groups a deletion; it is not part of the answer. The
 		// generator strips it and keeps the `==`/`**` delimiters, so the two sides
 		// of a card read alike, and the map has to do the same — handing the text
@@ -946,8 +948,8 @@ export class MindMapView extends ItemView {
 		// The front never showed it, being blanked over, which is why it took a
 		// node stepping through its groups to make it visible.
 		const back = text.replace(MindMapView.CLOZE_REGEX, (full) => {
-			const delim = full.startsWith("==") ? "==" : "**";
-			return `${delim}${full.slice(2, -2).replace(/^c\d+:/, "")}${delim}`;
+			if (full.startsWith("==")) return colourAnswer(full);
+			return `**${full.slice(2, -2).replace(/^c\d+:/, "")}**`;
 		});
 		return { front, back, isCloze: true };
 	}

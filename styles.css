@@ -4550,3 +4550,58 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	border: 1px dashed var(--interactive-accent);
 	background-color: hsla(var(--interactive-accent-hsl), 0.1);
 }
+
+/* Coloured highlight clozes (`==🔴text==`, card-gen/cloze-colour.ts). The generator wraps a coloured blank in .osmosis-cloze-blank and a coloured answer in .osmosis-cloze-mark, each with .osmosis-cloze-<colour>. Obsidian's palette variables, so a theme recolours them; an uncoloured cloze carries none of this. */
+.osmosis-cloze-blank.osmosis-cloze-red,
+.osmosis-cloze-mark.osmosis-cloze-red {
+	background-color: rgba(var(--color-red-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-red {
+	color: var(--color-red);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-orange,
+.osmosis-cloze-mark.osmosis-cloze-orange {
+	background-color: rgba(var(--color-orange-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-orange {
+	color: var(--color-orange);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-yellow,
+.osmosis-cloze-mark.osmosis-cloze-yellow {
+	background-color: rgba(var(--color-yellow-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-yellow {
+	color: var(--color-yellow);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-green,
+.osmosis-cloze-mark.osmosis-cloze-green {
+	background-color: rgba(var(--color-green-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-green {
+	color: var(--color-green);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-blue,
+.osmosis-cloze-mark.osmosis-cloze-blue {
+	background-color: rgba(var(--color-blue-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-blue {
+	color: var(--color-blue);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-purple,
+.osmosis-cloze-mark.osmosis-cloze-purple {
+	background-color: rgba(var(--color-purple-rgb), 0.3);
+}
+
+.osmosis-cloze-blank.osmosis-cloze-purple {
+	color: var(--color-purple);
+}

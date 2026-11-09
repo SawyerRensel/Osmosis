@@ -43,6 +43,26 @@ const shapes = [
 	"      h: 0.06",
 ].join("\n");
 
+describe("parseFenceContent — coloured highlight clozes", () => {
+	it("blanks and reveals a coloured cloze in its colour, leaving the plain one as it was", () => {
+		const parsed = parse("id: rivers\n\nThe ==🔵Danube== meets the ==Rhine== nowhere.");
+
+		expect(parsed?.front).toBe(
+			`The <span class="osmosis-cloze-blank osmosis-cloze-blue">${CLOZE_BLANK}</span> meets the ${CLOZE_BLANK} nowhere.`,
+		);
+		expect(parsed?.back).toBe(
+			'The <mark class="osmosis-cloze-mark osmosis-cloze-blue">Danube</mark> meets the ==Rhine== nowhere.',
+		);
+	});
+
+	it("reads a plain fence exactly as before", () => {
+		const parsed = parse("id: rivers\n\nThe ==c1:Danube== meets the **Rhine** and :::Elbe:::.");
+
+		expect(parsed?.front).toBe(`The ${CLOZE_BLANK} meets the ${CLOZE_BLANK} and ${CLOZE_BLANK}.`);
+		expect(parsed?.back).toBe("The ==Danube== meets the **Rhine** and Elbe.");
+	});
+});
+
 describe("parseFenceContent — embed labels", () => {
 	it("hands an occlusion fence's diagram to the mask renderer, not to markdown", () => {
 		const parsed = parse(`id: bridge\n${shapes}\n\n![[bridge.svg]]{a}`);

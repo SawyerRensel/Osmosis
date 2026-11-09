@@ -6,6 +6,7 @@ import type { Card, CardOcclusion, ScheduleData } from "../database/types";
 import { mountRatingAnchor, removeRatingAnchors, renderOcclusion, repaintOcclusion } from "./OcclusionRenderer";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import { dueCardsForFenceKey } from "../study/spatial-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
@@ -1066,9 +1067,14 @@ export class ContextualStudyProcessor {
 		}
 	}
 
-	/** Match ==term==, **term**, or :::term::: cloze deletions (with optional cN: group prefix). */
-	private static readonly CLOZE_REGEX =
-		/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g;
+	/**
+	 * Match ==term==, **term**, or :::term::: cloze deletions (with optional cN:
+	 * group prefix). A `==` cloze may open with a colour emoji (`cloze-colour.ts`).
+	 */
+	private static readonly CLOZE_REGEX = new RegExp(
+		`==${CLOZE_COLOUR_PATTERN}?(?:c\\d+:)?([^=]+)==|\\*\\*(?:c\\d+:)?([^*]+)\\*\\*|:::(?:c\\d+:)?(.+?):::`,
+		"g",
+	);
 
 	/**
 	 * Parse fence content into front/back/metadata.
@@ -1137,11 +1143,14 @@ export class ContextualStudyProcessor {
 		// Back: `==`/`**` delimiters are kept (they're valid Markdown for highlight/bold),
 		// `:::` delimiters are removed entirely (not Markdown — would leave visual residue),
 		// and any `cN:` group prefix is stripped from all three forms.
-		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, CLOZE_BLANK);
+		// A coloured `==` cloze blanks, and reads back, in its colour; its emoji is
+		// not part of the answer.
+		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, (full: string) =>
+			colourBlank(CLOZE_BLANK, full.startsWith("==") ? parseHighlightToken(full).colour : null));
 		const back = content.replace(
-			/==(?:c\d+:)?([^=]+)==|\*\*(?:c\d+:)?([^*]+)\*\*|:::(?:c\d+:)?(.+?):::/g,
-			(_m, eq?: string, bold?: string, plain?: string) => {
-				if (eq !== undefined) return `==${eq}==`;
+			ContextualStudyProcessor.CLOZE_REGEX,
+			(full: string, eq?: string, bold?: string, plain?: string) => {
+				if (eq !== undefined) return colourAnswer(full);
 				if (bold !== undefined) return `**${bold}**`;
 				return plain!;
 			},
