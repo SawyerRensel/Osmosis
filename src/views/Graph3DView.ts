@@ -7,6 +7,7 @@ import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
 import { facingPhase } from "../graph3d/flatten";
+import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { refocusPath } from "../graph3d/refocus";
@@ -53,6 +54,14 @@ const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
 const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
 /** Whether a plain plate click only selects it (Overlays: "Click selects only"). Per device, like the joysticks; off by default. */
 const CLICK_SELECTS_ONLY_STORAGE_KEY = "osmosis-graph3d-click-selects-only";
+/**
+ * The near tier's panel detail and live-panel limit (Overlays: "Panel detail"
+ * and "Live panels"). Per device like the joysticks, and keyed by platform so
+ * a desktop window emulating mobile keeps its own pair. Applies to every 3D view.
+ */
+const NEAR_TIER_STORAGE_KEY = `osmosis-graph3d-near-tier-${Platform.isMobile ? "mobile" : "desktop"}`;
+/** The settings every 3D view reads each frame: read from storage once, then kept here so a change shows in all open views at once. */
+let nearTier: NearTierSettings | null = null;
 /**
  * Whether Obsidian's mobile toolbar (the floating navbar) is hidden while a 3D
  * graph is the active view. Per device, like the joysticks: it is a preference
@@ -342,6 +351,11 @@ export class Graph3DView extends ItemView {
 		await this.reload(true, typeof state?.subpath === "string" ? state.subpath : "", readPlace(state).node);
 	}
 
+	private nearTier(): NearTierSettings {
+		nearTier ??= cleanNearTier(this.app.loadLocalStorage(NEAR_TIER_STORAGE_KEY), Platform.isMobile);
+		return nearTier;
+	}
+
 	async onOpen(): Promise<void> {
 		const root = this.contentEl;
 		root.empty();
@@ -355,6 +369,13 @@ export class Graph3DView extends ItemView {
 			{
 				get: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 				set: (on) => this.app.saveLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY, on),
+			},
+			{
+				get: () => this.nearTier(),
+				set: (patch) => {
+					nearTier = cleanNearTier({ ...this.nearTier(), ...patch }, Platform.isMobile);
+					this.app.saveLocalStorage(NEAR_TIER_STORAGE_KEY, nearTier);
+				},
 			},
 			(overlays) => this.plugin().setGraph3DOverlays(overlays),
 			({ depth, backlinks }) => {
@@ -421,6 +442,7 @@ export class Graph3DView extends ItemView {
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
+			nearTier: () => this.nearTier(),
 		});
 		this.scene.setTheme(this.readTheme());
 		this.scene.setLinkMode(this.editMode);

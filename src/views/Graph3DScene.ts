@@ -33,6 +33,7 @@ import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type 
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
 import { DEFAULT_OVERLAYS, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
+import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
@@ -185,6 +186,8 @@ export interface SceneOptions {
 	onSticksToggle: (shown: boolean) => void;
 	/** Whether a plain plate click only selects the plate, with no flight and no history step. Read at each click, so it is per device and shared by every 3D view. */
 	clickSelectsOnly: () => boolean;
+	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
+	nearTier: () => NearTierSettings;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -436,7 +439,7 @@ export class Graph3DScene {
 	constructor(private readonly container: HTMLElement, private readonly options: SceneOptions) {
 		// The near tier's CSS2D renderer has to be handed over at construction:
 		// the engine sizes it and draws it after the canvas every frame.
-		this.near = new Graph3DNear(options.renderMarkdown, options.renderDiagram, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
+		this.near = new Graph3DNear(options.renderMarkdown, options.renderDiagram, Graph3DNear.emWorld(LINE_PLATE_HEIGHT), options.nearTier);
 		this.graph = new ForceGraph3D(container, {
 			controlType: "orbit",
 			// CSS2DRenderer is a renderer by shape, not by type.

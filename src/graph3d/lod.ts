@@ -18,6 +18,42 @@ export const NEAR_BUDGET = { desktop: 24, mobile: 12 } as const;
 /** Screen scale at which a panel enters the tier, and the lower one at which it leaves. */
 export const NEAR_ENTER_SCALE = 0.6;
 export const NEAR_EXIT_SCALE = 0.45;
+/** Exit scale over enter scale: kept at every panel size threshold, so the hysteresis band stays the same. */
+export const NEAR_EXIT_RATIO = NEAR_EXIT_SCALE / NEAR_ENTER_SCALE;
+/** Panel detail slider limit: ×1/`DETAIL_LIMIT` to ×`DETAIL_LIMIT`, so the enter scale runs 0.3 to 1.2. */
+export const DETAIL_LIMIT = 2;
+/** Budget ranges the Overlays sliders allow; the defaults (`NEAR_BUDGET`) sit inside them. */
+export const NEAR_BUDGET_RANGE = { desktop: { min: 4, max: 48 }, mobile: { min: 4, max: 24 } } as const;
+
+/** The two near-tier settings a user can change (Overlays menu), kept per device. */
+export interface NearTierSettings {
+	/** Panel detail: a multiplier on how far away panels open. The enter scale is `NEAR_ENTER_SCALE / detail`, so more detail means panels from farther away. */
+	detail: number;
+	/** Live panels at once. */
+	budget: number;
+}
+
+export function defaultNearTier(mobile: boolean): NearTierSettings {
+	return { detail: 1, budget: mobile ? NEAR_BUDGET.mobile : NEAR_BUDGET.desktop };
+}
+
+/** Settings read back from storage, anything unusable replaced by the default and the rest clamped to the ranges. */
+export function cleanNearTier(value: unknown, mobile: boolean): NearTierSettings {
+	const fallback = defaultNearTier(mobile);
+	const range = NEAR_BUDGET_RANGE[mobile ? "mobile" : "desktop"];
+	const raw = typeof value === "object" && value !== null ? (value as Partial<Record<keyof NearTierSettings, unknown>>) : {};
+	const number = (v: unknown, dflt: number, min: number, max: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt);
+	return {
+		detail: number(raw.detail, fallback.detail, 1 / DETAIL_LIMIT, DETAIL_LIMIT),
+		budget: Math.round(number(raw.budget, fallback.budget, range.min, range.max)),
+	};
+}
+
+/** The screen scale at which a panel enters the tier, for a panel detail multiplier. */
+export const enterScaleFromDetail = (detail: number): number => NEAR_ENTER_SCALE / detail;
+/** Panel detail slider position (log₂, so ×½ and ×2 sit evenly either side of ×1) to detail, and back. */
+export const detailFromSlider = (position: number): number => 2 ** position;
+export const sliderFromDetail = (detail: number): number => Math.log2(detail);
 /**
  * A node enters only with its centre on screen (normalized device
  * coordinates within ±1), and leaves once its centre is this far out.
@@ -57,25 +93,26 @@ export function panelScale(depth: number, pxPerUnitAt1: number, pxPerUnit: numbe
 	return depth <= 0 ? 0 : pxPerUnitAt1 / (depth * pxPerUnit);
 }
 
-function canEnter(p: NearProbe): boolean {
-	return p.depth > 0 && p.scale >= NEAR_ENTER_SCALE && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_ENTER_SCREEN && p.visibility >= NEAR_ENTER_VISIBILITY;
+function canEnter(p: NearProbe, enterScale: number): boolean {
+	return p.depth > 0 && p.scale >= enterScale && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_ENTER_SCREEN && p.visibility >= NEAR_ENTER_VISIBILITY;
 }
 
-function canStay(p: NearProbe): boolean {
-	return p.depth > 0 && p.scale >= NEAR_EXIT_SCALE && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_EXIT_SCREEN && p.visibility >= NEAR_EXIT_VISIBILITY;
+function canStay(p: NearProbe, enterScale: number): boolean {
+	return p.depth > 0 && p.scale >= enterScale * NEAR_EXIT_RATIO && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_EXIT_SCREEN && p.visibility >= NEAR_EXIT_VISIBILITY;
 }
 
 /**
  * The near tier for this frame. Nodes in `current` stay while they pass the
  * looser exit tests; others need the stricter entry tests. If more qualify
  * than `budget`, the nearest win, with current members given
- * `NEAR_KEEP_BONUS`.
+ * `NEAR_KEEP_BONUS`. `enterScale` is the panel size threshold (default
+ * `NEAR_ENTER_SCALE`); the exit scale follows it at `NEAR_EXIT_RATIO`.
  */
-export function chooseNear(probes: Iterable<NearProbe>, current: ReadonlySet<string>, budget: number): Set<string> {
+export function chooseNear(probes: Iterable<NearProbe>, current: ReadonlySet<string>, budget: number, enterScale = NEAR_ENTER_SCALE): Set<string> {
 	const ranked: { id: string; rank: number }[] = [];
 	for (const probe of probes) {
 		const member = current.has(probe.id);
-		if (member ? canStay(probe) : canEnter(probe)) {
+		if (member ? canStay(probe, enterScale) : canEnter(probe, enterScale)) {
 			ranked.push({ id: probe.id, rank: member ? probe.depth * (1 - NEAR_KEEP_BONUS) : probe.depth });
 		}
 	}

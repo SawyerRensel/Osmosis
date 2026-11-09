@@ -26,14 +26,14 @@
  *   tier, and release their media when the panel is removed.
  */
 
-import { Component, Platform } from "obsidian";
+import { Component } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { repaintOcclusion } from "./OcclusionRenderer";
 import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
-import { NEAR_BUDGET, NEAR_EXIT_SCALE, chooseNear, panelScale, type NearProbe } from "../graph3d/lod";
+import { NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelScale, type NearProbe, type NearTierSettings } from "../graph3d/lod";
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
 import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
@@ -120,7 +120,6 @@ export class Graph3DNear {
 	readonly group = new Group();
 	private readonly panels = new Map<string, Panel>();
 	private readonly cache = new Map<string, HTMLElement>();
-	private readonly budget = Platform.isMobile ? NEAR_BUDGET.mobile : NEAR_BUDGET.desktop;
 	/** Px of panel laid out per world unit: the panel's text matches the plate text under it. */
 	private readonly pxPerUnit: number;
 	private focus = 0;
@@ -151,8 +150,17 @@ export class Graph3DNear {
 		}
 	});
 
-	/** `lineEmWorld` is how many world units one em of plate text is. */
-	constructor(private readonly render: NearMarkdownRenderer, private readonly renderDiagram: NearDiagramRenderer, lineEmWorld: number) {
+	/**
+	 * `lineEmWorld` is how many world units one em of plate text is. `settings`
+	 * gives the user's panel detail and live-panel limit, read every frame so a
+	 * change in the Overlays menu applies at once.
+	 */
+	constructor(
+		private readonly render: NearMarkdownRenderer,
+		private readonly renderDiagram: NearDiagramRenderer,
+		lineEmWorld: number,
+		private readonly settings: () => NearTierSettings,
+	) {
 		this.pxPerUnit = NEAR_FONT_PX / lineEmWorld;
 		this.renderer.domElement.addClass("osmosis-graph3d-near");
 	}
@@ -174,6 +182,9 @@ export class Graph3DNear {
 		this.screenPlates = null;
 		camera.updateMatrixWorld();
 		const pxPerUnitAt1 = this.pxPerUnitAt1(camera);
+		const { detail, budget } = this.settings();
+		const enterScale = enterScaleFromDetail(detail);
+		const exitScale = enterScale * NEAR_EXIT_RATIO;
 		const probes: NearProbe[] = [];
 		const markdown = new Map<string, { node: NearSource; text: string }>();
 		const point = this.point;
@@ -183,7 +194,7 @@ export class Graph3DNear {
 			const depth = -point.z;
 			const scale = panelScale(depth, pxPerUnitAt1, this.pxPerUnit);
 			// Most nodes are far: skip them before anything costlier.
-			if (scale < NEAR_EXIT_SCALE) continue;
+			if (scale < exitScale) continue;
 			const text = nearMarkdown(node.graph);
 			if (text === null) continue;
 			point.applyMatrix4(camera.projectionMatrix);
@@ -192,7 +203,7 @@ export class Graph3DNear {
 		}
 		const current = new Set<string>();
 		for (const [id, panel] of this.panels) if (panel.target === 1) current.add(id);
-		const near = chooseNear(probes, current, this.budget);
+		const near = chooseNear(probes, current, budget, enterScale);
 
 		for (const id of near) {
 			const { node, text } = markdown.get(id)!;

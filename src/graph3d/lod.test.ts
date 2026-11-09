@@ -1,13 +1,22 @@
 import { describe, it, expect } from "vitest";
 import {
+	DETAIL_LIMIT,
+	NEAR_BUDGET,
+	NEAR_BUDGET_RANGE,
 	NEAR_ENTER_SCALE,
+	NEAR_EXIT_RATIO,
 	NEAR_EXIT_SCALE,
 	NEAR_EXIT_SCREEN,
 	NEAR_EXIT_VISIBILITY,
 	NEAR_ENTER_VISIBILITY,
 	NEAR_KEEP_BONUS,
 	chooseNear,
+	cleanNearTier,
+	defaultNearTier,
+	detailFromSlider,
+	enterScaleFromDetail,
 	panelScale,
+	sliderFromDetail,
 	type NearProbe,
 } from "./lod";
 
@@ -91,5 +100,69 @@ describe("chooseNear", () => {
 		}
 		// Each node enters once as the camera passes it: no flicker in and out.
 		expect(changes).toBeLessThanOrEqual(ids.length);
+	});
+});
+
+describe("chooseNear with a panel size threshold", () => {
+	const enter = 1.2;
+	const exit = enter * NEAR_EXIT_RATIO;
+
+	it("enters at the given threshold, not the default", () => {
+		// Scale 0.8 passes the default threshold (0.6) but not 1.2.
+		const p = probe("a", 100 / 0.8);
+		expect(chooseNear([p], none, 24).has("a")).toBe(true);
+		expect(chooseNear([p], none, 24, enter).has("a")).toBe(false);
+		expect(chooseNear([probe("a", 100 / enter - 1)], none, 24, enter).has("a")).toBe(true);
+	});
+
+	it("keeps the exit-to-enter ratio, so the hysteresis band scales with it", () => {
+		expect(exit).toBeCloseTo(0.9);
+		const between = 100 / ((enter + exit) / 2);
+		expect(chooseNear([probe("a", between)], none, 24, enter).has("a")).toBe(false);
+		expect(chooseNear([probe("a", between)], new Set(["a"]), 24, enter).has("a")).toBe(true);
+		expect(chooseNear([probe("a", 100 / exit + 1)], new Set(["a"]), 24, enter).has("a")).toBe(false);
+	});
+
+	it("at a lower threshold, takes in farther nodes and holds them farther out", () => {
+		const low = 0.3;
+		expect(chooseNear([probe("a", 100 / low - 1)], none, 24, low).has("a")).toBe(true);
+		expect(chooseNear([probe("a", 100 / (low * NEAR_EXIT_RATIO) + 1)], new Set(["a"]), 24, low).has("a")).toBe(false);
+		expect(chooseNear([probe("a", 100 / (low * NEAR_EXIT_RATIO) - 1)], new Set(["a"]), 24, low).has("a")).toBe(true);
+	});
+
+	it("does not flicker at the boundary as the scale wobbles around it", () => {
+		let current = new Set<string>();
+		let changes = 0;
+		for (let i = 0; i < 100; i++) {
+			// Scale wobbles ±5% around the enter threshold.
+			const scale = enter * (1 + 0.05 * Math.sin(i));
+			const next = chooseNear([probe("a", 100, { scale })], current, 24, enter);
+			if (next.has("a") !== current.has("a")) changes++;
+			current = next;
+		}
+		expect(changes).toBe(1);
+	});
+});
+
+describe("near tier settings", () => {
+	it("defaults to today's budget and threshold", () => {
+		expect(defaultNearTier(false)).toEqual({ detail: 1, budget: NEAR_BUDGET.desktop });
+		expect(defaultNearTier(true)).toEqual({ detail: 1, budget: NEAR_BUDGET.mobile });
+		expect(enterScaleFromDetail(1)).toBe(NEAR_ENTER_SCALE);
+	});
+
+	it("maps more detail to a lower enter scale, with the slider in log steps", () => {
+		expect(enterScaleFromDetail(2)).toBeCloseTo(0.3);
+		expect(enterScaleFromDetail(1 / DETAIL_LIMIT)).toBeCloseTo(1.2);
+		expect(sliderFromDetail(detailFromSlider(0.75))).toBeCloseTo(0.75);
+	});
+
+	it("cleans stored values: bad ones fall back, numbers clamp to the device's range", () => {
+		expect(cleanNearTier(undefined, false)).toEqual(defaultNearTier(false));
+		expect(cleanNearTier({ detail: "x", budget: NaN }, true)).toEqual(defaultNearTier(true));
+		expect(cleanNearTier({ detail: 100, budget: 1000 }, false)).toEqual({ detail: DETAIL_LIMIT, budget: NEAR_BUDGET_RANGE.desktop.max });
+		expect(cleanNearTier({ detail: 0.01, budget: 1000 }, true)).toEqual({ detail: 1 / DETAIL_LIMIT, budget: NEAR_BUDGET_RANGE.mobile.max });
+		expect(cleanNearTier({ detail: 1, budget: 0 }, false).budget).toBe(NEAR_BUDGET_RANGE.desktop.min);
+		expect(cleanNearTier({ detail: 1, budget: 7.6 }, false).budget).toBe(8);
 	});
 });

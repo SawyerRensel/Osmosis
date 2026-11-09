@@ -1,4 +1,13 @@
-import { Setting, setIcon, setTooltip, type SliderComponent, type ToggleComponent } from "obsidian";
+import { Platform, Setting, setIcon, setTooltip, type SliderComponent, type ToggleComponent } from "obsidian";
+import {
+	DETAIL_LIMIT,
+	NEAR_BUDGET_RANGE,
+	NEAR_ENTER_SCALE,
+	detailFromSlider,
+	enterScaleFromDetail,
+	sliderFromDetail,
+	type NearTierSettings,
+} from "../graph3d/lod";
 import {
 	MIST_LIMIT,
 	OVERLAY_EDGE_KINDS,
@@ -49,6 +58,12 @@ export interface DeviceToggle {
 	set: (on: boolean) => void;
 }
 
+/** The near tier's per-device settings the menu shows and sets but does not store (the view keeps them in local storage and applies them live). */
+export interface NearTierControl {
+	get: () => NearTierSettings;
+	set: (patch: Partial<NearTierSettings>) => void;
+}
+
 /**
  * The 3D graph's Overlays menu, in the spirit of Blender's viewport Overlays
  * and Shading popovers: an icon button in the viewport's top-right corner that
@@ -72,6 +87,7 @@ export class Graph3DOverlaysMenu {
 		private reach: GraphReach,
 		private readonly maxDepth: number,
 		private readonly clickSelectsOnly: DeviceToggle,
+		private readonly nearTier: NearTierControl,
 		private readonly onChange: (overlays: Graph3DOverlays) => void,
 		private readonly onReach: (reach: GraphReach) => void,
 	) {
@@ -230,6 +246,31 @@ export class Graph3DOverlaysMenu {
 				.setValue(overlays.labels)
 				.onChange((value) => this.change({ labels: value as LabelMode })),
 		);
+		const near = this.nearTier.get();
+		const detail = new Setting(panel).setName("Panel detail").setDesc(detailLabel(near.detail));
+		detail.addSlider((slider) => {
+			const limit = Math.log2(DETAIL_LIMIT);
+			slider
+				.setLimits(-limit, limit, 0.25)
+				.setValue(sliderFromDetail(near.detail))
+				.setInstant(true)
+				.onChange((value) => {
+					detail.setDesc(detailLabel(detailFromSlider(value)));
+					this.nearTier.set({ detail: detailFromSlider(value) });
+				});
+		});
+		const range = NEAR_BUDGET_RANGE[Platform.isMobile ? "mobile" : "desktop"];
+		const budget = new Setting(panel).setName("Live panels").setDesc(budgetLabel(near.budget));
+		budget.addSlider((slider) =>
+			slider
+				.setLimits(range.min, range.max, 1)
+				.setValue(near.budget)
+				.setInstant(true)
+				.onChange((value) => {
+					budget.setDesc(budgetLabel(value));
+					this.nearTier.set({ budget: value });
+				}),
+		);
 	}
 }
 
@@ -258,4 +299,14 @@ function flattenLabel(flatten: number): string {
 
 function mistLabel(mist: number): string {
 	return `×${mist < 1 ? mist.toFixed(2) : mist.toFixed(1)}`;
+}
+
+function detailLabel(detail: number): string {
+	const mark = `×${detail < 1 ? detail.toFixed(2) : detail.toFixed(1)}`;
+	const at = enterScaleFromDetail(detail).toFixed(2);
+	return `${mark}. How close a plate gets before it turns into a live panel: higher opens panels from farther away (at ${at}× its laid-out size; ×1 is ${NEAR_ENTER_SCALE.toFixed(2)}×). Kept on this device.`;
+}
+
+function budgetLabel(budget: number): string {
+	return `${String(budget)}. The most live panels at once; the nearest win. Fewer is lighter on a big graph. Kept on this device.`;
 }
