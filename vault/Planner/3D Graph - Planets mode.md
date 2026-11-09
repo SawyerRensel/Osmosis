@@ -21,7 +21,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-09T17:43:33.000Z"
-date_modified: "2026-11-09T19:30:00.000Z"
+date_modified: "2026-11-09T20:15:00.000Z"
 date_start_scheduled: "2026-11-09T17:43:33.000Z"
 date_start_actual: "2026-11-09T17:43:33.000Z"
 date_end_scheduled:
@@ -128,7 +128,7 @@ Flat slices (the flatten slider).
 
 ## Batch implementation notes (awaiting manual test)
 
-P1 shipped on `feature/3d-graph-planets` in b30dfee (stacked on the round 3+4 work). P2 and P3 are not started.
+P1 shipped on `feature/3d-graph-planets` in b30dfee (stacked on the round 3+4 work). P2 is on `feature/3d-graph-planets-continents` in 120b83b (see `### P2` at the end of these notes). P3 is not started.
 
 ### Approach
 
@@ -214,6 +214,80 @@ None new. Use `vault/tests/graph3d/`: `Sailing Basics.md` (sole H1 root, links, 
 
 ### What remains for P1 polish / P2 / P3
 
-- **P2 seam:** `ContinentStyle` in `planets.ts` has only `direction`. Add `radial` (the 2D `computeLayout` has no radial direction yet), Balance (pass `balance` through `continentMap`, which hard-codes `"one-side"`) and per-note overrides. The scene passes `DEFAULT_CONTINENT_STYLE` in `Graph3DScene.updatePlanets`. A style change must call `world.clear()` and `reshape()`, as the Layout change does in `setOverlays`.
+- **P2 seam (done, see `### P2`):** `ContinentStyle` in `planets.ts` has only `direction`. Add `radial` (the 2D `computeLayout` has no radial direction yet), Balance (pass `balance` through `continentMap`, which hard-codes `"one-side"`) and per-note overrides. The scene passes `DEFAULT_CONTINENT_STYLE` in `Graph3DScene.updatePlanets`. A style change must call `world.clear()` and `reshape()`, as the Layout change does in `setOverlays`.
 - **P3:** panels are suppressed in `setOverlays`. Each plate's frame is on `EngineNode.frame` (`normal`, `right`, `up`) for a CSS3D panel to copy.
 - Not done: particles along arcs, and a camera roll for hovering in a cap.
+
+### P2 (radial Direction, Balance, per-note overrides)
+
+Shipped on `feature/3d-graph-planets-continents` (cut from `feature/3d-graph-planets`) in 120b83b. Unit tests only: nothing here has been seen in Obsidian.
+
+#### What the 2D map already had
+
+- **Balance** (`one-side` / `both-sides` / `alternating`) and a **side** (`right` / `left` / `down` / `up`) already exist in 2D's `computeLayout`, so continents reuse them unchanged: `continentMap` now passes `style.balance` and `style.side` through. `findBalancePivot` makes the continent's head the pivot when it has two or more children.
+- **Radial** exists in 2D only as a name. `MapLayout = "classic" | "radial"` is a stored setting (`mapLayout`), but `computeLayout` ignores it and the properties sidebar offers only "Classic". So radial is new pure code in `src/graph3d/radial.ts`; 2D behaviour is untouched.
+
+#### Where a note's own settings live, and what maps
+
+They live in the note's frontmatter, in the `osmosis-styles:` block (`OsmosisStyleFrontmatter` in `src/styles.ts`; the 2D map and its properties sidebar read and write it). No new store. `noteMapSettings(frontmatter)` in `planets.ts` reads it through the existing `parseOsmosisStyleFrontmatter` + `buildMapSettingsFromFrontmatter`.
+
+| 2D setting | On a planet |
+| --- | --- |
+| `direction` (`left-right` / `top-down`) | Continent direction |
+| `mapLayout: radial` | Continent direction `radial`, and wins over `direction`. `mapLayout: classic` makes the note a tree even when the Overlays default is radial |
+| `balance` | Continent balance (ignored by radial) |
+| `layoutSide` | One-side's side, kept only when it suits the direction (left/right for left-right, up/down for top-down) |
+| `horizontalSpacing`, `verticalSpacing`, `maxNodeWidth`, `topicShape`, branch line settings, theme, background, `collapseDepth` | No equivalent: a planet's plates are the graph's own, spaced at the flat slices' gaps. Ignored |
+| Per-node `side` (in `styles:`) | Not mapped. Possible follow-up: it needs the per-line selector lookup the 2D map does (`buildNodeSidesMap`) |
+
+#### Resolution and storage
+
+- `resolveContinentStyle(defaults, noteSettings)`: the note's setting where it has one, else the Overlays default, field by field. The defaults carry no side.
+- Global defaults are two new overlay settings, `continentDirection` (left-right / top-down / radial) and `continentBalance`, normalised in `normalizeOverlays` like the others. They sit in the Overlays menu under Layout and the flatten slider, shown only in Planets mode. The Balance dropdown is hidden while Direction is radial.
+- A default change calls `world.clear()` then `reshape()`, as the Layout change does (`continentStyleChanged`, true only in Planets). It re-lays out every planet, including ones with their own settings, because it is simpler than diffing.
+- A per-note change: `Graph3DScene` gets a `noteMapSettings(path)` option that the view answers from `metadataCache.getCache(path).frontmatter`. `updatePlanets` resolves each planet's style on every data push, and `planetKey` now includes the style, so a changed planet (and only that one) re-lays out, eased over `RELAYOUT_MS` like a structural edit. The view's existing `resolve` handler reloads the model after a note is edited (frontmatter included), which is what triggers the push. Not verified live: that Obsidian's `resolve` fires for a frontmatter-only edit.
+
+#### The radial layout (`radialMap`)
+
+- Head at (0, 0). Each line gets an angular wedge proportional to its weight (the larger of its own diagonal and the sum of its children's weights), the head's children sharing the full circle and every other line fanning its children over at most `MAX_FAN` (π) about its own direction, so a lone child's children don't curl behind it.
+- Rings: a line sits at the middle of its wedge on the ring for its depth. A ring is one step out from the last by the largest plate extents along each line's own direction plus the column gap, then widened until every plate fits across its own wedge. No overlaps (tested on a lopsided tree).
+- Angles run clockwise from the left seam, so a lone child lies to the right, like left-right.
+- Plates stay rigid; only centres are placed, and the existing `wrapPoint` puts them on the sphere. The continent's `reach` and footprint come from the plates as before, so `planetRadius` sizes the planet from them.
+- **Balance is ignored in radial**: the circle is always filled. The 2D Balance modes split a left-right tree into two sides, which has no meaning round a centre. The alternative (one-side as a half-circle fan) was not built.
+
+#### Decisions worth remembering
+
+- A radial continent's bounding box is larger than a left-right one's for the same lines (measured on a 9-line toy: reach 85 vs 98, footprint area about 4x). The radius rule uses the footprint, so radial planets come out bigger. That is honest for a round map, but may look airy; not tuned, because it cannot be judged without seeing it.
+- Global-default changes are not animated (clear, then reshape); per-note changes are.
+
+#### Surface map
+
+| File | Change |
+| --- | --- |
+| `src/graph3d/radial.ts` (+ `radial.test.ts`, 8 tests) | New: the radial map |
+| `src/graph3d/planets.ts` | `ContinentStyle` gains `balance` and `side`, `direction` gains `radial`; `resolveContinentStyle`, `noteMapSettings`, `treeMap` (split out of `continentMap`); `PlanetWorld.update` takes `styleOf(core)`; the planet key includes the style |
+| `src/graph3d/planets.test.ts` | Balance modes, override resolution, frontmatter reading, per-planet re-layout |
+| `src/graph3d/overlays.ts` (+test) | `continentDirection`, `continentBalance`, `continentStyleChanged` |
+| `src/views/Graph3DOverlays.ts` | Continent direction and balance dropdowns, Planets only |
+| `src/views/Graph3DScene.ts` | `noteMapSettings` option, per-planet `styleOf`, default change re-lays out |
+| `src/views/Graph3DView.ts` | `noteMapSettings(path)` from the metadata cache |
+
+#### Fixture
+
+`vault/tests/graph3d/Anchor Radial.md` (own `mapLayout: radial`, links to Anchor Balance) and `Anchor Balance.md` (own `direction: left-right`, `balance: alternating`, links back and to `Sailing Basics.md`, which has no settings of its own). Masters in `e2e/fixtures/graph3d/`.
+
+#### Manual test (Sawyer)
+
+1. Open `tests/graph3d/Anchor Radial.md` in the 3D graph at depth 2, Layout Planets. Three planets: Anchor Radial's continents fan round their headings (radial), Anchor Balance's deal out left and right (alternating), Sailing Basics follows the defaults (left to right, one side).
+2. Overlays, Planets only: "Continent direction" and "Continent balance" appear under Layout. Set Direction to Radial: Sailing Basics turns radial, the Balance dropdown hides, and the two Anchor notes do not change (their own settings win). Set it to Top down, Balance to Both sides: Sailing Basics changes; Anchor Radial stays radial.
+3. Switch Layout to Flat slices or Organic: the two dropdowns disappear.
+4. In Anchor Balance's properties, change `balance` to `both-sides` (or edit the frontmatter): only that planet re-lays out, eased; the others stay put.
+5. Plates stay flat, upright and undistorted on every continent.
+
+#### Not verified
+
+Anything visual (how radial continents look on a sphere, planet sizes), the frontmatter-edit trigger, and the menu layout.
+
+#### Facts for P3
+
+- Panels are still off in Planets mode. Nothing P3 needs changed: each plate's frame is still `EngineNode.frame`. Radial continents change where plates lie but not their frames (up is still world +y projected), so tilted panels need no radial special case.
