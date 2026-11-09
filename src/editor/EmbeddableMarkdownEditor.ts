@@ -259,6 +259,8 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 				keymap.of([
 					{
 						key: "Enter",
+						// When a caller's `onEnter` takes the key (saves), it stops here: the editor is gone by the time the key would bubble, and the view behind it would take it as its own Enter.
+						stopPropagation: true,
 						run: () => this.options.onEnter(this, false, false),
 						shift: () => this.options.onEnter(this, false, true),
 					},
@@ -311,6 +313,11 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 	onunload(): void {
 		this.destroy();
 	}
+}
+
+/** Whether an Obsidian suggestion popup ([[ links, # headings) is open: Enter belongs to it, not to the editor. */
+export function suggestOpen(): boolean {
+	return activeDocument.querySelector(".suggestion-container") !== null;
 }
 
 /**

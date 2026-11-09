@@ -3,7 +3,8 @@ import { Platform, setIcon, type App, type TFile } from "obsidian";
 import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView } from "@codemirror/view";
-import { EmbeddableMarkdownEditor } from "../editor/EmbeddableMarkdownEditor";
+import { EmbeddableMarkdownEditor, suggestOpen } from "../editor/EmbeddableMarkdownEditor";
+import { enterSavesEdit } from "../edit-keys";
 import { fitEditWidth, visibleBand, type EditorPlace, type VisibleBand } from "../graph3d/edit";
 import type { TrackedEditor } from "./Graph3DNear";
 
@@ -96,6 +97,11 @@ export class Graph3DEditor implements TrackedEditor {
 		this.saveButton = anchor.appendChild(this.button("save", "check", "Save changes", true));
 		// A press in the editor is not a press on the canvas behind it.
 		for (const type of ["pointerdown", "mousedown", "click"]) anchor.addEventListener(type, (e) => e.stopPropagation());
+		// A double click on the node being edited saves it.
+		anchor.addEventListener("dblclick", (e) => {
+			e.stopPropagation();
+			this.close(true);
+		});
 		const sizes = new ResizeObserver((entries) => {
 			const size = entries[0]?.borderBoxSize[0];
 			if (size === undefined) return;
@@ -111,7 +117,12 @@ export class Graph3DEditor implements TrackedEditor {
 				value: request.text,
 				cls: "osmosis-node-editor",
 				file: request.file,
-				onEnter: () => false,
+				// Enter saves, Shift+Enter adds a line. Deferred like the others; an open suggestion popup keeps the key.
+				onEnter: (_editor, mod, shift) => {
+					if (!enterSavesEdit(mod, shift) || suggestOpen()) return false;
+					queueMicrotask(() => this.close(true));
+					return true;
+				},
 				// Deferred so the keymap returns before the editor is destroyed, or the key leaks to the workspace.
 				onSubmit: () => queueMicrotask(() => this.close(true)),
 				onEscape: () => queueMicrotask(() => this.close(false)),
@@ -248,7 +259,7 @@ export class Graph3DEditor implements TrackedEditor {
 		this.textarea = input;
 		input.addEventListener("input", () => this.fitWidth());
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
-			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) this.close(true);
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey || enterSavesEdit(false, e.shiftKey))) this.close(true);
 			else if (e.key === "Escape") this.close(false);
 			else {
 				e.stopPropagation();

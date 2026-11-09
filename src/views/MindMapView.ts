@@ -21,6 +21,7 @@ import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
 import { selectAfterDelete } from "../select-after-delete";
+import { enterSavesEdit } from "../edit-keys";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
@@ -66,6 +67,7 @@ import { movedPastSlop } from "../pointer-gesture";
 import { ToolRibbon, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
+	suggestOpen,
 	autoResizeExtension,
 } from "../editor/EmbeddableMarkdownEditor";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
@@ -7138,6 +7140,11 @@ export class MindMapView extends ItemView {
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
+		// A double click on the node being edited saves it.
+		container.addEventListener("dblclick", (e) => {
+			e.stopPropagation();
+			this.stopEditing(true);
+		});
 
 		// Edit the node's source line — bullet/heading/checkbox markers and all
 		// — so every markdown element is reachable from the map. Its leading
@@ -7152,7 +7159,12 @@ export class MindMapView extends ItemView {
 				value: editValue,
 				cls: "osmosis-node-editor",
 				file: this.nodeFile(node.source),
-				onEnter: () => false, // Let Enter insert newline (default CM behavior)
+				// Enter saves; Shift+Enter falls through to CodeMirror for a new line. An open suggestion popup keeps the key.
+				onEnter: (_editor, mod, shift) => {
+					if (!enterSavesEdit(mod, shift) || suggestOpen()) return false;
+					queueMicrotask(() => this.stopEditing(true));
+					return true;
+				},
 				onSubmit: () => {
 					// Ctrl+Enter saves
 					// Defer so CM keymap handler returns true (suppressing the event)
@@ -7448,7 +7460,7 @@ export class MindMapView extends ItemView {
 		else this.contentEl.appendChild(container);
 
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
-			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey || enterSavesEdit(false, e.shiftKey))) {
 				this.stopEditing(true);
 				e.preventDefault();
 				e.stopPropagation();

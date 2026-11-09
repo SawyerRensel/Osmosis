@@ -13,6 +13,7 @@ import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import type { Arrow } from "../graph3d/arrow-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
+import { doubleClickEdit } from "../edit-keys";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
@@ -411,7 +412,7 @@ export class Graph3DView extends ItemView {
 			onNodeArrived: (node) => this.visit(node),
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
-			onNodeDoubleClick: (node) => this.beginEdit(node),
+			onNodeDoubleClick: (node) => this.editOnDoubleClick(node),
 			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
@@ -697,6 +698,14 @@ export class Graph3DView extends ItemView {
 		this.editLanded = true;
 		then?.();
 		void this.reload();
+	}
+
+	/** A double click on `node`: edit it, turning edit mode on first if it is off. True when taken (see `doubleClickEdit`). */
+	private editOnDoubleClick(node: GraphNode): boolean {
+		const action = doubleClickEdit({ isLine: node.kind === "line", hasSource: node.source !== undefined }, this.editMode, this.study?.active === true);
+		if (action === "none") return false;
+		if (action === "enable") this.setEditMode(true);
+		return this.beginEdit(node);
 	}
 
 	/**
