@@ -18,6 +18,7 @@ import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
 import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../graph3d/selection-edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
+import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
@@ -144,6 +145,8 @@ export class Graph3DView extends ItemView {
 	private lastEditPath: string | null = null;
 	/** Lines an edit just changed, for the next reload to keep in place: each is at `start` in its note now, and `from` is the node it was (a new line has none); the first is selected again. */
 	private edited: { path: string; start: number; from?: string }[] = [];
+	/** The write in progress is a save or a delete: the reload that shows it selects the line `edited` names first (or `selectAfter`), alone. */
+	private selectLanded = false;
 	/** An edit made in this view (or its undo or redo) was written: the reload that shows it re-settles the loaded nodes if it changed an outline (`outlineChanged`). */
 	private editLanded = false;
 	/** A structural edit made a new empty line, which the next reload opens the editor on once it is in the scene. */
@@ -674,8 +677,8 @@ export class Graph3DView extends ItemView {
 	 * line's note in the shared history. Then reload the loaded area, keeping
 	 * the line selected and where it was: an edit changes its ID, not its start.
 	 */
-	private async commitEdit(file: TFile, content: string, node: GraphNode, start: number): Promise<void> {
-		await this.commitLines(file, content, [{ path: file.path, start, from: node.id }]);
+	private async commitEdit(file: TFile, content: string, node: GraphNode, start: number, select = false): Promise<void> {
+		await this.commitLines(file, content, [{ path: file.path, start, from: node.id }], select ? () => { this.selectLanded = true; } : undefined);
 	}
 
 	/**
@@ -753,7 +756,11 @@ export class Graph3DView extends ItemView {
 		this.scene?.setEditing(null);
 		this.saving++;
 		try {
-			if (edited !== null && edited !== original) await this.saveEdit(node, edited);
+			// A save selects the line, new or not. Every way an edit commits (blur, Ctrl/Cmd+Enter, the check button, a click on the canvas, leaving edit mode) ends here. An edit that changes the line gives it a new ID: the reload selects that (`place`).
+			if (edited !== null) {
+				this.scene?.select([node.id]);
+				if (edited !== original) await this.saveEdit(node, edited);
+			}
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not save an edit", error);
 			new Notice("Osmosis: could not save that edit");
@@ -782,7 +789,7 @@ export class Graph3DView extends ItemView {
 		const { text } = renameInFile(content, line, ancestorsOf(root, line.id), edited);
 		const out = normalizeWrite(text);
 		if (out === content) return;
-		await this.commitEdit(file, out, node, locateLine(out, restoreEditedLine(line, edited), line.range.start));
+		await this.commitEdit(file, out, node, locateLine(out, restoreEditedLine(line, edited), line.range.start), true);
 	}
 
 	/**
@@ -1020,6 +1027,8 @@ export class Graph3DView extends ItemView {
 			await this.commitLines(file, out, edited, () => {
 				this.pendingEdit = plan.fresh && selected !== null ? { path: file.path, start: selected } : null;
 				this.selectAfter = plan.select === null ? noteNodeId(file.path) : null;
+				// A delete selects the line `plan.select` names; the other actions leave the selection as it was.
+				this.selectLanded = action === "delete";
 			});
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not make that edit", error);
@@ -1069,8 +1078,10 @@ export class Graph3DView extends ItemView {
 	/**
 	 * Delete every selected line with its subtree (as a single delete does),
 	 * across notes, as one undo step. Plates that are not lines are skipped.
-	 * The primary line's parent is selected after, or its note's core if it was
-	 * top level; the loaded nodes re-settle (`commitLines`'s `editLanded`).
+	 * After, the previous sibling of the first deleted line in document order is
+	 * selected, else its parent, else its note's core (`selectAfterDelete`); the
+	 * anchor is in the primary's note, or the first note written if the primary
+	 * is not a line. The loaded nodes re-settle (`commitLines`'s `editLanded`).
 	 */
 	private async deleteSelection(nodes: readonly GraphNode[]): Promise<void> {
 		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
@@ -1086,7 +1097,7 @@ export class Graph3DView extends ItemView {
 				new Notice("Osmosis: nothing selected to delete");
 				return;
 			}
-			const primary = nodes[0]!;
+			const anchorPath = byPath.has(nodes[0]?.path ?? "") ? nodes[0]!.path! : byPath.keys().next().value!;
 			const writes: { file: TFile; out: string }[] = [];
 			let edited: typeof this.edited = [];
 			let selectAfter: string | null = null;
@@ -1101,13 +1112,12 @@ export class Graph3DView extends ItemView {
 				const out = normalizeWrite(text);
 				if (out === content) continue;
 				writes.push({ file, out });
-				// Select the primary's parent once it is gone (or the note's core, under the root).
-				const first = path === primary.path ? (lines.find((line) => line.id === primary.source?.id) ?? lines[0]!) : null;
-				if (first === null || edited.length > 0 || selectAfter !== null) continue;
-				const parent = ancestorsOf(root, first.id)[0];
-				const kept = parent === undefined || parent.type === "root" ? null : findNodeById(this.cache.get(path, text).root, parent.id);
+				// Select the previous sibling of the first deleted line, else its parent (or the note's core, under the root).
+				if (path !== anchorPath) continue;
+				const after = selectAfterDelete(root, ids);
+				const kept = after === null ? null : findNodeById(this.cache.get(path, text).root, after);
 				const start = kept === null ? null : mapStart(text, out, kept.range.start);
-				const from = parent === undefined ? undefined : this.model?.nodes.find((n) => n.path === path && n.source?.id === parent.id)?.id;
+				const from = after === null ? undefined : this.model?.nodes.find((n) => n.path === path && n.source?.id === after)?.id;
 				if (start === null) selectAfter = noteNodeId(path);
 				else edited = [{ path, start, from }];
 			}
@@ -1126,6 +1136,7 @@ export class Graph3DView extends ItemView {
 			// Marked only now, so a reload that was already under way can't take it.
 			this.edited = edited;
 			this.selectAfter = selectAfter;
+			this.selectLanded = true;
 			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
@@ -1433,17 +1444,27 @@ export class Graph3DView extends ItemView {
 		this.edited = [];
 		// An edited line that was selected stays selected under its new ID.
 		const carried = new Map<string, string>();
+		let landed: string | null = null;
 		edited.forEach((line, i) => {
 			const id = lineNodeAt(model, line.path, line.start);
 			const from = line.from === undefined ? undefined : positions.get(line.from);
 			if (id === null) return;
 			if (from !== undefined && !positions.has(id)) positions.set(id, from);
 			if (line.from !== undefined && line.from !== id) carried.set(line.from, id);
-			if (i === 0) scene.setFocusId(id);
+			if (i === 0) {
+				scene.setFocusId(id);
+				landed = id;
+			}
 		});
 		scene.carrySelection(carried);
-		if (this.selectAfter !== null) scene.setFocusId(this.selectAfter);
+		if (this.selectAfter !== null) {
+			scene.setFocusId(this.selectAfter);
+			landed = this.selectAfter;
+		}
 		this.selectAfter = null;
+		// A save or a delete selects its line alone (the scene drops an ID that is not in the model).
+		if (this.selectLanded && landed !== null) scene.select([landed]);
+		this.selectLanded = false;
 		return placeNodes(model, positions, via);
 	}
 

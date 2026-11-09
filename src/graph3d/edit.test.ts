@@ -370,10 +370,15 @@ describe("planStructural", () => {
 		expect(out.plan.moved?.node.content).toBe("Bow line");
 	});
 
-	it("delete selects the parent, or the note when the parent is the root", () => {
+	it("delete selects the previous sibling, else the parent, or the note when the parent is the root", () => {
 		const nested = run("delete", "Spring")!;
 		expect(nested.node?.content).toBe("Stern line");
 		expect(nested.text).not.toContain("Spring");
+		const middle = run("delete", "Breast")!;
+		expect(middle.node?.content).toBe("Spring");
+		expect(middle.text).not.toContain("Breast");
+		expect(run("delete", "Stern line")!.node?.content).toBe("Bow line");
+		expect(run("delete", "Fuel")!.node?.content).toBe("Moorings");
 		const top = run("delete", "Harbour")!;
 		expect(top.plan.select).toBeNull();
 		expect(top.text).toBe("");

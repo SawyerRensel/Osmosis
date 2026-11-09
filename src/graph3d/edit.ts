@@ -7,6 +7,7 @@
 import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
 import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, subtreeEnd, type Spliced } from "../mindmap-edit";
+import { selectAfterDelete } from "../select-after-delete";
 import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
 import { normalizeHeading, type GraphModel } from "./model";
@@ -291,7 +292,7 @@ export type StructuralAction = "child" | "sibling" | "parent" | "delete" | "up" 
 export interface StructuralPlan {
 	/** The note's new text, before `normalizeWrite`. */
 	text: string;
-	/** Where the line to select starts in `text`; null: the note's core (a delete under the root has no line left to select). */
+	/** Where the line to select starts in `text`; null: the note's core (a delete with nothing before it under the root has no line left to select). */
 	select: number | null;
 	/** The selected line is new and empty, so the editor opens on it at once. */
 	fresh: boolean;
@@ -325,9 +326,12 @@ export function planStructural(action: StructuralAction, content: string, root: 
 			const edit = insertParent(content, line, { start: line.range.start, end: subtreeEnd(line) });
 			return { text: edit.text, select: edit.start, fresh: true, moved: { node: line, start: edit.moved ?? edit.start } };
 		}
-		case "delete":
-			// The parent stays where it was: everything removed is after its first line.
-			return { text: deleteSubtree(content, line), select: parent.type === "root" ? null : parent.range.start, fresh: false, moved: null };
+		case "delete": {
+			// The previous sibling, else the parent (`selectAfterDelete`). Both come before the cut, so they stay where they were.
+			const after = selectAfterDelete(root, [line.id]);
+			const kept = after === null ? null : findNodeById(root, after);
+			return { text: deleteSubtree(content, line), select: kept === null ? null : kept.range.start, fresh: false, moved: null };
+		}
 		case "up":
 		case "down": {
 			const neighbour = siblings[index + (action === "up" ? -1 : 1)];

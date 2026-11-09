@@ -20,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { selectAfterDelete } from "../select-after-delete";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
@@ -4940,16 +4941,17 @@ export class MindMapView extends ItemView {
 		// Collect the selected nodes, then their ranges (descending, to process
 		// from end so earlier offsets stay valid).
 		const selectedSrcs: OsmosisNode[] = [];
-		// Parents to fall back on for the selection afterwards, in selection
-		// order. One that was itself deleted simply won't be in the new map.
-		const parentIds: string[] = [];
+		let tree: OsmosisNode | null = null;
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
 			if (!node) continue;
 			selectedSrcs.push(node.source);
-			if (node.parent && node.parent.source.type !== "root") parentIds.push(node.parent.source.id);
+			if (tree === null) tree = this.treeRootOf(node);
 		}
-		if (selectedSrcs.length === 0) return;
+		if (selectedSrcs.length === 0 || tree === null) return;
+		// What to select afterwards: the previous sibling of the first deleted
+		// node in document order, else its parent.
+		const afterId = selectAfterDelete(tree, selectedSrcs.map((src) => src.id));
 
 		// A mixed host+embedded selection is allowed (design decision O4): each
 		// file gets its own splice, and the whole thing is one undo step. Ranges
@@ -5004,11 +5006,29 @@ export class MindMapView extends ItemView {
 			this.endEditGroup();
 			await this.resyncFromParent();
 		}
-		// Select a surviving parent, else the first node — without panning to
-		// it: deleting must leave the viewport where the user had it.
-		const survivor = parentIds.find((id) => this.nodeMap.has(id))
-			?? this.currentLayout?.nodes.find((n) => n.source.type !== "root")?.source.id;
-		if (survivor) this.selectNode(survivor);
+		// Select the previous sibling or the parent, else the first node (the
+		// root can't be selected) — without panning to it: deleting must leave
+		// the viewport where the user had it.
+		this.selectNodeAfterDelete(afterId);
+	}
+
+	/** The parse-tree root above `node`: what `selectAfterDelete` walks. */
+	private treeRootOf(node: LayoutNode): OsmosisNode {
+		let top = node;
+		while (top.parent) top = top.parent;
+		return top.source;
+	}
+
+	/**
+	 * Select `afterId`, the node `selectAfterDelete` chose, once the
+	 * delete has re-rendered; if it is null (a top-level node with nothing
+	 * before it) or gone, the first node. Never pans.
+	 */
+	private selectNodeAfterDelete(afterId: string | null): void {
+		const id = afterId !== null && this.nodeMap.has(afterId)
+			? afterId
+			: this.currentLayout?.nodes.find((n) => n.source.type !== "root")?.source.id;
+		if (id) this.selectNode(id);
 	}
 
 	/**
@@ -8108,22 +8128,13 @@ export class MindMapView extends ItemView {
 
 		const updated = edit.deleteSubtree(content, src);
 
-		// Select the parent or sibling after deletion
-		const parentId =
-			node.parent?.source.type !== "root" ? node.parent?.source.id : null;
+		// The previous sibling, else the parent, is selected after deletion.
+		const afterId = selectAfterDelete(this.treeRootOf(node), [src.id]);
 		await this.writeNodeFile(src, updated);
 
-		// Try to select something reasonable after deletion — without panning to
-		// it: deleting a node must leave the viewport where the user had it.
-		if (parentId) {
-			const parentNode = this.nodeMap.get(parentId);
-			if (parentNode) {
-				this.selectNode(parentId);
-			}
-		} else {
-			const first = this.currentLayout?.nodes.find((n) => n.source.type !== "root");
-			if (first) this.selectNode(first.source.id);
-		}
+		// Without panning to it: deleting a node must leave the viewport where
+		// the user had it.
+		this.selectNodeAfterDelete(afterId);
 	}
 
 	/**
