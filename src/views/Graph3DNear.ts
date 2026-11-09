@@ -21,6 +21,10 @@
  *   (`plateVisibility`), so the DOM and WebGL fade as one. A separate
  *   cross-fade on the whole panel eases it in and out of the tier over the
  *   plate, so entering or leaving never pops.
+ * - **Tilted (Planets mode):** a panel is a CSS3D object lying on its plate's
+ *   tangent frame instead (`../graph3d/tilt.ts`), hidden whenever the plate is
+ *   seen from behind; panels stack in the CSS3D renderer's own 3D context, and
+ *   a plate cuts a hole only when it is on the eye's side of the panel's plane.
  * - **Lifecycle:** each panel renders into its own `Component`, unloaded when
  *   the panel goes. Video and audio pause the moment their node leaves the
  *   tier, and release their media when the panel is removed.
@@ -32,14 +36,17 @@ import type { OcclusionSide } from "../study/occlusion-masks";
 import { repaintOcclusion } from "./OcclusionRenderer";
 import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
 import { NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelScale, type NearProbe, type NearTierSettings } from "../graph3d/lod";
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
 import { nearMarkdown } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
-import { holeMask, panelHoles, type ScreenPlate } from "../graph3d/occlusion";
-import { frontPanelAt, rectContains, type DrawnPanel } from "../graph3d/links";
+import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../graph3d/occlusion";
+import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "../graph3d/links";
+import type { TangentFrame } from "../graph3d/planets";
+import { facesEye, panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
 
 /** A link under a click, in a near-tier panel. */
 export interface PanelLink {
@@ -80,6 +87,13 @@ export interface NearSource {
 	departing: boolean;
 	color: { getStyle(): string };
 	shape: { width: number; height: number };
+	/** Planets mode: the plate lies on its planet in this frame, and its panel is tilted onto it. */
+	frame?: TangentFrame;
+}
+
+/** A plate drawn this frame, with the node it is. */
+interface DrawnPlate extends ScreenPlate {
+	node: NearSource;
 }
 
 /** Panel text size, in CSS px, before the per-frame scale. */
@@ -91,7 +105,9 @@ const NEAR_CACHE_SIZE = 64;
 const MEDIA = "video, audio";
 
 interface Panel {
-	object: CSS2DObject;
+	/** A CSS2D panel faces the screen; a CSS3D one (Planets mode) lies on its plate's frame. */
+	object: CSS2DObject | CSS3DObject;
+	tilted: boolean;
 	box: HTMLElement;
 	body: HTMLElement;
 	veil: HTMLElement;
@@ -111,11 +127,15 @@ interface Panel {
 	diagram: string;
 	/** View depth as last drawn. */
 	depth: number;
+	/** A tilted panel's plates in front of it, as last cut out, for clicks. */
+	occluders: ScreenPlate[];
 }
 
 export class Graph3DNear {
 	/** Handed to 3d-force-graph as an extra renderer: it lays the panels over the canvas every frame. */
 	readonly renderer = new CSS2DRenderer();
+	/** The same for Planets mode's tilted panels, which lie on their plates in 3D. */
+	readonly renderer3d = new CSS3DRenderer();
 	/** The panels' scene objects; add it to the scene. */
 	readonly group = new Group();
 	private readonly panels = new Map<string, Panel>();
@@ -126,6 +146,11 @@ export class Graph3DNear {
 	private density = 0;
 	/** Off (the Overlays menu's labels on plates only), no panel is chosen and the open ones fade out. */
 	private enabled = true;
+	/** Planets mode: panels are CSS3D, lying on their plate's frame, and hidden from behind. */
+	private tilted = false;
+	/** The camera's position and its screen-facing frame this frame (the frame a panel without a plate frame faces along). */
+	private readonly eye = new Vector3();
+	private cameraFrame: TangentFrame = { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 }, normal: { x: 0, y: 0, z: 1 } };
 	/** The node being edited over, whose panel stays hidden. */
 	private editing: string | null = null;
 	/** The multi-select: these nodes' panels wear the selection border. */
@@ -136,9 +161,9 @@ export class Graph3DNear {
 	private readonly platePoint = new Vector3();
 	/** This frame's nodes, and their plates on screen: worked out at the first panel drawn, with the render's camera. */
 	private sources: readonly NearSource[] = [];
-	private screenPlates: ScreenPlate[] | null = null;
+	private screenPlates: DrawnPlate[] | null = null;
 	/** The plates of the last frame drawn, for clicks between frames. */
-	private drawnPlates: ScreenPlate[] = [];
+	private drawnPlates: DrawnPlate[] = [];
 	private readonly boxes = new Map<Element, Panel>();
 	private readonly sizes = new ResizeObserver((entries) => {
 		for (const entry of entries) {
@@ -163,6 +188,7 @@ export class Graph3DNear {
 	) {
 		this.pxPerUnit = NEAR_FONT_PX / lineEmWorld;
 		this.renderer.domElement.addClass("osmosis-graph3d-near");
+		this.renderer3d.domElement.addClass("osmosis-graph3d-near");
 	}
 
 	/** World units of plate text per em for a plate `height` units tall. */
@@ -181,6 +207,9 @@ export class Graph3DNear {
 		this.sources = nodes;
 		this.screenPlates = null;
 		camera.updateMatrixWorld();
+		const eye = this.eye.setFromMatrixPosition(camera.matrixWorld);
+		const e = camera.matrixWorld.elements;
+		this.cameraFrame = { right: { x: e[0], y: e[1], z: e[2] }, up: { x: e[4], y: e[5], z: e[6] }, normal: { x: e[8], y: e[9], z: e[10] } };
 		const pxPerUnitAt1 = this.pxPerUnitAt1(camera);
 		const { detail, budget } = this.settings();
 		const enterScale = enterScaleFromDetail(detail);
@@ -190,6 +219,8 @@ export class Graph3DNear {
 		const point = this.point;
 		for (const node of this.enabled ? nodes : []) {
 			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			// A planet's plate seen from behind isn't drawn, so it has no panel either.
+			if (this.tilted && node.frame !== undefined && !facesEye({ x: node.x, y: node.y, z: node.z }, node.frame.normal, eye)) continue;
 			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
 			const depth = -point.z;
 			const scale = panelScale(depth, pxPerUnitAt1, this.pxPerUnit);
@@ -232,6 +263,7 @@ export class Graph3DNear {
 			}
 			const node = panel.node;
 			panel.object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
+			if (panel.tilted) this.tilt(panel);
 			panel.object.element.setCssStyles({ opacity: String(panel.fade) });
 		}
 		this.placeEditor(camera, pxPerUnitAt1);
@@ -275,8 +307,12 @@ export class Graph3DNear {
 			drawn.push({ id: panel.node.id, rect: { left: rect.left - origin.left, top: rect.top - origin.top, right: rect.right - origin.left, bottom: rect.bottom - origin.top }, depth: panel.depth });
 			byId.set(panel.node.id, panel);
 		}
-		const front = frontPanelAt(x - origin.left, y - origin.top, drawn, this.drawnPlates);
-		return front === null ? undefined : byId.get(front);
+		const [px, py] = [x - origin.left, y - origin.top];
+		// A tilted panel's occluders are the plates it cut out (`placeTilted`), not every plate nearer than its centre.
+		const front = frontPanelAt(px, py, drawn, this.tilted ? [] : this.drawnPlates);
+		const panel = front === null ? undefined : byId.get(front);
+		if (panel?.occluders.some((plate) => Math.abs(plate.x - px) <= plate.halfWidth && Math.abs(plate.y - py) <= plate.halfHeight) === true) return undefined;
+		return panel;
 	}
 
 	/** The node whose panel is drawn on top at client point (`x`, `y`), if any. */
@@ -344,6 +380,18 @@ export class Graph3DNear {
 		this.enabled = enabled;
 	}
 
+	/**
+	 * Tilt panels onto their plates (Planets mode) or face them to the screen.
+	 * A panel is one or the other for its life, so the open ones go at once
+	 * and come back of the new kind, from the cache, as the tier picks them.
+	 */
+	setTilted(tilted: boolean): void {
+		if (tilted === this.tilted) return;
+		this.tilted = tilted;
+		for (const panel of this.panels.values()) this.removePanel(panel);
+		this.panels.clear();
+	}
+
 	/** Re-draw each open panel's outline in its node's colour, after the colour mode changes. */
 	refreshColors(): void {
 		for (const panel of this.panels.values()) panel.box.setCssStyles({ boxShadow: `inset 0 0 0 0.07em ${panel.node.color.getStyle()}` });
@@ -365,6 +413,7 @@ export class Graph3DNear {
 		this.screenPlates = null;
 		this.drawnPlates = [];
 		this.renderer.domElement.remove();
+		this.renderer3d.domElement.remove();
 	}
 
 	private pxPerUnitAt1(camera: PerspectiveCamera): number {
@@ -378,8 +427,13 @@ export class Graph3DNear {
 		const body = box.createDiv({ cls: "osmosis-graph3d-near-body markdown-rendered" });
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });
-		const object = new CSS2DObject(anchor);
-		const panel: Panel = { object, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity };
+		const object = this.tilted ? new CSS3DObject(anchor) : new CSS2DObject(anchor);
+		if (this.tilted) {
+			// Placed by its own matrix (`tilt`), and inert like the CSS2D panels (CSS3DObject turns pointer events on).
+			object.matrixAutoUpdate = false;
+			anchor.setCssStyles({ pointerEvents: "none" });
+		}
+		const panel: Panel = { object, tilted: this.tilted, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity, occluders: [] };
 		this.boxes.set(box, panel);
 		box.classList.toggle("is-editing", node.id === this.editing);
 		this.sizes.observe(box);
@@ -390,8 +444,25 @@ export class Graph3DNear {
 		return panel;
 	}
 
+	/**
+	 * Lay a tilted panel on its plate this frame: centred on the node, along
+	 * the plate's frame (the camera's, for a plate that has none: a planet's
+	 * core, a star), world-sized, and hidden while the plate is seen from behind.
+	 */
+	private tilt(panel: Panel): void {
+		const { node, object } = panel;
+		const frame = node.frame ?? this.cameraFrame;
+		object.matrix.fromArray(panelMatrix(object.position, frame, this.pxPerUnit));
+		object.matrixWorldNeedsUpdate = true;
+		object.visible = node.frame === undefined || facesEye(object.position, frame.normal, this.eye);
+	}
+
 	/** Scale the panel to its depth, cut out the plates in front of it and veil it by the mist, as the CSS2D renderer positions it. */
 	private place(panel: Panel, camera: Camera): void {
+		if (panel.tilted) {
+			this.placeTilted(panel, camera as PerspectiveCamera);
+			return;
+		}
 		const point = this.point.copy(panel.object.position).applyMatrix4(camera.matrixWorldInverse);
 		const depth = -point.z;
 		const pxPerUnitAt1 = this.pxPerUnitAt1(camera as PerspectiveCamera);
@@ -410,13 +481,79 @@ export class Graph3DNear {
 			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width, height: panel.height, scale, depth },
 			plates,
 		);
+		this.cutHoles(panel, holes);
+		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density)) });
+	}
+
+	/**
+	 * A tilted panel's frame, as the CSS3D renderer draws it (the panel's
+	 * matrix is already set, by `tilt`): cut out the plates in front of it
+	 * (`tiltedHole`) and veil it by the mist at its centre's depth. Panels
+	 * stack among themselves in the CSS3D renderer's own 3D context.
+	 */
+	private placeTilted(panel: Panel, camera: PerspectiveCamera): void {
+		const { node } = panel;
+		const centre = panel.object.position;
+		const depth = -this.point.copy(centre).applyMatrix4(camera.matrixWorldInverse).z;
+		panel.depth = depth;
+		panel.box.setCssStyles({ transform: "translate(-50%, -50%)" });
+		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera, this.pxPerUnitAt1(camera)));
+		const tilted: TiltedPanel = { centre, frame: node.frame ?? this.cameraFrame, width: panel.width, height: panel.height, pxPerUnit: this.pxPerUnit };
+		const bounds = this.screenBounds(tilted, camera);
+		const holes: PanelHole[] = [];
+		panel.occluders = [];
+		for (const plate of plates) {
+			if (plate.id === node.id) continue;
+			if (bounds !== null && (plate.x + plate.halfWidth < bounds.left || plate.x - plate.halfWidth > bounds.right || plate.y + plate.halfHeight < bounds.top || plate.y - plate.halfHeight > bounds.bottom)) continue;
+			const hole = tiltedHole(tilted, this.eye, this.worldPlate(plate.node));
+			if (hole === null) continue;
+			holes.push(hole);
+			panel.occluders.push(plate);
+		}
+		this.cutHoles(panel, holes);
+		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(node.opacity, depth, this.focus, this.density)) });
+	}
+
+	/** Where a tilted panel lies on screen, in the stage's px: the box round its corners, or null when one is behind the camera. */
+	private screenBounds(panel: TiltedPanel, camera: PerspectiveCamera): ScreenRect | null {
+		const { width, height } = this.renderer3d.getSize();
+		const bounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+		for (const [u, v] of [[0, 0], [panel.width, 0], [0, panel.height], [panel.width, panel.height]] as const) {
+			const corner = panelPoint(panel, u, v);
+			const point = this.platePoint.set(corner.x, corner.y, corner.z).applyMatrix4(camera.matrixWorldInverse);
+			if (-point.z <= camera.near) return null;
+			point.applyMatrix4(camera.projectionMatrix);
+			const x = ((point.x + 1) / 2) * width;
+			const y = ((1 - point.y) / 2) * height;
+			bounds.left = Math.min(bounds.left, x);
+			bounds.right = Math.max(bounds.right, x);
+			bounds.top = Math.min(bounds.top, y);
+			bounds.bottom = Math.max(bounds.bottom, y);
+		}
+		return bounds;
+	}
+
+	/** A plate's centre and corners in the world: along its frame on a planet, facing the camera otherwise. */
+	private worldPlate(node: NearSource): WorldPlate {
+		const { right, up } = node.frame ?? this.cameraFrame;
+		const halfWidth = node.shape.width / 2;
+		const halfHeight = node.shape.height / 2;
+		const centre = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
+		const corners = [-1, 1].flatMap((a) => [-1, 1].map((b) => ({
+			x: centre.x + right.x * a * halfWidth + up.x * b * halfHeight,
+			y: centre.y + right.y * a * halfWidth + up.y * b * halfHeight,
+			z: centre.z + right.z * a * halfWidth + up.z * b * halfHeight,
+		})));
+		return { centre, corners, radius: PLATE_RADIUS };
+	}
+
+	/** Mask `holes` out of the panel, writing only when they changed. */
+	private cutHoles(panel: Panel, holes: readonly PanelHole[]): void {
 		const mask = holeMask(holes);
 		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
-		if (key !== panel.mask) {
-			panel.mask = key;
-			panel.box.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
-		}
-		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density)) });
+		if (key === panel.mask) return;
+		panel.mask = key;
+		panel.box.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
 	}
 
 	/**
@@ -426,12 +563,14 @@ export class Graph3DNear {
 	 * background. Plates are pulled toward the camera (`PLATE_PULL`) but scaled
 	 * to keep their size on screen, so this is where they land.
 	 */
-	private platesOnScreen(camera: PerspectiveCamera, pxPerUnitAt1: number): ScreenPlate[] {
-		const plates: ScreenPlate[] = [];
+	private platesOnScreen(camera: PerspectiveCamera, pxPerUnitAt1: number): DrawnPlate[] {
+		const plates: DrawnPlate[] = [];
 		const { width, height } = this.renderer.getSize();
 		const point = this.platePoint;
 		for (const node of this.sources) {
 			if (node.opacity <= 0 || node.x === undefined || node.y === undefined || node.z === undefined) continue;
+			// A planet's plate seen from behind isn't drawn.
+			if (node.frame !== undefined && !facesEye({ x: node.x, y: node.y, z: node.z }, node.frame.normal, this.eye)) continue;
 			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
 			const depth = -point.z;
 			if (depth <= camera.near) continue;
@@ -442,7 +581,7 @@ export class Graph3DNear {
 			const x = ((point.x + 1) / 2) * width;
 			const y = ((1 - point.y) / 2) * height;
 			if (x + halfWidth < 0 || x - halfWidth > width || y + halfHeight < 0 || y - halfHeight > height) continue;
-			plates.push({ id: node.id, x, y, halfWidth, halfHeight, radius: 2 * halfHeight * PLATE_RADIUS, depth });
+			plates.push({ id: node.id, node, x, y, halfWidth, halfHeight, radius: 2 * halfHeight * PLATE_RADIUS, depth });
 		}
 		return plates;
 	}

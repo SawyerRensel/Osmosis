@@ -454,13 +454,13 @@ export class Graph3DScene {
 	readonly heldKeys = new Set<string>();
 
 	constructor(private readonly container: HTMLElement, private readonly options: SceneOptions) {
-		// The near tier's CSS2D renderer has to be handed over at construction:
-		// the engine sizes it and draws it after the canvas every frame.
+		// The near tier's CSS2D and CSS3D renderers have to be handed over at construction:
+		// the engine sizes them and draws them after the canvas every frame.
 		this.near = new Graph3DNear(options.renderMarkdown, options.renderDiagram, Graph3DNear.emWorld(LINE_PLATE_HEIGHT), options.nearTier);
 		this.graph = new ForceGraph3D(container, {
 			controlType: "orbit",
-			// CSS2DRenderer is a renderer by shape, not by type.
-			extraRenderers: [this.near.renderer as never],
+			// CSS2DRenderer and CSS3DRenderer are renderers by shape, not by type.
+			extraRenderers: [this.near.renderer as never, this.near.renderer3d as never],
 		}) as unknown as ForceGraph3DInstance<EngineNode, EngineLink>;
 		const camera = this.graph.camera() as PerspectiveCamera;
 		camera.near = CAMERA_NEAR;
@@ -839,8 +839,9 @@ export class Graph3DScene {
 		if (reweigh || reflatten || relayout) this.reshape(!this.focusLeaves(before, overlays));
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
-		// Planets mode has no live panels yet (P3 tilts them with their plates): a flat CSS2D panel over a tilted plate would hide it.
-		this.near.setEnabled(overlays.labels === "all" && overlays.layout !== "planets");
+		// Planets mode tilts each panel onto its plate (CSS3D): a flat CSS2D panel over a tilted plate would hide it.
+		this.near.setEnabled(overlays.labels === "all");
+		this.near.setTilted(overlays.layout === "planets");
 		this.dirty = true;
 	}
 
