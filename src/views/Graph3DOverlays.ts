@@ -23,6 +23,7 @@ import {
 	type OverlayEdgeKind,
 } from "../graph3d/overlays";
 import { flatDepth, flatWeight } from "../graph3d/flatten";
+import type { ContinentBalance, ContinentDirection } from "../graph3d/planets";
 
 const COLOR_MODES: Record<ColorMode, string> = {
 	note: "Note",
@@ -45,6 +46,18 @@ const LAYOUT_MODES: Record<LayoutMode, string> = {
 	organic: "Organic",
 	flat: "Flat slices",
 	planets: "Planets",
+};
+
+const CONTINENT_DIRECTION_NAMES: Record<ContinentDirection, string> = {
+	"left-right": "Left to right",
+	"top-down": "Top down",
+	radial: "Radial",
+};
+
+const CONTINENT_BALANCE_NAMES: Record<ContinentBalance, string> = {
+	"one-side": "One side",
+	"both-sides": "Both sides",
+	alternating: "Alternating",
 };
 
 const LABEL_MODES: Record<LabelMode, string> = {
@@ -211,11 +224,37 @@ export class Graph3DOverlaysMenu {
 					.setValue(overlays.layout)
 					.onChange((value) => {
 						flatten.settingEl.toggle(value === "flat");
+						direction.settingEl.toggle(value === "planets");
+						balance.settingEl.toggle(value === "planets" && this.current.continentDirection !== "radial");
 						this.change({ layout: value as LayoutMode });
 					}),
 			);
 		// The Layout choice sits above the slider it governs.
 		panel.appendChild(flatten.settingEl);
+		// Planets only: how each continent (a direct child of a note's root) is drawn, unless the note's own 2D map settings say otherwise.
+		const direction = new Setting(panel)
+			.setName("Continent direction")
+			.setDesc("How each continent is laid out on a planet. A note's own map settings (direction, or map layout radial) override this.");
+		const balance = new Setting(panel)
+			.setName("Continent balance")
+			.setDesc("Which sides a continent's branches take. A note's own balance setting overrides this. Radial fills the circle, so it has none.");
+		direction.settingEl.toggle(overlays.layout === "planets");
+		balance.settingEl.toggle(overlays.layout === "planets" && overlays.continentDirection !== "radial");
+		direction.addDropdown((dropdown) =>
+			dropdown
+				.addOptions(CONTINENT_DIRECTION_NAMES)
+				.setValue(overlays.continentDirection)
+				.onChange((value) => {
+					balance.settingEl.toggle(value !== "radial");
+					this.change({ continentDirection: value as ContinentDirection });
+				}),
+		);
+		balance.addDropdown((dropdown) =>
+			dropdown
+				.addOptions(CONTINENT_BALANCE_NAMES)
+				.setValue(overlays.continentBalance)
+				.onChange((value) => this.change({ continentBalance: value as ContinentBalance })),
+		);
 		flatten.addSlider((slider) =>
 			slider
 				// Continuous: lines at the boundary depth are pulled part-way into their slice.

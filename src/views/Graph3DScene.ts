@@ -33,7 +33,7 @@ import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
-import { DEFAULT_OVERLAYS, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
+import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
@@ -42,7 +42,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { DEFAULT_CONTINENT_STYLE, PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, surfaceArc, type TangentFrame } from "../graph3d/planets";
+import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, resolveContinentStyle, surfaceArc, type ContinentStyle, type NoteMapSettings, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -192,6 +192,8 @@ export interface SceneOptions {
 	clickSelectsOnly: () => boolean;
 	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
 	nearTier: () => NearTierSettings;
+	/** A note's own 2D map settings (direction, map layout, balance, side), which override the Overlays' continent defaults for its planet. Read whenever the data is pushed. */
+	noteMapSettings: (path: string) => NoteMapSettings | undefined;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -755,7 +757,11 @@ export class Graph3DScene {
 			const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
 			const trees = planetTrees(live.map((node) => node.graph), edges);
 			const sizeOf = (id: string): { width: number; height: number } => this.live.get(id)?.shape ?? { width: 0, height: LINE_PLATE_HEIGHT };
-			const grew = this.world.update(trees, sizeOf, DEFAULT_CONTINENT_STYLE, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
+			const styleOf = (core: string): ContinentStyle => {
+				const path = this.live.get(core)?.graph.path;
+				return resolveContinentStyle({ direction: this.overlays.continentDirection, balance: this.overlays.continentBalance }, path === undefined ? undefined : this.options.noteMapSettings(path));
+			};
+			const grew = this.world.update(trees, sizeOf, styleOf, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
 			for (const id of this.world.collisions(grew, (id) => this.live.get(id))) {
 				const core = this.live.get(id);
 				if (core !== undefined) core.fx = core.fy = core.fz = undefined;
@@ -823,8 +829,8 @@ export class Graph3DScene {
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
 		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
-		// A new layout lays every note out afresh.
-		const relayout = overlays.layout !== this.overlays.layout;
+		// A new layout, or new continent defaults in Planets, lays every note out afresh.
+		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
 		const before = this.overlays;
 		this.overlays = overlays;
 		if (relayout) this.world.clear();

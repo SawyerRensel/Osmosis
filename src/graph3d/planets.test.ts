@@ -3,6 +3,7 @@ import type { Vec3 } from "./flight";
 import {
 	CAP_ANGLE,
 	CAP_FALLBACK,
+	DEFAULT_CONTINENT_STYLE,
 	MAX_CONTINENT_ANGLE,
 	PLANET_GAP,
 	PlanetWorld,
@@ -20,7 +21,10 @@ import {
 	surfaceStep,
 	tangentFrame,
 	wrapPoint,
+	type ContinentStyle,
 	type PlanetBranch,
+	noteMapSettings,
+	resolveContinentStyle,
 } from "./planets";
 
 const len = (v: Vec3): number => Math.hypot(v.x, v.y, v.z);
@@ -103,10 +107,87 @@ describe("continentMap", () => {
 	});
 
 	it("lays top-down maps out with children below", () => {
-		const map = continentMap(head, plate, { direction: "top-down" });
+		const map = continentMap(head, plate, { direction: "top-down", balance: "one-side" });
 		const at = new Map(map.plates.map((p) => [p.id, p]));
 		expect(at.get("a")!.y).toBeGreaterThan(0);
 		expect(at.get("a")!.x).toBeLessThan(at.get("b")!.x);
+	});
+});
+
+describe("continentMap balance", () => {
+	const kids = ["a", "b", "c", "d"];
+	const head: PlanetBranch = { id: "h", children: kids.map((id) => ({ id, children: [] })) };
+	const xs = (style: ContinentStyle): Map<string, number> => new Map(continentMap(head, plate, style).plates.map((p) => [p.id, p.x]));
+
+	it("one-side keeps every child on one side, the left when the note's side says so", () => {
+		const right = xs({ direction: "left-right", balance: "one-side" });
+		expect(kids.every((id) => right.get(id)! > 0)).toBe(true);
+		const left = xs({ direction: "left-right", balance: "one-side", side: "left" });
+		expect(kids.every((id) => left.get(id)! < 0)).toBe(true);
+	});
+
+	it("both-sides puts the first half on one side and the rest on the other", () => {
+		const both = xs({ direction: "left-right", balance: "both-sides" });
+		expect([both.get("a")! > 0, both.get("b")! > 0, both.get("c")! < 0, both.get("d")! < 0]).toEqual([true, true, true, true]);
+	});
+
+	it("alternating deals the children out, right then left", () => {
+		const alt = xs({ direction: "left-right", balance: "alternating" });
+		expect([alt.get("a")! > 0, alt.get("b")! < 0, alt.get("c")! > 0, alt.get("d")! < 0]).toEqual([true, true, true, true]);
+	});
+
+	it("balances a top-down map above and below", () => {
+		const ys = new Map(continentMap(head, plate, { direction: "top-down", balance: "alternating" }).plates.map((p) => [p.id, p.y]));
+		expect([ys.get("a")! > 0, ys.get("b")! < 0]).toEqual([true, true]);
+	});
+
+	it("leaves a radial map the same whatever the balance", () => {
+		const one = continentMap(head, plate, { direction: "radial", balance: "one-side" }).plates;
+		const alt = continentMap(head, plate, { direction: "radial", balance: "alternating" }).plates;
+		expect(alt).toEqual(one);
+	});
+});
+
+describe("resolveContinentStyle", () => {
+	const defaults: ContinentStyle = { direction: "top-down", balance: "alternating" };
+
+	it("takes the defaults for a note with no map settings of its own", () => {
+		expect(resolveContinentStyle(defaults)).toBe(defaults);
+		expect(resolveContinentStyle(defaults, {})).toEqual(defaults);
+	});
+
+	it("lets the note's own settings win, field by field", () => {
+		expect(resolveContinentStyle(defaults, { direction: "left-right" })).toEqual({ direction: "left-right", balance: "alternating" });
+		expect(resolveContinentStyle(defaults, { balance: "one-side" })).toEqual({ direction: "top-down", balance: "one-side" });
+		expect(resolveContinentStyle(defaults, { direction: "left-right", balance: "both-sides" })).toEqual({ direction: "left-right", balance: "both-sides" });
+	});
+
+	it("reads the 2D map's mapLayout: radial over direction, classic back to a tree", () => {
+		expect(resolveContinentStyle(defaults, { mapLayout: "radial", direction: "left-right" }).direction).toBe("radial");
+		const radial: ContinentStyle = { direction: "radial", balance: "one-side" };
+		expect(resolveContinentStyle(radial, { mapLayout: "classic" }).direction).toBe("left-right");
+		expect(resolveContinentStyle(radial, { mapLayout: "classic", direction: "top-down" }).direction).toBe("top-down");
+		expect(resolveContinentStyle(radial, { balance: "both-sides" }).direction).toBe("radial");
+	});
+
+	it("keeps the note's side only when it suits the direction", () => {
+		expect(resolveContinentStyle(defaults, { direction: "left-right", layoutSide: "left" }).side).toBe("left");
+		expect(resolveContinentStyle(defaults, { layoutSide: "up" }).side).toBe("up");
+		expect(resolveContinentStyle(defaults, { layoutSide: "left" }).side).toBeUndefined();
+		expect(resolveContinentStyle(defaults, { direction: "left-right", layoutSide: "up" }).side).toBeUndefined();
+	});
+});
+
+describe("noteMapSettings", () => {
+	it("reads direction, map layout, balance and side from the osmosis-styles block, and nothing else", () => {
+		const fm = { "osmosis-styles": { direction: "top-down", mapLayout: "classic", balance: "both-sides", layoutSide: "up", theme: "Dark", horizontalSpacing: 200 } };
+		expect(noteMapSettings(fm)).toEqual({ direction: "top-down", mapLayout: "classic", balance: "both-sides", layoutSide: "up" });
+	});
+
+	it("gives nothing for a note with no map settings of its own", () => {
+		expect(noteMapSettings(undefined)).toBeUndefined();
+		expect(noteMapSettings({ tags: ["a"] })).toBeUndefined();
+		expect(noteMapSettings({ "osmosis-styles": { theme: "Dark" } })).toBeUndefined();
 	});
 });
 
@@ -239,9 +320,28 @@ describe("arcs and hover", () => {
 	});
 });
 
+describe("PlanetWorld styles", () => {
+	const tree = { core: "a", continents: [{ id: "x", children: [{ id: "x1", children: [] }, { id: "x2", children: [] }] }] };
+
+	it("re-lays out a planet whose own style changed and leaves the others", () => {
+		const world = new PlanetWorld();
+		const styles = new Map<string, ContinentStyle>();
+		const styleOf = (core: string): ContinentStyle => styles.get(core) ?? DEFAULT_CONTINENT_STYLE;
+		const other = { core: "b", continents: tree.continents.map((c) => ({ ...c, id: `b${c.id}`, children: c.children.map((k) => ({ ...k, id: `b${k.id}` })) })) };
+		world.update([tree, other], plate, styleOf, () => 0, 0, false);
+		const [a, b] = [world.place("x1")!, world.place("bx1")!];
+		world.update([tree, other], plate, styleOf, () => 0, 0, false);
+		expect(world.place("x1")).toBe(a);
+		styles.set("a", { direction: "radial", balance: "one-side" });
+		world.update([tree, other], plate, styleOf, () => 0, 0, false);
+		expect(world.place("x1")).not.toBe(a);
+		expect(world.place("bx1")).toBe(b);
+	});
+});
+
 describe("PlanetWorld", () => {
 	const tree = (core: string, lines: string[]) => ({ core, continents: lines.map((id) => ({ id, children: [] })) });
-	const style = { direction: "left-right" as const };
+	const style = (): ContinentStyle => DEFAULT_CONTINENT_STYLE;
 
 	it("keeps a planet's layout until its tree changes, and puts plates on their core", () => {
 		const world = new PlanetWorld();

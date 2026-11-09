@@ -13,6 +13,7 @@ import {
 	mistFromSlider,
 	modelKey,
 	nodeTags,
+	continentStyleChanged,
 	normalizeOverlays,
 	overlayNodeColor,
 	pullChanged,
@@ -70,6 +71,23 @@ describe("normalizeOverlays", () => {
 		expect(effectiveFlatten({ layout: "planets", flatten: 0.75 })).toBe(0);
 		expect(effectiveFlatten({ layout: "organic", flatten: 0.75 })).toBe(0);
 		expect(effectiveFlatten({ layout: "flat", flatten: 0.75 })).toBe(0.75);
+	});
+
+	it("reads the continent defaults, falling back on junk", () => {
+		expect(normalizeOverlays({}).continentDirection).toBe("left-right");
+		expect(normalizeOverlays({}).continentBalance).toBe("one-side");
+		const set = normalizeOverlays({ continentDirection: "radial", continentBalance: "alternating" });
+		expect([set.continentDirection, set.continentBalance]).toEqual(["radial", "alternating"]);
+		const junk = normalizeOverlays({ continentDirection: "spiral", continentBalance: 3 });
+		expect([junk.continentDirection, junk.continentBalance]).toEqual(["left-right", "one-side"]);
+	});
+
+	it("says a continent default changed only while Planets is the layout", () => {
+		const planets = { layout: "planets" as const, continentDirection: "left-right" as const, continentBalance: "one-side" as const };
+		expect(continentStyleChanged(planets, { ...planets, continentDirection: "radial" })).toBe(true);
+		expect(continentStyleChanged(planets, { ...planets, continentBalance: "both-sides" })).toBe(true);
+		expect(continentStyleChanged(planets, planets)).toBe(false);
+		expect(continentStyleChanged(planets, { ...planets, continentDirection: "radial", layout: "flat" })).toBe(false);
 	});
 
 	it("flattens moderately by default, for new and existing users, and clamps a saved flatten", () => {

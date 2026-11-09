@@ -8,6 +8,7 @@
 
 import { noteHue, nodeColor } from "./appearance";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type GraphNodeKind } from "./model";
+import type { ContinentBalance, ContinentDirection } from "./planets";
 
 export type ColorMode = "note" | "memory" | "tag" | "type";
 
@@ -33,6 +34,10 @@ export interface Graph3DOverlays {
 	layout: LayoutMode;
 	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
 	flatten: number;
+	/** Planets only: the default Direction of a continent's 2D map. A note's own 2D map settings override it (`resolveContinentStyle`). */
+	continentDirection: ContinentDirection;
+	/** Planets only: the default Balance of a continent's 2D map (unused by radial). A note's own 2D map settings override it. */
+	continentBalance: ContinentBalance;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;
 	/** A particle runs along each drawn edge, source to target. */
@@ -54,6 +59,8 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
 	layout: "flat",
 	flatten: 0.75,
+	continentDirection: "left-right",
+	continentBalance: "one-side",
 	mist: 1,
 	particles: false,
 	labels: "all",
@@ -63,6 +70,8 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 const COLOR_MODES: readonly ColorMode[] = ["note", "memory", "tag", "type"];
 const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
 const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "flat", "planets"];
+export const CONTINENT_DIRECTIONS: readonly ContinentDirection[] = ["left-right", "top-down", "radial"];
+export const CONTINENT_BALANCES: readonly ContinentBalance[] = ["one-side", "both-sides", "alternating"];
 
 /**
  * Overlay settings as saved in plugin data, checked field by field: anything
@@ -87,6 +96,8 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		// Saved before the Layout choice: the flatten slider at Off was organic.
 		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : value.flatten === 0 ? "organic" : DEFAULT_OVERLAYS.layout,
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
+		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
+		continentBalance: CONTINENT_BALANCES.includes(value.continentBalance as ContinentBalance) ? (value.continentBalance as ContinentBalance) : DEFAULT_OVERLAYS.continentBalance,
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,
@@ -96,6 +107,11 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 
 /** The flatten position in effect: the slider's in the flat-slices layout, nothing flat otherwise. */
 export const effectiveFlatten = (overlays: Pick<Graph3DOverlays, "layout" | "flatten">): number => (overlays.layout === "flat" ? overlays.flatten : 0);
+
+/** Whether the Overlays change from `before` to `after` changes how Planets mode lays continents out, so every planet must be laid out afresh. */
+export function continentStyleChanged(before: Pick<Graph3DOverlays, "layout" | "continentDirection" | "continentBalance">, after: Pick<Graph3DOverlays, "layout" | "continentDirection" | "continentBalance">): boolean {
+	return after.layout === "planets" && (before.continentDirection !== after.continentDirection || before.continentBalance !== after.continentBalance);
+}
 
 /** Whether an edge is drawn: its kind is shown, and, when it reaches an unresolved link, so are those. */
 export function edgeShown(kind: GraphEdgeKind, toGhost: boolean, edges: Readonly<Record<OverlayEdgeKind, boolean>>): boolean {

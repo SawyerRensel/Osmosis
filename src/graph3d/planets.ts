@@ -21,20 +21,68 @@
  */
 
 import { computeLayout, type LayoutNode } from "../layout";
+import { buildMapSettingsFromFrontmatter, parseOsmosisStyleFrontmatter, type BalanceMode, type LayoutSide, type MapSettings } from "../styles";
 import type { OsmosisNode } from "../types";
 import { edgeDistance } from "./appearance";
 import type { Vec3 } from "./flight";
 import { isNoteRoot, type GraphEdgeKind, type GraphNodeKind } from "./model";
+import { radialMap } from "./radial";
+
+/** The 2D map's two directions, and the 3D-only radial one (`radial.ts`). */
+export type ContinentDirection = "left-right" | "top-down" | "radial";
+/** The 2D map's Balance modes. Radial ignores them: it always fills the circle. */
+export type ContinentBalance = BalanceMode;
 
 /**
- * How a continent's 2D map is laid out. P1 has the two directions; this is the
- * seam for P2, which adds `radial`, Balance and a note's own 2D map settings.
+ * How a continent's 2D map is laid out: the Overlays menu's defaults, with a
+ * note's own 2D map settings on top (`resolveContinentStyle`).
  */
 export interface ContinentStyle {
-	direction: "left-right" | "top-down";
+	direction: ContinentDirection;
+	balance: ContinentBalance;
+	/** One-side only: which side the children take. Absent, the direction's default (right, or down). */
+	side?: LayoutSide;
 }
 
-export const DEFAULT_CONTINENT_STYLE: ContinentStyle = { direction: "left-right" };
+export const DEFAULT_CONTINENT_STYLE: ContinentStyle = { direction: "left-right", balance: "one-side" };
+
+/** The part of a note's own 2D map settings (`osmosis-styles` frontmatter, see `buildMapSettingsFromFrontmatter`) a planet reads. */
+export type NoteMapSettings = Partial<Pick<MapSettings, "direction" | "mapLayout" | "balance" | "layoutSide">>;
+
+/**
+ * A note's own 2D map settings, read from its frontmatter (the `osmosis-styles`
+ * block the 2D map and its properties sidebar write): only the four fields a
+ * planet uses. Spacing, topic shape and the rest have no meaning on a planet,
+ * whose plates are the graph's own.
+ */
+export function noteMapSettings(frontmatter: Record<string, unknown> | undefined | null): NoteMapSettings | undefined {
+	const settings = buildMapSettingsFromFrontmatter(parseOsmosisStyleFrontmatter(frontmatter));
+	const note: NoteMapSettings = {};
+	if (settings.direction !== undefined) note.direction = settings.direction;
+	if (settings.mapLayout !== undefined) note.mapLayout = settings.mapLayout;
+	if (settings.balance !== undefined) note.balance = settings.balance;
+	if (settings.layoutSide !== undefined) note.layoutSide = settings.layoutSide;
+	return Object.keys(note).length === 0 ? undefined : note;
+}
+
+/**
+ * A planet's continent style: the note's own 2D map settings where it has
+ * them, else the Overlays defaults. `mapLayout: "radial"` is the 2D map's
+ * name for radial and wins over `direction`; `mapLayout: "classic"` makes the
+ * note a tree even when the default is radial. A `layoutSide` that doesn't
+ * suit the direction (left on a top-down map) is dropped, as the 2D map's
+ * Side menu never offers it.
+ */
+export function resolveContinentStyle(defaults: ContinentStyle, note?: NoteMapSettings): ContinentStyle {
+	if (note === undefined) return defaults;
+	const tree = defaults.direction === "radial" ? DEFAULT_CONTINENT_STYLE.direction : defaults.direction;
+	const direction: ContinentDirection = note.mapLayout === "radial" ? "radial" : note.direction ?? (note.mapLayout === "classic" ? tree : defaults.direction);
+	const balance = note.balance ?? defaults.balance;
+	const sides: readonly LayoutSide[] = direction === "top-down" ? ["down", "up"] : ["right", "left"];
+	// Only the note's own side counts: the defaults have none.
+	const side = note.layoutSide !== undefined && sides.includes(note.layoutSide) ? note.layoutSide : undefined;
+	return side === undefined ? { direction, balance } : { direction, balance, side };
+}
 
 /** A line of a planet, with its children in document order. */
 export interface PlanetBranch {
@@ -119,20 +167,14 @@ function layoutSource(branch: PlanetBranch): OsmosisNode {
 	return { id: branch.id, type: "list", depth: 0, content: "", children: branch.children.map(layoutSource) } as unknown as OsmosisNode;
 }
 
-/** A continent laid out as a 2D mind map (the 2D map's own `computeLayout`), at plate sizes. */
-export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE): ContinentMap {
-	const sizes = new Map<string, { width: number; height: number }>();
-	const gather = (branch: PlanetBranch): void => {
-		sizes.set(branch.id, sizeOf(branch.id));
-		branch.children.forEach(gather);
-	};
-	gather(head);
+/** The 2D map's own layout of a continent: x right, y down, the head's centre at (0, 0). */
+function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height: number }>, style: ContinentStyle, direction: "left-right" | "top-down"): MapPlate[] {
 	const result = computeLayout(
 		{ root: layoutSource(head), filePath: "", contentHash: "" },
 		{
-			direction: style.direction,
-			balance: "one-side",
-			layoutSide: style.direction === "top-down" ? "down" : "right",
+			direction,
+			balance: style.balance,
+			layoutSide: style.side ?? (direction === "top-down" ? "down" : "right"),
 			topicShape: "rounded-rect",
 			horizontalSpacing: COLUMN_GAP,
 			verticalSpacing: ROW_GAP,
@@ -152,6 +194,18 @@ export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: Conti
 		node.children.forEach(visit);
 	};
 	visit(result.root);
+	return plates;
+}
+
+/** A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or `radialMap`), at plate sizes. */
+export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE): ContinentMap {
+	const sizes = new Map<string, { width: number; height: number }>();
+	const gather = (branch: PlanetBranch): void => {
+		sizes.set(branch.id, sizeOf(branch.id));
+		branch.children.forEach(gather);
+	};
+	gather(head);
+	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP, ROW_GAP) : treeMap(head, sizes, style, style.direction);
 	let reach = 0;
 	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const p of plates) {
@@ -473,15 +527,17 @@ export class PlanetWorld {
 	/**
 	 * Lay out the planets of `trees` that are new or changed, keeping the rest.
 	 * A changed planet keeps its continents where they were (by head ID) and,
-	 * with `animate`, eases its plates from where they were. Returns the cores
+	 * with `animate`, eases its plates from where they were. A planet whose
+	 * style (`styleOf`) changed counts as changed. Returns the cores
 	 * whose radius grew, for the caller to check for collisions.
 	 */
-	update(trees: readonly PlanetTree[], sizeOf: PlateSize, style: ContinentStyle, phaseOf: (core: string) => number, now: number, animate: boolean): string[] {
+	update(trees: readonly PlanetTree[], sizeOf: PlateSize, styleOf: (core: string) => ContinentStyle, phaseOf: (core: string) => number, now: number, animate: boolean): string[] {
 		const next = new Map<string, Planet>();
 		this.memberOf.clear();
 		const grew: string[] = [];
 		for (const tree of trees) {
-			const key = planetKey(tree, sizeOf);
+			const style = styleOf(tree.core);
+			const key = planetKey(tree, sizeOf, style);
 			const old = this.planets.get(tree.core);
 			let planet = old;
 			if (old === undefined || old.key !== key) {
@@ -595,9 +651,9 @@ export class PlanetWorld {
 	}
 }
 
-/** What a planet's layout depends on: its tree's shape and its plates' sizes. */
-function planetKey(tree: PlanetTree, sizeOf: PlateSize): string {
-	const parts: string[] = [];
+/** What a planet's layout depends on: its tree's shape, its plates' sizes and its continent style. */
+function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle): string {
+	const parts: string[] = [`${style.direction}/${style.balance}/${style.side ?? ""}|`];
 	const visit = (branch: PlanetBranch): void => {
 		const { width, height } = sizeOf(branch.id);
 		parts.push(`${branch.id}:${width.toFixed(2)}x${height.toFixed(2)}(`);
