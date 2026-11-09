@@ -2,6 +2,14 @@ import { describe, it, expect } from "vitest";
 import { edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
+	it("drops a coloured highlight's colour emoji, and only that one", () => {
+		expect(spriteLabel("The ==🔴Danube== flows")).toBe("The Danube flows");
+		expect(spriteLabel("==🟣c1:Danube== and ==🟢Rhine==")).toBe("Danube and Rhine");
+		expect(spriteLabel("A ==stop 🔴 sign== here")).toBe("A stop 🔴 sign here");
+		expect(spriteLabel("A ==⭐star== here")).toBe("A ⭐star here");
+		expect(spriteLabel("🔴 Alert")).toBe("🔴 Alert");
+	});
+
 	it("keeps short plain text as it is", () => {
 		expect(spriteLabel("Clove hitch")).toBe("Clove hitch");
 	});

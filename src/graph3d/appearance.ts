@@ -4,6 +4,7 @@
  * `overlays.ts`.
  */
 
+import { parseHighlightToken } from "../card-gen/cloze-colour";
 import type { GraphEdgeKind, GraphNode } from "./model";
 
 /**
@@ -22,6 +23,8 @@ export function spriteLabel(text: string, maxChars = 32): string {
 		.replace(/!?\[\[([^\]#]*)(#[^\]]*)?\]\]/g, (_, path: string, sub: string | undefined) =>
 			path !== "" ? path : (sub ?? "").replace(/^#\^?/, ""))
 		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+		// A coloured highlight's emoji picks a colour; it is not part of the text.
+		.replace(/==[^=]+==/g, (token) => `==${parseHighlightToken(token).text}==`)
 		.replace(/(\*\*|__|==|~~|`)/g, "")
 		.replace(/^\|\s*|\s*\|$/g, "")
 		.replace(/\s*\|\s*/g, " · ")
