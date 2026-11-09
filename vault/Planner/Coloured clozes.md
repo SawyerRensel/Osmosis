@@ -84,7 +84,7 @@ The cloze token regexes took `==(c\d+:)?([^=]+)==`, so `==🔴c1:x==` would have
 | `:::` inline code clozes, `# osmosis-cloze` code clozes, `**bold**` clozes | No: no highlight, no colour spelling. |
 | Image occlusion, line cards, `src/mindmap-edit.ts` (`grep -a`) | No `==` cloze handling there. |
 | 3D near-tier panels | Yes, for free. A cloze fence's panel is the raw fence rendered with `MarkdownRenderer`, so the `ContextualStudyProcessor` draws it. Under 3D study the panel text is the generator's `card.front`/`card.back`, which carry the classes. |
-| 3D plates | Not applicable. A plate is one single-colour glyph-atlas line (`spriteLabel`), with no per-span styling, so no blank or answer is drawn on a plate at all. `spriteLabel` strips `==` but not the emoji, so a plate whose first line is a coloured cloze shows the emoji glyph (a coloured dot). Left as is: it hints the colour and changing plate text was out of scope. |
+| 3D plates | Not applicable for drawing. A plate is one single-colour glyph-atlas line (`spriteLabel`), with no per-span styling, so no blank or answer is drawn on a plate at all. `spriteLabel` now drops a coloured highlight's leading colour emoji (via `parseHighlightToken`) so a plate reads `Danube`, not `🔴Danube`; only the six colour emoji in the cloze position, so `==stop 🔴 sign==` and `==⭐x==` keep theirs. Plates stay single-colour. |
 
 ### Decisions worth remembering
 
@@ -96,6 +96,7 @@ The cloze token regexes took `==(c\d+:)?([^=]+)==`, so `==🔴c1:x==` would have
 
 | File | Change |
 |---|---|
+| `src/graph3d/appearance.ts` | `spriteLabel` strips a coloured highlight's colour emoji (test in `appearance.test.ts`). |
 | `src/card-gen/cloze-colour.ts` | New. Colour table, parsing, blank/answer markup. |
 | `src/card-gen/explicit.ts` | Token regex accepts the emoji; front/back builders use the helpers; occurrence text excludes the emoji. |
 | `src/views/ContextualStudyProcessor.ts` | Same, for the fence's own front/back. |
@@ -124,4 +125,4 @@ I cannot see Obsidian. Two things rest on knowledge rather than a check: that Ob
 
 ### Results
 
-`npm run lint` clean; `npx vitest run --maxWorkers=2` 98 files, 2714 tests pass; `npm run build` succeeds.
+`npm run lint` clean; `npx vitest run --maxWorkers=2` 98 files, 2715 tests pass; `npm run build` succeeds.
