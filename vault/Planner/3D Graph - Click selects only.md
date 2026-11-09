@@ -66,7 +66,7 @@ Shift+click selects without flying, but only adds to the selection.
 **Decisions.**
 - Per device is localStorage, not settings: the existing pattern for per-device toggles.
 - The toggle sits in the Overlays menu (the menu does not store it; the view passes a get/set pair).
-- `onNodeClick` is skipped whole, so `study.clicked` (study mode advancing to the clicked card) also does not fire on a select-only click. Study mode's own keys still work. Untested whether you want study clicks to keep advancing.
+- `onNodeClick` still fires on a select-only click, now with a `selectOnly` flag: the view's `clickNode` runs `study.clicked` (reveal/advance) either way and skips only `visit` (flight and history step) when the flag is set. The toggle is about the camera alone.
 - Plain click on empty space and on an edge (ride) is unchanged; the ride still moves the camera.
 - No unit test: the decision is a single boolean branch inside the Three.js scene's click handler (not importable under vitest), with no pure logic to extract.
 
