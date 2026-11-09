@@ -19,6 +19,7 @@ import {
 	type ColorMode,
 	type Graph3DOverlays,
 	type LabelMode,
+	type LayoutMode,
 	type OverlayEdgeKind,
 } from "../graph3d/overlays";
 import { flatDepth, flatWeight } from "../graph3d/flatten";
@@ -38,6 +39,12 @@ const EDGE_NAMES: Record<OverlayEdgeKind, string> = {
 	tag: "Tags",
 	attachment: "Attachments",
 	unresolved: "Unresolved links",
+};
+
+const LAYOUT_MODES: Record<LayoutMode, string> = {
+	organic: "Organic",
+	flat: "Flat slices",
+	planets: "Planets",
 };
 
 const LABEL_MODES: Record<LabelMode, string> = {
@@ -193,6 +200,22 @@ export class Graph3DOverlaysMenu {
 			.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
 			.addToggle((toggle) => toggle.setValue(overlays.linksPull).onChange((value) => this.change({ linksPull: value })));
 		const flatten = new Setting(panel).setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
+		// The flatten slider shapes the flat slices only: hidden in the other layouts, its position kept.
+		flatten.settingEl.toggle(overlays.layout === "flat");
+		new Setting(panel)
+			.setName("Layout")
+			.setDesc("Organic lets forces shape each note, flat slices lay branches out like the mind map, and planets put each note on a globe. Changing it lays everything out again.")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOptions(LAYOUT_MODES)
+					.setValue(overlays.layout)
+					.onChange((value) => {
+						flatten.settingEl.toggle(value === "flat");
+						this.change({ layout: value as LayoutMode });
+					}),
+			);
+		// The Layout choice sits above the slider it governs.
+		panel.appendChild(flatten.settingEl);
 		flatten.addSlider((slider) =>
 			slider
 				// Continuous: lines at the boundary depth are pulled part-way into their slice.

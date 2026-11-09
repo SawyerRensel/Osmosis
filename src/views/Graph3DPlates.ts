@@ -77,6 +77,8 @@ export interface PlateSource {
 	shape: PlateShape;
 	/** In the multi-select: drawn with the selection border (the theme accent, at least 2 px). */
 	selected?: boolean;
+	/** Planets mode: the plate lies on its planet's surface along these unit axes (text-right, text-up), seen from the front only. Without, it faces the camera. */
+	frame?: { right: { x: number; y: number; z: number }; up: { x: number; y: number; z: number } };
 }
 
 export interface PlateColors {
@@ -179,8 +181,28 @@ const FOG_VERTEX = /* glsl */ `
 #include <fog_vertex>
 mvPosition.xyz *= ${PLATE_PULL.toFixed(3)};
 gl_Position = projectionMatrix * mvPosition;
-// A plate faded right out is collapsed off screen.
-if (aOpacity <= 0.0) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+// A plate faded right out, or a planet's plate seen from behind, is collapsed off screen.
+if (aOpacity <= 0.0 || plateBack) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+`;
+
+/**
+ * Where a point `offset` from a plate's centre (text-right, text-up) lands, in
+ * view space: across the screen for a billboard, or along the plate's own
+ * axes for a plate lying on a planet, which is front-face only (`plateBack`).
+ */
+const ORIENT_GLSL = /* glsl */ `
+attribute vec3 aRight;
+attribute vec3 aUp;
+bool plateBack = false;
+vec4 placeOnPlate(vec2 offset) {
+	if (dot(aRight, aRight) < 0.5) {
+		vec4 mv = modelViewMatrix * vec4(aCenter, 1.0);
+		mv.xy += offset;
+		return mv;
+	}
+	plateBack = dot(cross(aRight, aUp), cameraPosition - aCenter) <= 0.0;
+	return modelViewMatrix * vec4(aCenter + aRight * offset.x + aUp * offset.y, 1.0);
+}
 `;
 
 const PLATE_VERTEX = /* glsl */ `
@@ -195,12 +217,12 @@ varying vec3 vColor;
 varying float vOpacity;
 varying float vSelected;
 ${FOCUS_DIM_GLSL}
+${ORIENT_GLSL}
 #include <fog_pars_vertex>
 void main() {
-	vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
 	vLocal = position.xy * aSize;
+	vec4 mvPosition = placeOnPlate(vLocal);
 	vHalf = aSize * 0.5;
-	mvPosition.xy += vLocal;
 	vColor = aColor;
 	vSelected = aSelected;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
@@ -248,10 +270,10 @@ attribute vec4 aUv;
 varying vec2 vUv;
 varying float vOpacity;
 ${FOCUS_DIM_GLSL}
+${ORIENT_GLSL}
 #include <fog_pars_vertex>
 void main() {
-	vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
-	mvPosition.xy += aRect.xy + position.xy * aRect.zw;
+	vec4 mvPosition = placeOnPlate(aRect.xy + position.xy * aRect.zw);
 	vUv = aUv.xy + (position.xy + 0.5) * aUv.zw;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
@@ -275,8 +297,8 @@ void main() {
 `;
 
 /** Instanced attributes and their widths, for each mesh. */
-const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1 } as const;
-const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4 } as const;
+const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3 } as const;
+const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3 } as const;
 type PlateAttribute = keyof typeof PLATE_ATTRIBUTES;
 type GlyphAttribute = keyof typeof GLYPH_ATTRIBUTES;
 
@@ -422,13 +444,23 @@ export class Graph3DPlates {
 		const plateSize = this.plates.array("aSize");
 		const plateColor = this.plates.array("aColor");
 		const plateSelected = this.plates.array("aSelected");
+		const plateRight = this.plates.array("aRight");
+		const plateUp = this.plates.array("aUp");
 		const glyphCursor = this.glyphs.map(() => 0);
 		const glyphArrays = this.glyphs.map((layer) => ({
 			center: layer.array("aCenter"),
 			opacity: layer.array("aOpacity"),
 			rect: layer.array("aRect"),
 			uv: layer.array("aUv"),
+			right: layer.array("aRight"),
+			up: layer.array("aUp"),
 		}));
+		// A plate's axes, or zeros for a billboard. Written with the layout: a planet's plates turn only when it is laid out again.
+		const axes = (array: Float32Array, i: number, axis: { x: number; y: number; z: number } | undefined): void => {
+			array[i * 3] = axis?.x ?? 0;
+			array[i * 3 + 1] = axis?.y ?? 0;
+			array[i * 3 + 2] = axis?.z ?? 0;
+		};
 		// Plain index writes: this runs for every glyph on every simulating tick.
 		nodes.forEach((node, i) => {
 			const placed = node.x !== undefined && node.y !== undefined && node.z !== undefined;
@@ -447,6 +479,8 @@ export class Graph3DPlates {
 				plateColor[i * 3 + 1] = node.color.g;
 				plateColor[i * 3 + 2] = node.color.b;
 				plateSelected[i] = node.selected === true ? 1 : 0;
+				axes(plateRight, i, node.frame?.right);
+				axes(plateUp, i, node.frame?.up);
 			}
 			for (const glyph of node.shape.glyphs) {
 				const arrays = glyphArrays[glyph.page];
@@ -462,13 +496,15 @@ export class Graph3DPlates {
 				arrays.rect[g * 4 + 2] = glyph.width;
 				arrays.rect[g * 4 + 3] = glyph.height;
 				arrays.uv.set(glyph.uv, g * 4);
+				axes(arrays.right, g, node.frame?.right);
+				axes(arrays.up, g, node.frame?.up);
 			}
 		});
 		this.plates.touch("aCenter", "aOpacity");
-		if (layout) this.plates.touch("aSize", "aColor", "aSelected");
+		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp");
 		for (const layer of this.glyphs) {
 			layer.touch("aCenter", "aOpacity");
-			if (layout) layer.touch("aRect", "aUv");
+			if (layout) layer.touch("aRect", "aUv", "aRight", "aUp");
 		}
 	}
 

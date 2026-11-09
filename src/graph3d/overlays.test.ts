@@ -3,6 +3,7 @@ import type { GraphModel, GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
 import { nodeColor } from "./appearance";
 import {
+	effectiveFlatten,
 	DEFAULT_OVERLAYS,
 	edgeShown,
 	linkPulls,
@@ -58,6 +59,17 @@ describe("normalizeOverlays", () => {
 		expect(overlays).not.toHaveProperty("bloom");
 		expect(overlays.particles).toBe(false);
 		expect(overlays.labels).toBe("plates");
+	});
+
+	it("reads the Layout choice, taking an old flatten slider at Off as organic", () => {
+		expect(normalizeOverlays({}).layout).toBe("flat");
+		expect(normalizeOverlays({ flatten: 0 }).layout).toBe("organic");
+		expect(normalizeOverlays({ flatten: 0.5 }).layout).toBe("flat");
+		expect(normalizeOverlays({ layout: "planets", flatten: 0 }).layout).toBe("planets");
+		expect(normalizeOverlays({ layout: "globe" }).layout).toBe("flat");
+		expect(effectiveFlatten({ layout: "planets", flatten: 0.75 })).toBe(0);
+		expect(effectiveFlatten({ layout: "organic", flatten: 0.75 })).toBe(0);
+		expect(effectiveFlatten({ layout: "flat", flatten: 0.75 })).toBe(0.75);
 	});
 
 	it("flattens moderately by default, for new and existing users, and clamps a saved flatten", () => {

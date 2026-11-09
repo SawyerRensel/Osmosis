@@ -9,6 +9,7 @@
 //   node /tmp/osmosis-ticks.mjs 0      # flatten off
 //   node /tmp/osmosis-ticks.mjs 0.75   # the default flatten
 //   node /tmp/osmosis-ticks.mjs 0.75 e2e/fixtures/graph3d "Galley Handbook.md"   # another web, from its focus note
+//   node /tmp/osmosis-ticks.mjs planets   # Planets mode: only planet cores and free stars simulate (`planets.ts`)
 //
 // Every node starts free, as on first load. Plate sizes are estimated from
 // label length (the scene measures them with its glyph atlas), so absolute
@@ -35,13 +36,15 @@ import { linkDistance, nodeExtent, spriteLabel } from "../src/graph3d/appearance
 import { panelBoxEm } from "../src/graph3d/near";
 import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch } from "../src/graph3d/flatten";
 import type { Vec3 } from "../src/graph3d/flight";
+import { DEFAULT_CONTINENT_STYLE, PlanetWorld, planetTrees } from "../src/graph3d/planets";
 
 const LINE_PLATE_HEIGHT = 5;
 const CORE_PLATE_HEIGHT = 10;
 const PLATE_HEIGHT_EM = 1.75;
 const TICKS = 120;
 
-const flatten = Number(process.argv[2] ?? "0");
+const planets = process.argv[2] === "planets";
+const flatten = planets ? 0 : Number(process.argv[2] ?? "0");
 const dir = join(process.cwd(), process.argv[3] ?? "e2e/fixtures/graph3d-stress");
 const focus = process.argv[4] ?? "Stress Hub.md";
 const SHAPE_TICKS = 300;
@@ -96,7 +99,16 @@ const byId = new Map(bodies.map((b) => [b.id, b]));
 const t0 = performance.now();
 const branches = new FlatLayouts().branches(model.nodes, flatDepth(flatten), (node) => byId.get(node.id)!.size);
 const index = flatIndex(branches);
-const charge = chargeStrengths(bodies.map((b) => ({ ...b, pinned: false })), -30);
+// Planets mode lays each note out geometrically once; only cores and stars feel the many-body force.
+const world = new PlanetWorld();
+let planetSetup = 0;
+if (planets) {
+	const start = performance.now();
+	world.update(planetTrees(model.nodes, model.edges), (id) => byId.get(id)!.size, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+	planetSetup = performance.now() - start;
+}
+const stars = bodies.filter((b) => planets && world.planetOf(b.id) === undefined);
+const charge = chargeStrengths(bodies.filter((b) => (world.planetOf(b.id) ?? b.id) === b.id).map((b) => ({ ...b, pinned: false })), -30);
 const shares = flatCharges(charge, branches);
 const noteCores = new Map(bodies.filter((b) => isNoteRoot(b)).map((b) => [b.path!, { body: b, strength: shares.get(b.id) ?? 0 }]));
 const charged = bodies.filter((b) => charge.has(b.id)).map((body) => ({ body, path: body.path }));
@@ -116,7 +128,7 @@ const sim = forceSimulation<Body>(bodies, 3)
 	.velocityDecay(0.4)
 	.force("link", forceLink<Body, Link>(links).id((n: Body) => n.id)
 		.distance((l: Link) => linkDistance(l.kind, (l.source as Body).extent, (l.target as Body).extent))
-		.strength((l: Link) => flatLinkScale(index, endId(l.source), endId(l.target)) / Math.max(1, Math.min(degree.get(endId(l.source)) ?? 1, degree.get(endId(l.target)) ?? 1))))
+		.strength((l: Link) => (planets && world.planetOf(endId(l.source)) !== undefined && world.planetOf(endId(l.source)) === world.planetOf(endId(l.target)) ? 0 : 1) * flatLinkScale(index, endId(l.source), endId(l.target)) / Math.max(1, Math.min(degree.get(endId(l.source)) ?? 1, degree.get(endId(l.target)) ?? 1))))
 	.force("charge", limited)
 	.stop();
 if (shares.size > 0) sim.force("notes", (alpha: number) => notePush(noteCores, charged, alpha));
@@ -126,6 +138,14 @@ if (branches.length > 0) {
 		const start = performance.now();
 		flattenStep(branches, (id) => byId.get(id), 0.6, alpha);
 		flatTime += performance.now() - start;
+	});
+}
+let planetTime = 0;
+if (planets) {
+	sim.force("planets", (alpha: number) => {
+		const start = performance.now();
+		world.step((id) => byId.get(id), stars, alpha, 0);
+		planetTime += performance.now() - start;
 	});
 }
 /** Every line of a branch below its root, with its offset from the root. */
@@ -139,6 +159,15 @@ for (let i = 0; i < TICKS; i++) {
 	times.push(performance.now() - start);
 }
 times.sort((a, b) => a - b);
+if (planets) {
+	// The shape checks below are for flat slices; on planets, plates packed on each surface make the clash grid quadratic.
+	const mean = times.reduce((a, b) => a + b, 0) / times.length;
+	console.log(
+		`planets: ${bodies.length} nodes, ${world.size} planets, ${stars.length} stars, ${charge.size} charged, layout ${planetSetup.toFixed(1)} ms · ` +
+		`tick over ${TICKS}: mean ${mean.toFixed(2)} ms (planets force ${(planetTime / TICKS).toFixed(2)} ms), median ${times[TICKS >> 1]!.toFixed(2)} ms, worst ${times[TICKS - 1]!.toFixed(2)} ms`,
+	);
+	process.exit(0);
+}
 const flatMean = flatTime / TICKS;
 // Run on to rest (d3's alpha reaches its minimum after about 300 ticks) for the shape checks.
 for (let i = TICKS; i < SHAPE_TICKS; i++) sim.tick();

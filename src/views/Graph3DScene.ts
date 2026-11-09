@@ -33,7 +33,7 @@ import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
-import { DEFAULT_OVERLAYS, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
+import { DEFAULT_OVERLAYS, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
@@ -42,6 +42,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
+import { DEFAULT_CONTINENT_STYLE, PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, surfaceArc, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -85,6 +86,8 @@ interface EngineNode extends NodeObject {
 	extent: number;
 	/** In the multi-select (`Graph3DScene.selection`): its plate wears the selection border. */
 	selected?: boolean;
+	/** Planets mode: the plate lies on its planet's surface in this frame (`planets.ts`). */
+	frame?: TangentFrame;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
@@ -291,6 +294,12 @@ const SETTLE_TICKS = 80;
 const CHARGE = -30;
 const FADE_MS = 500;
 const LINK_OPACITY = 0.45;
+/** Planets mode: a same-note link (tunnel) is dimmer than an edge, a link between planets (lane) brighter. */
+const TUNNEL_OPACITY = 0.2;
+const LANE_OPACITY = 0.8;
+/** Segments in a surface arc and in a lane. */
+const ARC_SEGMENTS = 6;
+const LANE_SEGMENTS = 12;
 /** Link particles: world units a second, and their size in world units (a line plate is 5 tall). */
 const PARTICLE_SPEED = 25;
 const PARTICLE_SIZE = 1.6;
@@ -331,6 +340,10 @@ export class Graph3DScene {
 	private readonly flatLayouts = new FlatLayouts();
 	/** The flat branches of the loaded nodes at the flatten slider's depth, and where each of their lines sits. */
 	private flatBranches: FlatBranch[] = [];
+	/** Planets mode: each note's planet, laid out once, and its surface plates' places (`planets.ts`). Empty in other layouts. */
+	private readonly world = new PlanetWorld();
+	/** Nodes on no planet (tags, files, ghosts), which planets push out of themselves. */
+	private stars: EngineNode[] = [];
 	private flatPlaces = new Map<string, FlatPlace>();
 	/** Each loaded note's ring phase (`ringDirections`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
 	private ringPhases = new Map<string, number>();
@@ -501,6 +514,11 @@ export class Graph3DScene {
 		// branches out in their slices, rigidly, and hands their pull to their heads.
 		const keep = 1 - this.graph.d3VelocityDecay();
 		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha)) as never);
+		// Planets mode, last of all: surface plates hand their pull to their planet's core, planets
+		// collide by radius, and the plates are put back on their cores. Nothing to do in other layouts.
+		this.graph.d3Force("planets", ((alpha: number) => {
+			if (this.world.size > 0) this.world.step((id) => this.live.get(id), this.stars, alpha, performance.now());
+		}) as never);
 		// Centring shifts every free node each tick to keep the mean at the
 		// origin, so arrivals would drift against a pinned world.
 		this.graph.d3Force("center", null);
@@ -697,9 +715,12 @@ export class Graph3DScene {
 		const live = this.nodes.filter((node) => !node.departing);
 		this.live = new Map(live.map((node) => [node.id, node]));
 		this.capturePhases(live);
-		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(this.overlays.flatten), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0);
+		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(effectiveFlatten(this.overlays)), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0);
 		this.flatPlaces = flatIndex(this.flatBranches);
-		this.charge = chargeStrengths(live.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
+		this.updatePlanets(live);
+		// In planets mode only the planets' cores and the free-floating stars feel the many-body force.
+		const charged = this.world.size === 0 ? live : live.filter((node) => (this.world.planetOf(node.id) ?? node.id) === node.id);
+		this.charge = chargeStrengths(charged.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
 		const shares = flatCharges(this.charge, this.flatBranches);
 		this.noteCores = new Map();
 		for (const node of live) {
@@ -718,6 +739,36 @@ export class Graph3DScene {
 		this.dirty = true;
 		this.layoutDirty = true;
 		this.graph.graphData({ nodes: this.nodes, links: this.links });
+	}
+
+	/**
+	 * Planets mode: lay out the planets that are new or changed (a changed one
+	 * eases to its new shape), give every surface plate its frame, and wake the
+	 * space forces only for planets a grown radius now overlaps. Other layouts
+	 * drop the planets.
+	 */
+	private updatePlanets(live: readonly EngineNode[]): void {
+		const planets = this.overlays.layout === "planets";
+		if (!planets) {
+			if (this.world.size > 0) this.world.clear();
+		} else {
+			const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
+			const trees = planetTrees(live.map((node) => node.graph), edges);
+			const sizeOf = (id: string): { width: number; height: number } => this.live.get(id)?.shape ?? { width: 0, height: LINE_PLATE_HEIGHT };
+			const grew = this.world.update(trees, sizeOf, DEFAULT_CONTINENT_STYLE, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
+			for (const id of this.world.collisions(grew, (id) => this.live.get(id))) {
+				const core = this.live.get(id);
+				if (core !== undefined) core.fx = core.fy = core.fz = undefined;
+			}
+			this.world.placeAll((id) => this.live.get(id), performance.now(), true);
+		}
+		this.stars = [];
+		for (const node of live) {
+			const place = planets ? this.world.place(node.id) : undefined;
+			if (place !== node.frame) this.layoutDirty = true;
+			node.frame = place;
+			if (planets && this.world.planetOf(node.id) === undefined) this.stars.push(node);
+		}
 	}
 
 	/**
@@ -771,15 +822,19 @@ export class Graph3DScene {
 	 */
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
-		const reflatten = overlays.flatten !== this.overlays.flatten;
+		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
+		// A new layout lays every note out afresh.
+		const relayout = overlays.layout !== this.overlays.layout;
 		const before = this.overlays;
 		this.overlays = overlays;
+		if (relayout) this.world.clear();
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
 		// pushData (in reshape) re-cuts the branches and re-reads which links pull, and the engine re-reads every link's strength.
-		if (reweigh || reflatten) this.reshape(!this.focusLeaves(before, overlays));
+		if (reweigh || reflatten || relayout) this.reshape(!this.focusLeaves(before, overlays));
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
-		this.near.setEnabled(overlays.labels === "all");
+		// Planets mode has no live panels yet (P3 tilts them with their plates): a flat CSS2D panel over a tilted plate would hide it.
+		this.near.setEnabled(overlays.labels === "all" && overlays.layout !== "planets");
 		this.dirty = true;
 	}
 
@@ -800,6 +855,9 @@ export class Graph3DScene {
 	 */
 	private readonly linkStrength = (link: EngineLink): number => {
 		if (!this.pulling.has(link)) return 0;
+		// Inside a planet nothing pulls: its layout is geometric.
+		const planet = this.world.planetOf(endId(link.source));
+		if (planet !== undefined && planet === this.world.planetOf(endId(link.target))) return 0;
 		const flat = flatLinkScale(this.flatPlaces, endId(link.source), endId(link.target));
 		if (flat === 0) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
@@ -838,6 +896,14 @@ export class Graph3DScene {
 	 * editor that opens meanwhile moves the track onto its line (`setEditing`).
 	 */
 	reshape(followFocus = true, edit = false): void {
+		// Planets mode: an edit re-lays out only its planet, which `pushData` (on the new data) already did,
+		// easing its plates and waking the space forces only on a collision. The camera tracks the edited line.
+		if (edit && this.world.size > 0) {
+			const edited = this.nodes.find((node) => node.id === this.focusId && !node.departing);
+			if (followFocus && this.flight === null && edited !== undefined && placed(edited)) this.follow = { node: edited, at: { x: edited.x, y: edited.y, z: edited.z }, track: true };
+			this.pushData();
+			return;
+		}
 		let any = false;
 		for (const node of this.nodes) {
 			if (node.departing || (!edit && node.id === this.editingId)) continue;
@@ -913,10 +979,11 @@ export class Graph3DScene {
 		this.cancelFlight();
 		this.focusId = id;
 		const pose = this.cameraPose();
+		if (this.hoverOver(node, Math.hypot(pose.position.x - pose.target.x, pose.position.y - pose.target.y, pose.position.z - pose.target.z))) return;
 		const step = { x: node.x - pose.target.x, y: node.y - pose.target.y, z: node.z - pose.target.z };
 		const add = (a: Vec3) => ({ x: a.x + step.x, y: a.y + step.y, z: a.z + step.z });
 		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: add(pose.position), target: add(pose.target) }, start: performance.now() };
-		if (node.fx === undefined) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
+		if (!this.settled(node)) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
 	}
 
 	/**
@@ -1182,6 +1249,7 @@ export class Graph3DScene {
 		if (node.x === undefined || node.y === undefined || node.z === undefined) return;
 		this.pendingFlight = null;
 		const distance = isNoteRoot(node.graph) ? NOTE_STAND_OFF : LINE_STAND_OFF;
+		if (this.hoverOver(node, distance)) return;
 		const position = { x: node.x, y: node.y, z: node.z };
 		this.flight = {
 			node,
@@ -1218,13 +1286,24 @@ export class Graph3DScene {
 				this.ride = null;
 				return;
 			}
-			const pose = tripPose(ride.trip, { x: from.x, y: from.y, z: from.z }, { x: to.x, y: to.y, z: to.z }, now);
+			const [a, b] = [{ x: from.x, y: from.y, z: from.z }, { x: to.x, y: to.y, z: to.z }];
+			const pose = tripPose(ride.trip, a, b, now);
+			// Planets mode: a lane between planets bows out, and the ride bows with it (`laneBow`), by how far along it the target is.
+			const bow = this.laneBowOf(from, to);
+			if (bow !== null) {
+				const span = Math.max(1e-6, Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) ** 2);
+				const t = Math.min(1, Math.max(0, ((pose.target.x - a.x) * (b.x - a.x) + (pose.target.y - a.y) * (b.y - a.y) + (pose.target.z - a.z) * (b.z - a.z)) / span));
+				const lift = 4 * t * (1 - t);
+				for (const p of [pose.position, pose.target]) [p.x, p.y, p.z] = [p.x + bow.x * lift, p.y + bow.y * lift, p.z + bow.z * lift];
+			}
 			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
 			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
 			controls.update();
 			if (pose.done) {
 				this.ride = null;
 				this.options.onNodeArrived(to.graph);
+				// Planets mode lands in the hover view over the plate the lane reaches.
+				this.hoverOver(to, Math.hypot(pose.position.x - pose.target.x, pose.position.y - pose.target.y, pose.position.z - pose.target.z));
 			}
 			return;
 		}
@@ -1270,8 +1349,37 @@ export class Graph3DScene {
 		}
 		const move = new Vector3(node.x - follow.at.x, node.y - follow.at.y, node.z - follow.at.z);
 		follow.at = { x: node.x, y: node.y, z: node.z };
-		if (node.fx !== undefined) this.follow = null;
+		if (this.settled(node)) this.follow = null;
 		return move;
+	}
+
+	/**
+	 * Whether a node has stopped moving: it is pinned, or, on a planet (whose
+	 * surface plates are always pinned to their core), its core is pinned and
+	 * the planet is not easing into a new layout.
+	 */
+	private settled(node: EngineNode): boolean {
+		const planet = this.world.planetOf(node.id);
+		if (planet === undefined || planet === node.id) return node.fx !== undefined;
+		return this.live.get(planet)?.fx !== undefined && !this.world.easing;
+	}
+
+	/**
+	 * Planets mode: glide to hover above a surface plate, `distance` out on its
+	 * outward normal, looking straight down at it. The camera keeps world +y as
+	 * up, which looking down a normal puts the plate's own up (world +y
+	 * projected onto it) at the top of the screen. False for a plate on no
+	 * planet's surface (a core, a star, or another layout): the caller moves as usual.
+	 */
+	private hoverOver(node: EngineNode, distance: number): boolean {
+		const place = this.world.place(node.id);
+		if (place === undefined || !placed(node)) return false;
+		const pose = this.cameraPose();
+		const hover = hoverPose({ x: node.x, y: node.y, z: node.z }, place, distance);
+		this.flight = this.ride = null;
+		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: hover.position, target: hover.target }, start: performance.now() };
+		this.follow = this.settled(node) ? null : { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
+		return true;
 	}
 
 	/** The user moved the view: a flight or follow under way gives way. A structural edit's track goes on (see `reshape`). */
@@ -1977,7 +2085,10 @@ export class Graph3DScene {
 			return this.orbitControls().target.clone();
 		}
 		const camera = this.graph.camera();
-		const node = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
+		const picked = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
+		// Planets mode orbits a surface plate's planet: a drag turns the globe under the camera.
+		const planet = picked === null ? undefined : this.live.get(this.world.planetOf(picked.id) ?? picked.id);
+		const node = planet !== undefined && placed(planet) ? planet : picked;
 		if (node !== null) {
 			const centre = new Vector3(node.x, node.y, node.z);
 			this.lastDepth = centre.distanceTo(camera.position);
@@ -2009,6 +2120,9 @@ export class Graph3DScene {
 			point.set(node.x, node.y, node.z).sub(camera.position);
 			const distance = point.dot(forward);
 			if (distance <= 0 || distance > reach) continue;
+			// A planet's plate seen from behind isn't drawn, so it can't be picked.
+			const n = node.frame?.normal;
+			if (n !== undefined && n.x * point.x + n.y * point.y + n.z * point.z >= 0) continue;
 			point.add(camera.position).project(camera);
 			candidates.push(node);
 			onScreen.push({
@@ -2103,6 +2217,8 @@ export class Graph3DScene {
 		const focusDepth = this.viewDepth(controls.target);
 		focus.value = focus.value === 0 ? focusDepth : focus.value + (focusDepth - focus.value) * ease;
 		this.stepFades(now);
+		// A re-laid-out planet's plates ease to their new places.
+		if (this.world.placeAll((id) => this.live.get(id), performance.now())) this.dirty = true;
 		this.near.update(this.nodes, this.graph.camera() as PerspectiveCamera, focus.value, this.fog.density, seconds);
 		if (this.dirty) {
 			this.dirty = false;
@@ -2148,8 +2264,10 @@ export class Graph3DScene {
 		const geometry = this.edges.geometry;
 		let positions = geometry.getAttribute("position") as BufferAttribute | undefined;
 		let colors = geometry.getAttribute("color") as BufferAttribute | undefined;
-		if (positions === undefined || colors === undefined || positions.count < this.links.length * 2) {
-			const capacity = Math.max(64, this.links.length * 4);
+		// A planet's edges are arcs of up to LANE_SEGMENTS segments.
+		const perLink = 2 * (this.world.size > 0 ? LANE_SEGMENTS : 1);
+		if (positions === undefined || colors === undefined || positions.count < this.links.length * perLink) {
+			const capacity = Math.max(64, this.links.length * perLink * 2);
 			geometry.dispose();
 			positions = new BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
 			colors = new BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(DynamicDrawUsage);
@@ -2164,9 +2282,20 @@ export class Graph3DScene {
 			if (typeof source === "string" || typeof target === "string") continue;
 			if (source.x === undefined || target.x === undefined) continue;
 			if (!this.edgeDrawn(link.kind, source, target)) continue;
-			const alpha = LINK_OPACITY * Math.min(source.opacity, target.opacity);
+			let alpha = LINK_OPACITY * Math.min(source.opacity, target.opacity);
 			if (alpha <= 0) continue;
 			const color = this.edgeColor(link.kind);
+			if (this.world.size > 0 && placed(source) && placed(target)) {
+				const { points, scale } = this.planetEdge(link.kind, source, target);
+				alpha = Math.min(1, alpha * scale);
+				for (let i = 1; i < points.length; i++) {
+					for (const end of [points[i - 1]!, points[i]!]) {
+						positions.setXYZ(vertex, end.x, end.y, end.z);
+						colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
+					}
+				}
+				continue;
+			}
 			for (const end of [source, target]) {
 				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
 				colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
@@ -2196,6 +2325,37 @@ export class Graph3DScene {
 		for (const end of segments.flat()) positions.setXYZ(vertex++, end.x, end.y, end.z);
 		geometry.setDrawRange(0, vertex);
 		positions.needsUpdate = true;
+	}
+
+	/**
+	 * The bow of the lane between two plates on different planets (`laneBow`),
+	 * or null when they are not (a straight edge).
+	 */
+	private laneBowOf(source: EngineNode, target: EngineNode): Vec3 | null {
+		const [ps, pt] = [this.world.planetOf(source.id), this.world.planetOf(target.id)];
+		if (ps === undefined || pt === undefined || ps === pt) return null;
+		const [cs, ct] = [this.live.get(ps), this.live.get(pt)];
+		if (cs === undefined || ct === undefined || !placed(cs) || !placed(ct) || !placed(source) || !placed(target)) return null;
+		return laneBow(source, target, cs, ct);
+	}
+
+	/**
+	 * Planets mode: the points an edge is drawn through, and its opacity
+	 * scale. Between two surface plates of one planet a hierarchy or embed edge
+	 * is a surface arc and a link a dim tunnel (a chord through the interior);
+	 * between planets a link is a bright lane bowed out of both. Anything else,
+	 * a stalk from the core to a continent among them, is straight.
+	 */
+	private planetEdge(kind: GraphEdgeKind, source: EngineNode & Vec3, target: EngineNode & Vec3): { points: Vec3[]; scale: number } {
+		const straight = { points: [source, target], scale: 1 };
+		const [ps, pt] = [this.world.planetOf(source.id), this.world.planetOf(target.id)];
+		if (ps === undefined || pt === undefined) return straight;
+		const [cs, ct] = [this.live.get(ps), this.live.get(pt)];
+		if (cs === undefined || ct === undefined || !placed(cs) || !placed(ct)) return straight;
+		if (ps !== pt) return { points: laneArc(source, target, cs, ct, LANE_SEGMENTS), scale: LANE_OPACITY / LINK_OPACITY };
+		if (source.id === ps || target.id === ps) return straight;
+		if (kind === "hierarchy" || kind === "embed") return { points: surfaceArc(cs, source, target, ARC_SEGMENTS), scale: 1 };
+		return { points: [source, target], scale: TUNNEL_OPACITY / LINK_OPACITY };
 	}
 
 	/** Whether the Overlays menu shows an edge of `kind` between these nodes. */

@@ -19,6 +19,9 @@ export const OVERLAY_EDGE_KINDS: readonly OverlayEdgeKind[] = ["hierarchy", "lin
 /** What carries text: plates and the near tier's live panels, plates only, or neither (blank plates). */
 export type LabelMode = "all" | "plates" | "none";
 
+/** How notes are laid out: organic 3D, flat slices (the flatten slider), or planets (`planets.ts`). */
+export type LayoutMode = "organic" | "flat" | "planets";
+
 export interface Graph3DOverlays {
 	colorBy: ColorMode;
 	edges: Record<OverlayEdgeKind, boolean>;
@@ -26,7 +29,9 @@ export interface Graph3DOverlays {
 	forceBalance: number;
 	/** Whether links between plates (kind `link`, ghost targets included) pull. Off, they still draw if their edge kind is shown, but exert no force. */
 	linksPull: boolean;
-	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). */
+	/** The Layout choice. The flatten slider applies in `flat` only. */
+	layout: LayoutMode;
+	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
 	flatten: number;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;
@@ -47,6 +52,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	forceBalance: 0.5,
 	linksPull: true,
 	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
+	layout: "flat",
 	flatten: 0.75,
 	mist: 1,
 	particles: false,
@@ -56,6 +62,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 
 const COLOR_MODES: readonly ColorMode[] = ["note", "memory", "tag", "type"];
 const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
+const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "flat", "planets"];
 
 /**
  * Overlay settings as saved in plugin data, checked field by field: anything
@@ -77,6 +84,8 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		edges,
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
 		linksPull: typeof value.linksPull === "boolean" ? value.linksPull : DEFAULT_OVERLAYS.linksPull,
+		// Saved before the Layout choice: the flatten slider at Off was organic.
+		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : value.flatten === 0 ? "organic" : DEFAULT_OVERLAYS.layout,
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
@@ -84,6 +93,9 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		travelSpeed: number(value.travelSpeed, DEFAULT_OVERLAYS.travelSpeed, 1 / TRAVEL_LIMIT, TRAVEL_LIMIT),
 	};
 }
+
+/** The flatten position in effect: the slider's in the flat-slices layout, nothing flat otherwise. */
+export const effectiveFlatten = (overlays: Pick<Graph3DOverlays, "layout" | "flatten">): number => (overlays.layout === "flat" ? overlays.flatten : 0);
 
 /** Whether an edge is drawn: its kind is shown, and, when it reaches an unresolved link, so are those. */
 export function edgeShown(kind: GraphEdgeKind, toGhost: boolean, edges: Readonly<Record<OverlayEdgeKind, boolean>>): boolean {
