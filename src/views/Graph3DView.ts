@@ -11,6 +11,7 @@ import { collectEmbedded } from "../graph3d/transcluded";
 import type { LinkClick } from "../graph3d/links";
 import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
+import type { Arrow } from "../graph3d/arrow-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
@@ -261,6 +262,23 @@ export class Graph3DView extends ItemView {
 		this.scope.register(["Alt"], "ArrowDown", structuralKey("down"));
 		this.scope.register(["Alt"], "ArrowLeft", structuralKey("outdent"));
 		this.scope.register(["Alt"], "ArrowRight", structuralKey("indent"));
+		// The arrows move the selection to the related plate closest to that direction on screen, and the camera glides after it.
+		// Shift+arrow adds that plate to the selection instead. A step in back/forward, as a plate click is; the focus note stays.
+		const arrowKey = (arrow: Arrow, extend: boolean) => (e: KeyboardEvent) => {
+			if (isEditableTarget(e.target) || e.target instanceof HTMLSelectElement || this.editor.isOpen) return undefined;
+			const scene = this.scene;
+			const selected = scene?.selectedNodes() ?? [];
+			if (scene === null || selected.length === 0) return undefined;
+			const id = scene.arrowTarget(arrow);
+			if (id === null) return false;
+			scene.select(extend ? [...selected.map((node) => node.id), id] : [id]);
+			void this.navigate({ focus: this.focusPath, node: id }, "", true, true);
+			return false;
+		};
+		for (const [key, arrow] of [["ArrowUp", "up"], ["ArrowDown", "down"], ["ArrowLeft", "left"], ["ArrowRight", "right"]] as const) {
+			this.scope.register([], key, arrowKey(arrow, false));
+			this.scope.register(["Shift"], key, arrowKey(arrow, true));
+		}
 	}
 
 	getViewType(): string {
@@ -289,7 +307,7 @@ export class Graph3DView extends ItemView {
 			const step = stepTo(this.here(), readPlace(state));
 			if (isEntry(step)) result.history = true;
 			// Not awaited: the leaf stays busy until this returns, and drops any step asked for meanwhile.
-			this.arrival = this.travel(step, typeof state?.subpath === "string" ? state.subpath : "", state?.land !== false);
+			this.arrival = this.travel(step, typeof state?.subpath === "string" ? state.subpath : "", state?.land !== false, state?.glide === true);
 			return;
 		}
 		this.placed = true;
@@ -1536,13 +1554,15 @@ export class Graph3DView extends ItemView {
 	 * back/forward hand an old place to `setState` without recording one; a new
 	 * step after going back clears the forward entries. A `subpath` lands on a
 	 * heading or block when `place` has no plate; without `land`, a refocus
-	 * leaves the camera where it is. While the leaf is busy (still opening,
-	 * say) it drops the call, so the step is taken without an entry.
+	 * leaves the camera where it is. With `glide` (an arrow key), a plate in the
+	 * same focus note is glided to without turning (`Graph3DScene.glideTo`)
+	 * rather than flown to. While the leaf is busy (still opening, say) it
+	 * drops the call, so the step is taken without an entry.
 	 */
-	private async navigate(place: Place, subpath = "", land = true): Promise<void> {
+	private async navigate(place: Place, subpath = "", land = true, glide = false): Promise<void> {
 		this.arrival = null;
-		await this.leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { ...this.getState(), focus: place.focus, node: place.node, subpath, land } });
-		this.arrival ??= this.travel(stepTo(this.here(), place), subpath, land);
+		await this.leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { ...this.getState(), focus: place.focus, node: place.node, subpath, land, glide } });
+		this.arrival ??= this.travel(stepTo(this.here(), place), subpath, land, glide);
 		await this.arrival;
 	}
 
@@ -1550,14 +1570,18 @@ export class Graph3DView extends ItemView {
 	 * Take a step: fly to another plate (or, if an edit deleted it, its note's
 	 * root), or make another note the focus note and land on the step's plate.
 	 * A plate loaded now is flown to at once, so the camera follows it while
-	 * the reload re-heats the layout, as a hop always has.
+	 * the reload re-heats the layout, as a hop always has. With `glide`, a
+	 * plate in the same focus note is glided to instead (see `navigate`).
 	 */
-	private async travel(step: Step, subpath: string, land: boolean): Promise<void> {
+	private async travel(step: Step, subpath: string, land: boolean, glide = false): Promise<void> {
 		const scene = this.scene;
 		if (step.kind === "none" || scene === null) return;
 		const loaded = (id: string): boolean => this.model?.nodes.some((node) => node.id === id) ?? false;
 		if (step.kind === "fly") {
-			if (this.focusPath !== null) scene.flyTo(landing(loaded, this.focusPath, step.node));
+			if (this.focusPath === null) return;
+			const to = landing(loaded, this.focusPath, step.node);
+			if (glide) scene.glideTo(to);
+			else scene.flyTo(to);
 			return;
 		}
 		const node = step.node;

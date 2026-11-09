@@ -51,6 +51,7 @@ import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/jo
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
 import { boxHits, boxRect, toggled, type ScreenPoint } from "../graph3d/selection";
 import { frameDistance } from "../graph3d/liftoff";
+import { arrowCandidates, pickInDirection, type Arrow, type ScreenOffset } from "../graph3d/arrow-nav";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -385,7 +386,8 @@ export class Graph3DScene {
 	 * the user takes over. A `track` (a re-settle after a structural edit) is
 	 * not given up when the user orbits or zooms: their moves add to it.
 	 */
-	private follow: { node: EngineNode; at: Vec3; track?: boolean } | null = null;
+	/** `steer`: an arrow key's glide (`glideTo`) is under way to this node, and moves with it. */
+	private follow: { node: EngineNode; at: Vec3; track?: boolean; steer?: boolean } | null = null;
 	/** A structural edit's re-settle is under way (`reshape`): until it cools, an editor opening doesn't pin its line, and the camera tracks the line instead. */
 	private editSettling = false;
 	/** An edit's turn (desktop) or pan (phone) under way, to a fixed pose. */
@@ -888,6 +890,62 @@ export class Graph3DScene {
 		this.startPendingFlight();
 	}
 
+	/**
+	 * Arrow-key navigation: glide to node `id` and make it the focused node.
+	 * The camera and the orbit target move together, by the step from the
+	 * target to the node, so the viewing distance and the camera's turn stay
+	 * as they are and screen up stays up from hop to hop. A node still
+	 * settling is followed, during the glide and after it, as a flight's is.
+	 */
+	glideTo(id: string): void {
+		const node = this.nodes.find((n) => n.id === id && !n.departing);
+		if (node === undefined || !placed(node)) return;
+		this.pendingFlight = null;
+		this.lookPending = { x: 0, y: 0 };
+		this.cancelFlight();
+		this.focusId = id;
+		const pose = this.cameraPose();
+		const step = { x: node.x - pose.target.x, y: node.y - pose.target.y, z: node.z - pose.target.z };
+		const add = (a: Vec3) => ({ x: a.x + step.x, y: a.y + step.y, z: a.z + step.z });
+		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: add(pose.position), target: add(pose.target) }, start: performance.now() };
+		if (node.fx === undefined) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
+	}
+
+	/**
+	 * The plate an arrow press moves the selection to from the primary
+	 * (`selectedNodes()[0]`): of its parent, children, edge neighbours and
+	 * siblings, the one closest to `arrow` on screen (`pickInDirection`).
+	 * Plates behind the camera, or not drawn (fading out, or not placed yet),
+	 * are skipped. Null with no selection, with the primary behind the camera,
+	 * or with nothing in that direction.
+	 */
+	arrowTarget(arrow: Arrow): string | null {
+		const primaryId = this.selectedNodes()[0]?.id;
+		const primary = primaryId === undefined ? undefined : this.nodes.find((n) => n.id === primaryId);
+		if (primary === undefined || !placed(primary)) return null;
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const forward = camera.getWorldDirection(new Vector3());
+		const point = new Vector3();
+		const screen = (node: EngineNode & Vec3): { x: number; y: number } | null => {
+			point.set(node.x, node.y, node.z).sub(camera.position);
+			if (point.dot(forward) <= 0) return null;
+			point.add(camera.position).project(camera);
+			return { x: ((point.x + 1) / 2) * this.container.clientWidth, y: ((1 - point.y) / 2) * this.container.clientHeight };
+		};
+		const from = screen(primary);
+		if (from === null) return null;
+		const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
+		const byId = new Map(this.nodes.map((node) => [node.id, node]));
+		const offsets: ScreenOffset[] = [];
+		for (const id of arrowCandidates(primary.id, edges)) {
+			const node = byId.get(id);
+			if (node === undefined || node.departing || node.opacity <= 0 || !placed(node)) continue;
+			const to = screen(node);
+			if (to !== null) offsets.push({ id, x: to.x - from.x, y: to.y - from.y });
+		}
+		return pickInDirection(offsets, arrow);
+	}
+
 	/** The node last flown to, the one edits and undo act on; null when it is gone from the graph. */
 	focusedNode(): GraphNode | null {
 		return this.focusId === null ? null : (this.nodes.find((node) => node.id === this.focusId)?.graph ?? null);
@@ -1130,8 +1188,8 @@ export class Graph3DScene {
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
 		if (this.glide !== null) {
-			// An edit's turn while its line is tracked: the turn moves with the line.
-			const move = this.follow?.track === true ? this.followMove() : null;
+			// An edit's turn while its line is tracked, or an arrow key's glide to a node still settling: the glide moves with the node.
+			const move = this.follow?.track === true || this.follow?.steer === true ? this.followMove() : null;
 			const glide = move === null ? this.glide : (this.glide = shiftGlide(this.glide, move));
 			const pose = glidePose(glide, now, GLIDE_MS);
 			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
