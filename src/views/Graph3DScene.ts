@@ -45,6 +45,7 @@ import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
+import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../graph3d/hover";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
@@ -398,8 +399,22 @@ export class Graph3DScene {
 	private box: { pointerId: number; x0: number; y0: number; el: HTMLElement | null } | null = null;
 	/** The flight under way, aimed at its node wherever the node is now. */
 	private flight: { node: EngineNode; flight: Flight; duration: number } | null = null;
-	/** A ride along an edge toward `to` (follow a link), aimed at the edge's two ends wherever they are now. */
-	private ride: { from: EngineNode; to: EngineNode; trip: Trip } | null = null;
+	/**
+	 * A ride along an edge toward `to` (follow a link), aimed at the edge's two
+	 * ends wherever they are now. With `lands`, `to` is a planet's surface plate
+	 * and the ride blends into the hover view over it (`blendPose`); `up` is the
+	 * camera's up when the ride began.
+	 */
+	private ride: { from: EngineNode; to: EngineNode; trip: Trip; lands: boolean; up: Vec3 } | null = null;
+	/** Planets mode: a flight into the hover view over `node`'s plate, `distance` out on its normal (`hoverOver`). */
+	private hoverFlight: { node: EngineNode; distance: number; flight: HoverFlight } | null = null;
+	/**
+	 * The camera rests over a plate in a pole cap, where world +y can't put the
+	 * plate's up at the top of the screen, so `camera.up` is left at the plate's
+	 * up (`restingUp`). Otherwise a `camera.up` other than world +y is a hover's
+	 * turn that something cut short, and `levelUp` sets it back.
+	 */
+	private capRest = false;
 	/**
 	 * After a flight, the camera moves with its node until the node settles, or
 	 * the user takes over. A `track` (a re-settle after a structural edit) is
@@ -604,6 +619,7 @@ export class Graph3DScene {
 
 		const ids = new Set(this.nodes.map((node) => node.id));
 		if (this.flight !== null && !ids.has(this.flight.node.id)) this.flight = null;
+		if (this.hoverFlight !== null && !ids.has(this.hoverFlight.node.id)) this.hoverFlight = null;
 		if (this.follow !== null && (!ids.has(this.follow.node.id) || this.follow.node.departing)) {
 			// A save gives the tracked line a new ID: track its successor, which the view has just focused (`Graph3DView.place`).
 			const next = this.follow.track === true ? this.nodes.find((n) => n.id === this.focusId && !n.departing) : undefined;
@@ -918,7 +934,7 @@ export class Graph3DScene {
 		// easing its plates and waking the space forces only on a collision. The camera tracks the edited line.
 		if (edit && this.world.size > 0) {
 			const edited = this.nodes.find((node) => node.id === this.focusId && !node.departing);
-			if (followFocus && this.flight === null && edited !== undefined && placed(edited)) this.follow = { node: edited, at: { x: edited.x, y: edited.y, z: edited.z }, track: true };
+			if (followFocus && this.flight === null && this.hoverFlight === null && edited !== undefined && placed(edited)) this.follow = { node: edited, at: { x: edited.x, y: edited.y, z: edited.z }, track: true };
 			this.pushData();
 			return;
 		}
@@ -1274,18 +1290,34 @@ export class Graph3DScene {
 			flight: startFlight(this.graph.camera().position, this.orbitControls().target, position, distance, performance.now()),
 			duration: FLIGHT_MS / this.overlays.travelSpeed,
 		};
-		this.follow = this.glide = this.ride = null;
+		this.follow = this.glide = this.ride = this.hoverFlight = null;
 	}
 
 	/**
-	 * One frame of an edit's glide (to a fixed pose), or of the flight: the
-	 * camera eases toward where its node is now. Once there, it keeps moving
-	 * with the node until the node is pinned (the layout has cooled), so a node
-	 * still settling stays centred.
+	 * One frame of a hover flight (Planets mode), an edit's glide (to a fixed
+	 * pose), a ride, or the flight: the camera eases toward where its node is
+	 * now. Once there, it keeps moving with the node until the node is pinned
+	 * (the layout has cooled), so a node still settling stays centred.
 	 */
 	private steerFlight(now: number): void {
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
+		this.levelUp();
+		const hover = this.hoverFlight;
+		if (hover !== null) {
+			const end = hover.node.departing ? null : this.hoverEnd(hover.node, hover.distance);
+			if (end === null) {
+				this.hoverFlight = null;
+				return;
+			}
+			const pose = hoverFlightPose(hover.flight, end, now);
+			this.setCamera(pose);
+			if (pose.done) {
+				this.hoverFlight = null;
+				this.restOver(hover.node, pose);
+			}
+			return;
+		}
 		if (this.glide !== null) {
 			// An edit's turn while its line is tracked, or an arrow key's glide to a node still settling: the glide moves with the node.
 			const move = this.follow?.track === true || this.follow?.steer === true ? this.followMove() : null;
@@ -1305,7 +1337,7 @@ export class Graph3DScene {
 				return;
 			}
 			const [a, b] = [{ x: from.x, y: from.y, z: from.z }, { x: to.x, y: to.y, z: to.z }];
-			const pose = tripPose(ride.trip, a, b, now);
+			const pose: CameraState & { done: boolean } = { ...tripPose(ride.trip, a, b, now), up: ride.up };
 			// Planets mode: a lane between planets bows out, and the ride bows with it (`laneBow`), by how far along it the target is.
 			const bow = this.laneBowOf(from, to);
 			if (bow !== null) {
@@ -1314,14 +1346,18 @@ export class Graph3DScene {
 				const lift = 4 * t * (1 - t);
 				for (const p of [pose.position, pose.target]) [p.x, p.y, p.z] = [p.x + bow.x * lift, p.y + bow.y * lift, p.z + bow.z * lift];
 			}
-			camera.position.set(pose.position.x, pose.position.y, pose.position.z);
-			controls.target.set(pose.target.x, pose.target.y, pose.target.z);
-			controls.update();
+			// Planets mode: over the ride's second half the camera blends into the hover view over the plate the lane reaches, landing in it.
+			const end = ride.lands ? this.hoverEnd(to, ride.trip.standOff) : null;
+			const landed = end === null ? pose : { ...blendPose(pose, end, rideBlend((now - ride.trip.start) / ride.trip.duration)), done: pose.done };
+			if (end === null) {
+				camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+				controls.target.set(pose.target.x, pose.target.y, pose.target.z);
+				controls.update();
+			} else this.setCamera(landed);
 			if (pose.done) {
 				this.ride = null;
+				if (end !== null) this.restOver(to, landed);
 				this.options.onNodeArrived(to.graph);
-				// Planets mode lands in the hover view over the plate the lane reaches.
-				this.hoverOver(to, Math.hypot(pose.position.x - pose.target.x, pose.position.y - pose.target.y, pose.position.z - pose.target.z));
 			}
 			return;
 		}
@@ -1383,26 +1419,83 @@ export class Graph3DScene {
 	}
 
 	/**
-	 * Planets mode: glide to hover above a surface plate, `distance` out on its
-	 * outward normal, looking straight down at it. The camera keeps world +y as
-	 * up, which looking down a normal puts the plate's own up (world +y
-	 * projected onto it) at the top of the screen. False for a plate on no
-	 * planet's surface (a core, a star, or another layout): the caller moves as usual.
+	 * Planets mode: fly to hover above a surface plate, `distance` out on its
+	 * outward normal, looking straight down at it with its up (world +y
+	 * projected onto it) at the top of the screen. Position, look direction and
+	 * up are one eased flight over the travel-speed-scaled flight time
+	 * (`graph3d/hover.ts`), re-aimed each frame at where the plate is now.
+	 * Already there (a lane ride lands in the hover view, and its arrival then
+	 * comes here), or already on the way, it changes nothing. False for a plate
+	 * on no planet's surface (a core, a star, or another layout): the caller
+	 * moves as usual.
 	 */
 	private hoverOver(node: EngineNode, distance: number): boolean {
-		const place = this.world.place(node.id);
-		if (place === undefined || !placed(node)) return false;
-		const pose = this.cameraPose();
-		const hover = hoverPose({ x: node.x, y: node.y, z: node.z }, place, distance);
-		this.flight = this.ride = null;
-		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: hover.position, target: hover.target }, start: performance.now() };
-		this.follow = this.settled(node) ? null : { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
+		const end = this.hoverEnd(node, distance);
+		if (end === null) return false;
+		this.flight = this.ride = this.glide = null;
+		if (this.hoverFlight?.node === node && this.hoverFlight.distance === distance) return true;
+		const camera = this.graph.camera();
+		this.hoverFlight = this.follow = null;
+		this.capRest = false;
+		// What is on screen: the camera's own orientation, whatever its up vector says.
+		if (atPose(camera.position, camera.quaternion, end)) this.restOver(node, end);
+		else this.hoverFlight = { node, distance, flight: startHover(camera.position, this.orbitControls().target, camera.quaternion, performance.now(), FLIGHT_MS / this.overlays.travelSpeed) };
 		return true;
+	}
+
+	/** The hover pose over `node`'s plate, `distance` out on its normal, where the plate is now; null for a node on no planet's surface. */
+	private hoverEnd(node: EngineNode, distance: number): CameraState | null {
+		const place = this.world.place(node.id);
+		if (place === undefined || !placed(node)) return null;
+		return hoverPose({ x: node.x, y: node.y, z: node.z }, place, distance);
+	}
+
+	/** Set the camera to `pose`, up included; OrbitControls' `update()` then aims it at the target with that up. */
+	private setCamera(pose: CameraState): void {
+		const camera = this.graph.camera();
+		camera.position.set(pose.position.x, pose.position.y, pose.position.z);
+		camera.up.set(pose.up.x, pose.up.y, pose.up.z);
+		const controls = this.orbitControls();
+		controls.target.set(pose.target.x, pose.target.y, pose.target.z);
+		controls.update();
+	}
+
+	/**
+	 * Arrived in the hover pose over `node`: from here nothing turns the camera
+	 * on its own. Its up goes back to world +y, which shows exactly the same
+	 * view, except over a pole cap plate, where it keeps the plate's up
+	 * (`restingUp`). A plate still easing into place is followed, as a
+	 * flight's node is.
+	 */
+	private restOver(node: EngineNode, pose: CameraState): void {
+		const forward = { x: pose.target.x - pose.position.x, y: pose.target.y - pose.position.y, z: pose.target.z - pose.position.z };
+		const up = restingUp(forward, pose.up);
+		this.graph.camera().up.set(up.x, up.y, up.z);
+		this.capRest = up.x !== 0 || up.y !== 1 || up.z !== 0;
+		this.orbitControls().update();
+		if (placed(node) && !this.settled(node)) this.follow = { node, at: { x: node.x, y: node.y, z: node.z } };
+	}
+
+	/**
+	 * Put `camera.up` back to world +y, which the view's orbit and look
+	 * controls turn about, when a hover's turn was cut short (the user took
+	 * over, or the camera went elsewhere) and left it tilted. A rest over a cap
+	 * plate keeps its up while the camera stays there or the user moves it,
+	 * and gives it up once another flight, glide or ride starts.
+	 */
+	private levelUp(): void {
+		if (this.hoverFlight !== null || this.ride?.lands === true) return;
+		const up = this.graph.camera().up;
+		if (up.x === 0 && up.y === 1 && up.z === 0) return;
+		if (this.capRest && this.flight === null && this.glide === null && this.ride === null) return;
+		this.capRest = false;
+		up.set(0, 1, 0);
+		this.orbitControls().update();
 	}
 
 	/** The user moved the view: a flight or follow under way gives way. A structural edit's track goes on (see `reshape`). */
 	private cancelFlight(): void {
-		this.flight = this.glide = this.ride = null;
+		this.flight = this.glide = this.ride = this.hoverFlight = null;
 		if (this.follow?.track !== true) this.follow = null;
 	}
 
@@ -1422,8 +1515,9 @@ export class Graph3DScene {
 		const standOff = isNoteRoot(to.graph) ? NOTE_STAND_OFF : LINE_STAND_OFF;
 		const trip = startTrip(camera, this.orbitControls().target, toEnd ? a : b, toEnd ? b : a, standOff, performance.now(), this.overlays.travelSpeed);
 		this.pendingFlight = null;
-		this.flight = this.follow = this.glide = null;
-		this.ride = { from, to, trip };
+		this.flight = this.follow = this.glide = this.hoverFlight = null;
+		const up = this.graph.camera().up;
+		this.ride = { from, to, trip, lands: this.world.place(to.id) !== undefined, up: { x: up.x, y: up.y, z: up.z } };
 	}
 
 	destroy(): void {
