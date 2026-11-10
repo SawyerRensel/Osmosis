@@ -369,3 +369,7 @@ None new: `vault/tests/graph3d/Sailing Basics.md`, `Galley Handbook.md`, `Naviga
 #### Not verified
 
 Everything visual: text crispness of slanted CSS3D panels (Chrome picks a raster scale for 3D layers), the 3D sorting of panels at a slant, masks under a 3D transform, the camera-facing core panel, and the browser-side frame cost above. Panels on mobile were not looked at.
+
+### Feedback fix 1 (Sawyer, 2026-11-09): panels overlapped
+- **Cause:** `Graph3DScene.updatePlanets` passed the continent layout each line's *plate* size, while Flat slices already space by `flatSize`, the larger of the plate and its near-tier panel. Up close, live panels are far bigger than their plates, so they covered each other.
+- **Fix:** Planets' `sizeOf` now uses `flatSize`, on branch `fix/3d-graph-planets-panel-spacing` (e2ed8e9). Planets grow to fit, so from far away the plates look more spread out, as they do in Flat slices. Don't revert this to plate-only sizes.
