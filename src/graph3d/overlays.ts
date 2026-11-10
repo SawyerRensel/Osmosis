@@ -38,9 +38,9 @@ export interface Graph3DOverlays {
 	layout: LayoutMode;
 	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
 	flatten: number;
-	/** Planets only: the default Direction of a continent's 2D map. A note's own 2D map settings override it (`resolveContinentStyle`). */
+	/** Planets only: the Direction of every continent's 2D map. A note's own 2D map settings don't apply on a planet. */
 	continentDirection: ContinentDirection;
-	/** Planets only: the default Balance of a continent's 2D map (unused by radial). A note's own 2D map settings override it. */
+	/** Planets only: the Balance of every continent's 2D map (unused by radial). A note's own 2D map settings don't apply on a planet. */
 	continentBalance: ContinentBalance;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;

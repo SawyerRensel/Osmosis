@@ -256,13 +256,13 @@ export class Graph3DOverlaysMenu {
 			);
 		// The Layout choice sits above the slider it governs.
 		panel.appendChild(flatten.settingEl);
-		// Planets only: how each continent (a direct child of a note's root) is drawn, unless the note's own 2D map settings say otherwise.
+		// Planets only: how every continent (a direct child of a note's root) is drawn; a note's own 2D map settings don't apply.
 		const direction = new Setting(panel)
 			.setName("Continent direction")
-			.setDesc("How each continent is laid out on a planet. A note's own map settings (direction, or map layout radial) override this.");
+			.setDesc("How each continent is laid out on a planet.");
 		const balance = new Setting(panel)
 			.setName("Continent balance")
-			.setDesc("Which sides a continent's branches take. A note's own balance setting overrides this. Radial fills the circle, so it has none.");
+			.setDesc("Which sides a continent's branches take. Radial fills the circle, so it has none.");
 		direction.settingEl.toggle(overlays.layout === "planets");
 		balance.settingEl.toggle(overlays.layout === "planets" && overlays.continentDirection !== "radial");
 		direction.addDropdown((dropdown) =>

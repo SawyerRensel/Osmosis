@@ -42,7 +42,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, resolveContinentStyle, surfaceArc, type ContinentStyle, type NoteMapSettings, type TangentFrame } from "../graph3d/planets";
+import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
@@ -192,8 +192,6 @@ export interface SceneOptions {
 	clickSelectsOnly: () => boolean;
 	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
 	nearTier: () => NearTierSettings;
-	/** A note's own 2D map settings (direction, map layout, balance, side), which override the Overlays' continent defaults for its planet. Read whenever the data is pushed. */
-	noteMapSettings: (path: string) => NoteMapSettings | undefined;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -763,11 +761,8 @@ export class Graph3DScene {
 				const node = this.live.get(id);
 				return node === undefined ? { width: 0, height: LINE_PLATE_HEIGHT } : this.flatSize(node.graph);
 			};
-			const styleOf = (core: string): ContinentStyle => {
-				const path = this.live.get(core)?.graph.path;
-				return resolveContinentStyle({ direction: this.overlays.continentDirection, balance: this.overlays.continentBalance }, path === undefined ? undefined : this.options.noteMapSettings(path));
-			};
-			const grew = this.world.update(trees, sizeOf, styleOf, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
+			const style: ContinentStyle = { direction: this.overlays.continentDirection, balance: this.overlays.continentBalance };
+			const grew = this.world.update(trees, sizeOf, style, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
 			for (const id of this.world.collisions(grew, (id) => this.live.get(id))) {
 				const core = this.live.get(id);
 				if (core !== undefined) core.fx = core.fy = core.fz = undefined;
@@ -836,7 +831,7 @@ export class Graph3DScene {
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
 		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
-		// A new layout, or new continent defaults in Planets, lays every note out afresh.
+		// A new layout, or a new continent direction or balance in Planets, lays every note out afresh.
 		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
 		// The spacing sliders re-settle too; in Planets they lay the planets out afresh (their gaps are layout, not forces).
 		const respace = spacingChanged(this.overlays, overlays);

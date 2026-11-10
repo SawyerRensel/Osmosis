@@ -4,7 +4,7 @@ osmosis-styles:
 ---
 # Anchor Radial
 
-A note with its own 2D map settings: `mapLayout: radial`. On a planet its continents fan round their headings instead of using the Overlays default. Next door is [[Anchor Balance]].
+A note with its own 2D map settings: `mapLayout: radial`. They shape this note's 2D map only. On a planet they are ignored: its continents follow the Overlays menu's Continent direction and Continent balance. Next door is [[Anchor Balance]].
 
 ## Types of anchor
 

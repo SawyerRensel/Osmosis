@@ -21,7 +21,7 @@
  */
 
 import { computeLayout, type LayoutNode } from "../layout";
-import { buildMapSettingsFromFrontmatter, parseOsmosisStyleFrontmatter, type BalanceMode, type LayoutSide, type MapSettings } from "../styles";
+import type { BalanceMode } from "../styles";
 import type { OsmosisNode } from "../types";
 import { UNIT_SPACING, edgeDistance, type Spacing } from "./appearance";
 import type { Vec3 } from "./flight";
@@ -34,55 +34,17 @@ export type ContinentDirection = "left-right" | "top-down" | "radial";
 export type ContinentBalance = BalanceMode;
 
 /**
- * How a continent's 2D map is laid out: the Overlays menu's defaults, with a
- * note's own 2D map settings on top (`resolveContinentStyle`).
+ * How a continent's 2D map is laid out: the Overlays menu's Continent
+ * direction and balance, the same for every planet. A note's own 2D map
+ * settings (its `osmosis-styles` frontmatter) are the 2D map's and have no say
+ * here.
  */
 export interface ContinentStyle {
 	direction: ContinentDirection;
 	balance: ContinentBalance;
-	/** One-side only: which side the children take. Absent, the direction's default (right, or down). */
-	side?: LayoutSide;
 }
 
 export const DEFAULT_CONTINENT_STYLE: ContinentStyle = { direction: "left-right", balance: "one-side" };
-
-/** The part of a note's own 2D map settings (`osmosis-styles` frontmatter, see `buildMapSettingsFromFrontmatter`) a planet reads. */
-export type NoteMapSettings = Partial<Pick<MapSettings, "direction" | "mapLayout" | "balance" | "layoutSide">>;
-
-/**
- * A note's own 2D map settings, read from its frontmatter (the `osmosis-styles`
- * block the 2D map and its properties sidebar write): only the four fields a
- * planet uses. Spacing, topic shape and the rest have no meaning on a planet,
- * whose plates are the graph's own.
- */
-export function noteMapSettings(frontmatter: Record<string, unknown> | undefined | null): NoteMapSettings | undefined {
-	const settings = buildMapSettingsFromFrontmatter(parseOsmosisStyleFrontmatter(frontmatter));
-	const note: NoteMapSettings = {};
-	if (settings.direction !== undefined) note.direction = settings.direction;
-	if (settings.mapLayout !== undefined) note.mapLayout = settings.mapLayout;
-	if (settings.balance !== undefined) note.balance = settings.balance;
-	if (settings.layoutSide !== undefined) note.layoutSide = settings.layoutSide;
-	return Object.keys(note).length === 0 ? undefined : note;
-}
-
-/**
- * A planet's continent style: the note's own 2D map settings where it has
- * them, else the Overlays defaults. `mapLayout: "radial"` is the 2D map's
- * name for radial and wins over `direction`; `mapLayout: "classic"` makes the
- * note a tree even when the default is radial. A `layoutSide` that doesn't
- * suit the direction (left on a top-down map) is dropped, as the 2D map's
- * Side menu never offers it.
- */
-export function resolveContinentStyle(defaults: ContinentStyle, note?: NoteMapSettings): ContinentStyle {
-	if (note === undefined) return defaults;
-	const tree = defaults.direction === "radial" ? DEFAULT_CONTINENT_STYLE.direction : defaults.direction;
-	const direction: ContinentDirection = note.mapLayout === "radial" ? "radial" : note.direction ?? (note.mapLayout === "classic" ? tree : defaults.direction);
-	const balance = note.balance ?? defaults.balance;
-	const sides: readonly LayoutSide[] = direction === "top-down" ? ["down", "up"] : ["right", "left"];
-	// Only the note's own side counts: the defaults have none.
-	const side = note.layoutSide !== undefined && sides.includes(note.layoutSide) ? note.layoutSide : undefined;
-	return side === undefined ? { direction, balance } : { direction, balance, side };
-}
 
 /** A line of a planet, with its children in document order. */
 export interface PlanetBranch {
@@ -174,7 +136,7 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
 		{
 			direction,
 			balance: style.balance,
-			layoutSide: style.side ?? (direction === "top-down" ? "down" : "right"),
+			layoutSide: direction === "top-down" ? "down" : "right",
 			topicShape: "rounded-rect",
 			horizontalSpacing: COLUMN_GAP * nodeSpacing,
 			verticalSpacing: ROW_GAP * nodeSpacing,
@@ -539,15 +501,14 @@ export class PlanetWorld {
 	 * Lay out the planets of `trees` that are new or changed, keeping the rest.
 	 * A changed planet keeps its continents where they were (by head ID) and,
 	 * with `animate`, eases its plates from where they were. A planet whose
-	 * style (`styleOf`) changed counts as changed. Returns the cores
+	 * style changed counts as changed (every planet, as the style is shared). Returns the cores
 	 * whose radius grew, for the caller to check for collisions.
 	 */
-	update(trees: readonly PlanetTree[], sizeOf: PlateSize, styleOf: (core: string) => ContinentStyle, phaseOf: (core: string) => number, now: number, animate: boolean): string[] {
+	update(trees: readonly PlanetTree[], sizeOf: PlateSize, style: ContinentStyle, phaseOf: (core: string) => number, now: number, animate: boolean): string[] {
 		const next = new Map<string, Planet>();
 		this.memberOf.clear();
 		const grew: string[] = [];
 		for (const tree of trees) {
-			const style = styleOf(tree.core);
 			const key = planetKey(tree, sizeOf, style, this.spacing.node);
 			const old = this.planets.get(tree.core);
 			let planet = old;
@@ -665,7 +626,7 @@ export class PlanetWorld {
 
 /** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style and the Node spacing. */
 function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number): string {
-	const parts: string[] = [`${style.direction}/${style.balance}/${style.side ?? ""}/${String(nodeSpacing)}|`];
+	const parts: string[] = [`${style.direction}/${style.balance}/${String(nodeSpacing)}|`];
 	const visit = (branch: PlanetBranch): void => {
 		const { width, height } = sizeOf(branch.id);
 		parts.push(`${branch.id}:${width.toFixed(2)}x${height.toFixed(2)}(`);

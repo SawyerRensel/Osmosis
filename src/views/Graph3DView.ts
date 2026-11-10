@@ -21,7 +21,6 @@ import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
 import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../graph3d/selection-edit";
 import { placeNodes, type Placed } from "../graph3d/positions";
-import { noteMapSettings, type NoteMapSettings } from "../graph3d/planets";
 import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -354,11 +353,6 @@ export class Graph3DView extends ItemView {
 		await this.reload(true, typeof state?.subpath === "string" ? state.subpath : "", readPlace(state).node);
 	}
 
-	/** A note's own 2D map settings, from its frontmatter, for its planet's continents (Planets layout). */
-	private noteMapSettings(path: string): NoteMapSettings | undefined {
-		return noteMapSettings(this.app.metadataCache.getCache(path)?.frontmatter);
-	}
-
 	private nearTier(): NearTierSettings {
 		nearTier ??= cleanNearTier(this.app.loadLocalStorage(NEAR_TIER_STORAGE_KEY), Platform.isMobile);
 		return nearTier;
@@ -451,7 +445,6 @@ export class Graph3DView extends ItemView {
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 			nearTier: () => this.nearTier(),
-			noteMapSettings: (path) => this.noteMapSettings(path),
 		});
 		this.scene.setTheme(this.readTheme());
 		this.scene.setLinkMode(this.editMode);

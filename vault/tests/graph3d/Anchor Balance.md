@@ -5,7 +5,7 @@ osmosis-styles:
 ---
 # Anchor Balance
 
-A note with its own 2D map settings: `direction: left-right` and `balance: alternating`. On a planet its continents deal their branches out to the left and right. It links back to [[Anchor Radial]] and on to [[Sailing Basics]], which has no settings of its own and follows the Overlays defaults.
+A note with its own 2D map settings: `direction: left-right` and `balance: alternating`. They shape this note's 2D map only. On a planet they are ignored: its continents follow the Overlays menu's Continent direction and Continent balance, exactly like [[Sailing Basics]], which has no settings of its own. It also links back to [[Anchor Radial]].
 
 ## Night anchoring
 
