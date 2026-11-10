@@ -2278,7 +2278,9 @@ export class Graph3DScene {
 	/**
 	 * The drawn edge nearest client point (`x`, `y`) on screen, within `slop` px
 	 * and inside the mist: one the Overlays menu shows, not fading out, with both
-	 * ends placed. See `pickEdge`.
+	 * ends placed. In Planets mode it is hit-tested through the points it is
+	 * drawn through (`planetEdge`), so a lane is picked on its bowed arc, not on
+	 * the straight line between its plates. See `pickEdge`.
 	 */
 	private edgeNear(x: number, y: number, slop: number): { source: EngineNode; target: EngineNode } | null {
 		const camera = this.graph.camera() as PerspectiveCamera;
@@ -2293,7 +2295,7 @@ export class Graph3DScene {
 			if (source.departing || target.departing || !placed(source) || !placed(target)) continue;
 			if (!this.edgeDrawn(link.kind, source, target) || Math.min(source.opacity, target.opacity) <= 0) continue;
 			ends.push({ source, target });
-			edges.push({ a: { x: source.x, y: source.y, z: source.z }, b: { x: target.x, y: target.y, z: target.z } });
+			edges.push({ points: this.world.size > 0 ? this.planetEdge(link.kind, source, target).points : [source, target] });
 		}
 		const hit = pickEdge(
 			edges,
