@@ -1,4 +1,4 @@
-import { Platform, setIcon, type App, type TFile } from "obsidian";
+import { Platform, setIcon, type App, type TFile, type View } from "obsidian";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
 import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
@@ -73,7 +73,11 @@ export class Graph3DEditor implements TrackedEditor {
 	private readonly fitKey = {};
 	private cleanup: Array<() => void> = [];
 
-	constructor(private readonly app: App) {}
+	/** `view`: the graph view the editor sits in; plugins looking for the active MarkdownView (QuickAdd) are shown this editor while it is in use. */
+	constructor(
+		private readonly app: App,
+		private readonly view: View,
+	) {}
 
 	get isOpen(): boolean {
 		return this.request !== null;
@@ -117,6 +121,7 @@ export class Graph3DEditor implements TrackedEditor {
 				value: request.text,
 				cls: "osmosis-node-editor",
 				file: request.file,
+				view: this.view,
 				// Enter saves, Shift+Enter adds a line. Deferred like the others; an open suggestion popup keeps the key.
 				onEnter: (_editor, mod, shift) => {
 					if (!enterSavesEdit(mod, shift) || suggestOpen()) return false;

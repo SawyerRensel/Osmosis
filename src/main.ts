@@ -13,6 +13,7 @@ import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, pars
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { TOOLBAR_GROUPS } from "./views/ToolRibbon";
+import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
@@ -167,6 +168,10 @@ export default class OsmosisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+
+		// Node editors stand in as the active MarkdownView while focused, so
+		// plugins like QuickAdd can read and replace their selection.
+		this.register(installMarkdownViewStandIn(this.app));
 
 		// Armed before anything can await it — the startup scan below settles it.
 		this.cardStoreReady = new Promise<void>((resolve) => {

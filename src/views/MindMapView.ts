@@ -7209,6 +7209,8 @@ export class MindMapView extends ItemView {
 				value: editValue,
 				cls: "osmosis-node-editor",
 				file: this.nodeFile(node.source),
+				// Plugins that look for the active MarkdownView (QuickAdd) find this editor.
+				view: this,
 				// Enter saves; Shift+Enter falls through to CodeMirror for a new line. An open suggestion popup keeps the key.
 				onEnter: (_editor, mod, shift) => {
 					if (!enterSavesEdit(mod, shift) || suggestOpen()) return false;

@@ -2,13 +2,17 @@ import {
 	App,
 	Constructor,
 	MarkdownFileInfo,
+	MarkdownView,
 	Scope,
 	TFile,
+	View,
+	type Workspace,
 } from "obsidian";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
 import { EditorSelection, Extension, Prec } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView, keymap, placeholder, ViewUpdate, tooltips } from "@codemirror/view";
+import { heldBlurStep, NodeEditorFocus, wrapMethod } from "./active-node-editor";
 
 declare const app: App;
 
@@ -98,6 +102,13 @@ export interface MarkdownEditorProps {
 	 * to resolve same-note links — without it `[[#` lists no headings.
 	 */
 	file?: TFile | null;
+	/**
+	 * The view the editor sits in (a mind map or 3D graph). When set, the
+	 * editor stands in as the active `MarkdownView` while it is the active
+	 * editor, so plugins that look for one (QuickAdd) find this editor and
+	 * `file`; see `installMarkdownViewStandIn`.
+	 */
+	view?: View | null;
 	/** Placeholder text when empty */
 	placeholder?: string;
 	/** Handler for Enter key (return false to use default behavior) */
@@ -123,6 +134,7 @@ const defaultProperties: Required<MarkdownEditorProps> = {
 	value: "",
 	cls: "",
 	file: null,
+	view: null,
 	placeholder: "",
 	onEnter: () => false,
 	onEscape: () => { /* noop */ },
@@ -133,6 +145,12 @@ const defaultProperties: Required<MarkdownEditorProps> = {
 	onChange: () => { /* noop */ },
 	extensions: [],
 };
+
+/** How often a blur held by a modal checks whether the modal has closed. */
+const HELD_BLUR_POLL_MS = 100;
+
+/** The node editor focused last, which may stand in as the active MarkdownView. */
+const nodeEditorFocus = new NodeEditorFocus<EmbeddableMarkdownEditor>();
 
 /**
  * An embeddable markdown editor that provides full Obsidian editing capabilities
@@ -145,6 +163,10 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 	options: Required<MarkdownEditorProps>;
 	initial_value: string;
 	scope: Scope;
+	/** The poll of a blur held while a modal is open; null when no blur is held. */
+	private heldBlur: number | null = null;
+	/** This editor as a MarkdownView, made on first lookup (`markdownViewStandIn`). */
+	private standIn: MarkdownView | null = null;
 
 	constructor(app: App, container: HTMLElement, options: Partial<MarkdownEditorProps> = {}) {
 		super(app, container, {
@@ -171,20 +193,26 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 		// From Obsidian 1.5.8+, must explicitly set value
 		this.set(options.value || "");
 
-		// Set up blur handler
+		// Set up blur handler. A blur to a modal (the command palette, a
+		// plugin's prompt) is held until the modal closes: the command it runs
+		// acts on this editor, so the edit must still be open.
 		if (this.options.onBlur !== defaultProperties.onBlur) {
 			this.editor.cm.contentDOM.addEventListener("blur", () => {
 				this.app.keymap.popScope(this.scope);
-				if (this._loaded) this.options.onBlur(this);
+				if (!this._loaded) return;
+				if (this.modalOpen()) this.holdBlur();
+				else this.options.onBlur(this);
 			});
 		}
 
 		// Set up focus handler — push scope and set as active editor
 		this.editor.cm.contentDOM.addEventListener("focusin", () => {
+			this.releaseBlur();
 			this.app.keymap.pushScope(this.scope);
 			// `owner` is a duck-typed stand-in for MarkdownFileInfo: Obsidian only
 			// reads `editMode`/`editor` off the active editor for our use case.
 			this.app.workspace.activeEditor = this.owner as unknown as MarkdownFileInfo;
+			if (this.options.view) nodeEditorFocus.focus({ editor: this, owner: this.owner, view: this.options.view });
 		});
 
 		// Add custom CSS class if provided
@@ -296,8 +324,69 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 		return extensions;
 	}
 
+	/**
+	 * This editor as a `MarkdownView`, for plugins that read the active editor
+	 * through `getActiveViewOfType(MarkdownView)`; null when it has no view.
+	 * Not a real view: it passes `instanceof MarkdownView`, and carries the
+	 * fields those plugins read. `editor` is this editor's own Obsidian
+	 * `Editor`, so an edit made through it goes down the same path as typing
+	 * (`onUpdate`, then the caller's save on commit).
+	 */
+	markdownViewStandIn(): MarkdownView | null {
+		const view = this.options.view;
+		if (!view) return null;
+		if (this.standIn === null) {
+			const standIn = Object.create(MarkdownView.prototype) as MarkdownView;
+			// Own data properties: they shadow whatever accessors the prototype has for the same names.
+			const fields: Record<string, unknown> = {
+				app: this.app,
+				leaf: view.leaf,
+				containerEl: this.containerEl,
+				contentEl: this.containerEl,
+				editor: this.editor,
+				file: this.options.file,
+				getMode: () => "source",
+			};
+			for (const [key, value] of Object.entries(fields)) {
+				Object.defineProperty(standIn, key, { value, writable: true, configurable: true, enumerable: true });
+			}
+			this.standIn = standIn;
+		}
+		return this.standIn;
+	}
+
+	/** Whether a modal (the command palette, a plugin's prompt) is open over this editor's window. */
+	private modalOpen(): boolean {
+		return this.editor.cm.contentDOM.ownerDocument.querySelector(".modal-container") !== null;
+	}
+
+	private holdBlur(): void {
+		if (this.heldBlur !== null) return;
+		this.heldBlur = window.setInterval(() => {
+			const doc = this.editor.cm.contentDOM.ownerDocument;
+			const step = heldBlurStep({
+				focused: this.editor.cm.hasFocus,
+				modalOpen: this.modalOpen(),
+				focusOnNothing: doc.activeElement === null || doc.activeElement === doc.body,
+			});
+			if (step === "wait") return;
+			this.releaseBlur();
+			if (step === "refocus") this.editor.cm.focus();
+			else if (step === "blur" && this._loaded) this.options.onBlur(this);
+		}, HELD_BLUR_POLL_MS);
+	}
+
+	private releaseBlur(): void {
+		if (this.heldBlur === null) return;
+		window.clearInterval(this.heldBlur);
+		this.heldBlur = null;
+	}
+
 	/** Clean up the editor and remove all event listeners */
 	destroy(): void {
+		this.releaseBlur();
+		nodeEditorFocus.destroyed(this);
+		this.standIn = null;
 		if (this._loaded) {
 			this.unload();
 		}
@@ -313,6 +402,42 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
 	onunload(): void {
 		this.destroy();
 	}
+}
+
+/**
+ * While a node editor (one given a `view`) is the active editor in the active
+ * leaf, answer `workspace.getActiveViewOfType(MarkdownView)` with its stand-in
+ * (`markdownViewStandIn`) and `workspace.getActiveFile()` with its note.
+ * Plugins such as QuickAdd read the selection and insert text through that
+ * lookup; without it they find no editor in a mind map or 3D graph leaf.
+ * Every other lookup, and every lookup while no node editor is active, goes to
+ * Obsidian untouched. Returns the undo, for the plugin's unload.
+ */
+export function installMarkdownViewStandIn(app: App): () => void {
+	const workspace = app.workspace;
+	// Obsidian's own lookup, set as the wrapper goes in: the active leaf's view comes from it.
+	let lookup: Workspace["getActiveViewOfType"] | null = null;
+	const activeNodeEditor = (): EmbeddableMarkdownEditor | null =>
+		nodeEditorFocus.answer(workspace.activeEditor, lookup?.call(workspace, View) ?? null);
+
+	const undoView = wrapMethod(workspace, "getActiveViewOfType", (original) => {
+		lookup = original;
+		return function (this: Workspace, type: Constructor<View>): View | null {
+			// Only the exact MarkdownView lookup: a lookup for a superclass (View, ItemView) is answered by the real mind map or graph view.
+			if (type === MarkdownView) {
+				const standIn = activeNodeEditor()?.markdownViewStandIn();
+				if (standIn) return standIn;
+			}
+			return original.call(this, type);
+		} as Workspace["getActiveViewOfType"];
+	});
+	const undoFile = wrapMethod(workspace, "getActiveFile", (original) => function (this: Workspace): TFile | null {
+		return activeNodeEditor()?.options.file ?? original.call(this);
+	});
+	return () => {
+		undoFile();
+		undoView();
+	};
 }
 
 /** Whether an Obsidian suggestion popup ([[ links, # headings) is open: Enter belongs to it, not to the editor. */

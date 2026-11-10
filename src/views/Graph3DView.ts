@@ -137,7 +137,7 @@ export class Graph3DView extends ItemView {
 		},
 	);
 	/** The inline editor over the node being edited. While it is open, reloads wait (see `reload`). */
-	private readonly editor = new Graph3DEditor(this.app);
+	private readonly editor = new Graph3DEditor(this.app, this);
 	/** An editor is being prepared (its line is being read), so a second request must not start another. */
 	private opening = false;
 	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
