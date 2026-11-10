@@ -131,6 +131,20 @@ describe("continentMap balance", () => {
 		expect([both.get("a")! > 0, both.get("b")! > 0, both.get("c")! < 0, both.get("d")! < 0]).toEqual([true, true, true, true]);
 	});
 
+	it("both-sides balances by the plates' laid-out extent, not the child count", () => {
+		// "a" carries four children, so it takes up as much height as "b", "c" and "d" together
+		const tall: PlanetBranch = {
+			id: "h",
+			children: [
+				{ id: "a", children: ["a1", "a2", "a3", "a4"].map((id) => ({ id, children: [] })) },
+				...["b", "c", "d"].map((id) => ({ id, children: [] })),
+			],
+		};
+		const map = new Map(continentMap(tall, plate, { direction: "left-right", balance: "both-sides" }).plates.map((p) => [p.id, p.x]));
+		expect(map.get("a")! > 0).toBe(true);
+		expect(["b", "c", "d"].every((id) => map.get(id)! < 0)).toBe(true);
+	});
+
 	it("alternating deals the children out, right then left", () => {
 		const alt = xs({ direction: "left-right", balance: "alternating" });
 		expect([alt.get("a")! > 0, alt.get("b")! < 0, alt.get("c")! > 0, alt.get("d")! < 0]).toEqual([true, true, true, true]);

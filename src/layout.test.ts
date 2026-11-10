@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeLayout, DEFAULT_LAYOUT_CONFIG, LayoutNode } from "./layout";
+import { chooseBalanceCut, computeLayout, DEFAULT_LAYOUT_CONFIG, LayoutNode } from "./layout";
 import { OsmosisNode, OsmosisTree } from "./types";
 
 function makeNode(
@@ -518,5 +518,113 @@ describe("computeLayout", () => {
 		expect(result.nodes.length).toBeGreaterThan(400);
 		expect(elapsed).toBeLessThan(50);
 		assertNoOverlap(result.nodes);
+	});
+});
+
+describe("both-sides balances by laid-out extent", () => {
+	/** A root with `n` branches b0..b(n-1) (ids), each sized by `sizes[i]` (width, height). */
+	function branches(sizes: [number, number][], kids: Record<number, number> = {}) {
+		const nodeSizes = new Map<string, { width: number; height: number }>();
+		const children = sizes.map(([w, h], i) => {
+			nodeSizes.set(`b${String(i)}`, { width: w, height: h });
+			const sub = Array.from({ length: kids[i] ?? 0 }, (_, j) => {
+				nodeSizes.set(`b${String(i)}k${String(j)}`, { width: w, height: h });
+				return makeNode(`b${String(i)}k${String(j)}`, "bullet", "k", 0);
+			});
+			return makeNode(`b${String(i)}`, "heading", "B", 1, sub);
+		});
+		return { tree: makeTree(makeNode("r", "root", "", 0, children)), nodeSizes };
+	}
+	const sidesOf = (n: number, side: "primary" | "secondary", result: ReturnType<typeof computeLayout>): string[] =>
+		Array.from({ length: n }, (_, i) => `b${String(i)}`).filter((id) => result.nodes.find((x) => x.source.id === id)!.side === side);
+
+	it("equal-sized branches split as a count-based split did", () => {
+		for (const n of [2, 3, 4, 5]) {
+			const { tree, nodeSizes } = branches(Array.from({ length: n }, () => [60, 20] as [number, number]));
+			const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+			const mid = Math.ceil(n / 2);
+			expect(sidesOf(n, "primary", result)).toEqual(Array.from({ length: mid }, (_, i) => `b${String(i)}`));
+		}
+	});
+
+	it("one huge branch: the others take the opposite side", () => {
+		// b0 is as tall as the other four together
+		const { tree, nodeSizes } = branches([[60, 400], [60, 20], [60, 20], [60, 20], [60, 20]]);
+		const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(5, "primary", result)).toEqual(["b0"]);
+		expect(sidesOf(5, "secondary", result)).toEqual(["b1", "b2", "b3", "b4"]);
+	});
+
+	it("a huge last branch goes alone to the secondary side, keeping document order", () => {
+		const { tree, nodeSizes } = branches([[60, 20], [60, 20], [60, 20], [60, 400]]);
+		const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(4, "primary", result)).toEqual(["b0", "b1", "b2"]);
+		expect(sidesOf(4, "secondary", result)).toEqual(["b3"]);
+	});
+
+	it("weighs a branch by its whole subtree, not its own node", () => {
+		// b0 is a single short node with eight children; b1..b3 are leaves
+		const { tree, nodeSizes } = branches([[60, 20], [60, 20], [60, 20], [60, 20]], { 0: 8 });
+		const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(4, "primary", result)).toEqual(["b0"]);
+	});
+
+	it("honours per-node side overrides and balances only the rest", () => {
+		// b1 is pinned left; b0 (tall) then needs b2 and b3 against it
+		const { tree, nodeSizes } = branches([[60, 100], [60, 20], [60, 20], [60, 20]]);
+		const nodeSides = new Map([["b1", "left" as const]]);
+		const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes, undefined, nodeSides);
+		expect(result.nodes.find((n) => n.source.id === "b1")!.side).toBe("secondary");
+		// Free branches b0, b2, b3 on the right would be 100+20+20 = 140+; the best cut sends b0 alone right.
+		expect(sidesOf(4, "primary", result)).toEqual(["b0"]);
+		expect(sidesOf(4, "secondary", result)).toEqual(["b1", "b2", "b3"]);
+	});
+
+	it("top-down balances by width", () => {
+		// Wide first branch, narrow rest: heights are all equal, so only width can drive the cut
+		const { tree, nodeSizes } = branches([[400, 20], [40, 20], [40, 20], [40, 20]]);
+		const result = computeLayout(tree, { direction: "top-down", balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(4, "primary", result)).toEqual(["b0"]);
+		// The same sizes left-right (heights equal) keep the count-based split
+		const lr = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(4, "primary", lr)).toEqual(["b0", "b1"]);
+	});
+
+	it("alternating stays strictly one each way, whatever the sizes", () => {
+		const { tree, nodeSizes } = branches([[60, 400], [60, 20], [60, 20], [60, 20]]);
+		const result = computeLayout(tree, { balance: "alternating", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(4, "primary", result)).toEqual(["b0", "b2"]);
+	});
+
+	it("one-side is unchanged", () => {
+		const { tree, nodeSizes } = branches([[60, 400], [60, 20], [60, 20]]);
+		const result = computeLayout(tree, { balance: "one-side", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		expect(sidesOf(3, "primary", result)).toEqual(["b0", "b1", "b2"]);
+	});
+
+	it("balances the two sides' extents and leaves no overlap", () => {
+		const { tree, nodeSizes } = branches([[60, 30], [60, 300], [60, 30], [60, 30], [60, 30]]);
+		const result = computeLayout(tree, { balance: "both-sides", nodePaddingX: 0, nodePaddingY: 0 }, undefined, nodeSizes);
+		assertNoOverlap(result.nodes);
+		const extent = (side: "primary" | "secondary"): number => {
+			const rects = result.nodes.filter((n) => n.side === side).map((n) => n.rect);
+			return Math.max(...rects.map((r) => r.y + r.height)) - Math.min(...rects.map((r) => r.y));
+		};
+		expect(Math.abs(extent("primary") - extent("secondary"))).toBeLessThan(250); // contiguous cuts cannot do better than 240; the count-based split leaves 308
+	});
+});
+
+describe("chooseBalanceCut", () => {
+	it("prefers the given cut on a tie", () => {
+		expect(chooseBalanceCut([10, 10, 10], [], [], 0, 2)).toBe(2);
+		expect(chooseBalanceCut([10, 10, 10, 10], [], [], 0, 2)).toBe(2);
+	});
+	it("counts the gap between siblings", () => {
+		// 30 vs 10+gap*? : [30, 10, 10] with gap 5: cut 1 -> 30 vs 25; cut 2 -> 45 vs 10
+		expect(chooseBalanceCut([30, 10, 10], [], [], 5, 2)).toBe(1);
+	});
+	it("treats pinned branches as fixed load", () => {
+		// a 50-span branch pinned secondary: the free ones go primary
+		expect(chooseBalanceCut([20, 20, 10], [], [50], 0, 1)).toBe(3);
 	});
 });

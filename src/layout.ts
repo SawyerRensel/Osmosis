@@ -142,6 +142,7 @@ export function computeLayout(
 			pivot.children,
 			cfg.balance,
 			nodeSides,
+			cfg,
 		);
 
 		// Lay out each group as an independent tree under the pivot.
@@ -251,13 +252,66 @@ export function computeLayout(
 	return { root, bounds, nodes };
 }
 
+/** The side a per-node override puts a node on ("right"/"down" are primary; "left"/"up" secondary). */
+function overrideSide(side: LayoutSide | undefined): "primary" | "secondary" | undefined {
+	if (!side) return undefined;
+	return side === "left" || side === "up" ? "secondary" : "primary";
+}
+
+/**
+ * Choose how many of the free (un-overridden) branches, in document order, go
+ * to the primary side; the rest go to the secondary side. Picks the cut that
+ * makes the two sides' total extents (spans plus the gaps between siblings)
+ * most nearly equal, counting the overridden branches' spans as fixed loads.
+ * On a tie, `preferred` (the cut a count-based split would make) wins.
+ *
+ * `freeSpans` are the free branches' spans; `fixedPrimary` / `fixedSecondary`
+ * are the spans of overridden branches already pinned to each side.
+ */
+export function chooseBalanceCut(
+	freeSpans: number[],
+	fixedPrimary: number[],
+	fixedSecondary: number[],
+	gap: number,
+	preferred: number,
+): number {
+	const extent = (spans: number[], extra: number[]): number => {
+		const count = spans.length + extra.length;
+		if (count === 0) return 0;
+		let total = gap * (count - 1);
+		for (const s of spans) total += s;
+		for (const s of extra) total += s;
+		return total;
+	};
+	const imbalance = (k: number): number =>
+		Math.abs(extent(fixedPrimary, freeSpans.slice(0, k)) - extent(fixedSecondary, freeSpans.slice(k)));
+
+	let best = Math.min(Math.max(preferred, 0), freeSpans.length);
+	let bestDiff = imbalance(best);
+	for (let k = 0; k <= freeSpans.length; k++) {
+		const diff = imbalance(k);
+		if (diff < bestDiff - 1e-9) {
+			best = k;
+			bestDiff = diff;
+		}
+	}
+	return best;
+}
+
 /**
  * Split root's children into primary (default side) and secondary (opposite side) groups.
+ *
+ * "both-sides" cuts the document-ordered branch list where the two sides'
+ * laid-out extents are most nearly equal (see `chooseBalanceCut`); the first
+ * run goes to the primary side, as a count-based split always did. Branches
+ * with a per-node side override (`nodeSides`) are not balanced: they keep
+ * their side and only count as load. "alternating" is strictly one each way.
  */
 function splitChildrenBySide(
 	children: LayoutNode[],
 	balance: BalanceMode,
-	nodeSides?: Map<string, LayoutSide>,
+	nodeSides: Map<string, LayoutSide> | undefined,
+	cfg: LayoutConfig,
 ): { primary: LayoutNode[]; secondary: LayoutNode[] } {
 	const primary: LayoutNode[] = [];
 	const secondary: LayoutNode[] = [];
@@ -272,11 +326,35 @@ function splitChildrenBySide(
 			}
 		}
 	} else {
-		// "both-sides": split evenly, then apply per-node overrides
+		// "both-sides": cut the free branches where the extents balance, then
+		// apply per-node overrides. Overridden branches start on the side a
+		// count-based split would give them; the override loop below moves them.
 		const mid = Math.ceil(children.length / 2);
+		const freeIdx: number[] = [];
+		const fixedPrimary: number[] = [];
+		const fixedSecondary: number[] = [];
 		for (let i = 0; i < children.length; i++) {
 			const child = children[i]!;
-			if (i < mid) {
+			const forced = overrideSide(nodeSides?.get(child.source.id));
+			if (forced === undefined) {
+				freeIdx.push(i);
+			} else {
+				(forced === "primary" ? fixedPrimary : fixedSecondary).push(computeSubtreeSpans(child, cfg));
+			}
+		}
+		const freeSpans = freeIdx.map((i) => computeSubtreeSpans(children[i]!, cfg));
+		const cut = chooseBalanceCut(
+			freeSpans,
+			fixedPrimary,
+			fixedSecondary,
+			cfg.verticalSpacing,
+			freeIdx.filter((i) => i < mid).length,
+		);
+		const cutIdx = new Set(freeIdx.slice(0, cut));
+		for (let i = 0; i < children.length; i++) {
+			const child = children[i]!;
+			const isFree = overrideSide(nodeSides?.get(child.source.id)) === undefined;
+			if (isFree ? cutIdx.has(i) : i < mid) {
 				primary.push(child);
 			} else {
 				secondary.push(child);
