@@ -417,8 +417,9 @@ export function installMarkdownViewStandIn(app: App): () => void {
 	const workspace = app.workspace;
 	// Obsidian's own lookup, set as the wrapper goes in: the active leaf's view comes from it.
 	let lookup: Workspace["getActiveViewOfType"] | null = null;
+	// `answerGuarded`: reading `activeEditor` can call back into this wrapper.
 	const activeNodeEditor = (): EmbeddableMarkdownEditor | null =>
-		nodeEditorFocus.answer(workspace.activeEditor, lookup?.call(workspace, View) ?? null);
+		nodeEditorFocus.answerGuarded(() => [workspace.activeEditor, lookup?.call(workspace, View) ?? null]);
 
 	const undoView = wrapMethod(workspace, "getActiveViewOfType", (original) => {
 		lookup = original;

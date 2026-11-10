@@ -30,8 +30,29 @@ export class NodeEditorFocus<E> {
 		this.last = entry;
 	}
 
+	private answering = false;
+
 	destroyed(editor: E): void {
 		if (this.last?.editor === editor) this.last = null;
+	}
+
+	/**
+	 * `answer`, for the workspace patch: `read` returns Obsidian's active editor
+	 * and the active leaf's view. It is only called while a node editor could
+	 * answer, and a lookup made while it runs gets null. Obsidian's
+	 * `activeEditor` getter falls back to `getActiveViewOfType(MarkdownView)`
+	 * when no editor is set, which lands back in the patch; without the guard
+	 * that recursed until the stack overflowed, on every lookup in the app.
+	 */
+	answerGuarded(read: () => [activeEditor: unknown, activeView: unknown]): E | null {
+		if (this.answering || this.last === null) return null;
+		this.answering = true;
+		try {
+			const [activeEditor, activeView] = read();
+			return this.answer(activeEditor, activeView);
+		} finally {
+			this.answering = false;
+		}
 	}
 
 	/** The editor that answers a lookup, given Obsidian's active editor and the active leaf's view; null when none does. */

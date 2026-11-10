@@ -73,6 +73,57 @@ describe("NodeEditorFocus", () => {
 	});
 });
 
+describe("NodeEditorFocus.answerGuarded (the workspace patch's entry)", () => {
+	// Obsidian's `activeEditor` getter falls back to `getActiveViewOfType(MarkdownView)`
+	// when no editor is set. With the patch in place that lookup re-enters it; this
+	// fake workspace does the same, so a missing guard overflows the stack.
+	function patchedWorkspace(focus: NodeEditorFocus<string>, view: unknown) {
+		const workspace = {
+			setEditor: null as unknown,
+			get activeEditor(): unknown {
+				return this.setEditor ?? workspace.lookup();
+			},
+			lookup(): string | null {
+				return focus.answerGuarded(() => [workspace.activeEditor, view]);
+			},
+		};
+		return workspace;
+	}
+
+	it("does not recurse when no editor is set and reading activeEditor looks up again", () => {
+		const focus = new NodeEditorFocus<string>();
+		const node = { editor: "node", owner: { name: "owner" }, view: { name: "map" } };
+		focus.focus(node);
+		const workspace = patchedWorkspace(focus, node.view);
+		expect(() => workspace.lookup()).not.toThrow();
+		expect(workspace.lookup()).toBeNull();
+	});
+
+	it("answers when the node editor is the set active editor, and the nested read gets null", () => {
+		const focus = new NodeEditorFocus<string>();
+		const node = { editor: "node", owner: { name: "owner" }, view: { name: "map" } };
+		focus.focus(node);
+		const workspace = patchedWorkspace(focus, node.view);
+		workspace.setEditor = node.owner;
+		expect(workspace.lookup()).toBe("node");
+	});
+
+	it("never reads the workspace before any node editor was focused", () => {
+		const focus = new NodeEditorFocus<string>();
+		let reads = 0;
+		expect(focus.answerGuarded(() => { reads++; return [null, null]; })).toBeNull();
+		expect(reads).toBe(0);
+	});
+
+	it("releases the guard after a read that throws", () => {
+		const focus = new NodeEditorFocus<string>();
+		const node = { editor: "node", owner: { name: "owner" }, view: { name: "map" } };
+		focus.focus(node);
+		expect(() => focus.answerGuarded(() => { throw new Error("boom"); })).toThrow("boom");
+		expect(focus.answerGuarded(() => [node.owner, node.view])).toBe("node");
+	});
+});
+
 describe("heldBlurStep", () => {
 	it("resumes when the focus is back in the editor, modal or not", () => {
 		expect(heldBlurStep({ focused: true, modalOpen: true, focusOnNothing: false })).toBe("resume");
