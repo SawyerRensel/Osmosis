@@ -434,6 +434,19 @@ export interface PlanetBody {
 	fz?: number;
 }
 
+/**
+ * A link that pulls between two bodies in Planets mode: from a planet's plate
+ * (or core) to another planet's, or to a star. `rest` is its rest length
+ * between its two nodes (`linkDistance`, Note spacing included), `scale` the
+ * force balance's weight for its kind (`linkStrengthScale`).
+ */
+export interface Lane {
+	source: string;
+	target: string;
+	rest: number;
+	scale: number;
+}
+
 /** Clear space kept between two planets' surfaces, in world units, at Note spacing ×1. */
 export const PLANET_GAP = 20;
 /** How long a re-laid-out planet's plates take to move to their new places. */
@@ -568,13 +581,14 @@ export class PlanetWorld {
 	}
 
 	/**
-	 * The planets' share of a simulation tick, run after the other forces: the
-	 * pull links put on surface plates goes to their cores, planets closer
-	 * than their radii plus `PLANET_GAP` push apart, free bodies on no planet
-	 * (tags, files, ghosts) are pushed out of planets, and the plates are put
-	 * back on their cores.
+	 * The planets' share of a simulation tick, run after the other forces:
+	 * `lanes` pull (`pullLanes`), the pull links put on surface plates goes to
+	 * their cores, planets closer than their radii plus `PLANET_GAP` push
+	 * apart, free bodies on no planet (tags, files, ghosts) are pushed out of
+	 * planets, and the plates are put back on their cores.
 	 */
-	step(bodyOf: (id: string) => PlanetBody | undefined, free: readonly PlanetBody[], alpha: number, now: number): void {
+	step(bodyOf: (id: string) => PlanetBody | undefined, free: readonly PlanetBody[], alpha: number, now: number, lanes: readonly Lane[] = []): void {
+		this.pullLanes(bodyOf, lanes, alpha, now);
 		const cores: { body: PlanetBody; radius: number }[] = [];
 		for (const planet of this.planets.values()) {
 			const core = bodyOf(planet.layout.core);
@@ -604,6 +618,62 @@ export class PlanetWorld {
 			for (const body of free) if (body.x !== undefined && body.fx === undefined) push(a.body, body, a.radius + gap / 2, 1);
 		}
 		this.placeAll(bodyOf, now, true);
+	}
+
+	/**
+	 * d3's link force, for links between bodies: a planet is one body, so its
+	 * lanes are counted for the whole planet, as a node's links are for the
+	 * node. Each lane's strength is its `scale` over the fewer lanes at either
+	 * body, and its correction is shared between the bodies by their lane
+	 * counts (the busier body moves less), d3's own default strength and bias.
+	 *
+	 * Left to d3, a lane was counted at its plate: each pulled at up to a
+	 * plate's full strength, and every plate's share went to the one core, so
+	 * a planet with several lanes took several times a node's pull in a tick.
+	 * It overshot and swung, and settled wherever the swing left it (with a
+	 * tag or a few busy planets it flew apart): Note spacing ×3 could settle
+	 * tighter than ×1. See `vault/Planner/3D Graph - Note spacing applies late and shrinks.md`.
+	 *
+	 * A lane's ends are measured where they will be this tick: a plate at its
+	 * core plus its offset, each end ahead by its body's velocity, as d3 does.
+	 */
+	private pullLanes(bodyOf: (id: string) => PlanetBody | undefined, lanes: readonly Lane[], alpha: number, now: number): void {
+		if (lanes.length === 0) return;
+		const owner = (id: string): string => this.memberOf.get(id) ?? id;
+		const count = new Map<string, number>();
+		for (const lane of lanes) {
+			const [a, b] = [owner(lane.source), owner(lane.target)];
+			if (a === b) continue;
+			count.set(a, (count.get(a) ?? 0) + 1);
+			count.set(b, (count.get(b) ?? 0) + 1);
+		}
+		const at = (id: string, body: PlanetBody): Vec3 | null => {
+			if (body.x === undefined || body.y === undefined || body.z === undefined) return null;
+			const core = this.memberOf.get(id);
+			const planet = core === undefined || core === id ? undefined : this.planets.get(core);
+			const place = planet?.layout.places.get(id);
+			const offset = planet === undefined || place === undefined ? { x: 0, y: 0, z: 0 } : this.offsetOf(planet, id, place, now);
+			return { x: body.x + offset.x + (body.vx ?? 0), y: body.y + offset.y + (body.vy ?? 0), z: body.z + offset.z + (body.vz ?? 0) };
+		};
+		for (const lane of lanes) {
+			const [ka, kb] = [owner(lane.source), owner(lane.target)];
+			if (ka === kb) continue;
+			const [a, b] = [bodyOf(ka), bodyOf(kb)];
+			if (a === undefined || b === undefined) continue;
+			const [pa, pb] = [at(lane.source, a), at(lane.target, b)];
+			if (pa === null || pb === null) continue;
+			const [ca, cb] = [count.get(ka) ?? 1, count.get(kb) ?? 1];
+			const [dx, dy, dz] = [pb.x - pa.x || 1e-6, pb.y - pa.y, pb.z - pa.z];
+			const l = Math.hypot(dx, dy, dz);
+			const k = ((l - lane.rest) / l) * alpha * (lane.scale / Math.min(ca, cb));
+			const toB = ca / (ca + cb);
+			b.vx = (b.vx ?? 0) - dx * k * toB;
+			b.vy = (b.vy ?? 0) - dy * k * toB;
+			b.vz = (b.vz ?? 0) - dz * k * toB;
+			a.vx = (a.vx ?? 0) + dx * k * (1 - toB);
+			a.vy = (a.vy ?? 0) + dy * k * (1 - toB);
+			a.vz = (a.vz ?? 0) + dz * k * (1 - toB);
+		}
 	}
 
 	/** The cores among `cores` whose planet now overlaps another's (radius plus gap), with that other: what a re-layout must wake. */

@@ -42,7 +42,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
-import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
+import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../graph3d/hover";
@@ -345,6 +345,8 @@ export class Graph3DScene {
 	private readonly world = new PlanetWorld();
 	/** Nodes on no planet (tags, files, ghosts), which planets push out of themselves. */
 	private stars: EngineNode[] = [];
+	/** Planets mode: the pulling links between bodies (a planet, or a star), which `PlanetWorld.step` pulls rather than d3 (`buildLanes`). */
+	private lanes: Lane[] = [];
 	private flatPlaces = new Map<string, FlatPlace>();
 	/** Each loaded note's ring phase (`ringDirections`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
 	private ringPhases = new Map<string, number>();
@@ -529,10 +531,11 @@ export class Graph3DScene {
 		// branches out in their slices, rigidly, and hands their pull to their heads.
 		const keep = 1 - this.graph.d3VelocityDecay();
 		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha)) as never);
-		// Planets mode, last of all: surface plates hand their pull to their planet's core, planets
-		// collide by radius, and the plates are put back on their cores. Nothing to do in other layouts.
+		// Planets mode, last of all: links between planets and stars pull each planet as one body (`buildLanes`), surface
+		// plates hand their pull to their planet's core, planets collide by radius, and the plates are put back on their cores.
+		// Nothing to do in other layouts.
 		this.graph.d3Force("planets", ((alpha: number) => {
-			if (this.world.size > 0) this.world.step((id) => this.live.get(id), this.stars, alpha, performance.now());
+			if (this.world.size > 0) this.world.step((id) => this.live.get(id), this.stars, alpha, performance.now(), this.lanes);
 		}) as never);
 		// Centring shifts every free node each tick to keep the mean at the
 		// origin, so arrivals would drift against a pinned world.
@@ -754,6 +757,7 @@ export class Graph3DScene {
 			this.pulling.add(link);
 			for (const id of [source, target]) this.degree.set(id, (this.degree.get(id) ?? 0) + 1);
 		}
+		this.buildLanes();
 		this.dirty = true;
 		this.layoutDirty = true;
 		this.graph.graphData({ nodes: this.nodes, links: this.links });
@@ -828,6 +832,7 @@ export class Graph3DScene {
 		}
 		this.flatLayouts.clear();
 		this.linkForce?.distance(this.linkDistanceOf);
+		this.buildLanes();
 		this.dirty = true;
 		this.layoutDirty = true;
 	}
@@ -876,6 +881,29 @@ export class Graph3DScene {
 		this.layoutDirty = true;
 	}
 
+	/**
+	 * Planets mode: the pulling links that run between bodies, for
+	 * `PlanetWorld.step` to pull as d3 would if each planet were one node
+	 * (see `pullLanes`). Rebuilt with the data, the Overlays and the plate sizes.
+	 */
+	private buildLanes(): void {
+		this.lanes = [];
+		if (this.world.size === 0) return;
+		const spacing = spacingOf(this.overlays);
+		for (const link of this.pulling) {
+			const [source, target] = [this.live.get(endId(link.source)), this.live.get(endId(link.target))];
+			if (source === undefined || target === undefined) continue;
+			const [a, b] = [this.world.planetOf(source.id), this.world.planetOf(target.id)];
+			if (a === b || (a === undefined && b === undefined)) continue;
+			this.lanes.push({
+				source: source.id,
+				target: target.id,
+				rest: linkDistance(link.kind, source.extent, target.extent, spacing),
+				scale: linkStrengthScale(link.kind, this.overlays.forceBalance),
+			});
+		}
+	}
+
 	/** A link's rest length at the spacing sliders' position (see `plateLinkDistance`). */
 	private readonly linkDistanceOf = (link: EngineLink): number => plateLinkDistance(link, spacingOf(this.overlays));
 
@@ -887,9 +915,8 @@ export class Graph3DScene {
 	 */
 	private readonly linkStrength = (link: EngineLink): number => {
 		if (!this.pulling.has(link)) return 0;
-		// Inside a planet nothing pulls: its layout is geometric.
-		const planet = this.world.planetOf(endId(link.source));
-		if (planet !== undefined && planet === this.world.planetOf(endId(link.target))) return 0;
+		// Inside a planet nothing pulls: its layout is geometric. Between planets, or a planet and a star, `PlanetWorld.step` pulls (`buildLanes`).
+		if (this.world.planetOf(endId(link.source)) !== undefined || this.world.planetOf(endId(link.target)) !== undefined) return 0;
 		const flat = flatLinkScale(this.flatPlaces, endId(link.source), endId(link.target));
 		if (flat === 0) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);

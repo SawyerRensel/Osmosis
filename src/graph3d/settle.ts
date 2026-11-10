@@ -60,10 +60,17 @@ export function chargeStrengths(nodes: readonly ChargeNode[], base: number): Map
  * (Note² - Node²) times their strength as a push from the note as a whole
  * (`notePush`); that is returned by note path. At ×1 nothing changes and
  * nothing is owed.
+ *
+ * Only a push is owed, never a pull: with Note spacing below Node spacing
+ * nothing is owed, and notes sit as close as their links' rest lengths (which
+ * Note spacing still scales) and their lines' charge let them. An owed pull
+ * acted from each core on whole other notes and did not weaken as notes
+ * overlapped, so notes fell into one another and stayed there (Note ×1 with
+ * Node ×1.15, 2026-11-09; `vault/Planner/3D Graph - Note spacing applies late and shrinks.md`).
  */
 export function spaceCharges(strengths: Map<string, number>, pathOf: (id: string) => string | undefined, spacing: Spacing, planets: boolean): Map<string, number> {
 	const within = planets ? spacing.note : spacing.node;
-	const owed = spacing.note ** 2 - within ** 2;
+	const owed = Math.max(0, spacing.note ** 2 - within ** 2);
 	const clusters = new Map<string, number>();
 	for (const [id, strength] of strengths) {
 		const path = pathOf(id);

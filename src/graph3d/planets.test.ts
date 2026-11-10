@@ -22,8 +22,10 @@ import {
 	tangentFrame,
 	wrapPoint,
 	type ContinentStyle,
+	type Lane,
 	type PlanetBranch,
 } from "./planets";
+import { linkDistance } from "./appearance";
 
 const len = (v: Vec3): number => Math.hypot(v.x, v.y, v.z);
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -469,5 +471,134 @@ describe("spacing sliders in Planets", () => {
 		world.spacing = { note: 1, node: 2 };
 		world.update([tree], wide, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
 		expect(world.place("a2")).not.toBe(place);
+	});
+});
+
+describe("lanes between planets", () => {
+	// Three planets of eight lines each. Every line of a and b links to the next planet's core (lanes from many plates at once),
+	// a and c link to a tag, and each line of a also links to a ghost of its own (leaf stars): the shape that swung and flew apart.
+	const lines = (core: string): string[] => Array.from({ length: 8 }, (_, i) => `${core}${i}`);
+	const trees = ["a", "b", "c"].map((core) => ({ core, continents: lines(core).map((id) => ({ id, children: [] })) }));
+	const lanesAt = (note: number): Lane[] => {
+		const lane = (source: string, target: string, kind: "link" | "tag"): Lane => ({ source, target, rest: linkDistance(kind, 10, 10, { note, node: 1 }), scale: 1 });
+		return [
+			...lines("a").map((id) => lane(id, "b", "link")),
+			...lines("b").map((id) => lane(id, "c", "link")),
+			...lines("a").map((id) => lane(id, `ghost:${id}`, "link")),
+			lane("a", "tag:x", "tag"),
+			lane("c", "tag:x", "tag"),
+		];
+	};
+	const stars = ["tag:x", ...lines("a").map((id) => `ghost:${id}`)];
+
+	/** d3's tick with only the planets force: alpha decays from 1 to 0.001 over 300 ticks, velocity keeps 0.6. `hold` keeps alpha at 1. */
+	const settle = (world: PlanetWorld, bodies: Map<string, PlanetBody>, lanes: readonly Lane[], hold = false): void => {
+		const bodyOf = (id: string): PlanetBody | undefined => bodies.get(id);
+		const free = stars.map((id) => bodies.get(id)!);
+		world.placeAll(bodyOf, 0, true);
+		let alpha = 1;
+		for (let tick = 0; tick < 300; tick++) {
+			world.step(bodyOf, free, alpha, 0, lanes);
+			for (const body of bodies.values()) {
+				if (body.fx !== undefined) continue;
+				body.vx = body.vx! * 0.6;
+				body.vy = body.vy! * 0.6;
+				body.vz = body.vz! * 0.6;
+				body.x! += body.vx;
+				body.y! += body.vy;
+				body.z! += body.vz;
+			}
+			if (!hold) alpha += (0 - alpha) * (1 - Math.pow(0.001, 1 / 300));
+		}
+	};
+	const world = (): { world: PlanetWorld; bodies: Map<string, PlanetBody> } => {
+		const bodies = new Map<string, PlanetBody>();
+		[...["a", "b", "c"], ...stars].forEach((id, i) => bodies.set(id, { x: 300 * Math.cos(i * 2.4), y: 300 * Math.sin(i * 2.4), z: (i % 5) * 20, vx: 0, vy: 0, vz: 0 }));
+		for (const core of ["a", "b", "c"]) for (const id of lines(core)) bodies.set(id, {});
+		return { world: new PlanetWorld(), bodies };
+	};
+	/** A re-settle at Note spacing `note`, from wherever the bodies are: what dragging the slider does (`Graph3DScene.setOverlays`). */
+	const respace = (state: { world: PlanetWorld; bodies: Map<string, PlanetBody> }, note: number, hold = false): number => {
+		state.world.clear();
+		state.world.spacing = { note, node: 1 };
+		state.world.update(trees, plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		for (const body of state.bodies.values()) body.fx = body.fy = body.fz = undefined;
+		settle(state.world, state.bodies, lanesAt(note), hold);
+		const [a, b, c] = ["a", "b", "c"].map((id) => state.bodies.get(id)!);
+		const d = (p: PlanetBody, q: PlanetBody): number => Math.hypot(p.x! - q.x!, p.y! - q.y!, p.z! - q.z!);
+		return (d(a!, b!) + d(b!, c!) + d(a!, c!)) / 3;
+	};
+
+	it("settles farther apart at Note spacing x3 than x1, and the same each time the slider comes back", () => {
+		const state = world();
+		const [x1, x3, again1, again3] = [respace(state, 1), respace(state, 3), respace(state, 1), respace(state, 3)];
+		// Rigid planets don't turn, so where a lane's plate sits depends a little on the way the planets came together: within 10%.
+		const near = (value: number, to: number): boolean => Math.abs(value - to) < 0.1 * to;
+		expect(x3).toBeGreaterThan(x1 * 1.5);
+		expect(near(again1, x1)).toBe(true);
+		expect(near(again3, x3)).toBe(true);
+		expect(again3).toBeGreaterThan(again1 * 1.5);
+		// Starting at x3, as a stored setting does on first load, lands where the slider does.
+		expect(near(respace(world(), 3), x3)).toBe(true);
+	});
+
+	it("doesn't swing or fly apart while the layout is hot", () => {
+		// A slider drag re-heats the layout on every step: alpha stays near 1.
+		const state = world();
+		const hot = respace(state, 1, true);
+		expect(Number.isFinite(hot)).toBe(true);
+		expect(hot).toBeLessThan(2000);
+		for (const body of state.bodies.values()) expect(Math.hypot(body.vx ?? 0, body.vy ?? 0, body.vz ?? 0)).toBeLessThan(50);
+	});
+
+	it("reproduces the old swing: the same lanes pulled per plate, as d3 did, fly apart while hot", () => {
+		// d3's link force on the plates (strength one over the fewer links at either node, shared by link count),
+		// every plate's share then handed to its core by `step`: what the scene did before lanes moved into `step`.
+		const state = world();
+		state.world.update(trees, plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		const bodyOf = (id: string): PlanetBody | undefined => state.bodies.get(id);
+		const lanes = lanesAt(1);
+		const count = new Map<string, number>();
+		for (const lane of lanes) for (const id of [lane.source, lane.target]) count.set(id, (count.get(id) ?? 0) + 1);
+		// Each surface plate also had its hierarchy link to its core, counted though it pulled nothing.
+		for (const id of ["a", "b", "c"].flatMap(lines)) count.set(id, (count.get(id) ?? 0) + 1);
+		for (let tick = 0; tick < 200 && Number.isFinite(state.bodies.get("a")!.x!); tick++) {
+			state.world.placeAll(bodyOf, 0, true);
+			for (const lane of lanes) {
+				const [p, q] = [state.bodies.get(lane.source)!, state.bodies.get(lane.target)!];
+				const [dx, dy, dz] = [q.x! + q.vx! - p.x! - p.vx!, q.y! + q.vy! - p.y! - p.vy!, q.z! + q.vz! - p.z! - p.vz!];
+				const l = Math.hypot(dx, dy, dz);
+				const k = ((l - lane.rest) / l) * (1 / Math.min(count.get(lane.source)!, count.get(lane.target)!));
+				const toQ = count.get(lane.source)! / (count.get(lane.source)! + count.get(lane.target)!);
+				[q.vx, q.vy, q.vz] = [q.vx! - dx * k * toQ, q.vy! - dy * k * toQ, q.vz! - dz * k * toQ];
+				[p.vx, p.vy, p.vz] = [p.vx! + dx * k * (1 - toQ), p.vy! + dy * k * (1 - toQ), p.vz! + dz * k * (1 - toQ)];
+			}
+			state.world.step(bodyOf, stars.map((id) => state.bodies.get(id)!), 1, 0);
+			for (const body of state.bodies.values()) {
+				if (body.fx !== undefined) continue;
+				for (const axis of ["x", "y", "z"] as const) {
+					const v = `v${axis}` as const;
+					body[v] = body[v]! * 0.6;
+					body[axis] = body[axis]! + body[v];
+				}
+			}
+		}
+		const a = state.bodies.get("a")!;
+		expect(Number.isFinite(a.x!) ? Math.hypot(a.x!, a.y!, a.z!) : Infinity).toBeGreaterThan(1e6);
+	});
+
+	it("shares a lane's pull between its bodies by their lane counts, as d3 does between nodes", () => {
+		const state = world();
+		state.world.update(trees, plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		const bodyOf = (id: string): PlanetBody | undefined => state.bodies.get(id);
+		state.world.placeAll(bodyOf, 0, true);
+		for (const body of state.bodies.values()) body.vx = body.vy = body.vz = 0;
+		// A busy planet (8 lanes) and a leaf ghost (1): the ghost moves 8 parts, the planet 1, and the planet takes no more than one lane's worth.
+		const lane: Lane = { source: "a0", target: "ghost:a0", rest: 0, scale: 1 };
+		const lanes = [lane, ...lines("a").slice(1).map((id) => ({ source: id, target: "b", rest: 1e9, scale: 0 }))];
+		state.world.step(bodyOf, [], 1, 0, lanes);
+		const [a, ghost] = [state.bodies.get("a")!, state.bodies.get("ghost:a0")!];
+		const speed = (p: PlanetBody): number => Math.hypot(p.vx!, p.vy!, p.vz!);
+		expect(speed(ghost) / speed(a)).toBeCloseTo(8, 6);
 	});
 });
