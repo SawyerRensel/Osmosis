@@ -106,6 +106,10 @@ const CARD_PAD_X = 2 * (1 + 12) / 16;
 const CARD_CHROME_Y = (2 * (1 + 12) + (1 + 2 * 8) + (4 + 24)) / 16;
 const CARD_BLOCK_GAP = 1;
 
+/** An image a panel draws: a Markdown image or an HTML `<img>` (`![[…]]` embeds became links in `nearMarkdown`). */
+const IMAGE = /!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>/gi;
+const imageCount = (text: string): number => text.match(IMAGE)?.length ?? 0;
+
 /** How big some Markdown lays out at `wrap` ems wide, before any panel padding, and how many blocks it holds. */
 function contentBoxEm(lines: readonly string[], wrap: number): { width: number; height: number; blocks: number } {
 	let width = 0;
@@ -142,14 +146,17 @@ function contentBoxEm(lines: readonly string[], wrap: number): { width: number; 
 				blank = false;
 				blocks++;
 			}
-			if (/!\[[^\]]*\]\([^)]*\)/.test(line)) {
-				// A Markdown image (embeds became links in `nearMarkdown`).
-				w = PANEL_MAX_EM.width;
-				row = PANEL_MEDIA_MAX_EM;
-			} else if (/^\|/.test(line)) {
+			if (/^\|/.test(line)) {
 				if (/^\|[\s:|-]*$/.test(line)) continue;
 				w = line.length * PROSE_EM_PER_CHAR;
-				row = TABLE_ROW;
+				// Images in one cell stack; cells sit side by side, so the fullest cell sets the row.
+				row = TABLE_ROW + Math.max(...line.split("|").map(imageCount)) * PANEL_MEDIA_MAX_EM;
+			} else if (imageCount(line) > 0) {
+				// Each image may take a row of its own (an image can be the panel's full width), under any
+				// text on the line: `` - `flex-grow` ![](a.png) ![](b.png) `` is one text row and two images.
+				const text = line.replace(IMAGE, "").replace(/^([-*+]|\d+[.)])\s+/, "").trim();
+				w = PANEL_MAX_EM.width;
+				row = imageCount(line) * PANEL_MEDIA_MAX_EM + (text === "" ? 0 : Math.ceil((text.length * PROSE_EM_PER_CHAR) / wrap) * PROSE_ROW);
 			} else {
 				w = line.length * PROSE_EM_PER_CHAR;
 				if (/^#{1,6}\s|^\[!/.test(line)) row = HEADING_ROW;
@@ -191,7 +198,8 @@ function cardSides(markdown: string): { front: string[]; back: string[] } | null
  * An `osmosis` card fence is measured as the card it renders (both sides, the
  * card's border, padding, divider and eye row), not as its fence source: the
  * header lines never show, and the chrome and code blocks are most of its
- * height (`3D Graph - Planets mode.md`, feedback fix 2).
+ * height (`3D Graph - Planets mode.md`, feedback fix 2). Every image on a
+ * line counts a full media row, below the line's text (feedback fix 3).
  *
  * `null` for a node that never gets a panel (`nearMarkdown`).
  */

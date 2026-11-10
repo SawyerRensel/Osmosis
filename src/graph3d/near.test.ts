@@ -121,6 +121,28 @@ describe("panelBoxEm", () => {
 		expect(box.height).toBeGreaterThanOrEqual(PANEL_MEDIA_MAX_EM);
 	});
 
+	it("gives every image on a line its own media row, under the line's text", () => {
+		const one = panelBoxEm(line("![](flag-alpha.svg)"))!;
+		const titled = panelBoxEm(line("- `Alpha` ![](flag-alpha.svg)", "`Alpha` ![](flag-alpha.svg)"))!;
+		const two = panelBoxEm(line("- `Alpha Bravo` ![](flag-alpha.svg) ![](flag-bravo.svg)", "`Alpha Bravo` ![](flag-alpha.svg) ![](flag-bravo.svg)"))!;
+		expect(titled.height).toBeCloseTo(one.height + 1.5);
+		// Two full-height images and a title: past the panel's cap.
+		expect(two.height).toBe(PANEL_MAX_EM.height);
+	});
+
+	it("counts an HTML image as an image", () => {
+		const box = panelBoxEm(line('<img src="https://example.com/a.png" width="300">'))!;
+		expect(box.height).toBeCloseTo(PANEL_MEDIA_MAX_EM + 0.5);
+	});
+
+	it("gives a table row the height of its fullest cell's images", () => {
+		const box = panelBoxEm(line("| Hoist | Flags |\n| --- | --- |\n| AB | ![](flag-alpha.svg) ![](flag-bravo.svg) |\n| C | ![](flag-charlie.svg) |"))!;
+		// Header, a row of two stacked images and a row of one: past the panel's cap.
+		expect(box.height).toBe(PANEL_MAX_EM.height);
+		const single = panelBoxEm(line("| Hoist | Flag | Flag |\n| --- | --- | --- |\n| AB | ![](flag-alpha.svg) | ![](flag-bravo.svg) |"))!;
+		expect(single.height).toBeCloseTo(2 * 2 + PANEL_MEDIA_MAX_EM + 0.5);
+	});
+
 	it("never exceeds the panel's largest size", () => {
 		const box = panelBoxEm(line("```\n" + "x\n".repeat(100) + "```"))!;
 		expect(box).toEqual({ width: expect.any(Number) as number, height: PANEL_MAX_EM.height });
