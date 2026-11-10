@@ -99,9 +99,16 @@ describe("panelBoxEm", () => {
 		expect(box.height).toBeGreaterThan(5 * 1.5);
 	});
 
-	it("counts a code block's lines, fences included", () => {
+	it("counts a code block's lines, fences included, and its padding", () => {
 		const box = panelBoxEm(line("```yaml\nmainsail:\n  cloth: dacron\n  last_service: 2026-04\n```"))!;
-		expect(box.height).toBeCloseTo(5 * 1.4 + 0.5);
+		expect(box.height).toBeCloseTo(5 * 1.4 + 1.5 + 0.5);
+	});
+
+	it("wraps long code lines, as reading view does (pre-wrap)", () => {
+		const short = panelBoxEm(line("```\nx\n```"))!;
+		const long = panelBoxEm(line("```\n" + "x".repeat(100) + "\n```"))!;
+		expect(long.width).toBe(PANEL_MAX_EM.width);
+		expect(long.height - short.height).toBeCloseTo(3 * 1.4);
 	});
 
 	it("counts table rows but not the separator", () => {
@@ -117,5 +124,45 @@ describe("panelBoxEm", () => {
 	it("never exceeds the panel's largest size", () => {
 		const box = panelBoxEm(line("```\n" + "x\n".repeat(100) + "```"))!;
 		expect(box).toEqual({ width: expect.any(Number) as number, height: PANEL_MAX_EM.height });
+	});
+});
+
+describe("panelBoxEm for an osmosis card fence", () => {
+	const schedule = ["id: hf-rows", "due: 2026-10-25T09:00:00.000Z", "stability: 4.0000", "difficulty: 5.5000", "reps: 2", "lapses: 0", "state: review", "lastReview: 2026-10-21T09:00:00.000Z", "learningSteps: 0", ""];
+	const question = "Defines the number of horizontal lines shown in a text area. Used on `<textarea>`.";
+	const fence = (header: string[], content: string[]): GraphNode => line(["````osmosis", ...header, ...content, "````"].join("\n"));
+	const withCode = (header: string[]): GraphNode => fence(header, [question, "***", "```html", '<textarea name="comment" rows="4">', "</textarea>", "```"]);
+
+	it("is at least as big as the card renders", () => {
+		// The card as laid out at the panel's 16 px text, in px: border and padding (2 × 13),
+		// the question's paragraph (1 em margins either side, about three rows at 20 px), the
+		// divider (17), the answer's code block (1 em margins, 12 px padding either side, two
+		// rows at 17.5 px), and the eye row (28); then the panel's own padding.
+		const rendered = (26 + (32 + 3 * 20) + 17 + (32 + 24 + 2 * 17.5) + 28) / 16 + 0.5;
+		const box = panelBoxEm(withCode(["id: hf-rows", ""]))!;
+		expect(box.height).toBeGreaterThanOrEqual(rendered);
+		expect(box.width).toBe(PANEL_MAX_EM.width);
+	});
+
+	it("does not count the header, which never renders", () => {
+		expect(panelBoxEm(withCode(schedule))).toEqual(panelBoxEm(withCode(["id: hf-rows", ""])));
+	});
+
+	it("measures a nested code block as code, not as the fence's own", () => {
+		const longCode = "x".repeat(100);
+		const box = panelBoxEm(fence(["id: hf-long", ""], ["Q", "***", "```html", longCode, "```"]))!;
+		const short = panelBoxEm(fence(["id: hf-long", ""], ["Q", "***", "```html", "x", "```"]))!;
+		expect(box.height - short.height).toBeGreaterThanOrEqual(3 * 1.4);
+	});
+
+	it("counts a cloze's text twice: reading view draws it as front and back", () => {
+		const cloze = panelBoxEm(fence(["id: hf-cloze", ""], ["A ==textarea== wraps soft lines."]))!;
+		const basic = panelBoxEm(fence(["id: hf-basic", ""], ["A textarea wraps soft lines.", "***", "x"]))!;
+		expect(cloze.height).toBeGreaterThanOrEqual(basic.height);
+	});
+
+	it("leaves an ordinary code block alone", () => {
+		const yaml = panelBoxEm(line("```yaml\nid: x\n\nQ\n```"))!;
+		expect(yaml.height).toBeLessThan(panelBoxEm(fence(["id: x", ""], ["Q"]))!.height);
 	});
 });
