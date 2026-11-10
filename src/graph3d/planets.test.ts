@@ -395,3 +395,94 @@ describe("PlanetWorld", () => {
 		expect(PLANET_GAP).toBeGreaterThan(0);
 	});
 });
+
+describe("spacing sliders in Planets", () => {
+	const head: PlanetBranch = { id: "h", children: [{ id: "a", children: [] }, { id: "b", children: [{ id: "c", children: [] }] }] };
+	const wide = (id: string): { width: number; height: number } => (id === "r" ? plate() : { width: 60, height: 5 });
+	const many = { core: "r", continents: Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, children: [{ id: `c${i}-x`, children: [{ id: `c${i}-y`, children: [] }] }] })) };
+
+	it("is exactly today's map at Node spacing x1", () => {
+		expect(continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 1)).toEqual(continentMap(head, plate));
+		const at = new Map(continentMap(head, plate).plates.map((p) => [p.id, p]));
+		// Parent half-width, the hierarchy edge's 18, the child's half-width.
+		expect(at.get("a")!.x).toBe(10 + 18 + 10);
+		expect(at.get("b")!.y - at.get("a")!.y).toBeCloseTo(5 + 1.5, 9);
+	});
+
+	it("widens the gaps between plates with Node spacing, never the plates", () => {
+		for (const style of [DEFAULT_CONTINENT_STYLE, { direction: "top-down" as const, balance: "one-side" as const }, { direction: "radial" as const, balance: "one-side" as const }]) {
+			let last = 0;
+			for (const spacing of [0.5, 1, 2, 3]) {
+				const map = continentMap(head, plate, style, spacing);
+				expect(map.plates.every((p) => p.width === 20 && p.height === 5)).toBe(true);
+				expect(map.reach).toBeGreaterThan(last);
+				last = map.reach;
+			}
+		}
+		const at = new Map(continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 2).plates.map((p) => [p.id, p]));
+		expect(at.get("a")!.x).toBe(10 + 36 + 10);
+	});
+
+	it("grows the planet with Node spacing, and x1 is today's radius", () => {
+		expect(layoutPlanet(many, wide, DEFAULT_CONTINENT_STYLE, 0, undefined, 1).radius).toBe(layoutPlanet(many, wide).radius);
+		let last = 0;
+		for (const spacing of [0.5, 1, 2, 3]) {
+			const { radius } = layoutPlanet(many, wide, DEFAULT_CONTINENT_STYLE, 0, undefined, spacing);
+			expect(radius).toBeGreaterThan(last);
+			last = radius;
+		}
+	});
+
+	it("keeps the gap between planet surfaces at PLANET_GAP x1, and scales it with Note spacing", () => {
+		const trees = [{ core: "a", continents: [{ id: "a1", children: [] }] }, { core: "b", continents: [{ id: "b1", children: [] }] }];
+		const style = (): ContinentStyle => DEFAULT_CONTINENT_STYLE;
+		const radius = layoutPlanet(trees[0]!, plate).radius;
+		const gapAt = (note: number): number => {
+			const world = new PlanetWorld();
+			world.spacing = { note, node: 1 };
+			world.update(trees, plate, style, () => 0, 0, false);
+			// Planets side by side, just closer than the gap: a plate-sized sliver.
+			const bodies = new Map<string, PlanetBody>([["a", { x: 0, y: 0, z: 0 }], ["a1", {}], ["b", { x: 0, y: 0, z: 0 }], ["b1", {}]]);
+			let low = 0;
+			let high = 1000;
+			for (let i = 0; i < 40; i++) {
+				const mid = (low + high) / 2;
+				bodies.get("b")!.x = mid;
+				if (world.collisions(["a"], (id) => bodies.get(id)).length > 0) low = mid;
+				else high = mid;
+			}
+			return high - 2 * radius;
+		};
+		expect(gapAt(1)).toBeCloseTo(PLANET_GAP, 6);
+		expect(gapAt(2)).toBeCloseTo(PLANET_GAP * 2, 6);
+		expect(gapAt(0.5)).toBeCloseTo(PLANET_GAP / 2, 6);
+		expect(gapAt(3)).toBeGreaterThan(gapAt(2));
+	});
+
+	it("pushes planets apart to the scaled gap, and stars out to half of it", () => {
+		const trees = [{ core: "a", continents: [{ id: "a1", children: [] }] }];
+		const run = (note: number): number => {
+			const world = new PlanetWorld();
+			world.spacing = { note, node: 1 };
+			world.update(trees, plate, () => DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+			const star: PlanetBody = { x: world.radius("a")! + 1, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+			const bodies = new Map<string, PlanetBody>([["a", { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, fx: 0 }], ["a1", {}]]);
+			world.step((id) => bodies.get(id), [star], 1, 0);
+			return star.vx!;
+		};
+		expect(run(2)).toBeGreaterThan(run(1));
+		expect(run(1)).toBeGreaterThan(run(0.5));
+	});
+
+	it("re-lays a planet out when Node spacing changes, and keeps it otherwise", () => {
+		const world = new PlanetWorld();
+		const tree = { core: "a", continents: [{ id: "a1", children: [{ id: "a2", children: [] }] }] };
+		world.update([tree], wide, () => DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		const place = world.place("a2")!;
+		world.update([tree], wide, () => DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		expect(world.place("a2")).toBe(place);
+		world.spacing = { note: 1, node: 2 };
+		world.update([tree], wide, () => DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		expect(world.place("a2")).not.toBe(place);
+	});
+});

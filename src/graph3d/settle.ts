@@ -16,6 +16,7 @@
  *   settled notes without paying for each of their lines.
  */
 
+import type { Spacing } from "./appearance";
 import { isNoteRoot, type GraphNodeKind } from "./model";
 
 export interface ChargeNode {
@@ -46,4 +47,28 @@ export function chargeStrengths(nodes: readonly ChargeNode[], base: number): Map
 		}
 	}
 	return strengths;
+}
+
+/**
+ * Scale many-body strengths (in place) for the spacing sliders. A strength
+ * sets a distance by its square root, so a node's is multiplied by the square
+ * of the spacing it keeps: a note's lines by Node spacing, which keeps its
+ * shape in step with its hierarchy rest length, tags and other pathless
+ * nodes by Note spacing; in Planets mode only cores and stars are charged,
+ * all by Note spacing. What keeps notes apart is then Note spacing's, not
+ * Node spacing's, so each note's lines also owe the difference
+ * (Note² - Node²) times their strength as a push from the note as a whole
+ * (`notePush`); that is returned by note path. At ×1 nothing changes and
+ * nothing is owed.
+ */
+export function spaceCharges(strengths: Map<string, number>, pathOf: (id: string) => string | undefined, spacing: Spacing, planets: boolean): Map<string, number> {
+	const within = planets ? spacing.note : spacing.node;
+	const owed = spacing.note ** 2 - within ** 2;
+	const clusters = new Map<string, number>();
+	for (const [id, strength] of strengths) {
+		const path = pathOf(id);
+		strengths.set(id, strength * (path === undefined ? spacing.note : within) ** 2);
+		if (owed !== 0 && path !== undefined) clusters.set(path, (clusters.get(path) ?? 0) + strength * owed);
+	}
+	return clusters;
 }

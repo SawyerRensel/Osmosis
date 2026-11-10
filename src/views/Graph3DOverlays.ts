@@ -11,6 +11,8 @@ import {
 import {
 	MIST_LIMIT,
 	OVERLAY_EDGE_KINDS,
+	SPACING_MAX,
+	SPACING_MIN,
 	TRAVEL_LIMIT,
 	mistFromSlider,
 	sliderFromMist,
@@ -208,6 +210,29 @@ export class Graph3DOverlaysMenu {
 					.setInstant(true)
 					.onChange((value) => this.change({ forceBalance: value })),
 			);
+		const noteSpacing = new Setting(panel).setName("Note spacing").setDesc(spacingLabel(overlays.noteSpacing, "notes and tags"));
+		noteSpacing.addSlider((slider) =>
+			slider
+				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
+				.setValue(overlays.noteSpacing)
+				// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+				.setInstant(true)
+				.onChange((value) => {
+					noteSpacing.setDesc(spacingLabel(value, "notes and tags"));
+					this.change({ noteSpacing: value });
+				}),
+		);
+		const nodeSpacing = new Setting(panel).setName("Node spacing").setDesc(spacingLabel(overlays.nodeSpacing, "nodes within a note"));
+		nodeSpacing.addSlider((slider) =>
+			slider
+				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
+				.setValue(overlays.nodeSpacing)
+				.setInstant(true)
+				.onChange((value) => {
+					nodeSpacing.setDesc(spacingLabel(value, "nodes within a note"));
+					this.change({ nodeSpacing: value });
+				}),
+		);
 		new Setting(panel)
 			.setName("Links pull")
 			.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
@@ -357,6 +382,10 @@ function flattenLabel(flatten: number): string {
 				? `Lines deeper than outline depth ${String(ramp - 1)} lie flat.`
 				: `Lines deeper than outline depth ${String(ramp)} lie flat; lines at depth ${String(ramp)} are pulled ${String(Math.round(weight * 100))}% into their slice.`;
 	return `${lead} A flat branch is drawn as the mind map draws it, in a slice through its note's core. Moving it re-settles the loaded notes as you drag.`;
+}
+
+function spacingLabel(spacing: number, what: string): string {
+	return `×${spacing.toFixed(2)}. The distance between ${what}, as a multiple of the default. Moving it re-settles the loaded notes as you drag, and lays planets out afresh.`;
 }
 
 function mistLabel(mist: number): string {

@@ -6,7 +6,7 @@
  * `vault/Planner/3D Graph Phase 5 - Overlays menu.md`.
  */
 
-import { noteHue, nodeColor } from "./appearance";
+import { noteHue, nodeColor, type Spacing } from "./appearance";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type GraphNodeKind } from "./model";
 import type { ContinentBalance, ContinentDirection } from "./planets";
 
@@ -30,6 +30,10 @@ export interface Graph3DOverlays {
 	forceBalance: number;
 	/** Whether links between plates (kind `link`, ghost targets included) pull. Off, they still draw if their edge kind is shown, but exert no force. */
 	linksPull: boolean;
+	/** The Note spacing slider: a multiple of today's distance between notes and tags, `SPACING_MIN` to `SPACING_MAX` (see `Spacing`). */
+	noteSpacing: number;
+	/** The Node spacing slider: a multiple of today's distance between nodes within a note, `SPACING_MIN` to `SPACING_MAX`. */
+	nodeSpacing: number;
 	/** The Layout choice. The flatten slider applies in `flat` only. */
 	layout: LayoutMode;
 	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
@@ -47,6 +51,8 @@ export interface Graph3DOverlays {
 	travelSpeed: number;
 }
 
+export const SPACING_MIN = 0.5;
+export const SPACING_MAX = 3;
 export const MIST_LIMIT = 4;
 export const TRAVEL_LIMIT = 4;
 
@@ -56,6 +62,8 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: false, unresolved: true },
 	forceBalance: 0.5,
 	linksPull: true,
+	noteSpacing: 1,
+	nodeSpacing: 1,
 	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
 	layout: "flat",
 	flatten: 0.75,
@@ -94,6 +102,8 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
 		linksPull: typeof value.linksPull === "boolean" ? value.linksPull : DEFAULT_OVERLAYS.linksPull,
 		// Saved before the Layout choice: the flatten slider at Off was organic.
+		noteSpacing: number(value.noteSpacing, DEFAULT_OVERLAYS.noteSpacing, SPACING_MIN, SPACING_MAX),
+		nodeSpacing: number(value.nodeSpacing, DEFAULT_OVERLAYS.nodeSpacing, SPACING_MIN, SPACING_MAX),
 		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : value.flatten === 0 ? "organic" : DEFAULT_OVERLAYS.layout,
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
@@ -103,6 +113,14 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,
 		travelSpeed: number(value.travelSpeed, DEFAULT_OVERLAYS.travelSpeed, 1 / TRAVEL_LIMIT, TRAVEL_LIMIT),
 	};
+}
+
+/** The spacing sliders as the layout reads them (`Spacing`). */
+export const spacingOf = (overlays: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">): Spacing => ({ note: overlays.noteSpacing, node: overlays.nodeSpacing });
+
+/** Whether either spacing slider moved from `before` to `after`, so the loaded nodes must re-settle (or, in Planets, be laid out afresh). */
+export function spacingChanged(before: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">, after: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">): boolean {
+	return before.noteSpacing !== after.noteSpacing || before.nodeSpacing !== after.nodeSpacing;
 }
 
 /** The flatten position in effect: the slider's in the flat-slices layout, nothing flat otherwise. */

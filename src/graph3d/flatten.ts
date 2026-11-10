@@ -176,6 +176,8 @@ function boxOf(points: readonly { dx: number; dy: number; reach: number; rise: n
  */
 export class FlatLayouts {
 	private layouts = new WeakMap<OsmosisNode, NoteLayout>();
+	/** The Node spacing the cached layouts were made at (`branches`). */
+	private nodeSpacing = 1;
 
 	clear(): void {
 		this.layouts = new WeakMap();
@@ -185,8 +187,14 @@ export class FlatLayouts {
 	 * Every flat branch of `nodes` at flat depth `flat` (`flatDepth`). Only
 	 * nodes in `nodes` take part: a line must be there, and so must its root
 	 * and core. `phaseOf` is a note's ring phase (see `ringDirections`).
+	 * `nodeSpacing` (the Node spacing slider) scales the gaps between plates
+	 * in a slice, never the plates; a new value lays every note out afresh.
 	 */
-	branches(nodes: readonly GraphNode[], flat: number, sizeOf: FlatSize, phaseOf: (core: GraphNode) => number = () => 0): FlatBranch[] {
+	branches(nodes: readonly GraphNode[], flat: number, sizeOf: FlatSize, phaseOf: (core: GraphNode) => number = () => 0, nodeSpacing = 1): FlatBranch[] {
+		if (nodeSpacing !== this.nodeSpacing) {
+			this.clear();
+			this.nodeSpacing = nodeSpacing;
+		}
 		if (!Number.isFinite(flat)) return [];
 		const rootDepth = Math.max(1, Math.floor(flat));
 		const idOf = new Map<OsmosisNode, string>();
@@ -281,8 +289,8 @@ export class FlatLayouts {
 				balance: "one-side",
 				layoutSide: "right",
 				topicShape: "rounded-rect",
-				horizontalSpacing: FLAT_COLUMN_GAP,
-				verticalSpacing: FLAT_ROW_GAP,
+				horizontalSpacing: FLAT_COLUMN_GAP * this.nodeSpacing,
+				verticalSpacing: FLAT_ROW_GAP * this.nodeSpacing,
 				nodePaddingX: 0,
 				nodePaddingY: 0,
 			},

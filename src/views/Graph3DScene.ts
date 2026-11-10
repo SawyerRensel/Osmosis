@@ -32,14 +32,14 @@ import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
-import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel } from "../graph3d/appearance";
-import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, type Graph3DOverlays } from "../graph3d/overlays";
+import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../graph3d/appearance";
+import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
-import { chargeStrengths } from "../graph3d/settle";
+import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, laneArc, laneBow, planetTrees, resolveContinentStyle, surfaceArc, type ContinentStyle, type NoteMapSettings, type TangentFrame } from "../graph3d/planets";
@@ -127,9 +127,9 @@ function dimWithFocus(material: Material, focus: { value: number }, round = fals
 }
 
 /** A link's rest length from its kind and the plates or panels at its ends (d3 has resolved both ends to nodes by then). */
-function plateLinkDistance(link: EngineLink): number {
+function plateLinkDistance(link: EngineLink, spacing: Spacing): number {
 	const [source, target] = [link.source as EngineNode, link.target as EngineNode];
-	return linkDistance(link.kind, source.extent, target.extent);
+	return linkDistance(link.kind, source.extent, target.extent, spacing);
 }
 
 /** A node's spacing extent, from its plate and the panel the near tier would lay out for it (at line-plate text size, as `Graph3DNear` does). */
@@ -500,7 +500,7 @@ export class Graph3DScene {
 		// don't pile up around their parent. d3 caches each link's distance when
 		// the data changes; setTheme re-applies it when plates are re-measured.
 		this.linkForce = this.graph.d3Force("link") as LinkForce | undefined;
-		this.linkForce?.distance(plateLinkDistance);
+		this.linkForce?.distance(this.linkDistanceOf);
 		this.linkForce?.strength(this.linkStrength);
 		// Settled nodes are pinned, and the many-body force skips most of them
 		// (see settle.ts), which is what keeps a tick cheap in a large world.
@@ -717,18 +717,20 @@ export class Graph3DScene {
 		const live = this.nodes.filter((node) => !node.departing);
 		this.live = new Map(live.map((node) => [node.id, node]));
 		this.capturePhases(live);
-		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(effectiveFlatten(this.overlays)), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0);
+		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(effectiveFlatten(this.overlays)), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0, this.overlays.nodeSpacing);
 		this.flatPlaces = flatIndex(this.flatBranches);
 		this.updatePlanets(live);
 		// In planets mode only the planets' cores and the free-floating stars feel the many-body force.
 		const charged = this.world.size === 0 ? live : live.filter((node) => (this.world.planetOf(node.id) ?? node.id) === node.id);
 		this.charge = chargeStrengths(charged.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
+		// The spacing sliders scale the charge; what notes owe Note spacing beyond that is pushed from the note as a whole, like a flat branch's share.
+		const owed = spaceCharges(this.charge, (id) => this.live.get(id)?.graph.path, spacingOf(this.overlays), this.world.size > 0);
 		const shares = flatCharges(this.charge, this.flatBranches);
 		this.noteCores = new Map();
 		for (const node of live) {
-			if (isNoteRoot(node.graph) && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: shares.get(node.id) ?? 0 });
+			if (isNoteRoot(node.graph) && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: (shares.get(node.id) ?? 0) + (owed.get(node.graph.path) ?? 0) });
 		}
-		this.charged = shares.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
+		this.charged = shares.size === 0 && owed.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
 		this.degree.clear();
 		this.pulling.clear();
 		const ghosts = new Set(this.nodes.filter((node) => node.graph.kind === "ghost").map((node) => node.id));
@@ -814,7 +816,7 @@ export class Graph3DScene {
 			node.extent = extentFor(node);
 		}
 		this.flatLayouts.clear();
-		this.linkForce?.distance(plateLinkDistance);
+		this.linkForce?.distance(this.linkDistanceOf);
 		this.dirty = true;
 		this.layoutDirty = true;
 	}
@@ -827,7 +829,8 @@ export class Graph3DScene {
 	 * Apply the Overlays menu. A hidden edge kind no longer pulls (`linkPulls`;
 	 * the Hierarchy toggle only hides the drawing), and "Links pull" off stops
 	 * links pulling. A new force balance re-weights the links, and a new
-	 * flatten position re-cuts the flat branches. Any of these re-settles the
+	 * flatten position re-cuts the flat branches, and a new Note or Node spacing
+	 * rescales the link lengths, charge and gaps. Any of these re-settles the
 	 * loaded nodes (`reshape`): the one place settled nodes are let go on purpose.
 	 */
 	setOverlays(overlays: SceneOverlays): void {
@@ -835,12 +838,16 @@ export class Graph3DScene {
 		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
 		// A new layout, or new continent defaults in Planets, lays every note out afresh.
 		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
+		// The spacing sliders re-settle too; in Planets they lay the planets out afresh (their gaps are layout, not forces).
+		const respace = spacingChanged(this.overlays, overlays);
 		const before = this.overlays;
 		this.overlays = overlays;
-		if (relayout) this.world.clear();
+		this.world.spacing = spacingOf(overlays);
+		if (relayout || (respace && this.world.size > 0)) this.world.clear();
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
+		if (respace) this.linkForce?.distance(this.linkDistanceOf);
 		// pushData (in reshape) re-cuts the branches and re-reads which links pull, and the engine re-reads every link's strength.
-		if (reweigh || reflatten || relayout) this.reshape(!this.focusLeaves(before, overlays));
+		if (reweigh || reflatten || relayout || respace) this.reshape(!this.focusLeaves(before, overlays));
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
 		// Planets mode tilts each panel onto its plate (CSS3D): a flat CSS2D panel over a tilted plate would hide it.
@@ -857,6 +864,9 @@ export class Graph3DScene {
 		this.dirty = true;
 		this.layoutDirty = true;
 	}
+
+	/** A link's rest length at the spacing sliders' position (see `plateLinkDistance`). */
+	private readonly linkDistanceOf = (link: EngineLink): number => plateLinkDistance(link, spacingOf(this.overlays));
 
 	/**
 	 * d3's default link strength (one over the fewer pulling links at either
@@ -887,8 +897,10 @@ export class Graph3DScene {
 	 * (`edit`): let every loaded node go and re-settle under the new link
 	 * weights, flat branches or shape, so the change shows at once.
 	 *
-	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), four in
+	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), five in
 	 * all: the force slider (2026-11-01), the flatten slider (2026-11-03), the
+	 * Note and Node spacing sliders (2026-11-09; in Planets they lay the planets
+	 * out afresh, as a Layout change does), the
 	 * edge-kind and Links pull toggles (2026-11-07; the Hierarchy edge toggle is
 	 * not one, it only hides the drawing), and structural edits (2026-11-08: a
 	 * line added, deleted, moved or re-levelled, judged by `outlineChanged`;
@@ -1209,7 +1221,7 @@ export class Graph3DScene {
 		const parentId = link === undefined ? undefined : typeof link.source === "object" ? link.source.id : link.source;
 		const parent = this.nodes.find((n) => n.id === parentId);
 		if (parent?.x === undefined || parent.y === undefined || parent.z === undefined) return;
-		const distance = linkDistance("hierarchy", parent.extent, node.extent);
+		const distance = linkDistance("hierarchy", parent.extent, node.extent, spacingOf(this.overlays));
 		const others: Vec3[] = [];
 		for (const n of this.nodes) {
 			if (n === node || n === parent || n.departing || n.x === undefined || n.y === undefined || n.z === undefined) continue;

@@ -560,3 +560,36 @@ describe("flattenStep", () => {
 		expect(covered).toBe(0);
 	});
 });
+
+describe("FlatLayouts.branches with Node spacing", () => {
+	const at = (spacing?: number): FlatBranch => (spacing === undefined ? new FlatLayouts().branches(model.nodes, 2, size) : new FlatLayouts().branches(model.nodes, 2, size, () => 0, spacing))[0]!;
+
+	it("is exactly today's layout at x1", () => {
+		expect(at(1)).toEqual(at());
+		const [one, two] = at().lines;
+		// Parent half-width, the hierarchy edge's 18, the child's half-width; siblings a plate and 1.5 apart.
+		expect(one!.dx).toBe(10 + 18 + 10);
+		expect(two!.dy - one!.dy).toBeCloseTo(5 + 1.5, 9);
+	});
+
+	it("scales the gaps between plates, never the plates, and the slice grows with it", () => {
+		let last = 0;
+		for (const spacing of [0.5, 1, 2, 3]) {
+			const crew = at(spacing);
+			const [one, two] = crew.lines;
+			expect(one!.dx).toBeCloseTo(20 + 18 * spacing, 9);
+			expect(two!.dy - one!.dy).toBeCloseTo(5 + 1.5 * spacing, 9);
+			expect(one!.reach).toBe(10);
+			expect(crew.box.x1).toBeGreaterThan(last);
+			last = crew.box.x1;
+		}
+	});
+
+	it("re-cuts a layouts cache that was made at another spacing", () => {
+		const layouts = new FlatLayouts();
+		const before = layouts.branches(model.nodes, 2, size, () => 0, 1)[0]!.lines[0]!.dx;
+		const after = layouts.branches(model.nodes, 2, size, () => 0, 2)[0]!.lines[0]!.dx;
+		expect(after).toBeGreaterThan(before);
+		expect(layouts.branches(model.nodes, 2, size, () => 0, 1)[0]!.lines[0]!.dx).toBe(before);
+	});
+});

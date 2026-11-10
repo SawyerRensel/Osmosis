@@ -14,7 +14,11 @@ import {
 	modelKey,
 	nodeTags,
 	continentStyleChanged,
+	SPACING_MAX,
+	SPACING_MIN,
 	normalizeOverlays,
+	spacingChanged,
+	spacingOf,
 	overlayNodeColor,
 	pullChanged,
 	sliderFromMist,
@@ -376,5 +380,32 @@ describe("memoryStrengths", () => {
 		const strengths = memoryStrengths(model, (_path, blockId) => cards[blockId] ?? []);
 		expect(strengths.get("note:a.md")).toBe(0.4);
 		expect(strengths.get("note:b.md")).toBe(0.9);
+	});
+});
+
+describe("spacing sliders", () => {
+	it("default to x1 and read back, clamped to x0.5 to x3", () => {
+		expect(DEFAULT_OVERLAYS.noteSpacing).toBe(1);
+		expect(DEFAULT_OVERLAYS.nodeSpacing).toBe(1);
+		expect(normalizeOverlays({}).noteSpacing).toBe(1);
+		expect(normalizeOverlays({}).nodeSpacing).toBe(1);
+		expect(normalizeOverlays({ noteSpacing: 2, nodeSpacing: 1.5 })).toMatchObject({ noteSpacing: 2, nodeSpacing: 1.5 });
+		expect(normalizeOverlays({ noteSpacing: 10, nodeSpacing: 0 })).toMatchObject({ noteSpacing: SPACING_MAX, nodeSpacing: SPACING_MIN });
+		expect(normalizeOverlays({ noteSpacing: -4 }).noteSpacing).toBe(SPACING_MIN);
+		expect(SPACING_MIN).toBe(0.5);
+		expect(SPACING_MAX).toBe(3);
+	});
+
+	it("takes the default for anything that is not a finite number", () => {
+		expect(normalizeOverlays({ noteSpacing: "wide", nodeSpacing: Number.NaN })).toMatchObject({ noteSpacing: 1, nodeSpacing: 1 });
+		expect(normalizeOverlays({ noteSpacing: Infinity }).noteSpacing).toBe(1);
+	});
+
+	it("tells when either moved, and hands the layout both", () => {
+		const same = { noteSpacing: 1, nodeSpacing: 1 };
+		expect(spacingChanged(same, { ...same })).toBe(false);
+		expect(spacingChanged(same, { ...same, noteSpacing: 1.5 })).toBe(true);
+		expect(spacingChanged(same, { ...same, nodeSpacing: 2 })).toBe(true);
+		expect(spacingOf({ noteSpacing: 2, nodeSpacing: 3 })).toEqual({ note: 2, node: 3 });
 	});
 });

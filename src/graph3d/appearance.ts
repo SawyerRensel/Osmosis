@@ -118,11 +118,26 @@ export function nodeExtent(plate: { width: number; height: number }, panelEm: { 
 }
 
 /**
+ * The Overlays' spacing sliders: how far apart things sit, as multiples of
+ * today's distances. `note` scales the distances between notes and tags,
+ * `node` those between nodes within a note. Gaps scale, never plates.
+ */
+export interface Spacing {
+	note: number;
+	node: number;
+}
+
+/** Today's spacing: both sliders at ×1. */
+export const UNIT_SPACING: Spacing = { note: 1, node: 1 };
+
+/**
  * Rest length of a link between two plates: the kind's distance (see
  * `edgeDistance`) measured between the plates' edges rather than their
  * centres, so a parent's children sit clear of it and of each other however
  * wide their labels are. See `vault/Planner/3D Graph - Plate-aware spacing.md`.
+ * The gap scales with the spacing sliders (`Spacing`), the plates don't:
+ * hierarchy edges lie within a note, every other kind runs between notes.
  */
-export function linkDistance(kind: GraphEdgeKind, sourceExtent: number, targetExtent: number): number {
-	return edgeDistance(kind) + sourceExtent + targetExtent;
+export function linkDistance(kind: GraphEdgeKind, sourceExtent: number, targetExtent: number, spacing: Spacing = UNIT_SPACING): number {
+	return edgeDistance(kind) * (kind === "hierarchy" ? spacing.node : spacing.note) + sourceExtent + targetExtent;
 }

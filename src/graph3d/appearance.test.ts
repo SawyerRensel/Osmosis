@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
+import { UNIT_SPACING, edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
 	it("drops a coloured highlight's colour emoji, and only that one", () => {
@@ -93,5 +93,38 @@ describe("nodeExtent", () => {
 
 	it("is the panel's half-diagonal in world units when the panel is bigger", () => {
 		expect(nodeExtent({ width: 30, height: 5 }, { width: 20, height: 15 }, 2)).toBe(25);
+	});
+});
+
+describe("linkDistance with spacing", () => {
+	const kinds = ["hierarchy", "link", "embed", "property", "tag", "attachment"] as const;
+
+	it("is exactly today's distance at x1, however it is spelled", () => {
+		for (const kind of kinds) {
+			expect(linkDistance(kind, 30, 12, { note: 1, node: 1 })).toBe(edgeDistance(kind) + 42);
+			expect(linkDistance(kind, 30, 12, UNIT_SPACING)).toBe(linkDistance(kind, 30, 12));
+		}
+	});
+
+	it("scales hierarchy edges by Node spacing and every other kind by Note spacing, never the plates", () => {
+		expect(linkDistance("hierarchy", 25, 5, { note: 3, node: 2 })).toBe(edgeDistance("hierarchy") * 2 + 30);
+		for (const kind of ["link", "embed", "property", "tag", "attachment"] as const) {
+			expect(linkDistance(kind, 25, 5, { note: 3, node: 2 })).toBe(edgeDistance(kind) * 3 + 30);
+		}
+	});
+
+	it("grows with each slider", () => {
+		let last = 0;
+		for (const node of [0.5, 1, 2, 3]) {
+			const distance = linkDistance("hierarchy", 10, 10, { note: 1, node });
+			expect(distance).toBeGreaterThan(last);
+			last = distance;
+		}
+		last = 0;
+		for (const note of [0.5, 1, 2, 3]) {
+			const distance = linkDistance("link", 10, 10, { note, node: 1 });
+			expect(distance).toBeGreaterThan(last);
+			last = distance;
+		}
 	});
 });

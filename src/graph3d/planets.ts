@@ -23,7 +23,7 @@
 import { computeLayout, type LayoutNode } from "../layout";
 import { buildMapSettingsFromFrontmatter, parseOsmosisStyleFrontmatter, type BalanceMode, type LayoutSide, type MapSettings } from "../styles";
 import type { OsmosisNode } from "../types";
-import { edgeDistance } from "./appearance";
+import { UNIT_SPACING, edgeDistance, type Spacing } from "./appearance";
 import type { Vec3 } from "./flight";
 import { isNoteRoot, type GraphEdgeKind, type GraphNodeKind } from "./model";
 import { radialMap } from "./radial";
@@ -168,7 +168,7 @@ function layoutSource(branch: PlanetBranch): OsmosisNode {
 }
 
 /** The 2D map's own layout of a continent: x right, y down, the head's centre at (0, 0). */
-function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height: number }>, style: ContinentStyle, direction: "left-right" | "top-down"): MapPlate[] {
+function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height: number }>, style: ContinentStyle, direction: "left-right" | "top-down", nodeSpacing: number): MapPlate[] {
 	const result = computeLayout(
 		{ root: layoutSource(head), filePath: "", contentHash: "" },
 		{
@@ -176,8 +176,8 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
 			balance: style.balance,
 			layoutSide: style.side ?? (direction === "top-down" ? "down" : "right"),
 			topicShape: "rounded-rect",
-			horizontalSpacing: COLUMN_GAP,
-			verticalSpacing: ROW_GAP,
+			horizontalSpacing: COLUMN_GAP * nodeSpacing,
+			verticalSpacing: ROW_GAP * nodeSpacing,
 			nodePaddingX: 0,
 			nodePaddingY: 0,
 		},
@@ -197,15 +197,19 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
 	return plates;
 }
 
-/** A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or `radialMap`), at plate sizes. */
-export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE): ContinentMap {
+/**
+ * A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or
+ * `radialMap`), at plate sizes. `nodeSpacing` (the Node spacing slider)
+ * scales the gaps between its plates, never the plates.
+ */
+export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE, nodeSpacing = 1): ContinentMap {
 	const sizes = new Map<string, { width: number; height: number }>();
 	const gather = (branch: PlanetBranch): void => {
 		sizes.set(branch.id, sizeOf(branch.id));
 		branch.children.forEach(gather);
 	};
 	gather(head);
-	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP, ROW_GAP) : treeMap(head, sizes, style, style.direction);
+	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
 	let reach = 0;
 	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const p of plates) {
@@ -382,8 +386,9 @@ export function layoutPlanet(
 	style: ContinentStyle = DEFAULT_CONTINENT_STYLE,
 	phase = 0,
 	previous?: ReadonlyMap<string, Vec3>,
+	nodeSpacing = 1,
 ): PlanetLayout {
-	const maps = tree.continents.map((head) => continentMap(head, sizeOf, style));
+	const maps = tree.continents.map((head) => continentMap(head, sizeOf, style, nodeSpacing));
 	const radius = planetRadius(maps, sizeOf(tree.core).width);
 	const centres = placeContinents(
 		maps.map((map) => map.reach / radius),
@@ -467,7 +472,7 @@ export interface PlanetBody {
 	fz?: number;
 }
 
-/** Clear space kept between two planets' surfaces, in world units. */
+/** Clear space kept between two planets' surfaces, in world units, at Note spacing ×1. */
 export const PLANET_GAP = 20;
 /** How long a re-laid-out planet's plates take to move to their new places. */
 export const RELAYOUT_MS = 600;
@@ -493,6 +498,12 @@ export class PlanetWorld {
 	/** Each surface plate's planet (its core's ID). A core maps to itself. */
 	private memberOf = new Map<string, string>();
 	private animating = false;
+	/**
+	 * The spacing sliders. Node spacing scales the gaps between plates on a
+	 * continent (and so the radius), Note spacing the clear space between
+	 * planet surfaces and round them. Set before `update`; a change needs `clear`.
+	 */
+	spacing: Spacing = UNIT_SPACING;
 
 	/** Drop every layout: the next `update` lays every planet out afresh (a mode or style change). */
 	clear(): void {
@@ -537,11 +548,11 @@ export class PlanetWorld {
 		const grew: string[] = [];
 		for (const tree of trees) {
 			const style = styleOf(tree.core);
-			const key = planetKey(tree, sizeOf, style);
+			const key = planetKey(tree, sizeOf, style, this.spacing.node);
 			const old = this.planets.get(tree.core);
 			let planet = old;
 			if (old === undefined || old.key !== key) {
-				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres);
+				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres, this.spacing.node);
 				let from: Map<string, Vec3> | null = null;
 				if (animate && old !== undefined) {
 					from = new Map();
@@ -625,10 +636,11 @@ export class PlanetWorld {
 			if (a.fx === undefined) [a.vx, a.vy, a.vz] = [(a.vx ?? 0) - ux * move * (1 - share), (a.vy ?? 0) - uy * move * (1 - share), (a.vz ?? 0) - uz * move * (1 - share)];
 			if (b.fx === undefined) [b.vx, b.vy, b.vz] = [(b.vx ?? 0) + ux * move * share, (b.vy ?? 0) + uy * move * share, (b.vz ?? 0) + uz * move * share];
 		};
+		const gap = PLANET_GAP * this.spacing.note;
 		for (let i = 0; i < cores.length; i++) {
 			const a = cores[i]!;
-			for (let j = i + 1; j < cores.length; j++) push(a.body, cores[j]!.body, a.radius + cores[j]!.radius + PLANET_GAP, 0.5);
-			for (const body of free) if (body.x !== undefined && body.fx === undefined) push(a.body, body, a.radius + PLANET_GAP / 2, 1);
+			for (let j = i + 1; j < cores.length; j++) push(a.body, cores[j]!.body, a.radius + cores[j]!.radius + gap, 0.5);
+			for (const body of free) if (body.x !== undefined && body.fx === undefined) push(a.body, body, a.radius + gap / 2, 1);
 		}
 		this.placeAll(bodyOf, now, true);
 	}
@@ -644,16 +656,16 @@ export class PlanetWorld {
 				const b = bodyOf(other);
 				if (other === id || b?.x === undefined) continue;
 				const d = Math.hypot((b.x ?? 0) - (a.x ?? 0), (b.y ?? 0) - (a.y ?? 0), (b.z ?? 0) - (a.z ?? 0));
-				if (d < ra + planet.layout.radius + PLANET_GAP) hit.add(id).add(other);
+				if (d < ra + planet.layout.radius + PLANET_GAP * this.spacing.note) hit.add(id).add(other);
 			}
 		}
 		return [...hit];
 	}
 }
 
-/** What a planet's layout depends on: its tree's shape, its plates' sizes and its continent style. */
-function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle): string {
-	const parts: string[] = [`${style.direction}/${style.balance}/${style.side ?? ""}|`];
+/** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style and the Node spacing. */
+function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number): string {
+	const parts: string[] = [`${style.direction}/${style.balance}/${style.side ?? ""}/${String(nodeSpacing)}|`];
 	const visit = (branch: PlanetBranch): void => {
 		const { width, height } = sizeOf(branch.id);
 		parts.push(`${branch.id}:${width.toFixed(2)}x${height.toFixed(2)}(`);
