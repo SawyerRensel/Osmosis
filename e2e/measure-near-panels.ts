@@ -90,8 +90,8 @@ for (let i = 0; i < 40; i++) {
 	nodes.push({ id: graph.id, graph, ...at, opacity: 1, departing: false, color: { getStyle: () => "#ccaa88" }, shape: { width: 12, height: LINE_PLATE_HEIGHT } });
 }
 
-async function run(tilted: boolean, distance: number, enabled: boolean): Promise<{ ms: number; panels: number; masked: number }> {
-	const near = new Graph3DNear(async () => {}, () => {}, Graph3DNear.emWorld(LINE_PLATE_HEIGHT), () => ({ detail: 3, budget: 24 }));
+async function run(tilted: boolean, distance: number, enabled: boolean, budget: number): Promise<{ ms: number; panels: number; masked: number }> {
+	const near = new Graph3DNear(async () => {}, () => {}, Graph3DNear.emWorld(LINE_PLATE_HEIGHT), () => ({ detail: 3, budget }));
 	near.renderer.setSize(1600, 900);
 	near.renderer3d.setSize(1600, 900);
 	near.setTilted(tilted);
@@ -127,13 +127,15 @@ async function run(tilted: boolean, distance: number, enabled: boolean): Promise
 
 // Each mode with its panels, and with the tier off (the same frame, no panels), so the
 // difference is what the panels themselves cost. Three rounds, to see the spread.
-for (const distance of [120, 240]) {
+for (const budget of [24, 48, 128]) {
+for (const distance of [240, 400]) {
 	for (let round = 0; round < 3; round++) {
 		for (const tilted of [false, true]) {
-			const off = await run(tilted, distance, false);
-			const { ms, panels, masked } = await run(tilted, distance, true);
+			const off = await run(tilted, distance, false, budget);
+			const { ms, panels, masked } = await run(tilted, distance, true, budget);
 			const delta = (ms - off.ms) * 1000;
-			console.log(`${tilted ? "CSS3D tilted" : "CSS2D flat  "}  hover ${distance}  panels ${panels} (masked ${masked})  frame ${(ms * 1000).toFixed(1)} µs, tier off ${(off.ms * 1000).toFixed(1)} µs, panels ${delta.toFixed(1)} µs = ${(delta / Math.max(1, panels)).toFixed(2)} µs/panel`);
+			console.log(`${tilted ? "CSS3D tilted" : "CSS2D flat  "}  budget ${budget}  hover ${distance}  panels ${panels} (masked ${masked})  frame ${(ms * 1000).toFixed(1)} µs, tier off ${(off.ms * 1000).toFixed(1)} µs, panels ${delta.toFixed(1)} µs = ${(delta / Math.max(1, panels)).toFixed(2)} µs/panel`);
 		}
 	}
+}
 }

@@ -153,8 +153,23 @@ describe("near tier settings", () => {
 
 	it("maps more detail to a lower enter scale, with the slider in log steps", () => {
 		expect(enterScaleFromDetail(2)).toBeCloseTo(0.3);
-		expect(enterScaleFromDetail(1 / DETAIL_LIMIT)).toBeCloseTo(1.2);
+		expect(DETAIL_LIMIT).toBe(4);
+		expect(enterScaleFromDetail(DETAIL_LIMIT)).toBeCloseTo(0.15);
+		expect(enterScaleFromDetail(1 / DETAIL_LIMIT)).toBeCloseTo(2.4);
+		expect(sliderFromDetail(DETAIL_LIMIT)).toBeCloseTo(2);
 		expect(sliderFromDetail(detailFromSlider(0.75))).toBeCloseTo(0.75);
+	});
+
+	it("allows up to 128 live panels on desktop and mobile, with the defaults inside the range", () => {
+		expect(NEAR_BUDGET_RANGE.desktop.max).toBe(128);
+		expect(NEAR_BUDGET_RANGE.mobile.max).toBe(128);
+		expect(NEAR_BUDGET.desktop).toBeLessThanOrEqual(NEAR_BUDGET_RANGE.desktop.max);
+		expect(cleanNearTier({ budget: 128 }, true).budget).toBe(128);
+	});
+
+	it("chooses up to a budget of 128 from more candidates", () => {
+		const probes = Array.from({ length: 200 }, (_, i) => ({ id: `n${String(i)}`, depth: 10 + i, scale: 1, x: 0, y: 0, visibility: 1 }));
+		expect(chooseNear(probes, new Set(), 128).size).toBe(128);
 	});
 
 	it("cleans stored values: bad ones fall back, numbers clamp to the device's range", () => {

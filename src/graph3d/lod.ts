@@ -20,10 +20,10 @@ export const NEAR_ENTER_SCALE = 0.6;
 export const NEAR_EXIT_SCALE = 0.45;
 /** Exit scale over enter scale: kept at every panel size threshold, so the hysteresis band stays the same. */
 export const NEAR_EXIT_RATIO = NEAR_EXIT_SCALE / NEAR_ENTER_SCALE;
-/** Panel detail slider limit: ×1/`DETAIL_LIMIT` to ×`DETAIL_LIMIT`, so the enter scale runs 0.3 to 1.2. */
-export const DETAIL_LIMIT = 2;
+/** Panel detail slider limit: ×1/`DETAIL_LIMIT` to ×`DETAIL_LIMIT`, so the enter scale runs 0.15 to 2.4. */
+export const DETAIL_LIMIT = 4;
 /** Budget ranges the Overlays sliders allow; the defaults (`NEAR_BUDGET`) sit inside them. */
-export const NEAR_BUDGET_RANGE = { desktop: { min: 4, max: 48 }, mobile: { min: 4, max: 24 } } as const;
+export const NEAR_BUDGET_RANGE = { desktop: { min: 4, max: 128 }, mobile: { min: 4, max: 128 } } as const;
 
 /** The two near-tier settings a user can change (Overlays menu), kept per device. */
 export interface NearTierSettings {

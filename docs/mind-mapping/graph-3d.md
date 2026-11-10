@@ -80,4 +80,4 @@ Double-click a node to edit it; in 3D this turns edit mode on.
 | Setting | Effect |
 |---------|--------|
 | Click selects only (Camera) | A click selects a plate without moving the camera |
-| Panel detail, Live panels (Lookdev) | How much text turns into a live panel; kept per device |
+| Panel detail, Live panels (Lookdev) | How much text turns into a live panel; kept per device. Panel detail runs ×¼ to ×4, Live panels 4 to 128 (default 24 on desktop, 12 on mobile) |
