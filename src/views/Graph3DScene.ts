@@ -756,7 +756,11 @@ export class Graph3DScene {
 		} else {
 			const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
 			const trees = planetTrees(live.map((node) => node.graph), edges);
-			const sizeOf = (id: string): { width: number; height: number } => this.live.get(id)?.shape ?? { width: 0, height: LINE_PLATE_HEIGHT };
+			// Space by the full panel, not just the plate, so live panels don't cover each other (as `flatSize` does for slices).
+			const sizeOf = (id: string): { width: number; height: number } => {
+				const node = this.live.get(id);
+				return node === undefined ? { width: 0, height: LINE_PLATE_HEIGHT } : this.flatSize(node.graph);
+			};
 			const styleOf = (core: string): ContinentStyle => {
 				const path = this.live.get(core)?.graph.path;
 				return resolveContinentStyle({ direction: this.overlays.continentDirection, balance: this.overlays.continentBalance }, path === undefined ? undefined : this.options.noteMapSettings(path));
