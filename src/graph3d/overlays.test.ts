@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GraphModel, GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
 import { nodeColor } from "./appearance";
+import { TAPER_STRENGTH_MAX } from "./taper";
 import {
 	effectiveFlatten,
 	DEFAULT_OVERLAYS,
@@ -64,6 +65,15 @@ describe("normalizeOverlays", () => {
 		expect(overlays).not.toHaveProperty("bloom");
 		expect(overlays.particles).toBe(false);
 		expect(overlays.labels).toBe("plates");
+	});
+
+	it("tapers hierarchy edges by default, and clamps the taper strength", () => {
+		expect(normalizeOverlays({}).taper).toBe(true);
+		expect(normalizeOverlays({ taper: false }).taper).toBe(false);
+		expect(normalizeOverlays({ taper: "no" }).taper).toBe(true);
+		expect(normalizeOverlays({ taperStrength: 1.5 }).taperStrength).toBe(1.5);
+		expect(normalizeOverlays({ taperStrength: 9 }).taperStrength).toBe(TAPER_STRENGTH_MAX);
+		expect(normalizeOverlays({ taperStrength: "x" }).taperStrength).toBe(1);
 	});
 
 	it("reads the Layout choice, taking an old flatten slider at Off as organic", () => {

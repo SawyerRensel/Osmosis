@@ -19,11 +19,15 @@ export interface EdgeView {
 	depth(p: Vec3): number;
 	/** Where `p`, which is ahead of the camera, lands on screen, in client px. */
 	screen(p: Vec3): { x: number; y: number };
+	/** Screen px a world unit spans at `depth` ahead of the camera; needed only for edges with a `width`. */
+	pxPerUnit?(depth: number): number;
 }
 
 /** An edge as drawn: the points its line runs through in world space, in order (at least two). */
 export interface DrawnEdge {
 	points: readonly Vec3[];
+	/** A tapered ribbon's full width, world units, at its first and last point (linear by point in between); none: a line. A click within it is on the edge. */
+	width?: { start: number; end: number };
 }
 
 /** Closer than this ahead of the camera, an edge is clipped off, so its projection stays finite. */
@@ -47,9 +51,10 @@ export function pickEdge(edges: readonly DrawnEdge[], view: EdgeView, x: number,
 			if (range === null) continue;
 			const start = at(a, b, range[0]);
 			const end = at(a, b, range[1]);
-			const { gap, t } = distanceToSegment(x, y, view.screen(start), view.screen(end));
-			if (gap > slop) continue;
+			const { gap: centre, t } = distanceToSegment(x, y, view.screen(start), view.screen(end));
 			const depth = view.depth(start) + (view.depth(end) - view.depth(start)) * t;
+			const gap = Math.max(0, centre - halfWidthPx(edge, k, range[0] + (range[1] - range[0]) * t, depth, view));
+			if (gap > slop) continue;
 			if (gap < bestGap || (gap === bestGap && depth < bestDepth)) {
 				best = i;
 				bestGap = gap;
@@ -58,6 +63,13 @@ export function pickEdge(edges: readonly DrawnEdge[], view: EdgeView, x: number,
 		}
 	});
 	return best;
+}
+
+/** Half the screen width, px, of a ribbon edge at parameter `t` of its segment `k` (ending at point `k`), `depth` ahead of the camera; 0 for a line. */
+function halfWidthPx(edge: DrawnEdge, k: number, t: number, depth: number, view: EdgeView): number {
+	if (edge.width === undefined || view.pxPerUnit === undefined) return 0;
+	const along = (k - 1 + t) / (edge.points.length - 1);
+	return ((edge.width.start + (edge.width.end - edge.width.start) * along) / 2) * view.pxPerUnit(depth);
 }
 
 /** The part of a segment, as parameters 0..1, whose depth (`da` at 0, `db` at 1) lies in [`NEAR`, `reach`]; null when none does. */

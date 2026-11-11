@@ -39,7 +39,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		controls: ["layout", "flatten", "continentSpacing", "continentDirection", "continentBalance", "forceBalance", "noteSpacing", "nodeSpacing", "linksPull"],
 	},
 	{ id: "show", name: "Show", controls: ["depth", "backlinks", "colorBy"] },
-	{ id: "edges", name: "Edges", controls: OVERLAY_EDGE_KINDS.map((kind): SettingsControl => `edge:${kind}`) },
+	{ id: "edges", name: "Edges", controls: [...OVERLAY_EDGE_KINDS.map((kind): SettingsControl => `edge:${kind}`), "taper", "taperStrength"] },
 	{ id: "camera", name: "Camera", controls: ["travelSpeed", "clickSelectsOnly"] },
 	{ id: "look", name: "Look", controls: ["mist", "particles", "labels", "panelDetail", "livePanels"] },
 ];

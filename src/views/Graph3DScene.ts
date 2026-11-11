@@ -33,10 +33,10 @@ import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../graph3d/appearance";
-import { nodeLook, type NodeLook } from "../graph3d/node-style";
+import { cssColor, nodeLook, type NodeLook } from "../graph3d/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
-import { panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
+import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { grabPoint, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
@@ -46,6 +46,8 @@ import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FAR_SIDE_GLSL } from "../graph3d/far-side";
 import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
+import { Graph3DRibbons } from "./Graph3DRibbons";
+import { branchEnds, dashOf, hierarchyDepths, type TaperEnds } from "../graph3d/taper";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
@@ -328,6 +330,8 @@ const SETTLE_TICKS = 80;
 const CHARGE = -30;
 const FADE_MS = 500;
 const LINK_OPACITY = 0.45;
+/** World units a mind-map px is on a line plate (`STYLE_PX_PER_EM` px an em), for branch styles' thicknesses and dashes. */
+const TAPER_PX_WORLD = Graph3DNear.emWorld(LINE_PLATE_HEIGHT) / STYLE_PX_PER_EM;
 /** Planets mode: a same-note link (tunnel) is dimmer than an edge, a link between planets (lane) brighter. */
 const TUNNEL_OPACITY = 0.2;
 const LANE_OPACITY = 0.8;
@@ -394,6 +398,12 @@ export class Graph3DScene {
 	/** Live Markdown panels over the nearest plates. */
 	private readonly near: Graph3DNear;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
+	/** Hierarchy edges as tapered ribbons, when the Settings taper them (`Graph3DRibbons`, `taper.ts`); the rest stay `edges`. */
+	private readonly ribbons: Graph3DRibbons;
+	/** Outline depth of every node a hierarchy edge reaches, for the links it was counted from. */
+	private taperDepths: { links: EngineLink[]; depths: Map<string, number>; edges: number } | null = null;
+	/** Branch line colours from `osmosis-styles`, parsed once each (null: not one 3D draws, so the edge kind's colour). */
+	private readonly branchColors = new Map<string, Color | null>();
 	/** Every node's boundary (cloud), one mesh (`Graph3DBoundaries`). */
 	private readonly boundaries: Graph3DBoundaries;
 	/** The study path's thread, and the nodes it runs through (null: a stop not loaded now). */
@@ -609,6 +619,7 @@ export class Graph3DScene {
 		dimWithFocus(edgeMaterial, this.plates.focus, false, true);
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
+		this.ribbons = new Graph3DRibbons((material) => dimWithFocus(material, this.plates.focus, false, true));
 		this.thread = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: THREAD_COLOR, transparent: true, depthWrite: false }));
 		this.thread.frustumCulled = false;
 		const particleMaterial = new PointsMaterial({ size: PARTICLE_SIZE, vertexColors: true, transparent: true, depthWrite: false });
@@ -618,7 +629,7 @@ export class Graph3DScene {
 		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
 		this.boundaries = new Graph3DBoundaries(this.plates.focus, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
-		this.graph.scene().add(this.boundaries.mesh, this.edges, this.thread, this.particles, this.plates.group, this.near.group);
+		this.graph.scene().add(this.boundaries.mesh, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
 		this.setOverlays(options.overlays);
 
@@ -1700,6 +1711,8 @@ export class Graph3DScene {
 		this.boundaries.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
+		this.ribbons.dispose();
+		this.taperDepths = null;
 		this.thread.geometry.dispose();
 		this.thread.material.dispose();
 		this.particles.geometry.dispose();
@@ -2542,8 +2555,13 @@ export class Graph3DScene {
 			if (source.departing || target.departing || !placed(source) || !placed(target)) continue;
 			if (!this.edgeDrawn(link.kind, source, target) || Math.min(source.opacity, target.opacity) <= 0) continue;
 			ends.push({ source, target });
-			edges.push({ points: this.world.size > 0 ? this.planetEdge(link.kind, source, target).points : [source, target] });
+			const points = this.world.size > 0 ? this.planetEdge(link.kind, source, target).points : [source, target];
+			// A tapered edge is as wide to click as it is drawn.
+			const taper = this.taperOf(link, target);
+			edges.push(taper === null ? { points } : { points, width: { start: taper.parent, end: taper.child } });
 		}
+		// World units to px at a depth, along the screen's height.
+		const pxPerUnit = (rect.height / 2) * camera.projectionMatrix.elements[5];
 		const hit = pickEdge(
 			edges,
 			{
@@ -2552,6 +2570,7 @@ export class Graph3DScene {
 					point.set(p.x, p.y, p.z).project(camera);
 					return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height };
 				},
+				pxPerUnit: (depth) => pxPerUnit / Math.max(depth, CAMERA_NEAR),
 			},
 			x,
 			y,
@@ -2614,6 +2633,7 @@ export class Graph3DScene {
 		// A re-laid-out planet's plates ease to their new places.
 		if (this.world.placeAll((id) => this.live.get(id), performance.now())) this.dirty = true;
 		this.near.update(this.nodes, this.graph.camera() as PerspectiveCamera, focus.value, this.fog.density, seconds);
+		this.ribbons.setViewportHeight(this.graph.renderer().domElement.height);
 		if (this.dirty) {
 			this.dirty = false;
 			this.plates.write(this.nodes, this.layoutDirty);
@@ -2675,6 +2695,8 @@ export class Graph3DScene {
 			geometry.setAttribute("aCore", cores);
 		}
 		let vertex = 0;
+		// A tapered hierarchy edge is straight, or a surface arc on a planet.
+		this.ribbons.begin(this.overlays.taper ? this.outline().edges * (this.world.size > 0 ? ARC_SEGMENTS : 1) : 0);
 		for (const link of this.links) {
 			// Links hold IDs until the engine's next digest swaps in the nodes.
 			const source = link.source as EngineNode | string;
@@ -2684,7 +2706,13 @@ export class Graph3DScene {
 			if (!this.edgeDrawn(link.kind, source, target)) continue;
 			let alpha = LINK_OPACITY * Math.min(source.opacity, target.opacity);
 			if (alpha <= 0) continue;
-			const color = this.edgeColor(link.kind);
+			const color = this.linkColor(link.kind, target);
+			const taper = this.taperOf(link, target);
+			if (taper !== null && placed(source) && placed(target)) {
+				const { points, scale } = this.world.size > 0 ? this.planetEdge(link.kind, source, target) : { points: [source, target], scale: 1 };
+				this.writeRibbon(points, taper, target, color, Math.min(1, alpha * scale), this.coreOf(source), this.coreOf(target));
+				continue;
+			}
 			if (this.world.size > 0 && placed(source) && placed(target)) {
 				const { points, scale } = this.planetEdge(link.kind, source, target);
 				alpha = Math.min(1, alpha * scale);
@@ -2692,8 +2720,7 @@ export class Graph3DScene {
 				for (let i = 1; i < points.length; i++) {
 					for (const end of [points[i - 1]!, points[i]!]) {
 						positions.setXYZ(vertex, end.x, end.y, end.z);
-						// A lane's point belongs to the nearer of its two planets.
-						const core = cs === null || (ct !== null && distanceSq(end, ct) < distanceSq(end, cs)) ? ct : cs;
+						const core = nearerCore(end, cs, ct);
 						if (core === null) cores.setXYZW(vertex, 0, 0, 0, 0);
 						else cores.setXYZW(vertex, core.x, core.y, core.z, 1);
 						colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
@@ -2711,6 +2738,52 @@ export class Graph3DScene {
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
 		cores.needsUpdate = true;
+		this.ribbons.end();
+	}
+
+	/** One tapered edge through `points` (parent first), its width easing from `ends.parent` to `ends.child` point by point, dashed as the child's branch style says. */
+	private writeRibbon(points: readonly Vec3[], ends: TaperEnds, child: EngineNode, color: Color, alpha: number, cs: Vec3 | null, ct: Vec3 | null): void {
+		const dash = dashOf(child.look.branchLine?.pattern, TAPER_PX_WORLD);
+		const last = points.length - 1;
+		let along = 0;
+		for (let i = 1; i <= last; i++) {
+			const [a, b] = [points[i - 1]!, points[i]!];
+			const width = (k: number): number => ends.parent + ((ends.child - ends.parent) * k) / last;
+			this.ribbons.segment(a, b, width(i - 1), width(i), along, dash, color, alpha, nearerCore(a, cs, ct), nearerCore(b, cs, ct));
+			along += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+		}
+	}
+
+	/**
+	 * A hierarchy edge's two widths when the Settings taper it (`branchEnds`:
+	 * from its parent's outline depth, or the child's branch style), else
+	 * null: it is a thin line like every other edge.
+	 */
+	private taperOf(link: EngineLink, child: EngineNode): TaperEnds | null {
+		if (link.kind !== "hierarchy" || !this.overlays.taper) return null;
+		const depth = this.outline().depths.get(endId(link.source)) ?? 0;
+		return branchEnds(depth, child.look.branchLine, this.overlays.taperStrength, TAPER_PX_WORLD);
+	}
+
+	/** The loaded hierarchy: each node's outline depth (`hierarchyDepths`) and how many hierarchy edges there are, counted again only when the links change. */
+	private outline(): { depths: Map<string, number>; edges: number } {
+		if (this.taperDepths?.links !== this.links) {
+			const ends = this.hierarchyEnds();
+			this.taperDepths = { links: this.links, depths: hierarchyDepths(ends), edges: ends.length };
+		}
+		return this.taperDepths;
+	}
+
+	/** An edge's colour: a hierarchy edge's child's branch line colour, when it has one 3D can draw; otherwise its kind's. */
+	private linkColor(kind: GraphEdgeKind, child: EngineNode): Color {
+		const css = kind === "hierarchy" ? child.look.branchLine?.color : undefined;
+		if (css === undefined) return this.edgeColor(kind);
+		let color = this.branchColors.get(css);
+		if (color === undefined) {
+			const parsed = cssColor(css);
+			this.branchColors.set(css, (color = parsed === null ? null : new Color(parsed)));
+		}
+		return color ?? this.edgeColor(kind);
 	}
 
 	private writeThread(): void {
@@ -2853,6 +2926,11 @@ function worldDistance(a: EngineNode, b: EngineNode): number {
 /** Whether a node's plate has a context menu: lines and note cores, which belong to a note (tags, files and ghosts have none). */
 function hasMenu(node: GraphNode): boolean {
 	return node.kind === "line" || node.kind === "note";
+}
+
+/** Which of an edge's two planet cores a point of it belongs to (the nearer; a lane's middle is between two planets), or null off planets. */
+function nearerCore(point: Vec3, cs: Vec3 | null, ct: Vec3 | null): Vec3 | null {
+	return cs === null || (ct !== null && distanceSq(point, ct) < distanceSq(point, cs)) ? ct : cs;
 }
 
 function distanceSq(a: Vec3, b: Vec3): number {

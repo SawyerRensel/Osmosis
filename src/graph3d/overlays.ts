@@ -9,6 +9,7 @@
 import { noteHue, nodeColor, type Spacing } from "./appearance";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type GraphNodeKind } from "./model";
 import type { ContinentBalance, ContinentDirection } from "./planets";
+import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "./taper";
 
 export type ColorMode = "note" | "memory" | "tag" | "type";
 
@@ -48,6 +49,10 @@ export interface Graph3DOverlays {
 	mist: number;
 	/** A particle runs along each drawn edge, source to target. */
 	particles: boolean;
+	/** Hierarchy edges draw as ribbons tapering by outline depth (`taper.ts`); off, every edge is a thin line. */
+	taper: boolean;
+	/** The Taper strength slider, `TAPER_STRENGTH_MIN` to `TAPER_STRENGTH_MAX` (`depthWidth`). */
+	taperStrength: number;
 	labels: LabelMode;
 	/** How fast every camera flight goes (travel speed): `1 / TRAVEL_LIMIT` to `TRAVEL_LIMIT`, 1 being the default pace. */
 	travelSpeed: number;
@@ -74,6 +79,8 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	continentBalance: "one-side",
 	mist: 1,
 	particles: false,
+	taper: true,
+	taperStrength: 1,
 	labels: "all",
 	travelSpeed: 1,
 };
@@ -114,6 +121,8 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		continentBalance: CONTINENT_BALANCES.includes(value.continentBalance as ContinentBalance) ? (value.continentBalance as ContinentBalance) : DEFAULT_OVERLAYS.continentBalance,
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
+		taper: typeof value.taper === "boolean" ? value.taper : DEFAULT_OVERLAYS.taper,
+		taperStrength: number(value.taperStrength, DEFAULT_OVERLAYS.taperStrength, TAPER_STRENGTH_MIN, TAPER_STRENGTH_MAX),
 		labels: LABEL_MODES.includes(value.labels as LabelMode) ? (value.labels as LabelMode) : DEFAULT_OVERLAYS.labels,
 		travelSpeed: number(value.travelSpeed, DEFAULT_OVERLAYS.travelSpeed, 1 / TRAVEL_LIMIT, TRAVEL_LIMIT),
 	};

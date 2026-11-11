@@ -26,6 +26,7 @@ import {
 import { flatDepth, flatWeight } from "../graph3d/flatten";
 import type { ContinentBalance, ContinentDirection } from "../graph3d/planets";
 import { SETTINGS_SECTIONS, controlShown, toggleCollapsed, type SettingsControl, type SettingsSectionId } from "../graph3d/settings-sections";
+import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "../graph3d/taper";
 import { sidebarSetting } from "./sidebar-setting";
 
 const COLOR_MODES: Record<ColorMode, string> = {
@@ -324,6 +325,22 @@ export class Graph3DSettingsPanel {
 					.setName("Link particles")
 					.setDesc("A particle runs along each edge, from source to target.")
 					.addToggle((toggle) => toggle.setValue(overlays.particles).onChange((value) => this.change({ particles: value })));
+			case "taper":
+				return row
+					.setName("Tapered branches")
+					.setDesc("Outline edges are thick at each note's root and thin toward its leaves. A node's branch line style overrides it. Off, every edge is a thin line.")
+					.addToggle((toggle) => toggle.setValue(overlays.taper).onChange((value) => this.change({ taper: value })));
+			case "taperStrength":
+				row.setName("Taper strength").setDesc(taperLabel(overlays.taperStrength));
+				return row.addSlider((slider) =>
+					slider
+						.setLimits(TAPER_STRENGTH_MIN, TAPER_STRENGTH_MAX, 0.05)
+						.setValue(overlays.taperStrength)
+						.onChange((value) => {
+							row.setDesc(taperLabel(value));
+							this.change({ taperStrength: value });
+						}),
+				);
 			case "labels":
 				return row.setName("Labels").addDropdown((dropdown) =>
 					dropdown
@@ -405,6 +422,10 @@ function flattenLabel(flatten: number): string {
 
 function spacingLabel(spacing: number, what: string): string {
 	return `×${spacing.toFixed(2)}. The distance between ${what}, as a multiple of the default. Moving it re-settles the loaded notes as you drag, and lays planets out afresh.`;
+}
+
+function taperLabel(strength: number): string {
+	return `×${strength.toFixed(2)}. How much thicker than the thinnest stem the branches near each root are.`;
 }
 
 function mistLabel(mist: number): string {

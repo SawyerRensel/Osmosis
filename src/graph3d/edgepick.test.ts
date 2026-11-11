@@ -22,6 +22,15 @@ describe("pickEdge", () => {
 		expect(pickEdge(edges, view, 500, 520, 16, 1000)).toBe(-1);
 	});
 
+	it("counts a click on a ribbon's width as on the edge, as wide as it is drawn there", () => {
+		const ribbon: DrawnEdge = { ...horizontal(-10), width: { start: 2, end: 0 } };
+		const wide = { ...view, pxPerUnit: (depth: number) => 100 / depth };
+		// 20 px off the centre line: past the slop, but within the slop of the wide end (half width 10 px there).
+		expect(pickEdge([horizontal(-10)], wide, 481, 520, 16, 1000)).toBe(-1);
+		expect(pickEdge([ribbon], wide, 481, 520, 16, 1000)).toBe(0);
+		expect(pickEdge([ribbon], wide, 519, 520, 16, 1000)).toBe(-1);
+	});
+
 	it("measures to the segment's ends, not the infinite line", () => {
 		const edges = [horizontal(-10)];
 		expect(pickEdge(edges, view, 560, 500, 16, 1000)).toBe(-1);
