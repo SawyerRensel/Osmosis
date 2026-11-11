@@ -134,3 +134,22 @@ Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the cu
 
 ### Not verified
 Could not see Obsidian: label placement against tilted Planets plates, the 120/300 thresholds' feel, and label overlap when several edges leave in nearly the same direction (not decluttered).
+
+### Follow-up after Sawyer's test (2026-11-11)
+
+Sawyer's test ("Javascript" note, node "Arguments" with many incoming links): the hints sat in one horizontal row under the plate, overlapping, and zoomed out they looked bigger than the node. Settled with Sawyer: hints run along their link lines, and scale with the world. Code commit `0d518e0`.
+
+- **Along the edge.** Each label is turned to its edge's on-screen direction (node centre to anchor, projected, so perspective is included; camera-plane direction when seen end on) and centred across the line, its start against the anchor just off the plate. `readableAngle` keeps text within ±90°: a leftward edge flips, and the label's END touches the anchor instead. A vertical edge reads bottom to top. This follows the edge's screen direction, so the Planets upright spin does not matter.
+- **No stacking.** `stackHints` (per node): a hint whose box would cover an earlier one's (edges under 90° apart, spans overlapping where they are closer across than a box height) is pushed out along its edge past that one's end plus 4 px; after `HINT_MAX_PUSHES` (2) pushes it is dropped. Taken in `chooseHints` order (current set ahead of newcomers), so a shown hint never moves when one arrives; deterministic, no per-frame state. Box sizes are estimated from the text (`hintBox`, 0.55 em a character), not measured.
+- **World size.** Hint text is `HINT_EM_RATIO` 0.6 of a line plate's text in world units (`HINT_EM_WORLD` in the scene); the box has a fixed 12 px font (`HINT_BASE_PX`) scaled by CSS transform, so no relayout per frame. Below 8 px on screen it fades, gone at 6 px (`hintSizeFade`), and too-small ends are not even candidates. The 120/300 depth fade is kept; on a typical window the size cutoff now ends hints before 300.
+- Hints with other nodes are still not decluttered against each other (only hints at one node are stacked).
+
+| File | Change |
+|---|---|
+| `src/graph3d/edge-hints.ts` | `labelShift` replaced by `readableAngle`, `hintSizeFade`, `hintBox`, `stackHints` and size constants |
+| `src/graph3d/edge-hints.test.ts` | 27 tests: readable angle (all directions, flips, vertical), size fade, box, stacking (separate, push, drop, per node, ±180° wrap, newcomer doesn't move others) |
+| `src/views/Graph3DHints.ts` | `place` takes angle, flip, push and scale; one transform string |
+| `src/views/Graph3DScene.ts` | `placeHints`: size filter, projected direction, spans, `stackHints` |
+| `styles.css` | hint font fixed at 12 px, `transform-origin: 0 0` |
+
+Not verified: the feel of 0.6 and the 6–8 px cutoff, and the text-width estimate against real fonts (a long label may be pushed a little too far or not quite far enough).
