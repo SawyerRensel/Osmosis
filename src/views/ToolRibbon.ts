@@ -104,6 +104,18 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 ];
 
 /**
+ * The buttons the 3D graph's ribbon leaves out: it draws `TOOLBAR_GROUPS`
+ * like the mind map, minus what has no 3D equivalent yet. Fold and unfold
+ * wait for the Fold idea ("3D Graph - Fold and unfold branches").
+ */
+export const GRAPH3D_HIDDEN_BUTTONS: ReadonlySet<string> = new Set(["fold-all", "unfold-all"]);
+
+/** `groups` without the buttons of `hidden`, and without any group that leaves empty (so no stray divider). */
+export function visibleGroups(groups: readonly ButtonDef[][], hidden: ReadonlySet<string>): ButtonDef[][] {
+	return groups.map((group) => group.filter((def) => !hidden.has(def.id))).filter((group) => group.length > 0);
+}
+
+/**
  * Whether a button's action may run in the given state — the same rule that
  * disables or hides the button itself.
  */
@@ -127,11 +139,14 @@ export class ToolRibbon {
 	constructor(
 		private container: HTMLElement,
 		private actions: ToolbarActions,
+		/** Buttons to leave out (the 3D graph's, see `GRAPH3D_HIDDEN_BUTTONS`), and a class for the bar. */
+		options: { hidden?: ReadonlySet<string>; cls?: string } = {},
 	) {
 		this.el = createDiv();
 		this.el.className = "osmosis-toolbar";
+		if (options.cls !== undefined) this.el.addClass(options.cls);
 
-		const groups = TOOLBAR_GROUPS;
+		const groups = visibleGroups(TOOLBAR_GROUPS, options.hidden ?? new Set());
 		for (let gi = 0; gi < groups.length; gi++) {
 			const group = groups[gi];
 			if (!group) continue;

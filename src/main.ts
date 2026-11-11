@@ -338,8 +338,9 @@ export default class OsmosisPlugin extends Plugin {
 				id: `mindmap-${def.id}`,
 				name: def.command,
 				icon: def.icon,
+				// The 3D graph draws the same ribbon (minus fold and unfold), so the command runs there too.
 				checkCallback: (checking) => {
-					const view = this.app.workspace.getActiveViewOfType(MindMapView);
+					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(Graph3DView);
 					return view ? view.runToolbarCommand(def, checking) : false;
 				},
 			});

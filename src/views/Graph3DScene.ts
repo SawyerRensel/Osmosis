@@ -50,6 +50,7 @@ import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gestu
 import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tripPose, viewingDistance, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../graph3d/hover";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
+import { enclosingSphere, fitDistance } from "../graph3d/fit";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
@@ -1088,6 +1089,34 @@ export class Graph3DScene {
 		const at = { x: node.x, y: node.y, z: node.z };
 		this.glide = { from: { position: pose.position, target: pose.target }, to: glideEnd(pose.position, pose.target, at, distance), start: performance.now() };
 		if (!this.settled(node)) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
+	}
+
+	/**
+	 * The ribbon's Fit: glide back (or in) along the camera's line of sight until
+	 * every loaded plate is in view (`enclosingSphere`, `fitDistance`). The
+	 * camera keeps its turn, as `glideTo` does.
+	 */
+	fitAll(): void {
+		const live = this.nodes.filter((n): n is EngineNode & Vec3 => !n.departing && placed(n));
+		const sphere = enclosingSphere(live.map((n) => ({ x: n.x, y: n.y, z: n.z, r: n.extent / 2 })));
+		if (sphere === null) return;
+		const camera = this.graph.camera() as PerspectiveCamera;
+		const pose = this.cameraPose();
+		this.pendingFlight = null;
+		this.lookPending = { x: 0, y: 0 };
+		this.cancelFlight();
+		this.glide = { from: { position: pose.position, target: pose.target }, to: glideEnd(pose.position, pose.target, sphere, fitDistance(sphere.r, camera.fov, camera.aspect)), start: performance.now() };
+	}
+
+	/**
+	 * The ribbon's Zoom in and out: the wheel's own eased zoom, by `factor`
+	 * (above 1 zooms in), aimed at the middle of the view.
+	 */
+	zoomStep(factor: number): void {
+		const pending = this.wheelZoom?.pending ?? 0;
+		this.cancelFlight();
+		const box = this.container.getBoundingClientRect();
+		this.wheelZoom = { x: box.left + box.width / 2, y: box.top + box.height / 2, pending: pending + Math.log(factor) };
 	}
 
 	/**

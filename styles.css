@@ -4298,6 +4298,21 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	pointer-events: none;
 }
 
+/*
+ * The shared toolbar ribbon (Graph3DView.ts): the mind map's `.osmosis-toolbar`, bottom centre. It
+ * clears Obsidian's floating mobile toolbar by --osmosis-graph3d-lift, not the mind map's fixed 80px, and
+ * stops short of the corner controls either side of it (toolbar toggle left, joysticks right).
+ */
+.osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
+	bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+	max-width: calc(100% - 2 * (var(--size-4-2) + 48px));
+}
+
+/* A relational study session's panel takes the same spot, and editing is off during one. */
+.osmosis-graph3d:has(.osmosis-graph3d-study) .osmosis-toolbar.osmosis-graph3d-ribbon {
+	display: none;
+}
+
 /* Obsidian's mobile toolbar toggle (Graph3DView.ts), bottom left, phones and tablets only. */
 .osmosis-graph3d-toolbar-toggle {
 	position: absolute;

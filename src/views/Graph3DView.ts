@@ -3,7 +3,8 @@ import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { migrateBlockIdentity, moveAcrossFiles, readMovedScheduleEntries, type MoveContext } from "../edit-moves";
-import { collectBlockIds, dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, toggleCheckboxLine } from "../mindmap-edit";
+import { collectBlockIds, dropContext, editSelectionStart, nodeEditText, normalizeWrite, renameInFile, resolveInsertSite, restoreEditedLine, subtreeEnd, toggleCheckboxLine } from "../mindmap-edit";
+import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pasteMigrates, spendCut, stylePasteOverrides, type ClipboardItem } from "../node-clipboard";
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
@@ -31,6 +32,7 @@ import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, ty
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { arrangeViewHeader } from "./ViewHeader";
+import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, type ButtonDef, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -148,6 +150,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	/** Whether the view is in edit mode: its edit gestures act, and flight keys stay off the structural ones. Off by default and not saved. */
 	private editMode = false;
 	private editActionEl: HTMLElement | null = null;
+	/** The shared toolbar ribbon (`TOOLBAR_GROUPS`, as the mind map draws it, minus fold and unfold). */
+	private ribbon: ToolRibbon | null = null;
 	/** Every 3D write goes through here, into the history shared with the mind map. */
 	private readonly edits = new EditPipeline(
 		this.app,
@@ -260,6 +264,29 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			void this.copySelection(nodes);
 			return false;
 		});
+		// Cut and paste (edit mode), and the style pair, as the mind map's keys: the toolbar ribbon's buttons are the same actions.
+		const editing = (e: KeyboardEvent): boolean => this.editMode && !isEditableTarget(e.target) && !this.editor.isOpen && activeWindow.getSelection()?.isCollapsed !== false;
+		this.scope.register(["Mod"], "x", (e: KeyboardEvent) => {
+			const nodes = this.scene?.selectedNodes() ?? [];
+			if (!editing(e) || nodes.length === 0) return undefined;
+			void this.cutSelection(nodes);
+			return false;
+		});
+		this.scope.register(["Mod"], "v", (e: KeyboardEvent) => {
+			if (!editing(e) || nodeClipboard.items.length === 0 || (this.scene?.focusedNode() ?? null) === null) return undefined;
+			void this.pasteSelection();
+			return false;
+		});
+		this.scope.register(["Mod", "Shift"], "c", (e: KeyboardEvent) => {
+			if (!editing(e) || this.styledSelection().length === 0) return undefined;
+			this.copyNodeStyle();
+			return false;
+		});
+		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
+			if (!editing(e) || this.styledSelection().length === 0) return undefined;
+			void this.pasteNodeStyle();
+			return false;
+		});
 		this.scope.register([], "F2", editKey);
 		// F makes the selected node's note the focus note: the one deliberate hop besides the plate menu.
 		this.scope.register([], "f", (e: KeyboardEvent) => {
@@ -272,21 +299,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		// In edit mode, the mind map's structural keys act on the focused line.
 		const structuralKey = (action: StructuralAction) => (e: KeyboardEvent) => {
 			if (!this.editMode || isEditableTarget(e.target) || e.target instanceof HTMLButtonElement) return undefined;
-			// Delete with more than one plate selected deletes them all.
-			const selected = this.scene?.selectedNodes() ?? [];
-			if (action === "delete" && selected.length > 1) {
-				void this.deleteSelection(selected);
-				return false;
-			}
-			// So do indent and outdent (Alt+→ / Alt+←).
-			if ((action === "indent" || action === "outdent") && selected.length > 1) {
-				void this.relevelSelection(action, selected);
-				return false;
-			}
-			const node = this.scene?.focusedNode() ?? null;
-			if (node === null || node.kind !== "line") return undefined;
-			void this.structural(action, node, false, selected);
-			return false;
+			return this.structuralOnSelection(action) ? false : undefined;
 		};
 		this.scope.register([], "Tab", structuralKey("child"));
 		this.scope.register([], "Enter", structuralKey("sibling"));
@@ -414,6 +427,9 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			text: "Open a note and run \"Open 3D graph for current note\".",
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
+		// The ribbon is added after the stage, so it floats over it.
+		this.ribbon = new ToolRibbon(root, this.ribbonActions(), { hidden: GRAPH3D_HIDDEN_BUTTONS, cls: "osmosis-graph3d-ribbon" });
+		this.updateRibbon();
 		this.study = new Graph3DStudy(root, this.plugin(), {
 			redraw: () => this.redraw(),
 			visit: (node) => this.visit(node),
@@ -511,6 +527,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		this.study?.destroy();
 		this.study = null;
 		this.toolbarToggleEl = null;
+		this.ribbon?.destroy();
+		this.ribbon = null;
 		syncMobileToolbar(this.app, this);
 		this.scene?.destroy();
 		this.scene = null;
@@ -657,6 +675,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	private setEditMode(on: boolean): void {
 		this.editMode = on;
 		this.showEditAction();
+		this.updateRibbon();
 		this.scene?.setLinkMode(on);
 		// Leaving edit mode (or starting a study session) saves the line being edited.
 		if (!on) this.editor.close(true);
@@ -671,6 +690,77 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		if (this.study?.active !== true) return false;
 		new Notice("Relational study: editing is off");
 		return true;
+	}
+
+	/** What the ribbon's buttons may do now: the mind map's rule (`canRunToolbarAction`). Reading mode here is edit mode being off. */
+	private ribbonState(): ToolbarState {
+		return {
+			hasSelection: (this.scene?.selectedNodes().length ?? 0) > 0,
+			isEditing: this.editor.isOpen,
+			hasFile: this.focusPath !== null,
+			isReadingMode: !this.editMode,
+		};
+	}
+
+	private updateRibbon(): void {
+		this.ribbon?.updateState(this.ribbonState());
+	}
+
+	/** Run a toolbar button for its command (see `checkCallback` semantics); false for a button this view's ribbon leaves out. */
+	runToolbarCommand(def: ButtonDef, checking: boolean): boolean {
+		return this.ribbon?.trigger(def, this.ribbonState(), checking) ?? false;
+	}
+
+	/**
+	 * Each `TOOLBAR_GROUPS` action as the 3D graph does it, on its selection.
+	 * Fold and unfold are not here (`GRAPH3D_HIDDEN_BUTTONS`): they wait for the Fold idea.
+	 */
+	private ribbonActions(): ToolbarActions {
+		const structural = (action: StructuralAction) => (): void => {
+			if (this.editBlocked() || this.editor.isOpen) return;
+			if (!this.structuralOnSelection(action)) new Notice("Osmosis: select a line first");
+		};
+		const nothing = (): void => undefined;
+		return {
+			fitToView: () => this.scene?.fitAll(),
+			zoomIn: () => this.scene?.zoomStep(1.25),
+			zoomOut: () => this.scene?.zoomStep(1 / 1.25),
+			// The mind map's "root" is the focus note's core here.
+			centerOnRoot: () => {
+				const core = this.focusPath === null ? null : noteNodeId(this.focusPath);
+				if (core !== null && this.model?.nodes.some((node) => node.id === core) === true) this.scene?.flyTo(core);
+			},
+			foldAll: nothing,
+			unfoldAll: nothing,
+			insertParent: structural("parent"),
+			addSibling: structural("sibling"),
+			addChild: structural("child"),
+			moveUp: structural("up"),
+			moveDown: structural("down"),
+			moveLeft: structural("outdent"),
+			moveRight: structural("indent"),
+			deleteNode: structural("delete"),
+			copy: () => void this.copySelection(this.scene?.selectedNodes() ?? []),
+			cut: () => void this.cutSelection(this.scene?.selectedNodes() ?? []),
+			paste: () => void this.pasteSelection(),
+			copyStyle: () => this.copyNodeStyle(),
+			pasteStyle: () => void this.pasteNodeStyle(),
+			undo: () => void this.step(false),
+			redo: () => void this.step(true),
+			refresh: () => {
+				this.cache.clear();
+				this.prefetched.clear();
+				this.styleFrontmatter.clear();
+				void this.reload();
+			},
+			openProperties: () => void this.plugin().activatePropertiesSidebar(),
+			openNodeMenu: (btn) => {
+				const node = this.scene?.focusedNode() ?? null;
+				if (node === null) return;
+				const rect = btn.getBoundingClientRect();
+				this.showNodeMenu(node, rect.left, rect.top);
+			},
+		};
 	}
 
 	/**
@@ -788,11 +878,13 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				selectionStart: editSelectionStart(text, fresh.line.content),
 				onVisibleBand: (band) => this.scene?.setVisibleBand(band),
 				done: (edited) => {
+					this.updateRibbon();
 					this.saved = this.finishEdit(node, text, edited);
 				},
 			});
 			// Gone from the scene since the read (it can't be while the editor is open: reloads wait).
 			if (!scene.setEditing(node.id, this.editor, Platform.isMobile)) this.editor.close(false);
+			this.updateRibbon();
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not open the editor", error);
 			new Notice("Osmosis: could not edit that line");
@@ -1037,6 +1129,27 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	}
 
 	/**
+	 * A structural key's (or ribbon button's) action on the selection: delete,
+	 * indent and outdent with more than one plate selected act on them all;
+	 * anything else on the focused line. False when there is no line to act on.
+	 */
+	private structuralOnSelection(action: StructuralAction): boolean {
+		const selected = this.scene?.selectedNodes() ?? [];
+		if (action === "delete" && selected.length > 1) {
+			void this.deleteSelection(selected);
+			return true;
+		}
+		if ((action === "indent" || action === "outdent") && selected.length > 1) {
+			void this.relevelSelection(action, selected);
+			return true;
+		}
+		const node = this.scene?.focusedNode() ?? null;
+		if (node === null || node.kind !== "line") return false;
+		void this.structural(action, node, false, selected);
+		return true;
+	}
+
+	/**
 	 * Do the mind map's structural edit `action` on `node`'s line: the same
 	 * bytes (`planStructural` wraps the functions `MindMapView` calls), found
 	 * against the file's fresh bytes, written once and filed in the shared
@@ -1096,9 +1209,14 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	 * with their subtrees, re-levelled and in document order, grouped by note
 	 * (the primary's note first). Plates that are not lines (notes, tags,
 	 * files, unresolved links) follow as links or tags.
+	 *
+	 * The selected lines also go on the internal clipboard the mind map uses
+	 * (`node-clipboard.ts`), so Paste works here and in 2D. `isCut` marks that
+	 * clipboard as a cut's (the caller deletes the lines). True when it got lines.
 	 */
-	private async copySelection(nodes: readonly GraphNode[]): Promise<void> {
+	private async copySelection(nodes: readonly GraphNode[], isCut = false): Promise<boolean> {
 		try {
+			const items: ClipboardItem[] = [];
 			const byPath = new Map<string, string[]>();
 			const others: string[] = [];
 			for (const node of nodes) {
@@ -1117,15 +1235,132 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				const { root } = this.cache.get(path, content);
 				const lines = ids.map((id) => findNodeById(root, id)).filter((line): line is OsmosisNode => line !== null);
 				if (lines.length > 0) groups.push({ title: file.basename, markdown: linesMarkdown(content, lines) });
+				for (const line of topmostLines(lines)) items.push(clipboardItem(line, content.slice(line.range.start, subtreeEnd(line))));
 			}
 			if (others.length > 0) groups.push({ title: null, markdown: others.join("\n") });
-			if (groups.length === 0) return;
+			if (groups.length === 0) return false;
 			await navigator.clipboard.writeText(selectionMarkdown(groups));
-			new Notice(nodes.length === 1 ? "Copied as Markdown" : `Copied ${nodes.length} selected as Markdown`);
+			// Lines from more than one note have no single origin for identity to move from: they paste as plain text.
+			if (items.length > 0) fillClipboard(items, isCut, byPath.size === 1 ? byPath.keys().next().value! : null);
+			const verb = isCut ? "Cut" : "Copied";
+			new Notice(nodes.length === 1 ? `${verb} as Markdown` : `${verb} ${nodes.length} selected as Markdown`);
+			return items.length > 0;
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not copy the selection", error);
 			new Notice("Osmosis: could not copy the selection");
+			return false;
 		}
+	}
+
+	/**
+	 * Cut the selected lines: copy them to the shared clipboard (as a cut, so
+	 * their block IDs and review history follow them to a paste in another
+	 * note), then delete them as one undo step. A sole H1 root (the note itself)
+	 * is not cut, as it is not deleted. The cut's schedule entries are read after
+	 * the delete, as the mind map does (reading flushes pending ratings, which
+	 * rewrites frontmatter).
+	 */
+	private async cutSelection(nodes: readonly GraphNode[]): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		const lines = nodes.filter((node) => node.kind === "line" && node.root !== true);
+		if (lines.length === 0) {
+			new Notice("Osmosis: nothing selected to cut");
+			return;
+		}
+		if (!(await this.copySelection(lines, true))) return;
+		if (!(await this.deleteSelection(lines))) {
+			// Nothing was removed, so nothing is moving: a paste of this clipboard is a plain copy.
+			spendCut();
+			return;
+		}
+		const origin = nodeClipboard.sourcePath;
+		if (origin !== null) nodeClipboard.schedules = await readMovedScheduleEntries(this.moveContext(), origin, nodeClipboard.blockIds);
+	}
+
+	/**
+	 * Paste the shared clipboard as the last children of the focused line, as
+	 * the mind map's Paste does (`pasteInto`). A cut that lands in another note
+	 * writes it and moves the block IDs' review history in one undo step. The
+	 * target stays selected and in place.
+	 */
+	private async pasteSelection(): Promise<void> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+		if (nodeClipboard.items.length === 0) {
+			new Notice("Osmosis: nothing to paste");
+			return;
+		}
+		const target = this.scene?.focusedNode() ?? null;
+		if (target === null || target.kind !== "line") {
+			new Notice("Osmosis: select a line to paste under");
+			return;
+		}
+		this.structuring = true;
+		try {
+			const fresh = await this.freshLine(target);
+			if (fresh === null) {
+				new Notice("Osmosis: that line has changed; try again");
+				return;
+			}
+			const { file, content, line } = fresh;
+			const text = pasteInto(content, line);
+			const out = normalizeWrite(text);
+			if (out === content) return;
+			let start = mapStart(text, out, line.range.start);
+			const origin = nodeClipboard.sourcePath;
+			if (origin !== null && pasteMigrates(file.path)) {
+				this.editOwner = file.path;
+				this.lastEditPath = file.path;
+				// As in `commitLines`: a reload already under way must not place the pasted lines before `edited` does.
+				this.loadSeq++;
+				this.edits.recorder.beginGroup();
+				try {
+					await this.edits.write(file, out);
+					await migrateBlockIdentity(this.moveContext(), origin, file.path, nodeClipboard.blockIds, nodeClipboard.schedules);
+				} finally {
+					this.edits.recorder.endGroup();
+				}
+				// Moving review history rewrote the destination's frontmatter only, so the body moved by its change in size.
+				if (start !== null) start += (await this.app.vault.read(file)).length - out.length;
+				this.edited = start === null ? [] : [{ path: file.path, start, from: target.id }];
+				this.editLanded = true;
+				void this.reload();
+			} else {
+				await this.commitLines(file, out, start === null ? [] : [{ path: file.path, start, from: target.id }]);
+			}
+			spendCut();
+		} catch (error) {
+			console.error("Osmosis: 3D graph could not paste", error);
+			new Notice("Osmosis: could not paste");
+		} finally {
+			this.structuring = false;
+		}
+	}
+
+	/** Copy the primary selected line's own style, for Paste style here or in the mind map (the clipboard is shared). */
+	private copyNodeStyle(): void {
+		const primary = this.styledSelection()[0];
+		if (primary === undefined) return;
+		const local = this.getNodeStyleContext(primary.id)?.local;
+		if (local === undefined || Object.keys(local).length === 0) {
+			new Notice("No style overrides to copy");
+			return;
+		}
+		copyStyleOf(local);
+		new Notice("Style copied");
+	}
+
+	/** Paste the copied style onto every selected line (replacing their own overrides), through the same write the style sidebar uses. */
+	private async pasteNodeStyle(): Promise<void> {
+		if (this.editBlocked()) return;
+		const ids = this.styledSelection().map((node) => node.id);
+		const overrides = nodeClipboard.style === null ? null : stylePasteOverrides(ids);
+		if (overrides === null) {
+			new Notice("No style to paste");
+			return;
+		}
+		if (ids.length === 0) return;
+		await this.applyNodeStyleOverrides(overrides);
+		new Notice(`Style pasted to ${ids.length} node(s)`);
 	}
 
 	/**
@@ -1136,8 +1371,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	 * anchor is in the primary's note, or the first note written if the primary
 	 * is not a line. The loaded nodes re-settle (`commitLines`'s `editLanded`).
 	 */
-	private async deleteSelection(nodes: readonly GraphNode[]): Promise<void> {
-		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
+	private async deleteSelection(nodes: readonly GraphNode[]): Promise<boolean> {
+		if (this.editBlocked() || this.structuring || this.editor.isOpen) return false;
 		this.structuring = true;
 		try {
 			const byPath = new Map<string, string[]>();
@@ -1148,7 +1383,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			}
 			if (byPath.size === 0) {
 				new Notice("Osmosis: nothing selected to delete");
-				return;
+				return false;
 			}
 			const anchorPath = byPath.has(nodes[0]?.path ?? "") ? nodes[0]!.path! : byPath.keys().next().value!;
 			const writes: { file: TFile; out: string }[] = [];
@@ -1174,7 +1409,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				if (start === null) selectAfter = noteNodeId(path);
 				else edited = [{ path, start, from }];
 			}
-			if (writes.length === 0) return;
+			if (writes.length === 0) return false;
 			this.editOwner = writes[0]!.file.path;
 			this.lastEditPath = writes[0]!.file.path;
 			// As in `commitLines`: a reload already under way must not place lines before `edited` does.
@@ -1192,9 +1427,11 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			this.selectLanded = true;
 			this.editLanded = true;
 			void this.reload();
+			return true;
 		} catch (error) {
 			console.error("Osmosis: 3D graph could not delete the selection", error);
 			new Notice("Osmosis: could not delete those lines");
+			return false;
 		} finally {
 			this.structuring = false;
 		}
@@ -1579,6 +1816,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 
 	private notifySelection(): void {
 		for (const fn of this.selectionListeners) fn();
+		this.updateRibbon();
 	}
 
 	/** The selected lines the Node tab styles (note, tag and attachment plates have no line to key a style by), the primary first. */

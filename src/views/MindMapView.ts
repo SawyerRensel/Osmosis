@@ -20,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pasteMigrates, spendCut, stylePasteOverrides, type ClipboardItem } from "../node-clipboard";
 import { codeFitLimitPx } from "../code-fit";
 import { planStyleKeys } from "../mindmap-style-key";
 import { selectAfterDelete } from "../select-after-delete";
@@ -169,19 +170,6 @@ interface OsmosisCardContent {
 	isCloze?: boolean;
 }
 
-/**
- * One copied subtree: its source text, plus enough of the original node for
- * `reindentSubtree` to re-serialize the first line at a new type/depth. The
- * node itself is not kept — after a *cut* it no longer exists by paste time.
- */
-interface ClipboardItem {
-	type: OsmosisNode["type"];
-	depth: number;
-	content: string;
-	blockId?: string;
-	text: string;
-}
-
 export class MindMapView extends ItemView implements NodeStyleHost {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
@@ -307,36 +295,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
 
-	// Clipboard state for copy/cut/paste
-	private clipboardText: string | null = null;
-	/**
-	 * One record per copied subtree. Paste promotes each *top-level* item to a
-	 * direct child of the target on its own terms — a single type/depth for the
-	 * whole clipboard re-levels a heading and a bullet by the same delta, and
-	 * lands one of them wrong.
-	 */
-	private clipboardItems: ClipboardItem[] = [];
-	private clipboardIsCut = false;
-	private clipboardSourceIds: Set<string> = new Set();
-	/**
-	 * Containing file of the copied nodes — null when the selection spanned more
-	 * than one, where there is no single origin for identity to move from. Also
-	 * marks the clipboard as Osmosis' own rather than an external app's.
-	 */
-	private clipboardSourcePath: string | null = null;
-	/** Block IDs carried by {@link clipboardText}. */
-	private clipboardBlockIds: Set<string> = new Set();
-	/**
-	 * The origin's `osmosis-schedule` entries for those block IDs, captured at
-	 * cut time. A cut deletes immediately, so by the time the user pastes the
-	 * line is gone from the origin and its frontmatter may have been rewritten —
-	 * capture on cut, replay on paste.
-	 */
-	private clipboardSchedules: Record<string, unknown> = {};
-
-	// Clipboard state for copy/paste style
-	private clipboardNodeStyle: NodeStyle | null = null;
-	private clipboardStyleClassName: string | null = null;
+	// Clipboard state (copy/cut/paste, copy/paste style) is shared with the 3D graph: see node-clipboard.ts.
 
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
@@ -3105,11 +3064,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			new Notice("No style overrides to copy");
 			return;
 		}
-		const cloned = structuredClone(localStyle);
-		// Remember class name for paste, then strip from visual clipboard
-		this.clipboardStyleClassName = cloned.class ?? null;
-		delete cloned.class;
-		this.clipboardNodeStyle = cloned;
+		copyStyleOf(localStyle);
 		new Notice("Style copied");
 	}
 
@@ -3118,34 +3073,14 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
 	private async pasteNodeStyle(): Promise<void> {
 		if (!await this.assertEditableFresh()) return;
-		if (!this.clipboardNodeStyle) {
+		if (nodeClipboard.style === null) {
 			new Notice("No style to paste");
 			return;
 		}
 		if (this.selectedNodeIds.size === 0) return;
 
-		const ALL_KEYS: (keyof NodeStyle)[] =
-			["shape", "fill", "border", "text", "branchLine", "background", "width"];
-
-		const overrides = new Map<string, NodeStyle>();
-		for (const id of this.selectedNodeIds) {
-			const full: NodeStyle = {};
-			// If source had a class, assign it; otherwise clear it
-			if (this.clipboardStyleClassName) {
-				full.class = this.clipboardStyleClassName;
-			} else {
-				(full as Record<string, unknown>)["class"] = undefined;
-			}
-			for (const key of ALL_KEYS) {
-				if (key in this.clipboardNodeStyle) {
-					(full as Record<string, unknown>)[key] =
-						structuredClone(this.clipboardNodeStyle[key]);
-				} else {
-					(full as Record<string, unknown>)[key] = undefined;
-				}
-			}
-			overrides.set(id, full);
-		}
+		const overrides = stylePasteOverrides(this.selectedNodeIds);
+		if (overrides === null) return;
 		await this.applyNodeStyleOverrides(overrides);
 		new Notice(`Style pasted to ${this.selectedNodeIds.size} node(s)`);
 	}
@@ -5420,29 +5355,16 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			const end = this.subtreeEnd(sel.source);
 			// Record each item's own shape while the live nodes are still in
 			// hand — a cut deletes them before the paste needs them.
-			items.push({
-				type: sel.source.type,
-				depth: sel.source.depth,
-				content: sel.source.content,
-				blockId: sel.source.blockId,
-				text: content.slice(start, end),
-			});
+			items.push(clipboardItem(sel.source, content.slice(start, end)));
 		}
-
-		this.clipboardItems = items;
-		this.clipboardText = items.map((item) => item.text).join("\n");
-		this.clipboardIsCut = isCut;
-		this.clipboardSourceIds = new Set(this.selectedNodeIds);
 
 		// Identity travels with the clipboard. A mixed host+embedded selection has
 		// no single origin to migrate from, so it pastes as plain text.
 		const paths = new Set(selected.map((sel) => fileOf(sel.source)));
-		this.clipboardSourcePath = paths.size === 1 ? [...paths][0]! : null;
-		this.clipboardBlockIds = edit.collectBlockIds(this.clipboardText);
-		this.clipboardSchedules = {};
+		fillClipboard(items, isCut, paths.size === 1 ? [...paths][0]! : null);
 
 		// Also put plain text on system clipboard for external paste
-		await navigator.clipboard.writeText(this.clipboardText);
+		await navigator.clipboard.writeText(nodeClipboard.text ?? "");
 
 		// If cut, delete the selected nodes
 		if (isCut) {
@@ -5455,11 +5377,11 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			// Capture the schedule *after* the delete: reading it flushes pending
 			// ratings, which rewrites the frontmatter and would have shifted the
 			// offsets the splice above depends on.
-			if (this.clipboardSourcePath) {
-				this.clipboardSchedules = await moves.readMovedScheduleEntries(
+			if (nodeClipboard.sourcePath) {
+				nodeClipboard.schedules = await moves.readMovedScheduleEntries(
 					this.moveContext(),
-					this.clipboardSourcePath,
-					this.clipboardBlockIds,
+					nodeClipboard.sourcePath,
+					nodeClipboard.blockIds,
 				);
 			}
 		}
@@ -5470,7 +5392,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!await this.assertEditableFresh()) return;
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
+		if (!this.currentFile || !this.selectedNodeId || !nodeClipboard.items.length)
 			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -5486,50 +5408,12 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		if (!destFile) return;
 
 		const content = await this.app.vault.read(destFile);
-		// Not `subtreeEnd`: for a heading that is the end of its *last
-		// sub-heading's* content, which markdown reads as a child of that
-		// sub-heading rather than of the node the user selected.
-		const insertPos = edit.childInsertOffset(src);
+		// The target's child slot, each item's re-levelling and the copy-vs-cut
+		// identity rule live in `pasteInto` (shared with the 3D graph).
+		const updated = pasteInto(content, src);
 
-		// Re-level each copied item *independently* against the target. Taking
-		// the delta from the target's own depth is one trap — pasting a bullet
-		// onto `## Heading` would indent it to the heading's level and bury it
-		// inside whatever list came before. Shifting a mixed clipboard by a
-		// single delta is the other: a heading and a bullet copied together need
-		// different treatment, and one of them lands wrong. `reindentSubtree`
-		// returns code blocks, tables, and blockquotes unchanged, so an atomic
-		// block's bytes are never reshaped.
-		let pasteText = this.clipboardItems
-			.map((item) => {
-				const context = edit.inferChildContext(src, item);
-				return edit.reindentSubtree(
-					item.text,
-					item,
-					context.type,
-					context.depth,
-				);
-			})
-			.join("\n");
-
-		const originPath = this.clipboardSourcePath;
-		// A cut moves identity; a copy duplicates a line, and a duplicated line is
-		// a new line — strip its block IDs so it doesn't inherit the original's
-		// card, and let Osmosis mint a fresh ID on demand. Text from outside
-		// Osmosis (no source path) pastes exactly as before.
-		if (originPath !== null && !this.clipboardIsCut) {
-			pasteText = edit.stripBlockIds(pasteText);
-		}
-
-		// Separator-aware: the offset can now sit *before* a heading line, where
-		// the newline the old formula appended belongs on the other side.
-		const updated = edit.insertAt(content, insertPos, pasteText).text;
-
-		const migrates =
-			originPath !== null &&
-			this.clipboardIsCut &&
-			originPath !== destPath &&
-			this.clipboardBlockIds.size > 0;
-		if (migrates) {
+		const originPath = nodeClipboard.sourcePath;
+		if (originPath !== null && pasteMigrates(destPath)) {
 			// Cut across the seam: the write and the schedule migration are one
 			// gesture, so they undo as one step (see `moveAcrossFiles`).
 			this.beginEditGroup();
@@ -5539,8 +5423,8 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 					this.moveContext(),
 					originPath,
 					destPath,
-					this.clipboardBlockIds,
-					this.clipboardSchedules,
+					nodeClipboard.blockIds,
+					nodeClipboard.schedules,
 				);
 			} finally {
 				this.endEditGroup();
@@ -5550,10 +5434,8 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			await this.writeFileAtPath(destPath, updated);
 		}
 
-		// A cut's identity lands exactly once: pasting the same clipboard again
-		// duplicates the line, so it takes the copy path and gets fresh IDs.
-		this.clipboardIsCut = false;
-		this.clipboardSchedules = {};
+		// A cut's identity lands exactly once (see `spendCut`).
+		spendCut();
 	}
 
 	/**
@@ -6762,7 +6644,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 				if (
 					(e.ctrlKey || e.metaKey) &&
 					this.selectedNodeId &&
-					this.clipboardText
+					nodeClipboard.text
 				) {
 					e.preventDefault();
 					void this.pasteNodes();
