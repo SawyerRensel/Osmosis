@@ -12,13 +12,13 @@ related:
   - "[[3D Graph - Near-tier panels overlap and hide their edges]]"
   - "[[3D Graph Phase 4 - Near tier]]"
   - "[[3D Graph - Near-tier sliders]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T00:25:00.000Z"
+date_start_scheduled: "2026-11-11T00:11:43.000Z"
+date_start_actual: "2026-11-11T00:11:43.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -94,3 +94,30 @@ Manual test: open a note containing a long code block (add a fixture under `e2e/
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+**Cause.** `chooseNear` judged a node by its centre alone (NDC within ±1 to enter, ±1.3 to stay). A panel is up to 30em tall and drawn at a large screen scale when the camera is close, so its centre leaves the screen while most of its body is still in view, and it faded to its plate.
+
+**Fix.** `NearProbe` gained optional `halfX` / `halfY`: the panel's half-size on screen in NDC (`panelHalfNdc(width, height, scale, viewport)`). The screen test is now `nearScreenDistance(p) = max(|x| - halfX, |y| - halfY)` against the same `NEAR_ENTER_SCREEN` (1) / `NEAR_EXIT_SCREEN` (1.3), so the *nearest edge of the box* has to be within the viewport (plus the exit margin for members). No extent means the centre alone, as before.
+
+**CSS2DRenderer check.** Three's `CSS2DRenderer` does hide an object whose centre's clip z is outside [-1, 1] (`display: none`), i.e. depth below the camera near plane (1) or past far. It is not part of this bug: a CSS2D panel is a billboard, all of it at its centre's depth, so there is no "near part" to save, and at depth < 1 the panel is hundreds of times its laid-out size, so its centre is far off screen anyway. Left alone.
+
+**Decisions worth remembering.**
+- The extent applies to entering as well as staying. Otherwise a tall panel you pan to (centre off screen, body in view) would stay a plate yet survive as a panel once it was one, which is inconsistent. Consequence: a normal-sized panel can now enter when its *edge* touches the screen rather than its centre (the thresholds themselves are unchanged). Nearest-first budget still applies.
+- The extent is only computed when the centre is past `NEAR_ENTER_SCREEN`; a centre on screen gives identical results with or without it, so the common path costs nothing.
+- Size source: the measured `panel.width/height` (ResizeObserver, laid-out px) when the panel exists, else `panelBoxEm(node.graph) * 16 px`. Estimates lean large, which here means kept a bit longer.
+- Planets (tilted, CSS3D) panels use the same screen-aligned estimate: foreshortening only makes it an overestimate. Not done: a tilted panel whose *centre* is behind the camera (`depth <= 0`) while a corner is in front still drops, because projecting a box that straddles the camera plane has no simple answer and it needs the camera to sit on a plate. Unverified in practice.
+
+| File | Change |
+|---|---|
+| `src/graph3d/lod.ts` | `NearProbe.halfX/halfY`, `panelHalfNdc`, `nearScreenDistance`; `canEnter`/`canStay` use it |
+| `src/graph3d/lod.test.ts` | Tests: tall kept/entered, short dropped, hysteresis band, width, centre-on-screen unchanged, depth/scale/mist rules |
+| `src/views/Graph3DNear.ts` | Probes carry the extent when the centre is off screen; `panelPx` |
+| `e2e/fixtures/graph3d/Long Checklist.md` (+ copy in `vault/tests/graph3d/`) | 40-line code block under a heading |
+
+**Fixture.** `vault/tests/graph3d/Long Checklist.md`. Reload Obsidian (Ctrl+R) after it appears.
+
+**Not verified.** Could not see Obsidian; the real on-screen behaviour (and whether `panelBoxEm`'s estimate matches the rendered height) is unchecked.
+
+**Manual test.** Open Long Checklist, open the 3D graph from it, fly or scroll in on the code-block node until it is a live panel, then keep going until its centre is below (or above) the screen edge. The panel must stay live while any of it is visible, and fade only once it is fully off screen (plus the small margin). Normal short panels behave as before.
