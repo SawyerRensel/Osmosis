@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Read node styles]]"
   - "[[3D Graph - Settings in the style sidebar]]"
   - "[[3D Graph - Overlay toggles hide plates and re-settle]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T21:55:00.000Z"
+date_start_scheduled: "2026-11-11T21:35:22.000Z"
+date_start_actual: "2026-11-11T21:35:22.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -106,3 +106,34 @@ Manual test (fixture: a deep note such as the Sailing notes at depth 3, Ctrl+R):
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit a8473a0 on `feature/3d-tapered-hierarchy-edges` (stacked on `fix/3d-planets-plates-upright`).
+
+**Approach.** Hierarchy edges leave the 1px `LineSegments` and go into one new indexed mesh, `Graph3DRibbons`: every segment of every hierarchy edge is a quad of four vertices sitting on its two end points, and the vertex shader pushes each pair apart along `edge direction × toward the camera`, so the ribbon always faces the eye. The mesh is rewritten in `writeEdges` on the same dirty frames as the lines, never because the camera moved. Width comes from the pure `src/graph3d/taper.ts`: `depthWidth(depth, strength)` = 1.6 world units at a root (a line plate is 5 tall), ×0.6 a level, floor 0.2; `branchEnds(parentDepth, child.look.branchLine, strength, pxWorld)` gives the parent-end and child-end widths, so every edge tapers from its parent's depth width to its child's. Depths come from `hierarchyDepths` over the loaded hierarchy edges (0 = a node with no parent: a note core or sole H1), cached until `this.links` is replaced.
+
+**Decisions worth remembering**
+- **Faced on the GPU, with a one-pixel floor.** The shader never lets a ribbon get narrower than one device pixel (`uRibbonHalfHeight`, set from the canvas each frame), so a far stem still looks exactly like today's line instead of vanishing.
+- **One extra draw call, not per-edge.** Link/embed/tag/property/attachment edges stay on the existing `LineSegments`, unchanged. Putting every edge in the ribbon mesh would also have been one call, but it would have changed how link edges look, so they stay lines.
+- **Branch style precedence (child's `branchLine`, as in 2D, where a branch's style belongs to its child):** `taper: none` keeps one width; `fade` thins to a 0.3 px hair at the child; `grow` the reverse; a `thickness` (2D px, converted at 13 px an em of a line plate) with no taper keeps the depth taper's ratio; `thickness` is not scaled by the Taper strength slider. `pattern` dashed/dotted is drawn with the 2D map's dash lengths (8 on 4 off, 2 on 4 off px), cut in the fragment shader. `style` (curved/elbow) is ignored: 3D edges are straight or planet arcs.
+- **Branch colour applies with taper off too.** A hierarchy edge with a `branchLine.color` (hex/rgb/hsl/named; `var(--…)` falls back) is drawn in that colour as a ribbon or a thin line. Off only turns the ribbons off.
+- **Map-level `branchLine*` settings are not read** (T43 skipped them in 3D), so in 3D the map default is the depth taper.
+- **Picking:** `DrawnEdge.width` + `EdgeView.pxPerUnit` let `pickEdge` measure from the ribbon's drawn edge, so a click anywhere on a thick ribbon rides it.
+- **Settings:** `Graph3DOverlays.taper` (default true) and `taperStrength` (×0.25–×2, default 1), in Settings › Edges after the edge toggles; stored in plugin data (per vault). Both show always (strength is not hidden when taper is off: least change to the panel's re-render logic).
+- **Far side / focus:** the ribbon material is patched by the same `dimWithFocus(…, farSide)` and writes `aCore` per vertex, so ribbons dim with the focus and on a planet's far side like the lines.
+- **Buffers** are sized by the hierarchy edge count (×`ARC_SEGMENTS` in Planets), grown ×1.5, disposed with the scene; created at construction so the program compiles with RGBA colours from the first frame.
+
+| File | Change |
+|---|---|
+| `src/graph3d/taper.ts` (+test) | New: `depthWidth`, `branchEnds`, `hierarchyDepths`, `dashOf`, `ribbonCorners` (CPU mirror of the shader), ribbon GLSL |
+| `src/views/Graph3DRibbons.ts` | New: the batched ribbon mesh (begin/segment/end, shader patch, dispose) |
+| `src/views/Graph3DScene.ts` | `writeEdges` routes tapered hierarchy edges to the ribbons (`writeRibbon`, `taperOf`, `outline`, `linkColor`, `nearerCore`); `edgeNear` passes ribbon widths; viewport height each tick; dispose |
+| `src/graph3d/edgepick.ts` (+test) | Optional `DrawnEdge.width` / `EdgeView.pxPerUnit`: a click within a ribbon's width hits it |
+| `src/graph3d/overlays.ts` (+test) | `taper`, `taperStrength` settings |
+| `src/graph3d/settings-sections.ts`, `src/views/Graph3DOverlays.ts` | The two controls in Settings › Edges |
+| `e2e/fixtures/graph3d/Tapered Branches.md` → `vault/tests/graph3d/` | New fixture |
+
+**Fixture:** `vault/tests/graph3d/Tapered Branches.md`, an outline five levels deep (headings → lists → nested lists), links to Rigging and Navigation, and four branch styles: `^os-tap01` Halyards (8 px, fade, orange), `^os-tap02` Sheets (4 px, none, dashed), `^os-tap03` Control lines (blue, dotted), `^os-tap04` Winches (6 px, grow).
+
+**Not verified (no Obsidian here):** the shader compiling and the look on screen; the right root width/falloff (1.6 / ×0.6 / 0.2 are a first guess to tune by eye); stress-web frame time before/after (the ticket asks for it in the close-out: Sawyer to read the perf gauge with the toggle on and off). Joints between a planet arc's segments are separate camera-facing quads, so a slight overlap/notch can show at the bends.
