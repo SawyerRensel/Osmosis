@@ -16,13 +16,13 @@ related:
   - "[[3D Graph - Shared toolbar ribbon]]"
   - "[[Mind Map - Boundary (cloud) style]]"
   - "[[3D Graph - Tapered hierarchy edges]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T11:20:00.000Z"
+date_start_scheduled: "2026-11-11T10:48:56.000Z"
+date_start_actual: "2026-11-11T10:48:56.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -106,3 +106,42 @@ Manual test (fixture: a note with styled nodes made in 2D, in `e2e/fixtures/`, c
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit 2fdb760 on `feature/3d-read-node-styles` (stacked on the Planets continent frames branch).
+
+**Approach.** Styles are resolved into the 3D *model*, not the view: `buildGraph` (`src/graph3d/model.ts`) asks a per-note reader, `noteStyleReader(frontmatter, root, globalClasses)` in the new pure module `src/graph3d/node-style.ts`, for each note/line node and stores the result as `GraphNode.style` (a sparse `NodeStyle`, absent when unstyled). The reader reuses 2D's code: `parseOsmosisStyleFrontmatter`, `lookupNodeStyleByPath` (block ID `^id`/`^os-` > `_n:` stable ID > tree path, exactly the mind map's order), `lookupClassStyle`, `lookupVariantStyle` and `resolveCascade`. The scene turns each node's style into a `NodeLook` (`nodeLook()`: fill, border, text colour, stroke multiple, corner radius, plus `width` and `branchLine` carried through) on `EngineNode.look`, renewed on every `setData`. Plates draw it from new instance attributes (plate `aFill` vec4 + `aShape` vec2, glyph `aInk` vec4; a style's border colour is written into the existing `aColor`), so there is no extra draw call. Near panels paint from the same look (`Graph3DNear.paint`).
+
+**Live updates.** No style cache: the frontmatter is read from `metadataCache.getFileCache()` on every reload, and the view already reloads on `metadataCache.on("resolve")` for loaded notes, so a style written in 2D (or by hand) lands within the 750 ms reload debounce. Text edits keep the style because `renameInFile` puts the line's block ID back, so the `^os-` key still matches.
+
+### Decisions worth remembering
+- **Theme not applied in 3D.** The cascade is Local > Class > Variant > the note's `baseStyle` (weakest, as 2D merges it into the theme base). The plugin theme (and map-level `topicShape`) is skipped: 3D's colour-by modes stand in for it, and applying it would restyle every unstyled node, breaking "a node with no style looks exactly as today".
+- **A style's border colour beats the colour-by outline** (2D shows it, so 3D does). The selection accent still beats both.
+- **Shapes drawn:** `rect` (square corners), `rounded-rect` (today's plate), `pill` (round ends). Every other shape (ellipse, circle, diamond, hexagon, cloud, underline, none, …) falls back to the default rounded plate: a plate is a one-line label, and `none` would leave text floating over whatever is behind it. `PLATE_CORNERS` in `node-style.ts` is the list.
+- **Border:** `width` is a multiple of the default outline (2D's default is 1 px), capped at ×8; `style: none` draws no outline; dashed/dotted draw solid (not attempted).
+- **Colours** are validated by `cssColor()`: `#rgb`, `#rrggbb`, `rgb()/hsl()` and names. `var(--…)`, 8-digit hex and keywords like `transparent` fall back to the default on both plates and panels, so a node looks the same near and far.
+- Panels take fill (background), border (inset shadow colour + thickness), corner radius, and text colour (set on the rendered body, as 2D sets it on its wrapper). Font, size, weight, italic and alignment are not read (they would change panel size and spacing).
+- `lookupVariantStyle` now takes `Pick<LayoutNode, "source">` (type widening only) so 3D can call it with a parse node.
+
+### For the tickets that build on this
+- Resolved style: `GraphNode.style` (model) and `EngineNode.look: NodeLook` (scene). `look.width` (mind-map px, null when unset) is for [[Graph - Node width in 3D and code blocks fit their lines]]; `look.branchLine` (`BranchStyle`, null when unset) is for [[3D Graph - Tapered hierarchy edges]]. Map-level branch settings (`branchLineColor/Thickness/Pattern/Taper`) are not read yet.
+- Refresh path: style change → frontmatter change → `resolve` → `Graph3DView.reload` → `buildGraph` → `Graph3DScene.setData` (renews `look`, sets `layoutDirty`, calls `near.refreshColors()`). A 3D style writer (sidebar ticket) needs nothing more than writing the frontmatter.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/node-style.ts` | New: `noteStyleReader`, `nodeLook`, `NodeLook`, `DEFAULT_LOOK`, `PLATE_CORNERS`, `cssColor` |
+| `src/graph3d/node-style.test.ts` | New: key resolution (`^os-`, user `^id`, `_n:`, tree path, root), cascade, variants, bad YAML, look, shapes, colours, `buildGraph` |
+| `src/graph3d/model.ts` | `GraphNode.style`; `BuildOptions.globalClasses`; styles resolved in pass 1 |
+| `src/styles.ts` | `lookupVariantStyle` accepts `Pick<LayoutNode, "source">` |
+| `src/views/Graph3DPlates.ts` | Instance attributes `aFill`, `aShape` (stroke, corner), glyph `aInk`; `PlateSource.look`; parsed style colour cache |
+| `src/views/Graph3DNear.ts` | `NearSource.look`; `paint()` (fill, outline, corners, text colour); style corners in the editor plate and occlusion holes |
+| `src/views/Graph3DScene.ts` | `EngineNode.look`, set in `createNode`/`setData`; panels repainted after `setData` |
+| `src/views/Graph3DView.ts` | Passes the global classes to `buildGraph` |
+
+### Fixture
+`e2e/fixtures/graph3d/Styled Mooring.md` → `vault/tests/graph3d/Styled Mooring.md`: fill + border + text colour (`^os-moor01`), a class with a 3 px border (`^chain-check`), pill (`^os-moor03`), rect without outline (`^os-moor04`), cloud falling back with width/branchLine (`^os-moor05`), a tree-path keyed text colour, and two unstyled lines.
+
+### Not verified
+Nothing was seen in Obsidian. Unit tests cover the resolution; the shader changes, the panel paint and the live reload after a 2D style write are untested by hand. Known gaps: transcluded content styled in its *host* note (2D's `_n:` key in the host's frontmatter) is not applied in 3D, which reads each line's styles from its own note; text font/size/weight/italic are not drawn.
