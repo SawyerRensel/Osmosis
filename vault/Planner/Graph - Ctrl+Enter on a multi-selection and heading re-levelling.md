@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Multi-select]]"
   - "[[Correct indentation when converting list item to heading in mind map view]]"
   - "[[3D Graph Phase 7 - Editing]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T00:40:00.000Z"
+date_start_scheduled: "2026-11-11T00:14:23.000Z"
+date_start_actual: "2026-11-11T00:14:23.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -104,3 +104,37 @@ Manual test (fixture in `e2e/fixtures/`, copy to `vault/tests/`, Ctrl+R):
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Commit e6006ed on `fix/graph-ctrl-enter-heading-relevel` (stacked on T39).
+
+**Cause.**
+- Heading re-levelling: `reindentSubtree` shifted descendant headings by `childDepthDelta`, which is the list-indent delta (`newChildBase - oldChildBase`). Headings' children start at base 0 on both sides, so heading to heading was always 0 and sub-headings never followed.
+- Ctrl+Enter: 3D `planStructural("parent")` wrapped `{line.range.start, subtreeEnd(line)}` for the focused line only; 2D collected the selected siblings of the primary.
+
+**Fix.**
+- `reindentSubtree`: when a heading stays a heading, descendant headings shift by `newDepth - originalNode.depth`, clamped to H1..H6. Every other conversion keeps the old delta, so list lines, fences, tables, heading to list and list to heading are unchanged.
+- New shared `selectedSiblings(siblings, selectedIds)` in `src/mindmap-edit.ts` (first to last selected sibling, with unselected siblings between). 2D `insertParentNode` and 3D `planStructural` both use it, plus the existing `subtreeSpan`.
+- 3D: `structural()` takes the selected nodes and passes the ids of the selected lines in the same note. Selected lines that are not siblings of the primary are ignored (they aren't in the parent's `children`).
+- `StructuralPlan.moved` gains `following` (the siblings after the first that moved in the span), and a new `carrySiblings` pairs the whole wrapped run with the new tree, so every wrapped line keeps its place in the scene as the single-line wrap does.
+
+**Decisions worth remembering.**
+- Heading to non-heading (a heading dropped into a list) still shifts its descendant headings by the old list delta. That output is odd (a `#####` under a bullet) but it is pre-existing and out of scope.
+- 2D `ensureSameFileEdit` now checks the whole wrapped span rather than only the selected siblings: the splice covers the whole span, so it is the stricter, more correct check.
+- Paste also goes through `reindentSubtree`, so a pasted heading with sub-headings now re-levels its sub-headings too (it previously left them). That follows from the shared fix, not extra code.
+- Primary is always counted as selected in the 3D span (`line.id` is added to the set).
+- The context menu's "Insert parent" on a single node is unchanged; the multi-selection menu has no such item (not asked for).
+
+| File | Change |
+|---|---|
+| `src/mindmap-edit.ts` | `reindentSubtree` heading delta; new `selectedSiblings` |
+| `src/mindmap-edit.test.ts` | tests: heading re-levelling (H2 to H3, H6 cap, shallower, H1 floor, delta 0, fence, Alt+Right via parser), `selectedSiblings` |
+| `src/graph3d/edit.ts` | `planStructural` takes `selected`; `moved.following`; `carrySiblings` |
+| `src/graph3d/edit.test.ts` | tests: span wrap, unselected between, non-siblings ignored, single selection, `carrySiblings` |
+| `src/views/Graph3DView.ts` | `structural()` passes selected lines; carries the whole span |
+| `src/views/MindMapView.ts` | `insertParentNode` uses `selectedSiblings` + `subtreeSpan` |
+
+**Fixture.** `e2e/fixtures/graph3d/Relevel Headings.md`, copied to `vault/tests/graph3d/` (no cards, nothing for sync to stamp). Reload Obsidian (Ctrl+R) first.
+
+**Not verified.** I cannot see Obsidian: the 3D scene behaviour after a span wrap (selection, no jump of the carried lines) and the 2D flows are covered only by unit tests of the pure code.
