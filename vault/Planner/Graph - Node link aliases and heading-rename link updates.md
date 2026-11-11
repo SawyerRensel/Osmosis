@@ -13,13 +13,13 @@ related:
   - "[[Heading Links suggestions not working in Mind Map View]]"
   - "[[3D Graph - Follow a link]]"
   - "[[Graph pointer gestures - orbit, pan, link, menu]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
 date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-11-11T15:20:52.000Z"
+date_start_actual: "2026-11-11T15:20:52.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -106,3 +106,39 @@ Manual test (fixture: two or three notes in `e2e/fixtures/` that link to each ot
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: `b569cc3` on `feature/graph-link-aliases-heading-rename` (stacked on T47).
+
+**Approach.**
+1. *Markers.* `nextLinkMarker(content)` (`src/graph3d/links.ts`) is one past the highest `|^N]]` (or markdown `[^N](`) in the **source note**; `linkMarker(n)` is `^N`. Both 3D insertion paths pass it as `generateMarkdownLink`'s alias: `linkLines` (one drag) and `planSelectionLink` (multi-select drop), which counts on per source note so several lines linked in one drop get `^3`, `^4`, ...
+2. *Heading rename.* The pure `src/heading-links.ts` finds and rewrites links in one note's text. `src/heading-link-update.ts` holds the Obsidian glue: `planHeadingRename` (setting on, old and new lines both headings, text really changed, old heading not still present), `rewriteOwnLinks` (same-note links, folded into the rename's own write), and `rewriteVaultLinks` (every other `.md` note that `resolvedLinks` says links to the renamed note, each via the new `EditPipeline.process` = `vault.process`, recorded; then the Notice). Wired into `Graph3DView.saveEdit` and `MindMapView.renameNode`.
+
+**Decisions worth remembering.**
+- Marker = max+1, not the lowest free gap. Deleting `^1` and dragging again gives `^3`, matching the test plan. Markers inside code still count, which can only raise N and never collide.
+- Heading matching ignores case, whitespace and the punctuation Obsidian drops from link subpaths (`headingMatches`). A block ref `#^id` never matches. Only the **last** segment of a nested `#A#B` link is renamed.
+- Links in fenced code (``` and ~~~, also indented or quoted), inline code and `%%` comments are left alone, because Obsidian doesn't index them. Frontmatter property links **are** rewritten, as Obsidian does. Math blocks and HTML comments are not skipped (rare).
+- Markdown links `[x](Note.md#Old%20H)` and `<...>` forms are rewritten too, with the new heading URL-encoded (parentheses as well). Characters a wikilink can't hold (`# | ^ [ ]`) become spaces in the new heading.
+- **Conservative guards:** nothing happens when `alwaysUpdateLinks` is unset (Obsidian's default is off), when the rename is case- or punctuation-only (links still resolve), or when another heading in the note still matches the old text (its links now point at that one). A list item that becomes a heading, or the reverse, rewrites nothing.
+- Undo: the rename and the same-note links are one write. Other notes' rewrites are one recorded group filed under the edited note, so **Ctrl+Z first reverts the other notes' links, then a second Ctrl+Z reverts the rename**. I kept these as two steps because `EditRecorder.beginGroup` restarts rather than nests, and the rename write happens deep in each view's save path.
+- Notes whose links don't change aren't written at all (a `cachedRead` pre-check), so their mtime stays untouched.
+- The Notice is prefixed `Osmosis: ` like every other plugin notice: "Osmosis: Updated 3 links in 2 notes".
+
+| File | Change |
+|---|---|
+| `src/heading-links.ts` (+test) | New pure module: `rewriteHeadingLinks`, `headingOfLine`, `headingMatches`, `hasHeading`, `skippedRanges`, `lineAt`, `headingRenameNotice` |
+| `src/heading-link-update.ts` | New Obsidian glue: `planHeadingRename`, `rewriteOwnLinks`, `rewriteVaultLinks` |
+| `src/edit-pipeline.ts` | `process(file, fn)`: atomic `vault.process`, recorded, no `beforeWrite` |
+| `src/graph3d/links.ts` (+test) | `nextLinkMarker`, `linkMarker` |
+| `src/graph3d/selection-edit.ts` (+test) | `planSelectionLink`'s `linkText` gets an alias; per-note marker counter |
+| `src/views/Graph3DView.ts` | Marker alias in `linkLines` and `linkSelection`; heading-link rewrite in `saveEdit` |
+| `src/views/MindMapView.ts` | Heading-link rewrite in `renameNode` |
+
+**Fixture.** `vault/tests/graph3d/Lighthouse Keeping.md` (the target, with a same-note `[[#Lamp Room]]`), `Lighthouse Log.md` (plain, aliased, case-different, markdown and embed links, plus links in inline code and a fence and a link to the other note's same-named heading, all of which must stay put) and `Lighthouse Rota.md` (has its own `## Lamp Room`). Masters are in `e2e/fixtures/graph3d/`.
+
+**Not verified (no Obsidian here):**
+- How `generateMarkdownLink` renders the alias in a vault set to markdown links (`[^1](...)`, which Obsidian may read as a footnote reference).
+- Whether `getConfig("alwaysUpdateLinks")` is the exact key in the current Obsidian.
+- Live editor refresh of the other notes when they are open.
+- 2D has no link insertion, so markers are 3D-only, as scoped.
