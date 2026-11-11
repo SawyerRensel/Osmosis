@@ -55,8 +55,11 @@ export const enterScaleFromDetail = (detail: number): number => NEAR_ENTER_SCALE
 export const detailFromSlider = (position: number): number => 2 ** position;
 export const sliderFromDetail = (detail: number): number => Math.log2(detail);
 /**
- * A node enters only with its centre on screen (normalized device
- * coordinates within ±1), and leaves once its centre is this far out.
+ * A node enters only with its panel on screen, and leaves once the panel is
+ * this far out. How far out is counted in normalized device coordinates from
+ * the viewport's middle to the nearest edge of the panel's box (its centre
+ * less its half-extent, `NearProbe.halfX`), so ±1 is the viewport's own edge.
+ * A panel with no extent is its centre alone.
  */
 export const NEAR_ENTER_SCREEN = 1;
 export const NEAR_EXIT_SCREEN = 1.3;
@@ -80,6 +83,13 @@ export interface NearProbe {
 	/** The centre in normalized device coordinates, −1 to 1 across the viewport. */
 	x: number;
 	y: number;
+	/**
+	 * Half the panel's width and height on screen, in the same units as `x` and
+	 * `y` (`panelHalfNdc`), so a tall panel whose centre has left the screen
+	 * stays while its body is still in view. Missing means 0: the centre alone.
+	 */
+	halfX?: number;
+	halfY?: number;
 	/** `plateVisibility` at this depth: 0 lost in the mist, 1 fully shown. */
 	visibility: number;
 }
@@ -93,12 +103,28 @@ export function panelScale(depth: number, pxPerUnitAt1: number, pxPerUnit: numbe
 	return depth <= 0 ? 0 : pxPerUnitAt1 / (depth * pxPerUnit);
 }
 
+/**
+ * Half a panel's size on screen in normalized device coordinates, which run 2
+ * across the viewport: `width` and `height` are the panel's laid-out px, and
+ * `scale` is what it is drawn at (`panelScale`). Panels face the screen (or
+ * are drawn as if they do), so a panel on a tilted plate is only ever
+ * overestimated, which here means kept a little longer.
+ */
+export function panelHalfNdc(width: number, height: number, scale: number, viewport: { width: number; height: number }): { x: number; y: number } {
+	return { x: (width * scale) / viewport.width, y: (height * scale) / viewport.height };
+}
+
+/** How far the panel's box is past the viewport's middle, to its nearest edge: 1 when the box just touches the screen edge. */
+export function nearScreenDistance(p: NearProbe): number {
+	return Math.max(Math.abs(p.x) - (p.halfX ?? 0), Math.abs(p.y) - (p.halfY ?? 0));
+}
+
 function canEnter(p: NearProbe, enterScale: number): boolean {
-	return p.depth > 0 && p.scale >= enterScale && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_ENTER_SCREEN && p.visibility >= NEAR_ENTER_VISIBILITY;
+	return p.depth > 0 && p.scale >= enterScale && nearScreenDistance(p) <= NEAR_ENTER_SCREEN && p.visibility >= NEAR_ENTER_VISIBILITY;
 }
 
 function canStay(p: NearProbe, enterScale: number): boolean {
-	return p.depth > 0 && p.scale >= enterScale * NEAR_EXIT_RATIO && Math.max(Math.abs(p.x), Math.abs(p.y)) <= NEAR_EXIT_SCREEN && p.visibility >= NEAR_EXIT_VISIBILITY;
+	return p.depth > 0 && p.scale >= enterScale * NEAR_EXIT_RATIO && nearScreenDistance(p) <= NEAR_EXIT_SCREEN && p.visibility >= NEAR_EXIT_VISIBILITY;
 }
 
 /**

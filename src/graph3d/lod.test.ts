@@ -15,6 +15,9 @@ import {
 	defaultNearTier,
 	detailFromSlider,
 	enterScaleFromDetail,
+	NEAR_ENTER_SCREEN,
+	nearScreenDistance,
+	panelHalfNdc,
 	panelScale,
 	sliderFromDetail,
 	type NearProbe,
@@ -179,5 +182,54 @@ describe("near tier settings", () => {
 		expect(cleanNearTier({ detail: 0.01, budget: 1000 }, true)).toEqual({ detail: 1 / DETAIL_LIMIT, budget: NEAR_BUDGET_RANGE.mobile.max });
 		expect(cleanNearTier({ detail: 1, budget: 0 }, false).budget).toBe(NEAR_BUDGET_RANGE.desktop.min);
 		expect(cleanNearTier({ detail: 1, budget: 7.6 }, false).budget).toBe(8);
+	});
+});
+
+describe("panelHalfNdc", () => {
+	it("is the panel's drawn half-size over the viewport's half-size", () => {
+		// 320 x 480 px laid out, drawn at 2x, in a 1280 x 960 viewport: 640 x 960 px drawn, 320 and 480 px a side from the centre.
+		expect(panelHalfNdc(320, 480, 2, { width: 1280, height: 960 })).toEqual({ x: 0.5, y: 1 });
+	});
+});
+
+describe("chooseNear with a panel's extent", () => {
+	/** A tall panel: its centre is below the screen, its body reaches back up into it. */
+	const tall = (extra: Partial<NearProbe> = {}) => probe("a", 50, { y: -1.6, halfY: 0.8, ...extra });
+
+	it("keeps a tall panel whose centre left the screen while its body is still in view", () => {
+		expect(nearScreenDistance(tall())).toBeCloseTo(0.8);
+		expect(chooseNear([tall()], new Set(["a"]), 24).has("a")).toBe(true);
+	});
+
+	it("lets a tall panel enter by its body too", () => {
+		expect(chooseNear([tall()], none, 24).has("a")).toBe(true);
+	});
+
+	it("drops the same panel once it is short, so its box is off screen", () => {
+		expect(chooseNear([tall({ halfY: 0.2 })], new Set(["a"]), 24).has("a")).toBe(false);
+		expect(chooseNear([tall({ halfY: 0.2 })], none, 24).has("a")).toBe(false);
+	});
+
+	it("holds the hysteresis band on the box's edge: a member leaves past the exit margin, not the enter one", () => {
+		const between = { y: -(NEAR_ENTER_SCREEN + NEAR_EXIT_SCREEN) / 2 - 0.5, halfY: 0.5 };
+		expect(chooseNear([probe("a", 50, between)], none, 24).has("a")).toBe(false);
+		expect(chooseNear([probe("a", 50, between)], new Set(["a"]), 24).has("a")).toBe(true);
+		expect(chooseNear([probe("a", 50, { y: -NEAR_EXIT_SCREEN - 0.51, halfY: 0.5 })], new Set(["a"]), 24).has("a")).toBe(false);
+	});
+
+	it("counts the width too", () => {
+		expect(chooseNear([probe("a", 50, { x: 1.5, halfX: 0.6 })], none, 24).has("a")).toBe(true);
+		expect(chooseNear([probe("a", 50, { x: 1.5, halfX: 0.1 })], none, 24).has("a")).toBe(false);
+	});
+
+	it("changes nothing for a centre on screen, whatever the extent", () => {
+		expect(nearScreenDistance(probe("a", 50, { x: 0.9, y: -0.9, halfX: 0.3, halfY: 0.3 }))).toBeLessThanOrEqual(NEAR_ENTER_SCREEN);
+		expect(chooseNear([probe("a", 50, { x: 0.9, halfX: 0.3 })], none, 24).has("a")).toBe(true);
+	});
+
+	it("still needs the centre in front of the camera, and the scale and mist rules", () => {
+		expect(chooseNear([tall({ depth: -5, scale: 10 })], new Set(["a"]), 24).size).toBe(0);
+		expect(chooseNear([tall({ scale: 0.01 })], new Set(["a"]), 24).size).toBe(0);
+		expect(chooseNear([tall({ visibility: 0 })], new Set(["a"]), 24).size).toBe(0);
 	});
 });

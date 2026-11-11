@@ -38,9 +38,9 @@ import { Group, Vector3, type Camera, type PerspectiveCamera } from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRenderer.js";
 import type { GraphNode } from "../graph3d/model";
-import { NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelScale, type NearProbe, type NearTierSettings } from "../graph3d/lod";
+import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelHalfNdc, panelScale, type NearProbe, type NearTierSettings } from "../graph3d/lod";
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
-import { nearMarkdown } from "../graph3d/near";
+import { nearMarkdown, panelBoxEm } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
 import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../graph3d/occlusion";
@@ -217,6 +217,7 @@ export class Graph3DNear {
 		const probes: NearProbe[] = [];
 		const markdown = new Map<string, { node: NearSource; text: string }>();
 		const point = this.point;
+		const viewport = this.renderer.getSize();
 		for (const node of this.enabled ? nodes : []) {
 			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
 			// A planet's plate seen from behind isn't drawn, so it has no panel either.
@@ -229,7 +230,18 @@ export class Graph3DNear {
 			const text = nearMarkdown(node.graph);
 			if (text === null) continue;
 			point.applyMatrix4(camera.projectionMatrix);
-			probes.push({ id: node.id, depth, scale, x: point.x, y: point.y, visibility: plateVisibility(node.opacity, depth, focus, density) });
+			const probe: NearProbe = { id: node.id, depth, scale, x: point.x, y: point.y, visibility: plateVisibility(node.opacity, depth, focus, density) };
+			// A centre on screen needs no extent. Off it, the panel's box decides: a tall panel
+			// (a long code block) stays while any of it shows (`NearProbe.halfX`).
+			if (Math.max(Math.abs(point.x), Math.abs(point.y)) > NEAR_ENTER_SCREEN) {
+				const box = this.panelPx(node, this.panels.get(node.id));
+				if (box !== null) {
+					const half = panelHalfNdc(box.width, box.height, scale, viewport);
+					probe.halfX = half.x;
+					probe.halfY = half.y;
+				}
+			}
+			probes.push(probe);
 			markdown.set(node.id, { node, text });
 		}
 		const current = new Set<string>();
@@ -267,6 +279,13 @@ export class Graph3DNear {
 			panel.object.element.setCssStyles({ opacity: String(panel.fade) });
 		}
 		this.placeEditor(camera, pxPerUnitAt1);
+	}
+
+	/** A node's panel size in laid-out px: as measured once its panel exists, else estimated from its Markdown (`panelBoxEm`). */
+	private panelPx(node: NearSource, panel: Panel | undefined): { width: number; height: number } | null {
+		if (panel !== undefined && panel.width > 0 && panel.height > 0) return { width: panel.width, height: panel.height };
+		const em = panelBoxEm(node.graph);
+		return em === null ? null : { width: em.width * NEAR_FONT_PX, height: em.height * NEAR_FONT_PX };
 	}
 
 	/**
