@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HINT_FAR_DEPTH, HINT_KEEP_BONUS, HINT_MAX, HINT_NEAR_DEPTH, chooseHints, exitDistance, hintFade, hintText, hintedKind, labelShift, noteName, plainLabel } from "./edge-hints";
+import { HINT_FAR_DEPTH, HINT_KEEP_BONUS, HINT_MAX, HINT_NEAR_DEPTH, chooseHints, HINT_FULL_PX, HINT_MAX_PUSHES, HINT_MIN_PX, HINT_STACK_GAP_PX, exitDistance, hintBox, hintFade, hintSizeFade, hintText, hintedKind, noteName, plainLabel, readableAngle, stackHints, type HintSpan } from "./edge-hints";
 
 const probe = (id: string, depth: number, x = 0, y = 0) => ({ id, depth, x, y });
 
@@ -112,11 +112,82 @@ describe("exitDistance", () => {
 	});
 });
 
-describe("labelShift", () => {
-	it("puts the label's near side on the anchor", () => {
-		expect(labelShift(1, 0)).toEqual({ x: 0, y: -50 });
-		expect(labelShift(-1, 0)).toEqual({ x: -100, y: -50 });
-		expect(labelShift(0, 1)).toEqual({ x: -50, y: -100 });
-		expect(labelShift(0, 0)).toEqual({ x: -50, y: -50 });
+describe("readableAngle", () => {
+	it("runs along a rightward edge as is", () => {
+		expect(readableAngle(1, 0)).toEqual({ angle: 0, flipped: false });
+		expect(readableAngle(1, 1).angle).toBeCloseTo(Math.PI / 4);
+		expect(readableAngle(1, -1)).toMatchObject({ flipped: false });
+		expect(readableAngle(1, -1).angle).toBeCloseTo(-Math.PI / 4);
+	});
+	it("flips a leftward edge so the text is never upside down", () => {
+		expect(readableAngle(-1, 0).angle).toBeCloseTo(0);
+		expect(readableAngle(-1, 0).flipped).toBe(true);
+		expect(readableAngle(-1, 1).angle).toBeCloseTo(-Math.PI / 4);
+		expect(readableAngle(-1, -1).angle).toBeCloseTo(Math.PI / 4);
+		expect(readableAngle(-1, -1).flipped).toBe(true);
+	});
+	it("stays within ±90° for every direction, and reads a vertical edge bottom to top", () => {
+		for (let i = 0; i < 64; i++) {
+			const a = (i / 64) * 2 * Math.PI;
+			const { angle } = readableAngle(Math.cos(a), Math.sin(a));
+			expect(angle).toBeGreaterThan(-Math.PI / 2 - 1e-9);
+			expect(angle).toBeLessThanOrEqual(Math.PI / 2 + 1e-9);
+		}
+		expect(readableAngle(0, 1)).toEqual({ angle: Math.PI / 2, flipped: false });
+		expect(readableAngle(0, -1).angle).toBeCloseTo(Math.PI / 2);
+		expect(readableAngle(0, -1).flipped).toBe(true);
+		expect(readableAngle(0, 0)).toEqual({ angle: 0, flipped: false });
+	});
+});
+
+describe("hintSizeFade", () => {
+	it("hides a hint too small to read and fades it in, not pops", () => {
+		expect(hintSizeFade(2)).toBe(0);
+		expect(hintSizeFade(HINT_MIN_PX)).toBe(0);
+		expect(hintSizeFade((HINT_MIN_PX + HINT_FULL_PX) / 2)).toBeCloseTo(0.5);
+		expect(hintSizeFade(HINT_FULL_PX)).toBe(1);
+		expect(hintSizeFade(40)).toBe(1);
+		expect(hintSizeFade(Number.NaN)).toBe(0);
+	});
+});
+
+describe("hintBox", () => {
+	it("grows with the text and has a fixed height", () => {
+		expect(hintBox("Mooring lines").length).toBeGreaterThan(hintBox("Knots").length);
+		expect(hintBox("Mooring lines").height).toBe(hintBox("Knots").height);
+	});
+});
+
+describe("stackHints", () => {
+	const span = (id: string, degrees: number, group = "n", start = 20): HintSpan => ({ id, group, angle: (degrees * Math.PI) / 180, start, length: 60, height: 10 });
+	it("leaves hints on well-separated edges where they are", () => {
+		const out = stackHints([span("a", 0), span("b", 90), span("c", 180), span("d", -45)]);
+		expect([...out.entries()]).toEqual([["a", 0], ["b", 0], ["c", 0], ["d", 0]]);
+	});
+	it("pushes a hint on a nearly parallel edge out past the earlier one", () => {
+		const out = stackHints([span("a", 0), span("b", 5)]);
+		expect(out.get("a")).toBe(0);
+		expect(out.get("b")).toBe(60 + HINT_STACK_GAP_PX);
+	});
+	it("drops a hint still in the way after the most pushes allowed", () => {
+		const spans = Array.from({ length: HINT_MAX_PUSHES + 2 }, (_, i) => span(`h${i}`, i));
+		const out = stackHints(spans);
+		expect(out.size).toBe(HINT_MAX_PUSHES + 1);
+		expect(out.has(`h${HINT_MAX_PUSHES + 1}`)).toBe(false);
+	});
+	it("only stacks hints at the same node", () => {
+		const out = stackHints([span("a", 0, "n1"), span("b", 0, "n2")]);
+		expect(out.get("b")).toBe(0);
+	});
+	it("treats angles across ±180° as close", () => {
+		const out = stackHints([span("a", 179), span("b", -179)]);
+		expect(out.get("b")).toBeGreaterThan(0);
+	});
+	it("keeps an earlier hint in place when a newcomer arrives after it", () => {
+		const before = stackHints([span("a", 0), span("b", 4)]);
+		const after = stackHints([span("a", 0), span("b", 4), span("c", 2)]);
+		expect(after.get("a")).toBe(before.get("a"));
+		expect(after.get("b")).toBe(before.get("b"));
+		expect(after.get("c")).toBeGreaterThan(0);
 	});
 });

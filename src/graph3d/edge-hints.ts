@@ -119,12 +119,100 @@ export function exitDistance(d: { x: number; y: number; z: number }, half: { wid
 }
 
 /**
- * CSS percentages that put a label's box against the anchor on the side away
- * from the node: `x`/`y` is the edge's screen direction (y up). A label to
- * the right has its left edge at the anchor (0%, -50%).
+ * Hints scale with the world: a hint's text is this fraction of a line plate's
+ * text (both in world units), so it shrinks as the camera backs off and can
+ * never outweigh the node it sits by.
  */
-export function labelShift(x: number, y: number): { x: number; y: number } {
-	const len = Math.hypot(x, y);
-	if (len < 1e-6) return { x: -50, y: -50 };
-	return { x: -50 + (50 * x) / len, y: -50 - (50 * y) / len };
+export const HINT_EM_RATIO = 0.6;
+
+/** The label's CSS font size; it is scaled to its world size by transform (`HINT_BASE_PX` in styles.css). */
+export const HINT_BASE_PX = 12;
+
+/** On-screen text size (px) below which a hint is gone, and above which it is fully shown; linear between, so it never pops. */
+export const HINT_MIN_PX = 6;
+export const HINT_FULL_PX = 8;
+
+/** How much of a hint shows at an on-screen text size of `px`: 0 at or below `HINT_MIN_PX`, 1 from `HINT_FULL_PX`. */
+export function hintSizeFade(px: number): number {
+	if (!(px > HINT_MIN_PX)) return 0;
+	if (px >= HINT_FULL_PX) return 1;
+	return (px - HINT_MIN_PX) / (HINT_FULL_PX - HINT_MIN_PX);
+}
+
+/**
+ * The angle (radians, counter-clockwise, y up) to turn a label so its text
+ * runs along screen direction `x`/`y` and stays readable: never past ±90°.
+ * `flipped` means the text reads toward the direction's start, not away
+ * from it. A vertical edge reads bottom to top either way.
+ */
+export function readableAngle(x: number, y: number): { angle: number; flipped: boolean } {
+	if (Math.hypot(x, y) < 1e-9) return { angle: 0, flipped: false };
+	const a = Math.atan2(y, x);
+	if (a > Math.PI / 2) return { angle: a - Math.PI, flipped: true };
+	if (a <= -Math.PI / 2) return { angle: a + Math.PI, flipped: true };
+	return { angle: a, flipped: false };
+}
+
+/** A label's box at `HINT_BASE_PX`, estimated from its text (no DOM measuring): length along the edge and height across it, in px. */
+export function hintBox(text: string): { length: number; height: number } {
+	// ~0.55 em a character, 6 px padding each side plus the border; line height 1.3 plus padding and border.
+	return { length: Math.ceil(text.length * 0.55 * HINT_BASE_PX) + 14, height: Math.ceil(1.3 * HINT_BASE_PX) + 4 };
+}
+
+/** A placed hint for `stackHints`, in screen px: `angle` is its edge's true screen direction (not the readable one), `start` its distance from the node's centre, `length`/`height` its box. */
+export interface HintSpan {
+	id: string;
+	group: string;
+	angle: number;
+	start: number;
+	length: number;
+	height: number;
+}
+
+/** A hint pushed out this many times along its edge and still in the way is dropped. */
+export const HINT_MAX_PUSHES = 2;
+
+/** Screen gap (px) kept between two hints stacked along nearly the same direction. */
+export const HINT_STACK_GAP_PX = 4;
+
+/**
+ * Keep hints at one node (same `group`) off each other. Hints are taken in
+ * the given order (the scene passes nearest first, the current set ahead of
+ * newcomers, so a hint already shown is not moved by one arriving): one
+ * whose box would cover an earlier one's (edges less than 90° apart, their
+ * spans along the edge overlapping where the two are closer across than a
+ * box height) is pushed out along its edge past the other's end. After
+ * `HINT_MAX_PUSHES` pushes it is dropped instead. Returns each kept hint's
+ * extra distance along its edge (px); dropped hints are absent.
+ */
+export function stackHints(spans: readonly HintSpan[], gap = HINT_STACK_GAP_PX): Map<string, number> {
+	const out = new Map<string, number>();
+	const placed = new Map<string, { angle: number; from: number; to: number; height: number }[]>();
+	for (const span of spans) {
+		const others = placed.get(span.group) ?? [];
+		let from = span.start;
+		let pushes = 0;
+		let moved = true;
+		while (moved && pushes <= HINT_MAX_PUSHES) {
+			moved = false;
+			for (const other of others) {
+				let turn = Math.abs(span.angle - other.angle) % (2 * Math.PI);
+				if (turn > Math.PI) turn = 2 * Math.PI - turn;
+				if (turn >= Math.PI / 2) continue;
+				const near = Math.max(from, other.from);
+				const far = Math.min(from + span.length, other.to);
+				if (near >= far + gap) continue;
+				if (near * Math.sin(turn) >= (span.height + other.height) / 2 + gap) continue;
+				from = other.to + gap;
+				pushes++;
+				moved = true;
+				break;
+			}
+		}
+		if (moved) continue;
+		others.push({ angle: span.angle, from, to: from + span.length, height: span.height });
+		placed.set(span.group, others);
+		out.set(span.id, from - span.start);
+	}
+	return out;
 }

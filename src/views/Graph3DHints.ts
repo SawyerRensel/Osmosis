@@ -9,7 +9,7 @@
 
 import { Group, Vector3 } from "three";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { HINT_MAX, labelShift } from "../graph3d/edge-hints";
+import { HINT_MAX } from "../graph3d/edge-hints";
 
 /** Slots beyond `HINT_MAX`, so a hint that has just left can finish fading while its replacement fades in. */
 const SPARE_SLOTS = 4;
@@ -58,26 +58,29 @@ export class Graph3DHints {
 	}
 
 	/**
-	 * Choose hint `id` this frame, anchored at `at` (world) with the label on
-	 * the far side of it from the node, `direction` being the edge's screen
-	 * direction (y up); `depth` stacks it like a panel at that depth. `text`
-	 * is asked for only when the hint takes a slot. A full pool drops it.
+	 * Choose hint `id` this frame, anchored at `at` (world, just off its node
+	 * along the edge). The label is turned to `angle` (radians, counter-
+	 * clockwise on screen) so it runs along the edge; unless `flipped`, its
+	 * start touches the anchor, otherwise its end does. `push` moves it a
+	 * further number of screen px out along the edge and `scale` sizes it
+	 * from `HINT_BASE_PX`; `depth` stacks it like a panel at that depth. The
+	 * text is written only when the hint takes a slot. A full pool drops it.
 	 */
-	place(id: string, text: () => string, at: Vector3, direction: { x: number; y: number }, depth: number, opacity: number): void {
+	place(id: string, text: string, at: Vector3, angle: number, flipped: boolean, push: number, scale: number, depth: number, opacity: number): void {
 		let slot = this.slots.find((s) => s.id === id);
 		if (slot === undefined) {
 			slot = this.slots.find((s) => s.id === null);
 			if (slot === undefined) return;
 			slot.id = id;
 			slot.opacity = 0;
-			slot.box.setText(text());
+			slot.box.setText(text);
 		}
 		this.shown.add(id);
 		slot.target = opacity;
 		slot.object.position.copy(at);
 		slot.object.renderOrder = -depth;
-		const shift = labelShift(direction.x, direction.y);
-		const transform = `translate(${shift.x}%, ${shift.y}%)`;
+		// Applied right to left: hang the box off the anchor (start or end against it, centred across the edge), size it, push it out along the edge, turn it.
+		const transform = `rotate(${(-angle).toFixed(3)}rad) translateX(${(flipped ? -push : push).toFixed(1)}px) scale(${scale.toFixed(3)}) translate(${flipped ? -100 : 0}%, -50%)`;
 		if (transform !== slot.written.transform) {
 			slot.box.setCssStyles({ transform });
 			slot.written.transform = transform;

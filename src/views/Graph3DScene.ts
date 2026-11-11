@@ -48,7 +48,7 @@ import { FAR_SIDE_GLSL, showsText } from "../graph3d/far-side";
 import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
 import { Graph3DHints } from "./Graph3DHints";
 import { Graph3DRibbons } from "./Graph3DRibbons";
-import { chooseHints, exitDistance, hintFade, hintText, hintedKind, type HintProbe } from "../graph3d/edge-hints";
+import { HINT_BASE_PX, HINT_EM_RATIO, chooseHints, exitDistance, hintBox, hintFade, hintSizeFade, hintText, hintedKind, readableAngle, stackHints, type HintProbe, type HintSpan } from "../graph3d/edge-hints";
 import { branchEnds, dashOf, hierarchyDepths, type TaperEnds } from "../graph3d/taper";
 import { FOCUS_DIM_GLSL, plateVisibility } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
@@ -318,6 +318,8 @@ const CAMERA_NEAR = 1;
 
 /** Screen px between a plate's edge and its edge hint. */
 const HINT_GAP_PX = 4;
+/** An edge hint's text height in world units: a fixed fraction of a line plate's text, so hints scale with the world. */
+const HINT_EM_WORLD = HINT_EM_RATIO * Graph3DNear.emWorld(LINE_PLATE_HEIGHT);
 /** How far from a plate a flight stops: a note's root (its core or sole H1: arriving there is arriving at the note), and every other node. Arrow keys and edge rides keep the current distance instead (`viewingDistance`). */
 const NOTE_STAND_OFF = 160;
 const LINE_STAND_OFF = 70;
@@ -2714,8 +2716,13 @@ export class Graph3DScene {
 		const focus = this.plates.focus.value;
 		const density = this.fog.density;
 		const point = this.hintPoint;
+		const canvas = this.graph.renderer().domElement;
+		const halfWidth = canvas.clientWidth / 2;
+		const halfHeight = canvas.clientHeight / 2;
+		// Screen px per world unit at view depth 1.
+		const unitPx = halfHeight * camera.projectionMatrix.elements[5];
 		const probes: HintProbe[] = [];
-		const ends = new Map<string, { link: EngineLink; from: EngineNode & Vec3; to: EngineNode & Vec3; opacity: number; depth: number }>();
+		const ends = new Map<string, { link: EngineLink; from: EngineNode & Vec3; to: EngineNode & Vec3; opacity: number; depth: number; x: number; y: number }>();
 		for (const link of this.hintLinks.hinted) {
 			const [source, target] = [link.source as EngineNode | string, link.target as EngineNode | string];
 			if (typeof source === "string" || typeof target === "string") continue;
@@ -2724,20 +2731,19 @@ export class Graph3DScene {
 			const opacity = Math.min(source.opacity, target.opacity);
 			if (opacity <= 0) continue;
 			for (const [from, to] of [[source, target], [target, source]] as const) {
-				// Depth along the view, from the camera plane: behind the camera or beyond the far threshold is out.
+				// Depth along the view, from the camera plane: behind the camera, beyond the far threshold or too small to read is out.
 				const depth = -((from.x - eye.x) * back.x + (from.y - eye.y) * back.y + (from.z - eye.z) * back.z);
-				if (depth <= 0 || !(hintFade(depth) > 0)) continue;
+				if (depth <= 0 || !(hintFade(depth) > 0) || !(hintSizeFade((HINT_EM_WORLD * unitPx) / depth) > 0)) continue;
 				// A planet's plate seen from behind is dimmed and shows no text; its edges' hints go with it.
 				if (!showsText(from, from.frame?.normal, eye)) continue;
 				point.set(from.x, from.y, from.z).project(camera);
 				const id = `${link.kind}|${from.id}|${to.id}`;
 				probes.push({ id, depth, x: point.x, y: point.y });
-				ends.set(id, { link, from, to, opacity, depth });
+				ends.set(id, { link, from, to, opacity, depth, x: point.x * halfWidth, y: point.y * halfHeight });
 			}
 		}
 		const chosen = chooseHints(probes, this.hints.ids());
-		const size = this.graph.renderer().domElement.clientHeight;
-		const unitPx = (size / 2) * camera.projectionMatrix.elements[5];
+		const spans: (HintSpan & { text: string; at: Vector3; dx: number; dy: number; scale: number; depth: number; opacity: number })[] = [];
 		for (const id of chosen) {
 			const end = ends.get(id);
 			if (end === undefined) continue;
@@ -2753,9 +2759,31 @@ export class Graph3DScene {
 			// Clear the plate, or the panel over it, then a few px more.
 			const box = this.near.liveBoxWorld(from.id) ?? from.shape;
 			const reach = exitDistance(dir, { width: Math.max(box.width, from.shape.width) / 2, height: Math.max(box.height, from.shape.height) / 2 }, right, up) + HINT_GAP_PX / (unitPx / depth);
-			point.set(from.x + dir.x * reach, from.y + dir.y * reach, from.z + dir.z * reach);
-			const visibility = plateVisibility(end.opacity, depth, focus, density);
-			this.hints.place(id, () => hintText(from.graph, to.graph), point, { x: dir.x * right.x + dir.y * right.y + dir.z * right.z, y: dir.x * up.x + dir.y * up.y + dir.z * up.z }, depth, hintFade(depth) * visibility);
+			const at = new Vector3(from.x + dir.x * reach, from.y + dir.y * reach, from.z + dir.z * reach);
+			// The edge's direction as drawn on screen (y up): node centre to anchor, perspective included.
+			point.copy(at).project(camera);
+			let dx = point.x * halfWidth - end.x;
+			let dy = point.y * halfHeight - end.y;
+			const start = Math.hypot(dx, dy);
+			if (start < 0.5) {
+				// Seen end on: the camera-plane direction is all there is.
+				dx = dir.x * right.x + dir.y * right.y + dir.z * right.z;
+				dy = dir.x * up.x + dir.y * up.y + dir.z * up.z;
+			}
+			const textPx = (HINT_EM_WORLD * unitPx) / depth;
+			const scale = textPx / HINT_BASE_PX;
+			const text = hintText(from.graph, to.graph);
+			const size = hintBox(text);
+			const opacity = hintFade(depth) * hintSizeFade(textPx) * plateVisibility(end.opacity, depth, focus, density);
+			spans.push({ id, group: from.id, angle: Math.atan2(dy, dx), start, length: size.length * scale, height: size.height * scale, text, at, dx, dy, scale, depth, opacity });
+		}
+		// Hints leaving one node in nearly the same direction are stacked out along their edges, or dropped.
+		const pushes = stackHints(spans);
+		for (const span of spans) {
+			const push = pushes.get(span.id);
+			if (push === undefined) continue;
+			const { angle, flipped } = readableAngle(span.dx, span.dy);
+			this.hints.place(span.id, span.text, span.at, angle, flipped, push, span.scale, span.depth, span.opacity);
 		}
 	}
 
