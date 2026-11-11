@@ -69,7 +69,7 @@ export function flightPose(flight: Flight, node: Vec3, now: number, duration: nu
 export interface Trip {
 	fromPosition: Vec3;
 	fromTarget: Vec3;
-	/** How far short of the far end the camera stops: the usual viewing distance. */
+	/** How far short of the far end the camera stops: the viewing distance it had when the ride began. */
 	standOff: number;
 	start: number;
 	/** In ms, already scaled by the travel speed. */
@@ -135,6 +135,32 @@ function direction(a: Vec3, b: Vec3): [Vec3, number] {
 }
 
 const smooth = (t: number): number => t * t * (3 - 2 * t);
+
+/**
+ * The distance the camera views from, which an arrow key's glide and an edge
+ * ride keep (Sawyer, 2026-11-10: the distance you zoomed to is the one you
+ * keep). A move under way already has its end distance (`heading`): that one,
+ * so presses in quick succession don't drift. Otherwise, how far ahead of the
+ * camera the focused node is along the view (camera to orbit target), which is
+ * what sets its plate's size on screen. Not the orbit target's own distance:
+ * a wheel zoom re-seats the target at the depth of whatever the cursor aimed
+ * at (another plate, a planet's core, the last depth aimed at), so it is often
+ * far from the node in view. With no focused node, or one behind the camera
+ * or closer than `minimum`, the orbit target's distance it is.
+ */
+export function viewingDistance(camera: Vec3, target: Vec3, focused: Vec3 | null, heading: number | null, minimum: number): number {
+	if (heading !== null) return heading;
+	const [forward, orbit] = direction(camera, target);
+	if (focused === null) return orbit;
+	const depth = (focused.x - camera.x) * forward.x + (focused.y - camera.y) * forward.y + (focused.z - camera.z) * forward.z;
+	return depth >= minimum ? depth : orbit;
+}
+
+/** Where an arrow key's glide ends: looking at `node` from `distance`, along the camera's current view direction, so it turns nowhere. */
+export function glideEnd(camera: Vec3, target: Vec3, node: Vec3, distance: number): { position: Vec3; target: Vec3 } {
+	const [forward] = direction(camera, target);
+	return { position: { x: node.x - forward.x * distance, y: node.y - forward.y * distance, z: node.z - forward.z * distance }, target: { ...node } };
+}
 
 /** A short eased camera move between two poses that track no node: an edit's turn or pan (`graph3d/framing.ts`). */
 export interface Glide {

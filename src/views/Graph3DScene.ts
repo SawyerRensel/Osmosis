@@ -44,7 +44,7 @@ import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkSc
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
-import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripPose, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
+import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tripPose, viewingDistance, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
 import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../graph3d/hover";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
@@ -278,7 +278,7 @@ const LINE_PLATE_MAX_EM = 20;
  * looked at closer than this anyway (the orbit target stays `MIN_DEPTH` ahead).
  */
 const CAMERA_NEAR = 1;
-/** How far from a plate a flight or a ride along an edge stops: a note's root (its core or sole H1: arriving there is arriving at the note), and every other node. */
+/** How far from a plate a flight stops: a note's root (its core or sole H1: arriving there is arriving at the note), and every other node. Arrow keys and edge rides keep the current distance instead (`viewingDistance`). */
 const NOTE_STAND_OFF = 160;
 const LINE_STAND_OFF = 70;
 /** Flight speed as a fraction of the camera's distance to its orbit target, per second. */
@@ -1027,23 +1027,24 @@ export class Graph3DScene {
 
 	/**
 	 * Arrow-key navigation: glide to node `id` and make it the focused node.
-	 * The camera and the orbit target move together, by the step from the
-	 * target to the node, so the viewing distance and the camera's turn stay
-	 * as they are and screen up stays up from hop to hop. A node still
-	 * settling is followed, during the glide and after it, as a flight's is.
+	 * The camera keeps its turn and its viewing distance (`viewingDistance`:
+	 * how far ahead the focused node was, not the orbit target, which a wheel
+	 * zoom re-seats wherever the cursor aimed), so screen up stays up and
+	 * plates keep their size from hop to hop. A node still settling is
+	 * followed, during the glide and after it, as a flight's is.
 	 */
 	glideTo(id: string): void {
 		const node = this.nodes.find((n) => n.id === id && !n.departing);
 		if (node === undefined || !placed(node)) return;
 		this.pendingFlight = null;
 		this.lookPending = { x: 0, y: 0 };
+		const distance = this.viewingDistance();
 		this.cancelFlight();
 		this.focusId = id;
+		if (this.hoverOver(node, distance)) return;
 		const pose = this.cameraPose();
-		if (this.hoverOver(node, Math.hypot(pose.position.x - pose.target.x, pose.position.y - pose.target.y, pose.position.z - pose.target.z))) return;
-		const step = { x: node.x - pose.target.x, y: node.y - pose.target.y, z: node.z - pose.target.z };
-		const add = (a: Vec3) => ({ x: a.x + step.x, y: a.y + step.y, z: a.z + step.z });
-		this.glide = { from: { position: pose.position, target: pose.target }, to: { position: add(pose.position), target: add(pose.target) }, start: performance.now() };
+		const at = { x: node.x, y: node.y, z: node.z };
+		this.glide = { from: { position: pose.position, target: pose.target }, to: glideEnd(pose.position, pose.target, at, distance), start: performance.now() };
 		if (!this.settled(node)) this.follow = { node, at: { x: node.x, y: node.y, z: node.z }, steer: true };
 	}
 
@@ -1520,6 +1521,24 @@ export class Graph3DScene {
 		this.orbitControls().update();
 	}
 
+	/**
+	 * The distance an arrow key's glide and an edge ride keep (`viewingDistance`):
+	 * where a move under way ends, or else how far ahead the focused node is.
+	 */
+	private viewingDistance(): number {
+		const apart = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+		const origin = { x: 0, y: 0, z: 0 };
+		const heading =
+			this.glide !== null
+				? apart(this.glide.to.position, this.glide.to.target)
+				: this.flight !== null
+					? apart(this.flight.flight.offset, origin)
+					: (this.hoverFlight?.distance ?? this.ride?.trip.standOff ?? null);
+		const focus = this.focusId === null ? undefined : this.nodes.find((n) => n.id === this.focusId && !n.departing);
+		const pose = this.cameraPose();
+		return viewingDistance(pose.position, pose.target, focus !== undefined && placed(focus) ? { x: focus.x, y: focus.y, z: focus.z } : null, heading, MIN_DEPTH);
+	}
+
 	/** The user moved the view: a flight or follow under way gives way. A structural edit's track goes on (see `reshape`). */
 	private cancelFlight(): void {
 		this.flight = this.glide = this.ride = this.hoverFlight = null;
@@ -1529,7 +1548,7 @@ export class Graph3DScene {
 	/**
 	 * Follow a link: ride the camera along `edge` to its end away from the
 	 * focused node (with neither end focused, the one farther from the camera),
-	 * stopping at the usual viewing distance. Arriving is reported as
+	 * stopping at the current viewing distance (`viewingDistance`). Arriving is reported as
 	 * `onNodeArrived`. See `startTrip`.
 	 */
 	private rideAlong(source: EngineNode, target: EngineNode): void {
@@ -1539,7 +1558,7 @@ export class Graph3DScene {
 		const b = { x: target.x, y: target.y, z: target.z };
 		const toEnd = farEnd({ a, b, aId: source.id, bId: target.id }, this.focusId, camera) === "b";
 		const [from, to] = toEnd ? [source, target] : [target, source];
-		const standOff = isNoteRoot(to.graph) ? NOTE_STAND_OFF : LINE_STAND_OFF;
+		const standOff = this.viewingDistance();
 		const trip = startTrip(camera, this.orbitControls().target, toEnd ? a : b, toEnd ? b : a, standOff, performance.now(), this.overlays.travelSpeed);
 		this.pendingFlight = null;
 		this.flight = this.follow = this.glide = this.hoverFlight = null;

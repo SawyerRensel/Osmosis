@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flightPose, glidePose, shiftGlide, startFlight, startTrip, tripDuration, tripEnd, tripPose, TRIP_MAX_MS, TRIP_MIN_MS, type Vec3 } from "./flight";
+import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tripDuration, tripEnd, tripPose, viewingDistance, TRIP_MAX_MS, TRIP_MIN_MS, type Vec3 } from "./flight";
 
 const DURATION = 1000;
 
@@ -77,6 +77,55 @@ describe("glidePose", () => {
 		const half = glidePose(glide, DURATION / 2, DURATION);
 		expect(half.position.x).toBeCloseTo(7.5, 9);
 		expect(half.done).toBe(false);
+	});
+});
+
+describe("viewingDistance", () => {
+	const camera = { x: 0, y: 0, z: 300 };
+	const target = { x: 0, y: 0, z: 0 };
+
+	it("is how far ahead the focused node is, not the orbit target a zoom re-seated past it", () => {
+		expect(viewingDistance(camera, target, { x: 0, y: 0, z: 255 }, null, 10)).toBeCloseTo(45, 9);
+	});
+
+	it("measures along the view, so an off-centre node counts by its depth", () => {
+		expect(viewingDistance(camera, target, { x: 30, y: -20, z: 200 }, null, 10)).toBeCloseTo(100, 9);
+	});
+
+	it("falls back to the orbit target with no focused node, or one behind the camera or nearer than the minimum", () => {
+		expect(viewingDistance(camera, target, null, null, 10)).toBeCloseTo(300, 9);
+		expect(viewingDistance(camera, target, { x: 0, y: 0, z: 400 }, null, 10)).toBeCloseTo(300, 9);
+		expect(viewingDistance(camera, target, { x: 0, y: 0, z: 295 }, null, 10)).toBeCloseTo(300, 9);
+	});
+
+	it("is the end distance of a move under way, so quick presses don't drift", () => {
+		expect(viewingDistance(camera, target, { x: 0, y: 0, z: 255 }, 70, 10)).toBe(70);
+	});
+});
+
+describe("keeping the viewing distance", () => {
+	// The user zoomed in to 45 from the focused node, with the orbit target re-seated 300 ahead.
+	const camera = { x: 0, y: 0, z: 300 };
+	const target = { x: 0, y: 0, z: 0 };
+	const focused = { x: 0, y: 0, z: 255 };
+	const apart = (a: Vec3, b: Vec3): number => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+	it("an arrow key's glide, to a node in the same note or another, ends at that distance, looking the same way", () => {
+		const distance = viewingDistance(camera, target, focused, null, 10);
+		for (const node of [{ x: 40, y: 10, z: 250 }, { x: -500, y: 200, z: -900 }]) {
+			const end = glideEnd(camera, target, node, distance);
+			expect(apart(end.position, node)).toBeCloseTo(45, 9);
+			expectNear(end.target, node);
+			expectNear({ x: end.target.x - end.position.x, y: end.target.y - end.position.y, z: end.target.z - end.position.z }, { x: 0, y: 0, z: -45 });
+		}
+	});
+
+	it("an edge ride ends at that distance from its far end", () => {
+		const [from, to] = [focused, { x: 200, y: 0, z: 255 }];
+		const trip = startTrip(camera, target, from, to, viewingDistance(camera, target, focused, null, 10), 0, 1);
+		const pose = tripPose(trip, from, to, trip.duration);
+		expect(apart(pose.position, to)).toBeCloseTo(45, 9);
+		expectNear(pose.target, to);
 	});
 });
 
