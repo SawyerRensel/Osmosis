@@ -41,10 +41,9 @@ describe("TOOLBAR_GROUPS commands", () => {
 });
 
 describe("TOOLBAR_GROUPS layout", () => {
-	// Pinned before the 2D/3D toggle was added (its group is the first), so a change to any other button shows here.
+	// The 2D/3D toggle is not here: it is the header's 2D | 3D pill (`view-header.ts`), and its command is registered in main.ts.
 	it("keeps its buttons, groups and command names", () => {
 		expect(TOOLBAR_GROUPS.map((group) => group.map((d) => `${d.id}:${d.command ?? "-"}`))).toEqual([
-			["toggle-3d:Toggle between 2D mind map and 3D graph"],
 			["fit:Fit mind map to view", "zoom-in:Zoom in on mind map", "zoom-out:Zoom out of mind map", "center:Center mind map on root"],
 			["fold-all:Collapse all under node", "unfold-all:Expand all under node"],
 			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],

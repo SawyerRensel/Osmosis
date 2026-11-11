@@ -27,6 +27,8 @@ import { placeNodes, type Placed } from "../graph3d/positions";
 import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
+import { readingToggle } from "../view-header";
+import { arrangeViewHeader } from "./ViewHeader";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -403,12 +405,22 @@ export class Graph3DView extends ItemView {
 		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncMobileToolbar(this.app)));
 		syncMobileToolbar(this.app);
 
-		this.addAction("brain-circuit", "Switch to 2D mind map", () => void this.switchTo2D());
+		// The header's buttons are shared with the mind map (`view-header.ts`); `arrangeViewHeader` puts them in order.
+		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
+		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
+		this.showEditAction();
+		// Until the style sidebar holds the 3D settings, its button opens the Overlays panel.
+		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => this.overlaysMenu?.toggle());
+		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
-		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
-		this.editActionEl = this.addAction("pencil", "Edit mode", () => this.toggleEditMode());
-		this.editActionEl.toggleClass("is-active", this.editMode);
+		arrangeViewHeader(this, "3d", {
+			"note-view": noteViewActionEl,
+			reading: this.editActionEl,
+			style: styleActionEl,
+			study: this.studyActionEl,
+			follow: this.followActionEl,
+		}, () => void this.switchTo2D());
 
 		this.emptyEl = root.createDiv({
 			cls: "osmosis-graph3d-empty",
@@ -636,6 +648,14 @@ export class Graph3DView extends ItemView {
 		this.studyActionEl?.toggleClass("is-active", this.study.active);
 	}
 
+	/** The Reading/Editing button, as the mind map shows it: the icon of the mode a click switches to. */
+	private showEditAction(): void {
+		if (this.editActionEl === null) return;
+		const { icon, label } = readingToggle(!this.editMode);
+		setIcon(this.editActionEl, icon);
+		this.editActionEl.setAttribute("aria-label", label);
+	}
+
 	private toggleEditMode(): void {
 		if (!this.editMode && this.editBlocked()) return;
 		this.setEditMode(!this.editMode);
@@ -643,7 +663,7 @@ export class Graph3DView extends ItemView {
 
 	private setEditMode(on: boolean): void {
 		this.editMode = on;
-		this.editActionEl?.toggleClass("is-active", on);
+		this.showEditAction();
 		this.scene?.setLinkMode(on);
 		// Leaving edit mode (or starting a study session) saves the line being edited.
 		if (!on) this.editor.close(true);
@@ -1777,7 +1797,7 @@ export class Graph3DView extends ItemView {
 	}
 
 	/**
-	 * The 2D/3D toggle (this view's header action, and the mind map's toggle
+	 * The 2D/3D toggle (this view's header pill, and the toggle
 	 * command): show the focused node's note as a mind map in this leaf,
 	 * landing on the focused line at the scale its plate is drawn now (see
 	 * `graph3d/liftoff.ts`). An open edit saves first, as a blur does; a study
@@ -1785,10 +1805,7 @@ export class Graph3DView extends ItemView {
 	 * undo history is held across the swap.
 	 */
 	async switchTo2D(): Promise<void> {
-		this.scene?.cancelLinkDrag();
-		if (this.editor.isOpen) this.editor.close(true);
-		await this.saved;
-		if (this.study?.active === true) this.toggleStudy();
+		await this.settleForSwap();
 		const scene = this.scene;
 		const node = scene?.focusedNode() ?? null;
 		const nodePath = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : undefined;
@@ -1802,6 +1819,26 @@ export class Graph3DView extends ItemView {
 		const map = this.mapState ?? { pinned: true, readingMode: false };
 		const state = { ...writeMapState(path, map.pinned, map.readingMode), landing, graph3d: { depth: this.depth, backlinks: this.backlinks, follow: this.follow } };
 		await this.plugin().swapLeafView(this.leaf, "2d", state, [path]);
+	}
+
+	/** Close what a swap of this leaf's view would cut short: a link drag, an open edit (saved), a study session (its ratings flushed). */
+	private async settleForSwap(): Promise<void> {
+		this.scene?.cancelLinkDrag();
+		if (this.editor.isOpen) this.editor.close(true);
+		await this.saved;
+		if (this.study?.active === true) this.toggleStudy();
+	}
+
+	/** The header's Note view: the focused node's note (else the focus note) in this leaf's ordinary note view, as the mind map's does. */
+	private async switchToNote(): Promise<void> {
+		await this.settleForSwap();
+		const node = this.scene?.focusedNode() ?? null;
+		const path = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : this.focusPath;
+		if (path === null) {
+			new Notice("Open a note in the 3D graph first");
+			return;
+		}
+		await this.leaf.setViewState({ type: "markdown", state: { file: path }, active: true });
 	}
 
 	/**

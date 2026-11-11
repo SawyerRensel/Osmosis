@@ -94,6 +94,8 @@ import {
 } from "../study/spatial-study";
 import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { arrangeViewHeader } from "./ViewHeader";
+import { readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -663,14 +665,14 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * The toolbar's 2D/3D toggle: show this note as a 3D graph in this leaf,
+	 * The 2D/3D toggle (the header's pill, and its command): show this note as a 3D graph in this leaf,
 	 * lifting off from the map as it is drawn now (see `graph3d/liftoff.ts`).
 	 * A peek or study session ends first, flushing its ratings. The note's undo
 	 * history is held across the swap. Its embedded notes' are not: nothing
 	 * holds them now, and an entry is dropped only when the last holder of one
 	 * of its files lets go, so holding them for the swap could only drop them.
 	 */
-	private async switchTo3D(): Promise<void> {
+	async switchTo3D(): Promise<void> {
 		const file = this.currentFile;
 		const tree = this.currentTree;
 		const layout = this.currentLayout;
@@ -821,13 +823,9 @@ export class MindMapView extends ItemView {
 	/** Header action shows the mode you'd switch to (markdown-view convention). */
 	private updateReadingAction(): void {
 		if (!this.readingActionEl) return;
-		setIcon(this.readingActionEl, this.isReadingMode ? "pencil" : "book-open");
-		this.readingActionEl.setAttribute(
-			"aria-label",
-			this.isReadingMode
-				? "Current view: reading\nClick to edit"
-				: "Current view: editing\nClick to read",
-		);
+		const { icon, label } = readingToggle(this.isReadingMode);
+		setIcon(this.readingActionEl, icon);
+		this.readingActionEl.setAttribute("aria-label", label);
 	}
 
 	/**
@@ -1973,16 +1971,16 @@ export class MindMapView extends ItemView {
 					menu.showAtPosition({ x: rect.left, y: rect.top }),
 				);
 			},
-			toggle3D: () => void this.switchTo3D(),
 		});
 
+		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below.
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
 		});
 
 		// Open properties sidebar action (useful on mobile)
-		this.addAction("paintbrush", "Open style sidebar", () => {
+		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => {
 			void this.plugin.activatePropertiesSidebar();
 		});
 
@@ -1992,7 +1990,7 @@ export class MindMapView extends ItemView {
 		});
 
 		// Note view action — switch back to markdown editor
-		this.addAction("file-text", "Note view", () => {
+		const noteViewActionEl = this.addAction("file-text", "Note view", () => {
 			if (this.currentFile) {
 				void this.leaf.setViewState({
 					type: "markdown",
@@ -2011,6 +2009,15 @@ export class MindMapView extends ItemView {
 		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
 			this.toggleSpatialPeek();
 		});
+
+		arrangeViewHeader(this, "2d", {
+			"note-view": noteViewActionEl,
+			reading: this.readingActionEl,
+			style: styleActionEl,
+			study: this.spatialStudyActionEl,
+			pin: this.pinActionEl,
+			peek: this.spatialPeekActionEl,
+		}, () => void this.switchTo3D());
 
 		// Apply the global default mode; persisted per-leaf state (setState)
 		// arrives afterwards and overrides it.

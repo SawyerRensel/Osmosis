@@ -4,7 +4,7 @@ icon: lucide/orbit
 
 # 3D Graph
 
-The 3D graph shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open 3D graph for current note**, and switch back to the flat map with the 2D/3D toggle.
+The 3D graph shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open 3D graph for current note**, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Reading/Editing, Style sidebar and Study buttons).
 
 ## Controls
 
@@ -42,7 +42,7 @@ Back and forward also work from Obsidian's own tab buttons. Plain travel (clicks
 
 ### Keys in edit mode
 
-Turn edit mode on from the view's pencil button, then select a line.
+Turn edit mode on from the header's Reading/Editing button (the pencil, shown while reading), then select a line.
 
 | Key | Action |
 |-----|--------|

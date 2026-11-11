@@ -4624,3 +4624,48 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 .osmosis-cloze-blank.osmosis-cloze-purple {
 	color: var(--color-purple);
 }
+
+/* The 2D | 3D pill in the header of the mind map and the 3D graph. */
+.osmosis-view-switch {
+	display: inline-flex;
+	align-items: center;
+	margin: 0 var(--size-4-1);
+	padding: 1px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	flex-shrink: 0;
+}
+
+.osmosis-view-switch-option {
+	min-width: 0;
+	height: auto;
+	padding: 1px var(--size-4-2);
+	border: none;
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	line-height: 1.4;
+	cursor: var(--cursor);
+}
+
+.osmosis-view-switch-option:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-view-switch-option.is-active {
+	color: var(--text-on-accent);
+	background: var(--interactive-accent);
+	cursor: default;
+}
+
+.is-mobile .osmosis-view-switch {
+	margin: 0 2px;
+}
+
+.is-mobile .osmosis-view-switch-option {
+	padding: 1px var(--size-4-1);
+}

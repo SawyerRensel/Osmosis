@@ -12,7 +12,7 @@ import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
-import { TOOLBAR_GROUPS } from "./views/ToolRibbon";
+import { TOGGLE_3D_COMMAND, TOOLBAR_GROUPS } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
@@ -339,15 +339,24 @@ export default class OsmosisPlugin extends Plugin {
 				icon: def.icon,
 				checkCallback: (checking) => {
 					const view = this.app.workspace.getActiveViewOfType(MindMapView);
-					if (view) return view.runToolbarCommand(def, checking);
-					// The 2D/3D toggle also takes a 3D graph back to its mind map.
-					const graph = def.action === "toggle3D" ? this.app.workspace.getActiveViewOfType(Graph3DView) : null;
-					if (!graph) return false;
-					if (!checking) void graph.switchTo2D();
-					return true;
+					return view ? view.runToolbarCommand(def, checking) : false;
 				},
 			});
 		}
+
+		// The 2D/3D toggle: the header's 2D | 3D pill has no toolbar button, so its command stands alone (same id as before, so a hotkey on it survives).
+		this.addCommand({
+			id: TOGGLE_3D_COMMAND.id,
+			name: TOGGLE_3D_COMMAND.name,
+			icon: TOGGLE_3D_COMMAND.icon,
+			checkCallback: (checking) => {
+				const map = this.app.workspace.getActiveViewOfType(MindMapView);
+				const graph = map ? null : this.app.workspace.getActiveViewOfType(Graph3DView);
+				if (!map && !graph) return false;
+				if (!checking) void (map ? map.switchTo3D() : graph?.switchTo2D());
+				return true;
+			},
+		});
 
 		this.addCommand({
 			id: "open-graph3d",
