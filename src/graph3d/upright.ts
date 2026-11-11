@@ -83,13 +83,3 @@ vec2 uprightSpin(vec3 p, vec3 r, vec3 u) {
 	return h < 1e-6 ? vec2(1.0, 0.0) : cs / h;
 }
 `;
-
-/**
- * The side of the square a plate `width` × `height` stays inside at any spin
- * (its diagonal): squares that don't overlap hold circles that don't, so a
- * continent laid out at these sizes has no two plates overlapping however
- * each one turns.
- */
-export function spinFootprint(width: number, height: number): number {
-	return Math.hypot(width, height);
-}

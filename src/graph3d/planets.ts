@@ -22,14 +22,15 @@
  * Pure: no `obsidian` import, so it is unit-tested directly.
  */
 
-import { computeLayout, type LayoutNode } from "../layout";
+import { DEFAULT_LAYOUT_CONFIG, computeLayout, type LayoutNode } from "../layout";
 import type { BalanceMode } from "../styles";
 import type { OsmosisNode } from "../types";
-import { UNIT_SPACING, edgeDistance, type Spacing } from "./appearance";
+import { UNIT_SPACING, type Spacing } from "./appearance";
 import type { Vec3 } from "./flight";
 import { isNoteRoot, type GraphEdgeKind, type GraphNodeKind } from "./model";
+import { STYLE_PX_PER_EM } from "./near";
+import { LINE_PLATE_HEIGHT, PLATE_HEIGHT_EM } from "./plates";
 import { radialMap } from "./radial";
-import { spinFootprint } from "./upright";
 
 /** The 2D map's two directions, and the 3D-only radial one (`radial.ts`). */
 export type ContinentDirection = "left-right" | "top-down" | "radial";
@@ -103,7 +104,7 @@ export function planetTrees(
 /** A plate's footprint, in world units. */
 export type PlateSize = (id: string) => { width: number; height: number };
 
-/** A plate of a continent's 2D map: its centre relative to the continent head's, x right and y down, and its footprint (the square it stays inside at any spin, see `continentMap`). */
+/** A plate of a continent's 2D map: its centre relative to the continent head's, x right and y down, and its size. */
 export interface MapPlate {
 	id: string;
 	x: number;
@@ -120,10 +121,12 @@ export interface ContinentMap {
 	area: number;
 }
 
-/** Gap between a parent and its children: a hierarchy edge's rest length, as the flat slices use. */
-const COLUMN_GAP = edgeDistance("hierarchy");
-/** Gap between siblings (as `flatten.ts`). */
-const ROW_GAP = 1.5;
+/** World units per 2D mind-map pixel: `STYLE_PX_PER_EM` px to an em of line-plate text (as T44's node widths). */
+const PX_WORLD = LINE_PLATE_HEIGHT / PLATE_HEIGHT_EM / STYLE_PX_PER_EM;
+/** Gap between a parent and its children: the 2D mind map's own (`DEFAULT_LAYOUT_CONFIG`), in world units. */
+export const COLUMN_GAP = DEFAULT_LAYOUT_CONFIG.horizontalSpacing * PX_WORLD;
+/** Gap between siblings: the 2D mind map's own, in world units. */
+export const ROW_GAP = DEFAULT_LAYOUT_CONFIG.verticalSpacing * PX_WORLD;
 /** Clear space kept round each continent, in world units, at Continent spacing ×1. */
 export const CONTINENT_MARGIN = 6;
 
@@ -164,26 +167,21 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
 
 /**
  * A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or
- * `radialMap`), at plate footprints: each plate spins upright with the camera
- * (`upright.ts`), so it is laid out as the square it stays inside at any spin
- * (`spinFootprint`, its diagonal). Plates then never overlap whichever way
- * they turn, and the layout doesn't depend on the camera. `nodeSpacing` (the Node spacing slider)
- * scales the gaps between its plates, never the plates; `continentSpacing`
+ * `radialMap`), at plate sizes and the 2D map's gaps, so at ×1 it is as
+ * compact as the 2D map. Plates spin upright with the camera (`upright.ts`)
+ * but are laid out as they lie in the continent's frame: at an unusual roll
+ * wide neighbours can touch (accepted for compactness), and the layout never
+ * depends on the camera. `nodeSpacing` (the Node spacing slider) scales the gaps between its plates, never the plates; `continentSpacing`
  * (the Continent spacing slider) scales the clear space kept round it.
  */
 export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE, nodeSpacing = 1, continentSpacing = 1): ContinentMap {
-	const footprint: PlateSize = (id) => {
-		const { width, height } = sizeOf(id);
-		const side = spinFootprint(width, height);
-		return { width: side, height: side };
-	};
 	const sizes = new Map<string, { width: number; height: number }>();
 	const gather = (branch: PlanetBranch): void => {
-		sizes.set(branch.id, footprint(branch.id));
+		sizes.set(branch.id, sizeOf(branch.id));
 		branch.children.forEach(gather);
 	};
 	gather(head);
-	const plates = style.direction === "radial" ? radialMap(head, footprint, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
+	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
 	const margin = CONTINENT_MARGIN * continentSpacing;
 	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const p of plates) {

@@ -26,7 +26,6 @@ import type { Vec3 } from "../graph3d/flight";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { STYLE_PX_PER_EM } from "../graph3d/near";
 import type { TangentFrame } from "../graph3d/planets";
-import { spinFootprint } from "../graph3d/upright";
 
 /** At most this often (ms) while things keep moving, so a settling graph doesn't rebuild hulls every frame. */
 const REBUILD_MS = 66;
@@ -183,11 +182,8 @@ export class Graph3DBoundaries {
 			const look = owner.look.boundary!;
 			const members = group.members.map((id) => byId.get(id)!);
 			const padding = BOUNDARY_PADDING * em * (1 + group.nest);
-			// A planet's plate spins upright with the camera (`upright.ts`): wrap the square it stays inside at any spin, so the boundary needn't follow the camera.
-			const plates: BoundaryPlate[] = members.map((n) => {
-				const side = n.frame === undefined ? undefined : spinFootprint(n.shape.width, n.shape.height);
-				return { x: n.x!, y: n.y!, z: n.z!, width: side ?? n.shape.width, height: side ?? n.shape.height, right: n.frame?.right, up: n.frame?.up };
-			});
+			// A planet's plate is wrapped as it lies in its continent's frame (as `continentMap` lays it out), not as it spins for the camera, so the boundary needn't follow the camera.
+			const plates: BoundaryPlate[] = members.map((n) => ({ x: n.x!, y: n.y!, z: n.z!, width: n.shape.width, height: n.shape.height, right: n.frame?.right, up: n.frame?.up }));
 			// A patch when every plate lies on one planet's surface; otherwise a hull.
 			const places = members.map(surface);
 			const first = places[0];

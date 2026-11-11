@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Vec3 } from "./flight";
 import { tangentFrame, type TangentFrame } from "./planets";
-import { spinFootprint, uprightFrame, uprightSpin, type ViewBasis } from "./upright";
+import { uprightFrame, uprightSpin, type ViewBasis } from "./upright";
 
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
 const cross = (a: Vec3, b: Vec3): Vec3 => ({ x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x });
@@ -118,19 +118,5 @@ describe("uprightFrame", () => {
 		}
 		// A camera at the plate's centre has no screen to fit: no spin.
 		expect(uprightSpin({ x: 0, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 })).toEqual({ cos: 1, sin: 0 });
-	});
-});
-
-describe("spinFootprint", () => {
-	it("holds the plate at every spin", () => {
-		for (const [w, h] of [[20, 5], [3, 9], [7, 7]] as const) {
-			const half = spinFootprint(w, h) / 2;
-			for (let a = 0; a < Math.PI * 2; a += 0.05) {
-				for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
-					const [x, y] = [(sx * w) / 2, (sy * h) / 2];
-					expect(Math.hypot(x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a))).toBeLessThanOrEqual(half + 1e-9);
-				}
-			}
-		}
 	});
 });

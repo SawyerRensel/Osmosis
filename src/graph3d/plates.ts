@@ -15,6 +15,8 @@
 export const PLATE_PAD_X_EM = 0.4;
 /** Plate height in ems: a 1.25 em line box and 0.25 em above and below. */
 export const PLATE_HEIGHT_EM = 1.75;
+/** A line plate's height in world units (every label but a note title). */
+export const LINE_PLATE_HEIGHT = 5;
 /** Outline width, in ems. */
 export const PLATE_STROKE_EM = 0.07;
 /** Corner radius, as a share of the plate's height. */

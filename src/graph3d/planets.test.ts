@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import type { Vec3 } from "./flight";
 import {
 	CAP_FALLBACK,
+	COLUMN_GAP,
 	CONTINENT_MARGIN,
 	DEFAULT_CONTINENT_STYLE,
 	MAX_CONTINENT_ANGLE,
 	PLANET_GAP,
 	PlanetWorld,
 	RELAYOUT_MS,
+	ROW_GAP,
 	type PlanetBody,
 	MIN_PLANET_RADIUS,
 	continentMap,
@@ -28,7 +30,9 @@ import {
 	type PlanetBranch,
 } from "./planets";
 import { linkDistance } from "./appearance";
-import { uprightFrame, type ViewBasis } from "./upright";
+import { DEFAULT_LAYOUT_CONFIG } from "../layout";
+import { STYLE_PX_PER_EM } from "./near";
+import { LINE_PLATE_HEIGHT, PLATE_HEIGHT_EM } from "./plates";
 
 const len = (v: Vec3): number => Math.hypot(v.x, v.y, v.z);
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -398,11 +402,30 @@ describe("spacing sliders in Planets", () => {
 
 	it("is exactly today's map at Node spacing x1", () => {
 		expect(continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 1)).toEqual(continentMap(head, plate));
-		const at = new Map(continentMap(head, plate).plates.map((p) => [p.id, p]));
-		// Parent half-footprint, the hierarchy edge's 18, the child's half-footprint (a 20 × 5 plate spins inside a square of its diagonal).
-		const side = Math.hypot(20, 5);
-		expect(at.get("a")!.x).toBeCloseTo(side / 2 + 18 + side / 2, 9);
-		expect(at.get("b")!.y - at.get("a")!.y).toBeCloseTo(side + 1.5, 9);
+	});
+
+	it("uses the 2D mind map's gaps, at T44's 13 px per em of line-plate text", () => {
+		const pxWorld = LINE_PLATE_HEIGHT / PLATE_HEIGHT_EM / STYLE_PX_PER_EM;
+		expect(COLUMN_GAP).toBeCloseTo(DEFAULT_LAYOUT_CONFIG.horizontalSpacing * pxWorld, 9);
+		expect(ROW_GAP).toBeCloseTo(DEFAULT_LAYOUT_CONFIG.verticalSpacing * pxWorld, 9);
+		// 80 px and 8 px of a 2D map.
+		expect(COLUMN_GAP).toBeCloseTo(17.58, 2);
+		expect(ROW_GAP).toBeCloseTo(1.758, 3);
+	});
+
+	it("lays plates out at their real sizes, as compactly as the 2D map, and Node spacing scales only the gaps", () => {
+		for (const [spacing, style] of [[1, DEFAULT_CONTINENT_STYLE], [0.5, DEFAULT_CONTINENT_STYLE], [1, { direction: "left-right", balance: "both-sides" }]] as const) {
+			const at = new Map(continentMap(head, plate, style, spacing).plates.map((p) => [p.id, p]));
+			expect([...at.values()].every((p) => p.width === 20 && p.height === 5)).toBe(true);
+			// Parent to child: half-widths and the 2D level gap. Siblings: a plate's height and the 2D sibling gap.
+			expect(Math.abs(at.get("a")!.x)).toBeCloseTo(10 + COLUMN_GAP * spacing + 10, 9);
+			expect(Math.abs(at.get("c")!.x - at.get("b")!.x)).toBeCloseTo(10 + COLUMN_GAP * spacing + 10, 9);
+			if (style.balance === "one-side") expect(at.get("b")!.y - at.get("a")!.y).toBeCloseTo(5 + ROW_GAP * spacing, 9);
+		}
+		// Top-down: siblings side by side a width and the sibling gap apart, a level below their parent.
+		const down = new Map(continentMap(head, plate, { direction: "top-down", balance: "one-side" }, 0.5).plates.map((p) => [p.id, p]));
+		expect(down.get("b")!.x - down.get("a")!.x).toBeCloseTo(20 + ROW_GAP * 0.5, 9);
+		expect(down.get("a")!.y).toBeCloseTo(2.5 + COLUMN_GAP * 0.5 + 2.5, 9);
 	});
 
 	it("widens the gaps between plates with Node spacing, never the plates", () => {
@@ -410,13 +433,11 @@ describe("spacing sliders in Planets", () => {
 			let last = 0;
 			for (const spacing of [0.5, 1, 2, 3]) {
 				const map = continentMap(head, plate, style, spacing);
-				expect(map.plates.every((p) => p.width === Math.hypot(20, 5) && p.height === Math.hypot(20, 5))).toBe(true);
+				expect(map.plates.every((p) => p.width === 20 && p.height === 5)).toBe(true);
 				expect(map.reach).toBeGreaterThan(last);
 				last = map.reach;
 			}
 		}
-		const at = new Map(continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 2).plates.map((p) => [p.id, p]));
-		expect(at.get("a")!.x).toBeCloseTo(Math.hypot(20, 5) + 36, 9);
 	});
 
 	it("grows the planet with Node spacing, and x1 is today's radius", () => {
@@ -732,7 +753,7 @@ describe("spreadContinent", () => {
 	});
 });
 
-describe("plates spun upright", () => {
+describe("plates at their continent's frame", () => {
 	// Mixed sizes: wide one-liners, tall panels, a square.
 	const sizes = [{ width: 24, height: 1.4 }, { width: 9, height: 7 }, { width: 14, height: 3 }, { width: 5, height: 5 }];
 	const sizeOf = (id: string): { width: number; height: number } => sizes[[...id].reduce((sum, c) => sum + c.charCodeAt(0), 0) % sizes.length]!;
@@ -755,45 +776,25 @@ describe("plates spun upright", () => {
 		});
 	};
 
-	it("keeps every two plates of a continent a spin apart: their circles round them never meet", () => {
-		for (const style of styles) {
-			const layout = layoutPlanet(tree, sizeOf, style);
-			for (const head of ["a", "b", "c"]) {
-				const places = [...layout.places.entries()].filter(([, p]) => p.continent === head);
-				for (let i = 0; i < places.length; i++) {
-					for (let j = i + 1; j < places.length; j++) {
-						const [[ia, a], [ib, b]] = [places[i]!, places[j]!];
-						const [sa, sb] = [sizeOf(ia), sizeOf(ib)];
-						const gap = len({ x: b.offset.x - a.offset.x, y: b.offset.y - a.offset.y, z: b.offset.z - a.offset.z });
-						expect(gap).toBeGreaterThanOrEqual((Math.hypot(sa.width, sa.height) + Math.hypot(sb.width, sb.height)) / 2 - 1e-6);
-					}
+	it("leaves no two plates of a continent overlapping as they lie in its frame", () => {
+		for (const style of [...styles, { direction: "left-right", balance: "both-sides" } as const]) {
+			for (const spacing of [0.5, 1]) {
+				const layout = layoutPlanet(tree, sizeOf, style, 0, undefined, spacing);
+				for (const head of ["a", "b", "c"]) {
+					const plates = [...layout.places.entries()].filter(([, p]) => p.continent === head).map(([id, p]) => ({ c: p.offset, r: p.right, u: p.up, w: sizeOf(id).width, h: sizeOf(id).height }));
+					for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) expect(overlap(plates[i]!, plates[j]!)).toBe(false);
 				}
 			}
 		}
 	});
 
-	it("leaves no plates overlapping once spun upright, from any camera", () => {
-		const layout = layoutPlanet(tree, sizeOf, DEFAULT_CONTINENT_STYLE);
-		const r = layout.radius;
-		for (const [ex, ey, ez, roll] of [[0, 0, 4, 0], [3, 2, -1, 1.3], [-1, 4, 0.5, 2.6], [0.2, -3, 2, -0.8]] as const) {
-			const eye = { x: ex * r, y: ey * r, z: ez * r };
-			const back = { x: ex, y: ey, z: ez };
-			const l = len(back);
-			const b = { x: ex / l, y: ey / l, z: ez / l };
-			const r0 = tangentFrame(b).right;
-			const u0 = tangentFrame(b).up;
-			const right = { x: Math.cos(roll) * r0.x + Math.sin(roll) * u0.x, y: Math.cos(roll) * r0.y + Math.sin(roll) * u0.y, z: Math.cos(roll) * r0.z + Math.sin(roll) * u0.z };
-			const view: ViewBasis = { eye, right, up: { x: b.y * right.z - b.z * right.y, y: b.z * right.x - b.x * right.z, z: b.x * right.y - b.y * right.x }, back: b };
-			for (const head of ["a", "b", "c"]) {
-				const plates = [...layout.places.entries()]
-					.filter(([, p]) => p.continent === head)
-					.map(([id, p]) => {
-						const spun = uprightFrame(p, p.offset, view);
-						return { c: p.offset, r: spun.right, u: spun.up, w: sizeOf(id).width, h: sizeOf(id).height };
-					});
-				for (let i = 0; i < plates.length; i++) for (let j = i + 1; j < plates.length; j++) expect(overlap(plates[i]!, plates[j]!)).toBe(false);
-			}
-		}
+	it("packs a continent of siblings as tightly as the 2D map: a plate's height and the sibling gap apart", () => {
+		const fan = { core: "r", continents: [{ id: "h", children: Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, children: [] })) }] };
+		const layout = layoutPlanet(fan, plate);
+		const [a, b] = [layout.places.get("s0")!.offset, layout.places.get("s1")!.offset];
+		// On the sphere: the arc between neighbours is close to the flat 5 + ROW_GAP (the wrap only bends it).
+		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeCloseTo(5 + ROW_GAP, 0);
+		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeLessThan(Math.hypot(20, 5));
 	});
 });
 

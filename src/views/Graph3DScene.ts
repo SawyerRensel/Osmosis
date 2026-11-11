@@ -37,6 +37,7 @@ import { cssColor, nodeLook, type NodeLook } from "../graph3d/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
+import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { grabPoint, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
@@ -303,9 +304,8 @@ const MIST_EASE = 0.25;
 const FLIGHT_SCALE_STEP = 1.25;
 const FLIGHT_SCALE_LIMIT = 8;
 const SPEED_READOUT_MS = 1200;
-/** Plate heights in world units: note titles, and every other label. */
+/** Plate heights in world units: note titles, and every other label (`LINE_PLATE_HEIGHT`, in `plates.ts`). */
 const CORE_PLATE_HEIGHT = 10;
-const LINE_PLATE_HEIGHT = 5;
 /** Widest plate text, in ems, before it is cut with an ellipsis. */
 const CORE_PLATE_MAX_EM = 30;
 const LINE_PLATE_MAX_EM = 20;
