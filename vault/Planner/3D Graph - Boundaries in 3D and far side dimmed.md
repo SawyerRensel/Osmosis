@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Read node styles]]"
   - "[[3D Graph - Planets mode]]"
   - "[[3D Graph - Planets continent frames]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T16:40:00.000Z"
+date_start_scheduled: "2026-11-11T15:51:10.000Z"
+date_start_actual: "2026-11-11T15:51:10.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -107,3 +107,46 @@ Manual test (fixture: a styled note with a boundary on one branch, plus the Anch
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `fd22dd5` on `feature/3d-boundaries-far-side-dim` (stacked on [[Mind Map - Boundary (cloud) style]]).
+
+### Approach
+
+- **Far side.** Planet plates used to be collapsed off screen when seen from behind (`plateBack` in `Graph3DPlates`). Now the plate background is drawn with its colour mixed `FAR_SIDE_DIM` (0.7, same sense as `FOCUS_DIM_BEHIND`) of the way to the background, while its glyphs keep collapsing: no text on a plate's back. Edges get a per-vertex `aCore` attribute (the vertex's planet core, w = 1 on a planet) and the edge shader dims a vertex whose outward direction from its core faces away from the camera, so edges dim per vertex as the camera orbits, with no CPU rewrite. Pure rule and GLSL twin in `src/graph3d/far-side.ts` (`onFarSide`, `farSideKeep`, `showsText`, `FAR_SIDE_GLSL`).
+- **Boundaries.** `NodeLook.boundary` (from T50) is drawn by `Graph3DBoundaries`: every boundary in ONE indexed mesh and one draw call, outer boundaries first so inner ones lie on top. Members = the node plus every loaded node under it via hierarchy edges (`boundaryGroups`). Geometry in pure `src/graph3d/boundary3d.ts`:
+  - **Hull** (Organic, Flat, and any boundary whose members are not all surface plates of one planet, e.g. on a planet's core): 3D convex hull (three's `ConvexHull`) of each plate grown into a rounded cylinder about world vertical (billboard plates turn about it as you orbit). Smooth normals. Only its back faces are drawn, so it sits *behind* the plates it wraps like the 2D cloud; the outline is a screen-px rim where the hull turns edge-on.
+  - **Patch** (Planets, all members on one planet): 2D hull of the plates' corners in an azimuthal equidistant map about the subtree's mean direction (the inverse of `wrapPoint`), rounded by the padding, wrapped back onto the sphere in rings so it hugs the surface. The plate pull draws plates over it. The outline is drawn from a per-vertex distance-from-edge; dashed / dotted follow the 2D pattern (4 on 3 off / a dot every 2.5 widths) by arc length. Far-side patches dim by the same rule.
+  - Padding = the 2D `BOUNDARY_PADDING` (12 px) in em via `STYLE_PX_PER_EM`, × (1 + levels of boundary nested inside), so nested boundaries never touch.
+- Rebuilt only when the scene is dirty (positions/styles changed), throttled to ≥ 66 ms and ≥ 10× the last build's time. Measured: 50 plates ≈ 2–4 ms, 300 ≈ 5 ms, 1,000 ≈ 18 ms (hull). Graphs with no boundary pay nothing (mesh hidden, no build).
+
+### Decisions worth remembering
+
+- **Far-side nodes stay non-interactive** (existing rule: a back-facing planet plate is not picked; no near panel). Least change; the ticket's out-of-scope says far side isn't meant to be readable.
+- **Far-side plates now cut holes in nearer-than-them panels** (the occlusion skip for back plates was removed in `Graph3DNear.place`), since they are drawn and "a nearer thing simply covers a farther one".
+- **Unset boundary colour = the node's own 3D colour** (`EngineNode.color`, the colour-by colour), not the theme accent: matches "tinted by the node's colour" and what you see on the plate outline.
+- **Hull outline is always solid** in Organic/Flat (a rim on a 3D surface has no path to dash along); `none` / width 0 still removes it. Patches honour dashed/dotted.
+- **Subtree = outline (hierarchy edges) only**; embedded notes (embed edges) are not wrapped, so a boundary never spans planets.
+- **Hull drawn back faces only**: when the camera flies inside a hull, the whole view behind is tinted at the fill opacity (no special case).
+- No decluttering, no position changes; front-facing rendering untouched (only the `plateBack` branch changed).
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/far-side.ts` | New: `FAR_SIDE_DIM`, `onFarSide`, `farSideKeep`, `showsText`, `FAR_SIDE_GLSL`. |
+| `src/graph3d/boundary3d.ts` (+ test) | New: `boundaryGroups`, `hullMesh`, `patchMesh`. |
+| `src/views/Graph3DBoundaries.ts` | New: single-mesh boundary renderer (shader, throttled rebuild, GPU buffer release). |
+| `src/views/Graph3DPlates.ts` | `fogVertex(hideBack)`: back plates dimmed, glyphs still collapsed. |
+| `src/views/Graph3DScene.ts` | Edge `aCore` attribute + far-side edge shader patch (`dimWithFocus(..., farSide)`), `coreOf`, `surfaceOf`, `hierarchyEnds`, boundaries mesh wired into tick/dispose. |
+| `src/views/Graph3DNear.ts` | Panels use `showsText`; back plates now count as occluders. |
+| `e2e/fixtures/graph3d/Boundary Clouds 3D.md` → `vault/tests/graph3d/` | Fixture. |
+
+### Fixture
+
+`vault/tests/graph3d/Boundary Clouds 3D.md`: "Moorings" (default tinted by its blue fill) with a nested dashed orange boundary on "Visitor berths"; "Boatyard" dotted, tinted by its green border; a leaf boundary on "Shackles" (purple, no outline); "Chandlery" otherwise plain.
+
+### Not verified
+
+I could not see Obsidian: the shaders compile only at runtime (typecheck/lint/build pass), the look of the hull rim (fwidth on smooth normals) and of the patch on a strongly curved small planet, and frame rate on the stress web are unchecked.
