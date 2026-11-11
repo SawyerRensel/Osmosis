@@ -159,6 +159,15 @@ describe("planSelectionLink", () => {
 		expect(plan?.skipped).toBe(1);
 	});
 
+	it("numbers each note's links on from its highest existing ^N marker, per source note", () => {
+		const aliased = (_from: string, subpath: string, alias: string): string => `[[Deck${subpath}|${alias}]]`;
+		const galley = "# Galley\n\n- Stove [[Deck#^old|^2]]\n- Kettle\n\t- Whistle\n- Pantry\n";
+		const notes = notesOf({ "Deck.md": "# Deck\n\n- Sheet\n- Cleat ^cleat\n- Fender\n", "Galley.md": galley });
+		const plan = planSelectionLink(notes, [...pick(notes, "Galley.md", "Kettle", "Pantry"), ...pick(notes, "Deck.md", "Sheet")], { path: "Deck.md", node: line(notes, "Deck.md", "Cleat") }, aliased);
+		expect(out(plan?.texts.get("Galley.md"))).toBe("# Galley\n\n- Stove [[Deck#^old|^2]]\n- Kettle [[Deck#^cleat|^3]]\n\t- Whistle\n- Pantry [[Deck#^cleat|^4]]\n");
+		expect(out(plan?.texts.get("Deck.md"))).toBe("# Deck\n\n- Sheet [[Deck#^cleat|^1]]\n- Cleat ^cleat\n- Fender\n");
+	});
+
 	it("links to a note: its own lines are skipped, and nothing is stamped", () => {
 		const notes = notesOf({ "Deck.md": DECK, "Galley.md": GALLEY });
 		const plan = planSelectionLink(notes, [...pick(notes, "Deck.md", "Sheet"), ...pick(notes, "Galley.md", "Pantry")], { path: "Deck.md", node: null }, link);

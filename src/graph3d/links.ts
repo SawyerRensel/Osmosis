@@ -104,3 +104,24 @@ export function frontPanelAt(x: number, y: number, panels: readonly DrawnPanel[]
 	}
 	return front.id;
 }
+
+/**
+ * The number for the next node link written into a note: one past the highest
+ * `^N` marker already used as a link's display text there (`[[Note#^id|^N]]`,
+ * or `[^N](…)` when the vault writes markdown links), 1 when there is none.
+ * Markers are never renumbered, so a deleted link leaves a gap and the next
+ * link still takes the next number. The marker is plain text: `[^1]` inside a
+ * wikilink would end it at its `]]`.
+ */
+export function nextLinkMarker(content: string): number {
+	let highest = 0;
+	for (const match of content.matchAll(/\|\^(\d+)\]\]|\[\^(\d+)\]\(/g)) {
+		highest = Math.max(highest, Number(match[1] ?? match[2]));
+	}
+	return highest + 1;
+}
+
+/** A node link's display text: `^N`. */
+export function linkMarker(n: number): string {
+	return `^${n}`;
+}

@@ -26,6 +26,8 @@ import { planStyleKeys } from "../mindmap-style-key";
 import { selectAfterDelete } from "../select-after-delete";
 import { enterSavesEdit } from "../edit-keys";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
+import { lineAt } from "../heading-links";
+import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks } from "../heading-link-update";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
@@ -7899,9 +7901,18 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// rename is just the one line.
 		const ancestors: OsmosisNode[] = [];
 		for (let p = target.parent; p; p = p.parent) ancestors.push(p.source);
-		const { text: renamed, retyped } = edit.renameInFile(content, src, ancestors, newLine);
+		const result = edit.renameInFile(content, src, ancestors, newLine);
+		const retyped = result.retyped;
+		let renamed = result.text;
+		// A renamed heading takes its links along (when Obsidian's link
+		// auto-update is on): this note's own in the same write, other notes'
+		// after it.
+		const headingRename = planHeadingRename(this.app, file, lineAt(content, src.range.start), newLine, renamed);
+		const ownLinks = headingRename === null ? null : rewriteOwnLinks(this.app, headingRename, renamed);
+		if (ownLinks !== null) renamed = ownLinks.text;
 		if (!retyped) {
 			await this.writeNodeFile(src, renamed);
+			if (headingRename !== null) await rewriteVaultLinks(this.app, this.edits, headingRename, ownLinks?.count ?? 0);
 			return;
 		}
 		// The node may have moved, so its old offset no longer finds it; match

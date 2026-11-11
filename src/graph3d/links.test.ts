@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { LINK_REACH, frontPanelAt, linkClickAction, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
+import { LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
 
 const plain: LinkClickInput = { click: true, link: { external: false }, isFocus: true, focusDistance: 0, mod: false, alt: false, panKey: false };
 
@@ -72,5 +72,27 @@ describe("frontPanelAt", () => {
 	it("leaves a nearer node's plate to its panel", () => {
 		const panels = [panel("far", 0, 0, 30), panel("near", 40, 20, 10)];
 		expect(frontPanelAt(50, 25, panels, [plate("near", 50, 25, 10)])).toBe("near");
+	});
+});
+
+describe("nextLinkMarker", () => {
+	it("is 1 in a note with no markers", () => {
+		expect(nextLinkMarker("")).toBe(1);
+		expect(nextLinkMarker("- Sheet [[Deck#^cleat]]\n- Fender [[Deck|the deck]]\n")).toBe(1);
+	});
+
+	it("takes one past the highest marker, leaving gaps where links were deleted", () => {
+		expect(nextLinkMarker("- A [[Deck#^a|^1]]\n- B [[Deck#^b|^2]]\n")).toBe(3);
+		expect(nextLinkMarker("- B [[Deck#^b|^2]]\n")).toBe(3);
+		expect(nextLinkMarker("- A [[Deck#^a|^7]] and [[Galley|^3]]\n")).toBe(8);
+	});
+
+	it("counts markdown-style marker links, and ignores markers that are not a link's whole display text", () => {
+		expect(nextLinkMarker("- A [^4](Deck.md#^a)\n")).toBe(5);
+		expect(nextLinkMarker("- A [[Deck#^a|see ^9]] ^12 [^5]\n[^5]: a footnote\n")).toBe(1);
+	});
+
+	it("writes the marker as plain text", () => {
+		expect(linkMarker(3)).toBe("^3");
 	});
 });

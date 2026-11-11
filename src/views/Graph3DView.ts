@@ -11,7 +11,9 @@ import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, 
 import { facingPhase } from "../graph3d/flatten";
 import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
-import type { LinkClick } from "../graph3d/links";
+import { linkMarker, nextLinkMarker, type LinkClick } from "../graph3d/links";
+import { lineAt } from "../heading-links";
+import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks } from "../heading-link-update";
 import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import type { Arrow } from "../graph3d/arrow-nav";
@@ -929,9 +931,15 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		}
 		const { file, content, line, root } = fresh;
 		const { text } = renameInFile(content, line, ancestorsOf(root, line.id), edited);
-		const out = normalizeWrite(text);
+		let out = normalizeWrite(text);
 		if (out === content) return;
-		await this.commitEdit(file, out, node, locateLine(out, restoreEditedLine(line, edited), line.range.start), true);
+		// A renamed heading takes its links along (when Obsidian's link auto-update is on): this note's own in the same write, other notes' after it.
+		const written = restoreEditedLine(line, edited);
+		const rename = planHeadingRename(this.app, file, lineAt(content, line.range.start), written, out);
+		const own = rename === null ? null : rewriteOwnLinks(this.app, rename, out);
+		if (own !== null) out = own.text;
+		await this.commitEdit(file, out, node, locateLine(out, written, line.range.start), true);
+		if (rename !== null) await rewriteVaultLinks(this.app, this.edits, rename, own?.count ?? 0);
 	}
 
 	/**
@@ -970,7 +978,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
 				return;
 			}
-			const text = this.app.fileManager.generateMarkdownLink(toFile, a.file.path, sub.subpath);
+			const text = this.app.fileManager.generateMarkdownLink(toFile, a.file.path, sub.subpath, linkMarker(nextLinkMarker(a.content)));
 			const start = a.line.range.start;
 			this.editOwner = a.file.path;
 			this.lastEditPath = a.file.path;
@@ -1618,7 +1626,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				new Notice("Osmosis: that line has changed; try again");
 				return;
 			}
-			const plan = planSelectionLink(notes, picked, { path: toFile.path, node: target }, (fromPath, subpath) => this.app.fileManager.generateMarkdownLink(toFile, fromPath, subpath));
+			const plan = planSelectionLink(notes, picked, { path: toFile.path, node: target }, (fromPath, subpath, alias) => this.app.fileManager.generateMarkdownLink(toFile, fromPath, subpath, alias));
 			if (plan === null) {
 				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
 				return;

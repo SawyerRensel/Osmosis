@@ -12,6 +12,7 @@ import { dropContext, inferIndentDepth, inferIndentType, inferRootHeadingLevel, 
 import type { OsmosisNode } from "../types";
 import { ancestorsOf, appendInsertion, insertAll, linkSubpath, moveGap, preorder, stampInsertion, type Insertion, type MovePlace } from "./edit";
 import { topmostLines } from "./selection";
+import { linkMarker, nextLinkMarker } from "./links";
 
 /** A note as read fresh for the edit: its text and its parse. */
 export interface PlanNote {
@@ -259,12 +260,13 @@ export interface SelectionLink extends SelectionEdit {
  * is linked, a line under another selected line too: a link is the line's own,
  * not its subtree's. The target needs a block ID at most once (`linkSubpath`:
  * an ID it has is reused). `linkText` writes the link from a note, given the
- * subpath. Skipped: the target line itself, a line in the target's own note
+ * subpath and the link's display text (`^N`, the next marker in that note,
+ * counted on per link: `nextLinkMarker`). Skipped: the target line itself, a line in the target's own note
  * when the target is that note, and a line that cannot take a link (a code
  * block, table, quote or embed). `lines` lists the linked lines, then the
  * target if it was stamped. Null when the target cannot take a block ID.
  */
-export function planSelectionLink(notes: ReadonlyMap<string, PlanNote>, selected: readonly PickedLine[], target: MoveTarget, linkText: (fromPath: string, subpath: string) => string): SelectionLink | null {
+export function planSelectionLink(notes: ReadonlyMap<string, PlanNote>, selected: readonly PickedLine[], target: MoveTarget, linkText: (fromPath: string, subpath: string, alias: string) => string): SelectionLink | null {
 	// A note (or file) target needs no text of its own: it is linked by name.
 	const dest = notes.get(target.path);
 	const sub = target.node === null ? { subpath: "", stamp: null } : dest === undefined ? null : linkSubpath(target.node, dest.root, dest.content);
@@ -272,12 +274,17 @@ export function planSelectionLink(notes: ReadonlyMap<string, PlanNote>, selected
 	const edits = new Map<string, (Insertion & { line: OsmosisNode })[]>();
 	const add = (path: string, edit: Insertion, line: OsmosisNode): void => void edits.set(path, [...(edits.get(path) ?? []), { ...edit, line }]);
 	let skipped = 0;
+	const markers = new Map<string, number>();
 	for (const { path, line } of selected) {
 		const note = notes.get(path);
 		const own = path === target.path && (target.node === null || line === target.node);
-		const edit = note === undefined || own ? null : appendInsertion(note.content, line, linkText(path, sub.subpath));
+		const marker = note === undefined ? 0 : (markers.get(path) ?? nextLinkMarker(note.content));
+		const edit = note === undefined || own ? null : appendInsertion(note.content, line, linkText(path, sub.subpath, linkMarker(marker)));
 		if (edit === null) skipped++;
-		else add(path, edit, line);
+		else {
+			add(path, edit, line);
+			markers.set(path, marker + 1);
+		}
 	}
 	if (edits.size > 0 && target.node !== null && sub.stamp !== null) add(target.path, stampInsertion(target.node, sub.stamp), target.node);
 	const texts = new Map<string, string>();

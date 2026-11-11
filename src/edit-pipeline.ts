@@ -41,6 +41,20 @@ export class EditPipeline {
 	}
 
 	/**
+	 * Rewrite a file atomically (`vault.process`), recording the change. Like
+	 * `processFrontMatter`, doesn't call `beforeWrite`: it is for notes the view
+	 * is not built from, whose reload the view's own "modify" handler decides.
+	 */
+	async process(file: TFile, fn: (data: string) => string): Promise<void> {
+		let before = "";
+		const after = await this.app.vault.process(file, (data) => {
+			before = data;
+			return fn(data);
+		});
+		this.recorder.record(file.path, before, after);
+	}
+
+	/**
 	 * `processFrontMatter`, recording the change. Doesn't call `beforeWrite`:
 	 * callers that need the reload skipped mark the write themselves first.
 	 * Resolves with the file's content afterwards.
