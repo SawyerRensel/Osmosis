@@ -5590,21 +5590,11 @@ export class MindMapView extends ItemView {
 		// come off it, and the pre-guard node's parent belongs to the layout the
 		// freshness check may have just replaced.
 		if (this.selectedNodeIds.size > 1 && target.parent) {
-			const siblings = target.parent.source.children;
-			const selectedIndices = this.getSelectedSiblingIndices(siblings);
-			if (selectedIndices.length === 0) return;
-
-			const firstSrc = siblings[selectedIndices[0]!]!;
-			const lastSrc =
-				siblings[selectedIndices[selectedIndices.length - 1]!]!;
-			if (
-				!this.ensureSameFileEdit(
-					selectedIndices.map((i) => siblings[i]!),
-				)
-			)
-				return;
-			blockStart = firstSrc.range.start;
-			blockEnd = this.subtreeEnd(lastSrc);
+			// The shared rule (the 3D graph's Ctrl+Enter uses it too).
+			const wrapped = edit.selectedSiblings(target.parent.source.children, this.selectedNodeIds);
+			if (wrapped.length === 0) return;
+			if (!this.ensureSameFileEdit(wrapped)) return;
+			({ start: blockStart, end: blockEnd } = edit.subtreeSpan(wrapped));
 		} else {
 			blockStart = src.range.start;
 			blockEnd = this.subtreeEnd(src);

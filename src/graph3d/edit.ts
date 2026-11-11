@@ -6,7 +6,7 @@
 
 import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
-import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, subtreeEnd, type Spliced } from "../mindmap-edit";
+import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, selectedSiblings, subtreeSpan, type Spliced } from "../mindmap-edit";
 import { selectAfterDelete } from "../select-after-delete";
 import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
@@ -296,23 +296,28 @@ export interface StructuralPlan {
 	select: number | null;
 	/** The selected line is new and empty, so the editor opens on it at once. */
 	fresh: boolean;
-	/** An existing line whose subtree moved or was re-levelled (its IDs change with its depth), and where it starts in `text`. */
-	moved: { node: OsmosisNode; start: number } | null;
+	/**
+	 * An existing line whose subtree moved or was re-levelled (its IDs change with its depth), and where it starts in `text`;
+	 * `following` are the siblings after it that moved with it as one span (a multi-selection wrapped under a new parent).
+	 */
+	moved: { node: OsmosisNode; following: OsmosisNode[]; start: number } | null;
 }
 
 /**
  * What `action` does to `line`, a node of `root`, in `content`, or null when
  * there is nothing to do (no sibling to move past, nothing to indent under, a
  * heading already at the root). The same computation the mind map makes, one
- * node at a time.
+ * node at a time, except that Ctrl+Enter (`parent`) wraps the span from the
+ * first to the last of `selected` (IDs of lines in this note) that are siblings
+ * of `line`, as the mind map does; selected lines elsewhere are left alone.
  */
-export function planStructural(action: StructuralAction, content: string, root: OsmosisNode, line: OsmosisNode): StructuralPlan | null {
+export function planStructural(action: StructuralAction, content: string, root: OsmosisNode, line: OsmosisNode, selected: ReadonlySet<string> = new Set()): StructuralPlan | null {
 	const ancestors = ancestorsOf(root, line.id);
 	const parent = ancestors[0];
 	if (parent === undefined) return null;
 	const siblings = parent.children;
 	const index = siblings.indexOf(line);
-	const moved = (edit: { text: string; start: number }): StructuralPlan => ({ text: edit.text, select: edit.start, fresh: false, moved: { node: line, start: edit.start } });
+	const moved = (edit: { text: string; start: number }): StructuralPlan => ({ text: edit.text, select: edit.start, fresh: false, moved: { node: line, following: [], start: edit.start } });
 	switch (action) {
 		case "child": {
 			const edit = insertChild(content, line);
@@ -323,8 +328,10 @@ export function planStructural(action: StructuralAction, content: string, root: 
 			return { text: edit.text, select: edit.start, fresh: true, moved: null };
 		}
 		case "parent": {
-			const edit = insertParent(content, line, { start: line.range.start, end: subtreeEnd(line) });
-			return { text: edit.text, select: edit.start, fresh: true, moved: { node: line, start: edit.moved ?? edit.start } };
+			const span = selectedSiblings(siblings, new Set([...selected, line.id]));
+			const [first = line, ...following] = span;
+			const edit = insertParent(content, line, subtreeSpan(span.length === 0 ? [line] : span));
+			return { text: edit.text, select: edit.start, fresh: true, moved: { node: first, following, start: edit.moved ?? edit.start } };
 		}
 		case "delete": {
 			// The previous sibling, else the parent (`selectAfterDelete`). Both come before the cut, so they stay where they were.
@@ -403,11 +410,31 @@ export function preorder(node: OsmosisNode): OsmosisNode[] {
  */
 export function carryPairs(old: OsmosisNode, root: OsmosisNode, start: number): { from: OsmosisNode; to: OsmosisNode }[] {
 	const now = nodeAtStart(root, start);
-	if (now === null) return [];
+	return now === null ? [] : pairSubtrees(old, now);
+}
+
+/** `old`'s subtree paired line by line with `now`'s, or just the two roots when the shapes differ. */
+function pairSubtrees(old: OsmosisNode, now: OsmosisNode): { from: OsmosisNode; to: OsmosisNode }[] {
 	const before = preorder(old);
 	const after = preorder(now);
 	if (before.length !== after.length) return [{ from: old, to: now }];
 	return before.map((from, i) => ({ from, to: after[i]! }));
+}
+
+/**
+ * {@link carryPairs} for a run of adjacent siblings (`olds`, in order) that now
+ * stand together under one parent, the first starting at `start` in `root`:
+ * each pairs with the sibling now at the same place in that run.
+ */
+export function carrySiblings(olds: readonly OsmosisNode[], root: OsmosisNode, start: number): { from: OsmosisNode; to: OsmosisNode }[] {
+	const first = nodeAtStart(root, start);
+	const parent = first === null ? undefined : ancestorsOf(root, first.id)[0];
+	if (first === null || parent === undefined) return [];
+	const at = parent.children.indexOf(first);
+	return olds.flatMap((old, i) => {
+		const now = parent.children[at + i];
+		return now === undefined ? [] : pairSubtrees(old, now);
+	});
 }
 
 /**

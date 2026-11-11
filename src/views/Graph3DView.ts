@@ -16,7 +16,7 @@ import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../g
 import type { Arrow } from "../graph3d/arrow-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { doubleClickEdit } from "../edit-keys";
-import { ancestorsOf, appendToLine, carryPairs, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
+import { ancestorsOf, appendToLine, carryPairs, carrySiblings, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
 import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../graph3d/selection-edit";
@@ -267,7 +267,7 @@ export class Graph3DView extends ItemView {
 			}
 			const node = this.scene?.focusedNode() ?? null;
 			if (node === null || node.kind !== "line") return undefined;
-			void this.structural(action, node);
+			void this.structural(action, node, false, selected);
 			return false;
 		};
 		this.scope.register([], "Tab", structuralKey("child"));
@@ -1027,7 +1027,7 @@ export class Graph3DView extends ItemView {
 	 * re-levelled (its IDs change with its depth, and all its descendants'
 	 * with it) keeps its place, and so does everything under it.
 	 */
-	private async structural(action: StructuralAction, node: GraphNode, fromMenu = false): Promise<void> {
+	private async structural(action: StructuralAction, node: GraphNode, fromMenu = false, picked: readonly GraphNode[] = []): Promise<void> {
 		if (this.editBlocked() || this.structuring || this.editor.isOpen) return;
 		this.structuring = true;
 		try {
@@ -1037,7 +1037,10 @@ export class Graph3DView extends ItemView {
 				return;
 			}
 			const { file, content, line, root } = fresh;
-			const plan = planStructural(action, content, root, line);
+			// Only the selected lines of this note can be wrapped with it (Ctrl+Enter).
+			const selectedIds = new Set<string>();
+			for (const pick of picked) if (pick.kind === "line" && pick.path === file.path && pick.source !== undefined) selectedIds.add(pick.source.id);
+			const plan = planStructural(action, content, root, line, selectedIds);
 			if (plan === null) {
 				if (fromMenu) new Notice("Osmosis: nothing to do there");
 				return;
@@ -1053,7 +1056,7 @@ export class Graph3DView extends ItemView {
 			if (plan.moved !== null && movedAt !== null) {
 				const graphIds = new Map<string, string>();
 				for (const n of this.model?.nodes ?? []) if (n.kind === "line" && n.path === file.path && n.source !== undefined) graphIds.set(n.source.id, n.id);
-				for (const { from, to } of carryPairs(plan.moved.node, this.cache.get(file.path, out).root, movedAt)) {
+				for (const { from, to } of carrySiblings([plan.moved.node, ...plan.moved.following], this.cache.get(file.path, out).root, movedAt)) {
 					edited.push({ path: file.path, start: to.range.start, from: graphIds.get(from.id) });
 				}
 			}

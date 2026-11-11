@@ -492,6 +492,20 @@ export function subtreeSpan(nodes: readonly OsmosisNode[]): Range {
 }
 
 /**
+ * The run of siblings a multi-selection takes in: from the first selected
+ * sibling to the last, in order, with any unselected siblings between them (a
+ * contiguous span, as Ctrl+Enter wraps and the mind map has always done).
+ * Empty when none of `siblings` is selected.
+ */
+export function selectedSiblings(siblings: readonly OsmosisNode[], selected: ReadonlySet<string>): OsmosisNode[] {
+	const first = siblings.findIndex((sibling) => selected.has(sibling.id));
+	if (first === -1) return [];
+	let last = siblings.length - 1;
+	while (!selected.has(siblings[last]!.id)) last--;
+	return siblings.slice(first, last + 1);
+}
+
+/**
  * Widen a removal span to swallow the blank lines around it, keeping a single
  * `\n` separator between what remains on either side. Without this, repeated
  * moves accumulate blank lines at every site a node has vacated.
@@ -574,6 +588,15 @@ export function reindentSubtree(
 	const newChildBase =
 		newType === "heading" || newType === "root" || newType === "paragraph" ? 0 : newDepth + 1;
 	const childDepthDelta = newChildBase - oldChildBase;
+	// A heading that stays a heading carries its sub-headings with it: they
+	// shift by however many levels the heading itself moved, so the relative
+	// depth survives. (Heading children start at base 0, so childDepthDelta
+	// is 0 here and says nothing about it.) Every other conversion keeps the
+	// existing child delta.
+	const headingDelta =
+		originalNode.type === "heading" && newType === "heading"
+			? newDepth - originalNode.depth
+			: childDepthDelta;
 
 	let inFence = false;
 	let fenceChar = "";
@@ -623,7 +646,7 @@ export function reindentSubtree(
 				const oldLevel = headingMatch[1].length;
 				const newLevel = Math.max(
 					1,
-					Math.min(6, oldLevel + childDepthDelta),
+					Math.min(6, oldLevel + headingDelta),
 				);
 				result.push(
 					"#".repeat(newLevel) + " " + (headingMatch[2] ?? ""),

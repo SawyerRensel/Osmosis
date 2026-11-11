@@ -3,7 +3,7 @@ import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import { normalizeWrite, renameInFile, toggleCheckboxLine } from "../mindmap-edit";
 import { buildGraph } from "./model";
-import { ancestorsOf, appendToLine, bandOffset, carryPairs, editorAnchor, findNodeById, fitEditWidth, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
+import { ancestorsOf, appendToLine, bandOffset, carryPairs, carrySiblings, editorAnchor, findNodeById, fitEditWidth, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, nodeAtStart, planStructural, preorder, stampBlockId, visibleBand, type StructuralAction } from "./edit";
 
 const parser = new OsmosisParser();
 
@@ -370,6 +370,39 @@ describe("planStructural", () => {
 		expect(out.plan.moved?.node.content).toBe("Bow line");
 	});
 
+	it("parent with several selected siblings wraps the span from the first to the last, as the mind map does", () => {
+		// Bow line and Stern line selected, Bow line primary: both go under one new parent, with Stern's subtree.
+		const plan = planStructural("parent", md, tree, lineOf("Bow line"), new Set([lineOf("Bow line").id, lineOf("Stern line").id]))!;
+		const text = normalizeWrite(plan.text);
+		expect(text).toContain("## Moorings\n\n- \n\t- Bow line\n\t- Stern line ^stern\n\t\t- Spring\n\t\t- Breast\n\n## Fuel");
+		expect(plan.moved?.node.content).toBe("Bow line");
+		expect(plan.moved?.following.map((n) => n.content)).toEqual(["Stern line"]);
+	});
+
+	it("parent wraps the whole span, unselected siblings between the ends included", () => {
+		const list = "- A\n- B\n- C\n- D\n";
+		const root = parser.parse(list, "L.md").root;
+		const [a, b, c, d] = root.children;
+		const plan = planStructural("parent", list, root, c!, new Set([c!.id, a!.id]))!;
+		expect(plan.text).toBe("- \n\t- A\n\t- B\n\t- C\n- D\n");
+		expect(plan.moved?.node).toBe(a);
+		expect(plan.moved?.following).toEqual([b, c]);
+		expect(d).toBeDefined();
+	});
+
+	it("parent leaves selected lines that are not siblings of the primary alone", () => {
+		const plan = planStructural("parent", md, tree, lineOf("Bow line"), new Set([lineOf("Bow line").id, lineOf("Spring").id, lineOf("Diesel").id]))!;
+		const text = normalizeWrite(plan.text);
+		expect(text).toContain("- \n\t- Bow line\n- Stern line ^stern\n\t- Spring");
+		expect(text).toContain("## Fuel\n\n- Diesel");
+	});
+
+	it("parent with a selection of one is the single-line wrap", () => {
+		const alone = planStructural("parent", md, tree, lineOf("Bow line"))!;
+		const set = planStructural("parent", md, tree, lineOf("Bow line"), new Set([lineOf("Bow line").id]))!;
+		expect(set.text).toBe(alone.text);
+	});
+
 	it("delete selects the previous sibling, else the parent, or the note when the parent is the root", () => {
 		const nested = run("delete", "Spring")!;
 		expect(nested.node?.content).toBe("Stern line");
@@ -439,6 +472,22 @@ describe("carryPairs", () => {
 		const now = parser.parse("- B\n", "T.md").root;
 		expect(carryPairs(b, now, 0)).toHaveLength(1);
 		expect(carryPairs(b, now, 99)).toEqual([]);
+	});
+});
+
+describe("carrySiblings", () => {
+	it("pairs each old sibling's subtree with the sibling now at the same place", () => {
+		const before = "- A\n\t- A1\n- B\n";
+		const after = "- \n\t- A\n\t\t- A1\n\t- B\n";
+		const [a, b] = parser.parse(before, "T.md").root.children;
+		const now = parser.parse(after, "T.md").root;
+		const pairs = carrySiblings([a!, b!], now, after.indexOf("\t- A\n"));
+		expect(pairs.map((p) => [p.from.content, p.to.content])).toEqual([["A", "A"], ["A1", "A1"], ["B", "B"]]);
+	});
+
+	it("is empty when no line starts there", () => {
+		const a = parser.parse("- A\n", "T.md").root.children[0]!;
+		expect(carrySiblings([a], parser.parse("- A\n", "T.md").root, 99)).toEqual([]);
 	});
 });
 

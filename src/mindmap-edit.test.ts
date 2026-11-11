@@ -18,6 +18,7 @@ import {
 	inferChildContext,
 	childInsertOffset,
 	subtreeSpan,
+	selectedSiblings,
 	widenRemoval,
 	removeSpan,
 	insertAt,
@@ -530,6 +531,73 @@ describe("reindentSubtree re-levels a pasted subtree", () => {
 				"\t\t- Frequency",
 			].join("\n"),
 		);
+	});
+});
+
+// ── reindentSubtree: a heading's depth change carries its sub-headings ───────
+describe("reindentSubtree re-levels descendant headings with a moved heading", () => {
+	const text = ["## Route", "### Stop", "#### Platform", "- Note", "### Depot"].join("\n");
+	const route = node({ type: "heading", depth: 2, content: "Route" });
+
+	it("deepens every sub-heading by the same amount (H2 to H3)", () => {
+		expect(reindentSubtree(text, route, "heading", 3)).toBe(
+			["### Route", "#### Stop", "##### Platform", "- Note", "#### Depot"].join("\n"),
+		);
+	});
+
+	it("caps at H6 while the shallower ones keep their relative depth", () => {
+		expect(reindentSubtree(text, route, "heading", 5)).toBe(
+			["##### Route", "###### Stop", "###### Platform", "- Note", "###### Depot"].join("\n"),
+		);
+	});
+
+	it("shifts sub-headings up when the heading moves shallower (H3 to H2)", () => {
+		const deep = ["### Route", "#### Stop", "##### Platform"].join("\n");
+		const head = node({ type: "heading", depth: 3, content: "Route" });
+		expect(reindentSubtree(deep, head, "heading", 2)).toBe(
+			["## Route", "### Stop", "#### Platform"].join("\n"),
+		);
+	});
+
+	it("never goes above H1", () => {
+		const deep = ["### Route", "#### Stop", "###### Platform"].join("\n");
+		const head = node({ type: "heading", depth: 3, content: "Route" });
+		expect(reindentSubtree(deep, head, "heading", 1)).toBe(
+			["# Route", "## Stop", "#### Platform"].join("\n"),
+		);
+	});
+
+	it("leaves the text alone when the depth does not change", () => {
+		expect(reindentSubtree(text, route, "heading", 2)).toBe(text);
+	});
+
+	it("does not touch a '#' line inside a code fence", () => {
+		const fenced = ["## Route", "```sh", "### not a heading", "```", "### Stop"].join("\n");
+		expect(reindentSubtree(fenced, route, "heading", 3)).toBe(
+			["### Route", "```sh", "### not a heading", "```", "#### Stop"].join("\n"),
+		);
+	});
+
+	it("re-levels through the real parser when a heading is indented (Alt+Right)", () => {
+		const md = ["# Top", "## Alpha", "## Beta", "### Beta child"].join("\n");
+		const tree = parser.parse(md, "f.md");
+		const alpha = findByContent(tree.root, "Alpha");
+		const beta = findByContent(tree.root, "Beta");
+		const out = indentSiblings(md, [beta], alpha);
+		expect(out.text).toBe(["# Top", "## Alpha", "### Beta", "#### Beta child"].join("\n"));
+	});
+});
+
+describe("selectedSiblings", () => {
+	it("is the span from the first to the last selected sibling, in order", () => {
+		const root = parser.parse("- A\n- B\n- C\n- D\n", "f.md").root;
+		const [a, b, c] = root.children;
+		expect(selectedSiblings(root.children, new Set([c!.id, a!.id]))).toEqual([a, b, c]);
+	});
+
+	it("is empty when nothing in the list is selected", () => {
+		const root = parser.parse("- A\n- B\n", "f.md").root;
+		expect(selectedSiblings(root.children, new Set(["nope"]))).toEqual([]);
 	});
 });
 
