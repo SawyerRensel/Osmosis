@@ -38,9 +38,10 @@ export interface PlateLayout {
 /**
  * Lay `text` out on a plate, with `advance` giving each character's width at
  * `fontPx`. Text wider than `maxWidth` is cut at a character and ends in an
- * ellipsis.
+ * ellipsis. The plate is at least `minWidth` wide (its text stays centred), for
+ * a node whose style or code block sets its width.
  */
-export function layoutPlate(text: string, advance: (char: string) => number, fontPx: number, maxWidth: number): PlateLayout {
+export function layoutPlate(text: string, advance: (char: string) => number, fontPx: number, maxWidth: number, minWidth = 0): PlateLayout {
 	let chars = Array.from(text);
 	const widths = chars.map(advance);
 	let textWidth = sum(widths);
@@ -61,7 +62,7 @@ export function layoutPlate(text: string, advance: (char: string) => number, fon
 		if (char.trim() !== "") glyphs.push({ char, x: pen });
 		pen += widths[i]!;
 	});
-	return { glyphs, width: textWidth + 2 * PLATE_PAD_X_EM * fontPx, height: PLATE_HEIGHT_EM * fontPx };
+	return { glyphs, width: Math.max(minWidth, textWidth + 2 * PLATE_PAD_X_EM * fontPx), height: PLATE_HEIGHT_EM * fontPx };
 }
 
 function sum(values: readonly number[]): number {

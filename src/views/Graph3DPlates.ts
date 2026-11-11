@@ -439,9 +439,9 @@ export class Graph3DPlates {
 		for (const layer of this.glyphs) layer.mesh.visible = visible;
 	}
 
-	/** Lay `text` out on a plate `height` world units tall, cut at `maxEm` ems wide. */
-	shape(text: string, height: number, maxEm: number): PlateShape {
-		const layout = layoutPlate(text, (char) => this.atlas.advance(char), FONT_PX, maxEm * FONT_PX);
+	/** Lay `text` out on a plate `height` world units tall, its text cut at `maxEm` ems wide and the plate at least `minEm` wide. */
+	shape(text: string, height: number, maxEm: number, minEm = 0): PlateShape {
+		const layout = layoutPlate(text, (char) => this.atlas.advance(char), FONT_PX, maxEm * FONT_PX, minEm * FONT_PX);
 		const scale = height / layout.height;
 		const glyphs = layout.glyphs.map(({ char, x }) => {
 			const glyph = this.atlas.glyph(char);

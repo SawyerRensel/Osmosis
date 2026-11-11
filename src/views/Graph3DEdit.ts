@@ -166,10 +166,12 @@ export class Graph3DEditor implements TrackedEditor {
 		request.done(text);
 	}
 
-	setPlate(plate: { minWidth: number; minHeight: number; radius: number; fontSize: number }): void {
+	setPlate(plate: { minWidth: number; maxWidth?: number; minHeight: number; radius: number; fontSize: number }): void {
 		this.box?.setCssStyles({
 			fontSize: `${plate.fontSize}px`,
 			minWidth: `${plate.minWidth}px`,
+			// Unset, the stylesheet's 20em; set, a node with its own width wraps there.
+			maxWidth: plate.maxWidth === undefined ? "" : `${plate.maxWidth}px`,
 			minHeight: `${plate.minHeight}px`,
 			borderRadius: `${plate.radius}px`,
 		});

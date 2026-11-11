@@ -30,13 +30,13 @@ import { Graph3DHelp } from "./Graph3DHelp";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
-import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
+import { Graph3DNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../graph3d/appearance";
 import { nodeLook, type NodeLook } from "../graph3d/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
-import { panelBoxEm } from "../graph3d/near";
+import { panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { grabPoint, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
@@ -189,6 +189,8 @@ export interface SceneOptions {
 	onClickWhileEditing: () => void;
 	/** A link drag released on another node at client (`x`, `y`): line `from` is dropped onto `to`, a line or a note. */
 	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
+	/** A width drag on a selected line's panel ended at `width`, a `width` style in mind-map px (`styleWidthFromEm`). The view writes it; it resolves (or rejects) once the write has landed. */
+	onResizeNode: (node: GraphNode, width: number) => Promise<void>;
 	/** A right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line or note plate, at client (`x`, `y`). */
 	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
@@ -270,6 +272,8 @@ const ORBIT_RATE = 2 * Math.PI;
 const LOOK_RATE = Math.PI * 0.6;
 /** How far from a node's edge, in screen px, a press or a zoom still aims at that node. */
 const PICK_SLOP_PX = { mouse: 16, touch: 32 };
+/** How far from a panel's width handle a press still grabs it, in px. */
+const RESIZE_SLOP_PX = { mouse: 4, touch: 14 };
 /** How far outside a task checkbox's drawn box a press still ticks it: the box is a few pixels wide at panel scale. */
 const CHECKBOX_SLOP_PX = { mouse: 4, touch: 14 };
 /** Two clicks this close in time and place are a double click (a double tap uses the wider distance). */
@@ -453,6 +457,8 @@ export class Graph3DScene {
 	private pinch: Pinch | null = null;
 	/** Edit mode is on: Alt+drag from a line (or a touch drag from one) pulls out a link; a plain mouse drag still orbits. */
 	private linkMode = false;
+	/** A width drag in progress on a panel's handle: where it started, and the panel's width then (px before its scale) and scale. */
+	private widthDrag: { pointerId: number; node: GraphNode; startX: number; width: number; scale: number; current: number } | null = null;
 	private linkDrag: LinkDrag | null = null;
 	/** A right-button press that has not moved past the shared slop (`movedPastSlop`): released, it opens the context menu. (Moving it is OrbitControls' pan.) */
 	private menuPress: { pointerId: number; x: number; y: number } | null = null;
@@ -623,11 +629,14 @@ export class Graph3DScene {
 				return node;
 			}
 			previous.delete(graph.id);
-			const relabel = this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
+			const look = nodeLook(graph.style);
+			// A new width (a style, or a code block's longest line) lays the plate out again.
+			const rewidth = look.width !== (existing.look?.width ?? null) || plateWidthEm(existing.graph)?.minEm !== plateWidthEm(graph)?.minEm;
+			const relabel = rewidth || this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
 			existing.graph = graph;
 			existing.color.setStyle(this.colorOf(graph));
 			// A style written in the mind map (or any edit to the note's frontmatter) lands with the reload it triggers.
-			existing.look = nodeLook(graph.style);
+			existing.look = look;
 			if (relabel) {
 				existing.shape = this.shapeFor(graph);
 				// Flat branches are laid out at plate sizes.
@@ -1310,6 +1319,7 @@ export class Graph3DScene {
 	/** Edit mode on or off. Off, a link drag in progress is dropped. */
 	setLinkMode(on: boolean): void {
 		this.linkMode = on;
+		this.near.setResizable(on);
 		if (!on) {
 			this.endLinkDrag();
 			this.clearLongPress();
@@ -1644,6 +1654,9 @@ export class Graph3DScene {
 	/** Lay a node's label out on its plate: note titles large, every other node's first words small. */
 	private shapeFor(graph: GraphNode): PlateShape {
 		const isCore = graph.kind === "note";
+		// A line with a custom width, or a code block fitting its lines, has a plate as wide as its panel.
+		const width = graph.kind === "line" ? plateWidthEm(graph) : null;
+		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT, width.textMaxEm, width.minEm);
 		return this.plates.shape(this.labelText(graph), isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT, isCore ? CORE_PLATE_MAX_EM : LINE_PLATE_MAX_EM);
 	}
 
@@ -1784,6 +1797,7 @@ export class Graph3DScene {
 	 */
 	private readonly onPointerDown = (e: PointerEvent): void => {
 		const touch = e.pointerType === "touch";
+		if (this.beginResize(e, touch)) return;
 		const gesture = this.gestureOf(e);
 		if (this.touches.size === 0) {
 			// A press on a coasting view stops it, and that is all it does:
@@ -1868,6 +1882,10 @@ export class Graph3DScene {
 	};
 
 	private readonly onPointerMove = (e: PointerEvent): void => {
+		if (this.widthDrag !== null) {
+			this.moveResize(e);
+			return;
+		}
 		if (this.box?.pointerId === e.pointerId) this.moveBoxSelect(e.clientX, e.clientY);
 		const press = this.press;
 		if (press?.pointerId === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) > CLICK_SLOP_PX) this.press = null;
@@ -1910,6 +1928,7 @@ export class Graph3DScene {
 	};
 
 	private readonly onPointerUp = (e: PointerEvent): void => {
+		this.endResize(e);
 		this.touches.delete(e.pointerId);
 		if (this.mousePan === e.pointerId) this.endMousePan(e.type === "pointerup");
 		if (this.longPress?.pointerId === e.pointerId) this.clearLongPress();
@@ -1944,6 +1963,48 @@ export class Graph3DScene {
 		const coast = launchSpin(estimateVelocity(this.samples, now), estimateVelocity(this.turnSamples, now), this.carry, now - this.touchDownAt);
 		if (coast !== null) this.orbitCoast = { pivot: drag.pivot, look: drag.look, coast };
 	};
+
+	/**
+	 * A plain press on a selected panel's width handle (edit mode) starts a
+	 * width drag instead of an orbit or a click. True when it did.
+	 */
+	private beginResize(e: PointerEvent, touch: boolean): boolean {
+		if (!this.linkMode || this.editingId !== null || this.widthDrag !== null || this.touches.size > 0) return false;
+		if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return false;
+		const hit = this.near.resizeStart(e.clientX, e.clientY, touch ? RESIZE_SLOP_PX.touch : RESIZE_SLOP_PX.mouse);
+		if (hit === null) return false;
+		this.stoppedCoastOnDown = this.coasting();
+		this.cancelFlight();
+		this.drag = this.press = null;
+		this.widthDrag = { pointerId: e.pointerId, node: hit.node, startX: e.clientX, width: hit.width, scale: hit.scale, current: hit.width };
+		e.preventDefault();
+		return true;
+	}
+
+	/** The pointer moved during a width drag: the panel stays centred on its node, so each side grows by the pointer's travel. */
+	private moveResize(e: PointerEvent): void {
+		const resize = this.widthDrag;
+		if (resize === null || resize.pointerId !== e.pointerId) return;
+		const width = this.near.setPreviewWidth(resize.node.id, resize.width + (2 * (e.clientX - resize.startX)) / resize.scale);
+		if (width !== null) resize.current = width;
+	}
+
+	/** The width drag ended: write the width as a style (a drag that never moved writes nothing), and let the next reload retire the preview. */
+	private endResize(e: PointerEvent): void {
+		const resize = this.widthDrag;
+		if (resize === null || resize.pointerId !== e.pointerId) return;
+		this.widthDrag = null;
+		const moved = e.type === "pointerup" && Math.abs(resize.current - resize.width) >= 1;
+		if (!moved) {
+			this.near.setPreviewWidth(resize.node.id, null);
+			return;
+		}
+		const width = styleWidthFromEm(resize.current / NEAR_FONT_PX);
+		this.options.onResizeNode(resize.node, width).catch((error: unknown) => {
+			console.error("Osmosis: 3D graph could not resize a node", error);
+			this.near.setPreviewWidth(resize.node.id, null);
+		});
+	}
 
 	/** A right or Ctrl drag is OrbitControls' pan: sample it, so its release can coast like a pinch's pan. */
 	private startMousePan(e: PointerEvent): void {

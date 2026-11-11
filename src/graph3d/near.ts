@@ -4,7 +4,9 @@
  */
 
 import { splitFenceHeader } from "../card-gen/explicit";
+import { codeFitColumns, lineColumns } from "../code-fit";
 import type { GraphNode } from "./model";
+import { PLATE_PAD_X_EM } from "./plates";
 
 /** Attachments shown live up close: images, audio and video. PDFs and the rest stay plates. */
 const MEDIA_EXTENSIONS = new Set([
@@ -136,7 +138,7 @@ function contentBoxEm(lines: readonly string[], wrap: number): { width: number; 
 			w = 0;
 			row = CODE_ROW;
 		} else if (fence !== "") {
-			w = raw.length * CODE_EM_PER_CHAR;
+			w = lineColumns(raw) * CODE_EM_PER_CHAR;
 			row = CODE_ROW;
 			rows = Math.max(1, Math.ceil(w / (wrap - PRE_PAD.x)));
 			w += PRE_PAD.x;
@@ -188,6 +190,57 @@ function cardSides(markdown: string): { front: string[]; back: string[] } | null
 }
 
 /**
+ * Mind-map px a panel em stands for in a node's `width` style: the map draws
+ * node text at 13 px, so a width of 130 is ten ems of panel text. A `width` is
+ * the content width, before the node's padding, as the mind map stores it.
+ */
+export const STYLE_PX_PER_EM = 13;
+/** The narrowest a dragged width goes, in mind-map px: the map's 60 px node less its padding. */
+export const MIN_STYLE_WIDTH_PX = 44;
+
+/** A panel's total width, in ems, for a node `width` style of `px`: the content plus the panel's padding. */
+export const styleWidthEm = (px: number): number => px / STYLE_PX_PER_EM + 2 * PAD_X;
+
+/** The `width` style for a panel (or plate) `em` ems wide in all, as the drag handle writes it. */
+export const styleWidthFromEm = (em: number): number => Math.max(MIN_STYLE_WIDTH_PX, Math.round((em - 2 * PAD_X) * STYLE_PX_PER_EM));
+
+/**
+ * How wide a line node's panel (and plate) is laid out:
+ * - `custom`: the node's `width` style, exactly that wide, wrapping at it;
+ * - `code`: a code block with no custom width, as wide as its longest line up to
+ *   `CODE_FIT_MAX_COLUMNS`, then wrapping (the mind map does the same in px);
+ * - `default`: up to `PANEL_MAX_EM.width`, as wide as its content.
+ * `em` is the width for `custom` and `code`, the cap for `default`.
+ */
+export interface PanelWidthRule {
+	kind: "custom" | "code" | "default";
+	em: number;
+}
+
+const DEFAULT_WIDTH: PanelWidthRule = { kind: "default", em: PANEL_MAX_EM.width };
+
+/** The width rule for `node` (the default for any node without a line panel). Cheap for the common node: the Markdown is only read for a code block. */
+export function panelWidthRule(node: GraphNode, markdown?: string | null): PanelWidthRule {
+	if (node.kind !== "line" || node.source === undefined) return DEFAULT_WIDTH;
+	const width = node.style?.width;
+	if (typeof width === "number" && Number.isFinite(width) && width > 0) return { kind: "custom", em: styleWidthEm(width) };
+	if (node.source.type !== "codeblock") return DEFAULT_WIDTH;
+	const text = markdown === undefined ? nearMarkdown(node) : markdown;
+	if (text === null || cardSides(text) !== null) return DEFAULT_WIDTH;
+	return { kind: "code", em: codeFitColumns(text) * CODE_EM_PER_CHAR + PRE_PAD.x + 2 * PAD_X };
+}
+
+/**
+ * How wide `node`'s plate is laid out when its width is set (a custom `width`
+ * or a code block's fit), as `Graph3DPlates.shape` takes it: the plate `minEm`
+ * wide, its text cut at `textMaxEm`. Null for a plate sized by its label.
+ */
+export function plateWidthEm(node: GraphNode): { textMaxEm: number; minEm: number } | null {
+	const rule = panelWidthRule(node);
+	return rule.kind === "default" ? null : { textMaxEm: Math.max(0, rule.em - 2 * PLATE_PAD_X_EM), minEm: rule.em };
+}
+
+/**
  * How big a node's near panel can get, in ems of panel text, estimated from
  * its Markdown before anything renders. The scene spaces nodes by this as
  * well as by their plate (`3D Graph - Near-tier panels overlap and hide their
@@ -209,7 +262,8 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 	if (node.kind === "attachment") {
 		return AUDIO_EXTENSIONS.has(extension(node.path ?? "")) ? { ...AUDIO_EM } : { width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 2 * PAD_Y };
 	}
-	const wrap = PANEL_MAX_EM.width - 2 * PAD_X;
+	const rule = panelWidthRule(node, markdown);
+	const wrap = rule.em - 2 * PAD_X;
 	let width: number;
 	let height: number;
 	const card = cardSides(markdown);
@@ -222,7 +276,7 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		height = CARD_CHROME_Y + sides.reduce((sum, side) => sum + Math.max(PROSE_ROW, side.height) + (side.blocks + 1) * CARD_BLOCK_GAP, 0);
 	}
 	return {
-		width: Math.min(PANEL_MAX_EM.width, width + 2 * PAD_X),
+		width: rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X),
 		height: Math.min(PANEL_MAX_EM.height, height + 2 * PAD_Y),
 	};
 }

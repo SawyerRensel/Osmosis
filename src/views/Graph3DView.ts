@@ -16,6 +16,9 @@ import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../g
 import type { Arrow } from "../graph3d/arrow-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { doubleClickEdit } from "../edit-keys";
+import { planStyleKeys } from "../mindmap-style-key";
+import { buildStableIdSelector } from "../styles";
+import { writeWidthStyle } from "../graph3d/width-style";
 import { ancestorsOf, appendToLine, carryPairs, carrySiblings, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
@@ -439,6 +442,7 @@ export class Graph3DView extends ItemView {
 			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
+			onResizeNode: (node, width) => this.resizeNode(node, width),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
@@ -1471,6 +1475,43 @@ export class Graph3DView extends ItemView {
 		} finally {
 			this.structuring = false;
 		}
+	}
+
+	/**
+	 * The width handle on `node`'s panel was dragged to `width` (a `width` style
+	 * in mind-map px): write it into the note's `osmosis-styles`, as the mind map's
+	 * own resize does, stamping a `^os-` block ID on the line first when it has
+	 * none so the style survives edits to its text. The stamp and the style are
+	 * one undo step; the reload they trigger redraws the plate and panel at the
+	 * new width, and the mind map reads the same entry.
+	 */
+	private async resizeNode(node: GraphNode, width: number): Promise<void> {
+		if (this.editBlocked()) throw new Error("editing is off");
+		const fresh = await this.freshLine(node);
+		if (fresh === null) {
+			new Notice("Osmosis: that line has changed; try again");
+			throw new Error("line gone");
+		}
+		const { file, content, line, root } = fresh;
+		const plan = planStyleKeys(content, root, [line]);
+		const selector = plan.selectors.get(line.id) ?? buildStableIdSelector(line);
+		this.editOwner = file.path;
+		this.lastEditPath = file.path;
+		this.loadSeq++;
+		this.edits.recorder.beginGroup();
+		let after: string;
+		try {
+			if (plan.content !== content) await this.edits.write(file, plan.content);
+			after = await this.edits.processFrontMatter(file, (fm) => writeWidthStyle(fm, selector, buildStableIdSelector(line), width));
+		} finally {
+			this.edits.recorder.endGroup();
+		}
+		this.cache.invalidate(file.path);
+		this.prefetched.delete(file.path);
+		// The stamp lands at the end of the line; the frontmatter write above the body shifts every offset by its growth.
+		this.edited = [{ path: file.path, start: line.range.start + (after.length - plan.content.length), from: node.id }];
+		this.editLanded = true;
+		void this.reload();
 	}
 
 	/** A tap on a task checkbox in a panel: tick or untick the line in its note. Outside edit mode too, as in Obsidian's reading view. */

@@ -40,7 +40,7 @@ import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRe
 import type { GraphNode } from "../graph3d/model";
 import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelHalfNdc, panelScale, type NearProbe, type NearTierSettings } from "../graph3d/lod";
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
-import { nearMarkdown, panelBoxEm } from "../graph3d/near";
+import { MIN_STYLE_WIDTH_PX, nearMarkdown, panelBoxEm, panelWidthRule, styleWidthEm } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS, PLATE_STROKE_EM } from "../graph3d/plates";
 import type { NodeLook } from "../graph3d/node-style";
@@ -66,7 +66,7 @@ export interface PanelLink {
  */
 export interface TrackedEditor {
 	/** The panel box the editor lays out in, in px before its scale: the plate's size, corners and text size, as a panel has them. */
-	setPlate(plate: { minWidth: number; minHeight: number; radius: number; fontSize: number }): void;
+	setPlate(plate: { minWidth: number; maxWidth?: number; minHeight: number; radius: number; fontSize: number }): void;
 	/** Where it is this frame, in the stage's px; null while the node is behind the camera. */
 	place(at: EditorPlace | null): void;
 }
@@ -103,7 +103,7 @@ interface DrawnPlate extends ScreenPlate {
 }
 
 /** Panel text size, in CSS px, before the per-frame scale. */
-const NEAR_FONT_PX = 16;
+export const NEAR_FONT_PX = 16;
 /** Seconds for a panel to cross-fade in over its plate, or out. */
 const NEAR_FADE_S = 0.25;
 /** Rendered panels kept to clone on re-entry, like the mind map's HTML cache. */
@@ -135,6 +135,10 @@ interface Panel {
 	depth: number;
 	/** A tilted panel's plates in front of it, as last cut out, for clicks. */
 	occluders: ScreenPlate[];
+	/** The width-drag handle, shown on a selected panel in edit mode. */
+	handle: HTMLElement;
+	/** The width, in px before its scale, a width drag in progress has the panel at; null otherwise. */
+	preview: number | null;
 }
 
 export class Graph3DNear {
@@ -150,6 +154,8 @@ export class Graph3DNear {
 	private readonly pxPerUnit: number;
 	private focus = 0;
 	private density = 0;
+	/** Edit mode: a selected line's panel shows its width handle. */
+	private resizable = false;
 	/** Off (the Overlays menu's labels on plates only), no panel is chosen and the open ones fade out. */
 	private enabled = true;
 	/** Planets mode: panels are CSS3D, lying on their plate's frame, and hidden from behind. */
@@ -355,13 +361,56 @@ export class Graph3DNear {
 		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === this.editing);
 		if (node === null || editor === null) return;
 		const plateHeight = node.shape.height * this.pxPerUnit;
-		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: NEAR_FONT_PX });
+		// A node with a set width wraps its text at it (a code block at its fit), as its panel does.
+		const rule = panelWidthRule(node.graph);
+		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, ...(rule.kind === "default" ? {} : { maxWidth: Math.max(rule.em * NEAR_FONT_PX, node.shape.width * this.pxPerUnit) }), minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: NEAR_FONT_PX });
 	}
 
 	/** Give the panels of the nodes in `ids` the selection border, and take it from the rest. */
 	setSelected(ids: ReadonlySet<string>): void {
 		this.selected = ids;
-		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-selected", ids.has(panelId));
+		for (const [panelId, panel] of this.panels) {
+			panel.box.classList.toggle("is-selected", ids.has(panelId));
+			this.markResizable(panel);
+		}
+	}
+
+	/** Edit mode on or off: on, a selected line's panel shows its width handle. */
+	setResizable(on: boolean): void {
+		this.resizable = on;
+		for (const panel of this.panels.values()) this.markResizable(panel);
+	}
+
+	private markResizable(panel: Panel): void {
+		const { graph, id } = panel.node;
+		panel.box.classList.toggle("is-resizable", this.resizable && this.selected.has(id) && graph.kind === "line" && graph.source !== undefined);
+	}
+
+	/**
+	 * A press at client (`x`, `y`) on a selected panel's width handle (`slop`
+	 * px of reach around it), when that panel is the one drawn on top there:
+	 * the node, the panel's width in px before its scale, and how many screen px
+	 * one of those is. Null when it is not on a handle.
+	 */
+	resizeStart(x: number, y: number, slop: number): { node: GraphNode; width: number; scale: number } | null {
+		for (const panel of this.panels.values()) {
+			if (panel.target !== 1 || !panel.rendered || panel.fade < 0.5 || panel.width <= 0 || !panel.box.classList.contains("is-resizable")) continue;
+			const rect = panel.handle.getBoundingClientRect();
+			if (x < rect.left - slop || x > rect.right + slop || y < rect.top - slop || y > rect.bottom + slop) continue;
+			if (this.panelAt((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2) !== panel) continue;
+			const scale = panel.box.getBoundingClientRect().width / panel.width;
+			if (scale > 0) return { node: panel.node.graph, width: panel.width, scale };
+		}
+		return null;
+	}
+
+	/** Draw node `id`'s panel `width` px wide (before its scale), as a width drag goes; null ends the preview. Returns the width, kept above the narrowest. */
+	setPreviewWidth(id: string, width: number | null): number | null {
+		const panel = this.panels.get(id);
+		if (panel === undefined) return width;
+		panel.preview = width === null ? null : Math.max(width, styleWidthEm(MIN_STYLE_WIDTH_PX) * NEAR_FONT_PX);
+		this.paint(panel);
+		return panel.preview;
 	}
 
 	/** Mark node `id`'s panel as the drop target of a link drag (null clears it). */
@@ -419,7 +468,11 @@ export class Graph3DNear {
 
 	/** Re-paint each open panel from its node's colour and style, after the colour mode or a style changes. */
 	refreshColors(): void {
-		for (const panel of this.panels.values()) this.paint(panel);
+		// A reload carries a width drag's result: the preview has done its job.
+		for (const panel of this.panels.values()) {
+			panel.preview = null;
+			this.paint(panel);
+		}
 	}
 
 	/**
@@ -431,7 +484,14 @@ export class Graph3DNear {
 	private paint(panel: Panel): void {
 		const { look, color } = panel.node;
 		const stroke = (look?.stroke ?? 1) * PLATE_STROKE_EM;
+		// A custom width is the panel's exact width; a code block fitting its lines caps it there; every other node keeps the stylesheet's 20em.
+		const rule = panelWidthRule(panel.node.graph);
+		const width: Record<string, string> =
+			panel.preview !== null
+				? { width: `${panel.preview}px`, minWidth: `${panel.preview}px`, maxWidth: `${panel.preview}px` }
+				: { width: rule.kind === "custom" ? `${rule.em}em` : "", minWidth: `${panel.node.shape.width * this.pxPerUnit}px`, maxWidth: rule.kind === "default" ? "" : `${rule.em}em` };
 		panel.box.setCssStyles({
+			...width,
 			borderRadius: `${panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node)}px`,
 			boxShadow: stroke === 0 ? "none" : `inset 0 0 0 ${stroke}em ${look?.border ?? color.getStyle()}`,
 			backgroundColor: look?.fill ?? "",
@@ -476,9 +536,11 @@ export class Graph3DNear {
 			object.matrixAutoUpdate = false;
 			anchor.setCssStyles({ pointerEvents: "none" });
 		}
-		const panel: Panel = { object, tilted: this.tilted, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity, occluders: [] };
+		const handle = box.createDiv({ cls: "osmosis-graph3d-near-handle" });
+		const panel: Panel = { object, tilted: this.tilted, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
 		this.boxes.set(box, panel);
 		box.classList.toggle("is-editing", node.id === this.editing);
+		this.markResizable(panel);
 		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
 		object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);

@@ -20,6 +20,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { codeFitLimitPx } from "../code-fit";
 import { planStyleKeys } from "../mindmap-style-key";
 import { selectAfterDelete } from "../select-after-delete";
 import { enterSavesEdit } from "../edit-keys";
@@ -102,6 +103,9 @@ export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+/** A rendered code block's padding across, both sides together, in px (Obsidian's `pre`: 16 px a side). */
+const CODE_BLOCK_PAD_PX = 32;
 
 // Viewport constants
 const MIN_ZOOM = 0.1;
@@ -8519,6 +8523,11 @@ export class MindMapView extends ItemView {
 					const insets = getShapeInsets(nodeShape);
 					const insetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
 					contentMaxWidth = effectiveMaxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
+				}
+				// A code block with no custom width fits its longest line (up to
+				// CODE_FIT_MAX_COLUMNS) instead of the map's max node width.
+				if (customWidth === undefined && node.type === "codeblock" && !osmosisCard) {
+					contentMaxWidth = codeFitLimitPx(naturalWidth, displayContent, CODE_BLOCK_PAD_PX);
 				}
 
 				let finalWidth: number;

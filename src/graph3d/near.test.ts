@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, unembed } from "./near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, plateWidthEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
 import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
@@ -186,5 +186,79 @@ describe("panelBoxEm for an osmosis card fence", () => {
 	it("leaves an ordinary code block alone", () => {
 		const yaml = panelBoxEm(line("```yaml\nid: x\n\nQ\n```"))!;
 		expect(yaml.height).toBeLessThan(panelBoxEm(fence(["id: x", ""], ["Q"]))!.height);
+	});
+});
+
+describe("node width", () => {
+	const code = (...lines: string[]): GraphNode => {
+		const node = line(["```ts", ...lines, "```"].join("\n"));
+		node.source!.type = "codeblock";
+		return node;
+	};
+	const styled = (node: GraphNode, width: number): GraphNode => ({ ...node, style: { width } });
+
+	it("maps a width style to ems and back", () => {
+		expect(styleWidthEm(130)).toBeCloseTo(10 + 0.8);
+		expect(styleWidthFromEm(styleWidthEm(260))).toBe(260);
+		expect(styleWidthFromEm(0)).toBe(MIN_STYLE_WIDTH_PX);
+	});
+
+	it("lays a node with a custom width out at exactly that width, past the default cap", () => {
+		const wide = styled(line("- Clove hitch"), 520);
+		expect(panelWidthRule(wide)).toEqual({ kind: "custom", em: styleWidthEm(520) });
+		expect(panelBoxEm(wide)!.width).toBeCloseTo(styleWidthEm(520));
+		expect(panelBoxEm(wide)!.width).toBeGreaterThan(PANEL_MAX_EM.width);
+		expect(panelBoxEm(styled(line("- Clove hitch"), 100))!.width).toBeCloseTo(styleWidthEm(100));
+	});
+
+	it("wraps text taller in a narrower custom width", () => {
+		const text = "word ".repeat(40);
+		expect(panelBoxEm(styled(line(text), 100))!.height).toBeGreaterThan(panelBoxEm(styled(line(text), 600))!.height);
+	});
+
+	it("fits a code block to its longest line, past the 20em prose cap", () => {
+		const em = (columns: number): number => panelBoxEm(code("a".repeat(40), "b".repeat(columns)))!.width;
+		expect(panelWidthRule(code("x".repeat(80))).kind).toBe("code");
+		expect(em(80)).toBeGreaterThan(PANEL_MAX_EM.width);
+		expect(em(80)).toBeGreaterThan(em(60));
+	});
+
+	it("stops growing at 100 columns and wraps", () => {
+		const at100 = panelBoxEm(code("a".repeat(100)))!;
+		const at140 = panelBoxEm(code("a".repeat(140)))!;
+		expect(at140.width).toBeCloseTo(at100.width);
+		expect(at140.height).toBeGreaterThan(at100.height);
+	});
+
+	it("handles empty, one-line and wide-character code blocks", () => {
+		expect(panelBoxEm(code())!.width).toBeGreaterThan(0);
+		expect(panelBoxEm(code("x = 1"))!.width).toBeLessThan(PANEL_MAX_EM.width);
+		// 50 wide characters are 100 columns, as 100 narrow ones.
+		expect(panelBoxEm(code("日".repeat(50)))!.width).toBeCloseTo(panelBoxEm(code("a".repeat(100)))!.width);
+	});
+
+	it("lets a custom width beat the code fit", () => {
+		const node = styled(code("a".repeat(90)), 150);
+		expect(panelWidthRule(node).kind).toBe("custom");
+		expect(panelBoxEm(node)!.width).toBeCloseTo(styleWidthEm(150));
+	});
+
+	it("leaves other nodes under the default cap", () => {
+		expect(panelWidthRule(line("- " + "word ".repeat(80)))).toEqual({ kind: "default", em: PANEL_MAX_EM.width });
+		expect(panelBoxEm(line("- " + "word ".repeat(80)))!.width).toBe(PANEL_MAX_EM.width);
+	});
+
+	it("does not fit an osmosis card fence like a code block", () => {
+		const card = code("id: hf-x", "", "Q", "***", "A");
+		card.source!.raw = "```osmosis\nid: hf-x\n\nQ\n***\nA\n```";
+		expect(panelWidthRule(card).kind).toBe("default");
+	});
+
+	it("sizes a plate only when its width is set", () => {
+		expect(plateWidthEm(line("- Clove hitch"))).toBeNull();
+		const custom = plateWidthEm(styled(line("- Clove hitch"), 260))!;
+		expect(custom.minEm).toBeCloseTo(styleWidthEm(260));
+		expect(custom.textMaxEm).toBeCloseTo(styleWidthEm(260) - 0.8);
+		expect(plateWidthEm(code("a".repeat(60)))!.minEm).toBeGreaterThan(20);
 	});
 });

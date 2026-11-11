@@ -6,6 +6,13 @@ const advance = (char: string) => (char === "W" ? 20 : char === "…" ? 6 : 10);
 const FONT = 40;
 
 describe("layoutPlate", () => {
+	it("keeps a plate at least minWidth wide, its text centred", () => {
+		const plate = layoutPlate("abc", advance, FONT, Infinity, 500);
+		expect(plate.width).toBe(500);
+		expect(plate.glyphs.map((g) => g.x)).toEqual([-15, -5, 5]);
+		expect(layoutPlate("abc", advance, FONT, Infinity, 5).width).toBe(30 + 2 * PLATE_PAD_X_EM * FONT);
+	});
+
 	it("places each glyph at its pen position, centred on the plate", () => {
 		const plate = layoutPlate("abc", advance, FONT, Infinity);
 		// 30 px of text: pens at -15, -5, 5.
