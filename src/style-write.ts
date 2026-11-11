@@ -11,7 +11,7 @@ import { styleMappingFor, type NodeStyle } from "./styles";
 /** Style keys whose value is replaced whole (or deleted when the update sets `undefined`). */
 const SIMPLE_KEYS = ["shape", "fill", "background", "width", "class"] as const;
 /** Style keys whose value is a mapping: an update merges into it sub-key by sub-key. */
-const COMPOUND_KEYS = ["text", "border", "branchLine"] as const;
+const COMPOUND_KEYS = ["text", "border", "branchLine", "boundary"] as const;
 
 /**
  * `existing` with `update` merged in. A key present in `update` with the value

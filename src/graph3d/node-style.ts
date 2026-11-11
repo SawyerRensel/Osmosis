@@ -32,6 +32,7 @@ import {
 	type NodeStyle,
 	type TopicShape,
 } from "../styles";
+import { resolveBoundary, type ResolvedBoundary } from "../boundary";
 import type { OsmosisNode } from "../types";
 import { PLATE_RADIUS } from "./plates";
 
@@ -107,6 +108,11 @@ export interface NodeLook {
 	width: number | null;
 	/** The style's branch line, for the tapered-edges ticket to draw. */
 	branchLine: BranchStyle | null;
+	/**
+	 * The node's boundary (cloud) around its subtree, defaults applied; null for
+	 * none. Colours are `cssColor`-checked: null = the view's accent.
+	 */
+	boundary: ResolvedBoundary | null;
 }
 
 /** An unstyled node's look: exactly today's plate. */
@@ -118,6 +124,7 @@ export const DEFAULT_LOOK: Readonly<NodeLook> = Object.freeze({
 	corner: PLATE_RADIUS,
 	width: null,
 	branchLine: null,
+	boundary: null,
 });
 
 /** The look a node's resolved style gives it (`DEFAULT_LOOK` for none). */
@@ -135,7 +142,14 @@ export function nodeLook(style: NodeStyle | undefined): NodeLook {
 		corner: (style.shape !== undefined ? PLATE_CORNERS[style.shape] : undefined) ?? PLATE_RADIUS,
 		width: typeof style.width === "number" && style.width > 0 ? style.width : null,
 		branchLine: isStyle(style.branchLine) ? style.branchLine : null,
+		boundary: boundaryLook(style),
 	};
+}
+
+/** `resolveBoundary`, its colours limited to what WebGL can draw (`cssColor`). */
+function boundaryLook(style: NodeStyle): ResolvedBoundary | null {
+	const b = resolveBoundary(style);
+	return b === null ? null : { ...b, fill: cssColor(b.fill), stroke: cssColor(b.stroke) };
 }
 
 /**

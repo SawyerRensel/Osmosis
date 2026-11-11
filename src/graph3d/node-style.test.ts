@@ -107,7 +107,23 @@ describe("nodeLook", () => {
 
 	it("reads fill, border and text colours, width and branch line", () => {
 		const look = nodeLook({ fill: "#112233", border: { color: "rgb(1, 2, 3)", width: 3 }, text: { color: "navy" }, width: 320, branchLine: { color: "#444444", taper: "grow" } });
-		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, width: 320, branchLine: { color: "#444444", taper: "grow" } });
+		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, width: 320, branchLine: { color: "#444444", taper: "grow" }, boundary: null });
+	});
+
+	it("resolves the boundary, tinted by the node's fill, with colours WebGL can draw", () => {
+		expect(nodeLook({ fill: "#336699", boundary: { enabled: true } }).boundary).toEqual({
+			fill: "#336699",
+			fillOpacity: 0.15,
+			stroke: "#336699",
+			strokeOpacity: 0.5,
+			strokeWidth: 1,
+			dash: "solid",
+		});
+		const b = nodeLook({ boundary: { fill: "var(--color-red)", color: "teal", style: "dashed" } }).boundary;
+		expect(b?.fill).toBeNull();
+		expect(b?.stroke).toBe("teal");
+		expect(b?.dash).toBe("dashed");
+		expect(nodeLook({ boundary: { enabled: false } }).boundary).toBeNull();
 	});
 
 	it("draws no outline for border style none, and caps a huge one", () => {

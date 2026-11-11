@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope, type ToggleComponent } from "obsidian";
+import { DEFAULT_BOUNDARY_OPACITY, DEFAULT_BOUNDARY_WIDTH, MAX_BOUNDARY_WIDTH, resolveBoundary } from "../boundary";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
 import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./Graph3DView";
 import { Graph3DSettingsPanel } from "./Graph3DOverlays";
@@ -27,6 +28,7 @@ const FORMAT_SECTIONS = [
 	"Border",
 	"Text",
 	"Branch line",
+	"Boundary",
 ] as const;
 
 /** Maps each format section to the NodeStyle keys it controls, for reset. */
@@ -36,6 +38,7 @@ const SECTION_STYLE_KEYS: Record<string, (keyof NodeStyle)[]> = {
 	"Border": ["border"],
 	"Text": ["text"],
 	"Branch line": ["branchLine"],
+	"Boundary": ["boundary"],
 };
 
 /** References to live Format tab controls for value updates. */
@@ -59,6 +62,12 @@ interface FormatControls {
 	branchStyleDropdown: HTMLSelectElement | null;
 	branchPatternDropdown: HTMLSelectElement | null;
 	branchTaperDropdown: HTMLSelectElement | null;
+	boundaryToggle: ToggleComponent | null;
+	boundaryFillSwatch: HTMLElement | null;
+	boundaryOpacitySlider: HTMLInputElement | null;
+	boundaryColorSwatch: HTMLElement | null;
+	boundaryWidthSlider: HTMLInputElement | null;
+	boundaryStyleDropdown: HTMLSelectElement | null;
 }
 
 function emptyFormatControls(): FormatControls {
@@ -82,6 +91,12 @@ function emptyFormatControls(): FormatControls {
 		branchStyleDropdown: null,
 		branchPatternDropdown: null,
 		branchTaperDropdown: null,
+		boundaryToggle: null,
+		boundaryFillSwatch: null,
+		boundaryOpacitySlider: null,
+		boundaryColorSwatch: null,
+		boundaryWidthSlider: null,
+		boundaryStyleDropdown: null,
 	};
 }
 
@@ -855,6 +870,9 @@ export class PropertiesSidebarView extends ItemView {
 			case "Branch line":
 				this.renderBranchLineSection(body);
 				break;
+			case "Boundary":
+				this.renderBoundarySection(body);
+				break;
 		}
 	}
 
@@ -972,6 +990,7 @@ export class PropertiesSidebarView extends ItemView {
 		const styleToSave = { ...localStyle };
 		delete styleToSave.class; // Don't save the class assignment into the class definition
 		delete styleToSave.width; // Custom width is per-node, not a class property
+		delete styleToSave.boundary; // A boundary is per-node too: it stays on the node (not cleared below)
 
 		if (Object.keys(styleToSave).length === 0) {
 			new Notice("No local style overrides to save");
@@ -1079,6 +1098,7 @@ export class PropertiesSidebarView extends ItemView {
 				// Merge local + class overrides (skip theme defaults — class should layer on top of theme)
 				const localVisual = localStyle ? { ...localStyle } : {};
 				delete localVisual.class;
+				delete localVisual.boundary; // Per-node: stays on the node, not in the class
 				if (classStyle) {
 					// Class properties that aren't overridden locally
 					styleToSave = { ...classStyle, ...localVisual };
@@ -1432,6 +1452,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		const styleToSave = { ...localStyle };
 		delete styleToSave.class;
+		delete styleToSave.boundary; // Per-node: stays on the node, not in the variant
 
 		if (Object.keys(styleToSave).length === 0) {
 			new Notice("No local style overrides to save");
@@ -2852,6 +2873,103 @@ export class PropertiesSidebarView extends ItemView {
 			});
 	}
 
+	/**
+	 * A boundary (cloud) around the node and its subtree. Off is no `boundary`
+	 * key at all, or `enabled: false` when the node keeps other boundary
+	 * settings to come back to. Setting any value turns it on.
+	 */
+	private renderBoundarySection(body: HTMLElement): void {
+		sidebarSetting(body)
+			.setName("Show boundary")
+			.setDesc("Wrap this node and everything under it.")
+			.addToggle((toggle) => {
+				toggle.onChange(async (on) => {
+					// refreshFormatControls sets the value too; only a user's change writes.
+					const host = this.getStyleHost();
+					const primary = host?.getSelectedNodeInfo().primaryId;
+					const local = primary ? host?.getNodeStyleContext(primary)?.local : undefined;
+					if (on === this.boundaryShown(primary ?? null)) return;
+					if (on) {
+						await this.writeNodeStyle({ boundary: { enabled: true } });
+					} else {
+						const kept = Object.keys(local?.boundary ?? {}).filter((k) => k !== "enabled");
+						await this.writeNodeStyle({ boundary: kept.length > 0 ? { enabled: false } : undefined });
+					}
+				});
+				this.controls.boundaryToggle = toggle;
+			});
+
+		const fillSetting = sidebarSetting(body).setName("Fill");
+		const fillSwatch = fillSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.boundaryFillSwatch = fillSwatch;
+		fillSwatch.addEventListener("click", () => {
+			this.openColorPicker(fillSwatch, fillSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ boundary: { enabled: true, fill: color } });
+			});
+		});
+
+		sidebarSetting(body)
+			.setName("Opacity")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, 100, 5)
+					.setValue(Math.round(DEFAULT_BOUNDARY_OPACITY * 100))
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ boundary: { enabled: true, opacity: value / 100 } });
+					});
+				this.controls.boundaryOpacitySlider = slider.sliderEl;
+			});
+
+		const colorSetting = sidebarSetting(body).setName("Border color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.boundaryColorSwatch = colorSwatch;
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ boundary: { enabled: true, color } });
+			});
+		});
+
+		sidebarSetting(body)
+			.setName("Border width")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, MAX_BOUNDARY_WIDTH, 0.5)
+					.setValue(DEFAULT_BOUNDARY_WIDTH)
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ boundary: { enabled: true, width: value } });
+					});
+				this.controls.boundaryWidthSlider = slider.sliderEl;
+			});
+
+		sidebarSetting(body)
+			.setName("Border style")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(Inherit)")
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.addOption("none", "None")
+					.onChange(async (value) => {
+						await this.writeNodeStyle({
+							boundary: value === "inherit"
+								? { style: undefined }
+								: { enabled: true, style: value as "solid" | "dashed" | "dotted" | "none" },
+						});
+					});
+				this.controls.boundaryStyleDropdown = dropdown.selectEl;
+			});
+	}
+
+	/** Whether the node `id` currently has a boundary, by its resolved style. */
+	private boundaryShown(id: string | null): boolean {
+		const host = this.getStyleHost();
+		const context = id ? host?.getNodeStyleContext(id) : null;
+		if (!host || !context) return false;
+		const classStyle = lookupClassStyle(context.fm, context.local?.class, host.getGlobalClasses());
+		return resolveBoundary(resolveNodeStyle(host.getActiveTheme(), context.depth, context.local, classStyle)) !== null;
+	}
+
 	private renderTextSection(body: HTMLElement): void {
 		// Font family
 		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
@@ -3203,6 +3321,25 @@ export class PropertiesSidebarView extends ItemView {
 		}
 		if (this.controls.branchTaperDropdown) {
 			this.controls.branchTaperDropdown.value = localStyle?.branchLine?.taper ?? "inherit";
+		}
+
+		// Boundary
+		const boundary = resolveBoundary(resolved);
+		this.controls.boundaryToggle?.setValue(boundary !== null);
+		if (this.controls.boundaryFillSwatch) {
+			this.controls.boundaryFillSwatch.style.backgroundColor = boundary?.fill ?? "";
+		}
+		if (this.controls.boundaryOpacitySlider) {
+			this.controls.boundaryOpacitySlider.value = String(Math.round((boundary?.fillOpacity ?? DEFAULT_BOUNDARY_OPACITY) * 100));
+		}
+		if (this.controls.boundaryColorSwatch) {
+			this.controls.boundaryColorSwatch.style.backgroundColor = boundary?.stroke ?? "";
+		}
+		if (this.controls.boundaryWidthSlider) {
+			this.controls.boundaryWidthSlider.value = String(boundary?.strokeWidth ?? DEFAULT_BOUNDARY_WIDTH);
+		}
+		if (this.controls.boundaryStyleDropdown) {
+			this.controls.boundaryStyleDropdown.value = localStyle?.boundary?.style ?? "inherit";
 		}
 	}
 

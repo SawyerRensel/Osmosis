@@ -54,6 +54,7 @@ import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, L
 import { mergeStyleOverride } from "../style-write";
 import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
+import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import {
 	KEEP_VISIBLE_PX,
@@ -8772,6 +8773,9 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// which degrades to a no-op pan instead of a jump.
 		this.viewportHost = null;
 
+		// Boundaries (clouds) go behind everything: they wrap whole subtrees.
+		this.drawBoundaries(svg, layout, offsetX, offsetY);
+
 		// Create groups for layering: branch lines behind nodes
 		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
 		branchLinesGroup.setAttribute("class", "osmosis-branch-lines-group");
@@ -8848,6 +8852,54 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		} else {
 			container.appendChild(svg);
 		}
+	}
+
+	/**
+	 * Draw every boundary (cloud) style in the map: a soft hull around the
+	 * node and its laid-out descendants, so folding or editing re-shapes it on
+	 * the next pass. Not viewport-culled: there are few, and one spans many
+	 * nodes. Outer boundaries are drawn first, so an inner one lies on top.
+	 */
+	private drawBoundaries(svg: SVGElement, layout: LayoutResult, offsetX: number, offsetY: number): void {
+		const fm = this.osmosisStyleFrontmatter;
+		// Only a node's own style, class or variant sets one; never the theme.
+		if (!fm?.styles && !fm?.variants) return;
+		const looks = new Map<LayoutNode, NonNullable<ReturnType<typeof resolveBoundary>>>();
+		for (const node of layout.nodes) {
+			if (node.source.type === "root") continue;
+			const localStyle = lookupNodeStyle(fm, node);
+			const classStyle = lookupClassStyle(fm, localStyle?.class, this.getGlobalClasses());
+			const variantStyle = lookupVariantStyle(fm, node);
+			if (!localStyle?.boundary && !classStyle?.boundary && !variantStyle?.boundary) continue;
+			const depth = node.source.type === "heading" ? node.source.depth : undefined;
+			const look = resolveBoundary(resolveNodeStyle(this.effectiveTheme, depth, localStyle, classStyle, variantStyle));
+			if (look) looks.set(node, look);
+		}
+		if (looks.size === 0) return;
+		const group = document.createElementNS(SVG_NS, "g");
+		group.setAttribute("class", "osmosis-boundaries-group");
+		for (const { node, hull } of boundaryShapes([layout.root], (n) => looks.has(n), BOUNDARY_PADDING)) {
+			const look = looks.get(node)!;
+			const path = document.createElementNS(SVG_NS, "path");
+			path.setAttribute("class", "osmosis-boundary");
+			// Not data-node-id: lookups by that attribute expect a node group.
+			path.setAttribute("data-boundary-id", node.source.id);
+			path.setAttribute("d", roundedHullPath(hull.map((p) => ({ x: p.x + offsetX, y: p.y + offsetY })), BOUNDARY_PADDING));
+			const accent = "var(--interactive-accent)";
+			const styles = [
+				`fill: ${look.fill ?? accent}`,
+				`fill-opacity: ${String(look.fillOpacity)}`,
+				`stroke: ${look.strokeWidth > 0 ? (look.stroke ?? accent) : "none"}`,
+				`stroke-opacity: ${String(look.strokeOpacity)}`,
+				`stroke-width: ${String(look.strokeWidth)}`,
+				"pointer-events: none",
+			];
+			if (look.dash === "dashed") styles.push(`stroke-dasharray: ${String(look.strokeWidth * 4)} ${String(look.strokeWidth * 3)}`);
+			else if (look.dash === "dotted") styles.push(`stroke-dasharray: 0 ${String(look.strokeWidth * 2.5)}`, "stroke-linecap: round");
+			path.setAttribute("style", styles.join("; "));
+			group.appendChild(path);
+		}
+		svg.appendChild(group);
 	}
 
 	private async drawNode(
