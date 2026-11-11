@@ -44,6 +44,8 @@ import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } 
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
+import { FAR_SIDE_GLSL } from "../graph3d/far-side";
+import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
@@ -125,13 +127,16 @@ function endId(end: EngineLink["source"]): string {
  * blend over the background, so fading their alpha is the same mix toward it;
  * each fragment uses its own depth. `round` cuts square points into discs.
  */
-function dimWithFocus(material: Material, focus: { value: number }, round = false): void {
-	// three.js keys compiled programs by this function's source, which `round` doesn't change.
-	material.customProgramCacheKey = () => (round ? "osmosis-focus-round" : "osmosis-focus");
+function dimWithFocus(material: Material, focus: { value: number }, round = false, farSide = false): void {
+	// three.js keys compiled programs by this function's source, which `round` and `farSide` don't change.
+	material.customProgramCacheKey = () => `osmosis-focus${round ? "-round" : ""}${farSide ? "-far" : ""}`;
 	material.onBeforeCompile = (shader) => {
 		shader.uniforms.uFocus = focus;
+		// `farSide`: a vertex with an `aCore` (w = 1) on its planet's far side is dimmed (`far-side.ts`); the colour must be RGBA.
+		const far = farSide ? `attribute vec4 aCore;\n${FAR_SIDE_GLSL}\n` : "";
 		shader.vertexShader = shader.vertexShader
-			.replace("void main() {", "varying float vFocusDepth;\nvoid main() {")
+			.replace("void main() {", `varying float vFocusDepth;\n${far}void main() {`)
+			.replace("#include <color_vertex>", farSide ? "#include <color_vertex>\nif (aCore.w > 0.5) vColor.a *= farSideKeep(position - aCore.xyz, position);" : "#include <color_vertex>")
 			.replace("#include <fog_vertex>", "#include <fog_vertex>\nvFocusDepth = -mvPosition.z;");
 		shader.fragmentShader = shader.fragmentShader
 			.replace("void main() {", `varying float vFocusDepth;\n${FOCUS_DIM_GLSL}\nvoid main() {${round ? "\nif (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;" : ""}`)
@@ -389,6 +394,8 @@ export class Graph3DScene {
 	/** Live Markdown panels over the nearest plates. */
 	private readonly near: Graph3DNear;
 	private readonly edges: LineSegments<BufferGeometry, LineBasicMaterial>;
+	/** Every node's boundary (cloud), one mesh (`Graph3DBoundaries`). */
+	private readonly boundaries: Graph3DBoundaries;
 	/** The study path's thread, and the nodes it runs through (null: a stop not loaded now). */
 	private readonly thread: LineSegments<BufferGeometry, LineBasicMaterial>;
 	private threadIds: readonly (string | null)[] = [];
@@ -598,8 +605,8 @@ export class Graph3DScene {
 
 		this.plates = new Graph3DPlates(this.theme);
 		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
-		// Edges dim with the plates.
-		dimWithFocus(edgeMaterial, this.plates.focus);
+		// Edges dim with the plates, and on a planet's far side as its plates do.
+		dimWithFocus(edgeMaterial, this.plates.focus, false, true);
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
 		this.thread = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: THREAD_COLOR, transparent: true, depthWrite: false }));
@@ -610,7 +617,8 @@ export class Graph3DScene {
 		this.particles.frustumCulled = false;
 		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
-		this.graph.scene().add(this.edges, this.thread, this.particles, this.plates.group, this.near.group);
+		this.boundaries = new Graph3DBoundaries(this.plates.focus, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
+		this.graph.scene().add(this.boundaries.mesh, this.edges, this.thread, this.particles, this.plates.group, this.near.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
 		this.setOverlays(options.overlays);
 
@@ -1689,6 +1697,7 @@ export class Graph3DScene {
 		this.nodes = [];
 		this.links = [];
 		this.plates.dispose();
+		this.boundaries.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
 		this.thread.geometry.dispose();
@@ -2497,7 +2506,7 @@ export class Graph3DScene {
 			point.set(node.x, node.y, node.z).sub(camera.position);
 			const distance = point.dot(forward);
 			if (distance <= 0 || distance > reach) continue;
-			// A planet's plate seen from behind isn't drawn, so it can't be picked.
+			// A planet's plate seen from behind is only drawn dimmed (the far side), so it can't be picked.
 			const n = node.frame?.normal;
 			if (n !== undefined && n.x * point.x + n.y * point.y + n.z * point.z >= 0) continue;
 			point.add(camera.position).project(camera);
@@ -2611,7 +2620,9 @@ export class Graph3DScene {
 			this.layoutDirty = false;
 			this.writeEdges();
 			this.writeThread();
+			this.boundaries.invalidate();
 		}
+		this.boundaries.update(this.nodes, this.hierarchyEnds(), (node) => this.surfaceOf(node as EngineNode), now);
 		if (this.overlays.particles) this.writeParticles(now);
 		this.stepLinkDrag();
 		if (this.hover !== null) {
@@ -2649,15 +2660,19 @@ export class Graph3DScene {
 		const geometry = this.edges.geometry;
 		let positions = geometry.getAttribute("position") as BufferAttribute | undefined;
 		let colors = geometry.getAttribute("color") as BufferAttribute | undefined;
+		// Each vertex's planet core (w = 1), for the far-side dim; w = 0 off any planet.
+		let cores = geometry.getAttribute("aCore") as BufferAttribute | undefined;
 		// A planet's edges are arcs of up to LANE_SEGMENTS segments.
 		const perLink = 2 * (this.world.size > 0 ? LANE_SEGMENTS : 1);
-		if (positions === undefined || colors === undefined || positions.count < this.links.length * perLink) {
+		if (positions === undefined || colors === undefined || cores === undefined || positions.count < this.links.length * perLink) {
 			const capacity = Math.max(64, this.links.length * perLink * 2);
 			geometry.dispose();
 			positions = new BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(DynamicDrawUsage);
 			colors = new BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(DynamicDrawUsage);
+			cores = new BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(DynamicDrawUsage);
 			geometry.setAttribute("position", positions);
 			geometry.setAttribute("color", colors);
+			geometry.setAttribute("aCore", cores);
 		}
 		let vertex = 0;
 		for (const link of this.links) {
@@ -2673,9 +2688,14 @@ export class Graph3DScene {
 			if (this.world.size > 0 && placed(source) && placed(target)) {
 				const { points, scale } = this.planetEdge(link.kind, source, target);
 				alpha = Math.min(1, alpha * scale);
+				const [cs, ct] = [this.coreOf(source), this.coreOf(target)];
 				for (let i = 1; i < points.length; i++) {
 					for (const end of [points[i - 1]!, points[i]!]) {
 						positions.setXYZ(vertex, end.x, end.y, end.z);
+						// A lane's point belongs to the nearer of its two planets.
+						const core = cs === null || (ct !== null && distanceSq(end, ct) < distanceSq(end, cs)) ? ct : cs;
+						if (core === null) cores.setXYZW(vertex, 0, 0, 0, 0);
+						else cores.setXYZW(vertex, core.x, core.y, core.z, 1);
 						colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
 					}
 				}
@@ -2683,12 +2703,14 @@ export class Graph3DScene {
 			}
 			for (const end of [source, target]) {
 				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
+				cores.setXYZW(vertex, 0, 0, 0, 0);
 				colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
 			}
 		}
 		geometry.setDrawRange(0, vertex);
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
+		cores.needsUpdate = true;
 	}
 
 	private writeThread(): void {
@@ -2710,6 +2732,29 @@ export class Graph3DScene {
 		for (const end of segments.flat()) positions.setXYZ(vertex++, end.x, end.y, end.z);
 		geometry.setDrawRange(0, vertex);
 		positions.needsUpdate = true;
+	}
+
+	/** The outline's parent → child edges among the loaded nodes, for boundaries. */
+	private hierarchyEnds(): { source: string; target: string }[] {
+		const out: { source: string; target: string }[] = [];
+		for (const link of this.links) if (link.kind === "hierarchy") out.push({ source: endId(link.source), target: endId(link.target) });
+		return out;
+	}
+
+	/** Planets mode: the planet a surface plate lies on, for its boundary patch; null for a core, a star, or another layout. */
+	private surfaceOf(node: EngineNode): BoundarySurface | null {
+		if (node.frame === undefined) return null;
+		const id = this.world.planetOf(node.id);
+		const core = this.coreOf(node);
+		const radius = id === undefined ? undefined : this.world.radius(id);
+		return id === undefined || core === null || radius === undefined ? null : { core: id, centre: core, radius };
+	}
+
+	/** The placed core of the planet `node` is on (itself for a core), or null off any planet. */
+	private coreOf(node: EngineNode): (EngineNode & Vec3) | null {
+		const id = this.world.planetOf(node.id);
+		const core = id === undefined ? undefined : this.live.get(id);
+		return core !== undefined && placed(core) ? core : null;
 	}
 
 	/**
@@ -2808,4 +2853,8 @@ function worldDistance(a: EngineNode, b: EngineNode): number {
 /** Whether a node's plate has a context menu: lines and note cores, which belong to a note (tags, files and ghosts have none). */
 function hasMenu(node: GraphNode): boolean {
 	return node.kind === "line" || node.kind === "note";
+}
+
+function distanceSq(a: Vec3, b: Vec3): number {
+	return (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) ** 2;
 }

@@ -47,7 +47,8 @@ import type { NodeLook } from "../graph3d/node-style";
 import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../graph3d/occlusion";
 import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "../graph3d/links";
 import type { TangentFrame } from "../graph3d/planets";
-import { facesEye, panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
+import { showsText } from "../graph3d/far-side";
+import { panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
 
 /** A link under a click, in a near-tier panel. */
 export interface PanelLink {
@@ -233,8 +234,8 @@ export class Graph3DNear {
 		const viewport = this.renderer.getSize();
 		for (const node of this.enabled ? nodes : []) {
 			if (node.departing || node.x === undefined || node.y === undefined || node.z === undefined) continue;
-			// A planet's plate seen from behind isn't drawn, so it has no panel either.
-			if (this.tilted && node.frame !== undefined && !facesEye({ x: node.x, y: node.y, z: node.z }, node.frame.normal, eye)) continue;
+			// A planet's plate seen from behind is drawn dimmed but shows no text, so it has no panel either.
+			if (this.tilted && !showsText({ x: node.x, y: node.y, z: node.z }, node.frame?.normal, eye)) continue;
 			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
 			const depth = -point.z;
 			const scale = panelScale(depth, pxPerUnitAt1, this.pxPerUnit);
@@ -567,7 +568,7 @@ export class Graph3DNear {
 		const frame = node.frame ?? this.cameraFrame;
 		object.matrix.fromArray(panelMatrix(object.position, frame, this.pxPerUnit));
 		object.matrixWorldNeedsUpdate = true;
-		object.visible = node.frame === undefined || facesEye(object.position, frame.normal, this.eye);
+		object.visible = showsText(object.position, node.frame?.normal, this.eye);
 	}
 
 	/** Scale the panel to its depth, cut out the plates in front of it and veil it by the mist, as the CSS2D renderer positions it. */
@@ -682,8 +683,7 @@ export class Graph3DNear {
 		const point = this.platePoint;
 		for (const node of this.sources) {
 			if (node.opacity <= 0 || node.x === undefined || node.y === undefined || node.z === undefined) continue;
-			// A planet's plate seen from behind isn't drawn.
-			if (node.frame !== undefined && !facesEye({ x: node.x, y: node.y, z: node.z }, node.frame.normal, this.eye)) continue;
+			// A planet's plate seen from behind is drawn too (dimmed, the far side), so it covers a farther panel like any plate.
 			point.set(node.x, node.y, node.z).applyMatrix4(camera.matrixWorldInverse);
 			const depth = -point.z;
 			if (depth <= camera.near) continue;

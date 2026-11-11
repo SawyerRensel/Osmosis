@@ -36,6 +36,7 @@ import {
 	type IUniform,
 } from "three";
 import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
+import { FAR_SIDE_DIM } from "../graph3d/far-side";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { DEFAULT_LOOK, type NodeLook } from "../graph3d/node-style";
 
@@ -84,7 +85,7 @@ export interface PlateSource {
 	selected?: boolean;
 	/** A find bar match: drawn with the find border (as thick, in `PlateColors.found`). The selection's wins. */
 	found?: boolean;
-	/** Planets mode: the plate lies on its planet's surface along these unit axes (text-right, text-up), seen from the front only. Without, it faces the camera. */
+	/** Planets mode: the plate lies on its planet's surface along these unit axes (text-right, text-up), drawn dimmed and without text from behind. Without, it faces the camera. */
 	frame?: { right: { x: number; y: number; z: number }; up: { x: number; y: number; z: number } };
 	/** The node's style: fill, outline (over `color`), corners and text colour. Without, the default plate. */
 	look?: NodeLook;
@@ -188,18 +189,23 @@ class GlyphAtlas {
 	}
 }
 
-const FOG_VERTEX = /* glsl */ `
+/**
+ * The tail of both vertex shaders. A plate faded right out is collapsed off
+ * screen; a planet's plate seen from behind is drawn dimmed by the plate
+ * shader (`FAR_SIDE_DIM`), but its glyphs are collapsed (`hideBack`): no text
+ * on a plate's back.
+ */
+const fogVertex = (hideBack: boolean): string => /* glsl */ `
 #include <fog_vertex>
 mvPosition.xyz *= ${PLATE_PULL.toFixed(3)};
 gl_Position = projectionMatrix * mvPosition;
-// A plate faded right out, or a planet's plate seen from behind, is collapsed off screen.
-if (aOpacity <= 0.0 || plateBack) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+if (aOpacity <= 0.0${hideBack ? " || plateBack" : ""}) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 `;
 
 /**
  * Where a point `offset` from a plate's centre (text-right, text-up) lands, in
  * view space: across the screen for a billboard, or along the plate's own
- * axes for a plate lying on a planet, which is front-face only (`plateBack`).
+ * axes for a plate lying on a planet (`plateBack` when seen from behind: dimmed, no text).
  */
 const ORIENT_GLSL = /* glsl */ `
 attribute vec3 aRight;
@@ -242,8 +248,8 @@ void main() {
 	vSelected = aSelected;
 	vFill = aFill;
 	vShape = aShape;
-	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
-	${FOG_VERTEX}
+	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z)) * (plateBack ? ${(1 - FAR_SIDE_DIM).toFixed(4)} : 1.0);
+	${fogVertex(false)}
 }
 `;
 
@@ -305,7 +311,7 @@ void main() {
 	vUv = aUv.xy + (position.xy + 0.5) * aUv.zw;
 	vInk = aInk;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
-	${FOG_VERTEX}
+	${fogVertex(true)}
 }
 `;
 
