@@ -19,10 +19,10 @@ export interface LookEaseStep {
 	remaining: number;
 }
 
-/** Take a frame's share of `pending` after `seconds`. */
-export function easeLook(pending: number, seconds: number, tau = LOOK_EASE_SECONDS): LookEaseStep {
-	if (Math.abs(pending) < LOOK_EASE_EPSILON) return { step: pending, remaining: 0 };
+/** Take a frame's share of `pending` after `seconds`. The wheel's zoom glide eases the same way, in its own units (`epsilon`). */
+export function easeLook(pending: number, seconds: number, tau = LOOK_EASE_SECONDS, epsilon = LOOK_EASE_EPSILON): LookEaseStep {
+	if (Math.abs(pending) < epsilon) return { step: pending, remaining: 0 };
 	const step = pending * (1 - Math.exp(-Math.max(0, seconds) / tau));
 	const remaining = pending - step;
-	return Math.abs(remaining) < LOOK_EASE_EPSILON ? { step: pending, remaining: 0 } : { step, remaining };
+	return Math.abs(remaining) < epsilon ? { step: pending, remaining: 0 } : { step, remaining };
 }

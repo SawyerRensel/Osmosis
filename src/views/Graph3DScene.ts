@@ -37,6 +37,8 @@ import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, k
 import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
 import { rotateAboutPivot } from "../graph3d/pivot";
+import { grabPoint, stickyTurn } from "../graph3d/globe";
+import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
@@ -205,6 +207,14 @@ interface RotateDrag {
 	pivot: Vector3;
 	/** Turn the camera in place instead of orbiting. Once set, it holds until the drag ends. */
 	look: boolean;
+	/**
+	 * Pressed on a planet's surface: the grabbed point of the surface (world
+	 * space, on a sphere of `radius` about `pivot`, the core) that the drag keeps
+	 * under the pointer (`stickyTurn`). Null for any other pivot.
+	 */
+	grab: { point: Vector3; radius: number } | null;
+	/** Yaw and pitch (radians) the drag has turned so far, sampled for the release spin. */
+	turned: Vec;
 }
 
 /** A link drag in progress (edit mode): line `from` pulled toward whatever it is dropped on. */
@@ -450,16 +460,25 @@ export class Graph3DScene {
 	private readonly touches = new Map<number, { x: number; y: number }>();
 	/** Distance from the camera of the last point aimed at; a press or zoom over empty space reuses it. */
 	private lastDepth: number | null = null;
-	/** Touch momentum: finger positions (or the pinch midpoint) and ln(zoom), for the release velocity. */
+	/**
+	 * Momentum (`graph3d/inertia.ts`): pointer positions (or the pinch
+	 * midpoint), a drag's turn so far, and ln(zoom), for the release velocity.
+	 */
 	private samples: Sample[] = [];
+	private turnSamples: Sample[] = [];
 	private zoomSamples: Sample[] = [];
-	private orbitCoast: { drag: RotateDrag; velocity: Vec } | null = null;
-	private panCoast: { depth: number; velocity: Vec } | null = null;
+	/** A released drag spinning on (radians/ms) about its pivot, or about the camera for a touch look. */
+	private orbitCoast: { pivot: Vector3; look: boolean; coast: Coast } | null = null;
+	private panCoast: { depth: number; coast: Coast } | null = null;
 	private zoomCoast: { x: number; y: number; velocity: number } | null = null;
-	/** The orbit coast a touch interrupted, which a flick that follows adds to. */
+	/** The wheel's zoom still to glide out (ln zoom), aimed at the pointer's last place (`easeWheel`). */
+	private wheelZoom: { x: number; y: number; pending: number } | null = null;
+	/** A mouse pan (OrbitControls' right or Ctrl drag) in progress, sampled so its release can coast. */
+	private mousePan: number | null = null;
+	/** The spin a press interrupted, which a flick that follows adds to. */
 	private carry: Vec = { x: 0, y: 0 };
 	private touchDownAt = 0;
-	/** The touch now down stopped a coast, and so is not also a tap that flies. */
+	/** The press now down stopped a coast, and so is not also a click or tap that flies. */
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
 	private readonly perf: Graph3DPerf;
@@ -1413,7 +1432,7 @@ export class Graph3DScene {
 		controls.target.add(move);
 		controls.update();
 		// A track goes on through the user's orbit (see `reshape`): what they pressed moves with it, so they keep orbiting it.
-		for (const pivot of new Set([this.drag?.pivot, this.orbitCoast?.drag.pivot])) pivot?.add(move);
+		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.orbitCoast?.pivot])) pivot?.add(move);
 	}
 
 	/**
@@ -1539,10 +1558,21 @@ export class Graph3DScene {
 		return viewingDistance(pose.position, pose.target, focus !== undefined && placed(focus) ? { x: focus.x, y: focus.y, z: focus.z } : null, heading, MIN_DEPTH);
 	}
 
-	/** The user moved the view: a flight or follow under way gives way. A structural edit's track goes on (see `reshape`). */
+	/** The user moved the view: a flight or follow under way gives way, and so does any coast. A structural edit's track goes on (see `reshape`). */
 	private cancelFlight(): void {
 		this.flight = this.glide = this.ride = this.hoverFlight = null;
 		if (this.follow?.track !== true) this.follow = null;
+		this.stopCoasting();
+	}
+
+	/** Whether a released drag, pan or pinch is still coasting (the wheel's glide doesn't count: it is the wheel's own zoom, eased). */
+	private coasting(): boolean {
+		return this.orbitCoast !== null || this.panCoast !== null || this.zoomCoast !== null;
+	}
+
+	/** Stop every coast and the wheel's glide where they are. */
+	private stopCoasting(): void {
+		this.orbitCoast = this.panCoast = this.zoomCoast = this.wheelZoom = null;
 	}
 
 	/**
@@ -1743,17 +1773,17 @@ export class Graph3DScene {
 	private readonly onPointerDown = (e: PointerEvent): void => {
 		const touch = e.pointerType === "touch";
 		const gesture = this.gestureOf(e);
-		this.cancelFlight();
-		this.lookPending = { x: 0, y: 0 };
 		if (this.touches.size === 0) {
-			// A finger on a coasting view stops it, and that is all it does:
-			// not also a tap that flies. What the orbit coast had left carries
-			// into a flick that follows.
-			this.stoppedCoastOnDown = this.orbitCoast !== null || this.panCoast !== null || this.zoomCoast !== null;
-			this.carry = this.orbitCoast?.velocity ?? { x: 0, y: 0 };
+			// A press on a coasting view stops it, and that is all it does:
+			// not also a click or tap that flies. What the spin had left
+			// carries into a flick that follows.
+			this.stoppedCoastOnDown = this.coasting();
+			this.carry = this.orbitCoast?.coast.velocity ?? { x: 0, y: 0 };
 			this.touchDownAt = performance.now();
 		}
-		this.orbitCoast = this.panCoast = this.zoomCoast = null;
+		// Stops every coast too.
+		this.cancelFlight();
+		this.lookPending = { x: 0, y: 0 };
 		if (touch) {
 			this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
 			// A second finger is a pinch: the drag stops, and stays stopped
@@ -1769,6 +1799,7 @@ export class Graph3DScene {
 			}
 		} else if (gesture === "panOrMenu") {
 			if (this.editingId === null) this.menuPress = { pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+			this.startMousePan(e);
 			return;
 		} else if (gesture === "none") {
 			return;
@@ -1776,9 +1807,11 @@ export class Graph3DScene {
 			// Still a press that may be a click: Mod-click on a link opens it.
 			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
 			if (gesture === "boxSelect") this.beginBoxSelect(e);
+			else this.startMousePan(e);
 			return;
 		}
 		this.samples = [];
+		this.turnSamples = [];
 		// A link gesture (Alt + drag in edit mode, or a finger there) on a line pulls a link out of it. On empty space, or a note, tag or file, it orbits.
 		const from = gesture === "link" && !this.stoppedCoastOnDown && this.editingId === null ? this.pickedNode(e.clientX, e.clientY, touch) : null;
 		if (from?.graph.kind === "line") {
@@ -1789,13 +1822,18 @@ export class Graph3DScene {
 			if (touch) this.startLongPress(e.pointerId, e.clientX, e.clientY, from);
 			return;
 		}
+		const aim = this.aim(e.clientX, e.clientY, touch);
+		const look = touch && this.controlSettings.touchDrag === "look";
+		const ray = this.rayThrough(e.clientX, e.clientY);
 		this.drag = {
 			pointerId: e.pointerId,
 			touch,
 			x: e.clientX,
 			y: e.clientY,
-			pivot: this.aimPoint(e.clientX, e.clientY, touch),
-			look: touch && this.controlSettings.touchDrag === "look",
+			pivot: aim.point,
+			look,
+			grab: aim.globe === null || look ? null : { point: grabPoint(ray.origin, ray.direction, aim.point, aim.globe), radius: aim.globe },
+			turned: { x: 0, y: 0 },
 		};
 		this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
 		// A finger held still on a line or note plate opens its context menu, as in edit mode.
@@ -1829,6 +1867,7 @@ export class Graph3DScene {
 		if (e.pointerType === "mouse" && e.buttons === 0 && e.target === this.graph.renderer().domElement) {
 			this.hover = { x: e.clientX, y: e.clientY };
 		}
+		if (this.mousePan === e.pointerId) this.sample(this.samples, e.clientX, e.clientY);
 		const finger = this.touches.get(e.pointerId);
 		if (finger !== undefined) {
 			finger.x = e.clientX;
@@ -1854,12 +1893,13 @@ export class Graph3DScene {
 		// A flight key pressed during a mouse drag turns it into mouse-look
 		// for the rest of the drag; the next press orbits again.
 		if (!drag.touch && this.heldKeys.size > 0) drag.look = true;
-		if (drag.touch) this.sample(this.samples, e.clientX, e.clientY);
+		this.sample(this.samples, e.clientX, e.clientY);
 		this.rotate(drag, dx, dy);
 	};
 
 	private readonly onPointerUp = (e: PointerEvent): void => {
 		this.touches.delete(e.pointerId);
+		if (this.mousePan === e.pointerId) this.endMousePan(e.type === "pointerup");
 		if (this.longPress?.pointerId === e.pointerId) this.clearLongPress();
 		const menu = this.menuPress;
 		if (menu?.pointerId === e.pointerId) {
@@ -1886,11 +1926,29 @@ export class Graph3DScene {
 		const drag = this.drag;
 		if (drag?.pointerId !== e.pointerId) return;
 		this.drag = null;
-		if (!drag.touch) return;
+		// Mouse-look has its own glide (`easeLookPending`), which a spin would stack on.
+		if (drag.look && !drag.touch) return;
 		const now = performance.now();
-		const velocity = launchVelocity(estimateVelocity(this.samples, now), this.carry, now - this.touchDownAt);
-		if (velocity.x !== 0 || velocity.y !== 0) this.orbitCoast = { drag, velocity };
+		const coast = launchSpin(estimateVelocity(this.samples, now), estimateVelocity(this.turnSamples, now), this.carry, now - this.touchDownAt);
+		if (coast !== null) this.orbitCoast = { pivot: drag.pivot, look: drag.look, coast };
 	};
+
+	/** A right or Ctrl drag is OrbitControls' pan: sample it, so its release can coast like a pinch's pan. */
+	private startMousePan(e: PointerEvent): void {
+		this.mousePan = e.pointerId;
+		this.samples = [];
+	}
+
+	/** The mouse pan ends; released (not cancelled) while moving, it coasts on at the orbit target's depth, where OrbitControls panned. */
+	private endMousePan(released: boolean): void {
+		this.mousePan = null;
+		if (!released) return;
+		const now = performance.now();
+		const velocity = launchVelocity(estimateVelocity(this.samples, now), { x: 0, y: 0 }, 0);
+		if (velocity.x === 0 && velocity.y === 0) return;
+		const depth = this.graph.camera().position.distanceTo(this.orbitControls().target);
+		this.panCoast = { depth, coast: { velocity, stopBelow: PAN_MIN_VELOCITY } };
+	}
 
 	/** The browser's own context menu stays off the canvas: the right button there is ours (a pan, or the plate menu). */
 	private readonly onContextMenuEvent = (e: Event): void => {
@@ -2060,18 +2118,33 @@ export class Graph3DScene {
 		return this.options.onNodeDoubleClick(prev.node);
 	}
 
-	/** The wheel zooms toward what is under the cursor, or sets the flight speed while flying. */
+	/**
+	 * The wheel zooms toward what is under the cursor, or sets the flight speed
+	 * while flying. The zoom glides: it joins what the last notches left to go,
+	 * and `easeWheel` plays it out, decelerating.
+	 */
 	private readonly onWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 		e.stopPropagation();
+		const pending = this.wheelZoom?.pending ?? 0;
 		this.cancelFlight();
 		if (this.drag?.look === true && !this.drag.touch) {
 			flightScale = Math.min(FLIGHT_SCALE_LIMIT, Math.max(1 / FLIGHT_SCALE_LIMIT, flightScale * FLIGHT_SCALE_STEP ** wheelNotches(e)));
 			this.showSpeed();
 			return;
 		}
-		this.dolly(this.aimPoint(e.clientX, e.clientY, false), wheelLogZoom(e));
+		this.wheelZoom = { x: e.clientX, y: e.clientY, pending: pending + wheelLogZoom(e) };
 	};
+
+	/** Each frame, zoom by an eased share of the wheel's pending zoom, toward what is under the pointer now. */
+	private easeWheel(seconds: number): void {
+		const wheel = this.wheelZoom;
+		if (wheel === null) return;
+		const { step, remaining } = easeLook(wheel.pending, seconds, WHEEL_EASE_SECONDS, WHEEL_EASE_EPSILON);
+		wheel.pending = remaining;
+		if (remaining === 0) this.wheelZoom = null;
+		if (step !== 0) this.dolly(this.aimPoint(wheel.x, wheel.y, false), step);
+	}
 
 	private showSpeed(): void {
 		this.speedEl.setText(`Flight speed ×${flightScale.toFixed(flightScale < 1 ? 2 : 1)}`);
@@ -2090,13 +2163,26 @@ export class Graph3DScene {
 		}
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
-		const pivot = drag.look ? camera.position.clone() : drag.pivot;
-		const rate = (drag.look ? LOOK_RATE : ORBIT_RATE) / Math.max(1, this.container.clientHeight);
-		// Mouse-look turns toward the drag; a touch look drags the world, so it
-		// turns the other way. Orbiting drags the world either way.
-		const sign = drag.look && drag.touch ? 1 : -1;
-		rotateAboutPivot(camera.position, controls.target, pivot, sign * rate * dx, sign * rate * dy, camera.up);
+		let yaw: number;
+		let pitch: number;
+		if (drag.grab !== null && !drag.look) {
+			// A grabbed planet turns however far keeps the grabbed point under the pointer.
+			const ray = this.rayThrough(drag.x, drag.y);
+			const aim = grabPoint(ray.origin, ray.direction, drag.pivot, drag.grab.radius);
+			({ yaw, pitch } = stickyTurn(camera.position, controls.target, camera.up, drag.pivot, drag.grab.point, aim));
+		} else {
+			const rate = (drag.look ? LOOK_RATE : ORBIT_RATE) / Math.max(1, this.container.clientHeight);
+			// Mouse-look turns toward the drag; a touch look drags the world, so it
+			// turns the other way. Orbiting drags the world either way.
+			const sign = drag.look && drag.touch ? 1 : -1;
+			yaw = sign * rate * dx;
+			pitch = sign * rate * dy;
+		}
+		rotateAboutPivot(camera.position, controls.target, drag.look ? camera.position.clone() : drag.pivot, yaw, pitch, camera.up);
 		controls.update();
+		drag.turned.x += yaw;
+		drag.turned.y += pitch;
+		this.sample(this.turnSamples, drag.turned.x, drag.turned.y);
 	}
 
 	/** Each frame, turn the camera by an eased share of the mouse-look drag still pending; it goes on gliding after release. */
@@ -2143,7 +2229,7 @@ export class Graph3DScene {
 		this.pinch = null;
 		const now = performance.now();
 		const pan = launchVelocity(estimateVelocity(this.samples, now), { x: 0, y: 0 }, 0);
-		if (pan.x !== 0 || pan.y !== 0) this.panCoast = { depth: pinch.depth, velocity: pan };
+		if (pan.x !== 0 || pan.y !== 0) this.panCoast = { depth: pinch.depth, coast: { velocity: pan, stopBelow: PAN_MIN_VELOCITY } };
 		const zoom = estimateVelocity(this.zoomSamples, now).x;
 		if (Math.abs(zoom) >= ZOOM_MIN_VELOCITY) this.zoomCoast = { x: pinch.x, y: pinch.y, velocity: zoom };
 	}
@@ -2161,23 +2247,22 @@ export class Graph3DScene {
 		samples.splice(0, samples.length, ...pruneSamples(samples, t), { x, y, t });
 	}
 
-	/** One frame of touch momentum: each gesture coasts on and slows to a stop, as in the mind map. */
+	/** One frame of momentum: each released gesture coasts on and slows to a stop, as in the mind map. */
 	private coast(ms: number): void {
 		const orbit = this.orbitCoast;
 		if (orbit !== null) {
-			const x = integrateDecay(orbit.velocity.x, PAN_FRICTION, ms);
-			const y = integrateDecay(orbit.velocity.y, PAN_FRICTION, ms);
-			orbit.velocity = { x: x.velocity, y: y.velocity };
-			this.rotate(orbit.drag, x.delta, y.delta);
-			if (Math.hypot(x.velocity, y.velocity) < PAN_MIN_VELOCITY) this.orbitCoast = null;
+			const { delta, done } = stepCoast(orbit.coast, SPIN_FRICTION, ms);
+			const camera = this.graph.camera();
+			const controls = this.orbitControls();
+			rotateAboutPivot(camera.position, controls.target, orbit.look ? camera.position.clone() : orbit.pivot, delta.x, delta.y, camera.up);
+			controls.update();
+			if (done) this.orbitCoast = null;
 		}
 		const pan = this.panCoast;
 		if (pan !== null) {
-			const x = integrateDecay(pan.velocity.x, PAN_FRICTION, ms);
-			const y = integrateDecay(pan.velocity.y, PAN_FRICTION, ms);
-			pan.velocity = { x: x.velocity, y: y.velocity };
-			this.pan(x.delta, y.delta, pan.depth);
-			if (Math.hypot(x.velocity, y.velocity) < PAN_MIN_VELOCITY) this.panCoast = null;
+			const { delta, done } = stepCoast(pan.coast, PAN_FRICTION, ms);
+			this.pan(delta.x, delta.y, pan.depth);
+			if (done) this.panCoast = null;
 		}
 		const zoom = this.zoomCoast;
 		if (zoom !== null) {
@@ -2238,9 +2323,18 @@ export class Graph3DScene {
 	 * Auto Depth falls back when nothing is under the cursor.
 	 */
 	private aimPoint(x: number, y: number, touch: boolean): Vector3 {
+		return this.aim(x, y, touch).point;
+	}
+
+	/**
+	 * `aimPoint`, and when that is a planet's core because the pointer is on
+	 * one of its surface plates, `globe`: the radius at which that plate sits
+	 * from the core, the sphere a drag grabs. Null otherwise.
+	 */
+	private aim(x: number, y: number, touch: boolean): { point: Vector3; globe: number | null } {
 		const settings = this.controlSettings;
 		if (touch ? settings.touchDrag === "center" : settings.desktopPivot === "center") {
-			return this.orbitControls().target.clone();
+			return { point: this.orbitControls().target.clone(), globe: null };
 		}
 		const camera = this.graph.camera();
 		const picked = this.nodeNear(x, y, PICK_SLOP_PX[touch ? "touch" : "mouse"]);
@@ -2250,10 +2344,11 @@ export class Graph3DScene {
 		if (node !== null) {
 			const centre = new Vector3(node.x, node.y, node.z);
 			this.lastDepth = centre.distanceTo(camera.position);
-			return centre;
+			const surface = node !== picked && picked !== null && placed(picked) ? centre.distanceTo(new Vector3(picked.x, picked.y, picked.z)) : 0;
+			return { point: centre, globe: surface > 0 ? surface : null };
 		}
 		const depth = this.lastDepth ?? camera.position.distanceTo(this.orbitControls().target);
-		return this.rayThrough(x, y).at(depth, new Vector3());
+		return { point: this.rayThrough(x, y).at(depth, new Vector3()), globe: null };
 	}
 
 	/**
@@ -2338,7 +2433,10 @@ export class Graph3DScene {
 		const rect = this.graph.renderer().domElement.getBoundingClientRect();
 		const ndc = new Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
 		const raycaster = new Raycaster();
-		raycaster.setFromCamera(ndc, this.graph.camera());
+		// A drag may have moved the camera since the last render (a grabbed planet casts a ray on every move).
+		const camera = this.graph.camera();
+		camera.updateMatrixWorld();
+		raycaster.setFromCamera(ndc, camera);
 		return raycaster.ray;
 	}
 
@@ -2366,7 +2464,10 @@ export class Graph3DScene {
 		this.fly(seconds);
 		this.lookAround(seconds);
 		this.easeLookPending(seconds);
+		// A flight, glide or ride has the camera: nothing coasts against it.
+		if (this.flight !== null || this.glide !== null || this.ride !== null || this.hoverFlight !== null) this.stopCoasting();
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
+		this.easeWheel(seconds);
 		const controls = this.orbitControls();
 		const targetDistance = this.graph.camera().position.distanceTo(controls.target);
 		const ease = 1 - Math.exp(-seconds / MIST_EASE);
