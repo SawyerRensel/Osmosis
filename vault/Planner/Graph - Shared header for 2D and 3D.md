@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Settings in the style sidebar]]"
   - "[[3D Graph - Shared toolbar ribbon]]"
   - "[[Activate reading mode in Mind Map View when study mode is activated]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T11:30:00.000Z"
+date_start_scheduled: "2026-11-11T11:06:18.000Z"
+date_start_actual: "2026-11-11T11:06:18.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -102,3 +102,29 @@ Manual test (any note; Ctrl+R after build):
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+**Approach.** The header order is a pure module (`src/view-header.ts`: `SHARED_HEADER` = switch, note-view, reading, style, study; extras 2D = pin, peek, 3D = follow; plus `readingToggle`, the icon/tooltip rule both views now use). `arrangeViewHeader` (`src/views/ViewHeader.ts`) builds the 2D | 3D pill and re-orders `.view-actions` itself, left to right, ahead of Obsidian's own buttons, so it does not depend on how `addAction` orders things (I could not see Obsidian to check).
+
+**Decisions worth remembering**
+- The 2D toolbar's toggle button was removed by deleting its `TOOLBAR_GROUPS` entry. Commands are generated from that list, so the toggle command is now registered on its own in `main.ts` (`TOGGLE_3D_COMMAND`, same id `mindmap-toggle-3d`, so an existing hotkey survives; it still works from both views).
+- 3D Reading/Editing is the old pencil button (same `toggleEditMode`), restyled to the 2D convention: it shows the mode a click switches to (pencil while reading, book while editing); the old `is-active` highlight is gone. 3D starts in reading, as before.
+- 3D Style sidebar button (paintbrush) toggles the existing Overlays panel, as the ticket allowed. The Overlays corner button is left alone. [[3D Graph - Settings in the style sidebar]] should repoint it.
+- 3D Note view opens the focused node's note (else the focus note) in the ordinary note view in the same leaf, after the same settle step as switching to 2D (open edit saved, study ended, link drag dropped; `settleForSwap`). Unlike the 2D/3D swap it does not hold undo history, same as the 2D Note view.
+- Labels kept as they were ("Study mode" in 2D, "Relational study" in 3D); the shared part is id, icon and position.
+- Mobile: the pill is text `2D`/`3D` in small type with reduced padding, no extra icons beyond the shared set.
+
+| File | Change |
+|---|---|
+| `src/view-header.ts` (+test) | Pure header order, extras per view, `readingToggle` |
+| `src/views/ViewHeader.ts` | Pill DOM and header re-ordering |
+| `src/views/MindMapView.ts` | Uses `arrangeViewHeader`; `switchTo3D` public; reading action via `readingToggle` |
+| `src/views/Graph3DView.ts` | Header rebuilt: Note view, Reading/Editing (pencil), Style, Study, Follow; `settleForSwap`, `switchToNote`, `showEditAction` |
+| `src/views/ToolRibbon.ts` (+test), `src/main.ts` | Toggle button and `toggle3D` action removed; standalone command |
+| `styles.css` | `.osmosis-view-switch` pill |
+| `docs/mind-mapping/graph-3d.md` | Header wording |
+
+**Fixture.** None new; any note, e.g. `vault/tests/graph3d/Styled Mooring.md`.
+
+**Not verified.** Actual left-to-right placement and mobile fit in Obsidian's header (I cannot see it), and whether Obsidian's own buttons (the three-dots menu) stay to the right of ours.
