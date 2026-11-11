@@ -21,6 +21,7 @@ import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBro
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { Graph3DView, HIDE_TOOLBAR_CLASS, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
+import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
 import { LineRevealProcessor } from "./views/LineRevealProcessor";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
@@ -996,7 +997,7 @@ export default class OsmosisPlugin extends Plugin {
 
 	/** Apply the 3D graph navigation settings to every open 3D graph. */
 	/**
-	 * Take a change from a 3D graph's Overlays menu: every open 3D graph shows
+	 * Take a change from the 3D Settings in the style sidebar: every open 3D graph shows
 	 * it at once. Saved straight to data.json, and debounced, since a slider
 	 * fires on every step; `saveSettings()` would also re-sync every card.
 	 */
@@ -1004,6 +1005,12 @@ export default class OsmosisPlugin extends Plugin {
 		this.settings.graph3dOverlays = overlays;
 		this.saveOverlays();
 		this.refreshOpenGraph3DControls();
+	}
+
+	/** Take the style sidebar's 3D Settings sections that are collapsed, saved like the overlays. */
+	setGraph3DSettingsCollapsed(collapsed: SettingsSectionId[]): void {
+		this.settings.graph3dSettingsCollapsed = collapsed;
+		this.saveOverlays();
 	}
 
 	private readonly saveOverlays = debounce(() => void this.saveData(this.settings), 500, true);
@@ -1636,6 +1643,7 @@ export default class OsmosisPlugin extends Plugin {
 		// shape keeps changing, so each session settles it afresh.
 		Reflect.deleteProperty(this.settings, "graph3dPositions");
 		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);
+		this.settings.graph3dSettingsCollapsed = normalizeCollapsed(this.settings.graph3dSettingsCollapsed);
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

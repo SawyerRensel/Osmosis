@@ -16,10 +16,12 @@ import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../g
 import type { Arrow } from "../graph3d/arrow-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { doubleClickEdit } from "../edit-keys";
-import { planStyleKeys } from "../mindmap-style-key";
-import { buildStableIdSelector } from "../styles";
+import { planStyleKeys, stampedStart } from "../mindmap-style-key";
+import { buildBlockIdSelector, buildStableIdSelector, lookupNodeStyleByPath, parseOsmosisStyleFrontmatter, type NodeStyle, type ThemeDefinition } from "../styles";
+import { clearStyleOverride, combineStyleUpdates, writeStyleOverride } from "../style-write";
+import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { writeWidthStyle } from "../graph3d/width-style";
-import { ancestorsOf, appendToLine, carryPairs, carrySiblings, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
+import { ancestorsOf, appendToLine, carryPairs, carrySiblings, findNodeByBlockId, findNodeById, heldDiff, isEditableTarget, lineNodeAt, linkInNote, linkSubpath, locateLine, mapStart, moveGap, moveInNote, moveRefusal, planStructural, stampBlockId, type MovePlace, type StructuralAction } from "../graph3d/edit";
 import { outlineChanged } from "../graph3d/outline";
 import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyGroup } from "../graph3d/selection";
 import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../graph3d/selection-edit";
@@ -35,7 +37,7 @@ import type OsmosisPlugin from "../main";
 import type { Graph3DScene, SceneControls, SceneOverlays, SceneTheme } from "./Graph3DScene";
 import type { PanelLink } from "./Graph3DNear";
 import { Graph3DEditor } from "./Graph3DEdit";
-import { Graph3DOverlaysMenu } from "./Graph3DOverlays";
+import type { Graph3DSettingsSource } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
 import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
 import { isTrail } from "../graph3d/trail-note";
@@ -97,7 +99,7 @@ export function syncMobileToolbar(app: App, except: Graph3DView | null = null): 
  * the pure model in `src/graph3d/` to the engine in `Graph3DScene`, which is
  * imported only when the view opens.
  */
-export class Graph3DView extends ItemView {
+export class Graph3DView extends ItemView implements NodeStyleHost {
 	private scene: Graph3DScene | null = null;
 	private readonly cache = new ParseCache(200);
 	private adjacency: NoteAdjacency | null = null;
@@ -117,7 +119,22 @@ export class Graph3DView extends ItemView {
 	/** Whether this view hides Obsidian's mobile toolbar while it is the active view. */
 	hidesToolbar = false;
 	private toolbarToggleEl: HTMLElement | null = null;
-	private overlaysMenu: Graph3DOverlaysMenu | null = null;
+	/** The style sidebar's Settings panel, told when the settings or the loaded area's reach change (`settingsSource`). */
+	private readonly settingsListeners = new Set<() => void>();
+	/** The style sidebar's Node tab, told when the selection changes or a reload may have restyled it (`NodeStyleHost`). */
+	private readonly selectionListeners = new Set<() => void>();
+	/** Style writes from the sidebar, one at a time (`applyNodeStyleOverrides`). */
+	private styleChain: Promise<void> = Promise.resolve();
+	/** Style updates waiting for the write under way, by node ID. */
+	private pendingStyle: Map<string, { node: GraphNode; style: NodeStyle }> | null = null;
+	/** A colour drag in the sidebar is under way (`beginLiveEdit`). */
+	private liveStyle = false;
+	/** The colour drag under way has written something, so its end reloads the graph. */
+	private liveStyleWrote = false;
+	/** Block IDs this view stamped for a style, by `path\nparse ID` of the line before the stamp: a write queued before the reload still finds its line. */
+	private readonly styleStamps = new Map<string, string>();
+	/** A note's frontmatter as this view's last style write left it, until the metadata cache has it (`getNodeStyleContext`). */
+	private readonly styleFrontmatter = new Map<string, Record<string, unknown>>();
 	/** The colour mode the scene is coloured in now, to tell when the menu changed it. */
 	private colorBy: Graph3DOverlays["colorBy"] | null = null;
 	/** Which of the toggles that add or remove plates (see `modelKey`) the model shown now was built under, to reload when the menu changes one. */
@@ -225,15 +242,11 @@ export class Graph3DView extends ItemView {
 			if (node === null || !this.beginEdit(node)) return undefined;
 			return false;
 		};
-		// Escape drops a link drag in progress, else closes the Overlays menu (which a press on the canvas does not); otherwise the key goes on.
+		// Escape drops a link drag in progress, else closes the help; otherwise the key goes on.
 		// Then it clears the selection (multi-select).
 		this.scope.register([], "Escape", (e: KeyboardEvent) => {
 			if (this.scene?.cancelLinkDrag() === true) return false;
 			if (this.scene?.closeHelp() === true) return false;
-			if (this.overlaysMenu?.isOpen === true) {
-				this.overlaysMenu.toggle(false);
-				return false;
-			}
 			// The editor's own Escape (cancel the edit) goes on.
 			if (isEditableTarget(e.target) || this.editor.isOpen) return undefined;
 			return this.scene?.clearSelection() === true ? false : undefined;
@@ -349,7 +362,7 @@ export class Graph3DView extends ItemView {
 		}
 		// Hold the focus note's history from here, not from the first reload, which can wait on the engine loading: a mind map handing this leaf over may let go of it first.
 		if (this.focusPath !== null && !this.holds.has(this.focusPath)) this.holds.set(this.focusPath, this.plugin().editHistory.hold(this.focusPath));
-		this.overlaysMenu?.showReach({ depth: this.depth, backlinks: this.backlinks });
+		this.notifySettings();
 		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
 		await super.setState(state, result);
@@ -368,32 +381,6 @@ export class Graph3DView extends ItemView {
 		root.empty();
 		root.addClass("osmosis-graph3d");
 
-		this.overlaysMenu = new Graph3DOverlaysMenu(
-			root,
-			this.plugin().settings.graph3dOverlays,
-			{ depth: this.depth, backlinks: this.backlinks },
-			MAX_DEPTH,
-			{
-				get: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
-				set: (on) => this.app.saveLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY, on),
-			},
-			{
-				get: () => this.nearTier(),
-				set: (patch) => {
-					nearTier = cleanNearTier({ ...this.nearTier(), ...patch }, Platform.isMobile);
-					this.app.saveLocalStorage(NEAR_TIER_STORAGE_KEY, nearTier);
-				},
-			},
-			(overlays) => this.plugin().setGraph3DOverlays(overlays),
-			({ depth, backlinks }) => {
-				const reloads = depth !== this.depth || backlinks !== this.backlinks;
-				this.depth = depth;
-				this.backlinks = backlinks;
-				this.app.workspace.requestSaveLayout();
-				if (reloads) void this.reload();
-			},
-		);
-
 		// Bottom-left corner, phones and tablets only: hides Obsidian's own toolbar, which floats over the viewport.
 		this.hidesToolbar = Platform.isMobile && this.app.loadLocalStorage(HIDE_TOOLBAR_STORAGE_KEY) === true;
 		this.toolbarToggleEl = root.createDiv({ cls: "osmosis-graph3d-toolbar-toggle clickable-icon" });
@@ -409,8 +396,8 @@ export class Graph3DView extends ItemView {
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
-		// Until the style sidebar holds the 3D settings, its button opens the Overlays panel.
-		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => this.overlaysMenu?.toggle());
+		// The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map.
+		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => void this.plugin().activatePropertiesSidebar());
 		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
 		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
 		this.followActionEl.toggleClass("is-active", this.follow);
@@ -461,6 +448,7 @@ export class Graph3DView extends ItemView {
 			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
 			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 			nearTier: () => this.nearTier(),
+			onSelectionChange: () => this.notifySelection(),
 		});
 		this.scene.setTheme(this.readTheme());
 		this.scene.setLinkMode(this.editMode);
@@ -472,6 +460,8 @@ export class Graph3DView extends ItemView {
 		this.register(() => observer.disconnect());
 
 		this.registerEvent(this.app.workspace.on("css-change", () => this.scene?.setTheme(this.readTheme())));
+		// The metadata cache has caught up with a style write: read it from there again.
+		this.registerEvent(this.app.metadataCache.on("changed", (file) => this.styleFrontmatter.delete(file.path)));
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!this.follow || file?.extension !== "md" || file.path === this.focusPath) return;
@@ -524,7 +514,11 @@ export class Graph3DView extends ItemView {
 		syncMobileToolbar(this.app, this);
 		this.scene?.destroy();
 		this.scene = null;
-		this.overlaysMenu = null;
+		this.settingsListeners.clear();
+		this.selectionListeners.clear();
+		this.pendingStyle = null;
+		this.styleStamps.clear();
+		this.styleFrontmatter.clear();
 		this.colorBy = null;
 		this.modelShown = null;
 		this.resettleOnLoad = false;
@@ -539,13 +533,12 @@ export class Graph3DView extends ItemView {
 		this.holds.clear();
 	}
 
-	/** Re-read the navigation settings and overlays, after they change in Osmosis settings or an Overlays menu. */
+	/** Re-read the navigation settings and overlays, after they change in Osmosis settings or the style sidebar's Settings. */
 	applyControlSettings(): void {
 		this.scene?.setControls(this.controlSettings());
 		this.scene?.setOverlays(this.sceneOverlays());
 		const overlays = this.plugin().settings.graph3dOverlays;
-		// This view's own menu already shows what it sent; rebuilding it would end a slider drag.
-		if (this.overlaysMenu !== null && this.overlaysMenu.current !== overlays) this.overlaysMenu.show(overlays);
+		this.notifySettings();
 		if (overlays.colorBy !== this.colorBy && this.model !== null) this.scene?.setColoring(this.coloring(this.model));
 		// Attachments, Tags and Unresolved links off leave their plates out of the model, so turning one either way rebuilds it.
 		if (this.modelShown !== null && modelKey(overlays.edges) !== this.modelShown) {
@@ -1530,6 +1523,230 @@ export class Graph3DView extends ItemView {
 		this.prefetched.delete(file.path);
 		// The stamp lands at the end of the line; the frontmatter write above the body shifts every offset by its growth.
 		this.edited = [{ path: file.path, start: line.range.start + (after.length - plan.content.length), from: node.id }];
+		this.editLanded = true;
+		void this.reload();
+	}
+
+	// ─── Style sidebar (NodeStyleHost, Settings) ─────────────────────────
+
+	/** What the style sidebar's Settings panel shows and sets for this graph. */
+	settingsSource(): Graph3DSettingsSource {
+		return {
+			overlays: () => this.plugin().settings.graph3dOverlays,
+			setOverlays: (overlays) => this.plugin().setGraph3DOverlays(overlays),
+			reach: () => ({ depth: this.depth, backlinks: this.backlinks }),
+			setReach: ({ depth, backlinks }) => {
+				const reloads = depth !== this.depth || backlinks !== this.backlinks;
+				this.depth = depth;
+				this.backlinks = backlinks;
+				this.app.workspace.requestSaveLayout();
+				if (reloads) void this.reload();
+			},
+			maxDepth: MAX_DEPTH,
+			clickSelectsOnly: {
+				get: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
+				set: (on) => this.app.saveLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY, on),
+			},
+			nearTier: {
+				get: () => this.nearTier(),
+				set: (patch) => {
+					nearTier = cleanNearTier({ ...this.nearTier(), ...patch }, Platform.isMobile);
+					this.app.saveLocalStorage(NEAR_TIER_STORAGE_KEY, nearTier);
+				},
+			},
+		};
+	}
+
+	onSettingsChange(fn: () => void): void {
+		this.settingsListeners.add(fn);
+	}
+
+	offSettingsChange(fn: () => void): void {
+		this.settingsListeners.delete(fn);
+	}
+
+	private notifySettings(): void {
+		for (const fn of this.settingsListeners) fn();
+	}
+
+	onSelectionChange(fn: () => void): void {
+		this.selectionListeners.add(fn);
+	}
+
+	offSelectionChange(fn: () => void): void {
+		this.selectionListeners.delete(fn);
+	}
+
+	private notifySelection(): void {
+		for (const fn of this.selectionListeners) fn();
+	}
+
+	/** The selected lines the Node tab styles (note, tag and attachment plates have no line to key a style by), the primary first. */
+	private styledSelection(): GraphNode[] {
+		return (this.scene?.selectedNodes() ?? []).filter((node) => node.kind === "line" && node.source !== undefined && node.path !== undefined);
+	}
+
+	getSelectedNodeInfo(): { nodeIds: string[]; primaryId: string | null } {
+		const nodes = this.styledSelection();
+		return { nodeIds: nodes.map((node) => node.id), primaryId: nodes[0]?.id ?? null };
+	}
+
+	getNodeStyleContext(id: string): NodeStyleContext | null {
+		const node = this.model?.nodes.find((other) => other.id === id) ?? null;
+		const source = node?.source;
+		if (node?.path === undefined || source === undefined) return null;
+		const file = this.app.vault.getFileByPath(node.path);
+		const raw = this.styleFrontmatter.get(node.path) ?? (file === null ? undefined : this.app.metadataCache.getFileCache(file)?.frontmatter);
+		const fm = parseOsmosisStyleFrontmatter(raw);
+		// Tree-path selectors (a legacy fallback) need the whole parse; the block-ID and stable-ID ones cover what either view writes now.
+		const local = lookupNodeStyleByPath(fm, source.id, undefined, source.blockId);
+		return { fm, local, depth: source.type === "heading" ? source.depth : undefined };
+	}
+
+	/** The 3D graph draws without the plugin's theme (unstyled plates look as they always have), so the Node tab shows no theme defaults. */
+	getActiveTheme(): ThemeDefinition | undefined {
+		return undefined;
+	}
+
+	getGlobalClasses(): Record<string, NodeStyle> {
+		return this.plugin().settings.globalClasses ?? {};
+	}
+
+	beginLiveEdit(): void {
+		this.liveStyle = true;
+		this.liveStyleWrote = false;
+		this.edits.recorder.beginGroup();
+	}
+
+	endLiveEdit(): void {
+		if (!this.liveStyle) return;
+		this.liveStyle = false;
+		// After the drag's last write, so the drag is one undo step and the graph shows its end.
+		this.styleChain = this.styleChain.then(() => {
+			this.edits.recorder.endGroup();
+			if (this.liveStyleWrote) void this.reload();
+		});
+	}
+
+	undo(): void {
+		void this.step(false);
+	}
+
+	redo(): void {
+		void this.step(true);
+	}
+
+	/**
+	 * Merge `overrides` (by node ID) into the `osmosis-styles` of each line's
+	 * note, keyed as the mind map keys them (`planStyleKeys`), so the style
+	 * shows in both views. Writes go out one at a time; one that arrives while
+	 * another is going out joins the next (a colour drag sends one per step).
+	 */
+	async applyNodeStyleOverrides(overrides: Map<string, NodeStyle>): Promise<void> {
+		if (this.editBlocked()) return;
+		const pending = (this.pendingStyle ??= new Map<string, { node: GraphNode; style: NodeStyle }>());
+		for (const [id, style] of overrides) {
+			const node = this.model?.nodes.find((other) => other.id === id);
+			if (node === undefined) continue;
+			const queued = pending.get(id);
+			pending.set(id, { node, style: queued === undefined ? style : combineStyleUpdates(queued.style, style) });
+		}
+		const run = this.styleChain.then(async () => {
+			const batch = this.pendingStyle;
+			this.pendingStyle = null;
+			if (batch === null || batch.size === 0) return;
+			const styles = new Map([...batch.values()].map(({ node, style }) => [node, style]));
+			await this.writeStyles([...styles.keys()], true, (fm, node, selector, legacy) => writeStyleOverride(fm, selector, legacy, styles.get(node) ?? {}));
+		});
+		this.styleChain = run.catch((error: unknown) => {
+			console.error("Osmosis: 3D graph style write failed", error);
+			new Notice("Osmosis: could not save that style");
+		});
+		await this.styleChain;
+	}
+
+	async resetNodeStyles(nodeIds: string[], keys?: (keyof NodeStyle)[]): Promise<void> {
+		if (this.editBlocked()) return;
+		const nodes = nodeIds.flatMap((id) => this.model?.nodes.find((other) => other.id === id) ?? []);
+		const run = this.styleChain.then(() =>
+			this.writeStyles(nodes, false, (fm, _node, selector, legacy) => clearStyleOverride(fm, [selector, legacy], keys)),
+		);
+		this.styleChain = run.catch((error: unknown) => {
+			console.error("Osmosis: 3D graph style reset failed", error);
+			new Notice("Osmosis: could not reset that style");
+		});
+		await this.styleChain;
+	}
+
+	/**
+	 * Write the styles of `nodes`, note by note: stamp a block ID on each line
+	 * that needs one (`stamp`, when the write adds a style; a reset stamps
+	 * nothing), then `write` each line's entry in the note's frontmatter. One
+	 * undo step for all of it (or the drag's, inside a live edit). A line
+	 * stamped by an earlier write of a drag is found again by that block ID.
+	 */
+	private async writeStyles(
+		nodes: readonly GraphNode[],
+		stamp: boolean,
+		write: (fm: Record<string, unknown>, node: GraphNode, selector: string, legacySelector: string) => void,
+	): Promise<void> {
+		const byPath = new Map<string, GraphNode[]>();
+		for (const node of nodes) {
+			if (node.kind !== "line" || node.path === undefined || node.source === undefined) continue;
+			byPath.set(node.path, [...(byPath.get(node.path) ?? []), node]);
+		}
+		if (byPath.size === 0) return;
+		const ownGroup = !this.edits.recorder.grouping;
+		if (ownGroup) this.edits.recorder.beginGroup();
+		const edited: typeof this.edited = [];
+		let stamped = false;
+		try {
+			for (const [path, group] of byPath) {
+				const file = this.app.vault.getFileByPath(path);
+				if (file === null) continue;
+				const content = await this.app.vault.read(file);
+				const { root } = this.cache.get(path, content);
+				const lines = new Map<GraphNode, OsmosisNode>();
+				for (const node of group) {
+					const sourceId = node.source?.id ?? "";
+					const blockId = this.styleStamps.get(`${path}\n${sourceId}`);
+					const line = findNodeById(root, sourceId) ?? (blockId === undefined ? null : findNodeByBlockId(root, blockId));
+					if (line !== null) lines.set(node, line);
+				}
+				if (lines.size === 0) continue;
+				const plan = stamp ? planStyleKeys(content, root, [...lines.values()]) : null;
+				this.editOwner = path;
+				this.lastEditPath = path;
+				// A reload already under way would take `edited` from before these writes: drop it; the reload below replaces it.
+				this.loadSeq++;
+				if (plan !== null && plan.content !== content) {
+					await this.edits.write(file, plan.content);
+					stamped = true;
+				}
+				const body = plan?.content ?? content;
+				const after = await this.edits.processFrontMatter(file, (fm) => {
+					for (const [node, line] of lines) {
+						const selector = plan?.selectors.get(line.id) ?? buildBlockIdSelector(line) ?? buildStableIdSelector(line);
+						if (selector.startsWith("^") && line.blockId === undefined) this.styleStamps.set(`${path}\n${line.id}`, selector.slice(1));
+						write(fm, node, selector, buildStableIdSelector(line));
+					}
+					this.styleFrontmatter.set(path, structuredClone(fm));
+				});
+				this.cache.invalidate(path);
+				this.prefetched.delete(path);
+				// Stamps land at line ends; the frontmatter write above the body shifts every offset by its growth.
+				for (const [node, line] of lines) {
+					const start = plan === null ? line.range.start : stampedStart(plan, line.range.start);
+					edited.push({ path, start: start + (after.length - body.length), from: node.id });
+				}
+			}
+		} finally {
+			if (ownGroup) this.edits.recorder.endGroup();
+		}
+		// A stamp gives lines new IDs: the reload carries the selection over. Mid-drag, plain style writes wait for the drag's end (or the metadata cache's reload).
+		if (edited.length > 0) this.liveStyleWrote = true;
+		if (edited.length === 0 || (this.liveStyle && !stamped)) return;
+		this.edited = edited;
 		this.editLanded = true;
 		void this.reload();
 	}

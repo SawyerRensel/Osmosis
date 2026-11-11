@@ -12,6 +12,16 @@ import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
 import { normalizeHeading, type GraphModel } from "./model";
 
+/** The node of `root`'s tree that carries block ID `blockId`, or null. */
+export function findNodeByBlockId(root: OsmosisNode, blockId: string): OsmosisNode | null {
+	if (root.blockId === blockId) return root;
+	for (const child of root.children) {
+		const found = findNodeByBlockId(child, blockId);
+		if (found !== null) return found;
+	}
+	return null;
+}
+
 /**
  * The node with parse ID `id` under `root`, depth first. The 3D model is built
  * from a cached read, so an edit re-parses fresh bytes and finds its node again

@@ -204,6 +204,8 @@ export interface SceneOptions {
 	clickSelectsOnly: () => boolean;
 	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
 	nearTier: () => NearTierSettings;
+	/** The selection changed, or new data may have restyled or renamed what is selected (the style sidebar's Node tab follows it). */
+	onSelectionChange: () => void;
 }
 
 /** A rotating drag in progress: one mouse button or one finger. */
@@ -1170,6 +1172,7 @@ export class Graph3DScene {
 		for (const node of this.nodes) node.selected = this.selection.has(node.id) && !node.departing;
 		this.near.setSelected(this.selection);
 		this.dirty = this.layoutDirty = true;
+		this.options.onSelectionChange();
 	}
 
 	/** A line plate's height in world units, for the 2D/3D toggle's scale (`graph3d/liftoff.ts`). */

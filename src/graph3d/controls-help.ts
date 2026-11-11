@@ -44,7 +44,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "Arrow keys", action: "Move the selection to the related plate nearest that direction on screen" },
 			{ input: "Shift + arrow keys", action: "Add that plate to the selection as the new primary" },
 			{ input: "Alt + Left / Right", action: "Back / forward (in edit mode with a line selected, these re-level instead)" },
-			{ input: "Esc", action: "Cancel a link drag, close the Overlays menu, cancel the editor, else clear the selection" },
+			{ input: "Esc", action: "Cancel a link drag, close the help, cancel the editor, else clear the selection" },
 			{ input: "Ctrl/Cmd + C", action: "Copy the selection as Markdown" },
 			{ input: "Ctrl/Cmd + Z, Ctrl/Cmd + Shift + Z", action: "Undo, redo an edit" },
 		],
@@ -86,10 +86,10 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 	},
 	{
 		id: "settings",
-		title: "Overlays menu settings",
+		title: "Settings (style sidebar)",
 		entries: [
 			{ input: "Click selects only (Camera)", action: "A click selects a plate without moving the camera" },
-			{ input: "Panel detail, Live panels (Lookdev)", action: "How much text turns into a live panel; kept per device" },
+			{ input: "Panel detail, Live panels (Look)", action: "How much text turns into a live panel; kept per device" },
 		],
 	},
 ];

@@ -44,6 +44,8 @@ import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, isCorruptStyleFrontmatter, styleMappingFor, readStyleMapping, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
+import { mergeStyleOverride } from "../style-write";
+import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import {
@@ -180,7 +182,7 @@ interface ClipboardItem {
 	text: string;
 }
 
-export class MindMapView extends ItemView {
+export class MindMapView extends ItemView implements NodeStyleHost {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
 	private currentFile: TFile | null = null;
@@ -2317,6 +2319,14 @@ export class MindMapView extends ItemView {
 		return this.nodeMap.get(id) ?? null;
 	}
 
+	/** A node's style inputs for the style sidebar's Node tab (`NodeStyleHost`): the map's styles, the node's Local style and its heading depth. */
+	getNodeStyleContext(id: string): NodeStyleContext | null {
+		const node = this.nodeMap.get(id);
+		if (!node) return null;
+		const fm = this.osmosisStyleFrontmatter;
+		return { fm, local: lookupNodeStyle(fm, node), depth: node.source.type === "heading" ? node.source.depth : undefined };
+	}
+
 	/** Get the currently active theme definition. */
 	getActiveTheme(): ThemeDefinition | undefined {
 		return this.activeTheme;
@@ -2644,39 +2654,8 @@ export class MindMapView extends ItemView {
 						delete styles[legacySelector];
 					}
 
-					// Merge new properties into existing override.
-					// Use `"key" in style` so explicit `undefined` deletes the key.
-					const merged = { ...existing };
-
-					// Simple properties: set or delete
-					if ("shape" in style) { if (style.shape === undefined) delete merged.shape; else merged.shape = style.shape; }
-					if ("fill" in style) { if (style.fill === undefined) delete merged.fill; else merged.fill = style.fill; }
-					if ("background" in style) { if (style.background === undefined) delete merged.background; else merged.background = style.background; }
-					if ("width" in style) { if (style.width === undefined) delete merged.width; else merged.width = style.width; }
-					if ("class" in style) { if (style.class === undefined) { delete merged.class; } else { merged.class = style.class; } }
-
-					// Compound properties: merge sub-properties, delete undefined sub-keys
-					if ("text" in style) {
-						if (style.text === undefined) { delete merged.text; } else {
-							const m = { ...merged.text, ...style.text };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.text; else merged.text = m;
-						}
-					}
-					if ("border" in style) {
-						if (style.border === undefined) { delete merged.border; } else {
-							const m = { ...merged.border, ...style.border };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.border; else merged.border = m;
-						}
-					}
-					if ("branchLine" in style) {
-						if (style.branchLine === undefined) { delete merged.branchLine; } else {
-							const m = { ...merged.branchLine, ...style.branchLine };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.branchLine; else merged.branchLine = m;
-						}
-					}
+					// Merge new properties into existing override (`undefined` deletes a key).
+					const merged = mergeStyleOverride(existing, style);
 
 					if (Object.keys(merged).length === 0) {
 						delete styles[selector];

@@ -1,4 +1,4 @@
-import { Platform, Setting, setIcon, setTooltip, type SliderComponent, type ToggleComponent } from "obsidian";
+import { Platform, setIcon, type Setting, type SliderComponent, type ToggleComponent } from "obsidian";
 import {
 	DETAIL_LIMIT,
 	NEAR_BUDGET_RANGE,
@@ -10,7 +10,6 @@ import {
 } from "../graph3d/lod";
 import {
 	MIST_LIMIT,
-	OVERLAY_EDGE_KINDS,
 	SPACING_MAX,
 	SPACING_MIN,
 	TRAVEL_LIMIT,
@@ -26,6 +25,8 @@ import {
 } from "../graph3d/overlays";
 import { flatDepth, flatWeight } from "../graph3d/flatten";
 import type { ContinentBalance, ContinentDirection } from "../graph3d/planets";
+import { SETTINGS_SECTIONS, controlShown, toggleCollapsed, type SettingsControl, type SettingsSectionId } from "../graph3d/settings-sections";
+import { sidebarSetting } from "./sidebar-setting";
 
 const COLOR_MODES: Record<ColorMode, string> = {
 	note: "Note",
@@ -68,308 +69,312 @@ const LABEL_MODES: Record<LabelMode, string> = {
 	none: "Hidden",
 };
 
-/** The loaded area's depth and backlinks: they live in the view's state, so the menu only shows and sends them. */
+/** The loaded area's depth and backlinks: they live in the view's state, so the panel only shows and sends them. */
 export interface GraphReach {
 	depth: number;
 	backlinks: boolean;
 }
 
-/** A per-device toggle the menu shows and sets but does not store (the view keeps it in local storage). */
+/** A per-device toggle the panel shows and sets but does not store (the view keeps it in local storage). */
 export interface DeviceToggle {
 	get: () => boolean;
 	set: (on: boolean) => void;
 }
 
-/** The near tier's per-device settings the menu shows and sets but does not store (the view keeps them in local storage and applies them live). */
+/** The near tier's per-device settings the panel shows and sets but does not store (the view keeps them in local storage and applies them live). */
 export interface NearTierControl {
 	get: () => NearTierSettings;
 	set: (patch: Partial<NearTierSettings>) => void;
 }
 
+/** What a 3D graph hands the style sidebar's Settings panel: its settings, and where changes go. The panel never saves. */
+export interface Graph3DSettingsSource {
+	overlays: () => Graph3DOverlays;
+	/** Every change goes out whole (the plugin saves it and every open 3D graph shows it). */
+	setOverlays: (overlays: Graph3DOverlays) => void;
+	reach: () => GraphReach;
+	setReach: (reach: GraphReach) => void;
+	maxDepth: number;
+	clickSelectsOnly: DeviceToggle;
+	nearTier: NearTierControl;
+}
+
+/** Where the panel keeps its sections' open/closed state (per vault, in data.json). */
+export interface CollapseStore {
+	get: () => readonly SettingsSectionId[];
+	set: (collapsed: SettingsSectionId[]) => void;
+}
+
 /**
- * The 3D graph's Overlays menu, in the spirit of Blender's viewport Overlays
- * and Shading popovers: an icon button in the viewport's top-right corner that
- * opens a panel of settings under it. It also holds the graph's Depth and
- * Backlinks, which were a strip in the viewport. Taps work as clicks, so it
- * needs nothing extra on mobile. It is sticky: only its own button closes it
- * (and Escape, from the view), never a press on the canvas. Every change goes out whole through
- * `onChange` (or `onReach`); the menu never saves.
+ * The 3D graph's Settings, in the style sidebar (it replaced the viewport's
+ * Overlays popover): the sections of `SETTINGS_SECTIONS`, collapsible like the
+ * Node tab's, their open/closed state remembered. A layout's own controls show
+ * only in that layout (`controlShown`).
  */
-export class Graph3DOverlaysMenu {
-	private readonly button: HTMLElement;
-	private readonly panel: HTMLElement;
-	/** The settings as this menu last showed or sent them. */
-	current: Graph3DOverlays;
+export class Graph3DSettingsPanel {
+	/** The settings as this panel last showed or sent them. */
+	private current: Graph3DOverlays;
+	private reach: GraphReach;
+	private readonly rows = new Map<SettingsControl, Setting>();
 	private depthSlider: SliderComponent | null = null;
 	private backlinksToggle: ToggleComponent | null = null;
 
 	constructor(
-		root: HTMLElement,
-		overlays: Graph3DOverlays,
-		private reach: GraphReach,
-		private readonly maxDepth: number,
-		private readonly clickSelectsOnly: DeviceToggle,
-		private readonly nearTier: NearTierControl,
-		private readonly onChange: (overlays: Graph3DOverlays) => void,
-		private readonly onReach: (reach: GraphReach) => void,
+		private readonly el: HTMLElement,
+		private readonly source: Graph3DSettingsSource,
+		private readonly collapse: CollapseStore,
 	) {
-		this.current = overlays;
-		const corner = root.createDiv({ cls: "osmosis-graph3d-overlays-corner" });
-		this.button = corner.createEl("button", { cls: "osmosis-graph3d-overlays-button clickable-icon", attr: { "aria-label": "Overlays" } });
-		setIcon(this.button, "layers");
-		setTooltip(this.button, "Overlays");
-		this.button.addEventListener("click", () => this.toggle());
-		this.panel = corner.createDiv({ cls: "osmosis-graph3d-overlays is-hidden" });
+		this.current = source.overlays();
+		this.reach = source.reach();
+		this.build();
 	}
 
-	get isOpen(): boolean {
-		return !this.panel.hasClass("is-hidden");
-	}
-
-	toggle(open = !this.isOpen): void {
-		this.panel.toggleClass("is-hidden", !open);
-		this.button.toggleClass("is-active", open);
-		// Built on opening, so it always shows the settings as they are now.
-		if (open) this.build();
-		else {
-			this.panel.empty();
-			this.depthSlider = null;
-			this.backlinksToggle = null;
+	/**
+	 * Show settings changed elsewhere (another 3D graph, or a restored layout).
+	 * Settings this panel sent itself are left alone: rebuilding would end a
+	 * slider drag.
+	 */
+	refresh(): void {
+		const overlays = this.source.overlays();
+		const reach = this.source.reach();
+		if (reach.depth !== this.reach.depth || reach.backlinks !== this.reach.backlinks) {
+			this.reach = reach;
+			this.depthSlider?.setValue(reach.depth);
+			this.backlinksToggle?.setValue(reach.backlinks);
 		}
-	}
-
-	/** Show settings changed elsewhere (another 3D graph's menu). */
-	show(overlays: Graph3DOverlays): void {
+		if (overlays === this.current) return;
 		this.current = overlays;
-		if (this.isOpen) this.build();
-	}
-
-	/** Show the depth and backlinks the view now has (restored state, or a saved layout). */
-	showReach(reach: GraphReach): void {
-		this.reach = reach;
-		this.depthSlider?.setValue(reach.depth);
-		this.backlinksToggle?.setValue(reach.backlinks);
+		this.build();
 	}
 
 	private change(patch: Partial<Graph3DOverlays>): void {
 		this.current = { ...this.current, ...patch };
-		this.onChange(this.current);
+		this.source.setOverlays(this.current);
+		this.showControls();
+	}
+
+	/** Show only the controls the current settings call for. */
+	private showControls(): void {
+		for (const [control, row] of this.rows) row.settingEl.toggle(controlShown(control, this.current));
 	}
 
 	private build(): void {
-		const panel = this.panel;
-		panel.empty();
-		const overlays = this.current;
-
-		const depth = new Setting(panel).setName("Depth").setDesc(depthLabel(this.reach.depth));
-		depth.addSlider((slider) => {
-			this.depthSlider = slider;
-			slider
-				.setLimits(0, this.maxDepth, 1)
-				.setValue(this.reach.depth)
-				.onChange((value) => {
-					depth.setDesc(depthLabel(value));
-					this.reach = { ...this.reach, depth: value };
-					this.onReach(this.reach);
-				});
-		});
-		new Setting(panel)
-			.setName("Backlinks")
-			.setDesc("Count notes that link to a loaded note as hops, not only the notes it links to.")
-			.addToggle((toggle) => {
-				this.backlinksToggle = toggle;
-				toggle.setValue(this.reach.backlinks).onChange((value) => {
-					this.reach = { ...this.reach, backlinks: value };
-					this.onReach(this.reach);
-				});
+		this.el.empty();
+		this.rows.clear();
+		this.depthSlider = null;
+		this.backlinksToggle = null;
+		const collapsed = new Set(this.collapse.get());
+		for (const section of SETTINGS_SECTIONS) {
+			const sectionEl = this.el.createDiv({ cls: "osmosis-format-section osmosis-graph3d-settings-section" });
+			sectionEl.toggleClass("is-collapsed", collapsed.has(section.id));
+			const header = sectionEl.createDiv({ cls: "osmosis-format-section-header" });
+			setIcon(header.createSpan({ cls: "osmosis-chevron-icon" }), "chevron-right");
+			header.createSpan({ text: section.name });
+			header.addEventListener("click", () => {
+				const collapse = !sectionEl.hasClass("is-collapsed");
+				sectionEl.toggleClass("is-collapsed", collapse);
+				this.collapse.set(toggleCollapsed(this.collapse.get(), section.id, collapse));
 			});
+			const body = sectionEl.createDiv({ cls: "osmosis-format-section-body" });
+			for (const control of section.controls) this.rows.set(control, this.control(control, body));
+		}
+		this.showControls();
+	}
 
-		new Setting(panel).setName("Color by").addDropdown((dropdown) =>
-			dropdown
-				.addOptions(COLOR_MODES)
-				.setValue(overlays.colorBy)
-				.onChange((value) => this.change({ colorBy: value as ColorMode })),
-		);
-
-		new Setting(panel).setName("Edges").setHeading();
-		for (const kind of OVERLAY_EDGE_KINDS) {
-			new Setting(panel).setName(EDGE_NAMES[kind]).addToggle((toggle) =>
+	/** One control's row, in `body`. */
+	private control(control: SettingsControl, body: HTMLElement): Setting {
+		const overlays = this.current;
+		const row = sidebarSetting(body);
+		if (control.startsWith("edge:")) {
+			const kind = control.slice("edge:".length) as OverlayEdgeKind;
+			return row.setName(EDGE_NAMES[kind]).addToggle((toggle) =>
 				toggle.setValue(overlays.edges[kind]).onChange((value) => this.change({ edges: { ...this.current.edges, [kind]: value } })),
 			);
 		}
+		switch (control as Exclude<SettingsControl, `edge:${string}`>) {
+			case "depth":
+				row.setName("Depth").setDesc(depthLabel(this.reach.depth));
+				return row.addSlider((slider) => {
+					this.depthSlider = slider;
+					slider
+						.setLimits(0, this.source.maxDepth, 1)
+						.setValue(this.reach.depth)
+						.onChange((value) => {
+							row.setDesc(depthLabel(value));
+							this.reach = { ...this.reach, depth: value };
+							this.source.setReach(this.reach);
+						});
+				});
+			case "backlinks":
+				return row
+					.setName("Backlinks")
+					.setDesc("Count notes that link to a loaded note as hops, not only the notes it links to.")
+					.addToggle((toggle) => {
+						this.backlinksToggle = toggle;
+						toggle.setValue(this.reach.backlinks).onChange((value) => {
+							this.reach = { ...this.reach, backlinks: value };
+							this.source.setReach(this.reach);
+						});
+					});
+			case "colorBy":
+				return row.setName("Color by").addDropdown((dropdown) =>
+					dropdown
+						.addOptions(COLOR_MODES)
+						.setValue(overlays.colorBy)
+						.onChange((value) => this.change({ colorBy: value as ColorMode })),
+				);
+			case "layout":
+				return row
+					.setName("Layout")
+					.setDesc("Organic lets forces shape each note, flat slices lay branches out like the mind map, and planets put each note on a globe. Changing it lays everything out again.")
+					.addDropdown((dropdown) =>
+						dropdown
+							.addOptions(LAYOUT_MODES)
+							.setValue(overlays.layout)
+							.onChange((value) => this.change({ layout: value as LayoutMode })),
+					);
+			case "flatten":
+				row.setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
+				return row.addSlider((slider) =>
+					slider
+						// Continuous: lines at the boundary depth are pulled part-way into their slice.
+						.setLimits(0, 1, 0.01)
+						.setValue(overlays.flatten)
+						// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+						.setInstant(true)
+						.onChange((value) => {
+							row.setDesc(flattenLabel(value));
+							this.change({ flatten: value });
+						}),
+				);
+			case "continentSpacing":
+				return this.spacing(row, "Continent spacing", "continents on a planet", "continentSpacing");
+			case "continentDirection":
+				return row
+					.setName("Continent direction")
+					.setDesc("How each continent is laid out on a planet.")
+					.addDropdown((dropdown) =>
+						dropdown
+							.addOptions(CONTINENT_DIRECTION_NAMES)
+							.setValue(overlays.continentDirection)
+							.onChange((value) => this.change({ continentDirection: value as ContinentDirection })),
+					);
+			case "continentBalance":
+				return row
+					.setName("Continent balance")
+					.setDesc("Which sides a continent's branches take. Radial fills the circle, so it has none.")
+					.addDropdown((dropdown) =>
+						dropdown
+							.addOptions(CONTINENT_BALANCE_NAMES)
+							.setValue(overlays.continentBalance)
+							.onChange((value) => this.change({ continentBalance: value as ContinentBalance })),
+					);
+			case "forceBalance":
+				return row
+					.setName("Hierarchy ⟷ organic")
+					.setDesc("Left keeps each note's mind-map shape; right lets links shape the web. Moving it re-settles the loaded notes as you drag.")
+					.addSlider((slider) =>
+						slider
+							.setLimits(0, 1, 0.05)
+							.setValue(overlays.forceBalance)
+							// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+							.setInstant(true)
+							.onChange((value) => this.change({ forceBalance: value })),
+					);
+			case "noteSpacing":
+				return this.spacing(row, "Note spacing", "notes and tags", "noteSpacing");
+			case "nodeSpacing":
+				return this.spacing(row, "Node spacing", "nodes within a note", "nodeSpacing");
+			case "linksPull":
+				return row
+					.setName("Links pull")
+					.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
+					.addToggle((toggle) => toggle.setValue(overlays.linksPull).onChange((value) => this.change({ linksPull: value })));
+			case "travelSpeed":
+				row.setName("Travel speed").setDesc(travelLabel(overlays.travelSpeed));
+				return row.addSlider((slider) => {
+					const limit = Math.log2(TRAVEL_LIMIT);
+					slider
+						.setLimits(-limit, limit, 0.25)
+						.setValue(sliderFromTravel(overlays.travelSpeed))
+						.onChange((value) => {
+							row.setDesc(travelLabel(travelFromSlider(value)));
+							this.change({ travelSpeed: travelFromSlider(value) });
+						});
+				});
+			case "clickSelectsOnly":
+				return row
+					.setName("Click selects only")
+					.setDesc("A click on a plate selects it without flying there or adding a back step. Arrow keys, search and links still move the camera. Kept on this device.")
+					.addToggle((toggle) => toggle.setValue(this.source.clickSelectsOnly.get()).onChange((value) => this.source.clickSelectsOnly.set(value)));
+			case "mist":
+				row.setName("Mist density").setDesc(mistLabel(overlays.mist));
+				return row.addSlider((slider) => {
+					const limit = Math.log2(MIST_LIMIT);
+					slider
+						.setLimits(-limit, limit, 0.25)
+						.setValue(sliderFromMist(overlays.mist))
+						.onChange((value) => {
+							row.setDesc(mistLabel(mistFromSlider(value)));
+							this.change({ mist: mistFromSlider(value) });
+						});
+				});
+			case "particles":
+				return row
+					.setName("Link particles")
+					.setDesc("A particle runs along each edge, from source to target.")
+					.addToggle((toggle) => toggle.setValue(overlays.particles).onChange((value) => this.change({ particles: value })));
+			case "labels":
+				return row.setName("Labels").addDropdown((dropdown) =>
+					dropdown
+						.addOptions(LABEL_MODES)
+						.setValue(overlays.labels)
+						.onChange((value) => this.change({ labels: value as LabelMode })),
+				);
+			case "panelDetail": {
+				const near = this.source.nearTier.get();
+				row.setName("Panel detail").setDesc(detailLabel(near.detail));
+				return row.addSlider((slider) => {
+					const limit = Math.log2(DETAIL_LIMIT);
+					slider
+						.setLimits(-limit, limit, 0.25)
+						.setValue(sliderFromDetail(near.detail))
+						.setInstant(true)
+						.onChange((value) => {
+							row.setDesc(detailLabel(detailFromSlider(value)));
+							this.source.nearTier.set({ detail: detailFromSlider(value) });
+						});
+				});
+			}
+			case "livePanels": {
+				const near = this.source.nearTier.get();
+				const range = NEAR_BUDGET_RANGE[Platform.isMobile ? "mobile" : "desktop"];
+				row.setName("Live panels").setDesc(budgetLabel(near.budget));
+				return row.addSlider((slider) =>
+					slider
+						.setLimits(range.min, range.max, 1)
+						.setValue(near.budget)
+						.setInstant(true)
+						.onChange((value) => {
+							row.setDesc(budgetLabel(value));
+							this.source.nearTier.set({ budget: value });
+						}),
+				);
+			}
+		}
+	}
 
-		new Setting(panel).setName("Forces").setHeading();
-		new Setting(panel)
-			.setName("Hierarchy ⟷ organic")
-			.setDesc("Left keeps each note's mind-map shape; right lets links shape the web. Moving it re-settles the loaded notes as you drag.")
-			.addSlider((slider) =>
-				slider
-					.setLimits(0, 1, 0.05)
-					.setValue(overlays.forceBalance)
-					// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
-					.setInstant(true)
-					.onChange((value) => this.change({ forceBalance: value })),
-			);
-		const noteSpacing = new Setting(panel).setName("Note spacing").setDesc(spacingLabel(overlays.noteSpacing, "notes and tags"));
-		noteSpacing.addSlider((slider) =>
+	/** A spacing slider for `key`, sent on every step of a drag so the graph re-settles live (see Graph3DScene.reshape). */
+	private spacing(row: Setting, name: string, what: string, key: "noteSpacing" | "nodeSpacing" | "continentSpacing"): Setting {
+		row.setName(name).setDesc(spacingLabel(this.current[key], what));
+		return row.addSlider((slider) =>
 			slider
 				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
-				.setValue(overlays.noteSpacing)
-				// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
+				.setValue(this.current[key])
 				.setInstant(true)
 				.onChange((value) => {
-					noteSpacing.setDesc(spacingLabel(value, "notes and tags"));
-					this.change({ noteSpacing: value });
-				}),
-		);
-		const nodeSpacing = new Setting(panel).setName("Node spacing").setDesc(spacingLabel(overlays.nodeSpacing, "nodes within a note"));
-		nodeSpacing.addSlider((slider) =>
-			slider
-				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
-				.setValue(overlays.nodeSpacing)
-				.setInstant(true)
-				.onChange((value) => {
-					nodeSpacing.setDesc(spacingLabel(value, "nodes within a note"));
-					this.change({ nodeSpacing: value });
-				}),
-		);
-		// Planets only: the clear space round each continent. Hidden in the other layouts, its position kept.
-		const continentSpacing = new Setting(panel).setName("Continent spacing").setDesc(spacingLabel(overlays.continentSpacing, "continents on a planet"));
-		continentSpacing.addSlider((slider) =>
-			slider
-				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
-				.setValue(overlays.continentSpacing)
-				.setInstant(true)
-				.onChange((value) => {
-					continentSpacing.setDesc(spacingLabel(value, "continents on a planet"));
-					this.change({ continentSpacing: value });
-				}),
-		);
-		continentSpacing.settingEl.toggle(overlays.layout === "planets");
-		new Setting(panel)
-			.setName("Links pull")
-			.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
-			.addToggle((toggle) => toggle.setValue(overlays.linksPull).onChange((value) => this.change({ linksPull: value })));
-		const flatten = new Setting(panel).setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
-		// The flatten slider shapes the flat slices only: hidden in the other layouts, its position kept.
-		flatten.settingEl.toggle(overlays.layout === "flat");
-		new Setting(panel)
-			.setName("Layout")
-			.setDesc("Organic lets forces shape each note, flat slices lay branches out like the mind map, and planets put each note on a globe. Changing it lays everything out again.")
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOptions(LAYOUT_MODES)
-					.setValue(overlays.layout)
-					.onChange((value) => {
-						flatten.settingEl.toggle(value === "flat");
-						continentSpacing.settingEl.toggle(value === "planets");
-						direction.settingEl.toggle(value === "planets");
-						balance.settingEl.toggle(value === "planets" && this.current.continentDirection !== "radial");
-						this.change({ layout: value as LayoutMode });
-					}),
-			);
-		// The Layout choice sits above the slider it governs.
-		panel.appendChild(flatten.settingEl);
-		// Planets only: how every continent (a direct child of a note's root) is drawn; a note's own 2D map settings don't apply.
-		const direction = new Setting(panel)
-			.setName("Continent direction")
-			.setDesc("How each continent is laid out on a planet.");
-		const balance = new Setting(panel)
-			.setName("Continent balance")
-			.setDesc("Which sides a continent's branches take. Radial fills the circle, so it has none.");
-		direction.settingEl.toggle(overlays.layout === "planets");
-		balance.settingEl.toggle(overlays.layout === "planets" && overlays.continentDirection !== "radial");
-		direction.addDropdown((dropdown) =>
-			dropdown
-				.addOptions(CONTINENT_DIRECTION_NAMES)
-				.setValue(overlays.continentDirection)
-				.onChange((value) => {
-					balance.settingEl.toggle(value !== "radial");
-					this.change({ continentDirection: value as ContinentDirection });
-				}),
-		);
-		balance.addDropdown((dropdown) =>
-			dropdown
-				.addOptions(CONTINENT_BALANCE_NAMES)
-				.setValue(overlays.continentBalance)
-				.onChange((value) => this.change({ continentBalance: value as ContinentBalance })),
-		);
-		flatten.addSlider((slider) =>
-			slider
-				// Continuous: lines at the boundary depth are pulled part-way into their slice.
-				.setLimits(0, 1, 0.01)
-				.setValue(overlays.flatten)
-				// Sent on every step of a drag, so the graph re-settles live (see Graph3DScene.reshape).
-				.setInstant(true)
-				.onChange((value) => {
-					flatten.setDesc(flattenLabel(value));
-					this.change({ flatten: value });
-				}),
-		);
-
-		new Setting(panel).setName("Camera").setHeading();
-		const travel = new Setting(panel).setName("Travel speed").setDesc(travelLabel(overlays.travelSpeed));
-		travel.addSlider((slider) => {
-			const limit = Math.log2(TRAVEL_LIMIT);
-			slider
-				.setLimits(-limit, limit, 0.25)
-				.setValue(sliderFromTravel(overlays.travelSpeed))
-				.onChange((value) => {
-					travel.setDesc(travelLabel(travelFromSlider(value)));
-					this.change({ travelSpeed: travelFromSlider(value) });
-				});
-		});
-
-		new Setting(panel)
-			.setName("Click selects only")
-			.setDesc("A click on a plate selects it without flying there or adding a back step. Arrow keys, search and links still move the camera. Kept on this device.")
-			.addToggle((toggle) => toggle.setValue(this.clickSelectsOnly.get()).onChange((value) => this.clickSelectsOnly.set(value)));
-
-		new Setting(panel).setName("Lookdev").setHeading();
-		const mist = new Setting(panel).setName("Mist density").setDesc(mistLabel(overlays.mist));
-		mist.addSlider((slider) => {
-			const limit = Math.log2(MIST_LIMIT);
-			slider
-				.setLimits(-limit, limit, 0.25)
-				.setValue(sliderFromMist(overlays.mist))
-				.onChange((value) => {
-					mist.setDesc(mistLabel(mistFromSlider(value)));
-					this.change({ mist: mistFromSlider(value) });
-				});
-		});
-		new Setting(panel)
-			.setName("Link particles")
-			.setDesc("A particle runs along each edge, from source to target.")
-			.addToggle((toggle) => toggle.setValue(overlays.particles).onChange((value) => this.change({ particles: value })));
-		new Setting(panel).setName("Labels").addDropdown((dropdown) =>
-			dropdown
-				.addOptions(LABEL_MODES)
-				.setValue(overlays.labels)
-				.onChange((value) => this.change({ labels: value as LabelMode })),
-		);
-		const near = this.nearTier.get();
-		const detail = new Setting(panel).setName("Panel detail").setDesc(detailLabel(near.detail));
-		detail.addSlider((slider) => {
-			const limit = Math.log2(DETAIL_LIMIT);
-			slider
-				.setLimits(-limit, limit, 0.25)
-				.setValue(sliderFromDetail(near.detail))
-				.setInstant(true)
-				.onChange((value) => {
-					detail.setDesc(detailLabel(detailFromSlider(value)));
-					this.nearTier.set({ detail: detailFromSlider(value) });
-				});
-		});
-		const range = NEAR_BUDGET_RANGE[Platform.isMobile ? "mobile" : "desktop"];
-		const budget = new Setting(panel).setName("Live panels").setDesc(budgetLabel(near.budget));
-		budget.addSlider((slider) =>
-			slider
-				.setLimits(range.min, range.max, 1)
-				.setValue(near.budget)
-				.setInstant(true)
-				.onChange((value) => {
-					budget.setDesc(budgetLabel(value));
-					this.nearTier.set({ budget: value });
+					row.setDesc(spacingLabel(value, what));
+					this.change({ [key]: value });
 				}),
 		);
 	}

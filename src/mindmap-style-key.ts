@@ -21,6 +21,8 @@ export interface StyleKeyPlan {
 	content: string;
 	/** Node (parse) ID → the selector its style is stored under. */
 	selectors: Map<string, string>;
+	/** The stamps made, at their offsets in the original content. */
+	insertions: Insertion[];
 }
 
 /**
@@ -58,5 +60,12 @@ export function planStyleKeys(content: string, root: OsmosisNode, nodes: readonl
 		}
 	}
 
-	return { content: edits.length === 0 ? content : insertAll(content, edits), selectors };
+	return { content: edits.length === 0 ? content : insertAll(content, edits), selectors, insertions: edits };
+}
+
+/** Where a line that started at `start` in the original content starts once `plan`'s stamps are in (each lands at the end of a line). */
+export function stampedStart(plan: StyleKeyPlan, start: number): number {
+	let shift = 0;
+	for (const insertion of plan.insertions) if (insertion.offset < start) shift += insertion.text.length;
+	return start + shift;
 }

@@ -4049,59 +4049,6 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	display: none;
 }
 
-/* Overlays menu (Graph3DOverlays.ts): an icon button, and the panel it opens under it. Above the perf readout, so it stays reachable. */
-.osmosis-graph3d-overlays-corner {
-	position: absolute;
-	top: var(--size-4-2);
-	right: var(--size-4-2);
-	z-index: 2;
-}
-
-.osmosis-graph3d-overlays-button {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	margin-left: auto;
-}
-
-.osmosis-graph3d-overlays-button.is-active {
-	color: var(--text-accent);
-}
-
-.osmosis-graph3d-overlays {
-	position: absolute;
-	top: calc(100% + var(--size-4-1));
-	right: 0;
-	width: min(320px, calc(100vw - 2 * var(--size-4-4)));
-	max-height: 60vh;
-	overflow-y: auto;
-	padding: 0 var(--size-4-3);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
-	background: var(--background-secondary);
-	box-shadow: var(--shadow-s);
-	color: var(--text-normal);
-	/* Touch scrolling stays in the panel rather than reaching the view behind it. */
-	overscroll-behavior: contain;
-}
-
-.osmosis-graph3d-overlays.is-hidden {
-	display: none;
-}
-
-.osmosis-graph3d-overlays .setting-item {
-	padding: var(--size-4-2) 0;
-}
-
-/* Obsidian gives a setting row a large rounded box; here it is a small radius, as in Obsidian's own settings rows. The class is repeated to outweigh Obsidian's rule without !important. */
-.osmosis-graph3d-overlays.osmosis-graph3d-overlays .setting-item {
-	border-radius: var(--radius-s);
-}
-
-.osmosis-graph3d-overlays .setting-item-heading {
-	padding-top: var(--size-4-3);
-}
-
 .osmosis-graph3d-empty {
 	position: absolute;
 	inset: 0;

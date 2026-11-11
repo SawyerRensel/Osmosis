@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "./parser";
-import { planStyleKeys } from "./mindmap-style-key";
+import { planStyleKeys, stampedStart } from "./mindmap-style-key";
 import { buildPreferredSelector } from "./styles";
 import { findNodeById, preorder } from "./graph3d/edit";
 import type { OsmosisNode } from "./types";
@@ -120,5 +120,19 @@ describe("planStyleKeys", () => {
 		expect(result.selectors.get(nodes.find((n) => n.blockId === "tide-log")!.id)).toBe("^tide-log");
 		const reparsed = preorder(parser.parse(result.content, "Harbour.md").root).filter((n) => n.blockId !== undefined);
 		expect(reparsed.map((n) => `^${n.blockId}`).sort()).toEqual([...keys].sort());
+	});
+});
+
+describe("stampedStart", () => {
+	it("moves each line by the stamps made before it, so it is found at its new start", () => {
+		const root = parser.parse(note, "Harbour.md").root;
+		const lines = ["Check the mooring lines", "Replace the worn cleat", "Pack the galley stores."].map((content) => preorder(root).find((n) => n.content === content)!);
+		const result = planStyleKeys(note, root, lines);
+		const fresh = parser.parse(result.content, "Harbour.md").root;
+		for (const line of lines) {
+			const start = stampedStart(result, line.range.start);
+			const found = preorder(fresh).find((n) => n.range.start === start);
+			expect(found?.content).toBe(line.content);
+		}
 	});
 });
