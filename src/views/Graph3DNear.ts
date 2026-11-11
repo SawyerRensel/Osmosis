@@ -42,7 +42,8 @@ import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, p
 import { editorAnchor, type EditorPlace } from "../graph3d/edit";
 import { nearMarkdown, panelBoxEm } from "../graph3d/near";
 import { plateVisibility } from "../graph3d/focus";
-import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../graph3d/plates";
+import { PLATE_HEIGHT_EM, PLATE_RADIUS, PLATE_STROKE_EM } from "../graph3d/plates";
+import type { NodeLook } from "../graph3d/node-style";
 import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../graph3d/occlusion";
 import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "../graph3d/links";
 import type { TangentFrame } from "../graph3d/planets";
@@ -89,7 +90,12 @@ export interface NearSource {
 	shape: { width: number; height: number };
 	/** Planets mode: the plate lies on its planet in this frame, and its panel is tilted onto it. */
 	frame?: TangentFrame;
+	/** The node's style (`node-style.ts`): the panel takes its fill, outline, corners and text colour, as the plate does. */
+	look?: NodeLook;
 }
+
+/** A plate's corner radius, as a share of its height: its style's shape, or the default. */
+const cornerOf = (node: NearSource): number => node.look?.corner ?? PLATE_RADIUS;
 
 /** A plate drawn this frame, with the node it is. */
 interface DrawnPlate extends ScreenPlate {
@@ -349,7 +355,7 @@ export class Graph3DNear {
 		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === this.editing);
 		if (node === null || editor === null) return;
 		const plateHeight = node.shape.height * this.pxPerUnit;
-		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, minHeight: plateHeight, radius: plateHeight * PLATE_RADIUS, fontSize: NEAR_FONT_PX });
+		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: NEAR_FONT_PX });
 	}
 
 	/** Give the panels of the nodes in `ids` the selection border, and take it from the rest. */
@@ -411,9 +417,27 @@ export class Graph3DNear {
 		this.panels.clear();
 	}
 
-	/** Re-draw each open panel's outline in its node's colour, after the colour mode changes. */
+	/** Re-paint each open panel from its node's colour and style, after the colour mode or a style changes. */
 	refreshColors(): void {
-		for (const panel of this.panels.values()) panel.box.setCssStyles({ boxShadow: `inset 0 0 0 0.07em ${panel.node.color.getStyle()}` });
+		for (const panel of this.panels.values()) this.paint(panel);
+	}
+
+	/**
+	 * The panel's plate look: the plate's corners, and its outline as an inset
+	 * shadow (not a border, so the veil covers it as the mist does the plate's),
+	 * in the node's colour or its style's border colour; a style's fill and text
+	 * colour, or the stylesheet's theme colours (an empty value clears it).
+	 */
+	private paint(panel: Panel): void {
+		const { look, color } = panel.node;
+		const stroke = (look?.stroke ?? 1) * PLATE_STROKE_EM;
+		panel.box.setCssStyles({
+			borderRadius: `${panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node)}px`,
+			boxShadow: stroke === 0 ? "none" : `inset 0 0 0 ${stroke}em ${look?.border ?? color.getStyle()}`,
+			backgroundColor: look?.fill ?? "",
+		});
+		// On the rendered Markdown itself, as the mind map sets it.
+		panel.body.setCssStyles({ color: look?.text ?? "" });
 	}
 
 	/** The view went into the background: nothing keeps playing there. */
@@ -563,7 +587,7 @@ export class Graph3DNear {
 			y: centre.y + right.y * a * halfWidth + up.y * b * halfHeight,
 			z: centre.z + right.z * a * halfWidth + up.z * b * halfHeight,
 		})));
-		return { centre, corners, radius: PLATE_RADIUS };
+		return { centre, corners, radius: cornerOf(node) };
 	}
 
 	/** Mask `holes` out of the panel, writing only when they changed. */
@@ -600,7 +624,7 @@ export class Graph3DNear {
 			const x = ((point.x + 1) / 2) * width;
 			const y = ((1 - point.y) / 2) * height;
 			if (x + halfWidth < 0 || x - halfWidth > width || y + halfHeight < 0 || y - halfHeight > height) continue;
-			plates.push({ id: node.id, node, x, y, halfWidth, halfHeight, radius: 2 * halfHeight * PLATE_RADIUS, depth });
+			plates.push({ id: node.id, node, x, y, halfWidth, halfHeight, radius: 2 * halfHeight * cornerOf(node), depth });
 		}
 		return plates;
 	}
@@ -613,17 +637,14 @@ export class Graph3DNear {
 		panel.component.load();
 		panel.markdown = markdown;
 		panel.body.empty();
-		// Never smaller than the plate under it, with the same corners and outline. The
-		// outline is an inset shadow, not a border, so the veil covers it as the mist does the plate's.
-		const { shape, color } = panel.node;
-		const plateHeight = shape.height * this.pxPerUnit;
+		// Never smaller than the plate under it, with the same corners, outline and colours.
+		const { shape } = panel.node;
 		panel.box.setCssStyles({
 			fontSize: `${NEAR_FONT_PX}px`,
 			minWidth: `${shape.width * this.pxPerUnit}px`,
-			minHeight: `${plateHeight}px`,
-			borderRadius: `${plateHeight * PLATE_RADIUS}px`,
-			boxShadow: `inset 0 0 0 0.07em ${color.getStyle()}`,
+			minHeight: `${shape.height * this.pxPerUnit}px`,
 		});
+		this.paint(panel);
 		const sourcePath = panel.node.graph.path ?? "";
 		const masks = panel.node.graph.masks;
 		panel.diagram = "";

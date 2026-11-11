@@ -15,6 +15,10 @@
  *   departure mix it toward the background colour (as the mist does). Focus
  *   dimming (`../graph3d/focus.ts`) folds into the same mix, from the depth of
  *   the plate's centre, so a whole plate and its text dim together.
+ * - **Per-node styles:** a node's `osmosis-styles` look (`NodeLook`, from
+ *   `../graph3d/node-style.ts`) rides in instance attributes: fill, outline
+ *   colour and thickness, corner radius, text colour. An unstyled plate keeps
+ *   the theme uniforms, so styling adds no draw call.
  */
 
 import {
@@ -31,8 +35,9 @@ import {
 	CanvasTexture,
 	type IUniform,
 } from "three";
-import { GlyphPacker, PLATE_RADIUS, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
+import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
+import { DEFAULT_LOOK, type NodeLook } from "../graph3d/node-style";
 
 /** Glyphs are rasterised at this size, in rows this tall, on square pages this wide (all px). */
 const FONT_PX = 48;
@@ -79,6 +84,8 @@ export interface PlateSource {
 	selected?: boolean;
 	/** Planets mode: the plate lies on its planet's surface along these unit axes (text-right, text-up), seen from the front only. Without, it faces the camera. */
 	frame?: { right: { x: number; y: number; z: number }; up: { x: number; y: number; z: number } };
+	/** The node's style: fill, outline (over `color`), corners and text colour. Without, the default plate. */
+	look?: NodeLook;
 }
 
 export interface PlateColors {
@@ -211,11 +218,15 @@ attribute vec2 aSize;
 attribute vec3 aColor;
 attribute float aOpacity;
 attribute float aSelected;
+attribute vec4 aFill;
+attribute vec2 aShape;
 varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
 varying float vSelected;
+varying vec4 vFill;
+varying vec2 vShape;
 ${FOCUS_DIM_GLSL}
 ${ORIENT_GLSL}
 #include <fog_pars_vertex>
@@ -225,6 +236,8 @@ void main() {
 	vHalf = aSize * 0.5;
 	vColor = aColor;
 	vSelected = aSelected;
+	vFill = aFill;
+	vShape = aShape;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
 }
@@ -239,16 +252,20 @@ varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
 varying float vSelected;
+// A styled plate's fill (rgb, and 1 in a), or the theme's (a = 0).
+varying vec4 vFill;
+// The style's outline thickness (× the default) and corner radius (share of the height).
+varying vec2 vShape;
 #include <fog_pars_fragment>
 void main() {
 	float height = vHalf.y * 2.0;
-	float radius = height * ${PLATE_RADIUS.toFixed(3)};
+	float radius = height * vShape.y;
 	vec2 q = abs(vLocal) - (vHalf - radius);
 	float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
 	float aa = max(fwidth(d), 1e-4);
 	float coverage = clamp(0.5 - d / aa, 0.0, 1.0);
 	if (coverage <= 0.0) discard;
-	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)};
+	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)} * vShape.x;
 	// A selected plate's border is the accent, and never under 2 px, as the mind map's selection is.
 	stroke = mix(stroke, max(stroke * 1.5, 2.0 * aa), vSelected);
 	vec3 edge = mix(vColor, uAccent, vSelected);
@@ -256,7 +273,8 @@ void main() {
 	// so a distant plate's border doesn't shimmer as it lands between pixels.
 	float band = max(stroke, aa);
 	float border = smoothstep(-band - aa * 0.5, -band + aa * 0.5, d) * (stroke / band);
-	gl_FragColor = vec4(mix(uBackground, mix(uFill, edge, border), vOpacity), coverage);
+	vec3 fill = mix(uFill, vFill.rgb, vFill.a);
+	gl_FragColor = vec4(mix(uBackground, mix(fill, edge, border), vOpacity), coverage);
 	#include <fog_fragment>
 	#include <colorspace_fragment>
 }
@@ -267,14 +285,17 @@ attribute vec3 aCenter;
 attribute float aOpacity;
 attribute vec4 aRect;
 attribute vec4 aUv;
+attribute vec4 aInk;
 varying vec2 vUv;
 varying float vOpacity;
+varying vec4 vInk;
 ${FOCUS_DIM_GLSL}
 ${ORIENT_GLSL}
 #include <fog_pars_vertex>
 void main() {
 	vec4 mvPosition = placeOnPlate(aRect.xy + position.xy * aRect.zw);
 	vUv = aUv.xy + (position.xy + 0.5) * aUv.zw;
+	vInk = aInk;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z));
 	${FOG_VERTEX}
 }
@@ -286,19 +307,21 @@ uniform vec3 uText;
 uniform vec3 uBackground;
 varying vec2 vUv;
 varying float vOpacity;
+// A styled node's text colour (rgb, and 1 in a), or the theme's (a = 0).
+varying vec4 vInk;
 #include <fog_pars_fragment>
 void main() {
 	float alpha = texture2D(uAtlas, vUv).a;
 	if (alpha < 0.02) discard;
-	gl_FragColor = vec4(mix(uBackground, uText, vOpacity), alpha);
+	gl_FragColor = vec4(mix(uBackground, mix(uText, vInk.rgb, vInk.a), vOpacity), alpha);
 	#include <fog_fragment>
 	#include <colorspace_fragment>
 }
 `;
 
 /** Instanced attributes and their widths, for each mesh. */
-const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3 } as const;
-const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3 } as const;
+const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3, aFill: 4, aShape: 2 } as const;
+const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3, aInk: 4 } as const;
 type PlateAttribute = keyof typeof PLATE_ATTRIBUTES;
 type GlyphAttribute = keyof typeof GLYPH_ATTRIBUTES;
 
@@ -373,6 +396,8 @@ export class Graph3DPlates {
 	readonly focus: IUniform<number> = { value: 0 };
 	private font = "";
 	private labelsVisible = true;
+	/** Style colours as parsed, by their CSS text: a layout write reads them for every styled plate. */
+	private readonly styleColors = new Map<string, Color>();
 
 	constructor(colors: PlateColors) {
 		const material = new ShaderMaterial({
@@ -446,6 +471,8 @@ export class Graph3DPlates {
 		const plateSelected = this.plates.array("aSelected");
 		const plateRight = this.plates.array("aRight");
 		const plateUp = this.plates.array("aUp");
+		const plateFill = this.plates.array("aFill");
+		const plateShape = this.plates.array("aShape");
 		const glyphCursor = this.glyphs.map(() => 0);
 		const glyphArrays = this.glyphs.map((layer) => ({
 			center: layer.array("aCenter"),
@@ -454,7 +481,16 @@ export class Graph3DPlates {
 			uv: layer.array("aUv"),
 			right: layer.array("aRight"),
 			up: layer.array("aUp"),
+			ink: layer.array("aInk"),
 		}));
+		// A style colour into `array` at `i` as rgb and a 1 flag, or a 0 flag for the theme's.
+		const paint = (array: Float32Array, i: number, css: string | null): void => {
+			const color = css === null ? null : this.styleColor(css);
+			array[i * 4] = color?.r ?? 0;
+			array[i * 4 + 1] = color?.g ?? 0;
+			array[i * 4 + 2] = color?.b ?? 0;
+			array[i * 4 + 3] = color === null ? 0 : 1;
+		};
 		// A plate's axes, or zeros for a billboard. Written with the layout: a planet's plates turn only when it is laid out again.
 		const axes = (array: Float32Array, i: number, axis: { x: number; y: number; z: number } | undefined): void => {
 			array[i * 3] = axis?.x ?? 0;
@@ -472,12 +508,18 @@ export class Graph3DPlates {
 			plateCenter[i * 3 + 1] = y;
 			plateCenter[i * 3 + 2] = z;
 			plateOpacity[i] = opacity;
+			const look = node.look ?? DEFAULT_LOOK;
 			if (layout) {
 				plateSize[i * 2] = node.shape.width;
 				plateSize[i * 2 + 1] = node.shape.height;
-				plateColor[i * 3] = node.color.r;
-				plateColor[i * 3 + 1] = node.color.g;
-				plateColor[i * 3 + 2] = node.color.b;
+				// A style's border colour outlines the plate in place of the colour-by mode's.
+				const outline = (look.border === null ? null : this.styleColor(look.border)) ?? node.color;
+				plateColor[i * 3] = outline.r;
+				plateColor[i * 3 + 1] = outline.g;
+				plateColor[i * 3 + 2] = outline.b;
+				paint(plateFill, i, look.fill);
+				plateShape[i * 2] = look.stroke;
+				plateShape[i * 2 + 1] = look.corner;
 				plateSelected[i] = node.selected === true ? 1 : 0;
 				axes(plateRight, i, node.frame?.right);
 				axes(plateUp, i, node.frame?.up);
@@ -498,14 +540,25 @@ export class Graph3DPlates {
 				arrays.uv.set(glyph.uv, g * 4);
 				axes(arrays.right, g, node.frame?.right);
 				axes(arrays.up, g, node.frame?.up);
+				paint(arrays.ink, g, look.text);
 			}
 		});
 		this.plates.touch("aCenter", "aOpacity");
-		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp");
+		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp", "aFill", "aShape");
 		for (const layer of this.glyphs) {
 			layer.touch("aCenter", "aOpacity");
-			if (layout) layer.touch("aRect", "aUv", "aRight", "aUp");
+			if (layout) layer.touch("aRect", "aUv", "aRight", "aUp", "aInk");
 		}
+	}
+
+	/** A style colour (already checked by `cssColor`), parsed once. */
+	private styleColor(css: string): Color {
+		let color = this.styleColors.get(css);
+		if (color === undefined) {
+			color = new Color().setStyle(css);
+			this.styleColors.set(css, color);
+		}
+		return color;
 	}
 
 	/** Size the meshes for `nodes`, adding a glyph layer for each new atlas page. */

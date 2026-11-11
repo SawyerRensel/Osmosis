@@ -19,7 +19,9 @@
 import type { CachedMetadata } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
+import type { NodeStyle } from "../styles";
 import type { OsmosisNode, OsmosisTree } from "../types";
+import { noteStyleReader } from "./node-style";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
 
@@ -45,6 +47,11 @@ export interface GraphNode {
 	 * (`soleH1`). Its ID is the core's, `noteNodeId(path)`. See `isNoteRoot`.
 	 */
 	root?: boolean;
+	/**
+	 * Note and line nodes: the node's resolved `osmosis-styles` style, as the
+	 * mind map resolves it (`noteStyleReader`). Absent for a node with none.
+	 */
+	style?: NodeStyle;
 }
 
 /**
@@ -84,6 +91,8 @@ export interface BuildOptions {
 	 * adds none.
 	 */
 	contentOnly?: boolean;
+	/** The plugin's global style classes, for nodes whose style names one (`noteStyleReader`). */
+	globalClasses?: Record<string, NodeStyle>;
 }
 
 /**
@@ -166,12 +175,17 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 	};
 
 	// Pass 1: every note's root and lines, so pass 2 can target any loaded line.
-	for (const { tree, only } of notes) {
+	for (const { tree, cache, only } of notes) {
 		const path = tree.filePath;
 		const coreId = only === undefined ? noteNodeId(path) : null;
 		// A sole H1 is the root under the core's ID, so it keeps its place across edits to its text.
 		const h1 = coreId === null ? null : soleH1(tree.root);
-		if (coreId !== null && h1 === null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root });
+		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses);
+		const styled = (node: OsmosisNode): { style?: NodeStyle } => {
+			const style = styleOf?.(node);
+			return style === undefined ? {} : { style };
+		};
+		if (coreId !== null && h1 === null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root, ...styled(tree.root) });
 		const index: NoteIndex = { path, coreId, lines: [], byBlockId: new Map(), byHeading: new Map() };
 		indexes.set(path, index);
 
@@ -185,7 +199,7 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 				let id = child === h1 && coreId !== null ? coreId : lineNodeId(path, child, true);
 				// A duplicated block ID is a user error; keep both lines visible.
 				if (child !== h1 && nodes.has(id)) id = lineNodeId(path, child, false);
-				nodes.set(id, { id, kind: "line", label: child.content, path, source: child, ...(child === h1 ? { root: true } : {}) });
+				nodes.set(id, { id, kind: "line", label: child.content, path, source: child, ...(child === h1 ? { root: true } : {}), ...styled(child) });
 				if (parentId !== null && child !== h1) addEdge("hierarchy", parentId, id);
 				index.lines.push({ node: child, id });
 				if (child.blockId !== undefined && !index.byBlockId.has(child.blockId)) {

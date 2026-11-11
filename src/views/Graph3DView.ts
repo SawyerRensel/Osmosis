@@ -1858,7 +1858,7 @@ export class Graph3DView extends ItemView {
 		const fullModel = buildGraph(
 			notes.filter((note): note is NoteInput => note !== null),
 			resolve,
-			{ contentOnly: this.depth === 0 },
+			{ contentOnly: this.depth === 0, globalClasses: this.plugin().settings.globalClasses },
 		);
 		const model = visibleModel(fullModel, edges);
 		// An edit that added, deleted, moved or re-levelled a line makes room for its new shape; rewording one does not.

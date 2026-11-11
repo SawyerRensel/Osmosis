@@ -33,6 +33,7 @@ import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../graph3d/appearance";
+import { nodeLook, type NodeLook } from "../graph3d/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { panelBoxEm } from "../graph3d/near";
@@ -91,6 +92,12 @@ interface EngineNode extends NodeObject {
 	selected?: boolean;
 	/** Planets mode: the plate lies on its planet's surface in this frame (`planets.ts`). */
 	frame?: TangentFrame;
+	/**
+	 * The node's `osmosis-styles` look (`nodeLook` of `graph.style`), read by
+	 * the plates and the near tier. Also carries the style's `width` and
+	 * `branchLine` for the renderers that will draw them. Renewed by every `setData`.
+	 */
+	look: NodeLook;
 }
 
 interface EngineLink extends LinkObject<EngineNode> {
@@ -619,6 +626,8 @@ export class Graph3DScene {
 			const relabel = this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
 			existing.graph = graph;
 			existing.color.setStyle(this.colorOf(graph));
+			// A style written in the mind map (or any edit to the note's frontmatter) lands with the reload it triggers.
+			existing.look = nodeLook(graph.style);
 			if (relabel) {
 				existing.shape = this.shapeFor(graph);
 				// Flat branches are laid out at plate sizes.
@@ -658,6 +667,7 @@ export class Graph3DScene {
 		];
 		this.ticksSinceData = 0;
 		this.applySelection();
+		this.near.refreshColors();
 		this.pushData();
 		this.perf.plated(plated, performance.now() - now);
 	}
@@ -697,6 +707,7 @@ export class Graph3DScene {
 			departing: false,
 			shape: this.shapeFor(graph),
 			extent: 0,
+			look: nodeLook(graph.style),
 		};
 		node.extent = extentFor(node);
 		if (place !== undefined) {

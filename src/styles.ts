@@ -734,7 +734,7 @@ export function getClassScope(
  */
 export function lookupVariantStyle(
 	frontmatter: OsmosisStyleFrontmatter | undefined,
-	layoutNode: LayoutNode,
+	layoutNode: Pick<LayoutNode, "source">,
 ): NodeStyle | undefined {
 	if (!frontmatter?.variants || !frontmatter.activeVariant) return undefined;
 
