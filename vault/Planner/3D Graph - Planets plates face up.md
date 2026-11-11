@@ -114,3 +114,37 @@ Implemented on `fix/3d-planets-plates-upright` (stacked on `feature/3d-boundarie
 - Bigger planets push more of a note into the mist at the same zoom; fog/fit were not retuned.
 - Near panels spin from the camera as of `Graph3DNear.update`; the shader uses the render-time camera. Same tick, so they should agree, as panel positions already did.
 - Near-tier occluder prefilter (`platesOnScreen`) is still a screen-aligned box of the unspun size (only a prefilter; the exact hole uses the spun corners).
+
+### Follow-up after Sawyer's test (2026-11-11)
+
+Implemented on `fix/3d-planets-compact` (stacked on `feature/3d-edge-hints`), commit 30b17eb. Not yet tested in Obsidian.
+
+**Feedback.** Javascript note, Planets, Left to right, Both sides, Note and Node spacing 0.50: "3D nodes feel way too far apart even when the node spacing is set to 0.5", compared with the 2D mind map's compact default (siblings stacked tightly, a modest parent→child gap, code panels close to their parent).
+
+**Cause.** The no-overlap-at-any-spin rule above: every plate was laid out as the square of its diagonal, so a column of wide one-liners stood a plate's *width* apart. The sibling and level gaps were already small (1.5 and 18 world units), so Node spacing ×0.5 only trimmed gaps that were a sliver of the inflated squares: the radius fell ~5%.
+
+**Decision (Sawyer, asked interactively): compact like 2D.** Lay continents out at the plates' real sizes and 2D's gaps; plates still spin upright (shader and near-tier spin unchanged). At unusual roll angles wide neighbours may touch or overlap slightly; that is accepted.
+
+**Fix.**
+- `continentMap` lays out at `sizeOf` (real width × height, incl. T44 widths/code fit and live-panel boxes via the scene's `flatSize`) again.
+- The gaps are the 2D map's own: `COLUMN_GAP = DEFAULT_LAYOUT_CONFIG.horizontalSpacing` (80 px) and `ROW_GAP = DEFAULT_LAYOUT_CONFIG.verticalSpacing` (8 px), times `PX_WORLD = LINE_PLATE_HEIGHT / PLATE_HEIGHT_EM / STYLE_PX_PER_EM` (5 / 1.75 / 13 ≈ 0.22 world per px, T44's scale): 17.58 and 1.76 world units (were 18 and 1.5). A 2D theme's own spacing is *not* read: the 3D view has no per-note theme here, and the defaults are what Sawyer compared against.
+- `spreadContinent` is unchanged and now works on real sizes, so plates don't overlap as they lie in the continent's frame (unit-tested, 4 styles × spacing 0.5/1).
+- Boundary patches on planets wrap the real plate again (a diagonal square round a wide plate would cover its stacked siblings). `spinFootprint` became unused and was removed. `LINE_PLATE_HEIGHT` moved from the scene to `graph3d/plates.ts` so the pure layout can use it.
+- Spacing sliders checked: Node spacing scales only the in-continent gaps (`continentMap` and the spread clearance); Continent spacing only `CONTINENT_MARGIN`; Note spacing only `PLANET_GAP` between planets. The radius follows through `planetRadius`'s area rule (unchanged `SURFACE_FILL` 0.4).
+
+**Measurements** (planet radius, world units; 10 continents, each a head with 3 children × 3 grandchildren, plates 20–70 × 5–10 from a fixed seed; not the same random shapes as the hotfix's own numbers above):
+
+| Direction / balance | pre-hotfix ×1 | hotfix ×1 | now ×1 | hotfix ×0.5 | now ×0.5 |
+|---|---|---|---|---|---|
+| Left to right, one side | 186 | 427 | 187 | 405 | 172 |
+| Left to right, both sides | 196 | 444 | 198 | 418 | 180 |
+| Top down, one side | 242 | 427 | 241 | 405 | 205 |
+| Radial | 413 | 583 | 410 | 534 | 363 |
+| One continent of 10 siblings (30 × 5) | 57 | 97 | 57 | | |
+
+Every case is area-bound (the `SURFACE_FILL` term), not reach-bound. Node spacing ×0.5 now halves the gaps exactly, but the radius drops only 8–15%: as in 2D, gaps are small next to the plates (8 px sibling gap vs a ~23 px plate), so most of a continent's area is plates.
+
+**Could not verify / known gaps.**
+- Nothing seen in Obsidian.
+- Wide plates stacked in a Left to right column can overlap at a camera roll near 90° (accepted trade-off).
+- Space *between* continents is the area rule (`SURFACE_FILL` 0.4) plus the Continent spacing margin; unchanged. If the planet still feels sparse it is that, not the in-continent layout.
