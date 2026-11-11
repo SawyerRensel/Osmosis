@@ -299,6 +299,13 @@ export class Graph3DNear {
 		this.placeEditor(camera, pxPerUnitAt1);
 	}
 
+	/** The size, in world units, of the panel a node has up right now (measured), or null: an edge hint clears it rather than the plate underneath. */
+	liveBoxWorld(id: string): { width: number; height: number } | null {
+		const panel = this.panels.get(id);
+		if (panel === undefined || panel.width <= 0 || panel.height <= 0 || panel.target === 0) return null;
+		return { width: panel.width / this.pxPerUnit, height: panel.height / this.pxPerUnit };
+	}
+
 	/** A node's panel size in laid-out px: as measured once its panel exists, else estimated from its Markdown (`panelBoxEm`). */
 	private panelPx(node: NearSource, panel: Panel | undefined): { width: number; height: number } | null {
 		if (panel !== undefined && panel.width > 0 && panel.height > 0) return { width: panel.width, height: panel.height };

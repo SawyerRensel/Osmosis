@@ -44,11 +44,13 @@ import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } 
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
-import { FAR_SIDE_GLSL } from "../graph3d/far-side";
+import { FAR_SIDE_GLSL, showsText } from "../graph3d/far-side";
 import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
+import { Graph3DHints } from "./Graph3DHints";
 import { Graph3DRibbons } from "./Graph3DRibbons";
+import { chooseHints, exitDistance, hintFade, hintText, hintedKind, type HintProbe } from "../graph3d/edge-hints";
 import { branchEnds, dashOf, hierarchyDepths, type TaperEnds } from "../graph3d/taper";
-import { FOCUS_DIM_GLSL } from "../graph3d/focus";
+import { FOCUS_DIM_GLSL, plateVisibility } from "../graph3d/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../graph3d/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tripPose, viewingDistance, type Flight, type Glide, type Trip, type Vec3 } from "../graph3d/flight";
@@ -313,6 +315,9 @@ const LINE_PLATE_MAX_EM = 20;
  * looked at closer than this anyway (the orbit target stays `MIN_DEPTH` ahead).
  */
 const CAMERA_NEAR = 1;
+
+/** Screen px between a plate's edge and its edge hint. */
+const HINT_GAP_PX = 4;
 /** How far from a plate a flight stops: a note's root (its core or sole H1: arriving there is arriving at the note), and every other node. Arrow keys and edge rides keep the current distance instead (`viewingDistance`). */
 const NOTE_STAND_OFF = 160;
 const LINE_STAND_OFF = 70;
@@ -406,6 +411,10 @@ export class Graph3DScene {
 	private readonly branchColors = new Map<string, Color | null>();
 	/** Every node's boundary (cloud), one mesh (`Graph3DBoundaries`). */
 	private readonly boundaries: Graph3DBoundaries;
+	/** The edge-hint labels, a small pool (`Graph3DHints`), and the link and embed edges they are drawn for, filtered again only when the links change. */
+	private readonly hints = new Graph3DHints();
+	private readonly hintPoint = new Vector3();
+	private hintLinks: { links: EngineLink[]; hinted: EngineLink[] } | null = null;
 	/** The study path's thread, and the nodes it runs through (null: a stop not loaded now). */
 	private readonly thread: LineSegments<BufferGeometry, LineBasicMaterial>;
 	private threadIds: readonly (string | null)[] = [];
@@ -629,7 +638,7 @@ export class Graph3DScene {
 		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
 		this.boundaries = new Graph3DBoundaries(this.plates.focus, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
-		this.graph.scene().add(this.boundaries.mesh, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group);
+		this.graph.scene().add(this.boundaries.mesh, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group, this.hints.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
 		this.setOverlays(options.overlays);
 
@@ -1709,10 +1718,12 @@ export class Graph3DScene {
 		this.links = [];
 		this.plates.dispose();
 		this.boundaries.dispose();
+		this.hints.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
 		this.ribbons.dispose();
 		this.taperDepths = null;
+		this.hintLinks = null;
 		this.thread.geometry.dispose();
 		this.thread.material.dispose();
 		this.particles.geometry.dispose();
@@ -2643,6 +2654,7 @@ export class Graph3DScene {
 			this.boundaries.invalidate();
 		}
 		this.boundaries.update(this.nodes, this.hierarchyEnds(), (node) => this.surfaceOf(node as EngineNode), now);
+		this.updateHints(seconds);
 		if (this.overlays.particles) this.writeParticles(now);
 		this.stepLinkDrag();
 		if (this.hover !== null) {
@@ -2674,6 +2686,77 @@ export class Graph3DScene {
 		this.nodes = this.nodes.filter((node) => !left.has(node.id));
 		this.links = this.links.filter((link) => !left.has((link.source as EngineNode).id) && !left.has((link.target as EngineNode).id));
 		this.pushData();
+	}
+
+	/**
+	 * Edge hints (`edge-hints.ts`): near a node, each link or embed edge at it
+	 * is labelled, just off this end, with the node at its other end; the
+	 * nearest `HINT_MAX` ends show, fading in by view depth. One pass over the
+	 * link and embed edges a frame, with the cheap depth test first; text, edge
+	 * direction and the plate's reach are worked out only for the few chosen.
+	 */
+	private updateHints(seconds: number): void {
+		const hints = this.hints;
+		hints.begin();
+		if (this.overlays.labels !== "none") this.placeHints();
+		hints.end(seconds);
+	}
+
+	private placeHints(): void {
+		if (this.hintLinks?.links !== this.links) this.hintLinks = { links: this.links, hinted: this.links.filter((link) => hintedKind(link.kind)) };
+		const camera = this.graph.camera() as PerspectiveCamera;
+		camera.updateMatrixWorld();
+		const e = camera.matrixWorld.elements;
+		const eye = { x: e[12], y: e[13], z: e[14] };
+		const right = { x: e[0], y: e[1], z: e[2] };
+		const up = { x: e[4], y: e[5], z: e[6] };
+		const back = { x: e[8], y: e[9], z: e[10] };
+		const focus = this.plates.focus.value;
+		const density = this.fog.density;
+		const point = this.hintPoint;
+		const probes: HintProbe[] = [];
+		const ends = new Map<string, { link: EngineLink; from: EngineNode & Vec3; to: EngineNode & Vec3; opacity: number; depth: number }>();
+		for (const link of this.hintLinks.hinted) {
+			const [source, target] = [link.source as EngineNode | string, link.target as EngineNode | string];
+			if (typeof source === "string" || typeof target === "string") continue;
+			if (source.departing || target.departing || !placed(source) || !placed(target)) continue;
+			if (!this.edgeDrawn(link.kind, source, target)) continue;
+			const opacity = Math.min(source.opacity, target.opacity);
+			if (opacity <= 0) continue;
+			for (const [from, to] of [[source, target], [target, source]] as const) {
+				// Depth along the view, from the camera plane: behind the camera or beyond the far threshold is out.
+				const depth = -((from.x - eye.x) * back.x + (from.y - eye.y) * back.y + (from.z - eye.z) * back.z);
+				if (depth <= 0 || !(hintFade(depth) > 0)) continue;
+				// A planet's plate seen from behind is dimmed and shows no text; its edges' hints go with it.
+				if (!showsText(from, from.frame?.normal, eye)) continue;
+				point.set(from.x, from.y, from.z).project(camera);
+				const id = `${link.kind}|${from.id}|${to.id}`;
+				probes.push({ id, depth, x: point.x, y: point.y });
+				ends.set(id, { link, from, to, opacity, depth });
+			}
+		}
+		const chosen = chooseHints(probes, this.hints.ids());
+		const size = this.graph.renderer().domElement.clientHeight;
+		const unitPx = (size / 2) * camera.projectionMatrix.elements[5];
+		for (const id of chosen) {
+			const end = ends.get(id);
+			if (end === undefined) continue;
+			const { link, from, to, depth } = end;
+			const points = this.world.size > 0 ? this.planetEdge(link.kind, link.source as EngineNode & Vec3, link.target as EngineNode & Vec3).points : [link.source as Vec3, link.target as Vec3];
+			const next = from === link.source ? points[1]! : points[points.length - 2]!;
+			const dir = { x: next.x - from.x, y: next.y - from.y, z: next.z - from.z };
+			const length = Math.hypot(dir.x, dir.y, dir.z);
+			if (length < 1e-6) continue;
+			dir.x /= length;
+			dir.y /= length;
+			dir.z /= length;
+			// Clear the plate, or the panel over it, then a few px more.
+			const box = this.near.liveBoxWorld(from.id) ?? from.shape;
+			const reach = exitDistance(dir, { width: Math.max(box.width, from.shape.width) / 2, height: Math.max(box.height, from.shape.height) / 2 }, right, up) + HINT_GAP_PX / (unitPx / depth);
+			point.set(from.x + dir.x * reach, from.y + dir.y * reach, from.z + dir.z * reach);
+			const visibility = plateVisibility(end.opacity, depth, focus, density);
+			this.hints.place(id, () => hintText(from.graph, to.graph), point, { x: dir.x * right.x + dir.y * right.y + dir.z * right.z, y: dir.x * up.x + dir.y * up.y + dir.z * up.z }, depth, hintFade(depth) * visibility);
+		}
 	}
 
 	private writeEdges(): void {
