@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Plate-aware spacing]]"
   - "[[3D Graph - Spacing sliders]]"
   - "[[3D Graph - Planets ignores a note's 2D map settings]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-10T12:00:00.000Z"
-date_modified: "2026-11-10T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-11T10:38:25.000Z"
+date_start_scheduled: "2026-11-11T00:30:35.000Z"
+date_start_actual: "2026-11-11T00:30:35.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -110,3 +110,38 @@ Manual test (fixture: Anchor notes `Anchor Balance.md`, `Anchor Radial.md` in `v
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+Implemented on `feature/3d-planets-continent-frames` (stacked on `feature/3d-globe-drag-inertia`), commit 29b57fa. Not yet tested in Obsidian.
+
+**Cause.** Every plate took its own `tangentFrame(offset)` (world +y projected at its own place), so near a pole plates round the continent centre each pointed "up" a different way and the continent splayed. Continent seeds were confined to a band between `CAP_ANGLE` caps and pushed out of them. The azimuthal-equidistant wrap keeps distance from the centre but shrinks sideways spacing by `sin(d/R)/(d/R)`, and nothing checked plate overlap afterwards. The continent margin was the constant `CONTINENT_MARGIN`.
+
+**Approach.**
+- One frame per continent: `tangentFrame(centre)` once, then `wrapPlate(frame, x, y, radius)` wraps the map point and *carries* the frame there (rotation about normal × map bearing by `d/R`), so each plate is tangent at its own place but keeps the continent's right/up, exactly as on the 2D map. `wrapPoint` now delegates to it.
+- Caps removed: `CAP_ANGLE` and the cap push in `surfaceStep` are gone; `placeContinents` seeds a pole-to-pole Fibonacci sphere (even height steps). `CAP_FALLBACK` stays: it is still needed when a continent *centre* sits on a pole (world +y projection vanishes there; world −z is used).
+- `spreadContinent(map, head, radius, clearance)`: runs before placement (overlaps don't depend on where the continent sits). Each round wraps every plate about a fixed centre, finds pairs closer than half-sizes + `clearance` on both axes of one plate's frame, and moves the outer plate (and its whole branch) straight out along its own bearing just far enough to clear. Bounded by `SPREAD_ROUNDS = 32`, no randomness, the head never moves, an overlap-free map is returned as the same object. Sizes are `flatSize` (full panel), so it is panel-aware. `layoutPlanet` spreads at the first radius and takes `max(first, planetRadius(spread maps))`, so a spread continent can grow the planet.
+- Continent spacing: `continentSpacing` in `Graph3DOverlays` (default 1, clamped `SPACING_MIN`–`SPACING_MAX`, per vault like the others). `continentMap` uses `CONTINENT_MARGIN * continentSpacing`; it's in `planetKey` and `PlanetWorld.continentSpacing`. The slider sits under Node spacing in Forces, shown only for Planets (toggled by the Layout dropdown like Flatten). `spacingChanged` counts it only in Planets, so it takes the same path as Node spacing: `world.clear()` + `reshape()`.
+
+**Decisions worth remembering.**
+- Clearance in the spread is half the map's own sibling gap (`ROW_GAP * nodeSpacing / 2`): the flat map is never touched (its gaps are ≥ that), only plates the wrap squeezed.
+- The spread pushes radially, not sideways, per the settled decision; it keeps bearings and the parent-before-child order, so the continent keeps its shape and just grows outward.
+- Continent spacing re-lays out via `clear()` (fresh spiral seeds), like Node spacing, so ×3 then ×0.5 brings continents back together. Re-seeding from old centres would not: nothing pulls continents together.
+- At ×1 the margin, reach and layout are byte-identical to before (unit-tested with `toEqual`).
+
+| File | Change |
+|---|---|
+| `src/graph3d/planets.ts` | `wrapPlate` (shared continent frame), `spreadContinent` + `SPREAD_ROUNDS`, caps removed, whole-sphere seeding, `continentSpacing` through `continentMap`/`layoutPlanet`/`PlanetWorld`/`planetKey` |
+| `src/graph3d/planets.test.ts` | Pole tests replace cap test; continent frames, spread (removes overlaps, deterministic, no-op when clear, laid-out planet has none), Continent spacing (×1 unchanged, margin scales, gaps grow, PlanetWorld re-lays out) |
+| `src/graph3d/overlays.ts` | `continentSpacing` field/default/normalisation; `spacingChanged` includes it in Planets only |
+| `src/graph3d/overlays.test.ts` | Normalisation/clamping and `spacingChanged` cases |
+| `src/views/Graph3DOverlays.ts` | Continent spacing slider (Forces, Planets only) |
+| `src/views/Graph3DScene.ts` | `setOverlays` hands `continentSpacing` to the `PlanetWorld` |
+
+**Fixture.** No new fixture: `vault/tests/graph3d/Galley Handbook.md` (10 continents, some dense), `Anchor Balance.md`, `Anchor Radial.md`.
+
+**Could not verify / known gaps.**
+- Nothing seen in Obsidian.
+- The spread can't help plates the wrap pushed past ~90° from their centre (there, moving outward narrows the room). `planetRadius` lets a long continent reach 0.6π, but in every realistic shape tried (tree, radial, both-sides; 1–3 continents, up to 60 plates each) no overlaps remained.
+- Continent separation is still circle-packing by reach on a radius sized by bounding-box *area* (pre-existing). Many long, thin continents (reach large vs area) can't all fit and their reach circles overlap. That was true before; removing the caps gives a little more room. Fixing it would change planet sizes at ×1, so it was left alone.
+- The spread costs O(n²) per round per continent and stops as soon as nothing overlaps. It runs only on re-layout, not per frame.
