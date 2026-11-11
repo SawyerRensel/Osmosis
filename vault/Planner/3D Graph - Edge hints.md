@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Clickable links in panels]]"
   - "[[3D Graph - Tapered hierarchy edges]]"
   - "[[3D Graph - Focus dimming]]"
-status: To-Do
+status: In-Review
 priority:
-progress:
+progress: 100
 date_created: "2026-11-10T12:00:00.000Z"
 date_modified: "2026-11-10T12:00:00.000Z"
 date_start_scheduled:
-date_start_actual:
+date_start_actual: "2026-11-11T21:45:25.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -100,3 +100,37 @@ Manual test (fixture: `vault/tests/graph3d/` Sailing notes which link to each ot
 ## Working conventions
 
 Conventions: follow CLAUDE.md. Branch `feature/...` or `fix/...` cut from the current release branch (stacked on the previous ticket's branch if the batch workflow says so). `npm run lint`, `npm test`, `npm run build` after each change. Do NOT run Playwright E2E tests. Write unit tests for pure logic (vitest cannot import `obsidian`, so keep pure logic out of `src/views/`). Some src files contain NUL bytes: use `grep -a`. Never `git stash`. Fixtures go in `e2e/fixtures/` and are copied to `vault/`; Obsidian must be reloaded (Ctrl+R) after a fixture is written, and every fixture card must be back-dated. Use neutral domains (no biology) in fixtures and tests. After implementing, STOP and give Sawyer manual test steps; do not mark the note Done or open a PR until he confirms.
+
+## Batch implementation notes (awaiting manual test)
+
+**Branch** `feature/3d-edge-hints` (stacked on T52), code commit `9c5bfa5`.
+
+### Approach
+- Pure `src/graph3d/edge-hints.ts`: `hintedKind` (link and embed only), `hintFade` (1 within `HINT_NEAR_DEPTH` 120, 0 from `HINT_FAR_DEPTH` 300, linear between, view depth of the node), `chooseHints` (nearest `HINT_MAX` 8, same shape as `chooseNear`: a member gets a 25 % rank bonus and may drift to 1.15 NDC off screen where a newcomer needs 1.0), `hintText` / `plainLabel` / `noteName` (label text), `exitDistance` (how far a plate reaches along the edge as the camera sees it) and `labelShift` (which side of the anchor the box sits on).
+- `src/views/Graph3DHints.ts`: pool of 12 CSS2D labels (8 + 4 spare so a leaving label can finish fading while its replacement fades in), opacity eased at 0.12 s, inert (`pointer-events: none`), drawn by the near tier's CSS2D renderer (so no new renderer). `Graph3DScene.updateHints` runs each frame after the boundaries: one pass over the cached link/embed edges with the depth test first, then text, direction and reach only for the chosen few.
+- Anchor = this end's node plus the edge's direction (the first or last point of `planetEdge`'s points, so a Planets lane or tunnel leaves along its drawn arc) times the plate's reach (or the live panel's size, `Graph3DNear.liveBoxWorld`) plus 4 px. Label is shifted so its near side touches the anchor.
+
+### Decisions worth remembering
+- A hint at EITHER end of an edge names the node at the OTHER end (the ticket says "each names its own target"). So a link A to B shows "B" near A and "A" near B; nothing marks direction (arrowheads are out of scope).
+- Hidden by Settings > Look > Labels = none (labels none means no text), but NOT by "plates" (hints are not panels). No new setting: the ticket asked for none.
+- Hidden edge kinds: uses the same `edgeDrawn` test as the drawn edges, so a hidden kind or a hidden-ghost edge has no hint. Focus dimming and mist: opacity is multiplied by `plateVisibility`, the same term the panels use.
+- Planets: a hint is skipped while its node's plate faces away (`showsText`), matching the no-text-on-backs rule.
+- Thresholds are world-unit view depths (a line node's flight stand-off is 70, so a selected node's hints are fully visible); they are constants at the top of `edge-hints.ts` for tuning.
+- Labels are DOM, so (like panels) they always draw over the canvas; a plate nearer than the hint does not cover it. Not decluttered by design.
+- `tag`, `property`, `attachment` and `hierarchy` edges never get hints; `plainLabel` strips heading/list/emphasis markers and shows links as their text; text is cut at 40 characters with an ellipsis.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/edge-hints.ts` | new pure module (above) |
+| `src/graph3d/edge-hints.test.ts` | 17 unit tests: kind filter, fade, nearest 8, hysteresis, text builder (cross-note heading / root / same note / ghost), reach, shift |
+| `src/views/Graph3DHints.ts` | new label pool |
+| `src/views/Graph3DScene.ts` | `hints` field, `updateHints`/`placeHints`, group added to the scene, disposed |
+| `src/views/Graph3DNear.ts` | `liveBoxWorld(id)` |
+| `styles.css` | `.osmosis-graph3d-hint(-anchor)` |
+
+### Fixture
+`vault/tests/graph3d/Hint Harbour.md` (master in `e2e/fixtures/graph3d/`): one line with 12 links (10 notes, a heading, a ghost), a same-note link, an embed. Ctrl+R after the build.
+
+### Not verified
+Could not see Obsidian: label placement against tilted Planets plates, the 120/300 thresholds' feel, and label overlap when several edges leave in nearly the same direction (not decluttered).
