@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { Vec3 } from "./flight";
 import {
-	CAP_ANGLE,
 	CAP_FALLBACK,
+	CONTINENT_MARGIN,
 	DEFAULT_CONTINENT_STYLE,
 	MAX_CONTINENT_ANGLE,
 	PLANET_GAP,
@@ -18,8 +18,10 @@ import {
 	planetRadius,
 	planetTrees,
 	surfaceArc,
+	spreadContinent,
 	surfaceStep,
 	tangentFrame,
+	wrapPlate,
 	wrapPoint,
 	type ContinentStyle,
 	type Lane,
@@ -227,15 +229,20 @@ describe("surface forces", () => {
 		for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) expect(angle(dirs[i]!, dirs[j]!)).toBeGreaterThan(0.95);
 	});
 
-	it("nudge a continent out of a polar cap, gently", () => {
-		const dirs = [{ x: 0.05, y: 1, z: 0 }];
-		const polar = (): number => angle(dirs[0]!, { x: 0, y: 1, z: 0 });
-		const before = polar();
-		surfaceStep(dirs, [0.1]);
-		expect(polar()).toBeGreaterThan(before);
-		expect(polar()).toBeLessThan(CAP_ANGLE);
-		for (let i = 0; i < 200; i++) surfaceStep(dirs, [0.1]);
-		expect(polar()).toBeGreaterThan(CAP_ANGLE * 0.95);
+	it("leave a continent at a pole: no latitude is out of bounds", () => {
+		for (const pole of [{ x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 }]) {
+			const dirs = [pole];
+			for (let i = 0; i < 200; i++) surfaceStep(dirs, [0.1]);
+			expect(angle(dirs[0]!, pole)).toBeCloseTo(0, 9);
+			expect(placeContinents([0.1], 0, [pole])[0]!.y).toBeCloseTo(pole.y, 9);
+		}
+	});
+
+	it("seed over the whole sphere, near the poles too", () => {
+		const dirs = placeContinents(Array.from({ length: 20 }, () => 0.01));
+		// The old polar caps were 0.35 rad: both now hold a continent.
+		expect(dirs.some((d) => angle(d, { x: 0, y: 1, z: 0 }) < 0.35)).toBe(true);
+		expect(dirs.some((d) => angle(d, { x: 0, y: -1, z: 0 }) < 0.35)).toBe(true);
 	});
 
 	it("seed along a spiral, the first facing the phase", () => {
@@ -600,5 +607,174 @@ describe("lanes between planets", () => {
 		const [a, ghost] = [state.bodies.get("a")!, state.bodies.get("ghost:a0")!];
 		const speed = (p: PlanetBody): number => Math.hypot(p.vx!, p.vy!, p.vz!);
 		expect(speed(ghost) / speed(a)).toBeCloseTo(8, 6);
+	});
+});
+
+describe("continent frames", () => {
+	const fan: PlanetBranch = { id: "h", children: Array.from({ length: 8 }, (_, i) => ({ id: `s${i}`, children: [] })) };
+	const tree = { core: "r", continents: [fan] };
+	const radial: ContinentStyle = { direction: "radial", balance: "one-side" };
+	const at = (centre: Vec3) => layoutPlanet(tree, plate, radial, 0, new Map([["h", centre]]));
+	const north = { x: 0, y: 1, z: 0 };
+
+	it("carries the continent's one frame to every plate: the 2D map's orientation, at a pole too", () => {
+		const layout = at(north);
+		const head = layout.places.get("h")!;
+		// The frame is the continent centre's (world −z up at the pole), not the plate's own.
+		expect(head.up.z).toBeCloseTo(-1, 9);
+		let splayed = 0;
+		for (const place of layout.places.values()) {
+			const spread = angle(place.offset, head.offset);
+			// Each plate turns with the surface under it, no more: its up stays the head's, tipped by its distance from the centre.
+			expect(dot(place.up, head.up)).toBeGreaterThanOrEqual(Math.cos(spread) - 1e-9);
+			expect(dot(place.right, head.right)).toBeGreaterThanOrEqual(Math.cos(spread) - 1e-9);
+			expect(dot(place.normal, place.offset) / layout.radius).toBeCloseTo(1, 9);
+			expect(dot(place.up, place.normal)).toBeCloseTo(0, 9);
+			expect(len(place.up)).toBeCloseTo(1, 9);
+			// A frame of its own (world +y projected at its own place) points every plate round the pole a different way.
+			if (dot(tangentFrame(place.offset).up, head.up) < 0) splayed++;
+		}
+		expect(splayed).toBeGreaterThan(0);
+	});
+
+	it("keeps the plates' orientation to each other wherever the continent sits", () => {
+		const [pole, equator] = [at(north), at({ x: 0, y: 0, z: 1 })];
+		const ids = [...pole.places.keys()];
+		for (const a of ids) {
+			for (const b of ids) {
+				expect(dot(pole.places.get(a)!.up, pole.places.get(b)!.up)).toBeCloseTo(dot(equator.places.get(a)!.up, equator.places.get(b)!.up), 9);
+				expect(dot(pole.places.get(a)!.right, pole.places.get(b)!.up)).toBeCloseTo(dot(equator.places.get(a)!.right, equator.places.get(b)!.up), 9);
+			}
+		}
+	});
+
+	it("wraps as wrapPoint does, with right × up the normal, and stays stable far from the centre", () => {
+		const frame = tangentFrame({ x: 0.3, y: -0.8, z: 0.5 });
+		for (const [x, y] of [[0, 0], [12, -4], [-30, 25], [0, 140]] as const) {
+			const wrapped = wrapPlate(frame, x, y, 50);
+			const p = wrapPoint(frame.normal, x, y, 50);
+			expect(wrapped.offset.x).toBeCloseTo(p.x, 9);
+			expect(wrapped.offset.y).toBeCloseTo(p.y, 9);
+			const { right: r, up: u } = wrapped;
+			const n = { x: r.y * u.z - r.z * u.y, y: r.z * u.x - r.x * u.z, z: r.x * u.y - r.y * u.x };
+			expect(dot(n, wrapped.normal)).toBeCloseTo(1, 9);
+		}
+	});
+});
+
+describe("spreadContinent", () => {
+	/** Pairs of plates that overlap once wrapped onto `radius`, measured in the first plate's frame. */
+	const overlaps = (plates: readonly { x: number; y: number; width: number; height: number }[], radius: number): number => {
+		const frame = tangentFrame({ x: 0, y: 0, z: 1 });
+		const wrapped = plates.map((p) => wrapPlate(frame, p.x, p.y, radius));
+		let count = 0;
+		for (let i = 0; i < plates.length; i++) {
+			for (let j = i + 1; j < plates.length; j++) {
+				const o = wrapped[i]!.offset;
+				const q = wrapped[j]!.offset;
+				const rel = { x: q.x - o.x, y: q.y - o.y, z: q.z - o.z };
+				const [dx, dy] = [dot(rel, wrapped[i]!.right), dot(rel, wrapped[i]!.up)];
+				if (Math.abs(dx) < (plates[i]!.width + plates[j]!.width) / 2 && Math.abs(dy) < (plates[i]!.height + plates[j]!.height) / 2) count++;
+			}
+		}
+		return count;
+	};
+	// A dense radial continent: a ring of children, each with a child, squeezed sideways by a small planet.
+	const dense: PlanetBranch = { id: "h", children: Array.from({ length: 14 }, (_, i) => ({ id: `s${i}`, children: [{ id: `t${i}`, children: [] }] })) };
+	const radial: ContinentStyle = { direction: "radial", balance: "one-side" };
+
+	it("pushes squeezed plates out from the centre until none overlap, keeping their bearings", () => {
+		const map = continentMap(dense, plate, radial);
+		// Small enough to squeeze the outer ring, while the map still sits within its hemisphere (as planetRadius keeps it).
+		const radius = map.reach / 1.5;
+		expect(overlaps(map.plates, radius)).toBeGreaterThan(0);
+		const spread = spreadContinent(map, dense, radius, 0.75);
+		expect(overlaps(spread.plates, radius)).toBe(0);
+		const before = new Map(map.plates.map((p) => [p.id, p]));
+		for (const p of spread.plates) {
+			const q = before.get(p.id)!;
+			if (p.id === "h") expect([p.x, p.y]).toEqual([q.x, q.y]);
+			else {
+				expect(Math.atan2(p.y, p.x)).toBeCloseTo(Math.atan2(q.y, q.x), 9);
+				expect(Math.hypot(p.x, p.y)).toBeGreaterThanOrEqual(Math.hypot(q.x, q.y));
+			}
+		}
+		// Every child stays beyond its parent: the continent keeps its shape.
+		for (let i = 0; i < 14; i++) {
+			const [s, t] = [spread.plates.find((p) => p.id === `s${i}`)!, spread.plates.find((p) => p.id === `t${i}`)!];
+			expect(Math.hypot(t.x, t.y)).toBeGreaterThan(Math.hypot(s.x, s.y));
+		}
+		expect(spread.reach).toBeGreaterThan(map.reach);
+		expect(spreadContinent(map, dense, radius, 0.75)).toEqual(spread);
+	});
+
+	it("leaves a map nothing overlaps alone", () => {
+		const head: PlanetBranch = { id: "h", children: [{ id: "a", children: [] }, { id: "b", children: [{ id: "c", children: [] }] }] };
+		const map = continentMap(head, plate);
+		expect(spreadContinent(map, head, 200, 0.75)).toBe(map);
+	});
+
+	it("leaves no overlapping plates on a laid-out planet", () => {
+		const tree = { core: "r", continents: [dense, { id: "g", children: Array.from({ length: 10 }, (_, i) => ({ id: `g${i}`, children: [] })) }] };
+		const layout = layoutPlanet(tree, plate, radial);
+		for (const head of ["h", "g"]) {
+			const places = [...layout.places.values()].filter((p) => p.continent === head);
+			for (let i = 0; i < places.length; i++) {
+				for (let j = i + 1; j < places.length; j++) {
+					const [a, b] = [places[i]!, places[j]!];
+					const rel = { x: b.offset.x - a.offset.x, y: b.offset.y - a.offset.y, z: b.offset.z - a.offset.z };
+					expect(Math.abs(dot(rel, a.right)) >= 20 || Math.abs(dot(rel, a.up)) >= 5).toBe(true);
+				}
+			}
+		}
+	});
+});
+
+describe("Continent spacing", () => {
+	const head: PlanetBranch = { id: "h", children: [{ id: "a", children: [] }, { id: "b", children: [{ id: "c", children: [] }] }] };
+	const many = { core: "r", continents: Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, children: [{ id: `c${i}-x`, children: [{ id: `c${i}-y`, children: [] }] }] })) };
+	// Few, compact continents: ones the sphere has room to keep apart at every spacing.
+	const few = { core: "r", continents: Array.from({ length: 4 }, (_, i) => ({ id: `f${i}`, children: [] })) };
+	/** The narrowest gap between two continents' maps on the surface: centre to centre, less both reaches without their margins. */
+	const narrowest = (spacing: number): number => {
+		const layout = layoutPlanet(few, plate, DEFAULT_CONTINENT_STYLE, 0, undefined, 1, spacing);
+		const bare = few.continents.map((c) => continentMap(c, plate).reach - CONTINENT_MARGIN / 2);
+		const centres = few.continents.map((c) => layout.centres.get(c.id)!);
+		let least = Infinity;
+		for (let i = 0; i < centres.length; i++) for (let j = i + 1; j < centres.length; j++) least = Math.min(least, angle(centres[i]!, centres[j]!) * layout.radius - bare[i]! - bare[j]!);
+		return least;
+	};
+
+	it("keeps today's margin round a continent at x1, and scales it with the slider, never the plates", () => {
+		const today = continentMap(head, plate);
+		const corner = Math.max(...today.plates.map((p) => Math.hypot(Math.abs(p.x) + p.width / 2, Math.abs(p.y) + p.height / 2)));
+		expect(today.reach).toBe(corner + CONTINENT_MARGIN / 2);
+		expect(continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 1, 1)).toEqual(today);
+		for (const s of [0.5, 2, 3]) {
+			const scaled = continentMap(head, plate, DEFAULT_CONTINENT_STYLE, 1, s);
+			expect(scaled.plates).toEqual(today.plates);
+			expect(scaled.reach - today.reach).toBeCloseTo((CONTINENT_MARGIN * (s - 1)) / 2, 9);
+		}
+		expect(layoutPlanet(many, plate, DEFAULT_CONTINENT_STYLE, 0, undefined, 1, 1)).toEqual(layoutPlanet(many, plate));
+	});
+
+	it("sets continents at least the margin apart, farther as the slider grows", () => {
+		const gaps = [0.5, 1, 2, 3].map(narrowest);
+		[0.5, 1, 2, 3].forEach((s, i) => expect(gaps[i]!).toBeGreaterThan(CONTINENT_MARGIN * s * 0.9));
+		// Gaps are a floor (a small planet can leave room to spare), so they never shrink, and grow once the margin dominates.
+		for (let i = 1; i < gaps.length; i++) expect(gaps[i]!).toBeGreaterThanOrEqual(gaps[i - 1]! - 1e-9);
+		expect(gaps[3]!).toBeGreaterThan(gaps[1]! + CONTINENT_MARGIN);
+	});
+
+	it("re-lays a planet out when Continent spacing changes, and keeps it otherwise", () => {
+		const world = new PlanetWorld();
+		world.update([many], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		const [place, radius] = [world.place("c3-y")!, world.radius("r")!];
+		world.update([many], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		expect(world.place("c3-y")).toBe(place);
+		world.continentSpacing = 3;
+		world.update([many], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		expect(world.place("c3-y")).not.toBe(place);
+		expect(world.radius("r")!).toBeGreaterThan(radius);
 	});
 });

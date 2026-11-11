@@ -34,6 +34,8 @@ export interface Graph3DOverlays {
 	noteSpacing: number;
 	/** The Node spacing slider: a multiple of today's distance between nodes within a note, `SPACING_MIN` to `SPACING_MAX`. */
 	nodeSpacing: number;
+	/** Planets only: the Continent spacing slider, a multiple of today's clear space round each continent (`CONTINENT_MARGIN`), `SPACING_MIN` to `SPACING_MAX`. */
+	continentSpacing: number;
 	/** The Layout choice. The flatten slider applies in `flat` only. */
 	layout: LayoutMode;
 	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
@@ -64,6 +66,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	linksPull: true,
 	noteSpacing: 1,
 	nodeSpacing: 1,
+	continentSpacing: 1,
 	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
 	layout: "flat",
 	flatten: 0.75,
@@ -104,6 +107,7 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		// Saved before the Layout choice: the flatten slider at Off was organic.
 		noteSpacing: number(value.noteSpacing, DEFAULT_OVERLAYS.noteSpacing, SPACING_MIN, SPACING_MAX),
 		nodeSpacing: number(value.nodeSpacing, DEFAULT_OVERLAYS.nodeSpacing, SPACING_MIN, SPACING_MAX),
+		continentSpacing: number(value.continentSpacing, DEFAULT_OVERLAYS.continentSpacing, SPACING_MIN, SPACING_MAX),
 		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : value.flatten === 0 ? "organic" : DEFAULT_OVERLAYS.layout,
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
@@ -118,9 +122,11 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 /** The spacing sliders as the layout reads them (`Spacing`). */
 export const spacingOf = (overlays: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">): Spacing => ({ note: overlays.noteSpacing, node: overlays.nodeSpacing });
 
-/** Whether either spacing slider moved from `before` to `after`, so the loaded nodes must re-settle (or, in Planets, be laid out afresh). */
-export function spacingChanged(before: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">, after: Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing">): boolean {
-	return before.noteSpacing !== after.noteSpacing || before.nodeSpacing !== after.nodeSpacing;
+type SpacingSliders = Pick<Graph3DOverlays, "noteSpacing" | "nodeSpacing" | "continentSpacing">;
+
+/** Whether a spacing slider moved from `before` to `after` (Continent spacing only counts in Planets, the one layout it shapes), so the loaded nodes must re-settle (or, in Planets, be laid out afresh). */
+export function spacingChanged(before: SpacingSliders, after: SpacingSliders & Pick<Graph3DOverlays, "layout">): boolean {
+	return before.noteSpacing !== after.noteSpacing || before.nodeSpacing !== after.nodeSpacing || (after.layout === "planets" && before.continentSpacing !== after.continentSpacing);
 }
 
 /** The flatten position in effect: the slider's in the flat-slices layout, nothing flat otherwise. */

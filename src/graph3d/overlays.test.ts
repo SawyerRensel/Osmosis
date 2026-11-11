@@ -399,13 +399,25 @@ describe("spacing sliders", () => {
 	it("takes the default for anything that is not a finite number", () => {
 		expect(normalizeOverlays({ noteSpacing: "wide", nodeSpacing: Number.NaN })).toMatchObject({ noteSpacing: 1, nodeSpacing: 1 });
 		expect(normalizeOverlays({ noteSpacing: Infinity }).noteSpacing).toBe(1);
+		expect(normalizeOverlays({ continentSpacing: "wide" }).continentSpacing).toBe(1);
+	});
+
+	it("reads Continent spacing back at x1 by default, clamped to x0.5 to x3", () => {
+		expect(DEFAULT_OVERLAYS.continentSpacing).toBe(1);
+		expect(normalizeOverlays({}).continentSpacing).toBe(1);
+		expect(normalizeOverlays({ continentSpacing: 2.25 }).continentSpacing).toBe(2.25);
+		expect(normalizeOverlays({ continentSpacing: 9 }).continentSpacing).toBe(SPACING_MAX);
+		expect(normalizeOverlays({ continentSpacing: 0.1 }).continentSpacing).toBe(SPACING_MIN);
 	});
 
 	it("tells when either moved, and hands the layout both", () => {
-		const same = { noteSpacing: 1, nodeSpacing: 1 };
+		const same = { noteSpacing: 1, nodeSpacing: 1, continentSpacing: 1, layout: "flat" as const };
 		expect(spacingChanged(same, { ...same })).toBe(false);
 		expect(spacingChanged(same, { ...same, noteSpacing: 1.5 })).toBe(true);
 		expect(spacingChanged(same, { ...same, nodeSpacing: 2 })).toBe(true);
+		// Continent spacing shapes Planets only.
+		expect(spacingChanged(same, { ...same, continentSpacing: 2 })).toBe(false);
+		expect(spacingChanged(same, { ...same, continentSpacing: 2, layout: "planets" })).toBe(true);
 		expect(spacingOf({ noteSpacing: 2, nodeSpacing: 3 })).toEqual({ note: 2, node: 3 });
 	});
 });

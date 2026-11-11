@@ -7,11 +7,13 @@
  * the surface. The root's children are the *continents*: each is laid out as
  * a 2D mind map (`continentMap`), wrapped onto the sphere about its centre
  * (`wrapPoint`, an azimuthal equidistant map, so distances from the centre
- * keep), and placed anywhere on the globe by surface forces that keep
- * continents apart and gently out of the polar caps (`placeContinents`).
- * Plates lie tangent to the surface, rigid and undistorted, with their text-up
- * world +y projected onto the tangent plane (`tangentFrame`), or world −z in a
- * cap, where that projection vanishes.
+ * keep), and placed anywhere on the globe, poles included, by surface forces
+ * that keep continents apart (`placeContinents`). Each continent has one
+ * frame, taken at its centre (`tangentFrame`: world +y projected, or world −z
+ * at a pole), and every plate lies tangent to the surface at its own place
+ * with that frame carried there (`wrapPlate`), so a continent is as rigid as
+ * its 2D map. Plates the wrap squeezes together are pushed apart, away from
+ * the continent's centre (`spreadContinent`).
  *
  * The radius fits the plates at today's spacing (`planetRadius`), so a planet
  * grows and shrinks with its note. Internal layout is geometry only; the space
@@ -121,7 +123,7 @@ export interface ContinentMap {
 const COLUMN_GAP = edgeDistance("hierarchy");
 /** Gap between siblings (as `flatten.ts`). */
 const ROW_GAP = 1.5;
-/** Clear space kept round each continent, in world units. */
+/** Clear space kept round each continent, in world units, at Continent spacing ×1. */
 export const CONTINENT_MARGIN = 6;
 
 /** Stand-in parse nodes for the layout: only `id`, `type`, `children` and `content` are read, and sizes come from `PlateSize`. */
@@ -162,9 +164,10 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
 /**
  * A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or
  * `radialMap`), at plate sizes. `nodeSpacing` (the Node spacing slider)
- * scales the gaps between its plates, never the plates.
+ * scales the gaps between its plates, never the plates; `continentSpacing`
+ * (the Continent spacing slider) scales the clear space kept round it.
  */
-export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE, nodeSpacing = 1): ContinentMap {
+export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: ContinentStyle = DEFAULT_CONTINENT_STYLE, nodeSpacing = 1, continentSpacing = 1): ContinentMap {
 	const sizes = new Map<string, { width: number; height: number }>();
 	const gather = (branch: PlanetBranch): void => {
 		sizes.set(branch.id, sizeOf(branch.id));
@@ -172,17 +175,23 @@ export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: Conti
 	};
 	gather(head);
 	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
-	let reach = 0;
+	const margin = CONTINENT_MARGIN * continentSpacing;
 	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const p of plates) {
-		reach = Math.max(reach, Math.hypot(Math.abs(p.x) + p.width / 2, Math.abs(p.y) + p.height / 2));
 		[x0, x1] = [Math.min(x0, p.x - p.width / 2), Math.max(x1, p.x + p.width / 2)];
 		[y0, y1] = [Math.min(y0, p.y - p.height / 2), Math.max(y1, p.y + p.height / 2)];
 	}
-	return { plates, reach: reach + CONTINENT_MARGIN / 2, area: (x1 - x0 + CONTINENT_MARGIN) * (y1 - y0 + CONTINENT_MARGIN) };
+	return { plates, reach: plateReach(plates) + margin / 2, area: (x1 - x0 + margin) * (y1 - y0 + margin) };
 }
 
-/** Share of the surface the continents cover: the rest is gaps between them, and the caps. */
+/** How far a map's plates reach from its head: the farthest plate corner. */
+function plateReach(plates: readonly MapPlate[]): number {
+	let reach = 0;
+	for (const p of plates) reach = Math.max(reach, Math.hypot(Math.abs(p.x) + p.width / 2, Math.abs(p.y) + p.height / 2));
+	return reach;
+}
+
+/** Share of the surface the continents cover: the rest is the gaps between them. */
 export const SURFACE_FILL = 0.4;
 /** The smallest planet, so a note of one line still has a surface clear of its root plate. */
 export const MIN_PLANET_RADIUS = 12;
@@ -214,10 +223,8 @@ const normalize = (a: Vec3): Vec3 => {
 
 const WORLD_UP: Vec3 = { x: 0, y: 1, z: 0 };
 const CAP_UP: Vec3 = { x: 0, y: 0, z: -1 };
-/** A plate this close to a pole (radians from the axis) takes world −z for up: world +y projected onto its plane is too short to trust. */
+/** A frame this close to a pole (radians from the axis) takes world −z for up: world +y projected onto its plane is too short to trust. */
 export const CAP_FALLBACK = 0.05;
-/** The caps the surface forces keep continent centres out of, in radians from each pole. */
-export const CAP_ANGLE = 0.35;
 
 /** A plate's orientation on the surface: its outward normal, its text-right and its text-up, all unit vectors. */
 export interface TangentFrame {
@@ -227,9 +234,9 @@ export interface TangentFrame {
 }
 
 /**
- * The frame of a plate whose outward normal is `normal`: up is world +y
- * projected onto the tangent plane, or world −z projected when the plate is
- * within `CAP_FALLBACK` of a pole. Right is up × normal, so seen from outside
+ * The frame at outward normal `normal` (a continent's centre, see
+ * `wrapPlate`): up is world +y projected onto the tangent plane, or world −z
+ * projected within `CAP_FALLBACK` of a pole. Right is up × normal, so seen from outside
  * (looking down −normal, up at the top of the screen) right is to the right,
  * and right × up is the normal again.
  */
@@ -248,12 +255,121 @@ export function tangentFrame(normal: Vec3): TangentFrame {
  * frame, so the geodesic distance from the centre is the map distance.
  */
 export function wrapPoint(centre: Vec3, x: number, y: number, radius: number): Vec3 {
-	const frame = tangentFrame(centre);
+	return wrapPlate(tangentFrame(centre), x, y, radius).offset;
+}
+
+/** A plate wrapped onto its planet: its offset from the planet's centre and its frame there. */
+export interface WrappedPlate extends TangentFrame {
+	offset: Vec3;
+}
+
+/**
+ * Where the map point (`x` right, `y` down) of a continent whose one frame is
+ * `frame` (taken at its centre) lands on a sphere of `radius`, and the plate's
+ * frame there: an azimuthal equidistant map (`wrapPoint`), and the continent's
+ * frame carried from the centre to the point along the great circle between
+ * them (the rotation about normal × the map direction that takes the centre
+ * there). So a plate lies tangent at its own place, but its right and up are
+ * the continent's, as on the 2D map: no plate turns against its neighbours,
+ * near a pole or anywhere. Stable for any distance: the axis comes from the
+ * map direction, not from the two ends.
+ */
+export function wrapPlate(frame: TangentFrame, x: number, y: number, radius: number): WrappedPlate {
 	const d = Math.hypot(x, y);
-	if (d < 1e-9) return scale(frame.normal, radius);
+	if (d < 1e-9) return { offset: scale(frame.normal, radius), normal: frame.normal, right: frame.right, up: frame.up };
 	const towards = scale(add(scale(frame.right, x), frame.up, -y), 1 / d);
 	const angle = d / radius;
-	return scale(add(scale(frame.normal, Math.cos(angle)), towards, Math.sin(angle)), radius);
+	const [c, s] = [Math.cos(angle), Math.sin(angle)];
+	const normal = add(scale(frame.normal, c), towards, s);
+	const turned = add(scale(towards, c), frame.normal, -s);
+	// Right and up are tangent at the centre: their part along `towards` turns with it, the part along the axis stays.
+	const carry = (v: Vec3): Vec3 => {
+		const along = dot(v, towards);
+		return add(add(v, towards, -along), turned, along);
+	};
+	return { offset: scale(normal, radius), normal, right: carry(frame.right), up: carry(frame.up) };
+}
+
+/** How many rounds `spreadContinent` runs at most: each pushes every overlapping plate out at once. */
+export const SPREAD_ROUNDS = 32;
+
+/**
+ * Push the plates of a continent's map that overlap once wrapped onto a
+ * sphere of `radius` apart, away from the continent's centre, and return the
+ * map (its plates moved, its reach grown to match; the input is untouched).
+ *
+ * The equidistant wrap keeps distance from the centre but squeezes sideways
+ * spacing, more the farther out, so plates the 2D map kept apart can collide.
+ * Of two plates closer than `clearance` (on both axes of the nearer one's
+ * frame), the one farther from the centre moves straight out along its own
+ * bearing, with its whole branch, just far enough to clear (sideways or
+ * outwards, whichever is shorter). Bearings and the order out from the
+ * centre keep, so the continent keeps its shape and grows outward. The head
+ * never moves; a map nothing overlaps comes back unchanged; at most
+ * `SPREAD_ROUNDS` rounds, so it is bounded and, with no randomness, the same
+ * every time. Rotation doesn't change the overlaps, so it runs before the
+ * continent is placed and uses any centre.
+ */
+export function spreadContinent(map: ContinentMap, head: PlanetBranch, radius: number, clearance: number): ContinentMap {
+	const plates = map.plates.map((p) => ({ ...p }));
+	const index = new Map(plates.map((p, i) => [p.id, i]));
+	// Each plate's branch (itself and its descendants), as indices.
+	const branchOf: number[][] = plates.map(() => []);
+	const gather = (branch: PlanetBranch): number[] => {
+		const own = index.get(branch.id);
+		const members = own === undefined ? [] : [own];
+		for (const child of branch.children) members.push(...gather(child));
+		if (own !== undefined) branchOf[own] = members;
+		return members;
+	};
+	gather(head);
+	const frame = tangentFrame({ x: 0, y: 0, z: 1 });
+	// No plate is pushed round past the far side of the planet.
+	const farthest = radius * (Math.PI - 0.1);
+	let moved = false;
+	for (let round = 0; round < SPREAD_ROUNDS; round++) {
+		const wrapped = plates.map((p) => wrapPlate(frame, p.x, p.y, radius));
+		const out = plates.map((p) => Math.hypot(p.x, p.y));
+		const push = new Float64Array(plates.length);
+		for (let i = 0; i < plates.length; i++) {
+			for (let j = i + 1; j < plates.length; j++) {
+				const [a, b] = [plates[i]!, plates[j]!];
+				const rel = add(wrapped[j]!.offset, wrapped[i]!.offset, -1);
+				const [w, h] = [(a.width + b.width) / 2 + clearance, (a.height + b.height) / 2 + clearance];
+				if (dot(rel, rel) >= w * w + h * h) continue;
+				const [dx, dy] = [dot(rel, wrapped[i]!.right), dot(rel, wrapped[i]!.up)];
+				if (Math.abs(dx) >= w || Math.abs(dy) >= h) continue;
+				// The outer plate moves (the later one on a tie), from the other.
+				const k = out[j]! >= out[i]! ? j : i;
+				if (out[k]! < 1e-6) continue;
+				const [ax, ay] = k === j ? [dx, dy] : [-dx, -dy];
+				// Its outward bearing in its frame (the map's x right, y down; the frame's up is map up).
+				const [ux, uy] = [plates[k]!.x / out[k]!, -plates[k]!.y / out[k]!];
+				let need = Infinity;
+				if (Math.abs(ux) > 1e-6) need = Math.min(need, (w - Math.sign(ux) * ax) / Math.abs(ux));
+				if (Math.abs(uy) > 1e-6) need = Math.min(need, (h - Math.sign(uy) * ay) / Math.abs(uy));
+				push[k] = Math.max(push[k]!, need + 1e-3);
+			}
+		}
+		// A plate takes its own push plus every push of its ancestors, so a branch moves together.
+		const shift = new Float64Array(plates.length);
+		let any = false;
+		push.forEach((amount, k) => {
+			if (amount <= 0) return;
+			any = true;
+			for (const m of branchOf[k]!) shift[m] = shift[m]! + amount;
+		});
+		if (!any) break;
+		moved = true;
+		plates.forEach((p, m) => {
+			const d = out[m]!;
+			if (shift[m]! <= 0 || d < 1e-6) return;
+			const f = Math.min(d + shift[m]!, farthest) / d;
+			[p.x, p.y] = [p.x * f, p.y * f];
+		});
+	}
+	if (!moved) return map;
+	return { plates, reach: map.reach - plateReach(map.plates) + plateReach(plates), area: map.area };
 }
 
 /** Angular distance between two unit directions. */
@@ -262,9 +378,9 @@ const angleBetween = (a: Vec3, b: Vec3): number => Math.acos(Math.min(1, Math.ma
 /**
  * One step of the surface forces on continent centres (unit directions,
  * updated in place). Two continents closer than their reaches (angular radii,
- * `reach / radius`) plus a margin push apart along the surface; a continent
- * whose centre sits within `CAP_ANGLE` of a pole is nudged gently towards the
- * equator. Gaps are fine: nothing pulls continents together.
+ * `reach / radius`, margins included) push apart along the surface. A
+ * continent may sit anywhere, a pole included. Gaps are fine: nothing pulls
+ * continents together.
  */
 export function surfaceStep(dirs: Vec3[], reaches: readonly number[], step = 0.5): void {
 	const moves = dirs.map(() => ({ x: 0, y: 0, z: 0 }));
@@ -281,14 +397,6 @@ export function surfaceStep(dirs: Vec3[], reaches: readonly number[], step = 0.5
 			moves[i] = add(moves[i]!, away, push);
 			moves[j] = add(moves[j]!, away, -push);
 		}
-		// Cap avoidance: gentle, so a crowded planet can still use the caps.
-		const polar = angleBetween(dirs[i]!, WORLD_UP);
-		const fromPole = Math.min(polar, Math.PI - polar);
-		if (fromPole < CAP_ANGLE) {
-			const towardsEquator = scale(WORLD_UP, polar < Math.PI / 2 ? -1 : 1);
-			const tangent = add(towardsEquator, dirs[i]!, -dot(towardsEquator, dirs[i]!));
-			moves[i] = add(moves[i]!, normalize(tangent), (CAP_ANGLE - fromPole) * step * 0.25);
-		}
 	}
 	for (let i = 0; i < dirs.length; i++) {
 		const d = dirs[i]!;
@@ -303,20 +411,21 @@ export const SURFACE_STEPS = 120;
 
 /**
  * Continent centres on the unit sphere, in document order: seeded along a
- * golden-angle spiral between the caps, the first facing longitude `phase`
+ * golden-angle spiral over the whole sphere (even areas, pole to pole), the
+ * first facing longitude `phase`
  * (as `facingPhase`), or where `seeds` puts them (a re-layout keeps
  * continents where they were), then pushed apart by `surfaceStep`.
  */
 export function placeContinents(reaches: readonly number[], phase = 0, seeds: readonly (Vec3 | undefined)[] = []): Vec3[] {
 	const count = reaches.length;
-	const band = Math.PI - 2 * CAP_ANGLE;
 	const dirs = reaches.map((_, i) => {
 		const seed = seeds[i];
 		if (seed !== undefined) return normalize(seed);
-		// Top to bottom through the band, turning by the golden angle, so neighbours in document order sit near each other.
-		const polar = CAP_ANGLE + (band * (i + 0.5)) / count;
+		// Top to bottom, even steps in height (so even areas), turning by the golden angle, so neighbours in document order sit near each other.
+		const y = 1 - (2 * (i + 0.5)) / count;
+		const ring = Math.sqrt(Math.max(0, 1 - y * y));
 		const longitude = phase + i * Math.PI * (3 - Math.sqrt(5));
-		return { x: Math.sin(polar) * Math.cos(longitude), y: Math.cos(polar), z: Math.sin(polar) * Math.sin(longitude) };
+		return { x: ring * Math.cos(longitude), y, z: ring * Math.sin(longitude) };
 	});
 	for (let step = 0; step < SURFACE_STEPS; step++) surfaceStep(dirs, reaches);
 	return dirs;
@@ -339,8 +448,10 @@ export interface PlanetLayout {
 }
 
 /**
- * Lay a planet out: its continents' maps, the radius they need, their centres
- * on the globe, and each plate wrapped onto the surface with its frame.
+ * Lay a planet out: its continents' maps, the radius they need, the maps
+ * spread where the wrap squeezes plates together (`spreadContinent`, and the
+ * radius grown if that widened one too far), their centres on the globe, and
+ * each plate wrapped onto the surface with its continent's frame.
  */
 export function layoutPlanet(
 	tree: PlanetTree,
@@ -349,9 +460,14 @@ export function layoutPlanet(
 	phase = 0,
 	previous?: ReadonlyMap<string, Vec3>,
 	nodeSpacing = 1,
+	continentSpacing = 1,
 ): PlanetLayout {
-	const maps = tree.continents.map((head) => continentMap(head, sizeOf, style, nodeSpacing));
-	const radius = planetRadius(maps, sizeOf(tree.core).width);
+	const rootWidth = sizeOf(tree.core).width;
+	const flat = tree.continents.map((head) => continentMap(head, sizeOf, style, nodeSpacing, continentSpacing));
+	const first = planetRadius(flat, rootWidth);
+	// Half the map's own sibling gap: closer than that, the wrap has squeezed two plates together.
+	const maps = flat.map((map, i) => spreadContinent(map, tree.continents[i]!, first, (ROW_GAP * nodeSpacing) / 2));
+	const radius = Math.max(first, planetRadius(maps, rootWidth));
 	const centres = placeContinents(
 		maps.map((map) => map.reach / radius),
 		phase,
@@ -360,10 +476,9 @@ export function layoutPlanet(
 	const places = new Map<string, PlanetPlace>();
 	maps.forEach((map, i) => {
 		const head = tree.continents[i]!.id;
-		for (const plate of map.plates) {
-			const offset = wrapPoint(centres[i]!, plate.x, plate.y, radius);
-			places.set(plate.id, { offset, continent: head, ...tangentFrame(offset) });
-		}
+		// One frame per continent, at its centre, shared by all its plates.
+		const frame = tangentFrame(centres[i]!);
+		for (const plate of map.plates) places.set(plate.id, { ...wrapPlate(frame, plate.x, plate.y, radius), continent: head });
 	});
 	return { core: tree.core, radius, places, centres: new Map(tree.continents.map((head, i) => [head.id, centres[i]!])) };
 }
@@ -479,6 +594,8 @@ export class PlanetWorld {
 	 * planet surfaces and round them. Set before `update`; a change needs `clear`.
 	 */
 	spacing: Spacing = UNIT_SPACING;
+	/** The Continent spacing slider: the clear space round each continent (`CONTINENT_MARGIN`), and so the radius. As `spacing`. */
+	continentSpacing = 1;
 
 	/** Drop every layout: the next `update` lays every planet out afresh (a mode or style change). */
 	clear(): void {
@@ -522,11 +639,11 @@ export class PlanetWorld {
 		this.memberOf.clear();
 		const grew: string[] = [];
 		for (const tree of trees) {
-			const key = planetKey(tree, sizeOf, style, this.spacing.node);
+			const key = planetKey(tree, sizeOf, style, this.spacing.node, this.continentSpacing);
 			const old = this.planets.get(tree.core);
 			let planet = old;
 			if (old === undefined || old.key !== key) {
-				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres, this.spacing.node);
+				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres, this.spacing.node, this.continentSpacing);
 				let from: Map<string, Vec3> | null = null;
 				if (animate && old !== undefined) {
 					from = new Map();
@@ -694,9 +811,9 @@ export class PlanetWorld {
 	}
 }
 
-/** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style and the Node spacing. */
-function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number): string {
-	const parts: string[] = [`${style.direction}/${style.balance}/${String(nodeSpacing)}|`];
+/** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style and the Node and Continent spacing. */
+function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number, continentSpacing: number): string {
+	const parts: string[] = [`${style.direction}/${style.balance}/${String(nodeSpacing)}/${String(continentSpacing)}|`];
 	const visit = (branch: PlanetBranch): void => {
 		const { width, height } = sizeOf(branch.id);
 		parts.push(`${branch.id}:${width.toFixed(2)}x${height.toFixed(2)}(`);

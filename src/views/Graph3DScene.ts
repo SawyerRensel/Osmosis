@@ -873,11 +873,12 @@ export class Graph3DScene {
 		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
 		// A new layout, or a new continent direction or balance in Planets, lays every note out afresh.
 		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
-		// The spacing sliders re-settle too; in Planets they lay the planets out afresh (their gaps are layout, not forces).
+		// The spacing sliders re-settle too; in Planets they (and Continent spacing) lay the planets out afresh (their gaps are layout, not forces).
 		const respace = spacingChanged(this.overlays, overlays);
 		const before = this.overlays;
 		this.overlays = overlays;
 		this.world.spacing = spacingOf(overlays);
+		this.world.continentSpacing = overlays.continentSpacing;
 		if (relayout || (respace && this.world.size > 0)) this.world.clear();
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
 		if (respace) this.linkForce?.distance(this.linkDistanceOf);

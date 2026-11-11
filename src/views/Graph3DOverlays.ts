@@ -233,6 +233,19 @@ export class Graph3DOverlaysMenu {
 					this.change({ nodeSpacing: value });
 				}),
 		);
+		// Planets only: the clear space round each continent. Hidden in the other layouts, its position kept.
+		const continentSpacing = new Setting(panel).setName("Continent spacing").setDesc(spacingLabel(overlays.continentSpacing, "continents on a planet"));
+		continentSpacing.addSlider((slider) =>
+			slider
+				.setLimits(SPACING_MIN, SPACING_MAX, 0.05)
+				.setValue(overlays.continentSpacing)
+				.setInstant(true)
+				.onChange((value) => {
+					continentSpacing.setDesc(spacingLabel(value, "continents on a planet"));
+					this.change({ continentSpacing: value });
+				}),
+		);
+		continentSpacing.settingEl.toggle(overlays.layout === "planets");
 		new Setting(panel)
 			.setName("Links pull")
 			.setDesc("Off, links between plates still draw but pull nothing, so notes settle by their own shape. Toggling it re-settles the loaded notes.")
@@ -249,6 +262,7 @@ export class Graph3DOverlaysMenu {
 					.setValue(overlays.layout)
 					.onChange((value) => {
 						flatten.settingEl.toggle(value === "flat");
+						continentSpacing.settingEl.toggle(value === "planets");
 						direction.settingEl.toggle(value === "planets");
 						balance.settingEl.toggle(value === "planets" && this.current.continentDirection !== "radial");
 						this.change({ layout: value as LayoutMode });
