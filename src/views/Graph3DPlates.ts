@@ -37,6 +37,7 @@ import {
 } from "three";
 import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
 import { FAR_SIDE_DIM } from "../graph3d/far-side";
+import { UPRIGHT_GLSL } from "../graph3d/upright";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { DEFAULT_LOOK, type NodeLook } from "../graph3d/node-style";
 
@@ -205,9 +206,12 @@ if (aOpacity <= 0.0${hideBack ? " || plateBack" : ""}) gl_Position = vec4(2.0, 2
 /**
  * Where a point `offset` from a plate's centre (text-right, text-up) lands, in
  * view space: across the screen for a billboard, or along the plate's own
- * axes for a plate lying on a planet (`plateBack` when seen from behind: dimmed, no text).
+ * axes for a plate lying on a planet, spun about its normal so its text reads
+ * upright on screen (`uprightSpin`; the near tier spins its panels the same
+ * way) (`plateBack` when seen from behind: dimmed, no text).
  */
 const ORIENT_GLSL = /* glsl */ `
+${UPRIGHT_GLSL}
 attribute vec3 aRight;
 attribute vec3 aUp;
 bool plateBack = false;
@@ -218,7 +222,12 @@ vec4 placeOnPlate(vec2 offset) {
 		return mv;
 	}
 	plateBack = dot(cross(aRight, aUp), cameraPosition - aCenter) <= 0.0;
-	return modelViewMatrix * vec4(aCenter + aRight * offset.x + aUp * offset.y, 1.0);
+	// Spun about its normal so its text reads upright on screen (see upright.ts).
+	mat3 toView = mat3(modelViewMatrix);
+	vec2 spin = uprightSpin((modelViewMatrix * vec4(aCenter, 1.0)).xyz, toView * aRight, toView * aUp);
+	vec3 right = spin.x * aRight + spin.y * aUp;
+	vec3 up = spin.x * aUp - spin.y * aRight;
+	return modelViewMatrix * vec4(aCenter + right * offset.x + up * offset.y, 1.0);
 }
 `;
 

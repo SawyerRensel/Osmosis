@@ -49,6 +49,7 @@ import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "..
 import type { TangentFrame } from "../graph3d/planets";
 import { showsText } from "../graph3d/far-side";
 import { panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
+import { uprightFrame, type ViewBasis } from "../graph3d/upright";
 
 /** A link under a click, in a near-tier panel. */
 export interface PanelLink {
@@ -164,6 +165,8 @@ export class Graph3DNear {
 	/** The camera's position and its screen-facing frame this frame (the frame a panel without a plate frame faces along). */
 	private readonly eye = new Vector3();
 	private cameraFrame: TangentFrame = { right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 }, normal: { x: 0, y: 0, z: 1 } };
+	/** The camera as `uprightFrame` reads it, set with `cameraFrame` each update. */
+	private view: ViewBasis = { eye: { x: 0, y: 0, z: 0 }, right: { x: 1, y: 0, z: 0 }, up: { x: 0, y: 1, z: 0 }, back: { x: 0, y: 0, z: 1 } };
 	/** The node being edited over, whose panel stays hidden. */
 	private editing: string | null = null;
 	/** The multi-select: these nodes' panels wear the selection border. */
@@ -224,6 +227,7 @@ export class Graph3DNear {
 		const eye = this.eye.setFromMatrixPosition(camera.matrixWorld);
 		const e = camera.matrixWorld.elements;
 		this.cameraFrame = { right: { x: e[0], y: e[1], z: e[2] }, up: { x: e[4], y: e[5], z: e[6] }, normal: { x: e[8], y: e[9], z: e[10] } };
+		this.view = { eye: { x: eye.x, y: eye.y, z: eye.z }, right: this.cameraFrame.right, up: this.cameraFrame.up, back: this.cameraFrame.normal };
 		const pxPerUnitAt1 = this.pxPerUnitAt1(camera);
 		const { detail, budget } = this.settings();
 		const enterScale = enterScaleFromDetail(detail);
@@ -560,13 +564,12 @@ export class Graph3DNear {
 
 	/**
 	 * Lay a tilted panel on its plate this frame: centred on the node, along
-	 * the plate's frame (the camera's, for a plate that has none: a planet's
+	 * the plate's frame spun upright (the camera's, for a plate that has none: a planet's
 	 * core, a star), world-sized, and hidden while the plate is seen from behind.
 	 */
 	private tilt(panel: Panel): void {
 		const { node, object } = panel;
-		const frame = node.frame ?? this.cameraFrame;
-		object.matrix.fromArray(panelMatrix(object.position, frame, this.pxPerUnit));
+		object.matrix.fromArray(panelMatrix(object.position, this.plateFrame(node), this.pxPerUnit));
 		object.matrixWorldNeedsUpdate = true;
 		object.visible = showsText(object.position, node.frame?.normal, this.eye);
 	}
@@ -612,7 +615,7 @@ export class Graph3DNear {
 		panel.depth = depth;
 		panel.box.setCssStyles({ transform: "translate(-50%, -50%)" });
 		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera, this.pxPerUnitAt1(camera)));
-		const tilted: TiltedPanel = { centre, frame: node.frame ?? this.cameraFrame, width: panel.width, height: panel.height, pxPerUnit: this.pxPerUnit };
+		const tilted: TiltedPanel = { centre, frame: this.plateFrame(node), width: panel.width, height: panel.height, pxPerUnit: this.pxPerUnit };
 		const bounds = this.screenBounds(tilted, camera);
 		const holes: PanelHole[] = [];
 		panel.occluders = [];
@@ -647,9 +650,18 @@ export class Graph3DNear {
 		return bounds;
 	}
 
+	/**
+	 * A plate's frame as drawn this frame: on a planet, its frame spun upright
+	 * for the camera (as the plate shader spins it, `uprightFrame`); the
+	 * camera's own frame for a plate that faces the camera.
+	 */
+	private plateFrame(node: NearSource): TangentFrame {
+		return node.frame === undefined ? this.cameraFrame : uprightFrame(node.frame, { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 }, this.view);
+	}
+
 	/** A plate's centre and corners in the world: along its frame on a planet, facing the camera otherwise. */
 	private worldPlate(node: NearSource): WorldPlate {
-		const { right, up } = node.frame ?? this.cameraFrame;
+		const { right, up } = this.plateFrame(node);
 		const halfWidth = node.shape.width / 2;
 		const halfHeight = node.shape.height / 2;
 		const centre = { x: node.x ?? 0, y: node.y ?? 0, z: node.z ?? 0 };
