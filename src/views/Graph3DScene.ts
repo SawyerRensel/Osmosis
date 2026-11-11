@@ -91,6 +91,8 @@ interface EngineNode extends NodeObject {
 	extent: number;
 	/** In the multi-select (`Graph3DScene.selection`): its plate wears the selection border. */
 	selected?: boolean;
+	/** A find bar match (`Graph3DScene.found`): its plate and panel wear the find border. */
+	found?: boolean;
 	/** Planets mode: the plate lies on its planet's surface in this frame (`planets.ts`). */
 	frame?: TangentFrame;
 	/**
@@ -164,6 +166,8 @@ export interface SceneTheme {
 	font: string;
 	/** The selection border's colour. */
 	accent: string;
+	/** The find match border's colour. */
+	found: string;
 }
 
 export interface SceneControls {
@@ -407,7 +411,7 @@ export class Graph3DScene {
 	/** The last click on a node, to tell a double click. The node is kept, since the first click flies the camera away from where the second lands. */
 	private lastClick: { at: number; x: number; y: number; node: GraphNode } | null = null;
 	private hover: { x: number; y: number } | null = null;
-	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif", accent: "#7f6df2" };
+	private theme: SceneTheme = { background: "#000000", text: "#ffffff", plate: "#202020", font: "sans-serif", accent: "#7f6df2", found: "#e0ac00" };
 	private frame = 0;
 	private lastFrame = 0;
 	private paused = false;
@@ -421,6 +425,8 @@ export class Graph3DScene {
 	 * plate last clicked) that F, history and single-line keys act on.
 	 */
 	private selection = new Set<string>();
+	/** The find bar's matches (`setFound`); the current one is also the selection. */
+	private found: ReadonlySet<string> = new Set();
 	/** A Shift+drag box select in progress, from (`x0`, `y0`); `el` is its rubber band, drawn once it moves past the click slop. */
 	private box: { pointerId: number; x0: number; y0: number; el: HTMLElement | null } | null = null;
 	/** The flight under way, aimed at its node wherever the node is now. */
@@ -1196,10 +1202,23 @@ export class Graph3DScene {
 		if (changed) this.applySelection();
 	}
 
+	/** Mark the find bar's matches on their plates and panels; an empty set clears the marks. */
+	setFound(ids: ReadonlySet<string>): void {
+		this.found = ids;
+		this.applyFound();
+		this.dirty = this.layoutDirty = true;
+	}
+
+	private applyFound(): void {
+		for (const node of this.nodes) node.found = this.found.has(node.id) && !node.departing;
+		this.near.setFound(this.found);
+	}
+
 	/** Put the selection border on the selected nodes' plates and panels, and take it off the rest. */
 	private applySelection(): void {
 		for (const node of this.nodes) node.selected = this.selection.has(node.id) && !node.departing;
 		this.near.setSelected(this.selection);
+		this.applyFound();
 		this.dirty = this.layoutDirty = true;
 		this.options.onSelectionChange();
 	}

@@ -13,7 +13,9 @@ import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
 import { linkMarker, nextLinkMarker, type LinkClick } from "../graph3d/links";
 import { lineAt } from "../heading-links";
-import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks } from "../heading-link-update";
+import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
+import { replaceableLine, rewriteLines, type LineRewrite, type ReplacePlan } from "../find-replace";
+import { FindBar, type FindHost } from "./FindBar";
 import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import type { Arrow } from "../graph3d/arrow-nav";
@@ -154,6 +156,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	private editActionEl: HTMLElement | null = null;
 	/** The shared toolbar ribbon (`TOOLBAR_GROUPS`, as the mind map draws it, minus fold and unfold). */
 	private ribbon: ToolRibbon | null = null;
+	/** Ctrl+F's find bar over the loaded graph. */
+	private findBar: FindBar | null = null;
 	/** Every 3D write goes through here, into the history shared with the mind map. */
 	private readonly edits = new EditPipeline(
 		this.app,
@@ -255,7 +259,17 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			if (this.scene?.closeHelp() === true) return false;
 			// The editor's own Escape (cancel the edit) goes on.
 			if (isEditableTarget(e.target) || this.editor.isOpen) return undefined;
+			if (this.findBar?.isOpen === true) {
+				this.findBar.close();
+				return false;
+			}
 			return this.scene?.clearSelection() === true ? false : undefined;
+		});
+		// Ctrl/Cmd+F opens the find bar over the loaded graph (the node editor keeps its own).
+		this.scope.register(["Mod"], "f", () => {
+			if (this.editor.isOpen || this.findBar === null) return undefined;
+			this.findBar.open();
+			return false;
 		});
 		// Ctrl/Cmd+C copies the selection as Markdown, when no text box has the keys.
 		this.scope.register(["Mod"], "c", (e: KeyboardEvent) => {
@@ -432,6 +446,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		// The ribbon is added after the stage, so it floats over it.
 		this.ribbon = new ToolRibbon(root, this.ribbonActions(), { hidden: GRAPH3D_HIDDEN_BUTTONS, cls: "osmosis-graph3d-ribbon" });
 		this.updateRibbon();
+		this.findBar = new FindBar(root, this.findHost());
 		this.study = new Graph3DStudy(root, this.plugin(), {
 			redraw: () => this.redraw(),
 			visit: (node) => this.visit(node),
@@ -531,6 +546,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		this.toolbarToggleEl = null;
 		this.ribbon?.destroy();
 		this.ribbon = null;
+		this.findBar?.destroy();
+		this.findBar = null;
 		syncMobileToolbar(this.app, this);
 		this.scene?.destroy();
 		this.scene = null;
@@ -679,6 +696,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		this.showEditAction();
 		this.updateRibbon();
 		this.scene?.setLinkMode(on);
+		// Replace is off outside edit mode.
+		this.findBar?.refresh();
 		// Leaving edit mode (or starting a study session) saves the line being edited.
 		if (!on) this.editor.close(true);
 	}
@@ -940,6 +959,72 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		if (own !== null) out = own.text;
 		await this.commitEdit(file, out, node, locateLine(out, written, line.range.start), true);
 		if (rename !== null) await rewriteVaultLinks(this.app, this.edits, rename, own?.count ?? 0);
+	}
+
+	/** The find bar's side of this view (`FindHost`): every loaded node, matched on its label; a line of a note can be replaced. */
+	private findHost(): FindHost {
+		return {
+			// A study session hides answers in place, so find has nothing to show while one runs.
+			items: () =>
+				(this.study?.active === true ? [] : (this.model?.nodes ?? [])).map((node) => ({
+					id: node.id,
+					note: node.path ?? node.id,
+					text: node.label,
+					replaceable: node.kind === "line" && node.path !== undefined && node.source !== undefined && replaceableLine(node.source),
+				})),
+			// As an arrow key does: select it and glide there at the current viewing distance, a step in back/forward.
+			go: (match) => {
+				this.scene?.select([match.id]);
+				void this.navigate({ focus: this.focusPath, node: match.id }, "", true, true);
+			},
+			highlight: (ids) => this.scene?.setFound(ids),
+			replaceBlocked: () => (this.study?.active === true ? "Relational study: editing is off" : this.editMode ? null : "Turn on editing (the pencil) to replace"),
+			replace: (plan) => this.replaceFound(plan),
+			focusView: () => undefined,
+		};
+	}
+
+	/**
+	 * Write a find bar Replace into its note: every line it changes, as node
+	 * edits would (`rewriteLines`), in one write and one undo step. The lines
+	 * are found again in the note's fresh bytes; if any has changed, nothing is
+	 * written. Renamed headings take their links along, as `saveEdit`'s do.
+	 */
+	private async replaceFound(plan: ReplacePlan): Promise<boolean> {
+		if (this.editBlocked() || !this.editMode) return false;
+		const file = this.app.vault.getFileByPath(plan.note);
+		if (file === null) return false;
+		const nodes = new Map((this.model?.nodes ?? []).map((node) => [node.id, node]));
+		const content = await this.app.vault.read(file);
+		const { root } = this.cache.get(file.path, content);
+		const rewrites: LineRewrite[] = [];
+		for (const [id, text] of plan.texts) {
+			const sourceId = nodes.get(id)?.source?.id;
+			const line = sourceId === undefined ? null : findNodeById(root, sourceId);
+			if (line !== null) rewrites.push({ line, text });
+		}
+		const done = rewrites.length === plan.texts.size ? rewriteLines(content, rewrites) : null;
+		if (done === null) {
+			new Notice("Osmosis: that note changed; search again");
+			return false;
+		}
+		let out = normalizeWrite(done.text);
+		if (out === content) return false;
+		const renames: { rename: HeadingRename; own: number }[] = [];
+		for (const line of done.lines) {
+			const rename = planHeadingRename(this.app, file, line.before, line.after, out);
+			if (rename === null) continue;
+			const own = rewriteOwnLinks(this.app, rename, out);
+			out = own.text;
+			renames.push({ rename, own: own.count });
+		}
+		const ids = [...plan.texts.keys()];
+		const edited = done.lines.map((line, i) => ({ path: file.path, start: locateLine(out, line.after, line.start), from: ids[i]! }));
+		await this.commitLines(file, out, edited, () => {
+			this.selectLanded = true;
+		});
+		for (const { rename, own } of renames) await rewriteVaultLinks(this.app, this.edits, rename, own);
+		return true;
 	}
 
 	/**
@@ -2436,6 +2521,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		// After the new line is seeded beside its parent, so the camera tracks it from there.
 		if (reshaped) scene.reshape(true, true);
 		this.prefetch(horizon.prefetch, seq);
+		this.findBar?.refresh();
 	}
 
 	/** Whether the scene's focused plate is not in `model` (a tag hub or ghost an Overlays toggle just took away): the camera stays where it is. */
@@ -2485,7 +2571,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	private readTheme(): SceneTheme {
 		const probe = this.contentEl.createDiv({ cls: "osmosis-graph3d-probe" });
 		const style = getComputedStyle(probe);
-		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor };
+		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor, found: style.borderLeftColor };
 		probe.remove();
 		return theme;
 	}

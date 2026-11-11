@@ -384,6 +384,14 @@ pre.osmosis-code-block {
 	stroke-dasharray: 4 2;
 }
 
+/* A find bar match (FindBar). The current match is selected, and keeps the
+   selection's stroke. */
+.osmosis-node-group.osmosis-node-find-match:not(.osmosis-node-selected) > .osmosis-node {
+	stroke: var(--color-yellow);
+	stroke-width: 2;
+	stroke-dasharray: none;
+}
+
 /* Inline editing — overlay positioned outside the SVG */
 .osmosis-fo-hidden {
 	visibility: hidden;
@@ -4370,6 +4378,8 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	font-family: var(--font-interface);
 	/* The selection border (multi-select). */
 	border-bottom-color: var(--interactive-accent);
+	/* A find match's border (FindBar). */
+	border-left-color: var(--color-yellow);
 }
 
 /*
@@ -4496,6 +4506,11 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 /* A selected node's panel (multi-select): the mind map's 2px accent selection stroke. Before the link target, which wins while a drag is over it. */
 .osmosis-graph3d-near-panel.is-selected {
 	box-shadow: inset 0 0 0 2px var(--interactive-accent) !important;
+}
+
+/* A find match's panel (FindBar); the selection's border wins on the current match. */
+.osmosis-graph3d-near-panel.is-found:not(.is-selected) {
+	box-shadow: inset 0 0 0 2px var(--color-yellow) !important;
 }
 
 /* The width handle (Graph3DNear.resizeStart): a selected line's panel in edit mode, like the mind map's resize handle. Hit-tested by geometry, as the panels never take the pointer; the cursor is set by the scene. */
@@ -4630,4 +4645,66 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 
 .is-mobile .osmosis-view-switch-option {
 	padding: 1px var(--size-4-1);
+}
+
+/* Find bar (Ctrl+F) over the mind map and the 3D graph (FindBar.ts): top right of the view. */
+.osmosis-find-bar {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 11;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-1);
+	width: min(360px, calc(100% - var(--size-4-4)));
+	padding: var(--size-4-2);
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	box-shadow: var(--shadow-s);
+	pointer-events: auto;
+}
+
+.osmosis-find-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+}
+
+.osmosis-find-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.osmosis-find-bar.is-empty .osmosis-find-input:first-child {
+	border-color: var(--text-error);
+}
+
+.osmosis-find-counter {
+	flex-shrink: 0;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	white-space: nowrap;
+}
+
+.osmosis-find-bar.is-empty .osmosis-find-counter {
+	color: var(--text-error);
+}
+
+.osmosis-find-btn {
+	flex-shrink: 0;
+}
+
+.osmosis-find-btn.is-active {
+	color: var(--text-accent);
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-find-scope {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.osmosis-find-scope:empty {
+	display: none;
 }

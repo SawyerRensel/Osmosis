@@ -82,6 +82,8 @@ export interface PlateSource {
 	shape: PlateShape;
 	/** In the multi-select: drawn with the selection border (the theme accent, at least 2 px). */
 	selected?: boolean;
+	/** A find bar match: drawn with the find border (as thick, in `PlateColors.found`). The selection's wins. */
+	found?: boolean;
 	/** Planets mode: the plate lies on its planet's surface along these unit axes (text-right, text-up), seen from the front only. Without, it faces the camera. */
 	frame?: { right: { x: number; y: number; z: number }; up: { x: number; y: number; z: number } };
 	/** The node's style: fill, outline (over `color`), corners and text colour. Without, the default plate. */
@@ -95,6 +97,8 @@ export interface PlateColors {
 	font: string;
 	/** The selection border's colour. */
 	accent: string;
+	/** The find match border's colour. */
+	found: string;
 }
 
 interface AtlasGlyph {
@@ -247,10 +251,12 @@ const PLATE_FRAGMENT = /* glsl */ `
 uniform vec3 uFill;
 uniform vec3 uBackground;
 uniform vec3 uAccent;
+uniform vec3 uFound;
 varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
+// 1 in the selection, 2 a find match (FindBar), else 0.
 varying float vSelected;
 // A styled plate's fill (rgb, and 1 in a), or the theme's (a = 0).
 varying vec4 vFill;
@@ -266,9 +272,11 @@ void main() {
 	float coverage = clamp(0.5 - d / aa, 0.0, 1.0);
 	if (coverage <= 0.0) discard;
 	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)} * vShape.x;
-	// A selected plate's border is the accent, and never under 2 px, as the mind map's selection is.
-	stroke = mix(stroke, max(stroke * 1.5, 2.0 * aa), vSelected);
-	vec3 edge = mix(vColor, uAccent, vSelected);
+	// A selected plate's border is the accent, and never under 2 px, as the mind map's selection is. A find match's is as thick, in the find colour.
+	float selected = step(0.5, vSelected) * (1.0 - step(1.5, vSelected));
+	float found = step(1.5, vSelected);
+	stroke = mix(stroke, max(stroke * 1.5, 2.0 * aa), max(selected, found));
+	vec3 edge = mix(mix(vColor, uFound, found), uAccent, selected);
 	// An outline thinner than a pixel is drawn a pixel wide and that much fainter,
 	// so a distant plate's border doesn't shimmer as it lands between pixels.
 	float band = max(stroke, aa);
@@ -391,6 +399,7 @@ export class Graph3DPlates {
 		uText: { value: new Color() },
 		uBackground: { value: new Color() },
 		uAccent: { value: new Color() },
+		uFound: { value: new Color() },
 	};
 	/** View depth of the focus, for focus dimming. The scene eases it each frame and shares it with the edges. */
 	readonly focus: IUniform<number> = { value: 0 };
@@ -408,7 +417,7 @@ export class Graph3DPlates {
 			// With the renderer's multisampling, the shader's edge coverage becomes a smooth edge.
 			alphaToCoverage: true,
 		});
-		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground, uAccent: this.uniforms.uAccent, uFocus: this.focus });
+		Object.assign(material.uniforms, { uFill: this.uniforms.uFill, uBackground: this.uniforms.uBackground, uAccent: this.uniforms.uAccent, uFound: this.uniforms.uFound, uFocus: this.focus });
 		this.plates = new QuadLayer(material, PLATE_ATTRIBUTES);
 		this.group.add(this.plates.mesh);
 		this.atlas = new GlyphAtlas("");
@@ -424,6 +433,7 @@ export class Graph3DPlates {
 		this.uniforms.uText.value.setStyle(colors.text);
 		this.uniforms.uBackground.value.setStyle(colors.background);
 		this.uniforms.uAccent.value.setStyle(colors.accent);
+		this.uniforms.uFound.value.setStyle(colors.found);
 		const font = `${FONT_PX}px ${colors.font}`;
 		if (font === this.font) return;
 		this.font = font;
@@ -520,7 +530,7 @@ export class Graph3DPlates {
 				paint(plateFill, i, look.fill);
 				plateShape[i * 2] = look.stroke;
 				plateShape[i * 2 + 1] = look.corner;
-				plateSelected[i] = node.selected === true ? 1 : 0;
+				plateSelected[i] = node.selected === true ? 1 : node.found === true ? 2 : 0;
 				axes(plateRight, i, node.frame?.right);
 				axes(plateUp, i, node.frame?.up);
 			}

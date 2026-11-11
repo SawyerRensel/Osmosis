@@ -167,6 +167,7 @@ export class Graph3DNear {
 	private editing: string | null = null;
 	/** The multi-select: these nodes' panels wear the selection border. */
 	private selected: ReadonlySet<string> = new Set();
+	private found: ReadonlySet<string> = new Set();
 	/** The inline editor over it, and the node it follows. */
 	private edit: { editor: TrackedEditor; node: NearSource } | null = null;
 	private readonly point = new Vector3();
@@ -375,6 +376,12 @@ export class Graph3DNear {
 		}
 	}
 
+	/** Give the panels of the find bar's matches in `ids` the find border, and take it from the rest. */
+	setFound(ids: ReadonlySet<string>): void {
+		this.found = ids;
+		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-found", ids.has(panelId));
+	}
+
 	/** Edit mode on or off: on, a selected line's panel shows its width handle. */
 	setResizable(on: boolean): void {
 		this.resizable = on;
@@ -527,6 +534,7 @@ export class Graph3DNear {
 		const anchor = createDiv({ cls: "osmosis-graph3d-near-anchor" });
 		const box = anchor.createDiv({ cls: "osmosis-graph3d-near-panel" });
 		box.classList.toggle("is-selected", this.selected.has(node.id));
+		box.classList.toggle("is-found", this.found.has(node.id));
 		const body = box.createDiv({ cls: "osmosis-graph3d-near-body markdown-rendered" });
 		const veil = box.createDiv({ cls: "osmosis-graph3d-near-veil" });
 		anchor.setCssStyles({ opacity: "0" });

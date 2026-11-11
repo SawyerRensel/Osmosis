@@ -27,7 +27,11 @@ import { selectAfterDelete } from "../select-after-delete";
 import { enterSavesEdit } from "../edit-keys";
 import { EditPipeline, type RestoredFile } from "../edit-pipeline";
 import { lineAt } from "../heading-links";
-import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks } from "../heading-link-update";
+import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
+import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type ReplacePlan } from "../find-replace";
+import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
+import { ancestorsOf, findNodeById } from "../graph3d/edit";
+import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
@@ -416,6 +420,10 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 	private touchSelectionMode = false;
 	private resizeObserver: ResizeObserver | null = null;
 	private toolRibbon: ToolRibbon | null = null;
+	/** Ctrl+F's find bar over the map: the note and its transclusions. */
+	private findBar: FindBar | null = null;
+	/** The find bar's matches, marked on their nodes (`markFound`). */
+	private foundIds: ReadonlySet<string> = new Set();
 
 	// Pin/lock state: when pinned, active-leaf-change doesn't switch the map
 	private isPinned = false;
@@ -524,8 +532,10 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// Register a scope so Obsidian routes key events to this view when focused,
 		// preventing global hotkeys (like F2 = "rename file") from intercepting them.
 		this.scope = new Scope(this.app.scope);
+		// Keys typed in the find bar are its own (and the text box's), not the map's.
+		const inFind = (e: KeyboardEvent): boolean => this.findBar?.contains(e.target) === true;
 		this.scope.register([], "F2", (e: KeyboardEvent) => {
-			if (!this.editingNodeId && this.selectedNodeId) {
+			if (!this.editingNodeId && this.selectedNodeId && !inFind(e)) {
 				void this.startEditing(this.selectedNodeId);
 				e.preventDefault();
 				return false;
@@ -536,17 +546,26 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// Register Ctrl/Cmd combos that Obsidian would otherwise intercept
 		for (const key of ["d", "c", "x", "v", "z", "y", "Enter"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
 		for (const key of ["[", "]", "z"]) {
 			this.scope.register(["Mod", "Shift"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
+		// Ctrl/Cmd+F opens the find bar (the node editor keeps its own).
+		this.scope.register(["Mod"], "f", () => {
+			if (this.editingNodeId || !this.findBar) return undefined;
+			this.findBar.open();
+			return false;
+		});
 		this.scope.register(["Mod", "Shift"], "c", (e: KeyboardEvent) => {
+			if (inFind(e)) return undefined;
 			this.copyNodeStyle();
 			e.preventDefault();
 			return false;
@@ -558,12 +577,14 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			return false;
 		});
 		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
+			if (inFind(e)) return undefined;
 			void this.pasteNodeStyle();
 			e.preventDefault();
 			return false;
 		});
 		for (const key of ["[", "]"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
@@ -572,7 +593,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// keys (e.g. "Move line up") takes it first and nothing moves.
 		for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
 			this.scope.register(["Alt"], key, (e: KeyboardEvent) => {
-				if (this.editingNodeId) return undefined;
+				if (this.editingNodeId || inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
@@ -780,6 +801,8 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		this.contentEl.toggleClass("osmosis-reading-mode", reading);
 		this.updateReadingAction();
 		this.updateToolbarState();
+		// Replace is off in reading mode.
+		this.findBar?.refresh();
 		this.app.workspace.requestSaveLayout();
 	}
 
@@ -1935,6 +1958,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 				);
 			},
 		});
+		this.findBar = new FindBar(container, this.findHost());
 
 		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below.
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
@@ -2103,6 +2127,8 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		this.historyKey = null;
 		this.toolRibbon?.destroy();
 		this.toolRibbon = null;
+		this.findBar?.destroy();
+		this.findBar = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.renderComponent?.unload();
@@ -6501,6 +6527,13 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			return;
 		}
 
+		// Escape closes the find bar
+		if (e.key === "Escape" && this.findBar?.isOpen) {
+			this.findBar.close();
+			e.preventDefault();
+			return;
+		}
+
 		// Spatial study: 1–4 rate the card awaiting a rating
 		if (
 			this.spatialMode === "study" &&
@@ -7929,6 +7962,97 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		}
 	}
 
+	/** The find bar's side of the map (`FindHost`): the note's nodes and its transclusions', collapsed ones included. */
+	private findHost(): FindHost {
+		return {
+			items: () => this.findItems(),
+			go: (match) => void this.goToFound(match.id),
+			highlight: (ids) => this.markFound(ids),
+			replaceBlocked: () => (this.isReadingMode ? "Reading mode: map editing is off" : null),
+			replace: (plan) => this.replaceFound(plan),
+			focusView: () => this.contentEl.focus(),
+		};
+	}
+
+	/** Every node of the map in document order, a transcluded one filed under its own note. Card fences are data, not text, and are left out. */
+	private findItems(): FindItem[] {
+		const tree = this.currentTree;
+		const file = this.currentFile;
+		// A spatial study session hides answers in place, so find has nothing to show while one runs.
+		if (!tree || !file || this.spatialMode === "study") return [];
+		const items: FindItem[] = [];
+		const walk = (node: OsmosisNode): void => {
+			for (const child of node.children) {
+				const fence = OSMOSIS_FENCE_REGEX.test(child.content.split("\n", 1)[0]?.trim() ?? "");
+				if (!fence) items.push({ id: child.id, note: child.isTranscluded && child.sourceFile ? child.sourceFile : file.path, text: child.content, replaceable: replaceableLine(child) });
+				walk(child);
+			}
+		};
+		walk(tree.root);
+		return items;
+	}
+
+	/** Go to a find match: open any collapsed branch it is in, select it and centre it, keeping the zoom. */
+	private async goToFound(id: string): Promise<void> {
+		if (!this.currentTree) return;
+		let expanded = false;
+		for (const ancestor of ancestorsOf(this.currentTree.root, id)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		if (expanded) await this.render();
+		const layoutNode = this.nodeMap.get(id);
+		if (!layoutNode) return;
+		this.selectNode(id);
+		this.centerOnNode(layoutNode);
+	}
+
+	/** Mark the find bar's matches on the drawn nodes (and, through `foundIds`, on those drawn later). */
+	private markFound(ids: ReadonlySet<string>): void {
+		if (this.svg) {
+			for (const id of this.foundIds) this.svg.querySelector(`[data-node-id="${id}"]`)?.classList.remove("osmosis-node-find-match");
+			for (const id of ids) this.svg.querySelector(`[data-node-id="${id}"]`)?.classList.add("osmosis-node-find-match");
+		}
+		this.foundIds = ids;
+	}
+
+	/**
+	 * Write a find bar Replace into its note (the map's own, or a transcluded
+	 * one): every line it changes, as renames would (`rewriteLines`), in one
+	 * write and one undo step. If a line's bytes changed since the parse,
+	 * nothing is written. Renamed headings take their links along, as
+	 * `renameNode`'s do.
+	 */
+	private async replaceFound(plan: ReplacePlan): Promise<boolean> {
+		if (!await this.assertEditableFresh() || !this.currentTree) return false;
+		const file = this.app.vault.getFileByPath(plan.note);
+		if (!(file instanceof TFile)) return false;
+		const content = await this.app.vault.read(file);
+		const rewrites: LineRewrite[] = [];
+		for (const [id, text] of plan.texts) {
+			const line = findNodeById(this.currentTree.root, id);
+			if (line) rewrites.push({ line, text });
+		}
+		const done = rewrites.length === plan.texts.size ? rewriteLines(content, rewrites) : null;
+		const first = rewrites[0]?.line;
+		if (!done || !first) {
+			new Notice("Osmosis: that note changed; search again");
+			return false;
+		}
+		let out = done.text;
+		if (out === content) return false;
+		const renames: { rename: HeadingRename; own: number }[] = [];
+		for (const line of done.lines) {
+			const rename = planHeadingRename(this.app, file, line.before, line.after, out);
+			if (rename === null) continue;
+			const own = rewriteOwnLinks(this.app, rename, out);
+			out = own.text;
+			renames.push({ rename, own: own.count });
+		}
+		await this.writeNodeFile(first, out);
+		for (const { rename, own } of renames) await rewriteVaultLinks(this.app, this.edits, rename, own);
+		return true;
+	}
+
 	/**
 	 * Get the file a node belongs to: source file for transcluded nodes, current file otherwise.
 	 */
@@ -8155,6 +8279,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 
 		if (!this.currentTree) {
 			this.toolRibbon?.detach();
+			this.findBar?.detach();
 			container.empty();
 			container.addClass("osmosis-mindmap-container");
 			container.createEl("p", {
@@ -8225,6 +8350,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// to avoid a visible flash.
 		const isFirstRender = !this.svg;
 		this.toolRibbon?.detach();
+		this.findBar?.detach();
 		container.empty();
 		container.addClass("osmosis-mindmap-container");
 
@@ -8254,6 +8380,9 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		// Re-attach toolbar (container.empty() removes it)
 		this.toolRibbon?.attach();
 		this.updateToolbarState();
+		// The find bar too, and find again in what was just drawn.
+		this.findBar?.attach();
+		this.findBar?.refresh();
 	}
 
 	/**
@@ -8738,6 +8867,9 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		];
 		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
+		}
+		if (this.foundIds.has(node.source.id)) {
+			classes.push("osmosis-node-find-match");
 		}
 		if (
 			node.source.type === "transclusion" &&

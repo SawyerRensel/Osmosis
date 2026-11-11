@@ -1,0 +1,3 @@
+- Hoist the sail with the main halyard
+- Coil the sheets once the sail is down
+- Check the shackles
