@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[3D Graph - Planets surface grab anywhere on the sphere]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T17:00:00.000Z"
-date_modified: "2026-11-12T17:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T17:10:00.000Z"
+date_start_scheduled: "2026-11-12T16:53:20.000Z"
+date_start_actual: "2026-11-12T16:53:20.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -65,3 +65,47 @@ Under ~130k. Opus. Graph3DPlates.ts and src/graph3d/depth.ts whole; Graph3DScene
 - Keys in map views need the view `Scope` (memory: mind map keys need the view Scope). Toolbar buttons come from `TOOLBAR_GROUPS` in `src/views/ToolRibbon.ts`.
 - Pure logic goes in modules outside `src/views/` so Vitest can import it (Vitest cannot import `obsidian`).
 - `src/views/MindMapView.ts` is ~84k tokens with NUL bytes: never read it whole, use `grep -a -n` and read ranges. Graph3DScene.ts (~37k), Graph3DView.ts (~30k), styles.css (~33k): ranges only.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `471cf24` on `fix/plates-over-branches-depth`.
+
+### Cause, with numbers
+- Plates (and their glyphs) were drawn at `mvPosition *= 0.97` (`PLATE_PULL`, added in `2ff3422`). Plates write depth. Line edges and tapered ribbons are transparent, use `depthTest` and don't write depth, so they lose to any plate whose pulled depth is nearer.
+- The pull is 3% of the camera distance: 2.1 world units at the 70-unit line stand-off, 3 at 100 and 4.5 at 150. A line plate is 5 units tall and roughly 30 wide.
+- Inside a flat branch, lines and plates share one plane. A crossing's true depth gap is (screen distance × sin(tilt)). For example, a branch crossing a plate 20 units from its own nodes in a slice tilted 10° is 3.5 units in front, which is less than the 4.5-unit pull at a distance of 150, so the order flipped. In a flat slice, almost every crossing has a gap under 3%·D. That is the screenshot ("git status" and "Commands" over their slice-mates' branches).
+- What the pull was for: an edge leaving its own node toward the camera should not run across that node's text (plate note, "Plates for every node"). Even for that it only partly worked. An edge exits a plate of half-width w after gaining w·cot θ in depth, so a 3-unit pull with w = 15 covered only edges within about 11° of the screen plane.
+
+### Fix
+- `PLATE_PULL` is removed. Plates draw at their real depth, so the depth buffer decides every pair of things with no fixed margin.
+- The pull's purpose is now handled per incidence (`src/graph3d/own-plate.ts`). Each edge vertex carries both end plates (centre, half sizes, a planet plate's axes). The vertex shader takes them to view space and spins a planet plate upright as the plate shader does. The fragment shader casts the camera ray through the fragment onto each end plate, and discards the fragment only if it is in front of that plate and inside its rectangle. This applies to line edges (including planet arcs) and tapered ribbons. A branch over any *other* plate is never touched: no hiding, fading or thinning.
+- How the original purpose was verified (unit tests in `own-plate.test.ts`): an own edge leaving at 45° and one leaving nearly straight at the camera (40 units nearer) are both hidden over their plate. The old pull hid neither of these. The same edge draws again once it leaves the plate on screen. The same crossing point that a node's own plate hides is not hidden for an unrelated plate.
+- Planet boundary patches lie on the sphere, which touches each plate at its centre, and relied on the pull to sit under the plates. A patch is now drawn at `1/0.97` of its depth (`PATCH_PUSH`), so it keeps exactly the old margin under its plates. Surface edges now also draw over it.
+
+### Decisions worth remembering
+- Per-incidence exclusion, not a smaller constant pull. Any pull P flips every crossing whose gap is under P, and a flat slice has gaps near 0, so no value of P works.
+- The discard is exact (ray against the plate's plane and rectangle, with the upright spin). It is not a screen-space box, so tilted planet plates are handled too.
+- Not done: the study thread (orange) line and flowing particles don't get the per-incidence test. Where they leave a node toward the camera they can now cross its own text, because they are genuinely nearer. They could reuse `PLATE_END_ATTRIBUTES` and `patchOwnPlate` if Sawyer wants that.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/own-plate.ts` | New: end-plate attributes and writer, the view-space plate and ray test (TS mirror plus GLSL), and the shader patch |
+| `src/graph3d/own-plate.test.ts` | New: unit tests |
+| `src/views/Graph3DPlates.ts` | Removed `PLATE_PULL`; updated the doc |
+| `src/views/Graph3DScene.ts` | Edge geometry gets end-plate attributes; `underOwnPlates` patches edge and ribbon materials |
+| `src/views/Graph3DRibbons.ts` | End-plate attributes; `ends(a, b)` before each edge's segments |
+| `src/views/Graph3DBoundaries.ts` | `PATCH_PUSH` for planet patches |
+| `src/views/Graph3DNear.ts` | Comment only (plates are at their real depth) |
+
+### Fixture
+Reuse `vault/tests/graph3d/` (any note with a flat branch), or the Git note from the screenshot.
+
+### Could not verify
+I couldn't see Obsidian, so the shader compile at runtime (WebGL varyings and attributes) and the visual result are unchecked. Lint, 3214 unit tests and the build pass.
+
+### Manual retest (desktop and phone)
+1. Open the 3D graph on the Git note, with flat branches on (as in `r9-plates-over-branches.png`). Orbit so that branches cross "git status" and "Commands". A branch nearer than a plate now draws over it, and a plate nearer than a branch covers it.
+2. Tilt the view so a node's own edges leave toward the camera. They should stop at the node's plate rather than crossing its text, including edges that point nearly straight at you.
+3. Planets mode: surface plates should still sit on top of boundary patches, and branch arcs should still pass under their own plates.
+4. Phone: repeat step 1. The fov differs there, and nothing in the fix depends on it.
