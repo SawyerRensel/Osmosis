@@ -13,13 +13,13 @@ related:
   - "[[Header - Note header gateway and overflow menu]]"
   - "[[3D Graph - Settings in the style sidebar]]"
   - "[[3D Graph - Shared toolbar ribbon]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T12:00:00.000Z"
-date_modified: "2026-11-12T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T05:30:00.000Z"
+date_start_scheduled: "2026-11-12T05:15:35.000Z"
+date_start_actual: "2026-11-12T05:15:35.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -101,3 +101,27 @@ Manual (Ctrl+R after build):
 ## Out of scope
 
 - Note header (separate ticket). Study button behaviour in 2D/3D is unchanged.
+
+## Batch implementation notes (awaiting manual test)
+
+**Approach.** `src/view-header.ts` now says `SHARED_HEADER = note-view, switch, study, reading` (identical in both views; `HEADER_EXTRAS` is gone) and a new `PANE_MENU` table lists each view's menu entries (2D: Style, Pin, Peek; 3D: Style, Follow; `toggle` marks the ones that show a check). `addPaneMenuItems` (`src/views/ViewHeader.ts`) turns that table plus per-view handlers into `menu.addItem` calls, then a separator. Both views override `onPaneMenu`, add their entries, and call `super.onPaneMenu` last so Obsidian's defaults follow.
+
+**Decisions worth remembering**
+- Pin, Peek, Follow and Style header buttons are removed outright, along with their `is-active` bookkeeping (`pinActionEl`, `spatialPeekActionEl`, `followActionEl`). The menu check mark is now the only visible pinned/peek/follow state; a pinned map still marks its tab title via the existing `updateHeader()`.
+- Peek keeps the `peekIcon()` fallback (eye-dashed / scan-eye / eye) through an `icon` override on the handler, since the pure module cannot call `getIconIds`.
+- Ribbon `open-properties` removed from `TOOLBAR_GROUPS`, with the `openProperties` action in `ToolbarActions` and both views' handlers (orphaned). No command had been generated from it (it had no `command`), and the palette command "Open mind map properties" (`open-properties-sidebar` in `main.ts`) is registered separately, so nothing to re-register. `ToolRibbon.test.ts` updated (every button now has a command).
+- The node context menu's "Map properties" item (MindMapView ~4681) is untouched.
+- Docs updated: `editing.md` toolbar table, `commands.md` header row, `graph-3d.md` header sentence.
+
+| File | Change |
+|---|---|
+| `src/view-header.ts` (+test) | New order, `PANE_MENU`, extras removed |
+| `src/views/ViewHeader.ts` | `addPaneMenuItems`, `PaneMenuHandler` |
+| `src/views/MindMapView.ts` | `onPaneMenu`; Style/Pin/Peek header buttons and their state removed; ribbon `openProperties` removed |
+| `src/views/Graph3DView.ts` | `onPaneMenu`; Style/Follow header buttons removed; ribbon `openProperties` removed |
+| `src/views/ToolRibbon.ts` (+test) | `open-properties` button and action removed |
+| `docs/mind-mapping/editing.md`, `docs/reference/commands.md`, `docs/mind-mapping/graph-3d.md` | Wording |
+
+**Fixture.** None new; any note, e.g. `vault/tests/graph3d/Styled Mooring.md`.
+
+**Not verified (cannot see Obsidian).** Header left-to-right placement and phone fit; that Obsidian's own ⋯ stays rightmost; the separator rendering between our entries and Obsidian's; whether `onPaneMenu` is invoked for the `more-options` button on mobile in both views.
