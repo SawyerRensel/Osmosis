@@ -59,6 +59,7 @@ import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tr
 import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../graph3d/hover";
 import { farEnd, pickEdge, type DrawnEdge } from "../graph3d/edgepick";
 import { enclosingSphere, fitDistance } from "../graph3d/fit";
+import { keepScale, type ScaleBase } from "../graph3d/keep-scale";
 import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, type Inset } from "../graph3d/framing";
 import { linkClickAction, releaseIsClick, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
@@ -527,6 +528,10 @@ export class Graph3DScene {
 	private editingId: string | null = null;
 	/** Phone: the part of the window the on-screen keyboard leaves visible while editing; the picture is shifted to centre on it. */
 	private band: VisibleBand | null = null;
+	/** Phone: the stage size at which the camera has its default field of view (`graph3d/keep-scale.ts`). */
+	private scaleBase: ScaleBase | null = null;
+	/** The camera's field of view as the engine made it; a phone narrows it while the stage is shorter. */
+	private readonly defaultFov: number;
 	private readonly touches = new Map<number, { x: number; y: number }>();
 	/** Distance from the camera of the last point aimed at; a press or zoom over empty space reuses it. */
 	private lastDepth: number | null = null;
@@ -578,6 +583,7 @@ export class Graph3DScene {
 		const camera = this.graph.camera() as PerspectiveCamera;
 		camera.near = CAMERA_NEAR;
 		camera.updateProjectionMatrix();
+		this.defaultFov = camera.fov;
 		this.fog = new FogExp2(0x000000, MIST / MIST_MIN_DISTANCE);
 		this.graph.scene().fog = this.fog;
 
@@ -1099,7 +1105,21 @@ export class Graph3DScene {
 	}
 
 	resize(width: number, height: number): void {
-		if (width > 0 && height > 0) this.graph.width(width).height(height);
+		if (width > 0 && height > 0) {
+			this.graph.width(width).height(height);
+			// Phone: the keyboard shortens the stage (the WebView resizes despite
+			// `overlaysContent`); scale the field of view with the height so the
+			// map keeps its size on screen. Desktop keeps a fixed field of view.
+			if (Platform.isMobile) {
+				const kept = keepScale(this.scaleBase, width, height, this.defaultFov);
+				this.scaleBase = kept.base;
+				const camera = this.graph.camera() as PerspectiveCamera;
+				if (camera.fov !== kept.fov) {
+					camera.fov = kept.fov;
+					camera.updateProjectionMatrix();
+				}
+			}
+		}
 		this.applyViewOffset();
 	}
 
