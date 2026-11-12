@@ -68,6 +68,10 @@ const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
  * them shouldn't turn them on for a laptop that has keys.
  */
 const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
+/** Where the joysticks are offered (toolbar 🎮 and the ⋯ menu): any touch screen, desktops with one included. */
+function hasTouch(): boolean {
+	return Platform.isMobile || navigator.maxTouchPoints > 0;
+}
 /** Whether a plain plate click only selects it (Overlays: "Click selects only"). Per device, like the joysticks; off by default. */
 const CLICK_SELECTS_ONLY_STORAGE_KEY = "osmosis-graph3d-click-selects-only";
 /**
@@ -197,7 +201,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.navigation = true;
-		this.icon = "orbit";
+		this.icon = "brain-circuit";
 
 		// Flight keys go through the view's scope: a global user hotkey on the
 		// same letter would otherwise take the key before the view sees it.
@@ -328,11 +332,13 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
-	/** The ⋯ menu: Style and Follow (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
+	/** The ⋯ menu: Style, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "3d", {
 			style: { onClick: () => void this.plugin().activatePropertiesSidebar() },
 			follow: { onClick: () => this.toggleFollow(), checked: this.follow },
+			...(hasTouch() ? { sticks: { onClick: () => this.toggleSticks(), checked: this.sticksShown } } : {}),
+			help: { onClick: () => this.help?.toggle(true) },
 		});
 		super.onPaneMenu(menu, source);
 	}
@@ -343,7 +349,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	getDisplayText(): string {
 		const file = this.focusPath === null ? null : this.app.vault.getFileByPath(this.focusPath);
-		return file ? `3D graph: ${file.basename}` : "3D graph";
+		return file ? file.basename : "3D graph";
 	}
 
 	getState(): Record<string, unknown> {
@@ -419,7 +425,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		// The ribbon is added after the stage, so it floats over it.
 		// Its own toggles: Obsidian's navigation bar (phones), the joysticks (any touch screen, desktops with one included), and the controls help last.
-		const touch = Platform.isMobile || navigator.maxTouchPoints > 0;
+		const touch = hasTouch();
 		this.sticksShown = touch && this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true;
 		const toggle: Record<BarToggle, () => void> = {
 			navbar: () => this.toggleNavbar(),

@@ -17,13 +17,13 @@ describe("PANE_MENU", () => {
 		expect(PANE_MENU["2d"].map((e) => e.id)).toEqual(["style", "pin", "peek"]);
 	});
 
-	it("gives 3D Style and Follow, in that order", () => {
-		expect(PANE_MENU["3d"].map((e) => e.id)).toEqual(["style", "follow"]);
+	it("gives 3D Style, Follow, the joysticks and Controls help, in that order", () => {
+		expect(PANE_MENU["3d"].map((e) => e.id)).toEqual(["style", "follow", "sticks", "help"]);
 	});
 
-	it("marks the toggles (they show a check mark) and not Style", () => {
+	it("marks the toggles (they show a check mark), not Style or Controls help", () => {
 		for (const view of ["2d", "3d"] as const) {
-			for (const entry of PANE_MENU[view]) expect(entry.toggle).toBe(entry.id !== "style");
+			for (const entry of PANE_MENU[view]) expect(entry.toggle).toBe(entry.id !== "style" && entry.id !== "help");
 		}
 	});
 

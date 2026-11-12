@@ -614,9 +614,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	getDisplayText(): string {
-		const base = this.currentFile
-			? `Mind Map: ${this.currentFile.basename}`
-			: "Mind Map";
+		const base = this.currentFile ? this.currentFile.basename : "Mind Map";
 		return this.isPinned ? `${base} (pinned)` : base;
 	}
 

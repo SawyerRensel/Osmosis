@@ -19,7 +19,7 @@ export function headerItems(_view: HeaderView): HeaderItem[] {
 }
 
 /** An entry of the ⋯ pane menu. A toggle shows its state as a check mark. */
-export type PaneMenuId = "style" | "pin" | "peek" | "follow";
+export type PaneMenuId = "style" | "pin" | "peek" | "follow" | "sticks" | "help";
 export interface PaneMenuEntry {
 	id: PaneMenuId;
 	title: string;
@@ -27,7 +27,13 @@ export interface PaneMenuEntry {
 	toggle: boolean;
 }
 
-/** What each view adds to the ⋯ menu, in order, ahead of Obsidian's own entries. */
+/**
+ * What each view adds to the ⋯ menu, in order, ahead of Obsidian's own entries.
+ * A view leaves out an entry by giving it no handler: the 3D joysticks show only
+ * on a touch screen, as the toolbar's 🎮 does. The joysticks and Controls help
+ * are also on the toolbar; the menu is how a phone reaches them in reading mode,
+ * where the toolbar is hidden.
+ */
 export const PANE_MENU: Record<HeaderView, readonly PaneMenuEntry[]> = {
 	"2d": [
 		{ id: "style", title: "Style", icon: "paintbrush", toggle: false },
@@ -37,6 +43,8 @@ export const PANE_MENU: Record<HeaderView, readonly PaneMenuEntry[]> = {
 	"3d": [
 		{ id: "style", title: "Style", icon: "paintbrush", toggle: false },
 		{ id: "follow", title: "Follow active note", icon: "locate-fixed", toggle: true },
+		{ id: "sticks", title: "Walk and fly joysticks", icon: "gamepad-2", toggle: true },
+		{ id: "help", title: "Controls help", icon: "help", toggle: false },
 	],
 };
 

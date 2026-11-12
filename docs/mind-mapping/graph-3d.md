@@ -4,7 +4,7 @@ icon: lucide/orbit
 
 # 3D Graph
 
-The 3D graph shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open 3D graph for current note**, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Study and Reading/Editing buttons; Style, and Follow active note in 3D, are in the ⋯ menu).
+The 3D graph shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open 3D graph for current note**, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Study and Reading/Editing buttons; Style is in the ⋯ menu, and in 3D so are Follow active note, the walk and fly joysticks on a touch screen, and Controls help, which also stay on the toolbar).
 
 ## Controls
 
