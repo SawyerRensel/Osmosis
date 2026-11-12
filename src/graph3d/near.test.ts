@@ -262,3 +262,39 @@ describe("node width", () => {
 		expect(plateWidthEm(code("a".repeat(60)))!.minEm).toBeGreaterThan(20);
 	});
 });
+
+describe("nearMarkdown for a line group (T75)", () => {
+	const group = (raw: string, type: "heading" | "paragraph", content: string): GraphNode => {
+		const node = line(raw, content);
+		node.source!.type = type;
+		return node;
+	};
+
+	it("keeps a heading group's cover image as an embed, above its heading", () => {
+		const node = group("![[cover.png|300]]\n### Rigging", "heading", "Rigging");
+		expect(nearMarkdown(node)).toBe("![[cover.png|300]]\n\n### Rigging");
+	});
+
+	it("draws a caption below the heading as its own block and drops trailing IDs", () => {
+		const node = group("## Mooring ^os-a\nPick up the buoy from downwind.", "heading", "Mooring");
+		expect(nearMarkdown(node)).toBe("## Mooring\n\nPick up the buoy from downwind.");
+	});
+
+	it("still turns a note embed or a PDF in a group into a link", () => {
+		const node = group("See ![[Knots]] and ![[chart.pdf]]\n![[clip.mp4]]", "paragraph", "See");
+		expect(nearMarkdown(node)).toBe("See [[Knots]] and [[chart.pdf]]\n![[clip.mp4]]");
+	});
+
+	it("dedents an indented group", () => {
+		expect(nearMarkdown(group("\tFirst line\n\tsecond line", "paragraph", "First line\nsecond line"))).toBe("First line\nsecond line");
+	});
+
+	it("sizes a kept cover embed as an image", () => {
+		const node = group("![[cover.png]]\n### Rigging", "heading", "Rigging");
+		expect(panelBoxEm(node)!.height).toBeGreaterThanOrEqual(PANEL_MEDIA_MAX_EM);
+	});
+
+	it("leaves a single-line media embed a link, as before", () => {
+		expect(nearMarkdown(line("![[cover.png]]"))).toBe("[[cover.png]]");
+	});
+});

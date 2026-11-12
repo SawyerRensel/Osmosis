@@ -77,3 +77,11 @@ and easing the main. ^os-adjl01
 
 First line with its own card ^os-adjl02
 Second line with its own card ^os-adjl03
+
+## Carded heading groups (reveal and study)
+
+![[r9-create-move-icons.png]]
+### Reefing ^os-adjl04
+
+### Trimming
+Ease the sheet until the luff just stops shaking. ^os-adjl05

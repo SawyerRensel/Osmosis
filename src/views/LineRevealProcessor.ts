@@ -20,8 +20,10 @@ import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion }
 import {
 	blocksInRange,
 	computeRevealOrder,
+	lineGroupSpans,
 	listItemIdsInRange,
 	nextToReveal,
+	withGroupSpans,
 	type BlockRef,
 	type ListItemRef,
 } from "../study/line-reveal";
@@ -95,6 +97,13 @@ interface NoteRevealState {
 	stepAt: Map<string, number>;
 	/** Rendered elements by block ID — refreshed on every (re-)render. */
 	lines: Map<string, TrackedLine>;
+	/**
+	 * A line group's other sections (T75), by block ID, then by section start
+	 * line. Obsidian renders `![[cover.png]]` + `## Title ^os-x` as two
+	 * sections; the one holding the ID line is the group's `TrackedLine` (its
+	 * placeholder and rating bubble), the others only hide and show with it.
+	 */
+	groupParts: Map<string, Map<number, HTMLElement>>;
 }
 
 /**
@@ -134,7 +143,7 @@ export class LineRevealProcessor {
 			// drop every normal section).
 			if (el.closest(".internal-embed, .hover-popover, .is-live-preview")) return;
 
-			this.processSection(el, ctx.sourcePath, cardIds, info.lineStart, info.lineEnd);
+			this.processSection(el, ctx.sourcePath, cardIds, info.lineStart, info.lineEnd, info.text);
 			// Card sync may finish after the initial layout events fired
 			this.updateHeaderActions();
 		});
@@ -240,9 +249,11 @@ export class LineRevealProcessor {
 		cardIds: ReadonlySet<string>,
 		lineStart: number,
 		lineEnd: number,
+		text: string,
 	): void {
 		const cache = this.fileCache(notePath);
-		const blocks = toBlockRefs(cache);
+		const groups = this.groupSpans(notePath, text);
+		const blocks = withGroupSpans(toBlockRefs(cache), groups);
 		const inSection = blocksInRange(blocks, cardIds, lineStart, lineEnd);
 		if (inSection.length === 0) return;
 
@@ -272,7 +283,16 @@ export class LineRevealProcessor {
 		} else {
 			// Paragraph/heading/table/code section: one block, hide the whole
 			// section content.
-			this.trackLine(state, notePath, inSection[0]!.id, el);
+			const block = inSection[0]!;
+			const group = groups.get(block.id);
+			if (group !== undefined && group.endLine > lineEnd) {
+				// A line group's section above its ID line (a cover image over
+				// its heading): it hides with the group, without a placeholder.
+				this.trackGroupPart(state, block.id, lineStart, el);
+			} else {
+				if (group !== undefined) this.pruneGroupParts(state, group);
+				this.trackLine(state, notePath, block.id, el);
+			}
 		}
 
 		this.applyAll(notePath);
@@ -290,6 +310,48 @@ export class LineRevealProcessor {
 			if (card.blockId === blockId && card.occlusion) return card.occlusion;
 		}
 		return null;
+	}
+
+	/** The last note text parsed for line-group spans, and its spans. Every section of a render shares one text. */
+	private groupSpanCache: { notePath: string; text: string; spans: Map<string, BlockRef> } | null = null;
+
+	/** Line-group spans for a note's text, parsed once per render rather than once per section. */
+	private groupSpans(notePath: string, text: string): Map<string, BlockRef> {
+		const cached = this.groupSpanCache;
+		if (cached !== null && cached.notePath === notePath && cached.text === text) return cached.spans;
+		const spans = lineGroupSpans(text, notePath);
+		this.groupSpanCache = { notePath, text, spans };
+		return spans;
+	}
+
+	/** Wrap a group section's content for hiding (idempotent) and register it under its group. */
+	private trackGroupPart(state: NoteRevealState, blockId: string, lineStart: number, container: HTMLElement): void {
+		if (container.querySelector(":scope > .osmosis-line-back") === null) {
+			const back = createDiv({ cls: "osmosis-line-back" });
+			for (const node of Array.from(container.childNodes)) {
+				if (isPreservedNode(node)) continue;
+				back.appendChild(node);
+			}
+			container.appendChild(back);
+		}
+		let parts = state.groupParts.get(blockId);
+		if (parts === undefined) {
+			parts = new Map();
+			state.groupParts.set(blockId, parts);
+		}
+		parts.set(lineStart, container);
+	}
+
+	/** Forget a group's parts that an edit moved out of its span, so they are never hidden again. */
+	private pruneGroupParts(state: NoteRevealState, group: BlockRef): void {
+		const parts = state.groupParts.get(group.id);
+		if (parts === undefined) return;
+		for (const [lineStart, container] of parts) {
+			if (lineStart < group.startLine || lineStart > group.endLine) {
+				container.classList.remove("osmosis-line-hidden");
+				parts.delete(lineStart);
+			}
+		}
 	}
 
 	/** Wrap a line's content for hiding (idempotent) and register it. */
@@ -362,6 +424,10 @@ export class LineRevealProcessor {
 			const showPlaceholder = painted || hidden;
 			line.container.classList.toggle("osmosis-line-hidden", showPlaceholder);
 			line.placeholder.classList.toggle("osmosis-hidden", !showPlaceholder);
+			// A line group's other sections hide while the card is unrevealed.
+			for (const part of state.groupParts.get(blockId)?.values() ?? []) {
+				part.classList.toggle("osmosis-line-hidden", hidden);
+			}
 			if (painted && line.occlusion) {
 				const img = line.placeholder.querySelector("img");
 				// Repaint in place: rebuilding the <img> would re-request the file
@@ -1083,6 +1149,7 @@ export class LineRevealProcessor {
 				studySteps: new Map(),
 				stepAt: new Map(),
 				lines: new Map(),
+				groupParts: new Map(),
 			};
 			this.states.set(notePath, state);
 		}

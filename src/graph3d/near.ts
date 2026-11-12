@@ -5,6 +5,8 @@
 
 import { splitFenceHeader } from "../card-gen/explicit";
 import { codeFitColumns, lineColumns } from "../code-fit";
+import { isLineGroup } from "../line-groups";
+import { stripTrailingBlockId } from "../block-id";
 import type { GraphNode } from "./model";
 import { PLATE_PAD_X_EM } from "./plates";
 
@@ -49,12 +51,33 @@ export function unembed(markdown: string): string {
 	return markdown.replace(/!\[\[([^\]]*)\]\]/g, "[[$1]]");
 }
 
+/** Like `unembed`, but images, audio and video (`![[cover.png|300]]`) stay embeds. A PDF becomes a link, as everywhere in the panels. */
+function unembedNotes(markdown: string): string {
+	return markdown.replace(/!\[\[([^\]]*)\]\]/g, (embed, target: string) =>
+		MEDIA_EXTENSIONS.has(extension(target.split("|")[0]!.split("#")[0]!)) ? embed : `[[${target}]]`);
+}
+
+/**
+ * A line group's Markdown (T75): its lines with every trailing `^id` dropped
+ * (a multi-ID run keeps its earlier IDs inline). A heading group renders as in
+ * the 2D map: the lines above its first heading, the heading line (markers
+ * kept, as every panel keeps them), and the lines below it, as three blocks.
+ */
+function groupMarkdown(raw: string, heading: boolean): string {
+	const lines = raw.split("\n").map(stripTrailingBlockId);
+	const at = heading ? lines.findIndex((l) => /^#{1,6}\s/.test(l)) : -1;
+	if (at === -1) return lines.join("\n");
+	return [lines.slice(0, at).join("\n"), lines[at]!, lines.slice(at + 1).join("\n")].filter((block) => block.trim() !== "").join("\n\n");
+}
+
 /**
  * The Markdown a node's near panel renders, or `null` for a node that keeps
  * only its plate. Lines render their source with its markers (`- `, `## `,
  * `> [!note]`), so a heading reads as a heading and a callout as a callout,
  * with embeds turned into links (`unembed`). Media attachments render as their
- * embed. Note cores, tags and ghosts are already fully said by their plate. A
+ * embed. A line group (T75) keeps its media embeds, so a cover image shows
+ * above its heading up close (the far plate shows text only, Sawyer's call);
+ * its note embeds still become links. Note cores, tags and ghosts are already fully said by their plate. A
  * line under occlusion study (`masks`) gets a stand-in for its diagram.
  */
 export function nearMarkdown(node: GraphNode): string | null {
@@ -66,7 +89,12 @@ export function nearMarkdown(node: GraphNode): string | null {
 	// and this stands in for it, so a different diagram refills the panel, the same one
 	// with another side only repaints, and `panelBoxEm` sizes it as the image it is.
 	if (node.masks !== undefined) return `![](${encodeURIComponent(node.masks.occlusion.image).replace(/[()]/g, "")})`;
-	const markdown = unembed(dedent(node.source.raw ?? node.source.content)).trim();
+	const source = node.source;
+	const markdown = (
+		isLineGroup(source)
+			? unembedNotes(groupMarkdown(dedent(source.raw ?? ""), source.type === "heading"))
+			: unembed(dedent(source.raw ?? source.content))
+	).trim();
 	return markdown === "" ? null : markdown;
 }
 
@@ -108,8 +136,8 @@ const CARD_PAD_X = 2 * (1 + 12) / 16;
 const CARD_CHROME_Y = (2 * (1 + 12) + (1 + 2 * 8) + (4 + 24)) / 16;
 const CARD_BLOCK_GAP = 1;
 
-/** An image a panel draws: a Markdown image or an HTML `<img>` (`![[…]]` embeds became links in `nearMarkdown`). */
-const IMAGE = /!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>/gi;
+/** An image a panel draws: a Markdown image, an HTML `<img>`, or a line group's media embed (other `![[…]]` became links in `nearMarkdown`). */
+const IMAGE = /!\[[^\]]*\]\([^)]*\)|!\[\[[^\]]*\]\]|<img\b[^>]*>/gi;
 const imageCount = (text: string): number => text.match(IMAGE)?.length ?? 0;
 
 /** How big some Markdown lays out at `wrap` ems wide, before any panel padding, and how many blocks it holds. */
