@@ -46,20 +46,18 @@ The toolbar is a sticky action bar at the bottom of the mind map view. It provid
 
 | Icon | Action | Requires Selection |
 |------|--------|--------------------|
+| :lucide-circle-chevron-left: | Insert parent | Yes |
+| :lucide-circle-chevron-down: | Add sibling | Yes |
+| :lucide-circle-chevron-right: | Add child | Yes |
+| :lucide-corner-right-up: | Move up | Yes |
+| :lucide-corner-right-down: | Move down | Yes |
+| :lucide-outdent: | Outdent node (one level shallower, on either side of the map) | Yes |
+| :lucide-indent: | Indent node (under the previous sibling) | Yes |
+| :lucide-trash-2: | Delete | Yes |
 | :lucide-maximize: | Fit to view | No |
-| :lucide-zoom-in: | Zoom in | No |
-| :lucide-zoom-out: | Zoom out | No |
 | :lucide-home: | Center on root | No |
 | :lucide-chevrons-down-up: | Collapse all | Yes |
 | :lucide-chevrons-up-down: | Expand all | Yes |
-| :lucide-arrow-right-to-line: | Insert parent | Yes |
-| :lucide-arrow-down-from-line: | Add sibling | Yes |
-| :lucide-arrow-right-from-line: | Add child | Yes |
-| :lucide-arrow-up: | Move up | Yes |
-| :lucide-arrow-down: | Move down | Yes |
-| :lucide-arrow-left: | Move left (outdent) | Yes |
-| :lucide-arrow-right: | Move right (indent) | Yes |
-| :lucide-trash-2: | Delete | Yes |
 | :lucide-copy: | Copy | Yes |
 | :lucide-scissors: | Cut | Yes |
 | :lucide-clipboard-paste: | Paste | Yes |
@@ -68,10 +66,13 @@ The toolbar is a sticky action bar at the bottom of the mind map view. It provid
 | :lucide-undo-2: | Undo | No |
 | :lucide-redo-2: | Redo | No |
 | :lucide-refresh-cw: | Refresh mind map | No |
+| :lucide-more-vertical: | More actions (the node's menu) | No |
+
+Zoom in and Zoom out have no buttons (pinch or scroll instead), but they are still commands you can give a hotkey.
 
 Buttons that require a selection are dimmed when no node is selected. The toolbar hides automatically when you're editing a node's text.
 
-The toolbar looks like Obsidian's own mobile editing toolbar on every device. On desktop and tablet it floats at the bottom centre of the view in both reading and edit mode. On a phone it appears in edit mode only: Obsidian's navigation bar hides and the toolbar takes its place, as Obsidian's editing toolbar does. The :lucide-panel-bottom: button near the end of the toolbar brings the navigation bar back (the toolbar then sits above it), and the device remembers the choice. In reading mode a phone shows the navigation bar and no toolbar. The navigation bar always comes back when you switch to a view that isn't a mind map or 3D graph. In the 3D graph on a touch screen, the :lucide-gamepad-2: button shows the walk and fly joysticks, and in the 3D graph the last button, :lucide-help:, opens the list of controls.
+The toolbar looks like Obsidian's own mobile editing toolbar on every device. On desktop and tablet it floats at the bottom centre of the view in both reading and edit mode. On a phone it appears in edit mode only: Obsidian's navigation bar hides and the toolbar takes its place, as Obsidian's editing toolbar does. The toolbar is the navigation bar's height and eight buttons wide, as wide as Obsidian's editing toolbar; more buttons scroll sideways. In reading mode a phone shows the navigation bar and no toolbar. The navigation bar always comes back when you switch to a view that isn't a mind map or 3D graph. In the 3D graph on a touch screen, the :lucide-gamepad-2: button shows the walk and fly joysticks, and in the 3D graph the last button, :lucide-help:, opens the list of controls.
 
 
 ## Structure Operations

@@ -545,8 +545,17 @@ pre.osmosis-code-block {
  * element adds its blur, shadow and edge mask on phones). Our own classes, not Obsidian's, so its
  * monospace font, unset desktop option width and theme snippets aimed at the editor don't apply.
  * Bottom centre of the view; on a phone it shows in edit mode only (`barShown`), in the navigation bar's slot.
+ *
+ * Size: the height of a phone's floating navigation bar (`--navbar-height` is --touch-size-l there,
+ * 52 px), and eight buttons wide. On a phone the eight fill the width of Obsidian's floating editing
+ * toolbar (the viewport less --size-4-2 each side and the safe areas), so each is about 48 px on a
+ * 412 px phone, never under Obsidian's own 40 px option. Desktop and tablet have no navigation bar or
+ * editing toolbar to match, so they take the same height and a fixed 48 px button, which is what a
+ * typical phone gets. More than eight buttons scroll sideways. Buttons sit edge to edge, evenly
+ * spaced, with no gaps between groups.
  */
 .osmosis-toolbar {
+	--osmosis-toolbar-btn-width: 48px;
 	--icon-size: var(--icon-l);
 	--icon-stroke: var(--icon-l-stroke-width);
 	--icon-color: var(--text-normal);
@@ -556,7 +565,7 @@ pre.osmosis-code-block {
 	left: 50%;
 	transform: translateX(-50%);
 	max-width: calc(100% - var(--size-4-4));
-	border-radius: var(--touch-size-m);
+	border-radius: var(--touch-size-l);
 	overflow: hidden;
 	background: var(--raised-background, var(--background-secondary));
 	backdrop-filter: var(--raised-blur);
@@ -569,7 +578,9 @@ pre.osmosis-code-block {
 .osmosis-toolbar-list {
 	display: flex;
 	align-items: center;
-	height: var(--touch-size-m);
+	width: calc(8 * var(--osmosis-toolbar-btn-width) + 2 * var(--size-4-1));
+	max-width: 100%;
+	height: var(--touch-size-l);
 	padding: 0 var(--size-4-1);
 	overflow-x: auto;
 	overflow-y: hidden;
@@ -580,12 +591,13 @@ pre.osmosis-code-block {
 	display: none;
 }
 
-/* Phone with the navigation bar shown (edit mode, navbar toggle off): raise the bar above it. */
 .is-phone .osmosis-toolbar {
+	--osmosis-toolbar-btn-width: max(var(--toolbar-option-width, 40px), calc((100vw - var(--safe-area-inset-left, 0px) - var(--safe-area-inset-right, 0px) - var(--size-4-4) - 2 * var(--size-4-1)) / 8));
+	/* Only if the navigation bar shows under the bar, which edit mode never leaves it doing: clear it. */
 	bottom: 80px;
 }
 
-/* With the navigation bar hidden (phones, edit mode by default; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */
+/* With the navigation bar hidden (phones in edit mode; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */
 body.osmosis-hide-navbar .osmosis-toolbar {
 	bottom: var(--navbar-bottom-offset, var(--size-4-2));
 }
@@ -594,7 +606,7 @@ body.osmosis-hide-navbar .osmosis-toolbar {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	min-width: var(--toolbar-option-width, 40px);
+	width: var(--osmosis-toolbar-btn-width);
 	height: 100%;
 	padding: 0;
 	border: none;
@@ -610,7 +622,7 @@ body.osmosis-hide-navbar .osmosis-toolbar {
 	background: var(--background-modifier-hover);
 }
 
-/* A toggle that is on (the navigation bar, joystick and help toggles). */
+/* A toggle that is on (the joystick and help toggles). */
 .osmosis-toolbar-btn.is-active {
 	--icon-color: var(--text-accent);
 	color: var(--text-accent);
@@ -624,12 +636,6 @@ body.osmosis-hide-navbar .osmosis-toolbar {
 
 .osmosis-toolbar-hidden {
 	display: none;
-}
-
-/* Between groups: a small gap rather than a rule, as Obsidian's toolbar has no dividers. */
-.osmosis-toolbar-divider {
-	width: var(--size-4-2);
-	flex-shrink: 0;
 }
 
 /* ─── Properties Sidebar: Compact Layout ──────────────── */
@@ -2568,7 +2574,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	display: none;
 }
 
-/* Individual toolbar buttons/dividers hidden in reading mode */
+/* Individual toolbar buttons hidden in reading mode */
 .osmosis-toolbar-btn-hidden {
 	display: none;
 }
@@ -4075,7 +4081,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 
 /*
  * Viewport corners: perf gauge top left, Overlays top right, flight speed bottom left
- * (the navigation bar, joystick and help toggles are the Osmosis bar's last buttons).
+ * (the joystick and help toggles are the Osmosis bar's last buttons).
  * --osmosis-graph3d-lift is how far a phone's navigation bar rises from the bottom of the
  * viewport (tablets hide it), --osmosis-graph3d-bar-bottom is where the Osmosis bar sits, and
  * --osmosis-graph3d-above-bar is the line just above the bar: the joysticks, the speed
@@ -4084,7 +4090,7 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 .osmosis-graph3d {
 	--osmosis-graph3d-lift: 0px;
 	--osmosis-graph3d-bar-bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
-	--osmosis-graph3d-above-bar: calc(var(--osmosis-graph3d-bar-bottom) + var(--touch-size-m) + var(--size-4-2));
+	--osmosis-graph3d-above-bar: calc(var(--osmosis-graph3d-bar-bottom) + var(--touch-size-l) + var(--size-4-2));
 }
 
 body.is-phone:not(.osmosis-hide-navbar) .osmosis-graph3d {
@@ -4399,6 +4405,11 @@ body.osmosis-hide-navbar .mobile-navbar {
 .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
 	bottom: var(--osmosis-graph3d-bar-bottom);
 	max-width: calc(100% - 2 * (var(--size-4-2) + 48px));
+}
+
+/* A phone has no status bar, and the bar's eight buttons span its width there, as in 2D. */
+.is-phone .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
+	max-width: calc(100% - var(--size-4-4));
 }
 
 /* A relational study session's panel takes the same spot, and editing is off during one. */

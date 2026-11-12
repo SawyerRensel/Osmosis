@@ -77,7 +77,7 @@ import {
 } from "../mindmap-inertia";
 import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
 import { movedPastSlop } from "../pointer-gesture";
-import { ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type ButtonDef, type NavbarHost, type ToolbarState } from "./ToolRibbon";
+import { ToolRibbon, syncNavbar, type ButtonDef, type NavbarHost, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
 	suggestOpen,
@@ -804,7 +804,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.contentEl.toggleClass("osmosis-reading-mode", reading);
 		this.updateReadingAction();
 		this.updateToolbarState();
-		this.showNavbar();
+		syncNavbar(this.app);
 		// Replace is off in reading mode.
 		this.findBar?.refresh();
 		this.app.workspace.requestSaveLayout();
@@ -813,17 +813,6 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	/** For `syncNavbar`: edit mode (reading mode being off) is the only mode that hides the navigation bar. */
 	navbarEditMode(): boolean {
 		return !this.isReadingMode;
-	}
-
-	private toggleNavbar(): void {
-		toggleNavbarPref(this.app);
-		this.showNavbar();
-	}
-
-	/** Obsidian's navigation bar as this mode wants it: hidden in edit mode by default, the bar's toggle showing which. */
-	private showNavbar(): void {
-		this.toolRibbon?.setPressed("navbar", hidesNavbar(this.app, this.navbarEditMode()));
-		syncNavbar(this.app);
 	}
 
 	/** Header action shows the mode you'd switch to (markdown-view convention). */
@@ -1940,10 +1929,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 					: null;
 				if (node) void this.insertParentNode(node);
 			},
-			moveUp: () => this.executeDirectionalAction("ArrowUp"),
-			moveDown: () => this.executeDirectionalAction("ArrowDown"),
-			moveLeft: () => this.executeDirectionalAction("ArrowLeft"),
-			moveRight: () => this.executeDirectionalAction("ArrowRight"),
+			moveUp: () => this.runMoveAction("siblingPrev"),
+			moveDown: () => this.runMoveAction("siblingNext"),
+			outdent: () => this.runMoveAction("depthShallower"),
+			indent: () => this.runMoveAction("depthDeeper"),
 			deleteNode: () => {
 				if (this.selectedNodeIds.size > 1) {
 					void this.deleteSelectedNodes();
@@ -1972,11 +1961,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 					menu.showAtPosition({ x: rect.left, y: rect.top }),
 				);
 			},
-		}, {
-			// Phones: hide Obsidian's navigation bar in edit mode (by default; reading mode has no bar and always shows it).
-			toggles: barToggles("2d", { isPhone: Platform.isPhone, touch: false }).map((id) => ({ id, onClick: () => this.toggleNavbar() })),
 		});
-		this.showNavbar();
+		// Phones: Obsidian's navigation bar is hidden in edit mode, where the bar takes its slot.
+		syncNavbar(this.app);
 		this.findBar = new FindBar(container, this.findHost());
 
 		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
@@ -6498,10 +6485,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		return null;
 	}
 
-	/** Execute the Alt-arrow action for a physical direction (used by toolbar buttons). */
-	private executeDirectionalAction(key: string): void {
-		const action = this.resolveArrowAction(key);
-		if (!action) return;
+	/**
+	 * A toolbar move: by tree depth or sibling order, whatever the screen side
+	 * or layout direction. Alt+Arrow keys resolve their direction to one of
+	 * these with `resolveArrowAction` in `handleKeyDown`.
+	 */
+	private runMoveAction(action: "depthDeeper" | "depthShallower" | "siblingPrev" | "siblingNext"): void {
 		switch (action) {
 			case "depthDeeper":
 				void this.indentNode();

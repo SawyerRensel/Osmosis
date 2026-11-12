@@ -37,7 +37,7 @@ import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, ty
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
-import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
+import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -424,23 +424,22 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		// The ribbon is added after the stage, so it floats over it.
-		// Its own toggles: Obsidian's navigation bar (phones), the joysticks (any touch screen, desktops with one included), and the controls help last.
+		// Its own toggles: the joysticks (any touch screen, desktops with one included), and the controls help last.
 		const touch = hasTouch();
 		this.sticksShown = touch && this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true;
 		const toggle: Record<BarToggle, () => void> = {
-			navbar: () => this.toggleNavbar(),
 			sticks: () => this.toggleSticks(),
 			help: () => this.help?.toggle(!this.help.isOpen),
 		};
 		this.ribbon = new ToolRibbon(root, this.ribbonActions(), {
 			hidden: GRAPH3D_HIDDEN_BUTTONS,
 			cls: "osmosis-graph3d-ribbon",
-			toggles: barToggles("3d", { isPhone: Platform.isPhone, touch }).map((id) => ({ id, onClick: toggle[id] })),
+			toggles: barToggles("3d", { touch }).map((id) => ({ id, onClick: toggle[id] })),
 		});
 		this.ribbon.setPressed("sticks", this.sticksShown);
 		this.help = new Graph3DHelp(root, this.ribbon.toggleButton("help") ?? null);
 		this.updateRibbon();
-		this.showNavbar();
+		syncNavbar(this.app);
 		this.findBar = new FindBar(root, this.findHost());
 		this.study = new Graph3DStudy(root, this.plugin(), {
 			redraw: () => this.redraw(),
@@ -655,17 +654,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		return this.editMode;
 	}
 
-	private toggleNavbar(): void {
-		toggleNavbarPref(this.app);
-		this.showNavbar();
-	}
-
-	/** Obsidian's navigation bar as this mode wants it: hidden in edit mode by default, the bar's toggle showing which. */
-	private showNavbar(): void {
-		this.ribbon?.setPressed("navbar", hidesNavbar(this.app, this.editMode));
-		syncNavbar(this.app);
-	}
-
 	private toggleSticks(): void {
 		this.sticksShown = !this.sticksShown;
 		this.app.saveLocalStorage(STICKS_STORAGE_KEY, this.sticksShown);
@@ -700,7 +688,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.editMode = on;
 		this.showEditAction();
 		this.updateRibbon();
-		this.showNavbar();
+		syncNavbar(this.app);
 		this.scene?.setLinkMode(on);
 		// Replace is off outside edit mode.
 		this.findBar?.refresh();
@@ -764,8 +752,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			addChild: structural("child"),
 			moveUp: structural("up"),
 			moveDown: structural("down"),
-			moveLeft: structural("outdent"),
-			moveRight: structural("indent"),
+			outdent: structural("outdent"),
+			indent: structural("indent"),
 			deleteNode: structural("delete"),
 			copy: () => void this.copySelection(this.scene?.selectedNodes() ?? []),
 			cut: () => void this.cutSelection(this.scene?.selectedNodes() ?? []),

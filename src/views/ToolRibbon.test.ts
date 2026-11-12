@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GRAPH3D_HIDDEN_BUTTONS, NAVBAR_STORAGE_KEY, TOOLBAR_GROUPS, barShown, barToggles, canRunToolbarAction, navbarHidden, readNavbarPref, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
+import { GRAPH3D_HIDDEN_BUTTONS, TOOLBAR_GROUPS, barShown, barToggles, canRunToolbarAction, navbarHidden, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 
 const idle: ToolbarState = { hasSelection: true, isEditing: false, hasFile: true, isReadingMode: false };
 const def = (flags: Partial<ButtonDef>): ButtonDef => ({ id: "x", icon: "x", label: "X", action: "undo", ...flags });
@@ -44,17 +44,39 @@ describe("TOOLBAR_GROUPS layout", () => {
 	// The 2D/3D toggle is not here: it is the header's 2D | 3D pill (`view-header.ts`), and its command is registered in main.ts.
 	it("keeps its buttons, groups and command names", () => {
 		expect(TOOLBAR_GROUPS.map((group) => group.map((d) => `${d.id}:${d.command ?? "-"}`))).toEqual([
+			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],
+			["move-up:Move node up", "move-down:Move node down", "move-left:Outdent node", "move-right:Indent node"],
+			["delete:Delete node"],
 			["fit:Fit mind map to view", "zoom-in:Zoom in on mind map", "zoom-out:Zoom out of mind map", "center:Center mind map on root"],
 			["fold-all:Collapse all under node", "unfold-all:Expand all under node"],
-			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],
-			["move-up:Move node up", "move-down:Move node down", "move-left:Move node left", "move-right:Move node right"],
-			["delete:Delete node"],
 			["copy:Copy node", "cut:Cut node", "paste:Paste node"],
 			["copy-style:Copy node style", "paste-style:Paste node style"],
 			["undo:Undo mind map edit", "redo:Redo mind map edit"],
 			["refresh:Refresh mind map"],
 			["node-menu:Open node menu"],
 		]);
+	});
+
+	it("draws the editing core first, so it fills a phone's eight slots", () => {
+		const bar = TOOLBAR_GROUPS.flat().filter((d) => !d.noButton);
+		expect(bar.slice(0, 8).map((d) => d.id)).toEqual(["insert-parent", "add-sibling", "add-child", "move-up", "move-down", "move-left", "move-right", "delete"]);
+	});
+
+	it("keeps zoom as commands with no buttons", () => {
+		const zoom = TOOLBAR_GROUPS.flat().filter((d) => d.noButton);
+		expect(zoom.map((d) => `${d.id}:${d.command ?? "-"}`)).toEqual(["zoom-in:Zoom in on mind map", "zoom-out:Zoom out of mind map"]);
+	});
+
+	it("uses Obsidian's editor icons for moves and circle chevrons for creating", () => {
+		const icon = (id: string) => TOOLBAR_GROUPS.flat().find((d) => d.id === id)?.icon;
+		expect(["insert-parent", "add-sibling", "add-child"].map(icon)).toEqual(["circle-chevron-left", "circle-chevron-down", "circle-chevron-right"]);
+		expect(["move-up", "move-down", "move-left", "move-right"].map(icon)).toEqual(["lucide-corner-right-up", "lucide-corner-right-down", "lucide-outdent", "lucide-indent"]);
+	});
+
+	it("wires outdent and indent to tree depth, not screen side", () => {
+		const action = (id: string) => TOOLBAR_GROUPS.flat().find((d) => d.id === id)?.action;
+		expect(action("move-left")).toBe("outdent");
+		expect(action("move-right")).toBe("indent");
 	});
 });
 
@@ -70,8 +92,8 @@ describe("the 3D graph's ribbon", () => {
 
 	it("drops the group the hidden buttons leave empty, and keeps the rest as they are", () => {
 		expect(groups).toHaveLength(TOOLBAR_GROUPS.length - 1);
-		expect(groups[0]).toEqual(TOOLBAR_GROUPS[0]);
-		expect(groups[1]).toEqual(TOOLBAR_GROUPS[2]);
+		const fold = TOOLBAR_GROUPS.findIndex((group) => group.some((d) => d.id === "fold-all"));
+		expect(groups).toEqual(TOOLBAR_GROUPS.filter((_, i) => i !== fold));
 	});
 
 	it("hides only fold/unfold: every other button has a 3D action", () => {
@@ -84,27 +106,24 @@ describe("the 3D graph's ribbon", () => {
 });
 
 describe("the bar's toggles", () => {
-	const phone = { isPhone: true, touch: true };
-	const desktop = { isPhone: false, touch: false };
-	const touchDesktop = { isPhone: false, touch: true };
-
-	it("has the navigation bar toggle on phones only, in 2D and 3D", () => {
-		expect(barToggles("2d", phone)).toEqual(["navbar"]);
-		expect(barToggles("3d", phone)).toEqual(["navbar", "sticks", "help"]);
-	});
+	const touch = { touch: true };
+	const mouse = { touch: false };
 
 	it("has the joystick toggle in 3D on any touch screen, and never in 2D", () => {
-		expect(barToggles("3d", touchDesktop)).toEqual(["sticks", "help"]);
-		expect(barToggles("2d", touchDesktop)).toEqual([]);
+		expect(barToggles("3d", touch)).toEqual(["sticks", "help"]);
+		expect(barToggles("2d", touch)).toEqual([]);
 	});
 
 	it("ends the 3D bar with the controls help on every device, and gives 2D none", () => {
-		for (const device of [phone, desktop, touchDesktop]) {
-			expect(barToggles("3d", device).at(-1)).toBe("help");
-			expect(barToggles("2d", device)).not.toContain("help");
+		expect(barToggles("3d", mouse)).toEqual(["help"]);
+		expect(barToggles("2d", mouse)).toEqual([]);
+	});
+
+	it("has no navigation bar toggle", () => {
+		for (const device of [touch, mouse]) {
+			expect(barToggles("3d", device)).not.toContain("navbar");
+			expect(barToggles("2d", device)).not.toContain("navbar");
 		}
-		expect(barToggles("3d", desktop)).toEqual(["help"]);
-		expect(barToggles("2d", desktop)).toEqual([]);
 	});
 });
 
@@ -126,23 +145,15 @@ describe("barShown", () => {
 });
 
 describe("navbarHidden", () => {
-	it("hides the navigation bar on a phone in edit mode by default", () => {
-		expect(readNavbarPref(() => null)).toBe(true);
-		expect(navbarHidden(true, true, readNavbarPref(() => null))).toBe(true);
+	it("always hides the navigation bar on a phone in edit mode", () => {
+		expect(navbarHidden(true, true)).toBe(true);
 	});
 
 	it("always shows it in reading mode", () => {
-		expect(navbarHidden(true, false, true)).toBe(false);
-		expect(navbarHidden(true, false, false)).toBe(false);
-	});
-
-	it("follows the edit-mode preference once turned off", () => {
-		const off = readNavbarPref((key) => (key === NAVBAR_STORAGE_KEY ? false : null));
-		expect(off).toBe(false);
-		expect(navbarHidden(true, true, off)).toBe(false);
+		expect(navbarHidden(true, false)).toBe(false);
 	});
 
 	it("never hides anything on desktop or tablet", () => {
-		expect(navbarHidden(false, true, true)).toBe(false);
+		expect(navbarHidden(false, true)).toBe(false);
 	});
 });
