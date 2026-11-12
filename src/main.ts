@@ -12,14 +12,14 @@ import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
-import { TOGGLE_3D_COMMAND, TOOLBAR_GROUPS } from "./views/ToolRibbon";
+import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
-import { Graph3DView, HIDE_TOOLBAR_CLASS, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
+import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
@@ -330,6 +330,9 @@ export default class OsmosisPlugin extends Plugin {
 				return true;
 			},
 		});
+
+		// The Osmosis bar hides Obsidian's navigation bar only while a map is the active view: it comes back whenever another view becomes active.
+		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncNavbar(this.app)));
 
 		// One command per mind map toolbar button, so each can take a hotkey.
 		// None ships with one: the view's built-in keys already cover them.
@@ -921,8 +924,8 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	onunload() {
-		// Never leave Obsidian's mobile toolbar hidden behind a plugin that is gone
-		document.body.removeClass(HIDE_TOOLBAR_CLASS);
+		// Never leave Obsidian's navigation bar hidden behind a plugin that is gone
+		document.body.removeClass(HIDE_NAVBAR_CLASS);
 		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();

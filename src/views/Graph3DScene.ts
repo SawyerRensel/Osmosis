@@ -212,9 +212,8 @@ export interface SceneOptions {
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
 	renderDiagram: NearDiagramRenderer;
-	/** Whether the walk and fly joysticks start shown, and where a toggle goes to be remembered. */
+	/** Whether the walk and fly joysticks start shown (the Osmosis bar's toggle, `showSticks`). */
 	sticks: boolean;
-	onSticksToggle: (shown: boolean) => void;
 	/** Whether a plain plate click only selects the plate, with no flight and no history step. Read at each click, so it is per device and shared by every 3D view. */
 	clickSelectsOnly: () => boolean;
 	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
@@ -574,10 +573,10 @@ export class Graph3DScene {
 		window.addEventListener("pointercancel", this.onPointerUp);
 		// Capture phase, so it runs before OrbitControls' wheel listener on the canvas and can stop it.
 		container.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
-		// The bottom-left corner: the controls help, the joystick toggle, and the flight speed after them (the CSS lays it out in reverse).
+		// The bottom-left corner: the controls help, and the flight speed after it (the CSS lays it out in reverse).
 		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
 		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
-		this.sticks = new Graph3DSticks(container, corner, options.sticks, options.onSticksToggle);
+		this.sticks = new Graph3DSticks(container, options.sticks);
 		this.help = new Graph3DHelp(container, corner);
 
 		// Links are measured between plate edges, not centres, so wide labels
@@ -1395,6 +1394,11 @@ export class Graph3DScene {
 		// Seeding is a jump, not a move to follow.
 		if (this.follow?.node === node) this.follow.at = { ...seed };
 		this.dirty = true;
+	}
+
+	/** Show or hide the walk and fly joysticks (the Osmosis bar's toggle). */
+	showSticks(shown: boolean): void {
+		this.sticks.show(shown);
 	}
 
 	/** Edit mode on or off. Off, a link drag in progress is dropped. */

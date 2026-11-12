@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, setTooltip, type App, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Menu, Notice, Platform, parseLinktext, Scope, TFile, debounce, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { ParseCache } from "../cache";
 import { EditPipeline } from "../edit-pipeline";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
@@ -36,7 +36,7 @@ import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, ty
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
-import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, type ButtonDef, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
+import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -76,25 +76,6 @@ const CLICK_SELECTS_ONLY_STORAGE_KEY = "osmosis-graph3d-click-selects-only";
 const NEAR_TIER_STORAGE_KEY = `osmosis-graph3d-near-tier-${Platform.isMobile ? "mobile" : "desktop"}`;
 /** The settings every 3D view reads each frame: read from storage once, then kept here so a change shows in all open views at once. */
 let nearTier: NearTierSettings | null = null;
-/**
- * Whether Obsidian's mobile toolbar (the floating navbar) is hidden while a 3D
- * graph is the active view. Per device, like the joysticks: it is a preference
- * about this phone's screen, and the same graph opened on a laptop has no
- * toolbar to hide. Off by default, so a first-time user sees the app as usual.
- */
-const HIDE_TOOLBAR_STORAGE_KEY = "osmosis-graph3d-hide-toolbar";
-/** Body class that hides the toolbar (`.mobile-navbar`), set only while a 3D graph that asks for it is the active view. */
-export const HIDE_TOOLBAR_CLASS = "osmosis-graph3d-hide-toolbar";
-
-/**
- * Put the body class in line with the active view: on only while it is a 3D
- * graph that hides the toolbar, so Obsidian's toolbar is never left hidden
- * elsewhere. `except` is a view that is closing and no longer counts.
- */
-export function syncMobileToolbar(app: App, except: Graph3DView | null = null): void {
-	const active = app.workspace.getActiveViewOfType(Graph3DView);
-	document.body.toggleClass(HIDE_TOOLBAR_CLASS, Platform.isMobile && active !== null && active !== except && active.hidesToolbar);
-}
 
 /**
  * The 3D graph: every line of the notes within N hops of the focus note, as
@@ -105,7 +86,7 @@ export function syncMobileToolbar(app: App, except: Graph3DView | null = null): 
  * the pure model in `src/graph3d/` to the engine in `Graph3DScene`, which is
  * imported only when the view opens.
  */
-export class Graph3DView extends ItemView implements NodeStyleHost {
+export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	private scene: Graph3DScene | null = null;
 	private readonly cache = new ParseCache(200);
 	private adjacency: NoteAdjacency | null = null;
@@ -121,9 +102,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	private studyActionEl: HTMLElement | null = null;
 	/** Relational study, while the view is open; its session runs only while `active`. */
 	private study: Graph3DStudy | null = null;
-	/** Whether this view hides Obsidian's mobile toolbar while it is the active view. */
-	hidesToolbar = false;
-	private toolbarToggleEl: HTMLElement | null = null;
+	/** Whether the walk and fly joysticks are shown (the bar's toggle, touch screens only). */
+	private sticksShown = false;
 	/** The style sidebar's Settings panel, told when the settings or the loaded area's reach change (`settingsSource`). */
 	private readonly settingsListeners = new Set<() => void>();
 	/** The style sidebar's Node tab, told when the selection changes or a reload may have restyled it (`NodeStyleHost`). */
@@ -417,17 +397,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		root.empty();
 		root.addClass("osmosis-graph3d");
 
-		// Bottom-left corner, phones and tablets only: hides Obsidian's own toolbar, which floats over the viewport.
-		this.hidesToolbar = Platform.isMobile && this.app.loadLocalStorage(HIDE_TOOLBAR_STORAGE_KEY) === true;
-		this.toolbarToggleEl = root.createDiv({ cls: "osmosis-graph3d-toolbar-toggle clickable-icon" });
-		this.toolbarToggleEl.toggleClass("is-hidden", !Platform.isMobile);
-		setIcon(this.toolbarToggleEl, "panel-bottom");
-		this.toolbarToggleEl.addEventListener("click", () => this.toggleToolbar());
-		this.showToolbarToggle();
-		// The toolbar comes back whenever another view becomes active, and goes again when this one does.
-		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncMobileToolbar(this.app)));
-		syncMobileToolbar(this.app);
-
 		// The header's buttons are shared with the mind map (`view-header.ts`); `arrangeViewHeader` puts them in order.
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
@@ -445,8 +414,17 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		// The ribbon is added after the stage, so it floats over it.
-		this.ribbon = new ToolRibbon(root, this.ribbonActions(), { hidden: GRAPH3D_HIDDEN_BUTTONS, cls: "osmosis-graph3d-ribbon" });
+		// Its own toggles: Obsidian's navigation bar (phones and tablets) and the joysticks (any touch screen, desktops with one included).
+		const touch = Platform.isMobile || navigator.maxTouchPoints > 0;
+		this.sticksShown = touch && this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true;
+		this.ribbon = new ToolRibbon(root, this.ribbonActions(), {
+			hidden: GRAPH3D_HIDDEN_BUTTONS,
+			cls: "osmosis-graph3d-ribbon",
+			toggles: barToggles("3d", { isMobile: Platform.isMobile, touch }).map((id) => ({ id, onClick: () => (id === "navbar" ? this.toggleNavbar() : this.toggleSticks()) })),
+		});
+		this.ribbon.setPressed("sticks", this.sticksShown);
 		this.updateRibbon();
+		this.showNavbar();
 		this.findBar = new FindBar(root, this.findHost());
 		this.study = new Graph3DStudy(root, this.plugin(), {
 			redraw: () => this.redraw(),
@@ -478,8 +456,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 			onResizeNode: (node, width) => this.resizeNode(node, width),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
-			sticks: this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true,
-			onSticksToggle: (shown) => this.app.saveLocalStorage(STICKS_STORAGE_KEY, shown),
+			sticks: this.sticksShown,
 			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 			nearTier: () => this.nearTier(),
 			onSelectionChange: () => this.notifySelection(),
@@ -544,12 +521,11 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		this.loadSeq++;
 		this.study?.destroy();
 		this.study = null;
-		this.toolbarToggleEl = null;
 		this.ribbon?.destroy();
 		this.ribbon = null;
 		this.findBar?.destroy();
 		this.findBar = null;
-		syncMobileToolbar(this.app, this);
+		syncNavbar(this.app, this);
 		this.scene?.destroy();
 		this.scene = null;
 		this.settingsListeners.clear();
@@ -655,17 +631,27 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.setFocus(file.path, true);
 	}
 
-	private toggleToolbar(): void {
-		this.hidesToolbar = !this.hidesToolbar;
-		this.app.saveLocalStorage(HIDE_TOOLBAR_STORAGE_KEY, this.hidesToolbar);
-		this.showToolbarToggle();
-		syncMobileToolbar(this.app);
+	/** For `syncNavbar`: the mode whose navigation bar preference applies. */
+	navbarEditMode(): boolean {
+		return this.editMode;
 	}
 
-	private showToolbarToggle(): void {
-		this.toolbarToggleEl?.toggleClass("is-active", this.hidesToolbar);
-		this.toolbarToggleEl?.setAttr("aria-pressed", String(this.hidesToolbar));
-		if (this.toolbarToggleEl !== null) setTooltip(this.toolbarToggleEl, this.hidesToolbar ? "Show Obsidian's toolbar" : "Hide Obsidian's toolbar");
+	private toggleNavbar(): void {
+		toggleNavbarPref(this.app, this.editMode);
+		this.showNavbar();
+	}
+
+	/** Obsidian's navigation bar as this mode wants it: hidden in edit mode by default, the bar's toggle showing which. */
+	private showNavbar(): void {
+		this.ribbon?.setPressed("navbar", hidesNavbar(this.app, this.editMode));
+		syncNavbar(this.app);
+	}
+
+	private toggleSticks(): void {
+		this.sticksShown = !this.sticksShown;
+		this.app.saveLocalStorage(STICKS_STORAGE_KEY, this.sticksShown);
+		this.ribbon?.setPressed("sticks", this.sticksShown);
+		this.scene?.showSticks(this.sticksShown);
 	}
 
 	private toggleStudy(): void {
@@ -695,6 +681,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		this.editMode = on;
 		this.showEditAction();
 		this.updateRibbon();
+		this.showNavbar();
 		this.scene?.setLinkMode(on);
 		// Replace is off outside edit mode.
 		this.findBar?.refresh();

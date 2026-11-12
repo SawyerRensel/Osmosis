@@ -570,6 +570,12 @@ pre.osmosis-code-block {
 	bottom: 80px;
 }
 
+/* With the nav bar hidden (edit mode by default; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */
+body.osmosis-hide-navbar .osmosis-toolbar,
+body.osmosis-hide-navbar .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
+	bottom: var(--navbar-bottom-offset, var(--size-4-2));
+}
+
 .osmosis-toolbar-btn {
 	display: flex;
 	align-items: center;
@@ -589,6 +595,11 @@ pre.osmosis-code-block {
 .osmosis-toolbar-btn:hover:not(.is-disabled) {
 	background: var(--background-modifier-hover);
 	color: var(--icon-color-hover);
+}
+
+/* A toggle that is on (the bar's navigation bar and joystick toggles). */
+.osmosis-toolbar-btn.is-active {
+	color: var(--text-accent);
 }
 
 .osmosis-toolbar-btn.is-disabled {
@@ -4051,8 +4062,8 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 }
 
 /*
- * Viewport corners: perf gauge top left, Overlays top right, Obsidian's mobile
- * toolbar toggle bottom left, joystick toggle and speed bottom right.
+ * Viewport corners: perf gauge top left, Overlays top right, controls help and
+ * flight speed bottom left (the navigation bar and joystick toggles are in the ribbon).
  * --osmosis-graph3d-lift is how far Obsidian's floating mobile toolbar rises
  * from the bottom of the viewport, so what sits at the bottom stays clear of it.
  */
@@ -4060,12 +4071,12 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	--osmosis-graph3d-lift: 0px;
 }
 
-body.is-mobile:not(.osmosis-graph3d-hide-toolbar) .osmosis-graph3d {
+body.is-mobile:not(.osmosis-hide-navbar) .osmosis-graph3d {
 	--osmosis-graph3d-lift: 84px;
 }
 
-/* Hides Obsidian's mobile toolbar while a 3D graph that asks for it is the active view (set in Graph3DView.ts). */
-body.osmosis-graph3d-hide-toolbar .mobile-navbar {
+/* Hides Obsidian's navigation bar while a map whose mode asks for it is the active view (`syncNavbar` in ToolRibbon.ts). */
+body.osmosis-hide-navbar .mobile-navbar {
 	display: none;
 }
 
@@ -4168,9 +4179,8 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 }
 
 /*
- * Bottom-left corner: the controls help and joystick toggles, with the flight speed readout to their
- * right (row-reverse: the DOM lists the readout first). Obsidian's status bar sits bottom right. On
- * mobile the toolbar toggle owns the corner's far left, so the cluster starts after it.
+ * Bottom-left corner: the controls help, with the flight speed readout to its right (row-reverse: the
+ * DOM lists the readout first). Obsidian's status bar sits bottom right.
  */
 .osmosis-graph3d-corner {
 	position: absolute;
@@ -4182,10 +4192,6 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	align-items: center;
 	gap: var(--size-4-2);
 	pointer-events: none;
-}
-
-.is-mobile .osmosis-graph3d-corner {
-	left: calc(var(--size-4-2) + 40px);
 }
 
 /* Flight speed, shown briefly while the wheel changes it. */
@@ -4264,20 +4270,7 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 	color: var(--text-muted);
 }
 
-/* Walk and fly joysticks (Graph3DSticks.ts). */
-.osmosis-graph3d-sticks-toggle {
-	pointer-events: auto;
-}
-
-.osmosis-graph3d-sticks-toggle.is-active {
-	color: var(--text-accent);
-}
-
-.osmosis-graph3d-sticks-toggle.is-hidden {
-	display: none;
-}
-
-/* Raised clear of the corner toggles, and of Obsidian's mobile toolbar when it is shown. */
+/* Walk and fly joysticks (Graph3DSticks.ts), toggled from the ribbon. Raised clear of the corner controls, and of Obsidian's mobile toolbar when it is shown. */
 .osmosis-graph3d-stick {
 	position: absolute;
 	bottom: calc(var(--size-4-2) + max(48px, var(--osmosis-graph3d-lift)));
@@ -4320,8 +4313,8 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 
 /*
  * The shared toolbar ribbon (Graph3DView.ts): the mind map's `.osmosis-toolbar`, bottom centre. It
- * clears Obsidian's floating mobile toolbar by --osmosis-graph3d-lift, not the mind map's fixed 80px, and
- * stops short of the corner controls either side of it (toolbar toggle left, joysticks right).
+ * clears Obsidian's floating mobile toolbar by --osmosis-graph3d-lift, not the mind map's fixed 80px (or
+ * takes the navigation bar's slot when that is hidden), and stops short of the bottom corners either side.
  */
 .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
 	bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
@@ -4330,22 +4323,6 @@ body.osmosis-graph3d-hide-toolbar .mobile-navbar {
 
 /* A relational study session's panel takes the same spot, and editing is off during one. */
 .osmosis-graph3d:has(.osmosis-graph3d-study) .osmosis-toolbar.osmosis-graph3d-ribbon {
-	display: none;
-}
-
-/* Obsidian's mobile toolbar toggle (Graph3DView.ts), bottom left, phones and tablets only. */
-.osmosis-graph3d-toolbar-toggle {
-	position: absolute;
-	left: var(--size-4-2);
-	bottom: var(--size-4-2);
-	z-index: 1;
-}
-
-.osmosis-graph3d-toolbar-toggle.is-active {
-	color: var(--text-accent);
-}
-
-.osmosis-graph3d-toolbar-toggle.is-hidden {
 	display: none;
 }
 

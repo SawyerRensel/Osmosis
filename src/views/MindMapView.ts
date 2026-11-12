@@ -77,7 +77,7 @@ import {
 } from "../mindmap-inertia";
 import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
 import { movedPastSlop } from "../pointer-gesture";
-import { ToolRibbon, type ButtonDef, type ToolbarState } from "./ToolRibbon";
+import { ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type ButtonDef, type NavbarHost, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
 	suggestOpen,
@@ -177,7 +177,7 @@ interface OsmosisCardContent {
 	isCloze?: boolean;
 }
 
-export class MindMapView extends ItemView implements NodeStyleHost {
+export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
 	private currentFile: TFile | null = null;
@@ -806,9 +806,26 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		this.contentEl.toggleClass("osmosis-reading-mode", reading);
 		this.updateReadingAction();
 		this.updateToolbarState();
+		this.showNavbar();
 		// Replace is off in reading mode.
 		this.findBar?.refresh();
 		this.app.workspace.requestSaveLayout();
+	}
+
+	/** For `syncNavbar`: edit mode is reading mode being off. */
+	navbarEditMode(): boolean {
+		return !this.isReadingMode;
+	}
+
+	private toggleNavbar(): void {
+		toggleNavbarPref(this.app, this.navbarEditMode());
+		this.showNavbar();
+	}
+
+	/** Obsidian's navigation bar as this mode wants it: hidden in edit mode by default, the bar's toggle showing which. */
+	private showNavbar(): void {
+		this.toolRibbon?.setPressed("navbar", hidesNavbar(this.app, this.navbarEditMode()));
+		syncNavbar(this.app);
 	}
 
 	/** Header action shows the mode you'd switch to (markdown-view convention). */
@@ -1957,7 +1974,11 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 					menu.showAtPosition({ x: rect.left, y: rect.top }),
 				);
 			},
+		}, {
+			// Phones and tablets: hide Obsidian's navigation bar (per mode; edit mode hides it by default).
+			toggles: barToggles("2d", { isMobile: Platform.isMobile, touch: false }).map((id) => ({ id, onClick: () => this.toggleNavbar() })),
 		});
+		this.showNavbar();
 		this.findBar = new FindBar(container, this.findHost());
 
 		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
@@ -2103,6 +2124,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 
 	async onClose(): Promise<void> {
 		this.closed = true;
+		syncNavbar(this.app, this);
 		this.releaseHistory?.();
 		this.releaseHistory = null;
 		this.historyKey = null;

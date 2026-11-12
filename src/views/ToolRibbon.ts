@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { Platform, View, setIcon, type App } from "obsidian";
 
 /** Toolbar state used to enable/disable context-sensitive buttons. */
 export interface ToolbarState {
@@ -113,6 +113,91 @@ export function visibleGroups(groups: readonly ButtonDef[][], hidden: ReadonlySe
 }
 
 /**
+ * The Osmosis bar's own toggles, after its last group: Obsidian's navigation
+ * bar (phones and tablets, both views) and the 3D graph's walk and fly
+ * joysticks (3D on a touch screen, desktops with one included). They are view
+ * settings, not map actions, so they have no commands.
+ */
+export type BarToggle = "navbar" | "sticks";
+
+const BAR_TOGGLE_DEFS: Record<BarToggle, { icon: string; label: string }> = {
+	navbar: { icon: "panel-bottom", label: "Hide navigation bar" },
+	sticks: { icon: "gamepad-2", label: "Walk and fly joysticks" },
+};
+
+/** Which toggles the bar shows in `view` on this device. */
+export function barToggles(view: "2d" | "3d", device: { isMobile: boolean; touch: boolean }): BarToggle[] {
+	const toggles: BarToggle[] = [];
+	if (device.isMobile) toggles.push("navbar");
+	if (view === "3d" && device.touch) toggles.push("sticks");
+	return toggles;
+}
+
+/**
+ * Whether Obsidian hides its navigation bar for a map in edit (or reading)
+ * mode: each mode has its own per-device preference, which the bar's toggle
+ * flips for the mode it is in. Edit mode hides it by default, so the bar
+ * drops into its slot as Obsidian's editing toolbar does; reading mode shows
+ * it by default. Desktop has no navigation bar.
+ */
+export interface NavbarPrefs {
+	edit: boolean;
+	reading: boolean;
+}
+
+/** Each mode's preference, in Obsidian's per-device (vault-scoped) localStorage. */
+export const NAVBAR_STORAGE_KEYS: Record<keyof NavbarPrefs, string> = {
+	edit: "osmosis-hide-navbar-edit",
+	reading: "osmosis-hide-navbar-reading",
+};
+
+/** The preferences from storage: edit mode hides unless turned off, reading mode shows unless turned on. */
+export function readNavbarPrefs(load: (key: string) => unknown): NavbarPrefs {
+	return { edit: load(NAVBAR_STORAGE_KEYS.edit) !== false, reading: load(NAVBAR_STORAGE_KEYS.reading) === true };
+}
+
+export function navbarHidden(isMobile: boolean, editMode: boolean, prefs: NavbarPrefs): boolean {
+	return isMobile && (editMode ? prefs.edit : prefs.reading);
+}
+
+/** Body class that hides `.mobile-navbar` (styles.css), set only while a map that asks for it is the active view. */
+export const HIDE_NAVBAR_CLASS = "osmosis-hide-navbar";
+
+/** A view whose bar can hide the navigation bar: the mind map and the 3D graph. */
+export interface NavbarHost {
+	/** Whether the map is in edit mode, which picks the preference that applies. */
+	navbarEditMode(): boolean;
+}
+
+function isNavbarHost(view: View): view is View & NavbarHost {
+	return typeof (view as Partial<NavbarHost>).navbarEditMode === "function";
+}
+
+/** Whether the navigation bar is hidden for a map in this mode, on this device. */
+export function hidesNavbar(app: App, editMode: boolean): boolean {
+	return navbarHidden(Platform.isMobile, editMode, readNavbarPrefs((key) => app.loadLocalStorage(key)));
+}
+
+/** The bar's navbar toggle: flip the preference of the mode the map is in, then apply it. */
+export function toggleNavbarPref(app: App, editMode: boolean): void {
+	const mode = editMode ? "edit" : "reading";
+	app.saveLocalStorage(NAVBAR_STORAGE_KEYS[mode], !readNavbarPrefs((key) => app.loadLocalStorage(key))[mode]);
+	syncNavbar(app);
+}
+
+/**
+ * Put the body class in line with the active view: on only while it is a map
+ * whose mode hides the navigation bar, so Obsidian's navigation is never left
+ * hidden elsewhere. Run on `active-leaf-change` (main.ts), on a mode change,
+ * and on close, where `except` is the closing view, which no longer counts.
+ */
+export function syncNavbar(app: App, except: View | null = null): void {
+	const view = app.workspace.getActiveViewOfType(View);
+	const hide = view !== null && view !== except && isNavbarHost(view) && hidesNavbar(app, view.navbarEditMode());
+	document.body.toggleClass(HIDE_NAVBAR_CLASS, hide);
+}
+
+/**
  * Whether a button's action may run in the given state — the same rule that
  * disables or hides the button itself.
  */
@@ -130,14 +215,18 @@ export function canRunToolbarAction(def: ButtonDef, state: ToolbarState): boolea
 export class ToolRibbon {
 	private el: HTMLElement;
 	private buttons = new Map<string, HTMLButtonElement>();
+	private toggleButtons = new Map<BarToggle, HTMLButtonElement>();
 	private state: ToolbarState = { hasSelection: false, isEditing: false, hasFile: false, isReadingMode: false };
 	private savedScrollLeft = 0;
 
 	constructor(
 		private container: HTMLElement,
 		private actions: ToolbarActions,
-		/** Buttons to leave out (the 3D graph's, see `GRAPH3D_HIDDEN_BUTTONS`), and a class for the bar. */
-		options: { hidden?: ReadonlySet<string>; cls?: string } = {},
+		/**
+		 * Buttons to leave out (the 3D graph's, see `GRAPH3D_HIDDEN_BUTTONS`), a class for the bar, and
+		 * the bar's own toggles (`barToggles`) with what each click does.
+		 */
+		options: { hidden?: ReadonlySet<string>; cls?: string; toggles?: { id: BarToggle; onClick: () => void }[] } = {},
 	) {
 		this.el = createDiv();
 		this.el.className = "osmosis-toolbar";
@@ -179,6 +268,25 @@ export class ToolRibbon {
 				divider.className = "osmosis-toolbar-divider";
 				this.el.appendChild(divider);
 			}
+		}
+
+		const toggles = options.toggles ?? [];
+		if (toggles.length > 0) this.el.createDiv({ cls: "osmosis-toolbar-divider" });
+		for (const { id, onClick } of toggles) {
+			const { icon, label } = BAR_TOGGLE_DEFS[id];
+			const btn = this.el.createEl("button", { cls: "osmosis-toolbar-btn clickable-icon", attr: { "aria-label": label, title: label, "aria-pressed": "false" } });
+			btn.dataset.toggle = id;
+			setIcon(btn, icon);
+			btn.addEventListener("pointerdown", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			btn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				onClick();
+			});
+			this.toggleButtons.set(id, btn);
 		}
 
 		// Prevent pointer-up on toolbar buttons from bubbling to the mind map
@@ -267,8 +375,16 @@ export class ToolRibbon {
 		action(btn);
 	}
 
+	/** Show a toggle as on or off. */
+	setPressed(id: BarToggle, on: boolean): void {
+		const btn = this.toggleButtons.get(id);
+		btn?.toggleClass("is-active", on);
+		btn?.setAttribute("aria-pressed", String(on));
+	}
+
 	destroy(): void {
 		this.el.remove();
 		this.buttons.clear();
+		this.toggleButtons.clear();
 	}
 }

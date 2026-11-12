@@ -1,6 +1,6 @@
 /**
  * Two on-screen thumb joysticks for walking and flying through the 3D graph on
- * a touch screen, behind a toggle in the viewport's bottom-right corner. What
+ * a touch screen, behind a toggle in the Osmosis bar (the ribbon). What
  * each stick does is `STICK_ROLES` (left moves, right looks); the maths is `src/graph3d/joysticks.ts`;
  * `Graph3DScene` reads `look` and `move` every frame.
  *
@@ -9,7 +9,6 @@
  * Each tracks its own pointer, so one thumb on each works at once.
  */
 
-import { Platform, setIcon, setTooltip } from "obsidian";
 import { CENTRED, STICK_ROLES, stickDeflection, type Deflection, type StickRole, type StickSide } from "../graph3d/joysticks";
 
 interface Stick {
@@ -21,27 +20,16 @@ interface Stick {
 }
 
 export class Graph3DSticks {
-	private readonly toggleEl: HTMLElement;
 	private readonly sticks: Record<StickSide, Stick>;
-	private shown = false;
 
 	/**
-	 * `corner` holds the toggle. It shows only where there is a touch screen,
-	 * desktops with one included; elsewhere the keys and mouse do this job.
-	 * The sticks start shown when `shown` says so (and the toggle is there).
+	 * The sticks start shown when `shown` says so. Their toggle is the view's
+	 * (the Osmosis bar), shown only where there is a touch screen, desktops
+	 * with one included; elsewhere the keys and mouse do this job.
 	 */
-	constructor(container: HTMLElement, corner: HTMLElement, shown: boolean, private readonly onToggle: (shown: boolean) => void) {
-		const touchCapable = Platform.isMobile || navigator.maxTouchPoints > 0;
-		this.toggleEl = corner.createDiv({ cls: "osmosis-graph3d-sticks-toggle clickable-icon" });
-		this.toggleEl.toggleClass("is-hidden", !touchCapable);
-		setIcon(this.toggleEl, "gamepad-2");
-		setTooltip(this.toggleEl, "Walk and fly joysticks");
-		this.toggleEl.addEventListener("click", () => {
-			this.show(!this.shown);
-			this.onToggle(this.shown);
-		});
+	constructor(container: HTMLElement, shown: boolean) {
 		this.sticks = { left: this.createStick(container, "left"), right: this.createStick(container, "right") };
-		this.show(shown && touchCapable);
+		this.show(shown);
 	}
 
 	/** The look stick's deflection now. */
@@ -59,10 +47,7 @@ export class Graph3DSticks {
 		return side === undefined ? CENTRED : this.sticks[side].deflection;
 	}
 
-	private show(shown: boolean): void {
-		this.shown = shown;
-		this.toggleEl.toggleClass("is-active", shown);
-		this.toggleEl.setAttr("aria-pressed", String(shown));
+	show(shown: boolean): void {
 		for (const stick of Object.values(this.sticks)) {
 			stick.base.toggleClass("is-hidden", !shown);
 			if (!shown) this.release(stick);
