@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, TFile, getIconIds, setIcon } from "obsidian";
+import { MarkdownView, Menu, Notice, Platform, TFile, getIconIds, setIcon } from "obsidian";
 import type { CachedMetadata } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -13,6 +13,7 @@ import {
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
 } from "../study/spatial-study";
+import { decksOfNote } from "../study/note-scope";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
@@ -776,9 +777,23 @@ export class LineRevealProcessor {
 				continue;
 			}
 
-			studyBtn ??= this.createHeaderAction("graduation-cap", "Study this note", "osmosis-line-study-action", view, (p) => {
-				this.toggleStudy(p);
-			});
+			// A running in-note session stops directly; otherwise the button opens
+			// the study menu. Only "Study here" needs reading view, so the switch
+			// happens from the menu item rather than on the tap.
+			studyBtn ??= this.createHeaderAction(
+				"graduation-cap",
+				"Study this note",
+				"osmosis-line-study-action",
+				view,
+				(p, evt) => {
+					if (this.stateFor(p).mode === "study") {
+						this.toggleStudy(p);
+						return;
+					}
+					this.showStudyMenu(view, p, evt);
+				},
+				(p) => this.stateFor(p).mode === "study",
+			);
 
 			// Re-anchor on every pass (the mind map button may appear after us):
 			// right of the mind map button when present, else left of the
@@ -800,27 +815,106 @@ export class LineRevealProcessor {
 		label: string,
 		cls: string,
 		view: MarkdownView,
-		onClick: (notePath: string) => void,
+		onClick: (notePath: string, evt: MouseEvent) => void,
+		/** Whether to switch the note to reading view before `onClick` runs. */
+		switchToPreview: (notePath: string) => boolean = () => true,
 	): HTMLElement {
 		const btn = createEl("a");
 		btn.className = `clickable-icon view-action ${cls}`;
 		btn.setAttribute("aria-label", label);
 		setIcon(btn, icon);
-		btn.addEventListener("click", () => {
+		btn.addEventListener("click", (evt) => {
 			const path = view.file?.path;
 			if (path === undefined) return;
 			void (async () => {
 				// Peek/study live in reading view — switch to it first if needed
-				if (view.getMode() !== "preview") {
-					await view.leaf.setViewState({
-						type: "markdown",
-						state: { ...view.getState(), mode: "preview" },
-					});
-				}
-				onClick(path);
+				if (switchToPreview(path)) await this.ensurePreview(view);
+				onClick(path, evt);
 			})();
 		});
 		return btn;
+	}
+
+	private async ensurePreview(view: MarkdownView): Promise<void> {
+		if (view.getMode() === "preview") return;
+		await view.leaf.setViewState({
+			type: "markdown",
+			state: { ...view.getState(), mode: "preview" },
+		});
+	}
+
+	/**
+	 * The note header's Study menu: study in place, this note's cards in the
+	 * sequential popup, or a deck the note belongs to in the popup. One deck
+	 * starts directly; several go in a submenu (inline on mobile, where
+	 * `setSubmenu` is not relied on).
+	 */
+	private showStudyMenu(view: MarkdownView, notePath: string, evt: MouseEvent): void {
+		const menu = new Menu();
+		menu.addItem((item) =>
+			item
+				.setTitle("Study here")
+				.setIcon("graduation-cap")
+				.onClick(() => {
+					void this.ensurePreview(view).then(() => {
+						this.toggleStudy(notePath);
+					});
+				}),
+		);
+		menu.addItem((item) =>
+			item
+				.setTitle("This note (popup)")
+				.setIcon("file-text")
+				.onClick(() => {
+					void this.plugin.openStudySession({ type: "note", notePath });
+				}),
+		);
+
+		const decks = decksOfNote(this.plugin.cardStore.getCardsByNote(notePath));
+		const openDeck = (deck: string): void => {
+			void this.plugin.openStudySession({ type: "single", deck });
+		};
+		if (decks.length === 1) {
+			const deck = decks[0] as string;
+			menu.addItem((item) =>
+				item
+					.setTitle(`Deck: ${deck} (popup)`)
+					.setIcon("layers")
+					.onClick(() => {
+						openDeck(deck);
+					}),
+			);
+		} else if (decks.length > 1) {
+			menu.addItem((item) => {
+				item.setTitle("Deck… (popup)").setIcon("layers");
+				// setSubmenu is not in the published typings; feature-detect it.
+				const sub = Platform.isMobile
+					? undefined
+					: (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
+				if (sub) {
+					for (const deck of decks) {
+						sub.addItem((subItem) =>
+							subItem.setTitle(deck).onClick(() => {
+								openDeck(deck);
+							}),
+						);
+					}
+				} else {
+					item.setDisabled(true);
+					for (const deck of decks) {
+						menu.addItem((deckItem) =>
+							deckItem
+								.setTitle(`Deck: ${deck} (popup)`)
+								.setIcon("layers")
+								.onClick(() => {
+									openDeck(deck);
+								}),
+						);
+					}
+				}
+			});
+		}
+		menu.showAtMouseEvent(evt);
 	}
 
 	// ── Floating pill (study progress + Stop) ─────────────────

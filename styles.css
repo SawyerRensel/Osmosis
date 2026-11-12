@@ -1271,6 +1271,7 @@ hr.osmosis-map-style-divider {
    shrinks itself rather than squeezing the progress bar or pushing the flip and
    rating buttons off the bottom. Those must stay reachable at every card
    length — they are how the session is driven. */
+.osmosis-study-modal .osmosis-study-scope,
 .osmosis-study-modal .osmosis-study-progress,
 .osmosis-study-modal .osmosis-study-breadcrumb,
 .osmosis-study-modal .osmosis-study-actions,
@@ -1341,6 +1342,17 @@ hr.osmosis-map-style-divider {
 	display: flex;
 	align-items: center;
 	gap: 4px;
+}
+
+/* Names the note in a single-note session. */
+.osmosis-study-scope {
+	margin-bottom: 8px;
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .osmosis-study-breadcrumb {

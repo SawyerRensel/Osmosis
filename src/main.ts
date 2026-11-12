@@ -50,7 +50,7 @@ import type { MutationDeps } from "./browse/mutate";
 import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
-import type { DeckScope } from "./study/types";
+import type { StudyScope } from "./study/types";
 
 /**
  * Extensions the "Create image occlusion" item is offered for — Obsidian's own
@@ -1282,7 +1282,7 @@ export default class OsmosisPlugin extends Plugin {
 		await this.app.workspace.getLeaf("tab").openFile(file);
 	}
 
-	async openStudySession(scope: DeckScope): Promise<void> {
+	async openStudySession(scope: StudyScope): Promise<void> {
 		const sessionManager = this.createSessionManager("sequential");
 		const modal = new SequentialStudyModal(
 			this.app,
