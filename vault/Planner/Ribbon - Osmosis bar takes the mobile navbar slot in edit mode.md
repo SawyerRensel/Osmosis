@@ -13,13 +13,13 @@ related:
   - "[[3D Graph - Mobile viewport layout and study panel polish]]"
   - "[[3D Graph - Mobile walk and fly joysticks]]"
   - "[[Header - Map header order and overflow menu]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T12:00:00.000Z"
-date_modified: "2026-11-12T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T05:55:00.000Z"
+date_start_scheduled: "2026-11-12T05:27:02.000Z"
+date_start_actual: "2026-11-12T05:27:02.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -100,3 +100,41 @@ Manual (Ctrl+R after build), phone:
 4. Open a plain note in another tab and switch to it → navbar visible.
 5. 3D: 🎮 in ribbon toggles joysticks; no corner button; 2D ribbon has no 🎮.
 Desktop: ribbon looks as before in 2D and 3D.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: commit `51c67ba` on `feature/osmosis-bar-navbar-slot`. Navbar slot and joystick move both shipped; nothing split off.
+
+### Approach
+- **The bar's toggles are not `TOOLBAR_GROUPS` entries.** They are view settings, not map actions, so they get no `mindmap-<id>` commands and don't touch `ToolbarActions`, `canRunToolbarAction` or the command tests. `ToolRibbon` takes `options.toggles` (`{ id: BarToggle; onClick }[]`) and draws them as a last group after a divider; `setPressed(id, on)` shows them on (accent colour, `aria-pressed`). `barToggles(view, { isMobile, touch })` (pure, tested) decides which: `navbar` on `Platform.isMobile` in 2D and 3D, `sticks` in 3D only where `Platform.isMobile || navigator.maxTouchPoints > 0`.
+- **Navbar hiding** is the body class `osmosis-hide-navbar` (renamed from `osmosis-graph3d-hide-toolbar`) with `body.osmosis-hide-navbar .mobile-navbar { display: none }`. `syncNavbar(app, except)` in `ToolRibbon.ts` derives it from the active view: on only when the active view is a `NavbarHost` (MindMapView or Graph3DView, duck-typed by `navbarEditMode()`, so ToolRibbon imports neither view) and `navbarHidden(Platform.isMobile, editMode, prefs)` says so. It runs on `active-leaf-change` (one registration in `main.ts`, replacing 3D's per-view one), on every mode change (2D `setReadingMode`, 3D `setEditMode`, which study start also goes through), on the toggle, and on close with `except` = the closing view. `onunload` still removes the class.
+- **Placement:** with the class on, the ribbon sits at `bottom: var(--navbar-bottom-offset, var(--size-4-2))`, which is Obsidian's own navbar offset (`max(--safe-area-inset-bottom, --size-4-3)`, read from `ref/obsidian-core/app.css`), so it respects the safe-area inset exactly as the navbar does. 3D's `--osmosis-graph3d-lift` drops to 0 under the same class, as before.
+- **Joysticks:** `Graph3DSticks` lost its corner toggle (constructor is now `(container, shown)`, `show()` public); the view owns `sticksShown` (still localStorage `osmosis-graph3d-sticks`) and calls `Graph3DScene.showSticks()`. The scene's `onSticksToggle` option is gone.
+
+### Decisions worth remembering
+- **Override persistence: two per-device preferences, one per mode** (`osmosis-hide-navbar-edit`, default on; `osmosis-hide-navbar-reading`, default off), in Obsidian's vault-scoped localStorage. The ribbon toggle flips the preference of the mode the map is in. Chosen over the suggested single edit preference + transient reading override because the old 3D button was a *persistent* "hide in all modes" setting used while exploring (reading mode); a transient override would have made that a tap on every open. It is still one rule (`navbarHidden`) and shared by 2D and 3D. The old key `osmosis-graph3d-hide-toolbar` is no longer read (no migration: its meaning, 3D only/all modes, doesn't map onto either new key cleanly); it just sits unused in localStorage.
+- Toggles go **at the end** of the bar, after the node menu, matching where the joystick corner button was (right). On a phone the bar scrolls horizontally, so in edit mode they may need a scroll to reach; edit mode can always be left via the header pencil, which brings the navbar back by default.
+- Labels are static ("Hide navigation bar", "Walk and fly joysticks") with the pressed state showing on/off; pressed navbar = hidden.
+- The bar is still hidden while a node is being edited and during a relational study session (unchanged), so the toggles are unreachable then; study is reading mode, so the reading preference applies.
+- Tablets: Obsidian already hides `.mobile-navbar` on tablets (`body.is-tablet .mobile-navbar { display: none }`), but `Platform.isMobile` is true there, so the toggle is shown per the ticket's gate; on a tablet its only visible effect is the bar dropping from the 80/84 px lift to the bottom edge.
+- Removed the `.is-mobile .osmosis-graph3d-corner` 40 px left offset, which only made room for the old toolbar toggle; the 3D bottom-left corner is now just the help button and speed readout.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/views/ToolRibbon.ts` | `BarToggle`, `barToggles`, `NavbarPrefs`, `NAVBAR_STORAGE_KEYS`, `readNavbarPrefs`, `navbarHidden`, `HIDE_NAVBAR_CLASS`, `NavbarHost`, `hidesNavbar`, `toggleNavbarPref`, `syncNavbar`; `toggles` option; `setPressed` |
+| `src/views/ToolRibbon.test.ts` | toggle visibility per view/platform; navbar rule and defaults |
+| `src/views/MindMapView.ts` | navbar toggle in the ribbon; `navbarEditMode`, `showNavbar` on open and in `setReadingMode`; sync on close |
+| `src/views/Graph3DView.ts` | corner toolbar toggle, `syncMobileToolbar`, `HIDE_TOOLBAR_*` removed; ribbon toggles; `sticksShown`, `toggleSticks`; `showNavbar` in `setEditMode` |
+| `src/views/Graph3DScene.ts` | `showSticks`; `onSticksToggle` option removed |
+| `src/views/Graph3DSticks.ts` | corner toggle removed; `show()` public |
+| `src/main.ts` | one `active-leaf-change` → `syncNavbar`; unload removes `HIDE_NAVBAR_CLASS` |
+| `styles.css` | class rename; ribbon in the navbar slot; `.osmosis-toolbar-btn.is-active`; old corner toggle rules removed |
+| `docs/mind-mapping/editing.md` | phone/tablet paragraph under Toolbar |
+
+### Fixture
+None new: any map works. `vault/tests/graph3d/Sailing Basics.md` for 3D, any 2D mind map note for 2D.
+
+### Could not verify
+- Everything visual on a real phone: the bar at the navbar's slot (depends on `--navbar-bottom-offset` being defined where the view can see it; falls back to `--size-4-2`), whether Obsidian leaves a blank strip where the navbar was, and the toggle being reachable on a narrow screen.
+- Pre-existing, not changed here: in 3D reading mode on a phone with the navbar shown and the joysticks up, the ribbon (bottom 92 px) and the sticks (bottom 92 px, 120 px tall, at the sides) share a band; on a narrow phone the ribbon's ends may sit under a stick. Worth a look during the test.
