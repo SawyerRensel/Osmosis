@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Toolbar - Mind map toolbar sizing, buttons and icons]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T17:00:00.000Z"
-date_modified: "2026-11-12T17:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T16:30:00.000Z"
+date_start_scheduled: "2026-11-12T16:22:28.000Z"
+date_start_actual: "2026-11-12T16:22:28.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -66,3 +66,54 @@ Under ~130k. `src/views/ToolRibbon.ts` whole; `styles.css` by range (grep `osmos
 - Keys in map views need the view `Scope` (memory: mind map keys need the view Scope). Toolbar buttons come from `TOOLBAR_GROUPS` in `src/views/ToolRibbon.ts`.
 - Pure logic goes in modules outside `src/views/` so Vitest can import it (Vitest cannot import `obsidian`).
 - `src/views/MindMapView.ts` is ~84k tokens with NUL bytes: never read it whole, use `grep -a -n` and read ranges. Graph3DScene.ts (~37k), Graph3DView.ts (~30k), styles.css (~33k): ranges only.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `bc96ee8` on `feature/toolbar-desktop-width`.
+
+### Cause
+- **Width:** T63 set `.osmosis-toolbar-list` to a fixed `8 × 48 px + padding` (392 px) on every device. Desktop showed 22 buttons in a 392 px strip, and reading mode left empty space beside its 7 buttons.
+- **Tooltips:** buttons set `aria-label` and a native `title`. Obsidian's `aria-label` tooltip defaults to `placement: "bottom"` (app.js `gt()`: `top = rect.bottom + gap`). For a bar at the bottom of the window, that runs off the body, and Obsidian clamps it back with `top = bodyHeight - tooltipHeight - gap`, which puts it on top of the button. The native `title` showed a second tooltip at the cursor.
+
+### Fix
+- `styles.css`: the list is now `width: max-content; max-width: 100%`. The outer `.osmosis-toolbar` already had `max-width: calc(100% - var(--size-4-4))` in 2D, and the 3D bar keeps its `calc(100% - 2 × (--size-4-2 + 48px))`, which avoids the status bar corner. So the bar is exactly as wide as its visible buttons. When the view is narrower it is capped and scrolls, like the phone bar. Hidden reading-mode buttons are `display: none`, so they take no width. The phone's 8-slot width moved into a new `.is-phone .osmosis-toolbar-list` rule and is unchanged.
+- `ToolRibbon.ts`: action buttons and toggles use `setTooltip(btn, label, { placement: "top" })` (`BAR_TOOLTIP`), which also sets `aria-label`. The native `title` is gone. Each button is the bar's full 52 px height, so "top of the button" is the top of the bar, and Obsidian's default 8 px gap plus the arrow clears it. No extra `gap` was needed.
+
+### Decisions worth remembering
+- Tablets follow the desktop rule (fit to buttons, 48 px slots), as the ticket says "desktop/tablet". Only `.is-phone` keeps the 8-slot width.
+- The 3D desktop margin (48 px + 8 px each side, for the status bar) counts as the "margins" in "view width minus margins". It was not changed.
+
+### Measurements (headless Chromium, app.css + styles.css)
+| Case | View | Bar width | Visible buttons | Scrolls |
+|---|---|---|---|---|
+| Desktop 2D edit | 1400 | 1064 (22 × 48 + 8) | 22 | no |
+| Desktop 2D reading | 1400 | 344 | 7 | no |
+| Desktop 3D edit | 1400 | 1016 | 21 | no |
+| Desktop 3D reading | 1400 | 296 | 6 | no |
+| Desktop 2D edit | 600 | 584 (8 px margins) | 22 | yes (1064) |
+| Desktop 3D edit | 600 | 488 (56 px margins) | 21 | yes (1016) |
+| Desktop 2D reading | 300 | 284 | 7 | yes (344) |
+| Phone 2D / 3D edit (412 px) | 412 | 396, 48.5 px slots | 22 / 21 | yes, unchanged from T63 |
+
+### Surface map
+| File | Change |
+|---|---|
+| `styles.css` | `.osmosis-toolbar-list` width is `max-content`; new `.is-phone .osmosis-toolbar-list` keeps 8 slots; header comment updated |
+| `src/views/ToolRibbon.ts` | `BAR_TOOLTIP`; `setTooltip(..., { placement: "top" })` for buttons and toggles; native `title` removed |
+
+### Fixture
+No new fixture. Any mind map works, for example the sailing fixtures in `vault/tests/graph3d/`.
+
+### Not verified
+- The tooltip position in real Obsidian. It was worked out from app.js's `gt()` positioning code and not seen on screen.
+
+### Manual retest
+**Desktop**
+1. Open a mind map in 2D edit mode with the window wide. The bar shows all buttons with no empty slots, from create through ⋮.
+2. Switch to reading mode. The bar shrinks to its 7 buttons with no empty slots.
+3. Drag the pane narrower. The bar shrinks to the pane width minus about 8 px each side, and the mouse wheel scrolls it sideways.
+4. Hover any button. One tooltip appears above the bar with its arrow pointing down, and nothing covers the button. There is no second native tooltip.
+5. Repeat steps 1 to 4 in 3D (toggle 2D | 3D). The bar ends with ?, and when narrow it stops 56 px short of each side.
+
+**Phone**
+1. Open a map in edit mode. The bar is unchanged: 8 slots across the toolbar width, the rest scroll, and it sits in the navigation bar's slot.
