@@ -39,3 +39,13 @@ export function fitDistance(radius: number, fovDeg: number, aspect: number, marg
 	const halfWide = Math.atan(Math.tan(half) * Math.max(aspect, 1e-3));
 	return (radius * margin) / Math.sin(Math.min(half, halfWide));
 }
+
+/**
+ * Whether a view state opening the 3D graph frames the whole map (as Fit
+ * does) rather than landing somewhere: true unless it names a plate to stand
+ * at (a restored workspace, a forward step), a line to land on (`subpath`, a
+ * Mod-click on a link), or a mind map picture to lift off from.
+ */
+export function opensFitted(state: Record<string, unknown> | null | undefined): boolean {
+	return typeof state?.node !== "string" && (typeof state?.subpath !== "string" || state.subpath === "") && state?.liftOff == null;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enclosingSphere, fitDistance } from "./fit";
+import { enclosingSphere, fitDistance, opensFitted } from "./fit";
 
 describe("enclosingSphere", () => {
 	it("is null for nothing", () => {
@@ -34,5 +34,19 @@ describe("fitDistance", () => {
 	it("grows with the radius and the margin", () => {
 		expect(fitDistance(20, 60, 1.5)).toBeCloseTo(2 * fitDistance(10, 60, 1.5));
 		expect(fitDistance(10, 60, 1.5, 2)).toBeGreaterThan(fitDistance(10, 60, 1.5, 1));
+	});
+});
+
+describe("opensFitted", () => {
+	it("fits a plain open: the note header's map button, the command, the file menu", () => {
+		expect(opensFitted({ focus: "Sailing.md" })).toBe(true);
+		expect(opensFitted({ focus: "Sailing.md", node: null, subpath: "" })).toBe(true);
+		expect(opensFitted(undefined)).toBe(true);
+	});
+
+	it("lands on a named plate, line or lift-off instead", () => {
+		expect(opensFitted({ focus: "Sailing.md", node: "Sailing.md#3" })).toBe(false);
+		expect(opensFitted({ focus: "Sailing.md", subpath: "Rigging" })).toBe(false);
+		expect(opensFitted({ focus: "Sailing.md", liftOff: { boxes: [] } })).toBe(false);
 	});
 });

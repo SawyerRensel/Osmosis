@@ -34,6 +34,7 @@ import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, t
 import { placeNodes, type Placed } from "../graph3d/positions";
 import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
+import { opensFitted } from "../graph3d/fit";
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
@@ -192,6 +193,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	private readonly holds = new Map<string, () => void>();
 	/** The mind map's picture, handed over by its 2D/3D toggle: the next reload lifts off from it (see `graph3d/liftoff.ts`). */
 	private liftOff: LiftOff | null = null;
+	/** The view just opened on a note with nowhere named to land: its first reload frames the whole map, as Fit does (`opensFitted`). */
+	private fitOnOpen = false;
 	/** The mind map's own state (pinned, reading mode) from the toggle that opened this view, handed back on the toggle to 2D. */
 	private mapState: { pinned: boolean; readingMode: boolean } | null = null;
 	/** The save of the edit closed last, for the toggle to 2D to wait on. */
@@ -387,6 +390,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		// From the mind map's 2D/3D toggle: its picture to lift off from, and its own state to hand back. Neither is kept in getState.
 		const liftOff = readLiftOff(state?.liftOff);
 		if (liftOff !== null) this.liftOff = liftOff;
+		this.fitOnOpen = opensFitted(state);
 		if (state?.map !== undefined) {
 			const map = readMapState(state.map);
 			this.mapState = { pinned: map.pinned, readingMode: map.readingMode ?? false };
@@ -2490,6 +2494,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * the loaded area. A `subpath` (a heading or block, without its `#`) lands
 	 * on that line instead. A `landOn` plate (a back/forward step's) is landed
 	 * on whatever `flyToFocus` says, or its note's root if an edit deleted it.
+	 * The first reload after the view opens with nowhere named to land frames
+	 * the whole map instead (`fitOnOpen`).
 	 */
 	private async reload(flyToFocus = false, subpath = "", landOn: string | null = null): Promise<void> {
 		const scene = this.scene;
@@ -2572,6 +2578,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Once, after the mind map's toggle: its nodes start flat where it drew them, free, and the camera looks at them from where the map did.
 		const liftOff = this.liftOff;
 		this.liftOff = null;
+		const fit = this.fitOnOpen;
+		this.fitOnOpen = false;
 		const seeds = liftOff === null ? undefined : liftOffSeeds(model, liftOff, scene.linePlateHeight);
 		if (this.faceFocus) {
 			this.faceFocus = false;
@@ -2590,6 +2598,9 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		} else if (landOn !== null) {
 			const ids = new Set(model.nodes.map((node) => node.id));
 			scene.flyTo(landing((id) => ids.has(id), focus, landOn), true);
+		} else if (fit) {
+			scene.setFocusId(noteNodeId(focus));
+			scene.fitAll(true);
 		} else if (flyToFocus) scene.flyTo(linkTargetNode(model, focus, subpath) ?? noteNodeId(focus), true);
 		this.openPending(scene, model);
 		// After the new line is seeded beside its parent, so the camera tracks it from there.

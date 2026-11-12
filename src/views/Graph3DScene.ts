@@ -462,6 +462,8 @@ export class Graph3DScene {
 	private paused = false;
 	private pendingFlight: string | null = null;
 	private pendingFlightWaits = false;
+	/** A Fit waiting for the layout to spread out after new data (`fitAll(true)`). */
+	private pendingFit = false;
 	/** The node last flown to: the focused node, whose links (and its neighbours') fire on a click. */
 	private focusId: string | null = null;
 	/**
@@ -1157,6 +1159,7 @@ export class Graph3DScene {
 	flyTo(id: string, afterLayout = false): void {
 		this.pendingFlight = id;
 		this.pendingFlightWaits = afterLayout;
+		this.pendingFit = false;
 		this.focusId = id;
 		this.ride = null;
 		this.startPendingFlight();
@@ -1188,9 +1191,16 @@ export class Graph3DScene {
 	/**
 	 * The ribbon's Fit: glide back (or in) along the camera's line of sight until
 	 * every loaded plate is in view (`enclosingSphere`, `fitDistance`). The
-	 * camera keeps its turn, as `glideTo` does.
+	 * camera keeps its turn, as `glideTo` does. With `afterLayout` (a map just
+	 * opened), it waits for the layout to spread out first, as `flyTo` can;
+	 * any move of the view meanwhile drops it.
 	 */
-	fitAll(): void {
+	fitAll(afterLayout = false): void {
+		this.pendingFit = afterLayout && this.ticksSinceData < SETTLE_TICKS;
+		if (this.pendingFit) {
+			this.pendingFlight = null;
+			return;
+		}
 		const live = this.nodes.filter((n): n is EngineNode & Vec3 => !n.departing && placed(n));
 		const sphere = enclosingSphere(live.map((n) => ({ x: n.x, y: n.y, z: n.z, r: n.extent / 2 })));
 		if (sphere === null) return;
@@ -1486,6 +1496,7 @@ export class Graph3DScene {
 	}
 
 	private startPendingFlight(): void {
+		if (this.pendingFit && this.ticksSinceData >= SETTLE_TICKS) this.fitAll();
 		if (this.pendingFlight === null) return;
 		const node = this.nodes.find((n) => n.id === this.pendingFlight);
 		if (node === undefined) {
@@ -1728,6 +1739,7 @@ export class Graph3DScene {
 	/** The user moved the view: a flight or follow under way gives way, and so does any coast. A structural edit's track goes on (see `reshape`). */
 	private cancelFlight(): void {
 		this.flight = this.glide = this.ride = this.hoverFlight = null;
+		this.pendingFit = false;
 		if (this.follow?.track !== true) this.follow = null;
 		this.stopCoasting();
 	}
@@ -1758,6 +1770,7 @@ export class Graph3DScene {
 		const standOff = this.viewingDistance();
 		const trip = startTrip(camera, this.orbitControls().target, toEnd ? a : b, toEnd ? b : a, standOff, performance.now(), this.overlays.travelSpeed);
 		this.pendingFlight = null;
+		this.pendingFit = false;
 		this.flight = this.follow = this.glide = this.hoverFlight = null;
 		const up = this.graph.camera().up;
 		this.ride = { from, to, trip, lands: this.world.place(to.id) !== undefined, up: { x: up.x, y: up.y, z: up.z } };
