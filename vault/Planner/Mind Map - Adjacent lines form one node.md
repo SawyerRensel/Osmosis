@@ -10,11 +10,11 @@ people:
 location:
 related:
   - "[[Support indented callouts and blocks in mind map view and note view]]"
-status: In-Progress
+status: In-Review
 priority:
-progress: 35
+progress: 70
 date_created: "2026-11-12T17:00:00.000Z"
-date_modified: "2026-11-12T18:10:00.000Z"
+date_modified: "2026-11-12T18:00:00.000Z"
 date_start_scheduled: "2026-11-12T17:07:56.000Z"
 date_start_actual: "2026-11-12T17:07:56.000Z"
 date_end_scheduled:
@@ -168,9 +168,51 @@ Old and new parser interleaved in one process (10 × 40 parses each, 3 runs): ol
 
 Note on the fixture: the breaker cases ("Prose right above a list", etc.) are written without blank lines on purpose; the first map write spaces them off, as it always has.
 
-## Next session (Phase 2: 2D render + editor + edit ops)
-1. `MindMapView.ts`: `getNodeDisplayContent` (`grep -a -n getNodeDisplayContent`) → `groupDisplayMarkdown(node)` from `src/line-groups.ts`; check the node-HTML cache key includes the display text, not just `content`.
-2. `src/mindmap-edit.ts` (`grep -a`, NUL bytes): `nodeEditText` / `restoreEditedLine` with multi-line `raw` (the group's ID goes on the last line; earlier IDs are already inside `raw`); `serializeLine` / `retypeSubtree` / `retypeInFile` for groups (retype a heading group = retype its first heading line only).
-3. Add a pure `separateRun(text, offset)` helper and apply it in `insertSibling(Before)`, `moveSiblings`, `moveWithinFile`, `indent/outdentSiblings`, `insertParent`, `edit-moves.ts`, paste: wherever a splice leaves a groupable line directly against another, insert the blank line. Flip the two Phase 2 `it.fails` in `mindmap-edit.test.ts` back to `it` and make them pass.
-4. Check the inline editor overlay with multi-line text (`editOverlayGeometry`).
-5. Then Phase 3 (3D near panel keeps media embeds, `selection-edit`/`edit.ts` `separateRun`, flip the three Phase 3 `it.fails`; reading-view reveal over the group's span). Phases 1+2 go to Sawyer for manual testing together; set In-Review only then.
+## Batch implementation notes (awaiting manual test)
+Session 3 built Phase 2 and the Phase 3 *edit-op* fixes (code commit `bec4e09`). Status is **In-Review** so the 2D side can be tested; the 3D near panel and reading-view reveal are still Phase 3 (see "Next session").
+
+### What was built
+- **2D rendering:** `getNodeDisplayContent` ends in `groupDisplayMarkdown(node)`, so a heading group draws its cover image above the title and its caption below. Both node caches key on the display text, so no cache-key change was needed: a group's key differs from its bare heading's.
+- **Inline editor:** `nodeEditText` opens every line of `raw`, each with the first line's indentation stripped; `restoreEditedLine` puts the indentation back on every non-blank line and the group's ID on the **last** line. `reattachBlockId` now looks only at the last line, so an ID the user typed there is not doubled. IDs on earlier lines (multi-ID runs) are inside `raw` and round-trip as text. Shift+Enter already gave a new line, and `editOverlayGeometry` already grows with the text, as for code blocks. An unchanged save is byte-identical (tested).
+- **Retype:** `retypeSubtree` reads the first line of the edited text, so retyping a group from the editor follows whatever its first line now is. The *placement* fix is the separation below.
+- **`separateRuns(text, seams)`** (pure, `src/line-groups.ts`): at each seam (an offset where an edit joined lines that were not adjacent before) that starts a line, it adds a blank line when the line before and the line at the seam are both groupable, and returns an offset mapper. It is applied by `insertChild`, `insertSibling`, `insertSiblingBefore`, `deleteSubtree`, `moveSiblings`, `indentSiblings`, `outdentSiblings`, `insertParent`, `moveWithinFile` and `retypeInFile`. Two new wrappers, `insertBlock` / `cutBlock` (`mindmap-edit.ts`), cover cross-file moves (`edit-moves.ts`) and paste (`node-clipboard.ts`). The 3D selection splice (`graph3d/selection-edit.ts` `splice`) tracks its cut and insert seams and runs it too.
+- **3D link append** (`appendInsertion`): a group takes the link text at the end of its last line, before its block ID. Before this fix it was appended after the ID, which would have broken the ID.
+- **Tests:** all five T75 `it.fails` are back to `it()`, including the three Phase 3 ones in `graph3d/edit` and `selection-edit`. New tests: `separateRuns` in `line-groups.test.ts`, and a "line groups survive edits (T75)" block in `mindmap-edit.test.ts` (edit text, indentation, byte-identical save, group move, sibling-before, paragraph move, `cutBlock`/`insertBlock`).
+
+### Decisions worth remembering
+- **Seams, not a global pass.** Each node is a whole run, so two adjacent groupable lines that belong to *different* nodes can only exist where an edit just put them together. Separating at the edit's own seams can therefore never split a user's run. The alternative, "split any adjacency that wasn't there before", would also have split a moved group's own lines after a re-level changed their text.
+- **Only a column-0 seam line is separated.** In Osmosis's parser a blank line ends a list (`- a\n\tp1\n\n\tp2` puts `p2` at the root), so a blank line can't separate two indented continuation lines without re-parenting the second. Two indented paragraphs brought together under one list item by an edit therefore merge into one group. This is rare (it needs a move between list-item continuation paragraphs). Fixing it would need a parser change, so it is left alone.
+- **Test expectations that changed:** "structural edits give the bytes…" `down heading Moorings`, `up heading Fuel` and `parent heading Fuel` now carry the blank line the op adds (previously only the normalizer added it). The Phase-1 guessed expectation for "re-levels … Alt+Right" was corrected to the op's real output (a trailing `\n` left by the cut, which the normalizer removes), and the test now also checks the parse. The `retypeSubtree` test helper splices with `separateRuns` the way `retypeInFile` does.
+- **Heading-group styling:** the whole node uses the heading's CSS class, so a caption under the title renders at the heading's font size in 2D. Not changed. Look at it in the manual test.
+
+### Surface map (session 3)
+| File | Change |
+|---|---|
+| `src/line-groups.ts` (+ test) | `separateRuns` + `Separated` |
+| `src/mindmap-edit.ts` (+ test) | multi-line `nodeEditText`/`restoreEditedLine`, last-line `reattachBlockId`; `insertBlock`, `cutBlock`, `separated`; seams in every structural op and `retypeInFile` |
+| `src/views/MindMapView.ts` | `getNodeDisplayContent` → `groupDisplayMarkdown` |
+| `src/edit-moves.ts` | cross-file move uses `insertBlock` / `cutBlock` |
+| `src/node-clipboard.ts` | paste uses `insertBlock` |
+| `src/graph3d/selection-edit.ts` (+ test) | `splice` separates its seams |
+| `src/graph3d/edit.ts` (+ test) | `appendInsertion` on a group's last line |
+
+### Manual retest (2D, desktop and phone)
+Fixture: `vault/tests/mindmap/adjacent-lines.md`. **Reload Obsidian (Ctrl+R) first.** Open the note's mind map.
+1. **Cover above a heading:** "Rigging" is one node with the image drawn *above* the title, and "Check the halyard" / "Coil the sheets" are its children.
+2. **Caption below:** "Mooring" is one node, with the sentence under the title.
+3. **Blank line control:** the image and "Anchoring" are two nodes.
+4. **Two headings in one run:** "Tides" is one node showing "Spring and neap" and the sentence below it. "Spring and neap" has no node of its own.
+5. **Hard wrap / rule:** the reach paragraph is one node, and "Above the rule / *** / Below the rule" is one node.
+6. **Breakers:** each "Prose right above …" is its own node, apart from the list, table, callout, code block and note embed. The guarded run under `osmosis-exclude` is one node.
+7. **Inline edit:** double-click "Rigging". The editor shows both lines (`![[…]]` then `### Rigging`). Press Shift+Enter at the end, type a caption, then press Enter. The node now shows image, title and caption, and the source has the three lines with no blank line between them. Double-click "A carded run" and save without changes: the source is unchanged and `^os-adjl01` is still on the last line. Edit its first line and save: `^os-adjl01` stays at the end of the last line.
+8. **Edit ops keep nodes apart:** select "Mooring" (a heading group) and press Alt+Up / Alt+Down. It moves as one block, a blank line stays on each side, and no node merges with its new neighbour. With "Rigging" selected, press Shift+Enter (sibling before): the new empty heading is its own node above it. Drag "Anchoring" under another section, then indent/outdent a heading with Alt+Right/Left. The node count stays right and no two nodes merge.
+9. **Cards:** "A carded run" still studies as one card. After all the above, check `osmosis-schedule` in the frontmatter: `os-adjl01`, `02` and `03` are all still present.
+
+Undo with Ctrl+Z, or restore the fixture from `e2e/fixtures/adjacent-lines.md` (and reload) when done.
+
+## Next session (Phase 3: 3D near panel + reveal + study)
+Edit ops are done for both views (this session); what's left:
+1. `src/graph3d/near.ts` (L48, L69): the near panel renders `raw` through `unembed`, which turns **every** `![[…]]` into a link. Keep **media** embeds (`isMediaEmbed` from `line-groups.ts`) as embeds so a cover image shows in the near tier; render a heading group like 2D does (`groupDisplayMarkdown`). Far plates keep `content` (`graph3d/model.ts` L202, no change needed unless the label looks wrong).
+2. Reading-view reveal (`src/study/line-reveal.ts`, `LineRevealProcessor.ts` ~L230–260): hide the group's Osmosis line span (from the parse) rather than Obsidian's metadata-cache block span, which for `## Title` + `![[cover.png]] ^os-x` covers only the image line.
+3. `SequentialStudyModal.ts`: the card back is now `groupDisplayMarkdown` (Markdown with an image): check it renders as Markdown and the image size is sane.
+4. Manual 3D pass (phone + desktop) on `vault/tests/mindmap/adjacent-lines.md`: near panel shows the cover image, 3D edit ops (sibling before, Alt-arrows, selection move to end, link) keep nodes apart.
