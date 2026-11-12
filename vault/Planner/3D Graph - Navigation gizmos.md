@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Touchpad swipe rotates]]"
   - "[[Graph pointer gestures - orbit, pan, link, menu]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T05:53:58.000Z"
-date_modified: "2026-11-12T05:53:58.000Z"
+date_modified: "2026-11-12T06:30:00.000Z"
 date_start_scheduled:
-date_start_actual:
+date_start_actual: "2026-11-12T06:06:21.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -97,3 +97,47 @@ Modifier drags (Ctrl or right-drag to pan, middle-drag to zoom) or the ribbon's 
 2. Drag Rotate: orbits around the centre. Drag Pan: the view slides. Drag Zoom up and down: zooms in and out.
 3. Click each gizmo without moving: nothing happens.
 4. In 2D, or on a phone or touch-screen laptop: no gizmos.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `cd08e22` on `feature/3d-nav-gizmos`. Not pushed, no PR.
+
+### Approach
+
+- **Pure module `src/graph3d/gizmos.ts`.** `GIZMOS` (kind, Lucide icon, tooltip, rest and drag cursors), `gizmosAvailable` (the inverse of the joystick gate, `!isMobile && maxTouchPoints === 0`), and `gizmoZoom(dy, height)`, the natural-log zoom for a vertical drag: a drag the height of the view is x8.
+- **DOM `src/views/Graph3DGizmos.ts`.** Three round buttons in a column. Pointer capture on press, so the drag goes on off the button, and `stopPropagation` so the canvas never starts a drag. It reports `begin` / `move(dx, dy)` / `end(released)` to the scene. **`begin` waits for the first move**, so a click without dragging does nothing at all (it doesn't even cancel a flight or coast). The scene builds it only when the view passes `gizmos: true` (`Graph3DView`, from `gizmosAvailable`), so it is never in 2D (a different view) and not on touch devices.
+- **Scene (`Graph3DScene`: `beginGizmo` / `moveGizmo` / `endGizmo`).**
+  - Rotate builds a `RotateDrag` pivoted on a clone of the orbit target, with no grab, and calls the drag's own `rotate()`. Pan calls `pan()` at the target's depth, as OrbitControls' mouse pan does. The state is `this.gizmoDrag`, a `Swipe`, separate from `this.drag` and from `this.swipe`.
+  - Release coasts through `launchSwipe`, which I extracted from T59's `endSwipe`. `endSwipe` passes the last event's time, as before; a gizmo passes the moment of release, so holding still before letting go coasts nowhere, as a drag does.
+  - Zoom adds `gizmoZoom` to `wheelZoom.pending`, aimed at the middle of the view, as the ribbon's `zoomStep` does. The wheel's own glide plays it out, so no separate coast.
+- **Swipe interplay.** `beginGizmo` clears `this.swipe`. A wheel event while a gizmo is held counts as pointer-busy, so it zooms and isn't classified as a swipe. `endSwipe` (from `tick`) only looks at `this.swipe`, so it never ends a gizmo drag. A followed node's move shifts the gizmo's pivot with the others.
+
+### Decisions worth remembering
+
+- **Drag direction = the content follows the pointer**, the same as a canvas drag (rotate drags the world, pan drags the view). Zoom: up zooms in.
+- **Zoom rate x8 per view height.** A guess to be felt. It is `GIZMO_ZOOM_PER_HEIGHT`.
+- **Zoom aims at the screen centre through `wheelZoom`**, so it picks a node near the centre if there is one (as the ribbon does) and falls back to the last depth. I did not use the orbit target, to match the ribbon.
+- **Find bar:** it sits in the same corner (z-index 11), so the gizmos are hidden while it is open (`:has(.osmosis-find-bar)`; it is attached only while open).
+- **Icons:** `rotate-3d`, `hand`, `search` (Lucide, bundled with Obsidian). If `rotate-3d` is missing in some Obsidian version the button shows blank; swap it in `GIZMOS`.
+- **Cursors:** rotate grab then grabbing, pan move, zoom ns-resize. The drag cursor works through the captured pointer's element.
+- **Help list:** new "Navigation gizmos" group in `controls-help.ts`.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/graph3d/gizmos.ts`, `gizmos.test.ts` (new) | Gizmo definitions, availability gate, drag-to-zoom mapping; 6 tests |
+| `src/views/Graph3DGizmos.ts` (new) | The three buttons and their pointer handling |
+| `src/views/Graph3DScene.ts` | `gizmos` option, `gizmoDrag`, `beginGizmo` / `moveGizmo` / `endGizmo`, `launchSwipe` extracted from `endSwipe`, pointer-busy and follow-pivot include the gizmo drag |
+| `src/views/Graph3DView.ts` | Passes `gizmos: gizmosAvailable(...)` |
+| `styles.css` | `.osmosis-graph3d-gizmos` / `-gizmo` (top right, faint, hover, dragging, hidden while Find is open) |
+| `src/graph3d/controls-help.ts`, `.test.ts` | "Navigation gizmos" group |
+| `docs/mind-mapping/graph-3d.md` | "Navigation gizmos" section under Controls |
+
+### Fixture
+
+No new fixture: `vault/tests/graph3d/Sailing Basics.md` in 3D.
+
+### Not verified
+
+Nothing was run in Obsidian. Unchecked: the icons' look, the zoom rate and rotate/pan feel, that the tooltip appears to the left, the cursor while dragging, coast on release, and a touch-screen laptop (`maxTouchPoints > 0` hides them).
