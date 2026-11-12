@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[3D Graph - Stress web first settle runs at 2 fps]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T18:30:00.000Z"
-date_modified: "2026-11-12T18:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T18:40:00.000Z"
+date_start_scheduled: "2026-11-12T18:28:59.000Z"
+date_start_actual: "2026-11-12T18:28:59.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -90,3 +90,70 @@ Keep it under ~130k tokens. Read `Graph3DPerf.ts` and `Graph3DNear.ts` whole (th
 
 ## Test plan (Sawyer)
 Run the generator. Open "Perf 10k" in 2D and in 3D, open the gauge, and pan, orbit and edit. Report the numbers. These numbers are the baseline T77–T80 are judged against.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `d8fb864` on `feature/perf-frame-readout`. Measuring only: no behaviour changes, and nothing is recorded while a gauge is hidden (every hook checks the toggle first; the 2D gauge's frame clock and the LoAF observer only exist while shown).
+
+### Approach
+- **Shared pieces.** `src/perf-stats.ts` (pure, tested): a sliding-window `Rolling`, the LoAF phase split (`loafPhases`: script = `renderStart − startTime`, rAF/ResizeObserver = `styleAndLayoutStart − renderStart`, style+layout = end − `styleAndLayoutStart`), `untimedMs` (frame avg minus the timed parts) and the readout's browser line. `src/views/PerfGauge.ts`: the top-left toggle + readout and the `long-animation-frame` `PerformanceObserver`, used by both views.
+- **3D (`Graph3DPerf`).** As before, plus: the near tier's CSS2D and CSS3D `render` wrapped like the WebGL one (summed per frame as "panels: render"); `Graph3DNear.stats` (null while hidden) sums the time in `place`/`placeTilted`, the transform writes (one per panel placed) and the mask writes that were not skipped; the force-engine tick; live panels by kind (code = has a `pre`, image = `img`/`video`/embed, else plain).
+- **2D (`MindMapPerf`).** fps and frame avg/worst from its own rAF clock (only while shown); cull pass time (`runCullUpdate`, per pass, wall time incl. its awaited node draws); nodes in the layout, drawn (`renderedNodeIds`) and node groups in the DOM; last parse, last full render split into measure (`measureNodeSizes`) and `computeLayout`; last edit commit; the same LoAF line.
+
+### Readout lines
+3D: `panels: render … place … transforms … masks … /frame`, `live panels N (code, image, plain)`, `engine: idle | x ms/tick, n ticks/s`, `browser (…)` / untimed. 2D: `fps`, `cull: passes/s avg (max)`, `nodes / drawn / in DOM`, `last parse … render … (measure …, layout …)`, `last edit commit`, browser line.
+
+### Decisions worth remembering
+- **LoAF only reports frames longer than 50 ms.** At ~28 ms frames the browser line will say "no frame over 50 ms"; the always-shown `untimed … ms/frame` (frame avg minus everything timed) is then the number for style/layout/paint/composite. Support is detected at runtime (`PerformanceObserver.supportedEntryTypes`); I could not check Obsidian's Electron version from here. Chrome shipped LoAF in 123.
+- **Engine tick is timed from the charge force to the next WebGL render.** three-forcegraph does not expose its d3 simulation, and replacing the link force to time it would reorder the forces. So the link force (first in the order) is untimed; the charge, notes, flatten and planets forces, d3's integration and the engine's node-position copy are in. Shown per tick and as ticks/s; the untimed remainder subtracts its per-frame share.
+- **Transform writes = panels placed.** Each `place` writes the box transform once; the CSS2D/CSS3D renderer writes the anchor's too (not counted separately: always one per visible panel object).
+- **Parse time is a cache miss.** The view parses through `ParseCache.get`; the gauge wraps it and records only calls that returned a tree it had not seen (a hit is the content hash, 0.4 ms on 10k). A tree first parsed while the gauge was hidden counts once when it is next fetched.
+- **Edit commit** runs from `assertEditableFresh` (every map mutation passes it) to the end of the next full render pass. An op refused after the guard leaves the mark until the next render; the next op overwrites it.
+- **2D placement:** the top-left corner of the map was free (toolbar is bottom-centre, find bar top-right). The gauge stops pointer/wheel events so clicking it does not pan or deselect, and is re-attached after every render pass (which empties the container), like the toolbar.
+- **CSS classes renamed** `osmosis-graph3d-perf*` → `osmosis-perf*` (shared). The 3D readout keeps its click-to-hide-plates (`.is-clickable`); the 2D one has no click.
+
+### Benchmark notes
+`node e2e/generate-perf-notes.mjs` writes `e2e/fixtures/perf/Perf 10k.md` (10,002 lines, 4,136 nodes) and `Perf 3k.md` (3,002 lines) and copies them to `vault/tests/perf/`. Both directories are gitignored (`.gitignore`). Headings H1–H5, nested lists to depth 4, prose, adjacent-line groups of 2–4 lines, code blocks (ts/python/text), tip callouts, tables, three images from `vault/media`, `^bN` block IDs with `[[#^bN]]` refs, and cross-links between the two notes. Sailing/workshop/bookkeeping/painting words.
+
+### Vitest benchmarks (measured, this machine, `src/perf-bench.test.ts`, median of 5 after 2 warm-ups)
+| Step on Perf 10k | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| `OsmosisParser.parse` (4,136 nodes) | 11.8 ms | 12.6 ms | 13.7 ms |
+| content hash (cache hit cost) | 0.4 ms | 0.4 ms | 0.4 ms |
+| `computeLayout` (default sizes) | 2.7 ms | 3.3 ms | 1.8 ms |
+
+Reported via `console.debug`, not asserted.
+
+### Suspects for T77–T80
+- **measured** (Sawyer's baseline): ~90% of the 3D frame (≈25 of 28 ms) is outside tick + WebGL render. The new gauge splits this into panel renders, place, engine and the untimed browser remainder.
+- **measured**: on 10k lines, parse (~12 ms) and `computeLayout` (~2–3 ms) are small. A slow 2D full render or edit commit is therefore elsewhere.
+- **read from code**: `measureNodeSizes` renders every node's Markdown into a detached div on every render pass (4,136 nodes), and each edit commit runs a full pass. Likely the bulk of 2D render/commit time; the gauge's `measure` field will show it.
+- **read from code**: each cull pass walks all layout nodes twice and runs one `querySelectorAll` per node leaving the view.
+- **read from code**: every 3D frame, every panel gets unconditional style writes: the anchor's opacity in `update`, the box transform and the veil opacity in `place`, and the renderer's anchor transform. In motion the masks change too, and each mask write re-rasterises a `mask-image`. With 48 live panels this is a strong candidate for the untimed style/layout/paint time.
+- **read from code**: the CSS2DRenderer sorts its objects by distance every render and writes `zIndex` per object.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/perf-stats.ts` | New: pure frame stats (`Rolling`, `LoafStats`, `loafPhases`, `untimedMs`, `loafLine`) |
+| `src/perf-stats.test.ts` | New: 7 tests |
+| `src/perf-bench.test.ts` | New: parse / hash / computeLayout benchmarks on Perf 10k (reported) |
+| `src/views/PerfGauge.ts` | New: shared toggle + readout + LoAF observer |
+| `src/views/Graph3DPerf.ts` | Rebuilt on PerfGauge; panel renders, place, transforms, masks, engine, panel kinds, browser line |
+| `src/views/Graph3DNear.ts` | `NearStats` / `stats` (null while hidden), `place` timing wrapper, mask-write count, `panelKinds()` |
+| `src/views/Graph3DScene.ts` | Passes `near` to the perf; `perf.engineTick()` at the start of the charge force |
+| `src/views/MindMapPerf.ts` | New: the 2D gauge |
+| `src/views/MindMapView.ts` | Creates/attaches/destroys the gauge; hooks in `runCullUpdate`, `renderPass`, `assertEditableFresh` |
+| `styles.css` | `osmosis-graph3d-perf*` → `osmosis-perf*`; pointer cursor only on a clickable readout |
+| `e2e/generate-perf-notes.mjs` | New: Perf 10k / Perf 3k generator (exports `buildPerfNote`) |
+| `.gitignore` | `/e2e/fixtures/perf/`, `/vault/tests/perf/` |
+
+### Retest (desktop and phone)
+1. Run `node e2e/generate-perf-notes.mjs`, then reload Obsidian (Ctrl+R).
+2. **2D, desktop:** open `tests/perf/Perf 10k`, Mind Map view. There is a gauge icon at the top left. Click it: the readout opens under it. Clicking it must not pan the map or deselect. Pan and zoom: fps, frame avg/worst and cull passes update twice a second. Edit a node's text and commit: `last edit commit` and `render (measure, layout)` fill in. Click the icon again: the readout hides.
+3. **3D, desktop:** open the 3D graph on Perf 10k with Panel detail 1 and Live panels 48. Open the gauge, then orbit and fly: check the `panels`, `live panels`, `engine` and `browser`/`untimed` lines. Clicking the readout still hides or shows the plates.
+4. **Phone:** repeat 2 and 3 on `tests/perf/Perf 3k`.
+5. Record the numbers here. They are the baseline T77–T80 are judged against.
+
+### Not verified
+I can't see Obsidian, so none of the following is checked: the gauge layout in 2D, LoAF support in Obsidian's Electron, the numbers themselves, and whether the 2D gauge overlaps anything in study modes (spatial study pill, rating bubble).
