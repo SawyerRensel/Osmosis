@@ -23,7 +23,8 @@ import { Graph3DView, HIDE_TOOLBAR_CLASS, VIEW_TYPE_GRAPH3D } from "./views/Grap
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
-import { LineRevealProcessor } from "./views/LineRevealProcessor";
+import { LineRevealProcessor, peekIcon } from "./views/LineRevealProcessor";
+import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
@@ -426,6 +427,29 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// ── Note header ⋯ menu: Peek ────────────────────────────
+		// The note view is Obsidian's, not ours, so its ⋯ menu is reached through
+		// the workspace `file-menu` event (source "more-options", which carries
+		// the leaf). `setSection("pane")` joins the editor-behaviour group at the
+		// top (Rapid flashcard mode sits there too). Peek used to be a header button.
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, source: string, leaf?: WorkspaceLeaf) => {
+				if (source !== "more-options") return;
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+				const view = leaf?.view;
+				if (!(view instanceof MarkdownView) || !this.lineReveal.hasCards(file.path)) return;
+				menu.addItem((item) => {
+					item.setTitle("Peek mode")
+						.setIcon(peekIcon())
+						.setChecked(this.lineReveal.isPeeking(file.path))
+						.setSection("pane")
+						.onClick(() => {
+							this.lineReveal.peekNote(view);
+						});
+				});
+			}),
+		);
+
 		// ── File menu: "Mind map view" ──────────────────────────
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
@@ -533,6 +557,12 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
 				this.addMindMapActionToMarkdownLeaves();
+				this.rememberActiveMapView();
+			}),
+		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				this.rememberActiveMapView();
 			}),
 		);
 		this.app.workspace.onLayoutReady(() => {
@@ -972,9 +1002,10 @@ export default class OsmosisPlugin extends Plugin {
 			btn.addEventListener("click", () => {
 				const file = (leaf.view as MarkdownView).file;
 				if (file) {
+					const to = this.lastMapView();
 					void leaf.setViewState({
-						type: VIEW_TYPE_MINDMAP,
-						state: { file: file.path },
+						type: to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP,
+						state: to === "3d" ? { focus: file.path } : { file: file.path },
 						active: true,
 					});
 				}
@@ -986,6 +1017,22 @@ export default class OsmosisPlugin extends Plugin {
 				viewActions.prepend(btn);
 			}
 		}
+	}
+
+	/** The map view the note header's brain button opens: the last one used on this device. */
+	private lastMapView(): MapViewKind {
+		return cleanLastMapView(this.app.loadLocalStorage(LAST_MAP_VIEW_STORAGE_KEY));
+	}
+
+	private rememberMapView(kind: MapViewKind): void {
+		if (this.lastMapView() !== kind) this.app.saveLocalStorage(LAST_MAP_VIEW_STORAGE_KEY, kind);
+	}
+
+	/** Record the active leaf's map view, if it is one: covers tab clicks, the 2D | 3D pill, file-menu opens and a restored workspace. */
+	private rememberActiveMapView(): void {
+		const { workspace } = this.app;
+		if (workspace.getActiveViewOfType(Graph3DView)) this.rememberMapView("3d");
+		else if (workspace.getActiveViewOfType(MindMapView)) this.rememberMapView("2d");
 	}
 
 	/** Re-measure and re-render every open mind map, after a global setting
@@ -1049,6 +1096,7 @@ export default class OsmosisPlugin extends Plugin {
 		const type = to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP;
 		try {
 			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
+			this.rememberMapView(to);
 		} catch (error) {
 			console.error("Osmosis: 2D/3D toggle failed", error);
 			new Notice("Osmosis: could not switch views");

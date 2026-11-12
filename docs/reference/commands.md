@@ -58,7 +58,7 @@ Not everything is a command. These are the surfaces that reach Osmosis directly:
 | Surface | Items |
 |---------|-------|
 | **Ribbon** | :lucide-brain-circuit: Osmosis dashboard |
-| **Note header** | :lucide-brain-circuit: Mind map view · :lucide-scan-eye: Peek mode · :lucide-graduation-cap: Study this note (whenever the note has cards) |
+| **Note header** | :lucide-brain-circuit: opens the map view you used last (2D or 3D) · :lucide-graduation-cap: Study this note (whenever the note has cards). The ⋯ menu adds :lucide-scan-eye: Peek mode |
 | **Note ⋯ menu** | Rapid flashcard mode |
 | **Mind map header** | :lucide-file-text: Note view · 2D \| 3D pill · :lucide-graduation-cap: Study mode · :lucide-book-open: / :lucide-pencil: Reading mode. The ⋯ menu adds :lucide-paintbrush: Style, :lucide-pin: Pin and :lucide-scan-eye: Peek mode |
 | **Mind map toolbar** | [Every structural and viewport action](../mind-mapping/editing.md#toolbar) |

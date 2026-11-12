@@ -62,8 +62,8 @@ Undo is **multi-level**: press it repeatedly to walk back through the session. I
 Study in the note itself — no modal, no context switching, surrounded by the
 explanations and examples you wrote.
 
-Two actions appear in the header of any note that has cards, next to the
-reading/edit toggle:
+Two actions appear on any note that has cards. Study sits in the header, next
+to the reading/edit toggle; Peek is in the ⋯ menu:
 
 - :lucide-scan-eye: **Peek mode** — hides *every* card in the note. Reveal them
   in any order by clicking; nothing is recorded. The equivalent of covering the
@@ -141,7 +141,7 @@ Embedded notes (`![[note]]`) are first-class citizens in spatial study and peek:
 
 ### Peek on the Map
 
-The :lucide-scan-eye: icon next to the study button enters **peek mode**: every card node hides, you reveal them in any order by tapping, and nothing is recorded.
+The **Peek mode** entry in the ⋯ menu turns on **peek mode**: every card node hides, you reveal them in any order by tapping, and nothing is recorded.
 
 ## Choosing a Mode
 

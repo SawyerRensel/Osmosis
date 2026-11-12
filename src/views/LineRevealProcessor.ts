@@ -557,6 +557,31 @@ export class LineRevealProcessor {
 		this.syncBanners();
 	}
 
+	/** Whether the note has any card, line or fence: the gate for Study and for the ⋯ menu's Peek. */
+	hasCards(notePath: string): boolean {
+		return this.hasAnyCard(notePath);
+	}
+
+	/** Whether the note is in peek mode, for the ⋯ menu's check mark. */
+	isPeeking(notePath: string): boolean {
+		return this.states.get(notePath)?.mode === "peek";
+	}
+
+	/** Toggle peek from the ⋯ menu. Peek lives in reading view, so switch to it first if needed. */
+	peekNote(view: MarkdownView): void {
+		const path = view.file?.path;
+		if (path === undefined) return;
+		void (async () => {
+			if (view.getMode() !== "preview") {
+				await view.leaf.setViewState({
+					type: "markdown",
+					state: { ...view.getState(), mode: "preview" },
+				});
+			}
+			this.togglePeek(path);
+		})();
+	}
+
 	private togglePeek(notePath: string): void {
 		const state = this.stateFor(notePath);
 		if (state.mode === "study") this.endStudy(notePath, state);
@@ -743,19 +768,16 @@ export class LineRevealProcessor {
 			const show = path !== undefined && this.hasAnyCard(path);
 
 			let studyBtn = actions.querySelector(".osmosis-line-study-action");
-			let peekBtn = actions.querySelector(".osmosis-line-peek-action");
+			// Peek lives in the ⋯ menu now; drop a button left by an older build.
+			actions.querySelector(".osmosis-line-peek-action")?.remove();
 
 			if (!show) {
 				studyBtn?.remove();
-				peekBtn?.remove();
 				continue;
 			}
 
 			studyBtn ??= this.createHeaderAction("graduation-cap", "Study this note", "osmosis-line-study-action", view, (p) => {
 				this.toggleStudy(p);
-			});
-			peekBtn ??= this.createHeaderAction(peekIcon(), "Peek mode", "osmosis-line-peek-action", view, (p) => {
-				this.togglePeek(p);
 			});
 
 			// Re-anchor on every pass (the mind map button may appear after us):
@@ -766,11 +788,9 @@ export class LineRevealProcessor {
 				? mindMapBtn.nextSibling
 				: (findModeToggle(actions) ?? actions.firstChild);
 			actions.insertBefore(studyBtn, anchor);
-			actions.insertBefore(peekBtn, studyBtn);
 
 			const state = this.stateFor(path);
 			studyBtn.classList.toggle("is-active", state.mode === "study");
-			peekBtn.classList.toggle("is-active", state.mode === "peek");
 		}
 		return allReady;
 	}
