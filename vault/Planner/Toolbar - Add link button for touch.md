@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Touch drag rotates and tap-hold multi-selects]]"
   - "[[Toolbar - Mind map toolbar sizing, buttons and icons]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T11:52:00.000Z"
 date_modified: "2026-11-12T11:52:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-11-12T12:14:09.000Z"
+date_start_actual: "2026-11-12T12:14:09.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -66,3 +66,43 @@ Under ~130k tokens. Keep the pure "is this release a target pick?" state machine
 ## Acceptance criteria
 - Phone 2D and 3D edit mode: select A → Add link → drag around to find B (no link made) → tap B → link created, the same as the desktop result.
 - Cancel paths work; reading mode has no button.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: commit `6069490` on `feature/toolbar-add-link`. The whole ticket shipped.
+
+### What a link is
+The same thing in both views: `[[Note#^id|^N]]` (or `#Heading` for a uniquely named plain heading, or `[[Note]]` for a note/the 2D root) appended to the end of the source line, with a block ID stamped on the target if it has none. The 3D desktop drop menu's "Add link" writes exactly this. The pure edits were already shared (`src/graph3d/edit.ts`: `linkSubpath`, `appendInsertion`, `stampInsertion`; `src/graph3d/selection-edit.ts`: `planSelectionLink`), so nothing had to move. 2D had no cross-link notion before; it now calls `planSelectionLink` for one or many sources. 2D draws no line for a link: the new link shows as a `^N` link in the source node's text, the same as an existing one.
+
+### Approach
+- **Button:** `add-link` (icon `link`, label "Add link", command "Add link to node" → `mindmap-add-link`), `needsSelection`, `editOnly`, action `addLink`. It sits in its own group **right after Delete**: slot 9, the first button past the phone's eight. T63's eight-slot editing core is unchanged (its test still holds). Armed shows `is-active` + `aria-pressed` via a new `ToolRibbon.setActive(id, on)`.
+- **State machine:** `src/link-pick.ts` `LinkPicker` (pure, `link-pick.test.ts`). `toggle(selection)` arms on a copy of the selection (nothing selected: stays off) or disarms; `tap({target, linkable})` → `pass` (not armed) / `link` (sources, target; disarms) / `cancel` (empty space or a source; disarms) / `ignore` (unlinkable plate; stays armed); `cancel()` for Escape etc.
+- **Tap vs drag:** the views consult the picker only where a release has already been judged a tap. 3D: `Graph3DScene.click()`, reached only after `releaseIsClick` with `CLICK_SLOP_PX`, not after a hold (the hold timer nulls `press`) or a stopped coast. With `setLinkPicking(true)` the click calls `onLinkPick(pickedNode(...))` before anything else, so no checkbox, selection toggle, double-click, link follow or flight. 2D: top of `handleTouchTap` (pans set `panCommitted`, holds set `longPressTriggered`, and neither reaches it) and `handleClick` for the mouse (after the pan/drag and fold-toggle checks). Drags, pinches and holds run as usual and leave the mode armed. A hold still multi-selects, but the armed sources were fixed when it was armed.
+- **3D link:** one armed line → `linkLines(from, to)`; several → `linkSelection(nodes, to)` (like the drop menu). Only line IDs are armed; a selection with no line gives "select a line first". Targets: lines and notes (`dropTarget`'s rule); a tag/file/other plate gives a Notice and stays armed.
+- **2D link:** `linkNodes(sourceIds, targetId)`: `assertEditableFresh`, then each end is found again in a fresh `parser.parse` of its own file (`getNodeFile`: a transcluded node's source file) by `nodeAtStart` + type + content check. `planSelectionLink` plans it, every file is written in one edit group (target's file first, as 3D does), then `resyncFromParent`. The first linked line stays selected (`pendingSelectionRangeStart`).
+- **Cancel:** tap the button again, tap empty space, tap a source node, Escape (3D: after a link drag cancel; 2D: before the find bar), leaving edit mode (3D `setEditMode(false)`, 2D `setReadingMode(true)`), and 2D switching to another note.
+
+### Decisions worth remembering
+- **Slot 9, after Delete**, not after the create buttons. That would push Delete off a phone's first eight, which T63 deliberately filled with the editing core. Move it into the first group if Sawyer wants it visible without scrolling.
+- **A tap on empty space only cancels.** It does not also clear the selection the way a plain tap does, so cancelling loses nothing.
+- **Tapping a source cancels** rather than being ignored. It is the obvious "never mind".
+- **2D: a tap on a fold toggle still folds while armed**, so a target inside a collapsed branch can be reached. Any other tap on a node, including on a link inside it, picks the target.
+- **Sources are fixed at arm time**, not read from the selection at the pick, because a hold on the way (3D and 2D) changes the selection.
+- **2D embed lines (`![[…]]`) and the root are refused as sources**, and an embed line is refused as a target: `getNodeFile` names the embedded file for them, not the file their range indexes. The 2D root as a target links to the note (`[[Note]]`), which from its own note is skipped ("can't add a link to that line").
+- Mouse/desktop: the button works with clicks too. 3D Alt+drag-to-link and the drop menu are unchanged.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/link-pick.ts` (+test) | new: `LinkPicker`, `LinkPick`, `PickTap` |
+| `src/views/ToolRibbon.ts` (+test) | `add-link` def in its own group after Delete; `addLink` action; `setActive(id, on)` |
+| `src/views/Graph3DScene.ts` | `onLinkPick` option, `setLinkPicking`, intercept at the top of `click()` |
+| `src/views/Graph3DView.ts` | `linkPicker`, `toggleLinkPick`, `cancelLinkPick`, `pickLinkTarget`, `showLinkPick`; Escape and leaving edit mode cancel |
+| `src/views/MindMapView.ts` | `linkPicker`, `toggleLinkPick`, `cancelLinkPick`, `pickLinkTarget`, `linkNodes`; intercepts in `handleTouchTap`/`handleClick`; Escape, reading mode and another file cancel |
+| `src/graph3d/controls-help.ts`, `docs/mind-mapping/graph-3d.md`, `docs/mind-mapping/editing.md` | Add link documented |
+
+### Fixture
+None new. 3D: `vault/tests/graph3d/Sailing Basics.md` (and `Harbour Links.md` for linked notes). 2D: any mind map note, e.g. the same Sailing Basics file in 2D; one with an `![[embed]]` covers the cross-file case.
+
+### Could not verify
+Nothing was run in Obsidian or on a device. Not verified: whether the armed `is-active` look is visible enough on the bar; whether a phone's tap on a plate in 3D lands inside `CLICK_SLOP_PX` reliably while armed (it is the same test every 3D tap uses); 2D link into or out of a transcluded section (written by the code path above, but untested live); whether `normalizeHeadingSpacing`/renumbering shifts the 2D reselect offset on some notes (then the selection simply drops after the link).
