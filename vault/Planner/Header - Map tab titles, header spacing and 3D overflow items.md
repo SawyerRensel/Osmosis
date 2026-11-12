@@ -12,13 +12,13 @@ related:
   - "[[Header - Map header order and overflow menu]]"
   - "[[Header - Note header gateway and overflow menu]]"
   - "[[Ribbon - Osmosis toolbar styled as Obsidian's mobile toolbar]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T11:52:00.000Z"
 date_modified: "2026-11-12T11:52:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-11-12T11:54:00.000Z"
+date_start_actual: "2026-11-12T11:54:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -74,3 +74,62 @@ Under ~130k tokens. Read `styles.css`, `Graph3DView.ts` and `main.ts` by range.
 - Both tabs show the brain-circuit icon and the bare note name.
 - On a phone (computed in headless Chromium, and stated in the notes) our header buttons have the same box, padding and gaps as Obsidian's own actions, in the note header and in both map headers.
 - 3D ⋯ shows the joystick toggle (touch only) and Controls help; both work in reading mode on a phone.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: commit `252e13f` on `feature/map-tab-and-header-polish`. The whole ticket shipped.
+
+### 1. Tab titles
+- `MindMapView.getDisplayText()` returns the bare basename (still `… (pinned)` when pinned, T54's marker kept); `Graph3DView.getDisplayText()` returns the bare basename. With no file they still say "Mind Map" / "3D graph" so an empty tab isn't blank.
+- `Graph3DView` tab icon `orbit` → `brain-circuit` (the 2D view already used it).
+- Nothing read the prefixed title: no command, menu, test or doc matched on "Mind Map:" / "3D graph:". The `orbit` icon stays on the "3D graph" file-menu item and the toggle-3D command, since those name the 3D view among other actions.
+
+### 2. Header spacing: measured
+**Method.** Built the phone header DOM (Obsidian's own markup from `app.js`: `div.view-actions.mod-raised`, actions are `button.clickable-icon.view-action`, prepended by `addAction`) with body `theme-dark is-mobile is-phone is-android is-floating-nav`. Rendered it against `ref/obsidian-core/app.css` + `styles.css` in Playwright 1.62.1's headless Chromium (412 px wide, DPR 2) with Obsidian's real lucide paths, extracted from `app.js`. Three headers: stock note `[📖][⋮]`, our note `[🧠 a][🎓 a][bookmark (hidden)][📖][⋮]`, and the map `[📄][2D|3D][🎓][📖][⋮]`.
+
+**Computed (before the fix), x relative to the pill's left edge:**
+
+| Header | Pill | Each action |
+|---|---|---|
+| Stock note | h 44, padding 0, gap 2 px | 📖 0–44, ⋮ 46–90; every box 44 × 44, padding 4/6 px, margin 0, icon at +10 |
+| Our note | same | 🧠 0–44, 🎓 46–90, 📖 92–136, ⋮ 138–182; identical boxes. The `<a>` tag makes no difference. |
+| Map | same | 📄 0–44, pill 48–119.6 (2 px margins), 🎓 123.6–167.6, 📖 169.6–213.6, ⋮ 215.6–259.6 |
+
+**Compared with Sawyer's screenshot** (`r9-3d-phone-toolbar.png`, pill 243–677 image px, which is ×1.672 of the 259.6 px render): the predicted centres for 📄, pill, 🎓, 📖 and ⋮ are 280, 323–443, 486, 563 and 640. Sawyer's are 280, ~325–435, 484, 562 and 640. **The render reproduces the phone pixel for pixel, so our buttons already have Obsidian's box, padding and gap.** None of the ticket's suspects apply: a missing `view-action` class, a margin, the `<a>` tag, or a first-child rule (app.css has none).
+
+**The real cause is optical, and it comes from Obsidian's pill.** `.is-phone .view-header .view-actions` has `padding: 0`, so the first icon sits only its box's 10 px from the rounded end. Ink extents (lucide, 24 px): brain-circuit 1–21.5, file-text 3–21, graduation-cap and book-open 1–23, more-vertical 10–14. So:
+- leading inset, edge to ink: 🧠 11 px, 📄 13 px
+- neighbouring icons, ink to ink: 24–26 px (🧠→🎓 25.5, 🎓→📖 24)
+- trailing inset, ⋮ ink to edge: **20 px**, because ⋮ is thin
+
+The wide first icon therefore looks pressed against the edge, and by contrast farther from its neighbour. Obsidian's own rows hide this because they end in ⋮ and usually have only one wide icon.
+
+**Fix.** `.is-phone .view-header .view-actions:has(> .osmosis-mindmap-action, > .osmosis-view-switch) { padding-inline-start: var(--size-4-2) }`, which is 8 px. After the fix: 🧠 inset 19 px and 📄 21 px, matching ⋮'s 20 px. Boxes and gaps are unchanged (verified re-render: 🧠 8–52, 🎓 54–98, …). The pill is right-aligned (`margin-inline-start: auto`), so it grows to the left and nothing else moves.
+
+### 3. 3D ⋯ menu
+`PANE_MENU["3d"]` is now Style, Follow active note, **Walk and fly joysticks** (check mark, `gamepad-2`), **Controls help** (`help`). The view passes the joystick handler only when `hasTouch()` is true (the same gate as the toolbar 🎮, now one helper in `Graph3DView.ts`). It calls `toggleSticks()`, so the menu and 🎮 share one state and storage key. Controls help calls `help.toggle(true)`, which always opens the panel and never closes it: the ⋯ tap's pointerdown already closes an open panel as an outside click, and a toggle would then shut it again. Both entries also stay on the toolbar.
+
+**Help with no toolbar** (phone reading mode): the panel sits on `--osmosis-graph3d-above-bar`. With the bar hidden, the existing `:has(.osmosis-toolbar-hidden)` rule drops that to `--size-4-2` + the navbar lift, so the panel is centred just above Obsidian's navbar, and `max-height` keeps it under the header. No CSS change was needed. It closes on any outside tap or Escape, as before.
+
+### Decisions worth remembering
+- **The spacing fix is padding on the pill, not a change to our buttons.** Our buttons were measured identical to Obsidian's. Don't "fix" them toward Obsidian; they already are. The padding applies only to pills that hold our buttons, so plain Obsidian headers (canvas, other views) are untouched.
+- **Leading end only.** The trailing end is Obsidian's ⋮, which already reads as 20 px.
+- **🧠→🎓 is 1.5 px wider in ink than 🎓→📖** (25.5 vs 24), because brain-circuit's right half is thin circuit lines. This was left alone: changing the gap would make our boxes differ from Obsidian's.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/views/MindMapView.ts` | `getDisplayText` drops the "Mind Map: " prefix |
+| `src/views/Graph3DView.ts` | tab icon `brain-circuit`; `getDisplayText` drops "3D graph: "; `hasTouch()` helper; ⋯ menu passes `sticks` (touch only) and `help` |
+| `src/view-header.ts` | `PaneMenuId` + `PANE_MENU["3d"]` gain `sticks` and `help` |
+| `src/view-header.test.ts` | 3D menu order; `help` is not a toggle |
+| `styles.css` | phone pill `padding-inline-start` when it holds our buttons |
+| `docs/mind-mapping/graph-3d.md` | ⋯ menu contents |
+
+### Fixture
+None new. Use `vault/tests/graph3d/Sailing Basics.md`, and any note with cards for the 🎓 in the note header.
+
+### Could not verify
+- The real phone. The render reproduced Sawyer's map screenshot exactly, but the note header has no screenshot to compare against.
+- `:has()` needs Android WebView 105+ / iOS 15.4+. Older WebViews simply keep today's look.
+- The menu tap opening help on a real touch device: the pointerdown/click ordering was reasoned through, not observed.
