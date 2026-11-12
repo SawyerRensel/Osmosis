@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { LINK_LABEL_MAX, LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, openLinkTitle, releaseIsClick, textLinks, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
+import { LINK_LABEL_MAX, LINK_REACH, frontPanelAt, LINK_LABEL, linkClickAction, openLinkTitle, releaseIsClick, textLinks, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
 
 const plain: LinkClickInput = { click: true, link: { external: false }, isFocus: true, focusDistance: 0, mod: false, alt: false, panKey: false, touch: false };
 
@@ -82,27 +82,6 @@ describe("frontPanelAt", () => {
 	});
 });
 
-describe("nextLinkMarker", () => {
-	it("is 1 in a note with no markers", () => {
-		expect(nextLinkMarker("")).toBe(1);
-		expect(nextLinkMarker("- Sheet [[Deck#^cleat]]\n- Fender [[Deck|the deck]]\n")).toBe(1);
-	});
-
-	it("takes one past the highest marker, leaving gaps where links were deleted", () => {
-		expect(nextLinkMarker("- A [[Deck#^a|^1]]\n- B [[Deck#^b|^2]]\n")).toBe(3);
-		expect(nextLinkMarker("- B [[Deck#^b|^2]]\n")).toBe(3);
-		expect(nextLinkMarker("- A [[Deck#^a|^7]] and [[Galley|^3]]\n")).toBe(8);
-	});
-
-	it("counts markdown-style marker links, and ignores markers that are not a link's whole display text", () => {
-		expect(nextLinkMarker("- A [^4](Deck.md#^a)\n")).toBe(5);
-		expect(nextLinkMarker("- A [[Deck#^a|see ^9]] ^12 [^5]\n[^5]: a footnote\n")).toBe(1);
-	});
-
-	it("writes the marker as plain text", () => {
-		expect(linkMarker(3)).toBe("^3");
-	});
-});
 
 describe("releaseIsClick", () => {
 	const press = { x: 100, y: 100 };
@@ -136,6 +115,15 @@ describe("openLinkTitle", () => {
 });
 
 describe("textLinks", () => {
+	it("recognises node links written with the arrow label, in both link styles", () => {
+		expect(LINK_LABEL).toBe("-->");
+		expect(textLinks(`- Sheet [[Deck#^cleat|${LINK_LABEL}]] and [${LINK_LABEL}](#^winch) and [${LINK_LABEL}](Deck.md#^fender)`)).toEqual([
+			{ href: "Deck#^cleat", text: "-->", external: false },
+			{ href: "#^winch", text: "-->", external: false },
+			{ href: "Deck.md#^fender", text: "-->", external: false },
+		]);
+	});
+
 	it("lists wikilinks, Markdown links and bare URLs in order", () => {
 		const links = textLinks("The loop is at [[Knots#^bowline|the bowline]], see [help](https://help.obsidian.md) and https://example.com/tides");
 		expect(links).toEqual([

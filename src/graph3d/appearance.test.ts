@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { UNIT_SPACING, edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
+	it("shows a node link's arrow label as the arrow", () => {
+		expect(spriteLabel("Sheet [[Deck#^cleat|-->]]")).toBe("Sheet -->");
+		expect(spriteLabel("Sheet [-->](Deck.md#^cleat)")).toBe("Sheet -->");
+	});
+
 	it("drops a coloured highlight's colour emoji, and only that one", () => {
 		expect(spriteLabel("The ==🔴Danube== flows")).toBe("The Danube flows");
 		expect(spriteLabel("==🟣c1:Danube== and ==🟢Rhine==")).toBe("Danube and Rhine");

@@ -12,7 +12,7 @@ import { facingPhase } from "../graph3d/flatten";
 import { gizmosAvailable } from "../graph3d/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
-import { linkMarker, nextLinkMarker, openLinkTitle, textLinks, type LinkClick } from "../graph3d/links";
+import { LINK_LABEL, openLinkTitle, textLinks, type LinkClick } from "../graph3d/links";
 import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type LineRewrite, type ReplacePlan } from "../find-replace";
@@ -1076,7 +1076,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
 				return;
 			}
-			const text = this.app.fileManager.generateMarkdownLink(toFile, a.file.path, sub.subpath, linkMarker(nextLinkMarker(a.content)));
+			const text = this.app.fileManager.generateMarkdownLink(toFile, a.file.path, sub.subpath, LINK_LABEL);
 			const start = a.line.range.start;
 			this.editOwner = a.file.path;
 			this.lastEditPath = a.file.path;
