@@ -275,3 +275,23 @@ describe("generateLineCards", () => {
 		expect(bullet?.front).toBe("note › Section");
 	});
 });
+
+describe("generateLineCards: line groups (T75)", () => {
+	it("makes one card per run; a heading group's back shows its cover above the title", () => {
+		const markdown = "# Harbour\n\n![[cover.png]]\n## Moorings\ncaption line ^os-grp001\n\n- Buoy ^os-buoy01";
+		const cards = generateLineCards(markdown, "Sailing.md");
+		expect(cards.map((c) => c.blockId)).toEqual(["os-grp001", "os-buoy01"]);
+		const group = cards[0]!;
+		expect(group.back).toBe("![[cover.png]]\n\nMoorings\n\ncaption line");
+		expect(group.front).toBe("Sailing › Harbour");
+		expect(group.sourceLine).toBe(2);
+		// The child's breadcrumb uses the heading text, not the image.
+		expect(cards[1]!.front).toBe("Sailing › Harbour › Moorings");
+	});
+
+	it("a run with two IDs is one card under its last ID", () => {
+		const cards = generateLineCards("first ^os-aaaaaa\nsecond ^os-bbbbbb", "N.md");
+		expect(cards.map((c) => c.blockId)).toEqual(["os-bbbbbb"]);
+		expect(cards[0]!.back).toBe("first\nsecond");
+	});
+});

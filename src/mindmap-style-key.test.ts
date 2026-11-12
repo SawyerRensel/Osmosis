@@ -74,7 +74,9 @@ describe("planStyleKeys", () => {
 	});
 
 	it("keeps the _n: fallback for a paragraph line that runs on into the next", () => {
-		const text = "## Notes\n\nfirst line\nsecond line\n";
+		// Two prose lines are one node now (T75); a comment-only line breaks
+		// the node but not Obsidian's block, so "first line" still runs on.
+		const text = "## Notes\n\nfirst line\n<!-- second line -->\n";
 		const root = parser.parse(text, "N.md").root;
 		const runOn = preorder(root).find((n) => n.type === "paragraph")!;
 		const result = planStyleKeys(text, root, [runOn]);

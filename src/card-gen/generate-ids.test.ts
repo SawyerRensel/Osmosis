@@ -35,19 +35,27 @@ describe("planIdGeneration", () => {
 		expect(second.content).toBe(first.content);
 	});
 
-	it("splits a soft-wrapped prose run into separate blocks, one card each", () => {
-		// Consecutive prose lines are normalized into blank-separated blocks so
-		// every line becomes its own Obsidian block with a valid block ID —
-		// one line = one card (matches the mind map's save convention).
+	it("tags a soft-wrapped prose run once, on its last line (T75: one run, one card)", () => {
 		const md = "First line of prose\ncontinues on second line\n\nSeparate block";
 		const plan = planIdGeneration(md);
 
-		expect(plan.insertions).toHaveLength(3);
+		expect(plan.insertions).toHaveLength(2);
 		const contentLines = plan.content.split("\n");
-		expect(contentLines[0]).toMatch(/^First line of prose \^os-/);
-		expect(contentLines[1]).toBe(""); // blank inserted between the two lines
-		expect(contentLines[2]).toMatch(/^continues on second line \^os-/);
-		expect(contentLines[4]).toMatch(/^Separate block \^os-/);
+		expect(contentLines[0]).toBe("First line of prose");
+		expect(contentLines[1]).toMatch(/^continues on second line \^os-/);
+		expect(contentLines[3]).toMatch(/^Separate block \^os-/);
+	});
+
+	it("tags a cover image + heading run on its last line, as a heading", () => {
+		const md = "![[cover.png]]\n## Title\ncaption\n\n- item";
+		const plan = planIdGeneration(md);
+		expect(plan.insertions.map((i) => i.nodeType)).toEqual(["heading", "bullet"]);
+		expect(plan.content).toMatch(/^!\[\[cover\.png\]\]\n## Title\ncaption \^os-[0-9a-z]{6}\n\n- item \^os-/);
+	});
+
+	it("leaves a run that already carries an ID on an earlier line untagged", () => {
+		const md = "## Title ^os-aaaaaa\ncaption";
+		expect(planIdGeneration(md).insertions).toHaveLength(0);
 	});
 
 	it("adds a standalone after-block ID for generic code blocks", () => {
@@ -174,26 +182,25 @@ describe("planIdGeneration with a line range (add from selection)", () => {
 		expect(plan.content).not.toContain("# Four ^os-");
 	});
 
-	it("makes each selected prose line its own card, remapping the range across inserted blanks", () => {
-		const md = "# H\n\nLine one\nLine two\nLine three\n\n# Tail";
-		// Select the three prose lines (original indices 2–4)
-		const plan = planIdGeneration(md, { start: 2, end: 4 });
-		expect(plan.insertions).toHaveLength(3);
-		expect(plan.content).toContain("Line one ^os-");
-		expect(plan.content).toContain("Line two ^os-");
-		expect(plan.content).toContain("Line three ^os-");
-		expect(plan.content).not.toContain("# H ^os-");
-		expect(plan.content).not.toContain("# Tail ^os-");
+	it("tags a selected prose run once, remapping the range across inserted blanks", () => {
+		const md = "# H\nLine one\nLine two\nLine three\n\n- tail";
+		// "# H" + the three prose lines are one heading run; select lines 1–3
+		const plan = planIdGeneration(md, { start: 1, end: 3 });
+		expect(plan.insertions).toHaveLength(1);
+		expect(plan.content).toBe(`# H\nLine one\nLine two\nLine three ^${plan.insertions[0]!.id}\n\n- tail`);
+		const spaced = planIdGeneration("- a\nLine one\nLine two\n- b", { start: 3, end: 3 });
+		// The list items are spaced off; line 3 ("- b") is remapped to line 5.
+		expect(spaced.insertions).toHaveLength(1);
+		expect(spaced.content.split("\n")[5]).toMatch(/^- b \^os-/);
 	});
 
-	it("tags only the selected line within a prose run, not its neighbors", () => {
+	it("tags a prose run when the selection touches only one of its lines", () => {
 		const md = "Line A\ncontinues here\n\n- bullet";
 		// Selection touches only the run's second line (original index 1)
 		const plan = planIdGeneration(md, { start: 1, end: 1 });
 		expect(plan.insertions).toHaveLength(1);
 		expect(plan.insertions[0]).toMatchObject({ nodeType: "paragraph" });
-		expect(plan.content).toContain("continues here ^os-");
-		expect(plan.content).not.toContain("Line A ^os-");
+		expect(plan.content).toContain("Line A\ncontinues here ^os-");
 	});
 
 	it("adds nothing when the range holds only already-tagged elements", () => {

@@ -14,7 +14,7 @@ describe("OsmosisParser", () => {
 		});
 
 		it("parses heading levels 1 through 6", () => {
-			const md = "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6";
+			const md = "# H1\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6";
 			const tree = parser.parse(md, "test.md");
 			// H1 > H2 > H3 > H4 > H5 > H6 (nested hierarchy)
 			expect(tree.root.children).toHaveLength(1);
@@ -25,7 +25,7 @@ describe("OsmosisParser", () => {
 		});
 
 		it("creates sibling headings at the same level", () => {
-			const md = "## A\n## B\n## C";
+			const md = "## A\n\n## B\n\n## C";
 			const tree = parser.parse(md, "test.md");
 			expect(tree.root.children).toHaveLength(3);
 			expect(tree.root.children[0]?.content).toBe("A");
@@ -34,7 +34,7 @@ describe("OsmosisParser", () => {
 		});
 
 		it("handles heading hierarchy with back-tracking", () => {
-			const md = "# H1\n## H2\n### H3\n## H2b\n# H1b";
+			const md = "# H1\n\n## H2\n\n### H3\n\n## H2b\n\n# H1b";
 			const tree = parser.parse(md, "test.md");
 			expect(tree.root.children).toHaveLength(2); // H1, H1b
 			const h1 = tree.root.children[0];
@@ -98,7 +98,7 @@ describe("OsmosisParser", () => {
 		});
 
 		it("paragraphs under headings become children", () => {
-			const md = "# Title\nSome text";
+			const md = "# Title\n\nSome text";
 			const tree = parser.parse(md, "test.md");
 			const h1 = tree.root.children[0];
 			expect(h1?.children).toHaveLength(1);
@@ -370,11 +370,13 @@ describe("OsmosisParser", () => {
 		it("handles headings with lists and paragraphs", () => {
 			const md = [
 				"# Chapter 1",
+				"",
 				"Introduction text",
 				"- Point A",
 				"- Point B",
 				"  - Sub-point",
 				"## Section 1.1",
+				"",
 				"More text",
 				"1. Step one",
 				"2. Step two",
@@ -404,11 +406,11 @@ describe("OsmosisParser", () => {
 
 	describe("range tracking", () => {
 		it("tracks character positions for each node", () => {
-			const md = "# Title\nSome text";
+			const md = "# Title\n\nSome text";
 			const tree = parser.parse(md, "test.md");
 			const h1 = tree.root.children[0];
 			expect(h1?.range).toEqual({ start: 0, end: 7 });
-			expect(h1?.children[0]?.range).toEqual({ start: 8, end: 17 });
+			expect(h1?.children[0]?.range).toEqual({ start: 9, end: 18 });
 		});
 
 		it("root node spans the entire document", () => {
@@ -560,14 +562,14 @@ describe("OsmosisParser", () => {
 
 	describe("findNodeAtPosition", () => {
 		it("finds the correct node at a given position", () => {
-			const md = "# Title\nSome text";
+			const md = "# Title\n\nSome text";
 			const tree = parser.parse(md, "test.md");
 
 			// Position 3 is within "# Title" (range 0-7)
 			const node = parser.findNodeAtPosition(tree, 3);
 			expect(node?.content).toBe("Title");
 
-			// Position 10 is within "Some text" (range 8-17)
+			// Position 10 is within "Some text" (range 9-18)
 			const node2 = parser.findNodeAtPosition(tree, 10);
 			expect(node2?.content).toBe("Some text");
 		});
@@ -673,7 +675,7 @@ describe("OsmosisParser", () => {
 		});
 
 		it("code block under a heading becomes its child", () => {
-			const md = "## Section\nSome text\n```\ncode\n```";
+			const md = "## Section\n\nSome text\n```\ncode\n```";
 			const tree = parser.parse(md, "test.md");
 			const heading = tree.root.children[0];
 			expect(heading?.children).toHaveLength(2);
@@ -851,5 +853,104 @@ describe("OsmosisParser", () => {
 			expect(tree.root.children).toHaveLength(1);
 			expect(tree.root.children[0]?.type).toBe("paragraph");
 		});
+	});
+});
+
+describe("line groups: adjacent lines form one node (T75)", () => {
+	const parse = (md: string) => parser.parse(md, "N.md").root;
+
+	it("a cover image directly above a heading is that heading", () => {
+		const md = "# Top\n\n![[cover.png]]\n## Title\n- child";
+		const title = parse(md).children[0]!.children[0]!;
+		expect(title).toMatchObject({ type: "heading", depth: 2, content: "Title" });
+		expect(title.raw).toBe("![[cover.png]]\n## Title");
+		expect(title.range).toEqual({ start: 7, end: md.indexOf("\n- child") });
+		expect(title.children.map((c) => c.content)).toEqual(["child"]);
+	});
+
+	it("keeps the heading's node ID when a cover is added", () => {
+		const plain = parse("## Title\n\ntext").children[0]!;
+		const covered = parse("![[cover.png]]\n## Title\n\ntext").children[0]!;
+		expect(covered.id).toBe(plain.id);
+	});
+
+	it("a blank line between them gives two nodes, as before", () => {
+		const root = parse("![[cover.png]]\n\n## Title");
+		expect(root.children.map((c) => c.type)).toEqual(["paragraph", "heading"]);
+	});
+
+	it("hard-wrapped prose is one paragraph", () => {
+		const md = "## H\n\nline one\nline two\n  line three";
+		const para = parse(md).children[0]!.children[0]!;
+		expect(para).toMatchObject({ type: "paragraph", content: "line one\nline two\nline three" });
+		expect(para.raw).toBe("line one\nline two\n  line three");
+		expect(md.slice(para.range.start, para.range.end)).toBe(para.raw);
+	});
+
+	it("a run with two headings is one node; the first heading sets level and place", () => {
+		const root = parse("# A\n## B\ntext\n\n## C");
+		expect(root.children).toHaveLength(1);
+		const a = root.children[0]!;
+		expect(a).toMatchObject({ type: "heading", depth: 1, content: "A", raw: "# A\n## B\ntext" });
+		expect(a.children.map((c) => c.content)).toEqual(["C"]);
+	});
+
+	it("horizontal rules, math and HTML lines do not break a run", () => {
+		expect(parse("above\n***\nbelow").children).toHaveLength(1);
+		expect(parse("$$\nx^2\n$$").children).toHaveLength(1);
+		expect(parse("<div>\nhi\n</div>").children).toHaveLength(1);
+	});
+
+	it("lists, tables, quotes, fences and note embeds break a run and stay as today", () => {
+		const md = "p1\n- item\np2\n| a |\n|---|\np3\n> quote\np4\n```\ncode\n```\np5\n![[Other note]]\np6";
+		const root = parse(md);
+		const types = root.children.map((c) => c.type);
+		expect(types).toEqual(["paragraph", "bullet", "table", "paragraph", "blockquote", "paragraph", "codeblock", "paragraph", "transclusion", "paragraph"]);
+		// "p2" directly under the list item stays its child (lazy continuation).
+		expect(root.children[1]!.children.map((c) => c.content)).toEqual(["p2"]);
+		for (const node of root.children) expect(node.raw?.includes("\n") && node.type === "paragraph").toBe(false);
+	});
+
+	it("a comment-only line and a standalone ID line break a run", () => {
+		const root = parse("<!-- osmosis-exclude -->\nsecret\nline\n^os-aaaaaa\nnext");
+		expect(root.children.map((c) => c.content)).toEqual(["<!-- osmosis-exclude -->", "secret\nline", "^os-aaaaaa", "next"]);
+	});
+
+	it("a standalone ID line still attaches to the code block above", () => {
+		const block = parse("```\ncode\n```\n^os-aaaaaa\ntext").children[0]!;
+		expect(block.blockId).toBe("os-aaaaaa");
+	});
+
+	it("a heading arriving inside a list closes the list before grouping", () => {
+		const root = parse("- item\nlazy line\n## H\ncaption");
+		expect(root.children.map((c) => c.type)).toEqual(["bullet", "heading"]);
+		expect(root.children[0]!.children.map((c) => c.content)).toEqual(["lazy line"]);
+		expect(root.children[1]!.raw).toBe("## H\ncaption");
+	});
+
+	it("the group's ID is on the last line; raw withholds only that ID", () => {
+		const md = "![[cover.png]]\n## Title\ncaption ^os-grp001";
+		const node = parse(md).children[0]!;
+		expect(node.blockId).toBe("os-grp001");
+		expect(node.raw).toBe("![[cover.png]]\n## Title\ncaption");
+		expect(node.range.end).toBe(md.length);
+	});
+
+	it("adopts a single ID on an earlier line", () => {
+		const node = parse("## Title ^os-aaaaaa\ncaption").children[0]!;
+		expect(node.blockId).toBe("os-aaaaaa");
+		expect(node.raw).toBe("## Title\ncaption");
+	});
+
+	it("groups a run with two IDs under the last; the earlier stays in raw", () => {
+		const node = parse("first ^os-aaaaaa\nsecond ^os-bbbbbb").children[0]!;
+		expect(node.blockId).toBe("os-bbbbbb");
+		expect(node.content).toBe("first\nsecond");
+		expect(node.raw).toBe("first ^os-aaaaaa\nsecond");
+	});
+
+	it("a single-line run is exactly today's node", () => {
+		const node = parse("just one ^os-aaaaaa").children[0]!;
+		expect(node).toMatchObject({ type: "paragraph", content: "just one", raw: "just one", blockId: "os-aaaaaa" });
 	});
 });

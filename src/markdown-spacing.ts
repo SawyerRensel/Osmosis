@@ -1,15 +1,16 @@
+import { isGroupableLine } from "./line-groups";
+
 /**
  * Block-spacing normalization shared by the mind-map write path and the
  * line-card generator.
  *
- * Osmosis is line-oriented — every non-blank line is its own node/card — but
- * Obsidian block IDs can only identify a whole block. Consecutive prose lines
- * with no blank line between them are ONE Obsidian block, so only the last
- * could carry a valid `^id`. Normalizing a prose run into blank-line-separated
- * blocks makes each line its own block, so each can be a card with its own
- * block ID. The mind map already applies this on every save; the generator
- * reuses it so both surfaces agree (see notes/02_planning/
- * notes_as_flashcards_plan.md §8, task-12 follow-up).
+ * Puts blank lines around code fences, tables, blockquotes, note embeds and
+ * other blocks, and collapses runs of blank lines. It does NOT separate two
+ * adjacent top-level *groupable* lines (headings and prose, see
+ * `src/line-groups.ts`): since T75 such a run is one mind-map node and one
+ * line card, exactly as Obsidian reads it as one block, so splitting it on
+ * every write would dissolve the user's groups. Its block ID goes on the
+ * run's last line, where Obsidian accepts it.
  */
 
 /** Result of normalization: the rewritten content plus an original→new line map. */
@@ -26,7 +27,8 @@ export interface NormalizedSpacing {
 
 /**
  * Ensure exactly one blank line before and after headings, top-level code
- * fences, tables, blockquotes, and standalone paragraphs — collapsing runs of
+ * fences, tables, blockquotes, and standalone paragraphs — except between two
+ * adjacent top-level groupable lines, which stay one run — collapsing runs of
  * 2+ blank lines to one. Idempotent. Returns the content and an original→new
  * line-index map.
  */
@@ -100,14 +102,19 @@ export function normalizeBlockSpacing(content: string): NormalizedSpacing {
 		const nextIsQuote = nextLine !== undefined && /^\s*>/.test(nextLine);
 		const isBlockquoteEnd = isQuoteLine && !nextIsQuote;
 
+		// Two adjacent top-level groupable lines (heading or prose) are one run
+		// — one node — and stay together. Indented lines keep the old rules.
+		const joinsRun = !inCodeBlock && isTopLevelGroupable(line);
 		const prevLine = result[result.length - 1];
-		const needsBlankBefore =
+		const joinsPrev = joinsRun && prevLine !== undefined && isTopLevelGroupable(prevLine);
+		const joinsNext = joinsRun && nextLine !== undefined && isTopLevelGroupable(nextLine);
+		const needsBlankBefore = !joinsPrev && (
 			isHeading
 			|| (isTopLevelFence && inCodeBlock)
 			|| isTableStart
 			|| isBlockquoteStart
 			|| (isTopLevelParagraph && prevLine !== undefined && prevLine.trim() !== ""
-				&& !/^#{1,6}\s/.test(prevLine));
+				&& !/^#{1,6}\s/.test(prevLine)));
 
 		if (
 			needsBlankBefore &&
@@ -122,13 +129,13 @@ export function normalizeBlockSpacing(content: string): NormalizedSpacing {
 
 		// Detect table end (current is table, next is not)
 		const isTableEnd = isTableLine && (nextLine === undefined || !/^\s*\|/.test(nextLine));
-		const needsBlankAfter =
+		const needsBlankAfter = !joinsNext && (
 			isHeading
 			|| (isTopLevelFence && !inCodeBlock)
 			|| isTableEnd
 			|| isBlockquoteEnd
 			|| (isTopLevelParagraph && nextLine !== undefined && nextLine.trim() !== ""
-				&& !/^#{1,6}\s/.test(nextLine));
+				&& !/^#{1,6}\s/.test(nextLine)));
 
 		// Never insert a blank before a standalone block-ID line — it must
 		// hug the block it references.
@@ -149,6 +156,11 @@ export function normalizeBlockSpacing(content: string): NormalizedSpacing {
 	const lineMap = [...headerMap, ...bodyMap];
 
 	return { content: [...headerLines, ...result].join("\n"), lineMap };
+}
+
+/** A groupable line at column 0 (see `isGroupableLine`). */
+function isTopLevelGroupable(line: string): boolean {
+	return !/^\s/.test(line) && isGroupableLine(line);
 }
 
 /**

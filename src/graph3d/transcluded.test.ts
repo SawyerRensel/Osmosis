@@ -115,7 +115,7 @@ describe("depth 0: collectEmbedded", () => {
 	});
 
 	it("does not follow an embed that sits outside the part shown", async () => {
-		const files = { "A.md": "# A\n![[B#One]]", "B.md": "# B\n## One\n- In\n## Two\n![[C]]", "C.md": "# C" };
+		const files = { "A.md": "# A\n![[B#One]]", "B.md": "# B\n\n## One\n- In\n## Two\n![[C]]", "C.md": "# C" };
 		const read = readerFor(files);
 		const embedded = await collectEmbedded((await read("A.md"))!, read, resolverFor(files));
 		expect(embedded.notes.map((n) => n.tree.filePath)).toEqual(["A.md", "B.md"]);
