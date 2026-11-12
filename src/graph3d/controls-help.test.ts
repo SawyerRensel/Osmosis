@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CONTROL_GROUPS, type ControlGroupId } from "./controls-help";
 
-const EXPECTED: ControlGroupId[] = ["mouse", "keys", "edit-keys", "editing", "touch", "settings"];
+const EXPECTED: ControlGroupId[] = ["mouse", "touchpad", "keys", "edit-keys", "editing", "touch", "settings"];
 
 describe("CONTROL_GROUPS", () => {
 	it("has a group for each kind of control, in order", () => {

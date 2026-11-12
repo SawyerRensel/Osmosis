@@ -41,7 +41,8 @@ import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { grabPoint, type Sphere, sphereOnRay, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
-import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
+import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../graph3d/depth";
+import { WheelClassifier, wheelAction } from "../graph3d/wheel-input";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
@@ -242,6 +243,17 @@ interface RotateDrag {
 	turned: Vec;
 }
 
+/** A touchpad swipe turning or panning the view like a drag (`onWheel`), until its events stop (`endSwipe`). */
+interface Swipe {
+	pan: boolean;
+	/** A drag from where the cursor was, moved by the swipe's deltas: its pivot, grab and running pointer place. */
+	drag: RotateDrag;
+	/** The view depth a pan moves at: the aimed point's, as for a pinch. */
+	depth: number;
+	startAt: number;
+	lastAt: number;
+}
+
 /** A link drag in progress (edit mode): line `from` pulled toward whatever it is dropped on. */
 interface LinkDrag {
 	pointerId: number;
@@ -352,6 +364,12 @@ const PARTICLE_OPACITY = 0.9;
 const THREAD_COLOR = "#ffb347";
 /** A press that moves less than this, in px, is a click rather than a drag. */
 const CLICK_SLOP_PX = 6;
+/**
+ * A touchpad swipe has ended (the fingers lifted, with no OS momentum
+ * following) once its wheel events stop for this long: longer than the gap
+ * between a touchpad's events, short enough that its coast follows on.
+ */
+const SWIPE_LIFT_MS = 50;
 /** A finger held this long on a line in edit mode, without moving past the click slop, opens its context menu instead of being a tap. */
 const LONG_PRESS_MS = 500;
 
@@ -522,6 +540,11 @@ export class Graph3DScene {
 	private zoomCoast: { x: number; y: number; velocity: number } | null = null;
 	/** The wheel's zoom still to glide out (ln zoom), aimed at the pointer's last place (`easeWheel`). */
 	private wheelZoom: { x: number; y: number; pending: number } | null = null;
+	/** Touchpad or mouse wheel, decided once per gesture (`graph3d/wheel-input.ts`). */
+	private readonly wheelSource = new WheelClassifier();
+	/** The Control key is physically down, so a ctrl-wheel is Ctrl + scroll and not Chromium's synthetic touchpad pinch. */
+	private ctrlHeld = false;
+	private swipe: Swipe | null = null;
 	/** A mouse pan (OrbitControls' right or Ctrl drag) in progress, sampled so its release can coast. */
 	private mousePan: number | null = null;
 	/** The spin a press interrupted, which a flick that follows adds to. */
@@ -573,6 +596,9 @@ export class Graph3DScene {
 		window.addEventListener("pointercancel", this.onPointerUp);
 		// Capture phase, so it runs before OrbitControls' wheel listener on the canvas and can stop it.
 		container.addEventListener("wheel", this.onWheel, { capture: true, passive: false });
+		window.addEventListener("keydown", this.onModifierKey, { capture: true });
+		window.addEventListener("keyup", this.onModifierKey, { capture: true });
+		window.addEventListener("blur", this.onWindowBlur);
 		// The bottom-left corner: the controls help, and the flight speed after it (the CSS lays it out in reverse).
 		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
 		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
@@ -1539,7 +1565,7 @@ export class Graph3DScene {
 		controls.target.add(move);
 		controls.update();
 		// A track goes on through the user's orbit (see `reshape`): what they pressed moves with it, so they keep orbiting it.
-		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.orbitCoast?.pivot])) pivot?.add(move);
+		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.swipe?.drag.pivot, this.swipe?.drag.grab?.point, this.orbitCoast?.pivot])) pivot?.add(move);
 	}
 
 	/**
@@ -1716,6 +1742,9 @@ export class Graph3DScene {
 		this.endLinkDrag();
 		this.endBoxSelect();
 		this.container.removeEventListener("wheel", this.onWheel, { capture: true });
+		window.removeEventListener("keydown", this.onModifierKey, { capture: true });
+		window.removeEventListener("keyup", this.onModifierKey, { capture: true });
+		window.removeEventListener("blur", this.onWindowBlur);
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
 		this.help.destroy();
@@ -1899,6 +1928,7 @@ export class Graph3DScene {
 		}
 		// Stops every coast too.
 		this.cancelFlight();
+		this.swipe = null;
 		this.lookPending = { x: 0, y: 0 };
 		if (touch) {
 			this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -2285,18 +2315,91 @@ export class Graph3DScene {
 	 * The wheel zooms toward what is under the cursor, or sets the flight speed
 	 * while flying. The zoom glides: it joins what the last notches left to go,
 	 * and `easeWheel` plays it out, decelerating.
+	 *
+	 * A touchpad's two-finger swipe (told apart per gesture, `WheelClassifier`)
+	 * turns the view instead, like a drag from under the cursor; with Shift it
+	 * pans, and with Ctrl it zooms at the wheel's rate. A pinch, and any wheel
+	 * event during a pointer drag or pinch, zooms as before.
 	 */
 	private readonly onWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 		e.stopPropagation();
 		const pending = this.wheelZoom?.pending ?? 0;
+		const spin = this.orbitCoast?.coast.velocity ?? { x: 0, y: 0 };
 		this.cancelFlight();
 		if (this.drag?.look === true && !this.drag.touch) {
 			flightScale = Math.min(FLIGHT_SCALE_LIMIT, Math.max(1 / FLIGHT_SCALE_LIMIT, flightScale * FLIGHT_SCALE_STEP ** wheelNotches(e)));
 			this.showSpeed();
 			return;
 		}
-		this.wheelZoom = { x: e.clientX, y: e.clientY, pending: pending + wheelLogZoom(e) };
+		const pointerBusy = this.drag !== null || this.pinch !== null || this.mousePan !== null;
+		const pinch = e.ctrlKey && !this.ctrlHeld;
+		const source = pinch || pointerBusy ? "wheel" : this.wheelSource.classify({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, t: e.timeStamp });
+		const action = wheelAction(e, source, this.ctrlHeld);
+		if (action.kind === "zoom") {
+			this.swipe = null;
+			this.wheelZoom = { x: e.clientX, y: e.clientY, pending: pending + action.logZoom };
+			return;
+		}
+		this.swipeBy(action.kind === "pan", action.dx, action.dy, e.clientX, e.clientY, spin);
+	};
+
+	/**
+	 * Move a touchpad swipe by (`dx`, `dy`) px. The first event of a swipe
+	 * starts it the way a press would start a drag at the cursor (`aim`, so the
+	 * pivot setting and a planet's surface grab apply); each event then moves
+	 * its pointer by the deltas, so the turn and its release coast are the
+	 * drag's own (`rotate`, `endSwipe`). `spin` is what a coast it stopped had left.
+	 */
+	private swipeBy(pan: boolean, dx: number, dy: number, x: number, y: number, spin: Vec): void {
+		const now = performance.now();
+		let swipe = this.swipe;
+		if (swipe === null || swipe.pan !== pan) {
+			this.samples = [];
+			this.turnSamples = [];
+			this.carry = pan ? { x: 0, y: 0 } : spin;
+			const aim = this.aim(x, y, false, !pan);
+			const ray = this.rayThrough(x, y);
+			const grab = pan || aim.globe === null ? null : { point: grabPoint(ray.origin, ray.direction, aim.point, aim.globe), radius: aim.globe };
+			const drag: RotateDrag = { pointerId: -1, touch: false, x, y, pivot: aim.point, look: false, grab, turned: { x: 0, y: 0 } };
+			swipe = this.swipe = { pan, drag, depth: this.viewDepth(aim.point), startAt: now, lastAt: now };
+		}
+		swipe.lastAt = now;
+		swipe.drag.x += dx;
+		swipe.drag.y += dy;
+		this.sample(this.samples, swipe.drag.x, swipe.drag.y);
+		if (pan) this.pan(dx, dy, swipe.depth);
+		else this.rotate(swipe.drag, dx, dy);
+	}
+
+	/**
+	 * Once a swipe's events have stopped for `SWIPE_LIFT_MS`, it ends like a
+	 * released drag: moving fast at its last event, it coasts. Where the OS
+	 * sends its own momentum (macOS, Windows), those events keep the swipe going
+	 * and wind down slowly, so it ends too slow to coast twice.
+	 */
+	private endSwipe(): void {
+		const swipe = this.swipe;
+		if (swipe === null || performance.now() - swipe.lastAt < SWIPE_LIFT_MS) return;
+		this.swipe = null;
+		const at = swipe.lastAt;
+		if (swipe.pan) {
+			const velocity = launchVelocity(estimateVelocity(this.samples, at), { x: 0, y: 0 }, 0);
+			if (velocity.x !== 0 || velocity.y !== 0) this.panCoast = { depth: swipe.depth, coast: { velocity, stopBelow: PAN_MIN_VELOCITY } };
+			return;
+		}
+		const coast = launchSpin(estimateVelocity(this.samples, at), estimateVelocity(this.turnSamples, at), this.carry, at - swipe.startAt);
+		if (coast !== null) this.orbitCoast = { pivot: swipe.drag.pivot, look: false, coast };
+	}
+
+	/** Track whether Control is physically down (see `ctrlHeld`). */
+	private readonly onModifierKey = (e: KeyboardEvent): void => {
+		this.ctrlHeld = e.key === "Control" ? e.type === "keydown" : e.ctrlKey;
+	};
+
+	/** A key released in another window never reaches this one. */
+	private readonly onWindowBlur = (): void => {
+		this.ctrlHeld = false;
 	};
 
 	/** Each frame, zoom by an eased share of the wheel's pending zoom, toward what is under the pointer now. */
@@ -2660,6 +2763,7 @@ export class Graph3DScene {
 		this.easeLookPending(seconds);
 		// A flight, glide or ride has the camera: nothing coasts against it.
 		if (this.flight !== null || this.glide !== null || this.ride !== null || this.hoverFlight !== null) this.stopCoasting();
+		this.endSwipe();
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		this.easeWheel(seconds);
 		const controls = this.orbitControls();

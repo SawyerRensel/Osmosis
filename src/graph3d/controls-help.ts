@@ -11,7 +11,7 @@ export interface ControlEntry {
 	action: string;
 }
 
-export type ControlGroupId = "mouse" | "keys" | "edit-keys" | "editing" | "touch" | "settings";
+export type ControlGroupId = "mouse" | "touchpad" | "keys" | "edit-keys" | "editing" | "touch" | "settings";
 
 export interface ControlGroup {
 	id: ControlGroupId;
@@ -33,6 +33,16 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "Right-click without dragging", action: "Plate context menu" },
 			{ input: "Hold a mouse button while flying", action: "The drag becomes eased mouse-look; the wheel then sets flight speed" },
 			{ input: "Mouse back / forward", action: "Step back or forward through your visits" },
+		],
+	},
+	{
+		id: "touchpad",
+		title: "Touchpad",
+		entries: [
+			{ input: "Two-finger swipe", action: "Orbit, like a drag from under the cursor" },
+			{ input: "Shift + two-finger swipe", action: "Pan" },
+			{ input: "Ctrl + two-finger swipe up / down", action: "Zoom in / out at the wheel's rate" },
+			{ input: "Pinch", action: "Zoom toward the cursor" },
 		],
 	},
 	{

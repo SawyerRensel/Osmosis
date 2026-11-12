@@ -25,6 +25,17 @@ The 3D graph shows a note and the notes around it, line by line, as plates float
 | Hold a mouse button while flying | The drag becomes eased mouse-look; the wheel then sets flight speed |
 | Mouse back / forward | Step back or forward through your visits |
 
+### Touchpad
+
+| Input | Action |
+|-------|--------|
+| Two-finger swipe | Orbit, like a drag from under the cursor |
+| ++shift++ + two-finger swipe | Pan |
+| ++ctrl++ + two-finger swipe up / down | Zoom in / out at the wheel's rate |
+| Pinch | Zoom toward the cursor |
+
+The view tells a touchpad from a mouse wheel by itself, with no setting: a swipe that moves sideways at all, or in steps finer than a wheel's notches, is a touchpad. A mouse wheel always zooms.
+
 ### Keys
 
 | Key | Action |
