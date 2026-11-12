@@ -12,13 +12,13 @@ related:
   - "[[Header - Map header order and overflow menu]]"
   - "[[Study - Note view study menu]]"
   - "[[Graph - Shared header for 2D and 3D]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T12:00:00.000Z"
 date_modified: "2026-11-12T12:00:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-11-12T05:18:04.000Z"
+date_start_actual: "2026-11-12T05:18:04.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -86,3 +86,28 @@ Manual (Ctrl+R after build):
 1. Open a note with cards: header is 🧠, Study, Edit, ⋯.
 2. Tap 🧠 → 2D. Switch to 3D with the pill. Go back to the note (📄). Tap 🧠 → opens 3D. Restart Obsidian, repeat → still 3D.
 3. ⋯ → Peek starts peek mode; a note without cards has no Peek item.
+
+## Batch implementation notes (awaiting manual test)
+
+**Approach.**
+- *Last-used memory.* `src/last-map-view.ts` (pure, tested) holds the key `osmosis-last-map-view` and `cleanLastMapView` (only the string `"3d"` means 3D; anything else is 2D). `main.ts` reads and writes it with `app.loadLocalStorage` / `saveLocalStorage` (vault-scoped, per device, so it survives a restart; the same mechanism as `osmosis-graph3d-sticks`). It is written from two places: `swapLeafView` (the 2D | 3D pill) and `rememberActiveMapView()`, called on `active-leaf-change` and `layout-change`, which records whichever map view is the active view (tab clicks, file-menu opens, a restored workspace). The write is skipped when the value is unchanged.
+- *Brain button.* The click handler in `addMindMapActionToMarkdownLeaves` opens `VIEW_TYPE_GRAPH3D` with `{ focus: path }` or `VIEW_TYPE_MINDMAP` with `{ file: path }` in the same leaf, depending on the memory. It stays an icon button; its position is unchanged (leftmost, or before the reading toggle).
+- *Study.* Click behaviour untouched. The header Peek button is no longer created, and `updateHeaderActions` removes a stale `.osmosis-line-peek-action` left by an older build. Study is still anchored right of the brain, so the order is brain, Study, Edit, then Obsidian's own ⋯.
+- *Peek in the ⋯ menu.* The note view is not an Osmosis view, so there is no `onPaneMenu` to override. A second `file-menu` handler (registered ahead of the "Mind map view" one) checks `source === "more-options"`, a markdown file, a `MarkdownView` in the passed `leaf`, and `lineReveal.hasCards(path)`; it adds "Peek mode" with `setSection("pane")` and a check mark from `isPeeking`. `peekNote(view)` is the old button's click logic (switch to reading view first, then toggle peek). I chose `file-menu` over `view.onPaneMenu` monkey-patching because it is the public API, the same route the existing Rapid flashcard mode entry uses, and it fires on desktop and mobile.
+
+**Decisions worth remembering**
+- Peek uses `setSection("pane")` (the group holding Rapid flashcard mode and Source mode) as the best available way to sit near the top; the order inside the section follows registration order, and the Peek handler is registered before the others in `main.ts`. Obsidian's own entries may still sit above it. This was not seen on screen.
+- The map memory records "last map view that was active", not only "last pill press", so opening the 3D graph from the file menu also counts. A restored workspace whose active tab is a 2D map will also set it to 2D.
+- The peek header button's `is-active` state is gone; the menu check mark replaces it.
+- Docs updated: `docs/reference/commands.md` (note header row), `docs/studying/study-modes.md` (Peek is in the menu).
+
+| File | Change |
+|---|---|
+| `src/last-map-view.ts` (+test) | New: storage key and `cleanLastMapView` |
+| `src/main.ts` | Brain opens the last-used view; `lastMapView` / `rememberMapView` / `rememberActiveMapView`; recorded on swap, `active-leaf-change`, `layout-change`; Peek `file-menu` entry |
+| `src/views/LineRevealProcessor.ts` | Header Peek button removed (stale one cleaned up); public `hasCards`, `isPeeking`, `peekNote` |
+| `docs/reference/commands.md`, `docs/studying/study-modes.md` | Wording |
+
+**Fixture.** None new; any note with cards, e.g. one under `vault/tests/` (and one without cards for the Peek-absent check).
+
+**Not verified (cannot see Obsidian).** That the Peek item lands near the top of the ⋯ menu; that Obsidian passes the leaf as the fourth `file-menu` argument for `more-options` in the version in use (if not, Peek would silently be missing; the existing Rapid entry does not need the leaf); that `layout-change` / `active-leaf-change` fire in time to record a pill swap (the explicit write in `swapLeafView` covers it anyway); the header order on a phone.
