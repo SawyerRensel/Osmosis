@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GlyphPacker, PLATE_HEIGHT_EM, PLATE_PAD_X_EM, layoutPlate } from "./plates";
+import { GlyphPacker, PLATE_HEIGHT_EM, PLATE_PAD_X_EM, PLATE_TEXTURE_WIDTH, ShapeCache, drainWithin, layoutPlate, plateTextureRows, shapeKey } from "./plates";
 
 /** A monospace-ish font for tests: every character 10 px wide, "W" 20, the ellipsis 6. */
 const advance = (char: string) => (char === "W" ? 20 : char === "…" ? 6 : 10);
@@ -106,5 +106,54 @@ describe("GlyphPacker", () => {
 	it("clamps a slot wider than the page to the page", () => {
 		const packer = new GlyphPacker(100, 20);
 		expect(packer.slot("x", 300)).toMatchObject({ x: 0, width: 100 });
+	});
+});
+
+describe("plate layout cache and slicing (T78)", () => {
+	it("keys a layout by its text and every size it was laid out at", () => {
+		expect(shapeKey("Mooring", 5, 20, 0)).toBe(shapeKey("Mooring", 5, 20, 0));
+		expect(shapeKey("Mooring", 5, 20, 0)).not.toBe(shapeKey("Mooring", 12, 20, 0));
+		expect(shapeKey("Mooring", 5, 20, 0)).not.toBe(shapeKey("Mooring", 5, 30, 0));
+		expect(shapeKey("Mooring", 5, 20, 0)).not.toBe(shapeKey("Mooring", 5, 20, 8));
+		expect(shapeKey("a|b", 5, 20, 0)).not.toBe(shapeKey("b", 5, 20, 0));
+	});
+
+	it("keeps every cached layout until the cache outgrows its limit, then only the live ones", () => {
+		const cache = new ShapeCache<{ name: string }>();
+		const [jib, boom, mast] = [{ name: "jib" }, { name: "boom" }, { name: "mast" }];
+		cache.set("jib", jib);
+		cache.set("boom", boom);
+		cache.set("mast", mast);
+		cache.trim([jib], 3);
+		expect(cache.size).toBe(3);
+		cache.trim([jib], 2);
+		expect(cache.size).toBe(1);
+		expect(cache.get("jib")).toBe(jib);
+		expect(cache.get("boom")).toBeUndefined();
+	});
+
+	it("drains a queue a time budget at a time, always moving at least one item", () => {
+		let now = 0;
+		const done: number[] = [];
+		const run = (item: number): void => {
+			done.push(item);
+			now += item;
+		};
+		const items = [1, 1, 1, 5, 1, 1];
+		let at = drainWithin(items, 0, run, 3, () => now);
+		expect(at).toBe(3);
+		at = drainWithin(items, at, run, 3, () => now);
+		expect(at).toBe(4);
+		at = drainWithin(items, at, run, 3, () => now);
+		expect(at).toBe(6);
+		expect(done).toEqual(items);
+		expect(drainWithin(items, 6, run, 3, () => now)).toBe(6);
+	});
+
+	it("sizes the plate-centre texture in whole rows", () => {
+		expect(plateTextureRows(0)).toBe(1);
+		expect(plateTextureRows(PLATE_TEXTURE_WIDTH)).toBe(1);
+		expect(plateTextureRows(PLATE_TEXTURE_WIDTH + 1)).toBe(2);
+		expect(plateTextureRows(30865)).toBe(Math.ceil(30865 / PLATE_TEXTURE_WIDTH));
 	});
 });

@@ -2988,6 +2988,8 @@ export class Graph3DScene {
 			this.dirty = false;
 			this.plates.write(this.nodes, this.layoutDirty);
 			this.layoutDirty = false;
+			// Plates still waiting for their glyphs get the next frame's share (`Graph3DPlates.write`).
+			if (this.plates.queued > 0) this.dirty = true;
 			this.writeEdges();
 			this.writeThread();
 			this.boundaries.invalidate();

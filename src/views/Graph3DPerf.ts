@@ -121,7 +121,7 @@ export class Graph3DPerf {
 			`draw calls ${info.render.calls}  triangles ${info.render.triangles}  textures ${info.memory.textures}`,
 			`plates ${plates.plates}  glyphs ${plates.glyphs}${this.plates.group.visible ? "" : " (hidden)"}`,
 			`atlas ${plates.pages} page(s) ~${mb(plates.atlasBytes)} MB  instances ~${mb(plates.instanceBytes)} MB GPU`,
-			`last plating ${plating}`,
+			`last plating ${plating}  queued ${plates.queued}  ·  writes: layout ${plates.layoutMs.toFixed(1)} ms  tick ${plates.tickMs.toFixed(2)} ms  glyphs ${plates.glyphMs.toFixed(1)} ms`,
 		].join("\n");
 	}
 

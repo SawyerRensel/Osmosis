@@ -118,3 +118,64 @@ export class GlyphPacker {
 		return slot;
 	}
 }
+
+/** The cache key of a plate laid out from `text` at this height and these widths (`Graph3DPlates.shape`). */
+export function shapeKey(text: string, height: number, maxEm: number, minEm: number): string {
+	return `${height}|${maxEm}|${minEm}|${text}`;
+}
+
+/**
+ * Plate layouts by `shapeKey`, so a node whose text and size are unchanged
+ * (a hop back, a refocus, a re-parse) reuses its layout. Values are shared:
+ * never mutate one. `trim` bounds it to the plates in use once it outgrows
+ * its limit.
+ */
+export class ShapeCache<T extends object> {
+	private readonly entries = new Map<string, T>();
+
+	get size(): number {
+		return this.entries.size;
+	}
+
+	get(key: string): T | undefined {
+		return this.entries.get(key);
+	}
+
+	set(key: string, value: T): void {
+		this.entries.set(key, value);
+	}
+
+	clear(): void {
+		this.entries.clear();
+	}
+
+	/** Past `limit` entries, drop every one that isn't in `live`. */
+	trim(live: Iterable<T>, limit: number): void {
+		if (this.entries.size <= limit) return;
+		const keep = new Set(live);
+		for (const [key, value] of this.entries) if (!keep.has(value)) this.entries.delete(key);
+	}
+}
+
+/**
+ * Run `run` on `items` from index `from` on, until `budgetMs` has passed by
+ * `clock` (at least one item runs, so the queue always moves). Returns the
+ * index of the first item not run.
+ */
+export function drainWithin<T>(items: readonly T[], from: number, run: (item: T) => void, budgetMs: number, clock: () => number): number {
+	const start = clock();
+	let i = from;
+	while (i < items.length) {
+		run(items[i++]!);
+		if (clock() - start >= budgetMs) break;
+	}
+	return i;
+}
+
+/** Plates per row of the plate-centre texture the glyph shader reads its plate's centre and opacity from. */
+export const PLATE_TEXTURE_WIDTH = 1024;
+
+/** Rows the plate-centre texture needs for `count` plates (at least one). */
+export function plateTextureRows(count: number): number {
+	return Math.max(1, Math.ceil(count / PLATE_TEXTURE_WIDTH));
+}

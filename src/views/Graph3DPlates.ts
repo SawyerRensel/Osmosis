@@ -17,6 +17,14 @@
  *   departure mix it toward the background colour (as the mist does). Focus
  *   dimming (`../graph3d/focus.ts`) folds into the same mix, from the depth of
  *   the plate's centre, so a whole plate and its text dim together.
+ * - **Glyphs ride their plate:** a glyph stores its plate's index, and its
+ *   vertex shader reads the plate's centre and opacity from a float texture
+ *   (`uPlates`), so a simulating tick writes one texel per plate, not one
+ *   centre per glyph (T78).
+ * - **Laid out a slice at a time:** `shape` measures a plate at once (its size
+ *   spaces the layout), but its glyphs are built by `write`, a few ms a frame
+ *   (`drainWithin`). A plate still waiting is drawn hidden and appears from the
+ *   background. Layouts are cached by text and size (`ShapeCache`).
  * - **Per-node styles:** a node's `osmosis-styles` look (`NodeLook`, from
  *   `../graph3d/node-style.ts`) rides in instance attributes: fill, outline
  *   colour and thickness, corner radius, text colour. An unstyled plate keeps
@@ -35,9 +43,13 @@ import {
 	UniformsLib,
 	UniformsUtils,
 	CanvasTexture,
+	DataTexture,
+	FloatType,
+	NearestFilter,
+	RGBAFormat,
 	type IUniform,
 } from "three";
-import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, layoutPlate } from "../graph3d/plates";
+import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, PLATE_TEXTURE_WIDTH, ShapeCache, drainWithin, layoutPlate, plateTextureRows, shapeKey, type PlateLayout } from "../graph3d/plates";
 import { FAR_SIDE_DIM } from "../graph3d/far-side";
 import { UPRIGHT_GLSL } from "../graph3d/upright";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
@@ -49,6 +61,10 @@ const ROW_PX = 64;
 const PAGE_PX = 1024;
 /** Clear space around each glyph in the atlas, so mipmaps don't bleed neighbours together. */
 const GLYPH_PAD_PX = 4;
+/** Least time a write spends building queued glyphs, in ms; it spends as long as its last full layout write took, if longer. */
+const GLYPH_BUDGET_MS = 4;
+/** The layout cache keeps plates no longer shown until it holds this many, or twice the plates shown. */
+const SHAPE_CACHE_MIN = 4096;
 
 /** A glyph quad on a plate, in world units relative to the plate's centre. */
 interface ShapeGlyph {
@@ -65,6 +81,15 @@ export interface PlateShape {
 	width: number;
 	height: number;
 	glyphs: ShapeGlyph[];
+	/** Its glyphs aren't built yet (`Graph3DPlates.write` builds them): the plate is drawn hidden until they are. */
+	pending?: boolean;
+}
+
+/** A plate waiting for its glyphs: its layout in font px, and the scale to world units. */
+interface QueuedShape {
+	shape: PlateShape;
+	layout: PlateLayout;
+	scale: number;
 }
 
 /** What the plate meshes need to know about a node each time they're written. */
@@ -298,8 +323,11 @@ void main() {
 `;
 
 const GLYPH_VERTEX = /* glsl */ `
-attribute vec3 aCenter;
-attribute float aOpacity;
+// The plate's centre (xyz) and opacity (w), one texel per plate (\`Graph3DPlates.write\`).
+uniform highp sampler2D uPlates;
+attribute float aPlate;
+vec3 aCenter;
+float aOpacity;
 attribute vec4 aRect;
 attribute vec4 aUv;
 attribute vec4 aInk;
@@ -310,6 +338,10 @@ ${FOCUS_DIM_GLSL}
 ${ORIENT_GLSL}
 #include <fog_pars_vertex>
 void main() {
+	int plate = int(aPlate + 0.5);
+	vec4 centre = texelFetch(uPlates, ivec2(plate % ${PLATE_TEXTURE_WIDTH}, plate / ${PLATE_TEXTURE_WIDTH}), 0);
+	aCenter = centre.xyz;
+	aOpacity = centre.w;
 	vec4 mvPosition = placeOnPlate(aRect.xy + position.xy * aRect.zw);
 	vUv = aUv.xy + (position.xy + 0.5) * aUv.zw;
 	vInk = aInk;
@@ -338,7 +370,7 @@ void main() {
 
 /** Instanced attributes and their widths, for each mesh. */
 const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3, aFill: 4, aShape: 2 } as const;
-const GLYPH_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3, aInk: 4 } as const;
+const GLYPH_ATTRIBUTES = { aPlate: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3, aInk: 4 } as const;
 type PlateAttribute = keyof typeof PLATE_ATTRIBUTES;
 type GlyphAttribute = keyof typeof GLYPH_ATTRIBUTES;
 
@@ -416,6 +448,15 @@ export class Graph3DPlates {
 	private labelsVisible = true;
 	/** Style colours as parsed, by their CSS text: a layout write reads them for every styled plate. */
 	private readonly styleColors = new Map<string, Color>();
+	/** Plate layouts by text and size. */
+	private readonly shapes = new ShapeCache<PlateShape>();
+	/** Plates whose glyphs `write` still has to build, from `queueAt` on. */
+	private queue: QueuedShape[] = [];
+	private queueAt = 0;
+	/** Every plate's centre and opacity, for the glyph shader. */
+	private readonly plateTexture: IUniform<DataTexture> = { value: Graph3DPlates.plateTexture(1) };
+	/** The last writes' costs, for the perf readout (ms). */
+	private readonly timing = { layout: 0, tick: 0, glyphs: 0 };
 
 	constructor(colors: PlateColors) {
 		const material = new ShaderMaterial({
@@ -450,6 +491,10 @@ export class Graph3DPlates {
 		this.atlas = new GlyphAtlas(font);
 		for (const layer of this.glyphs) layer.dispose();
 		this.glyphs.length = 0;
+		// Layouts measured in the old font are stale.
+		this.shapes.clear();
+		this.queue = [];
+		this.queueAt = 0;
 	}
 
 	/** Show or hide the text on every plate (the Overlays menu's labels); the plates keep their size. */
@@ -460,9 +505,25 @@ export class Graph3DPlates {
 
 	/** Lay `text` out on a plate `height` world units tall, its text cut at `maxEm` ems wide and the plate at least `minEm` wide. */
 	shape(text: string, height: number, maxEm: number, minEm = 0): PlateShape {
+		const key = shapeKey(text, height, maxEm, minEm);
+		const known = this.shapes.get(key);
+		if (known !== undefined) return known;
 		const layout = layoutPlate(text, (char) => this.atlas.advance(char), FONT_PX, maxEm * FONT_PX, minEm * FONT_PX);
 		const scale = height / layout.height;
-		const glyphs = layout.glyphs.map(({ char, x }) => {
+		const shape: PlateShape = { width: layout.width * scale, height, glyphs: [], pending: true };
+		this.shapes.set(key, shape);
+		this.queue.push({ shape, layout, scale });
+		return shape;
+	}
+
+	/** Plates still waiting for their glyphs. While any are, the scene keeps writing. */
+	get queued(): number {
+		return this.queue.length - this.queueAt;
+	}
+
+	/** Build a queued plate's glyphs, drawing any new characters into the atlas. */
+	private build({ shape, layout, scale }: QueuedShape): void {
+		shape.glyphs = layout.glyphs.map(({ char, x }) => {
 			const glyph = this.atlas.glyph(char);
 			return {
 				page: glyph.page,
@@ -472,7 +533,27 @@ export class Graph3DPlates {
 				uv: glyph.uv,
 			};
 		});
-		return { width: layout.width * scale, height, glyphs };
+		shape.pending = false;
+	}
+
+	/** Build queued glyphs for this write's share of time. Whether any were built. */
+	private buildQueued(): boolean {
+		if (this.queued === 0) return false;
+		const start = performance.now();
+		this.queueAt = drainWithin(this.queue, this.queueAt, (queued) => this.build(queued), Math.max(GLYPH_BUDGET_MS, this.timing.layout), () => performance.now());
+		if (this.queueAt === this.queue.length) {
+			this.queue = [];
+			this.queueAt = 0;
+		}
+		this.timing.glyphs = performance.now() - start;
+		return true;
+	}
+
+	private static plateTexture(rows: number): DataTexture {
+		const texture = new DataTexture(new Float32Array(PLATE_TEXTURE_WIDTH * rows * 4), PLATE_TEXTURE_WIDTH, rows, RGBAFormat, FloatType);
+		texture.minFilter = texture.magFilter = NearestFilter;
+		texture.generateMipmaps = false;
+		return texture;
 	}
 
 	/**
@@ -481,8 +562,20 @@ export class Graph3DPlates {
 	 * positions and opacities, which keeps a simulating tick cheap.
 	 */
 	write(nodes: readonly PlateSource[], layout: boolean): void {
+		// Newly built glyphs change the glyph counts: a layout write.
+		if (this.buildQueued()) layout = true;
+		const start = performance.now();
 		this.atlas.upload();
-		if (layout) this.reserve(nodes);
+		if (layout) {
+			this.reserve(nodes);
+			this.shapes.trim(nodes.map((node) => node.shape), Math.max(SHAPE_CACHE_MIN, 2 * nodes.length));
+		}
+		const rows = plateTextureRows(nodes.length);
+		if (this.plateTexture.value.image.height < rows) {
+			this.plateTexture.value.dispose();
+			this.plateTexture.value = Graph3DPlates.plateTexture(rows);
+		}
+		const plateTexels = this.plateTexture.value.image.data as Float32Array;
 		const plateCenter = this.plates.array("aCenter");
 		const plateOpacity = this.plates.array("aOpacity");
 		const plateSize = this.plates.array("aSize");
@@ -494,8 +587,7 @@ export class Graph3DPlates {
 		const plateShape = this.plates.array("aShape");
 		const glyphCursor = this.glyphs.map(() => 0);
 		const glyphArrays = this.glyphs.map((layer) => ({
-			center: layer.array("aCenter"),
-			opacity: layer.array("aOpacity"),
+			plate: layer.array("aPlate"),
 			rect: layer.array("aRect"),
 			uv: layer.array("aUv"),
 			right: layer.array("aRight"),
@@ -516,17 +608,22 @@ export class Graph3DPlates {
 			array[i * 3 + 1] = axis?.y ?? 0;
 			array[i * 3 + 2] = axis?.z ?? 0;
 		};
-		// Plain index writes: this runs for every glyph on every simulating tick.
+		// Plain index writes: this runs for every plate on every simulating tick (and every glyph on a layout write).
 		nodes.forEach((node, i) => {
 			const placed = node.x !== undefined && node.y !== undefined && node.z !== undefined;
 			const x = placed ? node.x ?? 0 : 0;
 			const y = placed ? node.y ?? 0 : 0;
 			const z = placed ? node.z ?? 0 : 0;
-			const opacity = placed ? node.opacity : 0;
+			// A plate waiting for its glyphs stays hidden: it appears from the background once they're built.
+			const opacity = placed && node.shape.pending !== true ? node.opacity : 0;
 			plateCenter[i * 3] = x;
 			plateCenter[i * 3 + 1] = y;
 			plateCenter[i * 3 + 2] = z;
 			plateOpacity[i] = opacity;
+			plateTexels[i * 4] = x;
+			plateTexels[i * 4 + 1] = y;
+			plateTexels[i * 4 + 2] = z;
+			plateTexels[i * 4 + 3] = opacity;
 			const look = node.look ?? DEFAULT_LOOK;
 			if (layout) {
 				plateSize[i * 2] = node.shape.width;
@@ -543,15 +640,12 @@ export class Graph3DPlates {
 				axes(plateRight, i, node.frame?.right);
 				axes(plateUp, i, node.frame?.up);
 			}
+			if (!layout) return;
 			for (const glyph of node.shape.glyphs) {
 				const arrays = glyphArrays[glyph.page];
 				if (arrays === undefined) continue;
 				const g = glyphCursor[glyph.page]!++;
-				arrays.center[g * 3] = x;
-				arrays.center[g * 3 + 1] = y;
-				arrays.center[g * 3 + 2] = z;
-				arrays.opacity[g] = opacity;
-				if (!layout) continue;
+				arrays.plate[g] = i;
 				arrays.rect[g * 4] = glyph.x;
 				arrays.rect[g * 4 + 1] = 0;
 				arrays.rect[g * 4 + 2] = glyph.width;
@@ -564,10 +658,9 @@ export class Graph3DPlates {
 		});
 		this.plates.touch("aCenter", "aOpacity");
 		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp", "aFill", "aShape");
-		for (const layer of this.glyphs) {
-			layer.touch("aCenter", "aOpacity");
-			if (layout) layer.touch("aRect", "aUv", "aRight", "aUp", "aInk");
-		}
+		this.plateTexture.value.needsUpdate = true;
+		if (layout) for (const layer of this.glyphs) layer.touch("aPlate", "aRect", "aUv", "aRight", "aUp", "aInk");
+		this.timing[layout ? "layout" : "tick"] = performance.now() - start;
 	}
 
 	/** A style colour (already checked by `cssColor`), parsed once. */
@@ -607,6 +700,7 @@ export class Graph3DPlates {
 			uText: this.uniforms.uText,
 			uBackground: this.uniforms.uBackground,
 			uFocus: this.focus,
+			uPlates: this.plateTexture,
 		});
 		const layer = new QuadLayer(material, GLYPH_ATTRIBUTES);
 		layer.mesh.visible = this.labelsVisible;
@@ -615,14 +709,18 @@ export class Graph3DPlates {
 	}
 
 	/** Counts and memory, for the perf readout. */
-	stats(): { plates: number; glyphs: number; pages: number; atlasBytes: number; instanceBytes: number } {
+	stats(): { plates: number; glyphs: number; pages: number; atlasBytes: number; instanceBytes: number; queued: number; layoutMs: number; tickMs: number; glyphMs: number } {
 		return {
+			queued: this.queued,
+			layoutMs: this.timing.layout,
+			tickMs: this.timing.tick,
+			glyphMs: this.timing.glyphs,
 			plates: this.plates.count,
 			glyphs: this.glyphs.reduce((sum, layer) => sum + layer.count, 0),
 			pages: this.atlas.pages.length,
 			// RGBA, plus a third again for the mipmap chain.
 			atlasBytes: this.atlas.pages.length * PAGE_PX * PAGE_PX * 4 * (4 / 3),
-			instanceBytes: this.glyphs.reduce((sum, layer) => sum + layer.bytes, this.plates.bytes),
+			instanceBytes: this.glyphs.reduce((sum, layer) => sum + layer.bytes, this.plates.bytes) + this.plateTexture.value.image.width * this.plateTexture.value.image.height * 16,
 		};
 	}
 
@@ -630,6 +728,7 @@ export class Graph3DPlates {
 		this.plates.dispose();
 		for (const layer of this.glyphs) layer.dispose();
 		this.atlas.dispose();
+		this.plateTexture.value.dispose();
 		this.group.removeFromParent();
 	}
 }
