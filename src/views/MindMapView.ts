@@ -812,13 +812,13 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.app.workspace.requestSaveLayout();
 	}
 
-	/** For `syncNavbar`: edit mode is reading mode being off. */
+	/** For `syncNavbar`: edit mode (reading mode being off) is the only mode that hides the navigation bar. */
 	navbarEditMode(): boolean {
 		return !this.isReadingMode;
 	}
 
 	private toggleNavbar(): void {
-		toggleNavbarPref(this.app, this.navbarEditMode());
+		toggleNavbarPref(this.app);
 		this.showNavbar();
 	}
 
@@ -1975,8 +1975,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				);
 			},
 		}, {
-			// Phones and tablets: hide Obsidian's navigation bar (per mode; edit mode hides it by default).
-			toggles: barToggles("2d", { isMobile: Platform.isMobile, touch: false }).map((id) => ({ id, onClick: () => this.toggleNavbar() })),
+			// Phones: hide Obsidian's navigation bar in edit mode (by default; reading mode has no bar and always shows it).
+			toggles: barToggles("2d", { isPhone: Platform.isPhone, touch: false }).map((id) => ({ id, onClick: () => this.toggleNavbar() })),
 		});
 		this.showNavbar();
 		this.findBar = new FindBar(container, this.findHost());

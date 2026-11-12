@@ -9,7 +9,7 @@ The 3D graph shows a note and the notes around it, line by line, as plates float
 ## Controls
 
 !!! note "Also in the view"
-    The **?** button in the bottom-left corner of the 3D view opens this list. It is written by hand in two places (`src/graph3d/controls-help.ts` for the view, this page for the site), so update both together.
+    The **?** button at the end of the 3D view's toolbar opens this list. It is written by hand in two places (`src/graph3d/controls-help.ts` for the view, this page for the site), so update both together.
 
 ### Mouse
 

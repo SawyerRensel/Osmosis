@@ -26,7 +26,6 @@ import {
 	type Ray,
 } from "three";
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { Graph3DHelp } from "./Graph3DHelp";
 import { Graph3DPerf } from "./Graph3DPerf";
 import { Graph3DGizmos } from "./Graph3DGizmos";
 import { Graph3DSticks } from "./Graph3DSticks";
@@ -556,7 +555,6 @@ export class Graph3DScene {
 	private stoppedCoastOnDown = false;
 	private readonly speedEl: HTMLElement;
 	private readonly perf: Graph3DPerf;
-	private readonly help: Graph3DHelp;
 	private readonly sticks: Graph3DSticks;
 	private readonly gizmos: Graph3DGizmos | null = null;
 	private speedTimer = 0;
@@ -602,7 +600,7 @@ export class Graph3DScene {
 		window.addEventListener("keydown", this.onModifierKey, { capture: true });
 		window.addEventListener("keyup", this.onModifierKey, { capture: true });
 		window.addEventListener("blur", this.onWindowBlur);
-		// The bottom-left corner: the controls help, and the flight speed after it (the CSS lays it out in reverse).
+		// The bottom-left corner: the flight speed readout (the controls help is the Osmosis bar's last button).
 		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
 		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
 		this.sticks = new Graph3DSticks(container, options.sticks);
@@ -613,7 +611,6 @@ export class Graph3DScene {
 				end: (kind, released) => this.endGizmo(kind, released),
 			});
 		}
-		this.help = new Graph3DHelp(container, corner);
 
 		// Links are measured between plate edges, not centres, so wide labels
 		// don't pile up around their parent. d3 caches each link's distance when
@@ -1448,11 +1445,6 @@ export class Graph3DScene {
 		}
 	}
 
-	/** Escape: close the controls help. True when it was open. */
-	closeHelp(): boolean {
-		return this.help.close();
-	}
-
 	/** Escape: drop a link drag (or a box select) in progress without linking (or selecting). True when there was one. */
 	cancelLinkDrag(): boolean {
 		const active = this.linkDrag?.active === true || this.box?.el != null;
@@ -1757,7 +1749,6 @@ export class Graph3DScene {
 		window.removeEventListener("blur", this.onWindowBlur);
 		window.clearTimeout(this.speedTimer);
 		this.perf.destroy();
-		this.help.destroy();
 		this.near.destroy();
 		this.nodes = [];
 		this.links = [];

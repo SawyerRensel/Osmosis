@@ -1,21 +1,15 @@
-import { setIcon, setTooltip } from "obsidian";
 import { CONTROL_GROUPS } from "../graph3d/controls-help";
 
 /**
- * The "?" button in the 3D view's corner and the panel it opens: the controls
- * list from `controls-help.ts`. A click anywhere else, or Escape (the view's
- * scope asks `close`), closes it.
+ * The 3D graph's controls help: the panel the Osmosis bar's last button ("?",
+ * `buttonEl`, whose click calls `toggle`) opens above the bar, listing
+ * `controls-help.ts`. A click anywhere else, or Escape (the view's scope asks
+ * `close`), closes it.
  */
 export class Graph3DHelp {
-	private readonly buttonEl: HTMLElement;
 	private readonly panelEl: HTMLElement;
 
-	constructor(container: HTMLElement, corner: HTMLElement) {
-		this.buttonEl = corner.createDiv({ cls: "osmosis-graph3d-help-toggle clickable-icon" });
-		setIcon(this.buttonEl, "help");
-		setTooltip(this.buttonEl, "Controls");
-		this.buttonEl.addEventListener("click", () => this.toggle(!this.isOpen));
-
+	constructor(container: HTMLElement, private readonly buttonEl: HTMLElement | null) {
 		this.panelEl = container.createDiv({ cls: "osmosis-graph3d-help is-hidden" });
 		this.panelEl.createDiv({ cls: "osmosis-graph3d-help-title", text: "3D graph controls" });
 		for (const group of CONTROL_GROUPS) {
@@ -34,7 +28,8 @@ export class Graph3DHelp {
 
 	toggle(open: boolean): void {
 		this.panelEl.toggleClass("is-hidden", !open);
-		this.buttonEl.toggleClass("is-active", open);
+		this.buttonEl?.toggleClass("is-active", open);
+		this.buttonEl?.setAttribute("aria-pressed", String(open));
 		if (open) activeDocument.addEventListener("pointerdown", this.onOutside, true);
 		else activeDocument.removeEventListener("pointerdown", this.onOutside, true);
 	}
@@ -51,7 +46,7 @@ export class Graph3DHelp {
 	}
 
 	private readonly onOutside = (e: PointerEvent): void => {
-		if (e.target instanceof Node && (this.panelEl.contains(e.target) || this.buttonEl.contains(e.target))) return;
+		if (e.target instanceof Node && (this.panelEl.contains(e.target) || this.buttonEl?.contains(e.target) === true)) return;
 		this.toggle(false);
 	};
 }

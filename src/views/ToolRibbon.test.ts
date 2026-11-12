@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GRAPH3D_HIDDEN_BUTTONS, NAVBAR_STORAGE_KEYS, TOOLBAR_GROUPS, barToggles, canRunToolbarAction, navbarHidden, readNavbarPrefs, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
+import { GRAPH3D_HIDDEN_BUTTONS, NAVBAR_STORAGE_KEY, TOOLBAR_GROUPS, barShown, barToggles, canRunToolbarAction, navbarHidden, readNavbarPref, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 
 const idle: ToolbarState = { hasSelection: true, isEditing: false, hasFile: true, isReadingMode: false };
 const def = (flags: Partial<ButtonDef>): ButtonDef => ({ id: "x", icon: "x", label: "X", action: "undo", ...flags });
@@ -84,42 +84,65 @@ describe("the 3D graph's ribbon", () => {
 });
 
 describe("the bar's toggles", () => {
-	const phone = { isMobile: true, touch: true };
-	const desktop = { isMobile: false, touch: false };
-	const touchDesktop = { isMobile: false, touch: true };
+	const phone = { isPhone: true, touch: true };
+	const desktop = { isPhone: false, touch: false };
+	const touchDesktop = { isPhone: false, touch: true };
 
-	it("has the navigation bar toggle on phones and tablets, in 2D and 3D", () => {
+	it("has the navigation bar toggle on phones only, in 2D and 3D", () => {
 		expect(barToggles("2d", phone)).toEqual(["navbar"]);
-		expect(barToggles("3d", phone)).toEqual(["navbar", "sticks"]);
+		expect(barToggles("3d", phone)).toEqual(["navbar", "sticks", "help"]);
 	});
 
 	it("has the joystick toggle in 3D on any touch screen, and never in 2D", () => {
-		expect(barToggles("3d", touchDesktop)).toEqual(["sticks"]);
+		expect(barToggles("3d", touchDesktop)).toEqual(["sticks", "help"]);
 		expect(barToggles("2d", touchDesktop)).toEqual([]);
 	});
 
-	it("adds nothing on a desktop without a touch screen", () => {
+	it("ends the 3D bar with the controls help on every device, and gives 2D none", () => {
+		for (const device of [phone, desktop, touchDesktop]) {
+			expect(barToggles("3d", device).at(-1)).toBe("help");
+			expect(barToggles("2d", device)).not.toContain("help");
+		}
+		expect(barToggles("3d", desktop)).toEqual(["help"]);
 		expect(barToggles("2d", desktop)).toEqual([]);
-		expect(barToggles("3d", desktop)).toEqual([]);
+	});
+});
+
+describe("barShown", () => {
+	it("shows on desktop and tablet in both modes", () => {
+		expect(barShown(idle, false)).toBe(true);
+		expect(barShown({ ...idle, isReadingMode: true }, false)).toBe(true);
+	});
+
+	it("shows on a phone in edit mode only", () => {
+		expect(barShown(idle, true)).toBe(true);
+		expect(barShown({ ...idle, isReadingMode: true }, true)).toBe(false);
+	});
+
+	it("hides while a node is being edited", () => {
+		expect(barShown({ ...idle, isEditing: true }, false)).toBe(false);
+		expect(barShown({ ...idle, isEditing: true }, true)).toBe(false);
 	});
 });
 
 describe("navbarHidden", () => {
-	const defaults = readNavbarPrefs(() => null);
-
-	it("hides the navigation bar in edit mode and shows it in reading mode by default", () => {
-		expect(defaults).toEqual({ edit: true, reading: false });
-		expect(navbarHidden(true, true, defaults)).toBe(true);
-		expect(navbarHidden(true, false, defaults)).toBe(false);
+	it("hides the navigation bar on a phone in edit mode by default", () => {
+		expect(readNavbarPref(() => null)).toBe(true);
+		expect(navbarHidden(true, true, readNavbarPref(() => null))).toBe(true);
 	});
 
-	it("follows each mode's own preference", () => {
-		const flipped = readNavbarPrefs((key) => (key === NAVBAR_STORAGE_KEYS.edit ? false : key === NAVBAR_STORAGE_KEYS.reading ? true : null));
-		expect(navbarHidden(true, true, flipped)).toBe(false);
-		expect(navbarHidden(true, false, flipped)).toBe(true);
+	it("always shows it in reading mode", () => {
+		expect(navbarHidden(true, false, true)).toBe(false);
+		expect(navbarHidden(true, false, false)).toBe(false);
 	});
 
-	it("never hides anything on desktop", () => {
-		expect(navbarHidden(false, true, { edit: true, reading: true })).toBe(false);
+	it("follows the edit-mode preference once turned off", () => {
+		const off = readNavbarPref((key) => (key === NAVBAR_STORAGE_KEY ? false : null));
+		expect(off).toBe(false);
+		expect(navbarHidden(true, true, off)).toBe(false);
+	});
+
+	it("never hides anything on desktop or tablet", () => {
+		expect(navbarHidden(false, true, true)).toBe(false);
 	});
 });

@@ -37,7 +37,7 @@ import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, ty
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
-import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
+import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, barToggles, hidesNavbar, syncNavbar, toggleNavbarPref, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
@@ -46,6 +46,7 @@ import type { PanelLink } from "./Graph3DNear";
 import { Graph3DEditor } from "./Graph3DEdit";
 import type { Graph3DSettingsSource } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
+import { Graph3DHelp } from "./Graph3DHelp";
 import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
 import { isTrail } from "../graph3d/trail-note";
 import { renderOcclusion } from "./OcclusionRenderer";
@@ -138,6 +139,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	private ribbon: ToolRibbon | null = null;
 	/** Ctrl+F's find bar over the loaded graph. */
 	private findBar: FindBar | null = null;
+	/** The controls help, opened by the bar's last button. */
+	private help: Graph3DHelp | null = null;
 	/** Every 3D write goes through here, into the history shared with the mind map. */
 	private readonly edits = new EditPipeline(
 		this.app,
@@ -236,7 +239,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Then it clears the selection (multi-select).
 		this.scope.register([], "Escape", (e: KeyboardEvent) => {
 			if (this.scene?.cancelLinkDrag() === true) return false;
-			if (this.scene?.closeHelp() === true) return false;
+			if (this.help?.close() === true) return false;
 			// The editor's own Escape (cancel the edit) goes on.
 			if (isEditableTarget(e.target) || this.editor.isOpen) return undefined;
 			if (this.findBar?.isOpen === true) {
@@ -415,15 +418,21 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		// The ribbon is added after the stage, so it floats over it.
-		// Its own toggles: Obsidian's navigation bar (phones and tablets) and the joysticks (any touch screen, desktops with one included).
+		// Its own toggles: Obsidian's navigation bar (phones), the joysticks (any touch screen, desktops with one included), and the controls help last.
 		const touch = Platform.isMobile || navigator.maxTouchPoints > 0;
 		this.sticksShown = touch && this.app.loadLocalStorage(STICKS_STORAGE_KEY) === true;
+		const toggle: Record<BarToggle, () => void> = {
+			navbar: () => this.toggleNavbar(),
+			sticks: () => this.toggleSticks(),
+			help: () => this.help?.toggle(!this.help.isOpen),
+		};
 		this.ribbon = new ToolRibbon(root, this.ribbonActions(), {
 			hidden: GRAPH3D_HIDDEN_BUTTONS,
 			cls: "osmosis-graph3d-ribbon",
-			toggles: barToggles("3d", { isMobile: Platform.isMobile, touch }).map((id) => ({ id, onClick: () => (id === "navbar" ? this.toggleNavbar() : this.toggleSticks()) })),
+			toggles: barToggles("3d", { isPhone: Platform.isPhone, touch }).map((id) => ({ id, onClick: toggle[id] })),
 		});
 		this.ribbon.setPressed("sticks", this.sticksShown);
+		this.help = new Graph3DHelp(root, this.ribbon.toggleButton("help") ?? null);
 		this.updateRibbon();
 		this.showNavbar();
 		this.findBar = new FindBar(root, this.findHost());
@@ -523,6 +532,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.loadSeq++;
 		this.study?.destroy();
 		this.study = null;
+		this.help?.destroy();
+		this.help = null;
 		this.ribbon?.destroy();
 		this.ribbon = null;
 		this.findBar?.destroy();
@@ -633,13 +644,13 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.setFocus(file.path, true);
 	}
 
-	/** For `syncNavbar`: the mode whose navigation bar preference applies. */
+	/** For `syncNavbar`: only edit mode hides the navigation bar. */
 	navbarEditMode(): boolean {
 		return this.editMode;
 	}
 
 	private toggleNavbar(): void {
-		toggleNavbarPref(this.app, this.editMode);
+		toggleNavbarPref(this.app);
 		this.showNavbar();
 	}
 

@@ -71,7 +71,7 @@ The toolbar is a sticky action bar at the bottom of the mind map view. It provid
 
 Buttons that require a selection are dimmed when no node is selected. The toolbar hides automatically when you're editing a node's text.
 
-On a phone or tablet the toolbar works like Obsidian's own editing toolbar: in edit mode, Obsidian's navigation bar hides and the toolbar takes its place at the bottom edge; in reading mode the navigation bar comes back with the toolbar above it. The :lucide-panel-bottom: button at the end of the toolbar hides or shows the navigation bar for the mode you're in, and the device remembers each mode's choice. The navigation bar always comes back when you switch to a view that isn't a mind map or 3D graph. In the 3D graph on a touch screen, the :lucide-gamepad-2: button next to it shows the walk and fly joysticks.
+The toolbar looks like Obsidian's own mobile editing toolbar on every device. On desktop and tablet it floats at the bottom centre of the view in both reading and edit mode. On a phone it appears in edit mode only: Obsidian's navigation bar hides and the toolbar takes its place, as Obsidian's editing toolbar does. The :lucide-panel-bottom: button near the end of the toolbar brings the navigation bar back (the toolbar then sits above it), and the device remembers the choice. In reading mode a phone shows the navigation bar and no toolbar. The navigation bar always comes back when you switch to a view that isn't a mind map or 3D graph. In the 3D graph on a touch screen, the :lucide-gamepad-2: button shows the walk and fly joysticks, and in the 3D graph the last button, :lucide-help:, opens the list of controls.
 
 
 ## Structure Operations

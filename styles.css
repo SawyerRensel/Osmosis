@@ -538,41 +538,55 @@ pre.osmosis-code-block {
 	overflow: auto;
 }
 
-/* Tool ribbon (action bar) */
+/*
+ * The Osmosis bar (ToolRibbon.ts), in the look of Obsidian's mobile editing toolbar (app.css:
+ * `.mobile-toolbar-options-list-container` / `-list` / `.mobile-toolbar-option`): one pill of plain
+ * icons, the height and radius of --touch-size-m, on Obsidian's raised surface (`mod-raised` on the
+ * element adds its blur, shadow and edge mask on phones). Our own classes, not Obsidian's, so its
+ * monospace font, unset desktop option width and theme snippets aimed at the editor don't apply.
+ * Bottom centre of the view; on a phone it shows in edit mode only (`barShown`), in the navigation bar's slot.
+ */
 .osmosis-toolbar {
+	--icon-size: var(--icon-l);
+	--icon-stroke: var(--icon-l-stroke-width);
+	--icon-color: var(--text-normal);
+	--icon-color-hover: var(--text-normal);
 	position: absolute;
-	bottom: 8px;
+	bottom: var(--size-4-2);
 	left: 50%;
 	transform: translateX(-50%);
-	max-width: calc(100% - 16px);
+	max-width: calc(100% - var(--size-4-4));
+	border-radius: var(--touch-size-m);
+	overflow: hidden;
+	background: var(--raised-background, var(--background-secondary));
+	backdrop-filter: var(--raised-blur);
+	box-shadow: var(--raised-shadow, var(--shadow-s));
+	z-index: 10;
+	pointer-events: auto;
+}
+
+/* The strip itself scrolls sideways when the buttons don't fit, as Obsidian's does. */
+.osmosis-toolbar-list {
 	display: flex;
 	align-items: center;
-	gap: 2px;
-	padding: 4px 6px;
-	background: var(--background-secondary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 8px;
-	z-index: 10;
-	box-shadow: var(--shadow-s);
-	pointer-events: auto;
+	height: var(--touch-size-m);
+	padding: 0 var(--size-4-1);
 	overflow-x: auto;
 	overflow-y: hidden;
-	/* Hide scrollbar while keeping scroll functional */
-	scrollbar-width: none; /* Firefox */
+	scrollbar-width: none;
 }
 
-.osmosis-toolbar::-webkit-scrollbar {
-	display: none; /* Chrome, Safari */
+.osmosis-toolbar-list::-webkit-scrollbar {
+	display: none;
 }
 
-/* Mobile: raise above Obsidian's bottom nav bar */
-.is-mobile .osmosis-toolbar {
+/* Phone with the navigation bar shown (edit mode, navbar toggle off): raise the bar above it. */
+.is-phone .osmosis-toolbar {
 	bottom: 80px;
 }
 
-/* With the nav bar hidden (edit mode by default; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */
-body.osmosis-hide-navbar .osmosis-toolbar,
-body.osmosis-hide-navbar .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
+/* With the navigation bar hidden (phones, edit mode by default; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */
+body.osmosis-hide-navbar .osmosis-toolbar {
 	bottom: var(--navbar-bottom-offset, var(--size-4-2));
 }
 
@@ -580,25 +594,25 @@ body.osmosis-hide-navbar .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbo
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	min-width: 28px;
-	width: 28px;
-	height: 28px;
+	min-width: var(--toolbar-option-width, 40px);
+	height: 100%;
 	padding: 0;
 	border: none;
-	border-radius: 4px;
+	border-radius: var(--touch-size-m);
 	background: transparent;
-	color: var(--icon-color);
+	box-shadow: none;
+	color: var(--text-normal);
 	cursor: pointer;
 	flex-shrink: 0;
 }
 
 .osmosis-toolbar-btn:hover:not(.is-disabled) {
 	background: var(--background-modifier-hover);
-	color: var(--icon-color-hover);
 }
 
-/* A toggle that is on (the bar's navigation bar and joystick toggles). */
+/* A toggle that is on (the navigation bar, joystick and help toggles). */
 .osmosis-toolbar-btn.is-active {
+	--icon-color: var(--text-accent);
 	color: var(--text-accent);
 }
 
@@ -612,11 +626,9 @@ body.osmosis-hide-navbar .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbo
 	display: none;
 }
 
+/* Between groups: a small gap rather than a rule, as Obsidian's toolbar has no dividers. */
 .osmosis-toolbar-divider {
-	width: 1px;
-	height: 20px;
-	margin: 0 4px;
-	background: var(--background-modifier-border);
+	width: var(--size-4-2);
 	flex-shrink: 0;
 }
 
@@ -4062,17 +4074,30 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 }
 
 /*
- * Viewport corners: perf gauge top left, Overlays top right, controls help and
- * flight speed bottom left (the navigation bar and joystick toggles are in the ribbon).
- * --osmosis-graph3d-lift is how far Obsidian's floating mobile toolbar rises
- * from the bottom of the viewport, so what sits at the bottom stays clear of it.
+ * Viewport corners: perf gauge top left, Overlays top right, flight speed bottom left
+ * (the navigation bar, joystick and help toggles are the Osmosis bar's last buttons).
+ * --osmosis-graph3d-lift is how far a phone's navigation bar rises from the bottom of the
+ * viewport (tablets hide it), --osmosis-graph3d-bar-bottom is where the Osmosis bar sits, and
+ * --osmosis-graph3d-above-bar is the line just above the bar: the joysticks, the speed
+ * readout and the help panel sit there, so the bar never covers them.
  */
 .osmosis-graph3d {
 	--osmosis-graph3d-lift: 0px;
+	--osmosis-graph3d-bar-bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+	--osmosis-graph3d-above-bar: calc(var(--osmosis-graph3d-bar-bottom) + var(--touch-size-m) + var(--size-4-2));
 }
 
-body.is-mobile:not(.osmosis-hide-navbar) .osmosis-graph3d {
+body.is-phone:not(.osmosis-hide-navbar) .osmosis-graph3d {
 	--osmosis-graph3d-lift: 84px;
+}
+
+body.osmosis-hide-navbar .osmosis-graph3d {
+	--osmosis-graph3d-bar-bottom: var(--navbar-bottom-offset, var(--size-4-2));
+}
+
+/* A phone has no bar in reading mode (or while a line is edited): nothing to clear but the navigation bar. */
+body.is-phone .osmosis-graph3d:has(.osmosis-graph3d-ribbon.osmosis-toolbar-hidden) {
+	--osmosis-graph3d-above-bar: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
 }
 
 /* Hides Obsidian's navigation bar while a map whose mode asks for it is the active view (`syncNavbar` in ToolRibbon.ts). */
@@ -4175,17 +4200,17 @@ body.osmosis-hide-navbar .mobile-navbar {
 /* With the joysticks up, the panel rides above them, so its buttons aren't under a stick. */
 .is-phone .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study,
 .is-tablet .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study {
-	bottom: calc(var(--size-4-2) * 2 + max(48px, var(--osmosis-graph3d-lift)) + 120px);
+	bottom: calc(var(--osmosis-graph3d-above-bar) + 120px + var(--size-4-2));
 }
 
 /*
- * Bottom-left corner: the controls help, with the flight speed readout to its right (row-reverse: the
- * DOM lists the readout first). Obsidian's status bar sits bottom right.
+ * Bottom-left corner: the flight speed readout, above the Osmosis bar's line so a wide bar never covers
+ * it, and above the left joystick when the sticks are up. Obsidian's status bar sits bottom right.
  */
 .osmosis-graph3d-corner {
 	position: absolute;
 	left: var(--size-4-2);
-	bottom: var(--size-4-2);
+	bottom: var(--osmosis-graph3d-above-bar);
 	z-index: 1;
 	display: flex;
 	flex-direction: row-reverse;
@@ -4211,19 +4236,16 @@ body.osmosis-hide-navbar .mobile-navbar {
 	opacity: 1;
 }
 
-/* Controls help (Graph3DHelp.ts): the "?" in the corner, and the panel that opens above it. */
-.osmosis-graph3d-help-toggle {
-	pointer-events: auto;
+.osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-corner {
+	bottom: calc(var(--osmosis-graph3d-above-bar) + 120px + var(--size-4-2));
 }
 
-.osmosis-graph3d-help-toggle.is-active {
-	color: var(--text-accent);
-}
-
+/* Controls help (Graph3DHelp.ts): the panel the Osmosis bar's last button ("?") opens, centred above the bar. */
 .osmosis-graph3d-help {
 	position: absolute;
-	left: var(--size-4-2);
-	bottom: calc(var(--size-4-2) * 2 + 40px);
+	left: 50%;
+	transform: translateX(-50%);
+	bottom: var(--osmosis-graph3d-above-bar);
 	z-index: 2;
 	box-sizing: border-box;
 	width: min(440px, calc(100% - 2 * var(--size-4-2)));
@@ -4328,10 +4350,10 @@ body.osmosis-hide-navbar .mobile-navbar {
 	height: var(--icon-m);
 }
 
-/* Walk and fly joysticks (Graph3DSticks.ts), toggled from the ribbon. Raised clear of the corner controls, and of Obsidian's mobile toolbar when it is shown. */
+/* Walk and fly joysticks (Graph3DSticks.ts), toggled from the Osmosis bar. Raised clear of the bar, and of a phone's navigation bar when it is shown. */
 .osmosis-graph3d-stick {
 	position: absolute;
-	bottom: calc(var(--size-4-2) + max(48px, var(--osmosis-graph3d-lift)));
+	bottom: var(--osmosis-graph3d-above-bar);
 	z-index: 1;
 	display: flex;
 	align-items: center;
@@ -4370,12 +4392,12 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /*
- * The shared toolbar ribbon (Graph3DView.ts): the mind map's `.osmosis-toolbar`, bottom centre. It
- * clears Obsidian's floating mobile toolbar by --osmosis-graph3d-lift, not the mind map's fixed 80px (or
- * takes the navigation bar's slot when that is hidden), and stops short of the bottom corners either side.
+ * The Osmosis bar in 3D (Graph3DView.ts): the mind map's `.osmosis-toolbar`, bottom centre, at
+ * --osmosis-graph3d-bar-bottom (above a phone's navigation bar, or in its slot when that is hidden),
+ * stopping short of the bottom corners either side (Obsidian's status bar sits bottom right on desktop).
  */
 .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
-	bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+	bottom: var(--osmosis-graph3d-bar-bottom);
 	max-width: calc(100% - 2 * (var(--size-4-2) + 48px));
 }
 
