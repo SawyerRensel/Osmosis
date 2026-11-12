@@ -14,7 +14,9 @@ import {
 	resolveSubpath,
 	setIcon,
 	type ViewStateResult,
+	type Modifier,
 } from "obsidian";
+import { arrowKeyStep, hierarchyStep, type HierarchyStep } from "../hierarchy-nav";
 import { ParseCache } from "../cache";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
@@ -597,6 +599,17 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				this.handleKeyDown(e);
 				return false;
 			});
+		}
+		// Ctrl/Cmd+Arrow walks the outline (+Shift extends the selection). Claim it
+		// here too; while editing, the keys stay with the editor's word jumps.
+		for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+			for (const modifiers of [["Mod"], ["Mod", "Shift"]] as Modifier[][]) {
+				this.scope.register(modifiers, key, (e: KeyboardEvent) => {
+					if (this.editingNodeId || inFind(e) || !this.selectedNodeId) return undefined;
+					if (!e.defaultPrevented) this.handleKeyDown(e);
+					return false;
+				});
+			}
 		}
 		// Alt+Arrow moves nodes. Claim it here, or a user hotkey on the same
 		// keys (e.g. "Move line up") takes it first and nothing moves.
@@ -6581,6 +6594,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
+		// Ctrl/Cmd+arrow follows the outline whatever the layout or side; +Shift extends the selection
+		const step = (e.ctrlKey || e.metaKey) && !e.altKey ? arrowKeyStep(e.key) : null;
+		if (step) {
+			e.preventDefault();
+			this.navigateHierarchy(step, e.shiftKey);
+			return;
+		}
+
 		// Direction-aware arrow key handling
 		const arrowAction = this.resolveArrowAction(e.key);
 		if (arrowAction) {
@@ -6970,6 +6991,39 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const firstChild = node.children[0];
 		if (firstChild) {
 			this.extendSelectionTo(firstChild.source.id);
+		}
+	}
+
+	/**
+	 * Ctrl/Cmd+arrow: move (or with `extend`, grow the selection) to the
+	 * previous/next sibling, parent or first child, stopping at the ends of the
+	 * siblings. A collapsed node's first child expands it first, as plain
+	 * arrows do. Never steps onto the file's root.
+	 */
+	private navigateHierarchy(step: HierarchyStep, extend: boolean): void {
+		const id = this.selectedNodeId;
+		if (!id) {
+			this.selectFirstNode();
+			return;
+		}
+		const node = this.nodeMap.get(id);
+		if (!node) return;
+		if (step === "firstChild" && this.collapsedIds.has(id) && node.source.children.length > 0) {
+			this.toggleCollapse(id);
+			return;
+		}
+		const tree = {
+			parent: (nodeId: string) => this.nodeMap.get(nodeId)?.parent?.source.id ?? null,
+			children: (nodeId: string) => this.nodeMap.get(nodeId)?.children.map((child) => child.source.id) ?? [],
+		};
+		const target = hierarchyStep(tree, id, step);
+		if (target === null || this.nodeMap.get(target)?.source.type === "root") return;
+		if (extend) {
+			this.extendSelectionTo(target);
+		} else {
+			this.selectNode(target);
+			this.syncMapSelectionToEditor(target);
+			this.scrollToSelectedNode();
 		}
 	}
 

@@ -20,6 +20,7 @@ import { FindBar, type FindHost } from "./FindBar";
 import { refocusPath } from "../graph3d/refocus";
 import { isEntry, landing, readPlace, stepTo, type Place, type Step } from "../graph3d/history";
 import type { Arrow } from "../graph3d/arrow-nav";
+import { arrowKeyStep, type HierarchyStep } from "../hierarchy-nav";
 import { computeHorizon, noteAdjacency, withBacklinkers, withEmbedded, type Horizon, type NoteAdjacency } from "../graph3d/horizon";
 import { doubleClickEdit } from "../edit-keys";
 import { planStyleKeys, stampedStart } from "../mindmap-style-key";
@@ -323,12 +324,13 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.scope.register(["Alt"], "ArrowRight", structuralKey("indent"));
 		// The arrows move the selection to the related plate closest to that direction on screen, and the camera glides after it.
 		// Shift+arrow adds that plate to the selection instead. A step in back/forward, as a plate click is; the focus note stays.
-		const arrowKey = (arrow: Arrow, extend: boolean) => (e: KeyboardEvent) => {
+		// Ctrl/Cmd+arrow (and +Shift) moves by the outline instead: Up/Down sibling, Left parent, Right first child.
+		const arrowKey = (arrow: Arrow, extend: boolean, step: HierarchyStep | null = null) => (e: KeyboardEvent) => {
 			if (isEditableTarget(e.target) || e.target instanceof HTMLSelectElement || this.editor.isOpen) return undefined;
 			const scene = this.scene;
 			const selected = scene?.selectedNodes() ?? [];
 			if (scene === null || selected.length === 0) return undefined;
-			const id = scene.arrowTarget(arrow);
+			const id = step !== null ? scene.hierarchyTarget(step) : scene.arrowTarget(arrow);
 			if (id === null) return false;
 			scene.select(extend ? [...selected.map((node) => node.id), id] : [id]);
 			void this.navigate({ focus: this.focusPath, node: id }, "", true, true);
@@ -337,6 +339,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		for (const [key, arrow] of [["ArrowUp", "up"], ["ArrowDown", "down"], ["ArrowLeft", "left"], ["ArrowRight", "right"]] as const) {
 			this.scope.register([], key, arrowKey(arrow, false));
 			this.scope.register(["Shift"], key, arrowKey(arrow, true));
+			this.scope.register(["Mod"], key, arrowKey(arrow, false, arrowKeyStep(key)));
+			this.scope.register(["Mod", "Shift"], key, arrowKey(arrow, true, arrowKeyStep(key)));
 		}
 	}
 

@@ -56,6 +56,9 @@ Rotate and Pan coast on when you let go mid-motion, like a drag. Phones and touc
 | ++f++ | Make the selected plate's note the focus note, which loads its surroundings |
 | ++left++ ++up++ ++right++ ++down++ | Move the selection to the related plate nearest that direction on screen |
 | ++shift+arrow++ | Add that plate to the selection as the new primary |
+| ++ctrl+up++ / ++ctrl+down++ | Move the selection to the previous / next sibling in the outline, stopping at the ends |
+| ++ctrl+left++ / ++ctrl+right++ | Move the selection to the parent / first child in the outline, wherever they are on screen |
+| ++ctrl+shift+arrow++ | Add that outline neighbour to the selection as the new primary |
 | ++alt+left++ / ++alt+right++ | Back / forward. In edit mode with a line selected, these outdent and indent instead |
 | ++escape++ | Cancel a link drag, close a menu or the editor, else clear the selection |
 | ++ctrl+c++ | Copy the selection as Markdown |

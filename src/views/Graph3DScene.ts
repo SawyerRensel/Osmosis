@@ -70,6 +70,7 @@ import { bandOffset, type VisibleBand } from "../graph3d/edit";
 import { boxHits, boxRect, heldInto, tapToggles, toggled, type ScreenPoint } from "../graph3d/selection";
 import { frameDistance } from "../graph3d/liftoff";
 import { arrowCandidates, pickInDirection, type Arrow, type ScreenOffset } from "../graph3d/arrow-nav";
+import { edgeHierarchy, hierarchyStep, type HierarchyStep } from "../hierarchy-nav";
 import {
 	MAX_FRAME_MS,
 	PAN_FRICTION,
@@ -1256,6 +1257,25 @@ export class Graph3DScene {
 			if (to !== null) offsets.push({ id, x: to.x - from.x, y: to.y - from.y });
 		}
 		return pickInDirection(offsets, arrow);
+	}
+
+	/**
+	 * The plate a Ctrl/Cmd+arrow press moves the selection to from the
+	 * primary: its previous or next sibling, parent or first child in the
+	 * outline (`hierarchyStep`), wherever they are on screen. Plates not drawn
+	 * (fading out, or not placed yet) count as absent. Null with no selection
+	 * or nothing there.
+	 */
+	hierarchyTarget(step: HierarchyStep): string | null {
+		const primaryId = this.selectedNodes()[0]?.id;
+		if (primaryId === undefined) return null;
+		const byId = new Map(this.nodes.map((node) => [node.id, node]));
+		const shown = (id: string): boolean => {
+			const node = byId.get(id);
+			return node !== undefined && !node.departing && node.opacity > 0 && placed(node);
+		};
+		const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
+		return hierarchyStep(edgeHierarchy(edges, shown), primaryId, step);
 	}
 
 	/** The node last flown to, the one edits and undo act on; null when it is gone from the graph. */
