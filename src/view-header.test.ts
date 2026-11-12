@@ -1,24 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { HEADER_EXTRAS, SHARED_HEADER, headerItems, readingToggle } from "./view-header";
+import { PANE_MENU, SHARED_HEADER, headerItems, readingToggle } from "./view-header";
 
 describe("headerItems", () => {
-	it("starts both views with the same shared buttons, in order", () => {
-		expect(SHARED_HEADER).toEqual(["switch", "note-view", "reading", "style", "study"]);
-		expect(headerItems("2d").slice(0, SHARED_HEADER.length)).toEqual([...SHARED_HEADER]);
-		expect(headerItems("3d").slice(0, SHARED_HEADER.length)).toEqual([...SHARED_HEADER]);
+	it("is Note view, the 2D | 3D pill, Study, then Reading/Editing", () => {
+		expect(SHARED_HEADER).toEqual(["note-view", "switch", "study", "reading"]);
 	});
 
-	it("puts Pin and Peek after the shared set in 2D, and Follow in 3D", () => {
-		expect(headerItems("2d")).toEqual([...SHARED_HEADER, "pin", "peek"]);
-		expect(headerItems("3d")).toEqual([...SHARED_HEADER, "follow"]);
+	it("is the same in both views, so nothing shifts between 2D and 3D", () => {
+		expect(headerItems("2d")).toEqual([...SHARED_HEADER]);
+		expect(headerItems("3d")).toEqual([...SHARED_HEADER]);
+	});
+});
+
+describe("PANE_MENU", () => {
+	it("gives 2D Style, Pin and Peek, in that order", () => {
+		expect(PANE_MENU["2d"].map((e) => e.id)).toEqual(["style", "pin", "peek"]);
 	});
 
-	it("never lists a button twice, and keeps extras out of the other view", () => {
+	it("gives 3D Style and Follow, in that order", () => {
+		expect(PANE_MENU["3d"].map((e) => e.id)).toEqual(["style", "follow"]);
+	});
+
+	it("marks the toggles (they show a check mark) and not Style", () => {
 		for (const view of ["2d", "3d"] as const) {
-			const items = headerItems(view);
-			expect(new Set(items).size).toBe(items.length);
+			for (const entry of PANE_MENU[view]) expect(entry.toggle).toBe(entry.id !== "style");
 		}
-		expect(HEADER_EXTRAS["2d"].some((id) => HEADER_EXTRAS["3d"].includes(id))).toBe(false);
+	});
+
+	it("never lists an entry twice in a view", () => {
+		for (const view of ["2d", "3d"] as const) {
+			const ids = PANE_MENU[view].map((e) => e.id);
+			expect(new Set(ids).size).toBe(ids.length);
+		}
 	});
 });
 

@@ -104,7 +104,7 @@ import {
 } from "../study/spatial-study";
 import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
-import { arrangeViewHeader } from "./ViewHeader";
+import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
@@ -428,7 +428,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 
 	// Pin/lock state: when pinned, active-leaf-change doesn't switch the map
 	private isPinned = false;
-	private pinActionEl: HTMLElement | null = null;
 
 	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
 	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
@@ -441,7 +440,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 	// collide with the host's.
 	private spatialMode: "off" | "peek" | "study" = "off";
 	private spatialStudyActionEl: HTMLElement | null = null;
-	private spatialPeekActionEl: HTMLElement | null = null;
 	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
 	private spatialTargets = new Set<string>();
 	/**
@@ -601,6 +599,16 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		}
 	}
 
+	/** The ⋯ menu: Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
+	onPaneMenu(menu: Menu, source: string): void {
+		addPaneMenuItems(menu, "2d", {
+			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
+			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
+			peek: { onClick: () => this.toggleSpatialPeek(), checked: this.spatialMode === "peek", icon: peekIcon() },
+		});
+		super.onPaneMenu(menu, source);
+	}
+
 	getViewType(): string {
 		return VIEW_TYPE_MINDMAP;
 	}
@@ -631,7 +639,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 				// Callers that name a file mean "show this one" — pin unless the
 				// state says otherwise, so the map stays on it.
 				this.isPinned = saved.pinned;
-				this.pinActionEl?.toggleClass("is-active", this.isPinned);
 				const switching = file !== this.currentFile;
 				// Record the map we're leaving, so Back returns to it. A link jump
 				// within the same note is recorded too: Back undoes the jump.
@@ -769,10 +776,7 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 
 	private togglePin(): void {
 		this.isPinned = !this.isPinned;
-		if (this.isPinned) {
-			this.pinActionEl?.addClass("is-active");
-		} else {
-			this.pinActionEl?.removeClass("is-active");
+		if (!this.isPinned) {
 			// Sync to the currently active file
 			const activeLeaf = this.app.workspace.getMostRecentLeaf();
 			if (activeLeaf?.view instanceof MarkdownView && activeLeaf.view.file) {
@@ -1353,7 +1357,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
-		this.spatialPeekActionEl?.addClass("is-active");
 		this.applySpatialState();
 	}
 
@@ -1385,7 +1388,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		const wasStudy = this.spatialMode === "study";
 		this.spatialMode = "off";
 		this.spatialStudyActionEl?.removeClass("is-active");
-		this.spatialPeekActionEl?.removeClass("is-active");
 
 		if (this.svg) {
 			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-hidden"))) {
@@ -1949,9 +1951,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 					void this.loadFile(this.currentFile);
 				}
 			},
-			openProperties: () => {
-				void this.plugin.activatePropertiesSidebar();
-			},
 			openNodeMenu: (btn) => {
 				const rect = btn.getBoundingClientRect();
 				this.showNodeMenu(this.selectedNodeId, (menu) =>
@@ -1961,20 +1960,10 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 		});
 		this.findBar = new FindBar(container, this.findHost());
 
-		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below.
+		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
-		});
-
-		// Open properties sidebar action (useful on mobile)
-		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => {
-			void this.plugin.activatePropertiesSidebar();
-		});
-
-		// Pin/lock header action
-		this.pinActionEl = this.addAction("pin", "Pin this mind map", () => {
-			this.togglePin();
 		});
 
 		// Note view action — switch back to markdown editor
@@ -1993,18 +1982,10 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			this.toggleSpatialStudy();
 		});
 
-		// Spatial peek mode toggle (same icon/fallback as the reading view)
-		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
-			this.toggleSpatialPeek();
-		});
-
 		arrangeViewHeader(this, "2d", {
 			"note-view": noteViewActionEl,
 			reading: this.readingActionEl,
-			style: styleActionEl,
 			study: this.spatialStudyActionEl,
-			pin: this.pinActionEl,
-			peek: this.spatialPeekActionEl,
 		}, () => void this.switchTo3D());
 
 		// Apply the global default mode; persisted per-leaf state (setState)
@@ -2096,7 +2077,6 @@ export class MindMapView extends ItemView implements NodeStyleHost {
 			this.app.vault.on("delete", (file) => {
 				if (this.isPinned && file instanceof TFile && file === this.currentFile) {
 					this.isPinned = false;
-					this.pinActionEl?.removeClass("is-active");
 					this.currentFile = null;
 					this.currentTree = null;
 					this.contentEl.empty();

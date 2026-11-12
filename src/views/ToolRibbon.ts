@@ -31,7 +31,6 @@ export interface ToolbarActions {
 	undo: () => void;
 	redo: () => void;
 	refresh: () => void;
-	openProperties: () => void;
 	openNodeMenu: (btn: HTMLElement) => void;
 }
 
@@ -93,8 +92,6 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 	],
 	[
 		{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", command: "Refresh mind map", action: "refresh" },
-		// "Open mind map properties" is already a command (main.ts).
-		{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: "openProperties" },
 	],
 	[
 		// A phone has no right-click, and a long press there has to stay

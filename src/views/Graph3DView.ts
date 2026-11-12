@@ -35,7 +35,7 @@ import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../graph3d/liftoff";
 import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
-import { arrangeViewHeader } from "./ViewHeader";
+import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { GRAPH3D_HIDDEN_BUTTONS, ToolRibbon, type ButtonDef, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type Graph3DOverlays } from "../graph3d/overlays";
 import { FSRSScheduler } from "../database/FSRSScheduler";
@@ -118,7 +118,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 	private backlinks = false;
 	private follow = false;
 	private loadSeq = 0;
-	private followActionEl: HTMLElement | null = null;
 	private studyActionEl: HTMLElement | null = null;
 	/** Relational study, while the view is open; its session runs only while `active`. */
 	private study: Graph3DStudy | null = null;
@@ -345,6 +344,15 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		}
 	}
 
+	/** The ⋯ menu: Style and Follow (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
+	onPaneMenu(menu: Menu, source: string): void {
+		addPaneMenuItems(menu, "3d", {
+			style: { onClick: () => void this.plugin().activatePropertiesSidebar() },
+			follow: { onClick: () => this.toggleFollow(), checked: this.follow },
+		});
+		super.onPaneMenu(menu, source);
+	}
+
 	getViewType(): string {
 		return VIEW_TYPE_GRAPH3D;
 	}
@@ -392,7 +400,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		// Hold the focus note's history from here, not from the first reload, which can wait on the engine loading: a mind map handing this leaf over may let go of it first.
 		if (this.focusPath !== null && !this.holds.has(this.focusPath)) this.holds.set(this.focusPath, this.plugin().editHistory.hold(this.focusPath));
 		this.notifySettings();
-		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.updateHeader();
 		await super.setState(state, result);
 		// A heading or block to land on, from a Mod-click on a link in another 3D graph. Not kept in getState.
@@ -425,17 +432,11 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
-		// The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map.
-		const styleActionEl = this.addAction("paintbrush", "Open style sidebar", () => void this.plugin().activatePropertiesSidebar());
 		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
-		this.followActionEl = this.addAction("locate-fixed", "Follow active note", () => this.toggleFollow());
-		this.followActionEl.toggleClass("is-active", this.follow);
 		arrangeViewHeader(this, "3d", {
 			"note-view": noteViewActionEl,
 			reading: this.editActionEl,
-			style: styleActionEl,
 			study: this.studyActionEl,
-			follow: this.followActionEl,
 		}, () => void this.switchTo2D());
 
 		this.emptyEl = root.createDiv({
@@ -649,7 +650,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 
 	private toggleFollow(): void {
 		this.follow = !this.follow;
-		this.followActionEl?.toggleClass("is-active", this.follow);
 		this.app.workspace.requestSaveLayout();
 		const file = this.app.workspace.getActiveFile();
 		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.setFocus(file.path, true);
@@ -774,7 +774,6 @@ export class Graph3DView extends ItemView implements NodeStyleHost {
 				this.styleFrontmatter.clear();
 				void this.reload();
 			},
-			openProperties: () => void this.plugin().activatePropertiesSidebar(),
 			openNodeMenu: (btn) => {
 				const node = this.scene?.focusedNode() ?? null;
 				if (node === null) return;

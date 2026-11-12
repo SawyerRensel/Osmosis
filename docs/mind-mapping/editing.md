@@ -68,7 +68,6 @@ The toolbar is a sticky action bar at the bottom of the mind map view. It provid
 | :lucide-undo-2: | Undo | No |
 | :lucide-redo-2: | Redo | No |
 | :lucide-refresh-cw: | Refresh mind map | No |
-| :lucide-paintbrush: | Map properties | No |
 
 Buttons that require a selection are dimmed when no node is selected. The toolbar hides automatically when you're editing a node's text.
 

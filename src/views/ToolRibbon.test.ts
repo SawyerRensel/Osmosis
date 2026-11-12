@@ -35,8 +35,8 @@ describe("TOOLBAR_GROUPS commands", () => {
 		expect(new Set(names).size).toBe(names.length);
 	});
 
-	it("exposes every button as a command except map properties, which already has one", () => {
-		expect(defs.filter((d) => !d.command).map((d) => d.id)).toEqual(["open-properties"]);
+	it("exposes every button as a command", () => {
+		expect(defs.filter((d) => !d.command).map((d) => d.id)).toEqual([]);
 	});
 });
 
@@ -52,7 +52,7 @@ describe("TOOLBAR_GROUPS layout", () => {
 			["copy:Copy node", "cut:Cut node", "paste:Paste node"],
 			["copy-style:Copy node style", "paste-style:Paste node style"],
 			["undo:Undo mind map edit", "redo:Redo mind map edit"],
-			["refresh:Refresh mind map", "open-properties:-"],
+			["refresh:Refresh mind map"],
 			["node-menu:Open node menu"],
 		]);
 	});

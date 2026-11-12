@@ -1,5 +1,5 @@
-import type { ItemView } from "obsidian";
-import { headerItems, type HeaderItem, type HeaderView } from "../view-header";
+import type { ItemView, Menu } from "obsidian";
+import { PANE_MENU, headerItems, type HeaderItem, type HeaderView, type PaneMenuId } from "../view-header";
 
 /** The 2D | 3D pill, as a header item. The active side is highlighted; the other switches the leaf to that view. */
 function createViewSwitch(active: HeaderView, onSwitch: (to: HeaderView) => void): HTMLElement {
@@ -36,4 +36,27 @@ export function arrangeViewHeader(view: ItemView, kind: HeaderView, buttons: Par
 	// Everything of ours goes before the first button that is not: Obsidian's own, at the right.
 	const anchor = Array.from(container.children).find((child) => !ours.has(child)) ?? null;
 	for (const el of ordered) container.insertBefore(el, anchor);
+}
+
+/** How a view runs one ⋯ menu entry: `checked` is a toggle's current state, `icon` overrides the default. */
+export interface PaneMenuHandler {
+	onClick: () => void;
+	checked?: boolean;
+	icon?: string;
+}
+
+/**
+ * Add the view's entries (`PANE_MENU`) to the ⋯ pane menu, then a separator, so
+ * they stand ahead of Obsidian's own. Call it from `onPaneMenu` before `super`.
+ */
+export function addPaneMenuItems(menu: Menu, kind: HeaderView, handlers: Partial<Record<PaneMenuId, PaneMenuHandler>>): void {
+	for (const entry of PANE_MENU[kind]) {
+		const handler = handlers[entry.id];
+		if (!handler) continue;
+		menu.addItem((item) => {
+			item.setTitle(entry.title).setIcon(handler.icon ?? entry.icon).onClick(handler.onClick);
+			if (entry.toggle) item.setChecked(handler.checked === true);
+		});
+	}
+	menu.addSeparator();
 }
