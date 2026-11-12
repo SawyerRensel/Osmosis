@@ -12,9 +12,9 @@ related:
   - "[[Support indented callouts and blocks in mind map view and note view]]"
 status: In-Review
 priority:
-progress: 70
+progress: 100
 date_created: "2026-11-12T17:00:00.000Z"
-date_modified: "2026-11-12T18:00:00.000Z"
+date_modified: "2026-11-12T17:47:04.000Z"
 date_start_scheduled: "2026-11-12T17:07:56.000Z"
 date_start_actual: "2026-11-12T17:07:56.000Z"
 date_end_scheduled:
@@ -210,9 +210,36 @@ Fixture: `vault/tests/mindmap/adjacent-lines.md`. **Reload Obsidian (Ctrl+R) fir
 
 Undo with Ctrl+Z, or restore the fixture from `e2e/fixtures/adjacent-lines.md` (and reload) when done.
 
-## Next session (Phase 3: 3D near panel + reveal + study)
-Edit ops are done for both views (this session); what's left:
-1. `src/graph3d/near.ts` (L48, L69): the near panel renders `raw` through `unembed`, which turns **every** `![[…]]` into a link. Keep **media** embeds (`isMediaEmbed` from `line-groups.ts`) as embeds so a cover image shows in the near tier; render a heading group like 2D does (`groupDisplayMarkdown`). Far plates keep `content` (`graph3d/model.ts` L202, no change needed unless the label looks wrong).
-2. Reading-view reveal (`src/study/line-reveal.ts`, `LineRevealProcessor.ts` ~L230–260): hide the group's Osmosis line span (from the parse) rather than Obsidian's metadata-cache block span, which for `## Title` + `![[cover.png]] ^os-x` covers only the image line.
-3. `SequentialStudyModal.ts`: the card back is now `groupDisplayMarkdown` (Markdown with an image): check it renders as Markdown and the image size is sane.
-4. Manual 3D pass (phone + desktop) on `vault/tests/mindmap/adjacent-lines.md`: near panel shows the cover image, 3D edit ops (sibling before, Alt-arrows, selection move to end, link) keep nodes apart.
+## Batch implementation notes, Phase 3 (awaiting manual test)
+Session 4 built Phase 3 (code commit `27922ad`). All three phases are built, so status is **In-Review** at progress 100.
+
+### What was built
+- **3D near panel** (`src/graph3d/near.ts`): a line group (`isLineGroup`) renders its lines with every trailing `^id` stripped. A heading group renders as three blocks: the lines above the heading, the heading line (with its `#` kept, as every panel keeps markers), and the lines below. So the cover image draws above the title, as in 2D. In a group, image, audio and video embeds stay embeds; note embeds and PDFs still become links. The panel size estimate (`IMAGE`) now counts a kept `![[…]]` embed as a media row, so spacing reserves room for the image.
+- **Reading-view reveal**: `lineGroupSpans(markdown, path)` (pure, `src/study/line-reveal.ts`) parses the note and returns each carded group's line span. `withGroupSpans` puts that span in place of Obsidian's block span. `LineRevealProcessor` parses `getSectionInfo().text` once per render (cached by note and text, not once per section). The section that holds the ID line stays the tracked line, with the placeholder and the rating bubble. Every other section of the group (for example the cover image over its heading, or the heading over its caption) is a "group part": its content is wrapped in `.osmosis-line-back`, and it hides while the card is unrevealed. Parts that an edit moved out of the span are pruned when the primary section re-renders.
+- **Study:** I checked this and changed no code. `SequentialStudyModal` renders `card.back` through `MarkdownRenderer` with the note as the source path, so `![[cover.png]]` resolves. `.osmosis-study-card img` is capped at `max-width: 100%; max-height: 50vh`. The title shows as plain bold-less text on the back (the `#` is stripped by `groupDisplayMarkdown`), the same as a single heading card's back.
+
+### Decisions worth remembering
+- **Only groups keep media embeds in the near panel.** A single-line `![[image.png]]` node is still a link, as before: the image is its own attachment node, and showing it twice was the reason `unembed` exists. For a group, the image is the point (a cover), so it shows in the panel *and* stays an attachment node. Far plates are text only (Sawyer's call). `graph3d/model.ts` is unchanged: a heading group's label is its heading text.
+- **The panel keeps `#` on a heading group's heading**, unlike 2D's `groupDisplayMarkdown`. The 2D node is already styled at its level, but a panel styles nothing itself.
+- **The group span comes from Osmosis's parse, not the metadata cache.** Only carded *groups* get a parsed span. Single lines, code blocks and tables keep Obsidian's block span, so a standalone `^id` after a code block works as before. The placeholder sits in the section holding the ID (the last line), so for cover + heading it replaces the heading and the image disappears.
+- **Group parts hide on `hidden` only**, never on the occlusion "painted" state, so an occluded line in a group shows its other sections once revealed.
+
+### Surface map (session 4)
+| File | Change |
+|---|---|
+| `src/graph3d/near.ts` (+ test) | group Markdown, media embeds kept in groups, embed counted in `IMAGE` |
+| `src/study/line-reveal.ts` (+ test) | `lineGroupSpans`, `withGroupSpans` |
+| `src/views/LineRevealProcessor.ts` | per-render group spans, `groupParts`, `trackGroupPart`, `pruneGroupParts`, parts toggled in `applyAll` |
+| `e2e/fixtures/adjacent-lines.md` → `vault/tests/mindmap/adjacent-lines.md` | new section "Carded heading groups": cover + `### Reefing ^os-adjl04`, `### Trimming` + caption `^os-adjl05` |
+
+### Not verified
+I cannot see Obsidian. Not checked: how the near panel looks on a phone (`camera.fov` differs there, but panel content does not depend on it), and whether Obsidian ever renders a group's lines as one section (then there are no parts and the section is simply the primary).
+
+### Manual retest (3D, reveal, study), desktop and phone
+Fixture: `vault/tests/mindmap/adjacent-lines.md`, which was updated. **Reload Obsidian (Ctrl+R) first.**
+10. **3D near panel:** open the note's 3D graph and fly close to "Rigging". Its panel shows the cover image *above* the "Rigging" heading. Far away, the plate shows only "Rigging". "Mooring" shows its heading with the sentence below it. "Reefing" shows the image above the title, with no `^os-adjl04` text.
+11. **3D edit ops:** in 3D, select "Mooring". Insert a sibling before it, move it with Alt+Up/Down, select some lines and move them to the end of the note, and add a link to a group. After each step, nodes stay separate (a blank line between them), and the link text lands before `^os-adjl0x`, never after it.
+12. **Reading-view reveal:** switch the note to reading view and click Peek (dashed eye). For "Reefing", the image *and* the heading are hidden, and one placeholder sits where the heading was. For "Trimming", both the heading and the caption are hidden. Click the placeholder: both lines come back together. "A carded run" hides both of its lines. Then try Study (graduation cap): reveal top-down and rate each card. The group reveals as one unit.
+13. **Study modal:** study the note's deck in the sequential modal. Flip the "Reefing" card: the back shows the image (no larger than half the screen height, inside the card) and "Reefing" below it. Flip "Trimming": the back shows "Trimming" and the caption.
+
+Restore the fixture from `e2e/fixtures/adjacent-lines.md` (and reload) when done.
