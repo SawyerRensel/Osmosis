@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Perf - Full frame timing readout in 3D and 2D]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T18:30:00.000Z"
-date_modified: "2026-11-12T18:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T23:58:00.000Z"
+date_start_scheduled: "2026-11-12T23:31:09.000Z"
+date_start_actual: "2026-11-12T23:31:09.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -86,3 +86,54 @@ Keep it under ~130k tokens. Read `Graph3DNear.ts` whole, plus `src/graph3d/occlu
 Use the JS-objects note at Panel detail 1 and Live panels 48. Then use Planets mode, which uses tilted CSS3D panels.
 1. Orbit, zoom and fly, and compare the gauge to the baseline.
 2. Check that panel text is crisp both still and moving, that nearer plates still cut holes in panels, that the mist veil fades, that links, checkboxes and resize still work, and that editing still works.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `b34ec81` on `fix/3d-panels-60fps` (stacked on T76). Nothing here is **measured**: I can't run Obsidian. Every effect below is **expected**, from reading the code and how Chromium renders. Sawyer's gauge decides.
+
+### Cause (read from code)
+Every frame, each screen-facing panel got a new `scale()` on its box, a new veil opacity and often a new mask. None of the panels had its own compositor layer. In Chromium, changing a transform, opacity or mask on content without a layer makes the browser re-raster that content. So all 48 panels' text (code blocks included) was redrawn every frame the camera moved. That matches the baseline: ~25 of 28 ms untimed, outside JS and WebGL.
+
+### What changed
+1. **Each screen-facing panel is a composited layer, re-rastered in scale buckets** (`src/graph3d/raster.ts`). New DOM: anchor → **lens** (`will-change: transform`, carries the mask) → **fill** (the plate fill, the lens's first child) → box (as before, now with `transform: scale(B)` from its corner, `B` = raster scale). The fill is painted in the lens's own space, so Chromium merges the box's content into the lens layer at scale `B`. The lens transform `translate(-50%,-50%) scale(s/B)` is all the compositor scales. `rasterScale` keeps `s/B` in **[0.9, 1]**. Outside that range it re-rasters at `B = s/0.95`. A panel's first raster is at `B = s` (ratio 1). So the raster is **never shown larger than drawn**, only shrunk by at most 10%.
+2. **The CSS2D anchor is composited too** (`will-change: transform`). The renderer's per-frame translate is then a compositor-only update.
+3. **The veil is its own layer** (`will-change: opacity`). The mist fade no longer repaints the text under it.
+4. **Masks.** The mask moved from the box to the lens. Hole lengths snap to 0.25 screen px (`snapHoles`, `MASK_STEP_PX`), so sub-pixel drift doesn't rewrite the mask. Because the fill is a child of the lens and not the lens's background, a mask write should invalidate only the mask layer, not the text.
+5. **Skipped writes.** The cross-fade opacity, lens transform and veil opacity are written only when their value changes.
+6. **Gauge.** The `panels:` line now reads `… transforms N  masks N  re-rasters N /frame`. `transforms` now counts lens transform writes that actually happened (before: panels placed).
+
+### Expected effect (not measured)
+- **Orbit and pan:** scale drifts by well under 10%, so close to 0 re-rasters a frame. Translate, scale, veil and z-order become compositor work. Masks only repaint their own mask layer. Frame avg should drop from 28.2 ms toward the JS + WebGL cost (~2.3 ms) plus style recalc for ~150 inline writes. I expect it under 16.7 ms.
+- **Zoom or fly:** a panel re-rasters about every 5% of scale change, not every frame. All panels change scale together, so they re-raster on the same frame: expect a heavier frame every few frames while zooming, not every frame.
+- **Planets mode (tilted CSS3D panels):** unchanged path. The lens has no `will-change` there (only `.osmosis-graph3d-near-flat`, the CSS2D layer, gets it), the box is unscaled and the raster scale is 1. Only the skipped writes, mask snapping and veil layer apply. I don't expect a big gain in Planets mode.
+
+### Decisions worth remembering
+- **Band [0.9, 1], reset 0.95: Sawyer, please check by eye.** Between re-rasters the compositor shrinks the text bitmap by up to 10%, which is bilinear resampling. A wider band means fewer re-rasters but softer text. If text looks softer than before while still, raise `RASTER_BAND.low` (for example 0.95, reset 0.975). If zooming stutters, lower it.
+- **What "never larger than drawn" relies on.** Chromium chooses a layer's raster resolution itself. For `will-change: transform` layers it keeps that resolution while the transform changes, and I believe it never goes below the layer's own scale 1. The lens's scale is always ≤ 1, so the raster is never enlarged. If that belief is wrong, the worst case is Chromium fixing the resolution at a moment in the band and then enlarging it by up to 1/0.9 = 1.11×. **Check:** zoom slowly into a code block from far away. Text should never look soft or smeared. Panning at a constant distance should look the same as before.
+- **Why the fill is a separate child.** The box must be drawn into the lens's layer, not get a layer of its own. In its own layer it would carry the full scale and blur. Something has to paint in the lens's own space before the box for Chromium to merge them, and the fill does that. It can't be the lens's background: a mask write on the lens would then invalidate that background and re-raster the whole layer.
+- **The box no longer has a background.** The fill draws it, at the box's corners × `B`. `.is-editing` now hides the lens, so the fill hides too.
+- **Not done: plate prefilter for `panelHoles`.** It costs 48 × ~500 arithmetic checks. That's inside the timed `place` figure, which was small in the baseline (`tick` 1.46 ms covers it). Not worth a grid without a measurement saying otherwise.
+- **Fractional positions.** Layers sit at sub-pixel positions, as the CSS2D renderer computes them. I didn't round them, because rounding would make a panel jitter by up to half a pixel against its plate.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/raster.ts` | New: `RASTER_BAND`, `rasterScale`, `MASK_STEP_PX`, `snapHoles` |
+| `src/graph3d/raster.test.ts` | New: 9 tests (band kept, re-raster up/down, never > 1 over a zoom sweep, snapping) |
+| `src/views/Graph3DNear.ts` | Lens + fill elements; bucketed raster in `placeOne`; `sizeLens` (also from the ResizeObserver, same frame); mask on lens with snapping; skipped opacity/transform/veil writes; `NearStats.rasters` |
+| `src/views/Graph3DPerf.ts` | `re-rasters /frame` in the panels line |
+| `styles.css` | `.osmosis-graph3d-near-lens`, `-fill`, `-flat` will-change; the box loses its fill, gets `transform-origin: 0 0`; veil `will-change: opacity`; `.is-editing` on the lens |
+
+### Fixtures
+No new fixture. Use Sawyer's JS-objects note (the baseline setup), `tests/perf/Perf 3k` for the phone (generate with `node e2e/generate-perf-notes.mjs`), and `tests/graph3d/Code Fit Widths` for code panels.
+
+### Retest (desktop, then phone)
+1. Reload Obsidian (Ctrl+R). Open the JS-objects note in the 3D graph with Panel detail 1 and Live panels 48, and open the gauge.
+2. **Orbit for 5 s, then pan, then zoom with the wheel and fly.** Record the `fps … frame avg …`, `panels: … re-rasters …` and `untimed` lines for each, and compare with the baseline (`fps 36 frame avg 28.2 / worst 50.1 ms`). Done when orbiting is at or below 16.7 ms. Expected: re-rasters near 0 while orbiting, a few a frame while zooming.
+3. **Crispness:** compare panel text still and while orbiting against the plates and against the previous build. Zoom slowly into a code block and watch for soft or smeared text (see the band note above).
+4. **Behaviour:** nearer plates still cut holes in panels (no flicker at the hole edges); the mist veil fades panels with depth; panels fade in and out over 0.25 s; links, task checkboxes and the width handle (edit mode, select a line) still hit where drawn; editing a line hides its panel and the editor tracks the plate; styled nodes (`tests/graph3d/Styled Mooring`) keep their fill and corners, including semi-transparent fills, with no darker corners.
+5. **Planets mode:** repeat steps 2 and 4. Tilted panels should look and behave as before.
+6. **Phone:** `tests/perf/Perf 3k` at the defaults (budget 12). Orbit and pinch, and record the gauge. Check text crispness at the phone's pixel ratio.
+
+### Could not verify
+All rendering behaviour: whether Chromium merges the box into the lens layer as described, its raster-resolution choice for `will-change` layers, whether mask writes stay off the text layer, GPU memory for ~100 extra layers (lens + veil per panel; expected modest because tiles cover only visible area), and every number above.
