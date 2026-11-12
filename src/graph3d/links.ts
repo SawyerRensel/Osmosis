@@ -38,23 +38,47 @@ export interface LinkClickInput {
 	alt: boolean;
 	/** Shift, Ctrl or Cmd: a press with one is OrbitControls' pan, which never flies. */
 	panKey: boolean;
+	/** A finger, not a mouse or pen: a tap on a link is a tap on its node (links open from the long-press menu). */
+	touch: boolean;
 }
 
 /**
  * What a click on the 3D graph does. Modifiers mirror the mind map's link
  * clicks (`MindMapView.openNodeLink`): plain stays in the medium, Mod opens
  * the same medium in a new tab, Mod+Alt opens a note view in a new tab, and
- * external URLs always go to the browser.
+ * external URLs always go to the browser. On touch a link never fires: a
+ * finger that lands on one is as likely to be starting a drag, so a tap there
+ * is a tap on its node and the link opens from the long-press menu.
  */
 export function linkClickAction(input: LinkClickInput): LinkClick {
 	if (!input.click) return "none";
 	const { link } = input;
 	if (link === null) return input.panKey ? "none" : "node";
+	if (input.touch) return "node";
 	if (!input.isFocus && !(input.focusDistance <= LINK_REACH)) return "node";
 	if (link.external) return "external";
 	if (input.mod && input.alt) return "open-note";
 	if (input.mod) return "follow-tab";
 	return "follow";
+}
+
+/**
+ * Whether a press released at (`x`, `y`) is a click: it ended in a release
+ * (not a cancel, which is the system taking the pointer) within `slop` px of
+ * where it began. The release's own position counts as well as the moves seen
+ * before it, since a quick flick can reach the release with no move between.
+ */
+export function releaseIsClick(press: { x: number; y: number }, x: number, y: number, cancelled: boolean, slop: number): boolean {
+	return !cancelled && Math.hypot(x - press.x, y - press.y) <= slop;
+}
+
+/** Link text up to this long goes into the long-press menu's label. */
+export const LINK_LABEL_MAX = 30;
+
+/** The long-press menu item that opens a link: its text when short, else plain "Open link". */
+export function openLinkTitle(text: string): string {
+	const label = text.trim().replace(/\s+/g, " ");
+	return label === "" || label.length > LINK_LABEL_MAX ? "Open link" : `Open link "${label}"`;
 }
 
 /** A rectangle on screen, in CSS px. */

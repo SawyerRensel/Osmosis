@@ -1,11 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
+import { LINK_LABEL_MAX, LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, openLinkTitle, releaseIsClick, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
 
-const plain: LinkClickInput = { click: true, link: { external: false }, isFocus: true, focusDistance: 0, mod: false, alt: false, panKey: false };
+const plain: LinkClickInput = { click: true, link: { external: false }, isFocus: true, focusDistance: 0, mod: false, alt: false, panKey: false, touch: false };
 
 describe("linkClickAction", () => {
 	it("follows a link within the graph on a plain click on the focused node", () => {
 		expect(linkClickAction(plain)).toBe("follow");
+	});
+
+	it("never follows a link on touch: a tap there is a tap on its node", () => {
+		expect(linkClickAction({ ...plain, touch: true })).toBe("node");
+		expect(linkClickAction({ ...plain, touch: true, link: { external: true } })).toBe("node");
+		expect(linkClickAction({ ...plain, touch: true, link: null })).toBe("node");
+		expect(linkClickAction({ ...plain, touch: true, click: false })).toBe("none");
 	});
 
 	it("never acts on a drag", () => {
@@ -94,5 +101,36 @@ describe("nextLinkMarker", () => {
 
 	it("writes the marker as plain text", () => {
 		expect(linkMarker(3)).toBe("^3");
+	});
+});
+
+describe("releaseIsClick", () => {
+	const press = { x: 100, y: 100 };
+
+	it("is a click when released in place or within the slop", () => {
+		expect(releaseIsClick(press, 100, 100, false, 6)).toBe(true);
+		expect(releaseIsClick(press, 104, 104, false, 6)).toBe(true);
+	});
+
+	it("is no click when the release lands past the slop, even with no move seen before it", () => {
+		expect(releaseIsClick(press, 107, 100, false, 6)).toBe(false);
+		expect(releaseIsClick(press, 140, 160, false, 6)).toBe(false);
+	});
+
+	it("is no click when the system cancelled the pointer", () => {
+		expect(releaseIsClick(press, 100, 100, true, 6)).toBe(false);
+	});
+});
+
+describe("openLinkTitle", () => {
+	it("names a short link", () => {
+		expect(openLinkTitle("Knots")).toBe('Open link "Knots"');
+		expect(openLinkTitle("  Obsidian\n help ")).toBe('Open link "Obsidian help"');
+	});
+
+	it("falls back to plain text for a long or empty link", () => {
+		expect(openLinkTitle("x".repeat(LINK_LABEL_MAX))).toBe(`Open link "${"x".repeat(LINK_LABEL_MAX)}"`);
+		expect(openLinkTitle("x".repeat(LINK_LABEL_MAX + 1))).toBe("Open link");
+		expect(openLinkTitle("   ")).toBe("Open link");
 	});
 });

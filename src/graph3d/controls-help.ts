@@ -100,6 +100,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "Two finger drag, pinch", action: "Pan and zoom" },
 			{ input: "Joystick button", action: "Show the walk and fly joysticks" },
 			{ input: "Hold a finger on a line or note plate", action: "Plate context menu (focus this note, link, and the rest)" },
+			{ input: "Hold a finger on a link in a panel", action: "The plate menu, with Open link first (a tap on a link is a tap on its plate)" },
 			{ input: "Drag from a line (edit mode)", action: "Link or move: the drop menu opens on release" },
 		],
 	},

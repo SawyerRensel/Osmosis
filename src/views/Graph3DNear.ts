@@ -59,6 +59,8 @@ export interface PanelLink {
 	href: string;
 	external: boolean;
 	sourcePath: string;
+	/** The link's text as shown, for the long-press menu's label. */
+	text: string;
 }
 
 /**
@@ -448,7 +450,7 @@ export class Graph3DNear {
 			const href = (internal ? anchor.getAttribute("data-href") : null) ?? anchor.getAttribute("href");
 			// Tags (`#tag`) and other in-page anchors aren't links to follow.
 			if (href === null || href === "" || (!internal && !/^[a-z][a-z\d+.-]*:/i.test(href))) return null;
-			return { node: panel.node.graph, href, external: !internal, sourcePath: panel.node.graph.path ?? "" };
+			return { node: panel.node.graph, href, external: !internal, sourcePath: panel.node.graph.path ?? "", text: anchor.textContent ?? "" };
 		}
 		return null;
 	}

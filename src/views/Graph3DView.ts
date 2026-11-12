@@ -12,7 +12,7 @@ import { facingPhase } from "../graph3d/flatten";
 import { gizmosAvailable } from "../graph3d/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
-import { linkMarker, nextLinkMarker, type LinkClick } from "../graph3d/links";
+import { linkMarker, nextLinkMarker, openLinkTitle, type LinkClick } from "../graph3d/links";
 import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type LineRewrite, type ReplacePlan } from "../find-replace";
@@ -451,7 +451,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.editOnDoubleClick(node),
-			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
+			onContextMenu: (node, x, y, link) => this.showNodeMenu(node, x, y, link),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
 			onResizeNode: (node, width) => this.resizeNode(node, width),
@@ -1720,15 +1720,31 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	/**
 	 * The context menu of a line or note plate (right-click, or a long press on
 	 * touch): "Focus this note" (a hop, greyed out in the focus note itself),
-	 * and in edit mode, for a line, edit it or any structural edit.
+	 * and in edit mode, for a line, edit it or any structural edit. A long
+	 * press on a link in a panel puts "Open link" first: on touch it is the
+	 * only way a link opens (a tap on one is a tap on its node).
 	 */
-	private showNodeMenu(node: GraphNode, x: number, y: number): void {
+	private showNodeMenu(node: GraphNode, x: number, y: number, link: PanelLink | null = null): void {
 		if (this.editor.isOpen) return;
+		const menu = new Menu();
+		if (link !== null) {
+			menu.addItem((item) =>
+				item
+					.setTitle(openLinkTitle(link.text))
+					.setIcon(link.external ? "external-link" : "link")
+					.onClick(() => this.followLink(link, link.external ? "external" : "follow")),
+			);
+			// A node with no menu of its own (only lines and notes have one) shows just the link.
+			if (node.kind !== "line" && node.kind !== "note") {
+				menu.showAtPosition({ x, y });
+				return;
+			}
+			menu.addSeparator();
+		}
 		// A selected plate's menu acts on the whole selection (if more than it is selected); any other plate's on itself.
 		const selection = this.scene?.selectedNodes() ?? [];
 		const group = selection.length > 1 && selection.some((n) => n.id === node.id) ? selection : null;
 		this.scene?.setFocusId(node.id);
-		const menu = new Menu();
 		const path = refocusPath(node, this.focusPath);
 		menu.addItem((item) => item.setTitle("Focus this note").setIcon("locate").setDisabled(path === null).onClick(() => this.hop(node)));
 		menu.addItem((item) =>
