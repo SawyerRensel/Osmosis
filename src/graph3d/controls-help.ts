@@ -41,7 +41,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 		entries: [
 			{ input: "Two-finger swipe", action: "Orbit, like a drag from under the cursor" },
 			{ input: "Shift + two-finger swipe", action: "Pan" },
-			{ input: "Ctrl + two-finger swipe up / down", action: "Zoom in / out at the wheel's rate" },
+			{ input: "Ctrl + two-finger swipe", action: "Zoom like the wheel: scrolling down zooms out" },
 			{ input: "Pinch", action: "Zoom toward the cursor" },
 		],
 	},
