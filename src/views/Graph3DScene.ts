@@ -47,6 +47,7 @@ import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
 import { FAR_SIDE_GLSL, showsText } from "../graph3d/far-side";
+import { PLATE_END_ATTRIBUTES, patchOwnPlate, writePlateEnd, type PlateEndArrays } from "../graph3d/own-plate";
 import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
 import { Graph3DHints } from "./Graph3DHints";
 import { Graph3DRibbons } from "./Graph3DRibbons";
@@ -150,6 +151,17 @@ function dimWithFocus(material: Material, focus: { value: number }, round = fals
 		shader.fragmentShader = shader.fragmentShader
 			.replace("void main() {", `varying float vFocusDepth;\n${FOCUS_DIM_GLSL}\nvoid main() {${round ? "\nif (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;" : ""}`)
 			.replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= 1.0 - focusDim(vFocusDepth);");
+	};
+}
+
+/** Chain `patchOwnPlate` onto a material `dimWithFocus` has patched: the edge passes under its own end plates. */
+function underOwnPlates(material: Material): void {
+	const compile = material.onBeforeCompile.bind(material);
+	const key = material.customProgramCacheKey.bind(material);
+	material.customProgramCacheKey = () => `${key()}-own-plate`;
+	material.onBeforeCompile = (shader, renderer) => {
+		compile(shader, renderer);
+		patchOwnPlate(shader);
 	};
 }
 
@@ -677,9 +689,14 @@ export class Graph3DScene {
 		const edgeMaterial = new LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false });
 		// Edges dim with the plates, and on a planet's far side as its plates do.
 		dimWithFocus(edgeMaterial, this.plates.focus, false, true);
+		// An edge passes under the plates at its own ends; elsewhere real depth decides (`own-plate.ts`).
+		underOwnPlates(edgeMaterial);
 		this.edges = new LineSegments(new BufferGeometry(), edgeMaterial);
 		this.edges.frustumCulled = false;
-		this.ribbons = new Graph3DRibbons((material) => dimWithFocus(material, this.plates.focus, false, true));
+		this.ribbons = new Graph3DRibbons((material) => {
+			dimWithFocus(material, this.plates.focus, false, true);
+			underOwnPlates(material);
+		});
 		this.thread = new LineSegments(new BufferGeometry(), new LineBasicMaterial({ color: THREAD_COLOR, transparent: true, depthWrite: false }));
 		this.thread.frustumCulled = false;
 		const particleMaterial = new PointsMaterial({ size: PARTICLE_SIZE, vertexColors: true, transparent: true, depthWrite: false });
@@ -3120,7 +3137,19 @@ export class Graph3DScene {
 			geometry.setAttribute("position", positions);
 			geometry.setAttribute("color", colors);
 			geometry.setAttribute("aCore", cores);
+			for (const [name, size] of Object.entries(PLATE_END_ATTRIBUTES)) geometry.setAttribute(name, new BufferAttribute(new Float32Array(capacity * size), size).setUsage(DynamicDrawUsage));
 		}
+		// Every vertex carries both end plates, so the edge passes under them (`own-plate.ts`).
+		const endArrays = (key: "A" | "B"): PlateEndArrays => ({
+			centre: (geometry.getAttribute(`aEnd${key}`) as BufferAttribute).array as Float32Array,
+			right: (geometry.getAttribute(`aEnd${key}Right`) as BufferAttribute).array as Float32Array,
+			up: (geometry.getAttribute(`aEnd${key}Up`) as BufferAttribute).array as Float32Array,
+		});
+		const [endsA, endsB] = [endArrays("A"), endArrays("B")];
+		const ends = (vertex: number, source: EngineNode, target: EngineNode): void => {
+			writePlateEnd(endsA, vertex, source);
+			writePlateEnd(endsB, vertex, target);
+		};
 		let vertex = 0;
 		// A tapered hierarchy edge is straight, or a surface arc on a planet.
 		this.ribbons.begin(this.overlays.taper ? this.outline().edges * (this.world.size > 0 ? ARC_SEGMENTS : 1) : 0);
@@ -3137,6 +3166,7 @@ export class Graph3DScene {
 			const taper = this.taperOf(link, target);
 			if (taper !== null && placed(source) && placed(target)) {
 				const { points, scale } = this.world.size > 0 ? this.planetEdge(link.kind, source, target) : { points: [source, target], scale: 1 };
+				this.ribbons.ends(source, target);
 				this.writeRibbon(points, taper, target, color, Math.min(1, alpha * scale), this.coreOf(source), this.coreOf(target));
 				continue;
 			}
@@ -3150,6 +3180,7 @@ export class Graph3DScene {
 						const core = nearerCore(end, cs, ct);
 						if (core === null) cores.setXYZW(vertex, 0, 0, 0, 0);
 						else cores.setXYZW(vertex, core.x, core.y, core.z, 1);
+						ends(vertex, source, target);
 						colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
 					}
 				}
@@ -3158,6 +3189,7 @@ export class Graph3DScene {
 			for (const end of [source, target]) {
 				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
 				cores.setXYZW(vertex, 0, 0, 0, 0);
+				ends(vertex, source, target);
 				colors.setXYZW(vertex++, color.r, color.g, color.b, alpha);
 			}
 		}
@@ -3165,6 +3197,7 @@ export class Graph3DScene {
 		positions.needsUpdate = true;
 		colors.needsUpdate = true;
 		cores.needsUpdate = true;
+		for (const name of Object.keys(PLATE_END_ATTRIBUTES)) geometry.getAttribute(name).needsUpdate = true;
 		this.ribbons.end();
 	}
 

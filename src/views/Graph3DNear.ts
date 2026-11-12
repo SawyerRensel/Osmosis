@@ -695,8 +695,7 @@ export class Graph3DNear {
 	 * Every plate drawn this frame, where it is on screen. A plate is drawn,
 	 * and covers what is behind it, whenever it is placed and not faded right
 	 * out, however far the mist or the focus dim has mixed it toward the
-	 * background. Plates are pulled toward the camera (`PLATE_PULL`) but scaled
-	 * to keep their size on screen, so this is where they land.
+	 * background. Plates are drawn at their real depth, so this is where they land.
 	 */
 	private platesOnScreen(camera: PerspectiveCamera, pxPerUnitAt1: number): DrawnPlate[] {
 		const plates: DrawnPlate[] = [];

@@ -1,9 +1,11 @@
 import { BufferAttribute, BufferGeometry, DoubleSide, DynamicDrawUsage, Mesh, MeshBasicMaterial, type Color, type Material } from "three";
 import type { Vec3 } from "../graph3d/flight";
+import { PLATE_END_ATTRIBUTES, writePlateEnd, type PlateEnd, type PlateEndArrays } from "../graph3d/own-plate";
 import { RIBBON_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL } from "../graph3d/taper";
 
 /** Floats per vertex in each attribute. */
-const ATTRIBUTES = { position: 3, color: 4, aCore: 4, aRibbon: 4, aDash: 3 } as const;
+/** With both end plates of the edge, which it passes under (`own-plate.ts`, via the scene's `patch`). */
+const ATTRIBUTES = { position: 3, color: 4, aCore: 4, aRibbon: 4, aDash: 3, ...PLATE_END_ATTRIBUTES } as const;
 type AttributeName = keyof typeof ATTRIBUTES;
 
 /**
@@ -23,6 +25,9 @@ export class Graph3DRibbons {
 	private arrays: Record<AttributeName, BufferAttribute> | null = null;
 	private capacity = 0;
 	private count = 0;
+	/** The plates at the ends of the edge being written (`ends`). */
+	private endA: PlateEnd | null = null;
+	private endB: PlateEnd | null = null;
 
 	/** `patch` dims the material as the line edges are (`dimWithFocus` with the far side). */
 	constructor(patch: (material: Material) => void) {
@@ -72,6 +77,12 @@ export class Graph3DRibbons {
 		this.capacity = capacity;
 	}
 
+	/** The plates at the ends of the edge whose segments come next. */
+	ends(a: PlateEnd, b: PlateEnd): void {
+		this.endA = a;
+		this.endB = b;
+	}
+
 	/**
 	 * One segment from `a` to `b`, full widths `wa` and `wb` in world units,
 	 * `along` world units down its edge at `a` (for dashes: `on` drawn of every
@@ -83,6 +94,8 @@ export class Graph3DRibbons {
 		const [dx, dy, dz] = [b.x - a.x, b.y - a.y, b.z - a.z];
 		const length = Math.hypot(dx, dy, dz);
 		let vertex = this.count * 4;
+		const endA: PlateEndArrays = { centre: arrays.aEndA.array as Float32Array, right: arrays.aEndARight.array as Float32Array, up: arrays.aEndAUp.array as Float32Array };
+		const endB: PlateEndArrays = { centre: arrays.aEndB.array as Float32Array, right: arrays.aEndBRight.array as Float32Array, up: arrays.aEndBUp.array as Float32Array };
 		for (const [end, half, core, at] of [
 			[a, wa / 2, coreA, along],
 			[b, wb / 2, coreB, along + length],
@@ -93,6 +106,8 @@ export class Graph3DRibbons {
 				if (core === null) arrays.aCore.setXYZW(vertex, 0, 0, 0, 0);
 				else arrays.aCore.setXYZW(vertex, core.x, core.y, core.z, 1);
 				arrays.aRibbon.setXYZW(vertex, dx, dy, dz, side * half);
+				writePlateEnd(endA, vertex, this.endA);
+				writePlateEnd(endB, vertex, this.endB);
 				arrays.aDash.setXYZ(vertex++, at, dash.on, dash.period);
 			}
 		}

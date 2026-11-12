@@ -9,8 +9,9 @@
  * - A **hull** (off a planet) draws only its back faces, so it sits behind
  *   the plates it wraps as a 2D boundary does; its outline is a rim where the
  *   hull turns edge-on, the style's width in screen px (always solid).
- * - A **patch** (on a planet) lies on the surface under its plates (which the
- *   plate pull draws in front); its outline runs round its edge in world
+ * - A **patch** (on a planet) lies on the surface under its plates, drawn at
+ *   `PATCH_PUSH` of its depth so the plates (which touch the surface at their
+ *   centres) and the surface edges cover it; its outline runs round its edge in world
  *   units, dashed or dotted as styled, and on the planet's far side it is
  *   dimmed like the plates (`FAR_SIDE_DIM`).
  * - Both dim with the focus and the mist. Rebuilt only after the scene marks
@@ -26,6 +27,13 @@ import type { Vec3 } from "../graph3d/flight";
 import { FOCUS_DIM_GLSL } from "../graph3d/focus";
 import { STYLE_PX_PER_EM } from "../graph3d/near";
 import type { TangentFrame } from "../graph3d/planets";
+
+/**
+ * A patch is drawn at this share of its depth, scaled away from the camera so
+ * it keeps its size on screen: the margin the plates once had over it when
+ * they were pulled to 97% of theirs.
+ */
+const PATCH_PUSH = 1 / 0.97;
 
 /** At most this often (ms) while things keep moving, so a settling graph doesn't rebuild hulls every frame. */
 const REBUILD_MS = 66;
@@ -77,6 +85,7 @@ void main() {
 	// A patch (aLine.x >= 0) has the sphere's outward normal: on the far side it dims as the plates do.
 	if (aLine.x >= 0.0) vKeep *= farSideKeep(normal, position);
 	gl_Position = projectionMatrix * mvPosition;
+	if (aLine.x >= 0.0) gl_Position = projectionMatrix * vec4(mvPosition.xyz * ${PATCH_PUSH.toFixed(4)}, 1.0);
 	#include <fog_vertex>
 }
 `;

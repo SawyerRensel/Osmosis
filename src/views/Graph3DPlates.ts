@@ -8,8 +8,10 @@
  *   advances (`layoutPlate`), so there is no kerning and no ligatures.
  * - **Backgrounds:** camera-facing quads whose rounded rectangle and outline
  *   come from a signed distance in the fragment shader.
- * - **Opaque, ordered by depth:** backgrounds write depth, so a nearer plate
- *   covers a farther one with no sorting. Glyphs blend over their own plate,
+ * - **Opaque, ordered by depth:** backgrounds write depth at their real
+ *   depth, so a nearer plate covers a farther one, and a nearer edge, with no
+ *   sorting. An edge passes under the plates at its own ends instead
+ *   (`../graph3d/own-plate.ts`). Glyphs blend over their own plate,
  *   which is always drawn first, and use a polygon offset to win the depth tie.
  * - **Fading:** an opaque plate can't fade with alpha, so arrival and
  *   departure mix it toward the background colour (as the mist does). Focus
@@ -47,13 +49,6 @@ const ROW_PX = 64;
 const PAGE_PX = 1024;
 /** Clear space around each glyph in the atlas, so mipmaps don't bleed neighbours together. */
 const GLYPH_PAD_PX = 4;
-/**
- * Plates (and their glyphs) are drawn at this share of their depth, scaled
- * toward the camera so they keep their size on screen. An edge leaving a node
- * toward the camera then stays under its plate instead of running across the
- * text. One factor for every plate keeps their depth order.
- */
-const PLATE_PULL = 0.97;
 
 /** A glyph quad on a plate, in world units relative to the plate's centre. */
 interface ShapeGlyph {
@@ -198,7 +193,6 @@ class GlyphAtlas {
  */
 const fogVertex = (hideBack: boolean): string => /* glsl */ `
 #include <fog_vertex>
-mvPosition.xyz *= ${PLATE_PULL.toFixed(3)};
 gl_Position = projectionMatrix * mvPosition;
 if (aOpacity <= 0.0${hideBack ? " || plateBack" : ""}) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 `;
