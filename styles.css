@@ -4422,8 +4422,8 @@ body.osmosis-hide-navbar .mobile-navbar {
 	display: none;
 }
 
-/* Perf readout (Graph3DPerf.ts), behind a toggle in the top-left corner; the readout opens downward. */
-.osmosis-graph3d-perf {
+/* Perf readout (PerfGauge.ts: the 3D graph and the 2D Mind Map), behind a toggle in the top-left corner; the readout opens downward. */
+.osmosis-perf {
 	position: absolute;
 	left: var(--size-4-2);
 	top: var(--size-4-2);
@@ -4435,7 +4435,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	gap: var(--size-4-1);
 }
 
-.osmosis-graph3d-perf-readout {
+.osmosis-perf-readout {
 	padding: var(--size-4-1) var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -4445,10 +4445,13 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--text-muted);
 	white-space: pre;
 	overflow-x: auto;
+}
+
+.osmosis-perf-readout.is-clickable {
 	cursor: pointer;
 }
 
-.osmosis-graph3d-perf-readout.is-hidden {
+.osmosis-perf-readout.is-hidden {
 	display: none;
 }
 

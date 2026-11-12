@@ -18,6 +18,7 @@ import {
 } from "obsidian";
 import { arrowKeyStep, hierarchyStep, type HierarchyStep } from "../hierarchy-nav";
 import { ParseCache } from "../cache";
+import { MindMapPerf } from "./MindMapPerf";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
@@ -430,6 +431,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private toolRibbon: ToolRibbon | null = null;
 	/** Ctrl+F's find bar over the map: the note and its transclusions. */
 	private findBar: FindBar | null = null;
+	/** The perf readout in the top-left corner (hidden by default). */
+	private perf: MindMapPerf | null = null;
 	/** The find bar's matches, marked on their nodes (`markFound`). */
 	private foundIds: ReadonlySet<string> = new Set();
 
@@ -879,6 +882,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private async assertEditableFresh(): Promise<boolean> {
 		if (!this.assertEditable()) return false;
+		this.perf?.editStarted();
 		await this.ensureTreeFresh();
 		return true;
 	}
@@ -2000,6 +2004,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Phones: Obsidian's navigation bar is hidden in edit mode, where the bar takes its slot.
 		syncNavbar(this.app);
 		this.findBar = new FindBar(container, this.findHost());
+		this.perf = new MindMapPerf(container, this.cache, () => ({
+			total: this.currentLayout?.nodes.length ?? 0,
+			drawn: this.renderedNodeIds.size,
+			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
+		}));
 
 		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
@@ -2152,6 +2161,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.toolRibbon = null;
 		this.findBar?.destroy();
 		this.findBar = null;
+		this.perf?.destroy();
+		this.perf = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.renderComponent?.unload();
@@ -3417,7 +3428,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		try {
 			do {
 				this.cullQueued = false;
+				const start = this.perf?.start() ?? 0;
 				await this.updateVisibleNodes();
+				this.perf?.cull(start);
 			} while (this.cullQueued);
 		} finally {
 			this.cullRunning = false;
@@ -8460,6 +8473,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private async renderPass(): Promise<void> {
 		if (this.closed) return;
 		const container = this.contentEl;
+		const perfStart = this.perf?.start() ?? 0;
 
 		// Clean up previous render component
 		this.renderComponent?.unload();
@@ -8497,6 +8511,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.currentTree,
 			nodeShapes,
 		);
+		const measured = this.perf?.start() ?? 0;
 
 		const layout = computeLayout(
 			this.currentTree,
@@ -8513,6 +8528,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			nodeShapes,
 			this.buildNodeSidesMap(),
 		);
+		const laidOut = this.perf?.start() ?? 0;
 		// The SVG draws layout space shifted by -bounds (see getOffsetX/Y), so an
 		// edit that moves the map's top-left bound — deleting the widest node on
 		// a left-side map, say — would slide the whole drawing under a fixed
@@ -8572,6 +8588,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// The find bar too, and find again in what was just drawn.
 		this.findBar?.attach();
 		this.findBar?.refresh();
+		this.perf?.attach();
+		this.perf?.rendered(perfStart, measured - perfStart, laidOut - measured);
 	}
 
 	/**

@@ -145,7 +145,19 @@ interface Panel {
 	preview: number | null;
 }
 
+/** Per-frame panel placement costs, summed while the perf readout is shown (`Graph3DPerf`). */
+export interface NearStats {
+	/** Time in `place` / `placeTilted`, ms. */
+	placeMs: number;
+	/** Panels placed. Each placement writes the box's transform once (the CSS2D/CSS3D renderer writes the anchor's too). */
+	transforms: number;
+	/** Mask writes that were not skipped as unchanged. */
+	masks: number;
+}
+
 export class Graph3DNear {
+	/** Set by the perf readout while it is shown; null (nothing recorded) otherwise. */
+	stats: NearStats | null = null;
 	/** Handed to 3d-force-graph as an extra renderer: it lays the panels over the canvas every frame. */
 	readonly renderer = new CSS2DRenderer();
 	/** The same for Planets mode's tilted panels, which lie on their plates in 3D. */
@@ -299,6 +311,17 @@ export class Graph3DNear {
 			panel.object.element.setCssStyles({ opacity: String(panel.fade) });
 		}
 		this.placeEditor(camera, pxPerUnitAt1);
+	}
+
+	/** The panels up now, fading ones included, by what they hold (for the perf readout). */
+	panelKinds(): { panels: number; code: number; image: number; plain: number } {
+		const kinds = { panels: this.panels.size, code: 0, image: 0, plain: 0 };
+		for (const panel of this.panels.values()) {
+			if (panel.body.querySelector("pre") !== null) kinds.code++;
+			else if (panel.body.querySelector("img, video, .internal-embed") !== null) kinds.image++;
+			else kinds.plain++;
+		}
+		return kinds;
 	}
 
 	/** The size, in world units, of the panel a node has up right now (measured), or null: an edge hint clears it rather than the plate underneath. */
@@ -585,6 +608,18 @@ export class Graph3DNear {
 
 	/** Scale the panel to its depth, cut out the plates in front of it and veil it by the mist, as the CSS2D renderer positions it. */
 	private place(panel: Panel, camera: Camera): void {
+		const stats = this.stats;
+		if (stats === null) {
+			this.placeOne(panel, camera);
+			return;
+		}
+		const start = performance.now();
+		this.placeOne(panel, camera);
+		stats.placeMs += performance.now() - start;
+		stats.transforms++;
+	}
+
+	private placeOne(panel: Panel, camera: Camera): void {
 		if (panel.tilted) {
 			this.placeTilted(panel, camera as PerspectiveCamera);
 			return;
@@ -688,6 +723,7 @@ export class Graph3DNear {
 		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
 		if (key === panel.mask) return;
 		panel.mask = key;
+		if (this.stats !== null) this.stats.masks++;
 		panel.box.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
 	}
 

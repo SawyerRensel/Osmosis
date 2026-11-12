@@ -1,58 +1,70 @@
 /**
  * Perf readout for the 3D graph, behind a toggle in the viewport's top-left
- * corner (hidden by default).
+ * corner (hidden by default). Nothing is recorded while it is hidden.
  *
  * Click the readout to hide or show every plate, to compare frame cost with
  * and without them.
  */
 
-import { setIcon, setTooltip } from "obsidian";
 import type { WebGLRenderer } from "three";
 import type { Graph3DPlates } from "./Graph3DPlates";
+import type { Graph3DNear, NearStats } from "./Graph3DNear";
+import { PerfGauge, PERF_REFRESH_MS, PERF_WINDOW_MS } from "./PerfGauge";
+import { Rolling, loafLine, untimedMs } from "../perf-stats";
 
-const REFRESH_MS = 500;
-/** Frames, renders and passes older than this drop out of the averages. */
-const WINDOW_MS = 1000;
-
-interface Timed {
-	at: number;
-	ms: number;
+/** Something with a `render(scene, camera)` to time: the WebGL renderer and the near tier's CSS2D/CSS3D renderers. */
+interface Renders {
+	render: (...args: never[]) => void;
 }
 
 export class Graph3DPerf {
-	private readonly corner: HTMLElement;
-	private readonly el: HTMLElement;
-	private readonly toggleEl: HTMLElement;
-	private shown = false;
-	private readonly render: WebGLRenderer["render"];
-	private frames: Timed[] = [];
-	private ticks: Timed[] = [];
-	private renders: Timed[] = [];
+	private readonly gauge: PerfGauge;
+	private readonly restore: (() => void)[] = [];
+	private readonly frames = new Rolling();
+	private readonly ticks = new Rolling();
+	private readonly renders = new Rolling();
+	/** The near tier's CSS2D and CSS3D renders, together, per frame. */
+	private readonly panelRenders = new Rolling();
+	private readonly places = new Rolling();
+	private readonly masks = new Rolling();
+	private readonly transforms = new Rolling();
+	/** Force-engine frames: from its charge force to the WebGL render that follows. */
+	private readonly engine = new Rolling();
+	private engineStartAt = 0;
 	private lastFrame = 0;
 	private lastRefresh = 0;
+	/** Panel renders of the frame in progress, summed over both renderers. */
+	private panelMs = 0;
+	private readonly nearStats: NearStats = { placeMs: 0, transforms: 0, masks: 0 };
 	/** The last time new data needed plates: how many, and how long laying them out took. */
 	private lastPlating: { count: number; ms: number } | null = null;
 
-	constructor(container: HTMLElement, private readonly renderer: WebGLRenderer, private readonly plates: Graph3DPlates) {
-		this.corner = container.createDiv({ cls: "osmosis-graph3d-perf" });
-		this.toggleEl = this.corner.createDiv({ cls: "osmosis-graph3d-perf-toggle clickable-icon" });
-		setIcon(this.toggleEl, "gauge");
-		setTooltip(this.toggleEl, "Performance readout");
-		this.toggleEl.addEventListener("click", this.toggleReadout);
-		// Below the toggle: the corner is the viewport's top left, so the readout opens downward.
-		this.el = this.corner.createDiv({ cls: "osmosis-graph3d-perf-readout is-hidden" });
-		this.el.addEventListener("click", this.togglePlates);
+	constructor(container: HTMLElement, private readonly renderer: WebGLRenderer, private readonly plates: Graph3DPlates, private readonly near: Graph3DNear) {
+		this.gauge = new PerfGauge(container, this.onToggle, this.togglePlates);
 		// The engine renders on its own animation loop; time each call there.
-		this.render = renderer.render.bind(renderer);
-		renderer.render = (scene, camera) => {
-			if (!this.shown) {
-				this.render(scene, camera);
+		this.wrap(renderer, (ms, start) => {
+			this.renders.push(start, ms);
+			if (this.engineStartAt !== 0) {
+				this.engine.push(start, start - this.engineStartAt);
+				this.engineStartAt = 0;
+			}
+		});
+		for (const css of [near.renderer, near.renderer3d]) this.wrap(css, (ms) => (this.panelMs += ms));
+	}
+
+	/** Time `target.render` while shown; `record` gets its duration and start. */
+	private wrap(target: Renders, record: (ms: number, start: number) => void): void {
+		const render = target.render.bind(target);
+		target.render = (...args: never[]) => {
+			if (!this.gauge.shown) {
+				render(...args);
 				return;
 			}
 			const start = performance.now();
-			this.render(scene, camera);
-			this.renders.push({ at: start, ms: performance.now() - start });
+			render(...args);
+			record(performance.now() - start, start);
 		};
+		this.restore.push(() => (target.render = render));
 	}
 
 	/** New data was shown: `count` plates were laid out, in `ms`. */
@@ -60,29 +72,49 @@ export class Graph3DPerf {
 		if (count > 0) this.lastPlating = { count, ms };
 	}
 
+	/** The force engine began a tick (its charge force ran). */
+	engineTick(): void {
+		if (this.gauge.shown && this.engineStartAt === 0) this.engineStartAt = performance.now();
+	}
+
 	frame(now: number, tickMs: number): void {
-		if (!this.shown) return;
-		if (this.lastFrame !== 0) this.frames.push({ at: now, ms: now - this.lastFrame });
+		if (!this.gauge.shown) return;
+		if (this.lastFrame !== 0) this.frames.push(now, now - this.lastFrame);
 		this.lastFrame = now;
-		this.ticks.push({ at: now, ms: tickMs });
-		if (now - this.lastRefresh < REFRESH_MS) return;
+		this.ticks.push(now, tickMs);
+		// The panels drawn since the last frame: the engine's loop renders between our ticks.
+		this.panelRenders.push(now, this.panelMs);
+		this.places.push(now, this.nearStats.placeMs);
+		this.masks.push(now, this.nearStats.masks);
+		this.transforms.push(now, this.nearStats.transforms);
+		this.panelMs = 0;
+		this.nearStats.placeMs = 0;
+		this.nearStats.masks = 0;
+		this.nearStats.transforms = 0;
+		if (now - this.lastRefresh < PERF_REFRESH_MS) return;
 		this.lastRefresh = now;
-		for (const list of [this.frames, this.ticks, this.renders]) {
-			while (list.length > 0 && now - list[0]!.at > WINDOW_MS) list.shift();
-		}
-		if (this.shown) this.el.setText(this.report());
+		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.engine]) list.prune(now, PERF_WINDOW_MS);
+		this.gauge.loaf.prune(now, PERF_WINDOW_MS);
+		this.gauge.setText(this.report());
 	}
 
 	private report(): string {
 		const info = this.renderer.info;
-		const avg = (list: Timed[]) => (list.length === 0 ? 0 : list.reduce((sum, t) => sum + t.ms, 0) / list.length);
-		const max = (list: Timed[]) => list.reduce((m, t) => Math.max(m, t.ms), 0);
 		const plates = this.plates.stats();
 		const mb = (bytes: number) => (bytes / 1048576).toFixed(1);
 		const plating = this.lastPlating === null ? "—" : `${this.lastPlating.count} in ${this.lastPlating.ms.toFixed(1)} ms`;
+		const kinds = this.near.panelKinds();
+		// The engine's frames per our frames: it only ticks while the layout runs.
+		const engineMs = this.frames.count === 0 ? 0 : this.engine.sum() / this.frames.count;
+		const frameAvg = this.frames.avg();
+		const untimed = untimedMs(frameAvg, [this.ticks.avg(), this.renders.avg(), this.panelRenders.avg(), engineMs]);
 		return [
-			`fps ${this.frames.length}  frame avg ${avg(this.frames).toFixed(1)} / worst ${max(this.frames).toFixed(1)} ms`,
-			`cpu: tick ${avg(this.ticks).toFixed(2)} ms  render ${avg(this.renders).toFixed(2)} ms (max ${max(this.renders).toFixed(1)})`,
+			`fps ${this.frames.count}  frame avg ${frameAvg.toFixed(1)} / worst ${this.frames.max().toFixed(1)} ms`,
+			`cpu: tick ${this.ticks.avg().toFixed(2)} ms  render ${this.renders.avg().toFixed(2)} ms (max ${this.renders.max().toFixed(1)})`,
+			`panels: render ${this.panelRenders.avg().toFixed(2)} ms (max ${this.panelRenders.max().toFixed(1)})  place ${this.places.avg().toFixed(2)} ms  transforms ${this.transforms.avg().toFixed(0)}  masks ${this.masks.avg().toFixed(1)} /frame`,
+			`live panels ${kinds.panels} (code ${kinds.code}, image ${kinds.image}, plain ${kinds.plain})`,
+			`engine: ${this.engine.count === 0 ? "idle" : `${this.engine.avg().toFixed(2)} ms/tick (max ${this.engine.max().toFixed(1)}), ${this.engine.count} ticks/s`}`,
+			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimed),
 			`draw calls ${info.render.calls}  triangles ${info.render.triangles}  textures ${info.memory.textures}`,
 			`plates ${plates.plates}  glyphs ${plates.glyphs}${this.plates.group.visible ? "" : " (hidden)"}`,
 			`atlas ${plates.pages} page(s) ~${mb(plates.atlasBytes)} MB  instances ~${mb(plates.instanceBytes)} MB GPU`,
@@ -94,22 +126,22 @@ export class Graph3DPerf {
 		this.plates.group.visible = !this.plates.group.visible;
 	};
 
-	private readonly toggleReadout = (): void => {
-		this.shown = !this.shown;
-		this.el.toggleClass("is-hidden", !this.shown);
-		this.toggleEl.toggleClass("is-active", this.shown);
+	private readonly onToggle = (shown: boolean): void => {
 		// Start the averages afresh: nothing was recorded while it was hidden.
-		this.frames = [];
-		this.ticks = [];
-		this.renders = [];
+		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.engine]) list.clear();
 		this.lastFrame = 0;
 		this.lastRefresh = 0;
+		this.panelMs = 0;
+		this.engineStartAt = 0;
+		this.nearStats.placeMs = 0;
+		this.nearStats.masks = 0;
+		this.nearStats.transforms = 0;
+		this.near.stats = shown ? this.nearStats : null;
 	};
 
 	destroy(): void {
-		this.renderer.render = this.render;
-		this.el.removeEventListener("click", this.togglePlates);
-		this.toggleEl.removeEventListener("click", this.toggleReadout);
-		this.corner.remove();
+		for (const restore of this.restore) restore();
+		this.near.stats = null;
+		this.gauge.destroy();
 	}
 }

@@ -651,7 +651,11 @@ export class Graph3DScene {
 		// (see settle.ts), which is what keeps a tick cheap in a large world.
 		const charge = this.graph.d3Force("charge") as ManyBodyForce;
 		charge.strength((node) => this.charge.get(node.id) ?? 0);
-		const settleCharge = Object.assign((alpha: number) => charge(alpha), {
+		// The perf readout times the engine's tick from here (the link force before it is not timed).
+		const settleCharge = Object.assign((alpha: number) => {
+			this.perf.engineTick();
+			charge(alpha);
+		}, {
 			initialize: (nodes: EngineNode[], ...args: unknown[]) => charge.initialize(nodes.filter((n) => this.charge.has(n.id)), ...args),
 		});
 		this.graph.d3Force("charge", settleCharge as never);
@@ -707,7 +711,7 @@ export class Graph3DScene {
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
 		this.boundaries = new Graph3DBoundaries(this.plates.focus, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
 		this.graph.scene().add(this.boundaries.mesh, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group, this.hints.group);
-		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates);
+		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates, this.near);
 		this.setOverlays(options.overlays);
 
 		this.frame = window.requestAnimationFrame(this.tick);
