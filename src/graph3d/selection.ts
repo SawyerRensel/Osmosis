@@ -44,6 +44,26 @@ export function toggled(selection: ReadonlySet<string>, id: string): Set<string>
 }
 
 /**
+ * Touch tap-hold multi-select, as the mind map's touch selection mode: a
+ * finger held still on a plate puts it in the selection and turns the mode
+ * on. Held on a plate that is already selected, it stays in (the mind map
+ * does the same, so a hold never drops what it lands on); a tap toggles.
+ */
+export function heldInto(selection: ReadonlySet<string>, id: string): Set<string> {
+	return new Set(selection).add(id);
+}
+
+/**
+ * Whether a tap toggles a plate in or out of the selection (like Shift+click)
+ * instead of selecting it alone: only while the touch selection mode is on
+ * and something is still selected, and only on a plate. A tap on empty space
+ * ends the mode and does what it always does (clears the selection).
+ */
+export function tapToggles(selecting: boolean, selectionSize: number, onPlate: boolean): boolean {
+	return selecting && selectionSize > 0 && onPlate;
+}
+
+/**
  * The selected lines of one note that an action takes, in document order: a
  * line inside another selected line's subtree goes with that line, so it is
  * dropped here (a delete or copy of both would act on it twice).

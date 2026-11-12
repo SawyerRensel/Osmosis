@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { LINK_LABEL_MAX, LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, openLinkTitle, releaseIsClick, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
+import { LINK_LABEL_MAX, LINK_REACH, frontPanelAt, linkClickAction, linkMarker, nextLinkMarker, openLinkTitle, releaseIsClick, textLinks, type DrawnPanel, type DrawnPlate, type LinkClickInput } from "./links";
 
 const plain: LinkClickInput = { click: true, link: { external: false }, isFocus: true, focusDistance: 0, mod: false, alt: false, panKey: false, touch: false };
 
@@ -132,5 +132,44 @@ describe("openLinkTitle", () => {
 		expect(openLinkTitle("x".repeat(LINK_LABEL_MAX))).toBe(`Open link "${"x".repeat(LINK_LABEL_MAX)}"`);
 		expect(openLinkTitle("x".repeat(LINK_LABEL_MAX + 1))).toBe("Open link");
 		expect(openLinkTitle("   ")).toBe("Open link");
+	});
+});
+
+describe("textLinks", () => {
+	it("lists wikilinks, Markdown links and bare URLs in order", () => {
+		const links = textLinks("The loop is at [[Knots#^bowline|the bowline]], see [help](https://help.obsidian.md) and https://example.com/tides");
+		expect(links).toEqual([
+			{ href: "Knots#^bowline", text: "the bowline", external: false },
+			{ href: "https://help.obsidian.md", text: "help", external: true },
+			{ href: "https://example.com/tides", text: "https://example.com/tides", external: true },
+		]);
+	});
+
+	it("shows a wikilink without an alias by its link text", () => {
+		expect(textLinks("Down to [[#Far shore]] or [[Knots]]")).toEqual([
+			{ href: "#Far shore", text: "#Far shore", external: false },
+			{ href: "Knots", text: "Knots", external: false },
+		]);
+	});
+
+	it("reads an internal Markdown link's path, decoded", () => {
+		expect(textLinks("[Bends](Rope%20Work.md#Bends) and [chart](<Sea Charts.md>)")).toEqual([
+			{ href: "Rope Work.md#Bends", text: "Bends", external: false },
+			{ href: "Sea Charts.md", text: "chart", external: false },
+		]);
+	});
+
+	it("skips embeds, images and inline code", () => {
+		expect(textLinks("![[Knots]] ![map](harbour.png) `[[Not a link]]` [[Real]]")).toEqual([{ href: "Real", text: "Real", external: false }]);
+	});
+
+	it("lists a target once, and at most the cap", () => {
+		expect(textLinks("[[A]] [[A|again]] [[B]]")).toHaveLength(2);
+		expect(textLinks("[[A]] [[B]] [[C]] [[D]] [[E]] [[F]] [[G]]")).toHaveLength(5);
+		expect(textLinks("[[A]] [[B]] [[C]]", 2).map((l) => l.href)).toEqual(["A", "B"]);
+	});
+
+	it("finds nothing in plain text", () => {
+		expect(textLinks("Coil the line clockwise")).toEqual([]);
 	});
 });

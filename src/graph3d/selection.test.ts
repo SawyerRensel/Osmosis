@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
-import { boxHits, boxRect, deleteLines, linesMarkdown, selectionMarkdown, toggled, topmostLines } from "./selection";
+import { boxHits, boxRect, deleteLines, heldInto, linesMarkdown, selectionMarkdown, tapToggles, toggled, topmostLines } from "./selection";
 
 const parser = new OsmosisParser();
 
@@ -97,5 +97,25 @@ describe("selectionMarkdown", () => {
 			{ title: null, markdown: "#knots" },
 		]);
 		expect(out).toBe("[[Sailing Basics]]\n- Sheet\n\n[[Galley Handbook]]\n- Kettle\n\n#knots");
+	});
+});
+
+describe("touch tap-hold multi-select", () => {
+	it("a hold adds the plate, and never drops one already selected", () => {
+		expect([...heldInto(new Set(["a"]), "b")]).toEqual(["a", "b"]);
+		expect([...heldInto(new Set(["a", "b"]), "a")]).toEqual(["a", "b"]);
+	});
+
+	it("a hold leaves the set it was given alone", () => {
+		const before = new Set(["a"]);
+		heldInto(before, "b");
+		expect([...before]).toEqual(["a"]);
+	});
+
+	it("a tap toggles only in selection mode, with something selected, on a plate", () => {
+		expect(tapToggles(true, 2, true)).toBe(true);
+		expect(tapToggles(false, 2, true)).toBe(false);
+		expect(tapToggles(true, 0, true)).toBe(false);
+		expect(tapToggles(true, 2, false)).toBe(false);
 	});
 });

@@ -95,8 +95,11 @@ Double-click a node to edit it; in 3D this turns edit mode on.
 | One-finger drag | Orbit (what it does is a setting) |
 | Two-finger drag, pinch | Pan and zoom |
 | Joystick button | Show the walk and fly joysticks |
-| Hold a finger on a line or note plate | Plate context menu |
-| Drag from a line (edit mode) | Link or move: a menu opens where you let go |
+| Hold a finger on a plate | Add it to the selection; taps then add or remove plates, until a tap on empty space |
+| Toolbar :lucide-more-vertical: | The selected plate's menu, with **Open link** for each link in its text |
+
+A one-finger drag orbits in edit mode too, even from a line: dragging to link
+or move is for the mouse (++alt++ + drag).
 
 ### Overlays menu settings
 

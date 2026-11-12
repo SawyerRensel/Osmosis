@@ -75,10 +75,64 @@ export function releaseIsClick(press: { x: number; y: number }, x: number, y: nu
 /** Link text up to this long goes into the long-press menu's label. */
 export const LINK_LABEL_MAX = 30;
 
-/** The long-press menu item that opens a link: its text when short, else plain "Open link". */
+/** The node menu's (⋮, touch) item that opens a link: its text when short, else plain "Open link". */
 export function openLinkTitle(text: string): string {
 	const label = text.trim().replace(/\s+/g, " ");
 	return label === "" || label.length > LINK_LABEL_MAX ? "Open link" : `Open link "${label}"`;
+}
+
+/** At most this many "Open link" items in the node menu (⋮) on touch. */
+export const MENU_LINKS_MAX = 5;
+
+/** A link written in a line's Markdown: its target as an `href` (a wikilink's link text, or a Markdown link's URL or path) and the text it shows. */
+export interface TextLink {
+	href: string;
+	text: string;
+	external: boolean;
+}
+
+/** `[[target|alias]]` (not an embed), `[text](url)` (not an image), or a bare `http(s)://` URL, in that order of trying at each position. */
+const TEXT_LINK = /(!?)\[\[([^[\]|\n]+)(?:\|([^[\]\n]*))?\]\]|(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+"[^"\n]*")?\s*\)|\bhttps?:\/\/[^\s<>()[\]]+/g;
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * The links in a line's Markdown, in order, for the node menu's "Open link"
+ * items on touch (a tap on a link in a panel is a tap on its plate, so the
+ * menu is how a finger opens one). Embeds and images are content, not links;
+ * inline code is skipped. A target listed twice is listed once. At most `max`.
+ */
+export function textLinks(markdown: string, max = MENU_LINKS_MAX): TextLink[] {
+	const text = markdown.replace(/`[^`\n]*`/g, (code) => " ".repeat(code.length));
+	const out: TextLink[] = [];
+	const seen = new Set<string>();
+	for (const m of text.matchAll(TEXT_LINK)) {
+		if (out.length >= max) break;
+		let link: TextLink | null = null;
+		if (m[2] !== undefined) {
+			if (m[1] === "!") continue;
+			const href = m[2].trim();
+			link = { href, text: m[3]?.trim() || href, external: false };
+		} else if (m[6] !== undefined) {
+			if (m[4] === "!") continue;
+			const raw = m[6].replace(/^<|>$/g, "");
+			const external = URL_SCHEME.test(raw);
+			let href = raw;
+			if (!external) {
+				try {
+					href = decodeURIComponent(raw);
+				} catch {
+					// A stray % is kept as written.
+				}
+			}
+			link = { href, text: (m[5] ?? "").trim() || raw, external };
+		} else {
+			link = { href: m[0], text: m[0], external: true };
+		}
+		if (link.href === "" || seen.has(link.href)) continue;
+		seen.add(link.href);
+		out.push(link);
+	}
+	return out;
 }
 
 /** A rectangle on screen, in CSS px. */

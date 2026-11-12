@@ -12,7 +12,7 @@ import { facingPhase } from "../graph3d/flatten";
 import { gizmosAvailable } from "../graph3d/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
-import { linkMarker, nextLinkMarker, openLinkTitle, type LinkClick } from "../graph3d/links";
+import { linkMarker, nextLinkMarker, openLinkTitle, textLinks, type LinkClick } from "../graph3d/links";
 import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type LineRewrite, type ReplacePlan } from "../find-replace";
@@ -465,7 +465,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			onLinkClick: (link, action) => this.followLink(link, action),
 			onCheckboxClick: (node) => void this.toggleCheckbox(node),
 			onNodeDoubleClick: (node) => this.editOnDoubleClick(node),
-			onContextMenu: (node, x, y, link) => this.showNodeMenu(node, x, y, link),
+			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
 			onResizeNode: (node, width) => this.resizeNode(node, width),
@@ -772,7 +772,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				const node = this.scene?.focusedNode() ?? null;
 				if (node === null) return;
 				const rect = btn.getBoundingClientRect();
-				this.showNodeMenu(node, rect.left, rect.top);
+				this.showNodeMenu(node, rect.left, rect.top, hasTouch() ? this.menuLinks(node) : []);
 			},
 		};
 	}
@@ -1723,23 +1723,36 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The context menu of a line or note plate (right-click, or a long press on
-	 * touch): "Focus this note" (a hop, greyed out in the focus note itself),
-	 * and in edit mode, for a line, edit it or any structural edit. A long
-	 * press on a link in a panel puts "Open link" first: on touch it is the
-	 * only way a link opens (a tap on one is a tap on its node).
+	 * The links written in a line's text, as the node menu (⋮) lists them on
+	 * touch (`textLinks`, at most `MENU_LINKS_MAX`). Other nodes have none.
 	 */
-	private showNodeMenu(node: GraphNode, x: number, y: number, link: PanelLink | null = null): void {
+	private menuLinks(node: GraphNode): PanelLink[] {
+		if (node.kind !== "line" || node.path === undefined) return [];
+		const sourcePath = node.path;
+		return textLinks(node.label).map((link) => ({ node, sourcePath, ...link }));
+	}
+
+	/**
+	 * The context menu of a line or note plate (right-click, or the toolbar's
+	 * ⋮ for the selected plate): "Focus this note" (a hop, greyed out in the
+	 * focus note itself), and in edit mode, for a line, edit it or any
+	 * structural edit. On touch, ⋮ passes the line's `links`, listed first as
+	 * "Open link" items: there it is the only way a link opens (a tap on one
+	 * is a tap on its node, and a held finger multi-selects).
+	 */
+	private showNodeMenu(node: GraphNode, x: number, y: number, links: readonly PanelLink[] = []): void {
 		if (this.editor.isOpen) return;
 		const menu = new Menu();
-		if (link !== null) {
-			menu.addItem((item) =>
-				item
-					.setTitle(openLinkTitle(link.text))
-					.setIcon(link.external ? "external-link" : "link")
-					.onClick(() => this.followLink(link, link.external ? "external" : "follow")),
-			);
-			// A node with no menu of its own (only lines and notes have one) shows just the link.
+		if (links.length > 0) {
+			for (const link of links) {
+				menu.addItem((item) =>
+					item
+						.setTitle(openLinkTitle(link.text))
+						.setIcon(link.external ? "external-link" : "link")
+						.onClick(() => this.followLink(link, link.external ? "external" : "follow")),
+				);
+			}
+			// A node with no menu of its own (only lines and notes have one) shows just the links.
 			if (node.kind !== "line" && node.kind !== "note") {
 				menu.showAtPosition({ x, y });
 				return;

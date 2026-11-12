@@ -59,7 +59,7 @@ export interface PanelLink {
 	href: string;
 	external: boolean;
 	sourcePath: string;
-	/** The link's text as shown, for the long-press menu's label. */
+	/** The link's text as shown, for an "Open link" menu item's label. */
 	text: string;
 }
 

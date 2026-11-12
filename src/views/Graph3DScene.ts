@@ -66,7 +66,7 @@ import { easeLook } from "../graph3d/look-ease";
 import { gizmoZoom, type GizmoKind } from "../graph3d/gizmos";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
-import { boxHits, boxRect, toggled, type ScreenPoint } from "../graph3d/selection";
+import { boxHits, boxRect, heldInto, tapToggles, toggled, type ScreenPoint } from "../graph3d/selection";
 import { frameDistance } from "../graph3d/liftoff";
 import { arrowCandidates, pickInDirection, type Arrow, type ScreenOffset } from "../graph3d/arrow-nav";
 import {
@@ -208,8 +208,8 @@ export interface SceneOptions {
 	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
 	/** A width drag on a selected line's panel ended at `width`, a `width` style in mind-map px (`styleWidthFromEm`). The view writes it; it resolves (or rejects) once the write has landed. */
 	onResizeNode: (node: GraphNode, width: number) => Promise<void>;
-	/** A right-click that stayed put, or a touch held still (`LONG_PRESS_MS`), on a line or note plate, at client (`x`, `y`). `link`: a touch held on a link in a panel, which the menu offers to open (a tap never opens one). */
-	onContextMenu: (node: GraphNode, x: number, y: number, link: PanelLink | null) => void;
+	/** A right-click that stayed put on a line or note plate, at client (`x`, `y`). (On touch a held finger multi-selects instead; the node menu is the toolbar's ⋮.) */
+	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
 	renderMarkdown: NearMarkdownRenderer;
 	/** Draws an occluded diagram in a near-tier panel (relational study's occlusion cards). */
@@ -367,8 +367,8 @@ const PARTICLE_OPACITY = 0.9;
 const THREAD_COLOR = "#ffb347";
 /** A press that moves less than this, in px, is a click rather than a drag. */
 const CLICK_SLOP_PX = 6;
-/** A finger held this long on a line in edit mode, without moving past the click slop, opens its context menu instead of being a tap. */
-const LONG_PRESS_MS = 500;
+/** A finger held this long on a plate, without moving past the click slop, adds it to the selection instead of being a tap (the mind map's hold). */
+const LONG_PRESS_MS = 400;
 
 /**
  * Flight speed multiplier, set with the wheel while flying. Like Unreal's
@@ -506,15 +506,17 @@ export class Graph3DScene {
 	/** Mouse-look drag px not yet turned into camera rotation; `tick` eases the camera through them. */
 	private lookPending = { x: 0, y: 0 };
 	private pinch: Pinch | null = null;
-	/** Edit mode is on: Alt+drag from a line (or a touch drag from one) pulls out a link; a plain mouse drag still orbits. */
+	/** Edit mode is on: Alt+drag from a line pulls out a link (mouse or pen; a finger always orbits); a plain mouse drag still orbits. */
 	private linkMode = false;
 	/** A width drag in progress on a panel's handle: where it started, and the panel's width then (px before its scale) and scale. */
 	private widthDrag: { pointerId: number; node: GraphNode; startX: number; width: number; scale: number; current: number } | null = null;
 	private linkDrag: LinkDrag | null = null;
 	/** A right-button press that has not moved past the shared slop (`movedPastSlop`): released, it opens the context menu. (Moving it is OrbitControls' pan.) */
 	private menuPress: { pointerId: number; x: number; y: number } | null = null;
-	/** A finger down on a line in edit mode, waiting out `LONG_PRESS_MS` to open the context menu. */
+	/** A finger down on a plate, waiting out `LONG_PRESS_MS` to add it to the selection. */
 	private longPress: { pointerId: number; x: number; y: number; timer: number } | null = null;
+	/** Touch selection mode, begun by a held finger (as in the mind map): a tap then toggles a plate in or out of the selection, until a tap on empty space or the selection empties. */
+	private touchSelecting = false;
 	/** The rubber band from the dragged line to the pointer. */
 	private linkLine: Line<BufferGeometry, LineBasicMaterial> | null = null;
 	/** The node whose editor is open: a press then orbits rather than linking, and leaves the editor its focus. */
@@ -1248,6 +1250,7 @@ export class Graph3DScene {
 
 	/** Empty the selection (Escape, a click on empty space). True when something was selected. */
 	clearSelection(): boolean {
+		this.touchSelecting = false;
 		if (this.selection.size === 0) return false;
 		this.select([]);
 		return true;
@@ -1959,14 +1962,13 @@ export class Graph3DScene {
 		}
 		this.samples = [];
 		this.turnSamples = [];
-		// A link gesture (Alt + drag in edit mode, or a finger there) on a line pulls a link out of it. On empty space, or a note, tag or file, it orbits.
+		// A link gesture (Alt + drag in edit mode, mouse or pen) on a line pulls a link out of it. On empty space, or a note, tag or file, it orbits.
 		const from = gesture === "link" && !this.stoppedCoastOnDown && this.editingId === null ? this.pickedNode(e.clientX, e.clientY, touch) : null;
 		if (from?.graph.kind === "line") {
 			this.drag = null;
 			this.linkDrag = { pointerId: e.pointerId, touch, from, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY, active: false, over: null, overColor: null };
 			// Still a press that may be a click, until the pointer moves.
 			this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
-			if (touch) this.startLongPress(e.pointerId, e.clientX, e.clientY, from, this.near.linkAt(e.clientX, e.clientY));
 			return;
 		}
 		const look = touch && this.controlSettings.touchDrag === "look";
@@ -1983,11 +1985,10 @@ export class Graph3DScene {
 			turned: { x: 0, y: 0 },
 		};
 		this.press = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, touch };
-		// A finger held still on a line or note plate opens its context menu, as in edit mode; held on a link, the menu offers to open it.
+		// A finger held still on a plate adds it to the selection (reading and edit mode alike).
 		if (touch && !this.stoppedCoastOnDown && this.editingId === null) {
 			const held = this.pickedNode(e.clientX, e.clientY, true);
-			const link = this.near.linkAt(e.clientX, e.clientY);
-			if (held !== null && (hasMenu(held.graph) || link !== null)) this.startLongPress(e.pointerId, e.clientX, e.clientY, held, link);
+			if (held !== null) this.startLongPress(e.pointerId, e.clientX, e.clientY, held);
 		}
 	};
 
@@ -2059,7 +2060,7 @@ export class Graph3DScene {
 			// A right-click that never moved: the context menu of the plate under it. (A cancelled pointer opens nothing.)
 			this.menuPress = null;
 			const node = e.type === "pointerup" && e.button === 2 ? this.pickedNode(menu.x, menu.y, false) : null;
-			if (node !== null && hasMenu(node.graph)) this.options.onContextMenu(node.graph, e.clientX, e.clientY, null);
+			if (node !== null && hasMenu(node.graph)) this.options.onContextMenu(node.graph, e.clientX, e.clientY);
 		}
 		if (this.box?.pointerId === e.pointerId) this.endBoxSelect(e.type === "pointerup" ? e.clientX : undefined, e.clientY);
 		const press = this.press;
@@ -2151,15 +2152,25 @@ export class Graph3DScene {
 		if (e.target === this.graph.renderer().domElement) e.preventDefault();
 	};
 
-	/** A finger went down on `node` (on `link` in its panel, if any): held still for `LONG_PRESS_MS`, it opens the node's context menu and the release is no click (nor a drag). */
-	private startLongPress(pointerId: number, x: number, y: number, node: EngineNode, link: PanelLink | null): void {
+	/**
+	 * A finger went down on `node`: held still for `LONG_PRESS_MS`, it joins
+	 * the selection (`heldInto`; one added becomes the primary), touch
+	 * selection mode starts, the phone buzzes as the mind map's does, and the
+	 * release is no tap (nor a drag: the finger no longer orbits).
+	 */
+	private startLongPress(pointerId: number, x: number, y: number, node: EngineNode): void {
 		this.clearLongPress();
 		const timer = window.setTimeout(() => {
 			this.longPress = null;
-			if (this.editingId !== null || this.pinch !== null || this.linkDrag?.active === true) return;
+			if (this.editingId !== null || this.pinch !== null || node.departing) return;
 			this.press = this.drag = null;
-			this.endLinkDrag();
-			this.options.onContextMenu(node.graph, x, y, link);
+			this.touchSelecting = true;
+			if (!this.selection.has(node.id)) {
+				this.selection = heldInto(this.selection, node.id);
+				this.focusId = node.id;
+				this.applySelection();
+			}
+			navigator.vibrate?.(50);
 		}, LONG_PRESS_MS);
 		this.longPress = { pointerId, x, y, timer };
 	}
@@ -2248,14 +2259,19 @@ export class Graph3DScene {
 			this.options.onCheckboxClick(box.node);
 			return;
 		}
-		if (!e.shiftKey && !e.ctrlKey && !e.metaKey && this.doubleClicked(x, y, touch)) return;
+		// Touch selection mode (a held finger began it): a tap on a plate toggles it, as Shift+click does; one on empty space ends the mode and clears, below.
+		const tapped = touch && this.touchSelecting ? this.pickedNode(x, y, true) : null;
+		if (touch && !tapToggles(this.touchSelecting, this.selection.size, tapped !== null)) this.touchSelecting = false;
+		const toggling = touch && this.touchSelecting;
+		if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !toggling && this.doubleClicked(x, y, touch)) return;
 		const slop = PICK_SLOP_PX[touch ? "touch" : "mouse"];
 		// Shift+click toggles the plate in the selection; one added becomes the primary. No flight, no history step.
-		if (e.shiftKey) {
-			const hit = this.pickedNode(x, y, touch);
+		if (e.shiftKey || toggling) {
+			const hit = tapped ?? this.pickedNode(x, y, touch);
 			if (hit === null) return;
 			this.selection = toggled(this.selection, hit.id);
 			if (this.selection.has(hit.id)) this.focusId = hit.id;
+			if (this.selection.size === 0) this.touchSelecting = false;
 			this.applySelection();
 			return;
 		}

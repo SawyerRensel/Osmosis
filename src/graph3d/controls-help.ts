@@ -99,9 +99,8 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "One finger drag", action: "Orbit (what the drag does is a setting)" },
 			{ input: "Two finger drag, pinch", action: "Pan and zoom" },
 			{ input: "Joystick button", action: "Show the walk and fly joysticks" },
-			{ input: "Hold a finger on a line or note plate", action: "Plate context menu (focus this note, link, and the rest)" },
-			{ input: "Hold a finger on a link in a panel", action: "The plate menu, with Open link first (a tap on a link is a tap on its plate)" },
-			{ input: "Drag from a line (edit mode)", action: "Link or move: the drop menu opens on release" },
+			{ input: "Hold a finger on a plate", action: "Add it to the selection; taps then add or remove plates, until a tap on empty space" },
+			{ input: "Toolbar ⋮", action: "The selected plate's menu, with Open link for each link in its text (a tap on a link is a tap on its plate)" },
 		],
 	},
 	{

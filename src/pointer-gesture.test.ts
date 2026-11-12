@@ -62,10 +62,11 @@ describe("gestureFor", () => {
 		expect(gestureFor(mouse({ button: 3 }))).toBe("none");
 	});
 
-	it("orbits with a finger, and links from a line in edit mode", () => {
+	it("orbits with a finger, in edit mode too: a touch drag never links", () => {
 		const finger = { pointerType: "touch" };
 		expect(gestureFor(mouse(finger))).toBe("orbit");
-		expect(gestureFor(mouse({ ...finger, editMode: true }))).toBe("link");
+		expect(gestureFor(mouse({ ...finger, editMode: true }))).toBe("orbit");
+		expect(gestureFor(mouse({ ...finger, editMode: true, altKey: true }))).toBe("orbit");
 	});
 
 	it("treats a pen like a mouse", () => {
