@@ -547,12 +547,13 @@ pre.osmosis-code-block {
  * Bottom centre of the view; on a phone it shows in edit mode only (`barShown`), in the navigation bar's slot.
  *
  * Size: the height of a phone's floating navigation bar (`--navbar-height` is --touch-size-l there,
- * 52 px), and eight buttons wide. On a phone the eight fill the width of Obsidian's floating editing
- * toolbar (the viewport less --size-4-2 each side and the safe areas), so each is about 48 px on a
- * 412 px phone, never under Obsidian's own 40 px option. Desktop and tablet have no navigation bar or
- * editing toolbar to match, so they take the same height and a fixed 48 px button, which is what a
- * typical phone gets. More than eight buttons scroll sideways. Buttons sit edge to edge, evenly
- * spaced, with no gaps between groups.
+ * 52 px). On a phone it is eight buttons wide, the eight filling the width of Obsidian's floating
+ * editing toolbar (the viewport less --size-4-2 each side and the safe areas), so each is about 48 px
+ * on a 412 px phone, never under Obsidian's own 40 px option; more than eight scroll sideways.
+ * Desktop and tablet have no navigation bar or editing toolbar to match, so they take the same height
+ * and a fixed 48 px button, which is what a typical phone gets, and the bar is as wide as the buttons
+ * it shows (fewer in reading mode), capped at the view less its margins, past which it scrolls.
+ * Buttons sit edge to edge, evenly spaced, with no gaps between groups.
  */
 .osmosis-toolbar {
 	--osmosis-toolbar-btn-width: 48px;
@@ -578,7 +579,7 @@ pre.osmosis-code-block {
 .osmosis-toolbar-list {
 	display: flex;
 	align-items: center;
-	width: calc(8 * var(--osmosis-toolbar-btn-width) + 2 * var(--size-4-1));
+	width: max-content;
 	max-width: 100%;
 	height: var(--touch-size-l);
 	padding: 0 var(--size-4-1);
@@ -595,6 +596,10 @@ pre.osmosis-code-block {
 	--osmosis-toolbar-btn-width: max(var(--toolbar-option-width, 40px), calc((100vw - var(--safe-area-inset-left, 0px) - var(--safe-area-inset-right, 0px) - var(--size-4-4) - 2 * var(--size-4-1)) / 8));
 	/* Only if the navigation bar shows under the bar, which edit mode never leaves it doing: clear it. */
 	bottom: 80px;
+}
+
+.is-phone .osmosis-toolbar-list {
+	width: calc(8 * var(--osmosis-toolbar-btn-width) + 2 * var(--size-4-1));
 }
 
 /* With the navigation bar hidden (phones in edit mode; `syncNavbar` in ToolRibbon.ts), the bar takes its slot. */

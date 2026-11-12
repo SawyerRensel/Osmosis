@@ -1,4 +1,4 @@
-import { Platform, View, setIcon, type App } from "obsidian";
+import { Platform, View, setIcon, setTooltip, type App, type TooltipOptions } from "obsidian";
 
 /** Toolbar state used to enable/disable context-sensitive buttons. */
 export interface ToolbarState {
@@ -146,6 +146,14 @@ const BAR_TOGGLE_DEFS: Record<BarToggle, { icon: string; label: string }> = {
 	help: { icon: "help", label: "Controls" },
 };
 
+/**
+ * Tooltips open above the bar. Obsidian's default places them below the
+ * button, which at the bottom of the view runs off the window and is pushed
+ * back up over the button; `top` puts them over the bar's top edge (each button
+ * is the bar's full height) with Obsidian's usual 8 px gap.
+ */
+const BAR_TOOLTIP: TooltipOptions = { placement: "top" };
+
 /** Which toggles the bar shows in `view` on this device, in order. */
 export function barToggles(view: "2d" | "3d", device: { touch: boolean }): BarToggle[] {
 	const toggles: BarToggle[] = [];
@@ -237,8 +245,7 @@ export class ToolRibbon {
 			if (def.noButton) continue;
 			const btn = createEl("button");
 			btn.className = "osmosis-toolbar-btn clickable-icon";
-			btn.setAttribute("aria-label", def.label);
-			btn.setAttribute("title", def.label);
+			setTooltip(btn, def.label, BAR_TOOLTIP);
 			btn.dataset.action = def.id;
 			if (def.needsSelection) {
 				btn.dataset.needsSelection = "true";
@@ -263,7 +270,8 @@ export class ToolRibbon {
 
 		for (const { id, onClick } of options.toggles ?? []) {
 			const { icon, label } = BAR_TOGGLE_DEFS[id];
-			const btn = this.listEl.createEl("button", { cls: "osmosis-toolbar-btn clickable-icon", attr: { "aria-label": label, title: label, "aria-pressed": "false" } });
+			const btn = this.listEl.createEl("button", { cls: "osmosis-toolbar-btn clickable-icon", attr: { "aria-pressed": "false" } });
+			setTooltip(btn, label, BAR_TOOLTIP);
 			btn.dataset.toggle = id;
 			setIcon(btn, icon);
 			btn.addEventListener("pointerdown", (e) => {
