@@ -40,6 +40,7 @@ import {
 	normalizeWrite,
 	insertChild,
 	insertSibling,
+	insertSiblingBefore,
 	deleteSubtree,
 	moveSiblings,
 	indentSiblings,
@@ -2013,6 +2014,39 @@ describe("structural edits report where their line starts", () => {
 		expect(at(afterB.text, afterB.start)).toBe("- [ ] ");
 		const afterPlain = insertSibling(text, plain);
 		expect(at(afterPlain.text, afterPlain.start)).toBe("\u200B");
+	});
+
+	it("insertSiblingBefore: the new line goes above, with the same placeholders", () => {
+		const text = "- A\n\t- A1\n- [x] B\n\nPlain.\nMore.\n";
+		const root = parser.parse(text, "T.md").root;
+		const [a, b, plain] = root.children as [OsmosisNode, OsmosisNode, OsmosisNode];
+		const beforeA = insertSiblingBefore(text, a);
+		expect(beforeA.text).toBe("- \n- A\n\t- A1\n- [x] B\n\nPlain.\nMore.\n");
+		expect(beforeA.start).toBe(0);
+		const beforeA1 = insertSiblingBefore(text, a.children[0]!);
+		expect(beforeA1.text.startsWith("- A\n\t- \n\t- A1\n")).toBe(true);
+		expect(at(beforeA1.text, beforeA1.start)).toBe("\t- ");
+		const beforeB = insertSiblingBefore(text, b);
+		expect(at(beforeB.text, beforeB.start)).toBe("- [ ] ");
+		expect(beforeB.text.slice(0, beforeB.start)).toBe("- A\n\t- A1\n");
+		const beforePlain = insertSiblingBefore(text, plain);
+		expect(at(beforePlain.text, beforePlain.start)).toBe("\u200B");
+		expect(beforePlain.text).toBe("- A\n\t- A1\n- [x] B\n\n\u200B\n\nPlain.\nMore.\n");
+	});
+
+	it("insertSiblingBefore: a paragraph straight under a heading gets a blank line above the placeholder", () => {
+		const text = "# Head\nPlain.\n";
+		const para = parser.parse(text, "T.md").root.children[0]!.children[0]!;
+		expect(para.type).toBe("paragraph");
+		const out = insertSiblingBefore(text, para);
+		expect(out.text).toBe("# Head\n\n\u200B\n\nPlain.\n");
+		expect(at(out.text, out.start)).toBe("\u200B");
+	});
+
+	it("insertSiblingBefore: the root has nothing above it, so it behaves as insertSibling", () => {
+		const text = "- A\n";
+		const root = parser.parse(text, "T.md").root;
+		expect(insertSiblingBefore(text, root)).toEqual(insertSibling(text, root));
 	});
 
 	it("moveSiblings: the first line of the block that moved", () => {

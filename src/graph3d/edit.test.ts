@@ -362,6 +362,20 @@ describe("planStructural", () => {
 		expect(heading.node).toMatchObject({ type: "heading", depth: 2, content: "" });
 	});
 
+	it("siblingBefore selects a new empty line directly above the line, at its level", () => {
+		const bullet = run("siblingBefore", "Stern line")!;
+		expect(bullet.plan.fresh).toBe(true);
+		expect(bullet.node).toMatchObject({ type: "bullet", depth: 0, content: "" });
+		expect(bullet.text).toContain("- Bow line\n- \n- Stern line ^stern\n");
+		const nested = run("siblingBefore", "Spring")!;
+		expect(nested.node).toMatchObject({ type: "bullet", depth: 1, content: "" });
+		const heading = run("siblingBefore", "Fuel")!;
+		expect(heading.node).toMatchObject({ type: "heading", depth: 2, content: "" });
+		const parent = heading.root.children[0]!;
+		expect(parent.children.map((c) => c.content)).toEqual(["Moorings", "", "Fuel"]);
+		expect(run("siblingBefore", "Harbour")).toMatchObject({ plan: { fresh: true } });
+	});
+
 	it("parent selects a new empty line and keeps the old one as its child", () => {
 		const out = run("parent", "Bow line")!;
 		expect(out.plan.fresh).toBe(true);

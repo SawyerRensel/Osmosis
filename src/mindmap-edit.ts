@@ -1011,6 +1011,34 @@ export function insertSibling(content: string, src: OsmosisNode): Spliced {
 }
 
 /**
+ * Add an empty sibling before `src`, at its level (Shift+Enter): the mirror of
+ * {@link insertSibling}, with the same placeholder rules. `start` is where the
+ * new line starts. The virtual root has nothing above it, so it gets what Enter
+ * gives it, a sibling after.
+ */
+export function insertSiblingBefore(content: string, src: OsmosisNode): Spliced {
+	if (src.type === "root") return insertSibling(content, src);
+	const newContent = src.metadata?.checkbox ? "[ ] " : "";
+	const insertPos = src.range.start;
+	const blockLike =
+		src.type === "paragraph" ||
+		src.type === "codeblock" ||
+		src.type === "table" ||
+		src.type === "blockquote";
+	if (!blockLike) {
+		const line = serializeLine(src.type, src.depth, newContent);
+		return { text: content.slice(0, insertPos) + line + "\n" + content.slice(insertPos), start: insertPos };
+	}
+	// A paragraph is only its own block with a blank line above it, or it would merge into the line before.
+	const before = content.slice(0, insertPos);
+	const lead = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+	return {
+		text: before + lead + "​\n\n" + content.slice(insertPos),
+		start: insertPos + lead.length,
+	};
+}
+
+/**
  * Delete `src` and its subtree, also consuming the newline before it (else the
  * one after) so no blank line is left behind.
  */

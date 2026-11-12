@@ -313,6 +313,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		};
 		this.scope.register([], "Tab", structuralKey("child"));
 		this.scope.register([], "Enter", structuralKey("sibling"));
+		this.scope.register(["Shift"], "Enter", structuralKey("siblingBefore"));
 		this.scope.register(["Mod"], "Enter", structuralKey("parent"));
 		this.scope.register([], "Delete", structuralKey("delete"));
 		this.scope.register([], "Backspace", structuralKey("delete"));

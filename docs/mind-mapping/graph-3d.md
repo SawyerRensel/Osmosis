@@ -71,6 +71,7 @@ Turn edit mode on from the header's Reading/Editing button (the pencil, shown wh
 |-----|--------|
 | ++f2++ | Edit the line |
 | ++enter++ | Add a sibling after the line |
+| ++shift+enter++ | Add a sibling before the line |
 | ++tab++ | Add a child under the line |
 | ++ctrl+enter++ | Add a parent above the line |
 | ++delete++ / ++backspace++ | Delete the line, or every selected line |

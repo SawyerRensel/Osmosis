@@ -81,7 +81,8 @@ The toolbar looks like Obsidian's own mobile editing toolbar on every device. On
 | Action | Keyboard | Context Menu |
 |--------|----------|--------------|
 | Add child | ++tab++ | Add child |
-| Add sibling | ++enter++ | Add sibling |
+| Add sibling (after) | ++enter++ | Add sibling |
+| Add sibling above | ++shift+enter++ | — |
 | Insert parent | ++ctrl+enter++ | Insert parent |
 | Delete | ++delete++ or ++backspace++ | Delete |
 | Duplicate | ++ctrl+d++ | — |

@@ -6,7 +6,7 @@
 
 import { extractTrailingBlockId, generateBlockId } from "../block-id";
 import { OSMOSIS_FENCE_REGEX, STRUCTURAL_LINE_REGEX } from "../card-gen/generate-ids";
-import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, selectedSiblings, subtreeSpan, type Spliced } from "../mindmap-edit";
+import { collectBlockIds, deleteSubtree, dropContext, indentSiblings, insertChild, insertParent, insertSibling, insertSiblingBefore, moveSiblings, moveWithinFile, outdentSiblings, resolveInsertSite, selectedSiblings, subtreeSpan, type Spliced } from "../mindmap-edit";
 import { selectAfterDelete } from "../select-after-delete";
 import type { OsmosisNode } from "../types";
 import { panelScale } from "./lod";
@@ -296,7 +296,7 @@ export function linkInNote(content: string, a: OsmosisNode, b: OsmosisNode | nul
 }
 
 /** The structural edits the 3D graph offers on a line, the mind map's own. */
-export type StructuralAction = "child" | "sibling" | "parent" | "delete" | "up" | "down" | "indent" | "outdent";
+export type StructuralAction = "child" | "sibling" | "siblingBefore" | "parent" | "delete" | "up" | "down" | "indent" | "outdent";
 
 /** What a structural edit does to a note: its new text, and which lines to select, edit and keep in place after it. */
 export interface StructuralPlan {
@@ -335,6 +335,10 @@ export function planStructural(action: StructuralAction, content: string, root: 
 		}
 		case "sibling": {
 			const edit = insertSibling(content, line);
+			return { text: edit.text, select: edit.start, fresh: true, moved: null };
+		}
+		case "siblingBefore": {
+			const edit = insertSiblingBefore(content, line);
 			return { text: edit.text, select: edit.start, fresh: true, moved: null };
 		}
 		case "parent": {

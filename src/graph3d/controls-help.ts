@@ -74,6 +74,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 		entries: [
 			{ input: "F2", action: "Edit the selected line" },
 			{ input: "Enter", action: "Add a sibling after the selected line" },
+			{ input: "Shift + Enter", action: "Add a sibling before the selected line" },
 			{ input: "Tab", action: "Add a child under the selected line" },
 			{ input: "Ctrl/Cmd + Enter", action: "Add a parent above the selected line" },
 			{ input: "Delete or Backspace", action: "Delete the selected line, or every selected line" },

@@ -561,6 +561,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				return false;
 			});
 		}
+		// Shift+Enter adds a sibling above. Claim it here so a user hotkey on the same keys can't take it first.
+		this.scope.register(["Shift"], "Enter", (e: KeyboardEvent) => {
+			if (this.editingNodeId || inFind(e) || !this.selectedNodeId) return undefined;
+			if (!e.defaultPrevented) this.handleKeyDown(e);
+			return false;
+		});
 		// Ctrl/Cmd+F opens the find bar (the node editor keeps its own).
 		this.scope.register(["Mod"], "f", () => {
 			if (this.editingNodeId || !this.findBar) return undefined;
@@ -6649,10 +6655,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 							void this.insertParentNode(parentEnterNode);
 						}
 					} else {
-						// Enter = add sibling after selected node
+						// Enter = add sibling after selected node, Shift+Enter = before it
 						const enterNode = this.nodeMap.get(this.selectedNodeId);
 						if (enterNode) {
-							void this.addSiblingNode(enterNode);
+							void this.addSiblingNode(enterNode, e.shiftKey);
 						}
 					}
 					e.preventDefault();
@@ -8280,11 +8286,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * Add a sibling node after the given node.
+	 * Add a sibling node after the given node (or before it with `before`).
 	 * Inserts a new line after the node's subtree at the same level.
 	 * For transcluded nodes, writes to the source file.
 	 */
-	private async addSiblingNode(node: LayoutNode): Promise<void> {
+	private async addSiblingNode(node: LayoutNode, before = false): Promise<void> {
 		const target = await this.assertEditableNode(node);
 		if (!target) return;
 		if (!this.currentFile) return;
@@ -8293,12 +8299,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const updated = edit.insertSibling(content, src).text;
+		const updated = (before ? edit.insertSiblingBefore : edit.insertSibling)(content, src).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
 
-		// Find and start editing the new sibling (node right after the original)
+		// Find and start editing the new sibling (the node right after the original, or right before it)
 		this.startEditingNewNode(selectedId, false);
 	}
 
