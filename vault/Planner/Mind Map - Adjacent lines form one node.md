@@ -116,3 +116,9 @@ Under ~130k per session. `src/parser` by range; card/sync modules by grep; never
 
 ## Batch implementation notes (session 1)
 Session 1 was research and spec only; no code changed. Phase 1 was not started: budget was at the ~70k threshold, and the findings show that phase 1 without phase 2 would show heading groups without their image in 2D, so phases 1 and 2 should go to manual test together. Next session: Phase 1 above.
+
+## Sawyer's answers (grill, 2026-11-12) — override the draft spec where they differ
+- **Hard-wrapped prose:** yes, one node (adjacent prose lines group).
+- **Two headings in one run:** ONE node for the whole run — "Headings are no different than any other line. A user can follow common Markdown formatting conventions that include a blank line between headings." The first heading in the run sets the node's level/place in the tree. Drop the "split before the 2nd heading" rule.
+- **Run breakers:** only **note embeds** `![[Note]]` (permeable embeds) break a run, on top of the decided exceptions (lists, tables, callouts/`>`, code fences) and blank lines. **Horizontal rules do NOT break a run**, and neither does a run with 2+ `^os-` IDs: group it, keep the ID on the last line, and do not lose review history (0 such runs exist in the vault today; schedule entries are not deleted when an ID disappears — document exactly what happens to the earlier IDs). Standalone `^id` lines and comment-only lines (`osmosis-exclude`) — keep as the draft decided unless that conflicts with the above; record why.
+- **3D image:** near panel only; far plates show text.
