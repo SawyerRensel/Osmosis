@@ -628,6 +628,11 @@ export class PlanetWorld {
 		return this.planets.get(core)?.layout.radius;
 	}
 
+	/** Every planet's core ID. */
+	cores(): IterableIterator<string> {
+		return this.planets.keys();
+	}
+
 	/** A surface plate's frame (none for a core, or a node on no planet). */
 	place(id: string): PlanetPlace | undefined {
 		const core = this.memberOf.get(id);

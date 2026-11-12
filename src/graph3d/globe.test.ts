@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Vector3 } from "three";
-import { grabPoint, stickyTurn } from "./globe";
+import { grabPoint, sphereOnRay, stickyTurn } from "./globe";
 import { rotateAboutPivot } from "./pivot";
 
 const UP = new Vector3(0, 1, 0);
@@ -51,6 +51,63 @@ describe("grabPoint", () => {
 		expect(far.clone().sub(origin).dot(far)).toBeCloseTo(0, 9);
 		// On the cursor's side.
 		expect(grabPoint(origin, ray(-edge - 0.5), centre, 2).x).toBeLessThan(0);
+	});
+});
+
+describe("sphereOnRay", () => {
+	const origin = new Vector3(0, 0, 100);
+	const ahead = new Vector3(0, 0, -1);
+
+	it("finds the sphere the ray meets, where and how far along", () => {
+		const planet = { centre: new Vector3(0, 0, 0), radius: 10 };
+		const hit = sphereOnRay(origin, ahead, [planet]);
+		expect(hit?.sphere).toBe(planet);
+		expect(hit?.distance).toBeCloseTo(90);
+		expect(hit?.point.distanceTo(new Vector3(0, 0, 10))).toBeCloseTo(0);
+	});
+
+	it("meets a sphere off its centre, between where plates would sit", () => {
+		const planet = { centre: new Vector3(0, 0, 0), radius: 10 };
+		const direction = new Vector3(6, 0, 0).sub(origin).normalize();
+		const hit = sphereOnRay(origin, direction, [planet]);
+		expect(hit).not.toBeNull();
+		expect(hit!.point.length()).toBeCloseTo(10);
+		expect(hit!.point.z).toBeGreaterThan(0);
+	});
+
+	it("is null when the ray passes beside every sphere, or there are none", () => {
+		const planets = [
+			{ centre: new Vector3(30, 0, 0), radius: 10 },
+			{ centre: new Vector3(-30, 0, 0), radius: 10 },
+		];
+		expect(sphereOnRay(origin, ahead, planets)).toBeNull();
+		expect(sphereOnRay(origin, ahead, [])).toBeNull();
+	});
+
+	it("ignores a sphere behind the ray's origin", () => {
+		expect(sphereOnRay(origin, ahead, [{ centre: new Vector3(0, 0, 200), radius: 10 }])).toBeNull();
+	});
+
+	it("picks the nearer of two spheres on the ray, in either order", () => {
+		const far = { centre: new Vector3(0, 0, -100), radius: 40 };
+		const near = { centre: new Vector3(0, 0, 20), radius: 5 };
+		expect(sphereOnRay(origin, ahead, [far, near])?.sphere).toBe(near);
+		expect(sphereOnRay(origin, ahead, [near, far])?.sphere).toBe(near);
+		expect(sphereOnRay(origin, ahead, [near, far])?.distance).toBeCloseTo(75);
+	});
+
+	it("from inside a sphere, meets it on the way out", () => {
+		const planet = { centre: new Vector3(0, 0, 90), radius: 20 };
+		const hit = sphereOnRay(origin, ahead, [planet]);
+		expect(hit?.sphere).toBe(planet);
+		expect(hit?.point.distanceTo(new Vector3(0, 0, 70))).toBeCloseTo(0);
+	});
+
+	it("agrees with grabPoint, so the drag starts on the point pressed", () => {
+		const planet = { centre: new Vector3(5, -3, 0), radius: 12 };
+		const direction = new Vector3(8, 2, 0).sub(origin).normalize();
+		const hit = sphereOnRay(origin, direction, [planet]);
+		expect(hit!.point.distanceTo(grabPoint(origin, direction, planet.centre, planet.radius))).toBeCloseTo(0);
 	});
 });
 

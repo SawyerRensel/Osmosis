@@ -42,6 +42,34 @@ export function grabPoint(origin: Vector3, direction: Vector3, centre: Vector3, 
 	return origin.clone().addScaledVector(graze, Math.sqrt(Math.max(0, distance * distance - radius * radius)));
 }
 
+/** A sphere to pick: a planet's core and the radius its surface plates sit at. */
+export interface Sphere {
+	centre: Vector3;
+	radius: number;
+}
+
+/**
+ * The sphere the ray from `origin` along unit `direction` meets first, with
+ * where it meets it and how far along the ray that is, or null when the ray
+ * meets none. A press anywhere over a planet (a plate, a gap between plates,
+ * or a node in front of it) grabs it. From inside a sphere the ray meets it
+ * on the way out, so that is its hit; spheres behind `origin` don't count.
+ */
+export function sphereOnRay<T extends Sphere>(origin: Vector3, direction: Vector3, spheres: Iterable<T>): { sphere: T; point: Vector3; distance: number } | null {
+	let best: { sphere: T; distance: number } | null = null;
+	for (const sphere of spheres) {
+		const toOrigin = origin.clone().sub(sphere.centre);
+		const b = toOrigin.dot(direction);
+		const disc = b * b - (toOrigin.lengthSq() - sphere.radius * sphere.radius);
+		if (disc < 0) continue;
+		const root = Math.sqrt(disc);
+		const t = -b - root >= 0 ? -b - root : -b + root;
+		if (t < 0 || (best !== null && t >= best.distance)) continue;
+		best = { sphere, distance: t };
+	}
+	return best === null ? null : { ...best, point: origin.clone().addScaledVector(direction, best.distance) };
+}
+
 /** Signed angle (radians) that turns `from` toward `to` about `axis`, right-handed; both are taken in the plane square to `axis`. */
 function angleAbout(axis: Vector3, from: Vector3, to: Vector3): number {
 	const a = from.clone().projectOnPlane(axis);

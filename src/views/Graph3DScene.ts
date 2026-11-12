@@ -39,7 +39,7 @@ import type { NearTierSettings } from "../graph3d/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
 import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
 import { rotateAboutPivot } from "../graph3d/pivot";
-import { grabPoint, stickyTurn } from "../graph3d/globe";
+import { grabPoint, type Sphere, sphereOnRay, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
 import { dollyDistance, pickNode, wheelLogZoom, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import type { Placed } from "../graph3d/positions";
@@ -1934,8 +1934,8 @@ export class Graph3DScene {
 			if (touch) this.startLongPress(e.pointerId, e.clientX, e.clientY, from);
 			return;
 		}
-		const aim = this.aim(e.clientX, e.clientY, touch);
 		const look = touch && this.controlSettings.touchDrag === "look";
+		const aim = this.aim(e.clientX, e.clientY, touch, !look);
 		const ray = this.rayThrough(e.clientX, e.clientY);
 		this.drag = {
 			pointerId: e.pointerId,
@@ -2489,8 +2489,13 @@ export class Graph3DScene {
 	 * `aimPoint`, and when that is a planet's core because the pointer is on
 	 * one of its surface plates, `globe`: the radius at which that plate sits
 	 * from the core, the sphere a drag grabs. Null otherwise.
+	 *
+	 * With `grab` (a drag starting), a pointer over a planet's sphere grabs it
+	 * even off its plates: in a gap between them, or on its core or a star in
+	 * front of it; the nearest sphere on the ray wins. Wheel and pinch zoom
+	 * don't ask, so they head where they always did.
 	 */
-	private aim(x: number, y: number, touch: boolean): { point: Vector3; globe: number | null } {
+	private aim(x: number, y: number, touch: boolean, grab = false): { point: Vector3; globe: number | null } {
 		const settings = this.controlSettings;
 		if (touch ? settings.touchDrag === "center" : settings.desktopPivot === "center") {
 			return { point: this.orbitControls().target.clone(), globe: null };
@@ -2500,14 +2505,34 @@ export class Graph3DScene {
 		// Planets mode orbits a surface plate's planet: a drag turns the globe under the camera.
 		const planet = picked === null ? undefined : this.live.get(this.world.planetOf(picked.id) ?? picked.id);
 		const node = planet !== undefined && placed(planet) ? planet : picked;
-		if (node !== null) {
-			const centre = new Vector3(node.x, node.y, node.z);
+		const centre = node === null ? null : new Vector3(node.x, node.y, node.z);
+		const surface = centre !== null && node !== picked && picked !== null && placed(picked) ? centre.distanceTo(new Vector3(picked.x, picked.y, picked.z)) : 0;
+		const sphere = grab && surface === 0 ? this.sphereUnder(x, y) : null;
+		if (sphere !== null) {
+			this.lastDepth = sphere.centre.distanceTo(camera.position);
+			return { point: sphere.centre, globe: sphere.radius };
+		}
+		if (centre !== null) {
 			this.lastDepth = centre.distanceTo(camera.position);
-			const surface = node !== picked && picked !== null && placed(picked) ? centre.distanceTo(new Vector3(picked.x, picked.y, picked.z)) : 0;
 			return { point: centre, globe: surface > 0 ? surface : null };
 		}
 		const depth = this.lastDepth ?? camera.position.distanceTo(this.orbitControls().target);
 		return { point: this.rayThrough(x, y).at(depth, new Vector3()), globe: null };
+	}
+
+	/** Planets mode: the nearest planet whose sphere the ray through client point (`x`, `y`) meets inside the mist, or null. */
+	private sphereUnder(x: number, y: number): Sphere | null {
+		const spheres: Sphere[] = [];
+		for (const id of this.world.cores()) {
+			const core = this.live.get(id);
+			const radius = this.world.radius(id);
+			if (core !== undefined && placed(core) && radius !== undefined && radius > 0) spheres.push({ centre: new Vector3(core.x, core.y, core.z), radius });
+		}
+		if (spheres.length === 0) return null;
+		const ray = this.rayThrough(x, y);
+		const hit = sphereOnRay(ray.origin, ray.direction, spheres);
+		// Past the mist's reach (as `nodeNear`) a planet can't be seen, so it can't be grabbed.
+		return hit === null || hit.distance > 2 / this.fog.density ? null : hit.sphere;
 	}
 
 	/**
