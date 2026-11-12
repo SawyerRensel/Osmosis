@@ -111,3 +111,19 @@ Manual (Ctrl+R after build):
 **Fixture.** None new; any note with cards, e.g. one under `vault/tests/` (and one without cards for the Peek-absent check).
 
 **Not verified (cannot see Obsidian).** That the Peek item lands near the top of the ⋯ menu; that Obsidian passes the leaf as the fourth `file-menu` argument for `more-options` in the version in use (if not, Peek would silently be missing; the existing Rapid entry does not need the leaf); that `layout-change` / `active-leaf-change` fire in time to record a pill swap (the explicit write in `swapLeafView` covers it anyway); the header order on a phone.
+
+## Follow-up after Sawyer's test, 2026-11-12
+
+**Reported.** "There seems to be extra space in Note view header between brain-cell button and graduation-cap buttons."
+
+**Cause (what was found, and what was not).** Both anchors that place our buttons were dead selectors. The 🧠 looked for `a.clickable-icon[aria-label="Reading view"]`, and Study's fallback `findModeToggle` looked only for `a.clickable-icon[...]`. Obsidian's reading/editing toggle is a `<button>` (`ItemView.addAction` creates `button.clickable-icon.view-action`), labelled "Current view: …". Neither selector ever matched. So the 🧠 was always *prepended* to the far left of the whole actions row, not placed next to Edit, and the row's layout depended on event order and on whatever else Obsidian or other plugins had put in the row. Before the fix, nothing pinned the 🧠/Study pair against the toggle.
+
+I could **not** reproduce a visible gap from stock Obsidian alone. Rendering the expected DOM (`[🧠 a][Study a][hidden bookmark button][Edit][⋯]`) against `app.css` + `styles.css` in headless Chromium gave even 28px (desktop) and 44px (phone) steps with real lucide icons. The only other element Obsidian adds to a markdown header is the core Bookmarks action, which is `display: none` unless the note is bookmarked. If the gap persists after this fix, it comes from an element outside Osmosis. Run this in the console with the note active and send the output: `[...document.querySelector('.workspace-leaf.mod-active .view-actions').children].map(e => e.outerHTML.slice(0, 120)).join('\n')`.
+
+**Fix.** `findModeToggle` now matches any tag (`.clickable-icon[aria-label^="Current view"]`, …) and is exported. `addMindMapActionToMarkdownLeaves` uses it to insert the 🧠 directly before the toggle. Study already goes right after the 🧠 on every pass. The header is now `[anything else][🧠][Study][Edit][⋯]` as one contiguous run, and no other action can sit between our two buttons and Edit. If the toggle is not found (a non-English locale, whose label differs), the 🧠 falls back to leftmost, as before.
+
+| File | Change |
+|---|---|
+| `src/views/LineRevealProcessor.ts` | `findModeToggle` matches `<button>` toggles; exported |
+| `src/views/LineRevealProcessor.dom.test.ts` | New: finds Obsidian's `<button>` toggle; null without one |
+| `src/main.ts` | 🧠 inserted before the mode toggle via `findModeToggle` (dead `a[aria-label="Reading view"]` selector removed) |

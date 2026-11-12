@@ -125,3 +125,25 @@ Manual (Ctrl+R after build):
 **Fixture.** None new; any note, e.g. `vault/tests/graph3d/Styled Mooring.md`.
 
 **Not verified (cannot see Obsidian).** Header left-to-right placement and phone fit; that Obsidian's own ⋯ stays rightmost; the separator rendering between our entries and Obsidian's; whether `onPaneMenu` is invoked for the `more-options` button on mobile in both views.
+
+## Follow-up after Sawyer's test, 2026-11-12
+
+**Reported.** "The 2D|3D toggle in mind map view are still rounded rectangle appearing as separate buttons instead of a pill-shaped toggle."
+
+**Cause.** The DOM was always right: one `div.osmosis-view-switch` wrapper holding two `<button class="osmosis-view-switch-option">` segments, placed in `.view-actions` by `arrangeViewHeader`. The CSS lost to Obsidian. Obsidian styles every `button:not(.clickable-icon)` (specificity 0,1,1) with `background-color: var(--interactive-normal)` and `box-shadow: var(--input-shadow)`. Our segment rule was a single class (0,1,0), so each segment got its own grey fill and shadow and looked like a separate button. The active segment's `.is-active` rule (0,2,0) still won, which is why the highlight showed. The wrapper also used `--radius-m` (8px), so it never read as a capsule. On tablets, `.is-tablet button:not(.clickable-icon)` (0,2,1) also overrode the padding. This was confirmed by rendering the header DOM against `ref/obsidian-core/app.css` + `styles.css` in headless Chromium: before the fix, the inactive segment computed `bg rgb(51,51,51)` plus the input shadow.
+
+**Fix.** The rules are now scoped as `.view-actions .osmosis-view-switch > button.osmosis-view-switch-option` (0,3,1), which beats both Obsidian rules. The wrapper has `border-radius: 999px`, a form-field fill, 2px padding, `overflow: hidden` and `gap: 0`. The segments are transparent capsules (`border-radius: 999px`, no shadow), and the active one is accent-filled. Re-rendered on desktop and on `.is-mobile.is-phone`: it is one capsule with the active half highlighted and no separate button chrome. Obsidian's phone `.view-action` sizing does not touch it, because the pill is not a `.view-action`.
+
+Expected DOM (unchanged):
+```
+.view-actions
+  a/button.view-action  (Note view)
+  div.osmosis-view-switch[role=group]
+    button.osmosis-view-switch-option.is-active  "2D"
+    button.osmosis-view-switch-option            "3D"
+  button.view-action (Study) · button.view-action (Reading) · ⋯
+```
+
+| File | Change |
+|---|---|
+| `styles.css` | Pill rules re-scoped for specificity; capsule radius and fill; mobile padding |
