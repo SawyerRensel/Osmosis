@@ -28,6 +28,7 @@ export class Graph3DPerf {
 	private readonly places = new Rolling();
 	private readonly masks = new Rolling();
 	private readonly transforms = new Rolling();
+	private readonly rasters = new Rolling();
 	/** Force-engine frames: from its charge force to the WebGL render that follows. */
 	private readonly engine = new Rolling();
 	private engineStartAt = 0;
@@ -35,7 +36,7 @@ export class Graph3DPerf {
 	private lastRefresh = 0;
 	/** Panel renders of the frame in progress, summed over both renderers. */
 	private panelMs = 0;
-	private readonly nearStats: NearStats = { placeMs: 0, transforms: 0, masks: 0 };
+	private readonly nearStats: NearStats = { placeMs: 0, transforms: 0, masks: 0, rasters: 0 };
 	/** The last time new data needed plates: how many, and how long laying them out took. */
 	private lastPlating: { count: number; ms: number } | null = null;
 
@@ -87,13 +88,15 @@ export class Graph3DPerf {
 		this.places.push(now, this.nearStats.placeMs);
 		this.masks.push(now, this.nearStats.masks);
 		this.transforms.push(now, this.nearStats.transforms);
+		this.rasters.push(now, this.nearStats.rasters);
 		this.panelMs = 0;
 		this.nearStats.placeMs = 0;
 		this.nearStats.masks = 0;
 		this.nearStats.transforms = 0;
+		this.nearStats.rasters = 0;
 		if (now - this.lastRefresh < PERF_REFRESH_MS) return;
 		this.lastRefresh = now;
-		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.engine]) list.prune(now, PERF_WINDOW_MS);
+		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.rasters, this.engine]) list.prune(now, PERF_WINDOW_MS);
 		this.gauge.loaf.prune(now, PERF_WINDOW_MS);
 		this.gauge.setText(this.report());
 	}
@@ -111,7 +114,7 @@ export class Graph3DPerf {
 		return [
 			`fps ${this.frames.count}  frame avg ${frameAvg.toFixed(1)} / worst ${this.frames.max().toFixed(1)} ms`,
 			`cpu: tick ${this.ticks.avg().toFixed(2)} ms  render ${this.renders.avg().toFixed(2)} ms (max ${this.renders.max().toFixed(1)})`,
-			`panels: render ${this.panelRenders.avg().toFixed(2)} ms (max ${this.panelRenders.max().toFixed(1)})  place ${this.places.avg().toFixed(2)} ms  transforms ${this.transforms.avg().toFixed(0)}  masks ${this.masks.avg().toFixed(1)} /frame`,
+			`panels: render ${this.panelRenders.avg().toFixed(2)} ms (max ${this.panelRenders.max().toFixed(1)})  place ${this.places.avg().toFixed(2)} ms  transforms ${this.transforms.avg().toFixed(0)}  masks ${this.masks.avg().toFixed(1)}  re-rasters ${this.rasters.avg().toFixed(1)} /frame`,
 			`live panels ${kinds.panels} (code ${kinds.code}, image ${kinds.image}, plain ${kinds.plain})`,
 			`engine: ${this.engine.count === 0 ? "idle" : `${this.engine.avg().toFixed(2)} ms/tick (max ${this.engine.max().toFixed(1)}), ${this.engine.count} ticks/s`}`,
 			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimed),
@@ -128,7 +131,7 @@ export class Graph3DPerf {
 
 	private readonly onToggle = (shown: boolean): void => {
 		// Start the averages afresh: nothing was recorded while it was hidden.
-		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.engine]) list.clear();
+		for (const list of [this.frames, this.ticks, this.renders, this.panelRenders, this.places, this.masks, this.transforms, this.rasters, this.engine]) list.clear();
 		this.lastFrame = 0;
 		this.lastRefresh = 0;
 		this.panelMs = 0;
@@ -136,6 +139,7 @@ export class Graph3DPerf {
 		this.nearStats.placeMs = 0;
 		this.nearStats.masks = 0;
 		this.nearStats.transforms = 0;
+		this.nearStats.rasters = 0;
 		this.near.stats = shown ? this.nearStats : null;
 	};
 

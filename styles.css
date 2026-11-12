@@ -4489,6 +4489,35 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /*
+ * The panel's layer (Graph3DNear.ts, src/graph3d/raster.ts): sized to the box
+ * at its raster scale, centred on the anchor and shrunk to the drawn scale.
+ * It carries the mask; its first child is the fill (painted in the lens's
+ * space, under the box, so the box is rastered into this layer). Screen-facing panels are composited, anchor and lens,
+ * so moving and scaling them is the compositor's work; tilted (CSS3D) panels
+ * are composited by their 3D transform already and keep the browser's raster.
+ */
+.osmosis-graph3d-near-lens {
+	position: absolute;
+	left: 0;
+	top: 0;
+	transform-origin: 50% 50%;
+	/* Plates nearer than the panel are cut out of it with mask layers, set inline (src/graph3d/occlusion.ts). */
+	mask-repeat: no-repeat;
+}
+
+/* Matches the plate's fill (a style's is set inline); its corners are the box's, set inline. */
+.osmosis-graph3d-near-fill {
+	position: absolute;
+	inset: 0;
+	background-color: var(--background-secondary);
+}
+
+.osmosis-graph3d-near-flat .osmosis-graph3d-near-anchor,
+.osmosis-graph3d-near-flat .osmosis-graph3d-near-lens {
+	will-change: transform;
+}
+
+/*
  * Edge hints (Graph3DHints.ts): a small label just off a link or embed
  * edge's end, naming the node at its other end. A zero-size anchor at the
  * point; the box is shifted against it by an inline transform.
@@ -4532,13 +4561,11 @@ body.osmosis-hide-navbar .mobile-navbar {
 	max-height: 30em;
 	overflow: hidden;
 	padding: 0.25em 0.4em;
-	/* Matches the plate: its fill and text colour (the outline is set inline). */
-	background-color: var(--background-secondary);
+	/* Matches the plate's text colour (the fill is the lens's, the outline is set inline). */
 	color: var(--text-normal);
 	line-height: 1.25;
-	transform-origin: 50% 50%;
-	/* Plates nearer than the panel are cut out of it with mask layers, set inline (src/graph3d/occlusion.ts). */
-	mask-repeat: no-repeat;
+	/* Scaled by its raster scale from the lens's corner. */
+	transform-origin: 0 0;
 }
 
 .osmosis-graph3d-near-body > :first-child,
@@ -4576,6 +4603,8 @@ body.osmosis-hide-navbar .mobile-navbar {
 	background-color: var(--background-primary);
 	opacity: 0;
 	pointer-events: none;
+	/* Its own layer: the mist changes it every frame without repainting the text under it. */
+	will-change: opacity;
 }
 
 /*
@@ -4620,7 +4649,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* The panel under the editor is hidden while its text is being edited. */
-.osmosis-graph3d-near-panel.is-editing {
+.osmosis-graph3d-near-lens.is-editing {
 	visibility: hidden;
 }
 

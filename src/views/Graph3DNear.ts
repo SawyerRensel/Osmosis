@@ -25,6 +25,12 @@
  *   tangent frame instead (`../graph3d/tilt.ts`), hidden whenever the plate is
  *   seen from behind; panels stack in the CSS3D renderer's own 3D context, and
  *   a plate cuts a hole only when it is on the eye's side of the panel's plane.
+ * - **Composited, re-rastered in buckets:** a screen-facing panel is its own
+ *   compositor layer (the lens), laid out at a raster scale at or above the
+ *   scale it is drawn at and shrunk to it by the lens's transform
+ *   (`../graph3d/raster.ts`). Moving the camera then moves and scales layers
+ *   without repainting their text; the veil fades on its own layer, and a
+ *   mask is a mask layer of its own. Only leaving the raster band repaints.
  * - **Lifecycle:** each panel renders into its own `Component`, unloaded when
  *   the panel goes. Video and audio pause the moment their node leaves the
  *   tier, and release their media when the panel is removed.
@@ -50,6 +56,7 @@ import type { TangentFrame } from "../graph3d/planets";
 import { showsText } from "../graph3d/far-side";
 import { panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
 import { uprightFrame, type ViewBasis } from "../graph3d/upright";
+import { MASK_STEP_PX, rasterScale, snapHoles } from "../graph3d/raster";
 
 /** A link under a click, in a near-tier panel. */
 export interface PanelLink {
@@ -118,6 +125,10 @@ interface Panel {
 	/** A CSS2D panel faces the screen; a CSS3D one (Planets mode) lies on its plate's frame. */
 	object: CSS2DObject | CSS3DObject;
 	tilted: boolean;
+	/** The composited layer: the box laid out at `raster` times its size, carrying the mask and the shrink to the drawn scale. */
+	lens: HTMLElement;
+	/** The plate's fill, the lens's first child, painted in the lens's own space. */
+	fill: HTMLElement;
 	box: HTMLElement;
 	body: HTMLElement;
 	veil: HTMLElement;
@@ -133,6 +144,14 @@ interface Panel {
 	height: number;
 	/** The mask last written, to skip unchanged writes. */
 	mask: string;
+	/** Px the box is drawn per px laid out inside the lens (`rasterScale`); 0 before the first placement. A tilted panel's is 1. */
+	raster: number;
+	/** The plate's corner radius, in px before any scale. */
+	radius: number;
+	/** The cross-fade opacity, lens transform and veil opacity last written, to skip unchanged writes. */
+	shownFade: number;
+	lensTransform: string;
+	veilOpacity: string;
 	/** An occlusion card's diagram as last painted (group and side), or "" for an ordinary panel. */
 	diagram: string;
 	/** View depth as last drawn. */
@@ -149,8 +168,10 @@ interface Panel {
 export interface NearStats {
 	/** Time in `place` / `placeTilted`, ms. */
 	placeMs: number;
-	/** Panels placed. Each placement writes the box's transform once (the CSS2D/CSS3D renderer writes the anchor's too). */
+	/** Lens transforms written (one a placed panel at most; the CSS2D/CSS3D renderer writes the anchor's too). */
 	transforms: number;
+	/** Panels re-rastered at a new scale bucket (`rasterScale`). */
+	rasters: number;
 	/** Mask writes that were not skipped as unchanged. */
 	masks: number;
 }
@@ -203,6 +224,8 @@ export class Graph3DNear {
 			if (panel === undefined || size === undefined) continue;
 			panel.width = size.inlineSize;
 			panel.height = size.blockSize;
+			// In the same frame, before paint: the lens is never a frame behind its box.
+			this.sizeLens(panel);
 		}
 	});
 
@@ -218,7 +241,7 @@ export class Graph3DNear {
 		private readonly settings: () => NearTierSettings,
 	) {
 		this.pxPerUnit = NEAR_FONT_PX / lineEmWorld;
-		this.renderer.domElement.addClass("osmosis-graph3d-near");
+		this.renderer.domElement.addClasses(["osmosis-graph3d-near", "osmosis-graph3d-near-flat"]);
 		this.renderer3d.domElement.addClass("osmosis-graph3d-near");
 	}
 
@@ -308,7 +331,10 @@ export class Graph3DNear {
 			const node = panel.node;
 			panel.object.position.set(node.x ?? 0, node.y ?? 0, node.z ?? 0);
 			if (panel.tilted) this.tilt(panel);
-			panel.object.element.setCssStyles({ opacity: String(panel.fade) });
+			if (panel.fade !== panel.shownFade) {
+				panel.shownFade = panel.fade;
+				panel.object.element.setCssStyles({ opacity: String(panel.fade) });
+			}
 		}
 		this.placeEditor(camera, pxPerUnitAt1);
 	}
@@ -396,7 +422,7 @@ export class Graph3DNear {
 	setEditing(node: NearSource | null, editor: TrackedEditor | null): void {
 		this.editing = node?.id ?? null;
 		this.edit = node === null || editor === null ? null : { editor, node };
-		for (const [panelId, panel] of this.panels) panel.box.classList.toggle("is-editing", panelId === this.editing);
+		for (const [panelId, panel] of this.panels) panel.lens.classList.toggle("is-editing", panelId === this.editing);
 		if (node === null || editor === null) return;
 		const plateHeight = node.shape.height * this.pxPerUnit;
 		// A node with a set width wraps its text at it (a code block at its fit), as its panel does.
@@ -534,12 +560,15 @@ export class Graph3DNear {
 			panel.preview !== null
 				? { width: `${panel.preview}px`, minWidth: `${panel.preview}px`, maxWidth: `${panel.preview}px` }
 				: { width: rule.kind === "custom" ? `${rule.em}em` : "", minWidth: `${panel.node.shape.width * this.pxPerUnit}px`, maxWidth: rule.kind === "default" ? "" : `${rule.em}em` };
+		panel.radius = panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
 		panel.box.setCssStyles({
 			...width,
-			borderRadius: `${panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node)}px`,
+			borderRadius: `${panel.radius}px`,
 			boxShadow: stroke === 0 ? "none" : `inset 0 0 0 ${stroke}em ${look?.border ?? color.getStyle()}`,
-			backgroundColor: look?.fill ?? "",
 		});
+		// The fill is under the box, in the lens's own space (see `createPanel`).
+		panel.fill.setCssStyles({ backgroundColor: look?.fill ?? "" });
+		this.sizeLens(panel);
 		// On the rendered Markdown itself, as the mind map sets it.
 		panel.body.setCssStyles({ color: look?.text ?? "" });
 	}
@@ -569,7 +598,13 @@ export class Graph3DNear {
 
 	private createPanel(node: NearSource, markdown: string): Panel {
 		const anchor = createDiv({ cls: "osmosis-graph3d-near-anchor" });
-		const box = anchor.createDiv({ cls: "osmosis-graph3d-near-panel" });
+		// The fill is painted in the lens's own space before the box's content, so the box
+		// (scaled by its raster scale, not composited) is drawn into the lens's layer at that
+		// scale, and the lens's own transform is all the compositor scales. The mask is the
+		// lens's and the fill a child, so a mask write leaves the layer's content alone.
+		const lens = anchor.createDiv({ cls: "osmosis-graph3d-near-lens" });
+		const fill = lens.createDiv({ cls: "osmosis-graph3d-near-fill" });
+		const box = lens.createDiv({ cls: "osmosis-graph3d-near-panel" });
 		box.classList.toggle("is-selected", this.selected.has(node.id));
 		box.classList.toggle("is-found", this.found.has(node.id));
 		const body = box.createDiv({ cls: "osmosis-graph3d-near-body markdown-rendered" });
@@ -582,9 +617,9 @@ export class Graph3DNear {
 			anchor.setCssStyles({ pointerEvents: "none" });
 		}
 		const handle = box.createDiv({ cls: "osmosis-graph3d-near-handle" });
-		const panel: Panel = { object, tilted: this.tilted, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
+		const panel: Panel = { object, tilted: this.tilted, lens, fill, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", raster: this.tilted ? 1 : 0, radius: 0, shownFade: 0, lensTransform: "", veilOpacity: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
 		this.boxes.set(box, panel);
-		box.classList.toggle("is-editing", node.id === this.editing);
+		lens.classList.toggle("is-editing", node.id === this.editing);
 		this.markResizable(panel);
 		this.sizes.observe(box);
 		object.onBeforeRender = (_renderer, _scene, camera) => this.place(panel, camera);
@@ -616,7 +651,6 @@ export class Graph3DNear {
 		const start = performance.now();
 		this.placeOne(panel, camera);
 		stats.placeMs += performance.now() - start;
-		stats.transforms++;
 	}
 
 	private placeOne(panel: Panel, camera: Camera): void {
@@ -634,16 +668,50 @@ export class Graph3DNear {
 		// first (higher on top) after this runs, and WebGL ignores it on a CSS2DObject.
 		panel.object.renderOrder = -depth;
 		panel.depth = depth;
-		panel.box.setCssStyles({ transform: `translate(-50%, -50%) scale(${scale})` });
+		// Re-raster only when the drawn scale leaves the band; otherwise the compositor shrinks the lens.
+		const raster = rasterScale(panel.raster, scale);
+		if (raster !== panel.raster) {
+			panel.raster = raster;
+			panel.box.setCssStyles({ transform: `scale(${raster})` });
+			this.sizeLens(panel);
+			if (this.stats !== null) this.stats.rasters++;
+		}
+		const shrink = panel.raster > 0 ? scale / panel.raster : scale;
+		this.setLensTransform(panel, `translate(-50%, -50%) scale(${shrink})`);
 		point.applyMatrix4(camera.projectionMatrix);
 		const size = this.renderer.getSize();
 		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera as PerspectiveCamera, pxPerUnitAt1));
+		// Holes in the lens's px: the box's, times its raster scale.
 		const holes = panelHoles(
-			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width, height: panel.height, scale, depth },
+			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width * panel.raster, height: panel.height * panel.raster, scale: shrink, depth },
 			plates,
 		);
-		this.cutHoles(panel, holes);
-		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density)) });
+		this.cutHoles(panel, holes, shrink);
+		this.setVeil(panel, 1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density));
+	}
+
+	/** The lens is the box's size times its raster scale, and the fill has the box's corners: the fill and the mask's 100% are the box as drawn. */
+	private sizeLens(panel: Panel): void {
+		const raster = panel.raster;
+		panel.lens.setCssStyles({
+			width: panel.width > 0 ? `${panel.width * raster}px` : "",
+			height: panel.height > 0 ? `${panel.height * raster}px` : "",
+		});
+		panel.fill.setCssStyles({ borderRadius: `${panel.radius * raster}px` });
+	}
+
+	private setLensTransform(panel: Panel, transform: string): void {
+		if (transform === panel.lensTransform) return;
+		panel.lensTransform = transform;
+		panel.lens.setCssStyles({ transform });
+		if (this.stats !== null) this.stats.transforms++;
+	}
+
+	private setVeil(panel: Panel, opacity: number): void {
+		const value = String(opacity);
+		if (value === panel.veilOpacity) return;
+		panel.veilOpacity = value;
+		panel.veil.setCssStyles({ opacity: value });
 	}
 
 	/**
@@ -657,7 +725,7 @@ export class Graph3DNear {
 		const centre = panel.object.position;
 		const depth = -this.point.copy(centre).applyMatrix4(camera.matrixWorldInverse).z;
 		panel.depth = depth;
-		panel.box.setCssStyles({ transform: "translate(-50%, -50%)" });
+		this.setLensTransform(panel, "translate(-50%, -50%)");
 		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera, this.pxPerUnitAt1(camera)));
 		const tilted: TiltedPanel = { centre, frame: this.plateFrame(node), width: panel.width, height: panel.height, pxPerUnit: this.pxPerUnit };
 		const bounds = this.screenBounds(tilted, camera);
@@ -671,8 +739,8 @@ export class Graph3DNear {
 			holes.push(hole);
 			panel.occluders.push(plate);
 		}
-		this.cutHoles(panel, holes);
-		panel.veil.setCssStyles({ opacity: String(1 - plateVisibility(node.opacity, depth, this.focus, this.density)) });
+		this.cutHoles(panel, holes, 1);
+		this.setVeil(panel, 1 - plateVisibility(node.opacity, depth, this.focus, this.density));
 	}
 
 	/** Where a tilted panel lies on screen, in the stage's px: the box round its corners, or null when one is behind the camera. */
@@ -717,14 +785,14 @@ export class Graph3DNear {
 		return { centre, corners, radius: cornerOf(node) };
 	}
 
-	/** Mask `holes` out of the panel, writing only when they changed. */
-	private cutHoles(panel: Panel, holes: readonly PanelHole[]): void {
-		const mask = holeMask(holes);
+	/** Mask `holes` (lens px, drawn at `scale`) out of the panel, writing only when one moved by about a step on screen. */
+	private cutHoles(panel: Panel, holes: readonly PanelHole[], scale: number): void {
+		const mask = holeMask(snapHoles(holes, MASK_STEP_PX / scale));
 		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
 		if (key === panel.mask) return;
 		panel.mask = key;
 		if (this.stats !== null) this.stats.masks++;
-		panel.box.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
+		panel.lens.setCssStyles({ maskImage: mask?.image ?? "", maskSize: mask?.size ?? "", maskPosition: mask?.position ?? "", maskComposite: mask?.composite ?? "" });
 	}
 
 	/**
