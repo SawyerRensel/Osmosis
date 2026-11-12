@@ -16,7 +16,7 @@ status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T05:53:58.000Z"
-date_modified: "2026-11-12T06:20:00.000Z"
+date_modified: "2026-11-12T10:26:00.000Z"
 date_start_scheduled: "2026-11-12T05:55:00.000Z"
 date_start_actual: "2026-11-12T05:55:00.000Z"
 date_end_scheduled:
@@ -153,3 +153,52 @@ Nothing was run in Obsidian, and I had no real wheel event recordings. The thres
 - **Shift may swap the axes.** If Chromium turns Shift + scroll into horizontal on this platform for touchpads (it does for mouse wheels), a vertical Shift + swipe would pan sideways. The fix would be to swap back in `wheelAction` when `shiftKey` is set.
 - **Untuned constants.** The rotation speed per swipe px is the drag's (`ORBIT_RATE`), and the platform's scroll distance per finger travel varies. `SWIPE_LIFT_MS` (50 ms) and the 200 ms gesture gap need a feel check.
 - **Long swipes and the grab.** A long swipe over a planet moves the virtual pointer off the planet's disc, where the grab holds at the rim (T41 behaviour), as a long mouse drag would.
+
+## Follow-up after Sawyer's test, 2026-11-12
+
+Code commit `5f3aa09` on `fix/round-8-feedback`. Still In-Review.
+
+### What was reported
+
+1. Two-finger swipe rotation is "way too sensitive", "jittery", and when it stops it feels like "slamming into invisible arbitrary barriers". It should feel like dragging a planet's surface. Sawyer confirmed that a click-drag on the mouse or touchpad feels right in the same layouts, so a swipe should map exactly like a drag, with a smooth coast when the fingers lift.
+2. Ctrl + two-finger swipe zooms the wrong way.
+
+### The cause
+
+The swipe already called the drag's own `rotate()` (same `ORBIT_RATE`, pivot and Planets grab). The problem was what went into it and when.
+
+- **Too sensitive: scroll px are not pointer px.** Raw `deltaX/deltaY` were treated as pointer movement. On Linux, Chromium turns libinput's 15 px of finger motion per scroll "click" into a 53 px wheel tick, so the same finger travel moves a swipe about 3.5 times further than a drag. In Planets that also ran the virtual pointer off the planet's disc quickly, where the grab holds at the rim. That was one "barrier".
+- **Slamming: the gesture ended and restarted mid-swipe.** `endSwipe` ended the swipe after any 50 ms gap between events. A slowing finger on libinput easily leaves such gaps. Each false end launched a spin coast, and the inflated scroll px easily cleared the fling threshold. The next event stopped that coast dead, then restarted the swipe: it re-aimed at the cursor (a new pivot, a new grab), and it carried the stopped spin into the next release. That gave a surge, a hard stop and a jump in the pivot, over and over. The stacked carry made release coasts too strong as well.
+- **Jitter: per-event application.** Each wheel event turned the camera as it arrived. Their sizes and spacing are uneven and don't line up with frames (unlike a drag's pointer moves, which Chromium delivers once a frame), and the 3.5x gain made that worse.
+- **Ctrl + swipe** deliberately used the opposite sign from the wheel ("in as the fingers go up" under natural scrolling). Sawyer wants the opposite.
+
+### The fix
+
+- **`SWIPE_GAIN` = 0.3** (`wheel-input.ts`, in `wheelAction`) scales swipe deltas to pointer px before they reach the drag (about 1/3.5, the Linux ratio).
+- **`SwipeFeed`** (pure, `wheel-input.ts`) models the swipe as a synthetic pointer drag:
+  - Events only collect movement. `stepSwipe` (from `tick`, replacing `endSwipe`) hands it to the drag **once a frame**, as pointer moves arrive.
+  - A swipe counts as **released** once no event has come for `SWIPE_LIFT_MS` (30 ms) **and** `SWIPE_LIFT_FRAMES` (2) frames. The frame count stops a slow, busy frame that delivers its events late from reading as a lift. On release it coasts through the drag's own `launchSwipe` / `launchSpin`, measured at the last event.
+  - **Events that return within `GESTURE_GAP_MS` (200 ms) resume the same swipe**: same pivot and drag, with the Planets grab re-taken under the virtual pointer and any coast stopped. Only after 200 ms of quiet does a new swipe start, re-aimed at the cursor. So a pause never re-anchors the gesture.
+- **Ctrl + swipe** now zooms with the wheel's sign (`deltaY`, not `-deltaY`): scrolling down zooms out, as a mouse wheel does. **Ctrl + mouse wheel is unchanged.** It is classified as `"wheel"` and has always zoomed like the plain wheel. Only the touchpad branch flipped, so the two never needed telling apart.
+
+### Decisions worth remembering
+
+- **One gain, tuned for Linux.** Nothing reports the scroll-to-finger ratio, and it varies by platform. On Linux X11 it is about 3.5. Wayland Chromium may scale differently. macOS and Windows deltas are closer to finger travel, so a swipe there may feel slower than a drag. If it still feels off, `SWIPE_GAIN` is the one knob.
+- **OS momentum is not filtered out.** Momentum wheel events (macOS, and Chromium's own touchpad fling where it has one) can't be told from finger events in JS. They keep the swipe alive and act as its coast. When they stop while still fast, our release coast takes over, so the coast still ends softly rather than with a hard stop.
+- **A resume after a false release stops that coast.** That only happens if the fingers pause while moving at fling speed, which is rare. Slow fingers, the usual cause of event gaps, are below the fling threshold and never coast.
+- **No easing of the per-frame movement.** It is applied whole each frame, as a pointer drag's is, so the content stays 1:1 with no added lag.
+- **Up to about 2 frames of stillness** between the last event and the coast (the lift detection). That is far less than the old 50 ms.
+- T60's gizmos are untouched. They use `Swipe` and `launchSwipe` but never `SwipeFeed` or `stepSwipe`.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `src/graph3d/wheel-input.ts` | `SWIPE_GAIN` on swipe deltas; Ctrl + swipe zoom sign flipped; new `SwipeFeed` (per-frame movement, lift detection, resume vs new gesture), `SWIPE_LIFT_MS`, `SWIPE_LIFT_FRAMES` |
+| `src/graph3d/wheel-input.test.ts` | Gain and Ctrl direction tests updated (Ctrl + swipe matches the wheel); `SwipeFeed` tests: per-frame coalescing, lift by time and frames, slow frames don't lift, resume vs new start, over, cancel |
+| `src/views/Graph3DScene.ts` | `swipeBy` feeds `SwipeFeed` and starts or resumes (re-grab, same pivot); `stepSwipe` in `tick` replaces `endSwipe`; scene `SWIPE_LIFT_MS` removed |
+| `src/graph3d/controls-help.ts`, `docs/mind-mapping/graph-3d.md` | Ctrl + swipe row: "zoom like the wheel: scrolling down zooms out" |
+
+### Not verified
+
+Nothing was run in Obsidian, and there are no recordings of real wheel events. The 3.5 ratio comes from known Linux and Chromium behaviour, not measurement. To measure it, open devtools (Ctrl+Shift+I) and run `addEventListener('wheel', e => console.log(e.deltaX, e.deltaY), true)`, swipe a known distance, and compare that with how far a drag of the same finger travel moves the cursor.
