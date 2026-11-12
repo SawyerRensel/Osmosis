@@ -25,6 +25,8 @@ export interface ToolbarActions {
 	/** One level deeper in the tree, under the previous sibling. */
 	indent: () => void;
 	deleteNode: () => void;
+	/** Arm (or disarm) link mode: the next tap on a node links the selection to it (`LinkPicker`). */
+	addLink: () => void;
 	copy: () => void;
 	cut: () => void;
 	paste: () => void;
@@ -80,6 +82,10 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 	],
 	[
 		{ id: "delete", icon: "trash-2", label: "Delete", command: "Delete node", action: "deleteNode", needsSelection: true, editOnly: true },
+	],
+	[
+		// After the eight editing-core slots: on a phone it is the first button past them.
+		{ id: "add-link", icon: "link", label: "Add link", command: "Add link to node", action: "addLink", needsSelection: true, editOnly: true },
 	],
 	[
 		{ id: "fit", icon: "maximize", label: "Fit to view", command: "Fit mind map to view", action: "fitToView" },
@@ -348,6 +354,13 @@ export class ToolRibbon {
 	/** A toggle's button, for what anchors to it (the 3D controls help). */
 	toggleButton(id: BarToggle): HTMLButtonElement | undefined {
 		return this.toggleButtons.get(id);
+	}
+
+	/** Show an action button as on or off (Add link while armed). */
+	setActive(id: string, on: boolean): void {
+		const btn = this.buttons.get(id);
+		btn?.toggleClass("is-active", on);
+		btn?.setAttribute("aria-pressed", String(on));
 	}
 
 	/** Show a toggle as on or off. */

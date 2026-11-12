@@ -47,6 +47,7 @@ import { Graph3DEditor } from "./Graph3DEdit";
 import type { Graph3DSettingsSource } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
 import { Graph3DHelp } from "./Graph3DHelp";
+import { LinkPicker } from "../link-pick";
 import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
 import { isTrail } from "../graph3d/trail-note";
 import { renderOcclusion } from "./OcclusionRenderer";
@@ -138,6 +139,8 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	private emptyEl: HTMLElement | null = null;
 	/** Whether the view is in edit mode: its edit gestures act, and flight keys stay off the structural ones. Off by default and not saved. */
 	private editMode = false;
+	/** The toolbar's Add link: armed on the selected lines, the next tap on a plate links them to it. */
+	private readonly linkPicker = new LinkPicker();
 	private editActionEl: HTMLElement | null = null;
 	/** The shared toolbar ribbon (`TOOLBAR_GROUPS`, as the mind map draws it, minus fold and unfold). */
 	private ribbon: ToolRibbon | null = null;
@@ -243,6 +246,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Then it clears the selection (multi-select).
 		this.scope.register([], "Escape", (e: KeyboardEvent) => {
 			if (this.scene?.cancelLinkDrag() === true) return false;
+			if (this.cancelLinkPick()) return false;
 			if (this.help?.close() === true) return false;
 			// The editor's own Escape (cancel the edit) goes on.
 			if (isEditableTarget(e.target) || this.editor.isOpen) return undefined;
@@ -468,6 +472,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
+			onLinkPick: (node) => this.pickLinkTarget(node),
 			onResizeNode: (node, width) => this.resizeNode(node, width),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
@@ -690,6 +695,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.updateRibbon();
 		syncNavbar(this.app);
 		this.scene?.setLinkMode(on);
+		if (!on) this.cancelLinkPick();
 		// Replace is off outside edit mode.
 		this.findBar?.refresh();
 		// Leaving edit mode (or starting a study session) saves the line being edited.
@@ -755,6 +761,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			outdent: structural("outdent"),
 			indent: structural("indent"),
 			deleteNode: structural("delete"),
+			addLink: () => this.toggleLinkPick(),
 			copy: () => void this.copySelection(this.scene?.selectedNodes() ?? []),
 			cut: () => void this.cutSelection(this.scene?.selectedNodes() ?? []),
 			paste: () => void this.pasteSelection(),
@@ -1095,6 +1102,51 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			console.error("Osmosis: 3D graph could not link those lines", error);
 			new Notice("Osmosis: could not add that link");
 		}
+	}
+
+	/** Show Add link as armed or not, on the button and to the scene's clicks. */
+	private showLinkPick(): void {
+		this.ribbon?.setActive("add-link", this.linkPicker.armed);
+		this.scene?.setLinkPicking(this.linkPicker.armed);
+	}
+
+	/** The toolbar's Add link: arm on the selected lines (the next tap on a plate is the target), or disarm. */
+	private toggleLinkPick(): void {
+		if (!this.linkPicker.armed && (this.editBlocked() || this.editor.isOpen)) return;
+		const lines = (this.scene?.selectedNodes() ?? []).filter((node) => node.kind === "line").map((node) => node.id);
+		if (!this.linkPicker.armed && lines.length === 0) {
+			new Notice("Osmosis: select a line first");
+			return;
+		}
+		if (this.linkPicker.toggle(lines)) new Notice("Tap the node to link to");
+		this.showLinkPick();
+	}
+
+	/** Escape, or leaving edit mode: disarm Add link. True when it was armed. */
+	private cancelLinkPick(): boolean {
+		const was = this.linkPicker.cancel();
+		if (was) this.showLinkPick();
+		return was;
+	}
+
+	/**
+	 * A tap while Add link is armed, on `node` (null: empty space): link the
+	 * armed lines to it as the drop menu's "Add link" does (one line:
+	 * `linkLines`; several: `linkSelection`). Empty space or an armed line
+	 * cancels; a plate that cannot be linked to (only lines and notes can) is
+	 * passed over and the mode stays armed.
+	 */
+	private pickLinkTarget(node: GraphNode | null): void {
+		const pick = this.linkPicker.tap({ target: node?.id ?? null, linkable: node !== null && (node.kind === "line" || node.kind === "note") });
+		this.showLinkPick();
+		if (pick.kind === "ignore") new Notice("Osmosis: tap a line or a note to link to");
+		if (pick.kind !== "link" || node === null) return;
+		const sources = pick.sources.map((id) => this.model?.nodes.find((n) => n.id === id)).filter((n): n is GraphNode => n !== undefined);
+		if (sources.length === 0) {
+			new Notice("Osmosis: that line has changed; try again");
+			return;
+		}
+		void (sources.length === 1 ? this.linkLines(sources[0]!, node) : this.linkSelection(sources, node));
 	}
 
 	/**

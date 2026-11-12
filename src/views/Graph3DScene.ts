@@ -208,6 +208,8 @@ export interface SceneOptions {
 	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
 	/** A width drag on a selected line's panel ended at `width`, a `width` style in mind-map px (`styleWidthFromEm`). The view writes it; it resolves (or rejects) once the write has landed. */
 	onResizeNode: (node: GraphNode, width: number) => Promise<void>;
+	/** While the toolbar's Add link is armed (`setLinkPicking`): a click or tap, on the plate under it (null: empty space). It neither selects nor flies. */
+	onLinkPick: (node: GraphNode | null) => void;
 	/** A right-click that stayed put on a line or note plate, at client (`x`, `y`). (On touch a held finger multi-selects instead; the node menu is the toolbar's ⋮.) */
 	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
@@ -508,6 +510,8 @@ export class Graph3DScene {
 	private pinch: Pinch | null = null;
 	/** Edit mode is on: Alt+drag from a line pulls out a link (mouse or pen; a finger always orbits); a plain mouse drag still orbits. */
 	private linkMode = false;
+	/** The toolbar's Add link is armed: the next click or tap picks the link's target (`onLinkPick`). Drags, holds and pinches navigate as usual. */
+	private linkPicking = false;
 	/** A width drag in progress on a panel's handle: where it started, and the panel's width then (px before its scale) and scale. */
 	private widthDrag: { pointerId: number; node: GraphNode; startX: number; width: number; scale: number; current: number } | null = null;
 	private linkDrag: LinkDrag | null = null;
@@ -1448,6 +1452,11 @@ export class Graph3DScene {
 		}
 	}
 
+	/** The toolbar's Add link armed or not (see `onLinkPick`). */
+	setLinkPicking(on: boolean): void {
+		this.linkPicking = on;
+	}
+
 	/** Escape: drop a link drag (or a box select) in progress without linking (or selecting). True when there was one. */
 	cancelLinkDrag(): boolean {
 		const active = this.linkDrag?.active === true || this.box?.el != null;
@@ -2253,6 +2262,11 @@ export class Graph3DScene {
 	/** A click or tap: follow the link under it, or fly to its node. See `linkClickAction`. */
 	private click(x: number, y: number, touch: boolean, e: PointerEvent): void {
 		if (this.editingId !== null) this.options.onClickWhileEditing();
+		// Add link armed: this click only picks the target. It is a click by now (`releaseIsClick`), so a drag to reach the target never gets here.
+		if (this.linkPicking) {
+			this.options.onLinkPick(this.pickedNode(x, y, touch)?.graph ?? null);
+			return;
+		}
 		// A plain tap on a task checkbox ticks it. Held modifiers belong to pan and to links.
 		const box = e.shiftKey || e.ctrlKey || e.metaKey ? null : this.near.checkboxAt(x, y, CHECKBOX_SLOP_PX[touch ? "touch" : "mouse"]);
 		if (box !== null) {

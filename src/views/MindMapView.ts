@@ -30,7 +30,9 @@ import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type ReplacePlan } from "../find-replace";
 import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
-import { ancestorsOf, findNodeById } from "../graph3d/edit";
+import { ancestorsOf, findNodeById, nodeAtStart } from "../graph3d/edit";
+import { planSelectionLink, type PickedLine, type PlanNote } from "../graph3d/selection-edit";
+import { LinkPicker } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
@@ -325,6 +327,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	// Cursor sync state
 	private parser = new OsmosisParser();
+	/** The toolbar's Add link: armed on the selected nodes, the next tap on a node links them to it. */
+	private readonly linkPicker = new LinkPicker();
 	private cursorSyncNodeId: string | null = null;
 	private cursorSyncTimer: number | null = null;
 	private suppressCursorSync = false;
@@ -801,6 +805,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.cleanupAllInteractions();
 		}
 		this.isReadingMode = reading;
+		if (reading) this.cancelLinkPick();
 		this.contentEl.toggleClass("osmosis-reading-mode", reading);
 		this.updateReadingAction();
 		this.updateToolbarState();
@@ -1941,6 +1946,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 					if (node) void this.deleteNode(node);
 				}
 			},
+			addLink: () => this.toggleLinkPick(),
 			copy: () => void this.copySelectedNodes(false),
 			cut: () => void this.copySelectedNodes(true),
 			paste: () => void this.pasteNodes(),
@@ -2187,6 +2193,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.spatialMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
 			this.exitSpatialMode();
 		}
+		// Add link is armed on this note's nodes.
+		if (this.currentFile && file.path !== this.currentFile.path) this.cancelLinkPick();
 
 		// Clear caches and let go of the old note's undo history when switching
 		// to a different file. The history is dropped unless another view holds it.
@@ -3976,6 +3984,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * merely ended with a finger resting on the map, a pan above all.
 	 */
 	private handleTouchTap(e: PointerEvent, nodeId: string | null): void {
+		// Add link armed: this tap picks the target (a fold toggle still folds,
+		// so a target inside a folded branch can be reached). Pans, holds and
+		// pinches never get here, so they navigate and leave the mode armed.
+		if (this.linkPicker.armed && !(e.target as Element).closest(".osmosis-collapse-toggle")) {
+			this.lastTapTime = 0;
+			this.pickLinkTarget(nodeId);
+			return;
+		}
 		// A tap on a link follows it, exactly as a click does on desktop.
 		//
 		// This lives on pointerup rather than in `handleClick` because a touch
@@ -4471,6 +4487,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			if (nodeId) {
 				this.toggleCollapse(nodeId);
 			}
+			return;
+		}
+
+		// Add link armed: the click picks the target, even on a link in the node.
+		if (this.linkPicker.armed) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.pickLinkTarget(this.getClickedNodeId(e));
 			return;
 		}
 
@@ -6517,6 +6541,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
+		// Escape disarms Add link
+		if (e.key === "Escape" && this.cancelLinkPick()) {
+			e.preventDefault();
+			return;
+		}
+
 		// Escape closes the find bar
 		if (e.key === "Escape" && this.findBar?.isOpen) {
 			this.findBar.close();
@@ -8041,6 +8071,105 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		await this.writeNodeFile(first, out);
 		for (const { rename, own } of renames) await rewriteVaultLinks(this.app, this.edits, rename, own);
 		return true;
+	}
+
+	/** The toolbar's Add link: arm on the selection (the next tap on a node is the target), or disarm. */
+	private toggleLinkPick(): void {
+		if (!this.linkPicker.armed && !this.assertEditable()) return;
+		if (this.linkPicker.toggle([...this.selectedNodeIds])) new Notice("Tap the node to link to");
+		this.toolRibbon?.setActive("add-link", this.linkPicker.armed);
+	}
+
+	/** Escape, reading mode, another note: disarm Add link. True when it was armed. */
+	private cancelLinkPick(): boolean {
+		const was = this.linkPicker.cancel();
+		if (was) this.toolRibbon?.setActive("add-link", false);
+		return was;
+	}
+
+	/** A tap or click while Add link is armed, on `nodeId` (null: empty space): link, or cancel (`LinkPicker.tap`). */
+	private pickLinkTarget(nodeId: string | null): void {
+		const pick = this.linkPicker.tap({ target: nodeId, linkable: true });
+		this.toolRibbon?.setActive("add-link", this.linkPicker.armed);
+		if (pick.kind === "link") void this.linkNodes(pick.sources, pick.target);
+	}
+
+	/**
+	 * Add a link to node `targetId` at the end of each source node's line, the
+	 * same edit as the 3D graph's "Add link" (`planSelectionLink`): the target
+	 * linked by its heading text or a block ID (stamped if it has none), the map's
+	 * root linked as its note. Each end is found again in a fresh parse of its
+	 * own file (a transcluded node's is its source file), and every file is
+	 * written in one undo step, the target's first.
+	 */
+	private async linkNodes(sourceIds: readonly string[], targetId: string): Promise<void> {
+		if (!await this.assertEditableFresh()) return;
+		const changed = (): void => void new Notice("Osmosis: that line has changed; try again");
+		const target = this.nodeMap.get(targetId)?.source;
+		const sources = sourceIds.flatMap((id) => {
+			const src = this.nodeMap.get(id)?.source;
+			return src === undefined ? [] : [src];
+		});
+		if (target === undefined || sources.length === 0) return changed();
+		// An embed line belongs to the note around it, not the one `getNodeFile` names; it can't take a link or an ID anyway.
+		if (target.type === "transclusion") {
+			new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+			return;
+		}
+		const toFile = this.getNodeFile(target);
+		if (toFile === null) return changed();
+		try {
+			const notes = new Map<string, PlanNote>();
+			const note = async (file: TFile): Promise<PlanNote> => {
+				const known = notes.get(file.path);
+				if (known !== undefined) return known;
+				const content = await this.app.vault.read(file);
+				const read = { content, root: this.parser.parse(content, file.path).root };
+				notes.set(file.path, read);
+				return read;
+			};
+			// The fresh node that is `src`, in `file`'s fresh parse; null when it is gone.
+			const fresh = async (src: OsmosisNode, file: TFile): Promise<OsmosisNode | null> => {
+				const found = nodeAtStart((await note(file)).root, src.range.start);
+				return found !== null && found.type === src.type && found.content === src.content ? found : null;
+			};
+			const toNode = target.type === "root" ? null : await fresh(target, toFile);
+			if (target.type !== "root" && toNode === null) return changed();
+			if (target.type === "root") await note(toFile);
+			const picked: PickedLine[] = [];
+			for (const src of sources) {
+				const file = src.type === "root" || src.type === "transclusion" ? null : this.getNodeFile(src);
+				const line = file === null ? null : await fresh(src, file);
+				if (file !== null && line !== null) picked.push({ path: file.path, line });
+			}
+			const plan = planSelectionLink(notes, picked, { path: toFile.path, node: toNode }, (fromPath, subpath, alias) => this.app.fileManager.generateMarkdownLink(toFile, fromPath, subpath, alias));
+			if (plan === null) {
+				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+				return;
+			}
+			if (plan.lines.length === 0) {
+				new Notice("Osmosis: can't add a link to that line");
+				return;
+			}
+			// Keep the (first) linked line selected after the re-render, as an edit of its text does.
+			const first = plan.lines[0]!;
+			if (first.path === this.currentFile?.path) this.pendingSelectionRangeStart = first.start;
+			// The target's note first, so a failure leaves a harmless ID rather than a link to nothing.
+			const writes = [...plan.texts].sort(([a], [b]) => Number(b === toFile.path) - Number(a === toFile.path));
+			this.beginEditGroup();
+			try {
+				for (const [path, text] of writes) {
+					const file = this.app.vault.getFileByPath(path);
+					if (file !== null) await this.writeFileTracked(file, text);
+				}
+			} finally {
+				this.endEditGroup();
+			}
+			await this.resyncFromParent();
+		} catch (error) {
+			console.error("Osmosis: mind map could not add that link", error);
+			new Notice("Osmosis: could not add that link");
+		}
 	}
 
 	/**

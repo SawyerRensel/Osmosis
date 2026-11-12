@@ -47,6 +47,7 @@ describe("TOOLBAR_GROUPS layout", () => {
 			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],
 			["move-up:Move node up", "move-down:Move node down", "move-left:Outdent node", "move-right:Indent node"],
 			["delete:Delete node"],
+			["add-link:Add link to node"],
 			["fit:Fit mind map to view", "zoom-in:Zoom in on mind map", "zoom-out:Zoom out of mind map", "center:Center mind map on root"],
 			["fold-all:Collapse all under node", "unfold-all:Expand all under node"],
 			["copy:Copy node", "cut:Cut node", "paste:Paste node"],

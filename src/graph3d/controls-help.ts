@@ -101,6 +101,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "Joystick button", action: "Show the walk and fly joysticks" },
 			{ input: "Hold a finger on a plate", action: "Add it to the selection; taps then add or remove plates, until a tap on empty space" },
 			{ input: "Toolbar ⋮", action: "The selected plate's menu, with Open link for each link in its text (a tap on a link is a tap on its plate)" },
+			{ input: "Toolbar Add link, then tap a plate", action: "Link the selected lines to it (edit mode); drags on the way keep it armed" },
 		],
 	},
 	{
