@@ -23,7 +23,7 @@ import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
-import { LineRevealProcessor, peekIcon } from "./views/LineRevealProcessor";
+import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
 import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
@@ -995,9 +995,6 @@ export default class OsmosisPlugin extends Plugin {
 			const viewActions = leaf.view.containerEl.querySelector(".view-actions");
 			if (!viewActions || viewActions.querySelector(".osmosis-mindmap-action")) continue;
 
-			// Find the reading-view toggle to insert before it
-			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
-
 			const btn = createEl("a");
 			btn.className = "clickable-icon view-action osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
@@ -1014,8 +1011,12 @@ export default class OsmosisPlugin extends Plugin {
 				}
 			});
 
-			if (readingViewBtn) {
-				viewActions.insertBefore(btn, readingViewBtn);
+			// Directly left of Obsidian's reading/editing toggle, so 🧠, Study (which
+			// LineRevealProcessor puts right after 🧠) and Edit form one run, with no
+			// other header action between them; leftmost if the toggle is not found.
+			const modeToggle = findModeToggle(viewActions);
+			if (modeToggle) {
+				viewActions.insertBefore(btn, modeToggle);
 			} else {
 				viewActions.prepend(btn);
 			}

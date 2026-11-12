@@ -1138,10 +1138,13 @@ export function peekIcon(): string {
 	return "eye";
 }
 
-/** The reading/edit mode toggle in a view-actions row, if identifiable. */
-function findModeToggle(actions: Element): Element | null {
+/**
+ * The reading/edit mode toggle in a view-actions row, if identifiable. Any tag:
+ * Obsidian's `addAction` makes a `<button>`, so an `a.`-qualified selector never matched.
+ */
+export function findModeToggle(actions: Element): Element | null {
 	return actions.querySelector(
-		'a.clickable-icon[aria-label^="Current view"], a.clickable-icon[aria-label="Edit this note"], a.clickable-icon[aria-label="Reading view"]',
+		'.clickable-icon[aria-label^="Current view"], .clickable-icon[aria-label="Edit this note"], .clickable-icon[aria-label="Reading view"]',
 	);
 }
 
