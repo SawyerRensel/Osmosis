@@ -12,13 +12,13 @@ related:
   - "[[Ribbon - Osmosis bar takes the mobile navbar slot in edit mode]]"
   - "[[3D Graph - Shared toolbar ribbon]]"
   - "[[3D Graph - Mobile walk and fly joysticks]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T06:30:00.000Z"
 date_modified: "2026-11-12T06:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: "2026-11-12T10:40:38.000Z"
+date_start_actual: "2026-11-12T10:40:38.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -93,3 +93,51 @@ Keep under ~140k tokens. `MindMapView.ts` is ~84k tokens and contains NUL bytes:
 Unit: updated `navbarHidden` (reading always shown), bar visibility per platform/mode, button order (help last in 3D).
 
 Manual (Ctrl+R after build): desktop 2D + 3D in both modes; phone 2D + 3D in both modes; help opens from the bar; navbar toggle; plain-note tab restores navbar.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: commit `2d76c24` on `feature/osmosis-mobile-toolbar` (stacked on `fix/round-8-feedback`). The whole ticket shipped; nothing split off.
+
+### Approach
+- **Look.** The bar copies Obsidian's editing toolbar from `ref/obsidian-core/app.css`: an outer pill (`.osmosis-toolbar`, like `.mobile-toolbar-options-list-container`: radius `--touch-size-m`, `overflow: hidden`) around a scrolling strip (`.osmosis-toolbar-list`, like `.mobile-toolbar-options-list`: height `--touch-size-m` (44 px), padding `0 --size-4-1`, horizontal scroll with no scrollbar). Buttons (like `.mobile-toolbar-option`) are `--toolbar-option-width` wide (40 px phone, 50 px tablet, 40 px fallback on desktop), full height, with `--icon-l` icons in `--text-normal`. The background, blur and shadow are Obsidian's raised-surface variables (`--raised-background`, `--raised-blur`, `--raised-shadow`), and the pill also carries Obsidian's own `mod-raised` class, which the real toolbar and navigation bar use. On phones that adds the floating-nav blur, shadow and iOS edge mask, so themes restyle the bar the way they restyle Obsidian's.
+- **Visibility.** `barShown(state, isPhone)` in `ToolRibbon.ts` (pure, tested): hidden while a node is being edited, and on a phone in reading mode. `updateState` applies it.
+- **Navbar.** One preference only, `osmosis-hide-navbar-edit` (`NAVBAR_STORAGE_KEY`, default on). `navbarHidden(isPhone, editMode, hideInEdit)` is now `isPhone && editMode && hideInEdit`, and reading mode always shows the navbar. `toggleNavbarPref(app)` takes no mode.
+- **Help.** `BarToggle` gains `"help"`, and `barToggles("3d", …)` always puts it last (order: navbar, sticks, help). `Graph3DHelp` moved from the scene to the view (`Graph3DView.help`). It takes the bar's help button, from the new `ToolRibbon.toggleButton(id)`, marks it `is-active`/`aria-pressed`, and ignores clicks on it in its outside-click handler. Escape now asks `this.help.close()`. The scene's corner keeps only the speed readout, and `closeHelp` is gone from the scene.
+- **3D layout.** `.osmosis-graph3d` defines `--osmosis-graph3d-bar-bottom` (`--size-4-2` + lift, or `--navbar-bottom-offset` under `osmosis-hide-navbar`) and `--osmosis-graph3d-above-bar` (bar bottom + `--touch-size-m` + `--size-4-2`). The joysticks, the speed readout and the help panel all sit at the above-bar line, so the bar never covers them. The speed readout also rises above the left joystick when the sticks are up. On a phone with no bar (reading mode, or while a line is edited), above-bar falls back to `--size-4-2` + lift, which keeps the joysticks where they were before.
+
+### Decisions (the ticket's open questions)
+- **Tablets work like desktop.** The bar shows in both modes, at the bottom centre, and has no navbar toggle. Everything keys off `Platform.isPhone` (bar visibility, navbar hiding, the toggle) and the CSS `body.is-phone` (the 80/84 px lift), because Obsidian already hides `.mobile-navbar` on tablets (`body.is-tablet .mobile-navbar{display:none}`). The 🎮 gate is unchanged: `Platform.isMobile || navigator.maxTouchPoints > 0`.
+- **Overflow scrolls horizontally**, as Obsidian's toolbar does. The wheel scrolls it on desktop.
+- **Dividers became a plain 8 px gap** (`--size-4-2`, no rule). Obsidian's toolbar has no dividers, but the gap keeps our groups readable. The divider elements stay, so the reading-mode collapse logic is untouched.
+- **Our own classes, not Obsidian's.** `.mobile-toolbar-option` sets a monospace font, its `--toolbar-option-width` is unset on desktop, and `.mobile-toolbar` is an app-region drag area pinned above the keyboard. Theme snippets aimed at the editor's toolbar would also leak in. So the rules are copied onto `osmosis-toolbar*`, and only `mod-raised` (a pure surface style) is shared.
+- **The help panel opens centred above the bar** (bottom = the above-bar line, z-index above the bar).
+- **The old key is not deleted.** `osmosis-hide-navbar-reading` is simply no longer read or written.
+- The 3D bar keeps its 56 px side margins: Obsidian's status bar sits bottom right on desktop.
+
+### Overlap check (styles.css bottoms)
+- The speed readout is moved above the bar's line, so a wide bar cannot cover it.
+- The joysticks are above the bar. On touch desktops: bar 8–52 px, sticks from 60 px. On a phone in edit mode they clear the bar in the navbar slot.
+- The relational study panel hides the bar, unchanged. With sticks up, the study panel sits above the sticks (rule updated to the new variable).
+- The Find bar and T60's gizmos are at the top right: no conflict.
+- 2D: the only other bottom item is `.osmosis-contextual-progress`, fixed at the bottom right. It can touch the bar only in a very narrow window, as before.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/views/ToolRibbon.ts` | `help` toggle; `barToggles` takes `isPhone`; `barShown`; single `NAVBAR_STORAGE_KEY`/`readNavbarPref`; `navbarHidden` simplified; `toggleNavbarPref(app)`; outer pill + `listEl`; `toggleButton(id)` |
+| `src/views/ToolRibbon.test.ts` | toggle order (help last in 3D, none in 2D), `barShown` per platform/mode, new navbar rule |
+| `src/views/Graph3DView.ts` | owns `Graph3DHelp`, wired to the bar's last button; Escape closes it; `isPhone` gate |
+| `src/views/Graph3DScene.ts` | help removed; corner holds only the speed readout |
+| `src/views/Graph3DHelp.ts` | no own button; takes the bar's button |
+| `src/views/MindMapView.ts` | `isPhone` gate; `toggleNavbarPref(app)` |
+| `styles.css` | toolbar restyled after Obsidian's; `is-phone` lift; 3D bar/above-bar variables; sticks, readout and help panel above the bar |
+| `docs/mind-mapping/editing.md`, `graph-3d.md` | new bar behaviour; help button location |
+
+### Fixture
+None new. Use `vault/tests/graph3d/Sailing Basics.md` for 3D and any mind map note for 2D.
+
+### Could not verify
+- Everything visual. Whether `--raised-background` reads well on desktop over the 2D canvas and the 3D scene in light and dark themes (on desktop it is 65 % `--background-primary` plus blur, where the old bar was opaque `--background-secondary`).
+- How the bar looks on a real phone with `mod-raised`, including whether Android leaves a strip where the navbar was.
+- The icon size on desktop: `--icon-l` is 18 px there, in a 44 px tall bar.
+

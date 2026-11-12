@@ -138,3 +138,12 @@ None new: any map works. `vault/tests/graph3d/Sailing Basics.md` for 3D, any 2D 
 ### Could not verify
 - Everything visual on a real phone: the bar at the navbar's slot (depends on `--navbar-bottom-offset` being defined where the view can see it; falls back to `--size-4-2`), whether Obsidian leaves a blank strip where the navbar was, and the toggle being reachable on a narrow screen.
 - Pre-existing, not changed here: in 3D reading mode on a phone with the navbar shown and the joysticks up, the ribbon (bottom 92 px) and the sticks (bottom 92 px, 120 px tall, at the sides) share a band; on a narrow phone the ribbon's ends may sit under a stick. Worth a look during the test.
+
+## Follow-up after Sawyer's test, 2026-11-12
+
+Reworked by [[Ribbon - Osmosis toolbar styled as Obsidian's mobile toolbar]] (T61). What changed about this ticket's behaviour:
+- **The bar is gone from reading mode on phones**, and the navbar always shows there. The reading-mode preference `osmosis-hide-navbar-reading` is dropped (no longer read or written). One edit-mode preference (`osmosis-hide-navbar-edit`) remains.
+- **Tablets now count as desktop.** The bar shows in both modes, there is no navbar toggle, and gating uses `Platform.isPhone` / `body.is-phone` instead of `isMobile`.
+- **The bar is restyled** after Obsidian's mobile editing toolbar (44 px pill, raised surface, gaps instead of divider lines).
+- **3D's help (?) moved** from the bottom-left corner to the bar's last button.
+
