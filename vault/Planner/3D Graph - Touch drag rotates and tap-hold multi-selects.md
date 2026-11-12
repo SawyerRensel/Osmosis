@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Tap-drag opens a link instead of rotating]]"
   - "[[Toolbar - Add link button for touch]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T11:52:00.000Z"
-date_modified: "2026-11-12T11:52:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-12T12:30:00.000Z"
+date_start_scheduled: "2026-11-12T12:08:17.000Z"
+date_start_actual: "2026-11-12T12:08:17.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -62,3 +62,50 @@ Under ~130k tokens. Read `Graph3DScene.ts` (~37k) and `Graph3DView.ts` (~30k) by
 - Tap-hold a node → it joins the multi-selection; tap-hold another → both selected; behaves like 2D.
 - ⋮ with a node that has links lists "Open link "…"" items that work.
 - Desktop: drag-to-link and right-click menu unchanged.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `78b118f` on `fix/3d-touch-drag-multiselect`.
+
+### The cause
+
+`gestureFor` (`src/pointer-gesture.ts`) returned `"link"` for every touch press in edit mode, so a finger that landed on a line started a `LinkDrag` instead of an orbit. The long press (500 ms) then opened the node's context menu, with "Open link" first (`cae29c1`).
+
+### The fix
+
+- **Touch never links.** `gestureFor` returns `"orbit"` for touch whatever the mode, so a finger drag from a node orbits, pivots or grabs a Planets surface exactly as in reading mode. Mouse and pen are unchanged: Alt+drag from a line in edit mode still links.
+- **Tap-hold multi-selects, mirroring 2D** (`MindMapView` touch selection mode). A finger held still for 400 ms on any plate (2D uses 400 ms, and 3D's old 500 ms is gone) in reading or edit mode does the following: it adds the plate to the selection (`heldInto`: a hold on an already-selected plate leaves it in, as 2D does), makes it the primary, turns `touchSelecting` on and buzzes (`navigator.vibrate(50)`, as 2D does). The release is no tap and the finger no longer orbits. While the mode is on, a tap on a plate toggles it like Shift+click (`tapToggles`), with no flight and no double-tap. A tap on empty space ends the mode and clears the selection, as a plain tap always did. The mode also ends when the last plate is toggled out, or on `clearSelection` (Escape). A hold on empty space does nothing (2D starts its timer only on a node).
+- **The long-press menu is gone on touch.** The toolbar's ⋮ (`openNodeMenu`) passes `menuLinks(node)` on touch devices (`hasTouch()`). These are the links written in the primary line's text (`textLinks`: wikilinks, Markdown links and bare URLs; embeds, images and inline code skipped; deduped; capped at `MENU_LINKS_MAX` = 5). They are listed first as "Open link "…"" items (`openLinkTitle`), then a separator and the usual plate menu. Each item calls `followLink(link, "follow" | "external")`, the same path the old long-press item used. Right-click on desktop is unchanged and gets no link items.
+- The Touch group of the in-view help and `docs/mind-mapping/graph-3d.md` now describe the hold, the ⋮ links and the fact that a finger drag orbits in edit mode too.
+
+### Decisions worth remembering
+
+- **Pen is treated like a mouse.** It keeps Alt+drag-to-link, since a pen is precise and has no hold-select path of its own. Only `pointerType === "touch"` is gated.
+- **Links come from the line's Markdown, not the panel DOM.** The ⋮ menu works for a selected plate that has no live near-tier panel. A note, tag or file node has no link items.
+- **⋮ link items appear on any touch-capable device** (`hasTouch()`, the joystick rule), including a touchscreen laptop. That is harmless, and it matches where the joysticks show.
+- **No 2D change.** 2D renders clickable links in nodes, and `handleTouchTap` already follows a link on a plain tap. A long press there is selection or drag, never a menu, so 2D has no stranded "Open link". The ⋮ link items are 3D only.
+- The `LinkDrag.touch` field and the touch branch of `dropTarget` remain. They are now always false or unreached, and were left in place for the toolbar "Add link" ticket.
+
+### For "Toolbar - Add link button for touch"
+
+The drop menu's "Add link" calls `Graph3DView.linkLines(from: GraphNode, to: GraphNode): Promise<void>` (private, `src/views/Graph3DView.ts` ~line 1033). It appends a link to `to` at the end of `from`'s line, stamping a block ID on `to` if needed, with one undo step. For a dragged multi-selection it calls `linkSelection(group: readonly GraphNode[], to: GraphNode)`. Both bail out on `editBlocked()`. `showDropMenu(from, to, x, y)` is the menu that chooses between them and also offers the move choices.
+
+### Surface map
+
+| File | Change |
+|---|---|
+| `src/pointer-gesture.ts` (+test) | Touch always `orbit`; docs |
+| `src/graph3d/selection.ts` (+test) | `heldInto`, `tapToggles` |
+| `src/graph3d/links.ts` (+test) | `textLinks`, `TextLink`, `MENU_LINKS_MAX`; `openLinkTitle` doc |
+| `src/views/Graph3DScene.ts` | Hold on any plate selects (400 ms, vibrate); `touchSelecting` mode in `click()`; touch long-press menu and link-drag long press removed; `onContextMenu` loses its `link` argument |
+| `src/views/Graph3DView.ts` | `menuLinks`; `showNodeMenu(..., links[])`; ⋮ passes links on touch |
+| `src/views/Graph3DNear.ts` | `PanelLink.text` doc |
+| `src/graph3d/controls-help.ts`, `docs/mind-mapping/graph-3d.md` | Touch controls |
+
+### Fixture
+
+Existing: `vault/tests/graph3d/Harbour Links.md` (heading, block, note, external, unresolved and file links) and `Sailing Basics.md`.
+
+### Not verified
+
+Nothing was run in Obsidian or on a phone. Not verified: whether `navigator.vibrate` buzzes in Obsidian's mobile WebView (iOS has no vibrate, and the call is a no-op there), whether 400 ms feels the same as 2D, and whether the ⋮ menu shows at the button on iOS. Also unverified: `docs/reference/mobile.md` and `docs/mind-mapping/index.md` say a 2D long-press opens a context menu, but the 2D code reads as hold-to-select. That was not checked and not changed, since it is out of scope.
