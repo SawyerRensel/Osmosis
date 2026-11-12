@@ -7,6 +7,7 @@ import {
 	DEFAULT_CONTINENT_STYLE,
 	MAX_CONTINENT_ANGLE,
 	PLANET_GAP,
+	PLANET_GAP_SHARE,
 	PlanetWorld,
 	RELAYOUT_MS,
 	ROW_GAP,
@@ -17,6 +18,8 @@ import {
 	laneArc,
 	layoutPlanet,
 	placeContinents,
+	planetClearance,
+	planetGap,
 	planetRadius,
 	planetTrees,
 	surfaceArc,
@@ -450,7 +453,7 @@ describe("spacing sliders in Planets", () => {
 		}
 	});
 
-	it("keeps the gap between planet surfaces at PLANET_GAP x1, and scales it with Note spacing", () => {
+	it("keeps the gap between planet surfaces at planetGap, and scales it with Note spacing", () => {
 		const trees = [{ core: "a", continents: [{ id: "a1", children: [] }] }, { core: "b", continents: [{ id: "b1", children: [] }] }];
 		const style: ContinentStyle = DEFAULT_CONTINENT_STYLE;
 		const radius = layoutPlanet(trees[0]!, plate).radius;
@@ -470,9 +473,9 @@ describe("spacing sliders in Planets", () => {
 			}
 			return high - 2 * radius;
 		};
-		expect(gapAt(1)).toBeCloseTo(PLANET_GAP, 6);
-		expect(gapAt(2)).toBeCloseTo(PLANET_GAP * 2, 6);
-		expect(gapAt(0.5)).toBeCloseTo(PLANET_GAP / 2, 6);
+		expect(gapAt(1)).toBeCloseTo(planetGap(radius, radius, 1), 6);
+		expect(gapAt(2)).toBeCloseTo(planetGap(radius, radius, 1) * 2, 6);
+		expect(gapAt(0.5)).toBeCloseTo(planetGap(radius, radius, 1) / 2, 6);
 		expect(gapAt(3)).toBeGreaterThan(gapAt(2));
 	});
 
@@ -630,6 +633,90 @@ describe("lanes between planets", () => {
 		const [a, ghost] = [state.bodies.get("a")!, state.bodies.get("ghost:a0")!];
 		const speed = (p: PlanetBody): number => Math.hypot(p.vx!, p.vy!, p.vz!);
 		expect(speed(ghost) / speed(a)).toBeCloseTo(8, 6);
+	});
+});
+
+describe("planet clearance", () => {
+	it("keeps two planets of different radii their radii plus the Note spacing gap apart", () => {
+		for (const note of [0.5, 1, 3]) {
+			const [ra, rb] = [40, 260];
+			const gap = planetGap(ra, rb, note);
+			expect(planetClearance(ra, rb, note)).toBeCloseTo(ra + rb + gap, 9);
+			expect(gap).toBeCloseTo(note * (PLANET_GAP + PLANET_GAP_SHARE * (ra + rb)), 9);
+		}
+	});
+
+	it("leaves a clear gap at x1, a link's length between notes at the least, and more between big planets", () => {
+		expect(planetGap(0, 0, 1)).toBe(linkDistance("link", 0, 0));
+		expect(planetGap(300, 300, 1)).toBeGreaterThan(planetGap(30, 30, 1));
+		// Between two radius-100 planets the gap is over half a radius: they don't read as touching.
+		expect(planetGap(100, 100, 1)).toBeGreaterThan(50);
+	});
+
+	it("scales the whole gap with the slider", () => {
+		expect(planetGap(120, 80, 3)).toBeCloseTo(3 * planetGap(120, 80, 1), 9);
+		expect(planetGap(120, 80, 0.5)).toBeCloseTo(0.5 * planetGap(120, 80, 1), 9);
+	});
+
+	it("holds every pair of settled planets, of different sizes and pulled together by lanes, at their clearance", () => {
+		// Four planets of different sizes; every line of b, c and d links to a's core, so lanes pull them all into a.
+		const big = (core: string, n: number): { core: string; continents: PlanetBranch[] } => ({
+			core,
+			continents: Array.from({ length: n }, (_, i) => ({ id: `${core}${i}`, children: [{ id: `${core}${i}x`, children: [] }] })),
+		});
+		const trees = [big("a", 14), big("b", 6), big("c", 2), big("d", 9)];
+		const wide = (id: string): { width: number; height: number } => ({ width: id.startsWith("a") ? 200 : id.startsWith("c") ? 20 : 60, height: 8 });
+		const cores = ["a", "b", "c", "d"];
+		const settleAt = (note: number): { world: PlanetWorld; d: (p: string, q: string) => number } => {
+			const world = new PlanetWorld();
+			world.spacing = { note, node: 1 };
+			world.update(trees, wide, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+			const bodies = new Map<string, PlanetBody>();
+			cores.forEach((id, i) => bodies.set(id, { x: 30 * Math.cos(i * 2.4), y: 30 * Math.sin(i * 2.4), z: i * 5, vx: 0, vy: 0, vz: 0 }));
+			for (const tree of trees) for (const branch of tree.continents) for (const id of [branch.id, branch.children[0]!.id]) bodies.set(id, {});
+			const lanes: Lane[] = trees.slice(1).flatMap((tree) => tree.continents.map((branch) => ({ source: branch.id, target: "a", rest: linkDistance("link", 30, 30, { note, node: 1 }), scale: 1 })));
+			const bodyOf = (id: string): PlanetBody | undefined => bodies.get(id);
+			world.placeAll(bodyOf, 0, true);
+			let alpha = 1;
+			for (let tick = 0; tick < 300; tick++) {
+				world.step(bodyOf, [], alpha, 0, lanes);
+				for (const body of bodies.values()) {
+					if (body.fx !== undefined) continue;
+					for (const axis of ["x", "y", "z"] as const) {
+						const v = `v${axis}` as const;
+						body[v] = body[v]! * 0.6;
+						body[axis] = body[axis]! + body[v];
+					}
+				}
+				alpha += (0 - alpha) * (1 - Math.pow(0.001, 1 / 300));
+			}
+			const d = (p: string, q: string): number => {
+				const [a, b] = [bodies.get(p)!, bodies.get(q)!];
+				return Math.hypot(a.x! - b.x!, a.y! - b.y!, a.z! - b.z!);
+			};
+			return { world, d };
+		};
+		const gaps = (note: number): number[] => {
+			const { world, d } = settleAt(note);
+			expect(world.radius("a")).toBeGreaterThan(2 * world.radius("c")!);
+			const out: number[] = [];
+			for (let i = 0; i < cores.length; i++) {
+				for (let j = i + 1; j < cores.length; j++) {
+					const [p, q] = [cores[i]!, cores[j]!];
+					const [rp, rq] = [world.radius(p)!, world.radius(q)!];
+					// The collision force is soft, so the lanes' pull leaves a sliver: within 3% of the gap.
+					expect(d(p, q)).toBeGreaterThan(rp + rq + 0.97 * planetGap(rp, rq, note));
+					out.push(d(p, q) - rp - rq);
+				}
+			}
+			return out;
+		};
+		const [x05, x1, x3] = [gaps(0.5), gaps(1), gaps(3)];
+		// The slider spreads every pair, not just the first planet's.
+		for (let k = 0; k < x1.length; k++) {
+			expect(x1[k]).toBeGreaterThan(x05[k]! * 1.5);
+			expect(x3[k]).toBeGreaterThan(x1[k]! * 2);
+		}
 	});
 });
 

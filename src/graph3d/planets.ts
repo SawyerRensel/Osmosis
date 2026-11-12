@@ -569,8 +569,26 @@ export interface Lane {
 	scale: number;
 }
 
-/** Clear space kept between two planets' surfaces, in world units, at Note spacing ×1. */
-export const PLANET_GAP = 20;
+/**
+ * The fixed part of the clear space between two planets' surfaces at Note
+ * spacing ×1: a link's length between notes in the other layouts
+ * (`edgeDistance("link")`). It was 20 alone, which next to planets of a
+ * radius in the hundreds read as touching, and the slider moved them only
+ * 10–60 units. See `vault/Planner/3D Graph - Planets at depth ignore the note distance slider.md`.
+ */
+export const PLANET_GAP = 80;
+/** The part of the clear space that grows with the planets: this share of their radii summed, so big planets stand as clearly apart as small ones. */
+export const PLANET_GAP_SHARE = 0.25;
+
+/** The clear space between the surfaces of planets of radii `ra` and `rb` at Note spacing `note` (the whole gap scales with the slider). */
+export function planetGap(ra: number, rb: number, note: number): number {
+	return note * (PLANET_GAP + PLANET_GAP_SHARE * (ra + rb));
+}
+
+/** The least distance between the centres of planets of radii `ra` and `rb` at Note spacing `note`: their radii plus `planetGap`. */
+export function planetClearance(ra: number, rb: number, note: number): number {
+	return ra + rb + planetGap(ra, rb, note);
+}
 /** How long a re-laid-out planet's plates take to move to their new places. */
 export const RELAYOUT_MS = 600;
 
@@ -712,9 +730,9 @@ export class PlanetWorld {
 	/**
 	 * The planets' share of a simulation tick, run after the other forces:
 	 * `lanes` pull (`pullLanes`), the pull links put on surface plates goes to
-	 * their cores, planets closer than their radii plus `PLANET_GAP` push
-	 * apart, free bodies on no planet (tags, files, ghosts) are pushed out of
-	 * planets, and the plates are put back on their cores.
+	 * their cores, planets closer than `planetClearance` push apart, free
+	 * bodies on no planet (tags, files, ghosts) are pushed out of planets to
+	 * half a gap, and the plates are put back on their cores.
 	 */
 	step(bodyOf: (id: string) => PlanetBody | undefined, free: readonly PlanetBody[], alpha: number, now: number, lanes: readonly Lane[] = []): void {
 		this.pullLanes(bodyOf, lanes, alpha, now);
@@ -740,11 +758,12 @@ export class PlanetWorld {
 			if (a.fx === undefined) [a.vx, a.vy, a.vz] = [(a.vx ?? 0) - ux * move * (1 - share), (a.vy ?? 0) - uy * move * (1 - share), (a.vz ?? 0) - uz * move * (1 - share)];
 			if (b.fx === undefined) [b.vx, b.vy, b.vz] = [(b.vx ?? 0) + ux * move * share, (b.vy ?? 0) + uy * move * share, (b.vz ?? 0) + uz * move * share];
 		};
-		const gap = PLANET_GAP * this.spacing.note;
+		const note = this.spacing.note;
 		for (let i = 0; i < cores.length; i++) {
 			const a = cores[i]!;
-			for (let j = i + 1; j < cores.length; j++) push(a.body, cores[j]!.body, a.radius + cores[j]!.radius + gap, 0.5);
-			for (const body of free) if (body.x !== undefined && body.fx === undefined) push(a.body, body, a.radius + gap / 2, 1);
+			for (let j = i + 1; j < cores.length; j++) push(a.body, cores[j]!.body, planetClearance(a.radius, cores[j]!.radius, note), 0.5);
+			const star = a.radius + planetGap(a.radius, 0, note) / 2;
+			for (const body of free) if (body.x !== undefined && body.fx === undefined) push(a.body, body, star, 1);
 		}
 		this.placeAll(bodyOf, now, true);
 	}
@@ -805,7 +824,7 @@ export class PlanetWorld {
 		}
 	}
 
-	/** The cores among `cores` whose planet now overlaps another's (radius plus gap), with that other: what a re-layout must wake. */
+	/** The cores among `cores` whose planet now overlaps another's (closer than `planetClearance`), with that other: what a re-layout must wake. */
 	collisions(cores: readonly string[], bodyOf: (id: string) => PlanetBody | undefined): string[] {
 		const hit = new Set<string>();
 		for (const id of cores) {
@@ -816,7 +835,7 @@ export class PlanetWorld {
 				const b = bodyOf(other);
 				if (other === id || b?.x === undefined) continue;
 				const d = Math.hypot((b.x ?? 0) - (a.x ?? 0), (b.y ?? 0) - (a.y ?? 0), (b.z ?? 0) - (a.z ?? 0));
-				if (d < ra + planet.layout.radius + PLANET_GAP * this.spacing.note) hit.add(id).add(other);
+				if (d < planetClearance(ra, planet.layout.radius, this.spacing.note)) hit.add(id).add(other);
 			}
 		}
 		return [...hit];
