@@ -36,6 +36,18 @@ The 3D graph shows a note and the notes around it, line by line, as plates float
 
 The view tells a touchpad from a mouse wheel by itself, with no setting: a swipe that moves sideways at all, or in steps finer than a wheel's notches, is a touchpad. A mouse wheel always zooms.
 
+### Navigation gizmos
+
+On a desktop with no touch screen, three faint round buttons sit at the top right of the 3D view. Press one and drag anywhere on screen; the view turns until you let go. They always act on the centre of the view, not on whatever is under the pointer. Clicking one without dragging does nothing.
+
+| Gizmo | Drag | Action |
+|-------|------|--------|
+| Rotate | Any direction | Orbit about the centre of the view |
+| Pan | Any direction | Slide the view |
+| Zoom (magnifier) | Up / down | Zoom in / out toward the centre of the view |
+
+Rotate and Pan coast on when you let go mid-motion, like a drag. Phones and touch-screen laptops don't show the gizmos; they have the walk and fly joysticks instead.
+
 ### Keys
 
 | Key | Action |

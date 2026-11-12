@@ -28,6 +28,7 @@ import {
 import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { Graph3DHelp } from "./Graph3DHelp";
 import { Graph3DPerf } from "./Graph3DPerf";
+import { Graph3DGizmos } from "./Graph3DGizmos";
 import { Graph3DSticks } from "./Graph3DSticks";
 import { Graph3DPlates, type PlateShape } from "./Graph3DPlates";
 import { Graph3DNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./Graph3DNear";
@@ -63,6 +64,7 @@ import { panOnto, plateInset, project, seedBeside, turnToSee, type CameraPose, t
 import { linkClickAction, type LinkClick } from "../graph3d/links";
 import { threadSegments } from "../graph3d/trails";
 import { easeLook } from "../graph3d/look-ease";
+import { gizmoZoom, type GizmoKind } from "../graph3d/gizmos";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../graph3d/joysticks";
 import { bandOffset, type VisibleBand } from "../graph3d/edit";
 import { boxHits, boxRect, toggled, type ScreenPoint } from "../graph3d/selection";
@@ -215,6 +217,8 @@ export interface SceneOptions {
 	renderDiagram: NearDiagramRenderer;
 	/** Whether the walk and fly joysticks start shown (the Osmosis bar's toggle, `showSticks`). */
 	sticks: boolean;
+	/** Whether the rotate, pan and zoom gizmos are built (a desktop with no touch screen, `gizmosAvailable`). */
+	gizmos: boolean;
 	/** Whether a plain plate click only selects the plate, with no flight and no history step. Read at each click, so it is per device and shared by every 3D view. */
 	clickSelectsOnly: () => boolean;
 	/** The near tier's panel detail and live-panel limit, read every frame: per device and shared by every 3D view. */
@@ -545,6 +549,8 @@ export class Graph3DScene {
 	/** The Control key is physically down, so a ctrl-wheel is Ctrl + scroll and not Chromium's synthetic touchpad pinch. */
 	private ctrlHeld = false;
 	private swipe: Swipe | null = null;
+	/** A rotate or pan gizmo held and moving (`beginGizmo`): a drag about the orbit target, ended by its release, never by `endSwipe`. */
+	private gizmoDrag: Swipe | null = null;
 	/** A mouse pan (OrbitControls' right or Ctrl drag) in progress, sampled so its release can coast. */
 	private mousePan: number | null = null;
 	/** The spin a press interrupted, which a flick that follows adds to. */
@@ -556,6 +562,7 @@ export class Graph3DScene {
 	private readonly perf: Graph3DPerf;
 	private readonly help: Graph3DHelp;
 	private readonly sticks: Graph3DSticks;
+	private readonly gizmos: Graph3DGizmos | null = null;
 	private speedTimer = 0;
 	readonly heldKeys = new Set<string>();
 
@@ -603,6 +610,13 @@ export class Graph3DScene {
 		const corner = container.createDiv({ cls: "osmosis-graph3d-corner" });
 		this.speedEl = corner.createDiv({ cls: "osmosis-graph3d-speed" });
 		this.sticks = new Graph3DSticks(container, options.sticks);
+		if (options.gizmos) {
+			this.gizmos = new Graph3DGizmos(container, {
+				begin: (kind) => this.beginGizmo(kind),
+				move: (kind, dx, dy) => this.moveGizmo(kind, dx, dy),
+				end: (kind, released) => this.endGizmo(kind, released),
+			});
+		}
 		this.help = new Graph3DHelp(container, corner);
 
 		// Links are measured between plate edges, not centres, so wide labels
@@ -1565,7 +1579,7 @@ export class Graph3DScene {
 		controls.target.add(move);
 		controls.update();
 		// A track goes on through the user's orbit (see `reshape`): what they pressed moves with it, so they keep orbiting it.
-		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.swipe?.drag.pivot, this.swipe?.drag.grab?.point, this.orbitCoast?.pivot])) pivot?.add(move);
+		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.swipe?.drag.pivot, this.swipe?.drag.grab?.point, this.gizmoDrag?.drag.pivot, this.orbitCoast?.pivot])) pivot?.add(move);
 	}
 
 	/**
@@ -2332,7 +2346,7 @@ export class Graph3DScene {
 			this.showSpeed();
 			return;
 		}
-		const pointerBusy = this.drag !== null || this.pinch !== null || this.mousePan !== null;
+		const pointerBusy = this.drag !== null || this.pinch !== null || this.mousePan !== null || this.gizmoDrag !== null;
 		const pinch = e.ctrlKey && !this.ctrlHeld;
 		const source = pinch || pointerBusy ? "wheel" : this.wheelSource.classify({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, t: e.timeStamp });
 		const action = wheelAction(e, source, this.ctrlHeld);
@@ -2382,7 +2396,15 @@ export class Graph3DScene {
 		const swipe = this.swipe;
 		if (swipe === null || performance.now() - swipe.lastAt < SWIPE_LIFT_MS) return;
 		this.swipe = null;
-		const at = swipe.lastAt;
+		this.launchSwipe(swipe, swipe.lastAt);
+	}
+
+	/**
+	 * A swipe or gizmo drag let go at time `at`: moving fast then, it coasts
+	 * like a released drag (a pan on, a turn on). The gizmo passes the moment
+	 * of release, so a drag held still before it coasts nowhere.
+	 */
+	private launchSwipe(swipe: Swipe, at: number): void {
 		if (swipe.pan) {
 			const velocity = launchVelocity(estimateVelocity(this.samples, at), { x: 0, y: 0 }, 0);
 			if (velocity.x !== 0 || velocity.y !== 0) this.panCoast = { depth: swipe.depth, coast: { velocity, stopBelow: PAN_MIN_VELOCITY } };
@@ -2390,6 +2412,57 @@ export class Graph3DScene {
 		}
 		const coast = launchSpin(estimateVelocity(this.samples, at), estimateVelocity(this.turnSamples, at), this.carry, at - swipe.startAt);
 		if (coast !== null) this.orbitCoast = { pivot: swipe.drag.pivot, look: false, coast };
+	}
+
+	/**
+	 * A navigation gizmo was pressed and has begun to move. Like a press on the
+	 * canvas it stops what the camera was doing, but it acts on the view's
+	 * centre, not what is under the pointer: Rotate orbits the orbit target (no
+	 * surface grab) and Pan slides the view at the target's depth, both as the
+	 * drag's own `rotate` and `pan` with the same release coast (`launchSwipe`).
+	 * Zoom needs no state: `moveGizmo` feeds the wheel's glide.
+	 */
+	private beginGizmo(kind: GizmoKind): void {
+		const spin = this.orbitCoast?.coast.velocity ?? { x: 0, y: 0 };
+		this.cancelFlight();
+		this.swipe = null;
+		this.lookPending = { x: 0, y: 0 };
+		if (kind === "zoom") return;
+		const camera = this.graph.camera();
+		const target = this.orbitControls().target;
+		const now = performance.now();
+		this.samples = [];
+		this.turnSamples = [];
+		this.carry = kind === "pan" ? { x: 0, y: 0 } : spin;
+		const drag: RotateDrag = { pointerId: -1, touch: false, x: 0, y: 0, pivot: target.clone(), look: false, grab: null, turned: { x: 0, y: 0 } };
+		this.gizmoDrag = { pan: kind === "pan", drag, depth: Math.max(MIN_DEPTH, camera.position.distanceTo(target)), startAt: now, lastAt: now };
+	}
+
+	/** The held gizmo's pointer moved (`dx`, `dy`) px: turn, slide or zoom the view by it. */
+	private moveGizmo(kind: GizmoKind, dx: number, dy: number): void {
+		if (kind === "zoom") {
+			// Toward the middle of the view, like the ribbon's zoom, on the wheel's own glide.
+			const box = this.container.getBoundingClientRect();
+			const pending = this.wheelZoom?.pending ?? 0;
+			this.wheelZoom = { x: box.left + box.width / 2, y: box.top + box.height / 2, pending: pending + gizmoZoom(dy, box.height) };
+			return;
+		}
+		const gizmo = this.gizmoDrag;
+		if (gizmo === null) return;
+		gizmo.lastAt = performance.now();
+		gizmo.drag.x += dx;
+		gizmo.drag.y += dy;
+		this.sample(this.samples, gizmo.drag.x, gizmo.drag.y);
+		if (gizmo.pan) this.pan(dx, dy, gizmo.depth);
+		else this.rotate(gizmo.drag, dx, dy);
+	}
+
+	/** The gizmo was let go. Released (not cancelled) while moving, a rotate or pan coasts on. A zoom's glide plays out by itself. */
+	private endGizmo(kind: GizmoKind, released: boolean): void {
+		const gizmo = this.gizmoDrag;
+		this.gizmoDrag = null;
+		if (kind === "zoom" || gizmo === null || !released) return;
+		this.launchSwipe(gizmo, performance.now());
 	}
 
 	/** Track whether Control is physically down (see `ctrlHeld`). */

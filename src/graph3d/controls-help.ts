@@ -11,7 +11,7 @@ export interface ControlEntry {
 	action: string;
 }
 
-export type ControlGroupId = "mouse" | "touchpad" | "keys" | "edit-keys" | "editing" | "touch" | "settings";
+export type ControlGroupId = "mouse" | "touchpad" | "gizmos" | "keys" | "edit-keys" | "editing" | "touch" | "settings";
 
 export interface ControlGroup {
 	id: ControlGroupId;
@@ -43,6 +43,15 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 			{ input: "Shift + two-finger swipe", action: "Pan" },
 			{ input: "Ctrl + two-finger swipe up / down", action: "Zoom in / out at the wheel's rate" },
 			{ input: "Pinch", action: "Zoom toward the cursor" },
+		],
+	},
+	{
+		id: "gizmos",
+		title: "Navigation gizmos (mouse, no touch screen)",
+		entries: [
+			{ input: "Drag the rotate gizmo (top right)", action: "Orbit about the view's centre" },
+			{ input: "Drag the hand gizmo", action: "Pan" },
+			{ input: "Drag the magnifier gizmo up / down", action: "Zoom in / out toward the view's centre" },
 		],
 	},
 	{

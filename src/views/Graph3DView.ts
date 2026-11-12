@@ -9,6 +9,7 @@ import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../graph3d/model";
 import { facingPhase } from "../graph3d/flatten";
+import { gizmosAvailable } from "../graph3d/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../graph3d/lod";
 import { collectEmbedded } from "../graph3d/transcluded";
 import { linkMarker, nextLinkMarker, type LinkClick } from "../graph3d/links";
@@ -457,6 +458,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
 			sticks: this.sticksShown,
+			gizmos: gizmosAvailable({ isMobile: Platform.isMobile, maxTouchPoints: navigator.maxTouchPoints }),
 			clickSelectsOnly: () => this.app.loadLocalStorage(CLICK_SELECTS_ONLY_STORAGE_KEY) === true,
 			nearTier: () => this.nearTier(),
 			onSelectionChange: () => this.notifySelection(),

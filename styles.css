@@ -4270,6 +4270,64 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--text-muted);
 }
 
+/*
+ * Navigation gizmos (Graph3DGizmos.ts): rotate, pan and zoom, stacked at the top right on a desktop with no
+ * touch screen. Faint at rest, solid on hover and while dragged. The Find bar (z-index 11) takes the same corner,
+ * so they step aside while it is open.
+ */
+.osmosis-graph3d-gizmos {
+	position: absolute;
+	top: var(--size-4-2);
+	right: var(--size-4-2);
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+	pointer-events: none;
+}
+
+.osmosis-graph3d:has(.osmosis-find-bar) .osmosis-graph3d-gizmos {
+	display: none;
+}
+
+.osmosis-graph3d-gizmo {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--background-secondary) 70%, transparent);
+	color: var(--text-muted);
+	opacity: 0.45;
+	cursor: var(--osmosis-gizmo-cursor);
+	pointer-events: auto;
+	/* The gizmo owns its drag: no scrolling or text selection under it. */
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	transition: opacity 120ms ease;
+}
+
+.osmosis-graph3d-gizmo:hover {
+	opacity: 0.9;
+	color: var(--text-normal);
+}
+
+.osmosis-graph3d-gizmo.is-dragging {
+	opacity: 1;
+	color: var(--text-normal);
+	border-color: var(--background-modifier-border-hover);
+	background: var(--background-secondary);
+	cursor: var(--osmosis-gizmo-cursor-drag);
+}
+
+.osmosis-graph3d-gizmo .svg-icon {
+	width: var(--icon-m);
+	height: var(--icon-m);
+}
+
 /* Walk and fly joysticks (Graph3DSticks.ts), toggled from the ribbon. Raised clear of the corner controls, and of Obsidian's mobile toolbar when it is shown. */
 .osmosis-graph3d-stick {
 	position: absolute;
