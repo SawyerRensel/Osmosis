@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Vector3 } from "three";
-import { grabPoint, sphereOnRay, stickyTurn } from "./globe";
+import { GRIP_LIMIT, grabPoint, gripPoint, slipRate, sphereOnRay, stickyTurn } from "./globe";
 import { rotateAboutPivot } from "./pivot";
 
 const UP = new Vector3(0, 1, 0);
@@ -180,5 +180,126 @@ describe("stickyTurn", () => {
 	it("does nothing when the camera looks straight along up", () => {
 		const centre = new Vector3(0, 0, 0);
 		expect(stickyTurn(new Vector3(0, 40, 0), centre, UP, centre, onSphere(centre, 10, 0, 0), onSphere(centre, 10, 0, 0.3))).toEqual({ yaw: 0, pitch: 0 });
+	});
+});
+
+describe("gripPoint", () => {
+	const centre = new Vector3(0, 0, 0);
+	const origin = new Vector3(0, 0, 40);
+	const ray = (angle: number) => new Vector3(Math.sin(angle), 0, -Math.cos(angle));
+	/** The view angle at which the ray meets the radius-10 sphere facing away from it by `incidence`. */
+	const at = (incidence: number) => Math.asin((10 * Math.sin(incidence)) / 40);
+
+	it("is the near hit while the surface faces the ray within GRIP_LIMIT", () => {
+		expect(gripPoint(origin, ray(0), centre, 10)?.distanceTo(new Vector3(0, 0, 10))).toBeCloseTo(0, 9);
+		const hit = gripPoint(origin, ray(at(GRIP_LIMIT - 0.01)), centre, 10);
+		expect(hit?.distanceTo(sphereOnRay(origin, ray(at(GRIP_LIMIT - 0.01)), [{ centre, radius: 10 }])!.point)).toBeCloseTo(0, 9);
+	});
+
+	it("is null past GRIP_LIMIT, past the silhouette, and from inside the sphere", () => {
+		expect(gripPoint(origin, ray(at(GRIP_LIMIT + 0.01)), centre, 10)).toBeNull();
+		expect(gripPoint(origin, ray(0.5), centre, 10)).toBeNull();
+		expect(gripPoint(new Vector3(0, 0, 5), ray(0), centre, 10)).toBeNull();
+	});
+});
+
+describe("slipRate", () => {
+	it("is the rate the surface turns under the pointer at GRIP_LIMIT", () => {
+		const perPx = Math.tan(Math.PI / 7.2) / 400;
+		const distance = 40;
+		const radius = 10;
+		// Surface angle from the near point under the ray `px` pixels from the core's place on screen.
+		const surface = (px: number) => {
+			const a = Math.atan(px * perPx);
+			return Math.asin((distance * Math.sin(a)) / radius) - a;
+		};
+		const edge = Math.tan(Math.asin((radius * Math.sin(GRIP_LIMIT)) / distance)) / perPx;
+		expect(slipRate(distance, radius, perPx)).toBeCloseTo((surface(edge + 1e-4) - surface(edge - 1e-4)) / 2e-4, 6);
+	});
+
+	it("is 0 from on or inside the surface", () => {
+		expect(slipRate(10, 10, 0.001)).toBe(0);
+		expect(slipRate(5, 10, 0.001)).toBe(0);
+	});
+});
+
+/**
+ * A planet drag the way `Graph3DScene.rotate` runs it, from a camera looking
+ * at a radius-10 planet at the origin: the grabbed point stays under the
+ * pointer while the ray holds the surface (`gripPoint`), and slips into a
+ * turn of `slipRate` per px (no faster than a plain orbit) once it doesn't,
+ * grabbing again where the ray holds once more. Returns each step's turn and
+ * how far (radians) the grabbed point sat from the pointer after each step
+ * that held.
+ */
+function dragPlanet(distance: number, steps: [number, number][]): { turns: number[]; misses: number[]; camera: Vector3 } {
+	const height = 800;
+	const perPx = Math.tan(Math.PI / 7.2) / (height / 2);
+	const centre = new Vector3(0, 0, 0);
+	const camera = new Vector3(0, 0, distance);
+	const target = new Vector3(0, 0, 0);
+	const rayAt = (x: number, y: number) => {
+		const forward = target.clone().sub(camera).normalize();
+		const right = forward.clone().cross(UP).normalize();
+		const up = right.clone().cross(forward);
+		return forward.addScaledVector(right, x * perPx).addScaledVector(up, -y * perPx).normalize();
+	};
+	let x = 0;
+	let y = 0;
+	let grabbed: Vector3 | null = gripPoint(camera, rayAt(x, y), centre, 10);
+	const turns: number[] = [];
+	const misses: number[] = [];
+	for (const [dx, dy] of steps) {
+		x += dx;
+		y += dy;
+		const before = camera.clone();
+		const hold = grabbed === null ? null : gripPoint(camera, rayAt(x, y), centre, 10);
+		if (grabbed !== null && hold !== null) {
+			const { yaw, pitch } = stickyTurn(camera, target, UP, centre, grabbed, hold);
+			rotateAboutPivot(camera, target, centre, yaw, pitch, UP);
+			misses.push(seen(camera, target, grabbed).angleTo(new Vector3(x * perPx, -y * perPx, 1).normalize()));
+		} else {
+			const rate = Math.min(slipRate(camera.distanceTo(centre), 10, perPx), (2 * Math.PI) / height);
+			rotateAboutPivot(camera, target, centre, -rate * dx, -rate * dy, UP);
+			grabbed = gripPoint(camera, rayAt(x, y), centre, 10);
+		}
+		turns.push(before.angleTo(camera));
+	}
+	return { turns, misses, camera };
+}
+
+const repeat = (n: number, step: [number, number]): [number, number][] => Array.from({ length: n }, () => step);
+
+describe("a planet drag past the planet's edge", () => {
+	it("keeps turning at an even rate, with no leap where the grab slips", () => {
+		const perPx = Math.tan(Math.PI / 7.2) / 400;
+		const slip = slipRate(40, 10, perPx) * 10;
+		for (const step of [
+			[10, 0],
+			[-10, 0],
+			[10, 6],
+		] as [number, number][]) {
+			// 2000 px: far past the disc (about 220 px across from its centre) and off any view.
+			const { turns } = dragPlanet(40, repeat(200, step));
+			// Before, a 10 px step near the rim turned the planet up to 0.44 rad, and then every step past it turned it not at all.
+			expect(Math.max(...turns)).toBeLessThan(slip * Math.hypot(...step) / 10 * 1.05);
+			expect(Math.min(...turns)).toBeGreaterThan(0);
+		}
+	});
+
+	it("turns back when the drag reverses, and grabs again on the disc with the point under the pointer", () => {
+		const { turns, misses, camera } = dragPlanet(40, [...repeat(100, [10, 0]), ...repeat(100, [-10, 0])]);
+		expect(Math.min(...turns)).toBeGreaterThan(0);
+		// It came back over the disc and held.
+		expect(misses.length).toBeGreaterThan(20);
+		expect(Math.max(...misses)).toBeLessThan(1e-6);
+		// Back where it started: the same distance out and back undoes the same turn.
+		expect(camera.distanceTo(new Vector3(0, 0, 40))).toBeLessThan(0.5);
+	});
+
+	it("turns a small, far planet no faster than a plain orbit once off it", () => {
+		const { turns } = dragPlanet(1000, repeat(200, [10, 0]));
+		expect(Math.max(...turns.slice(10))).toBeLessThanOrEqual((2 * Math.PI * 10) / 800 + 1e-9);
+		expect(Math.min(...turns)).toBeGreaterThan(0);
 	});
 });

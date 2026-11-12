@@ -39,7 +39,7 @@ import type { NearTierSettings } from "../graph3d/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
 import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
 import { rotateAboutPivot } from "../graph3d/pivot";
-import { grabPoint, type Sphere, sphereOnRay, stickyTurn } from "../graph3d/globe";
+import { grabPoint, gripPoint, slipRate, type Sphere, sphereOnRay, stickyTurn } from "../graph3d/globe";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
 import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import { SwipeFeed, WheelClassifier, wheelAction } from "../graph3d/wheel-input";
@@ -243,9 +243,11 @@ interface RotateDrag {
 	/**
 	 * Pressed on a planet's surface: the grabbed point of the surface (world
 	 * space, on a sphere of `radius` about `pivot`, the core) that the drag keeps
-	 * under the pointer (`stickyTurn`). Null for any other pivot.
+	 * under the pointer (`stickyTurn`). Its `point` is null while the grab has
+	 * slipped (the pointer is off the part of the disc that holds, `gripPoint`).
+	 * Null for any other pivot.
 	 */
-	grab: { point: Vector3; radius: number } | null;
+	grab: { point: Vector3 | null; radius: number } | null;
 	/** Yaw and pitch (radians) the drag has turned so far, sampled for the release spin. */
 	turned: Vec;
 }
@@ -2463,7 +2465,7 @@ export class Graph3DScene {
 			const grab = swipe.drag.grab;
 			if (grab !== null) {
 				const ray = this.rayThrough(swipe.drag.x, swipe.drag.y);
-				grab.point = grabPoint(ray.origin, ray.direction, swipe.drag.pivot, grab.radius);
+				grab.point = gripPoint(ray.origin, ray.direction, swipe.drag.pivot, grab.radius);
 			}
 		}
 		swipe.lastAt = now;
@@ -2597,11 +2599,21 @@ export class Graph3DScene {
 		const controls = this.orbitControls();
 		let yaw: number;
 		let pitch: number;
-		if (drag.grab !== null && !drag.look) {
+		const grab = drag.look ? null : drag.grab;
+		const ray = grab?.point ? this.rayThrough(drag.x, drag.y) : null;
+		const hold = grab && ray ? gripPoint(ray.origin, ray.direction, drag.pivot, grab.radius) : null;
+		if (grab?.point && hold !== null) {
 			// A grabbed planet turns however far keeps the grabbed point under the pointer.
-			const ray = this.rayThrough(drag.x, drag.y);
-			const aim = grabPoint(ray.origin, ray.direction, drag.pivot, drag.grab.radius);
-			({ yaw, pitch } = stickyTurn(camera.position, controls.target, camera.up, drag.pivot, drag.grab.point, aim));
+			({ yaw, pitch } = stickyTurn(camera.position, controls.target, camera.up, drag.pivot, grab.point, hold));
+		} else if (grab !== null) {
+			// Off the part of the disc that holds, the grab slips: the planet turns on
+			// with the pointer's travel at the rate it had where it slipped, no faster
+			// than a plain orbit, however far the pointer goes.
+			const height = Math.max(1, this.container.clientHeight);
+			const perPx = Math.tan(((camera as PerspectiveCamera).fov * Math.PI) / 360) / (height / 2);
+			const rate = Math.min(slipRate(camera.position.distanceTo(drag.pivot), grab.radius, perPx), ORBIT_RATE / height);
+			yaw = -rate * dx;
+			pitch = -rate * dy;
 		} else {
 			const rate = (drag.look ? LOOK_RATE : ORBIT_RATE) / Math.max(1, this.container.clientHeight);
 			// Mouse-look turns toward the drag; a touch look drags the world, so it
@@ -2612,6 +2624,11 @@ export class Graph3DScene {
 		}
 		rotateAboutPivot(camera.position, controls.target, drag.look ? camera.position.clone() : drag.pivot, yaw, pitch, camera.up);
 		controls.update();
+		if (grab !== null && (grab.point === null || hold === null)) {
+			// Slipped, it grabs again wherever the pointer holds the surface now, so coming back over the disc never jumps.
+			const now = this.rayThrough(drag.x, drag.y);
+			grab.point = gripPoint(now.origin, now.direction, drag.pivot, grab.radius);
+		}
 		drag.turned.x += yaw;
 		drag.turned.y += pitch;
 		this.sample(this.turnSamples, drag.turned.x, drag.turned.y);

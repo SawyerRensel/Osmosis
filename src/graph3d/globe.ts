@@ -42,6 +42,52 @@ export function grabPoint(origin: Vector3, direction: Vector3, centre: Vector3, 
 	return origin.clone().addScaledVector(graze, Math.sqrt(Math.max(0, distance * distance - radius * radius)));
 }
 
+/**
+ * How far (radians) the surface may face away from the line of sight and
+ * still hold the grabbed point under the pointer. Toward the silhouette the
+ * surface turns ever faster under a moving pointer (without bound at the rim),
+ * and past it nothing is under the pointer at all. Beyond this the grab slips (`slipRate`).
+ */
+export const GRIP_LIMIT = Math.PI / 3;
+
+/**
+ * Where the ray from `origin` along unit `direction` holds the sphere: its
+ * near hit, while the surface there faces the ray within `GRIP_LIMIT`. Null
+ * when the ray misses, meets the sphere past that, or `origin` is inside it.
+ */
+export function gripPoint(origin: Vector3, direction: Vector3, centre: Vector3, radius: number): Vector3 | null {
+	const toOrigin = origin.clone().sub(centre);
+	const b = toOrigin.dot(direction);
+	const disc = b * b - (toOrigin.lengthSq() - radius * radius);
+	if (disc < 0 || radius <= 0) return null;
+	const t = -b - Math.sqrt(disc);
+	if (t < 0) return null;
+	const hit = origin.clone().addScaledVector(direction, t);
+	const facing = -hit.clone().sub(centre).dot(direction) / radius;
+	return facing >= Math.cos(GRIP_LIMIT) - 1e-12 ? hit : null;
+}
+
+/**
+ * Radians a slipped grab turns the planet per px of pointer travel: the rate
+ * the surface turned under the pointer where it slipped, at `GRIP_LIMIT`, so
+ * the drag turns on at the speed it had. `distance` is from the camera to the
+ * core; `perPx` is the view's tangent per px at its centre
+ * (tan(fov / 2) / half the height). A camera at or inside the surface never
+ * slips (its rays always hold), so that is 0.
+ *
+ * The ray at view angle a from the core meets the surface facing away from
+ * it by i, with sin i = distance sin a / radius, at the surface angle
+ * i − a from the near point; that turns by
+ * distance cos a / (radius cos i) − 1 per radian of a, and a px is
+ * perPx cos² a radians of a.
+ */
+export function slipRate(distance: number, radius: number, perPx: number): number {
+	if (radius <= 0 || distance <= radius) return 0;
+	const sinA = (radius * Math.sin(GRIP_LIMIT)) / distance;
+	const cosA = Math.sqrt(1 - sinA * sinA);
+	return perPx * cosA * cosA * ((distance * cosA) / (radius * Math.cos(GRIP_LIMIT)) - 1);
+}
+
 /** A sphere to pick: a planet's core and the radius its surface plates sit at. */
 export interface Sphere {
 	centre: Vector3;
