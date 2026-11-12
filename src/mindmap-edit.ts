@@ -18,6 +18,7 @@
 import type { OsmosisNode, Range } from "./types";
 import { extractTrailingBlockId, stripTrailingBlockId } from "./block-id";
 import { normalizeBlockSpacing } from "./markdown-spacing";
+import { separateRuns } from "./line-groups";
 
 /**
  * Serialize a node type/depth/content back to a single markdown line.
@@ -104,7 +105,12 @@ export function nodeEditText(
 	node: Pick<OsmosisNode, "type" | "depth" | "content" | "raw">,
 ): string {
 	const raw = node.raw ?? serializeLine(node.type, node.depth, node.content);
-	return raw.slice(nodeIndent(node.type, raw).length);
+	const indent = nodeIndent(node.type, raw);
+	// A line group (T75) shares its first line's indentation on every line.
+	return raw
+		.split("\n")
+		.map((line) => (line.startsWith(indent) ? line.slice(indent.length) : line))
+		.join("\n");
 }
 
 /**
@@ -121,7 +127,13 @@ export function restoreEditedLine(
 ): string {
 	const raw = node.raw ?? serializeLine(node.type, node.depth, node.content);
 	const indent = nodeIndent(node.type, raw);
-	return reattachBlockId(node.type, indent + text, node.blockId);
+	// Every line of a line group gets the indentation back; a blank line typed
+	// inside stays blank (it splits the group, the user's explicit gesture).
+	const indented = indent === ""
+		? text
+		: text.split("\n").map((line) => (line.trim() === "" ? line : indent + line)).join("\n");
+	// The group's ID goes back on its last line; IDs on earlier lines are part of the text.
+	return reattachBlockId(node.type, indented, node.blockId);
 }
 
 /**
@@ -139,7 +151,8 @@ export function reattachBlockId(
 	blockId?: string,
 ): string {
 	if (!blockId || isMultilineBlock(type)) return text;
-	if (extractTrailingBlockId(text)) return text;
+	// Only the last line can hold it: a line group's ID belongs on its last line.
+	if (extractTrailingBlockId(text.slice(text.lastIndexOf("\n") + 1))) return text;
 	return `${text} ^${blockId}`;
 }
 
@@ -547,6 +560,38 @@ export function insertAt(
 }
 
 /**
+ * {@link insertAt}, then a blank line at either seam where the block would
+ * otherwise run into a neighbouring line and merge with it into one line group
+ * (see `separateRuns`). For callers that only need the text.
+ */
+export function insertBlock(text: string, offset: number, block: string): string {
+	const prefix = offset > 0 && text[offset - 1] !== "\n" ? 1 : 0;
+	const start = offset + prefix;
+	return separateRuns(insertAt(text, offset, block).text, [start, start + block.length + 1]).text;
+}
+
+/**
+ * Cut a span out with {@link widenRemoval} and {@link removeSpan}, keeping the
+ * lines it leaves face to face from merging into one line group.
+ */
+export function cutBlock(text: string, span: Range): string {
+	const widened = widenRemoval(text, span);
+	return separateRuns(removeSpan(text, widened), [widened.start]).text;
+}
+
+/**
+ * A structural edit's result with blank lines put in at `seams` (offsets in
+ * `text` where the edit brought two nodes' lines together), so they don't
+ * re-parse as one line group; `start` and `moved` follow the shift.
+ */
+function separated(text: string, start: number, seams: readonly number[], moved?: number): Spliced {
+	const out = separateRuns(text, seams);
+	return moved === undefined
+		? { text: out.text, start: out.at(start) }
+		: { text: out.text, start: out.at(start), moved: out.at(moved) };
+}
+
+/**
  * Re-indent a subtree's text to match a new type/depth.
  * Adjusts the first line and all descendant lines proportionally.
  * Handles cross-type transitions (heading↔bullet) where depth semantics differ.
@@ -765,6 +810,9 @@ export function retypeInFile(
 	const end = subtreeEnd(node);
 	const block = retypeSubtree(content.slice(start, end), node.type, line);
 	if (block === null) return null;
+	// The block in place, with blank lines where its new kind meets a neighbour.
+	const inPlace = (): string =>
+		separateRuns(content.slice(0, start) + block + content.slice(end), [start, start + block.length + 1]).text;
 
 	// The span of `other` in the node's file, or null when it lives elsewhere.
 	const spanOf = (other: OsmosisNode): Range | null => {
@@ -789,9 +837,7 @@ export function retypeInFile(
 		placed = parent;
 		parent = ancestors[i + 1] ?? null;
 	}
-	if (placed !== node && !spanOf(placed)) {
-		return content.slice(0, start) + block + content.slice(end);
-	}
+	if (placed !== node && !spanOf(placed)) return inPlace();
 
 	const siblings: Array<Range & { heading: boolean }> = [];
 	for (const sib of parent?.children ?? []) {
@@ -814,18 +860,27 @@ export function retypeInFile(
 		const placedStart = placed === node ? start : spanOf(placed)!.start;
 		const ends = siblings.filter((s) => !s.heading && s.start > placedStart).map((s) => s.end);
 		if (placed !== node) ends.push(subtreeEnd(placed));
-		if (ends.length === 0) return content.slice(0, start) + block + content.slice(end);
+		if (ends.length === 0) return inPlace();
 		const target = inCut(Math.max(...ends));
-		return cut.slice(0, target) + "\n" + block + cut.slice(target);
+		const seamAfterCut = cutStart >= target ? cutStart + block.length + 1 : cutStart;
+		return separateRuns(cut.slice(0, target) + "\n" + block + cut.slice(target), [
+			seamAfterCut,
+			target + 1,
+			target + block.length + 2,
+		]).text;
 	}
 
 	const before = siblings.filter((s) => s.heading && s.start < start);
-	if (before.length === 0) return content.slice(0, start) + block + content.slice(end);
+	if (before.length === 0) return inPlace();
 	// Land on the line after the previous content, ahead of the blank line(s)
 	// that separate it from the heading.
 	let target = inCut(Math.min(...before.map((s) => s.start)));
 	while (target >= 2 && cut[target - 1] === "\n" && cut[target - 2] === "\n") target--;
-	return cut.slice(0, target) + block + "\n" + cut.slice(target);
+	return separateRuns(cut.slice(0, target) + block + "\n" + cut.slice(target), [
+		target,
+		target + block.length + 1,
+		cutStart >= target ? cutStart + block.length + 1 : cutStart,
+	]).text;
 }
 
 /**
@@ -979,7 +1034,8 @@ export function insertChild(content: string, parent: OsmosisNode): Spliced {
 	const newLine = serializeLine(type, depth, "");
 	const insertPos = childInsertOffset(parent);
 	const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? 1 : 0;
-	return { text: insertAt(content, insertPos, newLine).text, start: insertPos + prefix };
+	const start = insertPos + prefix;
+	return separated(insertAt(content, insertPos, newLine).text, start, [start, start + newLine.length + 1]);
 }
 
 /**
@@ -1004,10 +1060,12 @@ export function insertSibling(content: string, src: OsmosisNode): Spliced {
 		insertText = "\n" + serializeLine(src.type, src.depth, newContent);
 		lead = 1;
 	}
-	return {
-		text: content.slice(0, insertPos) + insertText + content.slice(insertPos),
-		start: insertPos + lead,
-	};
+	const start = insertPos + lead;
+	return separated(
+		content.slice(0, insertPos) + insertText + content.slice(insertPos),
+		start,
+		[start, start + insertText.length - lead + 1],
+	);
 }
 
 /**
@@ -1027,7 +1085,11 @@ export function insertSiblingBefore(content: string, src: OsmosisNode): Spliced 
 		src.type === "blockquote";
 	if (!blockLike) {
 		const line = serializeLine(src.type, src.depth, newContent);
-		return { text: content.slice(0, insertPos) + line + "\n" + content.slice(insertPos), start: insertPos };
+		return separated(
+			content.slice(0, insertPos) + line + "\n" + content.slice(insertPos),
+			insertPos,
+			[insertPos, insertPos + line.length + 1],
+		);
 	}
 	// A paragraph is only its own block with a blank line above it, or it would merge into the line before.
 	const before = content.slice(0, insertPos);
@@ -1055,7 +1117,7 @@ export function deleteSubtree(content: string, src: OsmosisNode): string {
 		deleteEnd++;
 	}
 
-	return content.slice(0, deleteStart) + content.slice(deleteEnd);
+	return separateRuns(content.slice(0, deleteStart) + content.slice(deleteEnd), [deleteStart, deleteStart + 1]).text;
 }
 
 /**
@@ -1094,10 +1156,11 @@ export function moveSiblings(content: string, selected: readonly OsmosisNode[], 
 			? "\n" + content.slice(tailPos)
 			: content.slice(rangeEnd);
 
-	if (blockStart < swapStart) {
-		return { text: head + swapText + "\n" + blockText + tail, start: head.length + swapText.length + 1 };
-	}
-	return { text: head + blockText + "\n" + swapText + tail, start: head.length };
+	// The three places the rewrite joins lines that were not adjacent before.
+	const [first, second] = blockStart < swapStart ? [swapText, blockText] : [blockText, swapText];
+	const seams = [head.length, head.length + first.length + 1, head.length + first.length + second.length + 2];
+	const text = head + first + "\n" + second + tail;
+	return separated(text, blockStart < swapStart ? head.length + swapText.length + 1 : head.length, seams);
 }
 
 /**
@@ -1132,10 +1195,15 @@ export function indentSiblings(content: string, selected: readonly OsmosisNode[]
 	const prefix = insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
 
 	const withoutBlock = content.slice(0, removeStart) + content.slice(blockEnd);
-	return {
-		text: withoutBlock.slice(0, insertPos) + prefix + reindented + withoutBlock.slice(insertPos),
-		start: insertPos + prefix.length,
-	};
+	const start = insertPos + prefix.length;
+	const seams = [start, start + reindented.length + 1];
+	// Where the block was cut out, its old neighbours now meet.
+	if (removeStart < blockStart) seams.push(removeStart + 1 + prefix.length + reindented.length);
+	return separated(
+		withoutBlock.slice(0, insertPos) + prefix + reindented + withoutBlock.slice(insertPos),
+		start,
+		seams,
+	);
 }
 
 /**
@@ -1166,10 +1234,11 @@ export function outdentSiblings(content: string, parent: OsmosisNode, selected: 
 		const reindented = selected
 			.map((nodeSrc) => reindentSubtree(subtreeText(nodeSrc), nodeSrc, newType, newDepth))
 			.join("\n");
-		return {
-			text: content.slice(0, blockStart) + reindented + content.slice(blockEnd),
-			start: blockStart,
-		};
+		return separated(
+			content.slice(0, blockStart) + reindented + content.slice(blockEnd),
+			blockStart,
+			[blockStart, blockStart + reindented.length + 1],
+		);
 	}
 
 	// Re-indent each selected node's subtree individually
@@ -1195,14 +1264,18 @@ export function outdentSiblings(content: string, parent: OsmosisNode, selected: 
 
 	const prefix =
 		adjustedParentEnd > 0 && withoutBlock[adjustedParentEnd - 1] !== "\n" ? "\n" : "";
-	return {
-		text:
-			withoutBlock.slice(0, adjustedParentEnd) +
+	const start = adjustedParentEnd + prefix.length;
+	const seams = [start, start + reindented.length + 1];
+	// Where the block was cut out (before the parent's end), its old neighbours now meet.
+	if (removeStart < blockStart) seams.push(removeStart + 1);
+	return separated(
+		withoutBlock.slice(0, adjustedParentEnd) +
 			prefix +
 			reindented +
 			withoutBlock.slice(adjustedParentEnd),
-		start: adjustedParentEnd + prefix.length,
-	};
+		start,
+		seams,
+	);
 }
 
 /**
@@ -1226,11 +1299,13 @@ export function insertParent(content: string, src: OsmosisNode, span: Range): Sp
 			.join("\n");
 	}
 
-	return {
-		text: content.slice(0, span.start) + newParentLine + "\n" + indentedSubtree + content.slice(span.end),
-		start: span.start,
-		moved: span.start + newParentLine.length + 1,
-	};
+	const moved = span.start + newParentLine.length + 1;
+	return separated(
+		content.slice(0, span.start) + newParentLine + "\n" + indentedSubtree + content.slice(span.end),
+		span.start,
+		[span.start, moved, moved + indentedSubtree.length + 1],
+		moved,
+	);
 }
 
 // ─── Drag and drop ───────────────────────────────────────
@@ -1318,20 +1393,24 @@ export function moveWithinFile(
 		// Dragging forward: remove first, then adjust the insert offset.
 		const afterRemove = removeSpan(content, span);
 		const adjusted = offset - (span.end - span.start);
-		return {
-			text: insertAt(afterRemove, adjusted, dragText).text,
-			start: adjusted + prefixAt(afterRemove, adjusted),
-		};
+		const start = adjusted + prefixAt(afterRemove, adjusted);
+		return separated(insertAt(afterRemove, adjusted, dragText).text, start, [
+			span.start,
+			start,
+			start + dragText.length + 1,
+		]);
 	}
 	// Dragging backward: insert first, then remove at the shifted span.
 	const inserted = insertAt(content, offset, dragText);
-	return {
-		text: removeSpan(inserted.text, {
+	const start = offset + prefixAt(content, offset);
+	return separated(
+		removeSpan(inserted.text, {
 			start: span.start + inserted.shift,
 			end: span.end + inserted.shift,
 		}),
-		start: offset + prefixAt(content, offset),
-	};
+		start,
+		[start, start + dragText.length + 1, span.start + inserted.shift],
+	);
 }
 
 /**

@@ -55,8 +55,11 @@ import {
 	outdentContext,
 	inferRootHeadingLevel,
 	indentSubtreeHeadings,
+	insertBlock,
+	cutBlock,
 } from "./mindmap-edit";
 import { normalizeBlockSpacing } from "./markdown-spacing";
+import { separateRuns } from "./line-groups";
 import type { FileEdit } from "./mindmap-edit";
 
 const parser = new OsmosisParser();
@@ -579,16 +582,18 @@ describe("reindentSubtree re-levels descendant headings with a moved heading", (
 		);
 	});
 
-	// T75 Phase 2: this edit leaves two headings adjacent, which now parse as
-	// one node. Edit ops relied on the write-time normalizer to separate them;
-	// Phase 2 makes the op insert the blank line itself. Flip back to it().
-	it.fails("re-levels through the real parser when a heading is indented (Alt+Right)", () => {
+	// T75: the edit would leave two headings adjacent (one line group); the op
+	// puts the blank line in itself rather than relying on the normalizer.
+	it("re-levels through the real parser when a heading is indented (Alt+Right)", () => {
 		const md = ["# Top", "", "## Alpha", "", "## Beta", "", "### Beta child"].join("\n");
 		const tree = parser.parse(md, "f.md");
 		const alpha = findByContent(tree.root, "Alpha");
 		const beta = findByContent(tree.root, "Beta");
 		const out = indentSiblings(md, [beta], alpha);
-		expect(out.text).toBe(["# Top", "", "## Alpha", "", "### Beta", "", "#### Beta child"].join("\n"));
+		expect(out.text).toBe(["# Top", "", "## Alpha", "", "### Beta", "", "#### Beta child", ""].join("\n"));
+		const moved = findByContent(findByContent(parser.parse(out.text, "f.md").root, "Alpha"), "Beta");
+		expect(moved.depth).toBe(3);
+		expect(moved.children.map((c) => c.content)).toEqual(["Beta child"]);
 	});
 });
 
@@ -1713,9 +1718,10 @@ describe("retypeSubtree re-nests children when a rename crosses list/heading", (
 		const line = restoreEditedLine(src, editedLine);
 		const end = subtreeEnd(src);
 		const retyped = retypeSubtree(md.slice(src.range.start, end), src.type, line);
-		return retyped === null
-			? md.slice(0, src.range.start) + line + md.slice(src.range.end)
-			: md.slice(0, src.range.start) + retyped + md.slice(end);
+		if (retyped === null) return md.slice(0, src.range.start) + line + md.slice(src.range.end);
+		// The seams `retypeInFile` separates when it splices the block in place.
+		const start = src.range.start;
+		return separateRuns(md.slice(0, start) + retyped + md.slice(end), [start, start + retyped.length + 1]).text;
 	}
 
 	it("dedents a top-level item's children when it becomes a heading", () => {
@@ -1727,10 +1733,9 @@ describe("retypeSubtree re-nests children when a rename crosses list/heading", (
 		expect(findByContent(item, "child").depth).toBe(0);
 	});
 
-	// T75 Phase 2: this edit leaves two headings adjacent, which now parse as
-	// one node. Edit ops relied on the write-time normalizer to separate them;
-	// Phase 2 makes the op insert the blank line itself. Flip back to it().
-	it.fails("parents grandchildren under a sub-heading made from a former child", () => {
+	// T75: the edit would leave two headings adjacent (one line group); the op
+	// puts the blank line in itself rather than relying on the normalizer.
+	it("parents grandchildren under a sub-heading made from a former child", () => {
 		// The reported sequence: item → ###, then its former child → ####.
 		let md = "## Top\n\n- item\n\t- child\n\t\t- gc";
 		md = rename(md, "item", "### item");
@@ -1970,8 +1975,8 @@ describe("structural edits give the bytes the mind map wrote", () => {
 		["delete", "bullet", "Diesel", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
 		["up", "bullet", "Stern line", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n- Stern line ^stern\n\t- Spring\n\t- Breast\n- Bow line\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
 		["down", "bullet", "Bow line", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n- Stern line ^stern\n\t- Spring\n\t- Breast\n- Bow line\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
-		["down", "heading", "Moorings", "# Harbour\n\nIntro paragraph.\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n"],
-		["up", "heading", "Fuel", "# Harbour\n\nIntro paragraph.\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n"],
+		["down", "heading", "Moorings", "# Harbour\n\nIntro paragraph.\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n"],
+		["up", "heading", "Fuel", "# Harbour\n\nIntro paragraph.\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n"],
 		["indent", "bullet", "Stern line", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n\t- Stern line ^stern\n\t\t- Spring\n\t\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
 		["indent", "heading", "Fuel", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n### Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n"],
 		["indent", "bullet", "Breast", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
@@ -1980,7 +1985,7 @@ describe("structural edits give the bytes the mind map wrote", () => {
 		["outdent", "paragraph", "Intro paragraph.", "# Harbour\n\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n# Intro paragraph.\n"],
 		["outdent", "heading", "Moorings", "# Harbour\n\nIntro paragraph.\n\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n# Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n"],
 		["parent", "bullet", "Bow line", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- \n\t- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
-		["parent", "heading", "Fuel", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## \n### Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
+		["parent", "heading", "Fuel", "# Harbour\n\nIntro paragraph.\n\n## Moorings\n\n- Bow line\n- Stern line ^stern\n\t- Spring\n\t- Breast\n1. First\n2. Second\n- [ ] Check cleats\n\n## \n\n### Fuel\n\n- Diesel\n\t- Red dye\n\n```js\nconst a = 1;\n```\n\n> Quote line\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"],
 	])("%s %s %s", (kind, type, content, expected) => {
 		expect(run(kind, type, content)).toBe(expected);
 	});
@@ -2170,5 +2175,60 @@ describe("moveWithinFile and dropContext (2D drag-and-drop)", () => {
 		expect(dropContext(deck, 3, findByContent(root, "Coil the lines"))).toEqual({ type: "heading", depth: 2 });
 		expect(dropContext(deck, 0, findByContent(root, "Coil the lines"))).toEqual({ type: "bullet", depth: 0 });
 		expect(dropContext(findByContent(root, "Coil the lines"), 0, findByContent(root, "Galley"))).toEqual({ type: "bullet", depth: 1 });
+	});
+});
+
+describe("line groups survive edits (T75)", () => {
+	const groupMd = "# Top\n\n![[cover.png]]\n## Rigging ^os-aaaaaa\n\n- Halyard\n\n## Mooring\n\nBuoy";
+
+	it("opens a line group's every line in the editor and saves its ID on the last line", () => {
+		const group = findByContent(parser.parse(groupMd, "f.md").root, "Rigging");
+		expect(nodeEditText(group)).toBe("![[cover.png]]\n## Rigging");
+		expect(restoreEditedLine(group, "![[cover.png]]\n## Rigging\nCaption")).toBe("![[cover.png]]\n## Rigging\nCaption ^os-aaaaaa");
+		// An ID typed on the last line is not doubled.
+		expect(restoreEditedLine(group, "## Rigging\nCaption ^os-aaaaaa")).toBe("## Rigging\nCaption ^os-aaaaaa");
+	});
+
+	it("restores an indented group's indentation on every line", () => {
+		const md = "- item\n\tfirst\n\tsecond";
+		const group = findByContent(parser.parse(md, "f.md").root, "first\nsecond");
+		expect(nodeEditText(group)).toBe("first\nsecond");
+		expect(restoreEditedLine(group, "first\nsecond\nthird")).toBe("\tfirst\n\tsecond\n\tthird");
+	});
+
+	it("keeps an edit-free save of a group byte-identical", () => {
+		const group = findByContent(parser.parse(groupMd, "f.md").root, "Rigging");
+		const out = renameInFile(groupMd, group, [], nodeEditText(group));
+		expect(out.text).toBe(groupMd);
+	});
+
+	it("moves a heading group as one block and keeps it apart from its new neighbours", () => {
+		const root = parser.parse(groupMd, "f.md").root;
+		const top = findByContent(root, "Top");
+		const [rigging, mooring] = top.children;
+		const out = moveSiblings(groupMd, [mooring!], rigging!);
+		expect(out.text).toBe("# Top\n\n## Mooring\n\nBuoy\n\n![[cover.png]]\n## Rigging ^os-aaaaaa\n\n- Halyard");
+		const moved = parser.parse(out.text, "f.md").root.children[0]!.children;
+		expect(moved.map((n) => n.content)).toEqual(["Mooring", "Rigging"]);
+		expect(out.text.slice(out.start)).toMatch(/^## Mooring/);
+	});
+
+	it("adds a heading sibling before a heading group without joining it", () => {
+		const group = findByContent(parser.parse(groupMd, "f.md").root, "Rigging");
+		const out = insertSiblingBefore(groupMd, group);
+		expect(out.text).toBe("# Top\n\n## \n\n![[cover.png]]\n## Rigging ^os-aaaaaa\n\n- Halyard\n\n## Mooring\n\nBuoy");
+		expect(out.text.slice(out.start)).toMatch(/^## \n/);
+	});
+
+	it("keeps paragraphs apart when one is moved next to another", () => {
+		const md = "One\n\nTwo\n\nThree";
+		const root = parser.parse(md, "f.md").root;
+		const out = moveSiblings(md, [root.children[2]!], root.children[1]!);
+		expect(parser.parse(out.text, "f.md").root.children.map((n) => n.content)).toEqual(["One", "Three", "Two"]);
+	});
+
+	it("separates the lines a cut leaves behind and a block inserted between prose", () => {
+		expect(cutBlock("Above\n\n- gone\n\nBelow", { start: 7, end: 13 })).toBe("Above\n\nBelow");
+		expect(insertBlock("Above\nBelow", 6, "## New")).toBe("Above\n\n## New\n\nBelow");
 	});
 });

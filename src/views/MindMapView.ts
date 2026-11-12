@@ -22,6 +22,7 @@ import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { groupDisplayMarkdown } from "../line-groups";
 import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pasteMigrates, spendCut, stylePasteOverrides, type ClipboardItem } from "../node-clipboard";
 import { codeFitLimitPx } from "../code-fit";
 import { planStyleKeys } from "../mindmap-style-key";
@@ -8842,7 +8843,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			return `\u2022 ${node.content}`;
 		}
-		return node.content;
+		// A line group (T75) shows all its lines: a cover image above its title.
+		return groupDisplayMarkdown(node);
 	}
 
 	/** YouTube / video URL patterns → embed URL extractors */

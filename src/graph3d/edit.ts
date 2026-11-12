@@ -253,9 +253,12 @@ export function stampInsertion(node: OsmosisNode, id: string): Insertion {
 /** Where link text goes on `node`'s line: at its end, before a trailing block ID. Null for a line that cannot take one (several lines, an embed). */
 export function appendInsertion(content: string, node: OsmosisNode, text: string): Insertion | null {
 	if (MULTILINE_TYPES.has(node.type) || node.type === "transclusion" || node.type === "root") return null;
-	const line = content.slice(node.range.start, node.range.end);
+	// A line group (T75) takes it on its last line, where its block ID is.
+	const span = content.slice(node.range.start, node.range.end);
+	const lastLine = span.lastIndexOf("\n") + 1;
+	const line = span.slice(lastLine);
 	const head = extractTrailingBlockId(line)?.stripped ?? line.trimEnd();
-	return { offset: node.range.start + head.length, text: ` ${text}` };
+	return { offset: node.range.start + lastLine + head.length, text: ` ${text}` };
 }
 
 /** `content` with every insertion made, each at its offset in the original text (later offsets first). */

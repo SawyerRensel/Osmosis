@@ -365,11 +365,8 @@ describe("planStructural", () => {
 		expect(heading.node).toMatchObject({ type: "heading", depth: 2, content: "" });
 	});
 
-	// T75 Phase 3: this edit leaves two groupable lines adjacent, which now
-	// parse as one node; the 3D edit ops relied on the write-time normalizer
-	// to separate them. Phase 3 makes the op insert the blank line itself.
-	// Flip back to it() then.
-	it.fails("siblingBefore selects a new empty line directly above the line, at its level", () => {
+	// T75: the op puts in the blank line that keeps two nodes from merging into one line group.
+	it("siblingBefore selects a new empty line directly above the line, at its level", () => {
 		const bullet = run("siblingBefore", "Stern line")!;
 		expect(bullet.plan.fresh).toBe(true);
 		expect(bullet.node).toMatchObject({ type: "bullet", depth: 0, content: "" });
@@ -438,11 +435,8 @@ describe("planStructural", () => {
 		expect(top.text).toBe("");
 	});
 
-	// T75 Phase 3: this edit leaves two groupable lines adjacent, which now
-	// parse as one node; the 3D edit ops relied on the write-time normalizer
-	// to separate them. Phase 3 makes the op insert the blank line itself.
-	// Flip back to it() then.
-	it.fails("up, down, indent and outdent keep the line selected where it went", () => {
+	// T75: the op puts in the blank line that keeps two nodes from merging into one line group.
+	it("up, down, indent and outdent keep the line selected where it went", () => {
 		const down = run("down", "Bow line")!;
 		expect(down.node?.content).toBe("Bow line");
 		expect(down.root.children[0]!.children[0]!.children.map((c) => c.content)).toEqual(["Stern line", "Bow line"]);

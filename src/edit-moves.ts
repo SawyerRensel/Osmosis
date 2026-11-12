@@ -130,7 +130,7 @@ export async function moveAcrossFiles(
 			);
 		}
 		const block = parts.join("\n");
-		const spliced = edit.insertAt(destText, site.offset, block).text;
+		const spliced = edit.insertBlock(destText, site.offset, block);
 
 		try {
 			await ctx.write(destFile, spliced);
@@ -145,7 +145,7 @@ export async function moveAcrossFiles(
 			const span = edit.subtreeSpan(originNodes);
 			await ctx.write(
 				originFile,
-				edit.removeSpan(originText, edit.widenRemoval(originText, span)),
+				edit.cutBlock(originText, span),
 			);
 		} catch {
 			new Notice(

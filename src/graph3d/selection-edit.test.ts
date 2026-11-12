@@ -91,11 +91,8 @@ describe("planSelectionMove", () => {
 		expect(planSelectionMove(notes, pick(notes, "Deck.md", "Halyard", "Winch"), { path: "Deck.md", node: line(notes, "Deck.md", "Winch") }, "after")).toBe("inside");
 	});
 
-	// T75 Phase 3: this edit leaves two groupable lines adjacent, which now
-	// parse as one node; the 3D edit ops relied on the write-time normalizer
-	// to separate them. Phase 3 makes the op insert the blank line itself.
-	// Flip back to it() then.
-	it.fails("moves headings and a list line to the end of a note, the list line inside the last section", () => {
+	// T75: the splice puts in the blank line that keeps two nodes from merging into one line group.
+	it("moves headings and a list line to the end of a note, the list line inside the last section", () => {
 		const text = "# One\n\n- a\n\n# Two\n\n- b\n\n# Three\n\n- c\n";
 		const notes = notesOf({ "N.md": text });
 		const plan = planSelectionMove(notes, pick(notes, "N.md", "One", "b"), { path: "N.md", node: null }, "end");

@@ -10,6 +10,7 @@
 
 import { dropContext, inferIndentDepth, inferIndentType, inferRootHeadingLevel, insertAt, outdentContext, reindentSubtree, removeSpan, resolveInsertSite, subtreeEnd, widenRemoval } from "../mindmap-edit";
 import type { OsmosisNode } from "../types";
+import { separateRuns } from "../line-groups";
 import { ancestorsOf, appendInsertion, insertAll, linkSubpath, moveGap, preorder, stampInsertion, type Insertion, type MovePlace } from "./edit";
 import { topmostLines } from "./selection";
 import { LINK_LABEL } from "./links";
@@ -86,6 +87,15 @@ function splice(content: string, removed: readonly OsmosisNode[], replaced: read
 		return offset - shift;
 	};
 	let text = [...cuts].reverse().reduce((out, cut) => removeSpan(out, cut), content);
+	// Where the splice joins lines that were not adjacent (T75): the lines a cut
+	// leaves face to face, and either side of each insertion. Kept in step with
+	// the text so `separateRuns` can keep them from merging into one line group.
+	let removedSoFar = 0;
+	let seams = cuts.map((cut) => {
+		const at = cut.start - removedSoFar;
+		removedSoFar += cut.end - cut.start;
+		return at;
+	});
 	// Last first: each insertion lands before the ones already made at its offset, so at one offset they go in reverse.
 	const order = inserted.map((edit, i) => ({ at: mapped(edit.offset), text: edit.text, level: edit.level, i })).sort((a, b) => b.at - a.at || a.level - b.level || b.i - a.i);
 	const starts: number[] = inserted.map(() => 0);
@@ -93,13 +103,17 @@ function splice(content: string, removed: readonly OsmosisNode[], replaced: read
 		const prefix = edit.at > 0 && text[edit.at - 1] !== "\n" ? 1 : 0;
 		const result = insertAt(text, edit.at, edit.text);
 		text = result.text;
+		seams = seams.map((seam) => (seam >= edit.at ? seam + result.shift : seam));
+		seams.push(edit.at + prefix, edit.at + prefix + edit.text.length + 1);
 		// Every insertion made so far is at or after this one.
 		for (let j = 0; j < k; j++) starts[order[j]!.i] = starts[order[j]!.i]! + result.shift;
 		starts[edit.i] = edit.at + prefix;
 	});
+	const separated = separateRuns(text, seams);
+	text = separated.text;
 	// A cut that reached the end of the note took its last newline.
 	if (content.endsWith("\n") && !text.endsWith("\n")) text += "\n";
-	return { text, starts };
+	return { text, starts: starts.map(separated.at) };
 }
 
 /** A note's line text with its subtree, verbatim. */

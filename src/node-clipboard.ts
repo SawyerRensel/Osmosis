@@ -1,6 +1,6 @@
 import type { NodeStyle } from "./styles";
 import type { OsmosisNode } from "./types";
-import { collectBlockIds, childInsertOffset, inferChildContext, insertAt, reindentSubtree, stripBlockIds } from "./mindmap-edit";
+import { collectBlockIds, childInsertOffset, inferChildContext, insertBlock, reindentSubtree, stripBlockIds } from "./mindmap-edit";
 
 /**
  * One copied subtree: its source text, plus enough of the original node for
@@ -93,7 +93,7 @@ export function pasteInto(content: string, target: OsmosisNode): string {
 		.join("\n");
 	// Text from outside Osmosis (no source path) pastes exactly as it came.
 	if (nodeClipboard.sourcePath !== null && !nodeClipboard.isCut) text = stripBlockIds(text);
-	return insertAt(content, at, text).text;
+	return insertBlock(content, at, text);
 }
 
 /** A cut that lands in another note than it left carries its block IDs' review history with it. */

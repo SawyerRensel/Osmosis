@@ -104,3 +104,50 @@ export function groupDisplayMarkdown(node: OsmosisNode): string {
 	const blocks = [lines.slice(0, at).join("\n"), node.content, lines.slice(at + 1).join("\n")];
 	return blocks.filter((block) => block.trim() !== "").join("\n\n");
 }
+
+/** The result of {@link separateRuns}: the new text, and where an old offset landed in it. */
+export interface Separated {
+	text: string;
+	/** An offset in the text passed in, mapped into `text`. A blank line added at an offset lands before it. */
+	at: (offset: number) => number;
+}
+
+/**
+ * Keep a structural edit from gluing two nodes into one line group.
+ *
+ * `seams` are offsets in `text` where an edit joined bytes that were not
+ * adjacent before — the start of a spliced-in block, the line after it, the
+ * place a block was cut out of. At each seam that starts a line, a blank line
+ * goes in when the line before it and the line at it are both groupable, since
+ * the parser would otherwise read them as one node. Edit ops used to leave this
+ * to `normalizeBlockSpacing`, which no longer splits runs (a user's run must
+ * survive every write).
+ *
+ * Only a seam line at column 0 is separated: in Osmosis's parser a blank line
+ * ends a list, so a blank between two indented lines (a list item's
+ * continuation paragraphs) would pop the second out of its item. Two indented
+ * lines brought together by an edit stay one group.
+ */
+export function separateRuns(text: string, seams: readonly number[]): Separated {
+	const lineAt = (offset: number): string => {
+		const end = text.indexOf("\n", offset);
+		return text.slice(offset, end === -1 ? text.length : end);
+	};
+	const added = [...new Set(seams)]
+		.filter((seam) => {
+			if (seam <= 0 || seam >= text.length || text[seam - 1] !== "\n") return false;
+			const line = lineAt(seam);
+			if (/^[\t ]/.test(line) || !isGroupableLine(line)) return false;
+			const prevStart = text.lastIndexOf("\n", seam - 2) + 1;
+			return isGroupableLine(text.slice(prevStart, seam - 1));
+		})
+		.sort((a, b) => a - b);
+	let out = text;
+	for (let i = added.length - 1; i >= 0; i--) {
+		out = out.slice(0, added[i]) + "\n" + out.slice(added[i]);
+	}
+	return {
+		text: out,
+		at: (offset) => offset + added.filter((seam) => seam <= offset).length,
+	};
+}

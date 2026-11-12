@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { groupDisplayMarkdown, isGroupableLine, isLineGroup, isMediaEmbed } from "./line-groups";
+import { groupDisplayMarkdown, isGroupableLine, isLineGroup, isMediaEmbed, separateRuns } from "./line-groups";
 import { OsmosisParser } from "./parser";
 
 const parser = new OsmosisParser();
@@ -40,5 +40,32 @@ describe("groupDisplayMarkdown", () => {
 		expect(groupDisplayMarkdown(root.children[0]!)).toBe("one\ntwo");
 		expect(isLineGroup(root.children[1]!)).toBe(false);
 		expect(groupDisplayMarkdown(root.children[1]!)).toBe("Solo");
+	});
+});
+
+describe("separateRuns", () => {
+	it("puts a blank line at a seam between two groupable lines", () => {
+		const text = "Intro.\n## Fuel\n- Diesel";
+		const out = separateRuns(text, [7]);
+		expect(out.text).toBe("Intro.\n\n## Fuel\n- Diesel");
+		expect(out.at(7)).toBe(8);
+		expect(out.at(3)).toBe(3);
+	});
+
+	it("leaves a seam next to a breaker, a blank line or mid-line alone", () => {
+		const text = "- item\n## A\n\n## B\npara";
+		expect(separateRuns(text, [7, 13, 3, 0, text.length]).text).toBe(text);
+	});
+
+	it("does not separate an indented line (a blank would end its list)", () => {
+		const text = "- a\n\tp1\n\tp2";
+		expect(separateRuns(text, [8]).text).toBe(text);
+	});
+
+	it("handles several seams, mapping offsets past each", () => {
+		const text = "A\nB\nC";
+		const out = separateRuns(text, [4, 2, 2]);
+		expect(out.text).toBe("A\n\nB\n\nC");
+		expect(out.at(4)).toBe(6);
 	});
 });
