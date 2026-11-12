@@ -339,9 +339,18 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
-	/** The ⋯ menu: Style, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
+	/** Open the find bar from the ⋯ menu, as Ctrl+F does. Deferred a tick so the closing menu doesn't take the focus back (a phone's can). */
+	private openFind(focus: "query" | "replace"): void {
+		window.setTimeout(() => {
+			if (!this.editor.isOpen) this.findBar?.open(focus);
+		}, 0);
+	}
+
+	/** The ⋯ menu: Find, Replace, Style, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "3d", {
+			find: { onClick: () => this.openFind("query") },
+			replace: { onClick: () => this.openFind("replace") },
 			style: { onClick: () => void this.plugin().activatePropertiesSidebar() },
 			follow: { onClick: () => this.toggleFollow(), checked: this.follow },
 			...(hasTouch() ? { sticks: { onClick: () => this.toggleSticks(), checked: this.sticksShown } } : {}),

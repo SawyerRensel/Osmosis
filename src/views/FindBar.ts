@@ -83,13 +83,14 @@ export class FindBar {
 		return target instanceof Node && this.el.contains(target);
 	}
 
-	/** Show the bar with the query selected, and mark the matches. */
-	open(): void {
+	/** Show the bar with the query selected (or, for `"replace"`, the Replace box), and mark the matches. */
+	open(focus: "query" | "replace" = "query"): void {
 		this.attach();
 		this.shown = true;
 		this.el.show();
-		this.queryEl.focus();
-		this.queryEl.select();
+		const box = focus === "replace" ? this.replaceEl : this.queryEl;
+		box.focus();
+		box.select();
 		this.refresh();
 	}
 

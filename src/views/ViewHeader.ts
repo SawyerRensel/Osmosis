@@ -46,13 +46,17 @@ export interface PaneMenuHandler {
 }
 
 /**
- * Add the view's entries (`PANE_MENU`) to the ⋯ pane menu, then a separator, so
- * they stand ahead of Obsidian's own. Call it from `onPaneMenu` before `super`.
+ * Add the view's entries (`PANE_MENU`) to the ⋯ pane menu, a separator between
+ * groups and one at the end, so they stand ahead of Obsidian's own. Call it from
+ * `onPaneMenu` before `super`.
  */
 export function addPaneMenuItems(menu: Menu, kind: HeaderView, handlers: Partial<Record<PaneMenuId, PaneMenuHandler>>): void {
+	let group: number | null = null;
 	for (const entry of PANE_MENU[kind]) {
 		const handler = handlers[entry.id];
 		if (!handler) continue;
+		if (group !== null && group !== entry.group) menu.addSeparator();
+		group = entry.group;
 		menu.addItem((item) => {
 			item.setTitle(entry.title).setIcon(handler.icon ?? entry.icon).onClick(handler.onClick);
 			if (entry.toggle) item.setChecked(handler.checked === true);

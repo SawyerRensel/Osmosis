@@ -603,9 +603,18 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
-	/** The ⋯ menu: Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
+	/** Open the find bar from the ⋯ menu, as Ctrl+F does. Deferred a tick so the closing menu doesn't take the focus back (a phone's can). */
+	private openFind(focus: "query" | "replace"): void {
+		window.setTimeout(() => {
+			if (!this.editingNodeId) this.findBar?.open(focus);
+		}, 0);
+	}
+
+	/** The ⋯ menu: Find, Replace, Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "2d", {
+			find: { onClick: () => this.openFind("query") },
+			replace: { onClick: () => this.openFind("replace") },
 			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
 			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
 			peek: { onClick: () => this.toggleSpatialPeek(), checked: this.spatialMode === "peek", icon: peekIcon() },
