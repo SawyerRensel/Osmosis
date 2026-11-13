@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Perf - Full frame timing readout in 3D and 2D]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T18:30:00.000Z"
-date_modified: "2026-11-12T18:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-13T00:30:00.000Z"
+date_start_scheduled: "2026-11-12T23:54:47.000Z"
+date_start_actual: "2026-11-12T23:54:47.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -83,3 +83,47 @@ Keep it under ~130k tokens. `MindMapView.ts` by range only: cull ~3290–3430, `
 
 ## Test plan (Sawyer)
 Open "Perf 10k" in 2D with the gauge on. Pan fast, pinch or wheel zoom, and fold and unfold a big branch. Then check a normal note for regressions: rendering, links, images, code and callouts, fold, and selection.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `450102f` on `fix/mindmap-large-pan-zoom` (stacked on T78). This is a first slice: the costs I could find and bound without seeing Obsidian. The pan/zoom paint path is unchanged (see "Not done").
+
+### What the code did (read from code unless marked)
+- **Opening measured every node with its own forced layout.** `measureNodeSizes` rendered a cell, read its size (Range rect, and a second `getBoundingClientRect` for wrapped nodes), then rendered the next one. Each read after a DOM write forces a layout: about 4,136 to 8,000 forced layouts when Perf 10k opens. Measuring is **already cached by content** (`nodeSizeCache`), so later render passes (fold, edit) only measure new or changed text. T76's note that it "renders every node on every pass" is wrong.
+- **The first frame drew the wrong viewport.** `renderSvg` drew the container's top-left at zoom 1, then `fitToView` moved to the fitted view and a cull pass drew it again. **Measured** (vitest, `src/mindmap-cull.test.ts`, default node sizes): on Perf 10k at 1600×1000 the old first pass drew 32 nodes and the fit threw away all 32. The fit is clamped to MIN_ZOOM 0.1 (map 2,369 × 135,424), so **320 of 4,135 nodes are in view at open**. On Perf 3k at 390×760: 246 of 1,237.
+- **Panning at fit zoom brings in up to 16 nodes per frame** (**measured**, same bench, 40 px/frame pan; 3 at zoom 1). The first time each is drawn it is a `MarkdownRenderer` call, all started in one frame.
+- **Each node leaving the view ran its own `querySelectorAll`** over the whole node group, and the same for branches.
+
+### The fix
+1. `measureNodeSizes`: render all uncached cells, then read all natural widths, then narrow the cells that need it, then read their heights. That is 2 forced layouts instead of one or two per node. The sizes are the same: a cell's box does not depend on its siblings, and the cells already stayed in the measurer until the end.
+2. First render: `renderSvg` starts from `fitViewBox(...)`, the same fit `fitToView` applies right after. The first pass draws the fitted view, and the `fitToView` call that follows is a no-op cull.
+3. Cull pass: the leaving nodes and branches are removed in one walk of each group. Entering nodes are drawn in this order: edited, selected or strictly on screen first, then the 200 px margin. Drawing stops after **8 ms** (`CULL_DRAW_BUDGET_MS`). The rest stay out of `renderedNodeIds`, and a follow-up pass is scheduled for the next frame. Each pass always draws at least one node.
+
+### Decisions worth remembering
+- **8 ms budget**: about half a 60 fps frame, which leaves the rest for style, layout and paint. It only limits passes that are drawing a lot (uncached nodes at low zoom). Warm-cache draws are clones and fit easily.
+- **Branch lines are not time-boxed.** They are plain paths and cheap. A branch can appear one frame before its node.
+- **Draw order across a pass changed.** Nodes on screen are appended before margin nodes. Before this, async draws already landed out of layout order, and tree nodes don't overlap, so this should not show.
+- **No CSS `contain`, no LOD, no transform-pan for desktop.** `contain: paint` would clip anything that overflows a node box (the rating bubble lives in the foreignObject). Switching desktop to transform pan needs `will-change` to be compositor-only, and Chromium does not re-raster a `will-change: transform` layer on zoom, so text would go soft. That breaks Sawyer's "crisp at all times" rule. Both need gauge numbers first.
+- Chromium and WebKit align wheel/pointer events to rAF, so the one `getScreenCTM` read per wheel zoom does not cause repeated forced layouts. Left alone.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/mindmap-cull.ts` | New: `rectInView`, `fitViewBox`, `drawWithinBudget` (pure) |
+| `src/mindmap-cull.test.ts` | New: 9 unit tests, plus the Perf 10k / 3k cull-workload report |
+| `src/views/MindMapView.ts` | `fitToView` and the first-render viewBox use `fitViewBox`. `isNodeInViewport` takes a margin. `updateVisibleNodes`: one-walk removal, time-boxed draws, follow-up pass. `measureNodeSizes`: batched reads |
+
+### Fixture
+`vault/tests/perf/Perf 10k.md` and `Perf 3k.md` (run `node e2e/generate-perf-notes.mjs`). For regressions, use any normal note with links, images, code, callouts, tables, transclusions and checkboxes.
+
+### Retest (desktop and phone)
+1. Reload Obsidian (Ctrl+R). Open `tests/perf/Perf 10k` in the Mind Map with the gauge on. Note how long it takes until nodes show, and the `render (measure …, layout …)` line. Measure should be much lower than before this commit.
+2. The map opens fitted, as before, with no jump from top-left to fitted. Pan fast at the opening zoom: record `fps`, `frame avg/worst`, `cull: … avg (max)`. `cull max` should stay near or under ~10 ms. `drawn` may lag `in DOM` by a few nodes for a frame. Nodes may appear one frame late at the edges, but never stay missing.
+3. Ctrl+wheel zoom in and out, then fold and unfold a big H1 branch: record the same lines.
+4. Phone: repeat on `tests/perf/Perf 3k` (pinch, fling).
+5. Regression: on a normal note, check that node sizes look the same as before (no clipped or over-wide nodes, especially code blocks, tables, images, checkboxes and drag-resized nodes), plus links, callouts, transclusions, fold, selection, rubber-band, editing, find, styles/boundaries, reading mode, study modes with the rating bubble, and iOS pan.
+
+### Not done / not verified
+- None of the frame numbers are measured in Obsidian. I could not see it. The "before" numbers need Sawyer's gauge on the T78 build.
+- **If panning at the fitted zoom is still slow**, the next suspect (read from code) is paint: about 320 foreignObjects are repainted on every viewBox change, and relaid out on every zoom step. Options then: a zoomed-out LOD, which is a visual change and needs Sawyer's OK, or transform pan with a re-raster on zoom end. The second conflicts with the crisp rule.
+- The measure cells and the drawn nodes still each run `MarkdownRenderer` once per node. Seeding `nodeHtmlCache` from the measure cells would halve the opening render, but the two paths differ (XHTML namespace, code language label, live video embeds), so I left it.
