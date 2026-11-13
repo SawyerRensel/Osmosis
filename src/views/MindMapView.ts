@@ -62,6 +62,7 @@ import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
+import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
 import {
 	KEEP_VISIBLE_PX,
 	MAX_FRAME_MS,
@@ -148,6 +149,9 @@ const PINCH_PAN_SLOP = 16; // px the pinch centre may wander before it also pans
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
+// Time one cull pass may spend starting draws of nodes that entered the view;
+// the rest wait for the next frame (see `updateVisibleNodes`).
+const CULL_DRAW_BUDGET_MS = 8;
 
 /** A viewport saved by `getEphemeralState`, as history hands it back. */
 interface SavedViewport {
@@ -3266,18 +3270,13 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const contentHeight = bounds.height + LAYOUT_PADDING * 2;
 
 		const containerRect = this.contentEl.getBoundingClientRect();
-		const cw = containerRect.width || contentWidth;
-		const ch = containerRect.height || contentHeight;
-
-		const zoom = Math.min(cw / contentWidth, ch / contentHeight, MAX_ZOOM);
-		this.zoom = Math.max(MIN_ZOOM, zoom);
-
-		const scaledW = cw / this.zoom;
-		const scaledH = ch / this.zoom;
-		this.viewBox.x = (contentWidth - scaledW) / 2;
-		this.viewBox.y = (contentHeight - scaledH) / 2;
-		this.viewBox.w = scaledW;
-		this.viewBox.h = scaledH;
+		const fit = fitViewBox(
+			contentWidth, contentHeight,
+			containerRect.width, containerRect.height,
+			MIN_ZOOM, MAX_ZOOM,
+		);
+		this.zoom = fit.zoom;
+		Object.assign(this.viewBox, fit.viewBox);
 		this.updateViewBox();
 	}
 
@@ -3321,23 +3320,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.updateViewBox();
 	}
 
-	/** Check if a node (in SVG coords with offset applied) intersects the expanded viewport */
+	/** Check if a node (in SVG coords with offset applied) intersects the viewport grown by `margin` */
 	private isNodeInViewport(
 		node: LayoutNode,
 		offsetX: number,
 		offsetY: number,
+		margin = CULL_MARGIN,
 	): boolean {
-		const nx = node.rect.x + offsetX;
-		const ny = node.rect.y + offsetY;
-		const nw = node.rect.width;
-		const nh = node.rect.height;
-
-		const vx = this.viewBox.x - CULL_MARGIN;
-		const vy = this.viewBox.y - CULL_MARGIN;
-		const vw = this.viewBox.w + CULL_MARGIN * 2;
-		const vh = this.viewBox.h + CULL_MARGIN * 2;
-
-		return nx + nw > vx && nx < vx + vw && ny + nh > vy && ny < vy + vh;
+		const { x, y, width, height } = node.rect;
+		return rectInView(x + offsetX, y + offsetY, width, height, this.viewBox, margin);
 	}
 
 	/** Check if a branch line (between parent and child) intersects the expanded viewport */
@@ -3484,33 +3475,52 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// edited). Every match, not the first: one node id can have acquired
 		// more than one group from overlapping passes (see `runCullUpdate`), and
 		// leaving the extras behind is what let them accumulate.
+		// One walk of the group for all of them: a selector query per leaving
+		// id rescanned every drawn node each time.
+		const leaving = new Set<string>();
 		for (const id of this.renderedNodeIds) {
-			if (!nowVisible.has(id) && id !== this.editingNodeId) {
-				nodesGroup
-					.querySelectorAll(`.osmosis-node-group[data-node-id="${id}"]`)
-					.forEach((el) => { el.remove(); });
-			}
+			if (!nowVisible.has(id) && id !== this.editingNodeId) leaving.add(id);
+		}
+		if (leaving.size > 0) {
+			nodesGroup.querySelectorAll(".osmosis-node-group").forEach((el) => {
+				const id = el.getAttribute("data-node-id");
+				if (id !== null && leaving.has(id)) el.remove();
+			});
 		}
 
 		// Remove branch lines that left the viewport. A tapered *and* patterned
 		// branch is two paths under the one child id, so take every match.
+		const leavingBranches = new Set<string>();
 		for (const id of this.renderedBranchIds) {
-			if (!nowVisibleBranches.has(id)) {
-				this.branchLinesGroup
-					.querySelectorAll(`.osmosis-branch-line[data-child-id="${id}"]`)
-					.forEach((line) => { line.remove(); });
-			}
+			if (!nowVisibleBranches.has(id)) leavingBranches.add(id);
+		}
+		if (leavingBranches.size > 0) {
+			this.branchLinesGroup.querySelectorAll(".osmosis-branch-line").forEach((line) => {
+				const id = line.getAttribute("data-child-id");
+				if (id !== null && leavingBranches.has(id)) line.remove();
+			});
 		}
 
-		// Add nodes and branches that entered the viewport
-		const renderPromises: Promise<void>[] = [];
+		// Add nodes and branches that entered the viewport. Node draws are
+		// time-boxed: a fast pan over a large map brings in dozens of nodes a
+		// frame, each a `MarkdownRenderer` call the first time, so the ones
+		// already on screen (and the selected/edited ones) go first and
+		// whatever is left after the budget waits for the next frame's pass.
+		const urgent: LayoutNode[] = [];
+		const ahead: LayoutNode[] = [];
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
 			const id = node.source.id;
 			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
-				renderPromises.push(
-					this.drawNode(nodesGroup, node, offsetX, offsetY),
-				);
+				if (
+					id === this.editingNodeId ||
+					this.selectedNodeIds.has(id) ||
+					this.isNodeInViewport(node, offsetX, offsetY, 0)
+				) {
+					urgent.push(node);
+				} else {
+					ahead.push(node);
+				}
 			}
 			if (
 				node.parent &&
@@ -3527,6 +3537,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				);
 			}
 		}
+		const renderPromises: Promise<void>[] = [];
+		const deferred = drawWithinBudget(
+			urgent, ahead, CULL_DRAW_BUDGET_MS, () => performance.now(),
+			(node) => { renderPromises.push(this.drawNode(nodesGroup, node, offsetX, offsetY)); },
+		);
 		await Promise.all(renderPromises);
 
 		// A full render pass can land while the draws above are awaiting: it
@@ -3541,8 +3556,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Re-apply spatial study state to newly rendered nodes
 		this.applySpatialState();
 
+		// Deferred nodes are not drawn, so they stay out of the set and the
+		// next frame's pass picks them up.
+		for (const node of deferred) nowVisible.delete(node.source.id);
 		this.renderedNodeIds = nowVisible;
 		this.renderedBranchIds = nowVisibleBranches;
+		if (deferred.length > 0) this.scheduleCullUpdate();
 	}
 
 	private screenToSvg(
@@ -8666,7 +8685,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			`;
 			container.appendChild(measurer);
 
-			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
+			// Render every cell first, then read them all: interleaving each
+			// render with its own size read forced one layout per node, which
+			// on a note with thousands of nodes is most of the opening time.
+			// Sizes do not change: a cell's own box does not depend on its
+			// siblings. The reads come in two rounds, natural widths and then
+			// the wrapped heights of the cells narrowed in between.
+			const cells: HTMLDivElement[] = [];
+			for (const { node, displayContent } of toMeasure) {
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = createDiv();
@@ -8724,12 +8750,23 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 						cell.insertBefore(cb, cell.firstChild);
 					}
 				}
+				cells.push(cell);
+			}
 
-				// Use Range to get tight bounding box of actual rendered content
+			// Use Range to get tight bounding box of actual rendered content
+			const contentRects = cells.map((cell) => {
 				const range = document.createRange();
 				range.selectNodeContents(cell);
-				const contentRect = range.getBoundingClientRect();
+				return range.getBoundingClientRect();
+			});
+
+			// Widths, and the cells that must be narrowed and read again.
+			const results: { width: number; height: number | null }[] = [];
+			toMeasure.forEach(({ node, displayContent, customWidth }, i) => {
+				const cell = cells[i]!;
+				const contentRect = contentRects[i]!;
 				const naturalWidth = contentRect.width;
+				const osmosisCard = this.getOsmosisCardContent(node);
 
 				// Compute per-node content max width based on effective shape
 				const nodeShape = nodeShapes?.get(node.id) ?? globalShape;
@@ -8745,19 +8782,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 					contentMaxWidth = codeFitLimitPx(naturalWidth, displayContent, CODE_BLOCK_PAD_PX);
 				}
 
-				let finalWidth: number;
-				let finalHeight: number;
-
 				if (customWidth !== undefined) {
 					// Custom width set via drag-to-resize: use it directly
-					finalWidth = customWidth;
 					cell.setCssStyles({ width: `${String(customWidth)}px` });
-					finalHeight = Math.max(
-						Math.ceil(cell.getBoundingClientRect().height),
-						20,
-					);
+					results.push({ width: customWidth, height: null });
 				} else {
-					finalWidth = Math.min(
+					const finalWidth = Math.min(
 						Math.max(Math.ceil(naturalWidth), 40),
 						contentMaxWidth,
 					);
@@ -8767,19 +8797,25 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 						cell.setCssStyles({
 							width: `${String(contentMaxWidth)}px`,
 						});
-						finalHeight = Math.max(
-							Math.ceil(cell.getBoundingClientRect().height),
-							20,
-						);
+						results.push({ width: finalWidth, height: null });
 					} else {
-						finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+						results.push({
+							width: finalWidth,
+							height: Math.max(Math.ceil(contentRect.height), 20),
+						});
 					}
 				}
+			});
 
-				const size = { width: finalWidth, height: finalHeight };
+			toMeasure.forEach(({ node, cacheKey }, i) => {
+				const { width, height } = results[i]!;
+				const size = {
+					width,
+					height: height ?? Math.max(Math.ceil(cells[i]!.getBoundingClientRect().height), 20),
+				};
 				sizes.set(node.id, size);
 				this.nodeSizeCache.set(cacheKey, size);
-			}
+			});
 
 			measurer.remove();
 		}
@@ -8950,14 +8986,19 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		svg.addClass("osmosis-mindmap-svg");
 		if (this.panByTransform) svg.addClass("osmosis-mindmap-svg-transformed");
 
-		// Initialize viewBox: use actual container dimensions so culling works from the start.
-		// The user sees the top-left portion of the map; pan/zoom to explore.
+		// Initialize viewBox on first render to the fit `renderPass` applies
+		// right after (`fitToView`), so the nodes drawn below are the ones the
+		// first frame shows. Drawing the container's top-left at zoom 1 instead
+		// rendered a viewport the fit then culled straight away.
 		if (!this.svg) {
 			const containerRect = container.getBoundingClientRect();
-			const w = containerRect.width || contentWidth;
-			const h = containerRect.height || contentHeight;
-			this.viewBox = { x: 0, y: 0, w, h };
-			this.zoom = 1;
+			const fit = fitViewBox(
+				contentWidth, contentHeight,
+				containerRect.width, containerRect.height,
+				MIN_ZOOM, MAX_ZOOM,
+			);
+			this.viewBox = fit.viewBox;
+			this.zoom = fit.zoom;
 		}
 
 		// On the transform path the SVG carries no viewBox at all: without one,
