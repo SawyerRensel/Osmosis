@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Mind Map - 10,000-line notes pan and zoom at 60 fps]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-12T18:30:00.000Z"
-date_modified: "2026-11-12T18:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-13T00:10:53.000Z"
+date_start_scheduled: "2026-11-12T23:20:00.000Z"
+date_start_actual: "2026-11-12T23:20:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -82,3 +82,62 @@ On "Perf 10k":
 2. Move a branch with Alt+arrows, delete a node, then undo and redo.
 3. Watch the gauge's "last edit" time.
 4. Then repeat the usual edits on a normal note to check for regressions.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit `7813cba` on `fix/mindmap-large-edit` (stacked on T79). Note: the "Baseline" section above is the 3D graph's (copied from T77/T78); there is no measured 2D edit baseline yet.
+
+### Cost of one edit commit on Perf 10k (4,136 nodes)
+**Measured** (vitest, `src/edit-commit-bench.test.ts`, median of 5, this machine, rename of a bullet halfway down):
+
+| Stage | ms |
+|---|---|
+| splice (`renameInFile`) | 0.0 |
+| `renumberOrderedLists` + `normalizeBlockSpacing` | 6.8 |
+| content hash | 0.4 |
+| parse | 12.1 |
+| `buildTreePathMap` (x1; the pass calls it up to 3x) | 0.45 |
+| measure pass's per-node cache-key loop (no styles) | 0.9 |
+| `computeLayout` | 5.0–6.4 |
+| **pure total** | **~27** |
+
+A CPU profile of parse + layout + normalise shows no single hot spot (largest: GC 12%, `normalizeBlockSpacing` 11%, `buildTree` 7%, `hash` 6%, `renumberOrderedLists` 6%). An incremental parser would win at most ~12 ms, at real risk to ranges, IDs and line groups.
+
+**Read from code** (not measurable in vitest): two `vault.read` + one `vault.modify` of a 340 KB file (the op's read, `EditPipeline.write`'s `before` read, the write); measuring only the new or changed node (one `MarkdownRenderer` call); then `renderPass` **emptied the container and built a new SVG**: every visible node was re-created (cloned from `nodeHtmlCache`) and the browser re-ran style and layout on every node's Markdown. That is ~31 nodes at zoom 1 and ~304 at the fitted zoom (**measured**, same bench). This browser cost was not timed at all: the gauge stopped at the end of the JS pass.
+
+### The fix: an edit's pass keeps the drawing
+- `render(true)` (only from `writeMarkdown`, `writeTranscludedMarkdown` → `resyncFromParent(true)` and undo/redo's `applySnapshot`) runs `redrawInPlace` instead of `renderSvg`: the live SVG and node group stay. Boundaries and branch lines are redrawn (cheap). For each visible node, `planReuse` (`src/mindmap-reuse.ts`, pure) keeps the existing group when its **draw signature** matches and gives it `transform="translate(dx, dy)"` from where it was first drawn; everything else is drawn exactly as before, off-document, and appended together.
+- **Measured** (bench): after a rename or an Enter on Perf 10k, **30 of 31** visible nodes at zoom 1 and **303 of 304** at the fitted zoom keep their group (node IDs and sizes are stable across the edit). Only the edited/new node is drawn.
+- Gauge: `last edit commit X ms (before render Y ms) + paint Z ms  kept K/N`. "+ paint" is the time from the end of the pass to the end of the next frame (rAF, then a task), which is where the browser's re-layout landed. Text commits now start the clock at the commit (it used to start when the editor opened, so it included typing time), and undo/redo start it too.
+
+### Decisions worth remembering
+- **Only edit passes keep groups.** Folds, file loads, settings and style writes still rebuild the SVG. Folding uses `.osmosis-animating` (`transition: transform`): a kept group's new translate would animate. In-place is also refused while a study session runs (it rewrites groups in place; `applySpatialState` drops every record), while the node editor is open, or during a drag.
+- **What counts as "would draw the same"** (`drawSignature`): group classes, id, type, depth, source file, content, display content, cyclic, resolved style (LCVRT), map/theme shape, width, height, has-toggle, collapsed, side, direction. Also: the group's class attribute is unchanged since drawing, its `foreignObject` has no class (e.g. `osmosis-fo-hidden`), and `nodeHtmlCache` still holds the same entry it was cloned from (a cache clear invalidates every group).
+- **Only cache clones are kept.** A group drawn by a fresh `MarkdownRenderer` call belongs to the old render `Component`, which the next pass unloads; it is redrawn once as a clone and kept from then on. Checkbox nodes are never kept (their click handler and checked state are bound at draw time).
+- **Cull passes now draw into a staging group** and commit only if no full pass replaced the layout since they started (`drawGeneration`). With the node group kept, the old `nodesGroup !== nodesGroup` check could no longer detect an overtaking pass.
+- **Kept groups are not re-ordered** (moving a node in the DOM would make the browser lay it out again). New nodes are appended after them. Tree nodes don't overlap, so this is invisible.
+- **No incremental parser.** Parse is ~12 ms of a ~27 ms pure path, below the 50 ms target on desktop. Not worth the risk to ranges, IDs and line groups without a gauge reading that says otherwise.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/mindmap-reuse.ts` | New: `planReuse`, `translateAttr` (pure) |
+| `src/mindmap-reuse.test.ts` | New: 6 tests |
+| `src/edit-commit-bench.test.ts` | New: per-stage edit commit timings and the kept-group count on Perf 10k (reported) |
+| `src/views/MindMapView.ts` | `render(keepDrawn)`/`renderPass(keepDrawn)`; `canRedrawInPlace`, `redrawInPlace`; `nodeGroupClass` (extracted from `drawNode`), `drawSignature`, `drawRecords`; `drawNode` records cache-cloned groups; `drawGeneration`; cull pass draws into a staging group; edit writes and undo render with `true`; gauge `editStarted` in `renameNode` and `forwardUndoRedo` |
+| `src/views/MindMapPerf.ts` | Edit commit split (before render, + paint) and `kept K/N` |
+
+### Fixture
+`vault/tests/perf/Perf 10k.md` and `Perf 3k.md` (gitignored; run `node e2e/generate-perf-notes.mjs`, then reload Obsidian). For regressions, any normal note with links, images, code, callouts, tables, transclusions, checkboxes, styles and boundaries.
+
+### Retest (desktop and phone)
+1. Reload Obsidian (Ctrl+R). Open `tests/perf/Perf 10k` in the Mind Map, open the gauge. Zoom to a readable level.
+2. Type in a node and commit, then Enter, Tab, Shift+Tab, Shift+Enter, Alt+arrows, Delete, Ctrl+Z, Ctrl+Y. After each, record the `last edit commit … (before render …) + paint …  kept K/N` line. Expect `kept` to be all visible nodes but one or two, and the map to update with no blank frame.
+3. Check after each edit: nodes below the edit line up with their branch lines; selection lands where it did before (select-after-delete, new node selected after Enter); the edited node shows its new text; fold toggles still work on moved nodes; clicking, dragging, rubber-band and double-click-to-edit on a moved node hit the right node.
+4. Fold and unfold a branch: still animates as before (that pass is a full rebuild).
+5. Phone: repeat 2–3 on `tests/perf/Perf 3k`.
+6. Regression on a normal note: checkbox toggling after an edit; a styled node (colour, shape, boundary) next to an edit keeps its style; a find (Ctrl+F) highlight survives an edit; edit a transcluded node; spatial study session start, rate, exit, then edit; reading mode still blocks edits.
+
+### Not verified
+I could not see Obsidian, so: no real edit-commit numbers before or after, how much "+ paint" drops, and the visual checks above. If `before render` dominates on phone, the next step is the pure path (normalise + parse + layout, ~27 ms here), and on iOS the two full-file `vault.read`s per edit.
+
