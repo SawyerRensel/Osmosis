@@ -28,7 +28,8 @@ export class MindMapPerf {
 	private lastRefresh = 0;
 	private lastParse: number | null = null;
 	private lastRender: { measure: number; layout: number; total: number } | null = null;
-	private lastCommit: number | null = null;
+	private lastCommit: { total: number; beforeRender: number; paint: number | null } | null = null;
+	private lastKept: { kept: number; drawn: number } | null = null;
 	/** When the edit in flight began, or 0. */
 	private editAt = 0;
 	private readonly restoreParse: () => void;
@@ -64,14 +65,26 @@ export class MindMapPerf {
 		if (this.gauge.shown) this.editAt = performance.now();
 	}
 
-	/** A full render pass finished; its parts in ms. Closes the edit in flight. */
-	rendered(start: number, measure: number, layout: number): void {
+	/**
+	 * A full render pass finished; its parts in ms, and how many of the nodes it
+	 * left drawn were kept from the pass before (an edit's pass, T80). Closes
+	 * the edit in flight; the time to the next paint is filled in after it.
+	 */
+	rendered(start: number, measure: number, layout: number, kept: number, drawn: number): void {
 		if (start === 0 || !this.gauge.shown) return;
 		const end = performance.now();
 		this.lastRender = { measure, layout, total: end - start };
+		this.lastKept = { kept, drawn };
 		if (this.editAt !== 0) {
-			this.lastCommit = end - this.editAt;
+			const commit = { total: end - this.editAt, beforeRender: start - this.editAt, paint: null as number | null };
+			this.lastCommit = commit;
 			this.editAt = 0;
+			// The frame after the pass runs style, layout and paint for what it
+			// changed; a task queued from its animation-frame callback runs once
+			// that frame is done.
+			window.requestAnimationFrame(() => window.setTimeout(() => {
+				commit.paint = performance.now() - end;
+			}, 0));
 		}
 	}
 
@@ -104,9 +117,17 @@ export class MindMapPerf {
 			`cull: ${this.culls.count} passes/s  avg ${this.culls.avg().toFixed(2)} ms (max ${this.culls.max().toFixed(1)})`,
 			`nodes ${total}  drawn ${drawn}  in DOM ${dom}`,
 			`last parse ${ms(this.lastParse, 2)}  render ${ms(render?.total ?? null)} (measure ${ms(render?.measure ?? null)}, layout ${ms(render?.layout ?? null)})`,
-			`last edit commit ${ms(this.lastCommit)}`,
+			this.commitLine(ms),
 			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimedMs(frameAvg, [cullPerFrame])),
 		].join("\n");
+	}
+
+	private commitLine(ms: (value: number | null, digits?: number) => string): string {
+		const commit = this.lastCommit;
+		const kept = this.lastKept;
+		const keptText = kept === null ? "" : `  kept ${kept.kept}/${kept.drawn}`;
+		if (commit === null) return `last edit commit ${ms(null)}${keptText}`;
+		return `last edit commit ${ms(commit.total)} (before render ${ms(commit.beforeRender)}) + paint ${ms(commit.paint)}${keptText}`;
 	}
 
 	private readonly onToggle = (shown: boolean): void => {

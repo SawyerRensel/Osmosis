@@ -63,6 +63,7 @@ import { createShapeElement, getShapeInsets } from "../shapes";
 import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
+import { planReuse, translateAttr, type DrawnGroup, type WantedNode } from "../mindmap-reuse";
 import {
 	KEEP_VISIBLE_PX,
 	MAX_FRAME_MS,
@@ -271,6 +272,18 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// and empties the container partway through; two overlapping passes tear
 	// down each other's DOM while the other is still awaiting measurement.
 	private renderChain: Promise<void> = Promise.resolve();
+	/**
+	 * Bumped whenever a full pass replaces the layout. A cull pass draws into a
+	 * staging group and commits only if this has not moved, since an edit's
+	 * pass keeps the same node group (see {@link redrawInPlace}).
+	 */
+	private drawGeneration = 0;
+	/**
+	 * What each node group drawn from the HTML cache was drawn from, so an
+	 * edit's pass can keep the ones that would draw the same (T80). Groups not
+	 * in here (fresh Markdown renders, checkboxes) are always redrawn.
+	 */
+	private drawRecords = new WeakMap<Element, { sig: string; x: number; y: number; cls: string; htmlKey: string; html: HTMLElement }>();
 	// Set by `onClose`. A pass already queued on the chain when the view goes
 	// away must not paint into a container that has been torn down.
 	private closed = false;
@@ -1491,6 +1504,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
+		// Study rewrites node groups in place; none drawn so far may be kept.
+		this.drawRecords = new WeakMap();
 		// Built once per pass, not once per node. `mapCards()` walks every node
 		// to collect source paths and then allocates a fresh array per source
 		// file plus one for the result — and this pass runs per animation frame
@@ -3442,6 +3457,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// has been drawing into is still the live one — see the commit check
 		// at the end.
 		const nodesGroup = this.nodesGroup;
+		const generation = this.drawGeneration;
 		const { nodes } = this.currentLayout;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
@@ -3538,9 +3554,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 		}
 		const renderPromises: Promise<void>[] = [];
+		// Drawn off-document and committed together below, so a pass that a
+		// full pass overtook adds nothing to the group that pass kept.
+		const staging = document.createElementNS(SVG_NS, "g");
 		const deferred = drawWithinBudget(
 			urgent, ahead, CULL_DRAW_BUDGET_MS, () => performance.now(),
-			(node) => { renderPromises.push(this.drawNode(nodesGroup, node, offsetX, offsetY)); },
+			(node) => { renderPromises.push(this.drawNode(staging, node, offsetX, offsetY)); },
 		);
 		await Promise.all(renderPromises);
 
@@ -3551,7 +3570,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// longer exists — every node it lists as absent gets drawn a second
 		// time. The nodes drawn above went into the old, now-detached group and
 		// go away with it.
-		if (this.nodesGroup !== nodesGroup) return;
+		if (this.nodesGroup !== nodesGroup || this.drawGeneration !== generation) return;
+		nodesGroup.append(...Array.from(staging.childNodes));
 
 		// Re-apply spatial study state to newly rendered nodes
 		this.applySpatialState();
@@ -7690,6 +7710,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
 		if (this.historyKey === null) return;
+		this.perf?.editStarted();
 		void this.applySnapshot(this.edits.step(this.historyKey, isRedo));
 	}
 
@@ -7809,7 +7830,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(true);
 	}
 
 	/**
@@ -7831,7 +7852,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(true);
 	}
 
 	/**
@@ -7849,7 +7870,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		newContent = this.normalizeHeadingSpacing(newContent);
 		await this.edits.write(sourceFile, newContent);
 
-		await this.resyncFromParent();
+		await this.resyncFromParent(true);
 	}
 
 	/**
@@ -7893,7 +7914,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
 	 * has to be re-read and re-expanded for the change to appear.
 	 */
-	private async resyncFromParent(): Promise<void> {
+	private async resyncFromParent(keepDrawn = false): Promise<void> {
 		if (!this.currentFile) return;
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
@@ -7902,7 +7923,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(keepDrawn);
 	}
 
 	/**
@@ -8032,6 +8053,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		newLine: string,
 	): Promise<void> {
 		if (!this.currentFile) return;
+		// The guard ran when the editor opened; the commit starts here.
+		this.perf?.editStarted();
 		// `startEditing` settled the tree before opening the editor, but a
 		// debounced schedule flush can land in the seconds the editor is open and
 		// move every offset in the file under it. Settle again and re-resolve the
@@ -8483,13 +8506,17 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * The chain absorbs a rejection so one failed pass cannot wedge every later
 	 * one; the pass's own promise still rejects for its caller.
 	 */
-	private render(): Promise<void> {
-		const next = this.renderChain.then(() => this.renderPass());
+	private render(keepDrawn = false): Promise<void> {
+		const next = this.renderChain.then(() => this.renderPass(keepDrawn));
 		this.renderChain = next.catch(() => undefined);
 		return next;
 	}
 
-	private async renderPass(): Promise<void> {
+	/**
+	 * @param keepDrawn the pass follows a map edit: keep the node groups that
+	 *   would draw the same and move them into place (see {@link redrawInPlace}).
+	 */
+	private async renderPass(keepDrawn = false): Promise<void> {
 		if (this.closed) return;
 		const container = this.contentEl;
 		const perfStart = this.perf?.start() ?? 0;
@@ -8556,6 +8583,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			? { x: this.getOffsetX(), y: this.getOffsetY() }
 			: null;
 		this.currentLayout = layout;
+		this.drawGeneration++;
 		if (prevOffset && this.svg) {
 			this.viewBox.x += this.getOffsetX() - prevOffset.x;
 			this.viewBox.y += this.getOffsetY() - prevOffset.y;
@@ -8573,12 +8601,23 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Defer container.empty() until just before appending the new SVG
 		// to avoid a visible flash.
 		const isFirstRender = !this.svg;
+		const inPlace = keepDrawn && this.canRedrawInPlace(container);
 		this.toolRibbon?.detach();
 		this.findBar?.detach();
-		container.empty();
+		if (inPlace) {
+			// Everything but the map itself goes, as `empty()` would take it.
+			const live = this.viewportHost ?? this.svg;
+			for (const child of Array.from(container.childNodes)) {
+				if (child !== live) child.remove();
+			}
+		} else {
+			container.empty();
+		}
 		container.addClass("osmosis-mindmap-container");
 
-		await this.renderSvg(container, layout);
+		const kept = inPlace
+			? await this.redrawInPlace(container, layout)
+			: (await this.renderSvg(container, layout), 0);
 
 		// Auto-frame all content on initial open so the user sees the whole map
 		if (isFirstRender) {
@@ -8608,7 +8647,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.findBar?.attach();
 		this.findBar?.refresh();
 		this.perf?.attach();
-		this.perf?.rendered(perfStart, measured - perfStart, laidOut - measured);
+		this.perf?.rendered(perfStart, measured - perfStart, laidOut - measured, kept, this.renderedNodeIds.size);
 	}
 
 	/**
@@ -9103,6 +9142,121 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
+	 * Whether an edit's pass may update the live SVG instead of replacing it.
+	 * Only from the plain editing state: no study session (it rewrites groups),
+	 * no fold animation running (a moved group would animate its translation),
+	 * no node editor open and no drag under way.
+	 */
+	private canRedrawInPlace(container: HTMLElement): boolean {
+		const live = this.viewportHost ?? this.svg;
+		return !!this.svg && !!this.nodesGroup && live?.parentNode === container
+			&& this.nodesGroup.parentNode === this.svg
+			&& this.spatialMode === "off" && !this.svg.hasClass("osmosis-animating")
+			&& this.editingNodeId === null && this.dragGhost === null;
+	}
+
+	/**
+	 * {@link renderSvg} for a pass that follows an edit (T80): the same drawing,
+	 * reached by keeping the live SVG. Boundaries and branch lines are cheap and
+	 * redrawn. Each visible node whose group would draw the same
+	 * ({@link drawSignature}, and nothing has touched the group since) keeps it,
+	 * translated to its new place, so the browser does not lay its Markdown out
+	 * again; the rest are drawn as a full pass draws them.
+	 *
+	 * @returns how many node groups were kept.
+	 */
+	private async redrawInPlace(container: HTMLElement, layout: LayoutResult): Promise<number> {
+		const svg = this.svg!;
+		const nodesGroup = this.nodesGroup!;
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		if (!this.panByTransform) {
+			svg.setAttribute(
+				"viewBox",
+				`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
+			);
+		}
+
+		// Everything in the SVG but the node groups goes, as a new SVG would
+		// not have it: boundaries, branch lines, a stray rubber band.
+		for (const child of Array.from(svg.childNodes)) {
+			if (child !== nodesGroup) child.remove();
+		}
+		this.drawBoundaries(svg, layout, offsetX, offsetY);
+		const boundaries = svg.lastElementChild;
+		if (boundaries && boundaries !== nodesGroup) svg.insertBefore(boundaries, nodesGroup);
+		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
+		branchLinesGroup.setAttribute("class", "osmosis-branch-lines-group");
+		svg.insertBefore(branchLinesGroup, nodesGroup);
+		this.branchLinesGroup = branchLinesGroup;
+		const lineStyle = this.mapSettings.branchLineStyle;
+		container.style.backgroundColor = this.mapSettings.background ?? this.activeTheme?.background ?? "";
+
+		// The same visibility rules as renderSvg.
+		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
+		const wanted: WantedNode<LayoutNode>[] = [];
+		for (const node of layout.nodes) {
+			if (node.source.type === "root") continue;
+			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+				this.renderedNodeIds.add(node.source.id);
+				wanted.push({
+					id: node.source.id,
+					node,
+					// A node that can't be kept still needs a signature that matches nothing.
+					sig: this.drawSignature(node) ?? "\u0000",
+					x: node.rect.x + offsetX,
+					y: node.rect.y + offsetY,
+				});
+			}
+			if (
+				node.parent &&
+				node.parent.source.type !== "root" &&
+				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
+			) {
+				this.renderedBranchIds.add(node.source.id);
+				this.drawBranchLine(branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
+			}
+		}
+
+		const drawn: DrawnGroup<Element>[] = [];
+		for (const el of Array.from(nodesGroup.children)) {
+			const rec = this.drawRecords.get(el);
+			const untouched = !!rec
+				&& el.getAttribute("class") === rec.cls
+				&& !el.querySelector(":scope > foreignObject")?.hasAttribute("class")
+				&& this.nodeHtmlCache.get(rec.htmlKey) === rec.html;
+			drawn.push({
+				id: el.getAttribute("data-node-id") ?? "",
+				el,
+				sig: untouched ? rec.sig : null,
+				x: rec?.x ?? 0,
+				y: rec?.y ?? 0,
+			});
+		}
+		const plan = planReuse(drawn, wanted);
+		for (const el of plan.remove) el.remove();
+		for (const { el, dx, dy } of plan.keep) {
+			const transform = translateAttr(dx, dy);
+			if (transform === null) el.removeAttribute("transform");
+			else el.setAttribute("transform", transform);
+		}
+
+		// New and changed nodes are drawn off-document and go in together.
+		const staging = document.createElementNS(SVG_NS, "g");
+		await Promise.all(plan.draw.map((node) => this.drawNode(staging, node, offsetX, offsetY)));
+		nodesGroup.append(...Array.from(staging.childNodes));
+
+		if (this.panByTransform && this.viewportHost) {
+			svg.style.transform = viewBoxTransform(
+				this.viewBox,
+				this.viewportHost.getBoundingClientRect(),
+			);
+		}
+		return plan.keep.length;
+	}
+
+	/**
 	 * Draw every boundary (cloud) style in the map: a soft hull around the
 	 * node and its laid-out descendants, so folding or editing re-shapes it on
 	 * the next pass. Not viewport-culled: there are few, and one spans many
@@ -9150,17 +9304,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		svg.appendChild(group);
 	}
 
-	private async drawNode(
-		svg: SVGElement,
-		node: LayoutNode,
-		offsetX: number,
-		offsetY: number,
-	): Promise<void> {
-		const x = node.rect.x + offsetX;
-		const y = node.rect.y + offsetY;
-		const { width, height } = node.rect;
-
-		const group = document.createElementNS(SVG_NS, "g");
+	/** The class attribute of a node's group, as {@link drawNode} sets it. */
+	private nodeGroupClass(node: LayoutNode): string {
 		const classes = [
 			`osmosis-node-group`,
 			`osmosis-node-group-${node.source.type}`,
@@ -9193,7 +9338,51 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		) {
 			classes.push("osmosis-node-transcluded");
 		}
-		group.setAttribute("class", classes.join(" "));
+		return classes.join(" ");
+	}
+
+	/**
+	 * Everything a node's drawing depends on apart from its position, or null
+	 * when its group must always be redrawn: a checkbox (its click handler and
+	 * checked state are bound at draw time). Two equal signatures draw the same
+	 * group, offset by the move between them.
+	 */
+	private drawSignature(node: LayoutNode): string | null {
+		const src = node.source;
+		if (src.metadata?.checkbox) return null;
+		const fm = this.osmosisStyleFrontmatter;
+		const depth = src.type === "heading" ? src.depth : undefined;
+		const localStyle = lookupNodeStyle(fm, node);
+		const classStyle = lookupClassStyle(fm, localStyle?.class, this.getGlobalClasses());
+		const variantStyle = lookupVariantStyle(fm, node);
+		const resolved = (this.effectiveTheme || localStyle || classStyle || variantStyle)
+			? resolveNodeStyle(this.effectiveTheme, depth, localStyle, classStyle, variantStyle)
+			: null;
+		const lazy = this.lazyTransclusionIds.has(src.id) && !!src.metadata?.resolved;
+		return JSON.stringify([
+			this.nodeGroupClass(node), src.id, src.type, depth ?? null, src.sourceFile ?? null,
+			src.content, this.getNodeDisplayContent(src), !!src.metadata?.cyclic, resolved,
+			this.mapSettings.topicShape ?? null, this.activeTheme?.topicShape ?? null,
+			node.rect.width, node.rect.height, src.children.length > 0 || lazy,
+			this.collapsedIds.has(src.id), node.side ?? null, this.mapSettings.direction ?? null,
+		]);
+	}
+
+	private async drawNode(
+		svg: SVGElement,
+		node: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): Promise<void> {
+		const x = node.rect.x + offsetX;
+		const y = node.rect.y + offsetY;
+		const { width, height } = node.rect;
+
+		const group = document.createElementNS(SVG_NS, "g");
+		// Set when the content is a clone of the HTML cache: only such a group
+		// can be kept by a later edit's pass (see `drawRecords`).
+		let fromCache: { key: string; html: HTMLElement } | null = null;
+		group.setAttribute("class", this.nodeGroupClass(node));
 		group.setAttribute("data-node-id", node.source.id);
 		if (node.source.sourceFile) {
 			group.setAttribute("data-source-file", node.source.sourceFile);
@@ -9319,6 +9508,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				? null
 				: this.nodeHtmlCache.get(cacheKey);
 			if (cachedHtml) {
+				fromCache = { key: cacheKey, html: cachedHtml };
 				// Clone cached rendered content instead of re-rendering markdown
 				for (const child of Array.from(cachedHtml.childNodes)) {
 					wrapper.appendChild(child.cloneNode(true));
@@ -9434,6 +9624,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			group.appendChild(resizeHandle);
 		}
 
+		if (fromCache) {
+			const sig = this.drawSignature(node);
+			if (sig !== null) {
+				this.drawRecords.set(group, {
+					sig, x, y, cls: group.getAttribute("class") ?? "", htmlKey: fromCache.key, html: fromCache.html,
+				});
+			}
+		}
 		svg.appendChild(group);
 	}
 
