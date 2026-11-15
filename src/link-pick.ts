@@ -4,7 +4,8 @@
  * target. Only a tap counts. The views ask this only about releases that
  * already passed their own tap test (2D's `handleTouchTap`/`handleClick`, the
  * 3D scene's `releaseIsClick` and click slop), so a drag, hold or pinch made
- * to reach the target navigates as usual and leaves the mode armed.
+ * to reach the target navigates as usual and leaves the mode armed. A pick
+ * shows `linkMenuItems` at the target: link to it, or move the sources there.
  */
 
 /** What a tap does while the mode is armed. */
@@ -58,4 +59,40 @@ export class LinkPicker {
 		if (target === null || sources.includes(target)) return { kind: "cancel" };
 		return { kind: "link", sources, target };
 	}
+}
+
+/** A choice in the menu shown at a link's target (3D's Alt-drag drop, and Add link's pick in both views). */
+export type LinkChoice = "link" | "under" | "after" | "end";
+
+export interface LinkMenuItem {
+	choice: LinkChoice;
+	title: string;
+	icon: string;
+}
+
+/** What the target and the sources allow, as each view judges it. */
+export interface LinkMenuTarget {
+	/** "Add link" applies: some source can take a link to the target. */
+	canLink: boolean;
+	/** The sources may be moved beside or under the target (not into their own subtree). */
+	canMove: boolean;
+	/** The target is a line, so it can take children. */
+	line: boolean;
+	/** The target is its note's root (a note plate, a sole H1, the mind map's root). */
+	root: boolean;
+}
+
+/**
+ * The menu's items, in order. "Move after" is never offered for a root: a
+ * line after a sole H1 sits outside it and gives the note back its core. A
+ * root offers "Move to end of note" instead.
+ */
+export function linkMenuItems({ canLink, canMove, line, root }: LinkMenuTarget): LinkMenuItem[] {
+	const items: LinkMenuItem[] = [];
+	if (canLink) items.push({ choice: "link", title: "Add link", icon: "link" });
+	if (!canMove) return items;
+	if (line) items.push({ choice: "under", title: "Move under", icon: "corner-down-right" });
+	if (line && !root) items.push({ choice: "after", title: "Move after", icon: "arrow-down" });
+	if (root) items.push({ choice: "end", title: "Move to end of note", icon: "arrow-down-to-line" });
+	return items;
 }

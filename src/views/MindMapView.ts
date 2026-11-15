@@ -36,7 +36,7 @@ import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type Re
 import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
 import { ancestorsOf, findNodeById, nodeAtStart } from "../graph3d/edit";
 import { planSelectionLink, type PickedLine, type PlanNote } from "../graph3d/selection-edit";
-import { LinkPicker } from "../link-pick";
+import { LinkPicker, linkMenuItems } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
@@ -4070,7 +4070,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// pinches never get here, so they navigate and leave the mode armed.
 		if (this.linkPicker.armed && !(e.target as Element).closest(".osmosis-collapse-toggle")) {
 			this.lastTapTime = 0;
-			this.pickLinkTarget(nodeId);
+			this.pickLinkTarget(nodeId, e.clientX, e.clientY);
 			return;
 		}
 		// A tap on a link follows it, exactly as a click does on desktop.
@@ -4575,7 +4575,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.linkPicker.armed) {
 			e.preventDefault();
 			e.stopPropagation();
-			this.pickLinkTarget(this.getClickedNodeId(e));
+			this.pickLinkTarget(this.getClickedNodeId(e), e.clientX, e.clientY);
 			return;
 		}
 
@@ -6387,13 +6387,21 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// reading any range: everything below is resolved from IDs afterwards.
 		await this.ensureTreeFresh();
 
-		if (
-			!dragNodeId ||
-			!dropTarget ||
-			!this.currentFile ||
-			!this.currentTree
-		)
-			return;
+		if (!dragNodeId || !dropTarget) return;
+		await this.moveNodesTo(dragNodeId, selectedIds, dropTarget);
+	}
+
+	/**
+	 * Move node `dragNodeId`, with the nodes of `selectedIds` that are its
+	 * siblings, to child `index` of `parentId`: a drag and drop's write, and the
+	 * Add link menu's moves. The tree must already be fresh.
+	 */
+	private async moveNodesTo(
+		dragNodeId: string,
+		selectedIds: ReadonlySet<string>,
+		dropTarget: { parentId: string; index: number },
+	): Promise<void> {
+		if (!this.currentFile || !this.currentTree) return;
 
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
@@ -8210,11 +8218,78 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		return was;
 	}
 
-	/** A tap or click while Add link is armed, on `nodeId` (null: empty space): link, or cancel (`LinkPicker.tap`). */
-	private pickLinkTarget(nodeId: string | null): void {
+	/**
+	 * A tap or click while Add link is armed, on `nodeId` (null: empty space)
+	 * at client point (x, y): the link menu there, or cancel
+	 * (`LinkPicker.tap`). The mode ends at the pick, so dismissing the menu
+	 * writes nothing and leaves it disarmed.
+	 */
+	private pickLinkTarget(nodeId: string | null, x: number, y: number): void {
 		const pick = this.linkPicker.tap({ target: nodeId, linkable: true });
 		this.toolRibbon?.setActive("add-link", this.linkPicker.armed);
-		if (pick.kind === "link") void this.linkNodes(pick.sources, pick.target);
+		if (pick.kind === "link") this.showLinkMenu(pick.sources, pick.target, x, y);
+	}
+
+	/**
+	 * The menu the 3D graph shows, for the armed nodes and the tapped target: Add
+	 * link (`linkNodes`), Move under, Move after, or for the map's root Move to
+	 * end of note (`moveNodesTo`, the drag and drop's write). The moves are
+	 * offered only for siblings (a drag moves only those) and never into a
+	 * source's own subtree; Add link only when some source can take the link.
+	 */
+	private showLinkMenu(sourceIds: readonly string[], targetId: string, x: number, y: number): void {
+		const target = this.nodeMap.get(targetId);
+		const sources = sourceIds.flatMap((id) => {
+			const node = this.nodeMap.get(id);
+			return node === undefined ? [] : [node];
+		});
+		if (target === undefined || sources.length === 0) {
+			new Notice("Osmosis: that line has changed; try again");
+			return;
+		}
+		const root = target.source.type === "root";
+		const hostPath = this.currentFile?.path;
+		// As `linkNodes` judges it: the root and embed lines take no link, and the root links to its own note, which a line there can't hold.
+		const canLink = target.source.type !== "transclusion" && sources.some((node) => {
+			const type = node.source.type;
+			return type !== "root" && type !== "transclusion" && (!root || this.getNodeFile(node.source)?.path !== hostPath);
+		});
+		const parent = sources[0]!.parent;
+		const canMove = parent !== null && parent !== undefined
+			&& sources.every((node) => node.parent === parent && !this.isDescendant(node, target));
+		const items = linkMenuItems({ canLink, canMove, line: !root, root });
+		if (items.length === 0) {
+			new Notice("Osmosis: can't link or move those nodes there");
+			return;
+		}
+		const menu = new Menu();
+		for (const { choice, title, icon } of items) {
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => {
+				if (choice === "link") void this.linkNodes(sourceIds, targetId);
+				else void this.moveNodesBy(sourceIds, targetId, choice);
+			}));
+		}
+		// After the release's own click has gone by, so it cannot close the menu.
+		window.setTimeout(() => menu.showAtPosition({ x, y }), 0);
+	}
+
+	/** The link menu's moves: `sourceIds` (siblings) under or after `targetId`, or to the end of the map's note. */
+	private async moveNodesBy(sourceIds: readonly string[], targetId: string, place: "under" | "after" | "end"): Promise<void> {
+		if (!await this.assertEditableFresh()) return;
+		const root = this.currentTree?.root;
+		const target = this.nodeMap.get(targetId);
+		const first = sourceIds[0];
+		const parent = target?.parent;
+		const drop = root === undefined || target === undefined || first === undefined ? null
+			: place === "under" ? { parentId: targetId, index: target.source.children.length }
+			: place === "end" ? { parentId: root.id, index: root.children.length }
+			: parent ? { parentId: parent.source.id, index: parent.source.children.indexOf(target.source) + 1 }
+			: null;
+		if (drop === null || first === undefined) {
+			new Notice("Osmosis: that line has changed; try again");
+			return;
+		}
+		await this.moveNodesTo(first, new Set(sourceIds), drop);
 	}
 
 	/**

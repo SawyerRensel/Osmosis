@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LinkPicker } from "./link-pick";
+import { LinkPicker, linkMenuItems } from "./link-pick";
 
 const tap = (target: string | null, linkable = true) => ({ target, linkable });
 
@@ -73,5 +73,39 @@ describe("LinkPicker", () => {
 		picker.toggle(["a"]);
 		expect(picker.cancel()).toBe(true);
 		expect(picker.armed).toBe(false);
+	});
+});
+
+describe("linkMenuItems", () => {
+	const choices = (t: Parameters<typeof linkMenuItems>[0]) => linkMenuItems(t).map((item) => item.choice);
+	const all = { canLink: true, canMove: true };
+
+	it("offers a link and both moves for an ordinary line", () => {
+		expect(choices({ ...all, line: true, root: false })).toEqual(["link", "under", "after"]);
+	});
+
+	it("offers no Move after for a sole-H1 root, but the end of its note", () => {
+		expect(choices({ ...all, line: true, root: true })).toEqual(["link", "under", "end"]);
+	});
+
+	it("offers only the end of the note for a note (not a line)", () => {
+		expect(choices({ ...all, line: false, root: true })).toEqual(["link", "end"]);
+	});
+
+	it("drops Add link when no source can take it", () => {
+		expect(choices({ canLink: false, canMove: true, line: true, root: false })).toEqual(["under", "after"]);
+	});
+
+	it("offers no move when the sources may not move there", () => {
+		expect(choices({ canLink: true, canMove: false, line: true, root: false })).toEqual(["link"]);
+		expect(choices({ canLink: false, canMove: false, line: true, root: true })).toEqual([]);
+	});
+
+	it("gives each choice the drop menu's title and icon", () => {
+		expect(linkMenuItems({ ...all, line: true, root: true }).map(({ title, icon }) => [title, icon])).toEqual([
+			["Add link", "link"],
+			["Move under", "corner-down-right"],
+			["Move to end of note", "arrow-down-to-line"],
+		]);
 	});
 });

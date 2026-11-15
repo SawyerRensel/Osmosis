@@ -54,7 +54,7 @@ The toolbar is a sticky action bar at the bottom of the mind map view. It provid
 | :lucide-outdent: | Outdent node (one level shallower, on either side of the map) | Yes |
 | :lucide-indent: | Indent node (under the previous sibling) | Yes |
 | :lucide-trash-2: | Delete | Yes |
-| :lucide-link: | Add link: the button lights up, then tap (or click) the node to link to. A link to it is added at the end of each selected node's line, and the target gets a block ID if it needs one. Drag, pinch or hold to get there first: only a tap picks. Tap the button again, tap empty space, tap the selected node or press ++escape++ to cancel | Yes |
+| :lucide-link: | Add link: the button lights up, then tap (or click) the target node. A menu opens there: **Add link** adds a link to it at the end of each selected node's line (the target gets a block ID if it needs one); **Move under** and **Move after** move the selected nodes (siblings) there, as a drag would; on the root, **Move to end of note**. Close the menu to do nothing. Drag, pinch or hold to get there first: only a tap picks. Tap the button again, tap empty space, tap the selected node or press ++escape++ to cancel | Yes |
 | :lucide-maximize: | Fit to view | No |
 | :lucide-home: | Center on root | No |
 | :lucide-chevrons-down-up: | Collapse all | Yes |

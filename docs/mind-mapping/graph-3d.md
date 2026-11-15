@@ -104,9 +104,11 @@ Double-click a node to edit it; in 3D this turns edit mode on.
 
 A one-finger drag orbits in edit mode too, even from a line: dragging to link
 or move is for the mouse (++alt++ + drag).
-To link lines on a touch screen, select them, tap the toolbar's :lucide-link:
-**Add link**, then tap the plate to link to. Drags, pinches and holds on the
-way there move the camera as usual and keep Add link armed.
+To link or move lines on a touch screen, select them, tap the toolbar's
+:lucide-link: **Add link**, then tap the target plate. The same menu as the
+++alt++ + drag drop opens there: **Add link**, **Move under**, **Move after**,
+or **Move to end of note** for a note. Drags, pinches and holds on the way
+there move the camera as usual and keep Add link armed.
 
 ### Overlays menu settings
 

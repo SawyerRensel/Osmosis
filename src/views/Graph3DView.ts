@@ -49,7 +49,7 @@ import { Graph3DEditor } from "./Graph3DEdit";
 import type { Graph3DSettingsSource } from "./Graph3DOverlays";
 import { Graph3DStudy } from "./Graph3DStudy";
 import { Graph3DHelp } from "./Graph3DHelp";
-import { LinkPicker } from "../link-pick";
+import { LinkPicker, linkMenuItems } from "../link-pick";
 import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
 import { isTrail } from "../graph3d/trail-note";
 import { renderOcclusion } from "./OcclusionRenderer";
@@ -490,7 +490,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			onContextMenu: (node, x, y) => this.showNodeMenu(node, x, y),
 			onClickWhileEditing: () => this.editor.close(true),
 			onLinkDrop: (from, to, x, y) => this.showDropMenu(from, to, x, y),
-			onLinkPick: (node) => this.pickLinkTarget(node),
+			onLinkPick: (node, x, y) => this.pickLinkTarget(node, x, y),
 			onResizeNode: (node, width) => this.resizeNode(node, width),
 			renderMarkdown: (markdown, el, sourcePath, component) => MarkdownRenderer.render(this.app, markdown, el, sourcePath, component),
 			renderDiagram: (el, occlusion, side, sourcePath) => renderOcclusion(this.app, el, occlusion, side, sourcePath),
@@ -1148,13 +1148,14 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * A tap while Add link is armed, on `node` (null: empty space): link the
-	 * armed lines to it as the drop menu's "Add link" does (one line:
-	 * `linkLines`; several: `linkSelection`). Empty space or an armed line
-	 * cancels; a plate that cannot be linked to (only lines and notes can) is
-	 * passed over and the mode stays armed.
+	 * A tap while Add link is armed, on `node` (null: empty space) at client
+	 * point (x, y): the drop menu's choices for the armed lines, shown at the
+	 * tap. Empty space or an armed line cancels; a plate that cannot be linked
+	 * to (only lines and notes can) is passed over and the mode stays armed.
+	 * The mode ends at the pick, so dismissing the menu writes nothing and
+	 * leaves it disarmed.
 	 */
-	private pickLinkTarget(node: GraphNode | null): void {
+	private pickLinkTarget(node: GraphNode | null, x: number, y: number): void {
 		const pick = this.linkPicker.tap({ target: node?.id ?? null, linkable: node !== null && (node.kind === "line" || node.kind === "note") });
 		this.showLinkPick();
 		if (pick.kind === "ignore") new Notice("Osmosis: tap a line or a note to link to");
@@ -1164,35 +1165,51 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			new Notice("Osmosis: that line has changed; try again");
 			return;
 		}
-		void (sources.length === 1 ? this.linkLines(sources[0]!, node) : this.linkSelection(sources, node));
+		this.showLinkMenu(sources, node, x, y);
 	}
 
 	/**
-	 * Line `from` was dropped on node `to` in edit mode: a menu at the drop
-	 * point offers a link to `to` (slice 4's gesture) or a move of the line,
-	 * with its subtree, under or after `to`, or to the end of `to`'s note. A
-	 * menu rather than a modifier key, so a phone gets every choice; Escape or
-	 * a click elsewhere writes nothing. A sole H1 root is both a heading and
-	 * the note: it offers what a core does (a `[[Note]]` link, the end of the
-	 * note) and "Move under", but not "Move after", which would put the line
-	 * outside the H1 and so give the note back its core.
+	 * Line `from` was dropped on node `to` in edit mode: the link menu at the
+	 * drop point (`showLinkMenu`). Dragged from a selected plate, with more
+	 * than it selected, the menu acts on every selected line.
 	 */
 	private showDropMenu(from: GraphNode, to: GraphNode, x: number, y: number): void {
 		if (this.editBlocked()) return;
-		// Dragged from a selected plate (with more than it selected), the menu acts on every selected line: the same choices, the same look.
 		const selection = this.scene?.selectedNodes() ?? [];
 		const group = selection.length > 1 && selection.some((n) => n.id === from.id) ? selection : null;
+		this.showLinkMenu(group ?? [from], to, x, y);
+	}
+
+	/**
+	 * The menu at (x, y) for `sources` and target `to`: a link to `to`
+	 * (slice 4's gesture) or a move of the lines, with their subtrees, under or
+	 * after `to`, or to the end of `to`'s note. A menu rather than a modifier
+	 * key, so a phone gets every choice; Escape or a click elsewhere writes
+	 * nothing. A sole H1 root is both a heading and the note: it offers what a
+	 * note does (a `[[Note]]` link, the end of the note) and "Move under", but
+	 * not "Move after", which would put the line outside the H1 and so give the
+	 * note back its core. One source acts alone (`linkLines`/`moveLine`);
+	 * several act as a group (`linkSelection`/`moveSelection`).
+	 */
+	private showLinkMenu(sources: readonly GraphNode[], to: GraphNode, x: number, y: number): void {
+		if (this.editBlocked()) return;
+		const from = sources[0];
+		if (from === undefined) return;
+		const group = sources.length > 1 ? [...sources] : null;
 		const linkable = (n: GraphNode): boolean => n.kind === "line" && n.id !== to.id && (!isNoteRoot(to) || to.path !== n.path);
+		const items = linkMenuItems({
+			canLink: group === null ? !isNoteRoot(to) || to.path !== from.path : group.some(linkable),
+			canMove: true,
+			line: to.kind === "line",
+			root: isNoteRoot(to),
+		});
 		const menu = new Menu();
-		if (group === null ? !isNoteRoot(to) || to.path !== from.path : group.some(linkable)) {
-			menu.addItem((item) => item.setTitle("Add link").setIcon("link").onClick(() => void (group === null ? this.linkLines(from, to) : this.linkSelection(group, to))));
+		for (const { choice, title, icon } of items) {
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => {
+				if (choice === "link") void (group === null ? this.linkLines(from, to) : this.linkSelection(group, to));
+				else void (group === null ? this.moveLine(from, to, choice) : this.moveSelection(group, to, choice));
+			}));
 		}
-		const move = (title: string, icon: string, place: MovePlace): void => {
-			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => void (group === null ? this.moveLine(from, to, place) : this.moveSelection(group, to, place))));
-		};
-		if (to.kind === "line") move("Move under", "corner-down-right", "under");
-		if (to.kind === "line" && !isNoteRoot(to)) move("Move after", "arrow-down", "after");
-		if (isNoteRoot(to)) move("Move to end of note", "arrow-down-to-line", "end");
 		// After the release's own click has gone by, so it cannot close the menu.
 		window.setTimeout(() => menu.showAtPosition({ x, y }), 0);
 	}

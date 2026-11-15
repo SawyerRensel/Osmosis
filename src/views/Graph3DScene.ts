@@ -222,8 +222,8 @@ export interface SceneOptions {
 	onLinkDrop: (from: GraphNode, to: GraphNode, x: number, y: number) => void;
 	/** A width drag on a selected line's panel ended at `width`, a `width` style in mind-map px (`styleWidthFromEm`). The view writes it; it resolves (or rejects) once the write has landed. */
 	onResizeNode: (node: GraphNode, width: number) => Promise<void>;
-	/** While the toolbar's Add link is armed (`setLinkPicking`): a click or tap, on the plate under it (null: empty space). It neither selects nor flies. */
-	onLinkPick: (node: GraphNode | null) => void;
+	/** While the toolbar's Add link is armed (`setLinkPicking`): a click or tap, on the plate under it (null: empty space), at client point (x, y). It neither selects nor flies. */
+	onLinkPick: (node: GraphNode | null, x: number, y: number) => void;
 	/** A right-click that stayed put on a line or note plate, at client (`x`, `y`). (On touch a held finger multi-selects instead; the node menu is the toolbar's ⋮.) */
 	onContextMenu: (node: GraphNode, x: number, y: number) => void;
 	/** Renders a near-tier panel's Markdown (`MarkdownRenderer.render`, from the view, which has the app). */
@@ -2340,7 +2340,7 @@ export class Graph3DScene {
 		if (this.editingId !== null) this.options.onClickWhileEditing();
 		// Add link armed: this click only picks the target. It is a click by now (`releaseIsClick`), so a drag to reach the target never gets here.
 		if (this.linkPicking) {
-			this.options.onLinkPick(this.pickedNode(x, y, touch)?.graph ?? null);
+			this.options.onLinkPick(this.pickedNode(x, y, touch)?.graph ?? null, e.clientX, e.clientY);
 			return;
 		}
 		// A plain tap on a task checkbox ticks it. Held modifiers belong to pan and to links.
