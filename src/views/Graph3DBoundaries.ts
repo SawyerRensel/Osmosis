@@ -193,10 +193,10 @@ export class Graph3DBoundaries {
 			const padding = BOUNDARY_PADDING * em * (1 + group.nest);
 			// A planet's plate is wrapped as it lies in its continent's frame (as `continentMap` lays it out), not as it spins for the camera, so the boundary needn't follow the camera.
 			const plates: BoundaryPlate[] = members.map((n) => ({ x: n.x!, y: n.y!, z: n.z!, width: n.shape.width, height: n.shape.height, right: n.frame?.right, up: n.frame?.up }));
-			// A patch when every plate lies on one planet's surface; otherwise a hull.
+			// A patch when every plate lies on one planet's surface (one shell of it, with core layers); otherwise a hull.
 			const places = members.map(surface);
 			const first = places[0];
-			const onePlanet = first !== null && first !== undefined && places.every((p) => p !== null && p.core === first.core);
+			const onePlanet = first !== null && first !== undefined && places.every((p) => p !== null && p.core === first.core && Math.abs(p.radius - first.radius) < 1e-6 * first.radius);
 			const strokeWorld = look.strokeWidth * em;
 			const mesh: BoundaryMesh = onePlanet ? patchMesh(plates, first.centre, first.radius, padding, Math.max(padding * 0.5, strokeWorld * 1.5)) : hullMesh(plates, padding);
 			// An unset colour is the node's own (its colour-by colour), as 2D tints by the node.

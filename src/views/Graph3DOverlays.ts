@@ -24,7 +24,7 @@ import {
 	type OverlayEdgeKind,
 } from "../graph3d/overlays";
 import { flatDepth, flatWeight } from "../graph3d/flatten";
-import type { ContinentBalance, ContinentDirection } from "../graph3d/planets";
+import { MAX_CORE_LAYERS, type ContinentBalance, type ContinentDirection } from "../graph3d/planets";
 import { SETTINGS_SECTIONS, controlShown, toggleCollapsed, type SettingsControl, type SettingsSectionId } from "../graph3d/settings-sections";
 import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "../graph3d/taper";
 import { sidebarSetting } from "./sidebar-setting";
@@ -270,6 +270,19 @@ export class Graph3DSettingsPanel {
 							.setValue(overlays.continentBalance)
 							.onChange((value) => this.change({ continentBalance: value as ContinentBalance })),
 					);
+			case "coreLayers":
+				row.setName("Core layers").setDesc(coreLayersLabel(overlays.coreLayers));
+				return row.addSlider((slider) =>
+					slider
+						.setLimits(1, MAX_CORE_LAYERS, 1)
+						.setValue(overlays.coreLayers)
+						// Sent on every step of a drag, so plates glide to their new shells live.
+						.setInstant(true)
+						.onChange((value) => {
+							row.setDesc(coreLayersLabel(value));
+							this.change({ coreLayers: value });
+						}),
+				);
 			case "forceBalance":
 				return row
 					.setName("Hierarchy ⟷ organic")
@@ -418,6 +431,11 @@ function flattenLabel(flatten: number): string {
 				? `Lines deeper than outline depth ${String(ramp - 1)} lie flat.`
 				: `Lines deeper than outline depth ${String(ramp)} lie flat; lines at depth ${String(ramp)} are pulled ${String(Math.round(weight * 100))}% into their slice.`;
 	return `${lead} A flat branch is drawn as the mind map draws it, in a slice through its note's core. Moving it re-settles the loaded notes as you drag.`;
+}
+
+function coreLayersLabel(layers: number): string {
+	const lead = layers <= 1 ? "1: every line lies on the planet's surface." : `${String(layers)}: lines sit on ${String(layers)} shells by outline depth, the root's children innermost and depth ${String(layers)} and deeper on the surface.`;
+	return `${lead} Moving it moves the plates as you drag.`;
 }
 
 function spacingLabel(spacing: number, what: string): string {

@@ -6,6 +6,7 @@ import {
 	CONTINENT_MARGIN,
 	DEFAULT_CONTINENT_STYLE,
 	MAX_CONTINENT_ANGLE,
+	MAX_CORE_LAYERS,
 	PLANET_GAP,
 	PLANET_GAP_SHARE,
 	PlanetWorld,
@@ -13,7 +14,9 @@ import {
 	ROW_GAP,
 	type PlanetBody,
 	MIN_PLANET_RADIUS,
+	branchDepths,
 	continentMap,
+	coreClearance,
 	hoverPose,
 	laneArc,
 	layoutPlanet,
@@ -22,6 +25,8 @@ import {
 	planetGap,
 	planetRadius,
 	planetTrees,
+	shellGrowth,
+	shellRadius,
 	surfaceArc,
 	spreadContinent,
 	surfaceStep,
@@ -931,5 +936,94 @@ describe("Continent spacing", () => {
 		world.update([many], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
 		expect(world.place("c3-y")).not.toBe(place);
 		expect(world.radius("r")!).toBeGreaterThan(radius);
+	});
+});
+
+describe("core layers", () => {
+	// Two continents, three levels deep: a > a1 > a11, a12; b > b1.
+	const deep: PlanetBranch[] = [
+		{ id: "a", children: [{ id: "a1", children: [{ id: "a11", children: [] }, { id: "a12", children: [] }] }] },
+		{ id: "b", children: [{ id: "b1", children: [] }] },
+	];
+	const tree = { core: "r", continents: deep };
+
+	it("spaces shells evenly from the core's clearance to the surface, deeper lines clamped to the surface", () => {
+		expect(shellRadius(100, 10, 1, 1)).toBe(100);
+		expect(shellRadius(100, 10, 5, 1)).toBe(100);
+		expect(shellRadius(100, 10, 1, 3)).toBeCloseTo(40, 9);
+		expect(shellRadius(100, 10, 2, 3)).toBeCloseTo(70, 9);
+		expect(shellRadius(100, 10, 3, 3)).toBe(100);
+		expect(shellRadius(100, 10, 7, 3)).toBe(100);
+		// The innermost shell stays clear of the root plate.
+		expect(shellRadius(100, 10, 1, MAX_CORE_LAYERS)).toBeGreaterThan(10);
+		expect(coreClearance(20, 100)).toBe(10 + CONTINENT_MARGIN);
+		expect(coreClearance(500, 100)).toBe(100);
+	});
+
+	it("counts outline depth from the continents", () => {
+		const depths = branchDepths(tree);
+		expect([depths.get("a"), depths.get("a1"), depths.get("a11"), depths.get("b"), depths.get("b1")]).toEqual([1, 2, 3, 1, 2]);
+		expect(depths.has("r")).toBe(false);
+	});
+
+	it("one layer is today's planet exactly", () => {
+		const today = layoutPlanet(tree, plate);
+		const one = layoutPlanet(tree, plate, DEFAULT_CONTINENT_STYLE, 0, undefined, 1, 1, 1);
+		expect(one.radius).toBe(today.radius);
+		for (const [id, place] of today.places) expect(one.places.get(id)).toEqual(place);
+	});
+
+	it("sinks each plate onto its depth's shell along its own direction, frame kept", () => {
+		const today = layoutPlanet(tree, plate);
+		const layered = layoutPlanet(tree, plate, DEFAULT_CONTINENT_STYLE, 0, undefined, 1, 1, 3);
+		const growth = layered.radius / today.radius;
+		expect(growth).toBeGreaterThanOrEqual(1);
+		const core = coreClearance(plate().width, today.radius);
+		const depths = branchDepths(tree);
+		for (const [id, place] of today.places) {
+			const moved = layered.places.get(id)!;
+			expect(angle(moved.offset, place.offset)).toBeLessThan(1e-6);
+			expect(moved.normal).toEqual(place.normal);
+			expect(moved.right).toEqual(place.right);
+			expect(len(moved.offset)).toBeCloseTo(growth * shellRadius(today.radius, core, depths.get(id)!, 3), 6);
+		}
+		// Heads innermost, leaves (depth 3) on the surface.
+		expect(len(layered.places.get("a")!.offset)).toBeLessThan(len(layered.places.get("a1")!.offset));
+		expect(len(layered.places.get("a11")!.offset)).toBeCloseTo(layered.radius, 6);
+	});
+
+	it("grows the planet only when plates sharing an inner shell would overlap there", () => {
+		const n = (x: number, z: number): Vec3 => ({ x: x / Math.hypot(x, 1, z), y: 1 / Math.hypot(x, 1, z), z: z / Math.hypot(x, 1, z) });
+		const frame = tangentFrame({ x: 0, y: 1, z: 0 });
+		const at = (normal: Vec3, depth: number) => ({ depth, normal, right: frame.right, up: frame.up, width: 20, height: 5 });
+		// 30 apart sideways on a surface of 100: clear there (20 wide), but not on a shell of radius 55.
+		const close = [at(n(0, 0), 1), at(n(0.3, 0), 1)];
+		const growth = shellGrowth(close, 100, 10, 2, 0);
+		expect(growth).toBeGreaterThan(1);
+		const r = growth * shellRadius(100, 10, 1, 2);
+		const gap = r * Math.hypot(close[1]!.normal.x - close[0]!.normal.x, close[1]!.normal.y - close[0]!.normal.y, close[1]!.normal.z - close[0]!.normal.z);
+		expect(gap).toBeGreaterThanOrEqual(20 - 1e-6);
+		// Far apart: no growth. On the surface (depth ≥ layers): never checked.
+		expect(shellGrowth([at(n(0, 0), 1), at(n(5, 0), 1)], 100, 10, 2, 0)).toBe(1);
+		expect(shellGrowth([at(n(0, 0), 2), at(n(0.01, 0), 2)], 100, 10, 2, 0)).toBe(1);
+		// Plates that touch even on the surface ask no more room than the surface gives.
+		expect(shellGrowth([at(n(0, 0), 1), at(n(0.01, 0), 1)], 100, 10, 2, 0)).toBeCloseTo(100 / shellRadius(100, 10, 1, 2), 9);
+	});
+
+	it("re-lays out a world's planets when the layers change, keeping continents and easing plates", () => {
+		const world = new PlanetWorld();
+		world.update([tree], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		const before = world.place("a1")!.offset;
+		world.coreLayers = 3;
+		world.update([tree], plate, DEFAULT_CONTINENT_STYLE, () => 0, 1000, true);
+		expect(world.easing).toBe(true);
+		const after = world.place("a1")!.offset;
+		expect(angle(before, after)).toBeLessThan(1e-6);
+		expect(len(after)).toBeLessThan(len(before));
+		const bodies = new Map<string, PlanetBody>([["r", { x: 0, y: 0, z: 0 }], ["a1", {}]]);
+		world.placeAll((id) => bodies.get(id), 1000);
+		expect(bodies.get("a1")!.x).toBeCloseTo(before.x, 9);
+		world.placeAll((id) => bodies.get(id), 1000 + RELAYOUT_MS);
+		expect(bodies.get("a1")!.x).toBeCloseTo(after.x, 9);
 	});
 });

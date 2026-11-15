@@ -8,7 +8,7 @@
 
 import { noteHue, nodeColor, type Spacing } from "./appearance";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type GraphNodeKind } from "./model";
-import type { ContinentBalance, ContinentDirection } from "./planets";
+import { MAX_CORE_LAYERS, type ContinentBalance, type ContinentDirection } from "./planets";
 import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "./taper";
 
 export type ColorMode = "note" | "memory" | "tag" | "type";
@@ -45,6 +45,8 @@ export interface Graph3DOverlays {
 	continentDirection: ContinentDirection;
 	/** Planets only: the Balance of every continent's 2D map (unused by radial). A note's own 2D map settings don't apply on a planet. */
 	continentBalance: ContinentBalance;
+	/** Planets only: the Core layers slider, how many concentric shells (1 to `MAX_CORE_LAYERS`) a planet's plates lie on by outline depth (`shellRadius`). 1 is the single surface. */
+	coreLayers: number;
 	/** Mist density multiplier, `MIST_LIMIT`⁻¹ to `MIST_LIMIT`. */
 	mist: number;
 	/** A particle runs along each drawn edge, source to target. */
@@ -77,6 +79,7 @@ export const DEFAULT_OVERLAYS: Graph3DOverlays = {
 	flatten: 0.75,
 	continentDirection: "left-right",
 	continentBalance: "one-side",
+	coreLayers: 1,
 	mist: 1,
 	particles: false,
 	taper: true,
@@ -119,6 +122,7 @@ export function normalizeOverlays(raw: unknown): Graph3DOverlays {
 		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
 		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
 		continentBalance: CONTINENT_BALANCES.includes(value.continentBalance as ContinentBalance) ? (value.continentBalance as ContinentBalance) : DEFAULT_OVERLAYS.continentBalance,
+		coreLayers: Math.round(number(value.coreLayers, DEFAULT_OVERLAYS.coreLayers, 1, MAX_CORE_LAYERS)),
 		mist: number(value.mist, DEFAULT_OVERLAYS.mist, 1 / MIST_LIMIT, MIST_LIMIT),
 		particles: typeof value.particles === "boolean" ? value.particles : DEFAULT_OVERLAYS.particles,
 		taper: typeof value.taper === "boolean" ? value.taper : DEFAULT_OVERLAYS.taper,
@@ -144,6 +148,11 @@ export const effectiveFlatten = (overlays: Pick<Graph3DOverlays, "layout" | "fla
 /** Whether the Overlays change from `before` to `after` changes how Planets mode lays continents out, so every planet must be laid out afresh. */
 export function continentStyleChanged(before: Pick<Graph3DOverlays, "layout" | "continentDirection" | "continentBalance">, after: Pick<Graph3DOverlays, "layout" | "continentDirection" | "continentBalance">): boolean {
 	return after.layout === "planets" && (before.continentDirection !== after.continentDirection || before.continentBalance !== after.continentBalance);
+}
+
+/** Whether the Core layers slider moved in Planets (the one layout it shapes), so the planets move their plates to the new shells. */
+export function coreLayersChanged(before: Pick<Graph3DOverlays, "coreLayers">, after: Pick<Graph3DOverlays, "layout" | "coreLayers">): boolean {
+	return after.layout === "planets" && before.coreLayers !== after.coreLayers;
 }
 
 /** Whether an edge is drawn: its kind is shown, and, when it reaches an unresolved link, so are those. */

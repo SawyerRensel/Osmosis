@@ -34,7 +34,7 @@ import { Graph3DNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownR
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../graph3d/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../graph3d/appearance";
 import { cssColor, nodeLook, type NodeLook } from "../graph3d/node-style";
-import { DEFAULT_OVERLAYS, continentStyleChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
+import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type Graph3DOverlays } from "../graph3d/overlays";
 import type { NearTierSettings } from "../graph3d/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../graph3d/near";
 import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
@@ -996,6 +996,8 @@ export class Graph3DScene {
 	 * flatten position re-cuts the flat branches, and a new Note or Node spacing
 	 * rescales the link lengths, charge and gaps. Any of these re-settles the
 	 * loaded nodes (`reshape`): the one place settled nodes are let go on purpose.
+	 * In Planets, Core layers re-lays out each planet, easing its plates to
+	 * their new shells (`PlanetWorld.coreLayers`).
 	 */
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
@@ -1004,15 +1006,19 @@ export class Graph3DScene {
 		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
 		// The spacing sliders re-settle too; in Planets they (and Continent spacing) lay the planets out afresh (their gaps are layout, not forces).
 		const respace = spacingChanged(this.overlays, overlays);
+		// Core layers moves plates between shells: each planet re-lays out (keeping its continents) and eases its plates there, as after an edit.
+		const relayer = coreLayersChanged(this.overlays, overlays);
 		const before = this.overlays;
 		this.overlays = overlays;
 		this.world.spacing = spacingOf(overlays);
 		this.world.continentSpacing = overlays.continentSpacing;
+		this.world.coreLayers = overlays.coreLayers;
 		if (relayout || (respace && this.world.size > 0)) this.world.clear();
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
 		if (respace) this.linkForce?.distance(this.linkDistanceOf);
 		// pushData (in reshape) re-cuts the branches and re-reads which links pull, and the engine re-reads every link's strength.
 		if (reweigh || reflatten || relayout || respace) this.reshape(!this.focusLeaves(before, overlays));
+		else if (relayer && this.world.size > 0) this.pushData();
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
 		// Planets mode tilts each panel onto its plate (CSS3D): a flat CSS2D panel over a tilted plate would hide it.
@@ -3280,12 +3286,13 @@ export class Graph3DScene {
 		return out;
 	}
 
-	/** Planets mode: the planet a surface plate lies on, for its boundary patch; null for a core, a star, or another layout. */
+	/** Planets mode: the planet a surface plate lies on and the radius of its shell (the surface, with one core layer), for its boundary patch; null for a core, a star, or another layout. */
 	private surfaceOf(node: EngineNode): BoundarySurface | null {
 		if (node.frame === undefined) return null;
 		const id = this.world.planetOf(node.id);
 		const core = this.coreOf(node);
-		const radius = id === undefined ? undefined : this.world.radius(id);
+		const offset = this.world.place(node.id)?.offset;
+		const radius = offset === undefined ? undefined : Math.hypot(offset.x, offset.y, offset.z);
 		return id === undefined || core === null || radius === undefined ? null : { core: id, centre: core, radius };
 	}
 

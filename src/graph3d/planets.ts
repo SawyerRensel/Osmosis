@@ -16,7 +16,9 @@
  * the continent's centre (`spreadContinent`).
  *
  * The radius fits the plates at today's spacing (`planetRadius`), so a planet
- * grows and shrinks with its note. Internal layout is geometry only; the space
+ * grows and shrinks with its note. With the Core layers slider above 1, plates
+ * sink onto concentric shells by outline depth (`shellRadius`), keeping their
+ * directions from the centre. Internal layout is geometry only; the space
  * forces move just the planets' centres (see `Graph3DScene`).
  *
  * Pure: no `obsidian` import, so it is unit-tested directly.
@@ -454,11 +456,92 @@ export interface PlanetLayout {
 	centres: Map<string, Vec3>;
 }
 
+/** The most core layers (shells) the Core layers slider offers. */
+export const MAX_CORE_LAYERS = 6;
+
+/**
+ * How far from the planet's centre the root plate keeps its shells: half its
+ * width plus `CONTINENT_MARGIN`, the clearance `planetRadius` already keeps
+ * (so never past the surface).
+ */
+export function coreClearance(rootWidth: number, radius: number): number {
+	return Math.min(radius, rootWidth / 2 + CONTINENT_MARGIN);
+}
+
+/**
+ * The radius of the shell a plate at outline `depth` (1 for a continent's
+ * head, the root's child) lies on, with `layers` shells: evenly spaced from
+ * the core's clearance `core` out to the surface `radius`, shell k at
+ * `core + (radius − core)·k/layers`. Depth 1 is the innermost shell, depth
+ * `layers` and deeper the surface; with one layer every plate is on the
+ * surface (today's planet).
+ */
+export function shellRadius(radius: number, core: number, depth: number, layers: number): number {
+	const n = Math.max(1, Math.round(layers));
+	const k = Math.min(n, Math.max(1, depth));
+	return core + ((radius - core) * k) / n;
+}
+
+/**
+ * How much a planet must grow (every shell and the surface alike, so the
+ * shells stay evenly spaced) for the plates sharing an inner shell to keep
+ * clear of each other. A plate keeps its direction from the centre on any
+ * shell, so on a shell of radius r its neighbours are r/radius as far apart
+ * as on the surface; two plates closer than `clearance` (on both axes of the
+ * first one's frame, and within their diagonal, as `spreadContinent`) need a
+ * bigger shell. No pair is
+ * asked for more room than the surface gives it (wide neighbours the surface
+ * already lets touch stay touching), so the surface never grows and one layer
+ * never grows anything. 1 when nothing on an inner shell overlaps.
+ */
+export function shellGrowth(
+	plates: readonly { depth: number; normal: Vec3; right: Vec3; up: Vec3; width: number; height: number }[],
+	radius: number,
+	core: number,
+	layers: number,
+	clearance: number,
+): number {
+	let growth = 1;
+	const byShell = new Map<number, typeof plates[number][]>();
+	for (const plate of plates) {
+		if (plate.depth >= layers) continue;
+		const list = byShell.get(plate.depth);
+		if (list === undefined) byShell.set(plate.depth, [plate]);
+		else list.push(plate);
+	}
+	for (const [depth, shell] of byShell) {
+		const r = shellRadius(radius, core, depth, layers);
+		if (r <= 0) continue;
+		let need = 0;
+		for (let i = 0; i < shell.length; i++) {
+			const a = shell[i]!;
+			for (let j = i + 1; j < shell.length; j++) {
+				const b = shell[j]!;
+				const rel = add(b.normal, a.normal, -1);
+				const [dx, dy] = [Math.abs(dot(rel, a.right)), Math.abs(dot(rel, a.up))];
+				const [w, h] = [(a.width + b.width) / 2 + clearance, (a.height + b.height) / 2 + clearance];
+				// The shell radius at which the two first clear: on one axis of the frame, or (as `spreadContinent` skips them) by their whole diagonal, so plates far round the sphere never count; at most the surface's.
+				const apart = length(rel);
+				const clear = Math.min(dx < 1e-12 ? Infinity : w / dx, dy < 1e-12 ? Infinity : h / dy, apart < 1e-12 ? Infinity : Math.hypot(w, h) / apart, radius);
+				need = Math.max(need, clear);
+			}
+		}
+		growth = Math.max(growth, need / r);
+	}
+	return growth;
+}
+
 /**
  * Lay a planet out: its continents' maps, the radius they need, the maps
  * spread where the wrap squeezes plates together (`spreadContinent`, and the
  * radius grown if that widened one too far), their centres on the globe, and
  * each plate wrapped onto the surface with its continent's frame.
+ *
+ * With more than one core layer (the Core layers slider), each plate then
+ * moves straight in towards the centre, onto the shell of its outline depth
+ * (`shellRadius`): its direction and frame keep, only its distance changes.
+ * If plates sharing an inner shell would overlap there, the whole planet
+ * grows (`shellGrowth`).
  */
 export function layoutPlanet(
 	tree: PlanetTree,
@@ -468,15 +551,16 @@ export function layoutPlanet(
 	previous?: ReadonlyMap<string, Vec3>,
 	nodeSpacing = 1,
 	continentSpacing = 1,
+	layers = 1,
 ): PlanetLayout {
 	const rootWidth = sizeOf(tree.core).width;
 	const flat = tree.continents.map((head) => continentMap(head, sizeOf, style, nodeSpacing, continentSpacing));
 	const first = planetRadius(flat, rootWidth);
 	// Half the map's own sibling gap: closer than that, the wrap has squeezed two plates together.
 	const maps = flat.map((map, i) => spreadContinent(map, tree.continents[i]!, first, (ROW_GAP * nodeSpacing) / 2));
-	const radius = Math.max(first, planetRadius(maps, rootWidth));
+	const surface = Math.max(first, planetRadius(maps, rootWidth));
 	const centres = placeContinents(
-		maps.map((map) => map.reach / radius),
+		maps.map((map) => map.reach / surface),
 		phase,
 		tree.continents.map((head) => previous?.get(head.id)),
 	);
@@ -485,9 +569,29 @@ export function layoutPlanet(
 		const head = tree.continents[i]!.id;
 		// One frame per continent, at its centre, shared by all its plates.
 		const frame = tangentFrame(centres[i]!);
-		for (const plate of map.plates) places.set(plate.id, { ...wrapPlate(frame, plate.x, plate.y, radius), continent: head });
+		for (const plate of map.plates) places.set(plate.id, { ...wrapPlate(frame, plate.x, plate.y, surface), continent: head });
 	});
+	let radius = surface;
+	if (layers > 1) {
+		const depths = branchDepths(tree);
+		const core = coreClearance(rootWidth, surface);
+		const shells = maps.flatMap((map) => map.plates.map((plate) => ({ ...places.get(plate.id)!, id: plate.id, depth: depths.get(plate.id) ?? 1, width: plate.width, height: plate.height })));
+		const growth = shellGrowth(shells, surface, core, layers, (ROW_GAP * nodeSpacing) / 2);
+		radius = surface * growth;
+		for (const plate of shells) places.get(plate.id)!.offset = scale(plate.normal, growth * shellRadius(surface, core, plate.depth, layers));
+	}
 	return { core: tree.core, radius, places, centres: new Map(tree.continents.map((head, i) => [head.id, centres[i]!])) };
+}
+
+/** Each line's outline depth on its planet: 1 for a continent's head (the root's child), 2 for its children, and so on. */
+export function branchDepths(tree: PlanetTree): Map<string, number> {
+	const depths = new Map<string, number>();
+	const visit = (branch: PlanetBranch, depth: number): void => {
+		depths.set(branch.id, depth);
+		for (const child of branch.children) visit(child, depth + 1);
+	};
+	for (const head of tree.continents) visit(head, 1);
+	return depths;
 }
 
 /**
@@ -621,6 +725,13 @@ export class PlanetWorld {
 	spacing: Spacing = UNIT_SPACING;
 	/** The Continent spacing slider: the clear space round each continent (`CONTINENT_MARGIN`), and so the radius. As `spacing`. */
 	continentSpacing = 1;
+	/**
+	 * The Core layers slider: how many shells a planet's plates lie on by
+	 * outline depth (`shellRadius`). Set before `update`; a change re-lays out
+	 * every planet there (it is in `planetKey`), keeping continents where they
+	 * were and easing plates to their shells, so no `clear` is needed.
+	 */
+	coreLayers = 1;
 
 	/** Drop every layout: the next `update` lays every planet out afresh (a mode or style change). */
 	clear(): void {
@@ -669,11 +780,11 @@ export class PlanetWorld {
 		this.memberOf.clear();
 		const grew: string[] = [];
 		for (const tree of trees) {
-			const key = planetKey(tree, sizeOf, style, this.spacing.node, this.continentSpacing);
+			const key = planetKey(tree, sizeOf, style, this.spacing.node, this.continentSpacing, this.coreLayers);
 			const old = this.planets.get(tree.core);
 			let planet = old;
 			if (old === undefined || old.key !== key) {
-				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres, this.spacing.node, this.continentSpacing);
+				const layout = layoutPlanet(tree, sizeOf, style, phaseOf(tree.core), old?.layout.centres, this.spacing.node, this.continentSpacing, this.coreLayers);
 				let from: Map<string, Vec3> | null = null;
 				if (animate && old !== undefined) {
 					from = new Map();
@@ -842,9 +953,9 @@ export class PlanetWorld {
 	}
 }
 
-/** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style and the Node and Continent spacing. */
-function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number, continentSpacing: number): string {
-	const parts: string[] = [`${style.direction}/${style.balance}/${String(nodeSpacing)}/${String(continentSpacing)}|`];
+/** What a planet's layout depends on: its tree's shape, its plates' sizes, its continent style, the Node and Continent spacing and the core layers. */
+function planetKey(tree: PlanetTree, sizeOf: PlateSize, style: ContinentStyle, nodeSpacing: number, continentSpacing: number, layers: number): string {
+	const parts: string[] = [`${style.direction}/${style.balance}/${String(nodeSpacing)}/${String(continentSpacing)}/${String(layers)}|`];
 	const visit = (branch: PlanetBranch): void => {
 		const { width, height } = sizeOf(branch.id);
 		parts.push(`${branch.id}:${width.toFixed(2)}x${height.toFixed(2)}(`);

@@ -36,7 +36,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{
 		id: "layout",
 		name: "Layout & spacing",
-		controls: ["layout", "flatten", "continentSpacing", "continentDirection", "continentBalance", "forceBalance", "noteSpacing", "nodeSpacing", "linksPull"],
+		controls: ["layout", "flatten", "continentSpacing", "continentDirection", "continentBalance", "coreLayers", "forceBalance", "noteSpacing", "nodeSpacing", "linksPull"],
 	},
 	{ id: "show", name: "Show", controls: ["depth", "backlinks", "colorBy"] },
 	{ id: "edges", name: "Edges", controls: [...OVERLAY_EDGE_KINDS.map((kind): SettingsControl => `edge:${kind}`), "taper", "taperStrength"] },
@@ -58,6 +58,7 @@ export function controlShown(control: SettingsControl, overlays: Pick<Graph3DOve
 			return overlays.layout === "flat";
 		case "continentSpacing":
 		case "continentDirection":
+		case "coreLayers":
 			return overlays.layout === "planets";
 		case "continentBalance":
 			return overlays.layout === "planets" && overlays.continentDirection !== "radial";

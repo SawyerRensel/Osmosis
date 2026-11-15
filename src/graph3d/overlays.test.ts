@@ -3,6 +3,7 @@ import type { GraphModel, GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
 import { nodeColor } from "./appearance";
 import { TAPER_STRENGTH_MAX } from "./taper";
+import { MAX_CORE_LAYERS } from "./planets";
 import {
 	effectiveFlatten,
 	DEFAULT_OVERLAYS,
@@ -19,6 +20,7 @@ import {
 	SPACING_MIN,
 	normalizeOverlays,
 	spacingChanged,
+	coreLayersChanged,
 	spacingOf,
 	overlayNodeColor,
 	pullChanged,
@@ -429,5 +431,23 @@ describe("spacing sliders", () => {
 		expect(spacingChanged(same, { ...same, continentSpacing: 2 })).toBe(false);
 		expect(spacingChanged(same, { ...same, continentSpacing: 2, layout: "planets" })).toBe(true);
 		expect(spacingOf({ noteSpacing: 2, nodeSpacing: 3 })).toEqual({ note: 2, node: 3 });
+	});
+});
+
+describe("core layers", () => {
+	it("defaults to one layer and reads back a whole number of layers in range", () => {
+		expect(DEFAULT_OVERLAYS.coreLayers).toBe(1);
+		expect(normalizeOverlays({}).coreLayers).toBe(1);
+		expect(normalizeOverlays({ coreLayers: "many" }).coreLayers).toBe(1);
+		expect(normalizeOverlays({ coreLayers: 3 }).coreLayers).toBe(3);
+		expect(normalizeOverlays({ coreLayers: 2.6 }).coreLayers).toBe(3);
+		expect(normalizeOverlays({ coreLayers: 40 }).coreLayers).toBe(MAX_CORE_LAYERS);
+		expect(normalizeOverlays({ coreLayers: 0 }).coreLayers).toBe(1);
+	});
+
+	it("counts as a change only in Planets", () => {
+		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "planets", coreLayers: 3 })).toBe(true);
+		expect(coreLayersChanged({ coreLayers: 3 }, { layout: "planets", coreLayers: 3 })).toBe(false);
+		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "flat", coreLayers: 3 })).toBe(false);
 	});
 });
