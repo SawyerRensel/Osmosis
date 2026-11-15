@@ -101,11 +101,8 @@ export class Graph3DEditor implements TrackedEditor {
 		this.saveButton = anchor.appendChild(this.button("save", "check", "Save changes", true));
 		// A press in the editor is not a press on the canvas behind it.
 		for (const type of ["pointerdown", "mousedown", "click"]) anchor.addEventListener(type, (e) => e.stopPropagation());
-		// A double click on the node being edited saves it.
-		anchor.addEventListener("dblclick", (e) => {
-			e.stopPropagation();
-			this.close(true);
-		});
+		// A double click in the editor selects a word, as in note edit mode. It stays here so nothing behind acts on it.
+		anchor.addEventListener("dblclick", (e) => e.stopPropagation());
 		const sizes = new ResizeObserver((entries) => {
 			const size = entries[0]?.borderBoxSize[0];
 			if (size === undefined) return;

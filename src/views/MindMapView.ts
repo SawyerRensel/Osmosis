@@ -7229,11 +7229,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
-		// A double click on the node being edited saves it.
-		container.addEventListener("dblclick", (e) => {
-			e.stopPropagation();
-			this.stopEditing(true);
-		});
+		// A double click in the editor selects a word, as in note edit mode. It stays here so the map's
+		// `handleDblClick` doesn't start another edit.
+		container.addEventListener("dblclick", (e) => e.stopPropagation());
 
 		// Edit the node's source line — bullet/heading/checkbox markers and all
 		// — so every markdown element is reachable from the map. Its leading
