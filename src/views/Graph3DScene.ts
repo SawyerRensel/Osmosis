@@ -40,6 +40,7 @@ import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../
 import { LINE_PLATE_HEIGHT } from "../graph3d/plates";
 import { rotateAboutPivot } from "../graph3d/pivot";
 import { grabPoint, gripPoint, slipRate, type Sphere, sphereOnRay, stickyTurn } from "../graph3d/globe";
+import { grabRadius } from "../graph3d/shells";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
 import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import { SwipeFeed, WheelClassifier, wheelAction } from "../graph3d/wheel-input";
@@ -51,6 +52,7 @@ import { PLATE_END_ATTRIBUTES, patchOwnPlate, writePlateEnd, type PlateEndArrays
 import { Graph3DBoundaries, type BoundarySurface } from "./Graph3DBoundaries";
 import { Graph3DHints } from "./Graph3DHints";
 import { Graph3DRibbons } from "./Graph3DRibbons";
+import { Graph3DShells, type ShellInstance } from "./Graph3DShells";
 import { HINT_BASE_PX, HINT_EM_RATIO, chooseHints, exitDistance, hintBox, hintFade, hintSizeFade, hintText, hintedKind, readableAngle, stackHints, type HintProbe, type HintSpan } from "../graph3d/edge-hints";
 import { branchEnds, dashOf, hierarchyDepths, type TaperEnds } from "../graph3d/taper";
 import { FOCUS_DIM_GLSL, plateVisibility } from "../graph3d/focus";
@@ -445,6 +447,8 @@ export class Graph3DScene {
 	private readonly branchColors = new Map<string, Color | null>();
 	/** Every node's boundary (cloud), one mesh (`Graph3DBoundaries`). */
 	private readonly boundaries: Graph3DBoundaries;
+	/** Planets mode's inner core layer shells, faint spheres that fade as the camera nears them (`Graph3DShells`). */
+	private readonly shells = new Graph3DShells();
 	/** The edge-hint labels, a small pool (`Graph3DHints`), and the link and embed edges they are drawn for, filtered again only when the links change. */
 	private readonly hints = new Graph3DHints();
 	private readonly hintPoint = new Vector3();
@@ -710,7 +714,7 @@ export class Graph3DScene {
 		this.particles.visible = false;
 		// Plates are opaque and write depth, so an edge behind a plate is hidden by it.
 		this.boundaries = new Graph3DBoundaries(this.plates.focus, Graph3DNear.emWorld(LINE_PLATE_HEIGHT));
-		this.graph.scene().add(this.boundaries.mesh, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group, this.hints.group);
+		this.graph.scene().add(this.boundaries.mesh, this.shells.group, this.edges, this.ribbons.mesh, this.thread, this.particles, this.plates.group, this.near.group, this.hints.group);
 		this.perf = new Graph3DPerf(container, this.graph.renderer(), this.plates, this.near);
 		this.setOverlays(options.overlays);
 
@@ -1848,6 +1852,7 @@ export class Graph3DScene {
 		this.links = [];
 		this.plates.dispose();
 		this.boundaries.dispose();
+		this.shells.dispose();
 		this.hints.dispose();
 		this.edges.geometry.dispose();
 		this.edges.material.dispose();
@@ -2837,13 +2842,21 @@ export class Graph3DScene {
 		return { point: this.rayThrough(x, y).at(depth, new Vector3()), globe: null };
 	}
 
-	/** Planets mode: the nearest planet whose sphere the ray through client point (`x`, `y`) meets inside the mist, or null. */
+	/**
+	 * Planets mode: the nearest planet whose sphere the ray through client
+	 * point (`x`, `y`) meets inside the mist, or null. With core layers, a
+	 * planet the camera is inside offers the outermost shell it is still
+	 * outside of (`grabRadius`): the plates the camera sees face-on there.
+	 */
 	private sphereUnder(x: number, y: number): Sphere | null {
 		const spheres: Sphere[] = [];
+		const eye = this.graph.camera().position;
 		for (const id of this.world.cores()) {
 			const core = this.live.get(id);
-			const radius = this.world.radius(id);
-			if (core !== undefined && placed(core) && radius !== undefined && radius > 0) spheres.push({ centre: new Vector3(core.x, core.y, core.z), radius });
+			const surface = this.world.radius(id);
+			if (core === undefined || !placed(core) || surface === undefined || surface <= 0) continue;
+			const centre = new Vector3(core.x, core.y, core.z);
+			spheres.push({ centre, radius: grabRadius(centre.distanceTo(eye), surface, this.world.shells(id)) });
 		}
 		if (spheres.length === 0) return null;
 		const ray = this.rayThrough(x, y);
@@ -2998,6 +3011,7 @@ export class Graph3DScene {
 			if (this.plates.queued > 0) this.dirty = true;
 			this.writeEdges();
 			this.writeThread();
+			this.writeShells();
 			this.boundaries.invalidate();
 		}
 		this.boundaries.update(this.nodes, this.hierarchyEnds(), (node) => this.surfaceOf(node as EngineNode), now);
@@ -3277,6 +3291,18 @@ export class Graph3DScene {
 		for (const end of segments.flat()) positions.setXYZ(vertex++, end.x, end.y, end.z);
 		geometry.setDrawRange(0, vertex);
 		positions.needsUpdate = true;
+	}
+
+	/** Planets mode with core layers: every planet's inner shells, at its core, in its colour. */
+	private writeShells(): void {
+		const shells: ShellInstance[] = [];
+		for (const id of this.world.cores()) {
+			const radii = this.world.shells(id);
+			const core = this.live.get(id);
+			if (radii.length === 0 || core === undefined || core.departing || !placed(core)) continue;
+			for (const radius of radii) shells.push({ x: core.x, y: core.y, z: core.z, radius, color: core.color, alpha: core.opacity });
+		}
+		this.shells.write(shells);
 	}
 
 	/** The outline's parent → child edges among the loaded nodes, for boundaries. */

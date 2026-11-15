@@ -451,6 +451,8 @@ export interface PlanetPlace extends TangentFrame {
 export interface PlanetLayout {
 	core: string;
 	radius: number;
+	/** The inner shells' radii with core layers, innermost first (shell N, the surface, is `radius`); empty with one layer. */
+	shells: number[];
 	places: Map<string, PlanetPlace>;
 	/** Each continent's centre direction, by head ID, to seed the next layout. */
 	centres: Map<string, Vec3>;
@@ -572,6 +574,7 @@ export function layoutPlanet(
 		for (const plate of map.plates) places.set(plate.id, { ...wrapPlate(frame, plate.x, plate.y, surface), continent: head });
 	});
 	let radius = surface;
+	const shellRadii: number[] = [];
 	if (layers > 1) {
 		const depths = branchDepths(tree);
 		const core = coreClearance(rootWidth, surface);
@@ -579,8 +582,9 @@ export function layoutPlanet(
 		const growth = shellGrowth(shells, surface, core, layers, (ROW_GAP * nodeSpacing) / 2);
 		radius = surface * growth;
 		for (const plate of shells) places.get(plate.id)!.offset = scale(plate.normal, growth * shellRadius(surface, core, plate.depth, layers));
+		for (let k = 1; k < Math.round(layers); k++) shellRadii.push(growth * shellRadius(surface, core, k, layers));
 	}
-	return { core: tree.core, radius, places, centres: new Map(tree.continents.map((head, i) => [head.id, centres[i]!])) };
+	return { core: tree.core, radius, shells: shellRadii, places, centres: new Map(tree.continents.map((head, i) => [head.id, centres[i]!])) };
 }
 
 /** Each line's outline depth on its planet: 1 for a continent's head (the root's child), 2 for its children, and so on. */
@@ -755,6 +759,11 @@ export class PlanetWorld {
 
 	radius(core: string): number | undefined {
 		return this.planets.get(core)?.layout.radius;
+	}
+
+	/** A planet's inner shells' radii, innermost first (empty with one core layer, or no such planet). */
+	shells(core: string): readonly number[] {
+		return this.planets.get(core)?.layout.shells ?? [];
 	}
 
 	/** Every planet's core ID. */

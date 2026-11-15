@@ -992,6 +992,21 @@ describe("core layers", () => {
 		expect(len(layered.places.get("a11")!.offset)).toBeCloseTo(layered.radius, 6);
 	});
 
+	it("keeps the inner shells' radii, matching where their plates lie", () => {
+		expect(layoutPlanet(tree, plate).shells).toEqual([]);
+		const layered = layoutPlanet(tree, plate, DEFAULT_CONTINENT_STYLE, 0, undefined, 1, 1, 3);
+		expect(layered.shells).toHaveLength(2);
+		expect(layered.shells[0]!).toBeLessThan(layered.shells[1]!);
+		expect(layered.shells[1]!).toBeLessThan(layered.radius);
+		expect(len(layered.places.get("a")!.offset)).toBeCloseTo(layered.shells[0]!, 6);
+		expect(len(layered.places.get("a1")!.offset)).toBeCloseTo(layered.shells[1]!, 6);
+		const world = new PlanetWorld();
+		world.coreLayers = 3;
+		world.update([tree], plate, DEFAULT_CONTINENT_STYLE, () => 0, 0, false);
+		expect(world.shells("r")).toEqual(layered.shells);
+		expect(world.shells("nope")).toEqual([]);
+	});
+
 	it("grows the planet only when plates sharing an inner shell would overlap there", () => {
 		const n = (x: number, z: number): Vec3 => ({ x: x / Math.hypot(x, 1, z), y: 1 / Math.hypot(x, 1, z), z: z / Math.hypot(x, 1, z) });
 		const frame = tangentFrame({ x: 0, y: 1, z: 0 });
