@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[3D Graph - Planets mode]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-15T21:50:00.000Z"
-date_modified: "2026-11-15T21:50:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-15T22:20:00.000Z"
+date_start_scheduled: "2026-11-15T21:51:08.000Z"
+date_start_actual: "2026-11-15T21:51:08.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -78,3 +78,39 @@ Links pull re-settles; Organic is the `forceBalance` slider (`src/graph3d/overla
 1. In a note's 3D map, edit a plate to contain `[[#Nowhere]]`, commit. Expect no edge. Add a heading `# Nowhere`; expect the edge.
 2. With the unresolved link present and Links pull on, Organic layout: press Enter to spawn a plate; while editing, no edge to the root, and the plate is not pulled.
 3. `[[Some other note#Missing]]`: no edge. `[[Some other note]]`: edge to its core as before.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: 3ebf0f1 on `fix/3d-unresolved-heading-edges`.
+
+### Part 1: cause and fix
+As the ticket said: `resolveTarget` in `src/graph3d/model.ts` returned the target note's root (`?? target.coreId`) when the heading or block was missing. Now it returns `null`, so no edge and no ghost, for same-note `[[#Missing]]` and cross-note `[[Other#Missing]]` / `[[Other#^missing]]`. This applies to links, embeds and frontmatter links, since they all go through `resolveTarget`. A plain `[[Other]]` still lands on the core. The model rebuilds on each parse, so the edge appears once the heading exists. `links.ts`, `edge-hints.ts` and `horizon.ts` have no fallback of their own.
+
+### Part 2: cause (proved by a unit test)
+**Mostly Part 1 in disguise, plus a second cause: the link cache lags the write.** `commitLines` writes the file and calls `reload()` at once. The tree is parsed from the new bytes, but `metadataCache.getFileCache()` still holds the old bytes' offsets. A structural edit inserts the new line in front of later lines, so a stale offset can fall inside the new, empty line. The `[[#Nowhere]]` reference was then put on the spawned plate, and the Part 1 fallback pointed it at the root. That gave the "new plate → root" edge. It lasted until the editor closed, because the reload from `resolve` waits for the editor and then uses the fresh cache. The test is `buildGraph: a link cache that lags an edit` in `model.test.ts`: Tab under "Alpha" through the real `planStructural`, a fresh tree and the old cache. Before the fix it fails on both the reported case and the resolved-link case. With the Part 1 fix alone, the reported case passes, but a stale *resolved* `[[Rigging]]` or `#tag` still lands on the spawned plate. So the second cause is real, just not visible as a root edge.
+**Fix:** `sourceAt` now needs the reference's own text (`original` for links and embeds, `tag` for tags) to appear in the line it lands on (`raw ?? content`). If it doesn't, the reference is skipped until the cache catches up. A reference on no line still goes to the root, as before.
+
+### Decisions worth remembering
+- **When the cache is stale, the reference is skipped, not searched for by text.** Looking for the text in other lines would guess wrong when the same link appears twice. Skipping only lasts until the next rebuild after the cache catches up. While a plate is being edited, an edge from a shifted line can blink out and come back when the edit commits. That is better than drawing it from the wrong plate.
+- **Depth 0: `![[Other#Missing]]` no longer loads Other** (`transcluded.ts`). It used to load the whole note, and with no edge it would have floated loose. "Nothing is drawn for an unresolved link." The old test that asserted the whole-note fallback was rewritten.
+- **Navigation is unchanged:** `linkTargetNode`, used for clicking or following a link, still falls back to the root, like following the link in Obsidian. Its doc comment now says this differs from `buildGraph`.
+- **Known gap, not changed:** at depth ≥ 1, `[[Other#Missing]]` still *loads* Other, because the horizon uses `resolvedLinks`, which has no subpaths. Other shows with no edge from this note (unless something else links it). Fixing this would need subpath-aware adjacency, which is a bigger change.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/model.ts` | `resolveTarget`: unmatched subpath → `null`; `sourceAt` checks that the line holds the reference's text; `lineAt` returns the line, not just its ID; `linkTargetNode` doc |
+| `src/graph3d/model.test.ts` | Missing cross-note/same-note/embed subpaths draw nothing, and the edge appears once the heading exists; stale-cache spawn tests (Part 2) |
+| `src/graph3d/transcluded.ts` | Embed with an unmatched subpath loads nothing |
+| `src/graph3d/transcluded.test.ts` | Fallback test now expects nothing, then the section once it exists |
+| `e2e/fixtures/graph3d/Unresolved Headings.md` (+ `vault/tests/graph3d/`) | New fixture |
+
+### Not verified
+I could not see Obsidian. The stale-cache cause matches the symptom and reproduces in a test with the real `planStructural`, but how long the cache actually lags in Obsidian was not measured.
+
+### Manual test (desktop, then phone)
+Fixture: `tests/graph3d/Unresolved Headings.md`. Reload Obsidian first (Ctrl+R).
+1. Open its 3D graph (depth 0 or 1). "Forward to [[#Nowhere]]", "Cross to [[Rigging#No Such Heading]]" and "Block that is gone [[Rigging#^nope]]" have **no** link edge. "Plain [[Rigging]]" has its edge to Rigging's root, as before. At depth 1, Rigging is loaded; at depth 0 it is not.
+2. Edit mode on, Overlays → Links pull on, Organic layout. Select "Alpha", press Enter (and Tab, and Shift+Enter on "Charlie"). While the new plate's editor is open, it has **no** edge to the root and is not pulled. Commit some plain text: still no edge.
+3. Add a line `## Nowhere` (edit a plate to `## Nowhere`, or in the note). Once it is committed, "Forward to [[#Nowhere]]" gets an edge to the new heading plate.
+4. Phone: repeat 1–2 with the toolbar's Add sibling / Add child.
