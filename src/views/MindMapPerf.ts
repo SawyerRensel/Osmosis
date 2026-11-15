@@ -30,6 +30,7 @@ export class MindMapPerf {
 	private lastRender: { measure: number; layout: number; total: number } | null = null;
 	private lastCommit: { total: number; beforeRender: number; paint: number | null } | null = null;
 	private lastKept: { kept: number; drawn: number } | null = null;
+	private lastOpen: { firstView: number; settled: number | null } | null = null;
 	/** When the edit in flight began, or 0. */
 	private editAt = 0;
 	private readonly restoreParse: () => void;
@@ -88,6 +89,20 @@ export class MindMapPerf {
 		}
 	}
 
+	/**
+	 * A large map opened from its first view (T84): ms from the opening pass's
+	 * start to the first view drawn. Recorded even while the gauge is hidden,
+	 * so opening it afterwards still shows how the note opened.
+	 */
+	openFirstView(ms: number): void {
+		this.lastOpen = { firstView: ms, settled: null };
+	}
+
+	/** ...and to the last node measured and drawn. */
+	openSettled(ms: number): void {
+		if (this.lastOpen) this.lastOpen.settled = ms;
+	}
+
 	/** Put the gauge back after the view emptied its container. */
 	attach(): void {
 		this.gauge.attach();
@@ -118,6 +133,7 @@ export class MindMapPerf {
 			`nodes ${total}  drawn ${drawn}  in DOM ${dom}`,
 			`last parse ${ms(this.lastParse, 2)}  render ${ms(render?.total ?? null)} (measure ${ms(render?.measure ?? null)}, layout ${ms(render?.layout ?? null)})`,
 			this.commitLine(ms),
+			`open: first view ${ms(this.lastOpen?.firstView ?? null, 0)}  all measured ${ms(this.lastOpen?.settled ?? null, 0)}`,
 			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimedMs(frameAvg, [cullPerFrame])),
 		].join("\n");
 	}

@@ -64,6 +64,7 @@ import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } fr
 import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
 import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
 import { planReuse, translateAttr, type DrawnGroup, type WantedNode } from "../mindmap-reuse";
+import { PROBE_BIG, PROBE_SMALL, measureOrder, planFirstView, probeSizes, settledWith, unsettledOf } from "../mindmap-progressive";
 import {
 	KEEP_VISIBLE_PX,
 	MAX_FRAME_MS,
@@ -153,6 +154,38 @@ const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
 // Time one cull pass may spend starting draws of nodes that entered the view;
 // the rest wait for the next frame (see `updateVisibleNodes`).
 const CULL_DRAW_BUDGET_MS = 8;
+// T84: a first render with at least this many unmeasured nodes opens from its
+// first view (see `mindmap-progressive.ts`); below that, measuring all is quick.
+const PROGRESSIVE_MIN_NODES = 400;
+// Measuring the rest after such an open: nodes per batch, and how long one
+// task renders cells before yielding the frame.
+const PROGRESSIVE_BATCH = 200;
+const MEASURE_SLICE_MS = 8;
+// A batch relays the map out (so the nodes it settled can show) only once the
+// view has moved and then held still this long: one such pass on Perf 10k is
+// ~40 ms of layouts (measured, `mindmap-progressive.test.ts`). The last batch
+// always relays out.
+const PROGRESSIVE_IDLE_MS = 250;
+
+/** One node waiting to be measured (see `measureNodeSizes`). */
+interface MeasureEntry {
+	node: OsmosisNode;
+	displayContent: string;
+	cacheKey: string;
+	customWidth?: number;
+}
+
+/**
+ * The node size cache. `epoch` counts clears, so measuring that started
+ * before a clear (a style or setting change) can tell its sizes are stale.
+ */
+class SizeCache extends Map<string, { width: number; height: number }> {
+	epoch = 0;
+	clear(): void {
+		this.epoch++;
+		super.clear();
+	}
+}
 
 /** A viewport saved by `getEphemeralState`, as history hands it back. */
 interface SavedViewport {
@@ -355,10 +388,26 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
-	private nodeSizeCache = new Map<
-		string,
-		{ width: number; height: number }
-	>();
+	private nodeSizeCache = new SizeCache();
+	/**
+	 * A large map opened from its first view and still measuring the rest
+	 * (T84, see {@link planOpening}). `sizes` holds every size measured so
+	 * far; `anchorId` is the drawn node the view holds still across relayouts.
+	 */
+	private progressive: {
+		token: number;
+		pending: Map<string, MeasureEntry>;
+		sizes: Map<string, { width: number; height: number }>;
+		anchorId: string;
+		treePathMap: Map<string, string>;
+		nodeShapes: Map<string, TopicShape>;
+		startedAt: number;
+		movedAt: number;
+		passAt: number;
+	} | null = null;
+	private progressiveToken = 0;
+	/** Laid-out nodes whose place can still change: never drawn (see {@link isNodeInViewport}). */
+	private unsettledIds: Set<string> | null = null;
 	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
 	// nodes whose content hasn't changed (keyed by display content string)
 	private nodeHtmlCache = new Map<string, HTMLElement>();
@@ -757,7 +806,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		for (const ancestor of chain.slice(0, -1)) {
 			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
 		}
-		if (expanded) await this.render();
+		// Placing on a node needs its final place (a progressive open's pass
+		// measures the rest).
+		if (expanded || this.progressive) await this.render();
 
 		const rect = this.contentEl.getBoundingClientRect();
 		const zoomed = platePx !== null && this.currentLayout !== null && rect.width > 0 && rect.height > 0;
@@ -790,11 +841,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (typeof subpath === "string" && subpath) {
 			void this.revealSubpath(subpath);
 		} else if (isViewport(viewport)) {
-			this.stopInertia();
-			const { zoom, ...viewBox } = viewport;
-			this.viewBox = viewBox;
-			this.zoom = zoom;
-			this.updateViewBox();
+			const restore = () => {
+				this.stopInertia();
+				const { zoom, ...viewBox } = viewport;
+				this.viewBox = viewBox;
+				this.zoom = zoom;
+				this.updateViewBox();
+			};
+			// A saved viewport is in the final layout's coordinates.
+			if (this.progressive) void this.render().then(restore);
+			else restore();
 		}
 	}
 
@@ -817,7 +873,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		for (const ancestor of path.slice(0, -1)) {
 			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
 		}
-		if (expanded) await this.render();
+		if (expanded || this.progressive) await this.render();
 
 		const layoutNode = this.nodeMap.get(node.id);
 		if (!layoutNode) return;
@@ -3254,6 +3310,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// The edit overlay lives outside the SVG, so the viewBox does not carry
 		// it along — re-place it or it freezes where the node used to be.
 		if (this.editingNodeId) this.positionEditOverlay();
+		if (this.progressive) this.progressive.movedAt = performance.now();
 		this.scheduleCullUpdate();
 	}
 
@@ -3342,6 +3399,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		offsetY: number,
 		margin = CULL_MARGIN,
 	): boolean {
+		if (this.unsettledIds?.has(node.source.id)) return false;
 		const { x, y, width, height } = node.rect;
 		return rectInView(x + offsetX, y + offsetY, width, height, this.viewBox, margin);
 	}
@@ -3353,6 +3411,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		offsetX: number,
 		offsetY: number,
 	): boolean {
+		if (this.unsettledIds && (this.unsettledIds.has(child.source.id) || this.unsettledIds.has(parent.source.id))) return false;
 		// Compute bounding box of the two connection points, accounting for side
 		const isSecondary = child.side === "secondary";
 		const isTopDown = this.mapSettings.direction === "top-down";
@@ -8150,7 +8209,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		for (const ancestor of ancestorsOf(this.currentTree.root, id)) {
 			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
 		}
-		if (expanded) await this.render();
+		if (expanded || this.progressive) await this.render();
 		const layoutNode = this.nodeMap.get(id);
 		if (!layoutNode) return;
 		this.selectNode(id);
@@ -8579,8 +8638,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * The chain absorbs a rejection so one failed pass cannot wedge every later
 	 * one; the pass's own promise still rejects for its caller.
 	 */
-	private render(keepDrawn = false): Promise<void> {
-		const next = this.renderChain.then(() => this.renderPass(keepDrawn));
+	private render(keepDrawn = false, step?: number): Promise<void> {
+		const next = this.renderChain.then(() => this.renderPass(keepDrawn, step));
 		this.renderChain = next.catch(() => undefined);
 		return next;
 	}
@@ -8588,9 +8647,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	/**
 	 * @param keepDrawn the pass follows a map edit: keep the node groups that
 	 *   would draw the same and move them into place (see {@link redrawInPlace}).
+	 * @param step a progressive open's own relayout (its token, see
+	 *   {@link measureRest}): lay out from the sizes measured so far. Any other
+	 *   pass measures everything, as it always has, and so ends the open.
 	 */
-	private async renderPass(keepDrawn = false): Promise<void> {
+	private async renderPass(keepDrawn = false, step?: number): Promise<void> {
 		if (this.closed) return;
+		// A step whose open another pass already ended: nothing to do.
+		if (step !== undefined && this.progressive?.token !== step) return;
 		const container = this.contentEl;
 		const perfStart = this.perf?.start() ?? 0;
 
@@ -8623,30 +8687,49 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Build per-node shape overrides from frontmatter
 		const nodeShapes = this.buildNodeShapeMap();
 
-		// Measure actual content sizes in a detached div to avoid clearing the
-		// visible SVG. This prevents the flash/blip during re-renders.
-		const nodeSizes = await this.measureNodeSizes(
-			container,
-			this.currentTree,
-			nodeShapes,
-		);
-		const measured = this.perf?.start() ?? 0;
+		const isFirstRender = !this.svg;
+		const progress = this.progressive;
+		// The drawn node a progressive open holds still, where it is now.
+		const anchorBefore = progress ? this.svgPositionOf(progress.anchorId) : null;
+		if (step === undefined) this.progressive = null;
 
-		const layout = computeLayout(
-			this.currentTree,
-			{
-				direction: this.mapSettings.direction,
-				horizontalSpacing: this.mapSettings.horizontalSpacing,
-				verticalSpacing: this.mapSettings.verticalSpacing,
-				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
-				balance: this.mapSettings.balance ?? "one-side",
-				layoutSide: this.mapSettings.layoutSide ?? "right",
-			},
-			this.collapsedIds,
-			nodeSizes,
-			nodeShapes,
-			this.buildNodeSidesMap(),
-		);
+		let layout: LayoutResult;
+		let measured: number;
+		let openedFirstView = false;
+		if (step !== undefined && progress) {
+			measured = this.perf?.start() ?? 0;
+			layout = this.layoutMap(progress.sizes, nodeShapes);
+			if (progress.pending.size === 0) {
+				this.progressive = null;
+				this.unsettledIds = null;
+				this.perf?.openSettled(performance.now() - progress.startedAt);
+			} else {
+				const pending = new Set(progress.pending.keys());
+				const sides = this.buildNodeSidesMap();
+				const probes = [PROBE_BIG, PROBE_SMALL].map((probe) =>
+					this.layoutMap(probeSizes(progress.sizes, pending, probe), nodeShapes, sides));
+				this.unsettledIds = unsettledOf(layout, settledWith(layout, probes, pending, progress.anchorId));
+			}
+		} else {
+			const first = isFirstRender && !keepDrawn
+				? await this.planOpening(container, nodeShapes)
+				: null;
+			if (first) {
+				layout = first;
+				openedFirstView = true;
+			} else {
+				// Measure actual content sizes in a detached div to avoid clearing the
+				// visible SVG. This prevents the flash/blip during re-renders.
+				const nodeSizes = await this.measureNodeSizes(
+					container,
+					this.currentTree,
+					nodeShapes,
+				);
+				layout = this.layoutMap(nodeSizes, nodeShapes);
+				this.unsettledIds = null;
+			}
+			measured = this.perf?.start() ?? 0;
+		}
 		const laidOut = this.perf?.start() ?? 0;
 		// The SVG draws layout space shifted by -bounds (see getOffsetX/Y), so an
 		// edit that moves the map's top-left bound — deleting the widest node on
@@ -8657,7 +8740,13 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			: null;
 		this.currentLayout = layout;
 		this.drawGeneration++;
-		if (prevOffset && this.svg) {
+		// A progressive open's relayout moves its estimated nodes, and so the
+		// whole drawing: hold the anchor (and with it every drawn node) still.
+		const anchorAfter = progress ? this.svgPositionOf(progress.anchorId) : null;
+		if (anchorBefore && anchorAfter && this.svg) {
+			this.viewBox.x += anchorAfter.x - anchorBefore.x;
+			this.viewBox.y += anchorAfter.y - anchorBefore.y;
+		} else if (prevOffset && this.svg) {
 			this.viewBox.x += this.getOffsetX() - prevOffset.x;
 			this.viewBox.y += this.getOffsetY() - prevOffset.y;
 		}
@@ -8673,7 +8762,6 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Now that measurement and layout are done, swap out the old SVG.
 		// Defer container.empty() until just before appending the new SVG
 		// to avoid a visible flash.
-		const isFirstRender = !this.svg;
 		const inPlace = keepDrawn && this.canRedrawInPlace(container);
 		this.toolRibbon?.detach();
 		this.findBar?.detach();
@@ -8721,6 +8809,142 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.findBar?.refresh();
 		this.perf?.attach();
 		this.perf?.rendered(perfStart, measured - perfStart, laidOut - measured, kept, this.renderedNodeIds.size);
+		if (openedFirstView && this.progressive) {
+			this.perf?.openFirstView(performance.now() - this.progressive.startedAt);
+			void this.measureRest(this.progressive.token);
+		}
+	}
+
+	/** Lay the current tree out with these node sizes (unlisted nodes are estimated). */
+	private layoutMap(
+		sizes: Map<string, { width: number; height: number }>,
+		nodeShapes: Map<string, TopicShape>,
+		sides = this.buildNodeSidesMap(),
+	): LayoutResult {
+		return computeLayout(
+			this.currentTree!,
+			{
+				direction: this.mapSettings.direction,
+				horizontalSpacing: this.mapSettings.horizontalSpacing,
+				verticalSpacing: this.mapSettings.verticalSpacing,
+				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
+				balance: this.mapSettings.balance ?? "one-side",
+				layoutSide: this.mapSettings.layoutSide ?? "right",
+			},
+			this.collapsedIds,
+			sizes,
+			nodeShapes,
+			sides,
+		);
+	}
+
+	/** A laid-out node's top-left in SVG coordinates, or null. */
+	private svgPositionOf(id: string): { x: number; y: number } | null {
+		const node = this.currentLayout?.nodes.find((n) => n.source.id === id);
+		return node ? { x: node.rect.x + this.getOffsetX(), y: node.rect.y + this.getOffsetY() } : null;
+	}
+
+	/**
+	 * T84: open a large map from its first fitted view. Measures the nodes in
+	 * and around that view (see `planFirstView`), marks every node whose place
+	 * can still change as unsettled (not drawn), and returns the layout to draw.
+	 * Null when the map is small, fits the container, or has boundaries (drawn
+	 * around whole subtrees): the pass then measures everything, as before.
+	 */
+	private async planOpening(
+		container: HTMLElement,
+		nodeShapes: Map<string, TopicShape>,
+	): Promise<LayoutResult | null> {
+		const fm = this.osmosisStyleFrontmatter;
+		if (!this.currentTree || fm?.styles || fm?.variants) return null;
+		const startedAt = performance.now();
+		const { sizes, toMeasure, treePathMap } = this.collectMeasureWork(this.currentTree, nodeShapes);
+		if (toMeasure.length < PROGRESSIVE_MIN_NODES) return null;
+		const rect = container.getBoundingClientRect();
+		const pending = new Map(toMeasure.map((e) => [e.node.id, e]));
+		const pendingIds = new Set(pending.keys());
+		const sides = this.buildNodeSidesMap();
+		const first = await planFirstView({
+			layoutOf: (s) => this.layoutMap(s, nodeShapes, sides),
+			sizes,
+			pending: pendingIds,
+			measure: async (ids) => {
+				await this.measureEntries(container, ids.map((id) => pending.get(id)!), sizes, treePathMap, nodeShapes, this.renderComponent);
+				for (const id of ids) {
+					pending.delete(id);
+					pendingIds.delete(id);
+				}
+			},
+			container: { w: rect.width, h: rect.height },
+			padding: LAYOUT_PADDING,
+			minZoom: MIN_ZOOM,
+			maxZoom: MAX_ZOOM,
+			margin: CULL_MARGIN,
+		});
+		// What was measured is cached, so the full measure that follows a
+		// null only does the rest.
+		if (!first) return null;
+		this.progressive = {
+			token: ++this.progressiveToken,
+			pending,
+			sizes,
+			anchorId: first.anchorId,
+			treePathMap,
+			nodeShapes,
+			startedAt,
+			movedAt: 0,
+			passAt: performance.now(),
+		};
+		this.unsettledIds = unsettledOf(first.layout, first.settled);
+		return first.layout;
+	}
+
+	/**
+	 * Measure what a progressive open left, in batches nearest the view first,
+	 * yielding the frame every {@link MEASURE_SLICE_MS}. A batch relays out only
+	 * after the view moved and settled (see {@link PROGRESSIVE_IDLE_MS}); the
+	 * last one always does, which draws the remaining nodes and ends the open.
+	 * Stops when any other pass ends the open (it measures the rest itself).
+	 */
+	private async measureRest(token: number): Promise<void> {
+		const component = new Component();
+		component.load();
+		try {
+			for (;;) {
+				const p = this.progressive;
+				if (!p || p.token !== token || this.closed) return;
+				if (p.pending.size === 0) {
+					await this.render(true, token);
+					return;
+				}
+				const anchor = this.currentLayout?.nodes.find((n) => n.source.id === p.anchorId);
+				const ids = this.currentLayout && anchor
+					? measureOrder(this.currentLayout, new Set(p.pending.keys()), { x: anchor.rect.x, y: anchor.rect.y }).slice(0, PROGRESSIVE_BATCH)
+					: [...p.pending.keys()].slice(0, PROGRESSIVE_BATCH);
+				const epoch = this.nodeSizeCache.epoch;
+				const done = await this.measureEntries(
+					this.contentEl, ids.map((id) => p.pending.get(id)!), p.sizes, p.treePathMap, p.nodeShapes, component,
+					() => this.progressive !== p || this.closed || this.nodeSizeCache.epoch !== epoch,
+				);
+				if (this.progressive !== p) return;
+				// The cache was cleared (a style or setting changed): what was
+				// measured may be stale. A full pass measures everything again
+				// and ends the open.
+				if (this.nodeSizeCache.epoch !== epoch) {
+					await this.render();
+					return;
+				}
+				if (!done) continue; // A pass emptied the container mid-batch: measure it again.
+				for (const id of ids) p.pending.delete(id);
+				const now = performance.now();
+				if (p.pending.size > 0 && p.movedAt > p.passAt && now - p.movedAt >= PROGRESSIVE_IDLE_MS) {
+					p.passAt = now;
+					await this.render(true, token);
+				}
+			}
+		} finally {
+			component.unload();
+		}
 	}
 
 	/**
@@ -8736,19 +8960,19 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		tree: OsmosisTree,
 		nodeShapes?: Map<string, TopicShape>,
 	): Promise<Map<string, { width: number; height: number }>> {
-		const sizes = new Map<string, { width: number; height: number }>();
-		const cfg = DEFAULT_LAYOUT_CONFIG;
-		const effectiveMaxNodeWidth =
-			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
-		// Reduce max content width for shapes with insets so text wraps before
-		// the shape boundary clips it.
-		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
-		const globalShapeInsets = getShapeInsets(globalShape);
-		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
-		const globalShapeScale = 1 - globalTotalInsetX;
-		const defaultContentMaxWidth = effectiveMaxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
+		const { sizes, toMeasure, treePathMap } = this.collectMeasureWork(tree, nodeShapes);
+		if (toMeasure.length > 0) {
+			await this.measureEntries(container, toMeasure, sizes, treePathMap, nodeShapes, this.renderComponent);
+		}
+		return sizes;
+	}
 
-		const sourcePath = this.currentFile?.path ?? "";
+	/** The sizes {@link measureNodeSizes} has cached, and the nodes it must measure. */
+	private collectMeasureWork(
+		tree: OsmosisTree,
+		nodeShapes?: Map<string, TopicShape>,
+	): { sizes: Map<string, { width: number; height: number }>; toMeasure: MeasureEntry[]; treePathMap: Map<string, string> } {
+		const sizes = new Map<string, { width: number; height: number }>();
 		const allNodes = this.collectAllNodes(tree.root);
 
 		// Build a map of nodeId → tree-path so we can resolve tree-path style
@@ -8757,11 +8981,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		// Collect nodes that need measurement (not in cache).
 		// Cache key includes heading depth and per-node style hash since typography varies.
-		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
-			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
-			: undefined;
 		const globalWidth = this.mapSettings.baseStyle?.width;
-		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string; customWidth?: number }[] = [];
+		const toMeasure: MeasureEntry[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
@@ -8787,10 +9008,42 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				toMeasure.push({ node, displayContent, cacheKey, customWidth: nodeWidth });
 			}
 		}
+		return { sizes, toMeasure, treePathMap };
+	}
 
-		// Only create the measurer if there are uncached nodes
-		if (toMeasure.length > 0) {
+	/**
+	 * Measure `toMeasure` into `sizes` and the size cache, rendering with
+	 * `component`. With `cancelled` (a progressive open's background batches),
+	 * rendering yields the frame every {@link MEASURE_SLICE_MS} and gives up —
+	 * returning false, recording nothing — once `cancelled()` or once a pass
+	 * has emptied the container out from under the measurer.
+	 */
+	private async measureEntries(
+		container: HTMLElement,
+		toMeasure: MeasureEntry[],
+		sizes: Map<string, { width: number; height: number }>,
+		treePathMap: Map<string, string>,
+		nodeShapes: Map<string, TopicShape> | undefined,
+		component: Component | null,
+		cancelled?: () => boolean,
+	): Promise<boolean> {
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const effectiveMaxNodeWidth =
+			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
+		// Reduce max content width for shapes with insets so text wraps before
+		// the shape boundary clips it.
+		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
+		const globalShapeInsets = getShapeInsets(globalShape);
+		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
+		const globalShapeScale = 1 - globalTotalInsetX;
+		const defaultContentMaxWidth = effectiveMaxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
+		const sourcePath = this.currentFile?.path ?? "";
+		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
+			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
+			: undefined;
+		{
 			const measurer = createDiv();
+			const gaveUp = (): boolean => !!cancelled && (cancelled() || !measurer.isConnected);
 			measurer.style.cssText = `
 				position: absolute; left: -9999px; top: -9999px;
 				visibility: hidden; pointer-events: none;
@@ -8804,7 +9057,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			// siblings. The reads come in two rounds, natural widths and then
 			// the wrapped heights of the cells narrowed in between.
 			const cells: HTMLDivElement[] = [];
+			let sliceStart = performance.now();
 			for (const { node, displayContent } of toMeasure) {
+				if (cancelled && performance.now() - sliceStart > MEASURE_SLICE_MS) {
+					await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+					sliceStart = performance.now();
+				}
+				if (gaveUp()) {
+					measurer.remove();
+					return false;
+				}
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = createDiv();
@@ -8833,13 +9095,13 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				const osmosisCard = this.getOsmosisCardContent(node);
 				if (osmosisCard) {
 					await this.renderOsmosisCardInto(cell, osmosisCard, sourcePath);
-				} else if (this.renderComponent) {
+				} else if (component) {
 					await MarkdownRenderer.render(
 						this.app,
 						displayContent,
 						cell,
 						sourcePath,
-						this.renderComponent,
+						component,
 					);
 				}
 
@@ -8863,6 +9125,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 					}
 				}
 				cells.push(cell);
+			}
+			if (gaveUp()) {
+				measurer.remove();
+				return false;
 			}
 
 			// Use Range to get tight bounding box of actual rendered content
@@ -8932,7 +9198,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			measurer.remove();
 		}
 
-		return sizes;
+		return true;
 	}
 
 	/** Collect all OsmosisNodes from the tree into a flat array. */
