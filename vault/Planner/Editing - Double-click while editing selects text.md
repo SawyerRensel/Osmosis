@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Mind Map - Shift+Enter adds a sibling above]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-15T21:50:00.000Z"
-date_modified: "2026-11-15T21:50:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-15T22:03:00.000Z"
+date_start_scheduled: "2026-11-15T21:57:00.000Z"
+date_start_actual: "2026-11-15T21:57:00.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -69,3 +69,31 @@ Small: ~40k tokens. `Graph3DEdit.ts` by range, `MindMapView.ts` ~7200–7260 and
 1. 2D: double-click a node to edit; double-click a word inside the editor → word selected, still editing. Save with ✓/Enter.
 2. 3D: same on a plate.
 3. Double-click another node while editing → same as before this change.
+
+## Batch implementation notes (awaiting manual test)
+Commit 945d156 on `fix/dblclick-selects-text`.
+
+**Approach.** Both `dblclick` listeners keep `e.stopPropagation()` and no longer save. CodeMirror then selects the word natively. Comments updated.
+
+**Checked by reading the code**
+- 2D: `handleDblClick` is registered on the map `container` (~1936) and starts an edit only for a clicked node. The editor lives in `contentEl` and its `dblclick` stops propagation, so the map never sees a double-click made inside the editor. A double-click on another node still goes through `handleDblClick` as before.
+- 3D: `Graph3DScene.ts`, `Graph3DView.ts`, `Graph3DNear.ts` and `Graph3DPlates.ts` have no `dblclick` handling at all, so nothing behind the editor reacts. The editor anchor's `dblclick` still stops propagation. A press elsewhere still goes through the existing outside-click handling, untouched.
+- Triple-click and a mobile double-tap fire no save path: the only `dblclick` listeners were the two removed saves. 2D `handleDblClick` also ignores touch.
+
+**Decisions.** Kept `stopPropagation` rather than deleting the listeners, so no ancestor listener can start another edit on the double-click. The 2D edit overlay built at ~7541 (a second editor) never had a `dblclick` save, so it is unchanged.
+
+| File | Change |
+|---|---|
+| `src/views/Graph3DEdit.ts` | `dblclick` on the anchor: stopPropagation only |
+| `src/views/MindMapView.ts` | `dblclick` on the editor container: stopPropagation only |
+
+**Fixture.** None needed; any note works.
+
+**Not verified.** I can't see Obsidian, so the native word selection and the phone double-tap are untested.
+
+**Retest (desktop)**
+1. 2D map: double-click a node to edit, then double-click a word inside the editor. The word is selected and you are still editing. Triple-click selects the line. Save with the check or Enter.
+2. 3D graph: same on a plate.
+3. While editing, double-click another node or plate. Behaviour is the same as before.
+
+**Retest (phone)**: double-tap a word in the editor. It selects (or does the native thing) and doesn't save.
