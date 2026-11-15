@@ -11,13 +11,13 @@ location:
 related:
   - "[[3D Graph - Planets mode]]"
   - "[[3D Graph - Planet core layer shells drawn]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-15T21:50:00.000Z"
-date_modified: "2026-11-15T21:50:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-15T22:26:52.000Z"
+date_start_scheduled: "2026-11-15T22:20:27.000Z"
+date_start_actual: "2026-11-15T22:20:27.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -68,3 +68,52 @@ Slider exists in Planets section; N=1 is pixel-identical to today; N>1 places pl
 
 ## Test plan (Sawyer)
 Planets layout on a multi-level note: Core layers 1 = as before. Drag to 3, 4: plates glide inward by depth, continents innermost, leaves on the surface. Grab-rotate still works. Phone too.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `287279c` on `feature/planet-core-layers`.
+
+### Approach
+The planet is laid out exactly as before (continent maps, spread, radius, centres, wrap onto the surface). Then, with more than one layer, each plate is moved straight in towards the centre onto the shell of its outline depth: `offset = normal · growth · shellRadius(...)`. Its direction from the centre, its `normal`, `right` and `up` are untouched, so continents keep their 2D-map shape as seen from outside and the hover pose, far-side dimming and upright spin keep working. The layer count is part of `planetKey`, so a slider change re-lays out each planet through the normal `PlanetWorld.update` path: continent centres are seeded from the previous layout (unchanged), and plates ease to their shells over `RELAYOUT_MS` from wherever they are mid-ease. That is the live re-settle.
+
+### Decisions worth remembering
+- **Shell radius formula:** `shellRadius(R, core, depth, N) = core + (R − core)·k/N`, `k = clamp(depth, 1, N)`, where `core = coreClearance(rootWidth, R) = min(R, rootWidth/2 + CONTINENT_MARGIN)`, the clearance `planetRadius` already keeps round the root plate. So shells are evenly spaced between the root plate's clearance and the surface, not `R·k/N`: at N = 6 `R/6` could sit inside the root plate. Shell N is the surface; N = 1 puts everything on the surface.
+- **Max 6 layers** (`MAX_CORE_LAYERS`), integer slider, default 1. Stored with the other overlays (`coreLayers`, rounded and clamped by `normalizeOverlays`).
+- **Depth** is the plate's level in its `PlanetTree` (`branchDepths`): a continent head (the root's child) is 1. Heading-less notes count list nesting the same way. An embedded note's lines continue counting from the embedding line, since they hang inline on the host's planet.
+- **Inner-shell overlap: the whole planet grows.** On a shell of radius r, neighbours are r/R as far apart as on the surface, so siblings on inner shells collide. `shellGrowth` finds the smallest uniform factor (applied to every shell *and* the surface, so the shells stay evenly spaced) at which no two plates sharing an inner shell overlap, using the same test as `spreadContinent` (both axes of the first plate's frame plus `ROW_GAP·nodeSpacing/2` clearance, and pairs farther apart than their diagonal never count). No pair is asked for more room than it has on the surface, so the surface shell never grows anything and N = 1 is never grown. Consequence Sawyer may notice: at high N a planet can get noticeably bigger (up to about R/r₁) and its surface continents spread out by the same factor; a grown planet wakes the space forces only if it now overlaps a neighbour (the existing `collisions` path). The alternative, keeping the surface fixed and pushing crowded shells outward, breaks even spacing and lets shells bunch onto the surface. Sizes come from `flatSize` (panel-aware), as before. The check is O(n²) per inner shell, but inner shells hold only shallow depths; the surface (all deeper lines) is never checked.
+- **Re-settle path:** `coreLayersChanged` (Planets only) → `setOverlays` sets `world.coreLayers` and calls `pushData()` (not `reshape`, not `world.clear()`), like an edit's planet re-layout. Nothing outside Planets moves. **New approved re-settle exception (Sawyer, 2026-11-15): dragging Core layers moves plates live.** Add to the memory list.
+- **Boundary patches:** `surfaceOf` now reports each plate's own shell radius (the length of its offset). A boundary group is draped as a patch only when all its plates share one planet *and* one shell; a group spanning shells falls back to a hull. At N = 1 this is the old behaviour (offset length = surface radius, to float precision).
+- **Grab (globe.ts) is unchanged:** it grabs the planet's outer sphere (`world.radius`, the surface). Inner-shell plates are still clickable through `nodeNear` (screen-space), but they sit under the outer shell's plates; T86 handles visibility.
+- Edges: hierarchy/embed arcs (`surfaceArc`) already ease the distance from the centre between their two ends, so branches run correctly from shell to shell.
+
+### Facts for T86 (shell drawing + fade)
+- Shell radii: `shellRadius(radius, core, depth, layers)` in `src/graph3d/planets.ts`, with `core = coreClearance(rootWidth, surfaceRadius)`. Note that `PlanetLayout.radius` is already the *grown* surface; the shells of a laid-out planet are `growth·shellRadius(surface, core, k, N)` for k = 1…N, i.e. evenly spaced from `layout.radius·core/surface` to `layout.radius`. Easiest for T86: store the shell radii (or `core` and `growth`) on `PlanetLayout` when drawing; today only `radius`, `places` and `centres` are kept.
+- Planet centres: the core node's live position (`this.live.get(coreId)` in `Graph3DScene`, see `coreOf` / `sphereUnder`); radii via `PlanetWorld.radius(core)`; cores via `PlanetWorld.cores()`; a plate's shell radius = `|world.place(id).offset|`.
+- Slider flow: `Graph3DOverlays.ts` case `"coreLayers"` (instant slider, 1…`MAX_CORE_LAYERS`) → `this.change({ coreLayers })` → saved overlays → `Graph3DScene.setOverlays` → `world.coreLayers` + `pushData()` → `updatePlanets` → `PlanetWorld.update` (key includes layers) → eased `placeAll` in `tick`.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/graph3d/planets.ts` | `MAX_CORE_LAYERS`, `coreClearance`, `shellRadius`, `shellGrowth`, `branchDepths`; `layoutPlanet(…, layers)` moves plates onto shells and grows the planet if needed; `PlanetWorld.coreLayers`, in `planetKey` |
+| `src/graph3d/overlays.ts` | `coreLayers` overlay (default 1, normalized), `coreLayersChanged` |
+| `src/graph3d/settings-sections.ts` | Core layers in Layout & spacing after Continent balance, shown in Planets only |
+| `src/views/Graph3DOverlays.ts` | Core layers slider (1–6, instant) and its description |
+| `src/views/Graph3DScene.ts` | `setOverlays` passes the layers and re-lays out planets live; `surfaceOf` reports the plate's shell radius |
+| `src/views/Graph3DBoundaries.ts` | Patch only when a group's plates share one shell, else hull |
+| `src/graph3d/planets.test.ts`, `overlays.test.ts` | Shell radius, depth, N = 1 identity, direction kept, growth, eased world re-layout; normalize and change detection |
+
+### Fixture
+None new: `vault/tests/graph3d/Tapered Branches.md` (sole H1 root, three H2 continents, lists up to four levels deep). `Galley Handbook.md` for a bigger planet.
+
+### Manual test (Sawyer)
+Desktop:
+1. Open `tests/graph3d/Tapered Branches.md` in the 3D graph, depth 0. Settings → Layout & spacing → Layout: Planets. A **Core layers** slider appears under Continent balance at 1. The planet looks exactly as before.
+2. Drag Core layers to 3, then 4, then 6, slowly. Plates glide inward as you drag: the H2s (Standing rigging, Running rigging, Deck hardware) innermost, their bullets on the next shell, deeper bullets further out, the deepest on the surface. Each plate stays above the same spot it had on the surface (same direction from the centre); hierarchy edges run between shells. The planet may grow a little at high values; no two plates on one shell should overlap.
+3. Drag back to 1: everything returns to the surface, same as step 1.
+4. At 4, grab-rotate the planet (drag on it): it still turns. Click an inner plate you can see between surface plates: it selects/hovers as usual.
+5. Switch Layout to Flat slices and back: the slider is hidden in Flat, and Planets comes back with the saved layer count. Reload Obsidian: the value persists.
+6. Try `Galley Handbook.md` at 6 for a larger planet; watch for any sluggishness while dragging.
+Phone: steps 1–4 in the settings sidebar; the slider should step through 1–6 with a finger drag, plates gliding; one-finger planet grab still turns it.
+
+### Could not verify
+Anything visual: I cannot see Obsidian. Not measured: drag smoothness on very large planets (each slider step re-lays out every planet, as Continent spacing already does). Inner shells are hidden behind surface plates until T86 adds fading.
