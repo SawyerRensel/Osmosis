@@ -10,13 +10,13 @@ people:
 location:
 related:
   - "[[Toolbar - Add link button for touch]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-15T21:50:00.000Z"
-date_modified: "2026-11-15T21:50:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-15T22:10:00.000Z"
+date_start_scheduled: "2026-11-15T21:58:51.000Z"
+date_start_actual: "2026-11-15T21:58:51.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -67,3 +67,44 @@ Link button → tap target → menu in both views; each item does what the 3D dr
 
 ## Test plan (Sawyer)
 Desktop and phone, 2D and 3D: select a node, tap Link, tap another node → menu. Try each item, then Ctrl+Z. Multi-select variant. Target = note root: no "Move after", "Move to end of note" offered. 3D Alt-drag drop still shows its menu.
+
+## Batch implementation notes (awaiting manual test)
+
+Code: commit `a9d4387` on `feature/link-button-menu`. The whole ticket shipped.
+
+### Approach
+- **One pure item builder:** `linkMenuItems({ canLink, canMove, line, root })` in `src/link-pick.ts` (tested in `link-pick.test.ts`) returns the ordered items with the drop menu's titles and icons: Add link (if `canLink`), then, if `canMove`, Move under (a line), Move after (a line that is not a root), Move to end of note (a root). Each view judges the four flags its own way.
+- **3D:** `showDropMenu` now only works out the group (the selection, if the dragged plate is in a larger one) and calls the new `showLinkMenu(sources, to, x, y)`, which holds the old menu body built from `linkMenuItems`. The Alt-drag drop menu therefore behaves as before (same items, same conditions, same actions). The pick (`pickLinkTarget`) calls `showLinkMenu` with the armed lines instead of linking at once; the scene's `onLinkPick` now also passes the release's client point.
+- **2D:** `pickLinkTarget(nodeId, x, y)` → `showLinkMenu`, an Obsidian `Menu` at the tap/click point. Add link → the existing `linkNodes`. Moves → `moveNodesBy` → `moveNodesTo`, which is `executeDrop`'s old body split out (the drag and drop's own write path: same-file splice or `moveAcrossFiles`, then the moved nodes reselected). `executeDrop` now just snapshots, settles and calls `moveNodesTo`. Under = end of the target's children; After = right after the target in its parent; the 2D root (the note) offers Move to end of note = end of the root's children.
+- Undo: every choice writes through exactly the path its existing gesture uses (3D `linkLines`/`linkSelection`/`moveLine`/`moveSelection`; 2D `linkNodes` and the drag's move), so Ctrl+Z behaves as for those.
+
+### Decisions worth remembering
+- **The mode ends at the pick.** `LinkPicker.tap` already disarms on a target, so dismissing the menu (Escape, a tap elsewhere) writes nothing and the button is off. Press Link again to retry. Simpler than re-arming on dismiss, and Obsidian's `Menu` close does not tell us whether an item was chosen.
+- **Menu at the tap point**, not the target's centre: the tap is on the target, and it is the point the 3D drop menu uses too.
+- **2D moves only for siblings.** A 2D drag moves only the selected siblings of the dragged node, and `moveNodesTo` keeps that rule. When the armed nodes are not all siblings (or a target is inside a source's subtree, or a source is the root), the move items are hidden and only Add link shows. If no item applies at all a Notice says so.
+- **2D Add link hidden where `linkNodes` would refuse:** target an embed line; every source the root or an embed line; target the root with every source in the map's own note.
+- **3D keeps `canMove: true`** as before: its own refusals (`moveRefusal` / "a line can't move under itself") still give the Notice after the choice, so the drop menu is unchanged.
+- 2D Move under a collapsed node appends at the end of its (hidden) children, from the parse tree rather than the layout.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/link-pick.ts` (+test) | `LinkChoice`, `LinkMenuItem`, `LinkMenuTarget`, `linkMenuItems` |
+| `src/views/Graph3DScene.ts` | `onLinkPick(node, x, y)` passes the click's client point |
+| `src/views/Graph3DView.ts` | `showLinkMenu` (from `showDropMenu`'s body, built on `linkMenuItems`); `showDropMenu` delegates; `pickLinkTarget` shows the menu |
+| `src/views/MindMapView.ts` | `executeDrop` split into `moveNodesTo`; new `showLinkMenu`, `moveNodesBy`; `pickLinkTarget` takes the tap point |
+| `src/graph3d/controls-help.ts`, `docs/mind-mapping/graph-3d.md`, `docs/mind-mapping/editing.md` | Menu documented |
+
+### Fixture
+None new. 3D: `vault/tests/graph3d/Sailing Basics.md` (+ `Harbour Links.md`). 2D: the same note in the mind map.
+
+### Could not verify
+Nothing was run in Obsidian or on a device. Not verified: that a phone's tap release doesn't close the menu immediately (it opens on a 0 ms timeout, as the 3D drop menu does); 2D moves into or out of a transcluded section via the menu (same code as the drag).
+
+### Retest (desktop and phone, 2D and 3D)
+1. Edit mode, select a line, tap Link, tap another line: a menu at the tap with Add link / Move under / Move after. Try each, Ctrl+Z after each (phone: the undo button).
+2. Multi-select two sibling lines, Link, tap a third line: each item acts on both.
+3. 2D: multi-select non-siblings (e.g. a heading and a bullet in another heading): only Add link shows.
+4. Target the note root (3D note plate or sole-H1, 2D root): no Move after; Move to end of note is offered (3D sole H1 also offers Move under).
+5. Tap Link, tap a target, then dismiss the menu: nothing written, button off.
+6. 3D desktop: Alt-drag a line onto another: the drop menu is as before.
