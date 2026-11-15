@@ -128,10 +128,14 @@ describe("depth 0: collectEmbedded", () => {
 		expect(labels(model, "B.md")).toEqual(["B", "Top", "Bends", "Bend"]);
 	});
 
-	it("falls back to the whole note when the subpath matches nothing", async () => {
+	it("shows nothing for a subpath that matches nothing, until it exists", async () => {
 		const files = { "A.md": "# A\n![[B#Nowhere]]", "B.md": "# B\n- Only line" };
-		const { model } = await depthZero(files, "A.md");
-		expect(labels(model, "B.md")).toEqual(["B", "Only line"]);
+		const missing = await depthZero(files, "A.md");
+		expect(missing.paths).toEqual(["A.md"]);
+		expect(missing.model.nodes.some((n) => n.path === "B.md")).toBe(false);
+
+		const found = await depthZero({ ...files, "B.md": "# B\n- Only line\n## Nowhere\n- Here" }, "A.md");
+		expect(labels(found.model, "B.md")).toEqual(["Nowhere", "Here"]);
 	});
 
 	it("keeps an empty focus note: its core alone", async () => {

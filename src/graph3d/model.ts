@@ -239,10 +239,10 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		}
 		const target = indexes.get(targetPath);
 		if (target === undefined) return null;
-		// An unmatched subpath falls back to the note, as following it in Obsidian does.
 		const key = subpathKey(subpath);
 		if (key === null) return target.coreId;
-		return ("blockId" in key ? target.byBlockId.get(key.blockId) : target.byHeading.get(key.heading)) ?? target.coreId;
+		// A heading or block that doesn't exist (yet) draws nothing: no fallback to the note, no ghost. The edge appears once it exists.
+		return ("blockId" in key ? target.byBlockId.get(key.blockId) : target.byHeading.get(key.heading)) ?? null;
 	};
 	const contentOnly = options.contentOnly === true;
 
@@ -251,18 +251,29 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		if (cache === null) continue;
 		const index = indexes.get(tree.filePath);
 		if (index === undefined) continue;
-		// Null: a reference outside the part of a partial note that is shown.
-		const sourceAt = (offset: number): string | null => lineAt(index, offset) ?? index.coreId;
+		/**
+		 * The line a reference at `offset` sits on, or the root when it is on no
+		 * line. Null for a reference outside the part of a partial note that is
+		 * shown, or one whose line doesn't hold its `text`: the link cache lags an
+		 * edit, so right after a write its offsets index the old bytes and can
+		 * land on a line just inserted (a spawned plate) or on a shifted
+		 * neighbour. Skipped until the cache catches up and the model rebuilds.
+		 */
+		const sourceAt = (offset: number, text: string): string | null => {
+			const line = lineAt(index, offset);
+			if (line === undefined) return index.coreId;
+			return (line.node.raw ?? line.node.content).includes(text) ? line.id : null;
+		};
 
 		for (const ref of cache.links ?? []) {
-			const source = sourceAt(ref.position.start.offset);
+			const source = sourceAt(ref.position.start.offset, ref.original);
 			const target = source === null ? null : resolveTarget(ref.link, index.path, !contentOnly);
 			if (source === null || target === null) continue;
 			const kind = nodes.get(target)?.kind === "attachment" ? "attachment" : "link";
 			addEdge(kind, source, target);
 		}
 		for (const ref of cache.embeds ?? []) {
-			const source = sourceAt(ref.position.start.offset);
+			const source = sourceAt(ref.position.start.offset, ref.original);
 			const target = source === null ? null : resolveTarget(ref.link, index.path);
 			if (source === null || target === null) continue;
 			const kind = nodes.get(target)?.kind === "attachment" ? "attachment" : "embed";
@@ -275,7 +286,7 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 
 		const tagTargets: [source: string, tag: string][] = [];
 		for (const ref of cache.tags ?? []) {
-			const source = sourceAt(ref.position.start.offset);
+			const source = sourceAt(ref.position.start.offset, ref.tag);
 			if (source !== null) tagTargets.push([source, ref.tag]);
 		}
 		if (index.coreId !== null) for (const tag of frontmatterTags(cache.frontmatter)) tagTargets.push([index.coreId, tag]);
@@ -302,9 +313,11 @@ export function subpathKey(subpath: string): { blockId: string } | { heading: st
 }
 
 /**
- * The node a link into the loaded note at `path` lands on, as `buildGraph`
- * resolves it: the line with the block ID or heading `subpath` names (without
- * its `#`), else the note's root (its core, or its sole H1). `null` when the note isn't loaded.
+ * Where following a link into the loaded note at `path` lands: the line with
+ * the block ID or heading `subpath` names (without its `#`), else the note's
+ * root (its core, or its sole H1), as following it in Obsidian does. Unlike
+ * `buildGraph`, which draws no edge for a subpath that names nothing. `null`
+ * when the note isn't loaded.
  */
 export function linkTargetNode(model: GraphModel, path: string, subpath: string): string | null {
 	const coreId = noteNodeId(path);
@@ -325,7 +338,7 @@ export function linkTargetNode(model: GraphModel, path: string, subpath: string)
  * nested range starts later, so the nearest containing line at or before the
  * offset is the deepest one.
  */
-function lineAt(index: NoteIndex, offset: number): string | undefined {
+function lineAt(index: NoteIndex, offset: number): { node: OsmosisNode; id: string } | undefined {
 	const { lines } = index;
 	let lo = 0;
 	let hi = lines.length - 1;
@@ -342,7 +355,7 @@ function lineAt(index: NoteIndex, offset: number): string | undefined {
 	}
 	for (let i = last; i >= 0; i--) {
 		const line = lines[i];
-		if (line !== undefined && offset < line.node.range.end) return line.id;
+		if (line !== undefined && offset < line.node.range.end) return line;
 	}
 	return undefined;
 }

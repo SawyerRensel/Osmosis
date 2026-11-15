@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Pos } from "obsidian";
 import { OsmosisParser } from "../parser";
+import { planStructural } from "./edit";
 import {
 	buildGraph,
 	noteNodeId,
@@ -203,13 +204,33 @@ describe("buildGraph: link resolution", () => {
 		expect(edgesFrom(model, lineId(model, "Uses [[Rigging]]"))).toEqual([{ kind: "link", target: noteNodeId("Rigging.md") }]);
 	});
 
-	it("falls back to the note core when the block or heading is missing", () => {
-		const md = "- A [[Rigging#^gone]]\n- B [[Rigging#No Such Heading]]";
+	it("draws no edge for a block or heading that is missing in another note, but does for a plain link", () => {
+		const md = "- A [[Rigging#^gone]]\n- B [[Rigging#No Such Heading]]\n- C [[Rigging]]";
 		const model = knots(md, (m) => ({
-			links: [ref(m, "[[Rigging#^gone]]", "Rigging#^gone"), ref(m, "[[Rigging#No Such Heading]]", "Rigging#No Such Heading")],
+			links: [ref(m, "[[Rigging#^gone]]", "Rigging#^gone"), ref(m, "[[Rigging#No Such Heading]]", "Rigging#No Such Heading"), ref(m, "[[Rigging]]", "Rigging")],
 		}));
-		expect(edgesFrom(model, lineId(model, "A [[Rigging#^gone]]"))[0]?.target).toBe(noteNodeId("Rigging.md"));
-		expect(edgesFrom(model, lineId(model, "B [[Rigging#No Such Heading]]"))[0]?.target).toBe(noteNodeId("Rigging.md"));
+		expect(edgesFrom(model, lineId(model, "A [[Rigging#^gone]]"))).toEqual([]);
+		expect(edgesFrom(model, lineId(model, "B [[Rigging#No Such Heading]]"))).toEqual([]);
+		expect(edgesFrom(model, lineId(model, "C [[Rigging]]"))).toEqual([{ kind: "link", target: noteNodeId("Rigging.md") }]);
+		expect(model.nodes.some((n) => n.kind === "ghost")).toBe(false);
+	});
+
+	it("draws no edge for a missing same-note heading until the heading exists", () => {
+		// The note is one H1, so its root is the H1 under the core's ID: the edge used to land there.
+		const before = "# Plan\n- See [[#Nowhere]]";
+		const missing = knots(before, (m) => ({ links: [ref(m, "[[#Nowhere]]", "#Nowhere")] }));
+		expect(edgesFrom(missing, lineId(missing, "See [[#Nowhere]]"))).toEqual([]);
+		expect(missing.edges.filter((e) => e.kind !== "hierarchy")).toEqual([]);
+
+		const after = "# Plan\n- See [[#Nowhere]]\n## Nowhere";
+		const found = knots(after, (m) => ({ links: [ref(m, "[[#Nowhere]]", "#Nowhere")] }));
+		expect(edgesFrom(found, lineId(found, "See [[#Nowhere]]"))).toEqual([{ kind: "link", target: lineId(found, "Nowhere") }]);
+	});
+
+	it("draws no embed edge for a missing section", () => {
+		const md = "- Bowline\n\n![[Rigging#No Such Heading]]";
+		const model = knots(md, (m) => ({ embeds: [ref(m, "![[Rigging#No Such Heading]]", "Rigging#No Such Heading")] }));
+		expect(model.edges.filter((e) => e.kind === "embed")).toEqual([]);
 	});
 
 	it("resolves a same-note heading ref", () => {
@@ -304,6 +325,53 @@ describe("buildGraph: link resolution", () => {
 	it("tolerates a note with no link cache", () => {
 		const model = buildGraph([{ tree: parser.parse("- Bowline", "Knots.md"), cache: null }], resolverFor(files));
 		expect(model.nodes).toHaveLength(2);
+	});
+});
+
+describe("buildGraph: a link cache that lags an edit", () => {
+	// A structural edit writes the file and rebuilds at once, while Obsidian's link
+	// cache still holds the old bytes' offsets: the tree is new, the cache is old.
+	const files = ["Rigging.md"];
+	const staleCache = (md: string): LinkCacheLike => ({
+		links: [...md.matchAll(/\[\[[^\]]*\]\]/g)].map((m) => ref(md, m[0], m[0].slice(2, -2))),
+		tags: md.includes("#knot") ? [{ tag: "#knot", position: at(md, "#knot") }] : [],
+	});
+	/** `before` and the text after spawning an empty child under Alpha, as Tab in 3D edit mode writes it. */
+	function spawnUnderAlpha(next: string): { before: string; after: string } {
+		const before = ["# Plan", "- Alpha", next, "- Charlie"].join("\n");
+		const tree = parser.parse(before, "Plan.md");
+		const alpha = tree.root.children[0]?.children[0];
+		if (alpha === undefined) throw new Error("no Alpha");
+		const plan = planStructural("child", before, tree.root, alpha);
+		if (plan === null) throw new Error("no plan");
+		return { before, after: plan.text };
+	}
+	function staleModel(next: string): { model: GraphModel; fresh: string } {
+		const { before, after } = spawnUnderAlpha(next);
+		const model = buildGraph([{ tree: parser.parse(after, "Plan.md"), cache: staleCache(before) }, target()], resolverFor(files));
+		const fresh = model.nodes.find((n) => n.kind === "line" && n.label === "");
+		if (fresh === undefined) throw new Error("no spawned line");
+		return { model, fresh: fresh.id };
+	}
+
+	it("draws no edge from a spawned plate for a stale missing-heading link (the reported edge to the root)", () => {
+		// Before the fix: the stale `[[#Nowhere]]` offset fell inside the new line, and the missing heading fell back to the root.
+		const { model, fresh } = staleModel("- [[#Nowhere]]");
+		expect(edgesFrom(model, fresh)).toEqual([]);
+	});
+
+	it("draws no edge from a spawned plate for a stale resolved link or tag", () => {
+		const { model, fresh } = staleModel("- [[Rigging]] #knot");
+		expect(edgesFrom(model, fresh)).toEqual([]);
+	});
+
+	it("still places a reference whose line holds it", () => {
+		const md = ["# Plan", "- Alpha", "- Charlie [[Rigging]] #knot"].join("\n");
+		const model = buildGraph([{ tree: parser.parse(md, "Plan.md"), cache: staleCache(md) }, target()], resolverFor(files));
+		expect(edgesFrom(model, lineId(model, "Charlie [[Rigging]] #knot"))).toEqual([
+			{ kind: "link", target: noteNodeId("Rigging.md") },
+			{ kind: "tag", target: tagNodeId("knot") },
+		]);
 	});
 });
 

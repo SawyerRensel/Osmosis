@@ -4,8 +4,8 @@
  *
  * Only the part an embed renders counts: the whole note (`![[Note]]`), a
  * heading's section (`![[Note#Heading]]`) or a block (`![[Note#^id]]`), the way
- * `buildGraph` resolves the same link. A subpath that matches nothing falls back
- * to the whole note, as it does there. Embeds inside embedded content follow, as
+ * `buildGraph` resolves the same link. A subpath that matches nothing shows
+ * nothing, as `buildGraph` draws no edge for it. Embeds inside embedded content follow, as
  * in the 2D mind map; a part already reached is not walked twice, so cycles end.
  * Unlike the mind map, an embed at the top level of an embedded note follows too
  * (the mind map leaves that one unexpanded, a quirk of its parse tree).
@@ -84,12 +84,15 @@ export async function collectEmbedded(focus: NoteInput, read: (path: string) => 
 			if (targetPath === null || !targetPath.endsWith(".md") || unreadable.has(targetPath)) continue;
 
 			let target = scopes.get(targetPath);
+			const input = target?.input ?? (await read(targetPath));
+			if (input === null) {
+				unreadable.add(targetPath);
+				continue;
+			}
+			const section = sectionOf(input, subpath);
+			// A heading or block that doesn't exist (yet) shows nothing, as `buildGraph` draws no edge to it.
+			if (section === undefined && subpathKey(subpath) !== null) continue;
 			if (target === undefined) {
-				const input = await read(targetPath);
-				if (input === null) {
-					unreadable.add(targetPath);
-					continue;
-				}
 				target = { input, whole: false, roots: new Set() };
 				scopes.set(targetPath, target);
 				hops.set(targetPath, (hops.get(path) ?? 0) + 1);
@@ -97,7 +100,6 @@ export async function collectEmbedded(focus: NoteInput, read: (path: string) => 
 			}
 			if (target.whole) continue;
 
-			const section = sectionOf(target.input, subpath);
 			if (section === undefined) target.whole = true;
 			else if (target.roots.has(section)) continue;
 			else target.roots.add(section);
