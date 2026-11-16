@@ -215,6 +215,32 @@ Uses Obsidian CSS variables for theme compatibility.
 	display: none;
 }
 
+/* Nothing inside a node scrolls (T88): every node shows all of its content.
+   Obsidian makes these scroll containers (`pre` and `.callout-content` scroll
+   sideways, an inline embed scrolls past `--embed-max-height`, the embedded
+   `.markdown-preview-view` and a Bases view scroll on their own), and the
+   browser composites each scroller that has overflow into a layer of its own.
+   One per code block, plus every node painted above one forced onto a layer
+   too, made a 524-node map 263 layers and ~28 ms a frame. `pre` already wraps
+   (`--code-white-space: pre-wrap`); `overflow-wrap: anywhere` breaks a token
+   longer than the line (a URL, minified code) instead of letting it spill.
+   The measure cell carries `.osmosis-node-content`, so it measures exactly
+   this. Scoped to the 2D map: the 3D panels and study cards never use it. */
+.osmosis-node-content pre,
+.osmosis-node-content .callout-content,
+.osmosis-node-content .markdown-embed-content,
+.osmosis-node-content .markdown-preview-view,
+.osmosis-node-content .bases-view,
+.osmosis-node-content .table-wrapper,
+.osmosis-node-content mjx-container {
+	overflow: visible;
+	max-height: none;
+}
+
+.osmosis-node-content pre {
+	overflow-wrap: anywhere;
+}
+
 /* Code block language label */
 .osmosis-node-group-codeblock .osmosis-node-content,
 pre.osmosis-code-block {
