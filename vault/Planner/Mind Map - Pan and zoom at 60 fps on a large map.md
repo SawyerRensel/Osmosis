@@ -12,13 +12,13 @@ related:
   - "[[Mind Map - 10,000-line notes pan and zoom at 60 fps]]"
   - "[[Mind Map - 10,000-line notes open with the first view first]]"
   - "[[Fix issues on iOS]]"
-status: To-Do
+status: In-Review
 priority:
 progress:
 date_created: "2026-11-16T00:30:00.000Z"
-date_modified: "2026-11-16T00:30:00.000Z"
-date_start_scheduled:
-date_start_actual:
+date_modified: "2026-11-16T23:05:00.000Z"
+date_start_scheduled: "2026-11-16T22:28:42.000Z"
+date_start_actual: "2026-11-16T22:28:42.000Z"
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -84,3 +84,53 @@ On the real note at fitted zoom (~520 nodes drawn) and the transcluding parent, 
 
 ## Test plan (Sawyer)
 Gauge on. Real note and its transcluding parent: pan fast at fitted zoom, mid, zoomed in; Ctrl+wheel zoom out and in; touchpad pan; phone pinch/fling (Android and iOS). Record fps / frame / untimed. Check text is never soft, nodes never missing after a pause, and clicks/hover/drag/rubber-band/edit/rating bubble/find land on the right node right after a pan.
+
+## Batch implementation notes (awaiting manual test)
+Code: `b5eb540` on `perf/mindmap-transform-gesture`. Lint, the full vitest suite (138 files, 3,346 tests) and `npm run build` pass. Nothing below has been measured in Obsidian yet.
+
+### Approach
+Every platform now builds `host > layer > svg`. `.osmosis-mindmap-host` clips (as on iOS already); `.osmosis-mindmap-layer` is a `will-change: transform` layer; the SVG inside paints for `paintedViewBox` (Chromium: the `viewBox` attribute, now with `overflow: visible` so its cull margin is painted outside its box; iOS: its own CSS transform, unchanged). `this.viewBox` stays the live view everything else reasons in. `updateViewBox()` computes `layerTransform(painted, live)` (`src/mindmap-viewport.ts`) and:
+- **pan** (scale exactly 1): sets `translate(tx, ty)` on the layer, rounded to whole device pixels. No repaint, and **never a commit**: the SVG is not repainted for a pan at all, however far it goes.
+- **zoom out** (scale < 1): sets `translate scale(s)` on the layer; repaints 1:1 150 ms after the last move.
+- **zoom in** (scale > 1) or a resize: repaints at once (`paintViewBox()`), as today. Never upscaled.
+
+Culling is unchanged and still follows the live viewBox each frame, so a pan draws entering nodes (time-boxed, 200-unit margin) into the moved layer. Those inserts should paint only the new nodes, not the whole map.
+
+### Decisions worth remembering
+- **No margin-exhaustion commit for pans.** The ticket proposed folding the transform into the viewBox when the drawn margin runs out. That isn't needed: the cull keeps drawing against the live view inside the moved layer, and a viewBox rewrite is the expensive thing being avoided. So the margin stays at `CULL_MARGIN` (200) and no trade-off measurement was needed. *Reasoned from the measured "viewBox change repaints all drawn nodes"; that inserting nodes into the layer is incremental is read from how Chromium invalidates, not measured.*
+- **Zoom in repaints every step**, the same cost as today. It falls as fewer nodes are drawn, and it is the only scheme that guarantees no upscaled raster.
+- **Translation is snapped to device pixels**, because a fractional offset on a composited layer resamples the text. Hit-testing (`screenToSvg` → `clientToUser(viewBox, hostRect)` on every platform now) uses the unsnapped live view, which is off by less than half a device pixel.
+- **The layer is permanently `will-change`**, created at the identity, so its raster scale is 1. Toggling it per gesture would cost a promotion raster at every gesture start.
+- **Resize forces a repaint** (`updateViewBox(true)`). The iOS SVG transform was measured against the old size.
+- iOS's three protected details are untouched (full `viewBoxFit`, `will-change` on `.osmosis-spatial-rating`, no `osmosis-webkit`). iOS now also pans by layer instead of rewriting the SVG's own transform every frame.
+
+### Gauge
+New line: `view: N layer moves/s  M repaints/s (last <reason>)`. Reasons are `zoom in`, `zoom-out pause` and `resize`. While panning, expect about 60 layer moves/s and 0 repaints/s.
+
+### Expected effect (estimate, not measured)
+Pan at fitted zoom (real note, 523 drawn): the frame should drop from about 28 ms to roughly the cull JS plus compositing, so 60 fps is plausible. Transcluding parent (419 of 1,229): panning brings in new nodes, so expect more frames, each paying only for the nodes entering (≤ 8 ms draw budget plus their paint). Zoom out: smooth, plus one full repaint about 150 ms after stopping. Zoom in: unchanged.
+
+### Risks to check
+1. **Soft text after a zoom out.** If Chromium lowers the layer's raster scale while it is shrunk, text would stay soft after the 1:1 repaint. The fallback would be to drop and re-add `will-change` on that repaint.
+2. Content far outside the SVG box (after a long pan) must still paint and hit-test. `overflow: visible` on an outer `<svg>` should allow both; iOS already relies on the same thing.
+
+### Secondary: why T84's progressive open didn't apply to the parent (read from code, not verified)
+`planOpening` returns null when the note's `osmosis-styles` frontmatter has `styles` or `variants`, or when fewer than 400 nodes still need measuring. The second can happen if the transcluded child's nodes were already in `nodeSizeCache`. I couldn't see the note, so check which one applies. Not fixed.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/mindmap-viewport.ts` | `layerTransform`, `layerTransformCss`, `moveKind` |
+| `src/mindmap-viewport.test.ts` | pan/zoom-out/meet/snap/epsilon cases |
+| `src/views/MindMapView.ts` | host+layer on all platforms, `paintedViewBox`, `paintViewBox()`, idle repaint timer, `updateViewBox(repaint)`, resize forces repaint |
+| `src/views/MindMapPerf.ts` | layer moves/s, repaints/s, last reason |
+| `styles.css` | `.osmosis-mindmap-layer`, SVG `overflow: visible` inside it |
+
+Fixture: none new. Use the real 524-node note and its transcluding parent.
+
+### Retest (Sawyer)
+Gauge on. Use the real note at fitted, mid and zoomed-in zoom, then the transcluding parent.
+1. **Desktop:** drag-pan fast, touchpad pan, and fling. Expect fps ≥ 60, `repaints/s 0`, and nodes appearing at the edges as you go. Then Ctrl+wheel zoom out: smooth, then one repaint (`last zoom-out pause`), with text sharp afterwards. Zoom in: no softer than today.
+2. **Right after a pan, without pausing:** click a node, hover, drag a node, rubber-band select, double-click to edit (the overlay must sit on the node), open the rating bubble, and use find. Each should land on the right node.
+3. **Android:** pinch out and in, fling. Same checks.
+4. **iOS:** pan and fling. Check that no node bodies are stranded, the Again button doesn't smear, and text stays sharp after a pinch-out pause.
