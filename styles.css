@@ -50,6 +50,25 @@ Uses Obsidian CSS variables for theme compatibility.
 	transform-origin: 0 0;
 }
 
+/* ── Every platform: pan by moving a composited layer (T87) ────────────────
+   Repainting the SVG for a new viewBox repaints every drawn node, measured as
+   the whole frame on a large map. The SVG is painted once and this layer moves
+   it: a pan is a translate the compositor applies without repainting anything,
+   a zoom out a scale below 1 (minified, still sharp) until the gesture pauses.
+   A zoom in always repaints, so the raster is never shown upscaled. The SVG
+   paints its cull margin outside its own box so a pan reveals drawn nodes; the
+   host above does the clipping. */
+.osmosis-mindmap-layer {
+	width: 100%;
+	height: 100%;
+	transform-origin: 0 0;
+	will-change: transform;
+}
+
+.osmosis-mindmap-layer > .osmosis-mindmap-svg {
+	overflow: visible;
+}
+
 /* The border a theme resolves for a node arrives as custom properties on the
    shape element rather than as inline `stroke` declarations (see `drawNode`).
    A custom property feeds the cascade instead of short-circuiting it, so the

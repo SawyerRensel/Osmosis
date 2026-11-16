@@ -23,6 +23,11 @@ export class MindMapPerf {
 	private readonly gauge: PerfGauge;
 	private readonly frames = new Rolling();
 	private readonly culls = new Rolling();
+	/** Viewport moves shown by moving the composited layer (T87): no repaint. */
+	private readonly layerMoves = new Rolling();
+	/** Viewport changes that repainted the SVG for a new viewBox. */
+	private readonly repaints = new Rolling();
+	private lastRepaintReason: string | null = null;
 	private frameId: number | null = null;
 	private lastFrame = 0;
 	private lastRefresh = 0;
@@ -59,6 +64,18 @@ export class MindMapPerf {
 
 	cull(start: number): void {
 		if (start !== 0 && this.gauge.shown) this.culls.push(start, performance.now() - start);
+	}
+
+	/** The viewport moved by transforming the painted layer (T87). */
+	viewMoved(): void {
+		if (this.gauge.shown) this.layerMoves.push(performance.now(), 0);
+	}
+
+	/** The SVG was repainted for a new viewBox, and why. */
+	viewRepainted(reason: string): void {
+		if (!this.gauge.shown) return;
+		this.repaints.push(performance.now(), 0);
+		this.lastRepaintReason = reason;
 	}
 
 	/** A map edit began (the op passed its guard). */
@@ -116,6 +133,8 @@ export class MindMapPerf {
 		this.lastRefresh = now;
 		this.frames.prune(now, PERF_WINDOW_MS);
 		this.culls.prune(now, PERF_WINDOW_MS);
+		this.layerMoves.prune(now, PERF_WINDOW_MS);
+		this.repaints.prune(now, PERF_WINDOW_MS);
 		this.gauge.loaf.prune(now, PERF_WINDOW_MS);
 		this.gauge.setText(this.report());
 	};
@@ -130,6 +149,7 @@ export class MindMapPerf {
 		return [
 			`fps ${this.frames.count}  frame avg ${frameAvg.toFixed(1)} / worst ${this.frames.max().toFixed(1)} ms`,
 			`cull: ${this.culls.count} passes/s  avg ${this.culls.avg().toFixed(2)} ms (max ${this.culls.max().toFixed(1)})`,
+			`view: ${this.layerMoves.count} layer moves/s  ${this.repaints.count} repaints/s (last ${this.lastRepaintReason ?? "—"})`,
 			`nodes ${total}  drawn ${drawn}  in DOM ${dom}`,
 			`last parse ${ms(this.lastParse, 2)}  render ${ms(render?.total ?? null)} (measure ${ms(render?.measure ?? null)}, layout ${ms(render?.layout ?? null)})`,
 			this.commitLine(ms),
@@ -149,6 +169,9 @@ export class MindMapPerf {
 	private readonly onToggle = (shown: boolean): void => {
 		this.frames.clear();
 		this.culls.clear();
+		this.layerMoves.clear();
+		this.repaints.clear();
+		this.lastRepaintReason = null;
 		this.lastFrame = 0;
 		this.lastRefresh = 0;
 		this.editAt = 0;

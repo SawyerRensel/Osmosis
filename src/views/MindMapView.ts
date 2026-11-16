@@ -61,7 +61,7 @@ import { mergeStyleOverride } from "../style-write";
 import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
-import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
+import { viewBoxTransform, clientToUser, layerTransform, layerTransformCss, moveKind, type ViewBox } from "../mindmap-viewport";
 import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
 import { planReuse, translateAttr, type DrawnGroup, type WantedNode } from "../mindmap-reuse";
 import { PROBE_BIG, PROBE_SMALL, measureOrder, planFirstView, probeSizes, settledWith, unsettledOf } from "../mindmap-progressive";
@@ -255,16 +255,28 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * `viewBox` changes, so iOS pans the map with a CSS transform on the SVG
 	 * instead — see `src/mindmap-viewport.ts` for the mechanism and the maths.
 	 * Chromium (desktop Electron, Android's WebView) re-transforms those layers
-	 * correctly and stays on the `viewBox` path.
+	 * correctly and paints with the `viewBox` attribute.
 	 */
 	private readonly panByTransform = Platform.isIosApp;
 	/**
-	 * The element whose box *is* the viewport, on the transform path: the SVG
-	 * no longer clips at its own bounds, so this wrapper does the clipping,
-	 * stays put while the SVG moves, and is what screen coordinates are
-	 * measured against. Null on the `viewBox` path, where the SVG is all three.
+	 * The element whose box *is* the viewport: the SVG does not clip at its own
+	 * bounds (it draws its cull margin outside them, and the layer below moves
+	 * it), so this wrapper does the clipping, stays put while the map moves, and
+	 * is what screen coordinates are measured against. Null only while a render
+	 * pass is building the next SVG.
 	 */
 	private viewportHost: HTMLDivElement | null = null;
+	/**
+	 * The composited layer between the host and the SVG (T87). The SVG is
+	 * painted once for {@link paintedViewBox}; a pan moves this layer instead of
+	 * repainting every drawn node, and a zoom out shrinks it until the gesture
+	 * pauses. See `layerTransform` in `src/mindmap-viewport.ts`.
+	 */
+	private viewportLayer: HTMLDivElement | null = null;
+	/** The viewBox the SVG is painted for; `viewBox` is the one on screen. */
+	private paintedViewBox: ViewBox = { x: 0, y: 0, w: 0, h: 0 };
+	/** Repaints a shrunk (zoomed-out) layer 1:1 once the gesture pauses. */
+	private viewportRepaintTimer: number | null = null;
 
 	// Collapse state
 	private collapsedIds = new Set<string>();
@@ -2244,6 +2256,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.renderComponent = null;
 		this.svg = null;
 		this.viewportHost = null;
+		this.viewportLayer = null;
+		this.clearViewportRepaint();
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
@@ -3294,11 +3308,61 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	// ─── Viewport ────────────────────────────────────────────
 
-	private updateViewBox(): void {
+	/**
+	 * Show the current `viewBox` (T87). Repainting the SVG for a new viewBox
+	 * repaints every drawn node — measured as the whole frame on a large map —
+	 * so a pan only moves the composited layer holding it, and a zoom out
+	 * only shrinks it (minified, so still sharp) until the gesture pauses. A
+	 * zoom in repaints at once: the raster is never shown larger than drawn.
+	 * Culling still follows the live viewBox, so the nodes a pan brings in are
+	 * drawn as before and only they are painted.
+	 *
+	 * `repaint` forces a repaint, for a viewport whose size changed: the iOS
+	 * SVG's own transform was measured against the old size.
+	 */
+	private updateViewBox(repaint = false): void {
 		if (!this.svg) return;
-		if (this.viewportHost) {
-			// iOS: the same viewport, expressed as a CSS transform so that
-			// composited node content travels with the map instead of stranding.
+		const host = this.viewportHost;
+		const layer = this.viewportLayer;
+		let moved = false;
+		if (!repaint && host && layer) {
+			const transform = layerTransform(
+				this.paintedViewBox,
+				this.viewBox,
+				host.getBoundingClientRect(),
+				window.devicePixelRatio,
+			);
+			const kind = moveKind(transform);
+			if (kind !== "repaint") {
+				layer.setCssProps({ transform: layerTransformCss(transform) });
+				if (kind === "shrink") this.scheduleViewportRepaint();
+				this.perf?.viewMoved();
+				moved = true;
+			}
+		}
+		if (!moved) {
+			this.paintViewBox();
+			this.perf?.viewRepainted(repaint ? "resize" : "zoom in");
+		}
+		// The edit overlay lives outside the SVG, so the viewBox does not carry
+		// it along — re-place it or it freezes where the node used to be.
+		if (this.editingNodeId) this.positionEditOverlay();
+		if (this.progressive) this.progressive.movedAt = performance.now();
+		this.scheduleCullUpdate();
+	}
+
+	/**
+	 * Paint the SVG for the current `viewBox` and put the layer back to the
+	 * identity: a full repaint of every drawn node, with nothing on screen
+	 * moving. iOS paints with a CSS transform on the SVG (composited node
+	 * content strands on a viewBox change); Chromium with the attribute.
+	 */
+	private paintViewBox(): void {
+		if (!this.svg) return;
+		this.clearViewportRepaint();
+		if (this.panByTransform) {
+			// No host yet: the render pass building it paints when it lands.
+			if (!this.viewportHost) return;
 			this.svg.style.transform = viewBoxTransform(
 				this.viewBox,
 				this.viewportHost.getBoundingClientRect(),
@@ -3307,11 +3371,27 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			const { x, y, w, h } = this.viewBox;
 			this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
 		}
-		// The edit overlay lives outside the SVG, so the viewBox does not carry
-		// it along — re-place it or it freezes where the node used to be.
-		if (this.editingNodeId) this.positionEditOverlay();
-		if (this.progressive) this.progressive.movedAt = performance.now();
-		this.scheduleCullUpdate();
+		this.viewportLayer?.setCssProps({ transform: "" });
+		this.paintedViewBox = { ...this.viewBox };
+	}
+
+	/** How long a zoomed-out layer waits for the gesture to pause before repainting 1:1. */
+	private static readonly VIEWPORT_REPAINT_IDLE_MS = 150;
+
+	private scheduleViewportRepaint(): void {
+		this.clearViewportRepaint();
+		this.viewportRepaintTimer = window.setTimeout(() => {
+			this.viewportRepaintTimer = null;
+			this.paintViewBox();
+			this.perf?.viewRepainted("zoom-out pause");
+			if (this.editingNodeId) this.positionEditOverlay();
+		}, MindMapView.VIEWPORT_REPAINT_IDLE_MS);
+	}
+
+	private clearViewportRepaint(): void {
+		if (this.viewportRepaintTimer === null) return;
+		window.clearTimeout(this.viewportRepaintTimer);
+		this.viewportRepaintTimer = null;
 	}
 
 	/** Notify the toolbar of current selection/editing state. */
@@ -3649,10 +3729,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
 		if (this.viewportHost) {
-			// getScreenCTM() reports the SVG's *own* user space, which on this
-			// path no longer includes the pan/zoom — that lives in a CSS
-			// transform above it. Invert the transform instead; the maths is
-			// unit-tested against the viewBox mapping it replaces.
+			// getScreenCTM() reports the SVG's *own* user space, which leaves
+			// out the pan/zoom held in CSS transforms above it (the layer's,
+			// and on iOS the SVG's). Map through the live viewBox instead; the
+			// maths is unit-tested against the viewBox mapping it replaces.
 			return clientToUser(
 				this.viewBox,
 				this.viewportHost.getBoundingClientRect(),
@@ -4459,7 +4539,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.viewBox.w = newW;
 		this.viewBox.h = newH;
 
-		this.updateViewBox();
+		this.updateViewBox(true);
 	}
 
 	private cancelLongPress(): void {
@@ -9398,6 +9478,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// viewport unset for that window rather than measuring a detached box,
 		// which degrades to a no-op pan instead of a jump.
 		this.viewportHost = null;
+		this.viewportLayer = null;
+		this.clearViewportRepaint();
 
 		// Boundaries (clouds) go behind everything: they wrap whole subtrees.
 		this.drawBoundaries(svg, layout, offsetX, offsetY);
@@ -9463,21 +9545,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 
 		await Promise.all(renderPromises);
-		if (this.panByTransform) {
-			const host = container.createDiv({ cls: "osmosis-mindmap-host" });
-			host.appendChild(svg);
-			this.viewportHost = host;
-			// The host is in the document now, so it has a box to measure —
-			// place the map. This is the transform path's equivalent of the
-			// viewBox attribute set above, not a viewport change, so it stays
-			// clear of updateViewBox()'s culling and overlay side effects.
-			svg.style.transform = viewBoxTransform(
-				this.viewBox,
-				host.getBoundingClientRect(),
-			);
-		} else {
-			container.appendChild(svg);
-		}
+		const host = container.createDiv({ cls: "osmosis-mindmap-host" });
+		const layer = host.createDiv({ cls: "osmosis-mindmap-layer" });
+		layer.appendChild(svg);
+		this.viewportHost = host;
+		this.viewportLayer = layer;
+		// The host is in the document now, so it has a box to measure — place
+		// the map (on iOS, the transform path's equivalent of the viewBox
+		// attribute set above). Not a viewport change, so it stays clear of
+		// updateViewBox()'s culling and overlay side effects.
+		this.paintViewBox();
 	}
 
 	/**
@@ -9509,12 +9586,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const nodesGroup = this.nodesGroup!;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
-		if (!this.panByTransform) {
-			svg.setAttribute(
-				"viewBox",
-				`${this.viewBox.x} ${this.viewBox.y} ${this.viewBox.w} ${this.viewBox.h}`,
-			);
-		}
+		if (!this.panByTransform) this.paintViewBox();
 
 		// Everything in the SVG but the node groups goes, as a new SVG would
 		// not have it: boundaries, branch lines, a stray rubber band.
@@ -9586,12 +9658,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		await Promise.all(plan.draw.map((node) => this.drawNode(staging, node, offsetX, offsetY)));
 		nodesGroup.append(...Array.from(staging.childNodes));
 
-		if (this.panByTransform && this.viewportHost) {
-			svg.style.transform = viewBoxTransform(
-				this.viewBox,
-				this.viewportHost.getBoundingClientRect(),
-			);
-		}
+		if (this.panByTransform) this.paintViewBox();
 		return plan.keep.length;
 	}
 
