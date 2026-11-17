@@ -358,13 +358,14 @@ export function yearsWithActivity(rollup: Rollup, now: number): number[] {
 
 /** Reviews per study surface across a day range. Osmosis-native; Anki has none. */
 export function studyModeTotals(points: readonly DayPoint[], rollup: Rollup): Record<StudyMode, number> {
-	const totals: Record<StudyMode, number> = { sequential: 0, contextual: 0, spatial: 0 };
+	const totals: Record<StudyMode, number> = { sequential: 0, contextual: 0, spatial: 0, relational: 0 };
 	for (const point of points) {
 		const bucket = rollup[point.day];
 		if (!bucket) continue;
 		totals.sequential += bucket.byMode.sequential;
 		totals.contextual += bucket.byMode.contextual;
 		totals.spatial += bucket.byMode.spatial;
+		totals.relational += bucket.byMode.relational;
 	}
 	return totals;
 }

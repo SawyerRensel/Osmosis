@@ -28,6 +28,8 @@ osmosis-deck: tests/tap-drag-pan
 - Cab signalling moves the aspect from the lineside into the driver's desk ^os-tdbul9
 
 ```osmosis
+id: 346f9193
+
 Which system sizes the safe gap from the train's braking distance?
 ***
 A moving block system

@@ -13,6 +13,13 @@ export type DeckScope =
 	| { type: "parent"; deck: string } // deck + all sub-decks
 	| { type: "all" };
 
+/**
+ * What a sequential study session covers: a deck scope, or the cards of one
+ * note. Kept apart from `DeckScope` because stats, the dashboard and the deck
+ * pickers only ever deal in decks and need no case for a note.
+ */
+export type StudyScope = DeckScope | { type: "note"; notePath: string };
+
 /** A node in the hierarchical deck tree. */
 export interface DeckNode {
 	/** Leaf name (e.g., "functions"). */

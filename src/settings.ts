@@ -3,8 +3,15 @@ import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
+import { DEFAULT_OVERLAYS, type Graph3DOverlays } from "./graph3d/overlays";
+import type { SettingsSectionId } from "./graph3d/settings-sections";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
+
+/** What a desktop left-drag orbits and the wheel zooms toward in the 3D graph. */
+export type Graph3DDesktopPivot = "cursor" | "center";
+/** What a one-finger drag does in the 3D graph on a touch screen. */
+export type Graph3DTouchDrag = "point" | "center" | "look";
 
 /** Auto-suggest for vault folder paths. */
 class FolderSuggest extends AbstractInputSuggest<string> {
@@ -14,6 +21,27 @@ class FolderSuggest extends AbstractInputSuggest<string> {
 			.map((f: TFolder) => f.path)
 			.filter((p: string) => p.toLowerCase().includes(lq))
 			.sort();
+	}
+
+	renderSuggestion(value: string, el: HTMLElement): void {
+		el.setText(value);
+	}
+
+	selectSuggestion(value: string): void {
+		this.setValue(value);
+		this.close();
+	}
+}
+
+/** Auto-suggest for Markdown note paths. */
+class NoteSuggest extends AbstractInputSuggest<string> {
+	getSuggestions(query: string): string[] {
+		const lq = query.toLowerCase();
+		return this.app.vault.getMarkdownFiles()
+			.map((f) => f.path)
+			.filter((p) => p.toLowerCase().includes(lq))
+			.sort()
+			.slice(0, 100);
 	}
 
 	renderSuggestion(value: string, el: HTMLElement): void {
@@ -139,6 +167,22 @@ export interface OsmosisSettings {
 	/** Hard ceiling on undo/redo history memory per mind map, in MB; the oldest
 	 *  edits drop when either this or undoMaxSteps is reached first (default: 20). */
 	undoMaxMemoryMB: number;
+
+	// ── Convert branch to note ──────────────────────────────
+	/** Folder new notes from "Convert branch to note" go in; empty means the source note's folder (default: ""). */
+	branchNoteFolder: string;
+	/** Note whose frontmatter and body are merged into every converted branch's new note; empty for none (default: ""). */
+	branchNoteTemplate: string;
+
+	// ── 3D Graph ────────────────────────────────────────────
+	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
+	graph3dDesktopPivot: Graph3DDesktopPivot;
+	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
+	graph3dOneFingerDrag: Graph3DTouchDrag;
+	/** The 3D graph's Settings (stored under the old Overlays key, so vaults keep their values), shared by every 3D graph view (see `src/graph3d/overlays.ts`). */
+	graph3dOverlays: Graph3DOverlays;
+	/** The style sidebar's 3D Settings sections that are collapsed (see `src/graph3d/settings-sections.ts`). */
+	graph3dSettingsCollapsed: SettingsSectionId[];
 }
 
 export const DEFAULT_SETTINGS: OsmosisSettings = {
@@ -183,6 +227,16 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Mind map editing defaults
 	undoMaxSteps: 50,
 	undoMaxMemoryMB: 20,
+
+	// Convert branch to note defaults
+	branchNoteFolder: "",
+	branchNoteTemplate: "",
+
+	// 3D graph defaults
+	graph3dDesktopPivot: "cursor",
+	graph3dOneFingerDrag: "point",
+	graph3dOverlays: DEFAULT_OVERLAYS,
+	graph3dSettingsCollapsed: [],
 };
 
 /** Reject non-integer or negative daily card limits with an inline message. */
@@ -217,6 +271,9 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 		if (key === "defaultMaxNodeWidth") {
 			this.plugin.remeasureOpenMindMaps();
+		}
+		if (key === "graph3dDesktopPivot" || key === "graph3dOneFingerDrag") {
+			this.plugin.refreshOpenGraph3DControls();
 		}
 	}
 
@@ -300,6 +357,69 @@ export class OsmosisSettingTab extends PluginSettingTab {
 							min: 1,
 							step: 1,
 							validate: validatePositiveInt,
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Convert branch to note",
+				items: [
+					{
+						name: "Folder for new notes",
+						desc: "Where \"Convert branch to note\" creates the new note. Leave empty to use the source note's folder.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.branchNoteFolder,
+								placeholder: "Same folder as the source note",
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => raw.trim().replace(/^\/+|\/+$/g, ""),
+								onCommit: (folder) => this.setControlValue("branchNoteFolder", folder),
+							});
+						},
+					},
+					{
+						name: "Template",
+						desc: "A note whose properties and text are merged into each new note: its properties at the top, its text after the branch. Leave empty for none.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.branchNoteTemplate,
+								placeholder: "No template",
+								createSuggest: (input) => new NoteSuggest(this.app, input),
+								normalize: (raw) => raw.trim(),
+								onCommit: (path) => this.setControlValue("branchNoteTemplate", path),
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "3D graph",
+				items: [
+					{
+						name: "Mouse orbit and zoom",
+						desc: "On desktop, what dragging with the left mouse button orbits around and what the scroll wheel zooms toward. The point under the cursor is the nearest node, if there is one close by. Pressing a flight key (W, A, S, D, Q, E) during a drag looks around from the camera until you release the button, and the scroll wheel then sets the flight speed.",
+						control: {
+							type: "dropdown",
+							key: "graph3dDesktopPivot",
+							options: {
+								cursor: "Point under the cursor",
+								center: "View center",
+							},
+						},
+					},
+					{
+						name: "One-finger drag",
+						desc: "On touch screens, what dragging with one finger does. The point under your finger is the nearest node, if there is one close by. Pinch zooms toward the point between your fingers, and two-finger drag pans.",
+						control: {
+							type: "dropdown",
+							key: "graph3dOneFingerDrag",
+							options: {
+								point: "Orbit the point under your finger",
+								center: "Orbit the view center",
+								look: "Look around",
+							},
 						},
 					},
 				],

@@ -141,3 +141,78 @@ export function userToClient(
 		y: viewport.top + offsetY + (userY - viewBox.y) * scale,
 	};
 }
+
+/**
+ * A 2D transform on the layer that holds the map: `translate(tx, ty)
+ * scale(scale)` about the layer's top-left corner.
+ */
+export interface LayerTransform {
+	tx: number;
+	ty: number;
+	scale: number;
+}
+
+/**
+ * How far a layer scale may sit from 1 and still count as a pure translation.
+ * Zooming out and back in by wheel steps lands near 1, not on it.
+ */
+const SCALE_EPSILON = 1e-6;
+
+/**
+ * The layer transform that moves what was painted for `painted` to where
+ * `live` puts it (T87).
+ *
+ * Every `viewBox` change repaints every drawn node — measured at ~0.05–0.08 ms
+ * per node, the whole frame on a large map — while moving a composited layer
+ * repaints nothing. So the view paints the map once for `painted` and shows
+ * `live` by transforming the layer; this is the transform. Both boxes resolve
+ * under the same `xMidYMid meet` rule as {@link viewBoxFit}, so a point painted
+ * at user `u` lands exactly where `live` would have painted it.
+ *
+ * A pure translation (scale 1) is rounded to whole device pixels: a layer
+ * drawn at a fractional offset is resampled, which is the soft text this
+ * scheme exists to avoid. The error is under half a device pixel and does not
+ * accumulate, because the transform is always recomputed from the two boxes.
+ */
+export function layerTransform(
+	painted: ViewBox,
+	live: ViewBox,
+	viewport: { width: number; height: number },
+	devicePixelRatio = 1,
+): LayerTransform {
+	const from = viewBoxFit(painted, viewport);
+	const to = viewBoxFit(live, viewport);
+	let scale = to.scale / from.scale;
+	if (Math.abs(scale - 1) < SCALE_EPSILON) scale = 1;
+	let tx = to.offsetX + (painted.x - live.x) * to.scale - from.offsetX * scale;
+	let ty = to.offsetY + (painted.y - live.y) * to.scale - from.offsetY * scale;
+	if (scale === 1) {
+		const dpr = devicePixelRatio > 0 ? devicePixelRatio : 1;
+		tx = Math.round(tx * dpr) / dpr;
+		ty = Math.round(ty * dpr) / dpr;
+	}
+	return { tx, ty, scale };
+}
+
+/** {@link LayerTransform} as a CSS `transform` value; the identity is `""`. */
+export function layerTransformCss({ tx, ty, scale }: LayerTransform): string {
+	if (tx === 0 && ty === 0 && scale === 1) return "";
+	const translate = `translate(${String(tx)}px, ${String(ty)}px)`;
+	return scale === 1 ? translate : `${translate} scale(${String(scale)})`;
+}
+
+/**
+ * Whether the view may show a move by transforming the painted layer, or must
+ * repaint the map for the new `viewBox` (T87):
+ *
+ * - `"translate"`: the zoom is unchanged. Moving the layer is free and the
+ *   raster is shown 1:1, so it never needs repainting for the move itself.
+ * - `"shrink"`: zoomed out. The raster is shown smaller than it was drawn —
+ *   minified, so still sharp — and is repainted 1:1 once the gesture pauses.
+ * - `"repaint"`: zoomed in. Showing the raster larger than it was drawn
+ *   would blur the text, which is never acceptable, so it repaints now.
+ */
+export function moveKind(transform: LayerTransform): "translate" | "shrink" | "repaint" {
+	if (transform.scale === 1) return "translate";
+	return transform.scale < 1 ? "shrink" : "repaint";
+}

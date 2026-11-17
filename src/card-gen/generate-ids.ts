@@ -15,6 +15,7 @@ export interface LineRange {
  * Scans a note and plans block-ID insertions so every eligible element
  * gains a stable line-card identity:
  * - headings, bullets, ordered items, paragraphs → trailing ` ^os-xxxxxx`
+ *   (a run of adjacent lines is one element; its ID goes on the last line)
  * - generic code blocks and tables → standalone `^os-xxxxxx` line after
  *   the block (Obsidian's native multi-line block reference)
  * - osmosis fences → `id: os-xxxxxx` metadata line
@@ -49,12 +50,12 @@ export interface GenerateIdsPlan {
 }
 
 const EXCLUDE_COMMENT_REGEX = /<!--\s*osmosis-exclude\s*-->/;
-const OSMOSIS_FENCE_REGEX = /^(`{3,})osmosis$/;
+export const OSMOSIS_FENCE_REGEX = /^(`{3,})osmosis$/;
 const FENCE_METADATA_REGEX = /^\w[\w-]*\s*:\s*.+$/;
 const PREVIEW_MAX_LENGTH = 60;
 
 /** Line prefixes that start a new markdown block (not a paragraph continuation). */
-const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\||\s*!\[|\s*>)/;
+export const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\||\s*!\[|\s*>)/;
 
 /**
  * Plan block-ID insertions for a note. Returns the transformed content and
@@ -65,10 +66,9 @@ const STRUCTURAL_LINE_REGEX = /^(#{1,6}\s|\s*[-*]\s|\s*\d+\.\s|`{3,}|~{3,}|\s*\|
  * bulk command) to tag the whole note.
  */
 export function planIdGeneration(markdown: string, range?: LineRange): GenerateIdsPlan {
-	// Normalize prose runs into blank-separated blocks first, so each line
-	// becomes its own Obsidian block with a valid block ID (one line = one
-	// card). This is the same convention the mind map applies on every save.
-	// A caller's range is remapped across the inserted blank lines.
+	// Normalize block spacing first, the same convention the mind map applies
+	// on every save. A run of adjacent prose/heading lines stays together and
+	// is one card (T75). A caller's range is remapped across inserted blanks.
 	const normalized = normalizeBlockSpacing(markdown);
 	markdown = normalized.content;
 	if (range !== undefined) {
@@ -152,15 +152,8 @@ export function planIdGeneration(markdown: string, range?: LineRange): GenerateI
 			// HTML-comment-only lines (e.g. <!-- osmosis-exclude -->) are
 			// markup, not content — never tag them.
 			if (/^<!--[\s\S]*-->$/.test(node.content.trim())) return;
-			// Obsidian blocks span consecutive plain lines — a block ID is
-			// only valid at the end of the block. Tag a paragraph line only
-			// when the next line does not continue the same block.
-			const nextLine = lines[nodeLine + 1];
-			const continues =
-				nextLine !== undefined &&
-				nextLine.trim() !== "" &&
-				!STRUCTURAL_LINE_REGEX.test(nextLine);
-			if (continues) return;
+			// A run of adjacent lines is one node (T75); its range ends on
+			// the run's last line, the only place Obsidian accepts the ID.
 			addInsertion(node, nodeLine, "trailing", node.range.end, ` ^`);
 			return;
 		}

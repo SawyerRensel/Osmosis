@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, TFile, getIconIds, setIcon } from "obsidian";
+import { MarkdownView, Menu, Notice, Platform, TFile, getIconIds, setIcon } from "obsidian";
 import type { CachedMetadata } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -13,14 +13,17 @@ import {
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
 } from "../study/spatial-study";
+import { decksOfNote } from "../study/note-scope";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
 import {
 	blocksInRange,
 	computeRevealOrder,
+	lineGroupSpans,
 	listItemIdsInRange,
 	nextToReveal,
+	withGroupSpans,
 	type BlockRef,
 	type ListItemRef,
 } from "../study/line-reveal";
@@ -94,6 +97,13 @@ interface NoteRevealState {
 	stepAt: Map<string, number>;
 	/** Rendered elements by block ID — refreshed on every (re-)render. */
 	lines: Map<string, TrackedLine>;
+	/**
+	 * A line group's other sections (T75), by block ID, then by section start
+	 * line. Obsidian renders `![[cover.png]]` + `## Title ^os-x` as two
+	 * sections; the one holding the ID line is the group's `TrackedLine` (its
+	 * placeholder and rating bubble), the others only hide and show with it.
+	 */
+	groupParts: Map<string, Map<number, HTMLElement>>;
 }
 
 /**
@@ -133,7 +143,7 @@ export class LineRevealProcessor {
 			// drop every normal section).
 			if (el.closest(".internal-embed, .hover-popover, .is-live-preview")) return;
 
-			this.processSection(el, ctx.sourcePath, cardIds, info.lineStart, info.lineEnd);
+			this.processSection(el, ctx.sourcePath, cardIds, info.lineStart, info.lineEnd, info.text);
 			// Card sync may finish after the initial layout events fired
 			this.updateHeaderActions();
 		});
@@ -239,9 +249,11 @@ export class LineRevealProcessor {
 		cardIds: ReadonlySet<string>,
 		lineStart: number,
 		lineEnd: number,
+		text: string,
 	): void {
 		const cache = this.fileCache(notePath);
-		const blocks = toBlockRefs(cache);
+		const groups = this.groupSpans(notePath, text);
+		const blocks = withGroupSpans(toBlockRefs(cache), groups);
 		const inSection = blocksInRange(blocks, cardIds, lineStart, lineEnd);
 		if (inSection.length === 0) return;
 
@@ -271,7 +283,16 @@ export class LineRevealProcessor {
 		} else {
 			// Paragraph/heading/table/code section: one block, hide the whole
 			// section content.
-			this.trackLine(state, notePath, inSection[0]!.id, el);
+			const block = inSection[0]!;
+			const group = groups.get(block.id);
+			if (group !== undefined && group.endLine > lineEnd) {
+				// A line group's section above its ID line (a cover image over
+				// its heading): it hides with the group, without a placeholder.
+				this.trackGroupPart(state, block.id, lineStart, el);
+			} else {
+				if (group !== undefined) this.pruneGroupParts(state, group);
+				this.trackLine(state, notePath, block.id, el);
+			}
 		}
 
 		this.applyAll(notePath);
@@ -289,6 +310,48 @@ export class LineRevealProcessor {
 			if (card.blockId === blockId && card.occlusion) return card.occlusion;
 		}
 		return null;
+	}
+
+	/** The last note text parsed for line-group spans, and its spans. Every section of a render shares one text. */
+	private groupSpanCache: { notePath: string; text: string; spans: Map<string, BlockRef> } | null = null;
+
+	/** Line-group spans for a note's text, parsed once per render rather than once per section. */
+	private groupSpans(notePath: string, text: string): Map<string, BlockRef> {
+		const cached = this.groupSpanCache;
+		if (cached !== null && cached.notePath === notePath && cached.text === text) return cached.spans;
+		const spans = lineGroupSpans(text, notePath);
+		this.groupSpanCache = { notePath, text, spans };
+		return spans;
+	}
+
+	/** Wrap a group section's content for hiding (idempotent) and register it under its group. */
+	private trackGroupPart(state: NoteRevealState, blockId: string, lineStart: number, container: HTMLElement): void {
+		if (container.querySelector(":scope > .osmosis-line-back") === null) {
+			const back = createDiv({ cls: "osmosis-line-back" });
+			for (const node of Array.from(container.childNodes)) {
+				if (isPreservedNode(node)) continue;
+				back.appendChild(node);
+			}
+			container.appendChild(back);
+		}
+		let parts = state.groupParts.get(blockId);
+		if (parts === undefined) {
+			parts = new Map();
+			state.groupParts.set(blockId, parts);
+		}
+		parts.set(lineStart, container);
+	}
+
+	/** Forget a group's parts that an edit moved out of its span, so they are never hidden again. */
+	private pruneGroupParts(state: NoteRevealState, group: BlockRef): void {
+		const parts = state.groupParts.get(group.id);
+		if (parts === undefined) return;
+		for (const [lineStart, container] of parts) {
+			if (lineStart < group.startLine || lineStart > group.endLine) {
+				container.classList.remove("osmosis-line-hidden");
+				parts.delete(lineStart);
+			}
+		}
 	}
 
 	/** Wrap a line's content for hiding (idempotent) and register it. */
@@ -361,6 +424,10 @@ export class LineRevealProcessor {
 			const showPlaceholder = painted || hidden;
 			line.container.classList.toggle("osmosis-line-hidden", showPlaceholder);
 			line.placeholder.classList.toggle("osmosis-hidden", !showPlaceholder);
+			// A line group's other sections hide while the card is unrevealed.
+			for (const part of state.groupParts.get(blockId)?.values() ?? []) {
+				part.classList.toggle("osmosis-line-hidden", hidden);
+			}
 			if (painted && line.occlusion) {
 				const img = line.placeholder.querySelector("img");
 				// Repaint in place: rebuilding the <img> would re-request the file
@@ -557,6 +624,31 @@ export class LineRevealProcessor {
 		this.syncBanners();
 	}
 
+	/** Whether the note has any card, line or fence: the gate for Study and for the ⋯ menu's Peek. */
+	hasCards(notePath: string): boolean {
+		return this.hasAnyCard(notePath);
+	}
+
+	/** Whether the note is in peek mode, for the ⋯ menu's check mark. */
+	isPeeking(notePath: string): boolean {
+		return this.states.get(notePath)?.mode === "peek";
+	}
+
+	/** Toggle peek from the ⋯ menu. Peek lives in reading view, so switch to it first if needed. */
+	peekNote(view: MarkdownView): void {
+		const path = view.file?.path;
+		if (path === undefined) return;
+		void (async () => {
+			if (view.getMode() !== "preview") {
+				await view.leaf.setViewState({
+					type: "markdown",
+					state: { ...view.getState(), mode: "preview" },
+				});
+			}
+			this.togglePeek(path);
+		})();
+	}
+
 	private togglePeek(notePath: string): void {
 		const state = this.stateFor(notePath);
 		if (state.mode === "study") this.endStudy(notePath, state);
@@ -743,20 +835,31 @@ export class LineRevealProcessor {
 			const show = path !== undefined && this.hasAnyCard(path);
 
 			let studyBtn = actions.querySelector(".osmosis-line-study-action");
-			let peekBtn = actions.querySelector(".osmosis-line-peek-action");
+			// Peek lives in the ⋯ menu now; drop a button left by an older build.
+			actions.querySelector(".osmosis-line-peek-action")?.remove();
 
 			if (!show) {
 				studyBtn?.remove();
-				peekBtn?.remove();
 				continue;
 			}
 
-			studyBtn ??= this.createHeaderAction("graduation-cap", "Study this note", "osmosis-line-study-action", view, (p) => {
-				this.toggleStudy(p);
-			});
-			peekBtn ??= this.createHeaderAction(peekIcon(), "Peek mode", "osmosis-line-peek-action", view, (p) => {
-				this.togglePeek(p);
-			});
+			// A running in-note session stops directly; otherwise the button opens
+			// the study menu. Only "Study here" needs reading view, so the switch
+			// happens from the menu item rather than on the tap.
+			studyBtn ??= this.createHeaderAction(
+				"graduation-cap",
+				"Study this note",
+				"osmosis-line-study-action",
+				view,
+				(p, evt) => {
+					if (this.stateFor(p).mode === "study") {
+						this.toggleStudy(p);
+						return;
+					}
+					this.showStudyMenu(view, p, evt);
+				},
+				(p) => this.stateFor(p).mode === "study",
+			);
 
 			// Re-anchor on every pass (the mind map button may appear after us):
 			// right of the mind map button when present, else left of the
@@ -766,11 +869,9 @@ export class LineRevealProcessor {
 				? mindMapBtn.nextSibling
 				: (findModeToggle(actions) ?? actions.firstChild);
 			actions.insertBefore(studyBtn, anchor);
-			actions.insertBefore(peekBtn, studyBtn);
 
 			const state = this.stateFor(path);
 			studyBtn.classList.toggle("is-active", state.mode === "study");
-			peekBtn.classList.toggle("is-active", state.mode === "peek");
 		}
 		return allReady;
 	}
@@ -780,27 +881,106 @@ export class LineRevealProcessor {
 		label: string,
 		cls: string,
 		view: MarkdownView,
-		onClick: (notePath: string) => void,
+		onClick: (notePath: string, evt: MouseEvent) => void,
+		/** Whether to switch the note to reading view before `onClick` runs. */
+		switchToPreview: (notePath: string) => boolean = () => true,
 	): HTMLElement {
 		const btn = createEl("a");
 		btn.className = `clickable-icon view-action ${cls}`;
 		btn.setAttribute("aria-label", label);
 		setIcon(btn, icon);
-		btn.addEventListener("click", () => {
+		btn.addEventListener("click", (evt) => {
 			const path = view.file?.path;
 			if (path === undefined) return;
 			void (async () => {
 				// Peek/study live in reading view — switch to it first if needed
-				if (view.getMode() !== "preview") {
-					await view.leaf.setViewState({
-						type: "markdown",
-						state: { ...view.getState(), mode: "preview" },
-					});
-				}
-				onClick(path);
+				if (switchToPreview(path)) await this.ensurePreview(view);
+				onClick(path, evt);
 			})();
 		});
 		return btn;
+	}
+
+	private async ensurePreview(view: MarkdownView): Promise<void> {
+		if (view.getMode() === "preview") return;
+		await view.leaf.setViewState({
+			type: "markdown",
+			state: { ...view.getState(), mode: "preview" },
+		});
+	}
+
+	/**
+	 * The note header's Study menu: study in place, this note's cards in the
+	 * sequential popup, or a deck the note belongs to in the popup. One deck
+	 * starts directly; several go in a submenu (inline on mobile, where
+	 * `setSubmenu` is not relied on).
+	 */
+	private showStudyMenu(view: MarkdownView, notePath: string, evt: MouseEvent): void {
+		const menu = new Menu();
+		menu.addItem((item) =>
+			item
+				.setTitle("Study here")
+				.setIcon("graduation-cap")
+				.onClick(() => {
+					void this.ensurePreview(view).then(() => {
+						this.toggleStudy(notePath);
+					});
+				}),
+		);
+		menu.addItem((item) =>
+			item
+				.setTitle("This note (popup)")
+				.setIcon("file-text")
+				.onClick(() => {
+					void this.plugin.openStudySession({ type: "note", notePath });
+				}),
+		);
+
+		const decks = decksOfNote(this.plugin.cardStore.getCardsByNote(notePath));
+		const openDeck = (deck: string): void => {
+			void this.plugin.openStudySession({ type: "single", deck });
+		};
+		if (decks.length === 1) {
+			const deck = decks[0] as string;
+			menu.addItem((item) =>
+				item
+					.setTitle(`Deck: ${deck} (popup)`)
+					.setIcon("layers")
+					.onClick(() => {
+						openDeck(deck);
+					}),
+			);
+		} else if (decks.length > 1) {
+			menu.addItem((item) => {
+				item.setTitle("Deck… (popup)").setIcon("layers");
+				// setSubmenu is not in the published typings; feature-detect it.
+				const sub = Platform.isMobile
+					? undefined
+					: (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
+				if (sub) {
+					for (const deck of decks) {
+						sub.addItem((subItem) =>
+							subItem.setTitle(deck).onClick(() => {
+								openDeck(deck);
+							}),
+						);
+					}
+				} else {
+					item.setDisabled(true);
+					for (const deck of decks) {
+						menu.addItem((deckItem) =>
+							deckItem
+								.setTitle(`Deck: ${deck} (popup)`)
+								.setIcon("layers")
+								.onClick(() => {
+									openDeck(deck);
+								}),
+						);
+					}
+				}
+			});
+		}
+		menu.showAtMouseEvent(evt);
 	}
 
 	// ── Floating pill (study progress + Stop) ─────────────────
@@ -969,6 +1149,7 @@ export class LineRevealProcessor {
 				studySteps: new Map(),
 				stepAt: new Map(),
 				lines: new Map(),
+				groupParts: new Map(),
 			};
 			this.states.set(notePath, state);
 		}
@@ -1024,10 +1205,13 @@ export function peekIcon(): string {
 	return "eye";
 }
 
-/** The reading/edit mode toggle in a view-actions row, if identifiable. */
-function findModeToggle(actions: Element): Element | null {
+/**
+ * The reading/edit mode toggle in a view-actions row, if identifiable. Any tag:
+ * Obsidian's `addAction` makes a `<button>`, so an `a.`-qualified selector never matched.
+ */
+export function findModeToggle(actions: Element): Element | null {
 	return actions.querySelector(
-		'a.clickable-icon[aria-label^="Current view"], a.clickable-icon[aria-label="Edit this note"], a.clickable-icon[aria-label="Reading view"]',
+		'.clickable-icon[aria-label^="Current view"], .clickable-icon[aria-label="Edit this note"], .clickable-icon[aria-label="Reading view"]',
 	);
 }
 

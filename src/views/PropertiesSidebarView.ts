@@ -1,5 +1,9 @@
-import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope } from "obsidian";
+import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope, type ToggleComponent } from "obsidian";
+import { DEFAULT_BOUNDARY_OPACITY, DEFAULT_BOUNDARY_WIDTH, MAX_BOUNDARY_WIDTH, resolveBoundary } from "../boundary";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
+import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./Graph3DView";
+import { Graph3DSettingsPanel } from "./Graph3DOverlays";
+import type { NodeStyleHost } from "./style-host";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "../settings";
 import { DEFAULT_MAP_SETTINGS } from "../settings";
@@ -10,6 +14,7 @@ import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { ColorPicker, extractThemeColors } from "./ColorPicker";
 import { FontPicker } from "./FontPicker";
+import { sidebarSetting } from "./sidebar-setting";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
@@ -23,6 +28,7 @@ const FORMAT_SECTIONS = [
 	"Border",
 	"Text",
 	"Branch line",
+	"Boundary",
 ] as const;
 
 /** Maps each format section to the NodeStyle keys it controls, for reset. */
@@ -32,6 +38,7 @@ const SECTION_STYLE_KEYS: Record<string, (keyof NodeStyle)[]> = {
 	"Border": ["border"],
 	"Text": ["text"],
 	"Branch line": ["branchLine"],
+	"Boundary": ["boundary"],
 };
 
 /** References to live Format tab controls for value updates. */
@@ -55,6 +62,12 @@ interface FormatControls {
 	branchStyleDropdown: HTMLSelectElement | null;
 	branchPatternDropdown: HTMLSelectElement | null;
 	branchTaperDropdown: HTMLSelectElement | null;
+	boundaryToggle: ToggleComponent | null;
+	boundaryFillSwatch: HTMLElement | null;
+	boundaryOpacitySlider: HTMLInputElement | null;
+	boundaryColorSwatch: HTMLElement | null;
+	boundaryWidthSlider: HTMLInputElement | null;
+	boundaryStyleDropdown: HTMLSelectElement | null;
 }
 
 function emptyFormatControls(): FormatControls {
@@ -78,27 +91,13 @@ function emptyFormatControls(): FormatControls {
 		branchStyleDropdown: null,
 		branchPatternDropdown: null,
 		branchTaperDropdown: null,
+		boundaryToggle: null,
+		boundaryFillSwatch: null,
+		boundaryOpacitySlider: null,
+		boundaryColorSwatch: null,
+		boundaryWidthSlider: null,
+		boundaryStyleDropdown: null,
 	};
-}
-
-/**
- * A setting row for this sidebar, laid out as a grid: name and control share
- * the first line, description spans the full width below it (see styles.css).
- *
- * Obsidian builds the description as a *grandchild* of the row, inside
- * `.setting-item-info` next to the name, and a grandchild cannot be given a
- * grid area of its own. Lifting it to a direct child is what makes the layout
- * expressible — the alternative, `display: contents` on the info wrapper, is
- * flagged as only partially supported by Obsidian's CSS lint.
- *
- * Safe to do at construction time: `Setting` creates `descEl` in its
- * constructor and `setDesc()` only writes text into it, so a description added
- * later still lands in the element this moved.
- */
-function sidebarSetting(parent: HTMLElement): Setting {
-	const setting = new Setting(parent);
-	setting.settingEl.appendChild(setting.descEl);
-	return setting;
 }
 
 export class PropertiesSidebarView extends ItemView {
@@ -149,6 +148,11 @@ export class PropertiesSidebarView extends ItemView {
 	private mapNodeWidthInput: HTMLInputElement | null = null;
 	private saveThemeBtn: HTMLElement | null = null;
 	private lastActiveMindMap: MindMapView | null = null;
+	/** The 3D graph the sidebar shows, when one was active last: its Settings, and its selection in the Node tab. Takes over from the mind map until a mind map is active again. */
+	private lastActiveGraph3D: Graph3DView | null = null;
+	/** The 3D graph whose Settings and selection are on show (`updateContext`). */
+	private currentGraph3D: Graph3DView | null = null;
+	private settingsPanelCleanup: (() => void) | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -183,10 +187,10 @@ export class PropertiesSidebarView extends ItemView {
 		) {
 			return undefined;
 		}
-		const mindMap = this.getActiveMindMap();
-		if (!mindMap) return undefined;
-		if (isRedo) mindMap.redo();
-		else mindMap.undo();
+		const host = this.getStyleHost();
+		if (!host) return undefined;
+		if (isRedo) host.redo();
+		else host.undo();
 		return false;
 	}
 
@@ -206,8 +210,11 @@ export class PropertiesSidebarView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf) => {
 				if (leaf?.view instanceof MindMapView) {
+					this.lastActiveGraph3D = null;
 					this.lastActiveMindMap = leaf.view;
 					this.listenForFileLoad(leaf.view);
+				} else if (leaf?.view instanceof Graph3DView) {
+					this.lastActiveGraph3D = leaf.view;
 				}
 				this.updateContext();
 			}),
@@ -218,17 +225,28 @@ export class PropertiesSidebarView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
 				const view = this.app.workspace.getActiveViewOfType(MindMapView);
-				if (view && view !== this.lastActiveMindMap) {
+				if (view && (view !== this.lastActiveMindMap || this.lastActiveGraph3D !== null)) {
+					this.lastActiveGraph3D = null;
 					this.lastActiveMindMap = view;
 					this.listenForFileLoad(view);
+					this.updateContext();
+					return;
+				}
+				// The 2D/3D toggle swaps the view in the same leaf, as does a 3D graph opened in place.
+				const graph = this.app.workspace.getActiveViewOfType(Graph3DView);
+				if (graph && graph !== this.lastActiveGraph3D) {
+					this.lastActiveGraph3D = graph;
 					this.updateContext();
 				}
 			}),
 		);
-		// Initialize lastActiveMindMap from the currently active leaf
-		const activeLeaf = this.app.workspace.getActiveViewOfType(MindMapView);
-		if (activeLeaf) {
-			this.lastActiveMindMap = activeLeaf;
+		// Initialize from the currently active leaf, or (opened from a view's
+		// Style button, which makes this sidebar active) the main area's last one.
+		const recent = this.app.workspace.getActiveViewOfType(MindMapView)?.leaf ?? this.app.workspace.getMostRecentLeaf();
+		if (recent?.view instanceof MindMapView) {
+			this.lastActiveMindMap = recent.view;
+		} else if (recent?.view instanceof Graph3DView) {
+			this.lastActiveGraph3D = recent.view;
 		}
 		this.updateContext();
 	}
@@ -237,12 +255,30 @@ export class PropertiesSidebarView extends ItemView {
 		this.closeAllPickers();
 		this.cleanupFileLoadListener();
 		this.cleanupSelectionListener();
+		this.cleanupSettingsPanel();
 		this.lastActiveMindMap = null;
+		this.lastActiveGraph3D = null;
+		this.currentGraph3D = null;
 		this.contentEl.empty();
 	}
 
-	/** Find the most recently active MindMapView, if any. */
+	/** The 3D graph the sidebar is following, if one was active last and is still open. */
+	private getActiveGraph3D(): Graph3DView | null {
+		const graph = this.lastActiveGraph3D;
+		if (graph === null) return null;
+		if (this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D).some((leaf) => leaf.view === graph)) return graph;
+		this.lastActiveGraph3D = null;
+		return null;
+	}
+
+	/** The view whose selected nodes the Node tab styles: the 3D graph being followed, else the mind map. */
+	private getStyleHost(): NodeStyleHost | null {
+		return this.getActiveGraph3D() ?? this.getActiveMindMap();
+	}
+
+	/** Find the most recently active MindMapView, if any (none while a 3D graph is followed: its sidebar has no Map tab). */
 	private getActiveMindMap(): MindMapView | null {
+		if (this.getActiveGraph3D() !== null) return null;
 		// Return the last active mind map if it's still attached to a leaf
 		if (this.lastActiveMindMap) {
 			const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP);
@@ -334,6 +370,21 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Update the sidebar to reflect the active mind map context. */
 	private updateContext(): void {
+		const graph = this.getActiveGraph3D();
+		if (graph !== null) {
+			if (graph === this.currentGraph3D && this.contentEl.hasChildNodes()) return;
+			this.currentGraph3D = graph;
+			this.currentMindMap = null;
+			this.currentFilePath = null;
+			this.closeAllPickers();
+			this.cleanupSettingsPanel();
+			this.contentEl.empty();
+			this.renderTabbedUI(graph);
+			this.setupSelectionListener(graph);
+			return;
+		}
+		this.currentGraph3D = null;
+		this.cleanupSettingsPanel();
 		const mindMap = this.getActiveMindMap();
 		const filePath = mindMap?.getCurrentFilePath() ?? null;
 
@@ -372,14 +423,15 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Tab UI ──────────────────────────────────────────────
 
-	private renderTabbedUI(): void {
+	/** The Map and Node tabs; for a 3D graph (`graph`), its Settings take the Map tab's place. */
+	private renderTabbedUI(graph?: Graph3DView): void {
 		const container = this.contentEl.createDiv({
 			cls: "osmosis-properties-container",
 		});
 
 		// Header
 		container.createEl("h6", {
-			text: "Map settings",
+			text: graph ? "3D graph" : "Map settings",
 			cls: "osmosis-properties-filename",
 		});
 
@@ -387,7 +439,7 @@ export class PropertiesSidebarView extends ItemView {
 		const tabBar = container.createDiv({ cls: "osmosis-tab-bar" });
 
 		const mapBtn = tabBar.createEl("button", {
-			text: "Map",
+			text: graph ? "Settings" : "Map",
 			cls: "osmosis-tab-btn",
 		});
 		const formatBtn = tabBar.createEl("button", {
@@ -404,8 +456,9 @@ export class PropertiesSidebarView extends ItemView {
 		this.tabContents = { map: mapContent, format: formatContent };
 
 		// Render tab contents
-		this.renderMapTab(mapContent);
-		this.renderFormatTab(formatContent);
+		if (graph) this.renderSettingsTab(mapContent, graph);
+		else this.renderMapTab(mapContent);
+		this.renderFormatTab(formatContent, graph !== undefined);
 
 		// Wire up tab switching
 		mapBtn.addEventListener("click", () => this.switchTab("map"));
@@ -430,6 +483,25 @@ export class PropertiesSidebarView extends ItemView {
 		if (tabId === "format") {
 			this.updateFormatTabState();
 		}
+	}
+
+	// ─── Settings Tab (3D graph) ─────────────────────────────
+
+	/** The 3D graph's Settings (they were its Overlays popover), kept in step with changes made elsewhere. */
+	private renderSettingsTab(container: HTMLElement, graph: Graph3DView): void {
+		const plugin = this.plugin;
+		const panel = new Graph3DSettingsPanel(container, graph.settingsSource(), {
+			get: () => plugin.settings.graph3dSettingsCollapsed,
+			set: (collapsed) => plugin.setGraph3DSettingsCollapsed(collapsed),
+		});
+		const refresh = () => panel.refresh();
+		graph.onSettingsChange(refresh);
+		this.settingsPanelCleanup = () => graph.offSettingsChange(refresh);
+	}
+
+	private cleanupSettingsPanel(): void {
+		this.settingsPanelCleanup?.();
+		this.settingsPanelCleanup = null;
 	}
 
 	// ─── Map Tab ─────────────────────────────────────────────
@@ -687,7 +759,8 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Format Tab ──────────────────────────────────────────
 
-	private renderFormatTab(container: HTMLElement): void {
+	/** The Node tab. For a 3D graph (`graph3d`), the style class section assigns a class but leaves managing classes to the mind map. */
+	private renderFormatTab(container: HTMLElement, graph3d = false): void {
 		this.formatControlEls = [];
 		this.controls = emptyFormatControls();
 
@@ -729,7 +802,7 @@ export class PropertiesSidebarView extends ItemView {
 				cls: "osmosis-format-section-body",
 			});
 
-			this.renderFormatSection(section, body, header);
+			this.renderFormatSection(section, body, graph3d && section === "Style class" ? undefined : header);
 
 			// Toggle collapse
 			header.addEventListener("click", () => {
@@ -748,8 +821,7 @@ export class PropertiesSidebarView extends ItemView {
 		});
 		resetAllBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			const mindMap = this.getActiveMindMap();
-			const count = mindMap?.getSelectedNodeInfo()?.nodeIds.length ?? 0;
+			const count = this.getStyleHost()?.getSelectedNodeInfo().nodeIds.length ?? 0;
 			if (count === 0) return;
 			const modal = new Modal(this.app);
 			modal.titleEl.setText("Reset all styles");
@@ -797,6 +869,9 @@ export class PropertiesSidebarView extends ItemView {
 				break;
 			case "Branch line":
 				this.renderBranchLineSection(body);
+				break;
+			case "Boundary":
+				this.renderBoundarySection(body);
 				break;
 		}
 	}
@@ -915,6 +990,7 @@ export class PropertiesSidebarView extends ItemView {
 		const styleToSave = { ...localStyle };
 		delete styleToSave.class; // Don't save the class assignment into the class definition
 		delete styleToSave.width; // Custom width is per-node, not a class property
+		delete styleToSave.boundary; // A boundary is per-node too: it stays on the node (not cleared below)
 
 		if (Object.keys(styleToSave).length === 0) {
 			new Notice("No local style overrides to save");
@@ -1022,6 +1098,7 @@ export class PropertiesSidebarView extends ItemView {
 				// Merge local + class overrides (skip theme defaults — class should layer on top of theme)
 				const localVisual = localStyle ? { ...localStyle } : {};
 				delete localVisual.class;
+				delete localVisual.boundary; // Per-node: stays on the node, not in the class
 				if (classStyle) {
 					// Class properties that aren't overridden locally
 					styleToSave = { ...classStyle, ...localVisual };
@@ -1375,6 +1452,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		const styleToSave = { ...localStyle };
 		delete styleToSave.class;
+		delete styleToSave.boundary; // Per-node: stays on the node, not in the variant
 
 		if (Object.keys(styleToSave).length === 0) {
 			new Notice("No local style overrides to save");
@@ -2382,8 +2460,7 @@ export class PropertiesSidebarView extends ItemView {
 			const depthOverrides = new Map<number, NodeStyle[]>();
 			for (const [, layoutNode] of nodeMap) {
 				if (layoutNode.source.type === "root") continue;
-				const stableKey = `_n:${layoutNode.source.id}`;
-				const localStyle = fm.styles[stableKey];
+				const localStyle = lookupNodeStyle(fm, layoutNode);
 				if (!localStyle) continue;
 				const depth = layoutNode.source.type === "heading" ? layoutNode.source.depth : 0;
 				if (!depthOverrides.has(depth)) depthOverrides.set(depth, []);
@@ -2418,8 +2495,7 @@ export class PropertiesSidebarView extends ItemView {
 		if (nodeMap && fm) {
 			for (const [, layoutNode] of nodeMap) {
 				if (layoutNode.source.type === "root") continue;
-				const stableKey = `_n:${layoutNode.source.id}`;
-				const localStyle = fm.styles?.[stableKey];
+				const localStyle = lookupNodeStyle(fm, layoutNode);
 				const className = localStyle?.class;
 				if (!className) continue;
 				const classStyle = lookupClassStyle(fm, className, globalClasses);
@@ -2797,6 +2873,103 @@ export class PropertiesSidebarView extends ItemView {
 			});
 	}
 
+	/**
+	 * A boundary (cloud) around the node and its subtree. Off is no `boundary`
+	 * key at all, or `enabled: false` when the node keeps other boundary
+	 * settings to come back to. Setting any value turns it on.
+	 */
+	private renderBoundarySection(body: HTMLElement): void {
+		sidebarSetting(body)
+			.setName("Show boundary")
+			.setDesc("Wrap this node and everything under it.")
+			.addToggle((toggle) => {
+				toggle.onChange(async (on) => {
+					// refreshFormatControls sets the value too; only a user's change writes.
+					const host = this.getStyleHost();
+					const primary = host?.getSelectedNodeInfo().primaryId;
+					const local = primary ? host?.getNodeStyleContext(primary)?.local : undefined;
+					if (on === this.boundaryShown(primary ?? null)) return;
+					if (on) {
+						await this.writeNodeStyle({ boundary: { enabled: true } });
+					} else {
+						const kept = Object.keys(local?.boundary ?? {}).filter((k) => k !== "enabled");
+						await this.writeNodeStyle({ boundary: kept.length > 0 ? { enabled: false } : undefined });
+					}
+				});
+				this.controls.boundaryToggle = toggle;
+			});
+
+		const fillSetting = sidebarSetting(body).setName("Fill");
+		const fillSwatch = fillSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.boundaryFillSwatch = fillSwatch;
+		fillSwatch.addEventListener("click", () => {
+			this.openColorPicker(fillSwatch, fillSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ boundary: { enabled: true, fill: color } });
+			});
+		});
+
+		sidebarSetting(body)
+			.setName("Opacity")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, 100, 5)
+					.setValue(Math.round(DEFAULT_BOUNDARY_OPACITY * 100))
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ boundary: { enabled: true, opacity: value / 100 } });
+					});
+				this.controls.boundaryOpacitySlider = slider.sliderEl;
+			});
+
+		const colorSetting = sidebarSetting(body).setName("Border color");
+		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
+		this.controls.boundaryColorSwatch = colorSwatch;
+		colorSwatch.addEventListener("click", () => {
+			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+				void this.writeNodeStyle({ boundary: { enabled: true, color } });
+			});
+		});
+
+		sidebarSetting(body)
+			.setName("Border width")
+			.addSlider((slider) => {
+				slider
+					.setLimits(0, MAX_BOUNDARY_WIDTH, 0.5)
+					.setValue(DEFAULT_BOUNDARY_WIDTH)
+					.onChange(async (value) => {
+						await this.writeNodeStyle({ boundary: { enabled: true, width: value } });
+					});
+				this.controls.boundaryWidthSlider = slider.sliderEl;
+			});
+
+		sidebarSetting(body)
+			.setName("Border style")
+			.addDropdown((dropdown) => {
+				dropdown
+					.addOption("inherit", "(Inherit)")
+					.addOption("solid", "Solid")
+					.addOption("dashed", "Dashed")
+					.addOption("dotted", "Dotted")
+					.addOption("none", "None")
+					.onChange(async (value) => {
+						await this.writeNodeStyle({
+							boundary: value === "inherit"
+								? { style: undefined }
+								: { enabled: true, style: value as "solid" | "dashed" | "dotted" | "none" },
+						});
+					});
+				this.controls.boundaryStyleDropdown = dropdown.selectEl;
+			});
+	}
+
+	/** Whether the node `id` currently has a boundary, by its resolved style. */
+	private boundaryShown(id: string | null): boolean {
+		const host = this.getStyleHost();
+		const context = id ? host?.getNodeStyleContext(id) : null;
+		if (!host || !context) return false;
+		const classStyle = lookupClassStyle(context.fm, context.local?.class, host.getGlobalClasses());
+		return resolveBoundary(resolveNodeStyle(host.getActiveTheme(), context.depth, context.local, classStyle)) !== null;
+	}
+
 	private renderTextSection(body: HTMLElement): void {
 		// Font family
 		const fontContainer = body.createDiv({ cls: "osmosis-format-font-row" });
@@ -2967,12 +3140,12 @@ export class PropertiesSidebarView extends ItemView {
 
 	private openColorPicker(anchor: HTMLElement, initialColor: string, onChange: (color: string) => void): void {
 		this.closeAllPickers();
-		const mindMap = this.getActiveMindMap();
-		const themeColors = extractThemeColors(mindMap?.getActiveTheme());
+		const host = this.getStyleHost();
+		const themeColors = extractThemeColors(host?.getActiveTheme());
 
 		// Bracket the picker's lifetime as one live-edit session so the whole
 		// drag persists as a single undo step and can't reload the map mid-drag.
-		mindMap?.beginLiveEdit();
+		host?.beginLiveEdit();
 
 		const picker = new ColorPicker({
 			app: this.app,
@@ -2980,7 +3153,7 @@ export class PropertiesSidebarView extends ItemView {
 			initialColor,
 			themeColors,
 			onChange,
-			onClose: () => mindMap?.endLiveEdit(),
+			onClose: () => host?.endLiveEdit(),
 		});
 		this.activePickers.push(picker);
 		picker.open(anchor);
@@ -2997,7 +3170,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Apply a partial NodeStyle override to all selected nodes. */
 	private async writeNodeStyle(update: NodeStyle): Promise<void> {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getStyleHost();
 		if (!mindMap) return;
 
 		const selection = mindMap.getSelectedNodeInfo();
@@ -3014,7 +3187,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Reset style properties for all selected nodes. Pass keys to reset specific groups, omit for all. */
 	private async resetSelectedNodeStyles(keys?: (keyof NodeStyle)[]): Promise<void> {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getStyleHost();
 		if (!mindMap) return;
 
 		const selection = mindMap.getSelectedNodeInfo();
@@ -3028,7 +3201,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Update Format tab disabled/enabled state based on selection. */
 	private updateFormatTabState(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getStyleHost();
 		const selection = mindMap?.getSelectedNodeInfo() ?? null;
 		const hasSelection = selection !== null && selection.nodeIds.length > 0;
 
@@ -3060,21 +3233,19 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Refresh all Format tab controls with the current selection's resolved style. */
 	private refreshFormatControls(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getStyleHost();
 		if (!mindMap) return;
 
 		const selection = mindMap.getSelectedNodeInfo();
 		if (!selection || !selection.primaryId) return;
 
-		const layoutNode = mindMap.getLayoutNodeById(selection.primaryId);
-		if (!layoutNode) return;
+		const context = mindMap.getNodeStyleContext(selection.primaryId);
+		if (!context) return;
 
 		const theme = mindMap.getActiveTheme();
-		const fm = mindMap.getOsmosisStyleFrontmatter();
-		const localStyle = lookupNodeStyle(fm, layoutNode);
+		const { fm, local: localStyle, depth: nodeDepth } = context;
 		const globalClasses = mindMap.getGlobalClasses();
 		const classStyle = lookupClassStyle(fm, localStyle?.class, globalClasses);
-		const nodeDepth = layoutNode.source.type === "heading" ? layoutNode.source.depth : undefined;
 		const resolved = resolveNodeStyle(theme, nodeDepth, localStyle, classStyle);
 
 		// Variant dropdown (Map tab)
@@ -3151,6 +3322,25 @@ export class PropertiesSidebarView extends ItemView {
 		if (this.controls.branchTaperDropdown) {
 			this.controls.branchTaperDropdown.value = localStyle?.branchLine?.taper ?? "inherit";
 		}
+
+		// Boundary
+		const boundary = resolveBoundary(resolved);
+		this.controls.boundaryToggle?.setValue(boundary !== null);
+		if (this.controls.boundaryFillSwatch) {
+			this.controls.boundaryFillSwatch.style.backgroundColor = boundary?.fill ?? "";
+		}
+		if (this.controls.boundaryOpacitySlider) {
+			this.controls.boundaryOpacitySlider.value = String(Math.round((boundary?.fillOpacity ?? DEFAULT_BOUNDARY_OPACITY) * 100));
+		}
+		if (this.controls.boundaryColorSwatch) {
+			this.controls.boundaryColorSwatch.style.backgroundColor = boundary?.stroke ?? "";
+		}
+		if (this.controls.boundaryWidthSlider) {
+			this.controls.boundaryWidthSlider.value = String(boundary?.strokeWidth ?? DEFAULT_BOUNDARY_WIDTH);
+		}
+		if (this.controls.boundaryStyleDropdown) {
+			this.controls.boundaryStyleDropdown.value = localStyle?.boundary?.style ?? "inherit";
+		}
 	}
 
 	// ─── File Load Listener ──────────────────────────────────
@@ -3195,7 +3385,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Selection Listener ──────────────────────────────────
 
-	private setupSelectionListener(mindMap: MindMapView): void {
+	private setupSelectionListener(mindMap: NodeStyleHost): void {
 		this.cleanupSelectionListener();
 
 		const handler = () => {

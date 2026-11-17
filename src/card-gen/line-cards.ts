@@ -1,12 +1,14 @@
 import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import type { GeneratedCard } from "./types";
+import { groupDisplayMarkdown } from "../line-groups";
 
 /**
  * Line-card generation for "Notes as Flashcards".
  *
  * Every element carrying a block ID (`^os-xxxxxx` trailing a line,
- * standalone after a code block/table) becomes its own FSRS card:
+ * standalone after a code block/table) becomes its own FSRS card — a run of
+ * adjacent lines is one element (T75):
  * front = ancestor breadcrumb path, back = the element itself.
  * Untagged lines never generate cards — the "Generate flashcards from
  * note" command is the opt-in trigger.
@@ -103,7 +105,8 @@ function makeLineCard(
 		id: lineCardId(notePath, node.blockId),
 		card_type: "line",
 		front: [noteName, ...crumbs].join(BREADCRUMB_SEPARATOR),
-		back: node.content,
+		// A heading group's back shows its cover/caption lines too (T75).
+		back: groupDisplayMarkdown(node),
 		deck: "",
 		sourceLine: lineAt(node.range.start),
 		typeIn: false,

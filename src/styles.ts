@@ -64,6 +64,26 @@ export interface BranchStyle {
 	taper?: BranchLineTaper;
 }
 
+/**
+ * A boundary (cloud): a translucent blob drawn behind a node and every visible
+ * node beneath it, so a branch reads as a group. Any key present turns it on
+ * unless `enabled` is false; unset colours are tinted by the node's colour.
+ * See `src/boundary.ts`.
+ */
+export interface BoundaryStyle {
+	enabled?: boolean;
+	/** Fill colour; unset = the node's colour. */
+	fill?: string;
+	/** Fill opacity, 0–1. */
+	opacity?: number;
+	/** Outline colour; unset = the fill colour. */
+	color?: string;
+	/** Outline thickness, px. */
+	width?: number;
+	/** Outline style. */
+	style?: "solid" | "dashed" | "dotted" | "none";
+}
+
 // ─── Node Style (per-node stylable properties) ─────────────────────────────
 
 /** All stylable properties for a single node. Every field is optional (sparse). */
@@ -73,6 +93,8 @@ export interface NodeStyle {
 	border?: BorderStyle;
 	text?: TextStyle;
 	branchLine?: BranchStyle;
+	/** A boundary (cloud) around this node and its subtree; see {@link BoundaryStyle}. */
+	boundary?: BoundaryStyle;
 	background?: string;
 	/** Custom content width in pixels (set via drag-to-resize). */
 	width?: number;
@@ -379,6 +401,9 @@ export function mergeNodeStyle(target: NodeStyle, source: NodeStyle): void {
 	}
 	if (source.branchLine) {
 		target.branchLine = { ...target.branchLine, ...source.branchLine };
+	}
+	if (source.boundary) {
+		target.boundary = { ...target.boundary, ...source.boundary };
 	}
 }
 
@@ -734,7 +759,7 @@ export function getClassScope(
  */
 export function lookupVariantStyle(
 	frontmatter: OsmosisStyleFrontmatter | undefined,
-	layoutNode: LayoutNode,
+	layoutNode: Pick<LayoutNode, "source">,
 ): NodeStyle | undefined {
 	if (!frontmatter?.variants || !frontmatter.activeVariant) return undefined;
 

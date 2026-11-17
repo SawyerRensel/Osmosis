@@ -1,5 +1,6 @@
 import { OsmosisNode, OsmosisTree, NodeType, Range } from "./types";
 import { extractTrailingBlockId } from "./block-id";
+import { isGroupableLine, isMediaEmbed } from "./line-groups";
 
 /**
  * Incremental markdown parser for Osmosis.
@@ -90,138 +91,11 @@ export class OsmosisParser {
 			quoteLines = [];
 		};
 
-		// Skip YAML frontmatter (--- delimited block at the start of the file)
-		let lineIdx = 0;
-		if (lines.length > 0 && lines[0]!.text.trim() === "---") {
-			lineIdx = 1;
-			while (lineIdx < lines.length) {
-				if (lines[lineIdx]!.text.trim() === "---") {
-					lineIdx++; // skip closing ---
-					break;
-				}
-				lineIdx++;
-			}
-		}
-
-		for (; lineIdx < lines.length; lineIdx++) {
-			const line = lines[lineIdx]!;
-			// Fenced code block detection
-			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.text.trim());
-			if (inCodeBlock) {
-				if (fenceMatch && fenceMatch[1]?.startsWith(codeFence.charAt(0)) && (fenceMatch[1]?.length ?? 0) >= codeFence.length && (fenceMatch[2] ?? "").trim() === "") {
-					// Closing fence: create codeblock node with full fenced content
-					codeLines.push(line.text);
-					const content = codeLines.join("\n");
-					const node = this.createNode("codeblock", 0, content, {
-						start: codeStart,
-						end: line.end,
-					});
-					// Insert into tree at current heading context
-					listStack = [];
-					const parent = headingStack[headingStack.length - 1] ?? root;
-					parent.children.push(node);
-					lastMultilineNode = node;
-					inCodeBlock = false;
-					codeLines = [];
-					continue;
-				}
-				codeLines.push(line.text);
-				continue;
-			}
-			if (fenceMatch?.[1] !== undefined) {
-				// Opening fence
-				inCodeBlock = true;
-				codeFence = fenceMatch[1];
-				codeLines = [line.text];
-				codeStart = line.start;
-				continue;
-			}
-
-			// Table detection: accumulate consecutive pipe-prefixed lines
-			const isPipeLine = /^\s*\|/.test(line.text);
-			if (inTable) {
-				if (isPipeLine) {
-					tableLines.push(line.text);
-					tableEnd = line.end;
-					continue;
-				} else {
-					// End of table: flush accumulated lines as a table node
-					const content = tableLines.join("\n");
-					const node = this.createNode("table", 0, content, {
-						start: tableStart,
-						end: tableEnd,
-					});
-					listStack = [];
-					const parent = headingStack[headingStack.length - 1] ?? root;
-					parent.children.push(node);
-					lastMultilineNode = node;
-					inTable = false;
-					tableLines = [];
-					// Fall through to process current line normally
-				}
-			}
-			if (!inTable && isPipeLine) {
-				// Check if next line is a table separator (|---|---|)
-				const nextLine = lines[lineIdx + 1];
-				if (nextLine && /^\s*\|[\s:]*-+[\s:]*[-|\s:]*$/.test(nextLine.text)) {
-					inTable = true;
-					tableLines = [line.text];
-					tableStart = line.start;
-					tableEnd = line.end;
-					continue;
-				}
-			}
-
-			// Blockquote / callout accumulation: consecutive `>`-prefixed lines
-			// (including `>` empty lines inside a callout) coalesce into one
-			// node. A blank or non-`>` line ends the block — standard markdown
-			// boundary — so stacked callouts stay separate nodes.
-			const isQuoteLine = /^\s*>/.test(line.text);
-			if (inBlockquote) {
-				if (isQuoteLine) {
-					quoteLines.push(line.text);
-					quoteEnd = line.end;
-					continue;
-				}
-				// End of blockquote: flush, then process the current line below
-				// (it may be a standalone `^id` that attaches to the block).
-				flushBlockquote();
-			}
-			if (!inBlockquote && isQuoteLine) {
-				inBlockquote = true;
-				quoteLines = [line.text];
-				quoteStart = line.start;
-				quoteEnd = line.end;
-				continue;
-			}
-
-			// Standalone block-ID line (e.g. "^os-a1b2c3") — Obsidian's way to
-			// block-reference a multi-line block. Attach the ID to the
-			// preceding code block / table / blockquote instead of a paragraph.
-			// The node's range deliberately excludes the ID line so content
-			// edits through the mind map cannot wipe the identity.
-			const standaloneId = /^\^([a-zA-Z0-9-]+)$/.exec(line.text.trim());
-			if (standaloneId?.[1] !== undefined && lastMultilineNode !== null) {
-				if (lastMultilineNode.blockId === undefined) {
-					lastMultilineNode.blockId = standaloneId[1];
-					// Record where the `^id` line ends so structural moves carry
-					// it with the block. `range` stays content-only (see types).
-					lastMultilineNode.blockIdLineEnd = line.end;
-				}
-				continue;
-			}
-
-			const parsed = this.parseLine(line);
-			if (parsed === null) {
-				// Blank line: reset list context
-				listStack = [];
-				continue;
-			}
-
-			const node = this.createNode(parsed.type, parsed.depth, parsed.content, {
-				start: line.start,
-				end: line.end,
-			}, parsed.raw);
+		// Create a node for one parsed line (or a merged line group) and place
+		// it in the tree: headings on the heading stack, list items by
+		// indentation, paragraphs under the open list item or heading.
+		const emit = (parsed: ParsedLine, range: Range): void => {
+			const node = this.createNode(parsed.type, parsed.depth, parsed.content, range, parsed.raw);
 			lastMultilineNode = null;
 
 			// Store ordered list number in metadata
@@ -328,14 +202,172 @@ export class OsmosisParser {
 						parsed.depth,
 						parsed.embed.target,
 						{
-							start: line.start + parsed.embed.start,
-							end: line.start + parsed.embed.end,
+							start: range.start + parsed.embed.start,
+							end: range.start + parsed.embed.end,
 						},
 						parsed.raw.slice(parsed.embed.start, parsed.embed.end),
 					),
 				);
 			}
+		};
+
+		// Pending run of adjacent groupable lines (see `src/line-groups.ts`).
+		// A run of one line is today's node; a longer run is one node.
+		let run: { line: LineInfo; parsed: ParsedLine }[] = [];
+		let runHasHeading = false;
+		const flushRun = (): void => {
+			if (run.length === 1) emit(run[0]!.parsed, { start: run[0]!.line.start, end: run[0]!.line.end });
+			else if (run.length > 1) emit(this.mergeRun(run), { start: run[0]!.line.start, end: run[run.length - 1]!.line.end });
+			run = [];
+			runHasHeading = false;
+		};
+
+		// Skip YAML frontmatter (--- delimited block at the start of the file)
+		let lineIdx = 0;
+		if (lines.length > 0 && lines[0]!.text.trim() === "---") {
+			lineIdx = 1;
+			while (lineIdx < lines.length) {
+				if (lines[lineIdx]!.text.trim() === "---") {
+					lineIdx++; // skip closing ---
+					break;
+				}
+				lineIdx++;
+			}
 		}
+
+		for (; lineIdx < lines.length; lineIdx++) {
+			const line = lines[lineIdx]!;
+			// Fenced code block detection
+			const fenceMatch = /^(`{3,}|~{3,})(.*)$/.exec(line.text.trim());
+			if (inCodeBlock) {
+				if (fenceMatch && fenceMatch[1]?.startsWith(codeFence.charAt(0)) && (fenceMatch[1]?.length ?? 0) >= codeFence.length && (fenceMatch[2] ?? "").trim() === "") {
+					// Closing fence: create codeblock node with full fenced content
+					codeLines.push(line.text);
+					const content = codeLines.join("\n");
+					const node = this.createNode("codeblock", 0, content, {
+						start: codeStart,
+						end: line.end,
+					});
+					// Insert into tree at current heading context
+					listStack = [];
+					const parent = headingStack[headingStack.length - 1] ?? root;
+					parent.children.push(node);
+					lastMultilineNode = node;
+					inCodeBlock = false;
+					codeLines = [];
+					continue;
+				}
+				codeLines.push(line.text);
+				continue;
+			}
+			// Any line that can't join a run of adjacent lines ends it.
+			const groupable = isGroupableLine(line.text);
+			if (!groupable) flushRun();
+
+			if (fenceMatch?.[1] !== undefined) {
+				// Opening fence
+				inCodeBlock = true;
+				codeFence = fenceMatch[1];
+				codeLines = [line.text];
+				codeStart = line.start;
+				continue;
+			}
+
+			// Table detection: accumulate consecutive pipe-prefixed lines
+			const isPipeLine = /^\s*\|/.test(line.text);
+			if (inTable) {
+				if (isPipeLine) {
+					tableLines.push(line.text);
+					tableEnd = line.end;
+					continue;
+				} else {
+					// End of table: flush accumulated lines as a table node
+					const content = tableLines.join("\n");
+					const node = this.createNode("table", 0, content, {
+						start: tableStart,
+						end: tableEnd,
+					});
+					listStack = [];
+					const parent = headingStack[headingStack.length - 1] ?? root;
+					parent.children.push(node);
+					lastMultilineNode = node;
+					inTable = false;
+					tableLines = [];
+					// Fall through to process current line normally
+				}
+			}
+			if (!inTable && isPipeLine) {
+				// Check if next line is a table separator (|---|---|)
+				const nextLine = lines[lineIdx + 1];
+				if (nextLine && /^\s*\|[\s:]*-+[\s:]*[-|\s:]*$/.test(nextLine.text)) {
+					inTable = true;
+					tableLines = [line.text];
+					tableStart = line.start;
+					tableEnd = line.end;
+					continue;
+				}
+			}
+
+			// Blockquote / callout accumulation: consecutive `>`-prefixed lines
+			// (including `>` empty lines inside a callout) coalesce into one
+			// node. A blank or non-`>` line ends the block — standard markdown
+			// boundary — so stacked callouts stay separate nodes.
+			const isQuoteLine = /^\s*>/.test(line.text);
+			if (inBlockquote) {
+				if (isQuoteLine) {
+					quoteLines.push(line.text);
+					quoteEnd = line.end;
+					continue;
+				}
+				// End of blockquote: flush, then process the current line below
+				// (it may be a standalone `^id` that attaches to the block).
+				flushBlockquote();
+			}
+			if (!inBlockquote && isQuoteLine) {
+				inBlockquote = true;
+				quoteLines = [line.text];
+				quoteStart = line.start;
+				quoteEnd = line.end;
+				continue;
+			}
+
+			// Standalone block-ID line (e.g. "^os-a1b2c3") — Obsidian's way to
+			// block-reference a multi-line block. Attach the ID to the
+			// preceding code block / table / blockquote instead of a paragraph.
+			// The node's range deliberately excludes the ID line so content
+			// edits through the mind map cannot wipe the identity.
+			const standaloneId = /^\^([a-zA-Z0-9-]+)$/.exec(line.text.trim());
+			if (standaloneId?.[1] !== undefined && lastMultilineNode !== null) {
+				if (lastMultilineNode.blockId === undefined) {
+					lastMultilineNode.blockId = standaloneId[1];
+					// Record where the `^id` line ends so structural moves carry
+					// it with the block. `range` stays content-only (see types).
+					lastMultilineNode.blockIdLineEnd = line.end;
+				}
+				continue;
+			}
+
+			const parsed = this.parseLine(line);
+			if (parsed === null) {
+				// Blank line: reset list context (the run was flushed above)
+				listStack = [];
+				continue;
+			}
+
+			if (groupable && (parsed.type === "heading" || parsed.type === "paragraph")) {
+				// A heading closes an open list, so lines still belonging to a
+				// list item (lazy continuation) don't become its cover.
+				if (parsed.type === "heading" && listStack.length > 0 && !runHasHeading) flushRun();
+				if (parsed.type === "heading") runHasHeading = true;
+				run.push({ line, parsed });
+				lastMultilineNode = null;
+				continue;
+			}
+
+			emit(parsed, { start: line.start, end: line.end });
+		}
+
+		flushRun();
 
 		// Flush any pending table at end of document
 		if (inTable && tableLines.length > 0) {
@@ -544,42 +576,40 @@ export class OsmosisParser {
 		return { target, start: match.index, end: match.index + match[0].length };
 	}
 
-	/** File extensions for media embeds that should NOT be expanded as note transclusions. */
-	private static readonly MEDIA_EXTENSIONS = new Set([
-		// Images
-		"png", "jpg", "jpeg", "gif", "bmp", "svg", "webp", "avif",
-		// Audio
-		"mp3", "webm", "wav", "m4a", "ogg", "3gp", "flac",
-		// Video
-		"mp4", "ogv", "mov", "mkv",
-		// PDF
-		"pdf",
-	]);
-
-	/** Compound extensions that are visual embeds despite ending in .md */
-	private static readonly MEDIA_COMPOUND_EXTENSIONS = [
-		".excalidraw.md",
-	];
+	/** Media embeds render natively instead of expanding as notes (see `line-groups.ts`). */
+	private isMediaEmbed(target: string): boolean {
+		return isMediaEmbed(target);
+	}
 
 	/**
-	 * Check if an embed target refers to a media file (image, audio, video, PDF)
-	 * or a visual embed like Excalidraw.
-	 * Handles wiki-link pipes (e.g. "image.png|300") and fragments (e.g. "file.pdf#page=2").
+	 * Merge a run of two or more adjacent heading/paragraph lines into one
+	 * node's parse (T75; rules in `src/line-groups.ts`).
+	 *
+	 * The run's first heading, if any, makes the group that heading — its
+	 * type, level and text, so its node ID, links and style keys don't change
+	 * when a cover image or caption is added. Otherwise the group is a
+	 * paragraph whose content is its lines' text joined with `\n`.
+	 *
+	 * The group's block ID is the *last* ID in the run. Only that one is
+	 * stripped from `raw`; any earlier IDs stay in `raw` so an edit through the
+	 * map round-trips them and their review history can come back when the run
+	 * is split again.
 	 */
-	private isMediaEmbed(target: string): boolean {
-		// Strip wiki-link pipe sizing (e.g. "image.png|300" → "image.png")
-		const pathPart = target.split("|")[0]?.split("#")[0] ?? "";
-
-		// Check compound extensions first (e.g. .excalidraw.md)
-		const lower = pathPart.toLowerCase();
-		for (const compound of OsmosisParser.MEDIA_COMPOUND_EXTENSIONS) {
-			if (lower.endsWith(compound)) return true;
+	private mergeRun(run: { line: LineInfo; parsed: ParsedLine }[]): ParsedLine {
+		let idAt = -1;
+		for (let i = run.length - 1; i >= 0; i--) {
+			if (run[i]!.parsed.blockId !== undefined) {
+				idAt = i;
+				break;
+			}
 		}
-
-		const dotIndex = pathPart.lastIndexOf(".");
-		if (dotIndex === -1) return false;
-		const ext = pathPart.slice(dotIndex + 1).toLowerCase();
-		return OsmosisParser.MEDIA_EXTENSIONS.has(ext);
+		const heading = run.find((entry) => entry.parsed.type === "heading")?.parsed;
+		const raw = run.map((entry, i) => (i === idAt ? entry.parsed.raw : entry.line.text)).join("\n");
+		const merged: ParsedLine = heading
+			? { type: "heading", depth: heading.depth, content: heading.content, raw }
+			: { type: "paragraph", depth: 0, content: run.map((entry) => entry.parsed.content).join("\n"), raw };
+		if (idAt !== -1) merged.blockId = run[idAt]!.parsed.blockId;
+		return merged;
 	}
 
 	/**

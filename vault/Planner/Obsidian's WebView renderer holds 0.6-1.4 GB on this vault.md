@@ -10,11 +10,11 @@ people:
 location:
 related:
   - "[[Study mode stops before transcluded reviews are finished.]]"
-status: To-Do
+status: Ideas
 priority:
 progress:
 date_created: 2026-09-07T16:23:20-04:00
-date_modified: 2026-09-07T16:23:20-04:00
+date_modified: 2026-10-28T02:08:29.387Z
 date_start_scheduled:
 date_start_actual:
 date_end_scheduled:

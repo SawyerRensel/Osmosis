@@ -472,7 +472,7 @@ export type Rollup = Record<string, DayRollup>;
 
 const RATINGS: readonly FSRSRating[] = [1, 2, 3, 4];
 const CARD_STATES: readonly CardState[] = ["new", "learning", "review", "relearning"];
-const STUDY_MODES: readonly StudyMode[] = ["sequential", "contextual", "spatial"];
+const STUDY_MODES: readonly StudyMode[] = ["sequential", "contextual", "spatial", "relational"];
 const REVIEW_CLASSES: readonly ReviewClass[] = ["learning", "young", "mature", "relearning"];
 
 /** A zeroed day bucket. */
@@ -482,7 +482,7 @@ export function emptyDayRollup(): DayRollup {
 		timeMs: 0,
 		byRating: { 1: 0, 2: 0, 3: 0, 4: 0 },
 		byState: { new: 0, learning: 0, review: 0, relearning: 0 },
-		byMode: { sequential: 0, contextual: 0, spatial: 0 },
+		byMode: { sequential: 0, contextual: 0, spatial: 0, relational: 0 },
 		byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 		timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 	};

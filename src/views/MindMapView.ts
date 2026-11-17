@@ -9,15 +9,41 @@ import {
 	Scope,
 	Notice,
 	Menu,
+	parseLinktext,
 	parseYaml,
+	resolveSubpath,
 	setIcon,
 	type ViewStateResult,
+	type Modifier,
 } from "obsidian";
+import { arrowKeyStep, hierarchyStep, type HierarchyStep } from "../hierarchy-nav";
 import { ParseCache } from "../cache";
+import { MindMapPerf } from "./MindMapPerf";
 import { OsmosisParser } from "../parser";
 import { normalizeBlockSpacing } from "../markdown-spacing";
 import { OsmosisNode, OsmosisTree } from "../types";
 import * as edit from "../mindmap-edit";
+import { groupDisplayMarkdown } from "../line-groups";
+import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pasteMigrates, spendCut, stylePasteOverrides, type ClipboardItem } from "../node-clipboard";
+import { codeFitLimitPx } from "../code-fit";
+import { planStyleKeys } from "../mindmap-style-key";
+import { selectAfterDelete } from "../select-after-delete";
+import { enterSavesEdit } from "../edit-keys";
+import { EditPipeline, type RestoredFile } from "../edit-pipeline";
+import { lineAt } from "../heading-links";
+import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
+import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type ReplacePlan } from "../find-replace";
+import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
+import { ancestorsOf, findNodeById, nodeAtStart } from "../graph3d/edit";
+import { planSelectionLink, type PickedLine, type PlanNote } from "../graph3d/selection-edit";
+import { LinkPicker, linkMenuItems } from "../link-pick";
+import { FindBar, type FindHost } from "./FindBar";
+import * as moves from "../edit-moves";
+import type { MoveContext } from "../edit-moves";
+import { canConvertBranch, convertBranchToNote } from "../convert-branch";
+import { nodePathAt } from "../mindmap-links";
+import { readMapState, writeMapState } from "../mindmap-state";
+import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../graph3d/liftoff";
 import {
 	computeLayout,
 	LayoutNode,
@@ -31,8 +57,14 @@ import { TransclusionResolver } from "../transclusion";
 import { getTheme, isDefaultTheme } from "../themes";
 import { resolveNodeStyle, lookupNodeStyle, lookupClassStyle, lookupVariantStyle, parseOsmosisStyleFrontmatter, isCorruptStyleFrontmatter, styleMappingFor, readStyleMapping, buildStableIdSelector, buildBlockIdSelector, buildPreferredSelector, mergeNodeStyle, buildMapSettingsFromFrontmatter, buildTreePathMap, lookupNodeStyleByPath } from "../styles";
 import type { ThemeDefinition, OsmosisStyleFrontmatter, NodeStyle, TopicShape, LayoutSide } from "../styles";
+import { mergeStyleOverride } from "../style-write";
+import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
-import { viewBoxTransform, clientToUser } from "../mindmap-viewport";
+import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
+import { viewBoxTransform, clientToUser, layerTransform, layerTransformCss, moveKind, type ViewBox } from "../mindmap-viewport";
+import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
+import { planReuse, translateAttr, type DrawnGroup, type WantedNode } from "../mindmap-reuse";
+import { PROBE_BIG, PROBE_SMALL, measureOrder, planFirstView, probeSizes, settledWith, unsettledOf } from "../mindmap-progressive";
 import {
 	KEEP_VISIBLE_PX,
 	MAX_FRAME_MS,
@@ -53,9 +85,11 @@ import {
 	type Sample,
 } from "../mindmap-inertia";
 import { exceedsDragThreshold, nodeDragPans } from "../mindmap-gesture";
-import { ToolRibbon, type ButtonDef, type ToolbarState } from "./ToolRibbon";
+import { movedPastSlop } from "../pointer-gesture";
+import { ToolRibbon, syncNavbar, type ButtonDef, type NavbarHost, type ToolbarState } from "./ToolRibbon";
 import {
 	EmbeddableMarkdownEditor,
+	suggestOpen,
 	autoResizeExtension,
 } from "../editor/EmbeddableMarkdownEditor";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime, never bundled. */
@@ -63,9 +97,9 @@ import { EditorSelection } from "@codemirror/state";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/view is provided by Obsidian, never bundled. */
 import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
+import { colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
 import { fenceDiagrams } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
-import { SCHEDULE_FRONTMATTER_KEY } from "../store/ScheduleStore";
 import {
 	allFenceCardKeys,
 	allLineCardIds,
@@ -79,6 +113,8 @@ import {
 } from "../study/spatial-study";
 import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
+import { readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -88,6 +124,9 @@ export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+/** A rendered code block's padding across, both sides together, in px (Obsidian's `pre`: 16 px a side). */
+const CODE_BLOCK_PAD_PX = 32;
 
 // Viewport constants
 const MIN_ZOOM = 0.1;
@@ -112,30 +151,56 @@ const PINCH_PAN_SLOP = 16; // px the pinch centre may wander before it also pans
 
 // Viewport culling constants
 const CULL_MARGIN = 200; // extra pixels around viewport to pre-render
+// Time one cull pass may spend starting draws of nodes that entered the view;
+// the rest wait for the next frame (see `updateVisibleNodes`).
+const CULL_DRAW_BUDGET_MS = 8;
+// T84: a first render with at least this many unmeasured nodes opens from its
+// first view (see `mindmap-progressive.ts`); below that, measuring all is quick.
+const PROGRESSIVE_MIN_NODES = 400;
+// Measuring the rest after such an open: nodes per batch, and how long one
+// task renders cells before yielding the frame.
+const PROGRESSIVE_BATCH = 200;
+const MEASURE_SLICE_MS = 8;
+// A batch relays the map out (so the nodes it settled can show) only once the
+// view has moved and then held still this long: one such pass on Perf 10k is
+// ~40 ms of layouts (measured, `mindmap-progressive.test.ts`). The last batch
+// always relays out.
+const PROGRESSIVE_IDLE_MS = 250;
 
-// Identity migration constants
-const EMPTY_BLOCK_IDS: ReadonlySet<string> = new Set();
+/** One node waiting to be measured (see `measureNodeSizes`). */
+interface MeasureEntry {
+	node: OsmosisNode;
+	displayContent: string;
+	cacheKey: string;
+	customWidth?: number;
+}
 
 /**
- * Read one key out of a file's YAML frontmatter block, straight from its raw
- * markdown. Used where the metadata cache can't be trusted — right after our
- * own write, it still holds the pre-write frontmatter.
+ * The node size cache. `epoch` counts clears, so measuring that started
+ * before a clear (a style or setting change) can tell its sizes are stale.
  */
-function frontmatterValue(content: string, key: string): unknown {
-	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
-	if (!match?.[1]) return undefined;
-	try {
-		const parsed: unknown = parseYaml(match[1]);
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			return undefined;
-		}
-		return (parsed as Record<string, unknown>)[key];
-	} catch {
-		return undefined;
+class SizeCache extends Map<string, { width: number; height: number }> {
+	epoch = 0;
+	clear(): void {
+		this.epoch++;
+		super.clear();
 	}
 }
 
-type FileEdit = edit.FileEdit;
+/** A viewport saved by `getEphemeralState`, as history hands it back. */
+interface SavedViewport {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+	zoom: number;
+}
+
+function isViewport(value: unknown): value is SavedViewport {
+	if (!value || typeof value !== "object") return false;
+	const v = value as Record<string, unknown>;
+	return ["x", "y", "w", "h", "zoom"].every((k) => typeof v[k] === "number");
+}
 
 /**
  * A fence node rendered as a card.
@@ -156,30 +221,7 @@ interface OsmosisCardContent {
 	isCloze?: boolean;
 }
 
-/**
- * A single reversible map edit. Usually one file, but a move across an embed
- * boundary rewrites both the origin and the destination note, and those must
- * undo together as one step rather than leaving the content duplicated after a
- * single Ctrl+Z.
- */
-interface MapEditSnapshot {
-	edits: FileEdit[];
-}
-
-/**
- * One copied subtree: its source text, plus enough of the original node for
- * `reindentSubtree` to re-serialize the first line at a new type/depth. The
- * node itself is not kept — after a *cut* it no longer exists by paste time.
- */
-interface ClipboardItem {
-	type: OsmosisNode["type"];
-	depth: number;
-	content: string;
-	blockId?: string;
-	text: string;
-}
-
-export class MindMapView extends ItemView {
+export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private cache = new ParseCache();
 	private transclusionResolver: TransclusionResolver;
 	private currentFile: TFile | null = null;
@@ -199,22 +241,42 @@ export class MindMapView extends ItemView {
 	private zoom = 1;
 	private isPanning = false;
 	private panStart = { x: 0, y: 0 };
+	/**
+	 * A mouse right-button press, with the node under it. It pans the map when
+	 * dragged; released without moving past the shared slop, it opens the node
+	 * (or background) context menu on release.
+	 */
+	private contextPress: { nodeId: string | null } | null = null;
+	/** When the context menu last opened on release; the browser's own `contextmenu` event that follows at once (Windows) is not a second request. */
+	private contextOpenedAt = -Infinity;
 	private svg: SVGSVGElement | null = null;
 	/**
 	 * WKWebView strands composited `<foreignObject>` content when the SVG's
 	 * `viewBox` changes, so iOS pans the map with a CSS transform on the SVG
 	 * instead — see `src/mindmap-viewport.ts` for the mechanism and the maths.
 	 * Chromium (desktop Electron, Android's WebView) re-transforms those layers
-	 * correctly and stays on the `viewBox` path.
+	 * correctly and paints with the `viewBox` attribute.
 	 */
 	private readonly panByTransform = Platform.isIosApp;
 	/**
-	 * The element whose box *is* the viewport, on the transform path: the SVG
-	 * no longer clips at its own bounds, so this wrapper does the clipping,
-	 * stays put while the SVG moves, and is what screen coordinates are
-	 * measured against. Null on the `viewBox` path, where the SVG is all three.
+	 * The element whose box *is* the viewport: the SVG does not clip at its own
+	 * bounds (it draws its cull margin outside them, and the layer below moves
+	 * it), so this wrapper does the clipping, stays put while the map moves, and
+	 * is what screen coordinates are measured against. Null only while a render
+	 * pass is building the next SVG.
 	 */
 	private viewportHost: HTMLDivElement | null = null;
+	/**
+	 * The composited layer between the host and the SVG (T87). The SVG is
+	 * painted once for {@link paintedViewBox}; a pan moves this layer instead of
+	 * repainting every drawn node, and a zoom out shrinks it until the gesture
+	 * pauses. See `layerTransform` in `src/mindmap-viewport.ts`.
+	 */
+	private viewportLayer: HTMLDivElement | null = null;
+	/** The viewBox the SVG is painted for; `viewBox` is the one on screen. */
+	private paintedViewBox: ViewBox = { x: 0, y: 0, w: 0, h: 0 };
+	/** Repaints a shrunk (zoomed-out) layer 1:1 once the gesture pauses. */
+	private viewportRepaintTimer: number | null = null;
 
 	// Collapse state
 	private collapsedIds = new Set<string>();
@@ -222,13 +284,18 @@ export class MindMapView extends ItemView {
 	private lazyTransclusionIds = new Set<string>();
 	private currentLayout: LayoutResult | null = null;
 
-	// Undo/redo history. Map edits write to disk directly (vault.modify /
+	// Undo/redo. Map edits write to disk directly (vault.modify /
 	// processFrontMatter), bypassing CodeMirror, so there is no editor history to
-	// forward to — the map keeps its own snapshot stack of file content before
-	// and after each edit, covering both text/structure and style writes. Cleared
-	// when the map switches to a different file.
-	private readonly undoStack: MapEditSnapshot[] = [];
-	private readonly redoStack: MapEditSnapshot[] = [];
+	// forward to. Every write goes through `edits`, which records it in the
+	// plugin's shared per-file history (`src/edit-history.ts`), covering both
+	// text/structure and style writes. The map holds its own note's history while
+	// it shows that note (`historyKey`); switching notes or closing the map lets
+	// go of it, which clears it unless another view still holds it.
+	private readonly edits: EditPipeline;
+	private historyKey: string | null = null;
+	private releaseHistory: (() => void) | null = null;
+	/** The 3D graph's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
+	private graph3dState: Record<string, unknown> | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
 	// draws identically afterwards — but the frontmatter block grew, which
@@ -250,22 +317,27 @@ export class MindMapView extends ItemView {
 	// and empties the container partway through; two overlapping passes tear
 	// down each other's DOM while the other is still awaiting measurement.
 	private renderChain: Promise<void> = Promise.resolve();
+	/**
+	 * Bumped whenever a full pass replaces the layout. A cull pass draws into a
+	 * staging group and commits only if this has not moved, since an edit's
+	 * pass keeps the same node group (see {@link redrawInPlace}).
+	 */
+	private drawGeneration = 0;
+	/**
+	 * What each node group drawn from the HTML cache was drawn from, so an
+	 * edit's pass can keep the ones that would draw the same (T80). Groups not
+	 * in here (fresh Markdown renders, checkboxes) are always redrawn.
+	 */
+	private drawRecords = new WeakMap<Element, { sig: string; x: number; y: number; cls: string; htmlKey: string; html: HTMLElement }>();
 	// Set by `onClose`. A pass already queued on the chain when the view goes
 	// away must not paint into a container that has been torn down.
 	private closed = false;
 
-	// Live-edit session (e.g. a color-picker drag). While active, self-writes
-	// neither trigger a reload — which would tear down an open picker mid-drag —
-	// nor push individual undo entries; instead the whole session collapses into
-	// one before→after snapshot recorded when it ends.
-	private liveEditActive = false;
-	private liveEditSnapshot: FileEdit | null = null;
-
-	// Edit group: a multi-file gesture (a move across an embed boundary, with the
-	// identity migration that follows it) whose writes collapse into one undo
-	// step. Also gates reload-on-modify for its duration — `suppressNextReload`
-	// covers a single write, and a group can write the host more than once.
-	private editGroup: Map<string, FileEdit> | null = null;
+	// Live-edit sessions (a color-picker drag) and edit groups (a move across
+	// an embed boundary) live on `edits.recorder`, which collapses each into one
+	// undo step. Both also gate reload-on-modify while open: self-writes neither
+	// tear down an open picker mid-drag nor reload between a group's writes,
+	// which a single `suppressNextReload` can't cover.
 
 	// Selection state
 	private selectedNodeId: string | null = null;
@@ -298,36 +370,7 @@ export class MindMapView extends ItemView {
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
 
-	// Clipboard state for copy/cut/paste
-	private clipboardText: string | null = null;
-	/**
-	 * One record per copied subtree. Paste promotes each *top-level* item to a
-	 * direct child of the target on its own terms — a single type/depth for the
-	 * whole clipboard re-levels a heading and a bullet by the same delta, and
-	 * lands one of them wrong.
-	 */
-	private clipboardItems: ClipboardItem[] = [];
-	private clipboardIsCut = false;
-	private clipboardSourceIds: Set<string> = new Set();
-	/**
-	 * Containing file of the copied nodes — null when the selection spanned more
-	 * than one, where there is no single origin for identity to move from. Also
-	 * marks the clipboard as Osmosis' own rather than an external app's.
-	 */
-	private clipboardSourcePath: string | null = null;
-	/** Block IDs carried by {@link clipboardText}. */
-	private clipboardBlockIds: Set<string> = new Set();
-	/**
-	 * The origin's `osmosis-schedule` entries for those block IDs, captured at
-	 * cut time. A cut deletes immediately, so by the time the user pastes the
-	 * line is gone from the origin and its frontmatter may have been rewritten —
-	 * capture on cut, replay on paste.
-	 */
-	private clipboardSchedules: Record<string, unknown> = {};
-
-	// Clipboard state for copy/paste style
-	private clipboardNodeStyle: NodeStyle | null = null;
-	private clipboardStyleClassName: string | null = null;
+	// Clipboard state (copy/cut/paste, copy/paste style) is shared with the 3D graph: see node-clipboard.ts.
 
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
@@ -350,15 +393,33 @@ export class MindMapView extends ItemView {
 
 	// Cursor sync state
 	private parser = new OsmosisParser();
+	/** The toolbar's Add link: armed on the selected nodes, the next tap on a node links them to it. */
+	private readonly linkPicker = new LinkPicker();
 	private cursorSyncNodeId: string | null = null;
 	private cursorSyncTimer: number | null = null;
 	private suppressCursorSync = false;
 
 	// Node size measurement cache (keyed by display content string)
-	private nodeSizeCache = new Map<
-		string,
-		{ width: number; height: number }
-	>();
+	private nodeSizeCache = new SizeCache();
+	/**
+	 * A large map opened from its first view and still measuring the rest
+	 * (T84, see {@link planOpening}). `sizes` holds every size measured so
+	 * far; `anchorId` is the drawn node the view holds still across relayouts.
+	 */
+	private progressive: {
+		token: number;
+		pending: Map<string, MeasureEntry>;
+		sizes: Map<string, { width: number; height: number }>;
+		anchorId: string;
+		treePathMap: Map<string, string>;
+		nodeShapes: Map<string, TopicShape>;
+		startedAt: number;
+		movedAt: number;
+		passAt: number;
+	} | null = null;
+	private progressiveToken = 0;
+	/** Laid-out nodes whose place can still change: never drawn (see {@link isNodeInViewport}). */
+	private unsettledIds: Set<string> | null = null;
 	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
 	// nodes whose content hasn't changed (keyed by display content string)
 	private nodeHtmlCache = new Map<string, HTMLElement>();
@@ -446,10 +507,15 @@ export class MindMapView extends ItemView {
 	private touchSelectionMode = false;
 	private resizeObserver: ResizeObserver | null = null;
 	private toolRibbon: ToolRibbon | null = null;
+	/** Ctrl+F's find bar over the map: the note and its transclusions. */
+	private findBar: FindBar | null = null;
+	/** The perf readout in the top-left corner (hidden by default). */
+	private perf: MindMapPerf | null = null;
+	/** The find bar's matches, marked on their nodes (`markFound`). */
+	private foundIds: ReadonlySet<string> = new Set();
 
 	// Pin/lock state: when pinned, active-leaf-change doesn't switch the map
 	private isPinned = false;
-	private pinActionEl: HTMLElement | null = null;
 
 	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
 	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
@@ -462,7 +528,6 @@ export class MindMapView extends ItemView {
 	// collide with the host's.
 	private spatialMode: "off" | "peek" | "study" = "off";
 	private spatialStudyActionEl: HTMLElement | null = null;
-	private spatialPeekActionEl: HTMLElement | null = null;
 	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
 	private spatialTargets = new Set<string>();
 	/**
@@ -541,12 +606,23 @@ export class MindMapView extends ItemView {
 			this.app,
 			this.cache,
 		);
+		this.edits = new EditPipeline(
+			this.app,
+			this.plugin.editHistory,
+			() => this.historyKey,
+			(path) => {
+				this.suppressNextReload = true;
+				this.cache.invalidate(path);
+			},
+		);
 
 		// Register a scope so Obsidian routes key events to this view when focused,
 		// preventing global hotkeys (like F2 = "rename file") from intercepting them.
 		this.scope = new Scope(this.app.scope);
+		// Keys typed in the find bar are its own (and the text box's), not the map's.
+		const inFind = (e: KeyboardEvent): boolean => this.findBar?.contains(e.target) === true;
 		this.scope.register([], "F2", (e: KeyboardEvent) => {
-			if (!this.editingNodeId && this.selectedNodeId) {
+			if (!this.editingNodeId && this.selectedNodeId && !inFind(e)) {
 				void this.startEditing(this.selectedNodeId);
 				e.preventDefault();
 				return false;
@@ -557,17 +633,32 @@ export class MindMapView extends ItemView {
 		// Register Ctrl/Cmd combos that Obsidian would otherwise intercept
 		for (const key of ["d", "c", "x", "v", "z", "y", "Enter"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
 		for (const key of ["[", "]", "z"]) {
 			this.scope.register(["Mod", "Shift"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
+		// Shift+Enter adds a sibling above. Claim it here so a user hotkey on the same keys can't take it first.
+		this.scope.register(["Shift"], "Enter", (e: KeyboardEvent) => {
+			if (this.editingNodeId || inFind(e) || !this.selectedNodeId) return undefined;
+			if (!e.defaultPrevented) this.handleKeyDown(e);
+			return false;
+		});
+		// Ctrl/Cmd+F opens the find bar (the node editor keeps its own).
+		this.scope.register(["Mod"], "f", () => {
+			if (this.editingNodeId || !this.findBar) return undefined;
+			this.findBar.open();
+			return false;
+		});
 		this.scope.register(["Mod", "Shift"], "c", (e: KeyboardEvent) => {
+			if (inFind(e)) return undefined;
 			this.copyNodeStyle();
 			e.preventDefault();
 			return false;
@@ -579,25 +670,57 @@ export class MindMapView extends ItemView {
 			return false;
 		});
 		this.scope.register(["Mod", "Shift"], "v", (e: KeyboardEvent) => {
+			if (inFind(e)) return undefined;
 			void this.pasteNodeStyle();
 			e.preventDefault();
 			return false;
 		});
 		for (const key of ["[", "]"]) {
 			this.scope.register(["Mod"], key, (e: KeyboardEvent) => {
+				if (inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
+		}
+		// Ctrl/Cmd+Arrow walks the outline (+Shift extends the selection). Claim it
+		// here too; while editing, the keys stay with the editor's word jumps.
+		for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
+			for (const modifiers of [["Mod"], ["Mod", "Shift"]] as Modifier[][]) {
+				this.scope.register(modifiers, key, (e: KeyboardEvent) => {
+					if (this.editingNodeId || inFind(e) || !this.selectedNodeId) return undefined;
+					if (!e.defaultPrevented) this.handleKeyDown(e);
+					return false;
+				});
+			}
 		}
 		// Alt+Arrow moves nodes. Claim it here, or a user hotkey on the same
 		// keys (e.g. "Move line up") takes it first and nothing moves.
 		for (const key of ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]) {
 			this.scope.register(["Alt"], key, (e: KeyboardEvent) => {
-				if (this.editingNodeId) return undefined;
+				if (this.editingNodeId || inFind(e)) return undefined;
 				this.handleKeyDown(e);
 				return false;
 			});
 		}
+	}
+
+	/** Open the find bar from the ⋯ menu, as Ctrl+F does. Deferred a tick so the closing menu doesn't take the focus back (a phone's can). */
+	private openFind(focus: "query" | "replace"): void {
+		window.setTimeout(() => {
+			if (!this.editingNodeId) this.findBar?.open(focus);
+		}, 0);
+	}
+
+	/** The ⋯ menu: Find, Replace, Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
+	onPaneMenu(menu: Menu, source: string): void {
+		addPaneMenuItems(menu, "2d", {
+			find: { onClick: () => this.openFind("query") },
+			replace: { onClick: () => this.openFind("replace") },
+			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
+			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
+			peek: { onClick: () => this.toggleSpatialPeek(), checked: this.spatialMode === "peek", icon: peekIcon() },
+		});
+		super.onPaneMenu(menu, source);
 	}
 
 	getViewType(): string {
@@ -605,43 +728,174 @@ export class MindMapView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		const base = this.currentFile
-			? `Mind Map: ${this.currentFile.basename}`
-			: "Mind Map";
+		const base = this.currentFile ? this.currentFile.basename : "Mind Map";
 		return this.isPinned ? `${base} (pinned)` : base;
 	}
 
 	getState(): Record<string, unknown> {
-		const state = super.getState();
-		// Persist only the mode — never `file`, which would auto-pin restored
-		// views via setState. collapsedIds stay unpersisted (they churn).
-		state.readingMode = this.isReadingMode;
-		return state;
+		// `file` and `pinned` are what history and a restored workspace reload
+		// the map from (see `mindmap-state.ts`).
+		return Object.assign(super.getState(), writeMapState(this.currentFile?.path ?? null, this.isPinned, this.isReadingMode));
 	}
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
-		if (typeof state?.readingMode === "boolean") {
-			this.setReadingMode(state.readingMode);
+		const saved = readMapState(state);
+		// The 3D graph's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
+		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.graph3dState = state.graph3d as Record<string, unknown>;
+		if (saved.readingMode !== null) {
+			this.setReadingMode(saved.readingMode);
 		}
-		if (typeof state?.file === "string") {
-			const file = this.app.vault.getFileByPath(state.file);
+		if (saved.file !== null) {
+			const file = this.app.vault.getFileByPath(saved.file);
 			if (file instanceof TFile) {
-				// Pin so the map stays on this file
-				this.isPinned = true;
-				this.pinActionEl?.addClass("is-active");
+				// Callers that name a file mean "show this one" — pin unless the
+				// state says otherwise, so the map stays on it.
+				this.isPinned = saved.pinned;
+				const switching = file !== this.currentFile;
+				// Record the map we're leaving, so Back returns to it. A link jump
+				// within the same note is recorded too: Back undoes the jump.
+				if (switching || state.linkJump === true) result.history = true;
 				await this.loadFile(file);
+				// The old viewport means nothing on another note's map; history
+				// and link targets re-place it through setEphemeralState.
+				if (switching) this.fitToView();
+				// The 3D graph's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
+				const landing = readLanding(state.landing);
+				if (landing !== null) await this.land(landing);
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 			}
 		}
 		await super.setState(state, result);
 	}
 
+	/**
+	 * The 2D/3D toggle (the header's pill, and its command): show this note as a 3D graph in this leaf,
+	 * lifting off from the map as it is drawn now (see `graph3d/liftoff.ts`).
+	 * A peek or study session ends first, flushing its ratings. The note's undo
+	 * history is held across the swap. Its embedded notes' are not: nothing
+	 * holds them now, and an entry is dropped only when the last holder of one
+	 * of its files lets go, so holding them for the swap could only drop them.
+	 */
+	async switchTo3D(): Promise<void> {
+		const file = this.currentFile;
+		const tree = this.currentTree;
+		const layout = this.currentLayout;
+		if (!file || !tree || !layout) return;
+		if (this.spatialMode !== "off") this.exitSpatialMode();
+		const fileOf = edit.buildContainingFileMap(tree.root, file.path);
+		const dx = this.getOffsetX();
+		const dy = this.getOffsetY();
+		const boxOf = (node: LayoutNode): MapBox => ({
+			path: fileOf.get(node.source.id) ?? file.path,
+			start: node.source.range.start,
+			root: node.source.type === "root",
+			x: node.rect.x + dx,
+			y: node.rect.y + dy,
+			width: node.rect.width,
+			height: node.rect.height,
+		});
+		const selected = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : undefined;
+		const focus = selected ? boxOf(selected) : null;
+		const liftOff: LiftOff = {
+			boxes: layout.nodes.map(boxOf),
+			viewport: { ...this.viewBox },
+			focus: focus && { path: focus.path, start: focus.start, root: focus.root },
+		};
+		const state = { ...this.graph3dState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
+		await this.plugin.swapLeafView(this.leaf, "3d", state, [file.path]);
+	}
+
+	/**
+	 * Land a hand-over from the 3D graph's toggle: select the line it had
+	 * focused (expanding what hides it) and centre on it, at the zoom that
+	 * draws a line as tall as its plate was on screen. With no line, the zoom
+	 * still carries and the map centres on its root.
+	 */
+	private async land({ focus, platePx }: Landing): Promise<void> {
+		if (!this.currentTree || !this.currentFile) return;
+		const chain = landingChain(this.currentTree.root, this.currentFile.path, focus);
+		let expanded = false;
+		for (const ancestor of chain.slice(0, -1)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		// Placing on a node needs its final place (a progressive open's pass
+		// measures the rest).
+		if (expanded || this.progressive) await this.render();
+
+		const rect = this.contentEl.getBoundingClientRect();
+		const zoomed = platePx !== null && this.currentLayout !== null && rect.width > 0 && rect.height > 0;
+		if (zoomed && this.currentLayout) {
+			const lines = this.currentLayout.nodes.filter((n) => n.source.type !== "root").map((n) => n.rect);
+			this.zoom = landingZoom(platePx, lines, MIN_ZOOM, MAX_ZOOM);
+			this.viewBox.w = rect.width / this.zoom;
+			this.viewBox.h = rect.height / this.zoom;
+		}
+		const target = chain[chain.length - 1];
+		const layoutNode = target ? this.nodeMap.get(target.id) : undefined;
+		if (target && layoutNode) {
+			this.selectNode(target.id);
+			this.centerOnNode(layoutNode);
+		} else if (zoomed) {
+			this.centerOnRoot();
+		}
+	}
+
+	getEphemeralState(): Record<string, unknown> {
+		const state = super.getEphemeralState();
+		state.viewport = { ...this.viewBox, zoom: this.zoom };
+		return state;
+	}
+
+	setEphemeralState(state: unknown): void {
+		super.setEphemeralState(state);
+		if (!state || typeof state !== "object") return;
+		const { subpath, viewport } = state as { subpath?: unknown; viewport?: unknown };
+		if (typeof subpath === "string" && subpath) {
+			void this.revealSubpath(subpath);
+		} else if (isViewport(viewport)) {
+			const restore = () => {
+				this.stopInertia();
+				const { zoom, ...viewBox } = viewport;
+				this.viewBox = viewBox;
+				this.zoom = zoom;
+				this.updateViewBox();
+			};
+			// A saved viewport is in the final layout's coordinates.
+			if (this.progressive) void this.render().then(restore);
+			else restore();
+		}
+	}
+
+	/**
+	 * Center on and select the node a `#heading` or `#^block` subpath names in
+	 * the open note, expanding any collapsed ancestors so it is drawn.
+	 */
+	private async revealSubpath(subpath: string): Promise<void> {
+		if (!this.currentFile || !this.currentTree) return;
+		const cache = this.app.metadataCache.getFileCache(this.currentFile);
+		const target = cache ? resolveSubpath(cache, subpath) : null;
+		const path = target ? nodePathAt(this.currentTree.root, target.start.offset) : [];
+		const node = path[path.length - 1];
+		if (!node) {
+			new Notice(`Couldn't find "${subpath}" in ${this.currentFile.basename}`);
+			return;
+		}
+
+		let expanded = false;
+		for (const ancestor of path.slice(0, -1)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		if (expanded || this.progressive) await this.render();
+
+		const layoutNode = this.nodeMap.get(node.id);
+		if (!layoutNode) return;
+		this.selectNode(node.id);
+		this.centerOnNode(layoutNode);
+	}
+
 	private togglePin(): void {
 		this.isPinned = !this.isPinned;
-		if (this.isPinned) {
-			this.pinActionEl?.addClass("is-active");
-		} else {
-			this.pinActionEl?.removeClass("is-active");
+		if (!this.isPinned) {
 			// Sync to the currently active file
 			const activeLeaf = this.app.workspace.getMostRecentLeaf();
 			if (activeLeaf?.view instanceof MarkdownView && activeLeaf.view.file) {
@@ -668,22 +922,27 @@ export class MindMapView extends ItemView {
 			this.cleanupAllInteractions();
 		}
 		this.isReadingMode = reading;
+		if (reading) this.cancelLinkPick();
 		this.contentEl.toggleClass("osmosis-reading-mode", reading);
 		this.updateReadingAction();
 		this.updateToolbarState();
+		syncNavbar(this.app);
+		// Replace is off in reading mode.
+		this.findBar?.refresh();
 		this.app.workspace.requestSaveLayout();
+	}
+
+	/** For `syncNavbar`: edit mode (reading mode being off) is the only mode that hides the navigation bar. */
+	navbarEditMode(): boolean {
+		return !this.isReadingMode;
 	}
 
 	/** Header action shows the mode you'd switch to (markdown-view convention). */
 	private updateReadingAction(): void {
 		if (!this.readingActionEl) return;
-		setIcon(this.readingActionEl, this.isReadingMode ? "pencil" : "book-open");
-		this.readingActionEl.setAttribute(
-			"aria-label",
-			this.isReadingMode
-				? "Current view: reading\nClick to edit"
-				: "Current view: editing\nClick to read",
-		);
+		const { icon, label } = readingToggle(this.isReadingMode);
+		setIcon(this.readingActionEl, icon);
+		this.readingActionEl.setAttribute("aria-label", label);
 	}
 
 	/**
@@ -708,6 +967,7 @@ export class MindMapView extends ItemView {
 	 */
 	private async assertEditableFresh(): Promise<boolean> {
 		if (!this.assertEditable()) return false;
+		this.perf?.editStarted();
 		await this.ensureTreeFresh();
 		return true;
 	}
@@ -783,7 +1043,7 @@ export class MindMapView extends ItemView {
 		};
 	}
 
-	/** Match ==term== or **term** cloze deletions. */
+	/** Match ==term== or **term** cloze deletions. A colour emoji opening a `==` one is part of its body (`cloze-colour.ts`). */
 	private static readonly CLOZE_REGEX = /==([^=]+)==|\*\*([^*]+)\*\*/g;
 
 	/**
@@ -799,7 +1059,8 @@ export class MindMapView extends ItemView {
 		const clozeMatches = [...text.matchAll(MindMapView.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
-		const front = text.replace(MindMapView.CLOZE_REGEX, CLOZE_BLANK);
+		const front = text.replace(MindMapView.CLOZE_REGEX, (full) =>
+			colourBlank(CLOZE_BLANK, full.startsWith("==") ? parseHighlightToken(full).colour : null));
 		// The `cN:` prefix groups a deletion; it is not part of the answer. The
 		// generator strips it and keeps the `==`/`**` delimiters, so the two sides
 		// of a card read alike, and the map has to do the same — handing the text
@@ -808,8 +1069,8 @@ export class MindMapView extends ItemView {
 		// The front never showed it, being blanked over, which is why it took a
 		// node stepping through its groups to make it visible.
 		const back = text.replace(MindMapView.CLOZE_REGEX, (full) => {
-			const delim = full.startsWith("==") ? "==" : "**";
-			return `${delim}${full.slice(2, -2).replace(/^c\d+:/, "")}${delim}`;
+			if (full.startsWith("==")) return colourAnswer(full);
+			return `**${full.slice(2, -2).replace(/^c\d+:/, "")}**`;
 		});
 		return { front, back, isCloze: true };
 	}
@@ -1223,7 +1484,6 @@ export class MindMapView extends ItemView {
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
-		this.spatialPeekActionEl?.addClass("is-active");
 		this.applySpatialState();
 	}
 
@@ -1255,7 +1515,6 @@ export class MindMapView extends ItemView {
 		const wasStudy = this.spatialMode === "study";
 		this.spatialMode = "off";
 		this.spatialStudyActionEl?.removeClass("is-active");
-		this.spatialPeekActionEl?.removeClass("is-active");
 
 		if (this.svg) {
 			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-hidden"))) {
@@ -1313,6 +1572,8 @@ export class MindMapView extends ItemView {
 	 */
 	private applySpatialState(): void {
 		if (this.spatialMode === "off") return;
+		// Study rewrites node groups in place; none drawn so far may be kept.
+		this.drawRecords = new WeakMap();
 		// Built once per pass, not once per node. `mapCards()` walks every node
 		// to collect source paths and then allocates a fresh array per source
 		// file plus one for the result — and this pass runs per animation frame
@@ -1793,10 +2054,10 @@ export class MindMapView extends ItemView {
 					: null;
 				if (node) void this.insertParentNode(node);
 			},
-			moveUp: () => this.executeDirectionalAction("ArrowUp"),
-			moveDown: () => this.executeDirectionalAction("ArrowDown"),
-			moveLeft: () => this.executeDirectionalAction("ArrowLeft"),
-			moveRight: () => this.executeDirectionalAction("ArrowRight"),
+			moveUp: () => this.runMoveAction("siblingPrev"),
+			moveDown: () => this.runMoveAction("siblingNext"),
+			outdent: () => this.runMoveAction("depthShallower"),
+			indent: () => this.runMoveAction("depthDeeper"),
 			deleteNode: () => {
 				if (this.selectedNodeIds.size > 1) {
 					void this.deleteSelectedNodes();
@@ -1805,6 +2066,7 @@ export class MindMapView extends ItemView {
 					if (node) void this.deleteNode(node);
 				}
 			},
+			addLink: () => this.toggleLinkPick(),
 			copy: () => void this.copySelectedNodes(false),
 			cut: () => void this.copySelectedNodes(true),
 			paste: () => void this.pasteNodes(),
@@ -1819,9 +2081,6 @@ export class MindMapView extends ItemView {
 					void this.loadFile(this.currentFile);
 				}
 			},
-			openProperties: () => {
-				void this.plugin.activatePropertiesSidebar();
-			},
 			openNodeMenu: (btn) => {
 				const rect = btn.getBoundingClientRect();
 				this.showNodeMenu(this.selectedNodeId, (menu) =>
@@ -1829,24 +2088,23 @@ export class MindMapView extends ItemView {
 				);
 			},
 		});
+		// Phones: Obsidian's navigation bar is hidden in edit mode, where the bar takes its slot.
+		syncNavbar(this.app);
+		this.findBar = new FindBar(container, this.findHost());
+		this.perf = new MindMapPerf(container, this.cache, () => ({
+			total: this.currentLayout?.nodes.length ?? 0,
+			drawn: this.renderedNodeIds.size,
+			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
+		}));
 
+		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
 		});
 
-		// Open properties sidebar action (useful on mobile)
-		this.addAction("paintbrush", "Open style sidebar", () => {
-			void this.plugin.activatePropertiesSidebar();
-		});
-
-		// Pin/lock header action
-		this.pinActionEl = this.addAction("pin", "Pin this mind map", () => {
-			this.togglePin();
-		});
-
 		// Note view action — switch back to markdown editor
-		this.addAction("file-text", "Note view", () => {
+		const noteViewActionEl = this.addAction("file-text", "Note view", () => {
 			if (this.currentFile) {
 				void this.leaf.setViewState({
 					type: "markdown",
@@ -1861,10 +2119,11 @@ export class MindMapView extends ItemView {
 			this.toggleSpatialStudy();
 		});
 
-		// Spatial peek mode toggle (same icon/fallback as the reading view)
-		this.spatialPeekActionEl = this.addAction(peekIcon(), "Peek mode", () => {
-			this.toggleSpatialPeek();
-		});
+		arrangeViewHeader(this, "2d", {
+			"note-view": noteViewActionEl,
+			reading: this.readingActionEl,
+			study: this.spatialStudyActionEl,
+		}, () => void this.switchTo3D());
 
 		// Apply the global default mode; persisted per-leaf state (setState)
 		// arrives afterwards and overrides it.
@@ -1890,7 +2149,7 @@ export class MindMapView extends ItemView {
 			this.app.vault.on("modify", (file) => {
 				if (!(file instanceof TFile)) return;
 				if (file === this.currentFile) {
-					if (this.liveEditActive) {
+					if (this.edits.recorder.live) {
 						// A live-edit session (color-picker drag) drives rendering
 						// directly via applyMapSettings/render; ignore our own writes
 						// so a stray reload can't tear down the open picker mid-drag.
@@ -1899,7 +2158,7 @@ export class MindMapView extends ItemView {
 						this.suppressNextReload = false;
 						return;
 					}
-					if (this.editGroup) {
+					if (this.edits.recorder.grouping) {
 						// Same reasoning as a live edit: a grouped gesture can
 						// write this file more than once (content splice, then
 						// the frontmatter that carries card identity across),
@@ -1931,7 +2190,7 @@ export class MindMapView extends ItemView {
 				// offsets writes into the wrong bytes. A debounced schedule flush
 				// is the common case: it renders identically and still moves every
 				// line in the file.
-				if (this.liveEditActive || this.editGroup || this.editingNodeId) return;
+				if (this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
 				if (this.suppressNextReload) {
 					this.suppressNextReload = false;
 					return;
@@ -1955,7 +2214,6 @@ export class MindMapView extends ItemView {
 			this.app.vault.on("delete", (file) => {
 				if (this.isPinned && file instanceof TFile && file === this.currentFile) {
 					this.isPinned = false;
-					this.pinActionEl?.removeClass("is-active");
 					this.currentFile = null;
 					this.currentTree = null;
 					this.contentEl.empty();
@@ -1982,14 +2240,24 @@ export class MindMapView extends ItemView {
 
 	async onClose(): Promise<void> {
 		this.closed = true;
+		syncNavbar(this.app, this);
+		this.releaseHistory?.();
+		this.releaseHistory = null;
+		this.historyKey = null;
 		this.toolRibbon?.destroy();
 		this.toolRibbon = null;
+		this.findBar?.destroy();
+		this.findBar = null;
+		this.perf?.destroy();
+		this.perf = null;
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.renderComponent?.unload();
 		this.renderComponent = null;
 		this.svg = null;
 		this.viewportHost = null;
+		this.viewportLayer = null;
+		this.clearViewportRepaint();
 		this.branchLinesGroup = null;
 		this.nodesGroup = null;
 		this.renderedNodeIds.clear();
@@ -2054,13 +2322,17 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
 			this.exitSpatialMode();
 		}
+		// Add link is armed on this note's nodes.
+		if (this.currentFile && file.path !== this.currentFile.path) this.cancelLinkPick();
 
-		// Clear caches and undo history when switching to a different file
+		// Clear caches and let go of the old note's undo history when switching
+		// to a different file. The history is dropped unless another view holds it.
 		if (file !== this.currentFile) {
 			this.nodeSizeCache.clear();
 			this.nodeHtmlCache.clear();
-			this.undoStack.length = 0;
-			this.redoStack.length = 0;
+			this.releaseHistory?.();
+			this.historyKey = file.path;
+			this.releaseHistory = this.plugin.editHistory.hold(file.path);
 		}
 		this.currentFile = file;
 		// A full load re-reads every file the map is built from, which is the
@@ -2157,6 +2429,14 @@ export class MindMapView extends ItemView {
 	/** Look up a LayoutNode by its source node ID. */
 	getLayoutNodeById(id: string): LayoutNode | null {
 		return this.nodeMap.get(id) ?? null;
+	}
+
+	/** A node's style inputs for the style sidebar's Node tab (`NodeStyleHost`): the map's styles, the node's Local style and its heading depth. */
+	getNodeStyleContext(id: string): NodeStyleContext | null {
+		const node = this.nodeMap.get(id);
+		if (!node) return null;
+		const fm = this.osmosisStyleFrontmatter;
+		return { fm, local: lookupNodeStyle(fm, node), depth: node.source.type === "heading" ? node.source.depth : undefined };
 	}
 
 	/** Get the currently active theme definition. */
@@ -2418,6 +2698,47 @@ export class MindMapView extends ItemView {
 
 		this.suppressNextReload = true;
 
+		// Key each style by the line's block ID, stamping one first if it has
+		// none, so the style survives edits to the line's text. The stamp and the
+		// style write are one undo step: open a group unless a live edit (colour
+		// drag) or an outer group already collects the writes.
+		const ownGroup = !this.edits.recorder.live && !this.edits.recorder.grouping;
+		if (ownGroup) this.beginEditGroup();
+		try {
+			const selectors = await this.stampStyleBlockIds(overrides);
+			await this.writeNodeStyleOverrides(overrides, selectors);
+		} finally {
+			if (ownGroup) this.endEditGroup();
+		}
+		await this.render();
+	}
+
+	/**
+	 * Stamp a block ID onto every node about to be styled that has none, and
+	 * return the selector each node's style is stored under (see
+	 * `planStyleKeys`). A write that only clears style keys stamps nothing.
+	 */
+	private async stampStyleBlockIds(overrides: Map<string, NodeStyle>): Promise<Map<string, string>> {
+		const file = this.currentFile;
+		if (!file) return new Map();
+		const nodes: OsmosisNode[] = [];
+		for (const [nodeId, style] of overrides) {
+			const source = this.nodeMap.get(nodeId)?.source;
+			if (source && Object.values(style).some((value) => value !== undefined)) nodes.push(source);
+		}
+		const content = await this.app.vault.read(file);
+		const plan = planStyleKeys(content, this.cache.get(file.path, content).root, nodes);
+		if (plan.content !== content) await this.writeFileTracked(file, plan.content);
+		return plan.selectors;
+	}
+
+	/** The write half of {@link applyNodeStyleOverrides}: merge `overrides` into `osmosis-styles` under `selectors`, then refresh the cached styles. */
+	private async writeNodeStyleOverrides(
+		overrides: Map<string, NodeStyle>,
+		selectors: Map<string, string>,
+	): Promise<void> {
+		if (!this.currentFile) return;
+
 		// Capture the written styles so we can update immediately without
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
@@ -2433,7 +2754,7 @@ export class MindMapView extends ItemView {
 					const layoutNode = this.nodeMap.get(nodeId);
 					if (!layoutNode) continue;
 
-					const selector = buildPreferredSelector(layoutNode.source);
+					const selector = selectors.get(nodeId) ?? buildPreferredSelector(layoutNode.source);
 					let existing = styles[selector] ?? {};
 
 					// If the node gained a block ID after an override was written
@@ -2445,39 +2766,8 @@ export class MindMapView extends ItemView {
 						delete styles[legacySelector];
 					}
 
-					// Merge new properties into existing override.
-					// Use `"key" in style` so explicit `undefined` deletes the key.
-					const merged = { ...existing };
-
-					// Simple properties: set or delete
-					if ("shape" in style) { if (style.shape === undefined) delete merged.shape; else merged.shape = style.shape; }
-					if ("fill" in style) { if (style.fill === undefined) delete merged.fill; else merged.fill = style.fill; }
-					if ("background" in style) { if (style.background === undefined) delete merged.background; else merged.background = style.background; }
-					if ("width" in style) { if (style.width === undefined) delete merged.width; else merged.width = style.width; }
-					if ("class" in style) { if (style.class === undefined) { delete merged.class; } else { merged.class = style.class; } }
-
-					// Compound properties: merge sub-properties, delete undefined sub-keys
-					if ("text" in style) {
-						if (style.text === undefined) { delete merged.text; } else {
-							const m = { ...merged.text, ...style.text };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.text; else merged.text = m;
-						}
-					}
-					if ("border" in style) {
-						if (style.border === undefined) { delete merged.border; } else {
-							const m = { ...merged.border, ...style.border };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.border; else merged.border = m;
-						}
-					}
-					if ("branchLine" in style) {
-						if (style.branchLine === undefined) { delete merged.branchLine; } else {
-							const m = { ...merged.branchLine, ...style.branchLine };
-							for (const k of Object.keys(m) as (keyof typeof m)[]) { if (m[k] === undefined) delete m[k]; }
-							if (Object.keys(m).length === 0) delete merged.branchLine; else merged.branchLine = m;
-						}
-					}
+					// Merge new properties into existing override (`undefined` deletes a key).
+					const merged = mergeStyleOverride(existing, style);
 
 					if (Object.keys(merged).length === 0) {
 						delete styles[selector];
@@ -2515,7 +2805,6 @@ export class MindMapView extends ItemView {
 		if (sizeAffecting) {
 			this.nodeSizeCache.clear();
 		}
-		await this.render();
 	}
 
 	/**
@@ -2928,11 +3217,7 @@ export class MindMapView extends ItemView {
 			new Notice("No style overrides to copy");
 			return;
 		}
-		const cloned = structuredClone(localStyle);
-		// Remember class name for paste, then strip from visual clipboard
-		this.clipboardStyleClassName = cloned.class ?? null;
-		delete cloned.class;
-		this.clipboardNodeStyle = cloned;
+		copyStyleOf(localStyle);
 		new Notice("Style copied");
 	}
 
@@ -2941,34 +3226,14 @@ export class MindMapView extends ItemView {
 	 *  are set to `undefined` so `applyNodeStyleOverrides` deletes them. */
 	private async pasteNodeStyle(): Promise<void> {
 		if (!await this.assertEditableFresh()) return;
-		if (!this.clipboardNodeStyle) {
+		if (nodeClipboard.style === null) {
 			new Notice("No style to paste");
 			return;
 		}
 		if (this.selectedNodeIds.size === 0) return;
 
-		const ALL_KEYS: (keyof NodeStyle)[] =
-			["shape", "fill", "border", "text", "branchLine", "background", "width"];
-
-		const overrides = new Map<string, NodeStyle>();
-		for (const id of this.selectedNodeIds) {
-			const full: NodeStyle = {};
-			// If source had a class, assign it; otherwise clear it
-			if (this.clipboardStyleClassName) {
-				full.class = this.clipboardStyleClassName;
-			} else {
-				(full as Record<string, unknown>)["class"] = undefined;
-			}
-			for (const key of ALL_KEYS) {
-				if (key in this.clipboardNodeStyle) {
-					(full as Record<string, unknown>)[key] =
-						structuredClone(this.clipboardNodeStyle[key]);
-				} else {
-					(full as Record<string, unknown>)[key] = undefined;
-				}
-			}
-			overrides.set(id, full);
-		}
+		const overrides = stylePasteOverrides(this.selectedNodeIds);
+		if (overrides === null) return;
 		await this.applyNodeStyleOverrides(overrides);
 		new Notice(`Style pasted to ${this.selectedNodeIds.size} node(s)`);
 	}
@@ -3043,11 +3308,61 @@ export class MindMapView extends ItemView {
 
 	// ─── Viewport ────────────────────────────────────────────
 
-	private updateViewBox(): void {
+	/**
+	 * Show the current `viewBox` (T87). Repainting the SVG for a new viewBox
+	 * repaints every drawn node — measured as the whole frame on a large map —
+	 * so a pan only moves the composited layer holding it, and a zoom out
+	 * only shrinks it (minified, so still sharp) until the gesture pauses. A
+	 * zoom in repaints at once: the raster is never shown larger than drawn.
+	 * Culling still follows the live viewBox, so the nodes a pan brings in are
+	 * drawn as before and only they are painted.
+	 *
+	 * `repaint` forces a repaint, for a viewport whose size changed: the iOS
+	 * SVG's own transform was measured against the old size.
+	 */
+	private updateViewBox(repaint = false): void {
 		if (!this.svg) return;
-		if (this.viewportHost) {
-			// iOS: the same viewport, expressed as a CSS transform so that
-			// composited node content travels with the map instead of stranding.
+		const host = this.viewportHost;
+		const layer = this.viewportLayer;
+		let moved = false;
+		if (!repaint && host && layer) {
+			const transform = layerTransform(
+				this.paintedViewBox,
+				this.viewBox,
+				host.getBoundingClientRect(),
+				window.devicePixelRatio,
+			);
+			const kind = moveKind(transform);
+			if (kind !== "repaint") {
+				layer.setCssProps({ transform: layerTransformCss(transform) });
+				if (kind === "shrink") this.scheduleViewportRepaint();
+				this.perf?.viewMoved();
+				moved = true;
+			}
+		}
+		if (!moved) {
+			this.paintViewBox();
+			this.perf?.viewRepainted(repaint ? "resize" : "zoom in");
+		}
+		// The edit overlay lives outside the SVG, so the viewBox does not carry
+		// it along — re-place it or it freezes where the node used to be.
+		if (this.editingNodeId) this.positionEditOverlay();
+		if (this.progressive) this.progressive.movedAt = performance.now();
+		this.scheduleCullUpdate();
+	}
+
+	/**
+	 * Paint the SVG for the current `viewBox` and put the layer back to the
+	 * identity: a full repaint of every drawn node, with nothing on screen
+	 * moving. iOS paints with a CSS transform on the SVG (composited node
+	 * content strands on a viewBox change); Chromium with the attribute.
+	 */
+	private paintViewBox(): void {
+		if (!this.svg) return;
+		this.clearViewportRepaint();
+		if (this.panByTransform) {
+			// No host yet: the render pass building it paints when it lands.
+			if (!this.viewportHost) return;
 			this.svg.style.transform = viewBoxTransform(
 				this.viewBox,
 				this.viewportHost.getBoundingClientRect(),
@@ -3056,10 +3371,27 @@ export class MindMapView extends ItemView {
 			const { x, y, w, h } = this.viewBox;
 			this.svg.setAttribute("viewBox", `${x} ${y} ${w} ${h}`);
 		}
-		// The edit overlay lives outside the SVG, so the viewBox does not carry
-		// it along — re-place it or it freezes where the node used to be.
-		if (this.editingNodeId) this.positionEditOverlay();
-		this.scheduleCullUpdate();
+		this.viewportLayer?.setCssProps({ transform: "" });
+		this.paintedViewBox = { ...this.viewBox };
+	}
+
+	/** How long a zoomed-out layer waits for the gesture to pause before repainting 1:1. */
+	private static readonly VIEWPORT_REPAINT_IDLE_MS = 150;
+
+	private scheduleViewportRepaint(): void {
+		this.clearViewportRepaint();
+		this.viewportRepaintTimer = window.setTimeout(() => {
+			this.viewportRepaintTimer = null;
+			this.paintViewBox();
+			this.perf?.viewRepainted("zoom-out pause");
+			if (this.editingNodeId) this.positionEditOverlay();
+		}, MindMapView.VIEWPORT_REPAINT_IDLE_MS);
+	}
+
+	private clearViewportRepaint(): void {
+		if (this.viewportRepaintTimer === null) return;
+		window.clearTimeout(this.viewportRepaintTimer);
+		this.viewportRepaintTimer = null;
 	}
 
 	/** Notify the toolbar of current selection/editing state. */
@@ -3090,18 +3422,13 @@ export class MindMapView extends ItemView {
 		const contentHeight = bounds.height + LAYOUT_PADDING * 2;
 
 		const containerRect = this.contentEl.getBoundingClientRect();
-		const cw = containerRect.width || contentWidth;
-		const ch = containerRect.height || contentHeight;
-
-		const zoom = Math.min(cw / contentWidth, ch / contentHeight, MAX_ZOOM);
-		this.zoom = Math.max(MIN_ZOOM, zoom);
-
-		const scaledW = cw / this.zoom;
-		const scaledH = ch / this.zoom;
-		this.viewBox.x = (contentWidth - scaledW) / 2;
-		this.viewBox.y = (contentHeight - scaledH) / 2;
-		this.viewBox.w = scaledW;
-		this.viewBox.h = scaledH;
+		const fit = fitViewBox(
+			contentWidth, contentHeight,
+			containerRect.width, containerRect.height,
+			MIN_ZOOM, MAX_ZOOM,
+		);
+		this.zoom = fit.zoom;
+		Object.assign(this.viewBox, fit.viewBox);
 		this.updateViewBox();
 	}
 
@@ -3130,7 +3457,12 @@ export class MindMapView extends ItemView {
 		// Root node is virtual; center on its first child if possible
 		const target = root.children.length > 0 ? root.children[0] : null;
 		if (!target) return;
+		this.centerOnNode(target);
+	}
 
+	/** Center the viewport on a node, keeping the zoom. */
+	private centerOnNode(target: LayoutNode): void {
+		this.stopInertia();
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
 		const nx = target.rect.x + offsetX + target.rect.width / 2;
@@ -3140,23 +3472,16 @@ export class MindMapView extends ItemView {
 		this.updateViewBox();
 	}
 
-	/** Check if a node (in SVG coords with offset applied) intersects the expanded viewport */
+	/** Check if a node (in SVG coords with offset applied) intersects the viewport grown by `margin` */
 	private isNodeInViewport(
 		node: LayoutNode,
 		offsetX: number,
 		offsetY: number,
+		margin = CULL_MARGIN,
 	): boolean {
-		const nx = node.rect.x + offsetX;
-		const ny = node.rect.y + offsetY;
-		const nw = node.rect.width;
-		const nh = node.rect.height;
-
-		const vx = this.viewBox.x - CULL_MARGIN;
-		const vy = this.viewBox.y - CULL_MARGIN;
-		const vw = this.viewBox.w + CULL_MARGIN * 2;
-		const vh = this.viewBox.h + CULL_MARGIN * 2;
-
-		return nx + nw > vx && nx < vx + vw && ny + nh > vy && ny < vy + vh;
+		if (this.unsettledIds?.has(node.source.id)) return false;
+		const { x, y, width, height } = node.rect;
+		return rectInView(x + offsetX, y + offsetY, width, height, this.viewBox, margin);
 	}
 
 	/** Check if a branch line (between parent and child) intersects the expanded viewport */
@@ -3166,6 +3491,7 @@ export class MindMapView extends ItemView {
 		offsetX: number,
 		offsetY: number,
 	): boolean {
+		if (this.unsettledIds && (this.unsettledIds.has(child.source.id) || this.unsettledIds.has(parent.source.id))) return false;
 		// Compute bounding box of the two connection points, accounting for side
 		const isSecondary = child.side === "secondary";
 		const isTopDown = this.mapSettings.direction === "top-down";
@@ -3247,7 +3573,9 @@ export class MindMapView extends ItemView {
 		try {
 			do {
 				this.cullQueued = false;
+				const start = this.perf?.start() ?? 0;
 				await this.updateVisibleNodes();
+				this.perf?.cull(start);
 			} while (this.cullQueued);
 		} finally {
 			this.cullRunning = false;
@@ -3268,6 +3596,7 @@ export class MindMapView extends ItemView {
 		// has been drawing into is still the live one — see the commit check
 		// at the end.
 		const nodesGroup = this.nodesGroup;
+		const generation = this.drawGeneration;
 		const { nodes } = this.currentLayout;
 		const offsetX = this.getOffsetX();
 		const offsetY = this.getOffsetY();
@@ -3301,33 +3630,52 @@ export class MindMapView extends ItemView {
 		// edited). Every match, not the first: one node id can have acquired
 		// more than one group from overlapping passes (see `runCullUpdate`), and
 		// leaving the extras behind is what let them accumulate.
+		// One walk of the group for all of them: a selector query per leaving
+		// id rescanned every drawn node each time.
+		const leaving = new Set<string>();
 		for (const id of this.renderedNodeIds) {
-			if (!nowVisible.has(id) && id !== this.editingNodeId) {
-				nodesGroup
-					.querySelectorAll(`.osmosis-node-group[data-node-id="${id}"]`)
-					.forEach((el) => { el.remove(); });
-			}
+			if (!nowVisible.has(id) && id !== this.editingNodeId) leaving.add(id);
+		}
+		if (leaving.size > 0) {
+			nodesGroup.querySelectorAll(".osmosis-node-group").forEach((el) => {
+				const id = el.getAttribute("data-node-id");
+				if (id !== null && leaving.has(id)) el.remove();
+			});
 		}
 
 		// Remove branch lines that left the viewport. A tapered *and* patterned
 		// branch is two paths under the one child id, so take every match.
+		const leavingBranches = new Set<string>();
 		for (const id of this.renderedBranchIds) {
-			if (!nowVisibleBranches.has(id)) {
-				this.branchLinesGroup
-					.querySelectorAll(`.osmosis-branch-line[data-child-id="${id}"]`)
-					.forEach((line) => { line.remove(); });
-			}
+			if (!nowVisibleBranches.has(id)) leavingBranches.add(id);
+		}
+		if (leavingBranches.size > 0) {
+			this.branchLinesGroup.querySelectorAll(".osmosis-branch-line").forEach((line) => {
+				const id = line.getAttribute("data-child-id");
+				if (id !== null && leavingBranches.has(id)) line.remove();
+			});
 		}
 
-		// Add nodes and branches that entered the viewport
-		const renderPromises: Promise<void>[] = [];
+		// Add nodes and branches that entered the viewport. Node draws are
+		// time-boxed: a fast pan over a large map brings in dozens of nodes a
+		// frame, each a `MarkdownRenderer` call the first time, so the ones
+		// already on screen (and the selected/edited ones) go first and
+		// whatever is left after the budget waits for the next frame's pass.
+		const urgent: LayoutNode[] = [];
+		const ahead: LayoutNode[] = [];
 		for (const node of nodes) {
 			if (node.source.type === "root") continue;
 			const id = node.source.id;
 			if (nowVisible.has(id) && !this.renderedNodeIds.has(id)) {
-				renderPromises.push(
-					this.drawNode(nodesGroup, node, offsetX, offsetY),
-				);
+				if (
+					id === this.editingNodeId ||
+					this.selectedNodeIds.has(id) ||
+					this.isNodeInViewport(node, offsetX, offsetY, 0)
+				) {
+					urgent.push(node);
+				} else {
+					ahead.push(node);
+				}
 			}
 			if (
 				node.parent &&
@@ -3344,6 +3692,14 @@ export class MindMapView extends ItemView {
 				);
 			}
 		}
+		const renderPromises: Promise<void>[] = [];
+		// Drawn off-document and committed together below, so a pass that a
+		// full pass overtook adds nothing to the group that pass kept.
+		const staging = document.createElementNS(SVG_NS, "g");
+		const deferred = drawWithinBudget(
+			urgent, ahead, CULL_DRAW_BUDGET_MS, () => performance.now(),
+			(node) => { renderPromises.push(this.drawNode(staging, node, offsetX, offsetY)); },
+		);
 		await Promise.all(renderPromises);
 
 		// A full render pass can land while the draws above are awaiting: it
@@ -3353,13 +3709,18 @@ export class MindMapView extends ItemView {
 		// longer exists — every node it lists as absent gets drawn a second
 		// time. The nodes drawn above went into the old, now-detached group and
 		// go away with it.
-		if (this.nodesGroup !== nodesGroup) return;
+		if (this.nodesGroup !== nodesGroup || this.drawGeneration !== generation) return;
+		nodesGroup.append(...Array.from(staging.childNodes));
 
 		// Re-apply spatial study state to newly rendered nodes
 		this.applySpatialState();
 
+		// Deferred nodes are not drawn, so they stay out of the set and the
+		// next frame's pass picks them up.
+		for (const node of deferred) nowVisible.delete(node.source.id);
 		this.renderedNodeIds = nowVisible;
 		this.renderedBranchIds = nowVisibleBranches;
+		if (deferred.length > 0) this.scheduleCullUpdate();
 	}
 
 	private screenToSvg(
@@ -3368,10 +3729,10 @@ export class MindMapView extends ItemView {
 	): { x: number; y: number } {
 		if (!this.svg) return { x: 0, y: 0 };
 		if (this.viewportHost) {
-			// getScreenCTM() reports the SVG's *own* user space, which on this
-			// path no longer includes the pan/zoom — that lives in a CSS
-			// transform above it. Invert the transform instead; the maths is
-			// unit-tested against the viewBox mapping it replaces.
+			// getScreenCTM() reports the SVG's *own* user space, which leaves
+			// out the pan/zoom held in CSS transforms above it (the layer's,
+			// and on iOS the SVG's). Map through the live viewBox instead; the
+			// maths is unit-tested against the viewBox mapping it replaces.
 			return clientToUser(
 				this.viewBox,
 				this.viewportHost.getBoundingClientRect(),
@@ -3415,6 +3776,18 @@ export class MindMapView extends ItemView {
 			this.dragNodeId = null;
 			this.isPanning = false;
 			this.initPinch();
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
+
+		this.contextPress = null;
+		// Right button (mouse or pen): pan, and open the context menu on release if it never moved. While a node is being edited the browser's own menu stays.
+		if (e.button === 2 && e.pointerType !== "touch" && !this.editingNodeId) {
+			this.contextPress = { nodeId: this.getClickedNodeId(e) };
+			this.isPanning = true;
+			this.panPending = true;
+			this.panStart = { x: e.clientX, y: e.clientY };
 			e.preventDefault();
 			e.stopPropagation();
 			return;
@@ -3638,7 +4011,8 @@ export class MindMapView extends ItemView {
 		if (this.panPending) {
 			const px = e.clientX - this.panStart.x;
 			const py = e.clientY - this.panStart.y;
-			if (!exceedsDragThreshold(px, py, e.pointerType)) {
+			const moved = this.contextPress !== null ? movedPastSlop(px, py) : exceedsDragThreshold(px, py, e.pointerType);
+			if (!moved) {
 				e.stopPropagation();
 				return;
 			}
@@ -3746,6 +4120,15 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// A right-click that never moved: its menu opens now, on release. (A cancelled or left pointer opens nothing.)
+		const contextPress = this.contextPress;
+		this.contextPress = null;
+		if (contextPress !== null && e.type === "pointerup" && e.button === 2 && !this.panCommitted) {
+			this.contextOpenedAt = performance.now();
+			this.showNodeMenu(contextPress.nodeId, (menu) => menu.showAtMouseEvent(e));
+			return;
+		}
+
 		// If we had a drag candidate but didn't reach threshold, treat as tap
 		const wasDragCandidate = this.dragNodeId !== null;
 		const dragCandidateId = this.dragNodeId;
@@ -3821,6 +4204,14 @@ export class MindMapView extends ItemView {
 	 * merely ended with a finger resting on the map, a pan above all.
 	 */
 	private handleTouchTap(e: PointerEvent, nodeId: string | null): void {
+		// Add link armed: this tap picks the target (a fold toggle still folds,
+		// so a target inside a folded branch can be reached). Pans, holds and
+		// pinches never get here, so they navigate and leave the mode armed.
+		if (this.linkPicker.armed && !(e.target as Element).closest(".osmosis-collapse-toggle")) {
+			this.lastTapTime = 0;
+			this.pickLinkTarget(nodeId, e.clientX, e.clientY);
+			return;
+		}
 		// A tap on a link follows it, exactly as a click does on desktop.
 		//
 		// This lives on pointerup rather than in `handleClick` because a touch
@@ -3833,7 +4224,7 @@ export class MindMapView extends ItemView {
 		if (this.spatialMode === "off") {
 			const link = (e.target as Element).closest("a");
 			if (link) {
-				this.openNodeLink(link);
+				this.openNodeLink(link, e);
 				return;
 			}
 		}
@@ -4148,7 +4539,7 @@ export class MindMapView extends ItemView {
 		this.viewBox.w = newW;
 		this.viewBox.h = newH;
 
-		this.updateViewBox();
+		this.updateViewBox(true);
 	}
 
 	private cancelLongPress(): void {
@@ -4167,6 +4558,7 @@ export class MindMapView extends ItemView {
 		this.isPanning = false;
 		this.panPending = false;
 		this.panCommitted = false;
+		this.contextPress = null;
 		this.carryVelocity = { x: 0, y: 0 };
 		this.isRubberBanding = false;
 		this.dragNodeId = null;
@@ -4219,22 +4611,66 @@ export class MindMapView extends ItemView {
 		return group?.getAttribute("data-node-id") ?? null;
 	}
 
+	/** The note a node's text lives in — the embedded note for a transcluded node. */
+	private nodeFile(node: OsmosisNode): TFile | null {
+		return node.sourceFile
+			? this.app.vault.getFileByPath(node.sourceFile)
+			: this.currentFile;
+	}
+
 	/**
-	 * Follow a link inside a node, the way Obsidian would.
+	 * Follow a link inside a node.
 	 *
 	 * Shared by both input paths. Cancelling the anchor's default action is only
 	 * half the job — without this the link would simply do nothing, which is
 	 * what the touch path did after the navigation fix.
+	 *
+	 * A link to a note stays in the mind map: a plain click opens the target's
+	 * map in this tab, Mod-click in a new tab, and either centers on the linked
+	 * heading or block. Mod+Alt-click opens the note in Note View in a new tab;
+	 * non-Markdown and unresolved targets go to Obsidian as before.
 	 */
-	private openNodeLink(anchor: Element): void {
+	private openNodeLink(anchor: Element, e: MouseEvent): void {
 		const href = anchor.getAttribute("href");
 		if (!href) return;
-		if (anchor.classList.contains("internal-link")) {
-			const dataHref = anchor.getAttribute("data-href") ?? href;
-			void this.app.workspace.openLinkText(dataHref, this.currentFile?.path ?? "");
-		} else {
+		if (!anchor.classList.contains("internal-link")) {
 			window.open(href);
+			return;
 		}
+		const linktext = anchor.getAttribute("data-href") ?? href;
+		const nodeId = anchor.closest(".osmosis-node-group")?.getAttribute("data-node-id");
+		const layoutNode = nodeId ? this.nodeMap.get(nodeId) : undefined;
+		const source = layoutNode ? this.nodeFile(layoutNode.source) : this.currentFile;
+		const sourcePath = source?.path ?? "";
+
+		const mod = Platform.isMacOS ? e.metaKey : e.ctrlKey;
+		if (mod && e.altKey) {
+			void this.app.workspace.openLinkText(linktext, sourcePath, "tab");
+			return;
+		}
+
+		const { path, subpath } = parseLinktext(linktext);
+		const file = path
+			? this.app.metadataCache.getFirstLinkpathDest(path, sourcePath)
+			: source;
+		if (!file || file.extension !== "md") {
+			void this.app.workspace.openLinkText(linktext, sourcePath, mod ? "tab" : false);
+			return;
+		}
+
+		const leaf = mod ? this.app.workspace.getLeaf("tab") : this.leaf;
+		// Following a link pins the map to its target, or it would snap back to
+		// the paired note on the next click there. A jump within the open note
+		// leaves the pin as it was.
+		const pinned = leaf !== this.leaf || file !== this.currentFile || this.isPinned;
+		void leaf.setViewState(
+			{
+				type: VIEW_TYPE_MINDMAP,
+				state: { file: file.path, pinned, linkJump: true },
+				active: true,
+			},
+			{ subpath },
+		);
 	}
 
 	private handleClick = (e: MouseEvent): void => {
@@ -4274,12 +4710,20 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Add link armed: the click picks the target, even on a link in the node.
+		if (this.linkPicker.armed) {
+			e.preventDefault();
+			e.stopPropagation();
+			this.pickLinkTarget(this.getClickedNodeId(e), e.clientX, e.clientY);
+			return;
+		}
+
 		// Check if clicking a link inside a node
 		const anchor = target.closest("a");
 		if (anchor) {
 			e.preventDefault();
 			e.stopPropagation();
-			this.openNodeLink(anchor);
+			this.openNodeLink(anchor, e);
 			return;
 		}
 
@@ -4316,6 +4760,13 @@ export class MindMapView extends ItemView {
 		if (this.editingNodeId) return;
 
 		e.preventDefault();
+
+		// A right-click opens its menu on release (`handlePointerUp`), so the
+		// press it began, or the release that already did, is not asked twice.
+		// This path is for a menu key, or macOS Ctrl+click, which have no
+		// right-button press of their own.
+		if (this.contextPress !== null) return;
+		if (performance.now() - this.contextOpenedAt < 250) return;
 
 		// A long press on a phone arrives here as a context-menu event, and the
 		// menu it opened swallowed the press on its way to becoming a node
@@ -4362,6 +4813,12 @@ export class MindMapView extends ItemView {
 					item.setTitle("Insert parent").setIcon("arrow-right-to-line")
 						.onClick(() => { if (node) void this.insertParentNode(node); }),
 				);
+				if (node && node.source.type !== "root" && canConvertBranch(node.source)) {
+					menu.addItem((item) =>
+						item.setTitle("Convert branch to note").setIcon("file-output")
+							.onClick(() => void this.convertBranch(node)),
+					);
+				}
 				menu.addSeparator();
 			}
 
@@ -4721,16 +5178,17 @@ export class MindMapView extends ItemView {
 		// Collect the selected nodes, then their ranges (descending, to process
 		// from end so earlier offsets stay valid).
 		const selectedSrcs: OsmosisNode[] = [];
-		// Parents to fall back on for the selection afterwards, in selection
-		// order. One that was itself deleted simply won't be in the new map.
-		const parentIds: string[] = [];
+		let tree: OsmosisNode | null = null;
 		for (const id of this.selectedNodeIds) {
 			const node = this.nodeMap.get(id);
 			if (!node) continue;
 			selectedSrcs.push(node.source);
-			if (node.parent && node.parent.source.type !== "root") parentIds.push(node.parent.source.id);
+			if (tree === null) tree = this.treeRootOf(node);
 		}
-		if (selectedSrcs.length === 0) return;
+		if (selectedSrcs.length === 0 || tree === null) return;
+		// What to select afterwards: the previous sibling of the first deleted
+		// node in document order, else its parent.
+		const afterId = selectAfterDelete(tree, selectedSrcs.map((src) => src.id));
 
 		// A mixed host+embedded selection is allowed (design decision O4): each
 		// file gets its own splice, and the whole thing is one undo step. Ranges
@@ -4785,11 +5243,29 @@ export class MindMapView extends ItemView {
 			this.endEditGroup();
 			await this.resyncFromParent();
 		}
-		// Select a surviving parent, else the first node — without panning to
-		// it: deleting must leave the viewport where the user had it.
-		const survivor = parentIds.find((id) => this.nodeMap.has(id))
-			?? this.currentLayout?.nodes.find((n) => n.source.type !== "root")?.source.id;
-		if (survivor) this.selectNode(survivor);
+		// Select the previous sibling or the parent, else the first node (the
+		// root can't be selected) — without panning to it: deleting must leave
+		// the viewport where the user had it.
+		this.selectNodeAfterDelete(afterId);
+	}
+
+	/** The parse-tree root above `node`: what `selectAfterDelete` walks. */
+	private treeRootOf(node: LayoutNode): OsmosisNode {
+		let top = node;
+		while (top.parent) top = top.parent;
+		return top.source;
+	}
+
+	/**
+	 * Select `afterId`, the node `selectAfterDelete` chose, once the
+	 * delete has re-rendered; if it is null (a top-level node with nothing
+	 * before it) or gone, the first node. Never pans.
+	 */
+	private selectNodeAfterDelete(afterId: string | null): void {
+		const id = afterId !== null && this.nodeMap.has(afterId)
+			? afterId
+			: this.currentLayout?.nodes.find((n) => n.source.type !== "root")?.source.id;
+		if (id) this.selectNode(id);
 	}
 
 	/**
@@ -4862,47 +5338,7 @@ export class MindMapView extends ItemView {
 		const file = this.fileAtPath(originPath);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
-		const blockStart = selectedSrcs[0]!.range.start;
-		const blockEnd = this.subtreeEnd(
-			selectedSrcs[selectedSrcs.length - 1]!,
-		);
-		const blockText = content.slice(blockStart, blockEnd);
-
-		const swapStart = swapSrc.range.start;
-		const swapEnd = this.subtreeEnd(swapSrc);
-		const swapText = content.slice(swapStart, swapEnd);
-
-		// Swap block with target.
-		// Replace the entire range spanning both nodes (including any gap
-		// and surrounding blank lines) with the swapped texts joined by "\n".
-		// normalizeHeadingSpacing (called by the write) will re-add proper
-		// blank lines around headings and top-level code fences.
-		const rangeStart = Math.min(blockStart, swapStart);
-		const rangeEnd = Math.max(blockEnd, swapEnd);
-
-		// Strip trailing blank lines before the swap range
-		let headEnd = rangeStart;
-		while (headEnd > 0 && content[headEnd - 1] === "\n") {
-			headEnd--;
-		}
-		const head = headEnd > 0 ? content.slice(0, headEnd) + "\n" : "";
-
-		// Strip leading blank lines after the swap range
-		let tailPos = rangeEnd;
-		while (tailPos < content.length && content[tailPos] === "\n") {
-			tailPos++;
-		}
-		const tail =
-			tailPos < content.length
-				? "\n" + content.slice(tailPos)
-				: content.slice(rangeEnd);
-
-		let updated: string;
-		if (blockStart < swapStart) {
-			updated = head + swapText + "\n" + blockText + tail;
-		} else {
-			updated = head + blockText + "\n" + swapText + tail;
-		}
+		const updated = edit.moveSiblings(content, selectedSrcs, swapSrc).text;
 
 		await this.writeFileAtPath(originPath, updated);
 
@@ -5021,43 +5457,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// Collect block of selected subtrees
-		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
-		const blockStart = firstSrc.range.start;
-		const blockEnd = this.subtreeEnd(lastSrc);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const context = indentContext(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
-			);
-		}
-		const reindented = reindentedParts.join("\n");
-
-		// Remove block from current position
-		let removeStart = blockStart;
-		if (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-
-		// Insert at end of previous sibling's subtree
-		const insertPos = this.subtreeEnd(prevSibling);
-		const prefix =
-			insertPos > 0 && content[insertPos - 1] !== "\n" ? "\n" : "";
-
-		const withoutBlock =
-			content.slice(0, removeStart) + content.slice(blockEnd);
-		const updated =
-			withoutBlock.slice(0, insertPos) +
-			prefix +
-			reindented +
-			withoutBlock.slice(insertPos);
+		const updated = edit.indentSiblings(content, selectedSrcs, prevSibling).text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -5084,44 +5484,17 @@ export class MindMapView extends ItemView {
 			if (selectedIndices.length === 0) return;
 
 			const firstSrc = siblings[selectedIndices[0]!]!;
-
-			// Determine promotion target type and depth
-			let newType: OsmosisNode["type"];
-			let newDepth: number;
-			if (firstSrc.type === "bullet" || firstSrc.type === "ordered") {
-				newType = "paragraph";
-				newDepth = 0;
-			} else if (firstSrc.type === "paragraph") {
-				newType = "heading";
-				// Match neighboring heading siblings, default to h1
-				newDepth = this.inferRootHeadingLevel(parentNode.source, selectedIndices[0]!);
-			} else {
-				return; // headings and other types can't promote further at root
-			}
-
-			const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
 			const file = this.getNodeFile(firstSrc);
 			if (!file) return;
 
 			const content = await this.app.vault.read(file);
-			const blockStart = firstSrc.range.start;
-			const blockEnd = this.subtreeEnd(lastSrc);
-
-			const reindentedParts: string[] = [];
-			for (const idx of selectedIndices) {
-				const nodeSrc = siblings[idx]!;
-				const nodeText = content.slice(
-					nodeSrc.range.start,
-					this.subtreeEnd(nodeSrc),
-				);
-				reindentedParts.push(
-					this.reindentSubtree(nodeText, nodeSrc, newType, newDepth),
-				);
-			}
-			const reindented = reindentedParts.join("\n");
-
-			const updated =
-				content.slice(0, blockStart) + reindented + content.slice(blockEnd);
+			const promoted = edit.outdentSiblings(
+				content,
+				parentNode.source,
+				selectedIndices.map((i) => siblings[i]!),
+			);
+			if (!promoted) return; // headings and other types can't promote further at root
+			const updated = promoted.text;
 
 			const movedContents = selectedIndices.map((i) => siblings[i]!.content);
 			await this.writeNodeFile(firstSrc, updated);
@@ -5137,7 +5510,6 @@ export class MindMapView extends ItemView {
 		if (selectedIndices.length === 0) return;
 
 		const firstSrc = siblings[selectedIndices[0]!]!;
-		const lastSrc = siblings[selectedIndices[selectedIndices.length - 1]!]!;
 		const parentSrc = parentNode.source;
 		const selectedSrcs = selectedIndices.map((i) => siblings[i]!);
 		if (!this.ensureSameFileEdit(selectedSrcs)) return;
@@ -5175,47 +5547,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		const blockStart = firstSrc.range.start;
-		const blockEnd = this.subtreeEnd(lastSrc);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const { type, depth } = context(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, type, depth),
-			);
-		}
-		const reindented = reindentedParts.join("\n");
-
-		// Remove block from current position
-		let removeStart = blockStart;
-		if (removeStart > 0 && content[removeStart - 1] === "\n") {
-			removeStart--;
-		}
-
-		// Insert after parent's subtree
-		const parentEnd = this.subtreeEnd(parentSrc);
-
-		const withoutBlock =
-			content.slice(0, removeStart) + content.slice(blockEnd);
-		const removedLength = blockEnd - removeStart;
-		const adjustedParentEnd = parentEnd - removedLength;
-
-		const prefix =
-			adjustedParentEnd > 0 &&
-			withoutBlock[adjustedParentEnd - 1] !== "\n"
-				? "\n"
-				: "";
-		const updated =
-			withoutBlock.slice(0, adjustedParentEnd) +
-			prefix +
-			reindented +
-			withoutBlock.slice(adjustedParentEnd);
+		const updated = edit.outdentSiblings(content, parentSrc, selectedSrcs)!.text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -5231,26 +5563,7 @@ export class MindMapView extends ItemView {
 		nodeSrc: OsmosisNode,
 		parentSrc: OsmosisNode,
 	): { type: OsmosisNode["type"]; depth: number } {
-		// Becoming a sibling of parent — preserve node's own list type.
-		// Only switch type for heading transitions.
-		let type: OsmosisNode["type"];
-		if (nodeSrc.type === "heading" && parentSrc.type === "heading") {
-			type = "heading";
-		} else if (
-			(nodeSrc.type === "bullet" || nodeSrc.type === "ordered") &&
-			nodeSrc.depth === 0 &&
-			parentSrc.type === "heading"
-		) {
-			// Depth-0 list item directly under a heading: promote to paragraph
-			// (progressive: bullet → paragraph → heading on successive outdents)
-			type = "paragraph";
-		} else if (nodeSrc.type === "bullet" || nodeSrc.type === "ordered") {
-			// Nested list items keep their own type when outdenting
-			type = nodeSrc.type;
-		} else {
-			type = parentSrc.type;
-		}
-		return { type, depth: parentSrc.depth };
+		return edit.outdentContext(nodeSrc, parentSrc);
 	}
 
 	/**
@@ -5302,29 +5615,16 @@ export class MindMapView extends ItemView {
 			const end = this.subtreeEnd(sel.source);
 			// Record each item's own shape while the live nodes are still in
 			// hand — a cut deletes them before the paste needs them.
-			items.push({
-				type: sel.source.type,
-				depth: sel.source.depth,
-				content: sel.source.content,
-				blockId: sel.source.blockId,
-				text: content.slice(start, end),
-			});
+			items.push(clipboardItem(sel.source, content.slice(start, end)));
 		}
-
-		this.clipboardItems = items;
-		this.clipboardText = items.map((item) => item.text).join("\n");
-		this.clipboardIsCut = isCut;
-		this.clipboardSourceIds = new Set(this.selectedNodeIds);
 
 		// Identity travels with the clipboard. A mixed host+embedded selection has
 		// no single origin to migrate from, so it pastes as plain text.
 		const paths = new Set(selected.map((sel) => fileOf(sel.source)));
-		this.clipboardSourcePath = paths.size === 1 ? [...paths][0]! : null;
-		this.clipboardBlockIds = edit.collectBlockIds(this.clipboardText);
-		this.clipboardSchedules = {};
+		fillClipboard(items, isCut, paths.size === 1 ? [...paths][0]! : null);
 
 		// Also put plain text on system clipboard for external paste
-		await navigator.clipboard.writeText(this.clipboardText);
+		await navigator.clipboard.writeText(nodeClipboard.text ?? "");
 
 		// If cut, delete the selected nodes
 		if (isCut) {
@@ -5337,10 +5637,11 @@ export class MindMapView extends ItemView {
 			// Capture the schedule *after* the delete: reading it flushes pending
 			// ratings, which rewrites the frontmatter and would have shifted the
 			// offsets the splice above depends on.
-			if (this.clipboardSourcePath) {
-				this.clipboardSchedules = await this.readMovedScheduleEntries(
-					this.clipboardSourcePath,
-					this.clipboardBlockIds,
+			if (nodeClipboard.sourcePath) {
+				nodeClipboard.schedules = await moves.readMovedScheduleEntries(
+					this.moveContext(),
+					nodeClipboard.sourcePath,
+					nodeClipboard.blockIds,
 				);
 			}
 		}
@@ -5351,7 +5652,7 @@ export class MindMapView extends ItemView {
 	 */
 	private async pasteNodes(): Promise<void> {
 		if (!await this.assertEditableFresh()) return;
-		if (!this.currentFile || !this.selectedNodeId || !this.clipboardItems.length)
+		if (!this.currentFile || !this.selectedNodeId || !nodeClipboard.items.length)
 			return;
 
 		const node = this.nodeMap.get(this.selectedNodeId);
@@ -5367,60 +5668,23 @@ export class MindMapView extends ItemView {
 		if (!destFile) return;
 
 		const content = await this.app.vault.read(destFile);
-		// Not `subtreeEnd`: for a heading that is the end of its *last
-		// sub-heading's* content, which markdown reads as a child of that
-		// sub-heading rather than of the node the user selected.
-		const insertPos = edit.childInsertOffset(src);
+		// The target's child slot, each item's re-levelling and the copy-vs-cut
+		// identity rule live in `pasteInto` (shared with the 3D graph).
+		const updated = pasteInto(content, src);
 
-		// Re-level each copied item *independently* against the target. Taking
-		// the delta from the target's own depth is one trap — pasting a bullet
-		// onto `## Heading` would indent it to the heading's level and bury it
-		// inside whatever list came before. Shifting a mixed clipboard by a
-		// single delta is the other: a heading and a bullet copied together need
-		// different treatment, and one of them lands wrong. `reindentSubtree`
-		// returns code blocks, tables, and blockquotes unchanged, so an atomic
-		// block's bytes are never reshaped.
-		let pasteText = this.clipboardItems
-			.map((item) => {
-				const context = edit.inferChildContext(src, item);
-				return edit.reindentSubtree(
-					item.text,
-					item,
-					context.type,
-					context.depth,
-				);
-			})
-			.join("\n");
-
-		const originPath = this.clipboardSourcePath;
-		// A cut moves identity; a copy duplicates a line, and a duplicated line is
-		// a new line — strip its block IDs so it doesn't inherit the original's
-		// card, and let Osmosis mint a fresh ID on demand. Text from outside
-		// Osmosis (no source path) pastes exactly as before.
-		if (originPath !== null && !this.clipboardIsCut) {
-			pasteText = edit.stripBlockIds(pasteText);
-		}
-
-		// Separator-aware: the offset can now sit *before* a heading line, where
-		// the newline the old formula appended belongs on the other side.
-		const updated = edit.insertAt(content, insertPos, pasteText).text;
-
-		const migrates =
-			originPath !== null &&
-			this.clipboardIsCut &&
-			originPath !== destPath &&
-			this.clipboardBlockIds.size > 0;
-		if (migrates) {
+		const originPath = nodeClipboard.sourcePath;
+		if (originPath !== null && pasteMigrates(destPath)) {
 			// Cut across the seam: the write and the schedule migration are one
 			// gesture, so they undo as one step (see `moveAcrossFiles`).
 			this.beginEditGroup();
 			try {
 				await this.writeFileTracked(destFile, updated);
-				await this.migrateBlockIdentity(
+				await moves.migrateBlockIdentity(
+					this.moveContext(),
 					originPath,
 					destPath,
-					this.clipboardBlockIds,
-					this.clipboardSchedules,
+					nodeClipboard.blockIds,
+					nodeClipboard.schedules,
 				);
 			} finally {
 				this.endEditGroup();
@@ -5430,10 +5694,8 @@ export class MindMapView extends ItemView {
 			await this.writeFileAtPath(destPath, updated);
 		}
 
-		// A cut's identity lands exactly once: pasting the same clipboard again
-		// duplicates the line, so it takes the copy path and gets fresh IDs.
-		this.clipboardIsCut = false;
-		this.clipboardSchedules = {};
+		// A cut's identity lands exactly once (see `spendCut`).
+		spendCut();
 	}
 
 	/**
@@ -5455,76 +5717,32 @@ export class MindMapView extends ItemView {
 		// Collect selected siblings sorted by position
 		let blockStart: number;
 		let blockEnd: number;
-		let blockText: string;
 
 		// `target.parent`, not `node.parent`: the sibling ranges spliced below
 		// come off it, and the pre-guard node's parent belongs to the layout the
 		// freshness check may have just replaced.
 		if (this.selectedNodeIds.size > 1 && target.parent) {
-			const siblings = target.parent.source.children;
-			const selectedIndices = this.getSelectedSiblingIndices(siblings);
-			if (selectedIndices.length === 0) return;
-
-			const firstSrc = siblings[selectedIndices[0]!]!;
-			const lastSrc =
-				siblings[selectedIndices[selectedIndices.length - 1]!]!;
-			if (
-				!this.ensureSameFileEdit(
-					selectedIndices.map((i) => siblings[i]!),
-				)
-			)
-				return;
-			blockStart = firstSrc.range.start;
-			blockEnd = this.subtreeEnd(lastSrc);
+			// The shared rule (the 3D graph's Ctrl+Enter uses it too).
+			const wrapped = edit.selectedSiblings(target.parent.source.children, this.selectedNodeIds);
+			if (wrapped.length === 0) return;
+			if (!this.ensureSameFileEdit(wrapped)) return;
+			({ start: blockStart, end: blockEnd } = edit.subtreeSpan(wrapped));
 		} else {
 			blockStart = src.range.start;
 			blockEnd = this.subtreeEnd(src);
 		}
-		blockText = content.slice(blockStart, blockEnd);
-
-		// Create the new parent line at the same type/depth as the first selected node
-		const newParentLine = this.serializeLine(src.type, src.depth, "");
-
-		// Indent all selected subtrees by 1 level
-		let indentedSubtree: string;
-		if (src.type === "heading") {
-			indentedSubtree = this.indentSubtreeHeadings(blockText);
-		} else {
-			indentedSubtree = blockText
-				.split("\n")
-				.map((line) => (line.trim() === "" ? line : "\t" + line))
-				.join("\n");
-		}
-
-		// Replace: [newParentLine]\n[indentedSubtree]
-		const updated =
-			content.slice(0, blockStart) +
-			newParentLine +
-			"\n" +
-			indentedSubtree +
-			content.slice(blockEnd);
+		// A new parent line at the same type/depth as the node, over the block
+		// indented one level.
+		const updated = edit.insertParent(content, src, {
+			start: blockStart,
+			end: blockEnd,
+		}).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
 
 		// Start editing the new (empty) parent node
 		this.startEditingNewNode(selectedId, false);
-	}
-
-	/**
-	 * Increase all heading levels in a subtree by 1 (e.g., ## → ###).
-	 */
-	private indentSubtreeHeadings(text: string): string {
-		return text
-			.split("\n")
-			.map((line) => {
-				const headingMatch = line.match(/^(#{1,5})\s/);
-				if (headingMatch && headingMatch[1]) {
-					return "#" + line;
-				}
-				return line;
-			})
-			.join("\n");
 	}
 
 	/**
@@ -6308,13 +6526,21 @@ export class MindMapView extends ItemView {
 		// reading any range: everything below is resolved from IDs afterwards.
 		await this.ensureTreeFresh();
 
-		if (
-			!dragNodeId ||
-			!dropTarget ||
-			!this.currentFile ||
-			!this.currentTree
-		)
-			return;
+		if (!dragNodeId || !dropTarget) return;
+		await this.moveNodesTo(dragNodeId, selectedIds, dropTarget);
+	}
+
+	/**
+	 * Move node `dragNodeId`, with the nodes of `selectedIds` that are its
+	 * siblings, to child `index` of `parentId`: a drag and drop's write, and the
+	 * Add link menu's moves. The tree must already be fresh.
+	 */
+	private async moveNodesTo(
+		dragNodeId: string,
+		selectedIds: ReadonlySet<string>,
+		dropTarget: { parentId: string; index: number },
+	): Promise<void> {
+		if (!this.currentFile || !this.currentTree) return;
 
 		const dragNode = this.nodeMap.get(dragNodeId);
 		if (!dragNode?.parent) return;
@@ -6363,13 +6589,7 @@ export class MindMapView extends ItemView {
 		const dropContext = (nodeSrc: OsmosisNode): {
 			type: OsmosisNode["type"];
 			depth: number;
-		} => {
-			const type = this.inferDropType(targetParent, dropTarget.index, nodeSrc);
-			return {
-				type,
-				depth: this.inferDropDepth(targetParent, dropTarget.index, type),
-			};
-		};
+		} => edit.dropContext(targetParent, dropTarget.index, nodeSrc);
 
 		if (site.path !== originPath) {
 			const moved = await this.moveAcrossFiles(
@@ -6387,37 +6607,12 @@ export class MindMapView extends ItemView {
 		const file = this.fileAtPath(originPath);
 		if (!file) return;
 		const content = await this.app.vault.read(file);
-
-		// Re-indent each selected node's subtree individually
-		const reindentedParts: string[] = [];
-		for (const nodeSrc of selectedSrcs) {
-			const nodeText = content.slice(
-				nodeSrc.range.start,
-				this.subtreeEnd(nodeSrc),
-			);
-			const context = dropContext(nodeSrc);
-			reindentedParts.push(
-				this.reindentSubtree(nodeText, nodeSrc, context.type, context.depth),
-			);
-		}
-		const dragText = reindentedParts.join("\n");
-
-		const span = edit.widenRemoval(content, edit.subtreeSpan(selectedSrcs));
-
-		let updated: string;
-		if (span.start < site.offset) {
-			// Dragging forward: remove first, then adjust the insert offset.
-			const afterRemove = edit.removeSpan(content, span);
-			const adjusted = site.offset - (span.end - span.start);
-			updated = edit.insertAt(afterRemove, adjusted, dragText).text;
-		} else {
-			// Dragging backward: insert first, then remove at the shifted span.
-			const inserted = edit.insertAt(content, site.offset, dragText);
-			updated = edit.removeSpan(inserted.text, {
-				start: span.start + inserted.shift,
-				end: span.end + inserted.shift,
-			});
-		}
+		const updated = edit.moveWithinFile(
+			content,
+			selectedSrcs,
+			site.offset,
+			dropContext,
+		).text;
 
 		await this.writeFileAtPath(originPath, updated);
 		this.reselectMultiAfterMove(movedContents);
@@ -6454,30 +6649,11 @@ export class MindMapView extends ItemView {
 	}
 
 	private inferChildType(parent: OsmosisNode): OsmosisNode["type"] {
-		if (parent.type === "heading" || parent.type === "root")
-			return "bullet";
-		return parent.type;
+		return edit.inferChildType(parent);
 	}
 
 	private inferChildDepth(parent: OsmosisNode): number {
-		if (parent.type === "heading" || parent.type === "root") return 0;
-		return parent.depth + 1;
-	}
-
-	/**
-	 * Infer heading level when promoting a root child to a heading.
-	 * Matches the nearest heading sibling's level, defaulting to h1.
-	 */
-	private inferRootHeadingLevel(root: OsmosisNode, index: number): number {
-		const siblings = root.children;
-		// Check neighbors outward from the index
-		for (let dist = 1; dist < siblings.length; dist++) {
-			for (const i of [index - dist, index + dist]) {
-				const sib = siblings[i];
-				if (sib?.type === "heading") return sib.depth;
-			}
-		}
-		return 1;
+		return edit.inferChildDepth(parent);
 	}
 
 	/**
@@ -6489,13 +6665,7 @@ export class MindMapView extends ItemView {
 		newParent: OsmosisNode,
 		movingNode: OsmosisNode,
 	): OsmosisNode["type"] {
-		if (
-			movingNode.type === "heading" &&
-			(newParent.type === "heading" || newParent.type === "root")
-		) {
-			return "heading";
-		}
-		return this.inferChildType(newParent);
+		return edit.inferIndentType(newParent, movingNode);
 	}
 
 	/**
@@ -6506,57 +6676,7 @@ export class MindMapView extends ItemView {
 		newParent: OsmosisNode,
 		movingNode: OsmosisNode,
 	): number {
-		if (
-			movingNode.type === "heading" &&
-			(newParent.type === "heading" || newParent.type === "root")
-		) {
-			return Math.min(6, newParent.depth + 1);
-		}
-		return this.inferChildDepth(newParent);
-	}
-
-	/**
-	 * Determine the new type for a drag-and-drop operation.
-	 * Unlike indent (which makes children), D&D places nodes as siblings.
-	 * When dropping between heading siblings, non-heading nodes promote to headings.
-	 * List items (bullet/ordered) preserve their own type.
-	 */
-	private inferDropType(
-		targetParent: OsmosisNode,
-		dropIndex: number,
-		movingNode: OsmosisNode,
-	): OsmosisNode["type"] {
-		if (targetParent.type === "heading" || targetParent.type === "root") {
-			// Check if neighboring siblings at the drop position are headings
-			const neighbor =
-				targetParent.children[dropIndex] ??
-				targetParent.children[dropIndex - 1];
-			if (neighbor?.type === "heading") return "heading";
-		}
-		// List items preserve their own type
-		if (movingNode.type === "bullet" || movingNode.type === "ordered") {
-			return movingNode.type;
-		}
-		return this.inferChildType(targetParent);
-	}
-
-	/**
-	 * Determine the new depth for a drag-and-drop operation.
-	 * Matches the depth of neighboring siblings at the drop position.
-	 */
-	private inferDropDepth(
-		targetParent: OsmosisNode,
-		dropIndex: number,
-		dropType: OsmosisNode["type"],
-	): number {
-		if (dropType === "heading") {
-			const neighbor =
-				targetParent.children[dropIndex] ??
-				targetParent.children[dropIndex - 1];
-			if (neighbor?.type === "heading") return neighbor.depth;
-			return Math.min(6, targetParent.depth + 1);
-		}
-		return this.inferChildDepth(targetParent);
+		return edit.inferIndentDepth(newParent, movingNode);
 	}
 
 	/**
@@ -6617,10 +6737,12 @@ export class MindMapView extends ItemView {
 		return null;
 	}
 
-	/** Execute the Alt-arrow action for a physical direction (used by toolbar buttons). */
-	private executeDirectionalAction(key: string): void {
-		const action = this.resolveArrowAction(key);
-		if (!action) return;
+	/**
+	 * A toolbar move: by tree depth or sibling order, whatever the screen side
+	 * or layout direction. Alt+Arrow keys resolve their direction to one of
+	 * these with `resolveArrowAction` in `handleKeyDown`.
+	 */
+	private runMoveAction(action: "depthDeeper" | "depthShallower" | "siblingPrev" | "siblingNext"): void {
 		switch (action) {
 			case "depthDeeper":
 				void this.indentNode();
@@ -6647,6 +6769,19 @@ export class MindMapView extends ItemView {
 			return;
 		}
 
+		// Escape disarms Add link
+		if (e.key === "Escape" && this.cancelLinkPick()) {
+			e.preventDefault();
+			return;
+		}
+
+		// Escape closes the find bar
+		if (e.key === "Escape" && this.findBar?.isOpen) {
+			this.findBar.close();
+			e.preventDefault();
+			return;
+		}
+
 		// Spatial study: 1–4 rate the card awaiting a rating
 		if (
 			this.spatialMode === "study" &&
@@ -6656,6 +6791,14 @@ export class MindMapView extends ItemView {
 		) {
 			e.preventDefault();
 			void this.rateSpatialCard(Number(e.key) as FSRSRating);
+			return;
+		}
+
+		// Ctrl/Cmd+arrow follows the outline whatever the layout or side; +Shift extends the selection
+		const step = (e.ctrlKey || e.metaKey) && !e.altKey ? arrowKeyStep(e.key) : null;
+		if (step) {
+			e.preventDefault();
+			this.navigateHierarchy(step, e.shiftKey);
 			return;
 		}
 
@@ -6733,10 +6876,10 @@ export class MindMapView extends ItemView {
 							void this.insertParentNode(parentEnterNode);
 						}
 					} else {
-						// Enter = add sibling after selected node
+						// Enter = add sibling after selected node, Shift+Enter = before it
 						const enterNode = this.nodeMap.get(this.selectedNodeId);
 						if (enterNode) {
-							void this.addSiblingNode(enterNode);
+							void this.addSiblingNode(enterNode, e.shiftKey);
 						}
 					}
 					e.preventDefault();
@@ -6792,7 +6935,7 @@ export class MindMapView extends ItemView {
 				if (
 					(e.ctrlKey || e.metaKey) &&
 					this.selectedNodeId &&
-					this.clipboardText
+					nodeClipboard.text
 				) {
 					e.preventDefault();
 					void this.pasteNodes();
@@ -7051,6 +7194,39 @@ export class MindMapView extends ItemView {
 		}
 	}
 
+	/**
+	 * Ctrl/Cmd+arrow: move (or with `extend`, grow the selection) to the
+	 * previous/next sibling, parent or first child, stopping at the ends of the
+	 * siblings. A collapsed node's first child expands it first, as plain
+	 * arrows do. Never steps onto the file's root.
+	 */
+	private navigateHierarchy(step: HierarchyStep, extend: boolean): void {
+		const id = this.selectedNodeId;
+		if (!id) {
+			this.selectFirstNode();
+			return;
+		}
+		const node = this.nodeMap.get(id);
+		if (!node) return;
+		if (step === "firstChild" && this.collapsedIds.has(id) && node.source.children.length > 0) {
+			this.toggleCollapse(id);
+			return;
+		}
+		const tree = {
+			parent: (nodeId: string) => this.nodeMap.get(nodeId)?.parent?.source.id ?? null,
+			children: (nodeId: string) => this.nodeMap.get(nodeId)?.children.map((child) => child.source.id) ?? [],
+		};
+		const target = hierarchyStep(tree, id, step);
+		if (target === null || this.nodeMap.get(target)?.source.type === "root") return;
+		if (extend) {
+			this.extendSelectionTo(target);
+		} else {
+			this.selectNode(target);
+			this.syncMapSelectionToEditor(target);
+			this.scrollToSelectedNode();
+		}
+	}
+
 	private selectFirstNode(): void {
 		if (!this.currentLayout) return;
 		// Select the first non-root node
@@ -7200,6 +7376,9 @@ export class MindMapView extends ItemView {
 		// Prevent clicks on the editor container from reaching the SVG/mind map
 		container.addEventListener("pointerdown", (e) => e.stopPropagation());
 		container.addEventListener("click", (e) => e.stopPropagation());
+		// A double click in the editor selects a word, as in note edit mode. It stays here so the map's
+		// `handleDblClick` doesn't start another edit.
+		container.addEventListener("dblclick", (e) => e.stopPropagation());
 
 		// Edit the node's source line — bullet/heading/checkbox markers and all
 		// — so every markdown element is reachable from the map. Its leading
@@ -7213,7 +7392,15 @@ export class MindMapView extends ItemView {
 			const editor = new EmbeddableMarkdownEditor(this.app, container, {
 				value: editValue,
 				cls: "osmosis-node-editor",
-				onEnter: () => false, // Let Enter insert newline (default CM behavior)
+				file: this.nodeFile(node.source),
+				// Plugins that look for the active MarkdownView (QuickAdd) find this editor.
+				view: this,
+				// Enter saves; Shift+Enter falls through to CodeMirror for a new line. An open suggestion popup keeps the key.
+				onEnter: (_editor, mod, shift) => {
+					if (!enterSavesEdit(mod, shift) || suggestOpen()) return false;
+					queueMicrotask(() => this.stopEditing(true));
+					return true;
+				},
 				onSubmit: () => {
 					// Ctrl+Enter saves
 					// Defer so CM keymap handler returns true (suppressing the event)
@@ -7509,7 +7696,7 @@ export class MindMapView extends ItemView {
 		else this.contentEl.appendChild(container);
 
 		input.addEventListener("keydown", (e: KeyboardEvent) => {
-			if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+			if (e.key === "Enter" && (e.ctrlKey || e.metaKey || enterSavesEdit(false, e.shiftKey))) {
 				this.stopEditing(true);
 				e.preventDefault();
 				e.stopPropagation();
@@ -7657,21 +7844,19 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Undo or redo the last map edit from the view's own snapshot history.
+	 * Undo or redo the last map edit to this map's note, from the shared history.
 	 *
 	 * Map edits write to disk via vault.modify / processFrontMatter, bypassing
 	 * CodeMirror, so there is no editor undo stack to forward to — this restores
-	 * the recorded before/after content instead. Self-contained: it does not see
-	 * edits made in a separate Markdown editor, and no-ops when the relevant stack
-	 * is empty.
+	 * the recorded before/after content instead. It sees edits any Osmosis view
+	 * made to this note (see `src/edit-history.ts`), but not edits made in a
+	 * separate Markdown editor, and no-ops when there is nothing to undo.
 	 */
 	private forwardUndoRedo(isRedo: boolean): void {
 		if (!this.assertEditable()) return;
-		const source = isRedo ? this.redoStack : this.undoStack;
-		const snapshot = source.pop();
-		if (!snapshot) return;
-		(isRedo ? this.undoStack : this.redoStack).push(snapshot);
-		void this.applySnapshot(snapshot.edits, isRedo);
+		if (this.historyKey === null) return;
+		this.perf?.editStarted();
+		void this.applySnapshot(this.edits.step(this.historyKey, isRedo));
 	}
 
 	/** Undo the last map edit. Public entry point for the properties sidebar,
@@ -7692,86 +7877,27 @@ export class MindMapView extends ItemView {
 	 * until {@link endLiveEdit}.
 	 */
 	beginLiveEdit(): void {
-		this.liveEditActive = true;
-		this.liveEditSnapshot = null;
+		this.edits.recorder.beginLive();
 	}
 
-	/** End a live-edit session, recording one snapshot for the whole burst. */
+	/** End a live-edit session, recording one undo step for the whole burst. */
 	endLiveEdit(): void {
-		if (!this.liveEditActive) return;
-		this.liveEditActive = false;
-		const snap = this.liveEditSnapshot;
-		this.liveEditSnapshot = null;
-		if (snap) this.recordEdit(snap.path, snap.before, snap.after);
+		this.edits.recorder.endLive();
 	}
 
 	/**
-	 * Open an edit group: every {@link recordEdit} until {@link endEditGroup}
-	 * accumulates into one undo step instead of pushing its own. Files may be
-	 * written more than once inside a group; the group keeps the first `before`
-	 * and the last `after` for each path, so the net change is what gets undone.
+	 * Open an edit group: every write until {@link endEditGroup} accumulates
+	 * into one undo step instead of pushing its own. Files may be written more
+	 * than once inside a group; the group keeps the first `before` and the last
+	 * `after` for each path, so the net change is what gets undone.
 	 */
 	private beginEditGroup(): void {
-		this.editGroup = new Map();
+		this.edits.recorder.beginGroup();
 	}
 
 	/** Close an edit group, pushing its accumulated writes as one undo step. */
 	private endEditGroup(): void {
-		const group = this.editGroup;
-		this.editGroup = null;
-		if (!group) return;
-		const edits = edit.collapseEditGroup(group);
-		if (edits.length === 0) return;
-		this.undoStack.push({ edits });
-		this.enforceUndoLimits();
-		this.redoStack.length = 0;
-	}
-
-	/** Push a reversible edit onto the undo history; no-op if content is unchanged. */
-	private recordEdit(path: string, before: string, after: string): void {
-		if (before === after) return;
-		if (this.liveEditActive) {
-			// Coalescing: keep the pre-session content as the baseline and track
-			// the latest result; endLiveEdit records the single net change.
-			if (!this.liveEditSnapshot) {
-				this.liveEditSnapshot = { path, before, after };
-			} else if (this.liveEditSnapshot.path === path) {
-				this.liveEditSnapshot.after = after;
-			}
-			return;
-		}
-		if (this.editGroup) {
-			edit.mergeEdit(this.editGroup, { path, before, after });
-			return;
-		}
-		this.undoStack.push({ edits: [{ path, before, after }] });
-		this.enforceUndoLimits();
-		// A fresh edit invalidates any redo history.
-		this.redoStack.length = 0;
-	}
-
-	/** In-memory byte estimate for one snapshot (summed across its files). */
-	private static snapshotBytes(snap: MapEditSnapshot): number {
-		return edit.editBytes(snap.edits);
-	}
-
-	/**
-	 * Trim undo history to the configured step and memory limits, oldest first,
-	 * applying whichever is reached first. Only the growing undoStack is capped
-	 * (redoStack is transient — cleared on any fresh edit). At least the most
-	 * recent entry is always kept so a just-made edit stays undoable.
-	 */
-	private enforceUndoLimits(): void {
-		const maxSteps = Math.max(1, this.plugin.settings.undoMaxSteps);
-		while (this.undoStack.length > maxSteps) this.undoStack.shift();
-
-		const maxBytes = Math.max(1, this.plugin.settings.undoMaxMemoryMB) * 1024 * 1024;
-		let total = 0;
-		for (const snap of this.undoStack) total += MindMapView.snapshotBytes(snap);
-		while (this.undoStack.length > 1 && total > maxBytes) {
-			const removed = this.undoStack.shift();
-			if (removed) total -= MindMapView.snapshotBytes(removed);
-		}
+		this.edits.recorder.endGroup();
 	}
 
 	/**
@@ -7785,10 +7911,7 @@ export class MindMapView extends ItemView {
 		file: TFile,
 		fn: (fm: Record<string, unknown>) => void,
 	): Promise<void> {
-		const before = await this.app.vault.read(file);
-		await this.app.fileManager.processFrontMatter(file, fn);
-		const after = await this.app.vault.read(file);
-		this.recordEdit(file.path, before, after);
+		const after = await this.edits.processFrontMatter(file, fn);
 
 		// processFrontMatter inserts or grows the frontmatter block, shifting
 		// every body offset. Rebuild currentTree from the new content so a
@@ -7815,28 +7938,17 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Restore every file in a snapshot (undo/redo target). Re-renders from the
-	 * restored content — reloading frontmatter and clearing the size cache so both
-	 * text and style changes are reflected. Handles the current file and
-	 * transcluded source files, mirroring the write paths.
-	 *
-	 * A multi-file group is applied in reverse order when undoing, forward when
-	 * redoing — the same reasoning as the move itself (see `moveAcrossFiles`):
-	 * the file that *gains* content is written before the one that loses it, so a
-	 * failure partway leaves the content duplicated rather than gone.
+	 * Re-render after an undo/redo (`EditPipeline.step`) has restored its files.
+	 * Re-renders from the restored content — reloading frontmatter and clearing
+	 * the size cache so both text and style changes are reflected. Handles the
+	 * current file and transcluded source files, mirroring the write paths.
 	 */
-	private async applySnapshot(edits: FileEdit[], isRedo: boolean): Promise<void> {
-		const ordered = isRedo ? edits : [...edits].reverse();
+	private async applySnapshot(step: Promise<RestoredFile[] | null>): Promise<void> {
+		const restored = await step;
+		if (restored === null) return;
 		let restoredCurrent: string | null = null;
-
-		for (const fileEdit of ordered) {
-			const file = this.app.vault.getFileByPath(fileEdit.path);
-			if (!(file instanceof TFile)) continue;
-			const content = isRedo ? fileEdit.after : fileEdit.before;
-			this.suppressNextReload = true;
-			this.cache.invalidate(fileEdit.path);
-			await this.app.vault.modify(file, content);
-			if (fileEdit.path === this.currentFile?.path) restoredCurrent = content;
+		for (const file of restored) {
+			if (file.path === this.currentFile?.path) restoredCurrent = file.content;
 		}
 
 		if (!this.currentFile) return;
@@ -7863,7 +7975,7 @@ export class MindMapView extends ItemView {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(true);
 	}
 
 	/**
@@ -7872,11 +7984,7 @@ export class MindMapView extends ItemView {
 	private async writeMarkdown(newContent: string): Promise<void> {
 		if (!this.currentFile) return;
 		newContent = this.normalizeHeadingSpacing(newContent);
-		const before = await this.app.vault.read(this.currentFile);
-		this.suppressNextReload = true;
-		this.cache.invalidate(this.currentFile.path);
-		await this.app.vault.modify(this.currentFile, newContent);
-		this.recordEdit(this.currentFile.path, before, newContent);
+		await this.edits.write(this.currentFile, newContent);
 
 		// Re-parse and re-render from the new content
 		this.currentTree = this.cache.get(this.currentFile.path, newContent);
@@ -7889,7 +7997,7 @@ export class MindMapView extends ItemView {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(true);
 	}
 
 	/**
@@ -7905,13 +8013,9 @@ export class MindMapView extends ItemView {
 		if (!(sourceFile instanceof TFile)) return;
 
 		newContent = this.normalizeHeadingSpacing(newContent);
-		const before = await this.app.vault.read(sourceFile);
-		this.suppressNextReload = true;
-		this.cache.invalidate(sourceFilePath);
-		await this.app.vault.modify(sourceFile, newContent);
-		this.recordEdit(sourceFilePath, before, newContent);
+		await this.edits.write(sourceFile, newContent);
 
-		await this.resyncFromParent();
+		await this.resyncFromParent(true);
 	}
 
 	/**
@@ -7955,7 +8059,7 @@ export class MindMapView extends ItemView {
 	 * parent's bytes are unchanged, but the content it embeds is not, so the tree
 	 * has to be re-read and re-expanded for the change to appear.
 	 */
-	private async resyncFromParent(): Promise<void> {
+	private async resyncFromParent(keepDrawn = false): Promise<void> {
 		if (!this.currentFile) return;
 		const parentContent = await this.app.vault.read(this.currentFile);
 		this.cache.invalidate(this.currentFile.path);
@@ -7964,7 +8068,7 @@ export class MindMapView extends ItemView {
 			this.currentTree,
 			this.lazyTransclusionIds,
 		);
-		await this.render();
+		await this.render(keepDrawn);
 	}
 
 	/**
@@ -7982,32 +8086,29 @@ export class MindMapView extends ItemView {
 		const normalized = this.normalizeHeadingSpacing(
 			this.renumberOrderedLists(content),
 		);
-		const before = await this.app.vault.read(file);
-		this.suppressNextReload = true;
-		this.cache.invalidate(file.path);
-		await this.app.vault.modify(file, normalized);
-		this.recordEdit(file.path, before, normalized);
+		await this.edits.write(file, normalized);
 	}
 
 	/**
-	 * Move a contiguous run of siblings out of one note and into another — the
-	 * primitive behind every gesture that crosses an embed boundary.
-	 *
-	 * **Write order is a safety property, not a preference.** The destination is
-	 * written first: if that fails, the origin still holds the content and the
-	 * vault is exactly as it was. Only once the bytes exist in the destination is
-	 * the origin spliced, so the worst failure duplicates the content instead of
-	 * destroying it — and the duplicate is already inside the undo group, so one
-	 * Ctrl+Z reverts it.
-	 *
-	 * The subtree text is sliced **verbatim** so `^os-…` block IDs survive, then
-	 * re-indented into the destination's own coordinates. When the insert lands
-	 * beside an existing line, that neighbor supplies type and depth: the drop's
-	 * tree parent is expressed in the *origin's* file, and feeding host depth into
-	 * a source note indents the line wrongly. `fallbackContext` covers the sites
-	 * with no neighbor (appending inside an embed, reparenting onto one), where
-	 * the target parent does live in the destination file and its own child rules
-	 * already apply.
+	 * What the shared cross-note move (`src/edit-moves.ts`) needs from this map:
+	 * its pipeline, its write normalisation, the frontmatter write that also
+	 * re-parses the tree, and the re-sync that runs once the group has closed.
+	 */
+	private moveContext(): MoveContext {
+		return {
+			app: this.app,
+			edits: this.edits,
+			write: (file, content) => this.writeFileTracked(file, content),
+			processFrontMatter: (file, fn) => this.processFrontMatterTracked(file, fn),
+			plugin: this.plugin,
+			settle: () => this.resyncFromParent(),
+		};
+	}
+
+	/**
+	 * Move a contiguous run of siblings out of one note and into another, then
+	 * re-sync the map. See `moveAcrossFiles` in `src/edit-moves.ts` for the
+	 * write order and the identity migration, which are safety properties.
 	 *
 	 * @returns true when the move landed; false after a bail (with a notice shown).
 	 */
@@ -8020,180 +8121,14 @@ export class MindMapView extends ItemView {
 			depth: number;
 		},
 	): Promise<boolean> {
-		const originFile = this.app.vault.getFileByPath(originPath);
-		const destFile = this.app.vault.getFileByPath(site.path);
-		if (!(originFile instanceof TFile) || !(destFile instanceof TFile)) {
-			new Notice("Osmosis: the destination note is no longer available");
-			return false;
-		}
-
-		this.beginEditGroup();
-		try {
-			let originText: string;
-			let destText: string;
-			try {
-				originText = await this.app.vault.read(originFile);
-				destText = await this.app.vault.read(destFile);
-			} catch {
-				new Notice("Osmosis: the destination note is no longer available");
-				return false;
-			}
-
-			// Extract verbatim (block IDs intact), then re-indent for the destination.
-			const parts: string[] = [];
-			for (const src of originNodes) {
-				const text = originText.slice(
-					src.range.start,
-					this.subtreeEnd(src),
-				);
-				const context = site.neighbor
-					? edit.inferSiblingContext(site.neighbor, src)
-					: fallbackContext(src);
-				parts.push(
-					this.reindentSubtree(text, src, context.type, context.depth),
-				);
-			}
-			const block = parts.join("\n");
-
-			try {
-				await this.writeFileTracked(
-					destFile,
-					edit.insertAt(destText, site.offset, block).text,
-				);
-			} catch {
-				new Notice(
-					`Osmosis: couldn't write ${destFile.basename} — move cancelled`,
-				);
-				return false;
-			}
-
-			try {
-				const span = edit.subtreeSpan(originNodes);
-				await this.writeFileTracked(
-					originFile,
-					edit.removeSpan(originText, edit.widenRemoval(originText, span)),
-				);
-			} catch {
-				new Notice(
-					`Osmosis: moved into ${destFile.basename} but couldn't update ${originFile.basename} — undo to revert`,
-				);
-				return false;
-			}
-
-			// Identity follows the bytes (design decision #3): the block IDs now
-			// living in the destination take their schedule with them, inside this
-			// same group so one Ctrl+Z restores both. The IDs are read from the
-			// moved text rather than the tree — a subtree carrying an embed folds
-			// to its `![[…]]` line, and the transcluded IDs behind it stay in
-			// their own note.
-			const movedIds = edit.collectBlockIds(block);
-			const entries = await this.readMovedScheduleEntries(
-				originPath,
-				movedIds,
-			);
-			await this.migrateBlockIdentity(
-				originPath,
-				site.path,
-				movedIds,
-				entries,
-			);
-			return true;
-		} finally {
-			this.endEditGroup();
-			// Re-sync even after a bail: the view must reflect what is actually on
-			// disk, which after a partial write is not what it showed before.
-			await this.resyncFromParent();
-		}
-	}
-
-	/**
-	 * The `osmosis-schedule` entries a note holds for `blockIds`, read straight
-	 * from its own bytes rather than the metadata cache — which lags our own
-	 * writes by an event loop.
-	 *
-	 * Pending ratings are flushed first, so a card rated seconds ago migrates
-	 * with its newest schedule and leaves nothing staged to be re-written into
-	 * the note it just left. That flush rewrites the frontmatter and shifts
-	 * every body offset with it, so this must only be called once no further
-	 * offset-based splice into `path` is pending.
-	 */
-	private async readMovedScheduleEntries(
-		path: string,
-		blockIds: ReadonlySet<string>,
-	): Promise<Record<string, unknown>> {
-		if (blockIds.size === 0) return {};
-		const file = this.fileAtPath(path);
-		if (!file) return {};
-
-		await this.plugin.scheduleStore.flushPath(path);
-		const content = await this.app.vault.read(file);
-		return edit.partitionScheduleEntries(
-			frontmatterValue(content, SCHEDULE_FRONTMATTER_KEY),
-			blockIds,
-		).moved;
-	}
-
-	/**
-	 * Carry line-card identity across a note boundary: write the moved lines'
-	 * schedule entries into the destination's frontmatter, drop them from the
-	 * origin's, and re-key the in-memory cards. Without it the debounced sync
-	 * orphans the origin's card two seconds later and mints the destination's
-	 * as brand new, with no review history.
-	 *
-	 * Called from inside an open edit group *after* the content writes land, so
-	 * both frontmatter writes join the same undo step — one Ctrl+Z restores text
-	 * and schedule together. {@link processFrontMatterTracked} is what makes
-	 * that true; `ScheduleStore` writes on its own debounce and bypasses
-	 * `recordEdit`, so its writes would fall outside the group.
-	 *
-	 * Best-effort by design: the bytes have already moved, so a frontmatter
-	 * failure is reported and left for the debounced sync to re-derive rather
-	 * than rolled back (undo still reverts the whole gesture).
-	 */
-	private async migrateBlockIdentity(
-		originPath: string,
-		destPath: string,
-		blockIds: ReadonlySet<string>,
-		entries: Record<string, unknown>,
-	): Promise<void> {
-		if (blockIds.size === 0 || originPath === destPath) return;
-
-		if (Object.keys(entries).length > 0) {
-			const originFile = this.fileAtPath(originPath);
-			const destFile = this.fileAtPath(destPath);
-			try {
-				if (destFile) {
-					await this.processFrontMatterTracked(destFile, (fm) => {
-						const { retained: existing } = edit.partitionScheduleEntries(
-							fm[SCHEDULE_FRONTMATTER_KEY],
-							EMPTY_BLOCK_IDS,
-						);
-						fm[SCHEDULE_FRONTMATTER_KEY] = { ...existing, ...entries };
-					});
-				}
-				if (originFile) {
-					await this.processFrontMatterTracked(originFile, (fm) => {
-						const { retained } = edit.partitionScheduleEntries(
-							fm[SCHEDULE_FRONTMATTER_KEY],
-							blockIds,
-						);
-						if (Object.keys(retained).length > 0) {
-							fm[SCHEDULE_FRONTMATTER_KEY] = retained;
-						} else {
-							delete fm[SCHEDULE_FRONTMATTER_KEY];
-						}
-					});
-				}
-			} catch (error) {
-				console.error("Osmosis: failed to migrate schedule frontmatter", error);
-				new Notice(
-					"Osmosis: the lines moved, but their review history couldn't follow",
-				);
-			}
-		}
-
-		this.plugin.cardSync.handleBlockMove(originPath, destPath, blockIds);
-		this.plugin.refreshDashboard();
+		const moved = await moves.moveAcrossFiles(
+			this.moveContext(),
+			originNodes,
+			site,
+			originPath,
+			fallbackContext,
+		);
+		return moved !== null;
 	}
 
 	/**
@@ -8263,6 +8198,8 @@ export class MindMapView extends ItemView {
 		newLine: string,
 	): Promise<void> {
 		if (!this.currentFile) return;
+		// The guard ran when the editor opened; the commit starts here.
+		this.perf?.editStarted();
 		// `startEditing` settled the tree before opening the editor, but a
 		// debounced schedule flush can land in the seconds the editor is open and
 		// move every offset in the file under it. Settle again and re-resolve the
@@ -8280,23 +8217,31 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 
 		const content = await this.app.vault.read(file);
-		// Restore what the edit box withheld: the node's indentation and its
-		// trailing block ID (line-card identity / style anchor).
-		const line = edit.restoreEditedLine(src, newLine);
-		// A list item renamed to a heading (or back) takes its children with it,
-		// and moves to where its new kind keeps its parent; any other rename is
-		// just the one line.
+		// `renameInFile` restores what the edit box withheld (the node's
+		// indentation and its trailing block ID: line-card identity / style
+		// anchor). A list item renamed to a heading (or back) takes its children
+		// with it, and moves to where its new kind keeps its parent; any other
+		// rename is just the one line.
 		const ancestors: OsmosisNode[] = [];
 		for (let p = target.parent; p; p = p.parent) ancestors.push(p.source);
-		const retyped = edit.retypeInFile(content, src, ancestors, line);
-		if (retyped === null) {
-			await this.writeNodeFile(src, content.slice(0, src.range.start) + line + content.slice(src.range.end));
+		const result = edit.renameInFile(content, src, ancestors, newLine);
+		const retyped = result.retyped;
+		let renamed = result.text;
+		// A renamed heading takes its links along (when Obsidian's link
+		// auto-update is on): this note's own in the same write, other notes'
+		// after it.
+		const headingRename = planHeadingRename(this.app, file, lineAt(content, src.range.start), newLine, renamed);
+		const ownLinks = headingRename === null ? null : rewriteOwnLinks(this.app, headingRename, renamed);
+		if (ownLinks !== null) renamed = ownLinks.text;
+		if (!retyped) {
+			await this.writeNodeFile(src, renamed);
+			if (headingRename !== null) await rewriteVaultLinks(this.app, this.edits, headingRename, ownLinks?.count ?? 0);
 			return;
 		}
 		// The node may have moved, so its old offset no longer finds it; match
 		// it by its new kind and unchanged text instead.
 		this.pendingSelectionRangeStart = null;
-		await this.writeNodeFile(src, retyped);
+		await this.writeNodeFile(src, renamed);
 		const type = src.type === "heading" ? undefined : "heading";
 		for (const [id, layoutNode] of this.nodeMap) {
 			const s = layoutNode.source;
@@ -8304,6 +8249,263 @@ export class MindMapView extends ItemView {
 				this.selectNode(id);
 				break;
 			}
+		}
+	}
+
+	/** The find bar's side of the map (`FindHost`): the note's nodes and its transclusions', collapsed ones included. */
+	private findHost(): FindHost {
+		return {
+			items: () => this.findItems(),
+			go: (match) => void this.goToFound(match.id),
+			highlight: (ids) => this.markFound(ids),
+			replaceBlocked: () => (this.isReadingMode ? "Reading mode: map editing is off" : null),
+			replace: (plan) => this.replaceFound(plan),
+			focusView: () => this.contentEl.focus(),
+		};
+	}
+
+	/** Every node of the map in document order, a transcluded one filed under its own note. Card fences are data, not text, and are left out. */
+	private findItems(): FindItem[] {
+		const tree = this.currentTree;
+		const file = this.currentFile;
+		// A spatial study session hides answers in place, so find has nothing to show while one runs.
+		if (!tree || !file || this.spatialMode === "study") return [];
+		const items: FindItem[] = [];
+		const walk = (node: OsmosisNode): void => {
+			for (const child of node.children) {
+				const fence = OSMOSIS_FENCE_REGEX.test(child.content.split("\n", 1)[0]?.trim() ?? "");
+				if (!fence) items.push({ id: child.id, note: child.isTranscluded && child.sourceFile ? child.sourceFile : file.path, text: child.content, replaceable: replaceableLine(child) });
+				walk(child);
+			}
+		};
+		walk(tree.root);
+		return items;
+	}
+
+	/** Go to a find match: open any collapsed branch it is in, select it and centre it, keeping the zoom. */
+	private async goToFound(id: string): Promise<void> {
+		if (!this.currentTree) return;
+		let expanded = false;
+		for (const ancestor of ancestorsOf(this.currentTree.root, id)) {
+			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
+		}
+		if (expanded || this.progressive) await this.render();
+		const layoutNode = this.nodeMap.get(id);
+		if (!layoutNode) return;
+		this.selectNode(id);
+		this.centerOnNode(layoutNode);
+	}
+
+	/** Mark the find bar's matches on the drawn nodes (and, through `foundIds`, on those drawn later). */
+	private markFound(ids: ReadonlySet<string>): void {
+		if (this.svg) {
+			for (const id of this.foundIds) this.svg.querySelector(`[data-node-id="${id}"]`)?.classList.remove("osmosis-node-find-match");
+			for (const id of ids) this.svg.querySelector(`[data-node-id="${id}"]`)?.classList.add("osmosis-node-find-match");
+		}
+		this.foundIds = ids;
+	}
+
+	/**
+	 * Write a find bar Replace into its note (the map's own, or a transcluded
+	 * one): every line it changes, as renames would (`rewriteLines`), in one
+	 * write and one undo step. If a line's bytes changed since the parse,
+	 * nothing is written. Renamed headings take their links along, as
+	 * `renameNode`'s do.
+	 */
+	private async replaceFound(plan: ReplacePlan): Promise<boolean> {
+		if (!await this.assertEditableFresh() || !this.currentTree) return false;
+		const file = this.app.vault.getFileByPath(plan.note);
+		if (!(file instanceof TFile)) return false;
+		const content = await this.app.vault.read(file);
+		const rewrites: LineRewrite[] = [];
+		for (const [id, text] of plan.texts) {
+			const line = findNodeById(this.currentTree.root, id);
+			if (line) rewrites.push({ line, text });
+		}
+		const done = rewrites.length === plan.texts.size ? rewriteLines(content, rewrites) : null;
+		const first = rewrites[0]?.line;
+		if (!done || !first) {
+			new Notice("Osmosis: that note changed; search again");
+			return false;
+		}
+		let out = done.text;
+		if (out === content) return false;
+		const renames: { rename: HeadingRename; own: number }[] = [];
+		for (const line of done.lines) {
+			const rename = planHeadingRename(this.app, file, line.before, line.after, out);
+			if (rename === null) continue;
+			const own = rewriteOwnLinks(this.app, rename, out);
+			out = own.text;
+			renames.push({ rename, own: own.count });
+		}
+		await this.writeNodeFile(first, out);
+		for (const { rename, own } of renames) await rewriteVaultLinks(this.app, this.edits, rename, own);
+		return true;
+	}
+
+	/** The toolbar's Add link: arm on the selection (the next tap on a node is the target), or disarm. */
+	private toggleLinkPick(): void {
+		if (!this.linkPicker.armed && !this.assertEditable()) return;
+		if (this.linkPicker.toggle([...this.selectedNodeIds])) new Notice("Tap the node to link to");
+		this.toolRibbon?.setActive("add-link", this.linkPicker.armed);
+	}
+
+	/** Escape, reading mode, another note: disarm Add link. True when it was armed. */
+	private cancelLinkPick(): boolean {
+		const was = this.linkPicker.cancel();
+		if (was) this.toolRibbon?.setActive("add-link", false);
+		return was;
+	}
+
+	/**
+	 * A tap or click while Add link is armed, on `nodeId` (null: empty space)
+	 * at client point (x, y): the link menu there, or cancel
+	 * (`LinkPicker.tap`). The mode ends at the pick, so dismissing the menu
+	 * writes nothing and leaves it disarmed.
+	 */
+	private pickLinkTarget(nodeId: string | null, x: number, y: number): void {
+		const pick = this.linkPicker.tap({ target: nodeId, linkable: true });
+		this.toolRibbon?.setActive("add-link", this.linkPicker.armed);
+		if (pick.kind === "link") this.showLinkMenu(pick.sources, pick.target, x, y);
+	}
+
+	/**
+	 * The menu the 3D graph shows, for the armed nodes and the tapped target: Add
+	 * link (`linkNodes`), Move under, Move after, or for the map's root Move to
+	 * end of note (`moveNodesTo`, the drag and drop's write). The moves are
+	 * offered only for siblings (a drag moves only those) and never into a
+	 * source's own subtree; Add link only when some source can take the link.
+	 */
+	private showLinkMenu(sourceIds: readonly string[], targetId: string, x: number, y: number): void {
+		const target = this.nodeMap.get(targetId);
+		const sources = sourceIds.flatMap((id) => {
+			const node = this.nodeMap.get(id);
+			return node === undefined ? [] : [node];
+		});
+		if (target === undefined || sources.length === 0) {
+			new Notice("Osmosis: that line has changed; try again");
+			return;
+		}
+		const root = target.source.type === "root";
+		const hostPath = this.currentFile?.path;
+		// As `linkNodes` judges it: the root and embed lines take no link, and the root links to its own note, which a line there can't hold.
+		const canLink = target.source.type !== "transclusion" && sources.some((node) => {
+			const type = node.source.type;
+			return type !== "root" && type !== "transclusion" && (!root || this.getNodeFile(node.source)?.path !== hostPath);
+		});
+		const parent = sources[0]!.parent;
+		const canMove = parent !== null && parent !== undefined
+			&& sources.every((node) => node.parent === parent && !this.isDescendant(node, target));
+		const items = linkMenuItems({ canLink, canMove, line: !root, root });
+		if (items.length === 0) {
+			new Notice("Osmosis: can't link or move those nodes there");
+			return;
+		}
+		const menu = new Menu();
+		for (const { choice, title, icon } of items) {
+			menu.addItem((item) => item.setTitle(title).setIcon(icon).onClick(() => {
+				if (choice === "link") void this.linkNodes(sourceIds, targetId);
+				else void this.moveNodesBy(sourceIds, targetId, choice);
+			}));
+		}
+		// After the release's own click has gone by, so it cannot close the menu.
+		window.setTimeout(() => menu.showAtPosition({ x, y }), 0);
+	}
+
+	/** The link menu's moves: `sourceIds` (siblings) under or after `targetId`, or to the end of the map's note. */
+	private async moveNodesBy(sourceIds: readonly string[], targetId: string, place: "under" | "after" | "end"): Promise<void> {
+		if (!await this.assertEditableFresh()) return;
+		const root = this.currentTree?.root;
+		const target = this.nodeMap.get(targetId);
+		const first = sourceIds[0];
+		const parent = target?.parent;
+		const drop = root === undefined || target === undefined || first === undefined ? null
+			: place === "under" ? { parentId: targetId, index: target.source.children.length }
+			: place === "end" ? { parentId: root.id, index: root.children.length }
+			: parent ? { parentId: parent.source.id, index: parent.source.children.indexOf(target.source) + 1 }
+			: null;
+		if (drop === null || first === undefined) {
+			new Notice("Osmosis: that line has changed; try again");
+			return;
+		}
+		await this.moveNodesTo(first, new Set(sourceIds), drop);
+	}
+
+	/**
+	 * Add a link to node `targetId` at the end of each source node's line, the
+	 * same edit as the 3D graph's "Add link" (`planSelectionLink`): the target
+	 * linked by its heading text or a block ID (stamped if it has none), the map's
+	 * root linked as its note. Each end is found again in a fresh parse of its
+	 * own file (a transcluded node's is its source file), and every file is
+	 * written in one undo step, the target's first.
+	 */
+	private async linkNodes(sourceIds: readonly string[], targetId: string): Promise<void> {
+		if (!await this.assertEditableFresh()) return;
+		const changed = (): void => void new Notice("Osmosis: that line has changed; try again");
+		const target = this.nodeMap.get(targetId)?.source;
+		const sources = sourceIds.flatMap((id) => {
+			const src = this.nodeMap.get(id)?.source;
+			return src === undefined ? [] : [src];
+		});
+		if (target === undefined || sources.length === 0) return changed();
+		// An embed line belongs to the note around it, not the one `getNodeFile` names; it can't take a link or an ID anyway.
+		if (target.type === "transclusion") {
+			new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+			return;
+		}
+		const toFile = this.getNodeFile(target);
+		if (toFile === null) return changed();
+		try {
+			const notes = new Map<string, PlanNote>();
+			const note = async (file: TFile): Promise<PlanNote> => {
+				const known = notes.get(file.path);
+				if (known !== undefined) return known;
+				const content = await this.app.vault.read(file);
+				const read = { content, root: this.parser.parse(content, file.path).root };
+				notes.set(file.path, read);
+				return read;
+			};
+			// The fresh node that is `src`, in `file`'s fresh parse; null when it is gone.
+			const fresh = async (src: OsmosisNode, file: TFile): Promise<OsmosisNode | null> => {
+				const found = nodeAtStart((await note(file)).root, src.range.start);
+				return found !== null && found.type === src.type && found.content === src.content ? found : null;
+			};
+			const toNode = target.type === "root" ? null : await fresh(target, toFile);
+			if (target.type !== "root" && toNode === null) return changed();
+			if (target.type === "root") await note(toFile);
+			const picked: PickedLine[] = [];
+			for (const src of sources) {
+				const file = src.type === "root" || src.type === "transclusion" ? null : this.getNodeFile(src);
+				const line = file === null ? null : await fresh(src, file);
+				if (file !== null && line !== null) picked.push({ path: file.path, line });
+			}
+			const plan = planSelectionLink(notes, picked, { path: toFile.path, node: toNode }, (fromPath, subpath, alias) => this.app.fileManager.generateMarkdownLink(toFile, fromPath, subpath, alias));
+			if (plan === null) {
+				new Notice("Osmosis: can't link to that line (it can't take a block ID)");
+				return;
+			}
+			if (plan.lines.length === 0) {
+				new Notice("Osmosis: can't add a link to that line");
+				return;
+			}
+			// Keep the (first) linked line selected after the re-render, as an edit of its text does.
+			const first = plan.lines[0]!;
+			if (first.path === this.currentFile?.path) this.pendingSelectionRangeStart = first.start;
+			// The target's note first, so a failure leaves a harmless ID rather than a link to nothing.
+			const writes = [...plan.texts].sort(([a], [b]) => Number(b === toFile.path) - Number(a === toFile.path));
+			this.beginEditGroup();
+			try {
+				for (const [path, text] of writes) {
+					const file = this.app.vault.getFileByPath(path);
+					if (file !== null) await this.writeFileTracked(file, text);
+				}
+			} finally {
+				this.endEditGroup();
+			}
+			await this.resyncFromParent();
+		} catch (error) {
+			console.error("Osmosis: mind map could not add that link", error);
+			new Notice("Osmosis: could not add that link");
 		}
 	}
 
@@ -8372,9 +8574,7 @@ export class MindMapView extends ItemView {
 		const content = await this.app.vault.read(file);
 		const lineText = content.slice(src.range.start, src.range.end);
 		const isChecked = src.metadata?.checked as boolean;
-		const toggled = isChecked
-			? lineText.replace(/\[x\]/i, "[ ]")
-			: lineText.replace("[ ]", "[x]");
+		const toggled = edit.toggleCheckboxLine(lineText, isChecked);
 		const updated =
 			content.slice(0, src.range.start) +
 			toggled +
@@ -8398,11 +8598,7 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const { type: childType, depth: childDepth } = edit.inferChildContext(src);
-		const newLine = this.serializeLine(childType, childDepth, "");
-		const insertPos = edit.childInsertOffset(src);
-
-		const updated = edit.insertAt(content, insertPos, newLine).text;
+		const updated = edit.insertChild(content, src).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
@@ -8412,11 +8608,11 @@ export class MindMapView extends ItemView {
 	}
 
 	/**
-	 * Add a sibling node after the given node.
+	 * Add a sibling node after the given node (or before it with `before`).
 	 * Inserts a new line after the node's subtree at the same level.
 	 * For transcluded nodes, writes to the source file.
 	 */
-	private async addSiblingNode(node: LayoutNode): Promise<void> {
+	private async addSiblingNode(node: LayoutNode, before = false): Promise<void> {
 		const target = await this.assertEditableNode(node);
 		if (!target) return;
 		if (!this.currentFile) return;
@@ -8425,34 +8621,12 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		// If sibling of a checkbox, create a new unchecked checkbox
-		const newContent = src.metadata?.checkbox ? "[ ] " : "";
-		const insertPos = this.subtreeEnd(src);
-
-		let insertText: string;
-		if (
-			src.type === "paragraph" ||
-			src.type === "codeblock" ||
-			src.type === "table" ||
-			src.type === "blockquote"
-		) {
-			// Paragraphs, code blocks, tables, and blockquotes need a blank line separator
-			// Use a zero-width space as placeholder (not stripped by trim())
-			insertText = "\n\n\u200B";
-		} else {
-			const newLine = this.serializeLine(src.type, src.depth, newContent);
-			insertText = "\n" + newLine;
-		}
-
-		const updated =
-			content.slice(0, insertPos) +
-			insertText +
-			content.slice(insertPos);
+		const updated = (before ? edit.insertSiblingBefore : edit.insertSibling)(content, src).text;
 
 		const selectedId = this.selectedNodeId;
 		await this.writeNodeFile(src, updated);
 
-		// Find and start editing the new sibling (node right after the original)
+		// Find and start editing the new sibling (the node right after the original, or right before it)
 		this.startEditingNewNode(selectedId, false);
 	}
 
@@ -8469,38 +8643,29 @@ export class MindMapView extends ItemView {
 		if (!file) return;
 		const content = await this.app.vault.read(file);
 
-		const start = src.range.start;
-		const end = this.subtreeEnd(src);
+		const updated = edit.deleteSubtree(content, src);
 
-		// Also consume the preceding or following newline to avoid blank lines
-		let deleteStart = start;
-		let deleteEnd = end;
-
-		if (deleteStart > 0 && content[deleteStart - 1] === "\n") {
-			deleteStart--;
-		} else if (deleteEnd < content.length && content[deleteEnd] === "\n") {
-			deleteEnd++;
-		}
-
-		const updated =
-			content.slice(0, deleteStart) + content.slice(deleteEnd);
-
-		// Select the parent or sibling after deletion
-		const parentId =
-			node.parent?.source.type !== "root" ? node.parent?.source.id : null;
+		// The previous sibling, else the parent, is selected after deletion.
+		const afterId = selectAfterDelete(this.treeRootOf(node), [src.id]);
 		await this.writeNodeFile(src, updated);
 
-		// Try to select something reasonable after deletion — without panning to
-		// it: deleting a node must leave the viewport where the user had it.
-		if (parentId) {
-			const parentNode = this.nodeMap.get(parentId);
-			if (parentNode) {
-				this.selectNode(parentId);
-			}
-		} else {
-			const first = this.currentLayout?.nodes.find((n) => n.source.type !== "root");
-			if (first) this.selectNode(first.source.id);
-		}
+		// Without panning to it: deleting a node must leave the viewport where
+		// the user had it.
+		this.selectNodeAfterDelete(afterId);
+	}
+
+	/**
+	 * Move a node and its subtree into a new note, leaving an `![[embed]]` in
+	 * its place (see `src/convert-branch.ts`). One undo step reverts the map's
+	 * note, the moved styles and history, and the rewritten links; the new note
+	 * itself stays (undo can't delete a file).
+	 */
+	private async convertBranch(node: LayoutNode): Promise<void> {
+		const target = await this.assertEditableNode(node);
+		if (!target || !this.currentFile) return;
+		if (target.source.type === "root" || !canConvertBranch(target.source)) return;
+		const { branchNoteFolder: folder, branchNoteTemplate: template } = this.plugin.settings;
+		await convertBranchToNote(this.moveContext(), { folder, template }, this.currentFile, target.source.id);
 	}
 
 	/**
@@ -8553,15 +8718,25 @@ export class MindMapView extends ItemView {
 	 * The chain absorbs a rejection so one failed pass cannot wedge every later
 	 * one; the pass's own promise still rejects for its caller.
 	 */
-	private render(): Promise<void> {
-		const next = this.renderChain.then(() => this.renderPass());
+	private render(keepDrawn = false, step?: number): Promise<void> {
+		const next = this.renderChain.then(() => this.renderPass(keepDrawn, step));
 		this.renderChain = next.catch(() => undefined);
 		return next;
 	}
 
-	private async renderPass(): Promise<void> {
+	/**
+	 * @param keepDrawn the pass follows a map edit: keep the node groups that
+	 *   would draw the same and move them into place (see {@link redrawInPlace}).
+	 * @param step a progressive open's own relayout (its token, see
+	 *   {@link measureRest}): lay out from the sizes measured so far. Any other
+	 *   pass measures everything, as it always has, and so ends the open.
+	 */
+	private async renderPass(keepDrawn = false, step?: number): Promise<void> {
 		if (this.closed) return;
+		// A step whose open another pass already ended: nothing to do.
+		if (step !== undefined && this.progressive?.token !== step) return;
 		const container = this.contentEl;
+		const perfStart = this.perf?.start() ?? 0;
 
 		// Clean up previous render component
 		this.renderComponent?.unload();
@@ -8570,6 +8745,7 @@ export class MindMapView extends ItemView {
 
 		if (!this.currentTree) {
 			this.toolRibbon?.detach();
+			this.findBar?.detach();
 			container.empty();
 			container.addClass("osmosis-mindmap-container");
 			container.createEl("p", {
@@ -8591,29 +8767,50 @@ export class MindMapView extends ItemView {
 		// Build per-node shape overrides from frontmatter
 		const nodeShapes = this.buildNodeShapeMap();
 
-		// Measure actual content sizes in a detached div to avoid clearing the
-		// visible SVG. This prevents the flash/blip during re-renders.
-		const nodeSizes = await this.measureNodeSizes(
-			container,
-			this.currentTree,
-			nodeShapes,
-		);
+		const isFirstRender = !this.svg;
+		const progress = this.progressive;
+		// The drawn node a progressive open holds still, where it is now.
+		const anchorBefore = progress ? this.svgPositionOf(progress.anchorId) : null;
+		if (step === undefined) this.progressive = null;
 
-		const layout = computeLayout(
-			this.currentTree,
-			{
-				direction: this.mapSettings.direction,
-				horizontalSpacing: this.mapSettings.horizontalSpacing,
-				verticalSpacing: this.mapSettings.verticalSpacing,
-				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
-				balance: this.mapSettings.balance ?? "one-side",
-				layoutSide: this.mapSettings.layoutSide ?? "right",
-			},
-			this.collapsedIds,
-			nodeSizes,
-			nodeShapes,
-			this.buildNodeSidesMap(),
-		);
+		let layout: LayoutResult;
+		let measured: number;
+		let openedFirstView = false;
+		if (step !== undefined && progress) {
+			measured = this.perf?.start() ?? 0;
+			layout = this.layoutMap(progress.sizes, nodeShapes);
+			if (progress.pending.size === 0) {
+				this.progressive = null;
+				this.unsettledIds = null;
+				this.perf?.openSettled(performance.now() - progress.startedAt);
+			} else {
+				const pending = new Set(progress.pending.keys());
+				const sides = this.buildNodeSidesMap();
+				const probes = [PROBE_BIG, PROBE_SMALL].map((probe) =>
+					this.layoutMap(probeSizes(progress.sizes, pending, probe), nodeShapes, sides));
+				this.unsettledIds = unsettledOf(layout, settledWith(layout, probes, pending, progress.anchorId));
+			}
+		} else {
+			const first = isFirstRender && !keepDrawn
+				? await this.planOpening(container, nodeShapes)
+				: null;
+			if (first) {
+				layout = first;
+				openedFirstView = true;
+			} else {
+				// Measure actual content sizes in a detached div to avoid clearing the
+				// visible SVG. This prevents the flash/blip during re-renders.
+				const nodeSizes = await this.measureNodeSizes(
+					container,
+					this.currentTree,
+					nodeShapes,
+				);
+				layout = this.layoutMap(nodeSizes, nodeShapes);
+				this.unsettledIds = null;
+			}
+			measured = this.perf?.start() ?? 0;
+		}
+		const laidOut = this.perf?.start() ?? 0;
 		// The SVG draws layout space shifted by -bounds (see getOffsetX/Y), so an
 		// edit that moves the map's top-left bound — deleting the widest node on
 		// a left-side map, say — would slide the whole drawing under a fixed
@@ -8622,7 +8819,14 @@ export class MindMapView extends ItemView {
 			? { x: this.getOffsetX(), y: this.getOffsetY() }
 			: null;
 		this.currentLayout = layout;
-		if (prevOffset && this.svg) {
+		this.drawGeneration++;
+		// A progressive open's relayout moves its estimated nodes, and so the
+		// whole drawing: hold the anchor (and with it every drawn node) still.
+		const anchorAfter = progress ? this.svgPositionOf(progress.anchorId) : null;
+		if (anchorBefore && anchorAfter && this.svg) {
+			this.viewBox.x += anchorAfter.x - anchorBefore.x;
+			this.viewBox.y += anchorAfter.y - anchorBefore.y;
+		} else if (prevOffset && this.svg) {
 			this.viewBox.x += this.getOffsetX() - prevOffset.x;
 			this.viewBox.y += this.getOffsetY() - prevOffset.y;
 		}
@@ -8638,12 +8842,23 @@ export class MindMapView extends ItemView {
 		// Now that measurement and layout are done, swap out the old SVG.
 		// Defer container.empty() until just before appending the new SVG
 		// to avoid a visible flash.
-		const isFirstRender = !this.svg;
+		const inPlace = keepDrawn && this.canRedrawInPlace(container);
 		this.toolRibbon?.detach();
-		container.empty();
+		this.findBar?.detach();
+		if (inPlace) {
+			// Everything but the map itself goes, as `empty()` would take it.
+			const live = this.viewportHost ?? this.svg;
+			for (const child of Array.from(container.childNodes)) {
+				if (child !== live) child.remove();
+			}
+		} else {
+			container.empty();
+		}
 		container.addClass("osmosis-mindmap-container");
 
-		await this.renderSvg(container, layout);
+		const kept = inPlace
+			? await this.redrawInPlace(container, layout)
+			: (await this.renderSvg(container, layout), 0);
 
 		// Auto-frame all content on initial open so the user sees the whole map
 		if (isFirstRender) {
@@ -8669,6 +8884,147 @@ export class MindMapView extends ItemView {
 		// Re-attach toolbar (container.empty() removes it)
 		this.toolRibbon?.attach();
 		this.updateToolbarState();
+		// The find bar too, and find again in what was just drawn.
+		this.findBar?.attach();
+		this.findBar?.refresh();
+		this.perf?.attach();
+		this.perf?.rendered(perfStart, measured - perfStart, laidOut - measured, kept, this.renderedNodeIds.size);
+		if (openedFirstView && this.progressive) {
+			this.perf?.openFirstView(performance.now() - this.progressive.startedAt);
+			void this.measureRest(this.progressive.token);
+		}
+	}
+
+	/** Lay the current tree out with these node sizes (unlisted nodes are estimated). */
+	private layoutMap(
+		sizes: Map<string, { width: number; height: number }>,
+		nodeShapes: Map<string, TopicShape>,
+		sides = this.buildNodeSidesMap(),
+	): LayoutResult {
+		return computeLayout(
+			this.currentTree!,
+			{
+				direction: this.mapSettings.direction,
+				horizontalSpacing: this.mapSettings.horizontalSpacing,
+				verticalSpacing: this.mapSettings.verticalSpacing,
+				topicShape: this.mapSettings.topicShape ?? "rounded-rect",
+				balance: this.mapSettings.balance ?? "one-side",
+				layoutSide: this.mapSettings.layoutSide ?? "right",
+			},
+			this.collapsedIds,
+			sizes,
+			nodeShapes,
+			sides,
+		);
+	}
+
+	/** A laid-out node's top-left in SVG coordinates, or null. */
+	private svgPositionOf(id: string): { x: number; y: number } | null {
+		const node = this.currentLayout?.nodes.find((n) => n.source.id === id);
+		return node ? { x: node.rect.x + this.getOffsetX(), y: node.rect.y + this.getOffsetY() } : null;
+	}
+
+	/**
+	 * T84: open a large map from its first fitted view. Measures the nodes in
+	 * and around that view (see `planFirstView`), marks every node whose place
+	 * can still change as unsettled (not drawn), and returns the layout to draw.
+	 * Null when the map is small, fits the container, or has boundaries (drawn
+	 * around whole subtrees): the pass then measures everything, as before.
+	 */
+	private async planOpening(
+		container: HTMLElement,
+		nodeShapes: Map<string, TopicShape>,
+	): Promise<LayoutResult | null> {
+		const fm = this.osmosisStyleFrontmatter;
+		if (!this.currentTree || fm?.styles || fm?.variants) return null;
+		const startedAt = performance.now();
+		const { sizes, toMeasure, treePathMap } = this.collectMeasureWork(this.currentTree, nodeShapes);
+		if (toMeasure.length < PROGRESSIVE_MIN_NODES) return null;
+		const rect = container.getBoundingClientRect();
+		const pending = new Map(toMeasure.map((e) => [e.node.id, e]));
+		const pendingIds = new Set(pending.keys());
+		const sides = this.buildNodeSidesMap();
+		const first = await planFirstView({
+			layoutOf: (s) => this.layoutMap(s, nodeShapes, sides),
+			sizes,
+			pending: pendingIds,
+			measure: async (ids) => {
+				await this.measureEntries(container, ids.map((id) => pending.get(id)!), sizes, treePathMap, nodeShapes, this.renderComponent);
+				for (const id of ids) {
+					pending.delete(id);
+					pendingIds.delete(id);
+				}
+			},
+			container: { w: rect.width, h: rect.height },
+			padding: LAYOUT_PADDING,
+			minZoom: MIN_ZOOM,
+			maxZoom: MAX_ZOOM,
+			margin: CULL_MARGIN,
+		});
+		// What was measured is cached, so the full measure that follows a
+		// null only does the rest.
+		if (!first) return null;
+		this.progressive = {
+			token: ++this.progressiveToken,
+			pending,
+			sizes,
+			anchorId: first.anchorId,
+			treePathMap,
+			nodeShapes,
+			startedAt,
+			movedAt: 0,
+			passAt: performance.now(),
+		};
+		this.unsettledIds = unsettledOf(first.layout, first.settled);
+		return first.layout;
+	}
+
+	/**
+	 * Measure what a progressive open left, in batches nearest the view first,
+	 * yielding the frame every {@link MEASURE_SLICE_MS}. A batch relays out only
+	 * after the view moved and settled (see {@link PROGRESSIVE_IDLE_MS}); the
+	 * last one always does, which draws the remaining nodes and ends the open.
+	 * Stops when any other pass ends the open (it measures the rest itself).
+	 */
+	private async measureRest(token: number): Promise<void> {
+		const component = new Component();
+		component.load();
+		try {
+			for (;;) {
+				const p = this.progressive;
+				if (!p || p.token !== token || this.closed) return;
+				if (p.pending.size === 0) {
+					await this.render(true, token);
+					return;
+				}
+				const anchor = this.currentLayout?.nodes.find((n) => n.source.id === p.anchorId);
+				const ids = this.currentLayout && anchor
+					? measureOrder(this.currentLayout, new Set(p.pending.keys()), { x: anchor.rect.x, y: anchor.rect.y }).slice(0, PROGRESSIVE_BATCH)
+					: [...p.pending.keys()].slice(0, PROGRESSIVE_BATCH);
+				const epoch = this.nodeSizeCache.epoch;
+				const done = await this.measureEntries(
+					this.contentEl, ids.map((id) => p.pending.get(id)!), p.sizes, p.treePathMap, p.nodeShapes, component,
+					() => this.progressive !== p || this.closed || this.nodeSizeCache.epoch !== epoch,
+				);
+				if (this.progressive !== p) return;
+				// The cache was cleared (a style or setting changed): what was
+				// measured may be stale. A full pass measures everything again
+				// and ends the open.
+				if (this.nodeSizeCache.epoch !== epoch) {
+					await this.render();
+					return;
+				}
+				if (!done) continue; // A pass emptied the container mid-batch: measure it again.
+				for (const id of ids) p.pending.delete(id);
+				const now = performance.now();
+				if (p.pending.size > 0 && p.movedAt > p.passAt && now - p.movedAt >= PROGRESSIVE_IDLE_MS) {
+					p.passAt = now;
+					await this.render(true, token);
+				}
+			}
+		} finally {
+			component.unload();
+		}
 	}
 
 	/**
@@ -8684,19 +9040,19 @@ export class MindMapView extends ItemView {
 		tree: OsmosisTree,
 		nodeShapes?: Map<string, TopicShape>,
 	): Promise<Map<string, { width: number; height: number }>> {
-		const sizes = new Map<string, { width: number; height: number }>();
-		const cfg = DEFAULT_LAYOUT_CONFIG;
-		const effectiveMaxNodeWidth =
-			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
-		// Reduce max content width for shapes with insets so text wraps before
-		// the shape boundary clips it.
-		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
-		const globalShapeInsets = getShapeInsets(globalShape);
-		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
-		const globalShapeScale = 1 - globalTotalInsetX;
-		const defaultContentMaxWidth = effectiveMaxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
+		const { sizes, toMeasure, treePathMap } = this.collectMeasureWork(tree, nodeShapes);
+		if (toMeasure.length > 0) {
+			await this.measureEntries(container, toMeasure, sizes, treePathMap, nodeShapes, this.renderComponent);
+		}
+		return sizes;
+	}
 
-		const sourcePath = this.currentFile?.path ?? "";
+	/** The sizes {@link measureNodeSizes} has cached, and the nodes it must measure. */
+	private collectMeasureWork(
+		tree: OsmosisTree,
+		nodeShapes?: Map<string, TopicShape>,
+	): { sizes: Map<string, { width: number; height: number }>; toMeasure: MeasureEntry[]; treePathMap: Map<string, string> } {
+		const sizes = new Map<string, { width: number; height: number }>();
 		const allNodes = this.collectAllNodes(tree.root);
 
 		// Build a map of nodeId → tree-path so we can resolve tree-path style
@@ -8705,11 +9061,8 @@ export class MindMapView extends ItemView {
 
 		// Collect nodes that need measurement (not in cache).
 		// Cache key includes heading depth and per-node style hash since typography varies.
-		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
-			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
-			: undefined;
 		const globalWidth = this.mapSettings.baseStyle?.width;
-		const toMeasure: { node: OsmosisNode; displayContent: string; cacheKey: string; customWidth?: number }[] = [];
+		const toMeasure: MeasureEntry[] = [];
 		for (const node of allNodes) {
 			if (node.type === "root") continue;
 			const displayContent = this.getNodeDisplayContent(node);
@@ -8735,17 +9088,65 @@ export class MindMapView extends ItemView {
 				toMeasure.push({ node, displayContent, cacheKey, customWidth: nodeWidth });
 			}
 		}
+		return { sizes, toMeasure, treePathMap };
+	}
 
-		// Only create the measurer if there are uncached nodes
-		if (toMeasure.length > 0) {
+	/**
+	 * Measure `toMeasure` into `sizes` and the size cache, rendering with
+	 * `component`. With `cancelled` (a progressive open's background batches),
+	 * rendering yields the frame every {@link MEASURE_SLICE_MS} and gives up —
+	 * returning false, recording nothing — once `cancelled()` or once a pass
+	 * has emptied the container out from under the measurer.
+	 */
+	private async measureEntries(
+		container: HTMLElement,
+		toMeasure: MeasureEntry[],
+		sizes: Map<string, { width: number; height: number }>,
+		treePathMap: Map<string, string>,
+		nodeShapes: Map<string, TopicShape> | undefined,
+		component: Component | null,
+		cancelled?: () => boolean,
+	): Promise<boolean> {
+		const cfg = DEFAULT_LAYOUT_CONFIG;
+		const effectiveMaxNodeWidth =
+			this.mapSettings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth;
+		// Reduce max content width for shapes with insets so text wraps before
+		// the shape boundary clips it.
+		const globalShape = this.mapSettings.topicShape ?? "rounded-rect";
+		const globalShapeInsets = getShapeInsets(globalShape);
+		const globalTotalInsetX = Math.min(globalShapeInsets.left, 0.45) + Math.min(globalShapeInsets.right, 0.45);
+		const globalShapeScale = 1 - globalTotalInsetX;
+		const defaultContentMaxWidth = effectiveMaxNodeWidth * globalShapeScale - cfg.nodePaddingX * 2;
+		const sourcePath = this.currentFile?.path ?? "";
+		const activeVariantDef = this.osmosisStyleFrontmatter?.activeVariant
+			? this.osmosisStyleFrontmatter.variants?.[this.osmosisStyleFrontmatter.activeVariant]
+			: undefined;
+		{
 			const measurer = createDiv();
+			const gaveUp = (): boolean => !!cancelled && (cancelled() || !measurer.isConnected);
 			measurer.style.cssText = `
 				position: absolute; left: -9999px; top: -9999px;
 				visibility: hidden; pointer-events: none;
 			`;
 			container.appendChild(measurer);
 
-			for (const { node, displayContent, cacheKey, customWidth } of toMeasure) {
+			// Render every cell first, then read them all: interleaving each
+			// render with its own size read forced one layout per node, which
+			// on a note with thousands of nodes is most of the opening time.
+			// Sizes do not change: a cell's own box does not depend on its
+			// siblings. The reads come in two rounds, natural widths and then
+			// the wrapped heights of the cells narrowed in between.
+			const cells: HTMLDivElement[] = [];
+			let sliceStart = performance.now();
+			for (const { node, displayContent } of toMeasure) {
+				if (cancelled && performance.now() - sliceStart > MEASURE_SLICE_MS) {
+					await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+					sliceStart = performance.now();
+				}
+				if (gaveUp()) {
+					measurer.remove();
+					return false;
+				}
 				// Render into a wide cell so nothing wraps, then use Range to
 				// measure actual content width (ignores block-level expansion).
 				const cell = createDiv();
@@ -8774,13 +9175,13 @@ export class MindMapView extends ItemView {
 				const osmosisCard = this.getOsmosisCardContent(node);
 				if (osmosisCard) {
 					await this.renderOsmosisCardInto(cell, osmosisCard, sourcePath);
-				} else if (this.renderComponent) {
+				} else if (component) {
 					await MarkdownRenderer.render(
 						this.app,
 						displayContent,
 						cell,
 						sourcePath,
-						this.renderComponent,
+						component,
 					);
 				}
 
@@ -8803,12 +9204,27 @@ export class MindMapView extends ItemView {
 						cell.insertBefore(cb, cell.firstChild);
 					}
 				}
+				cells.push(cell);
+			}
+			if (gaveUp()) {
+				measurer.remove();
+				return false;
+			}
 
-				// Use Range to get tight bounding box of actual rendered content
+			// Use Range to get tight bounding box of actual rendered content
+			const contentRects = cells.map((cell) => {
 				const range = document.createRange();
 				range.selectNodeContents(cell);
-				const contentRect = range.getBoundingClientRect();
+				return range.getBoundingClientRect();
+			});
+
+			// Widths, and the cells that must be narrowed and read again.
+			const results: { width: number; height: number | null }[] = [];
+			toMeasure.forEach(({ node, displayContent, customWidth }, i) => {
+				const cell = cells[i]!;
+				const contentRect = contentRects[i]!;
 				const naturalWidth = contentRect.width;
+				const osmosisCard = this.getOsmosisCardContent(node);
 
 				// Compute per-node content max width based on effective shape
 				const nodeShape = nodeShapes?.get(node.id) ?? globalShape;
@@ -8818,20 +9234,18 @@ export class MindMapView extends ItemView {
 					const insetX = Math.min(insets.left, 0.45) + Math.min(insets.right, 0.45);
 					contentMaxWidth = effectiveMaxNodeWidth * (1 - insetX) - cfg.nodePaddingX * 2;
 				}
-
-				let finalWidth: number;
-				let finalHeight: number;
+				// A code block with no custom width fits its longest line (up to
+				// CODE_FIT_MAX_COLUMNS) instead of the map's max node width.
+				if (customWidth === undefined && node.type === "codeblock" && !osmosisCard) {
+					contentMaxWidth = codeFitLimitPx(naturalWidth, displayContent, CODE_BLOCK_PAD_PX);
+				}
 
 				if (customWidth !== undefined) {
 					// Custom width set via drag-to-resize: use it directly
-					finalWidth = customWidth;
 					cell.setCssStyles({ width: `${String(customWidth)}px` });
-					finalHeight = Math.max(
-						Math.ceil(cell.getBoundingClientRect().height),
-						20,
-					);
+					results.push({ width: customWidth, height: null });
 				} else {
-					finalWidth = Math.min(
+					const finalWidth = Math.min(
 						Math.max(Math.ceil(naturalWidth), 40),
 						contentMaxWidth,
 					);
@@ -8841,24 +9255,30 @@ export class MindMapView extends ItemView {
 						cell.setCssStyles({
 							width: `${String(contentMaxWidth)}px`,
 						});
-						finalHeight = Math.max(
-							Math.ceil(cell.getBoundingClientRect().height),
-							20,
-						);
+						results.push({ width: finalWidth, height: null });
 					} else {
-						finalHeight = Math.max(Math.ceil(contentRect.height), 20);
+						results.push({
+							width: finalWidth,
+							height: Math.max(Math.ceil(contentRect.height), 20),
+						});
 					}
 				}
+			});
 
-				const size = { width: finalWidth, height: finalHeight };
+			toMeasure.forEach(({ node, cacheKey }, i) => {
+				const { width, height } = results[i]!;
+				const size = {
+					width,
+					height: height ?? Math.max(Math.ceil(cells[i]!.getBoundingClientRect().height), 20),
+				};
 				sizes.set(node.id, size);
 				this.nodeSizeCache.set(cacheKey, size);
-			}
+			});
 
 			measurer.remove();
 		}
 
-		return sizes;
+		return true;
 	}
 
 	/** Collect all OsmosisNodes from the tree into a flat array. */
@@ -8935,7 +9355,8 @@ export class MindMapView extends ItemView {
 			}
 			return `\u2022 ${node.content}`;
 		}
-		return node.content;
+		// A line group (T75) shows all its lines: a cover image above its title.
+		return groupDisplayMarkdown(node);
 	}
 
 	/** YouTube / video URL patterns → embed URL extractors */
@@ -9023,14 +9444,19 @@ export class MindMapView extends ItemView {
 		svg.addClass("osmosis-mindmap-svg");
 		if (this.panByTransform) svg.addClass("osmosis-mindmap-svg-transformed");
 
-		// Initialize viewBox: use actual container dimensions so culling works from the start.
-		// The user sees the top-left portion of the map; pan/zoom to explore.
+		// Initialize viewBox on first render to the fit `renderPass` applies
+		// right after (`fitToView`), so the nodes drawn below are the ones the
+		// first frame shows. Drawing the container's top-left at zoom 1 instead
+		// rendered a viewport the fit then culled straight away.
 		if (!this.svg) {
 			const containerRect = container.getBoundingClientRect();
-			const w = containerRect.width || contentWidth;
-			const h = containerRect.height || contentHeight;
-			this.viewBox = { x: 0, y: 0, w, h };
-			this.zoom = 1;
+			const fit = fitViewBox(
+				contentWidth, contentHeight,
+				containerRect.width, containerRect.height,
+				MIN_ZOOM, MAX_ZOOM,
+			);
+			this.viewBox = fit.viewBox;
+			this.zoom = fit.zoom;
 		}
 
 		// On the transform path the SVG carries no viewBox at all: without one,
@@ -9052,6 +9478,11 @@ export class MindMapView extends ItemView {
 		// viewport unset for that window rather than measuring a detached box,
 		// which degrades to a no-op pan instead of a jump.
 		this.viewportHost = null;
+		this.viewportLayer = null;
+		this.clearViewportRepaint();
+
+		// Boundaries (clouds) go behind everything: they wrap whole subtrees.
+		this.drawBoundaries(svg, layout, offsetX, offsetY);
 
 		// Create groups for layering: branch lines behind nodes
 		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
@@ -9114,40 +9545,182 @@ export class MindMapView extends ItemView {
 		}
 
 		await Promise.all(renderPromises);
-		if (this.panByTransform) {
-			const host = container.createDiv({ cls: "osmosis-mindmap-host" });
-			host.appendChild(svg);
-			this.viewportHost = host;
-			// The host is in the document now, so it has a box to measure —
-			// place the map. This is the transform path's equivalent of the
-			// viewBox attribute set above, not a viewport change, so it stays
-			// clear of updateViewBox()'s culling and overlay side effects.
-			svg.style.transform = viewBoxTransform(
-				this.viewBox,
-				host.getBoundingClientRect(),
-			);
-		} else {
-			container.appendChild(svg);
-		}
+		const host = container.createDiv({ cls: "osmosis-mindmap-host" });
+		const layer = host.createDiv({ cls: "osmosis-mindmap-layer" });
+		layer.appendChild(svg);
+		this.viewportHost = host;
+		this.viewportLayer = layer;
+		// The host is in the document now, so it has a box to measure — place
+		// the map (on iOS, the transform path's equivalent of the viewBox
+		// attribute set above). Not a viewport change, so it stays clear of
+		// updateViewBox()'s culling and overlay side effects.
+		this.paintViewBox();
 	}
 
-	private async drawNode(
-		svg: SVGElement,
-		node: LayoutNode,
-		offsetX: number,
-		offsetY: number,
-	): Promise<void> {
-		const x = node.rect.x + offsetX;
-		const y = node.rect.y + offsetY;
-		const { width, height } = node.rect;
+	/**
+	 * Whether an edit's pass may update the live SVG instead of replacing it.
+	 * Only from the plain editing state: no study session (it rewrites groups),
+	 * no fold animation running (a moved group would animate its translation),
+	 * no node editor open and no drag under way.
+	 */
+	private canRedrawInPlace(container: HTMLElement): boolean {
+		const live = this.viewportHost ?? this.svg;
+		return !!this.svg && !!this.nodesGroup && live?.parentNode === container
+			&& this.nodesGroup.parentNode === this.svg
+			&& this.spatialMode === "off" && !this.svg.hasClass("osmosis-animating")
+			&& this.editingNodeId === null && this.dragGhost === null;
+	}
 
+	/**
+	 * {@link renderSvg} for a pass that follows an edit (T80): the same drawing,
+	 * reached by keeping the live SVG. Boundaries and branch lines are cheap and
+	 * redrawn. Each visible node whose group would draw the same
+	 * ({@link drawSignature}, and nothing has touched the group since) keeps it,
+	 * translated to its new place, so the browser does not lay its Markdown out
+	 * again; the rest are drawn as a full pass draws them.
+	 *
+	 * @returns how many node groups were kept.
+	 */
+	private async redrawInPlace(container: HTMLElement, layout: LayoutResult): Promise<number> {
+		const svg = this.svg!;
+		const nodesGroup = this.nodesGroup!;
+		const offsetX = this.getOffsetX();
+		const offsetY = this.getOffsetY();
+		if (!this.panByTransform) this.paintViewBox();
+
+		// Everything in the SVG but the node groups goes, as a new SVG would
+		// not have it: boundaries, branch lines, a stray rubber band.
+		for (const child of Array.from(svg.childNodes)) {
+			if (child !== nodesGroup) child.remove();
+		}
+		this.drawBoundaries(svg, layout, offsetX, offsetY);
+		const boundaries = svg.lastElementChild;
+		if (boundaries && boundaries !== nodesGroup) svg.insertBefore(boundaries, nodesGroup);
+		const branchLinesGroup = document.createElementNS(SVG_NS, "g");
+		branchLinesGroup.setAttribute("class", "osmosis-branch-lines-group");
+		svg.insertBefore(branchLinesGroup, nodesGroup);
+		this.branchLinesGroup = branchLinesGroup;
+		const lineStyle = this.mapSettings.branchLineStyle;
+		container.style.backgroundColor = this.mapSettings.background ?? this.activeTheme?.background ?? "";
+
+		// The same visibility rules as renderSvg.
+		this.renderedNodeIds.clear();
+		this.renderedBranchIds.clear();
+		const wanted: WantedNode<LayoutNode>[] = [];
+		for (const node of layout.nodes) {
+			if (node.source.type === "root") continue;
+			if (this.isNodeInViewport(node, offsetX, offsetY)) {
+				this.renderedNodeIds.add(node.source.id);
+				wanted.push({
+					id: node.source.id,
+					node,
+					// A node that can't be kept still needs a signature that matches nothing.
+					sig: this.drawSignature(node) ?? "\u0000",
+					x: node.rect.x + offsetX,
+					y: node.rect.y + offsetY,
+				});
+			}
+			if (
+				node.parent &&
+				node.parent.source.type !== "root" &&
+				this.isBranchInViewport(node.parent, node, offsetX, offsetY)
+			) {
+				this.renderedBranchIds.add(node.source.id);
+				this.drawBranchLine(branchLinesGroup, node.parent, node, offsetX, offsetY, lineStyle);
+			}
+		}
+
+		const drawn: DrawnGroup<Element>[] = [];
+		for (const el of Array.from(nodesGroup.children)) {
+			const rec = this.drawRecords.get(el);
+			const untouched = !!rec
+				&& el.getAttribute("class") === rec.cls
+				&& !el.querySelector(":scope > foreignObject")?.hasAttribute("class")
+				&& this.nodeHtmlCache.get(rec.htmlKey) === rec.html;
+			drawn.push({
+				id: el.getAttribute("data-node-id") ?? "",
+				el,
+				sig: untouched ? rec.sig : null,
+				x: rec?.x ?? 0,
+				y: rec?.y ?? 0,
+			});
+		}
+		const plan = planReuse(drawn, wanted);
+		for (const el of plan.remove) el.remove();
+		for (const { el, dx, dy } of plan.keep) {
+			const transform = translateAttr(dx, dy);
+			if (transform === null) el.removeAttribute("transform");
+			else el.setAttribute("transform", transform);
+		}
+
+		// New and changed nodes are drawn off-document and go in together.
+		const staging = document.createElementNS(SVG_NS, "g");
+		await Promise.all(plan.draw.map((node) => this.drawNode(staging, node, offsetX, offsetY)));
+		nodesGroup.append(...Array.from(staging.childNodes));
+
+		if (this.panByTransform) this.paintViewBox();
+		return plan.keep.length;
+	}
+
+	/**
+	 * Draw every boundary (cloud) style in the map: a soft hull around the
+	 * node and its laid-out descendants, so folding or editing re-shapes it on
+	 * the next pass. Not viewport-culled: there are few, and one spans many
+	 * nodes. Outer boundaries are drawn first, so an inner one lies on top.
+	 */
+	private drawBoundaries(svg: SVGElement, layout: LayoutResult, offsetX: number, offsetY: number): void {
+		const fm = this.osmosisStyleFrontmatter;
+		// Only a node's own style, class or variant sets one; never the theme.
+		if (!fm?.styles && !fm?.variants) return;
+		const looks = new Map<LayoutNode, NonNullable<ReturnType<typeof resolveBoundary>>>();
+		for (const node of layout.nodes) {
+			if (node.source.type === "root") continue;
+			const localStyle = lookupNodeStyle(fm, node);
+			const classStyle = lookupClassStyle(fm, localStyle?.class, this.getGlobalClasses());
+			const variantStyle = lookupVariantStyle(fm, node);
+			if (!localStyle?.boundary && !classStyle?.boundary && !variantStyle?.boundary) continue;
+			const depth = node.source.type === "heading" ? node.source.depth : undefined;
+			const look = resolveBoundary(resolveNodeStyle(this.effectiveTheme, depth, localStyle, classStyle, variantStyle));
+			if (look) looks.set(node, look);
+		}
+		if (looks.size === 0) return;
 		const group = document.createElementNS(SVG_NS, "g");
+		group.setAttribute("class", "osmosis-boundaries-group");
+		for (const { node, hull } of boundaryShapes([layout.root], (n) => looks.has(n), BOUNDARY_PADDING)) {
+			const look = looks.get(node)!;
+			const path = document.createElementNS(SVG_NS, "path");
+			path.setAttribute("class", "osmosis-boundary");
+			// Not data-node-id: lookups by that attribute expect a node group.
+			path.setAttribute("data-boundary-id", node.source.id);
+			path.setAttribute("d", roundedHullPath(hull.map((p) => ({ x: p.x + offsetX, y: p.y + offsetY })), BOUNDARY_PADDING));
+			const accent = "var(--interactive-accent)";
+			const styles = [
+				`fill: ${look.fill ?? accent}`,
+				`fill-opacity: ${String(look.fillOpacity)}`,
+				`stroke: ${look.strokeWidth > 0 ? (look.stroke ?? accent) : "none"}`,
+				`stroke-opacity: ${String(look.strokeOpacity)}`,
+				`stroke-width: ${String(look.strokeWidth)}`,
+				"pointer-events: none",
+			];
+			if (look.dash === "dashed") styles.push(`stroke-dasharray: ${String(look.strokeWidth * 4)} ${String(look.strokeWidth * 3)}`);
+			else if (look.dash === "dotted") styles.push(`stroke-dasharray: 0 ${String(look.strokeWidth * 2.5)}`, "stroke-linecap: round");
+			path.setAttribute("style", styles.join("; "));
+			group.appendChild(path);
+		}
+		svg.appendChild(group);
+	}
+
+	/** The class attribute of a node's group, as {@link drawNode} sets it. */
+	private nodeGroupClass(node: LayoutNode): string {
 		const classes = [
 			`osmosis-node-group`,
 			`osmosis-node-group-${node.source.type}`,
 		];
 		if (this.selectedNodeIds.has(node.source.id)) {
 			classes.push("osmosis-node-selected");
+		}
+		if (this.foundIds.has(node.source.id)) {
+			classes.push("osmosis-node-find-match");
 		}
 		if (
 			node.source.type === "transclusion" &&
@@ -9171,7 +9744,51 @@ export class MindMapView extends ItemView {
 		) {
 			classes.push("osmosis-node-transcluded");
 		}
-		group.setAttribute("class", classes.join(" "));
+		return classes.join(" ");
+	}
+
+	/**
+	 * Everything a node's drawing depends on apart from its position, or null
+	 * when its group must always be redrawn: a checkbox (its click handler and
+	 * checked state are bound at draw time). Two equal signatures draw the same
+	 * group, offset by the move between them.
+	 */
+	private drawSignature(node: LayoutNode): string | null {
+		const src = node.source;
+		if (src.metadata?.checkbox) return null;
+		const fm = this.osmosisStyleFrontmatter;
+		const depth = src.type === "heading" ? src.depth : undefined;
+		const localStyle = lookupNodeStyle(fm, node);
+		const classStyle = lookupClassStyle(fm, localStyle?.class, this.getGlobalClasses());
+		const variantStyle = lookupVariantStyle(fm, node);
+		const resolved = (this.effectiveTheme || localStyle || classStyle || variantStyle)
+			? resolveNodeStyle(this.effectiveTheme, depth, localStyle, classStyle, variantStyle)
+			: null;
+		const lazy = this.lazyTransclusionIds.has(src.id) && !!src.metadata?.resolved;
+		return JSON.stringify([
+			this.nodeGroupClass(node), src.id, src.type, depth ?? null, src.sourceFile ?? null,
+			src.content, this.getNodeDisplayContent(src), !!src.metadata?.cyclic, resolved,
+			this.mapSettings.topicShape ?? null, this.activeTheme?.topicShape ?? null,
+			node.rect.width, node.rect.height, src.children.length > 0 || lazy,
+			this.collapsedIds.has(src.id), node.side ?? null, this.mapSettings.direction ?? null,
+		]);
+	}
+
+	private async drawNode(
+		svg: SVGElement,
+		node: LayoutNode,
+		offsetX: number,
+		offsetY: number,
+	): Promise<void> {
+		const x = node.rect.x + offsetX;
+		const y = node.rect.y + offsetY;
+		const { width, height } = node.rect;
+
+		const group = document.createElementNS(SVG_NS, "g");
+		// Set when the content is a clone of the HTML cache: only such a group
+		// can be kept by a later edit's pass (see `drawRecords`).
+		let fromCache: { key: string; html: HTMLElement } | null = null;
+		group.setAttribute("class", this.nodeGroupClass(node));
 		group.setAttribute("data-node-id", node.source.id);
 		if (node.source.sourceFile) {
 			group.setAttribute("data-source-file", node.source.sourceFile);
@@ -9297,6 +9914,7 @@ export class MindMapView extends ItemView {
 				? null
 				: this.nodeHtmlCache.get(cacheKey);
 			if (cachedHtml) {
+				fromCache = { key: cacheKey, html: cachedHtml };
 				// Clone cached rendered content instead of re-rendering markdown
 				for (const child of Array.from(cachedHtml.childNodes)) {
 					wrapper.appendChild(child.cloneNode(true));
@@ -9412,6 +10030,14 @@ export class MindMapView extends ItemView {
 			group.appendChild(resizeHandle);
 		}
 
+		if (fromCache) {
+			const sig = this.drawSignature(node);
+			if (sig !== null) {
+				this.drawRecords.set(group, {
+					sig, x, y, cls: group.getAttribute("class") ?? "", htmlKey: fromCache.key, html: fromCache.html,
+				});
+			}
+		}
 		svg.appendChild(group);
 	}
 

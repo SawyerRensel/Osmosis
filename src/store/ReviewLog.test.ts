@@ -141,6 +141,11 @@ describe("parseEntry rejection and defaults", () => {
 		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"bogus","m":"bogus"}');
 		expect(parsed).toMatchObject({ s: "review", m: "sequential" });
 	});
+
+	it("keeps the relational mode", () => {
+		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"review","m":"relational"}');
+		expect(parsed).toMatchObject({ m: "relational" });
+	});
 });
 
 describe("shard header", () => {
@@ -513,12 +518,13 @@ describe("aggregateRollup", () => {
 			entry({ t: day(10), r: 3, s: "review", m: "contextual" }),
 			entry({ t: day(11), r: 3, s: "review", m: "spatial" }),
 			entry({ t: day(12), r: 4, s: "review", m: "spatial" }),
+			entry({ t: day(13), r: 2, s: "review", m: "relational" }),
 		]);
 
 		const bucket = rollup["2026-08-07"];
-		expect(bucket?.byRating).toEqual({ 1: 1, 2: 0, 3: 2, 4: 1 });
-		expect(bucket?.byState).toEqual({ new: 0, learning: 0, review: 3, relearning: 1 });
-		expect(bucket?.byMode).toEqual({ sequential: 1, contextual: 1, spatial: 2 });
+		expect(bucket?.byRating).toEqual({ 1: 1, 2: 1, 3: 2, 4: 1 });
+		expect(bucket?.byState).toEqual({ new: 0, learning: 0, review: 4, relearning: 1 });
+		expect(bucket?.byMode).toEqual({ sequential: 1, contextual: 1, spatial: 2, relational: 1 });
 	});
 
 	it("splits counts and time by review class", () => {
@@ -584,7 +590,7 @@ describe("mergeRollups", () => {
 		const merged = mergeRollups([desktop, phone]);
 		expect(merged["2026-08-07"]).toMatchObject({ reviews: 2, timeMs: 1500 });
 		expect(merged["2026-08-07"]?.byRating).toEqual({ 1: 1, 2: 0, 3: 1, 4: 0 });
-		expect(merged["2026-08-07"]?.byMode).toEqual({ sequential: 1, contextual: 0, spatial: 1 });
+		expect(merged["2026-08-07"]?.byMode).toEqual({ sequential: 1, contextual: 0, spatial: 1, relational: 0 });
 	});
 
 	it("sums the review-class split across shards", () => {
@@ -1630,7 +1636,7 @@ describe("normalizeCache", () => {
 			timeMs: 0,
 			byRating: { 1: 2, 2: 0, 3: 0, 4: 0 },
 			byState: { new: 0, learning: 0, review: 0, relearning: 0 },
-			byMode: { sequential: 0, contextual: 0, spatial: 0 },
+			byMode: { sequential: 0, contextual: 0, spatial: 0, relational: 0 },
 			byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 			timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 		});

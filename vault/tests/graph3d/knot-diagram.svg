@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200" width="400" height="200">
+  <rect width="400" height="200" fill="#f4f1ea"/>
+  <!-- a bowline loop: standing part, loop, working end -->
+  <path d="M 40 170 L 200 110" fill="none" stroke="#5c564a" stroke-width="10" stroke-linecap="round"/>
+  <ellipse cx="260" cy="90" rx="70" ry="50" fill="none" stroke="#8a6d3b" stroke-width="10"/>
+  <path d="M 200 110 C 230 60, 300 60, 330 120" fill="none" stroke="#5c564a" stroke-width="10" stroke-linecap="round"/>
+</svg>

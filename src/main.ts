@@ -12,14 +12,19 @@ import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
-import { TOOLBAR_GROUPS } from "./views/ToolRibbon";
+import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
+import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyModal } from "./views/SequentialStudyModal";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
+import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
+import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
+import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
 import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
-import { LineRevealProcessor } from "./views/LineRevealProcessor";
+import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
+import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
@@ -42,9 +47,10 @@ import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
+import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
-import type { DeckScope } from "./study/types";
+import type { StudyScope } from "./study/types";
 
 /**
  * Extensions the "Create image occlusion" item is offered for — Obsidian's own
@@ -127,6 +133,11 @@ export default class OsmosisPlugin extends Plugin {
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
 	mutationHistory!: MutationHistory;
+	/** Undo/redo for map edits, one history per file, shared by the mind map and the 3D graph. */
+	readonly editHistory = new EditHistory(() => ({
+		maxSteps: this.settings.undoMaxSteps,
+		maxMemoryMB: this.settings.undoMaxMemoryMB,
+	}));
 	reviewLog!: ReviewLog;
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
@@ -159,6 +170,10 @@ export default class OsmosisPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+
+		// Node editors stand in as the active MarkdownView while focused, so
+		// plugins like QuickAdd can read and replace their selection.
+		this.register(installMarkdownViewStandIn(this.app));
 
 		// Armed before anything can await it — the startup scan below settles it.
 		this.cardStoreReady = new Promise<void>((resolve) => {
@@ -278,6 +293,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
+		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
 		// note-level querying, sorting and `.base` persistence, and a second
@@ -315,6 +331,9 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// The Osmosis bar hides Obsidian's navigation bar only while a map is the active view: it comes back whenever another view becomes active.
+		this.registerEvent(this.app.workspace.on("active-leaf-change", () => syncNavbar(this.app)));
+
 		// One command per mind map toolbar button, so each can take a hotkey.
 		// None ships with one: the view's built-in keys already cover them.
 		for (const def of TOOLBAR_GROUPS.flat()) {
@@ -323,12 +342,38 @@ export default class OsmosisPlugin extends Plugin {
 				id: `mindmap-${def.id}`,
 				name: def.command,
 				icon: def.icon,
+				// The 3D graph draws the same ribbon (minus fold and unfold), so the command runs there too.
 				checkCallback: (checking) => {
-					const view = this.app.workspace.getActiveViewOfType(MindMapView);
-					return view?.runToolbarCommand(def, checking) ?? false;
+					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(Graph3DView);
+					return view ? view.runToolbarCommand(def, checking) : false;
 				},
 			});
 		}
+
+		// The 2D/3D toggle: the header's 2D | 3D pill has no toolbar button, so its command stands alone (same id as before, so a hotkey on it survives).
+		this.addCommand({
+			id: TOGGLE_3D_COMMAND.id,
+			name: TOGGLE_3D_COMMAND.name,
+			icon: TOGGLE_3D_COMMAND.icon,
+			checkCallback: (checking) => {
+				const map = this.app.workspace.getActiveViewOfType(MindMapView);
+				const graph = map ? null : this.app.workspace.getActiveViewOfType(Graph3DView);
+				if (!map && !graph) return false;
+				if (!checking) void (map ? map.switchTo3D() : graph?.switchTo2D());
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "open-graph3d",
+			name: "Open 3D graph for current note",
+			checkCallback: (checking) => {
+				const file = this.app.workspace.getActiveFile();
+				if (file?.extension !== "md") return false;
+				if (!checking) void this.openGraph3D(file);
+				return true;
+			},
+		});
 
 		this.addCommand({
 			id: "open-properties-sidebar",
@@ -385,6 +430,29 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
+		// ── Note header ⋯ menu: Peek ────────────────────────────
+		// The note view is Obsidian's, not ours, so its ⋯ menu is reached through
+		// the workspace `file-menu` event (source "more-options", which carries
+		// the leaf). `setSection("pane")` joins the editor-behaviour group at the
+		// top (Rapid flashcard mode sits there too). Peek used to be a header button.
+		this.registerEvent(
+			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, source: string, leaf?: WorkspaceLeaf) => {
+				if (source !== "more-options") return;
+				if (!(file instanceof TFile) || file.extension !== "md") return;
+				const view = leaf?.view;
+				if (!(view instanceof MarkdownView) || !this.lineReveal.hasCards(file.path)) return;
+				menu.addItem((item) => {
+					item.setTitle("Peek mode")
+						.setIcon(peekIcon())
+						.setChecked(this.lineReveal.isPeeking(file.path))
+						.setSection("pane")
+						.onClick(() => {
+							this.lineReveal.peekNote(view);
+						});
+				});
+			}),
+		);
+
 		// ── File menu: "Mind map view" ──────────────────────────
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
@@ -402,6 +470,13 @@ export default class OsmosisPlugin extends Plugin {
 							} else {
 								void this.activateMindMapView();
 							}
+						});
+				});
+				menu.addItem((item) => {
+					item.setTitle("3D graph")
+						.setIcon("orbit")
+						.onClick(() => {
+							void this.openGraph3D(file);
 						});
 				});
 				menu.addItem((item) => {
@@ -485,6 +560,12 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
 				this.addMindMapActionToMarkdownLeaves();
+				this.rememberActiveMapView();
+			}),
+		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				this.rememberActiveMapView();
 			}),
 		);
 		this.app.workspace.onLayoutReady(() => {
@@ -843,6 +924,9 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	onunload() {
+		// Never leave Obsidian's navigation bar hidden behind a plugin that is gone
+		document.body.removeClass(HIDE_NAVBAR_CLASS);
+		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
 		// ...and any fence schedules a contextual session was still holding, so
@@ -911,9 +995,6 @@ export default class OsmosisPlugin extends Plugin {
 			const viewActions = leaf.view.containerEl.querySelector(".view-actions");
 			if (!viewActions || viewActions.querySelector(".osmosis-mindmap-action")) continue;
 
-			// Find the reading-view toggle to insert before it
-			const readingViewBtn = viewActions.querySelector('a.clickable-icon[aria-label="Reading view"]');
-
 			const btn = createEl("a");
 			btn.className = "clickable-icon view-action osmosis-mindmap-action";
 			btn.setAttribute("aria-label", "Mind map view");
@@ -921,20 +1002,41 @@ export default class OsmosisPlugin extends Plugin {
 			btn.addEventListener("click", () => {
 				const file = (leaf.view as MarkdownView).file;
 				if (file) {
+					const to = this.lastMapView();
 					void leaf.setViewState({
-						type: VIEW_TYPE_MINDMAP,
-						state: { file: file.path },
+						type: to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP,
+						state: to === "3d" ? { focus: file.path } : { file: file.path },
 						active: true,
 					});
 				}
 			});
 
-			if (readingViewBtn) {
-				viewActions.insertBefore(btn, readingViewBtn);
+			// Directly left of Obsidian's reading/editing toggle, so 🧠, Study (which
+			// LineRevealProcessor puts right after 🧠) and Edit form one run, with no
+			// other header action between them; leftmost if the toggle is not found.
+			const modeToggle = findModeToggle(viewActions);
+			if (modeToggle) {
+				viewActions.insertBefore(btn, modeToggle);
 			} else {
 				viewActions.prepend(btn);
 			}
 		}
+	}
+
+	/** The map view the note header's brain button opens: the last one used on this device. */
+	private lastMapView(): MapViewKind {
+		return cleanLastMapView(this.app.loadLocalStorage(LAST_MAP_VIEW_STORAGE_KEY));
+	}
+
+	private rememberMapView(kind: MapViewKind): void {
+		if (this.lastMapView() !== kind) this.app.saveLocalStorage(LAST_MAP_VIEW_STORAGE_KEY, kind);
+	}
+
+	/** Record the active leaf's map view, if it is one: covers tab clicks, the 2D | 3D pill, file-menu opens and a restored workspace. */
+	private rememberActiveMapView(): void {
+		const { workspace } = this.app;
+		if (workspace.getActiveViewOfType(Graph3DView)) this.rememberMapView("3d");
+		else if (workspace.getActiveViewOfType(MindMapView)) this.rememberMapView("2d");
 	}
 
 	/** Re-measure and re-render every open mind map, after a global setting
@@ -942,6 +1044,32 @@ export default class OsmosisPlugin extends Plugin {
 	remeasureOpenMindMaps(): void {
 		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP)) {
 			if (leaf.view instanceof MindMapView) leaf.view.remeasureAndRender();
+		}
+	}
+
+	/** Apply the 3D graph navigation settings to every open 3D graph. */
+	/**
+	 * Take a change from the 3D Settings in the style sidebar: every open 3D graph shows
+	 * it at once. Saved straight to data.json, and debounced, since a slider
+	 * fires on every step; `saveSettings()` would also re-sync every card.
+	 */
+	setGraph3DOverlays(overlays: Graph3DOverlays): void {
+		this.settings.graph3dOverlays = overlays;
+		this.saveOverlays();
+		this.refreshOpenGraph3DControls();
+	}
+
+	/** Take the style sidebar's 3D Settings sections that are collapsed, saved like the overlays. */
+	setGraph3DSettingsCollapsed(collapsed: SettingsSectionId[]): void {
+		this.settings.graph3dSettingsCollapsed = collapsed;
+		this.saveOverlays();
+	}
+
+	private readonly saveOverlays = debounce(() => void this.saveData(this.settings), 500, true);
+
+	refreshOpenGraph3DControls(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D)) {
+			if (leaf.view instanceof Graph3DView) leaf.view.applyControlSettings();
 		}
 	}
 
@@ -960,6 +1088,30 @@ export default class OsmosisPlugin extends Plugin {
 			active: true,
 		});
 		void workspace.revealLeaf(leaf);
+	}
+
+	/**
+	 * The mind map's 2D/3D toggle: show the other view in `leaf`, with `state`.
+	 * The outgoing view lets go of its notes' undo histories when it closes,
+	 * which may be before the incoming one takes them, so `keep` is held
+	 * across the swap (see `holdAcross`).
+	 */
+	async swapLeafView(leaf: WorkspaceLeaf, to: "2d" | "3d", state: Record<string, unknown>, keep: Iterable<string>): Promise<void> {
+		const type = to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP;
+		try {
+			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
+			this.rememberMapView(to);
+		} catch (error) {
+			console.error("Osmosis: 2D/3D toggle failed", error);
+			new Notice("Osmosis: could not switch views");
+		}
+	}
+
+	/** A 3D graph opens in its own tab, centred on `file`. */
+	private async openGraph3D(file: TFile): Promise<void> {
+		const leaf = this.app.workspace.getLeaf("tab");
+		await leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { focus: file.path }, active: true });
+		void this.app.workspace.revealLeaf(leaf);
 	}
 
 	async activatePropertiesSidebar(): Promise<void> {
@@ -1134,7 +1286,7 @@ export default class OsmosisPlugin extends Plugin {
 		await this.app.workspace.getLeaf("tab").openFile(file);
 	}
 
-	async openStudySession(scope: DeckScope): Promise<void> {
+	async openStudySession(scope: StudyScope): Promise<void> {
 		const sessionManager = this.createSessionManager("sequential");
 		const modal = new SequentialStudyModal(
 			this.app,
@@ -1536,6 +1688,15 @@ export default class OsmosisPlugin extends Plugin {
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
+		// Replaced by graph3dOneFingerDrag before release, with a new default.
+		// Any saveSettings() wrote the old default here, so it is dropped rather
+		// than carried over.
+		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");
+		// Saved 3D graph node positions, dropped before release: a vault's
+		// shape keeps changing, so each session settles it afresh.
+		Reflect.deleteProperty(this.settings, "graph3dPositions");
+		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);
+		this.settings.graph3dSettingsCollapsed = normalizeCollapsed(this.settings.graph3dSettingsCollapsed);
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

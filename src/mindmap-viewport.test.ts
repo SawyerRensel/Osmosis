@@ -4,6 +4,9 @@ import {
 	viewBoxTransform,
 	clientToUser,
 	userToClient,
+	layerTransform,
+	layerTransformCss,
+	moveKind,
 	type ViewBox,
 	type ViewportBox,
 } from "./mindmap-viewport";
@@ -176,5 +179,83 @@ describe("clientToUser", () => {
 		);
 		expect(Number.isFinite(user.x)).toBe(true);
 		expect(Number.isFinite(user.y)).toBe(true);
+	});
+});
+
+describe("layerTransform", () => {
+	const viewport = { width: 800, height: 600 };
+	/** Where the layer transform puts a point painted for `painted`. */
+	function shown(painted: ViewBox, live: ViewBox, ux: number, uy: number, dpr = 1) {
+		const t = layerTransform(painted, live, viewport, dpr);
+		const at = userToClient(painted, { left: 0, top: 0, ...viewport }, ux, uy);
+		return { x: t.tx + at.x * t.scale, y: t.ty + at.y * t.scale };
+	}
+
+	it("is the identity when nothing moved", () => {
+		const box = { x: 10, y: 20, w: 400, h: 300 };
+		expect(layerTransform(box, { ...box }, viewport)).toEqual({ tx: 0, ty: 0, scale: 1 });
+		expect(layerTransformCss(layerTransform(box, { ...box }, viewport))).toBe("");
+	});
+
+	it("puts every point where the live viewBox paints it, for a pan", () => {
+		const painted = { x: 0, y: 0, w: 400, h: 300 };
+		const live = { x: 37, y: -12, w: 400, h: 300 };
+		for (const [ux, uy] of [[0, 0], [100, 250], [-300, 900]] as const) {
+			const want = userToClient(live, { left: 0, top: 0, ...viewport }, ux, uy);
+			const got = shown(painted, live, ux, uy);
+			expect(got.x).toBeCloseTo(want.x, 9);
+			expect(got.y).toBeCloseTo(want.y, 9);
+		}
+	});
+
+	it("puts every point where the live viewBox paints it, for a zoom out", () => {
+		const painted = { x: 0, y: 0, w: 400, h: 300 };
+		const live = { x: -100, y: -60, w: 640, h: 480 };
+		const t = layerTransform(painted, live, viewport);
+		expect(t.scale).toBeCloseTo(0.625, 12);
+		for (const [ux, uy] of [[0, 0], [200, 150], [-500, 700]] as const) {
+			const want = userToClient(live, { left: 0, top: 0, ...viewport }, ux, uy);
+			const got = shown(painted, live, ux, uy);
+			expect(got.x).toBeCloseTo(want.x, 9);
+			expect(got.y).toBeCloseTo(want.y, 9);
+		}
+	});
+
+	it("follows the meet rule when the aspect ratios differ", () => {
+		const painted = { x: 0, y: 0, w: 400, h: 400 };
+		const live = { x: 50, y: 50, w: 800, h: 400 };
+		const want = userToClient(live, { left: 0, top: 0, ...viewport }, 300, 120);
+		const got = shown(painted, live, 300, 120);
+		expect(got.x).toBeCloseTo(want.x, 9);
+		expect(got.y).toBeCloseTo(want.y, 9);
+	});
+
+	it("rounds a pure translation to whole device pixels", () => {
+		const painted = { x: 0, y: 0, w: 400, h: 300 };
+		const live = { x: 0.3, y: -0.26, w: 400, h: 300 };
+		// Zoom 2: the pan is -0.6 and 0.52 CSS px.
+		expect(layerTransform(painted, live, viewport, 1)).toEqual({ tx: -1, ty: 1, scale: 1 });
+		expect(layerTransform(painted, live, viewport, 2)).toEqual({ tx: -0.5, ty: 0.5, scale: 1 });
+	});
+
+	it("treats a scale within rounding of 1 as a translation", () => {
+		const painted = { x: 0, y: 0, w: 400, h: 300 };
+		const live = { x: 5, y: 5, w: 400 * (1 + 1e-12), h: 300 * (1 + 1e-12) };
+		expect(layerTransform(painted, live, viewport).scale).toBe(1);
+	});
+});
+
+describe("moveKind", () => {
+	it("translates at the same zoom, shrinks zooming out, repaints zooming in", () => {
+		expect(moveKind({ tx: 4, ty: 0, scale: 1 })).toBe("translate");
+		expect(moveKind({ tx: 0, ty: 0, scale: 0.8 })).toBe("shrink");
+		expect(moveKind({ tx: 0, ty: 0, scale: 1.01 })).toBe("repaint");
+	});
+});
+
+describe("layerTransformCss", () => {
+	it("omits the scale for a translation", () => {
+		expect(layerTransformCss({ tx: 3, ty: -2, scale: 1 })).toBe("translate(3px, -2px)");
+		expect(layerTransformCss({ tx: 3, ty: -2, scale: 0.5 })).toBe("translate(3px, -2px) scale(0.5)");
 	});
 });

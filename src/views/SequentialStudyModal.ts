@@ -1,6 +1,6 @@
 import { Component, Modal, MarkdownRenderer, setIcon, type App } from "obsidian";
 import type { StudySessionManager } from "../study/StudySessionManager";
-import type { StudyCard, DeckScope } from "../study/types";
+import type { StudyCard, StudyScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, ScheduleData } from "../database/types";
 import type { FenceWriter } from "../store/FenceWriter";
@@ -79,7 +79,7 @@ export class SequentialStudyModal extends Modal {
 	constructor(
 		app: App,
 		private readonly sessionManager: StudySessionManager,
-		private readonly deckScope: DeckScope,
+		private readonly deckScope: StudyScope,
 		private readonly studyOptions?: { newLimit?: number; reviewLimit?: number },
 		private readonly fenceWriter?: FenceWriter,
 		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
@@ -121,6 +121,11 @@ export class SequentialStudyModal extends Modal {
 		this.onSessionEnd?.();
 	}
 
+	private noteTitle(notePath: string): string {
+		const name = notePath.split("/").pop() ?? notePath;
+		return name.replace(/\.md$/i, "");
+	}
+
 	private buildLayout(): void {
 		const container = this.contentEl;
 
@@ -151,6 +156,15 @@ export class SequentialStudyModal extends Modal {
 		});
 		setIcon(this.undoBtn, "undo-2");
 		this.undoBtn.addEventListener("click", () => void this.undo());
+
+		// A single-note session says which note it is, since the deck breadcrumb
+		// (opt-in) names a deck, not the note the user came from.
+		if (this.deckScope.type === "note") {
+			container.createDiv({
+				cls: "osmosis-study-scope",
+				text: this.noteTitle(this.deckScope.notePath),
+			});
+		}
 
 		// Progress bar
 		this.progressEl = container.createDiv({ cls: "osmosis-study-progress" });

@@ -10,6 +10,7 @@ import {
 	parseOccludeBlock,
 	stripEmbedLabels,
 } from "./occlusion";
+import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } from "./cloze-colour";
 import type { GeneratedCard, FenceMetadata, DerivedSchedule } from "./types";
 
 /** Match an osmosis code fence block (3+ backticks). */
@@ -26,9 +27,13 @@ const INNER_FENCE_OPEN = /^```\w/;
  *   **text**        (group 3 = optional "cN:", group 4 = text)
  *   :::text:::      (group 5 = optional "cN:", group 6 = text)
  * The "cN:" prefix is optional on all three. When present it signals grouping.
+ * A `==` cloze may also open with a colour emoji (`==🔴text==`); the emoji is
+ * matched but not captured, so the group numbers above hold. See `cloze-colour.ts`.
  */
-const PROSE_CLOZE_REGEX =
-	/==(c\d+:)?([^=]+)==|\*\*(c\d+:)?([^*]+)\*\*|:::(c\d+:)?(.+?):::/g;
+const PROSE_CLOZE_REGEX = new RegExp(
+	`==${CLOZE_COLOUR_PATTERN}?(c\\d+:)?([^=]+)==|\\*\\*(c\\d+:)?([^*]+)\\*\\*|:::(c\\d+:)?(.+?):::`,
+	"g",
+);
 
 /** Match an inline `:::...:::` token for stripping markers. */
 const INLINE_MARKER_REGEX = /:::(?:c\d+:)?(.+?):::/g;
@@ -332,7 +337,7 @@ function collectClozeGroups(
 			if (match[2] !== undefined) {
 				delimiter = "==";
 				labelPrefix = match[1];
-				text = match[2]!;
+				text = parseHighlightToken(fullMatch).text;
 			} else if (match[4] !== undefined) {
 				delimiter = "**";
 				labelPrefix = match[3];
@@ -465,7 +470,10 @@ function renderClozeCard(
 			const hit = target.occurrences.find(
 				(o) => o.kind === "prose" && o.lineIdx === i && o.fullMatch === full,
 			);
-			if (hit) return CLOZE_BLANK;
+			if (hit) {
+				// A coloured highlight blanks in its colour.
+				return colourBlank(CLOZE_BLANK, full.startsWith("==") ? parseHighlightToken(full).colour : null);
+			}
 			// Non-target prose cloze: `:::` gets stripped to its text; `==`/`**`
 			// stay wrapped so highlight/bold rendering is preserved on both sides.
 			if (full.startsWith(":::")) {
@@ -473,7 +481,9 @@ function renderClozeCard(
 				return inner.replace(/^c\d+:/, "");
 			}
 			// `==cN:text==` or `**cN:text**` → strip the `cN:` label; keep delimiters.
-			const delim = full.startsWith("==") ? "==" : "**";
+			// A coloured `==` becomes a coloured `<mark>`, without its emoji.
+			if (full.startsWith("==")) return colourAnswer(full);
+			const delim = "**";
 			const body = full.slice(2, -2).replace(/^c\d+:/, "");
 			return `${delim}${body}${delim}`;
 		};
@@ -486,9 +496,9 @@ function renderClozeCard(
 				const inner = full.slice(3, -3);
 				return inner.replace(/^c\d+:/, "");
 			}
-			const delim = full.startsWith("==") ? "==" : "**";
+			if (full.startsWith("==")) return colourAnswer(full);
 			const body = full.slice(2, -2).replace(/^c\d+:/, "");
-			return `${delim}${body}${delim}`;
+			return `**${body}**`;
 		};
 		const back = raw.replace(PROSE_CLOZE_REGEX, replaceBack);
 		return { front, back };

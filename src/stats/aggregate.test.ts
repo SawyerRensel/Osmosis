@@ -482,6 +482,7 @@ describe("study mode totals", () => {
 			entry({ t: new Date(2026, 7, 6, 9, 0).getTime(), m: "sequential" }),
 			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), m: "spatial" }),
 			entry({ t: new Date(2026, 7, 7, 10, 0).getTime(), m: "spatial" }),
+			entry({ t: new Date(2026, 7, 7, 11, 0).getTime(), m: "relational" }),
 		]);
 		const points = dailySeries(rollup, new Date(2026, 7, 6, 9, 0).getTime(), AUG_7);
 
@@ -489,11 +490,12 @@ describe("study mode totals", () => {
 			sequential: 1,
 			contextual: 0,
 			spatial: 2,
+			relational: 1,
 		});
 	});
 
 	it("is all zeroes with no reviews", () => {
-		expect(studyModeTotals([], {})).toEqual({ sequential: 0, contextual: 0, spatial: 0 });
+		expect(studyModeTotals([], {})).toEqual({ sequential: 0, contextual: 0, spatial: 0, relational: 0 });
 	});
 });
 

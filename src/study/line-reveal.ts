@@ -8,6 +8,10 @@
  * notes/02_planning/notes_as_flashcards_plan.md §5 "Contextual (Note View)".
  */
 
+import { OsmosisParser } from "../parser";
+import { isLineGroup } from "../line-groups";
+import type { OsmosisNode } from "../types";
+
 /** A block ID's line span in the note (from the metadata cache `blocks` map). */
 export interface BlockRef {
 	id: string;
@@ -72,4 +76,35 @@ export function listItemIdsInRange(
 		.filter((i) => i.startLine >= lineStart && i.startLine <= lineEnd)
 		.sort((a, b) => a.startLine - b.startLine)
 		.map((i) => i.id);
+}
+
+/**
+ * The line span of every carded line group (T75) in a note, by block ID, from
+ * Osmosis's own parse. Obsidian's metadata cache cannot give it: it makes a
+ * heading its own block, so for `![[cover.png]]` + `## Title ^os-x` the
+ * block covers only the heading line, and for `## Title` + `caption ^os-x` only
+ * the caption. A group hides as the one node it is, so its span comes from here.
+ */
+export function lineGroupSpans(markdown: string, notePath: string): Map<string, BlockRef> {
+	const spans = new Map<string, BlockRef>();
+	const lineOf = (offset: number): number => {
+		let line = 0;
+		for (let i = markdown.indexOf("\n"); i !== -1 && i < offset; i = markdown.indexOf("\n", i + 1)) line++;
+		return line;
+	};
+	const visit = (node: OsmosisNode): void => {
+		if (node.blockId !== undefined && !node.isTranscluded && isLineGroup(node)) {
+			// `range.end` is exclusive and may sit on the newline after the last line.
+			const end = Math.max(node.range.start, node.range.end - 1);
+			spans.set(node.blockId, { id: node.blockId, startLine: lineOf(node.range.start), endLine: lineOf(end) });
+		}
+		for (const child of node.children) visit(child);
+	};
+	visit(new OsmosisParser().parse(markdown, notePath).root);
+	return spans;
+}
+
+/** `blocks` with each line group's span (`lineGroupSpans`) in place of Obsidian's block span. */
+export function withGroupSpans(blocks: readonly BlockRef[], spans: ReadonlyMap<string, BlockRef>): BlockRef[] {
+	return blocks.map((b) => spans.get(b.id) ?? b);
 }

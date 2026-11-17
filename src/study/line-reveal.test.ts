@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
 	blocksInRange,
 	computeRevealOrder,
+	lineGroupSpans,
 	listItemIdsInRange,
 	nextToReveal,
+	withGroupSpans,
 	type BlockRef,
 	type ListItemRef,
 } from "./line-reveal";
@@ -106,5 +108,35 @@ describe("listItemIdsInRange", () => {
 
 	it("returns empty for a section with no list items", () => {
 		expect(listItemIdsInRange([], 0, 10)).toEqual([]);
+	});
+});
+
+describe("lineGroupSpans (T75)", () => {
+	const md = [
+		"---", "tags: [x]", "---", "",
+		"![[cover.png]]", "## Rigging ^os-g1", "",
+		"## Mooring", "Pick up the buoy from downwind. ^os-g2", "",
+		"A single line ^os-s1", "",
+		"Above the rule", "***", "Below the rule ^os-g3",
+	].join("\n");
+
+	it("spans every line of a carded group, from the parse", () => {
+		const spans = lineGroupSpans(md, "a.md");
+		expect(spans.get("os-g1")).toEqual(block("os-g1", 4, 5));
+		expect(spans.get("os-g2")).toEqual(block("os-g2", 7, 8));
+		expect(spans.get("os-g3")).toEqual(block("os-g3", 12, 14));
+	});
+
+	it("leaves single lines to Obsidian's block span", () => {
+		expect(lineGroupSpans(md, "a.md").has("os-s1")).toBe(false);
+	});
+
+	it("replaces a group's metadata-cache span so a heading section finds it", () => {
+		// Obsidian's cache: the heading's block is its own line only.
+		const blocks = withGroupSpans([block("os-g1", 5), block("os-s1", 10)], lineGroupSpans(md, "a.md"));
+		const ids = new Set(["os-g1", "os-s1"]);
+		// The cover image's section (line 4) now belongs to the group.
+		expect(blocksInRange(blocks, ids, 4, 4).map((b) => b.id)).toEqual(["os-g1"]);
+		expect(blocksInRange(blocks, ids, 10, 10).map((b) => b.id)).toEqual(["os-s1"]);
 	});
 });

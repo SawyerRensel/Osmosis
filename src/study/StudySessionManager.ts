@@ -4,7 +4,8 @@ import type { Card, ScheduleData, StudyMode } from "../database/types";
 import type { CardStore } from "../store/CardStore";
 import type { FenceWriter, ScheduleFields } from "../store/FenceWriter";
 import type { ReviewLogEntry } from "../store/ReviewLog";
-import type { DeckScope, StudyCard, DeckCounts } from "./types";
+import type { StudyScope, StudyCard, DeckCounts } from "./types";
+import { dueCardsInNote, newCardsInNote } from "./note-scope";
 
 /** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
 export interface LineScheduleWriter {
@@ -54,7 +55,7 @@ export class StudySessionManager {
 	 * Respects daily limits.
 	 */
 	buildQueue(
-		scope: DeckScope,
+		scope: StudyScope,
 		options?: { newLimit?: number; reviewLimit?: number },
 		now?: number,
 	): StudyCard[] {
@@ -257,7 +258,7 @@ export class StudySessionManager {
 	/**
 	 * Get counts for a deck scope.
 	 */
-	getCounts(scope: DeckScope, now?: number): DeckCounts {
+	getCounts(scope: StudyScope, now?: number): DeckCounts {
 		const ts = now ?? Date.now();
 		const dueCards = this.getDueCards(scope, ts);
 		const newCards = this.getNewCards(scope);
@@ -315,7 +316,7 @@ export class StudySessionManager {
 		if (file) void this.fenceWriter.removeSchedule(file, cardId);
 	}
 
-	private getDueCards(scope: DeckScope, now: number): Card[] {
+	private getDueCards(scope: StudyScope, now: number): Card[] {
 		switch (scope.type) {
 			case "single":
 				return this.store.getDueCards(now, scope.deck);
@@ -323,10 +324,12 @@ export class StudySessionManager {
 				return this.store.getDueCardsByDeckPrefix(now, scope.deck);
 			case "all":
 				return this.store.getDueCards(now);
+			case "note":
+				return dueCardsInNote(this.store.getCardsByNote(scope.notePath), now);
 		}
 	}
 
-	private getNewCards(scope: DeckScope): Card[] {
+	private getNewCards(scope: StudyScope): Card[] {
 		switch (scope.type) {
 			case "single":
 				return this.store.getNewCards(scope.deck);
@@ -334,6 +337,8 @@ export class StudySessionManager {
 				return this.store.getNewCardsByDeckPrefix(scope.deck);
 			case "all":
 				return this.store.getNewCards();
+			case "note":
+				return newCardsInNote(this.store.getCardsByNote(scope.notePath));
 		}
 	}
 }

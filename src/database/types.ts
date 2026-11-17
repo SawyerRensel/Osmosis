@@ -104,7 +104,7 @@ export interface CardOcclusion {
 export type CardState = "new" | "learning" | "review" | "relearning";
 
 /** Study modes for review tagging. */
-export type StudyMode = "sequential" | "contextual" | "spatial";
+export type StudyMode = "sequential" | "contextual" | "spatial" | "relational";
 
 /** A card with content and optional scheduling data. */
 export interface Card {

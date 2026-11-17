@@ -1,0 +1,155 @@
+---
+title: Header - Map header order and overflow menu
+summary: "2D and 3D headers become [Note] [2D | 3D pill] [Study] [Edit] [⋯]; Style, Pin, Peek and Follow move into the ⋯ pane menu; the ribbon's Map properties brush goes."
+tags:
+  - task
+calendar:
+  - Optimization
+context:
+people:
+location:
+related:
+  - "[[Graph - Shared header for 2D and 3D]]"
+  - "[[Header - Note header gateway and overflow menu]]"
+  - "[[3D Graph - Settings in the style sidebar]]"
+  - "[[3D Graph - Shared toolbar ribbon]]"
+status: Done
+priority:
+progress:
+date_created: "2026-11-12T12:00:00.000Z"
+date_modified: "2026-11-17T00:43:08.000Z"
+date_start_scheduled: "2026-11-12T05:15:35.000Z"
+date_start_actual: "2026-11-12T05:15:35.000Z"
+date_end_scheduled: "2026-11-17T00:43:08.000Z"
+date_end_actual: "2026-11-17T00:43:08.000Z"
+all_day: false
+repeat_frequency:
+repeat_interval:
+repeat_until:
+repeat_count:
+repeat_byday:
+repeat_bymonth:
+repeat_bymonthday:
+repeat_bysetpos:
+repeat_completed_dates:
+parent:
+children:
+blocked_by:
+  - "[[Graph - Shared header for 2D and 3D]]"
+cover:
+color:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/48
+---
+
+# Optimization
+
+## What tool or process needs improvement?
+
+The 2D mind map and 3D graph view headers. Since [[Graph - Shared header for 2D and 3D]] they share an order, but they still carry seven icons in 2D (`pill, Note view, Reading, Style, Study, Pin, Peek`) and six in 3D (`… Follow`). On a phone that is crowded, and the view-specific extras shift the row between 2D and 3D.
+
+## What's slow or frustrating about it?
+
+Too many header icons, Reading sits left of Study (Sawyer wants it right of Study), and Style exists twice (header 🖌 and the ribbon's "Map properties" 🖌).
+
+## What would "better" look like?
+
+Both map views show exactly, in this order:
+
+`[📄 Note view] [2D | 3D pill] [Study] [Reading/Edit] [⋯]`
+
+Everything else lives in Obsidian's ⋯ pane menu.
+
+## Decisions (settled with Sawyer, 2026-11-12 UI feedback grilling; not to be re-decided)
+
+- Header order above, identical in 2D and 3D. Note view is a **separate icon button left of the pill**; the pill stays **2D | 3D only** ("the 2D/3D feel like a toggle between mind maps").
+- Reading/Edit moves to the **right of Study**.
+- **⋯ menu** (override `onPaneMenu` on both views, add items before Obsidian's defaults):
+  - Style (both views) — opens the style sidebar, same as the header 🖌 did.
+  - Pin, Peek — 2D only. Follow — 3D only. Show checked state where the item is a toggle (`setChecked`).
+- **Style lives only in ⋯.** Remove the ribbon's `open-properties` (🖌 "Map properties") button from `TOOLBAR_GROUPS`. Keep its command (`mindmap-open-properties`) registered so hotkeys still work — check whether the command is derived from the ribbon entry; if so, register it separately.
+- The note header is a separate ticket: [[Header - Note header gateway and overflow menu]].
+
+## Code facts (scout, 2026-11-12 — spot-check line numbers)
+
+- Order lives in `src/view-header.ts`: `SHARED_HEADER = ["switch","note-view","reading","style","study"]`, `HEADER_EXTRAS = { "2d": ["pin","peek"], "3d": ["follow"] }`. `arrangeViewHeader()` in `src/views/ViewHeader.ts:29` reorders `addAction` elements; `createViewSwitch` (`ViewHeader.ts:5`) builds the pill.
+- 2D actions: `src/views/MindMapView.ts:1964-2010`. Pin at ~`:770`, Peek `toggleSpatialPeek` ~`:1112`, Style `activatePropertiesSidebar()`.
+- 3D actions: `src/views/Graph3DView.ts:425-438`. Follow ~`:651`.
+- Neither view overrides `onPaneMenu` today.
+- Ribbon: `TOOLBAR_GROUPS` in `src/views/ToolRibbon.ts:56`, group 9 holds `refresh` + `open-properties`. Commands `mindmap-<id>` are registered from ribbon entries at `main.ts:335`.
+
+## Context budget
+
+`MindMapView.ts` is ~338 KB (~84k tokens) and contains NUL bytes — **never read it whole**; use `grep -a -n` and read line ranges. `Graph3DView.ts` is ~30k tokens; read ranges too.
+
+## Acceptance criteria
+
+- 2D and 3D headers show exactly `[Note view] [2D | 3D] [Study] [Reading/Edit] [⋯]`, same positions in both.
+- ⋯ in 2D has Style, Pin, Peek; ⋯ in 3D has Style, Follow; toggles show their state and work.
+- The ribbon no longer shows a 🖌 button; the Style command still works from the palette.
+- Header still fits on a phone without overflow.
+
+## Test plan
+
+Unit: update the `view-header.ts` tests for the new `SHARED_HEADER` order and empty header extras (extras now feed the pane menu — consider moving the per-view menu list into the same pure module and testing it).
+
+Manual (Ctrl+R after build):
+1. Open any note in 2D, then 3D: same five header items, same positions; pill switches views.
+2. ⋯ in 2D: Style opens the sidebar; Pin and Peek toggle and show checked state. ⋯ in 3D: Style, Follow.
+3. Ribbon has no brush; palette "Map properties" still opens the sidebar.
+4. Phone: header fits.
+
+## Out of scope
+
+- Note header (separate ticket). Study button behaviour in 2D/3D is unchanged.
+
+## What was implemented
+
+**Where it shipped:** [PR #48](https://github.com/SawyerRensel/Osmosis/pull/48), merged into `release/0.0.6` with the rest of the 3D graph / mind map stack (tip `perf/mindmap-no-positioned-node-content`).
+
+Sawyer confirmed the result by using it in practice (2026-11-16) rather than through a dedicated test pass. The cause, fix, decisions, surface map and fixture are in the batch implementation notes below.
+
+## Batch implementation notes
+
+**Approach.** `src/view-header.ts` now says `SHARED_HEADER = note-view, switch, study, reading` (identical in both views; `HEADER_EXTRAS` is gone) and a new `PANE_MENU` table lists each view's menu entries (2D: Style, Pin, Peek; 3D: Style, Follow; `toggle` marks the ones that show a check). `addPaneMenuItems` (`src/views/ViewHeader.ts`) turns that table plus per-view handlers into `menu.addItem` calls, then a separator. Both views override `onPaneMenu`, add their entries, and call `super.onPaneMenu` last so Obsidian's defaults follow.
+
+**Decisions worth remembering**
+- Pin, Peek, Follow and Style header buttons are removed outright, along with their `is-active` bookkeeping (`pinActionEl`, `spatialPeekActionEl`, `followActionEl`). The menu check mark is now the only visible pinned/peek/follow state; a pinned map still marks its tab title via the existing `updateHeader()`.
+- Peek keeps the `peekIcon()` fallback (eye-dashed / scan-eye / eye) through an `icon` override on the handler, since the pure module cannot call `getIconIds`.
+- Ribbon `open-properties` removed from `TOOLBAR_GROUPS`, with the `openProperties` action in `ToolbarActions` and both views' handlers (orphaned). No command had been generated from it (it had no `command`), and the palette command "Open mind map properties" (`open-properties-sidebar` in `main.ts`) is registered separately, so nothing to re-register. `ToolRibbon.test.ts` updated (every button now has a command).
+- The node context menu's "Map properties" item (MindMapView ~4681) is untouched.
+- Docs updated: `editing.md` toolbar table, `commands.md` header row, `graph-3d.md` header sentence.
+
+| File | Change |
+|---|---|
+| `src/view-header.ts` (+test) | New order, `PANE_MENU`, extras removed |
+| `src/views/ViewHeader.ts` | `addPaneMenuItems`, `PaneMenuHandler` |
+| `src/views/MindMapView.ts` | `onPaneMenu`; Style/Pin/Peek header buttons and their state removed; ribbon `openProperties` removed |
+| `src/views/Graph3DView.ts` | `onPaneMenu`; Style/Follow header buttons removed; ribbon `openProperties` removed |
+| `src/views/ToolRibbon.ts` (+test) | `open-properties` button and action removed |
+| `docs/mind-mapping/editing.md`, `docs/reference/commands.md`, `docs/mind-mapping/graph-3d.md` | Wording |
+
+**Fixture.** None new; any note, e.g. `vault/tests/graph3d/Styled Mooring.md`.
+
+**Not verified (cannot see Obsidian).** Header left-to-right placement and phone fit; that Obsidian's own ⋯ stays rightmost; the separator rendering between our entries and Obsidian's; whether `onPaneMenu` is invoked for the `more-options` button on mobile in both views.
+
+## Follow-up after Sawyer's test, 2026-11-12
+
+**Reported.** "The 2D|3D toggle in mind map view are still rounded rectangle appearing as separate buttons instead of a pill-shaped toggle."
+
+**Cause.** The DOM was always right: one `div.osmosis-view-switch` wrapper holding two `<button class="osmosis-view-switch-option">` segments, placed in `.view-actions` by `arrangeViewHeader`. The CSS lost to Obsidian. Obsidian styles every `button:not(.clickable-icon)` (specificity 0,1,1) with `background-color: var(--interactive-normal)` and `box-shadow: var(--input-shadow)`. Our segment rule was a single class (0,1,0), so each segment got its own grey fill and shadow and looked like a separate button. The active segment's `.is-active` rule (0,2,0) still won, which is why the highlight showed. The wrapper also used `--radius-m` (8px), so it never read as a capsule. On tablets, `.is-tablet button:not(.clickable-icon)` (0,2,1) also overrode the padding. This was confirmed by rendering the header DOM against `ref/obsidian-core/app.css` + `styles.css` in headless Chromium: before the fix, the inactive segment computed `bg rgb(51,51,51)` plus the input shadow.
+
+**Fix.** The rules are now scoped as `.view-actions .osmosis-view-switch > button.osmosis-view-switch-option` (0,3,1), which beats both Obsidian rules. The wrapper has `border-radius: 999px`, a form-field fill, 2px padding, `overflow: hidden` and `gap: 0`. The segments are transparent capsules (`border-radius: 999px`, no shadow), and the active one is accent-filled. Re-rendered on desktop and on `.is-mobile.is-phone`: it is one capsule with the active half highlighted and no separate button chrome. Obsidian's phone `.view-action` sizing does not touch it, because the pill is not a `.view-action`.
+
+Expected DOM (unchanged):
+```
+.view-actions
+  a/button.view-action  (Note view)
+  div.osmosis-view-switch[role=group]
+    button.osmosis-view-switch-option.is-active  "2D"
+    button.osmosis-view-switch-option            "3D"
+  button.view-action (Study) · button.view-action (Reading) · ⋯
+```
+
+| File | Change |
+|---|---|
+| `styles.css` | Pill rules re-scoped for specificity; capsule radius and fill; mobile padding |

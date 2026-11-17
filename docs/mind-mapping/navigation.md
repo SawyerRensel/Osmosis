@@ -26,6 +26,20 @@ Arrow keys navigate between nodes. Their behavior adapts to the map's layout dir
     | ++left++ | Previous sibling |
     | ++right++ | Next sibling |
 
+### Following the outline
+
+Hold ++ctrl++ (++cmd++ on macOS) to move strictly by the outline, whatever the layout direction or the side of the map a node is on. Siblings stop at the first and last; they do not jump to a cousin.
+
+| Key | Action |
+|-----|--------|
+| ++ctrl+up++ | Previous sibling |
+| ++ctrl+down++ | Next sibling |
+| ++ctrl+left++ | Go to parent |
+| ++ctrl+right++ | Go to first child (expands a collapsed node first) |
+| ++ctrl+shift+arrow++ | Extend the selection the same way |
+
+While you edit a node's text, ++ctrl+arrow++ jumps by words as usual.
+
 ## Selection
 
 | Action | Input |

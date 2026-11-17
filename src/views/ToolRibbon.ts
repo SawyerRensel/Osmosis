@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { Platform, View, setIcon, setTooltip, type App, type TooltipOptions } from "obsidian";
 
 /** Toolbar state used to enable/disable context-sensitive buttons. */
 export interface ToolbarState {
@@ -20,9 +20,13 @@ export interface ToolbarActions {
 	addChild: () => void;
 	moveUp: () => void;
 	moveDown: () => void;
-	moveLeft: () => void;
-	moveRight: () => void;
+	/** One level shallower in the tree, on either side of a balanced map. */
+	outdent: () => void;
+	/** One level deeper in the tree, under the previous sibling. */
+	indent: () => void;
 	deleteNode: () => void;
+	/** Arm (or disarm) link mode: the next tap on a node links the selection to it (`LinkPicker`). */
+	addLink: () => void;
 	copy: () => void;
 	cut: () => void;
 	paste: () => void;
@@ -31,7 +35,6 @@ export interface ToolbarActions {
 	undo: () => void;
 	redo: () => void;
 	refresh: () => void;
-	openProperties: () => void;
 	openNodeMenu: (btn: HTMLElement) => void;
 }
 
@@ -47,33 +50,53 @@ export interface ButtonDef {
 	needsSelection?: boolean;
 	/** Button mutates the map — hidden in reading mode */
 	editOnly?: boolean;
+	/** A command only: the bar draws no button for it. */
+	noButton?: boolean;
 }
 
-/** The toolbar's buttons, in display order, one inner array per divider-separated group. */
+/** The 2D/3D toggle's command. It has no toolbar button: the header's 2D | 3D pill (`view-header.ts`) is its button. */
+export const TOGGLE_3D_COMMAND = { id: "mindmap-toggle-3d", icon: "orbit", name: "Toggle between 2D mind map and 3D graph" };
+
+/**
+ * The toolbar's buttons, in display order. The groups only organise the list
+ * (and its commands): the bar spaces every button evenly, with no gap between
+ * groups, as Obsidian's toolbar does. The editing core comes first, so it fills
+ * the bar's first eight slots on a phone.
+ */
 export const TOOLBAR_GROUPS: ButtonDef[][] = [
 	[
+		{ id: "insert-parent", icon: "circle-chevron-left", label: "Insert parent", command: "Insert parent node", action: "insertParent", needsSelection: true, editOnly: true },
+		{ id: "add-sibling", icon: "circle-chevron-down", label: "Add sibling", command: "Add sibling node", action: "addSibling", needsSelection: true, editOnly: true },
+		{ id: "add-child", icon: "circle-chevron-right", label: "Add child", command: "Add child node", action: "addChild", needsSelection: true, editOnly: true },
+	],
+	[
+		// Obsidian's own icons for its editor commands Move line up/down
+		// (`editor:swap-line-up`/`-down`) and Unindent/Indent list.
+		// Outdent and indent change tree depth, not screen side, so they tell
+		// the truth on both sides of a balanced map. The ids (and so the
+		// command ids, and hotkeys bound to them) predate the rename.
+		{ id: "move-up", icon: "lucide-corner-right-up", label: "Move up", command: "Move node up", action: "moveUp", needsSelection: true, editOnly: true },
+		{ id: "move-down", icon: "lucide-corner-right-down", label: "Move down", command: "Move node down", action: "moveDown", needsSelection: true, editOnly: true },
+		{ id: "move-left", icon: "lucide-outdent", label: "Outdent node", command: "Outdent node", action: "outdent", needsSelection: true, editOnly: true },
+		{ id: "move-right", icon: "lucide-indent", label: "Indent node", command: "Indent node", action: "indent", needsSelection: true, editOnly: true },
+	],
+	[
+		{ id: "delete", icon: "trash-2", label: "Delete", command: "Delete node", action: "deleteNode", needsSelection: true, editOnly: true },
+	],
+	[
+		// After the eight editing-core slots: on a phone it is the first button past them.
+		{ id: "add-link", icon: "link", label: "Add link", command: "Add link to node", action: "addLink", needsSelection: true, editOnly: true },
+	],
+	[
 		{ id: "fit", icon: "maximize", label: "Fit to view", command: "Fit mind map to view", action: "fitToView" },
-		{ id: "zoom-in", icon: "zoom-in", label: "Zoom in", command: "Zoom in on mind map", action: "zoomIn" },
-		{ id: "zoom-out", icon: "zoom-out", label: "Zoom out", command: "Zoom out of mind map", action: "zoomOut" },
+		// Commands only (with their hotkeys): the bar has no zoom buttons, since pinch and the wheel zoom.
+		{ id: "zoom-in", icon: "zoom-in", label: "Zoom in", command: "Zoom in on mind map", action: "zoomIn", noButton: true },
+		{ id: "zoom-out", icon: "zoom-out", label: "Zoom out", command: "Zoom out of mind map", action: "zoomOut", noButton: true },
 		{ id: "center", icon: "home", label: "Center on root", command: "Center mind map on root", action: "centerOnRoot" },
 	],
 	[
 		{ id: "fold-all", icon: "chevrons-down-up", label: "Collapse all", command: "Collapse all under node", action: "foldAll", needsSelection: true },
 		{ id: "unfold-all", icon: "chevrons-up-down", label: "Expand all", command: "Expand all under node", action: "unfoldAll", needsSelection: true },
-	],
-	[
-		{ id: "insert-parent", icon: "arrow-right-to-line", label: "Insert parent", command: "Insert parent node", action: "insertParent", needsSelection: true, editOnly: true },
-		{ id: "add-sibling", icon: "arrow-down-from-line", label: "Add sibling", command: "Add sibling node", action: "addSibling", needsSelection: true, editOnly: true },
-		{ id: "add-child", icon: "arrow-right-from-line", label: "Add child", command: "Add child node", action: "addChild", needsSelection: true, editOnly: true },
-	],
-	[
-		{ id: "move-up", icon: "arrow-up", label: "Move up", command: "Move node up", action: "moveUp", needsSelection: true, editOnly: true },
-		{ id: "move-down", icon: "arrow-down", label: "Move down", command: "Move node down", action: "moveDown", needsSelection: true, editOnly: true },
-		{ id: "move-left", icon: "arrow-left", label: "Move left", command: "Move node left", action: "moveLeft", needsSelection: true, editOnly: true },
-		{ id: "move-right", icon: "arrow-right", label: "Move right", command: "Move node right", action: "moveRight", needsSelection: true, editOnly: true },
-	],
-	[
-		{ id: "delete", icon: "trash-2", label: "Delete", command: "Delete node", action: "deleteNode", needsSelection: true, editOnly: true },
 	],
 	[
 		{ id: "copy", icon: "copy", label: "Copy", command: "Copy node", action: "copy", needsSelection: true },
@@ -90,8 +113,6 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 	],
 	[
 		{ id: "refresh", icon: "refresh-cw", label: "Refresh mind map", command: "Refresh mind map", action: "refresh" },
-		// "Open mind map properties" is already a command (main.ts).
-		{ id: "open-properties", icon: "paintbrush", label: "Map properties", action: "openProperties" },
 	],
 	[
 		// A phone has no right-click, and a long press there has to stay
@@ -99,6 +120,86 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 		{ id: "node-menu", icon: "more-vertical", label: "More actions", command: "Open node menu", action: "openNodeMenu" },
 	],
 ];
+
+/**
+ * The buttons the 3D graph's ribbon leaves out: it draws `TOOLBAR_GROUPS`
+ * like the mind map, minus what has no 3D equivalent yet. Fold and unfold
+ * wait for the Fold idea ("3D Graph - Fold and unfold branches").
+ */
+export const GRAPH3D_HIDDEN_BUTTONS: ReadonlySet<string> = new Set(["fold-all", "unfold-all"]);
+
+/** `groups` without the buttons of `hidden`, and without any group that leaves empty. */
+export function visibleGroups(groups: readonly ButtonDef[][], hidden: ReadonlySet<string>): ButtonDef[][] {
+	return groups.map((group) => group.filter((def) => !hidden.has(def.id))).filter((group) => group.length > 0);
+}
+
+/**
+ * The Osmosis bar's own toggles, after its last group: the 3D graph's walk
+ * and fly joysticks (3D on a touch screen, desktops with one included) and
+ * the 3D graph's controls help, always the last button. They are view
+ * settings, not map actions, so they have no commands.
+ */
+export type BarToggle = "sticks" | "help";
+
+const BAR_TOGGLE_DEFS: Record<BarToggle, { icon: string; label: string }> = {
+	sticks: { icon: "gamepad-2", label: "Walk and fly joysticks" },
+	help: { icon: "help", label: "Controls" },
+};
+
+/**
+ * Tooltips open above the bar. Obsidian's default places them below the
+ * button, which at the bottom of the view runs off the window and is pushed
+ * back up over the button; `top` puts them over the bar's top edge (each button
+ * is the bar's full height) with Obsidian's usual 8 px gap.
+ */
+const BAR_TOOLTIP: TooltipOptions = { placement: "top" };
+
+/** Which toggles the bar shows in `view` on this device, in order. */
+export function barToggles(view: "2d" | "3d", device: { touch: boolean }): BarToggle[] {
+	const toggles: BarToggle[] = [];
+	if (view === "3d" && device.touch) toggles.push("sticks");
+	if (view === "3d") toggles.push("help");
+	return toggles;
+}
+
+/**
+ * Whether the bar shows: never while a node is being edited, and on a phone
+ * only in edit mode, where it takes the navigation bar's slot as Obsidian's
+ * editing toolbar does. Desktops and tablets show it in both modes.
+ */
+export function barShown(state: ToolbarState, isPhone: boolean): boolean {
+	return !state.isEditing && !(isPhone && state.isReadingMode);
+}
+
+/** Whether Obsidian's navigation bar is hidden: on a phone, in edit mode, where the Osmosis bar takes its slot. Tablets and desktops show no navigation bar. */
+export function navbarHidden(isPhone: boolean, editMode: boolean): boolean {
+	return isPhone && editMode;
+}
+
+/** Body class that hides `.mobile-navbar` (styles.css), set only while a map that asks for it is the active view. */
+export const HIDE_NAVBAR_CLASS = "osmosis-hide-navbar";
+
+/** A view whose bar can hide the navigation bar: the mind map and the 3D graph. */
+export interface NavbarHost {
+	/** Whether the map is in edit mode, the only mode that hides the navigation bar. */
+	navbarEditMode(): boolean;
+}
+
+function isNavbarHost(view: View): view is View & NavbarHost {
+	return typeof (view as Partial<NavbarHost>).navbarEditMode === "function";
+}
+
+/**
+ * Put the body class in line with the active view: on only while it is a map
+ * whose mode hides the navigation bar, so Obsidian's navigation is never left
+ * hidden elsewhere. Run on `active-leaf-change` (main.ts), on a mode change,
+ * and on close, where `except` is the closing view, which no longer counts.
+ */
+export function syncNavbar(app: App, except: View | null = null): void {
+	const view = app.workspace.getActiveViewOfType(View);
+	const hide = view !== null && view !== except && isNavbarHost(view) && navbarHidden(Platform.isPhone, view.navbarEditMode());
+	document.body.toggleClass(HIDE_NAVBAR_CLASS, hide);
+}
 
 /**
  * Whether a button's action may run in the given state — the same rule that
@@ -112,58 +213,77 @@ export function canRunToolbarAction(def: ButtonDef, state: ToolbarState): boolea
 }
 
 /**
- * A sticky action bar rendered at the bottom of the mind map view.
- * Provides GUI buttons for existing keyboard-only actions.
+ * The Osmosis bar: the map's actions as a strip of icon buttons at the bottom
+ * centre of the view, in the look of Obsidian's mobile editing toolbar
+ * (styles.css). Desktop and tablet show it in both modes; a phone shows it
+ * in edit mode only, in the navigation bar's slot (`barShown`).
  */
 export class ToolRibbon {
+	/** The rounded strip; `listEl` inside it scrolls, as in Obsidian's toolbar (`mobile-toolbar-options-list-container` / `-list`). */
 	private el: HTMLElement;
+	private listEl: HTMLElement;
 	private buttons = new Map<string, HTMLButtonElement>();
+	private toggleButtons = new Map<BarToggle, HTMLButtonElement>();
 	private state: ToolbarState = { hasSelection: false, isEditing: false, hasFile: false, isReadingMode: false };
 	private savedScrollLeft = 0;
 
 	constructor(
 		private container: HTMLElement,
 		private actions: ToolbarActions,
+		/**
+		 * Buttons to leave out (the 3D graph's, see `GRAPH3D_HIDDEN_BUTTONS`), a class for the bar, and
+		 * the bar's own toggles (`barToggles`) with what each click does.
+		 */
+		options: { hidden?: ReadonlySet<string>; cls?: string; toggles?: { id: BarToggle; onClick: () => void }[] } = {},
 	) {
-		this.el = createDiv();
-		this.el.className = "osmosis-toolbar";
+		// `mod-raised` is Obsidian's raised surface (blur and shadow on phones), which its toolbar and navigation bar use too.
+		this.el = createDiv({ cls: "osmosis-toolbar mod-raised" });
+		if (options.cls !== undefined) this.el.addClass(options.cls);
+		this.listEl = this.el.createDiv({ cls: "osmosis-toolbar-list" });
 
-		const groups = TOOLBAR_GROUPS;
-		for (let gi = 0; gi < groups.length; gi++) {
-			const group = groups[gi];
-			if (!group) continue;
-			for (const def of group) {
-				const btn = createEl("button");
-				btn.className = "osmosis-toolbar-btn clickable-icon";
-				btn.setAttribute("aria-label", def.label);
-				btn.setAttribute("title", def.label);
-				btn.dataset.action = def.id;
-				if (def.needsSelection) {
-					btn.dataset.needsSelection = "true";
-				}
-				if (def.editOnly) {
-					btn.dataset.editOnly = "true";
-				}
-				setIcon(btn, def.icon);
-				btn.addEventListener("pointerdown", (e) => {
-					// Prevent focus stealing from the mind map container
-					e.preventDefault();
-					e.stopPropagation();
-				});
-				btn.addEventListener("click", (e) => {
-					e.preventDefault();
-					e.stopPropagation();
-					this.runAction(def, btn);
-				});
-				this.buttons.set(def.id, btn);
-				this.el.appendChild(btn);
+		for (const def of visibleGroups(TOOLBAR_GROUPS, options.hidden ?? new Set()).flat()) {
+			if (def.noButton) continue;
+			const btn = createEl("button");
+			btn.className = "osmosis-toolbar-btn clickable-icon";
+			setTooltip(btn, def.label, BAR_TOOLTIP);
+			btn.dataset.action = def.id;
+			if (def.needsSelection) {
+				btn.dataset.needsSelection = "true";
 			}
-			// Add divider between groups (except after last)
-			if (gi < groups.length - 1) {
-				const divider = createDiv();
-				divider.className = "osmosis-toolbar-divider";
-				this.el.appendChild(divider);
+			if (def.editOnly) {
+				btn.dataset.editOnly = "true";
 			}
+			setIcon(btn, def.icon);
+			btn.addEventListener("pointerdown", (e) => {
+				// Prevent focus stealing from the mind map container
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			btn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.runAction(def, btn);
+			});
+			this.buttons.set(def.id, btn);
+			this.listEl.appendChild(btn);
+		}
+
+		for (const { id, onClick } of options.toggles ?? []) {
+			const { icon, label } = BAR_TOGGLE_DEFS[id];
+			const btn = this.listEl.createEl("button", { cls: "osmosis-toolbar-btn clickable-icon", attr: { "aria-pressed": "false" } });
+			setTooltip(btn, label, BAR_TOOLTIP);
+			btn.dataset.toggle = id;
+			setIcon(btn, icon);
+			btn.addEventListener("pointerdown", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			btn.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				onClick();
+			});
+			this.toggleButtons.set(id, btn);
 		}
 
 		// Prevent pointer-up on toolbar buttons from bubbling to the mind map
@@ -177,7 +297,7 @@ export class ToolRibbon {
 		this.el.addEventListener("wheel", (e) => {
 			e.stopPropagation();
 			// Scroll the toolbar horizontally if it overflows
-			this.el.scrollLeft += e.deltaX || e.deltaY;
+			this.listEl.scrollLeft += e.deltaX || e.deltaY;
 		}, { passive: true });
 
 		this.container.appendChild(this.el);
@@ -186,7 +306,7 @@ export class ToolRibbon {
 	/** Detach toolbar before container.empty() to preserve scroll position. */
 	detach(): void {
 		if (this.el.parentElement) {
-			this.savedScrollLeft = this.el.scrollLeft;
+			this.savedScrollLeft = this.listEl.scrollLeft;
 			this.el.remove();
 		}
 	}
@@ -195,7 +315,7 @@ export class ToolRibbon {
 	attach(): void {
 		if (!this.el.parentElement) {
 			this.container.appendChild(this.el);
-			this.el.scrollLeft = this.savedScrollLeft;
+			this.listEl.scrollLeft = this.savedScrollLeft;
 		}
 	}
 
@@ -203,7 +323,7 @@ export class ToolRibbon {
 	updateState(state: ToolbarState): void {
 		this.state = state;
 
-		if (state.isEditing) {
+		if (!barShown(state, Platform.isPhone)) {
 			this.el.addClass("osmosis-toolbar-hidden");
 			return;
 		}
@@ -220,20 +340,6 @@ export class ToolRibbon {
 				state.isReadingMode && btn.dataset.editOnly === "true",
 			);
 		}
-
-		// Collapse dividers that no longer separate any visible buttons
-		// (reading mode hides whole groups).
-		let visibleSinceLastDivider = 0;
-		for (const child of Array.from(this.el.children)) {
-			const el = child as HTMLElement;
-			if (el.classList.contains("osmosis-toolbar-divider")) {
-				const show = visibleSinceLastDivider > 0;
-				el.toggleClass("osmosis-toolbar-btn-hidden", !show);
-				if (show) visibleSinceLastDivider = 0;
-			} else if (!el.classList.contains("osmosis-toolbar-btn-hidden")) {
-				visibleSinceLastDivider++;
-			}
-		}
 	}
 
 	/**
@@ -241,19 +347,40 @@ export class ToolRibbon {
 	 * governs the button. With `checking`, only report whether it would run.
 	 */
 	trigger(def: ButtonDef, state: ToolbarState, checking: boolean): boolean {
+		// A button left off this bar (the 3D graph's fold and unfold) has no action here; a command-only one does.
 		const btn = this.buttons.get(def.id);
-		if (!btn || !canRunToolbarAction(def, state)) return false;
-		if (!checking) this.runAction(def, btn);
+		if ((!btn && !def.noButton) || !canRunToolbarAction(def, state)) return false;
+		if (!checking) this.runAction(def, btn ?? this.el);
 		return true;
 	}
 
-	private runAction(def: ButtonDef, btn: HTMLButtonElement): void {
-		const action: (btn: HTMLButtonElement) => void = this.actions[def.action];
+	private runAction(def: ButtonDef, btn: HTMLElement): void {
+		const action: (btn: HTMLElement) => void = this.actions[def.action];
 		action(btn);
+	}
+
+	/** A toggle's button, for what anchors to it (the 3D controls help). */
+	toggleButton(id: BarToggle): HTMLButtonElement | undefined {
+		return this.toggleButtons.get(id);
+	}
+
+	/** Show an action button as on or off (Add link while armed). */
+	setActive(id: string, on: boolean): void {
+		const btn = this.buttons.get(id);
+		btn?.toggleClass("is-active", on);
+		btn?.setAttribute("aria-pressed", String(on));
+	}
+
+	/** Show a toggle as on or off. */
+	setPressed(id: BarToggle, on: boolean): void {
+		const btn = this.toggleButtons.get(id);
+		btn?.toggleClass("is-active", on);
+		btn?.setAttribute("aria-pressed", String(on));
 	}
 
 	destroy(): void {
 		this.el.remove();
 		this.buttons.clear();
+		this.toggleButtons.clear();
 	}
 }
