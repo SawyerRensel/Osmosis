@@ -10,15 +10,15 @@ people:
 location:
 related:
   - "[[3D Graph - Edge direction and taper]]"
-status: In-Review
+status: Done
 priority:
 progress:
 date_created: "2026-10-29T01:03:06.000Z"
-date_modified: "2026-10-29T01:03:06.000Z"
+date_modified: "2026-11-17T00:43:08.000Z"
 date_start_scheduled: "2026-10-31T15:49:06.000Z"
 date_start_actual: "2026-10-31T15:49:06.000Z"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-11-17T00:43:08.000Z"
+date_end_actual: "2026-11-17T00:43:08.000Z"
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ blocked_by:
   - "[[3D Graph Phase 2 - View shell]]"
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/48
 ---
 
 # Feature Request
@@ -64,7 +64,13 @@ A viewport header menu in the spirit of Blender's Overlays and Shading menus:
 - Run lint, test and build, then stop for Sawyer's manual test before committing.
 - Work on the `feature/3d-graph-view…` branch, cut from the current release branch.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #48](https://github.com/SawyerRensel/Osmosis/pull/48), merged into `release/0.0.6` with the rest of the 3D graph / mind map stack (tip `perf/mindmap-no-positioned-node-content`).
+
+Sawyer confirmed the result by using it in practice (2026-11-16) rather than through a dedicated test pass. The cause, fix, decisions, surface map and fixture are in the batch implementation notes below.
+
+## Batch implementation notes
 
 Built on `feature/3d-graph-phase-5`, stacked on `fix/3d-graph-batch-1`. Code commit b35606b.
 

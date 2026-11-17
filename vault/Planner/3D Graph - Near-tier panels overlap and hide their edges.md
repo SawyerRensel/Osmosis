@@ -11,15 +11,15 @@ location:
 related:
   - "[[3D Graph Phase 4 - Near tier]]"
   - "[[3D Graph - Plate-aware spacing]]"
-status: In-Review
+status: Done
 priority:
 progress:
 date_created: "2026-10-31T16:00:00.000Z"
-date_modified: "2026-10-31T15:35:04.000Z"
+date_modified: "2026-11-17T00:43:08.000Z"
 date_start_scheduled: "2026-10-31T19:00:00.000Z"
 date_start_actual: "2026-10-31T19:00:00.000Z"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-11-17T00:43:08.000Z"
+date_end_actual: "2026-11-17T00:43:08.000Z"
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/48
 ---
 
 # Bug Report
@@ -67,7 +67,13 @@ The cause is very likely a size mismatch: plate-aware spacing sizes link lengths
 - **No decluttering** (Sawyer): a nearer thing simply covers a farther one. So the panel stacking order must follow depth (check CSS2DRenderer z-index ordering is really applied), and the result must stay honest rather than hiding things.
 - Options worth weighing: size an attachment/image node's *plate* (and therefore its spacing) from the media's aspect and a nominal size known before layout; cap panel size relative to plate spacing; show the edge endpoints over the panels (e.g. a thin edge overlay or connection markers on the panel border). Pick the one that best keeps connections visible without breaking the two constraints above, and record why.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #48](https://github.com/SawyerRensel/Osmosis/pull/48), merged into `release/0.0.6` with the rest of the 3D graph / mind map stack (tip `perf/mindmap-no-positioned-node-content`).
+
+Sawyer confirmed the result by using it in practice (2026-11-16) rather than through a dedicated test pass. The cause, fix, decisions, surface map and fixture are in the batch implementation notes below.
+
+## Batch implementation notes
 
 Built 2026-10-31 on `fix/3d-graph-batch-1`, commit `407dc0c`. Not pushed, no PR. A first sub-agent wrote most of the code and the machine crashed before it could commit. A second sub-agent reviewed that diff against this ticket, kept it as it was, added the fixture, ran the checks and committed. Nothing has been seen running in Obsidian.
 

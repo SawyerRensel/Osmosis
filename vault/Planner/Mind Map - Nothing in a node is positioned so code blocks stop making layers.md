@@ -11,15 +11,15 @@ location:
 related:
   - "[[Mind Map - Code blocks never scroll so the map stays a few layers]]"
   - "[[Mind Map - Pan and zoom at 60 fps on a large map]]"
-status: In-Review
+status: Done
 priority:
 progress:
 date_created: "2026-11-16T23:55:00.000Z"
-date_modified: "2026-11-17T00:05:00.000Z"
+date_modified: "2026-11-17T00:43:08.000Z"
 date_start_scheduled: "2026-11-16T23:55:00.000Z"
 date_start_actual: "2026-11-16T23:55:00.000Z"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-11-17T00:43:08.000Z"
+date_end_actual: "2026-11-17T00:43:08.000Z"
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/48
 ---
 
 # Mind Map - Nothing in a node is positioned so code blocks stop making layers (T89)
@@ -66,7 +66,13 @@ At 100% zoom the extra scale is the identity and may merge. Not verified, so the
 ## Not done (next seeds, read from code, not measured)
 Obsidian also positions `.markdown-embed`/`.file-embed` (relative, with an absolute `.markdown-embed-link`), `ul>li`/`ol>li` (relative), `.list-bullet`, and the indentation guides. In a node these will seed layers the same way at a non-100% zoom. The likely case is the **transcluding parent** (28 fps, 419/1,229 drawn). Fix them only when a trace shows them as seeds. The embed link is a visible control, so removing its positioning is a UI decision for Sawyer.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #48](https://github.com/SawyerRensel/Osmosis/pull/48), merged into `release/0.0.6` with the rest of the 3D graph / mind map stack (tip `perf/mindmap-no-positioned-node-content`).
+
+Sawyer confirmed the result by using it in practice (2026-11-16) rather than through a dedicated test pass. The cause, fix, decisions, surface map and fixture are in the batch implementation notes below.
+
+## Batch implementation notes
 Code commit `45f3225` on `perf/mindmap-no-positioned-node-content` (stacked on T88). No push, no PR. Lint clean, 3,346 tests pass, built.
 
 Retest (desktop, then phone):

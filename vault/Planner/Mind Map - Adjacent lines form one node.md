@@ -10,15 +10,15 @@ people:
 location:
 related:
   - "[[Support indented callouts and blocks in mind map view and note view]]"
-status: In-Review
+status: Done
 priority:
 progress: 100
 date_created: "2026-11-12T17:00:00.000Z"
-date_modified: "2026-11-12T17:47:04.000Z"
+date_modified: "2026-11-17T00:43:08.000Z"
 date_start_scheduled: "2026-11-12T17:07:56.000Z"
 date_start_actual: "2026-11-12T17:07:56.000Z"
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: "2026-11-17T00:43:08.000Z"
+date_end_actual: "2026-11-17T00:43:08.000Z"
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/48
 ---
 
 # Mind Map - Adjacent lines form one node (T75)
@@ -112,6 +112,12 @@ Under ~130k per session. `src/parser` by range; card/sync modules by grep; never
 - Hard-wrapped prose: one node. Two headings in a run: one node, first heading wins (rule 3). Horizontal rules: groupable, not breakers (rule 2). 2+ IDs: grouped, history kept (rule 6). Note embeds: breakers (rule 2). 3D image: near panel only (rule 7).
 - `Title` + `---` is a setext heading in Obsidian. Osmosis has never read setext headings; now the two lines form one paragraph group, and its display Markdown renders it the way Obsidian does.
 
+## What was implemented
+
+**Where it shipped:** [PR #48](https://github.com/SawyerRensel/Osmosis/pull/48), merged into `release/0.0.6` with the rest of the 3D graph / mind map stack (tip `perf/mindmap-no-positioned-node-content`).
+
+Sawyer confirmed the result by using it in practice (2026-11-16) rather than through a dedicated test pass. The cause, fix, decisions, surface map and fixture are in the batch implementation notes below.
+
 ## Batch implementation notes (session 1)
 Session 1 was research and spec only; no code changed. Phase 1 was not started: budget was at the ~70k threshold, and the findings show that phase 1 without phase 2 would show heading groups without their image in 2D, so phases 1 and 2 should go to manual test together. Next session: Phase 1 above.
 
@@ -168,7 +174,7 @@ Old and new parser interleaved in one process (10 × 40 parses each, 3 runs): ol
 
 Note on the fixture: the breaker cases ("Prose right above a list", etc.) are written without blank lines on purpose; the first map write spaces them off, as it always has.
 
-## Batch implementation notes (awaiting manual test)
+## Batch implementation notes
 Session 3 built Phase 2 and the Phase 3 *edit-op* fixes (code commit `bec4e09`). Status is **In-Review** so the 2D side can be tested; the 3D near panel and reading-view reveal are still Phase 3 (see "Next session").
 
 ### What was built
@@ -210,7 +216,7 @@ Fixture: `vault/tests/mindmap/adjacent-lines.md`. **Reload Obsidian (Ctrl+R) fir
 
 Undo with Ctrl+Z, or restore the fixture from `e2e/fixtures/adjacent-lines.md` (and reload) when done.
 
-## Batch implementation notes, Phase 3 (awaiting manual test)
+## Batch implementation notes, Phase 3
 Session 4 built Phase 3 (code commit `27922ad`). All three phases are built, so status is **In-Review** at progress 100.
 
 ### What was built
