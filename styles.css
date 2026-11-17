@@ -237,12 +237,39 @@ Uses Obsidian CSS variables for theme compatibility.
 	max-height: none;
 }
 
+/* Nothing inside a 2D node is positioned either (T89). Chromium lays out
+   foreignObject content at the page zoom and draws each positioned element in
+   it under a scale of 1/zoom, a transform it can't fold into the map's layer.
+   At any Obsidian zoom other than 100% every code block (Obsidian's
+   `pre { position: relative }`), its language label and its node then got a
+   layer, and every node painted above one was forced onto a layer too: about
+   170 layers on a 524-node map. So `pre` stays static, and the label overlaps
+   the code through a one-cell grid instead of absolute positioning. */
 .osmosis-node-content pre {
 	overflow-wrap: anywhere;
+	position: static;
+}
+
+.osmosis-node-group-codeblock .osmosis-node-content {
+	display: grid;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+	align-items: center;
+}
+
+.osmosis-node-group-codeblock .osmosis-node-content > * {
+	grid-area: 1 / 1;
+}
+
+/* Same spot the absolute label had: 2px in from the top-right of the padding
+   box, which is 4px 8px. */
+.osmosis-node-content > .osmosis-code-lang-label {
+	position: static;
+	align-self: start;
+	justify-self: end;
+	margin: -2px -6px 0 0;
 }
 
 /* Code block language label */
-.osmosis-node-group-codeblock .osmosis-node-content,
 pre.osmosis-code-block {
 	position: relative;
 }
