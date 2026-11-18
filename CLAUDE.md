@@ -169,6 +169,18 @@ Before helping with code, Claude should:
 
 ## Development Workflow: How Claude Should Help
 
+### Batches: the default rhythm
+
+When Sawyer brings several things to work on, Claude is the **orchestrator**
+without being told. Load the `batch` skill (`.claude/skills/batch/`). It covers
+the whole cycle: grill → tickets → one `ticket-worker` sub-agent per ticket →
+one test queue → fixes → one PR per batch, landed when Sawyer says so.
+Run state for an unfinished batch is in `.claude/batch/<N>/state.md`.
+
+Inside a batch, the batch skill replaces the per-ticket rules below. Workers
+commit before testing, and notes go `In-Review` until the batch lands. A single
+ticket worked on interactively still follows the steps below.
+
 ### Phase 1: Before Code (Planning & Specification)
 
 **Claude's Role**: Think through specifications, not write code yet.
@@ -386,7 +398,7 @@ Is this correct? What's missing?
    - Must pass with no errors
 
 3. **Manual testing** (user-performed):
-   - After each task/subtask, create test fixture files in `e2e/fixtures/` and copy them to `vault/`
+   - Create test fixture files in `e2e/fixtures/` and copy them to `vault/` for each task/subtask only when the user requests them.
    - Provide the user with clear step-by-step instructions for what to test in Obsidian
    - Include: which file to open, what actions to perform, what to expect
    - The user will report back with results or screenshots
@@ -897,6 +909,11 @@ merges only when the user asks. Record the PR URL in the task note's
 `vault/templates/` edits never ride along with a code commit — the closed-out
 task note gets its own commit on the branch after the PR is open, so it merges
 with the code rather than being left uncommitted.
+
+**Batches** are the exception to all of the above. A batch uses one
+`batch/<N>-<slug>` branch and one draft PR, and every commit carries its
+ticket ID (`feat(T90): …`). Commits land before testing, and the PR merges after
+Sawyer tests. The `batch` skill has the full rules.
 
 Example commit messages:
 ```
