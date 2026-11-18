@@ -59,3 +59,8 @@ views:
     columnOrder: '["Ideas","To-Do","In-Progress","In-Review","Done","Cancelled","null"]'
   - type: table
     name: Table
+  - type: planner-timeline
+    name: Timeline
+    sectionsBy: note.calendar
+  - type: planner-calendar
+    name: Calendar
