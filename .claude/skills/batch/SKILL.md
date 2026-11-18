@@ -17,7 +17,7 @@ A batch moves through five stages. Find the stage the batch is in from the run s
 2. Write one Planner note per ticket from `vault/templates/`, following CLAUDE.md's *Creating a Task Note*. Each ticket also gets:
    - the next unused ticket ID `T<n>`, in `summary` and in the H1 (`# Title (T90)`);
    - the property `batch: <N>`, with `status: To-Do`;
-   - a **Context budget** section that names which files to read and by what line range. A ticket must fit one sub-agent session (~130k tokens). `MindMapView.ts` alone is ~84k tokens, so split tickets by surface.
+   - a **Context budget** section that names which files to read and by what line range, with a rough token estimate. A worker's reading plus its work must fit in ~100k tokens. That leaves headroom under the 140k smart zone (see *Context budget* below). `MindMapView.ts` alone is ~84k tokens, so split tickets by surface.
    - acceptance criteria and a test plan.
 3. Order the tickets so that ones touching the same files run one after another. Write the order into `.claude/batch/<N>/state.md` (format in [`run-state.md`](run-state.md)).
 
@@ -68,6 +68,16 @@ Only when Sawyer says to land (or merge) the batch:
 2. Close out every ticket note per CLAUDE.md's *Documenting a Completed Task*. Put them all in one commit: `docs: Close out batch <N> (T90–T97)`. Push.
 3. Mark the PR ready and merge it with a merge commit (`gh pr merge --merge --delete-branch`). If batch N+1 was stacked on this branch, retarget its PR to the release branch first.
 4. Delete the local branch. Mark `state.md` as landed.
+
+## Context budget
+
+Every agent in the run, the orchestrator included, works within Sawyer's **smart zone**: under ~140k tokens of context. Past that, judgment degrades.
+
+- **Workers:** the ticket's Context budget keeps one under it. The worker stops early and ships a slice when its reading outgrows the budget (see `ticket-worker`). A ticket that comes back as a slice gets its remainder split into a new ticket.
+- **The orchestrator:** your context carries the whole batch. Keep it lean:
+  - Read source only as far as you need to write a ticket's Context budget. Send wider surveys to an `Explore` agent.
+  - Keep worker reports in `state.md`, not in chat.
+  - At each stage boundary, judge how full your context is. Once it is past ~100k, or a stage would push it past 140k, bring `state.md` up to date and tell Sawyer to start a fresh session with "resume batch <N>". `state.md` has to be complete enough for that new session to carry on without this conversation.
 
 ## Rules for the whole run
 
