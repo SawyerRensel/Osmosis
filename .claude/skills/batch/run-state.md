@@ -11,9 +11,9 @@ Base: release/0.0.7 · Branch: batch/<N>-<slug> · PR: <url or "not yet"> · Sta
 Stage: intake | run | test | fix | landed
 
 ## Tickets (run order)
-| ID | Note | Model / effort | Status | Commits | Notes |
-|---|---|---|---|---|---|
-| T90 | [[Mind Map - …]] | opus / high | In-Review | abc1234, def5678 | partial: … |
+| ID | Note | Model / effort | Tokens | First test | Status | Commits | Notes |
+|---|---|---|---|---|---|---|---|
+| T90 | [[Mind Map - …]] | opus / high | 118k | pass | In-Review | abc1234, def5678 | partial: … |
 
 ## Facts the next tickets need
 - <fact learned by a worker, with the ticket that learned it>

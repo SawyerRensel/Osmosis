@@ -35,11 +35,13 @@ A batch moves through five stages. Find the stage the batch is in from the run s
 
    | The ticket… | model | effort |
    |---|---|---|
-   | needs a root cause, a perf diagnosis, a design call, or a refactor of shipped code | `opus` | `xhigh` |
-   | is a feature or fix with a clear spec but judgment left in the details | `opus` | `high` |
+   | needs judgment: a root cause, a perf diagnosis, a design call, a refactor of shipped code, or a feature with details left open | `opus` | `high` |
    | executes a plan already written step by step (in the note or by an earlier worker) | `sonnet` | `high` |
+   | is a stage-4 fix for a ticket that failed Sawyer's test at `high` | `opus` | `xhigh` |
 
-   Haiku is never used here: a cheap run that fails costs Sawyer a test round. When unsure between two rows, take the higher one. Fix tickets in stage 4 use the first row.
+   The cost to optimise is tokens per ticket that **passes Sawyer's test**, not per spawn. A run that fails costs a test round plus a fix run. Haiku is never used here for that reason. `xhigh` is the escalation step for a ticket that already failed once, not a default. If a ticket is unclear about which of the first two rows it fits, use `opus`.
+
+   Record each worker's total tokens (from its completion notice) and its first-test result in `state.md`. That gives each batch the measurements to re-tune this table.
 3. After each worker returns, check its report against the branch. It should have made code commits plus one `docs(T<n>)` note commit, and the tree should be clean. Append its test steps to the test queue and its facts to `state.md`.
 4. After the first ticket lands, push and open a **draft** PR against the base branch, using the `pr` skill for the body. Add a checklist with one line per ticket: `- [ ] T90 Title`. Push after each further ticket.
 5. If a worker dies on the rate limit, its edits stay in the tree. Resume it with SendMessage to its agent ID rather than starting over.
