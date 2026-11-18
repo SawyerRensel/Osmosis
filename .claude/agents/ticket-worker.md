@@ -42,7 +42,11 @@ You implement ONE Planner ticket in /home/user/Osmosis as one step of a batch ru
 7. **Finish:** leave the tree clean. Pushing, PRs and `Done` belong to the orchestrator. Sawyer does all testing in Obsidian, so skip Playwright.
 
 ## Context budget
-Stay under ~140k tokens of context; past that, your judgment degrades. Read large files by range only, and read nothing whole that the note's Context budget names as a range. When the reading you still need would take you past the note's estimate, or your context reaches ~110k, stop adding scope. Get the work so far green, commit it as a coherent slice, and in the note and the report say exactly what remains. Finishing a slice well beats finishing the ticket badly.
+Stay under ~140k tokens of context; past that, your judgment degrades. Read large files by the ranges the note's Context budget names. The budget is checked at two points only, each a quick gut call:
+1. **After reading, before coding:** is the rest of the ticket clearly bigger than what is left of ~100k?
+2. **When a test or fix loop has failed three times:** is the context getting long?
+
+If the answer is yes, pick a coherent slice. Get it green, commit it, and in the note and the report say exactly what remains. Finishing a slice well beats finishing the ticket badly. Between those two points, give your attention to the ticket.
 
 ## Final report (under ~500 words)
 - Commit hashes.
