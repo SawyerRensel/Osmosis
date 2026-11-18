@@ -31,7 +31,15 @@ A batch moves through five stages. Find the stage the batch is in from the run s
    - facts from earlier tickets that this one needs;
    - the memory files it should read.
 
-   Use the agent's default model (Opus). Pass `model: sonnet` only when the ticket executes a plan that is already written. Never Haiku.
+   Choose `model` and `effort` per ticket from the table below. Pass both on every spawn, and record them in `state.md`.
+
+   | The ticket… | model | effort |
+   |---|---|---|
+   | needs a root cause, a perf diagnosis, a design call, or a refactor of shipped code | `opus` | `xhigh` |
+   | is a feature or fix with a clear spec but judgment left in the details | `opus` | `high` |
+   | executes a plan already written step by step (in the note or by an earlier worker) | `sonnet` | `high` |
+
+   Haiku is never used here: a cheap run that fails costs Sawyer a test round. When unsure between two rows, take the higher one. Fix tickets in stage 4 use the first row.
 3. After each worker returns, check its report against the branch. It should have made code commits plus one `docs(T<n>)` note commit, and the tree should be clean. Append its test steps to the test queue and its facts to `state.md`.
 4. After the first ticket lands, push and open a **draft** PR against the base branch, using the `pr` skill for the body. Add a checklist with one line per ticket: `- [ ] T90 Title`. Push after each further ticket.
 5. If a worker dies on the rate limit, its edits stay in the tree. Resume it with SendMessage to its agent ID rather than starting over.
