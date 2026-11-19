@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDeckTree, pruneDeckTree } from "./DeckTreeBuilder";
+import { buildDeckTree, deckScopeOf, pruneDeckTree, visibleDeckTree } from "./DeckTreeBuilder";
 
 describe("DeckTreeBuilder", () => {
 	it("returns empty array for no decks", () => {
@@ -233,5 +233,32 @@ describe("pruneDeckTree", () => {
 		// history stays, math pruned (algebra+calculus promoted), science+physics pruned (quantum promoted)
 		expect(pruned).toHaveLength(4);
 		expect(pruned.map((n) => n.name)).toEqual(["algebra", "calculus", "history", "quantum"]);
+	});
+});
+
+describe("visibleDeckTree", () => {
+	const counts = new Map([
+		["Travel/Europe/Rail", { new: 2, learn: 0, due: 1 }],
+		["Cooking/Bread", { new: 1, learn: 1, due: 0 }],
+	]);
+
+	it("keeps the ancestors of an explicitly assigned deck", () => {
+		const tree = visibleDeckTree(["Travel/Europe/Rail"], counts, new Set());
+		expect(tree.map((n) => n.fullPath)).toEqual(["Travel"]);
+		expect(tree[0]!.children[0]!.children[0]!.fullPath).toBe("Travel/Europe/Rail");
+	});
+
+	it("prunes the empty ancestors of a folder-derived deck", () => {
+		const tree = visibleDeckTree(["Cooking/Bread"], counts, new Set(["Cooking/Bread"]));
+		expect(tree.map((n) => n.fullPath)).toEqual(["Cooking/Bread"]);
+		expect(tree[0]!.newCount).toBe(1);
+	});
+});
+
+describe("deckScopeOf", () => {
+	it("studies a deck with sub-decks as a parent scope, a leaf as a single deck", () => {
+		const [travel] = visibleDeckTree(["Travel", "Travel/Rail"], new Map(), new Set());
+		expect(deckScopeOf(travel!)).toEqual({ type: "parent", deck: "Travel" });
+		expect(deckScopeOf(travel!.children[0]!)).toEqual({ type: "single", deck: "Travel/Rail" });
 	});
 });

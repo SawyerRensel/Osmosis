@@ -1,4 +1,4 @@
-import type { DeckNode } from "./types";
+import type { DeckNode, DeckScope } from "./types";
 
 /**
  * Build a hierarchical deck tree from flat deck paths and per-deck counts.
@@ -113,4 +113,33 @@ export function pruneDeckTree(roots: DeckNode[], realDecks: Set<string>): DeckNo
 	result.sort((a, b) => a.name.localeCompare(b.name));
 
 	return result;
+}
+
+/**
+ * The deck tree as the dashboard and the study tab's deck picker show it:
+ * every real deck, plus the path segments above an explicitly assigned deck so
+ * its hierarchy survives pruning. Folder-derived decks keep no empty ancestors.
+ */
+export function visibleDeckTree(
+	decks: string[],
+	counts: Map<string, { new: number; learn: number; due: number }>,
+	folderDerived: Set<string>,
+): DeckNode[] {
+	const keepPaths = new Set(decks);
+	for (const deck of decks) {
+		if (!folderDerived.has(deck)) {
+			const parts = deck.split("/");
+			for (let i = 1; i < parts.length; i++) {
+				keepPaths.add(parts.slice(0, i).join("/"));
+			}
+		}
+	}
+	return pruneDeckTree(buildDeckTree(decks, counts), keepPaths);
+}
+
+/** What studying a deck row covers: the deck and its sub-decks when it has any. */
+export function deckScopeOf(node: DeckNode): DeckScope {
+	return node.children.length > 0
+		? { type: "parent", deck: node.fullPath }
+		: { type: "single", deck: node.fullPath };
 }

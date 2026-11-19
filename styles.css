@@ -1343,52 +1343,137 @@ hr.osmosis-map-style-divider {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Sequential Study Modal
+   Sequential Study Tab (SequentialStudyView)
    ═══════════════════════════════════════════════════════════ */
 
-/* A flex column capped at 85vh, with the card as the only row that scrolls.
-   `max-height` rather than a fixed height, so a one-line card still gets a
-   compact modal; the cap only binds once the content would leave the screen,
-   and then the card absorbs it instead of the modal growing a scrollbar of its
-   own. Two scrollbars — one on `.modal-content`, one on the card — is what a
-   long card with two images produced, and between them the Show answer button
-   could be scrolled out of reach. */
-.osmosis-study-modal {
+/* A flex column filling the leaf: the status strip, then the card as the only
+   row that scrolls, then the buttons pinned to the bottom. `flex: none` on
+   everything around the card means a long card scrolls itself rather than
+   pushing the flip and rating buttons out of reach — they are how the session
+   is driven. Text sits in a centered column; images may use the full width. */
+.osmosis-study-view {
+	--osmosis-study-column: 700px;
+	/* Space under the buttons. */
+	--osmosis-study-bottom: var(--size-4-4);
 	display: flex;
 	flex-direction: column;
-	width: 600px;
-	max-width: 90vw;
-	max-height: 85vh;
-}
-
-.osmosis-study-modal .modal-content {
-	display: flex;
-	flex-direction: column;
-	flex: 1;
-	min-height: 0;
+	padding: 0;
 	overflow: hidden;
-	/* Reserve room at the top for the absolutely-positioned icon row + ×
-	   close button so the progress bar doesn't slide underneath them. */
-	padding-top: 28px;
-	padding-bottom: 8px;
 }
 
-/* `flex: none` on everything around the card, so a card taller than the modal
-   shrinks itself rather than squeezing the progress bar or pushing the flip and
-   rating buttons off the bottom. Those must stay reachable at every card
-   length — they are how the session is driven. */
-.osmosis-study-modal .osmosis-study-scope,
-.osmosis-study-modal .osmosis-study-progress,
-.osmosis-study-modal .osmosis-study-breadcrumb,
-.osmosis-study-modal .osmosis-study-actions,
-.osmosis-study-modal > .modal-content > .osmosis-study-complete {
+/* Phone: the navigation bar floats over the leaf, so clear it while it shows,
+   and only the bottom inset once the tab has hidden it (`syncNavbar`). */
+body.is-phone .osmosis-study-view {
+	--osmosis-study-bottom: 84px;
+}
+
+body.is-phone.osmosis-hide-navbar .osmosis-study-view {
+	--osmosis-study-bottom: var(--navbar-bottom-offset, var(--size-4-2));
+}
+
+.osmosis-study-status,
+.osmosis-study-actions,
+.osmosis-study-view > .osmosis-study-complete {
 	flex: none;
 }
 
-/* Mobile: leave a comfortable thumb gap between the rating/flip buttons and
-   the bottom of the modal so they don't crowd the rounded corner. */
-.is-mobile .osmosis-study-modal .modal-content {
-	padding-bottom: 24px;
+/* Note name, progress and breadcrumb, above the card. */
+.osmosis-study-status {
+	width: 100%;
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
+	padding: var(--size-4-3) var(--size-4-4) 0;
+}
+
+/* The readable column. Children of the card sides rather than the sides
+   themselves, so an image can step out of it (below). */
+.osmosis-study-front > *,
+.osmosis-study-back > *,
+.osmosis-study-card > .osmosis-study-divider,
+.osmosis-study-card > .osmosis-study-complete,
+.osmosis-study-card > .osmosis-study-waiting {
+	max-width: var(--osmosis-study-column);
+	margin-inline: auto;
+}
+
+/* Images may use the tab's full width: an occluded diagram, and a paragraph
+   that holds nothing but an image. */
+.osmosis-study-front > .osmosis-study-media,
+.osmosis-study-front > p:has(> .image-embed:only-child),
+.osmosis-study-back > p:has(> .image-embed:only-child) {
+	max-width: none;
+	text-align: center;
+}
+
+/* Empty state: a deck picker in the readable column. */
+.osmosis-study-picker {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--size-4-4);
+}
+
+.osmosis-study-picker-column {
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
+}
+
+.osmosis-study-picker-empty {
+	color: var(--text-muted);
+}
+
+.osmosis-study-picker-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-1);
+}
+
+.osmosis-study-picker-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-2);
+	width: 100%;
+	height: auto;
+	padding: var(--size-4-2) var(--size-4-3);
+	padding-inline-start: calc(var(--size-4-3) + var(--osmosis-picker-depth, 0) * var(--size-4-5));
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-normal);
+	text-align: start;
+	cursor: pointer;
+}
+
+.osmosis-study-picker-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-study-picker-all {
+	margin-bottom: var(--size-4-2);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-study-picker-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-study-picker-count {
+	flex: none;
+	color: var(--text-accent);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-study-picker-count.is-zero {
+	color: var(--text-faint);
+}
+
+.osmosis-study-complete-buttons {
+	display: flex;
+	justify-content: center;
+	gap: var(--size-4-2);
 }
 
 .osmosis-study-card .copy-code-button {
@@ -1426,28 +1511,13 @@ hr.osmosis-map-style-divider {
 	margin-bottom: 0;
 }
 
-/* Constrain images/video inside study cards */
+/* Constrain images/video inside study cards to the width only: a tall image
+   scrolls with the card rather than shrinking to a fraction of the screen. */
 .osmosis-study-card img,
 .osmosis-study-card video {
 	max-width: 100%;
-	max-height: 50vh;
 	height: auto;
 	object-fit: contain;
-}
-
-/* Pin the icon-button row to the modal's top-left, on the same horizontal
-   line as Obsidian's × close button. We position relative to the modal element
-   itself (not modal-content) so we land in the header strip above the content
-   padding rather than overlapping the progress bar. */
-.osmosis-study-modal .osmosis-study-top-bar {
-	position: absolute;
-	/* Match Obsidian's close-button vertical offset */
-	top: 12px;
-	left: 12px;
-	z-index: 1;
-	display: flex;
-	align-items: center;
-	gap: 4px;
 }
 
 /* Names the note in a single-note session. */
@@ -1555,9 +1625,9 @@ hr.osmosis-map-style-divider {
 	object-fit: fill;
 }
 
-/* The study modal caps its images at 50vh, and an occluded one carries `width`
-   and `height` attributes to reserve its box before it decodes. The attribute
-   width then holds while the cap shortens the height, so the box loses the
+/* Study cards cap their images (by width), and an occluded one carries `width`
+   and `height` attributes to reserve its box before it decodes. Should a cap
+   bind one side while the attribute holds the other, the box loses the
    picture's proportions: a bitmap is stretched under its masks, and an SVG
    letterboxes inside a box its masks still span. With `width: auto` the browser
    applies the cap to both sides together, keeping the ratio the attributes
@@ -1791,21 +1861,14 @@ hr.osmosis-map-style-divider {
 	white-space: nowrap;
 }
 
-/* The one scroll surface in the modal. `flex: 1` with an explicit `min-height`
-   is what lets it shrink below its content — a flex item's default
-   `min-height: auto` refuses to — and the floor keeps a short card from
-   collapsing to nothing. It replaces a `max-height: calc(85vh - 120px)`, whose
-   120px was a guess at the surrounding chrome: when the chrome was taller than
-   that, the card fitted its cap and `.modal-content` scrolled as well. */
+/* The one scroll surface in the study tab, filling whatever the status strip
+   and the buttons leave. `flex: 1` with `min-height: 0` is what lets it shrink
+   below its content — a flex item's default `min-height: auto` refuses to. */
 .osmosis-study-card {
-	padding: 16px;
 	flex: 1;
-	min-height: 120px;
+	min-height: 0;
 	overflow-y: auto;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 8px;
-	background: var(--background-primary);
-	margin-bottom: 12px;
+	padding: var(--size-4-4);
 }
 
 .osmosis-study-front {
@@ -1826,57 +1889,52 @@ hr.osmosis-map-style-divider {
 	transition: max-height 0.3s ease, opacity 0.2s ease;
 }
 
+/* `none` rather than a large number: images are no longer height-capped, so a
+   tall answer could exceed any fixed ceiling and be clipped. */
 .osmosis-study-back.is-revealed {
-	max-height: 5000px;
+	max-height: none;
 	opacity: 1;
 }
 
+/* Desktop and tablet: a centered row at the bottom of the tab, as wide as the
+   readable column. */
 .osmosis-study-actions {
 	position: relative;
 	display: flex;
 	justify-content: center;
+	width: 100%;
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
+	padding: var(--size-4-2) var(--size-4-4) var(--osmosis-study-bottom);
 }
 
-
-.osmosis-study-actions-right {
-	display: flex;
-	gap: 4px;
+/* Phone: the buttons span the bottom edge to edge — Show answer as one bar,
+   the ratings as four equal cells. */
+body.is-phone .osmosis-study-actions {
+	max-width: none;
+	padding: 0 0 var(--osmosis-study-bottom);
 }
 
-.osmosis-study-icon-btn {
-	width: 42px;
-	height: 42px;
-	padding: 0;
-	border: none;
-	border-radius: 50%;
-	background: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
+body.is-phone .osmosis-study-flip {
+	flex: 1;
+	padding: 16px;
+	border-radius: 0;
+	border-inline: none;
 }
 
-/* `setIcon` drops a bare <svg> into the button and leaves its size to
-   Obsidian's `--icon-size`, which resolves against the surrounding context.
-   That context is missing on iOS — the top bar is mounted on `modalEl`, outside
-   the content area that carries it — and an <svg> flex item with no resolved
-   size collapses to a dot inside a 42px circle. `--icon-m` is a fixed token, so
-   pinning it here is the size desktop already computes, just stated outright. */
-.osmosis-study-icon-btn svg {
-	width: var(--icon-m);
-	height: var(--icon-m);
-	flex-shrink: 0;
+body.is-phone .osmosis-study-rating-bar {
+	width: 100%;
+	gap: 0;
 }
 
-.osmosis-study-icon-btn:hover {
-	color: var(--text-normal);
-	background: var(--background-modifier-hover);
+body.is-phone .osmosis-study-rating-bar button {
+	padding: 10px 4px;
+	border-radius: 0;
 }
 
-.osmosis-study-icon-btn[aria-label*="Exclude"]:hover {
-	color: var(--text-error);
+body.is-phone .osmosis-study-typein {
+	flex: 1;
+	padding: var(--size-4-2) var(--size-4-3) 0;
 }
 
 .osmosis-contextual-undo {
@@ -1894,6 +1952,7 @@ hr.osmosis-map-style-divider {
 }
 
 .osmosis-study-flip {
+	height: auto;
 	padding: 12px 18px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 9999px;
@@ -1907,12 +1966,10 @@ hr.osmosis-map-style-divider {
 	background: var(--background-modifier-hover);
 }
 
-/* Desktop: match the rating buttons' taller height. The flip button has a
-   1px border that the rating buttons don't, so subtract 1px from the
-   vertical padding to keep the rendered heights identical. */
+/* Desktop: about the height of the two-line rating buttons that replace it. */
 body:not(.is-mobile) .osmosis-study-flip {
-	padding-top: 17px;
-	padding-bottom: 17px;
+	padding-top: 15px;
+	padding-bottom: 15px;
 }
 
 .osmosis-study-rating-bar {
@@ -1922,8 +1979,15 @@ body:not(.is-mobile) .osmosis-study-flip {
 	width: 75%;
 }
 
+/* Each rating button stacks the interval it would schedule over its label. */
 .osmosis-study-rating-bar button {
 	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	height: auto;
+	line-height: 1.2;
 	padding: 12px 18px;
 	border: none;
 	border-radius: 8px;
@@ -1937,11 +2001,14 @@ body:not(.is-mobile) .osmosis-study-flip {
 	filter: brightness(1.1);
 }
 
-/* Desktop: taller rating buttons. Mobile keeps the default 12px so the
-   thumb-target height (already comfortable) doesn't grow unnecessarily. */
-body:not(.is-mobile) .osmosis-study-rating-bar button {
-	padding-top: 18px;
-	padding-bottom: 18px;
+.osmosis-rate-interval {
+	font-size: var(--font-ui-smaller);
+	font-weight: normal;
+	opacity: 0.85;
+}
+
+.osmosis-rate-interval:empty {
+	display: none;
 }
 
 .osmosis-study-rating-bar button.osmosis-rate-again,

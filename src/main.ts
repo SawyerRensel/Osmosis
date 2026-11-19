@@ -15,7 +15,7 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
-import { SequentialStudyModal } from "./views/SequentialStudyModal";
+import { SequentialStudyView, VIEW_TYPE_STUDY } from "./views/SequentialStudyView";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
@@ -293,6 +293,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
+		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new SequentialStudyView(leaf, this));
 		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
@@ -578,6 +579,16 @@ export default class OsmosisPlugin extends Plugin {
 			name: "Study all decks",
 			callback: () => {
 				void this.openStudySession({ type: "all" });
+			},
+		});
+
+		// The study tab without starting a session: its deck picker, or the
+		// session already running in it
+		this.addCommand({
+			id: "open-study",
+			name: "Open study tab",
+			callback: () => {
+				void this.activateMainView(VIEW_TYPE_STUDY);
 			},
 		});
 
@@ -1286,28 +1297,29 @@ export default class OsmosisPlugin extends Plugin {
 		await this.app.workspace.getLeaf("tab").openFile(file);
 	}
 
+	/**
+	 * Start a sequential session in the study tab. There is only ever one: an
+	 * open study tab is revealed and rebuilt with the new scope (ending the
+	 * session it held), rather than a second tab stacked beside it.
+	 */
 	async openStudySession(scope: StudyScope): Promise<void> {
-		const sessionManager = this.createSessionManager("sequential");
-		const modal = new SequentialStudyModal(
-			this.app,
-			sessionManager,
-			scope,
-			{
-				newLimit: this.settings.dailyNewCardLimit,
-				reviewLimit: this.settings.dailyReviewCardLimit,
-			},
-			this.fenceWriter,
-			(notePath: string) => this.app.vault.getFileByPath(notePath),
-			this.settings.showStudyBreadcrumb,
-			this.settings.sequentialContextLines,
-			() => {
-				// Session end: force pending line-card schedule writes to disk
-				// and buffered review-log entries
-				void this.scheduleStore.flush();
-				void this.reviewLog.flush();
-			},
-		);
-		modal.open();
+		await this.activateMainView(VIEW_TYPE_STUDY);
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
+		if (!leaf) return;
+		// A tab restored at startup is a placeholder until first shown
+		await leaf.loadIfDeferred();
+		if (leaf.view instanceof SequentialStudyView) leaf.view.startSession(scope);
+	}
+
+	/**
+	 * A study session ended or finished: force pending line-card schedule
+	 * writes and buffered review-log entries to disk, and refresh the deck
+	 * counts in the dashboard. Safe to call more than once.
+	 */
+	flushStudySession(): void {
+		void this.scheduleStore.flush();
+		void this.reviewLog.flush();
+		this.refreshDashboard();
 	}
 
 	/**

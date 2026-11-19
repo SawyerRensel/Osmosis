@@ -508,8 +508,8 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				heading: "Study mode",
 				items: [
 					{
-						name: "Show deck breadcrumb in study modal",
-						desc: "Display the deck path between the action buttons and progress bar in sequential study mode.",
+						name: "Show deck breadcrumb in study tab",
+						desc: "Display the deck path under the progress bar in sequential study mode.",
 						control: { type: "toggle", key: "showStudyBreadcrumb" },
 					},
 					{

@@ -15,7 +15,9 @@ two, an occluded diagram is one per mask group.
 
 ## Sequential Study
 
-Classic card-by-card review in a modal dialog.
+Classic card-by-card review in its own tab, like the stats dashboard. The card
+fills the tab and the buttons stay pinned to the bottom, however long the card.
+On a desktop the text sits in a centered column; images can use the full width.
 
 1. Open the [dashboard](dashboard.md) and click a deck (or **Study all**)
 2. The front of the card appears
@@ -23,7 +25,11 @@ Classic card-by-card review in a modal dialog.
 4. Rate your recall: **Again** (++1++), **Hard** (++2++), **Good** (++3++), **Easy** (++4++)
 5. The next card appears
 
-A progress bar at the top tracks remaining cards. Optionally, turn on **Settings > Osmosis > Show deck breadcrumb in study modal** to see which deck the card on screen belongs to.
+A progress bar at the top tracks remaining cards. Optionally, turn on **Settings > Osmosis > Show deck breadcrumb in study tab** to see which deck the card on screen belongs to. Each rating button shows the interval it would schedule above its label.
+
+There is only ever one study tab: starting another session reuses it. A finished session offers **Study again** and **Close**. A study tab with no session — after a restart, or opened with the **Open study tab** command — shows a deck picker instead.
+
+On a phone the study tab hides the navigation bar so the buttons sit at the bottom of the screen. Swipe up on the tab, or use **Show navigation bar** in the tab's ⋯ menu, to bring it back; it returns by itself when you leave the tab.
 
 ![osmosis_fence_card_from_a_window](../assets/media/osmosis_fence_card_from_a_window.png)
 
@@ -32,11 +38,11 @@ A progress bar at the top tracks remaining cards. Optionally, turn on **Settings
 
 ### Session Actions
 
-Three icon buttons sit in the modal's top-left corner, beside the close button:
+Three icon buttons sit in the tab's header:
 
 | Action | Key | What it does |
 |--------|-----|--------------|
-| Open note | ++g++ | Opens the card's source note and scrolls to the line it came from |
+| Open note | ++g++ | Opens the card's source note in a new tab, at the line it came from; the session waits for you |
 | Exclude card | ++e++ | Takes the card out of study — see below |
 | Undo | ++ctrl+z++ | Steps back through the session |
 

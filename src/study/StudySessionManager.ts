@@ -90,6 +90,35 @@ export class StudySessionManager {
 	}
 
 	/**
+	 * How long until the card would be due again under each rating, in ms, for
+	 * the labels above the rating buttons. Computes exactly what `recordReview`
+	 * would, without writing anything.
+	 */
+	previewIntervals(cardId: string, now?: number): Record<FSRSRating, number> {
+		const ts = now ?? Date.now();
+		const current = this.currentSchedule(this.store.getCard(cardId), ts);
+		const due = (rating: FSRSRating): number =>
+			Math.max(0, this.scheduler.review(current, rating, ts).schedule.due - ts);
+		return { 1: due(1), 2: due(2), 3: due(3), 4: due(4) };
+	}
+
+	/** The card's schedule as FSRS sees it; a card with none is new as of `ts`. */
+	private currentSchedule(card: Card | undefined, ts: number): ScheduleData {
+		return card && card.due !== undefined
+			? {
+				stability: card.stability ?? 0,
+				difficulty: card.difficulty ?? 0,
+				due: card.due,
+				lastReview: card.lastReview ?? null,
+				reps: card.reps ?? 0,
+				lapses: card.lapses ?? 0,
+				state: card.state ?? "new",
+				learningSteps: card.learningSteps ?? 0,
+			}
+			: this.scheduler.createNewSchedule(ts);
+	}
+
+	/**
 	 * Process a rating for a card. Updates store + writes schedule to markdown.
 	 * Returns the new schedule.
 	 */
@@ -113,18 +142,7 @@ export class StudySessionManager {
 		const priorIv = priorIntervalSeconds(card);
 
 		// Build current schedule from card data
-		const currentSchedule: ScheduleData = card && card.due !== undefined
-			? {
-				stability: card.stability ?? 0,
-				difficulty: card.difficulty ?? 0,
-				due: card.due,
-				lastReview: card.lastReview ?? null,
-				reps: card.reps ?? 0,
-				lapses: card.lapses ?? 0,
-				state: card.state ?? "new",
-				learningSteps: card.learningSteps ?? 0,
-			}
-			: this.scheduler.createNewSchedule(ts);
+		const currentSchedule = this.currentSchedule(card, ts);
 
 		// Process through FSRS
 		const update = this.scheduler.review(currentSchedule, rating, ts);
