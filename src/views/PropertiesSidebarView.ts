@@ -12,7 +12,8 @@ import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, M
 import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
-import { ColorPicker, extractThemeColors } from "./ColorPicker";
+import { PickrColorPicker } from "./PickrColorPicker";
+import { extractThemeColors } from "../color-palette";
 import { FontPicker } from "./FontPicker";
 import { sidebarSetting } from "./sidebar-setting";
 import { bindSlider, type ShowSliderValue } from "../slider-sync";
@@ -118,7 +119,7 @@ export class PropertiesSidebarView extends ItemView {
 	private themeDropdown: HTMLSelectElement | null = null;
 	private renameThemeBtn: HTMLElement | null = null;
 	private deleteThemeBtn: HTMLElement | null = null;
-	private activePickers: ColorPicker[] = [];
+	private activePicker: PickrColorPicker | null = null;
 	// Map tab style section controls
 	private mapBackgroundSwatch: HTMLElement | null = null;
 	private mapFillSwatch: HTMLElement | null = null;
@@ -1948,8 +1949,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBackgroundSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
-				swatch.style.backgroundColor = color;
+			this.openColorPicker(swatch, "#ffffff", (color) => {
+				paintSwatch(swatch, color);
 				void this.saveMapScalarSetting("background", color);
 			});
 		});
@@ -2051,8 +2052,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapFillSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
-				swatch.style.backgroundColor = color;
+			this.openColorPicker(swatch, "#ffffff", (color) => {
+				paintSwatch(swatch, color);
 				void this.saveBaseStyleProp({ fill: color });
 			});
 		});
@@ -2065,8 +2066,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBorderColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
-				colorSwatch.style.backgroundColor = color;
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
+				paintSwatch(colorSwatch, color);
 				void this.saveBaseStyleProp({ border: { color } });
 			});
 		});
@@ -2153,8 +2154,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapTextColorSwatch = textColorSwatch;
 
 		textColorSwatch.addEventListener("click", () => {
-			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
-				textColorSwatch.style.backgroundColor = color;
+			this.openColorPicker(textColorSwatch, "#000000", (color) => {
+				paintSwatch(textColorSwatch, color);
 				void this.saveBaseStyleProp({ text: { color } });
 			});
 		});
@@ -2203,8 +2204,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBranchColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
-				colorSwatch.style.backgroundColor = color;
+			this.openColorPicker(colorSwatch, "#888888", (color) => {
+				paintSwatch(colorSwatch, color);
 				void this.saveMapScalarSetting("branchLineColor", color);
 			});
 		});
@@ -2312,17 +2313,17 @@ export class PropertiesSidebarView extends ItemView {
 		// Background
 		if (this.mapBackgroundSwatch) {
 			const bg = settings.background ?? theme?.background ?? "";
-			this.mapBackgroundSwatch.style.backgroundColor = bg;
+			paintSwatch(this.mapBackgroundSwatch, bg);
 		}
 
 		// Fill
 		if (this.mapFillSwatch) {
-			this.mapFillSwatch.style.backgroundColor = base.fill ?? "";
+			paintSwatch(this.mapFillSwatch, base.fill ?? "");
 		}
 
 		// Border
 		if (this.mapBorderColorSwatch) {
-			this.mapBorderColorSwatch.style.backgroundColor = base.border?.color ?? "";
+			paintSwatch(this.mapBorderColorSwatch, base.border?.color ?? "");
 		}
 		this.mapBorderWidthSlider?.(base.border?.width ?? 1);
 		if (this.mapBorderStyleDropdown) {
@@ -2338,7 +2339,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.mapTextWeightDropdown.value = String(base.text?.weight ?? 400);
 		}
 		if (this.mapTextColorSwatch) {
-			this.mapTextColorSwatch.style.backgroundColor = base.text?.color ?? "";
+			paintSwatch(this.mapTextColorSwatch, base.text?.color ?? "");
 		}
 		if (this.mapTextAlignBtns) {
 			const active = base.text?.alignment ?? "left";
@@ -2349,8 +2350,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		// Branch line
 		if (this.mapBranchColorSwatch) {
-			this.mapBranchColorSwatch.style.backgroundColor =
-				settings.branchLineColor ?? theme?.branchLine?.color ?? "";
+			paintSwatch(this.mapBranchColorSwatch, settings.branchLineColor ?? theme?.branchLine?.color ?? "");
 		}
 		this.mapBranchThicknessSlider?.(settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2);
 
@@ -2802,7 +2802,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.fillSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+			this.openColorPicker(swatch, "#ffffff", (color) => {
 				void this.writeNodeStyle({ fill: color });
 			});
 		});
@@ -2815,7 +2815,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.borderColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ border: { color } });
 			});
 		});
@@ -2885,7 +2885,7 @@ export class PropertiesSidebarView extends ItemView {
 		const fillSwatch = fillSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.boundaryFillSwatch = fillSwatch;
 		fillSwatch.addEventListener("click", () => {
-			this.openColorPicker(fillSwatch, fillSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(fillSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ boundary: { enabled: true, fill: color } });
 			});
 		});
@@ -2905,7 +2905,7 @@ export class PropertiesSidebarView extends ItemView {
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.boundaryColorSwatch = colorSwatch;
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ boundary: { enabled: true, color } });
 			});
 		});
@@ -3002,7 +3002,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.textColorSwatch = textColorSwatch;
 
 		textColorSwatch.addEventListener("click", () => {
-			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(textColorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ text: { color } });
 			});
 		});
@@ -3054,7 +3054,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.branchColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
+			this.openColorPicker(colorSwatch, "#888888", (color) => {
 				void this.writeNodeStyle({ branchLine: { color } });
 			});
 		});
@@ -3116,8 +3116,16 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Color Picker Helper ─────────────────────────────────
 
-	private openColorPicker(anchor: HTMLElement, initialColor: string, onChange: (color: string) => void): void {
+	/**
+	 * Open the Pickr popup on a swatch. It opens on the swatch's stored color
+	 * (`paintSwatch` keeps it in `data-color` as written, since
+	 * `style.backgroundColor` reads back as `rgb()`), or `fallbackColor` when the
+	 * swatch has none. Clicking the swatch of the open picker closes it.
+	 */
+	private openColorPicker(anchor: HTMLElement, fallbackColor: string, onChange: (color: string) => void): void {
+		const reclick = this.activePicker?.anchor === anchor;
 		this.closeAllPickers();
+		if (reclick) return;
 		const host = this.getStyleHost();
 		const themeColors = extractThemeColors(host?.getActiveTheme());
 
@@ -3125,23 +3133,24 @@ export class PropertiesSidebarView extends ItemView {
 		// drag persists as a single undo step and can't reload the map mid-drag.
 		host?.beginLiveEdit();
 
-		const picker = new ColorPicker({
-			app: this.app,
-			plugin: this.plugin,
-			initialColor,
+		this.activePicker = new PickrColorPicker({
+			anchor,
+			initialColor: anchor.dataset.color ?? "",
+			fallbackColor,
 			themeColors,
+			customColors: this.plugin.settings.customColors,
+			saveCustomColors: () => void this.plugin.saveSettings(),
 			onChange,
-			onClose: () => host?.endLiveEdit(),
+			onClose: () => {
+				host?.endLiveEdit();
+				this.activePicker = null;
+			},
 		});
-		this.activePickers.push(picker);
-		picker.open(anchor);
 	}
 
 	private closeAllPickers(): void {
-		for (const p of this.activePickers) {
-			p.close();
-		}
-		this.activePickers = [];
+		this.activePicker?.close();
+		this.activePicker = null;
 	}
 
 	// ─── Node Style Write ────────────────────────────────────
@@ -3248,12 +3257,12 @@ export class PropertiesSidebarView extends ItemView {
 
 		// Fill
 		if (this.controls.fillSwatch) {
-			this.controls.fillSwatch.style.backgroundColor = resolved.fill ?? "";
+			paintSwatch(this.controls.fillSwatch, resolved.fill ?? "");
 		}
 
 		// Border
 		if (this.controls.borderColorSwatch) {
-			this.controls.borderColorSwatch.style.backgroundColor = resolved.border?.color ?? "";
+			paintSwatch(this.controls.borderColorSwatch, resolved.border?.color ?? "");
 		}
 		this.controls.borderWidthSlider?.(resolved.border?.width ?? 1);
 		if (this.controls.borderStyleDropdown) {
@@ -3268,7 +3277,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.controls.textWeightDropdown.value = w != null ? String(w) : "inherit";
 		}
 		if (this.controls.textColorSwatch) {
-			this.controls.textColorSwatch.style.backgroundColor = resolved.text?.color ?? "";
+			paintSwatch(this.controls.textColorSwatch, resolved.text?.color ?? "");
 		}
 		if (this.controls.textAlignBtns) {
 			const align = resolved.text?.alignment ?? "left";
@@ -3285,7 +3294,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.controls.branchStyleDropdown.value = localStyle?.branchLine?.style ?? "inherit";
 		}
 		if (this.controls.branchColorSwatch) {
-			this.controls.branchColorSwatch.style.backgroundColor = resolved.branchLine?.color ?? "";
+			paintSwatch(this.controls.branchColorSwatch, resolved.branchLine?.color ?? "");
 		}
 		this.controls.branchThicknessSlider?.(resolved.branchLine?.thickness ?? 2);
 		if (this.controls.branchPatternDropdown) {
@@ -3299,11 +3308,11 @@ export class PropertiesSidebarView extends ItemView {
 		const boundary = resolveBoundary(resolved);
 		this.controls.boundaryToggle?.setValue(boundary !== null);
 		if (this.controls.boundaryFillSwatch) {
-			this.controls.boundaryFillSwatch.style.backgroundColor = boundary?.fill ?? "";
+			paintSwatch(this.controls.boundaryFillSwatch, boundary?.fill ?? "");
 		}
 		this.controls.boundaryOpacitySlider?.(Math.round((boundary?.fillOpacity ?? DEFAULT_BOUNDARY_OPACITY) * 100));
 		if (this.controls.boundaryColorSwatch) {
-			this.controls.boundaryColorSwatch.style.backgroundColor = boundary?.stroke ?? "";
+			paintSwatch(this.controls.boundaryColorSwatch, boundary?.stroke ?? "");
 		}
 		this.controls.boundaryWidthSlider?.(boundary?.strokeWidth ?? DEFAULT_BOUNDARY_WIDTH);
 		if (this.controls.boundaryStyleDropdown) {
@@ -3380,4 +3389,13 @@ export class PropertiesSidebarView extends ItemView {
 			this.selectionCleanup = null;
 		}
 	}
+}
+
+/**
+ * Show `color` on a sidebar swatch and remember it as written, so the picker
+ * reopens on the stored value rather than the computed `rgb()` style.
+ */
+function paintSwatch(el: HTMLElement, color: string): void {
+	el.style.backgroundColor = color;
+	el.dataset.color = color;
 }

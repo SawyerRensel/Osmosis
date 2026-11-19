@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { extractThemeColors } from "./ColorPicker";
-import type { ThemeDefinition } from "../styles";
+import { extractThemeColors, rgbToHex } from "./color-palette";
+import type { ThemeDefinition } from "./styles";
 
 describe("extractThemeColors", () => {
 	it("returns empty array for undefined theme", () => {
@@ -58,5 +58,20 @@ describe("extractThemeColors", () => {
 		expect(colors).toContain("#ff0000");
 		expect(colors).toContain("#00ff00");
 		expect(colors).toContain("#0000ff");
+	});
+});
+
+describe("rgbToHex", () => {
+	it("formats channels as lowercase #rrggbb", () => {
+		expect(rgbToHex(255, 0, 170)).toBe("#ff00aa");
+		expect(rgbToHex(0, 0, 0)).toBe("#000000");
+	});
+
+	it("rounds the fractional channels Pickr reports", () => {
+		expect(rgbToHex(12.4, 12.6, 254.5)).toBe("#0c0dff");
+	});
+
+	it("clamps out-of-range channels", () => {
+		expect(rgbToHex(-3, 300, 128)).toBe("#00ff80");
 	});
 });
