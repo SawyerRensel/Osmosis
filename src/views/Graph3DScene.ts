@@ -3207,6 +3207,9 @@ export class Graph3DScene {
 			writePlateEnd(endsB, vertex, target);
 		};
 		let vertex = 0;
+		// Every segment drawn, for cutting out of the farther panels it crosses (`edge-cuts.ts`).
+		const cuts = this.near.edges;
+		cuts.clear();
 		// A tapered hierarchy edge is straight, or a surface arc on a planet.
 		this.ribbons.begin(this.overlays.taper ? this.outline().edges * (this.world.size > 0 ? ARC_SEGMENTS : 1) : 0);
 		for (const link of this.links) {
@@ -3223,7 +3226,7 @@ export class Graph3DScene {
 			if (taper !== null && placed(source) && placed(target)) {
 				const { points, scale } = this.world.size > 0 ? this.planetEdge(link.kind, source, target) : { points: [source, target], scale: 1 };
 				this.ribbons.ends(source, target);
-				this.writeRibbon(points, taper, target, color, Math.min(1, alpha * scale), this.coreOf(source), this.coreOf(target));
+				this.writeRibbon(points, taper, source, target, color, Math.min(1, alpha * scale), this.coreOf(source), this.coreOf(target));
 				continue;
 			}
 			if (this.world.size > 0 && placed(source) && placed(target)) {
@@ -3231,6 +3234,7 @@ export class Graph3DScene {
 				alpha = Math.min(1, alpha * scale);
 				const [cs, ct] = [this.coreOf(source), this.coreOf(target)];
 				for (let i = 1; i < points.length; i++) {
+					cuts.push(points[i - 1]!, points[i]!, 0, 0, source.id, target.id);
 					for (const end of [points[i - 1]!, points[i]!]) {
 						positions.setXYZ(vertex, end.x, end.y, end.z);
 						const core = nearerCore(end, cs, ct);
@@ -3242,6 +3246,7 @@ export class Graph3DScene {
 				}
 				continue;
 			}
+			cuts.push({ x: source.x, y: source.y ?? 0, z: source.z ?? 0 }, { x: target.x, y: target.y ?? 0, z: target.z ?? 0 }, 0, 0, source.id, target.id);
 			for (const end of [source, target]) {
 				positions.setXYZ(vertex, end.x ?? 0, end.y ?? 0, end.z ?? 0);
 				cores.setXYZW(vertex, 0, 0, 0, 0);
@@ -3258,7 +3263,7 @@ export class Graph3DScene {
 	}
 
 	/** One tapered edge through `points` (parent first), its width easing from `ends.parent` to `ends.child` point by point, dashed as the child's branch style says. */
-	private writeRibbon(points: readonly Vec3[], ends: TaperEnds, child: EngineNode, color: Color, alpha: number, cs: Vec3 | null, ct: Vec3 | null): void {
+	private writeRibbon(points: readonly Vec3[], ends: TaperEnds, parent: EngineNode, child: EngineNode, color: Color, alpha: number, cs: Vec3 | null, ct: Vec3 | null): void {
 		const dash = dashOf(child.look.branchLine?.pattern, TAPER_PX_WORLD);
 		const last = points.length - 1;
 		let along = 0;
@@ -3266,6 +3271,7 @@ export class Graph3DScene {
 			const [a, b] = [points[i - 1]!, points[i]!];
 			const width = (k: number): number => ends.parent + ((ends.child - ends.parent) * k) / last;
 			this.ribbons.segment(a, b, width(i - 1), width(i), along, dash, color, alpha, nearerCore(a, cs, ct), nearerCore(b, cs, ct));
+			this.near.edges.push(a, b, width(i - 1), width(i), parent.id, child.id);
 			along += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 		}
 	}
