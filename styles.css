@@ -1855,10 +1855,33 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	transition: width 0.3s ease;
 }
 
-.osmosis-study-progress-text {
+/* Anki's new | learn | due counts. The bucket of the card on screen is
+   underlined; it counts in its own bucket, as in Anki. */
+.osmosis-study-counts {
+	display: flex;
+	gap: var(--size-4-2);
 	font-size: var(--font-ui-small);
-	color: var(--text-muted);
+	font-weight: var(--font-semibold);
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
+}
+
+.osmosis-study-count-new {
+	color: var(--color-blue);
+}
+
+.osmosis-study-count-learn {
+	color: var(--color-red);
+}
+
+.osmosis-study-count-due {
+	color: var(--color-green);
+}
+
+.osmosis-study-count.is-current {
+	text-decoration: underline;
+	text-decoration-thickness: 2px;
+	text-underline-offset: 3px;
 }
 
 /* The one scroll surface in the study tab, filling whatever the status strip

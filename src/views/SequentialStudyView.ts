@@ -9,6 +9,7 @@ import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import { isCloseMatch } from "../study/match";
 import { formatInterval, isNavbarSwipe } from "../study/study-view";
+import { countSession, type CountBucket } from "../study/session-counts";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
@@ -50,6 +51,13 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 	{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
 	{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
 	{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
+];
+
+/** The counts above the card, in Anki's order and colours (see styles.css). */
+const COUNT_BUCKETS: Array<{ bucket: CountBucket; label: string }> = [
+	{ bucket: "new", label: "New" },
+	{ bucket: "learn", label: "Learn" },
+	{ bucket: "due", label: "Due" },
 ];
 
 /**
@@ -128,7 +136,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	 */
 	private statusEl!: HTMLElement;
 	private progressFill!: HTMLElement;
-	private progressText!: HTMLElement;
+	/** The new | learn | due counts, one span per bucket (see `updateProgress`). */
+	private countEls = new Map<CountBucket, HTMLElement>();
 	private breadcrumbEl: HTMLElement | null = null;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
@@ -429,7 +438,12 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		const progressEl = this.statusEl.createDiv({ cls: "osmosis-study-progress" });
 		const bar = progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
 		this.progressFill = bar.createDiv({ cls: "osmosis-study-progress-fill" });
-		this.progressText = progressEl.createSpan({ cls: "osmosis-study-progress-text" });
+		// Anki-style new | learn | due counts, the session's only counter
+		const countsEl = progressEl.createDiv({ cls: "osmosis-study-counts" });
+		this.countEls.clear();
+		for (const { bucket } of COUNT_BUCKETS) {
+			this.countEls.set(bucket, countsEl.createSpan({ cls: `osmosis-study-count osmosis-study-count-${bucket}` }));
+		}
 
 		// Deck breadcrumb container (e.g., "python › functions") — opt-in via
 		// settings. Contents are populated per-card in renderCard().
@@ -665,7 +679,23 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		const total = this.reviewed + remaining;
 		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
 		this.progressFill.setCssProps({ "--osmosis-progress-width": `${Math.min(pct, 100)}%` });
-		this.progressText.textContent = `${this.reviewed + 1} / ${total}`;
+		this.updateCounts();
+	}
+
+	/** Refresh the new | learn | due counts and underline the on-screen card's. */
+	private updateCounts(): void {
+		const counts = countSession(
+			this.queue,
+			this.currentIndex,
+			this.deferredCards.map((d) => d.studyCard),
+		);
+		for (const { bucket, label } of COUNT_BUCKETS) {
+			const el = this.countEls.get(bucket);
+			if (!el) continue;
+			el.textContent = String(counts[bucket]);
+			el.setAttribute("aria-label", `${label}: ${counts[bucket]}`);
+			el.toggleClass("is-current", counts.current === bucket);
+		}
 	}
 
 	/** Repopulate the breadcrumb to reflect the given deck path. No-op if the
@@ -1059,7 +1089,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		// Update progress to 100%
 		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
-		this.progressText.textContent = `${this.reviewed} reviewed`;
+		this.updateCounts();
 
 		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "Session complete" });
