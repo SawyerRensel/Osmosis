@@ -239,22 +239,67 @@ describe("buildGraph: link resolution", () => {
 		expect(edgesFrom(model, lineId(model, "Back to [[#Bends]]"))).toEqual([{ kind: "link", target: lineId(model, "Bends") }]);
 	});
 
-	it("makes an embed edge from the embedding line", () => {
-		const md = "- Bowline\n\n![[Rigging]]";
+	it("gives a note embed line no plate: its parent's embed edge goes straight to the note's sole H1", () => {
+		const md = "# Knots\n- Bowline\n\n![[Rigging]]";
 		const model = knots(md, (m) => ({ embeds: [ref(m, "![[Rigging]]", "Rigging")] }));
-		const embedLine = model.nodes.find((n) => n.kind === "line" && n.source?.type === "transclusion");
-		expect(embedLine).toBeDefined();
-		expect(edgesFrom(model, embedLine?.id ?? "")).toEqual([{ kind: "embed", target: noteNodeId("Rigging.md") }]);
+		expect(model.nodes.some((n) => n.source?.type === "transclusion")).toBe(false);
+		// One "Rigging" plate: the embedded note's H1, its root.
+		expect(model.nodes.filter((n) => n.label === "Rigging")).toMatchObject([{ id: noteNodeId("Rigging.md"), kind: "line", root: true }]);
+		expect(edgesFrom(model, noteNodeId("Knots.md"))).toEqual([{ kind: "embed", target: noteNodeId("Rigging.md") }]);
 	});
 
-	it("places a trailing list-item embed on the lifted embed line, not its parent", () => {
+	it("sends a whole-note embed to the file-name plate when the note has no sole H1", () => {
+		const md = "## Knots\n![[Moorings]]";
+		const moorings = note("Moorings.md", "- Swing mooring\n- Pile mooring");
+		const model = buildGraph([note("Knots.md", md, (m) => ({ embeds: [ref(m, "![[Moorings]]", "Moorings")] })), moorings], resolverFor(["Knots.md", "Moorings.md"]));
+		expect(model.nodes.find((n) => n.id === noteNodeId("Moorings.md"))).toMatchObject({ kind: "note", label: "Moorings" });
+		expect(edgesFrom(model, lineId(model, "Knots"))).toEqual([{ kind: "embed", target: noteNodeId("Moorings.md") }]);
+	});
+
+	it("sends a heading embed and a block embed from the parent line to that heading's and block's plates", () => {
+		const md = "# Knots\n- Sections\n  - ![[Rigging#Running Rigging]]\n- Blocks\n  - ![[Rigging#^halyard]]";
+		const model = knots(md, (m) => ({
+			embeds: [ref(m, "![[Rigging#Running Rigging]]", "Rigging#Running Rigging"), ref(m, "![[Rigging#^halyard]]", "Rigging#^halyard")],
+		}));
+		expect(model.nodes.some((n) => n.source?.type === "transclusion")).toBe(false);
+		expect(edgesFrom(model, lineId(model, "Sections"))).toEqual([{ kind: "embed", target: lineId(model, "Running Rigging") }]);
+		expect(edgesFrom(model, lineId(model, "Blocks"))).toEqual([{ kind: "embed", target: lineId(model, "Halyards") }]);
+	});
+
+	it("keeps a list item with text before its embed: the item's own plate carries the embed edge", () => {
 		const md = "- Rigging overview ![[Rigging]]";
 		const model = knots(md, (m) => ({ embeds: [ref(m, "![[Rigging]]", "Rigging")] }));
-		const parent = lineId(model, "Rigging overview");
-		const embedLine = model.nodes.find((n) => n.kind === "line" && n.source?.type === "transclusion");
-		expect(embedLine).toBeDefined();
-		expect(edgesFrom(model, parent)).toEqual([]);
-		expect(edgesFrom(model, embedLine?.id ?? "")).toEqual([{ kind: "embed", target: noteNodeId("Rigging.md") }]);
+		expect(model.nodes.some((n) => n.source?.type === "transclusion")).toBe(false);
+		expect(edgesFrom(model, lineId(model, "Rigging overview"))).toEqual([{ kind: "embed", target: noteNodeId("Rigging.md") }]);
+	});
+
+	it("re-parents anything under an embed line to the embed line's parent", () => {
+		const md = "# Knots\n- Lines\n  - ![[Rigging]]";
+		const tree = parser.parse(md, "Knots.md");
+		// The parser hangs indented lines from the enclosing item, never from an embed; build one by hand.
+		const embedLine = tree.root.children[0]!.children[0]!.children[0]!;
+		expect(embedLine.type).toBe("transclusion");
+		embedLine.children.push({ ...embedLine, id: "under", type: "bullet", content: "Coiled", raw: "Coiled", children: [], blockId: undefined });
+		const model = buildGraph([{ tree, cache: { embeds: [ref(md, "![[Rigging]]", "Rigging")] } }, target()], resolverFor(files));
+		const coiled = lineId(model, "Coiled");
+		expect(model.edges.filter((e) => e.target === coiled)).toEqual([{ kind: "hierarchy", source: lineId(model, "Lines"), target: coiled }]);
+	});
+
+	it("lands a link to an embed line's block ID on the line above it", () => {
+		const md = "# Knots\n- Lines\n  - ![[Rigging]] ^lines-embed\n- See [[#^lines-embed]]";
+		const model = knots(md, (m) => ({ embeds: [ref(m, "![[Rigging]]", "Rigging")], links: [ref(m, "[[#^lines-embed]]", "#^lines-embed")] }));
+		expect(edgesFrom(model, lineId(model, "See [[#^lines-embed]]"))).toEqual([{ kind: "link", target: lineId(model, "Lines") }]);
+	});
+
+	it("keeps the plate of an embed line that is a partial note's root: nothing is above it", () => {
+		const md = "# Knots\n- ![[Rigging]] ^lines-embed";
+		const tree = parser.parse(md, "Knots.md");
+		const embedLine = tree.root.children[0]!.children[0]!;
+		expect(embedLine.type).toBe("transclusion");
+		const model = buildGraph([{ tree, cache: { embeds: [ref(md, "![[Rigging]]", "Rigging")] }, only: new Set([embedLine]) }, target()], resolverFor(files));
+		const plate = model.nodes.find((n) => n.source === embedLine);
+		expect(plate).toBeDefined();
+		expect(edgesFrom(model, plate!.id)).toEqual([{ kind: "embed", target: noteNodeId("Rigging.md") }]);
 	});
 
 	it("places a link on the later line of a multiline blockquote", () => {

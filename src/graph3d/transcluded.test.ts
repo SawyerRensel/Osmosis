@@ -87,6 +87,13 @@ describe("depth 0: collectEmbedded", () => {
 		expect(model.edges.filter((e) => e.kind === "embed" && e.target === "note:Whole.md")).toHaveLength(1);
 	});
 
+	it("shows a transcluded note's title once: the embed line has no plate, its parent's embed edge goes to the H1", async () => {
+		const files = { "Galley.md": "# Galley\n- Stove\n\n![[Provisions]]", "Provisions.md": "# Provisions\n- Rice\n- Lentils" };
+		const { model } = await depthZero(files, "Galley.md");
+		expect(model.nodes.filter((n) => n.label === "Provisions")).toMatchObject([{ id: "note:Provisions.md", root: true }]);
+		expect(model.edges.filter((e) => e.kind === "embed")).toEqual([{ kind: "embed", source: "note:Galley.md", target: "note:Provisions.md" }]);
+	});
+
 	it("adds no node for plain links, to notes, unresolved targets or attachments", async () => {
 		const { model } = await depthZero();
 		expect(model.nodes.some((n) => n.path === "Linked.md" || n.kind === "ghost")).toBe(false);
