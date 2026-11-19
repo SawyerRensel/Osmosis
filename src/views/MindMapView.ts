@@ -345,6 +345,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private nodeMap = new Map<string, LayoutNode>();
 	private selectionChangeListeners = new Set<() => void>();
 	private fileLoadListeners = new Set<() => void>();
+	private historyApplyListeners = new Set<() => void>();
 
 	// Rubber-band selection state
 	private isRubberBanding = false;
@@ -2424,6 +2425,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	/** Unregister a file load callback. */
 	offFileLoad(fn: () => void): void {
 		this.fileLoadListeners.delete(fn);
+	}
+
+	/** Register a callback for after an undo/redo has restored the files and re-rendered (the style sidebar re-reads its controls). */
+	onHistoryApply(fn: () => void): void {
+		this.historyApplyListeners.add(fn);
+	}
+
+	/** Unregister a history-apply callback. */
+	offHistoryApply(fn: () => void): void {
+		this.historyApplyListeners.delete(fn);
 	}
 
 	/** Look up a LayoutNode by its source node ID. */
@@ -7976,6 +7987,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.lazyTransclusionIds,
 		);
 		await this.render(true);
+		for (const fn of this.historyApplyListeners) fn();
 	}
 
 	/**
