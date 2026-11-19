@@ -7,6 +7,7 @@ import type { FenceWriter } from "../store/FenceWriter";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
+import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { renderOcclusion } from "./OcclusionRenderer";
@@ -604,7 +605,8 @@ export class SequentialStudyModal extends Modal {
 		if (!entry) return;
 
 		if (entry.type === "exclude") {
-			// Undo exclude: clear the flag (frontmatter or fence) and re-insert
+			// Undo exclude: clear the flag (frontmatter or fence). The card is
+			// still in the queue at currentIndex - 1; stepping back shows it.
 			if (entry.studyCard.card.blockId !== undefined) {
 				this.sessionManager.setLineCardDisabled(entry.studyCard.card, false);
 			} else if (this.fenceWriter && this.resolveFile) {
@@ -613,10 +615,9 @@ export class SequentialStudyModal extends Modal {
 					await this.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);
 				}
 			}
-			this.currentIndex--;
-			this.queue.splice(this.currentIndex, 0, entry.studyCard);
+			this.stepBack();
 		} else {
-			// Undo rating: revert schedule and re-insert card
+			// Undo rating: revert schedule and step back to the card
 			await this.sessionManager.revertReview(
 				entry.studyCard.card.id,
 				entry.previousSchedule ?? null,
@@ -630,11 +631,21 @@ export class SequentialStudyModal extends Modal {
 			}
 
 			this.reviewed--;
-			this.currentIndex--;
-			this.queue.splice(this.currentIndex, 0, entry.studyCard);
+			// If the timer already fired, the deferred copy is in the queue: drop it.
+			this.stepBack(entry.deferredCard?.studyCard);
 		}
 
 		this.renderCard();
+	}
+
+	/** Step the queue back over the last advance (see `stepBackQueue`). */
+	private stepBack(firedDeferred?: StudyCard): void {
+		const next = stepBackQueue(
+			{ queue: this.queue, currentIndex: this.currentIndex },
+			firedDeferred,
+		);
+		this.queue = next.queue;
+		this.currentIndex = next.currentIndex;
 	}
 
 	/** Show or hide the undo button based on stack state. */
