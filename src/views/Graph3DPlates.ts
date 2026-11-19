@@ -65,6 +65,13 @@ const GLYPH_PAD_PX = 4;
 const GLYPH_BUDGET_MS = 4;
 /** The layout cache keeps plates no longer shown until it holds this many, or twice the plates shown. */
 const SHAPE_CACHE_MIN = 4096;
+/**
+ * The glyph layers' `renderOrder`: below every other transparent object's 0,
+ * so three draws them straight after the opaque plates. A layer is made when
+ * its atlas page is, after the edges, and three breaks ties by object id, so
+ * at 0 a farther plate's text was painted over a nearer edge (T97).
+ */
+export const GLYPH_RENDER_ORDER = -1;
 
 /** A glyph quad on a plate, in world units relative to the plate's centre. */
 interface ShapeGlyph {
@@ -704,6 +711,9 @@ export class Graph3DPlates {
 		});
 		const layer = new QuadLayer(material, GLYPH_ATTRIBUTES);
 		layer.mesh.visible = this.labelsVisible;
+		// First of the transparent objects, right after the opaque plates: glyphs write no depth, so
+		// a nearer edge drawn before them would be painted over by a farther plate's text (T97).
+		layer.mesh.renderOrder = GLYPH_RENDER_ORDER;
 		this.glyphs.push(layer);
 		this.group.add(layer.mesh);
 	}
