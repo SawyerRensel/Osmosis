@@ -44,6 +44,7 @@ import { grabRadius } from "../graph3d/shells";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../graph3d/inertia";
 import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../graph3d/depth";
 import { SwipeFeed, WheelClassifier, wheelAction } from "../graph3d/wheel-input";
+import { pinchDollyDistance, rayDistanceAtDepth } from "../graph3d/pinch-zoom";
 import type { Placed } from "../graph3d/positions";
 import { chargeStrengths, spaceCharges } from "../graph3d/settle";
 import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../graph3d/flatten";
@@ -2684,7 +2685,7 @@ export class Graph3DScene {
 	private startPinch(): void {
 		const [a, b] = [...this.touches.keys()] as [number, number];
 		const [x, y, spread] = this.pinchShape(a, b);
-		this.pinch = { ids: [a, b], x, y, spread, zoomed: 0, depth: this.viewDepth(this.aimPoint(x, y, true)) };
+		this.pinch = { ids: [a, b], x, y, spread, zoomed: 0, depth: this.viewDepth(this.pinchPoint(x, y)) };
 		this.samples = [];
 		this.zoomSamples = [];
 	}
@@ -2693,8 +2694,8 @@ export class Graph3DScene {
 	private movePinch(pinch: Pinch): void {
 		const [x, y, spread] = this.pinchShape(...pinch.ids);
 		const logZoom = Math.log(spread / pinch.spread);
-		const point = this.aimPoint(x, y, true);
-		this.dolly(point, logZoom);
+		const point = this.pinchPoint(x, y);
+		this.dolly(point, logZoom, this.pinchStep());
 		pinch.depth = this.viewDepth(point);
 		this.pan(x - pinch.x, y - pinch.y, pinch.depth);
 		pinch.x = x;
@@ -2713,6 +2714,30 @@ export class Graph3DScene {
 		if (pan.x !== 0 || pan.y !== 0) this.panCoast = { depth: pinch.depth, coast: { velocity: pan, stopBelow: PAN_MIN_VELOCITY } };
 		const zoom = estimateVelocity(this.zoomSamples, now).x;
 		if (Math.abs(zoom) >= ZOOM_MIN_VELOCITY) this.zoomCoast = { x: pinch.x, y: pinch.y, velocity: zoom };
+	}
+
+	/**
+	 * Where a pinch at client point (`x`, `y`) zooms toward. In Planets, the
+	 * point under the fingers on the plate they are over (in the plane facing
+	 * the camera through it), not that plate's planet core as `aim` gives, so
+	 * the zoom follows the plate's distance and keeps it under the fingers
+	 * (T96). A miss is `aim`'s miss, as for the wheel. Other layouts, and the
+	 * view-centre setting, aim as before.
+	 */
+	private pinchPoint(x: number, y: number): Vector3 {
+		if (this.overlays.layout !== "planets" || this.controlSettings.touchDrag === "center") return this.aimPoint(x, y, true);
+		const picked = this.nodeNear(x, y, PICK_SLOP_PX.touch);
+		const ray = this.rayThrough(x, y);
+		if (picked === null || !placed(picked)) return ray.at(this.missDepth(), new Vector3());
+		const forward = this.graph.camera().getWorldDirection(new Vector3());
+		const along = rayDistanceAtDepth(this.viewDepth(new Vector3(picked.x, picked.y, picked.z)), ray.direction.dot(forward));
+		this.lastDepth = along;
+		return ray.at(along, new Vector3());
+	}
+
+	/** How a pinch sizes its step: in Planets from the point under the fingers alone (`pinchDollyDistance`), elsewhere as the wheel does. */
+	private pinchStep(): (depth: number, logZoom: number) => number {
+		return this.overlays.layout === "planets" ? pinchDollyDistance : dollyDistance;
 	}
 
 	/** Midpoint and spread of two fingers, in client px. */
@@ -2749,7 +2774,7 @@ export class Graph3DScene {
 		if (zoom !== null) {
 			const step = integrateDecay(zoom.velocity, ZOOM_FRICTION, ms);
 			zoom.velocity = step.velocity;
-			this.dolly(this.aimPoint(zoom.x, zoom.y, true), step.delta);
+			this.dolly(this.pinchPoint(zoom.x, zoom.y), step.delta, this.pinchStep());
 			if (Math.abs(step.velocity) < ZOOM_MIN_VELOCITY) this.zoomCoast = null;
 		}
 	}
@@ -2761,12 +2786,12 @@ export class Graph3DScene {
 	 * at the point's depth, so the mist and flight speed follow what you zoomed
 	 * toward. It stays `MIN_DEPTH` ahead, so a zoom carries on through a node.
 	 */
-	private dolly(point: Vector3, logZoom: number): void {
+	private dolly(point: Vector3, logZoom: number, stepFor: (depth: number, logZoom: number) => number = dollyDistance): void {
 		const camera = this.graph.camera();
 		const controls = this.orbitControls();
 		const toPoint = point.clone().sub(camera.position);
 		const depth = toPoint.length();
-		const step = dollyDistance(depth, logZoom);
+		const step = stepFor(depth, logZoom);
 		camera.position.addScaledVector(toPoint.normalize(), step);
 		this.lastDepth = Math.max(MIN_DEPTH, depth - step);
 		const forward = camera.getWorldDirection(new Vector3());
@@ -2815,7 +2840,8 @@ export class Graph3DScene {
 	 * With `grab` (a drag starting), a pointer over a planet's sphere grabs it
 	 * even off its plates: in a gap between them, or on its core or a star in
 	 * front of it; the nearest sphere on the ray wins. Wheel and pinch zoom
-	 * don't ask, so they head where they always did.
+	 * don't ask, so they head where they always did (a pinch in Planets aims
+	 * with `pinchPoint` instead).
 	 */
 	private aim(x: number, y: number, touch: boolean, grab = false): { point: Vector3; globe: number | null } {
 		const settings = this.controlSettings;
@@ -2838,8 +2864,12 @@ export class Graph3DScene {
 			this.lastDepth = centre.distanceTo(camera.position);
 			return { point: centre, globe: surface > 0 ? surface : null };
 		}
-		const depth = this.lastDepth ?? camera.position.distanceTo(this.orbitControls().target);
-		return { point: this.rayThrough(x, y).at(depth, new Vector3()), globe: null };
+		return { point: this.rayThrough(x, y).at(this.missDepth(), new Vector3()), globe: null };
+	}
+
+	/** How far along the pointer's ray a zoom heads when no node is near it: the depth last aimed at, as Blender's Auto Depth. */
+	private missDepth(): number {
+		return this.lastDepth ?? this.graph.camera().position.distanceTo(this.orbitControls().target);
 	}
 
 	/**

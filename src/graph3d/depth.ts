@@ -53,12 +53,12 @@ export function pickNode(nodes: readonly ScreenNode[], x: number, y: number, slo
  * `logZoom` (ln of the zoom factor; positive zooms in). Negative backs away.
  *
  * The step is the share of the depth that the zoom factor implies, so the
- * point grows on screen by that factor, but never less than `MIN_DOLLY` per
- * unit of `logZoom`.
+ * point grows on screen by that factor, but never less than `minDolly`
+ * (default `MIN_DOLLY`) per unit of `logZoom`.
  */
-export function dollyDistance(depth: number, logZoom: number): number {
+export function dollyDistance(depth: number, logZoom: number, minDolly = MIN_DOLLY): number {
 	const proportional = depth * (1 - Math.exp(-logZoom));
-	const floor = MIN_DOLLY * Math.abs(logZoom);
+	const floor = minDolly * Math.abs(logZoom);
 	return Math.sign(logZoom) * Math.max(Math.abs(proportional), floor);
 }
 
