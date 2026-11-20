@@ -223,7 +223,7 @@ export class StatsView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "Osmosis stats";
+		return "Osmosis Stats";
 	}
 
 	getIcon(): string {

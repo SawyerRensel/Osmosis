@@ -2027,6 +2027,12 @@ body.is-phone .osmosis-study-rating-bar {
 	margin: 0 auto;
 }
 
+/* The phone's navigation bar floats over the bottom of the tab; leave room so
+   the last decks can scroll clear of it. */
+body.is-phone .osmosis-decks-column {
+	padding-bottom: 96px;
+}
+
 /* Desktop puts icons in the view header, so 8px is only ever read as padding.
    Mobile puts a full-width title bar there instead, and at 8px the operator
    row reads as part of that bar rather than as the top of the deck list.

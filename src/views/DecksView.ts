@@ -26,7 +26,7 @@ export class DecksView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "Decks";
+		return "Osmosis Decks";
 	}
 
 	getIcon(): string {
