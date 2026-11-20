@@ -10,14 +10,14 @@ people:
 location:
 related:
   - "[[Note study - Counts and progress bar replace the Stop pill]]"
-status: To-Do
+status: In-Review
 batch: 14
 priority:
 progress:
 date_created: 2026-11-20T19:00:00.000Z
 date_modified: 2026-11-20T19:00:00.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-20T22:25:26.000Z
+date_start_actual: 2026-11-20T22:25:26.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -86,3 +86,39 @@ pull_request:
 - Stage by explicit path, and run `git diff --cached --stat` before each commit. Never `git stash`. Don't push.
 - T105 has already run, so use the new mode names (Mind map) in any visible text. Don't rename the existing `spatial*` identifiers; T106 does that sweep next.
 - Run lint, test and build one at a time (7 GB RAM).
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `36e0c0a` on `batch/14-study-polish-renames`.
+
+### Approach
+- The pill (`ensureSpatialBanner`) is gone. `ensureSpatialStrip()` replaces it. It builds a `.osmosis-study-status.osmosis-mindmap-study-strip` wrapper in the map's `contentEl` and fills it with T102's `StudyProgressStrip`. `applySpatialState` keeps calling it after every render pass, and it rebuilds the strip when a render has detached it, exactly as the pill was rebuilt.
+- The strip reuses the study tab's `.osmosis-study-status` rule: pinned at the top, solid band then gradient fade, `pointer-events: none`. `.osmosis-mindmap-study-strip` only declares the strip height, the fade and `--osmosis-study-column: none`, and it joins the `--osmosis-count-*` colour rule.
+- Counting reuses `countNoteSession` unchanged. A new pure `spatialSessionCards(cards, targets)` in `src/study/spatial-study.ts` turns the session's target keys into `NoteSessionCard`s, fixed at session start (it resolves keys with `cardIdsForSpatialKey`, dedupes, then calls `noteSessionCard`). `rateSpatialCard` records each rated card's rating in `spatialCardRatings`. Again moves a card to learn; Hard, Good and Easy take it out.
+- Ending study: `exitSpatialMode` is untouched apart from removing the strip and clearing the count state, so the schedule and review-log flush still runs. The cap, the existing command, file switch and completion all go through it.
+
+### Decisions
+- **The bar counts targets; the counts count cards.** The bar is rated targets out of all targets, as the pill was. The counts are per card, as the dashboard's are. After `spatialStudyKeys` splits nodes, a target is one card in nearly every case. The only exception is an unsplit node key that carries several cards. That case is rare, and its single rating reaches all of them anyway.
+- **The underlined bucket is the card whose rating bubble is open.** Before a reveal you can tap any hidden node, so no "next card" is knowable and nothing is underlined. Between ratings the underline is therefore absent.
+- **No undo.** Mind map study has no undo, so the counts change only when you rate.
+- **The strip is pointer-transparent everywhere.** Without the Stop button nothing in it needs a click, so the map pans and selects through the whole band. The old `stopPropagation` listeners went with the pill.
+- **Dead CSS removed.** `.osmosis-reveal-banner`, `.osmosis-reveal-progress` and `.osmosis-reveal-btn` had no other user after T102, so they are deleted.
+- **New identifiers named for T106.** The new CSS class is `osmosis-mindmap-study-strip`, which already uses the new name, so T106 does not need to rename it. The new fields sit with their neighbours and use the old prefix: `spatialCountCards`, `spatialCardRatings`, `spatialStripEl`, `spatialStrip`, plus the methods `ensureSpatialStrip` and `spatialSessionCards()`. T106's spatial sweep should catch them.
+- **Docs.** `docs/studying/study-modes.md` mind map step 6 now describes the strip and the cap. The note-study paragraph (~line 85) still describes the old pill and Stop button. T102 left it stale, and this ticket did not touch it.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/study/spatial-study.ts` | New `spatialSessionCards()`; a comment now says "progress bar" instead of "banner" |
+| `src/study/spatial-study.test.ts` | 4 tests: bucketing, unsplit node key, unknown key, round trip through `countNoteSession` |
+| `src/views/MindMapView.ts` | Pill and Stop replaced by `ensureSpatialStrip()`; count state set at study start, on rating, at exit and on close |
+| `styles.css` | `.osmosis-mindmap-study-strip` rule plus the colour-rule selector; dead reveal-banner rules removed |
+| `docs/studying/study-modes.md` | Mind map study step 6 |
+
+### Fixture
+Reuses `vault/tests/flashcard/study-counts.md`, whose master is `e2e/fixtures/study-counts.md`. The fixture is unchanged and identical to the master at commit time. All its cards are fences, back-dated, and should read 2 | 2 | 3. If T102 testing already rated cards in it, restore it from the master and reload Obsidian (Ctrl+R).
+
+### Not verified
+- Nothing has been seen in Obsidian, desktop or phone. In particular, check that the gradient band reads well over a map, and that it does not clash with the phone's view header.
+- Underline behaviour on a split node (an occlusion, cloze or bidirectional node): the underline should follow each step's card.
+
