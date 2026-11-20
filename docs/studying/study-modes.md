@@ -16,8 +16,9 @@ two, an occluded diagram is one per mask group.
 ## Sequential Study
 
 Classic card-by-card review in its own tab, like the stats dashboard. The card
-fills the tab and the buttons stay pinned to the bottom, however long the card.
-On a desktop the text sits in a centered column; images can use the full width.
+fills the tab, and the buttons float over its bottom edge while the card
+scrolls underneath. On a desktop the text sits in a centered column; images can
+use the full width.
 
 1. Open the [dashboard](dashboard.md) and click a deck (or **Study all**)
 2. The front of the card appears

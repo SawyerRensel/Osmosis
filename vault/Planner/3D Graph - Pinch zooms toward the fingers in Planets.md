@@ -108,9 +108,9 @@ Two things made a Planets pinch too fast near a plate:
 
 ### Decisions
 
-- **Only the pinch changed in Planets. The wheel still heads for the core.** The ticket says the wheel zooms toward the cursor. In Planets it actually aims through the same `aim()` → core path. I left the wheel alone because the ticket is about the pinch and its scope is narrow. If Sawyer wants the wheel to match, the change is small: use `pinchPoint`/`pinchStep` in `stepWheelZoom` (around `this.dolly(this.aimPoint(wheel.x, wheel.y, false), step)`) with mouse slop.
+- **Only the pinch changed in Planets. The wheel still heads for the core.** (Changed in round 2, see below: the wheel now follows the pinch.) The ticket says the wheel zooms toward the cursor. In Planets it actually aims through the same `aim()` → core path. I left the wheel alone because the ticket is about the pinch and its scope is narrow. If Sawyer wants the wheel to match, the change is small: use `pinchPoint`/`pinchStep` in `stepWheelZoom` (around `this.dolly(this.aimPoint(wheel.x, wheel.y, false), step)`) with mouse slop.
 - **Other layouts are untouched.** Both the new pivot and the smaller floor are gated on `overlays.layout === "planets"`, as the acceptance criteria require. Elsewhere the pinch still uses `MIN_DOLLY`.
-- **The view-centre touch setting (`graph3dOneFingerDrag: center`) keeps the old behaviour.** It still zooms toward the orbit target in Planets too, because that setting is an explicit choice to aim at the centre.
+- **The view-centre touch setting (`graph3dOneFingerDrag: center`) keeps the old behaviour.** (Round 2 also restores its old step floor, see below.) It still zooms toward the orbit target in Planets too, because that setting is an explicit choice to aim at the centre.
 - **The pivot is the point under the fingers, not the plate's centre.** With the plate centre, content under the fingers would slide when the fingers are off-centre on a wide plate or panel. The ray point keeps it in place.
 - **`PINCH_MIN_DOLLY = 20` is a tuning value.** Line plates are 5 units tall and `LINE_STAND_OFF` is 70. If passing through a plate feels sticky, raise it. If the last stretch toward a plate feels jumpy, lower it.
 - Pinch momentum (`zoomCoast`) is created only by `endPinch`, so routing its per-frame dolly through `pinchPoint`/`pinchStep` affects nothing else.
@@ -132,3 +132,119 @@ Reuses `vault/tests/graph3d/Galley Handbook.md` (the largest graph3d fixture, at
 
 - There is no touchscreen here. Nothing was tried on a device, and Playwright was skipped per the batch rules. Lint, the full vitest suite (3402 tests) and the build are green.
 - The feel of `PINCH_MIN_DOLLY` near a plate is untested.
+
+### Round 2 fix
+
+Code commit: `d807cac`. Sawyer's test: "Pinch zoom is better when I pinch zoom
+over nodes in planet layout in 3d graph view, but it's still jarringly fast
+when my fingers land in between nodes in empty space. Pinch zoom should behave
+like rotating in responding to the sphere (or whatever the core layer is)
+regardless of whether I'm over nodes or not." Settled with Sawyer as well: the
+Planets mouse wheel zooms toward the cursor with the same rules.
+
+**Cause.** A miss fell back to `missDepth()`, which is `lastDepth`, Auto Depth's
+"depth last aimed at". The first finger of a pinch has already set that value
+by the time the pinch starts. Its pointer-down runs `aim(x, y, touch, grab =
+true)`. Over a gap on a planet, `sphereUnder` finds the planet's sphere, and
+`aim` sets `lastDepth` to the distance to the sphere's **centre**, which is
+the core. So a pinch between plates headed for a point at the core's distance
+along the fingers' ray. That point lies behind the surface the user sees by a
+whole planet radius, and the step is proportional to that distance.
+
+The numbers come from arithmetic on the code's own rules, not from a device.
+The camera is `s` from the surface, which is where a plate's flight stops
+(`LINE_STAND_OFF` = 70). The planet has radius `R`, so the core is `s + R`
+away. The step is `pinchDollyDistance`, d·(1 − 1/r) with a floor of 20 per
+unit of ln r:
+
+| R | s | Core | Pinch ×1.25: plate step | Gap step (round 1) | Surface grows | Pinch ×1.5: gap step |
+|---|---|---|---|---|---|---|
+| 40 | 70 | 110 | 14 (×1.25) | 22, 1.6× faster | ×1.46 | 37 (surface left at 33, ×2.1) |
+| 100 | 70 | 170 | 14 (×1.25) | 34, 2.4× faster | ×1.94 | 57 (surface left at 13, ×5.3) |
+| 150 | 70 | 220 | 14 (×1.25) | 44, 3.1× faster | ×2.7 | 73: passes through the surface |
+| 100 | 30 | 130 | 6 (×1.25) | 26, 4.3× faster | ×7.5 | 43: passes through the surface |
+
+The ratio is (s + R) / s, so the nearer you read and the bigger the note, the
+worse it gets. A modest pinch from reading distance can carry the camera
+through the surface, which is the lunge. Over a plate, round 1 replaced
+`lastDepth` with the plate's depth, which is why that case felt right. A
+pinch that started over a plate and drifted into a gap kept the plate's
+depth, because `dolly` re-seats `lastDepth`. A pinch that started in a gap
+and drifted onto a plate dropped its rate mid-gesture.
+
+**Fix.**
+
+- **Pivot between plates = the surface a drag grabs.** At the start of a
+  pinch, `zoomDepth` aims in this order, through the pure `zoomPivotDistance`:
+  1. The plate under the fingers, as in round 1.
+  2. Otherwise, where the fingers' ray meets the planet sphere that a
+     rotation there would grab. This is `sphereHit`, split out of
+     `sphereUnder`. It uses `grabRadius`, so with core layers it is the
+     outermost shell the camera is still outside of.
+  3. Off every planet (sky), Auto Depth's miss as before.
+
+  Plates sit on that sphere, so a gap now zooms at the rate of the plates
+  around it. A ray 3° beside a plate that is 70 away meets the surface at
+  70.15, which is 0.2% apart (unit test).
+- **The depth is latched for the whole gesture.** The view depth picked at
+  the start is kept in `pinch.depth`, which is already what the pan uses.
+  Each move zooms toward the point on the current midpoint's ray at that
+  depth (`zoomAt`). The depth then shrinks as the camera closes in. This
+  means:
+  - Crossing from a plate to a gap, or from a gap to a plate, never changes
+    the rate mid-gesture.
+  - Zooming through the surface never re-aims at the far wall, which is
+    about 2R away and would be a lunge.
+  - Past the latched plane, the zoom carries on at the 20-unit floor. Lift
+    and pinch again to aim afresh.
+
+  Over a single plate this matches round 1 exactly. Round 1 re-picked the
+  same plate on every move, and the plate's view depth fell by the same
+  step·cos.
+- **Pinch momentum keeps the latch.** `zoomCoast` carries the pinch's
+  depth, so the coast cannot re-aim either.
+- **Mouse wheel.** In Planets, `easeWheel` now goes through the same
+  `zoomAt`, with the same order of plate, surface, then miss, and the same
+  `pinchDollyDistance` step. It no longer goes toward the core with the
+  200-unit floor. The depth is latched while the wheel's glide runs:
+  consecutive notches keep it, and a pause long enough for the glide to
+  finish (about 0.2 s) re-aims. The mouse uses the mouse pick slop (16 px),
+  not the touch slop.
+
+**Decisions.**
+
+- **The ribbon's Zoom in/out and the zoom gizmo follow the wheel's rule in
+  Planets.** They feed the wheel's glide, aimed at the middle of the view. So
+  in Planets they now head for the plate or surface at the centre of the
+  view instead of its core. Keeping them on the core would have needed a
+  separate path. Tell me if they should stay on the core.
+- **The wheel's step near a plate is the pinch's.** That is 5% of the
+  distance per notch, with a floor of about 1 unit per notch
+  (`PINCH_MIN_DOLLY` 20 × ln(1/0.95)). It used to be at least about 10 units
+  per notch. Closing the last 20 units to a plate now takes about 20 notches, where it used to take 2.
+  If that feels sticky, raising `PINCH_MIN_DOLLY` tunes the pinch and the
+  wheel together. This follows Sawyer's "same rules".
+- **The view-centre settings (`touchDrag` / `desktopPivot` = `center`) keep
+  the pre-T96 behaviour completely.** In Planets, round 1 had given the
+  centre-setting pinch the 20-unit floor. It is back on `dollyDistance`, so
+  that setting is untouched by T96, as round 1 meant it to be.
+- **The latch, not per-move re-picking.** Latching is what makes a gap and a
+  plate, and the moment of passing through the surface, all seamless. The
+  cost: in one gesture you cannot zoom toward a plate and then on toward
+  another plate far behind it. Lifting and pinching again does that.
+- **Sky (off every planet) still uses Auto Depth's last depth.** After a
+  rotation, that can be a core's distance. Pinching at bare sky has nothing
+  under the fingers to size the zoom from, and the feedback was about the
+  gaps between plates.
+
+| File | Change |
+|---|---|
+| `src/graph3d/pinch-zoom.ts` | New `ZoomAim` and `zoomPivotDistance` (plate, then surface, then miss) |
+| `src/graph3d/pinch-zoom.test.ts` | 5 new tests: a gap's step equals the step for a pivot on the surface (14, not the core's 34); a gap beside a plate is within 1%; the core-layer shell; plate first; miss only off every planet |
+| `src/views/Graph3DScene.ts` | `zoomsUnderPointer`, `zoomDepth` and `zoomAt` replace `pinchPoint` and `pinchStep`. Pinch start, move and coast, and `easeWheel`, use them. `zoomCoast` and `wheelZoom` carry the latched `depth`. `sphereHit` is split out of `sphereUnder` |
+
+Fixture: as round 1, `vault/tests/graph3d/Galley Handbook.md`.
+
+**Not verified:** there is no touchscreen or mouse session here, so neither
+the pinch nor the wheel has been felt on a device. Lint, the full vitest suite
+(3408 tests) and the build are green.

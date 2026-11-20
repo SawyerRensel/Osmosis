@@ -18,7 +18,7 @@ priority:
 progress_current:
 progress_total:
 date_created: 2026-09-03T01:47:54.000Z
-date_modified: 2026-11-19T03:55:00.000Z
+date_modified: 2026-11-20T12:43:54.000Z
 date_start_scheduled: 2026-11-19T03:22:06.000Z
 date_start_actual: 2026-11-19T03:22:06.000Z
 date_end_scheduled:
@@ -364,3 +364,65 @@ screen). Occlusion on a full-width image: use the existing
 - That `addAction` order reads well in the header (Obsidian decides placement).
 - That `g` / `e` don't collide with a user's global hotkeys (the view scope
   should win while the tab is focused).
+
+### Round 2 fix (failed manual test, 2026-11-20)
+
+Code commit: `7626e29`. Sawyer's three findings: the buttons were too big on
+desktop and docked rather than floating; the phone's rating cells touched and
+had square corners; and occlusion masks were drawn across the pane, detached
+from the image.
+
+**Cause of the occlusion bug.** The embed's `|800` ceiling sat on the image only,
+as `max-width: min(100%, var(--osmosis-occlusion-width))`. The wrapper
+(`.osmosis-occlusion`, `inline-block`) sizes itself to its content, and a
+percentage max-width is ignored in that calculation, so the wrapper took the
+picture's natural width (e.g. 2000px, clamped to the pane) while the image
+stopped at 800px on its left. The masks are pinned to the wrapper with a 0–1
+viewBox stretched by `preserveAspectRatio="none"`, so they stretched across the
+pane. The 600px modal hid this for any picture wider than the modal, since the
+wrapper was clamped to the modal's width anyway. Reproduced in headless
+Chromium: a 2000px picture at `|800` in a 1400px pane gave an 800px image in a
+1368px wrapper.
+
+**Fix.** `createImage` sets `--osmosis-occlusion-width` on the wrapper, and the
+study card's ceiling is now on the wrapper. The image keeps `width: auto` and
+fills the wrapper. The same probe then matched image, wrapper and mask layer for
+natural, `|300`, `|800`-on-large, `|1200`-on-small and large-uncapped pictures,
+at 1400, 1000 and 500px panes and after a live resize.
+
+**Buttons.** Flip, type-in and ratings sit in one absolutely positioned panel
+with the Osmosis bar's raised background, blur and shadow, over the card. The
+card's bottom padding is `--osmosis-study-clearance` (panel height, the gap
+under it and a margin), so the last line scrolls clear. The rating row now
+carries `osmosis-contextual-rating`, the shared rating style, so it has the
+same 4px corners, 12px type and colours as the other study modes. The
+duplicate `.osmosis-study-rating-bar` colour selectors are gone, and the
+colour values are unchanged.
+
+Decisions:
+- **Every control is one height** (`--osmosis-study-button-height`: 40px
+  desktop, 48px tablet, 56px phone, matching the 3D graph's study panel). A
+  fixed height means the clearance is pure CSS, with no ResizeObserver.
+- **The panel has a fixed width** (340px desktop, 420px tablet), so Show answer
+  spans exactly the row of four rating buttons that later replaces it. On a
+  phone the panel spans the leaf with 8px insets, and the ratings have 8px gaps.
+- **An empty panel hides itself** (`:not(:has(> :not(.osmosis-hidden)))`) on the
+  waiting and completion screens.
+- **Show answer uses Obsidian's own button colours** with the rating buttons'
+  4px corners. Its old pill shape and its background-secondary fill would
+  disappear against the raised panel.
+- No rule that sets `display` on the flip button, type-in row or rating bar
+  outranks `.osmosis-hidden.osmosis-hidden` (0,2,0). The comments say why.
+
+| File | Change |
+|---|---|
+| `styles.css` | Floating panel, shared button height and clearance vars, phone and tablet sizes, rating row on the shared style, occlusion ceiling moved to the wrapper |
+| `src/views/OcclusionRenderer.ts` | `--osmosis-occlusion-width` set on the wrapper, not the image |
+| `src/views/SequentialStudyView.ts` | Rating bar gets `osmosis-contextual-rating` |
+| `docs/studying/study-modes.md` | "Buttons float over the card" |
+| `e2e/fixtures/occlusion-image-width.md` (+ vault copy) | Two cards on the 1200px `gantry-truss.svg`: capped at `|800`, and natural |
+
+Not verified: the look in Obsidian itself, meaning the real `--raised-*`
+variables, Obsidian's `box-sizing`, and the tablet `button` padding. Layout was
+checked against `styles.css` in headless Chromium with stand-ins for
+Obsidian's button and input rules.

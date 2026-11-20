@@ -1,6 +1,9 @@
+import { Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { MIN_DOLLY, dollyDistance } from "./depth";
-import { PINCH_MIN_DOLLY, pinchDollyDistance, rayDistanceAtDepth } from "./pinch-zoom";
+import { sphereOnRay } from "./globe";
+import { PINCH_MIN_DOLLY, pinchDollyDistance, rayDistanceAtDepth, zoomPivotDistance } from "./pinch-zoom";
+import { grabRadius } from "./shells";
 
 describe("pinchDollyDistance", () => {
 	it("moves a spread ratio r toward a point d away by d·(1 − 1/r), so the point grows by r on screen", () => {
@@ -62,5 +65,49 @@ describe("rayDistanceAtDepth", () => {
 
 	it("stays finite for a ray at right angles to the view", () => {
 		expect(rayDistanceAtDepth(80, 0)).toBe(800);
+	});
+});
+
+describe("zoomPivotDistance", () => {
+	// A planet of radius 100 whose core is 170 straight ahead: its surface is
+	// 70 away, the distance a plate is read from (`LINE_STAND_OFF`).
+	const eye = new Vector3(0, 0, 0);
+	const ahead = new Vector3(0, 0, -1);
+	/** Where a ray from the eye meets the sphere a drag there grabs (the scene's `sphereHit`). */
+	const surfaceAlong = (direction: Vector3, core: number, surface: number, shells: number[] = []): number | null =>
+		sphereOnRay(eye, direction, [{ centre: new Vector3(0, 0, -core), radius: grabRadius(core, surface, shells) }])?.distance ?? null;
+
+	it("over a gap heads for the surface a drag grabs, so its step is the step for a pivot on the surface, not the core", () => {
+		const logZoom = Math.log(1.25);
+		const surface = surfaceAlong(ahead, 170, 100);
+		expect(surface).toBeCloseTo(70, 9);
+		const gap = zoomPivotDistance({ plate: null, surface, miss: 170 }, 1);
+		expect(pinchDollyDistance(gap, logZoom)).toBeCloseTo(pinchDollyDistance(70, logZoom), 9);
+		expect(pinchDollyDistance(gap, logZoom)).toBeCloseTo(14, 9);
+		// Round 1 fell back to Auto Depth's last depth, which the first finger's press set to the core's: 34, 2.4 times as fast.
+		expect(pinchDollyDistance(170, logZoom)).toBeCloseTo(34, 9);
+	});
+
+	it("zooms a gap at the rate of a plate on the surface beside it", () => {
+		const plate = zoomPivotDistance({ plate: 70, surface: 70, miss: 170 }, 1);
+		const angle = 0.05;
+		const beside = new Vector3(Math.sin(angle), 0, -Math.cos(angle));
+		const gap = zoomPivotDistance({ plate: null, surface: surfaceAlong(beside, 170, 100), miss: 170 }, Math.cos(angle));
+		expect(Math.abs(gap - plate) / plate).toBeLessThan(0.01);
+	});
+
+	it("with core layers, heads for the shell a drag from inside the surface grabs", () => {
+		// 90 from the core: inside the surface (100), outside the shell at 60, which is 30 ahead.
+		const surface = surfaceAlong(ahead, 90, 100, [30, 60]);
+		expect(zoomPivotDistance({ plate: null, surface, miss: 90 }, 1)).toBeCloseTo(30, 9);
+	});
+
+	it("keeps the plate first, in the plane facing the camera through it, as in round 1", () => {
+		const cosine = Math.cos(0.2);
+		expect(zoomPivotDistance({ plate: 40, surface: 70, miss: 170 }, cosine)).toBeCloseTo(40 / cosine, 9);
+	});
+
+	it("falls back to the miss only off every planet", () => {
+		expect(zoomPivotDistance({ plate: null, surface: null, miss: 250 }, 0.9)).toBe(250);
 	});
 });
