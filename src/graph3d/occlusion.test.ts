@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { holeMask, panelHoles, type ScreenPanel, type ScreenPlate } from "./occlusion";
+import { holeMask, panelHoles, strokeLayer, type ScreenPanel, type ScreenPlate } from "./occlusion";
 
 // A panel laid out 200 × 40 px, drawn at half size centred on (500, 300), at view depth 100.
 const panel: ScreenPanel = { id: "line:reef", x: 500, y: 300, width: 200, height: 40, scale: 0.5, depth: 100 };
@@ -54,5 +54,35 @@ describe("holeMask", () => {
 		expect(holeMask([{ left: 0, top: 0, width: 10, height: 10, radius: 0 }])!.composite.split(", ")).toHaveLength(3);
 		const pill = holeMask([{ left: 0, top: 0, width: 40, height: 10, radius: 50 }])!;
 		expect(pill.size.split(", ")[3]).toBe("10px 10px");
+	});
+});
+
+describe("holeMask strokes", () => {
+	it("adds one gradient layer a stroke, after the holes", () => {
+		const mask = holeMask([{ left: 0, top: 0, width: 10, height: 10, radius: 0 }], [{ x1: 10, y1: 20, x2: 110, y2: 20, width: 2 }])!;
+		expect(mask.composite).toBe("subtract, add, add, add");
+		expect(mask.size.split(", ")[3]).toBe("102px 2px");
+		expect(mask.position.split(", ")[3]).toBe("9px 19px");
+		expect(holeMask([], [{ x1: 0, y1: 0, x2: 5, y2: 0, width: 2 }])!.composite).toBe("subtract, add");
+	});
+});
+
+describe("strokeLayer", () => {
+	it("bands a level stroke across a vertical gradient as tall as its box", () => {
+		const layer = strokeLayer({ x1: 10, y1: 20, x2: 110, y2: 20, width: 2 });
+		expect(layer).toEqual({ left: 9, top: 19, width: 102, height: 2, image: "linear-gradient(0deg, transparent 0px, #000 0.5px, #000 1.5px, transparent 2px)" });
+	});
+
+	it("turns the gradient at right angles to a slanted stroke, solid round the box's centre", () => {
+		// Down and to the right at 45°: the gradient runs at 45deg (up and right), across the stroke.
+		const layer = strokeLayer({ x1: 0, y1: 0, x2: 10, y2: 10, width: 2 });
+		expect(layer.width).toBe(12);
+		expect(layer.height).toBe(12);
+		// The gradient line of a 12 px square at 45° is 12√2 long; the band is its middle 2 px.
+		const middle = 6 * Math.SQRT2;
+		const r = (n: number) => `${Math.round(n * 100) / 100}px`;
+		expect(layer.image).toBe(`linear-gradient(45deg, transparent ${r(middle - 1)}, #000 ${r(middle - 0.5)}, #000 ${r(middle + 0.5)}, transparent ${r(middle + 1)})`);
+		// A vertical stroke's gradient runs across the screen.
+		expect(strokeLayer({ x1: 0, y1: 0, x2: 0, y2: 10, width: 2 }).image.startsWith("linear-gradient(90deg,")).toBe(true);
 	});
 });

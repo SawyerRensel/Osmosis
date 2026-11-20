@@ -15,7 +15,8 @@
  * - **Stacked by depth:** a nearer panel covers a farther one, by view depth,
  *   and a plate nearer than a panel is cut out of it with a CSS mask
  *   (`../graph3d/occlusion.ts`), so the plate on the canvas shows through as
- *   if the panel were in the depth buffer too.
+ *   if the panel were in the depth buffer too. So is every edge segment
+ *   nearer than the panel, as a thin stroke (`../graph3d/edge-cuts.ts`).
  * - **One mist:** a background-coloured veil over each panel mixes it toward
  *   the background exactly as the plate shader mixes the plate
  *   (`plateVisibility`), so the DOM and WebGL fade as one. A separate
@@ -56,7 +57,8 @@ import type { TangentFrame } from "../graph3d/planets";
 import { showsText } from "../graph3d/far-side";
 import { panelMatrix, panelPoint, tiltedHole, type TiltedPanel, type WorldPlate } from "../graph3d/tilt";
 import { uprightFrame, type ViewBasis } from "../graph3d/upright";
-import { MASK_STEP_PX, rasterScale, snapHoles } from "../graph3d/raster";
+import { MASK_STEP_PX, rasterScale, snapHoles, snapStrokes } from "../graph3d/raster";
+import { EdgeSegments, MIN_STROKE_PX, facingStrokes, screenBox, tiltedStrokes, toView, type PanelStroke } from "../graph3d/edge-cuts";
 
 /** A link under a click, in a near-tier panel. */
 export interface PanelLink {
@@ -187,6 +189,11 @@ export class Graph3DNear {
 	readonly group = new Group();
 	private readonly panels = new Map<string, Panel>();
 	private readonly cache = new Map<string, HTMLElement>();
+	/** Every edge segment drawn, refilled by the scene's `writeEdges`: the nearer ones are cut out of the panels they cross. */
+	readonly edges = new EdgeSegments();
+	/** `edges` in this frame's view space (`toView`), worked out at the first panel drawn; `edgeViewFresh` is false until then. */
+	private edgeView: Float32Array | null = null;
+	private edgeViewFresh = false;
 	/** Px of panel laid out per world unit: the panel's text matches the plate text under it. */
 	private readonly pxPerUnit: number;
 	private focus = 0;
@@ -260,6 +267,7 @@ export class Graph3DNear {
 		this.density = density;
 		this.sources = nodes;
 		this.screenPlates = null;
+		this.edgeViewFresh = false;
 		camera.updateMatrixWorld();
 		const eye = this.eye.setFromMatrixPosition(camera.matrixWorld);
 		const e = camera.matrixWorld.elements;
@@ -588,6 +596,8 @@ export class Graph3DNear {
 		this.sources = [];
 		this.screenPlates = null;
 		this.drawnPlates = [];
+		this.edges.clear();
+		this.edgeView = null;
 		this.renderer.domElement.remove();
 		this.renderer3d.domElement.remove();
 	}
@@ -682,11 +692,10 @@ export class Graph3DNear {
 		const size = this.renderer.getSize();
 		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera as PerspectiveCamera, pxPerUnitAt1));
 		// Holes in the lens's px: the box's, times its raster scale.
-		const holes = panelHoles(
-			{ id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width * panel.raster, height: panel.height * panel.raster, scale: shrink, depth },
-			plates,
-		);
-		this.cutHoles(panel, holes, shrink);
+		const screen = { id: panel.node.id, x: ((point.x + 1) / 2) * size.width, y: ((1 - point.y) / 2) * size.height, width: panel.width * panel.raster, height: panel.height * panel.raster, scale: shrink, depth };
+		const holes = panelHoles(screen, plates);
+		const strokes = facingStrokes(this.edges, this.viewEdges(camera), screen, { near: (camera as PerspectiveCamera).near, pxPerUnitAt1, viewportWidth: size.width, viewportHeight: size.height });
+		this.cutHoles(panel, holes, shrink, strokes);
 		this.setVeil(panel, 1 - plateVisibility(panel.node.opacity, depth, this.focus, this.density));
 	}
 
@@ -726,7 +735,8 @@ export class Graph3DNear {
 		const depth = -this.point.copy(centre).applyMatrix4(camera.matrixWorldInverse).z;
 		panel.depth = depth;
 		this.setLensTransform(panel, "translate(-50%, -50%)");
-		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera, this.pxPerUnitAt1(camera)));
+		const pxPerUnitAt1 = this.pxPerUnitAt1(camera);
+		const plates = (this.screenPlates ??= this.drawnPlates = this.platesOnScreen(camera, pxPerUnitAt1));
 		const tilted: TiltedPanel = { centre, frame: this.plateFrame(node), width: panel.width, height: panel.height, pxPerUnit: this.pxPerUnit };
 		const bounds = this.screenBounds(tilted, camera);
 		const holes: PanelHole[] = [];
@@ -739,7 +749,11 @@ export class Graph3DNear {
 			holes.push(hole);
 			panel.occluders.push(plate);
 		}
-		this.cutHoles(panel, holes, 1);
+		// The narrowest stroke, in the panel's px at its centre's depth.
+		const minWidth = (MIN_STROKE_PX * this.pxPerUnit * depth) / pxPerUnitAt1;
+		const size = this.renderer3d.getSize();
+		const cull = bounds === null ? null : { view: this.viewEdges(camera), box: screenBox(bounds, { near: camera.near, pxPerUnitAt1, viewportWidth: size.width, viewportHeight: size.height }) };
+		this.cutHoles(panel, holes, 1, depth > 0 ? tiltedStrokes(this.edges, tilted, node.id, this.eye, minWidth, cull) : []);
 		this.setVeil(panel, 1 - plateVisibility(node.opacity, depth, this.focus, this.density));
 	}
 
@@ -785,9 +799,19 @@ export class Graph3DNear {
 		return { centre, corners, radius: cornerOf(node) };
 	}
 
-	/** Mask `holes` (lens px, drawn at `scale`) out of the panel, writing only when one moved by about a step on screen. */
-	private cutHoles(panel: Panel, holes: readonly PanelHole[], scale: number): void {
-		const mask = holeMask(snapHoles(holes, MASK_STEP_PX / scale));
+	/** This frame's edge segments in view space, worked out once for every panel. */
+	private viewEdges(camera: Camera): Float32Array {
+		if (!this.edgeViewFresh || this.edgeView === null) {
+			this.edgeView = toView(this.edges, camera.matrixWorldInverse.elements, (camera as PerspectiveCamera).near, this.edgeView);
+			this.edgeViewFresh = true;
+		}
+		return this.edgeView;
+	}
+
+	/** Mask `holes` and `strokes` (lens px, drawn at `scale`) out of the panel, writing only when one moved by about a step on screen. */
+	private cutHoles(panel: Panel, holes: readonly PanelHole[], scale: number, strokes: readonly PanelStroke[]): void {
+		const step = MASK_STEP_PX / scale;
+		const mask = holeMask(snapHoles(holes, step), snapStrokes(strokes, step));
 		const key = mask === null ? "" : `${mask.image}|${mask.size}|${mask.position}`;
 		if (key === panel.mask) return;
 		panel.mask = key;

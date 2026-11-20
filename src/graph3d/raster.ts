@@ -11,6 +11,7 @@
  * leaving that band re-rasters the panel at a new bucket.
  */
 
+import type { PanelStroke } from "./edge-cuts";
 import type { PanelHole } from "./occlusion";
 
 /**
@@ -47,4 +48,11 @@ export function snapHoles(holes: readonly PanelHole[], step: number): PanelHole[
 	if (!(step > 0)) return holes.slice();
 	const snap = (n: number): number => Math.round(n / step) * step;
 	return holes.map((hole) => ({ left: snap(hole.left), top: snap(hole.top), width: snap(hole.width), height: snap(hole.height), radius: snap(hole.radius) }));
+}
+
+/** `strokes` snapped as `snapHoles` snaps holes, ends and width alike. */
+export function snapStrokes(strokes: readonly PanelStroke[], step: number): PanelStroke[] {
+	if (!(step > 0)) return strokes.slice();
+	const snap = (n: number): number => Math.round(n / step) * step;
+	return strokes.map((s) => ({ x1: snap(s.x1), y1: snap(s.y1), x2: snap(s.x2), y2: snap(s.y2), width: snap(s.width) }));
 }

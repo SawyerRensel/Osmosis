@@ -11,6 +11,8 @@
  * viewport's top-left corner.
  */
 
+import type { PanelStroke } from "./edge-cuts";
+
 /** A plate as drawn on screen this frame: a rounded rectangle at one view depth. */
 export interface ScreenPlate {
 	id: string;
@@ -82,14 +84,16 @@ const DISC = "radial-gradient(circle closest-side, #000 calc(100% - 0.5px), tran
 const px = (n: number): string => `${Math.round(n * 100) / 100}px`;
 
 /**
- * The mask that leaves an element showing everywhere except `holes`. The top
- * layer fills the element and subtracts every layer under it; those add up to
- * the union of the holes, so overlapping holes stay holes. Each rounded
- * rectangle is two crossed rectangles and four corner discs, because CSS
- * gradients have no rounded rectangle.
+ * The mask that leaves an element showing everywhere except `holes` and
+ * `strokes` (nearer edges, `edge-cuts.ts`). The top layer fills the element
+ * and subtracts every layer under it; those add up to the union of the
+ * holes, so overlapping holes stay holes. Each rounded rectangle is two
+ * crossed rectangles and four corner discs, because CSS gradients have no
+ * rounded rectangle. Each stroke is one layer: a band across a gradient
+ * drawn at right angles to it, in a box round the stroke.
  */
-export function holeMask(holes: readonly PanelHole[]): HoleMask | null {
-	if (holes.length === 0) return null;
+export function holeMask(holes: readonly PanelHole[], strokes: readonly PanelStroke[] = []): HoleMask | null {
+	if (holes.length === 0 && strokes.length === 0) return null;
 	const image = [FILL];
 	const size = ["100% 100%"];
 	const position = ["0 0"];
@@ -111,6 +115,34 @@ export function holeMask(holes: readonly PanelHole[]): HoleMask | null {
 			layer(DISC, left + width - d, top + height - d, d, d);
 		}
 	}
+	for (const stroke of strokes) {
+		const { left, top, width, height, image: img } = strokeLayer(stroke);
+		layer(img, left, top, width, height);
+	}
 	const composite = ["subtract", ...image.slice(1).map(() => "add")];
 	return { image: image.join(", "), size: size.join(", "), position: position.join(", "), composite: composite.join(", ") };
+}
+
+/** Px each side of a stroke ramps from cut to uncut, as a hole's corner disc does. */
+const STROKE_RAMP_PX = 0.5;
+const deg = (n: number): string => `${Math.round(n * 100) / 100}deg`;
+
+/**
+ * One stroke as a mask layer: a box round its centre line padded by half its
+ * width, and a gradient across it (CSS angles run clockwise from up, so
+ * `atan2(dy, dx)` is at right angles to the stroke) that is solid within half
+ * the width of the box's centre, which the centre line passes through. The
+ * gradient line of a box W × H at angle a is |W sin a| + |H cos a| long.
+ */
+export function strokeLayer(stroke: PanelStroke): { image: string; left: number; top: number; width: number; height: number } {
+	const half = stroke.width / 2;
+	const dx = stroke.x2 - stroke.x1;
+	const dy = stroke.y2 - stroke.y1;
+	const width = Math.abs(dx) + 2 * half;
+	const height = Math.abs(dy) + 2 * half;
+	const angle = Math.atan2(dy, dx);
+	const middle = (Math.abs(width * Math.sin(angle)) + Math.abs(height * Math.cos(angle))) / 2;
+	const ramp = Math.min(STROKE_RAMP_PX, half);
+	const image = `linear-gradient(${deg((angle * 180) / Math.PI)}, transparent ${px(middle - half)}, #000 ${px(middle - half + ramp)}, #000 ${px(middle + half - ramp)}, transparent ${px(middle + half)})`;
+	return { image, left: Math.min(stroke.x1, stroke.x2) - half, top: Math.min(stroke.y1, stroke.y2) - half, width, height };
 }

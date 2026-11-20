@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MASK_STEP_PX, RASTER_BAND, rasterScale, snapHoles } from "./raster";
+import { MASK_STEP_PX, RASTER_BAND, rasterScale, snapHoles, snapStrokes } from "./raster";
 
 describe("rasterScale", () => {
 	it("first rasters at the drawn scale", () => {
@@ -62,5 +62,18 @@ describe("snapHoles", () => {
 	it("leaves holes as they are for a step it cannot use", () => {
 		const holes = [{ left: 1.3, top: 2, width: 3, height: 4, radius: 0 }];
 		expect(snapHoles(holes, 0)).toEqual(holes);
+	});
+});
+
+describe("snapStrokes", () => {
+	it("rounds ends and width to the step, so sub-step drift leaves the mask unchanged", () => {
+		const stroke = { x1: 10.1, y1: 20.2, x2: 110.12, y2: 20.26, width: 1.5 };
+		expect(snapStrokes([stroke], 0.25)).toEqual([{ x1: 10, y1: 20.25, x2: 110, y2: 20.25, width: 1.5 }]);
+		expect(snapStrokes([{ ...stroke, x1: 10.05 }], 0.25)).toEqual(snapStrokes([stroke], 0.25));
+	});
+
+	it("leaves strokes alone without a step", () => {
+		const stroke = { x1: 1.01, y1: 2, x2: 3, y2: 4, width: 1.5 };
+		expect(snapStrokes([stroke], 0)).toEqual([stroke]);
 	});
 });
