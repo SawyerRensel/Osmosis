@@ -1234,10 +1234,9 @@ hr.osmosis-map-style-divider {
 	/* How far past its last line the card scrolls: the panel and the gap under
 	   it, plus a margin, so that line can come clear of the buttons. */
 	--osmosis-study-clearance: calc(var(--osmosis-study-bottom) + var(--osmosis-study-button-height) + 2 * var(--osmosis-study-panel-padding) + var(--size-4-4));
-	/* The status strip: a solid band holding the bar and counts, then a fade
-	   to transparent that the card scrolls under (T109). */
+	/* The status strip: a solid band holding the bar and counts, which the
+	   card scrolls under (T109). */
 	--osmosis-study-strip-height: 28px;
-	--osmosis-study-strip-fade: var(--size-4-2);
 	position: relative;
 	display: flex;
 	flex-direction: column;
@@ -1265,25 +1264,21 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	flex: none;
 }
 
-/* Progress bar and counts, pinned over the top of the card. The background is
-   the view's own, solid behind the bar and counts and fading out below them,
-   so they stay readable over content scrolled under them. No title: the tab
-   has it (T109). It takes no pointer events, so a wheel, tap or selection on
-   the faded band reaches the card. */
+/* Progress bar and counts, pinned over the top of the card on the view's own
+   solid background, so they stay readable over content scrolled under them.
+   No fade below it (Sawyer, batch 14). No title: the tab has it (T109). It
+   takes no pointer events, so a wheel, tap or selection on it reaches the
+   card. */
 .osmosis-study-status {
 	position: absolute;
 	top: 0;
 	left: 0;
 	right: 0;
 	z-index: 1;
-	height: calc(var(--osmosis-study-strip-height) + var(--osmosis-study-strip-fade));
+	height: var(--osmosis-study-strip-height);
 	padding: 0 var(--size-4-4);
 	pointer-events: none;
-	background: linear-gradient(
-		to bottom,
-		var(--background-primary) var(--osmosis-study-strip-height),
-		transparent
-	);
+	background: var(--background-primary);
 }
 
 /* The readable column. Children of the card sides rather than the sides
@@ -1728,13 +1723,13 @@ img.osmosis-zoomed,
 /* The one scroll surface in the study tab, filling the leaf under the
    floating strip and buttons. `flex: 1` with `min-height: 0` is what lets it
    shrink below its content — a flex item's default `min-height: auto` refuses
-   to. The top padding is the whole strip, fade included, so the first line
-   starts clear of it rather than dimmed. */
+   to. The top padding is the strip's height, so the first line starts clear
+   of it. */
 .osmosis-study-card {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	padding: calc(var(--osmosis-study-strip-height) + var(--osmosis-study-strip-fade)) var(--size-4-4) var(--osmosis-study-clearance);
+	padding: var(--osmosis-study-strip-height) var(--size-4-4) var(--osmosis-study-clearance);
 }
 
 .osmosis-study-front {
@@ -2429,10 +2424,9 @@ body.is-phone .osmosis-decks-column {
 /* Mind map study's progress strip (T110): the study tab's pinned bar and
    counts (.osmosis-study-status), over the top of the map, which has no title
    to sit above. Like the study tab's, it takes no pointer events, so the map
-   pans and selects through it, faded band included. */
+   pans and selects through it. */
 .osmosis-mindmap-study-strip {
 	--osmosis-study-strip-height: 28px;
-	--osmosis-study-strip-fade: var(--size-4-2);
 	--osmosis-study-column: none;
 }
 
