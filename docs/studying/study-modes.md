@@ -75,10 +75,11 @@ to the reading/edit toggle; Peek is in the ⋯ menu:
 - :lucide-scan-eye: **Peek mode** — hides *every* card in the note. Reveal them
   in any order by clicking; nothing is recorded. The equivalent of covering the
   page with your hand.
-- :lucide-graduation-cap: **Study this note** — opens a menu: **Study here**
-  (below), **This note (popup)** (the [sequential](#sequential-study) popup with
-  only this note's cards) and **Deck…** (the popup on a deck the note's cards
-  belong to; a submenu when there are several). Study here hides only the cards that are
+- :lucide-graduation-cap: **Study this note** — opens a menu: **Study this note
+  in note view** (below), **Study this note in flashcard view** (the
+  [sequential](#sequential-study) study tab with only this note's cards) and
+  **Study the deck in flashcard view: {Deck}**, one per deck the note's cards
+  belong to (a submenu past five). Study in note view hides only the cards that are
   **due or new**, and asks them one at a time. After each reveal, a rating
   bubble appears and must be answered before the next card unlocks. A floating
   pill tracks progress ("4/9 rated") with a **Stop** button, and a toast

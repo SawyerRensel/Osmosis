@@ -30,6 +30,8 @@ import {
 
 /** Placeholder shown in place of a hidden line (matches fence-card hiding). */
 const PLACEHOLDER_TEXT = "░░░░░░";
+/** Past this many decks, the study menu nests them in a submenu. */
+const MAX_FLAT_DECK_ITEMS = 5;
 
 /**
  * Contextual reveal mode for a note.
@@ -844,8 +846,8 @@ export class LineRevealProcessor {
 			}
 
 			// A running in-note session stops directly; otherwise the button opens
-			// the study menu. Only "Study here" needs reading view, so the switch
-			// happens from the menu item rather than on the tap.
+			// the study menu. Only "Study this note in note view" needs reading
+			// view, so the switch happens from the menu item rather than on the tap.
 			studyBtn ??= this.createHeaderAction(
 				"graduation-cap",
 				"Study this note",
@@ -919,7 +921,7 @@ export class LineRevealProcessor {
 		const menu = new Menu();
 		menu.addItem((item) =>
 			item
-				.setTitle("Study here")
+				.setTitle("Study this note in note view")
 				.setIcon("graduation-cap")
 				.onClick(() => {
 					void this.ensurePreview(view).then(() => {
@@ -929,7 +931,7 @@ export class LineRevealProcessor {
 		);
 		menu.addItem((item) =>
 			item
-				.setTitle("This note (popup)")
+				.setTitle("Study this note in flashcard view")
 				.setIcon("file-text")
 				.onClick(() => {
 					void this.plugin.openStudySession({ type: "note", notePath });
@@ -940,20 +942,24 @@ export class LineRevealProcessor {
 		const openDeck = (deck: string): void => {
 			void this.plugin.openStudySession({ type: "single", deck });
 		};
-		if (decks.length === 1) {
-			const deck = decks[0] as string;
+		const addDeckItem = (deck: string): void => {
 			menu.addItem((item) =>
 				item
-					.setTitle(`Deck: ${deck} (popup)`)
+					.setTitle(`Study the deck in flashcard view: ${deck}`)
 					.setIcon("layers")
 					.onClick(() => {
 						openDeck(deck);
 					}),
 			);
-		} else if (decks.length > 1) {
+		};
+		// One flat item per deck; past five, a submenu keeps the menu short.
+		// setSubmenu is not in the published typings, and mobile has none, so
+		// both fall back to the flat list.
+		if (decks.length <= MAX_FLAT_DECK_ITEMS) {
+			for (const deck of decks) addDeckItem(deck);
+		} else {
 			menu.addItem((item) => {
-				item.setTitle("Deck… (popup)").setIcon("layers");
-				// setSubmenu is not in the published typings; feature-detect it.
+				item.setTitle("Study a deck in flashcard view").setIcon("layers");
 				const sub = Platform.isMobile
 					? undefined
 					: (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
@@ -967,16 +973,7 @@ export class LineRevealProcessor {
 					}
 				} else {
 					item.setDisabled(true);
-					for (const deck of decks) {
-						menu.addItem((deckItem) =>
-							deckItem
-								.setTitle(`Deck: ${deck} (popup)`)
-								.setIcon("layers")
-								.onClick(() => {
-									openDeck(deck);
-								}),
-						);
-					}
+					for (const deck of decks) addDeckItem(deck);
 				}
 			});
 		}
