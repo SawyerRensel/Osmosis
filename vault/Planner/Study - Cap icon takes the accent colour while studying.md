@@ -9,14 +9,14 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Review
 batch: 14
 priority:
 progress:
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T12:00:00.000Z
-date_start_scheduled:
-date_start_actual:
+date_modified: 2026-11-20T17:40:00.000Z
+date_start_scheduled: 2026-11-20T17:32:00.000Z
+date_start_actual: 2026-11-20T17:32:00.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -64,3 +64,12 @@ Toggle study on/off in Note, mind map and 3D graph views (desktop and phone); ch
 - Batch 14 ticket: commit `feat(T100): …`/`fix(T100): …` plus one `docs(T100)` note commit setting `status: In-Review` with a "Batch implementation notes (awaiting manual test)" section. Stage by explicit path; `git diff --cached --stat` before each commit; never `git stash`; don't push.
 - Batch 12 (T91/T92) round-2 facts: the study tab's buttons sit in one floating panel; every mode's rating row uses the shared class `osmosis-contextual-rating` (colour rules only at `.osmosis-contextual-rating button.osmosis-rate-*` in styles.css); deck-count colours come from `--osmosis-count-new/learn/due`, declared on `.osmosis-dashboard, .osmosis-study-view`.
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes in `src/study/` or similar (vitest cannot import obsidian) and gets unit tests.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `831a4ea` on `batch/14-study-polish-renames`.
+
+- **Shared class.** The three existing study caps now also carry `osmosis-study-cap`: the note view's hand-made `.osmosis-line-study-action` (`LineRevealProcessor`), the mind map's `spatialStudyActionEl` and the 3D graph's `studyActionEl`. Each already toggled `is-active` while studying, so no TypeScript logic changed.
+- **One rule.** `.view-actions .osmosis-study-cap.is-active` (and `:hover`) sets `color: var(--interactive-accent)`. The `.view-actions` prefix outranks Obsidian's own icon colours. Scoping it to the shared class keeps other `is-active` header actions unchanged.
+- **For T103:** the Flashcard study tab's cap must add `osmosis-study-cap` and toggle `is-active`. Then this rule covers it.
+- Lint, the vitest suite (3442) and the build all pass.
