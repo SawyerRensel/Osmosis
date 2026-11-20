@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Sequential study as a view instead of a modal]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress:
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-18T12:00:00.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:35:41Z
 date_start_actual: 2026-11-19T03:35:41Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # Sequential study - New, learn and due counts (T92)
@@ -92,7 +92,11 @@ starting.
 | `src/study/StudySessionManager.ts` | queue building only | ~1.5k |
 | `styles.css` | the study-view rules T91 wrote | ~1k |
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand on 2026-11-20. It failed the first test and passed after the round-2 fix described in the *Round 2 fix* subsection below.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 Code commit: `2b1b577` on `batch/12-study-tab`.
 
@@ -161,7 +165,7 @@ completion screen calls it too, so it ends on `0 0 0` with nothing underlined.
 confirmed the buckets come out 2 new / 2 learn / 3 due. The strip and the
 dashboard row should both read **2 | 2 | 3**.
 
-### Not verified
+### Not verified before the manual test
 
 - Nothing was checked in Obsidian: not the visual result (colours under each
   theme, the underline, the fit beside the bar on a phone), and not the live

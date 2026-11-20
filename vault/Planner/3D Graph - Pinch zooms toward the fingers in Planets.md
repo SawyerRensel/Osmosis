@@ -10,16 +10,16 @@ people:
 location:
 related:
 
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress:
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-18T12:00:00.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:59:29.000Z
 date_start_actual: 2026-11-19T03:59:29.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # 3D Graph - Pinch zooms toward the fingers in Planets (T96)
@@ -89,7 +89,11 @@ recedes at a matching rate. Repeat over empty space and near the core.
 
 `Graph3DScene.ts` is ~42k tokens; never read it whole.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand on 2026-11-20. It failed the first test and passed after the round-2 fix described in the *Round 2 fix* subsection below.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 Commit: 055044c `fix(T96): Planets pinch zooms toward the point under the fingers`.
 
@@ -128,7 +132,7 @@ Two things made a Planets pinch too fast near a plate:
 
 Reuses `vault/tests/graph3d/Galley Handbook.md` (the largest graph3d fixture, at 146 lines, so its planet is big). Any note in `vault/tests/graph3d/` works.
 
-### Not verified
+### Not verified before the manual test
 
 - There is no touchscreen here. Nothing was tried on a device, and Playwright was skipped per the batch rules. Lint, the full vitest suite (3402 tests) and the build are green.
 - The feel of `PINCH_MIN_DOLLY` near a plate is untested.

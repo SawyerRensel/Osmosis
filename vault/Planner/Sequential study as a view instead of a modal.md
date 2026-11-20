@@ -12,17 +12,17 @@ related:
   - "[[Larger zoomable images during review]]"
   - "[[Anchor rating buttons under the revealed occlusion shape]]"
   - "[[Support zoom in sequential mode]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
 progress_current:
 progress_total:
 date_created: 2026-09-03T01:47:54.000Z
-date_modified: 2026-11-20T12:43:54.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:22:06.000Z
 date_start_actual: 2026-11-19T03:22:06.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -38,7 +38,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # Sequential study as a view instead of a modal (T91)
@@ -247,7 +247,11 @@ These settle the open questions above, and they take precedence over them.
 Don't read `src/study/occlusion-*` or the renderers. The card renders through
 existing calls, and only its container changes.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand on 2026-11-20. It failed the first test and passed after the round-2 fix described in the *Round 2 fix* subsection below.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 Code commit: `c99c266` on `batch/12-study-tab`.
 
@@ -355,7 +359,7 @@ new ones (long answer, type-in, cloze, a card to rate Again for the waiting
 screen). Occlusion on a full-width image: use the existing
 `vault/tests/flashcard/occlusion-image-width.md`.
 
-### Not verified (no Obsidian here)
+### Not verified before the manual test (no Obsidian here)
 
 - Everything visual and on-device: the layout, the phone full-width buttons,
   the 84px navbar clearance (copied from the 3D graph's lift) and

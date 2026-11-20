@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Sequential study as a view instead of a modal]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress:
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-19T03:20:58.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:20:58.000Z
 date_start_actual: 2026-11-19T03:20:58.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # Sequential study - Undo shows the card twice (T90)
@@ -93,7 +93,11 @@ ticket**, so don't restructure it.
 | `src/views/SequentialStudyModal.test.ts` | whole | 0.3k |
 | `src/study/StudySessionManager.ts` | `revertReview` only | ~0.5k |
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 **Cause (confirmed by reading the arithmetic, then pinned by unit tests).** `rate` / `excludeCard` advance `currentIndex` but leave the card at `queue[currentIndex - 1]`. `undo()` decremented the index (which alone shows the card again) and then also spliced a second copy in, so the card was queued twice.
 
