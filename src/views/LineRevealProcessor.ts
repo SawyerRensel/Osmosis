@@ -14,9 +14,11 @@ import {
 	dueOrNewLineCardBlockIds,
 } from "../study/spatial-study";
 import { decksOfNote } from "../study/note-scope";
+import { countNoteSession, noteSessionCard, type NoteSessionCard } from "../study/session-counts";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
+import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -69,7 +71,7 @@ interface NoteRevealState {
 	 * different kinds of string — a bare block ID and a fence's own `id:` — and
 	 * every line lookup here indexes by the former. `ContextualStudyProcessor`
 	 * owns the fences themselves and asks this set whether the one it is about
-	 * to draw is a target; the pill counts both.
+	 * to draw is a target; the progress strip counts both.
 	 */
 	fenceTargets: Set<string> | null;
 	/**
@@ -80,6 +82,14 @@ interface NoteRevealState {
 	fenceSteps: Map<string, number>;
 	/** How many of them have been answered. Fences rate in the other processor. */
 	ratedFences: Map<string, number>;
+	/**
+	 * Every card the session asks — line, shape group and fence alike — with the
+	 * bucket it started in, for the strip's new | learn | due counts (T102).
+	 * Fixed when study starts, for the reason `studySteps` gives.
+	 */
+	sessionCards: NoteSessionCard[];
+	/** This session's rating of each card answered so far, by card ID. */
+	sessionRatings: Map<string, FSRSRating>;
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
 	/**
@@ -118,13 +128,16 @@ interface NoteRevealState {
  *   to reveal it — casual, nothing recorded.
  * - Study (`graduation-cap`, same convention as Mind Map View): hides
  *   only lines whose card is due or new, enforces top-down reveal, and
- *   shows a rating bubble after each reveal. A floating pill shows
- *   progress and Stop.
+ *   shows a rating bubble after each reveal. A strip above the inline
+ *   title shows the progress bar and new | learn | due counts (T102);
+ *   pressing Study again ends the session.
  *
  * Hiding is purely visual (post-processor DOM), never a content edit.
  */
 export class LineRevealProcessor {
 	private readonly states = new Map<string, NoteRevealState>();
+	/** Each note-study strip's builder, keyed by its wrapper element. */
+	private readonly strips = new WeakMap<HTMLElement, StudyProgressStrip>();
 	private sessionManager: StudySessionManager | null = null;
 
 	constructor(private readonly plugin: OsmosisPlugin) {}
@@ -150,7 +163,7 @@ export class LineRevealProcessor {
 			this.updateHeaderActions();
 		});
 
-		// Header actions and the floating pill live on view chrome that
+		// Header actions and the progress strip live on view chrome that
 		// outlives the note they were created for — refresh on view changes
 		this.plugin.registerEvent(
 			this.plugin.app.workspace.on("file-open", () => {
@@ -187,7 +200,7 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Called after card sync. Refreshes header buttons and pills, and
+	 * Called after card sync. Refreshes header buttons and progress strips, and
 	 * re-renders any open reading view whose sections rendered before its
 	 * line cards existed in the store (startup race: the post-processor
 	 * skips notes with no known line cards, and nothing re-runs it when
@@ -592,6 +605,7 @@ export class LineRevealProcessor {
 			const elapsedMs = Date.now() - state.pendingRatingAt;
 			for (const cardId of cardIds) {
 				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+				state.sessionRatings.set(cardId, rating);
 			}
 			this.plugin.refreshDashboard();
 		}
@@ -693,6 +707,7 @@ export class LineRevealProcessor {
 			state.pendingRating = null;
 			this.planOcclusionSteps(notePath, state, targets);
 			this.planFenceSteps(notePath, state, fences);
+			this.planSessionCards(notePath, state, now);
 		}
 
 		this.applyAll(notePath);
@@ -736,7 +751,7 @@ export class LineRevealProcessor {
 	 *
 	 * Counted from the store here rather than reported by each fence as it draws,
 	 * because reading view builds its sections lazily: a fence below the fold has
-	 * not been rendered yet, and the pill would understate the session until the
+	 * not been rendered yet, and the bar would understate the session until the
 	 * reader happened to scroll past it.
 	 *
 	 * `ContextualStudyProcessor` derives the same sequence from the same store
@@ -761,6 +776,31 @@ export class LineRevealProcessor {
 		}
 	}
 
+	/**
+	 * Every card this session asks, bucketed as it stands now, for the strip's
+	 * counts. Called after `planOcclusionSteps` and `planFenceSteps`, and takes
+	 * the same cards they do: an occluded line's due shape groups, an ordinary
+	 * line's due-or-new cards (one rating reaches them all), a fence's due cards.
+	 */
+	private planSessionCards(notePath: string, state: NoteRevealState, now: number): void {
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const ids = new Set<string>();
+		for (const blockId of state.studyTargets ?? []) {
+			const steps = state.studySteps.get(blockId);
+			const lineIds = steps
+				? steps.map((step) => step.cardId).filter((id): id is string => id !== null)
+				: cardIdsForLineKey(cards, lineCardId(notePath, blockId));
+			for (const id of lineIds) ids.add(id);
+		}
+		for (const key of state.fenceTargets ?? []) {
+			for (const card of dueCardsForFenceKey(cards, key, now)) ids.add(card.id);
+		}
+		state.sessionCards = cards
+			.filter((card) => ids.has(card.id) && (card.due === undefined || card.due <= now))
+			.map(noteSessionCard);
+		state.sessionRatings.clear();
+	}
+
 	/** Leave study mode: drop session state and flush pending schedule writes. */
 	private endStudy(notePath: string, state: NoteRevealState): void {
 		state.mode = "off";
@@ -772,6 +812,8 @@ export class LineRevealProcessor {
 		state.fenceSteps.clear();
 		state.studySteps.clear();
 		state.stepAt.clear();
+		state.sessionCards = [];
+		state.sessionRatings.clear();
 		void this.plugin.scheduleStore.flush();
 		// Fence cards keep their schedule inside the note's own text, so a
 		// contextual session holds those writes back rather than rewriting the
@@ -786,7 +828,7 @@ export class LineRevealProcessor {
 	 * Holding a fence write back is only worth doing while the note is on screen
 	 * — that is the whole reason for it (see `FenceWriter.stageSchedule`). Once
 	 * the note is closed there is nothing left to disturb, and leaving reviews
-	 * unwritten risks losing them to a crash if the reader never presses Stop.
+	 * unwritten risks losing them to a crash if the reader never ends the session.
 	 */
 	private flushClosedNotes(): void {
 		const pending = this.plugin.fenceWriter.pendingPaths();
@@ -980,36 +1022,48 @@ export class LineRevealProcessor {
 		menu.showAtMouseEvent(evt);
 	}
 
-	// ── Floating pill (study progress + Stop) ─────────────────
+	// ── Progress strip (bar + new | learn | due counts) ───────
 
-	private ensureBanner(host: HTMLElement, notePath: string): void {
-		let banner = host.querySelector<HTMLElement>(":scope > .osmosis-reveal-banner");
-		if (!banner) {
-			banner = createDiv();
-			banner.className = "osmosis-reveal-banner";
-			host.appendChild(banner);
+	/**
+	 * Put the strip above the note's inline title, building it on first use, and
+	 * refresh it. With no inline title in the DOM it goes to the top of the
+	 * reading view's sizer instead.
+	 */
+	private ensureStrip(host: HTMLElement, notePath: string): void {
+		const sizer = host.querySelector<HTMLElement>(".markdown-preview-sizer");
+		if (!sizer) return;
+		let wrap = host.querySelector<HTMLElement>(".osmosis-note-study-strip");
+		let strip = wrap ? this.strips.get(wrap) : undefined;
+		if (!wrap || !strip) {
+			wrap?.remove();
+			wrap = createDiv({ cls: "osmosis-note-study-strip" });
+			strip = new StudyProgressStrip(wrap);
+			this.strips.set(wrap, strip);
 		}
-		banner.dataset["notePath"] = notePath;
-		this.renderBanner(banner, notePath);
-	}
+		mountAboveInlineTitle(sizer, wrap);
 
-	private renderBanner(banner: HTMLElement, notePath: string): void {
-		banner.empty();
 		const state = this.stateFor(notePath);
 		const { done, total } = this.studyProgress(state);
-
-		banner.createSpan({
-			cls: "osmosis-reveal-progress",
-			text: `${String(done)}/${String(total)} rated`,
-		});
-		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
-		stopBtn.addEventListener("click", () => {
-			this.toggleStudy(notePath);
-		});
+		strip.setProgress(total > 0 ? (done / total) * 100 : 0);
+		strip.setCounts(countNoteSession(state.sessionCards, state.sessionRatings, this.answeringCardIds(notePath, state)));
 	}
 
 	/**
-	 * The pill's count, in **questions rather than lines**.
+	 * The cards whose rating bubble is showing, for the underline under their
+	 * count: the shape group being asked on an occluded line, every card on an
+	 * ordinary one. A fence's question is not tracked here, so a fence being
+	 * answered underlines nothing.
+	 */
+	private answeringCardIds(notePath: string, state: NoteRevealState): string[] {
+		const blockId = state.pendingRating;
+		if (blockId === null) return [];
+		const step = this.currentStep(state, blockId);
+		if (step) return step.cardId === null ? [] : [step.cardId];
+		return cardIdsForLineKey(this.plugin.cardStore.getCardsByNote(notePath), lineCardId(notePath, blockId));
+	}
+
+	/**
+	 * The progress bar's fraction, in **questions rather than lines**.
 	 *
 	 * An occluded line asks one question per shape group, so counting lines would
 	 * report "0/1" through two of the three answers a three-group diagram takes.
@@ -1025,7 +1079,7 @@ export class LineRevealProcessor {
 		}
 		// A fence counts its questions the same way: a three-group cloze fence asks
 		// three and a bidirectional pair asks two, each rated separately, so the
-		// pill would sit still through most of a note of them if it counted fences.
+		// bar would sit still through most of a note of them if it counted fences.
 		for (const key of state.fenceTargets ?? []) {
 			const steps = state.fenceSteps.get(key) ?? 1;
 			total += steps;
@@ -1037,7 +1091,7 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Show the pill on every reading view whose note is in study mode;
+	 * Show the progress strip on every reading view whose note is in study mode;
 	 * remove it everywhere else (mode ended, leaf switched notes, edit mode).
 	 */
 	private syncBanners(): void {
@@ -1050,10 +1104,9 @@ export class LineRevealProcessor {
 			const path = view.file?.path;
 			const studying = path !== undefined && this.stateFor(path).mode === "study";
 			if (studying && view.getMode() === "preview") {
-				host.classList.add("osmosis-reveal-host");
-				this.ensureBanner(host, path);
+				this.ensureStrip(host, path);
 			} else {
-				host.querySelector(":scope > .osmosis-reveal-banner")?.remove();
+				host.querySelector(".osmosis-note-study-strip")?.remove();
 			}
 		}
 	}
@@ -1100,18 +1153,32 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Record that one of a fence's questions was answered, so the pill advances.
+	 * Record that one of a fence's questions was answered, so the strip advances.
 	 *
 	 * The rating itself is written by `ContextualStudyProcessor` — this only
-	 * tells the session's progress counter that one of its questions is done.
+	 * tells the session's progress counter that one of its questions is done,
+	 * and the counts which card and how (Again moves it to learn).
 	 * Counted rather than flagged: a fence that fans out is answered a card at a
 	 * time, and each of those is a question the reader has finished.
 	 */
-	markFenceRated(notePath: string, fenceKey: string): void {
+	markFenceRated(notePath: string, fenceKey: string, cardId: string, rating: FSRSRating): void {
 		const state = this.states.get(notePath);
 		if (!state || state.mode !== "study") return;
 		if (!state.fenceTargets?.has(fenceKey)) return;
 		state.ratedFences.set(fenceKey, (state.ratedFences.get(fenceKey) ?? 0) + 1);
+		state.sessionRatings.set(cardId, rating);
+		this.syncBanners();
+	}
+
+	/**
+	 * Take back `markFenceRated` when that rating is undone. Only a rating this
+	 * session recorded is taken back — the undo stack outlives the session.
+	 */
+	unmarkFenceRated(notePath: string, fenceKey: string, cardId: string): void {
+		const state = this.states.get(notePath);
+		if (!state || state.mode !== "study") return;
+		if (!state.sessionRatings.delete(cardId)) return;
+		state.ratedFences.set(fenceKey, Math.max((state.ratedFences.get(fenceKey) ?? 0) - 1, 0));
 		this.syncBanners();
 	}
 
@@ -1140,6 +1207,8 @@ export class LineRevealProcessor {
 				studyTargets: null,
 				fenceTargets: null,
 				ratedFences: new Map(),
+				sessionCards: [],
+				sessionRatings: new Map(),
 				fenceSteps: new Map(),
 				pendingRating: null,
 				pendingRatingAt: 0,
@@ -1156,7 +1225,7 @@ export class LineRevealProcessor {
 	/** Undo all DOM changes (plugin unload): unhide lines, drop injected UI. */
 	private removeAllArtifacts(): void {
 		const injected = document.querySelectorAll(
-			".osmosis-reveal-banner, .osmosis-line-placeholder, .osmosis-line-rating, .osmosis-line-peek-action, .osmosis-line-study-action",
+			".osmosis-note-study-strip, .osmosis-line-placeholder, .osmosis-line-rating, .osmosis-line-peek-action, .osmosis-line-study-action",
 		);
 		for (const el of Array.from(injected)) {
 			el.remove();
@@ -1166,9 +1235,6 @@ export class LineRevealProcessor {
 		}
 		for (const back of Array.from(document.querySelectorAll(".osmosis-line-back"))) {
 			back.replaceWith(...Array.from(back.childNodes));
-		}
-		for (const host of Array.from(document.querySelectorAll(".osmosis-reveal-host"))) {
-			host.classList.remove("osmosis-reveal-host");
 		}
 	}
 }

@@ -9,11 +9,12 @@ import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import { isCloseMatch } from "../study/match";
 import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
-import { countSession, type CountBucket } from "../study/session-counts";
+import { countSession } from "../study/session-counts";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { renderOcclusion } from "./OcclusionRenderer";
+import { StudyProgressStrip } from "./StudyProgressStrip";
 import { syncNavbar, type NavbarHost } from "./ToolRibbon";
 
 export const VIEW_TYPE_STUDY = "osmosis-study";
@@ -53,12 +54,6 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 	{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
 ];
 
-/** The counts above the card, in Anki's order and colours (see styles.css). */
-const COUNT_BUCKETS: Array<{ bucket: CountBucket; label: string }> = [
-	{ bucket: "new", label: "New" },
-	{ bucket: "learn", label: "Learn" },
-	{ bucket: "due", label: "Due" },
-];
 
 /**
  * Anki-style sequential study, as a main-area tab (one per workspace).
@@ -139,9 +134,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	 * counts, refreshed from `updateProgress`. No title — that is the tab's.
 	 */
 	private statusEl!: HTMLElement;
-	private progressFill!: HTMLElement;
-	/** The new | learn | due counts, one span per bucket (see `updateProgress`). */
-	private countEls = new Map<CountBucket, HTMLElement>();
+	private progressStrip!: StudyProgressStrip;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
 	private dividerEl!: HTMLElement;
@@ -441,16 +434,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		this.statusEl = container.createDiv({ cls: "osmosis-study-status" });
 
-		// Progress bar
-		const progressEl = this.statusEl.createDiv({ cls: "osmosis-study-progress" });
-		const bar = progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
-		this.progressFill = bar.createDiv({ cls: "osmosis-study-progress-fill" });
-		// Anki-style new | learn | due counts, the session's only counter
-		const countsEl = progressEl.createDiv({ cls: "osmosis-study-counts" });
-		this.countEls.clear();
-		for (const { bucket } of COUNT_BUCKETS) {
-			this.countEls.set(bucket, countsEl.createSpan({ cls: `osmosis-study-count osmosis-study-count-${bucket}` }));
-		}
+		// Progress bar and Anki-style new | learn | due counts, the session's only counter
+		this.progressStrip = new StudyProgressStrip(this.statusEl);
 
 		// Card area — the one scroll surface in the tab
 		this.cardEl = container.createDiv({ cls: "osmosis-study-card osmosis-study-scroll" });
@@ -706,24 +691,17 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		const remaining = (this.queue.length - this.currentIndex) + this.deferredCards.length;
 		const total = this.reviewed + remaining;
 		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
-		this.progressFill.setCssProps({ "--osmosis-progress-width": `${Math.min(pct, 100)}%` });
+		this.progressStrip.setProgress(pct);
 		this.updateCounts();
 	}
 
 	/** Refresh the new | learn | due counts and underline the on-screen card's. */
 	private updateCounts(): void {
-		const counts = countSession(
+		this.progressStrip.setCounts(countSession(
 			this.queue,
 			this.currentIndex,
 			this.deferredCards.map((d) => d.studyCard),
-		);
-		for (const { bucket, label } of COUNT_BUCKETS) {
-			const el = this.countEls.get(bucket);
-			if (!el) continue;
-			el.textContent = String(counts[bucket]);
-			el.setAttribute("aria-label", `${label}: ${counts[bucket]}`);
-			el.toggleClass("is-current", counts.current === bucket);
-		}
+		));
 	}
 
 	private flip(): void {
@@ -1102,7 +1080,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.plugin.flushStudySession();
 
 		// Update progress to 100%
-		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
+		this.progressStrip.setProgress(100);
 		this.updateCounts();
 
 		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {

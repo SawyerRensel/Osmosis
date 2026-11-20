@@ -2199,7 +2199,8 @@ body.is-phone .osmosis-study-rating-bar {
    resolves where a theme might override it. A new surface that shows these
    counts joins this selector. */
 .osmosis-dashboard,
-.osmosis-study-view {
+.osmosis-study-view,
+.osmosis-note-study-strip {
 	--osmosis-count-new: var(--interactive-accent);
 	--osmosis-count-learn: hsl(30, 75%, 50%);
 	--osmosis-count-due: hsl(140, 50%, 42%);
@@ -2345,8 +2346,13 @@ body.is-phone .osmosis-study-rating-bar {
 
 /* ─── Line-Card Progressive Reveal (Reading View) ────────── */
 
-.markdown-reading-view.osmosis-reveal-host {
-	position: relative;
+/* Note study's progress strip (T102): the study tab's bar and counts
+   (StudyProgressStrip), above the inline title. The reading view's sizer already
+   sets the column, so the strip takes its full width. */
+.osmosis-note-study-strip {
+	--osmosis-study-strip-height: 28px;
+	--osmosis-study-column: none;
+	margin-bottom: var(--size-4-2);
 }
 
 .osmosis-reveal-banner {

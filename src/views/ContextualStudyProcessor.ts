@@ -34,6 +34,8 @@ interface ContextualUndoEntry {
 	type: "rate" | "exclude";
 	cardId: string;
 	sourcePath: string;
+	/** The fence the rated card belongs to, so note study's strip can step back. Only for "rate". */
+	fenceKey?: string;
 	/** Previous schedule data before the rating (null = card was new). Only for "rate". */
 	previousSchedule?: ScheduleData | null;
 	/** The rating label that was displayed. Only for "rate". */
@@ -970,15 +972,16 @@ export class ContextualStudyProcessor {
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
-				// The session's progress pill lives in LineRevealProcessor, which
-				// owns the mode; tell it one of its questions is answered.
-				this.plugin.lineReveal?.markFenceRated(sourcePath, fenceKey);
+				// The session's progress strip lives in LineRevealProcessor, which
+				// owns the mode; tell it one of its questions is answered, and how.
+				this.plugin.lineReveal?.markFenceRated(sourcePath, fenceKey, cardId, rating);
 				void this.recordRating(cardId, rating, Date.now() - revealedAt);
 
 				this.undoStack.push({
 					type: "rate",
 					cardId,
 					sourcePath,
+					fenceKey,
 					previousSchedule,
 					ratingLabel: label,
 				});
@@ -1040,6 +1043,9 @@ export class ContextualStudyProcessor {
 
 			this.reviewedCount = Math.max(0, this.reviewedCount - 1);
 			this.updateProgress();
+			if (entry.fenceKey !== undefined) {
+				this.plugin.lineReveal?.unmarkFenceRated(entry.sourcePath, entry.fenceKey, entry.cardId);
+			}
 			this.plugin.refreshDashboard();
 
 			// Trigger re-render by modifying the file (touch the file to force Obsidian to re-process code blocks)
