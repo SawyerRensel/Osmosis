@@ -999,7 +999,7 @@ export class ContextualStudyProcessor {
 		}
 
 		if (!this.sessionManager) {
-			this.sessionManager = this.plugin.createSessionManager("contextual");
+			this.sessionManager = this.plugin.createSessionManager("note");
 		}
 		await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
 		this.plugin.refreshDashboard();
@@ -1033,7 +1033,7 @@ export class ContextualStudyProcessor {
 		} else {
 			// Undo rating: revert schedule
 			if (!this.sessionManager) {
-				this.sessionManager = this.plugin.createSessionManager("contextual");
+				this.sessionManager = this.plugin.createSessionManager("note");
 			}
 
 			const card = this.plugin.cardStore.getCard(entry.cardId);

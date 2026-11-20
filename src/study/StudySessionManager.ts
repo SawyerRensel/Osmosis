@@ -311,7 +311,7 @@ export class StudySessionManager {
 	 * reaches disk the moment it happens is worth more than one that waits.
 	 */
 	private persistFenceSchedule(notePath: string, cardId: string, schedule: ScheduleFields): void {
-		if (this.mode === "contextual") {
+		if (this.mode === "note") {
 			this.fenceWriter.stageSchedule(notePath, cardId, schedule);
 			return;
 		}
@@ -326,7 +326,7 @@ export class StudySessionManager {
 	 * the staged rating it was undoing when that finally flushed.
 	 */
 	private persistFenceRemoval(notePath: string, cardId: string): void {
-		if (this.mode === "contextual") {
+		if (this.mode === "note") {
 			this.fenceWriter.stageRemoveSchedule(notePath, cardId);
 			return;
 		}

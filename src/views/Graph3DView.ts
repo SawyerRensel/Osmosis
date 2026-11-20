@@ -433,7 +433,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
-		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
+		this.studyActionEl = this.addAction("graduation-cap", "Cosmos study", () => this.toggleStudy());
 		this.studyActionEl.addClass("osmosis-study-cap");
 		arrangeViewHeader(this, "3d", {
 			"note-view": noteViewActionEl,
@@ -728,7 +728,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private editBlocked(): boolean {
 		if (this.study?.active !== true) return false;
-		new Notice("Relational study: editing is off");
+		new Notice("Cosmos study: editing is off");
 		return true;
 	}
 
@@ -997,7 +997,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				void this.navigate({ focus: this.focusPath, node: match.id }, "", true, true);
 			},
 			highlight: (ids) => this.scene?.setFound(ids),
-			replaceBlocked: () => (this.study?.active === true ? "Relational study: editing is off" : this.editMode ? null : "Turn on editing (the pencil) to replace"),
+			replaceBlocked: () => (this.study?.active === true ? "Cosmos study: editing is off" : this.editMode ? null : "Turn on editing (the pencil) to replace"),
 			replace: (plan) => this.replaceFound(plan),
 			focusView: () => undefined,
 		};

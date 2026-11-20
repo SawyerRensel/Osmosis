@@ -9,6 +9,12 @@ All notable changes to Osmosis will be documented in this page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Study modes are renamed.** Sequential is now **Flashcard**, Contextual is **Note**, Spatial is **Mind map**, and the 3D graph's Relational study is **Cosmos**, in every label, the docs, and the stored values. New reviews log `flashcard`, `note`, `mindmap` or `cosmos`; existing review-log files are never rewritten, and their old names count under the new ones in Stats. The **Line card context lines** setting carries its value over
+
 ## [0.0.5] - 2026-08-17
 
 ### Changed

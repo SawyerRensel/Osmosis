@@ -238,8 +238,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.studyScope = scope;
 
 		const { settings } = this.plugin;
-		this.contextLines = settings.sequentialContextLines;
-		this.sessionManager = this.plugin.createSessionManager("sequential");
+		this.contextLines = settings.flashcardContextLines;
+		this.sessionManager = this.plugin.createSessionManager("flashcard");
 		this.queue = this.sessionManager.buildQueue(scope, {
 			newLimit: settings.dailyNewCardLimit,
 			reviewLimit: settings.dailyReviewCardLimit,

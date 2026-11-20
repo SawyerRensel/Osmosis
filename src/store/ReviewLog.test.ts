@@ -47,7 +47,7 @@ const baseEntry: ReviewLogEntry = {
 	st: 12.3,
 	d: 6.4,
 	e: 4200,
-	m: "sequential",
+	m: "flashcard",
 };
 
 /** An entry differing from `baseEntry` in the given fields. */
@@ -64,7 +64,7 @@ describe("entry serialisation", () => {
 	it("writes fields in the documented order", () => {
 		expect(serializeEntry(baseEntry)).toBe(
 			'{"t":' + String(baseEntry.t) + ',"c":"os-wcfb3w","r":3,"s":"review"' +
-			',"iv":345600,"pi":172800,"st":12.3,"d":6.4,"e":4200,"m":"sequential"}',
+			',"iv":345600,"pi":172800,"st":12.3,"d":6.4,"e":4200,"m":"flashcard"}',
 		);
 	});
 
@@ -85,7 +85,7 @@ describe("entry serialisation", () => {
 	});
 
 	it("round-trips every study mode and card state", () => {
-		for (const m of ["sequential", "contextual", "spatial"] as const) {
+		for (const m of ["flashcard", "note", "mindmap", "cosmos"] as const) {
 			for (const s of ["new", "learning", "review", "relearning"] as const) {
 				expect(parseEntry(serializeEntry(entry({ m, s })))).toMatchObject({ m, s });
 			}
@@ -133,18 +133,37 @@ describe("parseEntry rejection and defaults", () => {
 			st: 0,
 			d: 0,
 			e: 0,
-			m: "sequential",
+			m: "flashcard",
 		});
 	});
 
 	it("falls back on unrecognised state and mode values", () => {
 		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"bogus","m":"bogus"}');
-		expect(parsed).toMatchObject({ s: "review", m: "sequential" });
+		expect(parsed).toMatchObject({ s: "review", m: "flashcard" });
 	});
 
-	it("keeps the relational mode", () => {
-		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"review","m":"relational"}');
-		expect(parsed).toMatchObject({ m: "relational" });
+	it("keeps the cosmos mode", () => {
+		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"review","m":"cosmos"}');
+		expect(parsed).toMatchObject({ m: "cosmos" });
+	});
+
+	// T105: lines written before the rename are never rewritten, so the old
+	// names must keep reading as the new modes.
+	it("reads pre-rename mode names as the new ones", () => {
+		const legacy = { sequential: "flashcard", contextual: "note", spatial: "mindmap", relational: "cosmos" };
+		for (const [old, renamed] of Object.entries(legacy)) {
+			const parsed = parseEntry(`{"t":1,"c":"os-a1","r":3,"s":"review","m":"${old}"}`);
+			expect(parsed).toMatchObject({ m: renamed });
+		}
+	});
+
+	it("writes the new mode name when re-serialising a legacy line", () => {
+		const parsed = parseEntry('{"t":1,"c":"os-a1","r":3,"s":"review","m":"spatial"}');
+		expect(parsed && serializeEntry(parsed)).toContain('"m":"mindmap"');
+	});
+
+	it("does not treat Object.prototype keys as legacy mode names", () => {
+		expect(parseEntry('{"t":1,"c":"os-a1","r":3,"m":"toString"}')).toMatchObject({ m: "flashcard" });
 	});
 });
 
@@ -514,17 +533,17 @@ describe("aggregateRollup", () => {
 
 	it("splits counts by rating, state, and study mode", () => {
 		const rollup = aggregateRollup([
-			entry({ t: day(9), r: 1, s: "relearning", m: "sequential" }),
-			entry({ t: day(10), r: 3, s: "review", m: "contextual" }),
-			entry({ t: day(11), r: 3, s: "review", m: "spatial" }),
-			entry({ t: day(12), r: 4, s: "review", m: "spatial" }),
-			entry({ t: day(13), r: 2, s: "review", m: "relational" }),
+			entry({ t: day(9), r: 1, s: "relearning", m: "flashcard" }),
+			entry({ t: day(10), r: 3, s: "review", m: "note" }),
+			entry({ t: day(11), r: 3, s: "review", m: "mindmap" }),
+			entry({ t: day(12), r: 4, s: "review", m: "mindmap" }),
+			entry({ t: day(13), r: 2, s: "review", m: "cosmos" }),
 		]);
 
 		const bucket = rollup["2026-08-07"];
 		expect(bucket?.byRating).toEqual({ 1: 1, 2: 1, 3: 2, 4: 1 });
 		expect(bucket?.byState).toEqual({ new: 0, learning: 0, review: 4, relearning: 1 });
-		expect(bucket?.byMode).toEqual({ sequential: 1, contextual: 1, spatial: 2, relational: 1 });
+		expect(bucket?.byMode).toEqual({ flashcard: 1, note: 1, mindmap: 2, cosmos: 1 });
 	});
 
 	it("splits counts and time by review class", () => {
@@ -581,16 +600,16 @@ describe("aggregateRollup", () => {
 describe("mergeRollups", () => {
 	it("sums the same day across two devices' shards", () => {
 		const desktop = aggregateRollup([
-			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), r: 3, e: 1000, m: "sequential" }),
+			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), r: 3, e: 1000, m: "flashcard" }),
 		]);
 		const phone = aggregateRollup([
-			entry({ t: new Date(2026, 7, 7, 20, 0).getTime(), r: 1, e: 500, m: "spatial" }),
+			entry({ t: new Date(2026, 7, 7, 20, 0).getTime(), r: 1, e: 500, m: "mindmap" }),
 		]);
 
 		const merged = mergeRollups([desktop, phone]);
 		expect(merged["2026-08-07"]).toMatchObject({ reviews: 2, timeMs: 1500 });
 		expect(merged["2026-08-07"]?.byRating).toEqual({ 1: 1, 2: 0, 3: 1, 4: 0 });
-		expect(merged["2026-08-07"]?.byMode).toEqual({ sequential: 1, contextual: 0, spatial: 1, relational: 0 });
+		expect(merged["2026-08-07"]?.byMode).toEqual({ flashcard: 1, note: 0, mindmap: 1, cosmos: 0 });
 	});
 
 	it("sums the review-class split across shards", () => {
@@ -1612,6 +1631,25 @@ describe("normalizeCache", () => {
 		expect(result.shards).toEqual({});
 	});
 
+	it("counts a pre-rename cache's mode keys under the new names", () => {
+		const result = normalizeCache({
+			v: 3,
+			shards: {
+				"2026-08.pixel-10a.md": {
+					mtime: 1,
+					size: 1,
+					days: { "2026-08-07": { byMode: { sequential: 2, contextual: 1, spatial: 3, relational: 4, note: 5 } } },
+				},
+			},
+		});
+		expect(result.shards["2026-08.pixel-10a.md"]?.days["2026-08-07"]?.byMode).toEqual({
+			flashcard: 2,
+			note: 6,
+			mindmap: 3,
+			cosmos: 4,
+		});
+	});
+
 	it("coerces missing and nonsense counts to zero", () => {
 		const result = normalizeCache({
 			v: 3,
@@ -1636,7 +1674,7 @@ describe("normalizeCache", () => {
 			timeMs: 0,
 			byRating: { 1: 2, 2: 0, 3: 0, 4: 0 },
 			byState: { new: 0, learning: 0, review: 0, relearning: 0 },
-			byMode: { sequential: 0, contextual: 0, spatial: 0, relational: 0 },
+			byMode: { flashcard: 0, note: 0, mindmap: 0, cosmos: 0 },
 			byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 			timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 		});

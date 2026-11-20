@@ -139,12 +139,14 @@ export interface OsmosisSettings {
 	excludeTags: string[];
 
 	// ── Study Mode Settings ─────────────────────────────────
-	/** Whether contextual mode activates automatically in reading view (default: true). */
-	contextualAutoActivate: boolean;
-	/** Whether inline clozes blank out in contextual mode (default: false). */
-	contextualInlineCloze: boolean;
-	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
-	sequentialContextLines: number;
+	/** Whether note study activates automatically in reading view (default: true).
+	 *  Was `contextualAutoActivate`; `migrateRenamedSettingKeys` carries it over. */
+	noteAutoActivate: boolean;
+	/** Whether inline clozes blank out in note study (default: false). Was `contextualInlineCloze`. */
+	noteInlineCloze: boolean;
+	/** Preceding sibling lines shown as context on line-card fronts in flashcard study (default: 2).
+	 *  Was `sequentialContextLines`. */
+	flashcardContextLines: number;
 
 	/** Default maximum node width before text wraps, in px. Per-map "Max width"
 	 *  in the properties sidebar overrides this (default: 230). */
@@ -214,9 +216,9 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	excludeTags: [],
 
 	// Study Mode defaults
-	contextualAutoActivate: true,
-	contextualInlineCloze: false,
-	sequentialContextLines: 2,
+	noteAutoActivate: true,
+	noteInlineCloze: false,
+	flashcardContextLines: 2,
 
 	// Stats dashboard defaults
 	statsPanelOrder: [],
@@ -459,7 +461,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					},
 					{
 						name: "Include line cards in decks",
-						desc: "Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.",
+						desc: "Count line cards (block-ID-tagged lines) in deck totals and flashcard study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.",
 						control: { type: "toggle", key: "includeLineCardsInDecks" },
 					},
 				],
@@ -506,10 +508,10 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				items: [
 					{
 						name: "Line card context lines",
-						desc: "How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).",
+						desc: "How many immediately preceding sibling lines to show for context on a line card's front in flashcard study (0 = breadcrumb only).",
 						control: {
 							type: "slider",
-							key: "sequentialContextLines",
+							key: "flashcardContextLines",
 							min: 0,
 							max: 5,
 							step: 1,

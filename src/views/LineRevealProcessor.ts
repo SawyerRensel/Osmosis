@@ -605,7 +605,7 @@ export class LineRevealProcessor {
 			)
 			: step.cardId === null ? [] : [step.cardId];
 		if (cardIds.length > 0) {
-			this.sessionManager ??= this.plugin.createSessionManager("contextual");
+			this.sessionManager ??= this.plugin.createSessionManager("note");
 			const elapsedMs = Date.now() - state.pendingRatingAt;
 			for (const cardId of cardIds) {
 				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
@@ -635,7 +635,7 @@ export class LineRevealProcessor {
 		const targets = state.studyTargets;
 		if (targets && targets.size > 0 && [...targets].every((id) => state.rated.has(id))) {
 			this.endStudy(notePath, state);
-			new Notice(`Contextual study complete — ${String(targets.size)} lines rated.`);
+			new Notice(`Note study complete — ${String(targets.size)} lines rated.`);
 			this.updateHeaderActions();
 			this.plugin.contextualStudy.refresh(notePath);
 		}

@@ -17,7 +17,7 @@ Three controls at the top apply to every panel at once:
 | Control | Values |
 |---------|--------|
 | **Deck** | Whole collection, or any single deck and its sub-decks |
-| **Mode** | All, Sequential, Contextual, Spatial |
+| **Mode** | All, Flashcard, Note, Mind map, Cosmos |
 | **History** | 12 months, or All |
 
 Panels that plot volume over time carry their own range picker — **1 month**

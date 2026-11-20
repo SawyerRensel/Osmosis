@@ -23,8 +23,8 @@ that reach the same things. Any command can be bound to a hotkey under
 
 | Command | What it does |
 |---------|--------------|
-| **Study all decks** | Starts a [sequential](../studying/study-modes.md#sequential-study) session across every deck |
-| **Open study tab** | Reveals the [study tab](../studying/study-modes.md#sequential-study) — its deck picker, or the session already running in it |
+| **Study all decks** | Starts a [flashcard](../studying/study-modes.md#flashcard-study) session across every deck |
+| **Open study tab** | Reveals the [study tab](../studying/study-modes.md#flashcard-study) — its deck picker, or the session already running in it |
 | **Undo last card mutation** | Reverts the last [card browser](../studying/card-browser.md#undo) mutation |
 | **Redo last undone card mutation** | Replays it |
 
@@ -74,5 +74,5 @@ The shortcut tables live with the features they belong to:
 
 - [Mind map editing](../mind-mapping/editing.md#structure-operations) — structure, clipboard, undo
 - [Mind map navigation](../mind-mapping/navigation.md) — arrows, selection, collapse/expand
-- [Sequential study](../studying/study-modes.md#keyboard-shortcuts) — reveal, rate, undo, exclude
+- [Flashcard study](../studying/study-modes.md#keyboard-shortcuts) — reveal, rate, undo, exclude
 - [Occlusion editor](../flashcards/image-occlusion.md#the-editor) — duplicate, delete, undo

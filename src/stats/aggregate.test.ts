@@ -42,7 +42,7 @@ const baseEntry: ReviewLogEntry = {
 	st: 12.3,
 	d: 6.4,
 	e: 4200,
-	m: "sequential",
+	m: "flashcard",
 };
 
 function entry(overrides: Partial<ReviewLogEntry>): ReviewLogEntry {
@@ -130,9 +130,9 @@ describe("entryInScope", () => {
 	});
 
 	it("narrows to one study surface", () => {
-		const spatial = scope({ mode: "spatial" });
-		expect(entryInScope(entry({ m: "spatial" }), spatial, resolve)).toBe(true);
-		expect(entryInScope(entry({ m: "sequential" }), spatial, resolve)).toBe(false);
+		const spatial = scope({ mode: "mindmap" });
+		expect(entryInScope(entry({ m: "mindmap" }), spatial, resolve)).toBe(true);
+		expect(entryInScope(entry({ m: "flashcard" }), spatial, resolve)).toBe(false);
 	});
 
 	it("drops entries before the start day and keeps the boundary day", () => {
@@ -479,23 +479,23 @@ describe("yearsWithActivity", () => {
 describe("study mode totals", () => {
 	it("sums modes across the range from the rollup", () => {
 		const rollup = aggregateRollup([
-			entry({ t: new Date(2026, 7, 6, 9, 0).getTime(), m: "sequential" }),
-			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), m: "spatial" }),
-			entry({ t: new Date(2026, 7, 7, 10, 0).getTime(), m: "spatial" }),
-			entry({ t: new Date(2026, 7, 7, 11, 0).getTime(), m: "relational" }),
+			entry({ t: new Date(2026, 7, 6, 9, 0).getTime(), m: "flashcard" }),
+			entry({ t: new Date(2026, 7, 7, 9, 0).getTime(), m: "mindmap" }),
+			entry({ t: new Date(2026, 7, 7, 10, 0).getTime(), m: "mindmap" }),
+			entry({ t: new Date(2026, 7, 7, 11, 0).getTime(), m: "cosmos" }),
 		]);
 		const points = dailySeries(rollup, new Date(2026, 7, 6, 9, 0).getTime(), AUG_7);
 
 		expect(studyModeTotals(points, rollup)).toEqual({
-			sequential: 1,
-			contextual: 0,
-			spatial: 2,
-			relational: 1,
+			flashcard: 1,
+			note: 0,
+			mindmap: 2,
+			cosmos: 1,
 		});
 	});
 
 	it("is all zeroes with no reviews", () => {
-		expect(studyModeTotals([], {})).toEqual({ sequential: 0, contextual: 0, spatial: 0, relational: 0 });
+		expect(studyModeTotals([], {})).toEqual({ flashcard: 0, note: 0, mindmap: 0, cosmos: 0 });
 	});
 });
 

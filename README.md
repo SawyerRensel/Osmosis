@@ -194,27 +194,27 @@ Study any card in any mode, scheduled by FSRS — a system built on memory resea
 
 **On the map**
 
-Spatial study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.
+Mind map study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.
 
-<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_on_the_map.png" alt="Spatial study mode revealing a card answer on the mind map">
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_on_the_map.png" alt="Mind map study revealing a card answer on the mind map">
 
 </td>
 <td width="33%" valign="top">
 
 **In the note**
 
-Contextual study hides what's due, reveals it in place, and lets you rate it and read on. Peek mode reveals a card and leaves its schedule untouched.
+Note study hides what's due, reveals it in place, and lets you rate it and read on. Peek mode reveals a card and leaves its schedule untouched.
 
-<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_in_the_note.png" alt="Contextual study running inline in a note beside its mind map">
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_in_the_note.png" alt="Note study running inline in a note beside its mind map">
 
 </td>
 <td width="33%" valign="top">
 
 **From a window**
 
-Sequential study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.
+Flashcard study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.
 
-<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_from_a_window.png" alt="A sequential study session showing a card's question in a modal">
+<img src="https://raw.githubusercontent.com/SawyerRensel/Osmosis/main/docs/assets/media/osmosis_fence_card_from_a_window.png" alt="A flashcard study session showing a card's question">
 
 </td>
 </tr>

@@ -1,6 +1,6 @@
 /**
- * Pure logic for relational study, the 3D graph's study mode (`StudyMode`
- * `"relational"`). See `vault/Planner/3D Graph Phase 6 - Relational study
+ * Pure logic for Cosmos study, the 3D graph's study mode (`StudyMode`
+ * `"cosmos"`). See `vault/Planner/3D Graph Phase 6 - Relational study
  * mode.md` and the parent spec's "3D study mode".
  *
  * It works like 2D spatial study: a due card's node is hidden in place, and that

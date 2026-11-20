@@ -1933,7 +1933,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// (plan §11).
 		const cardIds = this.cardsForKey(cardId);
 		if (cardIds.length > 0) {
-			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
+			this.spatialSessionManager ??= this.plugin.createSessionManager("mindmap");
 			for (const id of cardIds) {
 				await this.spatialSessionManager.recordReview(id, rating, { elapsedMs });
 			}
@@ -1943,7 +1943,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.spatialRated.size >= this.spatialTargets.size) {
 			const total = this.spatialTargets.size;
 			this.exitSpatialMode(); // flushes schedule writes; map stays open
-			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
+			new Notice(`Mind map study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
 		} else {
 			// Re-apply rather than only redrawing the banner: an occluded node that
 			// has more groups left must reset to ask the next one, which is the

@@ -13,7 +13,7 @@ A fence that fans out into several cards is several questions everywhere: a
 three-group cloze is three reveals and three ratings, a bidirectional pair is
 two, an occluded diagram is one per mask group.
 
-## Sequential Study
+## Flashcard Study
 
 Classic card-by-card review in its own tab, like the stats dashboard. The card
 fills the tab, and the buttons float over its bottom edge while the card
@@ -64,7 +64,7 @@ Undo is **multi-level**: press it repeatedly to walk back through the session. I
 !!! note "Cards can come back mid-session"
     A card you rate *Again* reappears later in the same session, after a delay set by your [learning steps](spaced-repetition.md#learning-steps). If every remaining card is waiting on a timer, a "Waiting for next card" countdown appears instead of the session ending.
 
-## Contextual Study
+## Note Study
 
 Study in the note itself — no modal, no context switching, surrounded by the
 explanations and examples you wrote.
@@ -77,7 +77,7 @@ to the reading/edit toggle; Peek is in the ⋯ menu:
   page with your hand.
 - :lucide-graduation-cap: **Study this note** — opens a menu: **Study this note
   in note view** (below), **Study this note in flashcard view** (the
-  [sequential](#sequential-study) study tab with only this note's cards) and
+  [flashcard](#flashcard-study) study tab with only this note's cards) and
   **Study the deck in flashcard view: {Deck}**, one per deck the note's cards
   belong to (a submenu past five). Study in note view hides only the cards that are
   **due or new**, and asks them one at a time. After each reveal, a rating
@@ -108,15 +108,15 @@ to the reading/edit toggle; Peek is in the ⋯ menu:
 
 Once you rate a card, its answer **stays visible** for the rest of the session —
 you're reading the note, not drilling. Each card also carries an exclude toggle,
-and ++ctrl+z++ undoes ratings and excludes here just as it does in the
-sequential modal.
+and ++ctrl+z++ undoes ratings and excludes here just as it does in flashcard
+study.
 
 !!! info "Embedded notes stay put"
-    Contextual study deliberately leaves `![[embeds]]` alone. Study an embedded
-    note's cards in its own reading view, or on a [map](#spatial-study) that
+    Note study deliberately leaves `![[embeds]]` alone. Study an embedded
+    note's cards in its own reading view, or on a [map](#mind-map-study) that
     includes it.
 
-## Spatial Study
+## Mind Map Study
 
 Study on the mind map itself. Concepts stay in their spatial context,
 reinforcing structural relationships.
@@ -134,20 +134,20 @@ A node holding a multi-card fence steps through its questions one at a time —
 the node's content swaps per question — so a three-group cloze on the map asks
 exactly what it asks in the modal.
 
-Spatial study is especially powerful for topics where understanding the relationships between concepts matters as much as memorizing individual facts. The physical position of nodes on the map creates spatial memory associations that reinforce recall.
+Mind map study is especially powerful for topics where understanding the relationships between concepts matters as much as memorizing individual facts. The physical position of nodes on the map creates spatial memory associations that reinforce recall.
 
 !!! tip "Study a single branch"
     Right-click any node and choose **Study this branch** to scope the session to that subtree's due cards.
 
 !!! tip "Study without risking edits"
-    Spatial study and peek work in [mind map reading mode](../mind-mapping/index.md#reading-mode). Rating is study metadata, not a map edit — so on a phone, where a stray tap-drag can rearrange a branch, reading mode gives you a study surface that can't be changed by accident.
+    Mind map study and peek work in [mind map reading mode](../mind-mapping/index.md#reading-mode). Rating is study metadata, not a map edit — so on a phone, where a stray tap-drag can rearrange a branch, reading mode gives you a study surface that can't be changed by accident.
 
 ### Transcluded Content
 
-Embedded notes (`![[note]]`) are first-class citizens in spatial study and peek: if the embedded note has line cards, its nodes hide and reveal on the host map just like local ones, and ratings are written to the **embedded note's** own `osmosis-schedule` — the schedule always lives with the note that owns the line. A card studied on a host map and in its home note is the same card, so scheduling stays consistent everywhere.
+Embedded notes (`![[note]]`) are first-class citizens in mind map study and peek: if the embedded note has line cards, its nodes hide and reveal on the host map just like local ones, and ratings are written to the **embedded note's** own `osmosis-schedule` — the schedule always lives with the note that owns the line. A card studied on a host map and in its home note is the same card, so scheduling stays consistent everywhere.
 
 - Embedded notes without flashcards (no `osmosis-cards` opt-in, or no generated block IDs) simply stay visible as context.
-- A note whose line cards are [opted out of decks](../flashcards/line-cards.md) is still studiable in place — opt-out only affects decks and sequential study.
+- A note whose line cards are [opted out of decks](../flashcards/line-cards.md) is still studiable in place — opt-out only affects decks and flashcard study.
 - Embedding the same note twice puts both copies on one card: revealing one reveals the other, and it is rated (and counted) once.
 
 ### Peek on the Map
@@ -158,11 +158,11 @@ The **Peek mode** entry in the ⋯ menu turns on **peek mode**: every card node 
 
 | Mode | Best for | Context |
 |------|----------|---------|
-| **Sequential** | Focused review, clearing a backlog | Modal dialog, no distractions |
-| **Contextual** | Studying while reading | Inline in your notes |
-| **Spatial** | Learning structure and relationships | On the mind map |
+| **Flashcard** | Focused review, clearing a backlog | Its own study tab, no distractions |
+| **Note** | Studying while reading | Inline in your notes |
+| **Mind map** | Learning structure and relationships | On the mind map |
 
 All three modes use the same FSRS scheduler — a card rated in one mode updates its schedule everywhere. The [statistics dashboard](statistics.md) can tell you which mode is actually working best for you: **Recall by study mode** compares them.
 
 !!! note "Excluded cards"
-    A card you've [excluded from study](../flashcards/line-cards.md#exclude-from-study) sits out all three modes: it stays visible in peek and study, never enters the sequential queue, and doesn't count toward dashboard totals. Its history is kept, so including it again picks up where it left off.
+    A card you've [excluded from study](../flashcards/line-cards.md#exclude-from-study) sits out all three modes: it stays visible in peek and study, never enters the flashcard queue, and doesn't count toward dashboard totals. Its history is kept, so including it again picks up where it left off.

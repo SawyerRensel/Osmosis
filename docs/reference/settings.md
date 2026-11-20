@@ -34,7 +34,7 @@ search.
 | **Daily review card limit** | 200 | Maximum reviews per day (0 = unlimited) |
 | **Learning steps** | `1m, 10m` | Intra-session [steps](../studying/spaced-repetition.md#learning-steps) for new cards |
 | **Relearning steps** | `10m` | Steps for cards you rated *Again* |
-| **Include line cards in decks** | On | Count [line cards](../flashcards/line-cards.md) in deck totals and sequential study. Off keeps them studiable in place only. Per-note override: `osmosis-line-cards: false` |
+| **Include line cards in decks** | On | Count [line cards](../flashcards/line-cards.md) in deck totals and flashcard study. Off keeps them studiable in place only. Per-note override: `osmosis-line-cards: false` |
 
 ## Review History
 
@@ -52,7 +52,7 @@ search.
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
-| **Line card context lines** | 2 | How many preceding sibling lines appear as context on a line card's front in sequential study (0 = breadcrumb only) |
+| **Line card context lines** | 2 | How many preceding sibling lines appear as context on a line card's front in flashcard study (0 = breadcrumb only) |
 
 ## Note Inclusion
 

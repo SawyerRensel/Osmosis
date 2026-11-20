@@ -39,7 +39,7 @@ Get Osmosis installed and learn the basics in under five minutes.
 
 -   [:octicons-play-24: __Studying__](../studying/index.md)
 
-    Sequential, contextual, and spatial review, all scheduled by FSRS
+    Flashcard, note, and mind map review, all scheduled by FSRS
 
 -   [:octicons-graph-24: __Dashboard__](../studying/dashboard.md)
 

@@ -1,8 +1,8 @@
 /**
- * Relational study: the 3D graph's study mode (`StudyMode` `"relational"`).
+ * Cosmos study: the 3D graph's study mode (`StudyMode` `"cosmos"`).
  * A due card's node is hidden in place, and you recall it with its
  * neighbourhood around you, reveal it and rate it. Ratings go through
- * `plugin.createSessionManager("relational")`, so they move the same FSRS
+ * `plugin.createSessionManager("cosmos")`, so they move the same FSRS
  * schedules every other mode uses, and the review log counts them separately.
  * The view's graduation-cap header action starts and ends a session; the
  * panel has no Stop button of its own.
@@ -243,7 +243,7 @@ export class Graph3DStudy {
 		this.reviewed++;
 		// One card per key (`spatialStudyKeys` splits a node into its due cards); looked up the way 2D study does.
 		const ids = cardIdsForSpatialKey(this.allCards, key);
-		this.session ??= this.plugin.createSessionManager("relational");
+		this.session ??= this.plugin.createSessionManager("cosmos");
 		for (const id of ids) await this.session.recordReview(id, rating, { elapsedMs });
 		if (ids.length > 0) this.plugin.refreshDashboard();
 		this.host.redraw();

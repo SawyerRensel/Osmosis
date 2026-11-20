@@ -52,6 +52,7 @@ import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { StudyScope } from "./study/types";
+import { migrateRenamedSettingKeys } from "./study/mode-names";
 
 /**
  * Extensions the "Create image occlusion" item is offered for — Obsidian's own
@@ -1743,7 +1744,12 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
+		const saved = await this.loadData() as Record<string, unknown> | null;
+		// Study-mode settings renamed in T105 (sequentialContextLines →
+		// flashcardContextLines, …). Migrated before the merge, or the default
+		// for the new key would shadow the user's old value.
+		if (saved) migrateRenamedSettingKeys(saved);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved as Partial<OsmosisSettings> | null);
 		// Replaced by graph3dOneFingerDrag before release, with a new default.
 		// Any saveSettings() wrote the old default here, so it is dropped rather
 		// than carried over.

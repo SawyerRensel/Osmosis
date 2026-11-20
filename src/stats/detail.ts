@@ -71,10 +71,10 @@ export class DetailAccumulator {
 	private readonly rollup: Rollup = {};
 	private readonly reviewedCards = new Set<string>();
 	private readonly modeTotals: Record<StudyMode, number> = {
-		sequential: 0,
-		contextual: 0,
-		spatial: 0,
-		relational: 0,
+		flashcard: 0,
+		note: 0,
+		mindmap: 0,
+		cosmos: 0,
 	};
 	private readonly hours: HourBucket[] = Array.from({ length: 24 }, (_, hour) => ({
 		hour,

@@ -223,35 +223,35 @@ hide:
 
   <div class="osmosis-home__inner">
     <ul class="osmosis-pillars osmosis-pillars--swap" data-osmosis-swap="study">
-      <li data-osmosis-swap-key="spatial">
+      <li data-osmosis-swap-key="mindmap">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="6" height="6" x="16" y="16" rx="1"/><rect width="6" height="6" x="2" y="16" rx="1"/><rect width="6" height="6" x="9" y="2" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>
         <h3>On the map</h3>
-        <p>Spatial study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.</p>
+        <p>Mind map study hides due cards behind placeholders while the rest of the map stays visible — you recall a fact with everything it connects to still on screen.</p>
       </li>
-      <li data-osmosis-swap-key="contextual">
+      <li data-osmosis-swap-key="note">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M8 13h4"/><path d="M8 17h6"/></svg>
         <h3>In the note</h3>
-        <p>Contextual study hides what's due, reveals it in place, and lets you rate it and read on. Peek mode reveals a card and leaves its schedule untouched.</p>
+        <p>Note study hides what's due, reveals it in place, and lets you rate it and read on. Peek mode reveals a card and leaves its schedule untouched.</p>
       </li>
-      <li data-osmosis-swap-key="sequential">
+      <li data-osmosis-swap-key="flashcard">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M8 8h8"/><path d="M8 13h5"/><path d="M8 18h3"/></svg>
         <h3>From a window</h3>
-        <p>Sequential study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.</p>
+        <p>Flashcard study is the classic deck run: one card at a time, with multi-level undo that restores each card's previous schedule as it steps back.</p>
       </li>
     </ul>
 
     <!-- Pointing at a mode above brings its frame forward — see
          assets/javascripts/home-media.js. -->
     <div class="osmosis-band__media osmosis-swap" data-osmosis-swap-target="study">
-      <img class="osmosis-media" data-osmosis-swap-key="spatial"
+      <img class="osmosis-media" data-osmosis-swap-key="mindmap"
            src="assets/media/osmosis_fence_card_on_the_map.png"
-           alt="Spatial study mode revealing a card answer on the mind map">
-      <img class="osmosis-media" data-osmosis-swap-key="contextual"
+           alt="Mind map study revealing a card answer on the mind map">
+      <img class="osmosis-media" data-osmosis-swap-key="note"
            src="assets/media/osmosis_fence_card_in_the_note.png"
-           alt="Contextual study running inline in a note beside its mind map">
-      <img class="osmosis-media" data-osmosis-swap-key="sequential"
+           alt="Note study running inline in a note beside its mind map">
+      <img class="osmosis-media" data-osmosis-swap-key="flashcard"
            src="assets/media/osmosis_fence_card_from_a_window.png"
-           alt="A sequential study session showing a card's question in a modal">
+           alt="A flashcard study session showing a card's question">
     </div>
   </div>
 </section>

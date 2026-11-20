@@ -220,7 +220,7 @@ describe("StudySessionManager schedule-write routing", () => {
 			scheduler,
 			fenceWriter as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
-			"sequential",
+			"flashcard",
 			scheduleStore,
 			reviewLog,
 		);
@@ -368,7 +368,7 @@ describe("StudySessionManager fence-write staging", () => {
 	// source, so writing one mid-session rewrites the block reading view is
 	// displaying and scrolls the reader off the card they just answered.
 	it("stages a contextual rating instead of rewriting the note being read", async () => {
-		const { manager, staged, written } = makeManager("contextual");
+		const { manager, staged, written } = makeManager("note");
 		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
 
 		await manager.recordReview("abc12345", 3);
@@ -380,7 +380,7 @@ describe("StudySessionManager fence-write staging", () => {
 	});
 
 	it("still applies the rating to the store while the write is staged", async () => {
-		const { manager } = makeManager("contextual");
+		const { manager } = makeManager("note");
 		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
 
 		await manager.recordReview("abc12345", 3);
@@ -391,7 +391,7 @@ describe("StudySessionManager fence-write staging", () => {
 
 	// Nothing is displaying the note's source in these surfaces, so a review
 	// belongs on disk the moment it happens.
-	for (const mode of ["sequential", "spatial"] as const) {
+	for (const mode of ["flashcard", "mindmap"] as const) {
 		it(`writes a ${mode} rating through immediately`, async () => {
 			const { manager, staged, written } = makeManager(mode);
 			store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
@@ -408,7 +408,7 @@ describe("StudySessionManager fence-write staging", () => {
 	// An undo that wrote through would be overwritten by the staged rating it
 	// was undoing, the moment that rating flushed.
 	it("stages a contextual undo alongside the rating it reverts", async () => {
-		const { manager, staged, written } = makeManager("contextual");
+		const { manager, staged, written } = makeManager("note");
 		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
 
 		await manager.recordReview("abc12345", 3);
@@ -429,7 +429,7 @@ describe("StudySessionManager review logging", () => {
 	}
 
 	/** A manager wired to a capturing review log, in the given study mode. */
-	function makeManager(mode: StudyMode = "sequential"): Harness {
+	function makeManager(mode: StudyMode = "flashcard"): Harness {
 		const logged: ReviewLogEntry[] = [];
 		const reviewLog = {
 			record: (entry: ReviewLogEntry) => {
@@ -535,7 +535,7 @@ describe("StudySessionManager review logging", () => {
 	});
 
 	it("attributes the answer to the manager's study mode", async () => {
-		for (const mode of ["sequential", "contextual", "spatial"] as const) {
+		for (const mode of ["flashcard", "note", "mindmap"] as const) {
 			const { manager, logged } = makeManager(mode);
 			store.addCard(makeCard({ id: "os-a1" }));
 
@@ -588,7 +588,7 @@ describe("StudySessionManager review logging", () => {
 				stageRemoveSchedule: () => undefined,
 			} as unknown as import("../store/FenceWriter").FenceWriter,
 			(notePath) => ({ path: notePath } as import("obsidian").TFile),
-			"sequential",
+			"flashcard",
 		);
 		store.addCard(makeCard({ id: "os-a1" }));
 
