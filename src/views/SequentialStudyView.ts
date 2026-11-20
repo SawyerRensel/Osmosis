@@ -392,8 +392,10 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		const title = studyTabTitle(scope, h1s);
 		if (title === this.tabTitle) return;
 		this.tabTitle = title;
-		// updateHeader() refreshes the tab title; not in public typings
+		// updateHeader() refreshes only the tab title; the view header's title
+		// (the only one on a phone) is set once at load. Neither is in the typings.
 		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
+		(this as unknown as { titleEl?: HTMLElement }).titleEl?.setText(title);
 	}
 
 	/**
