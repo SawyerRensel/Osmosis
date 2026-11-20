@@ -2039,6 +2039,13 @@ body.is-phone .osmosis-study-rating-bar {
 }
 
 /* Not the accent: Easy is the accent, and the outline would vanish on it. */
+/* Every study mode's header cap (note, mind map, 3D graph, study tab) wears
+   the accent while its mode is on. The icon's stroke follows `currentColor`. */
+.view-actions .osmosis-study-cap.is-active,
+.view-actions .osmosis-study-cap.is-active:hover {
+	color: var(--interactive-accent);
+}
+
 .osmosis-study-rating-bar button.is-suggested {
 	outline: 2px solid var(--text-normal);
 	outline-offset: -2px;

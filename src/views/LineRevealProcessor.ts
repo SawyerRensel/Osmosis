@@ -849,7 +849,7 @@ export class LineRevealProcessor {
 			studyBtn ??= this.createHeaderAction(
 				"graduation-cap",
 				"Study this note",
-				"osmosis-line-study-action",
+				"osmosis-line-study-action osmosis-study-cap",
 				view,
 				(p, evt) => {
 					if (this.stateFor(p).mode === "study") {

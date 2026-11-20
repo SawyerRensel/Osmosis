@@ -434,6 +434,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
 		this.studyActionEl = this.addAction("graduation-cap", "Relational study", () => this.toggleStudy());
+		this.studyActionEl.addClass("osmosis-study-cap");
 		arrangeViewHeader(this, "3d", {
 			"note-view": noteViewActionEl,
 			reading: this.editActionEl,

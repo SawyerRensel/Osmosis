@@ -2119,6 +2119,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.spatialStudyActionEl = this.addAction("graduation-cap", "Study mode", () => {
 			this.toggleSpatialStudy();
 		});
+		this.spatialStudyActionEl.addClass("osmosis-study-cap");
 
 		arrangeViewHeader(this, "2d", {
 			"note-view": noteViewActionEl,
