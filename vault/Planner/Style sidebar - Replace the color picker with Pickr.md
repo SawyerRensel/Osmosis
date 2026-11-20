@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Style sidebar - Sliders snap back after release]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress:
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-19T04:05:00.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:47:06.000Z
 date_start_actual: 2026-11-19T03:47:06.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # Style sidebar - Replace the color picker with Pickr (T94)
@@ -100,7 +100,11 @@ is still there. Undo once → the whole pick reverts.
 Install with `npm install @simonwep/pickr` and commit `package.json` +
 `package-lock.json` (by path).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 Code commit: `d55668e` on `batch/12-study-tab`.
 
@@ -201,7 +205,7 @@ theme palette; map-level hex colors to test reopening; built for undo
 testing). It has no cards, so there was nothing to back-date. To reset after
 testing, copy `e2e/fixtures/map-style-undo.md` over it and reload (Ctrl+R).
 
-### Not verified (needs Obsidian)
+### Not verified before the manual test (needs Obsidian)
 
 - Everything visual and interactive: popup placement in a narrow right
   sidebar (`position: bottom-end`, nanopop flips when it doesn't fit), light

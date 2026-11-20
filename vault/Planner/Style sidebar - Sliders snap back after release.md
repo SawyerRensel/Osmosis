@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Style sidebar - Replace the color picker with Pickr]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress:
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-19T04:10:00.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T03:39:28.000Z
 date_start_actual: 2026-11-19T03:39:28.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # Style sidebar - Sliders snap back after release (T93)
@@ -104,7 +104,11 @@ width and font size, and for one map-level slider (horizontal spacing).
 Don't open `MindMapView.ts` whole (~84k tokens). Grep it for the style-host
 methods only.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 Code commit: `fix(T93): Style sidebar sliders keep their knob where released` on
 `batch/12-study-tab`.
@@ -234,7 +238,7 @@ the fresh case, copy the master over it and press Ctrl+R before testing.
 `vault/tests/mindmap/map-style-undo.md` covers a note that already has
 frontmatter.
 
-### Not verified
+### Not verified before the manual test
 
 - Nothing was run in Obsidian. The whole UI path, including the knob, number
   and fill staying together, is for Sawyer's manual test.

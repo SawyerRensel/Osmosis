@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[3D Graph Phase 4 - Near tier]]"
-status: In-Review
+status: Done
 batch: 12
 priority:
-progress: 50
+progress: 100
 date_created: 2026-11-18T12:00:00.000Z
-date_modified: 2026-11-19T11:45:10.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T04:03:37.000Z
 date_start_actual: 2026-11-19T04:03:37.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/50
 ---
 
 # 3D Graph - Edges respect depth over plates and panels (T97)
@@ -91,7 +91,13 @@ tilted. Watch the perf gauge while orbiting.
 
 Read memory `3d-graph-view-feature` first (plates replace spheres; never declutter).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #50](https://github.com/SawyerRensel/Osmosis/pull/50) (batch 12, branch `batch/12-study-tab`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+**Partial on its own:** this ticket fixed the plate half only (farther plates' text painting over nearer edges). The near-tier panel half shipped as T98, [[3D Graph - Nearer edges cut through near-tier panels]], in batch 13 (PR #51). Together they cover this ticket's acceptance criteria, and Sawyer passed both.
+
+The batch worker wrote this record when the code was committed. It covers the cause, the fix, the decisions and the surface map.
 
 **Slice shipped: part 1 (WebGL plates), in 274e996. Part 2 (near-tier panel edge cut-outs) is not done. It needs its own ticket.**
 
@@ -136,7 +142,7 @@ A design was drafted and then dropped for context budget. Nothing of it is commi
 
 No new fixture. Any large linked map in `vault/` works. The bug is about geometry, not content.
 
-### Not verified
+### Not verified before the manual test
 
 - Not run in Obsidian, and I had no screenshots to check against.
 - Frame time before and after was not measured. The change adds no draw calls and no per-frame work (same objects, different sort key), so I expect no perf change, but that is from reading code, not measured.
