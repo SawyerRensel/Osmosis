@@ -15,7 +15,7 @@ import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { VIEW_TYPE_DECKS } from "./DecksView";
 import { renderOcclusion } from "./OcclusionRenderer";
-import { ImageZoom, setZoom, zoomOf } from "./ImageZoom";
+import { contentRect, ImageZoom, setZoom, zoomOf } from "./ImageZoom";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { syncNavbar, type NavbarHost } from "./ToolRibbon";
 
@@ -152,6 +152,11 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	private statusEl!: HTMLElement;
 	private progressStrip!: StudyProgressStrip;
 	private cardEl!: HTMLElement;
+	/**
+	 * Everything the card shows, in one block at least the card's height — the
+	 * study area a zoomed image may spill into, and what clips it (styles.css).
+	 */
+	private bodyEl!: HTMLElement;
 	private frontEl!: HTMLElement;
 	private dividerEl!: HTMLElement;
 	private backEl!: HTMLElement;
@@ -434,11 +439,13 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		// Card area — the one scroll surface in the tab
 		this.cardEl = container.createDiv({ cls: "osmosis-study-card osmosis-study-scroll" });
+		this.bodyEl = this.cardEl.createDiv({ cls: "osmosis-study-body" });
 		this.imageZoom?.destroy();
-		this.imageZoom = new ImageZoom(this.cardEl);
-		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
-		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
-		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
+		const cardEl = this.cardEl;
+		this.imageZoom = new ImageZoom(cardEl, () => contentRect(cardEl));
+		this.frontEl = this.bodyEl.createDiv({ cls: "osmosis-study-front" });
+		this.dividerEl = this.bodyEl.createDiv({ cls: "osmosis-study-divider" });
+		this.backEl = this.bodyEl.createDiv({ cls: "osmosis-study-back" });
 
 		// Actions, floating over the bottom of the card
 		const actions = container.createDiv({ cls: "osmosis-study-actions" });
@@ -673,15 +680,15 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 	/**
 	 * Rebuild the card area DOM elements if they were destroyed
-	 * (e.g., by renderWaiting or renderComplete calling cardEl.empty()).
+	 * (e.g., by renderWaiting or renderComplete calling bodyEl.empty()).
 	 */
 	private rebuildCardArea(): void {
-		if (this.frontEl.parentElement === this.cardEl) return; // still intact
+		if (this.frontEl.parentElement === this.bodyEl) return; // still intact
 
-		this.cardEl.empty();
-		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
-		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
-		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
+		this.bodyEl.empty();
+		this.frontEl = this.bodyEl.createDiv({ cls: "osmosis-study-front" });
+		this.dividerEl = this.bodyEl.createDiv({ cls: "osmosis-study-divider" });
+		this.backEl = this.bodyEl.createDiv({ cls: "osmosis-study-back" });
 	}
 
 	private updateProgress(): void {
@@ -1019,7 +1026,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.isWaiting = true;
 
 		this.releaseCardComponent();
-		this.cardEl.empty();
+		this.bodyEl.empty();
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
@@ -1033,7 +1040,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		this.updateProgress();
 
-		this.cardEl.createDiv({ cls: "osmosis-study-waiting" }, (el) => {
+		this.bodyEl.createDiv({ cls: "osmosis-study-waiting" }, (el) => {
 			el.createEl("h2", { text: "Waiting for next card..." });
 			const countdownEl = el.createEl("p", {
 				text: `Next card in ${formatWaitTime(waitSecs)}`,
@@ -1076,7 +1083,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	 */
 	private renderComplete(): void {
 		this.releaseCardComponent();
-		this.cardEl.empty();
+		this.bodyEl.empty();
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
@@ -1088,7 +1095,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.progressStrip.setProgress(100);
 		this.updateCounts();
 
-		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
+		this.bodyEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "Session complete" });
 			el.createEl("p", { text: `You reviewed ${this.reviewed} card${this.reviewed !== 1 ? "s" : ""}.` });
 			const buttons = el.createDiv({ cls: "osmosis-study-complete-buttons" });

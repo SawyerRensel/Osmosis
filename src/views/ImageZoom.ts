@@ -1,4 +1,5 @@
 import {
+	BOX,
 	FIT,
 	isDoubleTap,
 	isZoomed,
@@ -6,10 +7,13 @@ import {
 	pinchState,
 	wheelZoomFactor,
 	zoomAbout,
+	windowIn,
 	zoomStyle,
 	type BoxPoint,
+	type ScreenRect,
 	type Tap,
 	type ZoomState,
+	type ZoomWindow,
 } from "../study/image-zoom";
 import { zoomBy } from "../study/occlusion-geometry";
 
@@ -24,10 +28,13 @@ import { zoomBy } from "../study/occlusion-geometry";
  * `.osmosis-occlusion` wrapper, zoomed as a whole so its masks and labels come
  * with it, or a bare `<img>`.
  *
- * The zoom is drawn in place: the picture's box keeps its size in the layout and
- * the magnified picture is clipped back to it (see `zoomStyle`), so nothing on
- * the card moves. A plain wheel is never taken, so the card scrolls exactly as
- * it did; a mouse or one finger pans only a picture that is already zoomed.
+ * The zoom is drawn in place: the picture's box keeps its size in the layout, so
+ * nothing on the card moves, and the magnified picture spills out of the box
+ * over the study area around it, which styles.css clips (batch 14, F2). The
+ * pan is held to the part of that area on screen, which the surface supplies as
+ * `areaOf` and which is measured as each gesture starts. A plain wheel is never
+ * taken, so the card scrolls exactly as it did; a mouse or one finger pans only
+ * a picture that is already zoomed.
  */
 
 const ZOOMED_CLASS = "osmosis-zoomed";
@@ -51,6 +58,24 @@ export function setZoom(picture: HTMLElement, state: ZoomState): void {
 	picture.setCssProps(zoomStyle(state));
 }
 
+/**
+ * `el`'s content box on screen: inside its padding, border and scrollbar. For a
+ * scroller that is the part of its content on view, less the room it keeps
+ * clear for whatever floats over its edges.
+ */
+export function contentRect(el: HTMLElement): ScreenRect {
+	const rect = el.getBoundingClientRect();
+	const style = getComputedStyle(el);
+	const left = rect.left + el.clientLeft;
+	const top = rect.top + el.clientTop;
+	return {
+		left: left + parseFloat(style.paddingLeft),
+		top: top + parseFloat(style.paddingTop),
+		right: left + el.clientWidth - parseFloat(style.paddingRight),
+		bottom: top + el.clientHeight - parseFloat(style.paddingBottom),
+	};
+}
+
 /** A picture's box in the layout, which a zoom never changes. */
 interface Box {
 	left: number;
@@ -64,6 +89,7 @@ interface Pan {
 	pointerId: number;
 	start: ZoomState;
 	box: Box;
+	window: ZoomWindow;
 	x: number;
 	y: number;
 	moved: boolean;
@@ -73,6 +99,7 @@ interface Pinch {
 	picture: HTMLElement;
 	start: ZoomState;
 	box: Box;
+	window: ZoomWindow;
 	center: BoxPoint;
 	spread: number;
 }
@@ -87,7 +114,15 @@ export class ImageZoom {
 	/** Set by a drag that just ended, so the click it is about to produce does not count as one. */
 	private swallowClick = false;
 
-	constructor(private readonly root: HTMLElement) {
+	/**
+	 * @param root  The surface: every picture under it zooms.
+	 * @param areaOf  The study area on screen that a zoomed picture may fill —
+	 *   the area styles.css clips it to, or the visible part of it.
+	 */
+	constructor(
+		private readonly root: HTMLElement,
+		private readonly areaOf: () => ScreenRect,
+	) {
 		// Not passive: zooming takes the event away from the card's scroll.
 		this.listen("wheel", (e) => this.onWheel(e), { passive: false });
 		this.listen("pointerdown", (e) => this.onPointerDown(e));
@@ -156,6 +191,13 @@ export class ImageZoom {
 		return { left: rect.left - state.x * width, top: rect.top - state.y * height, width, height };
 	}
 
+	/** The study area as a window onto `box`. */
+	private windowFor(box: Box): ZoomWindow {
+		const area = this.areaOf();
+		if (area.right <= area.left || area.bottom <= area.top) return BOX;
+		return windowIn({ left: box.left, top: box.top, right: box.left + box.width, bottom: box.top + box.height }, area);
+	}
+
 	private static pointIn(box: Box, clientX: number, clientY: number): BoxPoint {
 		return {
 			x: box.width > 0 ? (clientX - box.left) / box.width : 0,
@@ -174,7 +216,8 @@ export class ImageZoom {
 		const state = zoomOf(picture);
 		const zoom = zoomBy(state.zoom, wheelZoomFactor(e.deltaY, e.deltaMode));
 		if (zoom === state.zoom) return;
-		setZoom(picture, zoomAbout(state, zoom, ImageZoom.pointIn(this.boxOf(picture), e.clientX, e.clientY)));
+		const box = this.boxOf(picture);
+		setZoom(picture, zoomAbout(state, zoom, ImageZoom.pointIn(box, e.clientX, e.clientY), this.windowFor(box)));
 	}
 
 	// ── Mouse ─────────────────────────────────────────────────────
@@ -184,11 +227,13 @@ export class ImageZoom {
 		if (e.pointerType === "touch" || e.button !== 0) return;
 		const picture = this.pictureAt(e.target);
 		if (!picture || !isZoomed(zoomOf(picture))) return;
+		const box = this.boxOf(picture);
 		this.pan = {
 			picture,
 			pointerId: e.pointerId,
 			start: zoomOf(picture),
-			box: this.boxOf(picture),
+			box,
+			window: this.windowFor(box),
 			x: e.clientX,
 			y: e.clientY,
 			moved: false,
@@ -226,7 +271,7 @@ export class ImageZoom {
 		const dy = clientY - pan.y;
 		if (!pan.moved && Math.hypot(dx, dy) < DRAG_PX) return false;
 		pan.moved = true;
-		setZoom(pan.picture, panBy(pan.start, dx / pan.box.width, dy / pan.box.height));
+		setZoom(pan.picture, panBy(pan.start, dx / pan.box.width, dy / pan.box.height, pan.window));
 		return true;
 	}
 
@@ -258,6 +303,7 @@ export class ImageZoom {
 				picture,
 				start: zoomOf(picture),
 				box,
+				window: this.windowFor(box),
 				center: ImageZoom.pointIn(box, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2),
 				spread: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
 			};
@@ -277,11 +323,13 @@ export class ImageZoom {
 	}
 
 	private startTouchPan(picture: HTMLElement, touch: Touch): void {
+		const box = this.boxOf(picture);
 		this.pan = {
 			picture,
 			pointerId: touch.identifier,
 			start: zoomOf(picture),
-			box: this.boxOf(picture),
+			box,
+			window: this.windowFor(box),
 			x: touch.clientX,
 			y: touch.clientY,
 			moved: false,
@@ -296,7 +344,7 @@ export class ImageZoom {
 			e.stopPropagation();
 			const center = ImageZoom.pointIn(pinch.box, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
 			const spread = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-			setZoom(pinch.picture, pinchState(pinch.start, pinch.center, center, pinch.spread > 0 ? spread / pinch.spread : 1));
+			setZoom(pinch.picture, pinchState(pinch.start, pinch.center, center, pinch.spread > 0 ? spread / pinch.spread : 1, pinch.window));
 			return;
 		}
 		const pan = this.pan;

@@ -19,7 +19,8 @@ import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
 import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
-import { ImageZoom } from "./ImageZoom";
+import { contentRect, ImageZoom } from "./ImageZoom";
+import type { ScreenRect } from "../study/image-zoom";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -1131,7 +1132,7 @@ export class LineRevealProcessor {
 			this.zooms.delete(host);
 		}
 		for (const host of studyingHosts) {
-			if (!this.zooms.has(host)) this.zooms.set(host, new ImageZoom(host));
+			if (!this.zooms.has(host)) this.zooms.set(host, new ImageZoom(host, () => readingArea(host)));
 		}
 	}
 
@@ -1261,6 +1262,22 @@ export class LineRevealProcessor {
 			back.replaceWith(...Array.from(back.childNodes));
 		}
 	}
+}
+
+/**
+ * The study area a zoomed image in reading view `host` may fill (batch 14, F2):
+ * the scroller's content box across, and down only as far as the sizer, which
+ * is what clips a zoomed picture's height (styles.css). A short note's sizer can
+ * end above the bottom of the view.
+ */
+function readingArea(host: HTMLElement): ScreenRect {
+	const preview = host.querySelector<HTMLElement>(":scope > .markdown-preview-view");
+	if (!preview) return contentRect(host);
+	const area = contentRect(preview);
+	const sizer = preview.querySelector<HTMLElement>(":scope > .markdown-preview-sizer");
+	if (!sizer) return area;
+	const clip = sizer.getBoundingClientRect();
+	return { ...area, top: Math.max(area.top, clip.top), bottom: Math.min(area.bottom, clip.bottom) };
 }
 
 /** Nodes that stay outside the hideable wrapper. */

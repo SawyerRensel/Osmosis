@@ -1285,9 +1285,9 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
    themselves, so an image can step out of it (below). */
 .osmosis-study-front > *,
 .osmosis-study-back > *,
-.osmosis-study-card > .osmosis-study-divider,
-.osmosis-study-card > .osmosis-study-complete,
-.osmosis-study-card > .osmosis-study-waiting {
+.osmosis-study-body > .osmosis-study-divider,
+.osmosis-study-body > .osmosis-study-complete,
+.osmosis-study-body > .osmosis-study-waiting {
 	max-width: var(--osmosis-study-column);
 	margin-inline: auto;
 }
@@ -1459,19 +1459,62 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 }
 
 /* A study image zoomed in place (T104, src/views/ImageZoom.ts). The picture's
-   box keeps its size in the layout; what is drawn into it is magnified and
-   clipped back to it, so nothing on the card moves. A bare image carries the
-   transform itself. An occluded diagram's wrapper stays put and every layer in
-   it — image, masks, labels — gets the same transform, which keeps the masks
-   locked to the picture. The offsets are percentages of each layer's own box,
-   all of which are the wrapper's size. A clip on each layer rather than
-   `overflow: hidden` on the wrapper, which would also clip the rating buttons
-   that float under a revealed shape and may run past the picture's edge. */
+   box keeps its size in the layout, so nothing on the card moves. A bare image
+   carries the transform itself. An occluded diagram's wrapper stays put and
+   every layer in it — image, masks, labels — gets the same transform, which
+   keeps the masks locked to the picture. The offsets are percentages of each
+   layer's own box, all of which are the wrapper's size.
+
+   The magnified picture is not clipped to its box: it spills over the study
+   area around it (batch 14, F2), which clips it instead (below). So it is
+   lifted over the text there, and drawn on the page's background so that text
+   does not show through a transparent picture. */
 img.osmosis-zoomed,
 .osmosis-occlusion.osmosis-zoomed > :not(.osmosis-occlusion-rating-anchor) {
 	transform-origin: 0 0;
 	transform: translate(var(--osmosis-zoom-x), var(--osmosis-zoom-y)) scale(var(--osmosis-zoom));
-	clip-path: var(--osmosis-zoom-clip);
+}
+
+img.osmosis-zoomed,
+.osmosis-occlusion.osmosis-zoomed {
+	position: relative;
+	z-index: 1;
+}
+
+img.osmosis-zoomed,
+.osmosis-occlusion.osmosis-zoomed > img {
+	background-color: var(--background-primary);
+}
+
+/* The study area a zoomed picture spills into clips it, and keeps it out of
+   the scroller's scrollable overflow. A transform still counts towards that
+   overflow, and a `clip-path` on the picture does not take it out, so a picture
+   magnified past the card's edge made the card scroll sideways under it
+   (batch 14, F2). Its own stacking context, so the picture's z-index lifts it
+   over the card's text but never over the strip or the buttons. */
+.osmosis-study-body:has(.osmosis-zoomed) {
+	overflow: clip;
+	isolation: isolate;
+}
+
+/* The back clips its content for its reveal; a zoomed image on it may still
+   use the whole study area. `flow-root` keeps the block formatting context that
+   `overflow: hidden` gave it, so nothing in it moves. */
+.osmosis-study-back.is-revealed:has(.osmosis-zoomed) {
+	display: flow-root;
+	overflow: visible;
+}
+
+/* Note study: the reading view has no element both as wide as the view and as
+   tall as the note, so the view stops scrolling sideways and the sizer clips
+   the height. */
+.markdown-reading-view > .markdown-preview-view:has(.osmosis-zoomed) {
+	overflow-x: hidden;
+}
+
+.markdown-reading-view > .markdown-preview-view > .markdown-preview-sizer:has(.osmosis-zoomed) {
+	overflow-y: clip;
+	isolation: isolate;
 }
 
 .osmosis-zoomed {
@@ -1724,12 +1767,22 @@ img.osmosis-zoomed,
    floating strip and buttons. `flex: 1` with `min-height: 0` is what lets it
    shrink below its content — a flex item's default `min-height: auto` refuses
    to. The top padding is the strip's height, so the first line starts clear
-   of it. */
+   of it. A flex column itself, so that its one child, the body, can be made at
+   least its height. */
 .osmosis-study-card {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
 	padding: var(--osmosis-study-strip-height) var(--size-4-4) var(--osmosis-study-clearance);
+	display: flex;
+	flex-direction: column;
+}
+
+/* Everything the card shows. It grows to fill the card when the card is
+   short, so it spans the whole study area — down to the floating buttons — that
+   a zoomed image may use (below). */
+.osmosis-study-body {
+	flex: 1 0 auto;
 }
 
 .osmosis-study-front {
@@ -2485,9 +2538,9 @@ body.is-phone .osmosis-decks-column {
 	z-index: 1;
 	width: var(--osmosis-anchor-width);
 	left: clamp(
-		0px,
+		var(--osmosis-zoom-x, 0%),
 		calc(var(--osmosis-zoom-x, 0%) + var(--osmosis-anchor-x, 50%) * var(--osmosis-zoom, 1) - var(--osmosis-anchor-width) / 2),
-		max(0px, calc(100% - var(--osmosis-anchor-width)))
+		max(var(--osmosis-zoom-x, 0%), calc(var(--osmosis-zoom-x, 0%) + var(--osmosis-zoom, 1) * 100% - var(--osmosis-anchor-width)))
 	);
 	/* The wrapper sets line-height 0 for the image, and a line placeholder's
 	   letter-spacing would otherwise reach the button labels. */
@@ -2496,14 +2549,15 @@ body.is-phone .osmosis-decks-column {
 	cursor: default;
 }
 
-/* The shape's edge follows a zoom (T104), held inside the picture's box so the
-   buttons never float off over the text when the shape is panned out of view. */
+/* The shape's edge follows a zoom (T104). Not held inside the picture's box: a
+   zoomed picture spills out of it (batch 14, F2), and the buttons stay with
+   their shape wherever it is drawn, clipped with it by the study area. */
 .osmosis-occlusion-rating-anchor.is-below {
-	top: calc(clamp(0%, var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 100%) * var(--osmosis-zoom, 1), 100%) + 6px);
+	top: calc(var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 100%) * var(--osmosis-zoom, 1) + 6px);
 }
 
 .osmosis-occlusion-rating-anchor.is-above {
-	top: calc(clamp(0%, var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 0%) * var(--osmosis-zoom, 1), 100%) - 6px);
+	top: calc(var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 0%) * var(--osmosis-zoom, 1) - 6px);
 	transform: translateY(-100%);
 }
 
