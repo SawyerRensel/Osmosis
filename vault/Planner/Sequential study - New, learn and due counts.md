@@ -134,8 +134,9 @@ completion screen calls it too, so it ends on `0 0 0` with nothing underlined.
   counts only the learn cards inside its learn-ahead limit. This session shows
   every deferred card eventually (on the waiting screen), so it counts them all,
   which matches the ticket's "including deferred ones waiting on their timer".
-- **Colours**: `--color-blue`, `--color-red` and `--color-green`, with
-  semibold tabular numbers. The current bucket gets a 2px underline. The same
+- **Colours**: the dashboard's deck-count palette (changed in round 2, see
+  below; round 1 used `--color-blue/red/green`), with semibold tabular
+  numbers. The current bucket gets a 2px underline. The same
   CSS applies on desktop and phone. Each span has an `aria-label` such as
   `Due: 3`.
 - **New fixture instead of reusing `study-tab.md`.** T91's fixture has no
@@ -166,3 +167,38 @@ dashboard row should both read **2 | 2 | 3**.
   theme, the underline, the fit beside the bar on a phone), and not the live
   flow through the view's handlers. The unit tests model the view's queue
   operations; they do not run the view.
+
+### Round 2 fix
+
+Code commit: `36290d6`. Sawyer's test: "Flashcard study mode new/learn/due
+colors should match our deck dashboard colors." The strip showed blue, red and
+green.
+
+- **Cause:** the ticket asked for `--color-blue/red/green`, so the strip used
+  Obsidian's palette. The dashboard pills never did: new is
+  `--interactive-accent`, learn is `hsl(30, 75%, 50%)` (orange) and due is
+  `hsl(140, 50%, 42%)`, the same values in light and dark.
+- **Fix:** three variables, `--osmosis-count-new`, `--osmosis-count-learn` and
+  `--osmosis-count-due`, declared once on `.osmosis-dashboard,
+  .osmosis-study-view`. The dashboard pills and the study strip both read them,
+  so the two cannot drift apart. They are declared on the two containers and
+  not on `body`, so the accent resolves where a theme might override it. A new
+  surface that shows these counts joins that selector.
+- The dashboard's learn and due pill tints now come from the same variables
+  through `color-mix(in srgb, <var> 12%, transparent)`. That gives the same
+  pixels as the old `hsla(..., 0.12)` literals. The new pill's tint is
+  unchanged (`--interactive-accent-rgb`).
+- No TypeScript changed, and the counting logic is untouched. The underline
+  rule (`.osmosis-study-count.is-current`) is as before.
+- **Zero counts left as they were:** the dashboard greys a 0 (`--text-faint`)
+  and the strip still colours it. Greying it would need a class toggle in
+  `updateCounts()`, and the feedback was about the hues. If Sawyer wants
+  matching greyed zeros, that is a one-line follow-up.
+- **Not converted:** the card browser's state badges
+  (`.osmosis-browse-state-*`) are a third copy of the same values. Their
+  comment says to change them alongside the dashboard. They could join the
+  variables later; I left them alone to keep this fix to the study strip.
+
+| File | Change |
+|---|---|
+| `styles.css` | New `--osmosis-count-*` variables on `.osmosis-dashboard, .osmosis-study-view`; `.osmosis-dash-new/learn/due` and `.osmosis-study-count-new/learn/due` read them |
