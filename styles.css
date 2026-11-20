@@ -1763,16 +1763,17 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	white-space: nowrap;
 }
 
+/* The dashboard's deck-count palette (see .osmosis-dash-new). */
 .osmosis-study-count-new {
-	color: var(--color-blue);
+	color: var(--osmosis-count-new);
 }
 
 .osmosis-study-count-learn {
-	color: var(--color-red);
+	color: var(--osmosis-count-learn);
 }
 
 .osmosis-study-count-due {
-	color: var(--color-green);
+	color: var(--osmosis-count-due);
 }
 
 .osmosis-study-count.is-current {
@@ -2188,6 +2189,18 @@ body.is-phone .osmosis-study-rating-bar {
 	flex-shrink: 0;
 }
 
+/* The deck-count palette, the one source for the dashboard's count pills and
+   the study tab's new | learn | due strip, so the two cannot drift apart.
+   Declared on each surface's container rather than on body, so the accent
+   resolves where a theme might override it. A new surface that shows these
+   counts joins this selector. */
+.osmosis-dashboard,
+.osmosis-study-view {
+	--osmosis-count-new: var(--interactive-accent);
+	--osmosis-count-learn: hsl(30, 75%, 50%);
+	--osmosis-count-due: hsl(140, 50%, 42%);
+}
+
 /* Fixed width, not min-width: the columns only line up across rows if a
    three-digit count occupies the same box as a one-digit one. Kept as narrow
    as three digits allow — every pixel here comes out of the deck name, which
@@ -2206,18 +2219,18 @@ body.is-phone .osmosis-study-rating-bar {
 }
 
 .osmosis-dash-new {
-	color: var(--interactive-accent);
+	color: var(--osmosis-count-new);
 	background: rgba(var(--interactive-accent-rgb, 99, 135, 255), 0.12);
 }
 
 .osmosis-dash-learn {
-	color: hsl(30, 75%, 50%);
-	background: hsla(30, 75%, 50%, 0.12);
+	color: var(--osmosis-count-learn);
+	background: color-mix(in srgb, var(--osmosis-count-learn) 12%, transparent);
 }
 
 .osmosis-dash-due {
-	color: hsl(140, 50%, 42%);
-	background: hsla(140, 50%, 42%, 0.12);
+	color: var(--osmosis-count-due);
+	background: color-mix(in srgb, var(--osmosis-count-due) 12%, transparent);
 }
 
 .osmosis-dash-total {
