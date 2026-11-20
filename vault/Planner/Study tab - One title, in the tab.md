@@ -12,7 +12,7 @@ related:
   - "[[Sequential study as a view instead of a modal]]"
   - "[[Sequential study - New, learn and due counts]]"
 status: To-Do
-batch: 12
+batch: 14
 priority:
 progress:
 date_created: 2026-11-20T12:00:00.000Z
@@ -95,7 +95,7 @@ The header block (title, bar, breadcrumb) takes about 110px and scrolls away wit
 - `OcclusionRenderer.ts`: only if the third copy comes from there.
 
 ## Conventions
-- Batch 12 ticket (added in round 3): commit `fix(T109): …`, then one `docs(T109)` note commit setting `status: In-Review` and adding a "Batch implementation notes (awaiting manual test)" section.
+- Batch 14 ticket (raised in batch 12 round 3, deferred so 12 could land): commit `fix(T109): …`, then one `docs(T109)` note commit setting `status: In-Review` and adding a "Batch implementation notes (awaiting manual test)" section.
 - Stage by explicit path, and run `git diff --cached --stat` before each commit. Never `git stash`. Don't push.
 - T91 round 2: the study tab's buttons sit in one floating panel. Display rules must not outrank `.osmosis-hidden.osmosis-hidden`. T92 round 2: the counts use `--osmosis-count-*`.
 - Run lint, test and build one at a time (7 GB RAM).
