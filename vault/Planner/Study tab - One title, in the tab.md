@@ -147,3 +147,7 @@ All cards are new or overdue.
 - That `--background-primary` is the study leaf's background in every theme. Some themes paint the main area with another variable, which would show as a band behind the strip.
 - The strip spans the full width, so on desktop it sits over the top ~36px of the card's scrollbar track. It takes no pointer events, so dragging still works, but the thumb is hidden at scrollTop 0.
 - Occluded line cards in the contextual and spatial study surfaces are untouched; this change covers only the sequential tab.
+
+### Round-2 fixes (2026-11-20)
+- **F4: the view header title said "Study"** (dd54e52). Cause: `ItemView` sets its `titleEl` once, at load, from `getDisplayText()`, before the session starts. `leaf.updateHeader()` refreshes only the tab header. The view header, which is the only title on a phone, kept the idle title. Fix: `setTitleScope` now also sets `titleEl`. `titleEl` is not in the public typings, so it is reached through a cast, as `updateHeader` already is.
+- **F3: no fade under the strip** (d44465f). `.osmosis-study-status` is a plain band in the solid `--background-primary`. `--osmosis-study-strip-fade` is gone, and the card's top padding is just `--osmosis-study-strip-height`. This also covers mind map study's strip (T110), which reuses the class.
