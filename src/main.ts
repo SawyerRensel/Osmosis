@@ -17,6 +17,7 @@ import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { SequentialStudyView, VIEW_TYPE_STUDY } from "./views/SequentialStudyView";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
+import { DecksView, VIEW_TYPE_DECKS } from "./views/DecksView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
@@ -159,6 +160,12 @@ export default class OsmosisPlugin extends Plugin {
 	/** True once {@link cardStoreReady} has settled, so callers can stay synchronous. */
 	isCardStoreReady = false;
 	private resolveCardStoreReady!: () => void;
+	/**
+	 * The scope a study tab that is opening right now should start on
+	 * (`openStudySession`). A study tab that opens without one shows the Decks
+	 * page instead, so this is how a new one tells the two apart.
+	 */
+	private pendingStudyScope: StudyScope | null = null;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 	/**
@@ -292,6 +299,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_MINDMAP, (leaf: WorkspaceLeaf) => new MindMapView(leaf));
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
+		this.registerView(VIEW_TYPE_DECKS, (leaf: WorkspaceLeaf) => new DecksView(leaf, this));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
 		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new SequentialStudyView(leaf, this));
 		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
@@ -306,11 +314,12 @@ export default class OsmosisPlugin extends Plugin {
 			createCardBrowserRegistration(this),
 		);
 
-		// The dashboard is the plugin's only ribbon entry. A mind map is opened
-		// from a note's header action, file menu, or the command below — all of
-		// which know which note to map, which the ribbon never did.
-		this.addRibbonIcon("brain-circuit", "Osmosis dashboard", () => {
-			void this.activateDashboard();
+		// The Decks page is the plugin's only ribbon entry; the sidebar dashboard
+		// it mirrors is opened by the `open-dashboard` command. A mind map is
+		// opened from a note's header action, file menu, or the command below —
+		// all of which know which note to map, which the ribbon never did.
+		this.addRibbonIcon("brain-circuit", "Osmosis decks", () => {
+			void this.activateDecksTab();
 		});
 
 		this.addCommand({
@@ -582,8 +591,8 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
-		// The study tab without starting a session: its deck picker, or the
-		// session already running in it
+		// The study tab without starting a session: the session already running
+		// in it, or else the Decks page, which a bare study tab turns into
 		this.addCommand({
 			id: "open-study",
 			name: "Open study tab",
@@ -1211,15 +1220,28 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** Re-render any open dashboard sidebar views. */
+	/** Re-render every open deck dashboard: the sidebar and any Decks tabs. */
 	refreshDashboard(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-			// Sidebar leaves are deferred placeholders until first shown —
-			// they have no render() (calling it would throw and kill the
-			// caller), and render themselves from the store in onOpen().
+		const { workspace } = this.app;
+		const leaves = [...workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD), ...workspace.getLeavesOfType(VIEW_TYPE_DECKS)];
+		for (const leaf of leaves) {
+			// Leaves are deferred placeholders until first shown — they have
+			// no render() (calling it would throw and kill the caller), and
+			// render themselves from the store in onOpen().
 			const view = leaf.view;
 			if (view instanceof DashboardSidebarView) void view.render();
+			else if (view instanceof DecksView) view.render();
 		}
+	}
+
+	/**
+	 * The ribbon's Decks page, in a main-area tab: an open one is revealed and
+	 * redrawn rather than a second stacked beside it.
+	 */
+	async activateDecksTab(): Promise<void> {
+		await this.activateMainView(VIEW_TYPE_DECKS);
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_DECKS)[0];
+		if (leaf?.view instanceof DecksView) leaf.view.render();
 	}
 
 	async activateDashboard(): Promise<void> {
@@ -1300,15 +1322,37 @@ export default class OsmosisPlugin extends Plugin {
 	/**
 	 * Start a sequential session in the study tab. There is only ever one: an
 	 * open study tab is revealed and rebuilt with the new scope (ending the
-	 * session it held), rather than a second tab stacked beside it.
+	 * session it held), rather than a second tab stacked beside it. With none
+	 * open, `fromLeaf` (a Decks tab) becomes the study tab, or else a new tab.
 	 */
-	async openStudySession(scope: StudyScope): Promise<void> {
-		await this.activateMainView(VIEW_TYPE_STUDY);
-		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
-		if (!leaf) return;
-		// A tab restored at startup is a placeholder until first shown
-		await leaf.loadIfDeferred();
-		if (leaf.view instanceof SequentialStudyView) leaf.view.startSession(scope);
+	async openStudySession(scope: StudyScope, fromLeaf?: WorkspaceLeaf): Promise<void> {
+		const { workspace } = this.app;
+		const existing = workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
+		if (existing?.view instanceof SequentialStudyView) {
+			existing.view.startSession(scope);
+			await workspace.revealLeaf(existing);
+			return;
+		}
+
+		// A study view about to open — a tab restored at startup that is still
+		// a placeholder, or a new one — takes the scope in its onOpen. Without
+		// one it would show the Decks page instead.
+		const leaf = existing ?? fromLeaf ?? workspace.getLeaf("tab");
+		this.pendingStudyScope = scope;
+		try {
+			if (existing) await existing.loadIfDeferred();
+			else await leaf.setViewState({ type: VIEW_TYPE_STUDY, active: true });
+		} finally {
+			this.pendingStudyScope = null;
+		}
+		await workspace.revealLeaf(leaf);
+	}
+
+	/** For a study tab's onOpen: the scope `openStudySession` is opening it on, taken once. */
+	takePendingStudyScope(): StudyScope | null {
+		const scope = this.pendingStudyScope;
+		this.pendingStudyScope = null;
+		return scope;
 	}
 
 	/**

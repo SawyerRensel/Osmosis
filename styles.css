@@ -1306,71 +1306,6 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	text-align: center;
 }
 
-/* Empty state: a deck picker in the readable column. */
-.osmosis-study-picker {
-	flex: 1;
-	min-height: 0;
-	overflow-y: auto;
-	padding: var(--size-4-4);
-}
-
-.osmosis-study-picker-column {
-	max-width: var(--osmosis-study-column);
-	margin: 0 auto;
-}
-
-.osmosis-study-picker-empty {
-	color: var(--text-muted);
-}
-
-.osmosis-study-picker-list {
-	display: flex;
-	flex-direction: column;
-	gap: var(--size-2-1);
-}
-
-.osmosis-study-picker-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: var(--size-4-2);
-	width: 100%;
-	height: auto;
-	padding: var(--size-4-2) var(--size-4-3);
-	padding-inline-start: calc(var(--size-4-3) + var(--osmosis-picker-depth, 0) * var(--size-4-5));
-	border-radius: var(--radius-s);
-	background: transparent;
-	box-shadow: none;
-	color: var(--text-normal);
-	text-align: start;
-	cursor: pointer;
-}
-
-.osmosis-study-picker-row:hover {
-	background: var(--background-modifier-hover);
-}
-
-.osmosis-study-picker-all {
-	margin-bottom: var(--size-4-2);
-	font-weight: var(--font-semibold);
-}
-
-.osmosis-study-picker-name {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.osmosis-study-picker-count {
-	flex: none;
-	color: var(--text-accent);
-	font-variant-numeric: tabular-nums;
-}
-
-.osmosis-study-picker-count.is-zero {
-	color: var(--text-faint);
-}
-
 .osmosis-study-complete-buttons {
 	display: flex;
 	justify-content: center;
@@ -2057,6 +1992,14 @@ body.is-phone .osmosis-study-rating-bar {
 
 .osmosis-dashboard {
 	padding: 8px;
+}
+
+/* The Decks page (DecksView) is the same dashboard in a main-area tab, held to
+   a readable column so a wide tab does not strand the counts far from the
+   deck names. */
+.osmosis-decks-column {
+	max-width: 700px;
+	margin: 0 auto;
 }
 
 /* Desktop puts icons in the view header, so 8px is only ever read as padding.

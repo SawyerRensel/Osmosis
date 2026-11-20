@@ -1,18 +1,18 @@
 import { Component, ItemView, MarkdownRenderer, Platform, Scope, type Menu, type WorkspaceLeaf } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { StudySessionManager } from "../study/StudySessionManager";
-import type { DeckNode, StudyCard, StudyScope } from "../study/types";
+import type { StudyCard, StudyScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, ScheduleData } from "../database/types";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
-import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import { isCloseMatch } from "../study/match";
 import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
 import { countSession } from "../study/session-counts";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+import { VIEW_TYPE_DECKS } from "./DecksView";
 import { renderOcclusion } from "./OcclusionRenderer";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { syncNavbar, type NavbarHost } from "./ToolRibbon";
@@ -63,12 +63,13 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * Cards in learning/relearning steps reappear after timer-based delays,
  * matching Anki's intra-session behavior.
  *
- * The tab outlives a session: with no scope (opened bare, or restored after a
- * restart) it shows a deck picker, and a finished session leaves a completion
- * screen. Nothing about a session is saved in the workspace — `getState` is the
- * default empty one on purpose. Schedules are written per rating already, and
- * the undo stack is only valid against schedules that have not moved since, so
- * a restored tab starts from the picker rather than a stale queue.
+ * The tab outlives a session: a finished session leaves a completion screen.
+ * With no scope (opened bare, or restored after a restart) it turns into the
+ * Decks page (`DecksView`), as does toggling its header cap off. Nothing about
+ * a session is saved in the workspace — `getState` is the default empty one on
+ * purpose. Schedules are written per rating already, and the undo stack is
+ * only valid against schedules that have not moved since, so a restored tab
+ * starts from the Decks page rather than a stale queue.
  *
  * On a phone the tab hides Obsidian's navigation bar while it is the active
  * view, so the bottom buttons are never under it; a swipe up or the ⋯ menu
@@ -76,7 +77,7 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * view becomes active, and `onClose` does the same.
  */
 export class SequentialStudyView extends ItemView implements NavbarHost {
-	/** The session's scope; null while the deck picker is showing. */
+	/** The session's scope; null only before the first session, or on the way to the Decks page. */
 	private studyScope: StudyScope | null = null;
 	private sessionManager: StudySessionManager | null = null;
 	/** True from a non-empty session's start until it is ended; gates the flush. */
@@ -127,6 +128,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	private undoAction: HTMLElement | null = null;
 	private gotoAction: HTMLElement | null = null;
 	private excludeAction: HTMLElement | null = null;
+	/** The study cap: lit while the tab holds a session; toggling it off shows the Decks page. */
+	private capAction: HTMLElement | null = null;
 
 	// DOM elements
 	/**
@@ -169,6 +172,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	}
 
 	async onOpen(): Promise<void> {
+		this.capAction = this.addAction("graduation-cap", "Flashcard study", () => void this.showDecks());
+		this.capAction.addClass("osmosis-study-cap");
 		this.excludeAction = this.addAction("eye-off", "Exclude card (e)", () => void this.excludeCard());
 		this.gotoAction = this.addAction("file-text", "Open note (g)", () => this.goToCard());
 		this.undoAction = this.addAction("undo-2", "Undo (Ctrl+Z)", () => void this.undo());
@@ -180,23 +185,19 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 			this.registerDomEvent(this.contentEl, "touchcancel", () => { this.touchOrigin = null; }, { passive: true });
 		}
 
-		// Coming back to a tab left on the deck picker: the counts have
-		// probably moved since it was drawn.
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", (leaf) => {
-				if (leaf === this.leaf && this.studyScope === null) this.renderPicker();
-			}),
-		);
-
-		if (this.studyScope === null) {
-			this.renderPicker();
-			// A tab restored at startup opens before the first card sync has
-			// filled the store; draw the decks again once it has.
-			void this.plugin.cardStoreReady.then(() => {
-				if (this.studyScope === null) this.renderPicker();
-			});
-		}
 		syncNavbar(this.app);
+
+		const scope = this.plugin.takePendingStudyScope();
+		if (scope) {
+			this.startSession(scope);
+		} else {
+			// Opened bare (the open-study command, or restored after a restart):
+			// nothing to study, so the tab becomes the Decks page. Deferred,
+			// because this runs inside the setViewState that is opening the view.
+			window.setTimeout(() => {
+				if (this.studyScope === null && this.leaf.view === this) void this.showDecks();
+			}, 0);
+		}
 	}
 
 	async onClose(): Promise<void> {
@@ -345,6 +346,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.gotoAction?.toggleClass("osmosis-hidden", !this.hasCard);
 		this.excludeAction?.toggleClass("osmosis-hidden", !this.hasCard);
 		this.undoAction?.toggleClass("osmosis-hidden", !this.sessionActive || this.undoStack.length === 0);
+		this.capAction?.toggleClass("is-active", this.studyScope !== null);
 	}
 
 	/**
@@ -366,67 +368,13 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	}
 
 	/**
-	 * The empty state: every deck with its waiting count, and Study all on top.
-	 * Shown when the tab has no session, and rebuilt from the store each time.
+	 * Toggle study off: end the session, which flushes its ratings, and turn
+	 * this tab into the Decks page. Studying a deck there turns it back.
 	 */
-	private renderPicker(): void {
+	private async showDecks(): Promise<void> {
 		this.endSession();
 		this.studyScope = null;
-		this.queue = [];
-		this.undoStack = [];
-		this.updateHeaderActions();
-		this.setTitleScope(null);
-
-		this.contentEl.empty();
-		const picker = this.contentEl.createDiv({ cls: "osmosis-study-picker osmosis-study-scroll" });
-		const column = picker.createDiv({ cls: "osmosis-study-picker-column" });
-		column.createEl("h2", { text: "Choose a deck to study" });
-
-		const { cardStore } = this.plugin;
-		const tree = visibleDeckTree(
-			cardStore.getAllDecks(),
-			cardStore.getCardCountsByDeck(Date.now()),
-			cardStore.getFolderDerivedDecks(),
-		);
-		if (tree.length === 0) {
-			column.createEl("p", {
-				cls: "osmosis-study-picker-empty",
-				text: "No decks yet. Add osmosis-cards: true to a note's frontmatter to get started.",
-			});
-			return;
-		}
-
-		const list = column.createDiv({ cls: "osmosis-study-picker-list" });
-		const total = tree.reduce((sum, n) => sum + n.newCount + n.learnCount + n.dueCount, 0);
-		this.renderPickerRow(list, "Study all", total, 0, () => this.startSession({ type: "all" }))
-			.addClass("osmosis-study-picker-all");
-		const addRows = (nodes: DeckNode[], depth: number): void => {
-			for (const node of nodes) {
-				const waiting = node.newCount + node.learnCount + node.dueCount;
-				this.renderPickerRow(list, node.name, waiting, depth, () => this.startSession(deckScopeOf(node)));
-				addRows(node.children, depth + 1);
-			}
-		};
-		addRows(tree, 0);
-	}
-
-	private renderPickerRow(
-		list: HTMLElement,
-		label: string,
-		waiting: number,
-		depth: number,
-		start: () => void,
-	): HTMLElement {
-		const row = list.createEl("button", { cls: "osmosis-study-picker-row" });
-		row.setCssProps({ "--osmosis-picker-depth": String(depth) });
-		row.createSpan({ cls: "osmosis-study-picker-name", text: label });
-		row.createSpan({
-			cls: `osmosis-study-picker-count${waiting === 0 ? " is-zero" : ""}`,
-			text: String(waiting),
-			attr: { "aria-label": `${waiting} waiting` },
-		});
-		row.addEventListener("click", start);
-		return row;
+		await this.leaf.setViewState({ type: VIEW_TYPE_DECKS, active: true });
 	}
 
 	private buildLayout(): void {
@@ -1059,7 +1007,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 			el.createEl("h2", { text: "No cards due" });
 			el.createEl("p", { text: "All caught up! Check back later." });
 			const buttons = el.createDiv({ cls: "osmosis-study-complete-buttons" });
-			this.completeButton(buttons, "Choose a deck", () => this.renderPicker());
+			this.completeButton(buttons, "Choose a deck", () => void this.showDecks());
 			this.completeButton(buttons, "Close", () => this.leaf.detach());
 		});
 	}
@@ -1098,7 +1046,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		btn.addEventListener("click", onClick);
 	}
 
-	/** True while a card is on screen — not the picker, a waiting or a complete screen. */
+	/** True while a card is on screen — not a waiting, empty or complete screen. */
 	private get hasCard(): boolean {
 		return this.queue[this.currentIndex] !== undefined && !this.isWaiting;
 	}
@@ -1111,7 +1059,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	/**
 	 * A handler that returns without `preventDefault` lets the key through, so
 	 * with no card on screen Space and Enter still press a focused button on
-	 * the picker or completion screen.
+	 * an empty or completion screen.
 	 */
 	private registerKeyboard(scope: Scope): void {
 		scope.register([], " ", (e: KeyboardEvent) => {
