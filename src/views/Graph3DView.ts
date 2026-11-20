@@ -54,9 +54,10 @@ import { Graph3DTrailPicker } from "./Graph3DTrailPicker";
 import { isTrail } from "../graph3d/trail-note";
 import { renderOcclusion } from "./OcclusionRenderer";
 import { nearestTarget } from "../graph3d/study";
+import { COSMOS_ICON, COSMOS_STORAGE_KEYS } from "../cosmos-legacy";
 import type { FSRSRating } from "../database/FSRSScheduler";
 
-export const VIEW_TYPE_GRAPH3D = "osmosis-graph3d";
+export const VIEW_TYPE_GRAPH3D = "osmosis-cosmos";
 
 /** 0: just the focus note and what it transcludes (see `graph3d/transcluded.ts`). */
 export const GRAPH3D_DEFAULT_DEPTH = 0;
@@ -70,19 +71,19 @@ const RATING_KEYS: readonly FSRSRating[] = [1, 2, 3, 4];
  * vault-scoped localStorage), not in synced settings: a phone that walks with
  * them shouldn't turn them on for a laptop that has keys.
  */
-const STICKS_STORAGE_KEY = "osmosis-graph3d-sticks";
+const STICKS_STORAGE_KEY = COSMOS_STORAGE_KEYS.sticks;
 /** Where the joysticks are offered (toolbar 🎮 and the ⋯ menu): any touch screen, desktops with one included. */
 function hasTouch(): boolean {
 	return Platform.isMobile || navigator.maxTouchPoints > 0;
 }
 /** Whether a plain plate click only selects it (Overlays: "Click selects only"). Per device, like the joysticks; off by default. */
-const CLICK_SELECTS_ONLY_STORAGE_KEY = "osmosis-graph3d-click-selects-only";
+const CLICK_SELECTS_ONLY_STORAGE_KEY = COSMOS_STORAGE_KEYS.clickSelectsOnly;
 /**
  * The near tier's panel detail and live-panel limit (Overlays: "Panel detail"
  * and "Live panels"). Per device like the joysticks, and keyed by platform so
  * a desktop window emulating mobile keeps its own pair. Applies to every 3D view.
  */
-const NEAR_TIER_STORAGE_KEY = `osmosis-graph3d-near-tier-${Platform.isMobile ? "mobile" : "desktop"}`;
+const NEAR_TIER_STORAGE_KEY = COSMOS_STORAGE_KEYS.nearTier(Platform.isMobile);
 /** The settings every 3D view reads each frame: read from storage once, then kept here so a change shows in all open views at once. */
 let nearTier: NearTierSettings | null = null;
 
@@ -208,7 +209,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
 		this.navigation = true;
-		this.icon = "brain-circuit";
+		this.icon = COSMOS_ICON;
 
 		// Flight keys go through the view's scope: a global user hotkey on the
 		// same letter would otherwise take the key before the view sees it.
@@ -370,7 +371,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	getDisplayText(): string {
 		const file = this.focusPath === null ? null : this.app.vault.getFileByPath(this.focusPath);
-		return file ? file.basename : "3D graph";
+		return file ? file.basename : "Cosmos";
 	}
 
 	getState(): Record<string, unknown> {
@@ -443,7 +444,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.emptyEl = root.createDiv({
 			cls: "osmosis-graph3d-empty",
-			text: "Open a note and run \"Open 3D graph for current note\".",
+			text: "Open a note and run \"Open Cosmos for current note\".",
 		});
 		this.stageEl = root.createDiv({ cls: "osmosis-graph3d-stage" });
 		// The ribbon is added after the stage, so it floats over it.
@@ -609,7 +610,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	private controlSettings(): SceneControls {
 		const { settings } = this.plugin();
-		return { desktopPivot: settings.graph3dDesktopPivot, touchDrag: settings.graph3dOneFingerDrag };
+		return { desktopPivot: settings.cosmosDesktopPivot, touchDrag: settings.cosmosOneFingerDrag };
 	}
 
 	private sceneOverlays(): SceneOverlays {
@@ -823,7 +824,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
-			console.error("Osmosis: 3D graph undo failed", error);
+			console.error("Osmosis: Cosmos undo failed", error);
 			new Notice("Osmosis: could not " + (isRedo ? "redo" : "undo") + " that edit");
 		}
 	}
@@ -926,7 +927,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			if (!scene.setEditing(node.id, this.editor, Platform.isMobile)) this.editor.close(false);
 			this.updateRibbon();
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not open the editor", error);
+			console.error("Osmosis: Cosmos could not open the editor", error);
 			new Notice("Osmosis: could not edit that line");
 		} finally {
 			this.opening = false;
@@ -944,7 +945,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				if (edited !== original) await this.saveEdit(node, edited);
 			}
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not save an edit", error);
+			console.error("Osmosis: Cosmos could not save an edit", error);
 			new Notice("Osmosis: could not save that edit");
 		} finally {
 			this.saving--;
@@ -1118,7 +1119,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not link those lines", error);
+			console.error("Osmosis: Cosmos could not link those lines", error);
 			new Notice("Osmosis: could not add that link");
 		}
 	}
@@ -1295,7 +1296,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.editLanded = true;
 			void this.reload();
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not move that line", error);
+			console.error("Osmosis: Cosmos could not move that line", error);
 			new Notice("Osmosis: could not move that line");
 		} finally {
 			this.structuring = false;
@@ -1371,7 +1372,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				this.selectLanded = action === "delete";
 			});
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not make that edit", error);
+			console.error("Osmosis: Cosmos could not make that edit", error);
 			new Notice("Osmosis: could not make that edit");
 		} finally {
 			this.structuring = false;
@@ -1420,7 +1421,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			new Notice(nodes.length === 1 ? `${verb} as Markdown` : `${verb} ${nodes.length} selected as Markdown`);
 			return items.length > 0;
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not copy the selection", error);
+			console.error("Osmosis: Cosmos could not copy the selection", error);
 			new Notice("Osmosis: could not copy the selection");
 			return false;
 		}
@@ -1503,7 +1504,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			spendCut();
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not paste", error);
+			console.error("Osmosis: Cosmos could not paste", error);
 			new Notice("Osmosis: could not paste");
 		} finally {
 			this.structuring = false;
@@ -1603,7 +1604,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			void this.reload();
 			return true;
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not delete the selection", error);
+			console.error("Osmosis: Cosmos could not delete the selection", error);
 			new Notice("Osmosis: could not delete those lines");
 			return false;
 		} finally {
@@ -1734,7 +1735,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			await this.commitSelection(notes, plan, to.path, nodes[0], true, { dest: to.path, out: movedOut(notes, picked, to.path) });
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not move the selection", error);
+			console.error("Osmosis: Cosmos could not move the selection", error);
 			new Notice("Osmosis: could not move those lines");
 		} finally {
 			this.structuring = false;
@@ -1764,7 +1765,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			await this.commitSelection(notes, plan, nodes[0]?.path ?? picked[0]!.path, nodes[0], true);
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not re-level the selection", error);
+			console.error("Osmosis: Cosmos could not re-level the selection", error);
 			new Notice("Osmosis: could not make that edit");
 		} finally {
 			this.structuring = false;
@@ -1803,7 +1804,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			await this.commitSelection(notes, plan, toFile.path, nodes[0], false);
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not link the selection", error);
+			console.error("Osmosis: Cosmos could not link the selection", error);
 			new Notice("Osmosis: could not add those links");
 		} finally {
 			this.structuring = false;
@@ -1923,7 +1924,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			void this.reload();
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not convert a branch", error);
+			console.error("Osmosis: Cosmos could not convert a branch", error);
 			new Notice("Osmosis: could not convert that branch");
 		} finally {
 			this.structuring = false;
@@ -2100,7 +2101,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			await this.writeStyles([...styles.keys()], true, (fm, node, selector, legacy) => writeStyleOverride(fm, selector, legacy, styles.get(node) ?? {}));
 		});
 		this.styleChain = run.catch((error: unknown) => {
-			console.error("Osmosis: 3D graph style write failed", error);
+			console.error("Osmosis: Cosmos style write failed", error);
 			new Notice("Osmosis: could not save that style");
 		});
 		await this.styleChain;
@@ -2113,7 +2114,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.writeStyles(nodes, false, (fm, _node, selector, legacy) => clearStyleOverride(fm, [selector, legacy], keys)),
 		);
 		this.styleChain = run.catch((error: unknown) => {
-			console.error("Osmosis: 3D graph style reset failed", error);
+			console.error("Osmosis: Cosmos style reset failed", error);
 			new Notice("Osmosis: could not reset that style");
 		});
 		await this.styleChain;
@@ -2203,7 +2204,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 			const toggled = toggleCheckboxLine(content.slice(start, end), line.metadata?.checked === true);
 			await this.commitEdit(file, content.slice(0, start) + toggled + content.slice(end), node, start);
 		} catch (error) {
-			console.error("Osmosis: 3D graph could not toggle a checkbox", error);
+			console.error("Osmosis: Cosmos could not toggle a checkbox", error);
 			new Notice("Osmosis: could not change that checkbox");
 		}
 	}
@@ -2469,7 +2470,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		const nodePath = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : undefined;
 		const path = nodePath ?? this.focusPath;
 		if (path === null) {
-			new Notice("Open a note in the 3D graph first");
+			new Notice("Open a note in Cosmos first");
 			return;
 		}
 		const focus = node?.kind === "line" && nodePath !== undefined && node.source !== undefined ? { path: nodePath, start: node.source.range.start, root: false } : null;
@@ -2493,7 +2494,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 		const node = this.scene?.focusedNode() ?? null;
 		const path = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : this.focusPath;
 		if (path === null) {
-			new Notice("Open a note in the 3D graph first");
+			new Notice("Open a note in Cosmos first");
 			return;
 		}
 		await this.leaf.setViewState({ type: "markdown", state: { file: path }, active: true });
@@ -2564,7 +2565,7 @@ export class Graph3DView extends ItemView implements NodeStyleHost, NavbarHost {
 				const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
 				return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
 			} catch (error) {
-				console.error(`Osmosis: 3D graph could not read ${path}`, error);
+				console.error(`Osmosis: Cosmos could not read ${path}`, error);
 				return null;
 			}
 		};

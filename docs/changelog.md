@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The 3D graph is now Cosmos.** The view, its command (**Open Cosmos for current note**), its file-menu item, its settings heading and its docs page carry the new name. Open tabs, its two control settings and its per-device preferences carry over on the first start after the update. A hotkey set on the old command keeps working, because the command ID is unchanged.
 - **Study modes are renamed.** Sequential is now **Flashcard**, Contextual is **Note**, Spatial is **Mind map**, and the 3D graph's Relational study is **Cosmos**, in every label, the docs, and the stored values. New reviews log `flashcard`, `note`, `mindmap` or `cosmos`; existing review-log files are never rewritten, and their old names count under the new ones in Stats. The **Line card context lines** setting carries its value over
 
 ## [0.0.5] - 2026-08-17

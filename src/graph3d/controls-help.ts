@@ -1,6 +1,6 @@
 /**
  * The 3D graph's controls, as data. The in-view "?" help renders this list
- * (Graph3DHelp.ts); docs/mind-mapping/graph-3d.md ("Controls") is the same
+ * (Graph3DHelp.ts); docs/mind-mapping/cosmos.md ("Controls") is the same
  * list written by hand, so change both together. Pure, so a test can hold
  * every group to at least one entry.
  */
@@ -89,7 +89,7 @@ export const CONTROL_GROUPS: readonly ControlGroup[] = [
 		id: "editing",
 		title: "Editing a node",
 		entries: [
-			{ input: "Double-click a node", action: "Edit it (turns edit mode on in 3D)" },
+			{ input: "Double-click a node", action: "Edit it (turns edit mode on in Cosmos)" },
 			{ input: "Enter, or Ctrl/Cmd + Enter", action: "Save" },
 			{ input: "Shift + Enter", action: "Add a line" },
 			{ input: "Double-click the node, or click away", action: "Save" },

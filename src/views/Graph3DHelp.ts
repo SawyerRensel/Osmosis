@@ -11,7 +11,7 @@ export class Graph3DHelp {
 
 	constructor(container: HTMLElement, private readonly buttonEl: HTMLElement | null) {
 		this.panelEl = container.createDiv({ cls: "osmosis-graph3d-help is-hidden" });
-		this.panelEl.createDiv({ cls: "osmosis-graph3d-help-title", text: "3D graph controls" });
+		this.panelEl.createDiv({ cls: "osmosis-graph3d-help-title", text: "Cosmos controls" });
 		for (const group of CONTROL_GROUPS) {
 			this.panelEl.createDiv({ cls: "osmosis-graph3d-help-heading", text: group.title });
 			const list = this.panelEl.createEl("dl", { cls: "osmosis-graph3d-help-list" });

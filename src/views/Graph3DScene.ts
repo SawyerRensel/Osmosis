@@ -2227,7 +2227,7 @@ export class Graph3DScene {
 		}
 		const width = styleWidthFromEm(resize.current / NEAR_FONT_PX);
 		this.options.onResizeNode(resize.node, width).catch((error: unknown) => {
-			console.error("Osmosis: 3D graph could not resize a node", error);
+			console.error("Osmosis: Cosmos could not resize a node", error);
 			this.near.setPreviewWidth(resize.node.id, null);
 		});
 	}

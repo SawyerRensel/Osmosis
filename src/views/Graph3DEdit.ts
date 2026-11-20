@@ -141,7 +141,7 @@ export class Graph3DEditor implements TrackedEditor {
 			editor.editor.cm.focus();
 			editor.editor.cm.dispatch({ selection: EditorSelection.range(request.selectionStart, editor.editor.cm.state.doc.length) });
 		} catch (error) {
-			console.warn("Osmosis: embedded editor failed in the 3D graph, falling back to a textarea", error);
+			console.warn("Osmosis: embedded editor failed in Cosmos, falling back to a textarea", error);
 			this.openTextarea(box, request);
 		}
 

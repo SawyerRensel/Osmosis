@@ -22,11 +22,13 @@ export const LEGACY_KEY_FOR_MODE: Readonly<Record<StudyMode, string>> = {
 	cosmos: "relational",
 };
 
-/** Settings keys renamed in T105: old data.json key → new key. */
+/** Settings keys renamed in T105 (study modes) and T107 (the 3D graph became Cosmos): old data.json key → new key. */
 const RENAMED_SETTING_KEYS: Readonly<Record<string, string>> = {
 	contextualAutoActivate: "noteAutoActivate",
 	contextualInlineCloze: "noteInlineCloze",
 	sequentialContextLines: "flashcardContextLines",
+	graph3dDesktopPivot: "cosmosDesktopPivot",
+	graph3dOneFingerDrag: "cosmosOneFingerDrag",
 };
 
 /**

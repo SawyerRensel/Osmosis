@@ -892,7 +892,7 @@ export class Graph3DNear {
 				if (component !== panel.component || panel.markdown !== markdown) return;
 				panel.rendered = true;
 			},
-			(error: unknown) => console.error("Osmosis: 3D graph could not render a near panel", error),
+			(error: unknown) => console.error("Osmosis: Cosmos could not render a near panel", error),
 		);
 	}
 

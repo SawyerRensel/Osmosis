@@ -2,14 +2,14 @@
 icon: lucide/orbit
 ---
 
-# 3D Graph
+# Cosmos
 
-The 3D graph shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open 3D graph for current note**, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Study and Reading/Editing buttons; Style is in the ⋯ menu, and in 3D so are Follow active note, the walk and fly joysticks on a touch screen, and Controls help, which also stay on the toolbar).
+Cosmos shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open Cosmos for current note**, or **Cosmos** in a note's file menu, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Study and Reading/Editing buttons; Style is in the ⋯ menu, and in Cosmos so are Follow active note, the walk and fly joysticks on a touch screen, and Controls help, which also stay on the toolbar).
 
 ## Controls
 
 !!! note "Also in the view"
-    The **?** button at the end of the 3D view's toolbar opens this list. It is written by hand in two places (`src/graph3d/controls-help.ts` for the view, this page for the site), so update both together.
+    The **?** button at the end of the toolbar in Cosmos opens this list. It is written by hand in two places (`src/graph3d/controls-help.ts` for the view, this page for the site), so update both together.
 
 ### Mouse
 
@@ -38,7 +38,7 @@ The view tells a touchpad from a mouse wheel by itself, with no setting: a swipe
 
 ### Navigation gizmos
 
-On a desktop with no touch screen, three faint round buttons sit at the top right of the 3D view. Press one and drag anywhere on screen; the view turns until you let go. They always act on the centre of the view, not on whatever is under the pointer. Clicking one without dragging does nothing.
+On a desktop with no touch screen, three faint round buttons sit at the top right of Cosmos. Press one and drag anywhere on screen; the view turns until you let go. They always act on the centre of the view, not on whatever is under the pointer. Clicking one without dragging does nothing.
 
 | Gizmo | Drag | Action |
 |-------|------|--------|
@@ -83,7 +83,7 @@ Turn edit mode on from the header's Reading/Editing button (the pencil, shown wh
 
 ### Editing a node
 
-Double-click a node to edit it; in 3D this turns edit mode on.
+Double-click a node to edit it; in Cosmos this turns edit mode on.
 
 | Input | Action |
 |-------|--------|

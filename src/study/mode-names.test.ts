@@ -30,6 +30,12 @@ describe("migrateRenamedSettingKeys", () => {
 		expect(data).toEqual({ flashcardContextLines: 0 });
 	});
 
+	it("carries the 3D graph's control settings over to their Cosmos names", () => {
+		const data: Record<string, unknown> = { graph3dDesktopPivot: "center", graph3dOneFingerDrag: "look", graph3dOverlays: {} };
+		migrateRenamedSettingKeys(data);
+		expect(data).toEqual({ cosmosDesktopPivot: "center", cosmosOneFingerDrag: "look", graph3dOverlays: {} });
+	});
+
 	it("leaves already-migrated data alone", () => {
 		const data: Record<string, unknown> = { flashcardContextLines: 3 };
 		migrateRenamedSettingKeys(data);

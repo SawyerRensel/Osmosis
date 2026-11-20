@@ -436,7 +436,7 @@ export class PropertiesSidebarView extends ItemView {
 
 		// Header
 		container.createEl("h6", {
-			text: graph ? "3D graph" : "Map settings",
+			text: graph ? "Cosmos" : "Map settings",
 			cls: "osmosis-properties-filename",
 		});
 

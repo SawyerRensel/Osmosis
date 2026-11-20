@@ -176,9 +176,9 @@ export interface OsmosisSettings {
 
 	// ── 3D Graph ────────────────────────────────────────────
 	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
-	graph3dDesktopPivot: Graph3DDesktopPivot;
+	cosmosDesktopPivot: Graph3DDesktopPivot;
 	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
-	graph3dOneFingerDrag: Graph3DTouchDrag;
+	cosmosOneFingerDrag: Graph3DTouchDrag;
 	/** The 3D graph's Settings (stored under the old Overlays key, so vaults keep their values), shared by every 3D graph view (see `src/graph3d/overlays.ts`). */
 	graph3dOverlays: Graph3DOverlays;
 	/** The style sidebar's 3D Settings sections that are collapsed (see `src/graph3d/settings-sections.ts`). */
@@ -232,8 +232,8 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchNoteTemplate: "",
 
 	// 3D graph defaults
-	graph3dDesktopPivot: "cursor",
-	graph3dOneFingerDrag: "point",
+	cosmosDesktopPivot: "cursor",
+	cosmosOneFingerDrag: "point",
 	graph3dOverlays: DEFAULT_OVERLAYS,
 	graph3dSettingsCollapsed: [],
 };
@@ -271,7 +271,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		if (key === "defaultMaxNodeWidth") {
 			this.plugin.remeasureOpenMindMaps();
 		}
-		if (key === "graph3dDesktopPivot" || key === "graph3dOneFingerDrag") {
+		if (key === "cosmosDesktopPivot" || key === "cosmosOneFingerDrag") {
 			this.plugin.refreshOpenGraph3DControls();
 		}
 	}
@@ -394,14 +394,14 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
-				heading: "3D graph",
+				heading: "Cosmos",
 				items: [
 					{
 						name: "Mouse orbit and zoom",
 						desc: "On desktop, what dragging with the left mouse button orbits around and what the scroll wheel zooms toward. The point under the cursor is the nearest node, if there is one close by. Pressing a flight key (W, A, S, D, Q, E) during a drag looks around from the camera until you release the button, and the scroll wheel then sets the flight speed.",
 						control: {
 							type: "dropdown",
-							key: "graph3dDesktopPivot",
+							key: "cosmosDesktopPivot",
 							options: {
 								cursor: "Point under the cursor",
 								center: "View center",
@@ -413,7 +413,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						desc: "On touch screens, what dragging with one finger does. The point under your finger is the nearest node, if there is one close by. Pinch zooms toward the point between your fingers, and two-finger drag pans.",
 						control: {
 							type: "dropdown",
-							key: "graph3dOneFingerDrag",
+							key: "cosmosOneFingerDrag",
 							options: {
 								point: "Orbit the point under your finger",
 								center: "Orbit the view center",

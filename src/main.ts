@@ -54,6 +54,7 @@ import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { StudyScope } from "./study/types";
 import { toStudyOrigin, type StudyOrigin } from "./study/study-origin";
 import { migrateRenamedSettingKeys } from "./study/mode-names";
+import { LEGACY_COSMOS_VIEW_TYPE, LEGACY_STORAGE_KEYS, cosmosTabTitle, cosmosViewStateFrom, migrateStorageKeys } from "./cosmos-legacy";
 
 /**
  * Extensions the "Create image occlusion" item is offered for — Obsidian's own
@@ -306,6 +307,14 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
 		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new FlashcardStudyView(leaf, this));
 		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
+		// Cosmos was the 3D graph, under another view type, before T107. Its
+		// per-device preferences move to their new keys before any tab reads
+		// them, and tabs saved under the old type reopen as Cosmos.
+		migrateStorageKeys({
+			load: (key) => this.app.loadLocalStorage(key) as unknown,
+			save: (key, value) => this.app.saveLocalStorage(key, value),
+		}, LEGACY_STORAGE_KEYS);
+		this.app.workspace.onLayoutReady(() => void this.reopenLegacyCosmosLeaves());
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
 		// note-level querying, sorting and `.base` persistence, and a second
@@ -379,7 +388,7 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.addCommand({
 			id: "open-graph3d",
-			name: "Open 3D graph for current note",
+			name: "Open Cosmos for current note",
 			checkCallback: (checking) => {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "md") return false;
@@ -486,7 +495,7 @@ export default class OsmosisPlugin extends Plugin {
 						});
 				});
 				menu.addItem((item) => {
-					item.setTitle("3D graph")
+					item.setTitle("Cosmos")
 						.setIcon("orbit")
 						.onClick(() => {
 							void this.openGraph3D(file);
@@ -1763,14 +1772,32 @@ export default class OsmosisPlugin extends Plugin {
 		);
 	}
 
+	/**
+	 * Reopen each tab saved under Cosmos's pre-T107 view type as Cosmos, with
+	 * its saved state. Obsidian keeps such a leaf as a placeholder of the
+	 * unknown type, so `getLeavesOfType` finds it and `getViewState` still
+	 * holds what the old view saved.
+	 */
+	private async reopenLegacyCosmosLeaves(): Promise<void> {
+		for (const leaf of this.app.workspace.getLeavesOfType(LEGACY_COSMOS_VIEW_TYPE)) {
+			const old = leaf.getViewState();
+			try {
+				await leaf.setViewState(cosmosViewStateFrom(old, VIEW_TYPE_GRAPH3D, cosmosTabTitle(old.state)));
+			} catch (error) {
+				console.error("Osmosis: could not reopen a 3D graph tab as Cosmos", error);
+			}
+		}
+	}
+
 	async loadSettings() {
 		const saved = await this.loadData() as Record<string, unknown> | null;
-		// Study-mode settings renamed in T105 (sequentialContextLines →
-		// flashcardContextLines, …). Migrated before the merge, or the default
+		// Settings renamed in T105 (sequentialContextLines →
+		// flashcardContextLines, …) and T107 (graph3dDesktopPivot →
+		// cosmosDesktopPivot, …). Migrated before the merge, or the default
 		// for the new key would shadow the user's old value.
 		if (saved) migrateRenamedSettingKeys(saved);
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved as Partial<OsmosisSettings> | null);
-		// Replaced by graph3dOneFingerDrag before release, with a new default.
+		// Replaced by graph3dOneFingerDrag (now cosmosOneFingerDrag) before release, with a new default.
 		// Any saveSettings() wrote the old default here, so it is dropped rather
 		// than carried over.
 		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");

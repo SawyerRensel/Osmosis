@@ -55,7 +55,7 @@ export interface ButtonDef {
 }
 
 /** The 2D/3D toggle's command. It has no toolbar button: the header's 2D | 3D pill (`view-header.ts`) is its button. */
-export const TOGGLE_3D_COMMAND = { id: "mindmap-toggle-3d", icon: "orbit", name: "Toggle between 2D mind map and 3D graph" };
+export const TOGGLE_3D_COMMAND = { id: "mindmap-toggle-3d", icon: "orbit", name: "Toggle between mind map and Cosmos" };
 
 /**
  * The toolbar's buttons, in display order. The groups only organise the list
