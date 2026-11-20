@@ -70,3 +70,62 @@ occlude:
 The same section at its natural size.
 ![[bridge-cross-section.svg]]
 ```
+
+## Large picture held to 800 px
+
+A 1200 px picture capped at 800. In a pane wider than 800 px the masks must sit
+on the labels and the right-hand post, not stretch toward the pane's edge.
+
+```osmosis
+id: width-large-capped
+occlude:
+  mode: hide-all-guess-one
+  shapes:
+    - group: c1
+      kind: rect
+      x: 0.07
+      y: 0.44
+      w: 0.11
+      h: 0.12
+    - group: c2
+      kind: rect
+      x: 0.55
+      y: 0.44
+      w: 0.07
+      h: 0.12
+    - group: c3
+      kind: rect
+      x: 0.925
+      y: 0.24
+      w: 0.035
+      h: 0.52
+
+Name the marked parts of the truss.
+![[gantry-truss.svg|800]]
+```
+
+## Large picture with no width
+
+The same truss at its natural 1200 px: it fills a narrower pane edge to edge.
+
+```osmosis
+id: width-large-natural
+occlude:
+  mode: hide-all-guess-one
+  shapes:
+    - group: c1
+      kind: rect
+      x: 0.07
+      y: 0.44
+      w: 0.11
+      h: 0.12
+    - group: c2
+      kind: rect
+      x: 0.925
+      y: 0.24
+      w: 0.035
+      h: 0.52
+
+Name the marked parts of the truss.
+![[gantry-truss.svg]]
+```

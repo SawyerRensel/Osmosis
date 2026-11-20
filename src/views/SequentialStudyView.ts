@@ -457,7 +457,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
 		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
 
-		// Actions, pinned to the bottom of the tab
+		// Actions, floating over the bottom of the card
 		const actions = container.createDiv({ cls: "osmosis-study-actions" });
 
 		this.flipBtn = actions.createEl("button", {
@@ -479,7 +479,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		});
 		checkBtn.addEventListener("click", () => this.checkTypeIn());
 
-		this.ratingBar = actions.createDiv({ cls: "osmosis-study-rating-bar osmosis-hidden" });
+		// The rating row every other study surface uses, for the same buttons
+		this.ratingBar = actions.createDiv({ cls: "osmosis-contextual-rating osmosis-study-rating-bar osmosis-hidden" });
 
 		// Each button shows the interval it would schedule above its label
 		this.intervalEls = [];
