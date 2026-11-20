@@ -11,16 +11,16 @@ location:
 related:
   - "[[3D Graph - Edges respect depth over plates and panels]]"
   - "[[3D Graph Phase 4 - Near tier]]"
-status: In-Review
+status: Done
 batch: 13
 priority:
-progress:
+progress: 100
 date_created: 2026-11-19T12:00:00.000Z
-date_modified: 2026-11-19T12:40:00.000Z
+date_modified: 2026-11-20T18:00:00.000Z
 date_start_scheduled: 2026-11-19T11:49:52.000Z
 date_start_actual: 2026-11-19T11:49:52.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-20T18:00:00.000Z
+date_end_actual: 2026-11-20T18:00:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -36,7 +36,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/51
 ---
 
 # 3D Graph - Nearer edges cut through near-tier panels (T98)
@@ -106,7 +106,11 @@ visible across it. Orbit the other way → the panel hides it. Repeat in Planets
 Read memories `3d-graph-view-feature` (never declutter) and
 `justify-work-with-measurements` first.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #51](https://github.com/SawyerRensel/Osmosis/pull/51) (batch 13, branch `batch/13-panel-edge-cuts`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20. It completes [[3D Graph - Edges respect depth over plates and panels]] (T97, plates), which shipped in PR #50.
+
+The batch worker wrote this record when the code was committed.
 
 **Both slices shipped in 2307dd8: screen-facing (CSS2D) panels and Planets tilted (CSS3D) panels.**
 
@@ -156,7 +160,7 @@ Before the screen-box rejection, 2,000 segments cost 1.15 ms (facing) and 1.6 ms
 
 No new fixture. As T97 said, any large linked map in `vault/` works, because this is about geometry, not content.
 
-### Not verified
+### Not verified before the manual test
 
 - Not run in Obsidian. I have not seen it work: that the gradient angle convention and stops land on the drawn edge, that stroke widths look right, and how much the frame time and the `masks` count change.
 - That the CSS3D panel's mask lines up with tilted panels on a slanted view. It uses the same cast as `tiltedHole`, which is exact for a panel seen flat-on.
