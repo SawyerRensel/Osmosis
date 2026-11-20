@@ -109,10 +109,13 @@ import {
 	dueOrNewLineCardIds,
 	fenceKeyFromNode,
 	occlusionForLineKey,
+	spatialSessionCards,
 	spatialStudyKeys,
 } from "../study/spatial-study";
+import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
 import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
@@ -540,7 +543,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * groups, a cloze's groups, the two directions of a bidirectional pair. Each
 	 * is a card with its own schedule, so the node steps through them one at a
 	 * time and appears here under several keys. That is why `spatialTargets` is
-	 * not simply the node keys on the map, and why the banner's count is honest
+	 * not simply the node keys on the map, and why the progress bar is honest
 	 * about how much is left. Peek never splits: it reveals in any order and
 	 * records nothing, so stepping would invent an interaction it does not have.
 	 */
@@ -578,8 +581,13 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * "question shown" moment — the reveal is the only defensible anchor.
 	 */
 	private spatialPendingRatingAt = 0;
-	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
-	private spatialBanner: HTMLElement | null = null;
+	/** Each card the session asks, in the bucket it started in (T110). */
+	private spatialCountCards: NoteSessionCard[] = [];
+	/** The rating each of those cards got this session, for the new | learn | due counts. */
+	private spatialCardRatings = new Map<string, FSRSRating>();
+	/** Progress bar and counts pinned over the top of the map (study only, T110). */
+	private spatialStripEl: HTMLElement | null = null;
+	private spatialStrip: StudyProgressStrip | null = null;
 	private spatialSessionManager: StudySessionManager | null = null;
 
 	// Reading mode: the map can be explored and studied but not mutated.
@@ -1446,6 +1454,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.spatialMode = "study";
 		this.setSpatialTargets(nodeKeys, cards, now);
+		this.spatialCountCards = spatialSessionCards(cards, this.spatialTargets);
+		this.spatialCardRatings.clear();
 		this.spatialRevealed.clear();
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
@@ -1511,7 +1521,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
-	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
+	/** End peek/study (toggle off, completion, file switch). The map stays open. */
 	private exitSpatialMode(): void {
 		const wasStudy = this.spatialMode === "study";
 		this.spatialMode = "off";
@@ -1536,8 +1546,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			removeMaskOverlays(this.svg);
 		}
-		this.spatialBanner?.remove();
-		this.spatialBanner = null;
+		this.spatialStripEl?.remove();
+		this.spatialStripEl = null;
+		this.spatialStrip = null;
+		this.spatialCountCards = [];
+		this.spatialCardRatings.clear();
 		this.spatialTargets.clear();
 		this.spatialNodeTargets.clear();
 		this.spatialGroupOcclusions.clear();
@@ -1618,7 +1631,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				}
 			}
 		}
-		if (this.spatialMode === "study") this.ensureSpatialBanner();
+		if (this.spatialMode === "study") this.ensureSpatialStrip();
 	}
 
 	/**
@@ -1932,6 +1945,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// routes its schedule write, to the source note for transcluded lines
 		// (plan §11).
 		const cardIds = this.cardsForKey(cardId);
+		for (const id of cardIds) this.spatialCardRatings.set(id, rating);
 		if (cardIds.length > 0) {
 			this.spatialSessionManager ??= this.plugin.createSessionManager("mindmap");
 			for (const id of cardIds) {
@@ -1945,33 +1959,34 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.exitSpatialMode(); // flushes schedule writes; map stays open
 			new Notice(`Mind map study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
 		} else {
-			// Re-apply rather than only redrawing the banner: an occluded node that
+			// Re-apply rather than only redrawing the strip: an occluded node that
 			// has more groups left must reset to ask the next one, which is the
 			// whole point of stepping through them.
 			this.applySpatialState();
 		}
 	}
 
-	/** Floating "x/N due reviewed" pill + Stop. Recreated after re-renders. */
-	private ensureSpatialBanner(): void {
+	/**
+	 * The study tab's progress bar and new | learn | due counts, pinned over the
+	 * top of the map (T110). The bar is targets rated of targets; the counts are
+	 * cards, as the dashboard's are. The bucket underlined is the card whose
+	 * rating bubble is open — before a reveal, any hidden node may be next, so
+	 * none is. The strip takes no pointer events (`.osmosis-study-status`), so
+	 * the map pans and selects through it. Recreated after re-renders.
+	 */
+	private ensureSpatialStrip(): void {
 		if (this.spatialMode !== "study") return;
-		let banner = this.spatialBanner;
-		if (!banner || !banner.isConnected) {
-			banner = this.contentEl.createDiv({ cls: "osmosis-reveal-banner osmosis-spatial-banner" });
-			// Keep pill interactions away from the map's pan/select handlers
-			banner.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
-			banner.addEventListener("click", (e) => { e.stopPropagation(); });
-			this.spatialBanner = banner;
+		let strip = this.spatialStrip;
+		if (!strip || !this.spatialStripEl?.isConnected) {
+			this.spatialStripEl?.remove();
+			this.spatialStripEl = this.contentEl.createDiv({ cls: "osmosis-study-status osmosis-mindmap-study-strip" });
+			strip = new StudyProgressStrip(this.spatialStripEl);
+			this.spatialStrip = strip;
 		}
-		banner.empty();
-		banner.createSpan({
-			cls: "osmosis-reveal-progress",
-			text: `${String(this.spatialRated.size)}/${String(this.spatialTargets.size)} due reviewed`,
-		});
-		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
-		stopBtn.addEventListener("click", () => {
-			this.exitSpatialMode();
-		});
+		const total = this.spatialTargets.size;
+		strip.setProgress(total > 0 ? (this.spatialRated.size / total) * 100 : 0);
+		const answering = this.spatialPendingRating === null ? [] : this.cardsForKey(this.spatialPendingRating);
+		strip.setCounts(countNoteSession(this.spatialCountCards, this.spatialCardRatings, answering));
 	}
 
 
@@ -2285,7 +2300,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.spatialRated.clear();
 		this.spatialPendingRating = null;
 		this.spatialPendingNodeId = null;
-		this.spatialBanner = null;
+		this.spatialStripEl = null;
+		this.spatialStrip = null;
+		this.spatialCountCards = [];
+		this.spatialCardRatings.clear();
 		this.spatialSessionManager = null;
 		this.treeStale = false;
 		this.staleParsePaths.clear();
@@ -8879,7 +8897,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 
 		// Re-apply spatial study state after re-render (render wipes the DOM,
-		// including a mid-rating bubble and the progress pill)
+		// including a mid-rating bubble and the progress strip)
 		this.applySpatialState();
 
 		// After a save-edit re-render, re-select the node at the stored position

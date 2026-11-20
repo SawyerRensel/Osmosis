@@ -16,9 +16,12 @@ import {
 	fenceKey,
 	fenceKeyFromNode,
 	occlusionForLineKey,
+	spatialSessionCards,
 	spatialStudyKeys,
 	type SpatialNodeLike,
 } from "./spatial-study";
+import { countNoteSession } from "./session-counts";
+import type { FSRSRating } from "../database/FSRSScheduler";
 
 const NOW = Date.UTC(2026, 6, 14, 12, 0, 0);
 
@@ -616,5 +619,45 @@ describe("cardIdsForSpatialKey", () => {
 		];
 		expect(cardIdsForSpatialKey(cards, "bridge-c1")).toEqual([]);
 		expect(cardIdsForSpatialKey(cards, "bridge")).toEqual([]);
+	});
+});
+
+describe("spatialSessionCards", () => {
+	const line = (block: string) => `tests/espresso.md#^${block}`;
+	const cards = [
+		makeCard({ id: line("os-new001"), blockId: "os-new001" }),
+		makeCard({ id: line("os-lrn001"), blockId: "os-lrn001", state: "learning", due: NOW - 1000 }),
+		makeCard({ id: line("os-due001"), blockId: "os-due001", state: "review", due: NOW - 1000 }),
+		makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
+		makeCard({ id: "bridge-c2", cardType: "explicit_cloze", state: "review", due: NOW - 1000 }),
+	];
+
+	it("buckets each target's card as the dashboard does", () => {
+		expect(spatialSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")])).toEqual([
+			{ id: line("os-new001"), bucket: "new" },
+			{ id: line("os-lrn001"), bucket: "learn" },
+			{ id: line("os-due001"), bucket: "due" },
+		]);
+	});
+
+	it("counts every card an unsplit node key stands for, once each", () => {
+		expect(spatialSessionCards(cards, ["bridge", "bridge-c1"])).toEqual([
+			{ id: "bridge-c1", bucket: "new" },
+			{ id: "bridge-c2", bucket: "due" },
+		]);
+	});
+
+	it("skips a key that resolves to no card", () => {
+		expect(spatialSessionCards(cards, ["galley"])).toEqual([]);
+	});
+
+	it("feeds countNoteSession: Again moves a card to learn, Good takes it out", () => {
+		const session = spatialSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")]);
+		const ratings = new Map<string, FSRSRating>();
+		expect(countNoteSession(session, ratings, [])).toEqual({ new: 1, learn: 1, due: 1, current: null });
+		expect(countNoteSession(session, ratings, [line("os-due001")]).current).toBe("due");
+		ratings.set(line("os-due001"), 1);
+		ratings.set(line("os-new001"), 3);
+		expect(countNoteSession(session, ratings, [])).toEqual({ new: 0, learn: 2, due: 0, current: null });
 	});
 });

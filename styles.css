@@ -2174,7 +2174,8 @@ body.is-phone .osmosis-decks-column {
    counts joins this selector. */
 .osmosis-dashboard,
 .osmosis-study-view,
-.osmosis-note-study-strip {
+.osmosis-note-study-strip,
+.osmosis-mindmap-study-strip {
 	--osmosis-count-new: var(--interactive-accent);
 	--osmosis-count-learn: hsl(30, 75%, 50%);
 	--osmosis-count-due: hsl(140, 50%, 42%);
@@ -2329,42 +2330,6 @@ body.is-phone .osmosis-decks-column {
 	margin-bottom: var(--size-4-2);
 }
 
-.osmosis-reveal-banner {
-	position: absolute;
-	top: 12px;
-	right: 24px;
-	z-index: 10;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 4px 6px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 9999px;
-	background: var(--background-secondary);
-	box-shadow: var(--shadow-s);
-}
-
-.osmosis-reveal-progress {
-	padding-left: 8px;
-	font-size: 12px;
-	color: var(--text-muted);
-}
-
-.osmosis-reveal-banner button.osmosis-reveal-btn {
-	padding: 4px 12px;
-	border: none;
-	border-radius: 9999px;
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
-	cursor: pointer;
-	font-size: 12px;
-	font-weight: 500;
-}
-
-.osmosis-reveal-banner button.osmosis-reveal-btn:hover {
-	filter: brightness(1.1);
-}
-
 /* Hidden line: the wrapped content collapses, the placeholder shows */
 .osmosis-line-hidden > .osmosis-line-back {
 	display: none;
@@ -2460,6 +2425,16 @@ body.is-phone .osmosis-decks-column {
 /* ═══════════════════════════════════════════════════════════
    Spatial Study (Mind Map)
    ═══════════════════════════════════════════════════════════ */
+
+/* Mind map study's progress strip (T110): the study tab's pinned bar and
+   counts (.osmosis-study-status), over the top of the map, which has no title
+   to sit above. Like the study tab's, it takes no pointer events, so the map
+   pans and selects through it, faded band included. */
+.osmosis-mindmap-study-strip {
+	--osmosis-study-strip-height: 28px;
+	--osmosis-study-strip-fade: var(--size-4-2);
+	--osmosis-study-column: none;
+}
 
 .osmosis-spatial-hidden .osmosis-node-content {
 	visibility: hidden;

@@ -19,6 +19,7 @@
 import type { Card, CardOcclusion } from "../database/types";
 import { lineCardId } from "../card-gen/line-cards";
 import { groupNumber } from "../card-gen/occlusion";
+import { noteSessionCard, type NoteSessionCard } from "./session-counts";
 
 /**
  * Structural view of a laid-out map node — matches `LayoutNode` so the
@@ -303,8 +304,8 @@ function nodeKeyForCard(card: Card): string {
  * the two directions of a bidirectional pair. They are separate cards with
  * separate schedules, and spatial study is a card player — it has a target, a
  * rating and a completion count — so it steps through them one at a time
- * exactly as sequential and the note do, and the banner counts cards rather
- * than nodes.
+ * exactly as sequential and the note do, and the progress bar counts cards
+ * rather than nodes.
  *
  * This is deliberately *not* what the note surfaces do *outside* a session.
  * Plain reading view and peek paint every group at once with no target, because
@@ -349,6 +350,27 @@ export function cardIdsForSpatialKey(cards: readonly Card[], key: string): strin
 	const own = cards.find((card) => card.id === key && !card.disabled);
 	if (own) return [own.id];
 	return key.includes("#^") ? cardIdsForLineKey(cards, key) : cardIdsForFenceKey(cards, key);
+}
+
+/**
+ * The cards a mind map study session asks, each in the bucket it starts in —
+ * what `countNoteSession` counts (T110). A target is nearly always one card,
+ * but a node key that never split stands for every card it carries, and a
+ * rating reaches them all, so each is counted, once.
+ */
+export function spatialSessionCards(cards: readonly Card[], targets: Iterable<string>): NoteSessionCard[] {
+	const byId = new Map(cards.map((card) => [card.id, card]));
+	const seen = new Set<string>();
+	const session: NoteSessionCard[] = [];
+	for (const key of targets) {
+		for (const id of cardIdsForSpatialKey(cards, key)) {
+			const card = byId.get(id);
+			if (!card || seen.has(id)) continue;
+			seen.add(id);
+			session.push(noteSessionCard(card));
+		}
+	}
+	return session;
 }
 
 /**

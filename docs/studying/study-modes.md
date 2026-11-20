@@ -126,7 +126,7 @@ reinforcing structural relationships.
 3. Nodes whose cards are **due or new** hide behind `?` placeholders — the rest of the map stays fully visible, because seeing how information fits together is the point
 4. **Tap a hidden node** to reveal it
 5. **Rate** with the bubble that appears below the node — Again (++1++), Hard (++2++), Good (++3++), Easy (++4++)
-6. A floating pill tracks progress with a **Stop** button; a toast confirms when every due card is reviewed, and the map stays open
+6. A progress bar with **new**, **learn** and **due** counts sits at the top of the map, as in flashcard study. Click the :lucide-graduation-cap: icon again to stop; a toast confirms when every due card is reviewed, and the map stays open
 
 ![osmosis_fence_card_on_the_map](../assets/media/osmosis_fence_card_on_the_map.png)
 
