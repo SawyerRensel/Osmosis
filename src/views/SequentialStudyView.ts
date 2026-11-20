@@ -14,6 +14,7 @@ import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { VIEW_TYPE_DECKS } from "./DecksView";
 import { renderOcclusion } from "./OcclusionRenderer";
+import { ImageZoom, setZoom, zoomOf } from "./ImageZoom";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { syncNavbar, type NavbarHost } from "./ToolRibbon";
 
@@ -113,6 +114,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	/** Phone only: the user brought the navigation bar back (swipe up or ⋯ menu). */
 	private navbarShown = false;
 	private touchOrigin: TouchOrigin | null = null;
+	/** Pinch and Ctrl+wheel zoom on the card's images (T104), rebuilt with the card area. */
+	private imageZoom: ImageZoom | null = null;
 
 	/**
 	 * The tab title, the session's only title (`studyTabTitle`): the deck or
@@ -202,6 +205,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 	async onClose(): Promise<void> {
 		this.endSession();
+		this.imageZoom?.destroy();
+		this.imageZoom = null;
 		// This view no longer counts, even while it is still the active one
 		syncNavbar(this.app, this);
 		this.contentEl.empty();
@@ -387,6 +392,8 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		// Card area — the one scroll surface in the tab
 		this.cardEl = container.createDiv({ cls: "osmosis-study-card osmosis-study-scroll" });
+		this.imageZoom?.destroy();
+		this.imageZoom = new ImageZoom(this.cardEl);
 		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
 		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
 		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
@@ -667,8 +674,13 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 			// Occlusion answers in place, as cloze does: the answer is the same
 			// diagram with one mask lifted, and stacking a second copy of the
 			// image under the first would only ask the user to compare them.
+			// The answer is a fresh copy of the diagram, so it takes over the
+			// question's zoom: revealing must not throw the reader back to fit.
+			const zoom = zoomOf(this.frontEl.querySelector<HTMLElement>(".osmosis-occlusion"));
 			this.frontEl.empty();
 			this.renderOcclusionSide(studyCard.card, "back");
+			const diagram = this.frontEl.querySelector<HTMLElement>(".osmosis-occlusion");
+			if (diagram) setZoom(diagram, zoom);
 			this.dividerEl.addClass("osmosis-hidden");
 		} else if (isCloze) {
 			// Cloze: replace the front in-place with the revealed text rather than

@@ -19,6 +19,7 @@ import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
 import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
+import { ImageZoom } from "./ImageZoom";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -138,6 +139,8 @@ export class LineRevealProcessor {
 	private readonly states = new Map<string, NoteRevealState>();
 	/** Each note-study strip's builder, keyed by its wrapper element. */
 	private readonly strips = new WeakMap<HTMLElement, StudyProgressStrip>();
+	/** Image zoom (T104) on each reading view in Note study, keyed by its `.markdown-reading-view`. */
+	private readonly zooms = new Map<HTMLElement, ImageZoom>();
 	private sessionManager: StudySessionManager | null = null;
 
 	constructor(private readonly plugin: OsmosisPlugin) {}
@@ -196,6 +199,7 @@ export class LineRevealProcessor {
 				this.chromeRetryTimer = null;
 			}
 			this.removeAllArtifacts();
+			this.syncZooms(new Set());
 		});
 	}
 
@@ -1095,6 +1099,7 @@ export class LineRevealProcessor {
 	 * remove it everywhere else (mode ended, leaf switched notes, edit mode).
 	 */
 	private syncBanners(): void {
+		const studyingHosts = new Set<HTMLElement>();
 		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) continue;
@@ -1105,9 +1110,27 @@ export class LineRevealProcessor {
 			const studying = path !== undefined && this.stateFor(path).mode === "study";
 			if (studying && view.getMode() === "preview") {
 				this.ensureStrip(host, path);
+				studyingHosts.add(host);
 			} else {
 				host.querySelector(".osmosis-note-study-strip")?.remove();
 			}
+		}
+		this.syncZooms(studyingHosts);
+	}
+
+	/**
+	 * Image zoom on exactly the reading views in Note study. A view leaving it —
+	 * or closed, or the plugin unloading — stops listening and puts its pictures
+	 * back at fit.
+	 */
+	private syncZooms(studyingHosts: Set<HTMLElement>): void {
+		for (const [host, zoom] of this.zooms) {
+			if (studyingHosts.has(host)) continue;
+			zoom.destroy();
+			this.zooms.delete(host);
+		}
+		for (const host of studyingHosts) {
+			if (!this.zooms.has(host)) this.zooms.set(host, new ImageZoom(host));
 		}
 	}
 

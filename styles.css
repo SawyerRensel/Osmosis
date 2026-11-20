@@ -1463,6 +1463,31 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	pointer-events: none;
 }
 
+/* A study image zoomed in place (T104, src/views/ImageZoom.ts). The picture's
+   box keeps its size in the layout; what is drawn into it is magnified and
+   clipped back to it, so nothing on the card moves. A bare image carries the
+   transform itself. An occluded diagram's wrapper stays put and every layer in
+   it — image, masks, labels — gets the same transform, which keeps the masks
+   locked to the picture. The offsets are percentages of each layer's own box,
+   all of which are the wrapper's size. A clip on each layer rather than
+   `overflow: hidden` on the wrapper, which would also clip the rating buttons
+   that float under a revealed shape and may run past the picture's edge. */
+img.osmosis-zoomed,
+.osmosis-occlusion.osmosis-zoomed > :not(.osmosis-occlusion-rating-anchor) {
+	transform-origin: 0 0;
+	transform: translate(var(--osmosis-zoom-x), var(--osmosis-zoom-y)) scale(var(--osmosis-zoom));
+	clip-path: var(--osmosis-zoom-clip);
+}
+
+.osmosis-zoomed {
+	cursor: grab;
+	user-select: none;
+}
+
+.osmosis-zoomed.is-panning {
+	cursor: grabbing;
+}
+
 /* Also a size container, for the same reason the annotation layer is one: it is
    pinned to the wrapper with `inset: 0`, so its size is the image's own box and
    never comes from its contents. That is what lets a stroke be a fraction of
@@ -2486,7 +2511,7 @@ body.is-phone .osmosis-study-rating-bar {
 	width: var(--osmosis-anchor-width);
 	left: clamp(
 		0px,
-		calc(var(--osmosis-anchor-x, 50%) - var(--osmosis-anchor-width) / 2),
+		calc(var(--osmosis-zoom-x, 0%) + var(--osmosis-anchor-x, 50%) * var(--osmosis-zoom, 1) - var(--osmosis-anchor-width) / 2),
 		max(0px, calc(100% - var(--osmosis-anchor-width)))
 	);
 	/* The wrapper sets line-height 0 for the image, and a line placeholder's
@@ -2496,12 +2521,14 @@ body.is-phone .osmosis-study-rating-bar {
 	cursor: default;
 }
 
+/* The shape's edge follows a zoom (T104), held inside the picture's box so the
+   buttons never float off over the text when the shape is panned out of view. */
 .osmosis-occlusion-rating-anchor.is-below {
-	top: calc(var(--osmosis-anchor-y, 100%) + 6px);
+	top: calc(clamp(0%, var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 100%) * var(--osmosis-zoom, 1), 100%) + 6px);
 }
 
 .osmosis-occlusion-rating-anchor.is-above {
-	top: calc(var(--osmosis-anchor-y, 0%) - 6px);
+	top: calc(clamp(0%, var(--osmosis-zoom-y, 0%) + var(--osmosis-anchor-y, 0%) * var(--osmosis-zoom, 1), 100%) - 6px);
 	transform: translateY(-100%);
 }
 
