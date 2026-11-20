@@ -1,6 +1,6 @@
 /**
  * Undo/redo for map edits, shared by every view that edits notes (the 2D mind
- * map today, the 3D graph next).
+ * map today, Cosmos next).
  *
  * Map edits write to disk directly (`vault.modify` / `processFrontMatter`),
  * bypassing CodeMirror, so there is no editor history to forward to. Each edit

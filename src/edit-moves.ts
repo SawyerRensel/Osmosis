@@ -1,7 +1,7 @@
 /**
  * Moving lines from one note into another, for any view that edits notes: the
  * mind map (a drag, an Alt-arrow or a cut and paste across an embed seam) and
- * the 3D graph ("Move under" / "Move after" a line in another note).
+ * Cosmos ("Move under" / "Move after" a line in another note).
  *
  * Extracted from `MindMapView` unchanged. The view supplies how it writes (its
  * own normalisation and what it re-parses after a frontmatter write) through a

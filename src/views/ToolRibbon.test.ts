@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { GRAPH3D_HIDDEN_BUTTONS, TOOLBAR_GROUPS, barShown, barToggles, canRunToolbarAction, navbarHidden, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
+import { COSMOS_HIDDEN_BUTTONS, TOOLBAR_GROUPS, barShown, barToggles, canRunToolbarAction, navbarHidden, visibleGroups, type ButtonDef, type ToolbarState } from "./ToolRibbon";
 
 const idle: ToolbarState = { hasSelection: true, isEditing: false, hasFile: true, isReadingMode: false };
 const def = (flags: Partial<ButtonDef>): ButtonDef => ({ id: "x", icon: "x", label: "X", action: "undo", ...flags });
@@ -81,8 +81,8 @@ describe("TOOLBAR_GROUPS layout", () => {
 	});
 });
 
-describe("the 3D graph's ribbon", () => {
-	const groups = visibleGroups(TOOLBAR_GROUPS, GRAPH3D_HIDDEN_BUTTONS);
+describe("Cosmos's ribbon", () => {
+	const groups = visibleGroups(TOOLBAR_GROUPS, COSMOS_HIDDEN_BUTTONS);
 	const ids = groups.flat().map((d) => d.id);
 
 	it("is TOOLBAR_GROUPS without fold and unfold", () => {
@@ -98,7 +98,7 @@ describe("the 3D graph's ribbon", () => {
 	});
 
 	it("hides only fold/unfold: every other button has a 3D action", () => {
-		expect([...GRAPH3D_HIDDEN_BUTTONS].sort()).toEqual(["fold-all", "unfold-all"]);
+		expect([...COSMOS_HIDDEN_BUTTONS].sort()).toEqual(["fold-all", "unfold-all"]);
 	});
 
 	it("leaves 2D's own list alone", () => {

@@ -9,7 +9,7 @@ Cosmos shows a note and the notes around it, line by line, as plates floating in
 ## Controls
 
 !!! note "Also in the view"
-    The **?** button at the end of the toolbar in Cosmos opens this list. It is written by hand in two places (`src/graph3d/controls-help.ts` for the view, this page for the site), so update both together.
+    The **?** button at the end of the toolbar in Cosmos opens this list. It is written by hand in two places (`src/cosmos/controls-help.ts` for the view, this page for the site), so update both together.
 
 ### Mouse
 

@@ -103,7 +103,7 @@ export interface MarkdownEditorProps {
 	 */
 	file?: TFile | null;
 	/**
-	 * The view the editor sits in (a mind map or 3D graph). When set, the
+	 * The view the editor sits in (a mind map or Cosmos). When set, the
 	 * editor stands in as the active `MarkdownView` while it is the active
 	 * editor, so plugins that look for one (QuickAdd) find this editor and
 	 * `file`; see `installMarkdownViewStandIn`.
@@ -409,7 +409,7 @@ export class EmbeddableMarkdownEditor extends getEditorBase() {
  * leaf, answer `workspace.getActiveViewOfType(MarkdownView)` with its stand-in
  * (`markdownViewStandIn`) and `workspace.getActiveFile()` with its note.
  * Plugins such as QuickAdd read the selection and insert text through that
- * lookup; without it they find no editor in a mind map or 3D graph leaf.
+ * lookup; without it they find no editor in a mind map or Cosmos leaf.
  * Every other lookup, and every lookup while no node editor is active, goes to
  * Obsidian untouched. Returns the undo, for the plugin's unload.
  */

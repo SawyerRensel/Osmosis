@@ -1244,7 +1244,7 @@ hr.osmosis-map-style-divider {
 	overflow: hidden;
 }
 
-/* Thumb-sized on touch screens, as the 3D graph's study panel is. */
+/* Thumb-sized on touch screens, as Cosmos's study panel is. */
 body.is-tablet .osmosis-study-view {
 	--osmosis-study-button-height: 48px;
 }
@@ -1811,7 +1811,7 @@ img.osmosis-zoomed,
 }
 
 /* The buttons float over the bottom of the card, the way the Osmosis bar floats
-   over the 3D graph: the same raised background, blur and shadow. The card
+   over Cosmos: the same raised background, blur and shadow. The card
    scrolls underneath, and its bottom padding (`--osmosis-study-clearance`) lets
    its last line come clear of them.
 
@@ -1842,7 +1842,7 @@ body.is-tablet .osmosis-study-actions {
 	display: none;
 }
 
-/* Phone: the panel spans the leaf, as the 3D graph's study panel does, and its
+/* Phone: the panel spans the leaf, as Cosmos's study panel does, and its
    buttons span the panel. */
 body.is-phone .osmosis-study-actions {
 	left: var(--size-4-2);
@@ -1898,7 +1898,7 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
 }
 
 /* The shared rating row (`.osmosis-rating`, as in note view, the mind
-   map and the 3D graph) supplies the buttons' shape, type and colours. The tab
+   map and Cosmos) supplies the buttons' shape, type and colours. The tab
    adds the panel's height and stacks the interval each would schedule over its
    label. Two classes, to outrank the shared row's margin; no `display` here,
    for the reason given on the flip button. */
@@ -1939,7 +1939,7 @@ body.is-phone .osmosis-study-rating-bar {
 }
 
 /* The rating palette, on the shared row so every mode (study tab, note view,
-   mind map, 3D graph, occlusion anchor) reads the same four colours. Easy takes
+   mind map, Cosmos, occlusion anchor) reads the same four colours. Easy takes
    the accent, so it follows the user's accent colour; Good is Obsidian's blue,
    with a fixed hsl only if a theme drops the variable. */
 .osmosis-rating {
@@ -2047,7 +2047,7 @@ body.is-phone .osmosis-study-rating-bar {
 }
 
 /* Not the accent: Easy is the accent, and the outline would vanish on it. */
-/* Every study mode's header cap (note, mind map, 3D graph, study tab) wears
+/* Every study mode's header cap (note, mind map, Cosmos, study tab) wears
    the accent while its mode is on. The icon's stroke follows `currentColor`. */
 .view-actions .osmosis-study-cap.is-active,
 .view-actions .osmosis-study-cap.is-active:hover {
@@ -4164,15 +4164,15 @@ body.is-phone .osmosis-decks-column {
 	margin-top: 8px;
 }
 
-/* ── 3D graph view ───────────────────────────────────────── */
+/* ── Cosmos view ───────────────────────────────────────── */
 
-.osmosis-graph3d.view-content {
+.osmosis-cosmos.view-content {
 	position: relative;
 	padding: 0;
 	overflow: hidden;
 }
 
-.osmosis-graph3d-stage {
+.osmosis-cosmos-stage {
 	position: absolute;
 	inset: 0;
 }
@@ -4180,28 +4180,28 @@ body.is-phone .osmosis-decks-column {
 /*
  * Viewport corners: perf gauge top left, Overlays top right, flight speed bottom left
  * (the joystick and help toggles are the Osmosis bar's last buttons).
- * --osmosis-graph3d-lift is how far a phone's navigation bar rises from the bottom of the
- * viewport (tablets hide it), --osmosis-graph3d-bar-bottom is where the Osmosis bar sits, and
- * --osmosis-graph3d-above-bar is the line just above the bar: the joysticks, the speed
+ * --osmosis-cosmos-lift is how far a phone's navigation bar rises from the bottom of the
+ * viewport (tablets hide it), --osmosis-cosmos-bar-bottom is where the Osmosis bar sits, and
+ * --osmosis-cosmos-above-bar is the line just above the bar: the joysticks, the speed
  * readout and the help panel sit there, so the bar never covers them.
  */
-.osmosis-graph3d {
-	--osmosis-graph3d-lift: 0px;
-	--osmosis-graph3d-bar-bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
-	--osmosis-graph3d-above-bar: calc(var(--osmosis-graph3d-bar-bottom) + var(--touch-size-l) + var(--size-4-2));
+.osmosis-cosmos {
+	--osmosis-cosmos-lift: 0px;
+	--osmosis-cosmos-bar-bottom: calc(var(--size-4-2) + var(--osmosis-cosmos-lift));
+	--osmosis-cosmos-above-bar: calc(var(--osmosis-cosmos-bar-bottom) + var(--touch-size-l) + var(--size-4-2));
 }
 
-body.is-phone:not(.osmosis-hide-navbar) .osmosis-graph3d {
-	--osmosis-graph3d-lift: 84px;
+body.is-phone:not(.osmosis-hide-navbar) .osmosis-cosmos {
+	--osmosis-cosmos-lift: 84px;
 }
 
-body.osmosis-hide-navbar .osmosis-graph3d {
-	--osmosis-graph3d-bar-bottom: var(--navbar-bottom-offset, var(--size-4-2));
+body.osmosis-hide-navbar .osmosis-cosmos {
+	--osmosis-cosmos-bar-bottom: var(--navbar-bottom-offset, var(--size-4-2));
 }
 
 /* A phone has no bar in reading mode (or while a line is edited): nothing to clear but the navigation bar. */
-body.is-phone .osmosis-graph3d:has(.osmosis-graph3d-ribbon.osmosis-toolbar-hidden) {
-	--osmosis-graph3d-above-bar: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+body.is-phone .osmosis-cosmos:has(.osmosis-cosmos-ribbon.osmosis-toolbar-hidden) {
+	--osmosis-cosmos-above-bar: calc(var(--size-4-2) + var(--osmosis-cosmos-lift));
 }
 
 /* Hides Obsidian's navigation bar while a map whose mode asks for it is the active view (`syncNavbar` in ToolRibbon.ts). */
@@ -4209,7 +4209,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	display: none;
 }
 
-.osmosis-graph3d-empty {
+.osmosis-cosmos-empty {
 	position: absolute;
 	inset: 0;
 	z-index: 1;
@@ -4222,19 +4222,19 @@ body.osmosis-hide-navbar .mobile-navbar {
 	pointer-events: none;
 }
 
-.osmosis-graph3d-empty.is-hidden {
+.osmosis-cosmos-empty.is-hidden {
 	display: none;
 }
 
 /*
- * Relational study panel (Graph3DStudy.ts): bottom centre, clear of the corner
+ * Cosmos study panel (CosmosStudy.ts): bottom centre, clear of the corner
  * controls and of Obsidian's mobile toolbar when it is shown. Rating colours come
  * from .osmosis-rating. Its rows are flex rows of thumb-sized buttons,
  * so a later control (a path mode selector) is one more row.
  */
-.osmosis-graph3d-study {
+.osmosis-cosmos-study {
 	position: absolute;
-	bottom: calc(var(--size-4-2) + var(--osmosis-graph3d-lift));
+	bottom: calc(var(--size-4-2) + var(--osmosis-cosmos-lift));
 	left: 50%;
 	transform: translateX(-50%);
 	z-index: 1;
@@ -4251,24 +4251,24 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--text-muted);
 }
 
-.osmosis-graph3d-study-actions {
+.osmosis-cosmos-study-actions {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--size-4-2);
 }
 
-.osmosis-graph3d-study-rating {
+.osmosis-cosmos-study-rating {
 	margin-top: 0;
 }
 
-.osmosis-graph3d-study-hint {
+.osmosis-cosmos-study-hint {
 	color: var(--text-faint);
 }
 
 /* Tablet: more room for a thumb than the desktop buttons, but not the full width. */
-.is-tablet .osmosis-graph3d-study-actions > button,
-.is-tablet .osmosis-graph3d-study-rating button {
+.is-tablet .osmosis-cosmos-study-actions > button,
+.is-tablet .osmosis-cosmos-study-rating button {
 	min-height: 48px;
 	min-width: 84px;
 	padding: 0 var(--size-4-5);
@@ -4276,7 +4276,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* Phone: the panel spans the viewport and its buttons span the panel, tall enough for a thumb. */
-.is-phone .osmosis-graph3d-study {
+.is-phone .osmosis-cosmos-study {
 	left: var(--size-4-2);
 	right: var(--size-4-2);
 	transform: none;
@@ -4284,37 +4284,37 @@ body.osmosis-hide-navbar .mobile-navbar {
 	max-width: none;
 }
 
-.is-phone .osmosis-graph3d-study-actions {
+.is-phone .osmosis-cosmos-study-actions {
 	flex-wrap: nowrap;
 }
 
-.is-phone .osmosis-graph3d-study-actions > button,
-.is-phone .osmosis-graph3d-study-rating button {
+.is-phone .osmosis-cosmos-study-actions > button,
+.is-phone .osmosis-cosmos-study-rating button {
 	flex: 1;
 	min-height: 56px;
 	padding: 0 var(--size-4-2);
 	font-size: var(--font-ui-medium);
 }
 
-.is-phone .osmosis-graph3d-study-rating {
+.is-phone .osmosis-cosmos-study-rating {
 	flex: 1;
 	gap: var(--size-4-2);
 }
 
 /* With the joysticks up, the panel rides above them, so its buttons aren't under a stick. */
-.is-phone .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study,
-.is-tablet .osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-study {
-	bottom: calc(var(--osmosis-graph3d-above-bar) + 120px + var(--size-4-2));
+.is-phone .osmosis-cosmos:has(.osmosis-cosmos-stick:not(.is-hidden)) .osmosis-cosmos-study,
+.is-tablet .osmosis-cosmos:has(.osmosis-cosmos-stick:not(.is-hidden)) .osmosis-cosmos-study {
+	bottom: calc(var(--osmosis-cosmos-above-bar) + 120px + var(--size-4-2));
 }
 
 /*
  * Bottom-left corner: the flight speed readout, above the Osmosis bar's line so a wide bar never covers
  * it, and above the left joystick when the sticks are up. Obsidian's status bar sits bottom right.
  */
-.osmosis-graph3d-corner {
+.osmosis-cosmos-corner {
 	position: absolute;
 	left: var(--size-4-2);
-	bottom: var(--osmosis-graph3d-above-bar);
+	bottom: var(--osmosis-cosmos-above-bar);
 	z-index: 1;
 	display: flex;
 	flex-direction: row-reverse;
@@ -4324,7 +4324,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* Flight speed, shown briefly while the wheel changes it. */
-.osmosis-graph3d-speed {
+.osmosis-cosmos-speed {
 	padding: var(--size-4-1) var(--size-4-3);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -4336,20 +4336,20 @@ body.osmosis-hide-navbar .mobile-navbar {
 	transition: opacity 200ms ease;
 }
 
-.osmosis-graph3d-speed.is-visible {
+.osmosis-cosmos-speed.is-visible {
 	opacity: 1;
 }
 
-.osmosis-graph3d:has(.osmosis-graph3d-stick:not(.is-hidden)) .osmosis-graph3d-corner {
-	bottom: calc(var(--osmosis-graph3d-above-bar) + 120px + var(--size-4-2));
+.osmosis-cosmos:has(.osmosis-cosmos-stick:not(.is-hidden)) .osmosis-cosmos-corner {
+	bottom: calc(var(--osmosis-cosmos-above-bar) + 120px + var(--size-4-2));
 }
 
-/* Controls help (Graph3DHelp.ts): the panel the Osmosis bar's last button ("?") opens, centred above the bar. */
-.osmosis-graph3d-help {
+/* Controls help (CosmosHelp.ts): the panel the Osmosis bar's last button ("?") opens, centred above the bar. */
+.osmosis-cosmos-help {
 	position: absolute;
 	left: 50%;
 	transform: translateX(-50%);
-	bottom: var(--osmosis-graph3d-above-bar);
+	bottom: var(--osmosis-cosmos-above-bar);
 	z-index: 2;
 	box-sizing: border-box;
 	width: min(440px, calc(100% - 2 * var(--size-4-2)));
@@ -4364,15 +4364,15 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--text-normal);
 }
 
-.osmosis-graph3d-help.is-hidden {
+.osmosis-cosmos-help.is-hidden {
 	display: none;
 }
 
-.osmosis-graph3d-help-title {
+.osmosis-cosmos-help-title {
 	font-weight: var(--font-semibold);
 }
 
-.osmosis-graph3d-help-heading {
+.osmosis-cosmos-help-heading {
 	margin-top: var(--size-4-3);
 	font-size: var(--font-ui-smaller);
 	font-weight: var(--font-semibold);
@@ -4380,28 +4380,28 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--text-muted);
 }
 
-.osmosis-graph3d-help-list {
+.osmosis-cosmos-help-list {
 	display: grid;
 	grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
 	gap: var(--size-4-1) var(--size-4-3);
 	margin: var(--size-4-1) 0 0;
 }
 
-.osmosis-graph3d-help-list dt {
+.osmosis-cosmos-help-list dt {
 	font-weight: var(--font-medium);
 }
 
-.osmosis-graph3d-help-list dd {
+.osmosis-cosmos-help-list dd {
 	margin: 0;
 	color: var(--text-muted);
 }
 
 /*
- * Navigation gizmos (Graph3DGizmos.ts): rotate, pan and zoom, stacked at the top right on a desktop with no
+ * Navigation gizmos (CosmosGizmos.ts): rotate, pan and zoom, stacked at the top right on a desktop with no
  * touch screen. Faint at rest, solid on hover and while dragged. The Find bar (z-index 11) takes the same corner,
  * so they step aside while it is open.
  */
-.osmosis-graph3d-gizmos {
+.osmosis-cosmos-gizmos {
 	position: absolute;
 	top: var(--size-4-2);
 	right: var(--size-4-2);
@@ -4412,11 +4412,11 @@ body.osmosis-hide-navbar .mobile-navbar {
 	pointer-events: none;
 }
 
-.osmosis-graph3d:has(.osmosis-find-bar) .osmosis-graph3d-gizmos {
+.osmosis-cosmos:has(.osmosis-find-bar) .osmosis-cosmos-gizmos {
 	display: none;
 }
 
-.osmosis-graph3d-gizmo {
+.osmosis-cosmos-gizmo {
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -4436,12 +4436,12 @@ body.osmosis-hide-navbar .mobile-navbar {
 	transition: opacity 120ms ease;
 }
 
-.osmosis-graph3d-gizmo:hover {
+.osmosis-cosmos-gizmo:hover {
 	opacity: 0.9;
 	color: var(--text-normal);
 }
 
-.osmosis-graph3d-gizmo.is-dragging {
+.osmosis-cosmos-gizmo.is-dragging {
 	opacity: 1;
 	color: var(--text-normal);
 	border-color: var(--background-modifier-border-hover);
@@ -4449,15 +4449,15 @@ body.osmosis-hide-navbar .mobile-navbar {
 	cursor: var(--osmosis-gizmo-cursor-drag);
 }
 
-.osmosis-graph3d-gizmo .svg-icon {
+.osmosis-cosmos-gizmo .svg-icon {
 	width: var(--icon-m);
 	height: var(--icon-m);
 }
 
-/* Walk and fly joysticks (Graph3DSticks.ts), toggled from the Osmosis bar. Raised clear of the bar, and of a phone's navigation bar when it is shown. */
-.osmosis-graph3d-stick {
+/* Walk and fly joysticks (CosmosSticks.ts), toggled from the Osmosis bar. Raised clear of the bar, and of a phone's navigation bar when it is shown. */
+.osmosis-cosmos-stick {
 	position: absolute;
-	bottom: var(--osmosis-graph3d-above-bar);
+	bottom: var(--osmosis-cosmos-above-bar);
 	z-index: 1;
 	display: flex;
 	align-items: center;
@@ -4473,19 +4473,19 @@ body.osmosis-hide-navbar .mobile-navbar {
 	-webkit-user-select: none;
 }
 
-.osmosis-graph3d-stick.is-left {
+.osmosis-cosmos-stick.is-left {
 	left: var(--size-4-4);
 }
 
-.osmosis-graph3d-stick.is-right {
+.osmosis-cosmos-stick.is-right {
 	right: var(--size-4-4);
 }
 
-.osmosis-graph3d-stick.is-hidden {
+.osmosis-cosmos-stick.is-hidden {
 	display: none;
 }
 
-.osmosis-graph3d-stick-knob {
+.osmosis-cosmos-stick-knob {
 	width: 52px;
 	height: 52px;
 	border: 1px solid var(--background-modifier-border-hover);
@@ -4496,26 +4496,26 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /*
- * The Osmosis bar in 3D (Graph3DView.ts): the mind map's `.osmosis-toolbar`, bottom centre, at
- * --osmosis-graph3d-bar-bottom (above a phone's navigation bar, or in its slot when that is hidden),
+ * The Osmosis bar in 3D (CosmosView.ts): the mind map's `.osmosis-toolbar`, bottom centre, at
+ * --osmosis-cosmos-bar-bottom (above a phone's navigation bar, or in its slot when that is hidden),
  * stopping short of the bottom corners either side (Obsidian's status bar sits bottom right on desktop).
  */
-.osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
-	bottom: var(--osmosis-graph3d-bar-bottom);
+.osmosis-cosmos .osmosis-toolbar.osmosis-cosmos-ribbon {
+	bottom: var(--osmosis-cosmos-bar-bottom);
 	max-width: calc(100% - 2 * (var(--size-4-2) + 48px));
 }
 
 /* A phone has no status bar, and the bar's eight buttons span its width there, as in 2D. */
-.is-phone .osmosis-graph3d .osmosis-toolbar.osmosis-graph3d-ribbon {
+.is-phone .osmosis-cosmos .osmosis-toolbar.osmosis-cosmos-ribbon {
 	max-width: calc(100% - var(--size-4-4));
 }
 
-/* A relational study session's panel takes the same spot, and editing is off during one. */
-.osmosis-graph3d:has(.osmosis-graph3d-study) .osmosis-toolbar.osmosis-graph3d-ribbon {
+/* A Cosmos study session's panel takes the same spot, and editing is off during one. */
+.osmosis-cosmos:has(.osmosis-cosmos-study) .osmosis-toolbar.osmosis-cosmos-ribbon {
 	display: none;
 }
 
-/* Perf readout (PerfGauge.ts: the 3D graph and the 2D Mind Map), behind a toggle in the top-left corner; the readout opens downward. */
+/* Perf readout (PerfGauge.ts: Cosmos and the 2D Mind Map), behind a toggle in the top-left corner; the readout opens downward. */
 .osmosis-perf {
 	position: absolute;
 	left: var(--size-4-2);
@@ -4549,7 +4549,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* Resolves theme variables to rgb() for the WebGL scene; never visible. */
-.osmosis-graph3d-probe {
+.osmosis-cosmos-probe {
 	position: absolute;
 	visibility: hidden;
 	background-color: var(--background-primary);
@@ -4564,11 +4564,11 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /*
- * Near tier (Graph3DNear.ts): live Markdown panels over the nearest plates.
+ * Near tier (CosmosNear.ts): live Markdown panels over the nearest plates.
  * The renderer's layer passes the pointer through to the canvas, so a drag
  * over a panel still orbits; only media controls take it.
  */
-.osmosis-graph3d-near {
+.osmosis-cosmos-near {
 	/* Its own stacking context, so the panels' depth z-indexes stay under the header and readouts. */
 	z-index: 0;
 	left: 0;
@@ -4576,52 +4576,52 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* A zero-size point at the node; the panel is centred on it and scaled each frame. */
-.osmosis-graph3d-near-anchor {
+.osmosis-cosmos-near-anchor {
 	width: 0;
 	height: 0;
 }
 
 /*
- * The panel's layer (Graph3DNear.ts, src/graph3d/raster.ts): sized to the box
+ * The panel's layer (CosmosNear.ts, src/cosmos/raster.ts): sized to the box
  * at its raster scale, centred on the anchor and shrunk to the drawn scale.
  * It carries the mask; its first child is the fill (painted in the lens's
  * space, under the box, so the box is rastered into this layer). Screen-facing panels are composited, anchor and lens,
  * so moving and scaling them is the compositor's work; tilted (CSS3D) panels
  * are composited by their 3D transform already and keep the browser's raster.
  */
-.osmosis-graph3d-near-lens {
+.osmosis-cosmos-near-lens {
 	position: absolute;
 	left: 0;
 	top: 0;
 	transform-origin: 50% 50%;
-	/* Plates nearer than the panel are cut out of it with mask layers, set inline (src/graph3d/occlusion.ts). */
+	/* Plates nearer than the panel are cut out of it with mask layers, set inline (src/cosmos/occlusion.ts). */
 	mask-repeat: no-repeat;
 }
 
 /* Matches the plate's fill (a style's is set inline); its corners are the box's, set inline. */
-.osmosis-graph3d-near-fill {
+.osmosis-cosmos-near-fill {
 	position: absolute;
 	inset: 0;
 	background-color: var(--background-secondary);
 }
 
-.osmosis-graph3d-near-flat .osmosis-graph3d-near-anchor,
-.osmosis-graph3d-near-flat .osmosis-graph3d-near-lens {
+.osmosis-cosmos-near-flat .osmosis-cosmos-near-anchor,
+.osmosis-cosmos-near-flat .osmosis-cosmos-near-lens {
 	will-change: transform;
 }
 
 /*
- * Edge hints (Graph3DHints.ts): a small label just off a link or embed
+ * Edge hints (CosmosHints.ts): a small label just off a link or embed
  * edge's end, naming the node at its other end. A zero-size anchor at the
  * point; the box is shifted against it by an inline transform.
  */
-.osmosis-graph3d-hint-anchor {
+.osmosis-cosmos-hint-anchor {
 	width: 0;
 	height: 0;
 	pointer-events: none;
 }
 
-.osmosis-graph3d-hint {
+.osmosis-cosmos-hint {
 	position: absolute;
 	left: 0;
 	top: 0;
@@ -4632,7 +4632,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	border-radius: var(--radius-s);
 	background-color: var(--background-secondary);
 	color: var(--text-muted);
-	/* HINT_BASE_PX in src/graph3d/edge-hints.ts: the scene scales the label from this to its world size. */
+	/* HINT_BASE_PX in src/cosmos/edge-hints.ts: the scene scales the label from this to its world size. */
 	font-size: 12px;
 	line-height: 1.3;
 	transform-origin: 0 0;
@@ -4643,13 +4643,13 @@ body.osmosis-hide-navbar .mobile-navbar {
 	user-select: none;
 }
 
-.osmosis-graph3d-near-panel {
+.osmosis-cosmos-near-panel {
 	position: absolute;
 	left: 0;
 	top: 0;
 	box-sizing: border-box;
 	width: max-content;
-	/* PANEL_MAX_EM in src/graph3d/near.ts: the scene spaces nodes for a panel this big. */
+	/* PANEL_MAX_EM in src/cosmos/near.ts: the scene spaces nodes for a panel this big. */
 	max-width: 20em;
 	max-height: 30em;
 	overflow: hidden;
@@ -4661,36 +4661,36 @@ body.osmosis-hide-navbar .mobile-navbar {
 	transform-origin: 0 0;
 }
 
-.osmosis-graph3d-near-body > :first-child,
-.osmosis-graph3d-near-body > :first-child > :first-child {
+.osmosis-cosmos-near-body > :first-child,
+.osmosis-cosmos-near-body > :first-child > :first-child {
 	margin-top: 0;
 }
 
-.osmosis-graph3d-near-body > :last-child,
-.osmosis-graph3d-near-body > :last-child > :last-child {
+.osmosis-cosmos-near-body > :last-child,
+.osmosis-cosmos-near-body > :last-child > :last-child {
 	margin-bottom: 0;
 }
 
-.osmosis-graph3d-near-body img,
-.osmosis-graph3d-near-body video {
+.osmosis-cosmos-near-body img,
+.osmosis-cosmos-near-body video {
 	max-width: 100%;
-	/* PANEL_MEDIA_MAX_EM in src/graph3d/near.ts; contain keeps the aspect of an embed sized with |width. */
+	/* PANEL_MEDIA_MAX_EM in src/cosmos/near.ts; contain keeps the aspect of an embed sized with |width. */
 	max-height: 15em;
 	object-fit: contain;
 }
 
-/* An occluded diagram (relational study) keeps its proportions under the cap above: the masks span the image's own box, so a height cap with the width held would stretch picture and masks apart (the study card does the same). */
-.osmosis-graph3d-near-body .osmosis-occlusion .osmosis-occlusion-image {
+/* An occluded diagram (Cosmos study) keeps its proportions under the cap above: the masks span the image's own box, so a height cap with the width held would stretch picture and masks apart (the study card does the same). */
+.osmosis-cosmos-near-body .osmosis-occlusion .osmosis-occlusion-image {
 	width: auto;
 	max-width: min(100%, var(--osmosis-occlusion-width, 100%));
 }
 
-.osmosis-graph3d-near-body :is(video, audio, iframe) {
+.osmosis-cosmos-near-body :is(video, audio, iframe) {
 	pointer-events: auto;
 }
 
 /* Mixes the panel toward the background as the mist and focus dim mix its plate. */
-.osmosis-graph3d-near-veil {
+.osmosis-cosmos-near-veil {
 	position: absolute;
 	inset: 0;
 	background-color: var(--background-primary);
@@ -4701,7 +4701,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /*
- * Inline editing in the 3D graph (Graph3DEdit.ts). The anchor is a zero-size
+ * Inline editing in Cosmos (CosmosEdit.ts). The anchor is a zero-size
  * point at the node that the near tier moves every frame; the box is laid out
  * like the node's panel (font size, minimum size and corners set inline) and
  * scaled with it, so it sits on the plate and moves, scales and hides with it.
@@ -4709,7 +4709,7 @@ body.osmosis-hide-navbar .mobile-navbar {
  * and the CodeMirror resets. Above the near-tier panels, under the corner
  * controls, which come after it in the stage.
  */
-.osmosis-graph3d-edit {
+.osmosis-cosmos-edit {
 	position: absolute;
 	left: 0;
 	top: 0;
@@ -4718,11 +4718,11 @@ body.osmosis-hide-navbar .mobile-navbar {
 	z-index: 1;
 }
 
-.osmosis-edit-overlay.osmosis-graph3d-edit-box {
+.osmosis-edit-overlay.osmosis-cosmos-edit-box {
 	position: absolute;
 	left: 0;
 	top: 0;
-	/* Until the editor measures its text: from then on `fitWidth` (Graph3DEdit.ts) sets the width inline, since CodeMirror lends a shrink-to-fit box none of its text's width. */
+	/* Until the editor measures its text: from then on `fitWidth` (CosmosEdit.ts) sets the width inline, since CodeMirror lends a shrink-to-fit box none of its text's width. */
 	width: max-content;
 	/* PANEL_MAX_EM, as a panel: a long line wraps at the width the scene spaces nodes for. */
 	max-width: 20em;
@@ -4735,29 +4735,29 @@ body.osmosis-hide-navbar .mobile-navbar {
 }
 
 /* The buttons keep their own size and are placed over the box's corners each frame (transform, inline). */
-.osmosis-graph3d-edit .osmosis-edit-btn {
+.osmosis-cosmos-edit .osmosis-edit-btn {
 	top: 0;
 	left: 0;
 	right: auto;
 }
 
 /* The panel under the editor is hidden while its text is being edited. */
-.osmosis-graph3d-near-lens.is-editing {
+.osmosis-cosmos-near-lens.is-editing {
 	visibility: hidden;
 }
 
 /* A selected node's panel (multi-select): the mind map's 2px accent selection stroke. Before the link target, which wins while a drag is over it. */
-.osmosis-graph3d-near-panel.is-selected {
+.osmosis-cosmos-near-panel.is-selected {
 	box-shadow: inset 0 0 0 2px var(--interactive-accent) !important;
 }
 
 /* A find match's panel (FindBar); the selection's border wins on the current match. */
-.osmosis-graph3d-near-panel.is-found:not(.is-selected) {
+.osmosis-cosmos-near-panel.is-found:not(.is-selected) {
 	box-shadow: inset 0 0 0 2px var(--color-yellow) !important;
 }
 
-/* The width handle (Graph3DNear.resizeStart): a selected line's panel in edit mode, like the mind map's resize handle. Hit-tested by geometry, as the panels never take the pointer; the cursor is set by the scene. */
-.osmosis-graph3d-near-handle {
+/* The width handle (CosmosNear.resizeStart): a selected line's panel in edit mode, like the mind map's resize handle. Hit-tested by geometry, as the panels never take the pointer; the cursor is set by the scene. */
+.osmosis-cosmos-near-handle {
 	display: none;
 	position: absolute;
 	right: 0.15em;
@@ -4771,17 +4771,17 @@ body.osmosis-hide-navbar .mobile-navbar {
 	opacity: 0.8;
 }
 
-.osmosis-graph3d-near-panel.is-resizable > .osmosis-graph3d-near-handle {
+.osmosis-cosmos-near-panel.is-resizable > .osmosis-cosmos-near-handle {
 	display: block;
 }
 
-/* The drop target of a link drag in edit mode (Graph3DScene.linkDrag). !important: the outline is an inline box-shadow in the node's colour. */
-.osmosis-graph3d-near-panel.is-link-target {
+/* The drop target of a link drag in edit mode (CosmosScene.linkDrag). !important: the outline is an inline box-shadow in the node's colour. */
+.osmosis-cosmos-near-panel.is-link-target {
 	box-shadow: inset 0 0 0 0.25em var(--interactive-accent) !important;
 }
 
-/* The rubber band of a Shift+drag box select in the 3D graph (Graph3DScene.box). */
-.osmosis-graph3d-box {
+/* The rubber band of a Shift+drag box select in Cosmos (CosmosScene.box). */
+.osmosis-cosmos-box {
 	position: fixed;
 	z-index: 10;
 	pointer-events: none;
@@ -4845,7 +4845,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	color: var(--color-purple);
 }
 
-/* The 2D | 3D pill in the header of the mind map and the 3D graph: one capsule
+/* The 2D | 3D pill in the header of the mind map and Cosmos: one capsule
    (`div.osmosis-view-switch`) holding two `<button>` segments. Obsidian styles
    every `button:not(.clickable-icon)` (0,1,1) with its own background and
    `--input-shadow`, which beat a lone class (0,1,0) and drew each segment as a
@@ -4913,7 +4913,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	padding-inline-start: var(--size-4-2);
 }
 
-/* Find bar (Ctrl+F) over the mind map and the 3D graph (FindBar.ts): top right of the view. */
+/* Find bar (Ctrl+F) over the mind map and Cosmos (FindBar.ts): top right of the view. */
 .osmosis-find-bar {
 	position: absolute;
 	top: var(--size-4-2);

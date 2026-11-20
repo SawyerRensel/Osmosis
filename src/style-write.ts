@@ -1,6 +1,6 @@
 /**
  * Writing node style overrides into `osmosis-styles` frontmatter: the one
- * merge the mind map and the 3D graph's style sidebar both use, so a style set
+ * merge the mind map and Cosmos's style sidebar both use, so a style set
  * in either view is stored the same way.
  *
  * Pure logic, no `obsidian` import, so it is unit-tested.

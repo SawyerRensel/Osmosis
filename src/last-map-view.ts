@@ -1,7 +1,7 @@
 /**
  * Which map view the note header's brain button opens: the one the user last
  * had, 2D or 3D. Remembered per device (vault-scoped localStorage), like the
- * 3D graph's other personal preferences, so a phone that lives in 3D doesn't
+ * Cosmos's other personal preferences, so a phone that lives in 3D doesn't
  * change what a laptop opens. This module only validates what storage hands
  * back; the plugin reads and writes it.
  */

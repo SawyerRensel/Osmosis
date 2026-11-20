@@ -20,7 +20,7 @@ export type CopiedLine = Pick<OsmosisNode, "type" | "depth" | "content" | "block
 
 /**
  * The internal clipboard: one per plugin session, shared by the mind map and
- * the 3D graph, so a subtree copied in one view pastes in the other (and in
+ * Cosmos, so a subtree copied in one view pastes in the other (and in
  * another map of the same view). The system clipboard gets plain text too, for
  * external paste, but only this carries identity and per-item shape.
  */

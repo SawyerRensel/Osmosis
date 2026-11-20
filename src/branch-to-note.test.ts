@@ -11,7 +11,7 @@ import {
 	stableSelectorPairs,
 	uniqueNotePath,
 } from "./branch-to-note";
-import { findNodeById } from "./graph3d/edit";
+import { findNodeById } from "./cosmos/edit";
 import { subtreeEnd } from "./mindmap-edit";
 import { OsmosisParser } from "./parser";
 import type { OsmosisNode } from "./types";

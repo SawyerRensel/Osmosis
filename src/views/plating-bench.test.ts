@@ -1,5 +1,5 @@
 /**
- * Where the 3D graph's plating time goes (T78, `vault/Planner/3D Graph - New
+ * Where Cosmos's plating time goes (T78, `vault/Planner/3D Graph - New
  * plates lay out without a frame stall.md`). Reported, not asserted: wall-clock
  * limits are flaky on this machine. Read the `[perf]` lines in the output.
  *
@@ -9,15 +9,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { Color } from "three";
 import { OsmosisParser } from "../parser";
-import { buildGraph, type GraphNode } from "../graph3d/model";
-import { nodeColor, nodeExtent, spriteLabel } from "../graph3d/appearance";
-import { nodeLook } from "../graph3d/node-style";
-import { panelBoxEm, plateWidthEm } from "../graph3d/near";
-import { LINE_PLATE_HEIGHT, layoutPlate } from "../graph3d/plates";
-import { FlatLayouts, flatDepth } from "../graph3d/flatten";
-import { chargeStrengths } from "../graph3d/settle";
+import { buildGraph, type GraphNode } from "../cosmos/model";
+import { nodeColor, nodeExtent, spriteLabel } from "../cosmos/appearance";
+import { nodeLook } from "../cosmos/node-style";
+import { panelBoxEm, plateWidthEm } from "../cosmos/near";
+import { LINE_PLATE_HEIGHT, layoutPlate } from "../cosmos/plates";
+import { FlatLayouts, flatDepth } from "../cosmos/flatten";
+import { chargeStrengths } from "../cosmos/settle";
 import { buildPerfNote } from "../../e2e/generate-perf-notes.mjs";
-import { Graph3DPlates, type PlateShape, type PlateSource } from "./Graph3DPlates";
+import { CosmosPlates, type PlateShape, type PlateSource } from "./CosmosPlates";
 
 const RUNS = 5;
 
@@ -50,7 +50,7 @@ const report = (label: string, ms: number): void => console.debug(`[perf] ${labe
 
 const COLORS = { background: "#000", text: "#fff", plate: "#222", font: "sans-serif", accent: "#f0f", found: "#ff0" };
 
-function shapeOf(plates: Graph3DPlates, graph: GraphNode): PlateShape {
+function shapeOf(plates: CosmosPlates, graph: GraphNode): PlateShape {
 	const isCore = graph.kind === "note";
 	const width = graph.kind === "line" ? plateWidthEm(graph) : null;
 	const text = isCore ? graph.label : spriteLabel(graph.label);
@@ -62,7 +62,7 @@ describe("3D plating benchmarks (reported, not asserted)", () => {
 	it("plates ~520 nodes cold (first run in this worker: unoptimised JS, as on open)", () => {
 		const markdown: string = buildPerfNote("Cold", 1270, "Other", 10);
 		const model = buildGraph([{ tree: new OsmosisParser().parse(markdown, "Cold.md"), cache: null }], () => null);
-		const plates = new Graph3DPlates(COLORS);
+		const plates = new CosmosPlates(COLORS);
 		let start = performance.now();
 		const shapes = model.nodes.map((node) => shapeOf(plates, node));
 		report(`${model.nodes.length} nodes: shape, cold`, performance.now() - start);
@@ -91,10 +91,10 @@ describe("3D plating benchmarks (reported, not asserted)", () => {
 			const model = buildGraph([{ tree, cache: null }], () => null);
 			const nodes = model.nodes;
 			expect(nodes.length).toBeGreaterThan(500);
-			let plates = new Graph3DPlates(COLORS);
+			let plates = new CosmosPlates(COLORS);
 			report(`${nodes.length} nodes: shape (sync part: measure + queue), empty cache`, time(() => {
 				plates.dispose();
-				plates = new Graph3DPlates(COLORS);
+				plates = new CosmosPlates(COLORS);
 				for (const node of nodes) shapeOf(plates, node);
 			}));
 			report(`${nodes.length} nodes: shape, every layout cached (a re-parse or hop back)`, time(() => {
@@ -103,7 +103,7 @@ describe("3D plating benchmarks (reported, not asserted)", () => {
 			let writes = 0;
 			report(`${nodes.length} nodes: queued glyphs built by write(), all slices`, time(() => {
 				plates.dispose();
-				plates = new Graph3DPlates(COLORS);
+				plates = new CosmosPlates(COLORS);
 				const queued: PlateSource[] = nodes.map((node, i) => ({ x: i, y: i, z: i, opacity: 1, color: new Color(), shape: shapeOf(plates, node) }));
 				writes = 0;
 				while (plates.queued > 0) {

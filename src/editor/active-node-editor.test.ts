@@ -3,7 +3,7 @@ import { heldBlurStep, NodeEditorFocus, wrapMethod } from "./active-node-editor"
 
 describe("NodeEditorFocus", () => {
 	const mapView = { name: "mind map" };
-	const graphView = { name: "3D graph" };
+	const graphView = { name: "Cosmos" };
 	const noteView = { name: "note tab" };
 
 	function focused(name: string, view: unknown) {

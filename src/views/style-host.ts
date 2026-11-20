@@ -12,7 +12,7 @@ export interface NodeStyleContext {
 
 /**
  * A view whose selected nodes the style sidebar's Node tab styles: the mind
- * map, or the 3D graph. Both write the same `osmosis-styles` entries, so a
+ * map, or Cosmos. Both write the same `osmosis-styles` entries, so a
  * style set in one shows in the other (one styling system for 2D and 3D).
  */
 export interface NodeStyleHost {

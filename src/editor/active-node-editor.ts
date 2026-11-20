@@ -5,7 +5,7 @@
  *
  * Plugins such as QuickAdd find "the editor" through
  * `workspace.getActiveViewOfType(MarkdownView)`. A node editor lives in a mind
- * map or 3D graph leaf, so that lookup finds nothing, and they read an empty
+ * map or Cosmos leaf, so that lookup finds nothing, and they read an empty
  * selection. While a node editor is the active editor, Osmosis answers it with
  * a stand-in whose `editor` is the node's.
  */

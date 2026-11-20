@@ -1,5 +1,5 @@
 /**
- * The perf gauge's chrome, shared by the 2D Mind Map and the 3D graph: a
+ * The perf gauge's chrome, shared by the 2D Mind Map and Cosmos: a
  * toggle in the view's top-left corner (hidden by default) and the readout
  * under it, plus the browser's long animation frames while it is shown.
  * Nothing is observed or recorded while it is hidden.

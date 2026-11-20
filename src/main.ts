@@ -20,9 +20,9 @@ import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSide
 import { DecksView, VIEW_TYPE_DECKS } from "./views/DecksView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
-import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
-import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
-import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
+import { CosmosView, VIEW_TYPE_COSMOS } from "./views/CosmosView";
+import { normalizeOverlays, type CosmosOverlays } from "./cosmos/overlays";
+import { normalizeCollapsed, type SettingsSectionId } from "./cosmos/settings-sections";
 import { NoteStudyProcessor } from "./views/NoteStudyProcessor";
 import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
 import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
@@ -137,7 +137,7 @@ export default class OsmosisPlugin extends Plugin {
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
 	mutationHistory!: MutationHistory;
-	/** Undo/redo for map edits, one history per file, shared by the mind map and the 3D graph. */
+	/** Undo/redo for map edits, one history per file, shared by the mind map and Cosmos. */
 	readonly editHistory = new EditHistory(() => ({
 		maxSteps: this.settings.undoMaxSteps,
 		maxMemoryMB: this.settings.undoMaxMemoryMB,
@@ -306,7 +306,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_DECKS, (leaf: WorkspaceLeaf) => new DecksView(leaf, this));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
 		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new FlashcardStudyView(leaf, this));
-		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
+		this.registerView(VIEW_TYPE_COSMOS, (leaf: WorkspaceLeaf) => new CosmosView(leaf));
 		// Cosmos was the 3D graph, under another view type, before T107. Its
 		// per-device preferences move to their new keys before any tab reads
 		// them, and tabs saved under the old type reopen as Cosmos.
@@ -364,9 +364,9 @@ export default class OsmosisPlugin extends Plugin {
 				id: `mindmap-${def.id}`,
 				name: def.command,
 				icon: def.icon,
-				// The 3D graph draws the same ribbon (minus fold and unfold), so the command runs there too.
+				// Cosmos draws the same ribbon (minus fold and unfold), so the command runs there too.
 				checkCallback: (checking) => {
-					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(Graph3DView);
+					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(CosmosView);
 					return view ? view.runToolbarCommand(def, checking) : false;
 				},
 			});
@@ -379,7 +379,7 @@ export default class OsmosisPlugin extends Plugin {
 			icon: TOGGLE_3D_COMMAND.icon,
 			checkCallback: (checking) => {
 				const map = this.app.workspace.getActiveViewOfType(MindMapView);
-				const graph = map ? null : this.app.workspace.getActiveViewOfType(Graph3DView);
+				const graph = map ? null : this.app.workspace.getActiveViewOfType(CosmosView);
 				if (!map && !graph) return false;
 				if (!checking) void (map ? map.switchTo3D() : graph?.switchTo2D());
 				return true;
@@ -392,7 +392,7 @@ export default class OsmosisPlugin extends Plugin {
 			checkCallback: (checking) => {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "md") return false;
-				if (!checking) void this.openGraph3D(file);
+				if (!checking) void this.openCosmos(file);
 				return true;
 			},
 		});
@@ -498,7 +498,7 @@ export default class OsmosisPlugin extends Plugin {
 					item.setTitle("Cosmos")
 						.setIcon("orbit")
 						.onClick(() => {
-							void this.openGraph3D(file);
+							void this.openCosmos(file);
 						});
 				});
 				menu.addItem((item) => {
@@ -1036,7 +1036,7 @@ export default class OsmosisPlugin extends Plugin {
 				if (file) {
 					const to = this.lastMapView();
 					void leaf.setViewState({
-						type: to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP,
+						type: to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP,
 						state: to === "3d" ? { focus: file.path } : { file: file.path },
 						active: true,
 					});
@@ -1067,7 +1067,7 @@ export default class OsmosisPlugin extends Plugin {
 	/** Record the active leaf's map view, if it is one: covers tab clicks, the 2D | 3D pill, file-menu opens and a restored workspace. */
 	private rememberActiveMapView(): void {
 		const { workspace } = this.app;
-		if (workspace.getActiveViewOfType(Graph3DView)) this.rememberMapView("3d");
+		if (workspace.getActiveViewOfType(CosmosView)) this.rememberMapView("3d");
 		else if (workspace.getActiveViewOfType(MindMapView)) this.rememberMapView("2d");
 	}
 
@@ -1079,29 +1079,29 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** Apply the 3D graph navigation settings to every open 3D graph. */
+	/** Apply Cosmos navigation settings to every open Cosmos. */
 	/**
-	 * Take a change from the 3D Settings in the style sidebar: every open 3D graph shows
+	 * Take a change from the 3D Settings in the style sidebar: every open Cosmos shows
 	 * it at once. Saved straight to data.json, and debounced, since a slider
 	 * fires on every step; `saveSettings()` would also re-sync every card.
 	 */
-	setGraph3DOverlays(overlays: Graph3DOverlays): void {
+	setCosmosOverlays(overlays: CosmosOverlays): void {
 		this.settings.graph3dOverlays = overlays;
 		this.saveOverlays();
-		this.refreshOpenGraph3DControls();
+		this.refreshOpenCosmosControls();
 	}
 
 	/** Take the style sidebar's 3D Settings sections that are collapsed, saved like the overlays. */
-	setGraph3DSettingsCollapsed(collapsed: SettingsSectionId[]): void {
+	setCosmosSettingsCollapsed(collapsed: SettingsSectionId[]): void {
 		this.settings.graph3dSettingsCollapsed = collapsed;
 		this.saveOverlays();
 	}
 
 	private readonly saveOverlays = debounce(() => void this.saveData(this.settings), 500, true);
 
-	refreshOpenGraph3DControls(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D)) {
-			if (leaf.view instanceof Graph3DView) leaf.view.applyControlSettings();
+	refreshOpenCosmosControls(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOS)) {
+			if (leaf.view instanceof CosmosView) leaf.view.applyControlSettings();
 		}
 	}
 
@@ -1129,7 +1129,7 @@ export default class OsmosisPlugin extends Plugin {
 	 * across the swap (see `holdAcross`).
 	 */
 	async swapLeafView(leaf: WorkspaceLeaf, to: "2d" | "3d", state: Record<string, unknown>, keep: Iterable<string>): Promise<void> {
-		const type = to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP;
+		const type = to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP;
 		try {
 			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
 			this.rememberMapView(to);
@@ -1139,10 +1139,10 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** A 3D graph opens in its own tab, centred on `file`. */
-	private async openGraph3D(file: TFile): Promise<void> {
+	/** A Cosmos opens in its own tab, centred on `file`. */
+	private async openCosmos(file: TFile): Promise<void> {
 		const leaf = this.app.workspace.getLeaf("tab");
-		await leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { focus: file.path }, active: true });
+		await leaf.setViewState({ type: VIEW_TYPE_COSMOS, state: { focus: file.path }, active: true });
 		void this.app.workspace.revealLeaf(leaf);
 	}
 
@@ -1782,9 +1782,9 @@ export default class OsmosisPlugin extends Plugin {
 		for (const leaf of this.app.workspace.getLeavesOfType(LEGACY_COSMOS_VIEW_TYPE)) {
 			const old = leaf.getViewState();
 			try {
-				await leaf.setViewState(cosmosViewStateFrom(old, VIEW_TYPE_GRAPH3D, cosmosTabTitle(old.state)));
+				await leaf.setViewState(cosmosViewStateFrom(old, VIEW_TYPE_COSMOS, cosmosTabTitle(old.state)));
 			} catch (error) {
-				console.error("Osmosis: could not reopen a 3D graph tab as Cosmos", error);
+				console.error("Osmosis: could not move a tab saved under the old view type to Cosmos", error);
 			}
 		}
 	}
@@ -1801,7 +1801,7 @@ export default class OsmosisPlugin extends Plugin {
 		// Any saveSettings() wrote the old default here, so it is dropped rather
 		// than carried over.
 		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");
-		// Saved 3D graph node positions, dropped before release: a vault's
+		// Saved Cosmos node positions, dropped before release: a vault's
 		// shape keeps changing, so each session settles it afresh.
 		Reflect.deleteProperty(this.settings, "graph3dPositions");
 		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);

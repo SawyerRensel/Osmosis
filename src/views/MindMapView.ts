@@ -34,8 +34,8 @@ import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type ReplacePlan } from "../find-replace";
 import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
-import { ancestorsOf, findNodeById, nodeAtStart } from "../graph3d/edit";
-import { planSelectionLink, type PickedLine, type PlanNote } from "../graph3d/selection-edit";
+import { ancestorsOf, findNodeById, nodeAtStart } from "../cosmos/edit";
+import { planSelectionLink, type PickedLine, type PlanNote } from "../cosmos/selection-edit";
 import { LinkPicker, linkMenuItems } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
@@ -43,7 +43,7 @@ import type { MoveContext } from "../edit-moves";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../graph3d/liftoff";
+import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../cosmos/liftoff";
 import {
 	computeLayout,
 	LayoutNode,
@@ -297,8 +297,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private readonly edits: EditPipeline;
 	private historyKey: string | null = null;
 	private releaseHistory: (() => void) | null = null;
-	/** The 3D graph's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
-	private graph3dState: Record<string, unknown> | null = null;
+	/** Cosmos's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
+	private cosmosState: Record<string, unknown> | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
 	// draws identically afterwards — but the frontmatter block grew, which
@@ -374,7 +374,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
 
-	// Clipboard state (copy/cut/paste, copy/paste style) is shared with the 3D graph: see node-clipboard.ts.
+	// Clipboard state (copy/cut/paste, copy/paste style) is shared with Cosmos: see node-clipboard.ts.
 
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
@@ -749,8 +749,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
 		const saved = readMapState(state);
-		// The 3D graph's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
-		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.graph3dState = state.graph3d as Record<string, unknown>;
+		// Cosmos's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
+		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.cosmosState = state.graph3d as Record<string, unknown>;
 		if (saved.readingMode !== null) {
 			this.setReadingMode(saved.readingMode);
 		}
@@ -768,7 +768,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				// The old viewport means nothing on another note's map; history
 				// and link targets re-place it through setEphemeralState.
 				if (switching) this.fitToView();
-				// The 3D graph's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
+				// Cosmos's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
 				const landing = readLanding(state.landing);
 				if (landing !== null) await this.land(landing);
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
@@ -778,8 +778,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The 2D/3D toggle (the header's pill, and its command): show this note as a 3D graph in this leaf,
-	 * lifting off from the map as it is drawn now (see `graph3d/liftoff.ts`).
+	 * The 2D/3D toggle (the header's pill, and its command): show this note as Cosmos in this leaf,
+	 * lifting off from the map as it is drawn now (see `cosmos/liftoff.ts`).
 	 * A peek or study session ends first, flushing its ratings. The note's undo
 	 * history is held across the swap. Its embedded notes' are not: nothing
 	 * holds them now, and an entry is dropped only when the last holder of one
@@ -810,12 +810,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			viewport: { ...this.viewBox },
 			focus: focus && { path: focus.path, start: focus.start, root: focus.root },
 		};
-		const state = { ...this.graph3dState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
+		const state = { ...this.cosmosState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
 		await this.plugin.swapLeafView(this.leaf, "3d", state, [file.path]);
 	}
 
 	/**
-	 * Land a hand-over from the 3D graph's toggle: select the line it had
+	 * Land a hand-over from Cosmos's toggle: select the line it had
 	 * focused (expanding what hides it) and centre on it, at the zoom that
 	 * draws a line as tall as its plate was on screen. With no line, the zoom
 	 * still carries and the map centres on its root.
@@ -2113,7 +2113,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
 		}));
 
-		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
@@ -5699,7 +5699,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		const content = await this.app.vault.read(destFile);
 		// The target's child slot, each item's re-levelling and the copy-vs-cut
-		// identity rule live in `pasteInto` (shared with the 3D graph).
+		// identity rule live in `pasteInto` (shared with Cosmos).
 		const updated = pasteInto(content, src);
 
 		const originPath = nodeClipboard.sourcePath;
@@ -5752,7 +5752,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// come off it, and the pre-guard node's parent belongs to the layout the
 		// freshness check may have just replaced.
 		if (this.selectedNodeIds.size > 1 && target.parent) {
-			// The shared rule (the 3D graph's Ctrl+Enter uses it too).
+			// The shared rule (Cosmos's Ctrl+Enter uses it too).
 			const wrapped = edit.selectedSiblings(target.parent.source.children, this.selectedNodeIds);
 			if (wrapped.length === 0) return;
 			if (!this.ensureSameFileEdit(wrapped)) return;
@@ -8401,7 +8401,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The menu the 3D graph shows, for the armed nodes and the tapped target: Add
+	 * The menu Cosmos shows, for the armed nodes and the tapped target: Add
 	 * link (`linkNodes`), Move under, Move after, or for the map's root Move to
 	 * end of note (`moveNodesTo`, the drag and drop's write). The moves are
 	 * offered only for siblings (a drag moves only those) and never into a
@@ -8464,7 +8464,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	/**
 	 * Add a link to node `targetId` at the end of each source node's line, the
-	 * same edit as the 3D graph's "Add link" (`planSelectionLink`): the target
+	 * same edit as Cosmos's "Add link" (`planSelectionLink`): the target
 	 * linked by its heading text or a block ID (stamped if it has none), the map's
 	 * root linked as its note. Each end is found again in a fresh parse of its
 	 * own file (a transcluded node's is its source file), and every file is

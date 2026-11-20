@@ -1,5 +1,5 @@
 /**
- * The header both graph views share: the mind map (2D) and the 3D graph show
+ * The header both graph views share: the mind map (2D) and Cosmos show
  * the same buttons in the same order, so they are learnt once. The views build
  * the DOM (`views/ViewHeader.ts`); this module only says what is shown and in
  * what order, left to right, so the rule has one home and a test.

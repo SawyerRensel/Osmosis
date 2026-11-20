@@ -3,15 +3,15 @@ import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
-import { DEFAULT_OVERLAYS, type Graph3DOverlays } from "./graph3d/overlays";
-import type { SettingsSectionId } from "./graph3d/settings-sections";
+import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
+import type { SettingsSectionId } from "./cosmos/settings-sections";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
-/** What a desktop left-drag orbits and the wheel zooms toward in the 3D graph. */
-export type Graph3DDesktopPivot = "cursor" | "center";
-/** What a one-finger drag does in the 3D graph on a touch screen. */
-export type Graph3DTouchDrag = "point" | "center" | "look";
+/** What a desktop left-drag orbits and the wheel zooms toward in Cosmos. */
+export type CosmosDesktopPivot = "cursor" | "center";
+/** What a one-finger drag does in Cosmos on a touch screen. */
+export type CosmosTouchDrag = "point" | "center" | "look";
 
 /** Auto-suggest for vault folder paths. */
 class FolderSuggest extends AbstractInputSuggest<string> {
@@ -174,14 +174,14 @@ export interface OsmosisSettings {
 	/** Note whose frontmatter and body are merged into every converted branch's new note; empty for none (default: ""). */
 	branchNoteTemplate: string;
 
-	// ── 3D Graph ────────────────────────────────────────────
+	// ── Cosmos ────────────────────────────────────────────
 	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
-	cosmosDesktopPivot: Graph3DDesktopPivot;
+	cosmosDesktopPivot: CosmosDesktopPivot;
 	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
-	cosmosOneFingerDrag: Graph3DTouchDrag;
-	/** The 3D graph's Settings (stored under the old Overlays key, so vaults keep their values), shared by every 3D graph view (see `src/graph3d/overlays.ts`). */
-	graph3dOverlays: Graph3DOverlays;
-	/** The style sidebar's 3D Settings sections that are collapsed (see `src/graph3d/settings-sections.ts`). */
+	cosmosOneFingerDrag: CosmosTouchDrag;
+	/** Cosmos's Settings (stored under the old Overlays key, so vaults keep their values), shared by every Cosmos view (see `src/cosmos/overlays.ts`). */
+	graph3dOverlays: CosmosOverlays;
+	/** The style sidebar's 3D Settings sections that are collapsed (see `src/cosmos/settings-sections.ts`). */
 	graph3dSettingsCollapsed: SettingsSectionId[];
 }
 
@@ -231,7 +231,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchNoteFolder: "",
 	branchNoteTemplate: "",
 
-	// 3D graph defaults
+	// Cosmos defaults
 	cosmosDesktopPivot: "cursor",
 	cosmosOneFingerDrag: "point",
 	graph3dOverlays: DEFAULT_OVERLAYS,
@@ -272,7 +272,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			this.plugin.remeasureOpenMindMaps();
 		}
 		if (key === "cosmosDesktopPivot" || key === "cosmosOneFingerDrag") {
-			this.plugin.refreshOpenGraph3DControls();
+			this.plugin.refreshOpenCosmosControls();
 		}
 	}
 

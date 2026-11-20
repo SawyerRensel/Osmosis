@@ -1,8 +1,8 @@
-// Measures the 3D graph's d3 tick time on the stress web, headless, with the
-// forces the scene sets up (`Graph3DScene`): plate-aware link distances, the
+// Measures Cosmos's d3 tick time on the stress web, headless, with the
+// forces the scene sets up (`CosmosScene`): plate-aware link distances, the
 // many-body force limited as `settle.ts` limits it, no centring force, and,
 // with a flatten slider position given, the flatten force and the note push
-// (`src/graph3d/flatten.ts`). Then it runs on to rest and checks the shape.
+// (`src/cosmos/flatten.ts`). Then it runs on to rest and checks the shape.
 //
 //   node e2e/generate-graph3d-stress.mjs   # once, if e2e/fixtures/graph3d-stress/ is missing
 //   npx esbuild e2e/measure-graph3d-ticks.ts --bundle --platform=node --format=esm --outfile=/tmp/osmosis-ticks.mjs
@@ -29,14 +29,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { forceLink, forceManyBody, forceSimulation } from "d3-force-3d";
 import { OsmosisParser } from "../src/parser";
-import { buildGraph, isNoteRoot, type GraphEdgeKind, type GraphNode, type LinkCacheLike } from "../src/graph3d/model";
-import { placeNodes } from "../src/graph3d/positions";
-import { chargeStrengths } from "../src/graph3d/settle";
-import { linkDistance, nodeExtent, spriteLabel } from "../src/graph3d/appearance";
-import { panelBoxEm } from "../src/graph3d/near";
-import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch } from "../src/graph3d/flatten";
-import type { Vec3 } from "../src/graph3d/flight";
-import { DEFAULT_CONTINENT_STYLE, PlanetWorld, planetTrees } from "../src/graph3d/planets";
+import { buildGraph, isNoteRoot, type GraphEdgeKind, type GraphNode, type LinkCacheLike } from "../src/cosmos/model";
+import { placeNodes } from "../src/cosmos/positions";
+import { chargeStrengths } from "../src/cosmos/settle";
+import { linkDistance, nodeExtent, spriteLabel } from "../src/cosmos/appearance";
+import { panelBoxEm } from "../src/cosmos/near";
+import { FlatLayouts, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch } from "../src/cosmos/flatten";
+import type { Vec3 } from "../src/cosmos/flight";
+import { DEFAULT_CONTINENT_STYLE, PlanetWorld, planetTrees } from "../src/cosmos/planets";
 
 const LINE_PLATE_HEIGHT = 5;
 const CORE_PLATE_HEIGHT = 10;

@@ -1,6 +1,6 @@
 /**
  * How wide a code-block node fits its longest line, shared by the mind map
- * (px) and the 3D graph (ems): a code block with no custom width is as wide as
+ * (px) and Cosmos (ems): a code block with no custom width is as wide as
  * its longest line, up to `CODE_FIT_MAX_COLUMNS` characters, then wraps. A
  * custom `width` style always wins. Only code blocks: every other node keeps
  * the map's max node width.
