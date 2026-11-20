@@ -72,10 +72,10 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * only valid against schedules that have not moved since, so a restored tab
  * starts from the Decks page rather than a stale queue.
  *
- * On a phone the tab hides Obsidian's navigation bar while it is the active
- * view, so the bottom buttons are never under it; a swipe up or the ⋯ menu
- * brings it back (`navbarShown`). `syncNavbar` restores it whenever another
- * view becomes active, and `onClose` does the same.
+ * On a phone the tab shows Obsidian's navigation bar by default; a swipe up
+ * or the ⋯ menu hides it while the tab is the active view (`navbarShown`).
+ * `syncNavbar` restores it whenever another view becomes active, and
+ * `onClose` does the same.
  */
 export class SequentialStudyView extends ItemView implements NavbarHost {
 	/** The session's scope; null only before the first session, or on the way to the Decks page. */
@@ -112,7 +112,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	private cardShownAt = Date.now();
 
 	/** Phone only: the user brought the navigation bar back (swipe up or ⋯ menu). */
-	private navbarShown = false;
+	private navbarShown = true;
 	private touchOrigin: TouchOrigin | null = null;
 	/** Pinch and Ctrl+wheel zoom on the card's images (T104), rebuilt with the card area. */
 	private imageZoom: ImageZoom | null = null;
@@ -212,7 +212,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.contentEl.empty();
 	}
 
-	/** For `syncNavbar`: on a phone the tab hides the navigation bar unless the user brought it back. */
+	/** For `syncNavbar`: on a phone the tab hides the navigation bar only if the user hid it. */
 	navbarEditMode(): boolean {
 		return !this.navbarShown;
 	}
