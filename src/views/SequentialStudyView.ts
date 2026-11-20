@@ -1,4 +1,4 @@
-import { Component, ItemView, MarkdownRenderer, Platform, Scope, type Menu, type WorkspaceLeaf } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Platform, Scope, type Menu, type ViewState, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import type OsmosisPlugin from "../main";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import type { StudyCard, StudyScope } from "../study/types";
@@ -9,6 +9,7 @@ import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
 import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
 import { countSession } from "../study/session-counts";
+import { studyReturnTarget, toStudyOrigin, type StudyOrigin } from "../study/study-origin";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
@@ -65,12 +66,14 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * matching Anki's intra-session behavior.
  *
  * The tab outlives a session: a finished session leaves a completion screen.
- * With no scope (opened bare, or restored after a restart) it turns into the
- * Decks page (`DecksView`), as does toggling its header cap off. Nothing about
- * a session is saved in the workspace — `getState` is the default empty one on
+ * Toggling its header cap off steps back to what the tab showed before study
+ * took it over (`origin`: a note, as it was, or the Decks page), or to the
+ * Decks page (`DecksView`) for a tab study opened fresh. With no scope (opened
+ * bare, or restored after a restart) it steps back the same way. Nothing about
+ * a session is saved in the workspace — `getState` holds the origin only, on
  * purpose. Schedules are written per rating already, and the undo stack is
  * only valid against schedules that have not moved since, so a restored tab
- * starts from the Decks page rather than a stale queue.
+ * steps back rather than resuming a stale queue.
  *
  * On a phone the tab shows Obsidian's navigation bar by default; a swipe up
  * or the ⋯ menu hides it while the tab is the active view (`navbarShown`).
@@ -78,8 +81,15 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * `onClose` does the same.
  */
 export class SequentialStudyView extends ItemView implements NavbarHost {
-	/** The session's scope; null only before the first session, or on the way to the Decks page. */
+	/** The session's scope; null only before the first session, or on the way out of study. */
 	private studyScope: StudyScope | null = null;
+	/**
+	 * What the tab showed before study took it over (`openStudySession`), which
+	 * the cap returns to; null for a tab study opened fresh, which returns to
+	 * the Decks page. Saved in the view state, so it survives a restart and
+	 * rides in the tab's history entries.
+	 */
+	private origin: StudyOrigin | null = null;
 	private sessionManager: StudySessionManager | null = null;
 	/** True from a non-empty session's start until it is ended; gates the flush. */
 	private sessionActive = false;
@@ -131,7 +141,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	private undoAction: HTMLElement | null = null;
 	private gotoAction: HTMLElement | null = null;
 	private excludeAction: HTMLElement | null = null;
-	/** The study cap: lit while the tab holds a session; toggling it off shows the Decks page. */
+	/** The study cap: lit while the tab holds a session; toggling it off leaves study (`leaveStudy`). */
 	private capAction: HTMLElement | null = null;
 
 	// DOM elements
@@ -174,8 +184,19 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		return "graduation-cap";
 	}
 
+	getState(): Record<string, unknown> {
+		return this.origin ? { origin: this.origin } : {};
+	}
+
+	async setState(state: unknown, result: ViewStateResult): Promise<void> {
+		// A takeover opens with an empty state; it must not clear the origin onOpen took
+		const origin = toStudyOrigin((state as { origin?: unknown } | null)?.origin);
+		if (origin) this.origin = origin;
+		await super.setState(state, result);
+	}
+
 	async onOpen(): Promise<void> {
-		this.capAction = this.addAction("graduation-cap", "Flashcard study", () => void this.showDecks());
+		this.capAction = this.addAction("graduation-cap", "Flashcard study", () => void this.leaveStudy());
 		this.capAction.addClass("osmosis-study-cap");
 		this.excludeAction = this.addAction("eye-off", "Exclude card (e)", () => void this.excludeCard());
 		this.gotoAction = this.addAction("file-text", "Open note (g)", () => this.goToCard());
@@ -190,15 +211,18 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		syncNavbar(this.app);
 
-		const scope = this.plugin.takePendingStudyScope();
-		if (scope) {
-			this.startSession(scope);
+		const pending = this.plugin.takePendingStudy();
+		if (pending?.origin) this.origin = pending.origin;
+		if (pending) {
+			this.startSession(pending.scope);
 		} else {
-			// Opened bare (the open-study command, or restored after a restart):
-			// nothing to study, so the tab becomes the Decks page. Deferred,
-			// because this runs inside the setViewState that is opening the view.
+			// Opened bare (restored after a restart, or Back/Forward onto a study
+			// entry): nothing to study, so the tab steps back to its origin or
+			// the Decks page, without a history entry for the empty study tab.
+			// Deferred, because this runs inside the setViewState that is opening
+			// the view, and setState brings the saved origin after onOpen.
 			window.setTimeout(() => {
-				if (this.studyScope === null && this.leaf.view === this) void this.showDecks();
+				if (this.studyScope === null && this.leaf.view === this) void this.leaveStudy(false);
 			}, 0);
 		}
 	}
@@ -373,13 +397,29 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	}
 
 	/**
-	 * Toggle study off: end the session, which flushes its ratings, and turn
-	 * this tab into the Decks page. Studying a deck there turns it back.
+	 * Toggle study off: end the session, which flushes its ratings, and put
+	 * back what the tab showed before study took it over — the note in the
+	 * mode it was in, or the Decks page — or the Decks page for a tab study
+	 * opened fresh, or whose note is gone. `record` false leaves no history
+	 * entry for the study tab, so Back does not land on it again.
 	 */
-	private async showDecks(): Promise<void> {
+	async leaveStudy(record = true): Promise<void> {
 		this.endSession();
 		this.studyScope = null;
-		await this.leaf.setViewState({ type: VIEW_TYPE_DECKS, active: true });
+		const target = this.returnTarget();
+		// Focus stays put when a study tab in the background steps back (a note took over)
+		const active = this.app.workspace.getActiveViewOfType(SequentialStudyView) === this;
+		const viewState: ViewState = target
+			? { type: target.type, state: target.state, active }
+			: { type: VIEW_TYPE_DECKS, active };
+		// `popstate` is how Obsidian's own history navigation skips recording; not in public typings
+		if (!record) (viewState as ViewState & { popstate?: boolean }).popstate = true;
+		await this.leaf.setViewState(viewState, target?.eState);
+	}
+
+	/** Where `leaveStudy` lands; null is the Decks page. */
+	private returnTarget(): StudyOrigin | null {
+		return studyReturnTarget(this.origin, (path) => this.app.vault.getAbstractFileByPath(path) !== null);
 	}
 
 	private buildLayout(): void {
@@ -1019,7 +1059,10 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 			el.createEl("h2", { text: "No cards due" });
 			el.createEl("p", { text: "All caught up! Check back later." });
 			const buttons = el.createDiv({ cls: "osmosis-study-complete-buttons" });
-			this.completeButton(buttons, "Choose a deck", () => void this.showDecks());
+			// A session launched from a note goes back to it; otherwise on to another deck
+			const target = this.returnTarget();
+			const backToNote = target !== null && target.type !== VIEW_TYPE_DECKS;
+			this.completeButton(buttons, backToNote ? "Back to note" : "Choose a deck", () => void this.leaveStudy());
 			this.completeButton(buttons, "Close", () => this.leaf.detach());
 		});
 	}

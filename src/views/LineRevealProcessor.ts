@@ -958,8 +958,9 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * The note header's Study menu: study in place, this note's cards in the
-	 * sequential popup, or a deck the note belongs to in the popup. One deck
+	 * The note header's Study menu: study in place, or this note's cards or a
+	 * deck the note belongs to in the Flashcard study tab, which takes over
+	 * this note's tab and puts the note back when study is toggled off. One deck
 	 * starts directly; several go in a submenu (inline on mobile, where
 	 * `setSubmenu` is not relied on).
 	 */
@@ -980,13 +981,13 @@ export class LineRevealProcessor {
 				.setTitle("Study this note in flashcard view")
 				.setIcon("file-text")
 				.onClick(() => {
-					void this.plugin.openStudySession({ type: "note", notePath });
+					void this.plugin.openStudySession({ type: "note", notePath }, { leaf: view.leaf, takeOver: true });
 				}),
 		);
 
 		const decks = decksOfNote(this.plugin.cardStore.getCardsByNote(notePath));
 		const openDeck = (deck: string): void => {
-			void this.plugin.openStudySession({ type: "single", deck });
+			void this.plugin.openStudySession({ type: "single", deck }, { leaf: view.leaf, takeOver: true });
 		};
 		const addDeckItem = (deck: string): void => {
 			menu.addItem((item) =>

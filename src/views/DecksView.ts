@@ -54,7 +54,7 @@ export class DecksView extends ItemView {
 	render(): void {
 		if (!this.columnEl) return;
 		renderDecksDashboard(this.columnEl, this.plugin, (scope) => {
-			void this.plugin.openStudySession(scope, this.leaf);
+			void this.plugin.openStudySession(scope, { leaf: this.leaf });
 		});
 	}
 }

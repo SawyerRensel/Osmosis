@@ -52,6 +52,7 @@ import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { StudyScope } from "./study/types";
+import { toStudyOrigin, type StudyOrigin } from "./study/study-origin";
 import { migrateRenamedSettingKeys } from "./study/mode-names";
 
 /**
@@ -163,10 +164,11 @@ export default class OsmosisPlugin extends Plugin {
 	private resolveCardStoreReady!: () => void;
 	/**
 	 * The scope a study tab that is opening right now should start on
-	 * (`openStudySession`). A study tab that opens without one shows the Decks
-	 * page instead, so this is how a new one tells the two apart.
+	 * (`openStudySession`), and what the tab showed before study took it over.
+	 * A study tab that opens without one steps back to its origin (or the Decks
+	 * page) instead, so this is how a new one tells the two apart.
 	 */
-	private pendingStudyScope: StudyScope | null = null;
+	private pendingStudy: { scope: StudyScope; origin: StudyOrigin | null } | null = null;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 	/**
@@ -1324,11 +1326,23 @@ export default class OsmosisPlugin extends Plugin {
 	 * Start a sequential session in the study tab. There is only ever one: an
 	 * open study tab is revealed and rebuilt with the new scope (ending the
 	 * session it held), rather than a second tab stacked beside it. With none
-	 * open, `fromLeaf` (a Decks tab) becomes the study tab, or else a new tab.
+	 * open, `from.leaf` (a Decks tab) becomes the study tab, or else a new tab.
+	 *
+	 * `from.takeOver` (a note's Study menu) makes the launching tab the study
+	 * tab even when one is open: that one steps back to what it held first, as
+	 * its cap would. A tab study takes over remembers what it showed, and its
+	 * cap puts that back; the takeover itself is a history entry, so the tab's
+	 * Back lands there too.
 	 */
-	async openStudySession(scope: StudyScope, fromLeaf?: WorkspaceLeaf): Promise<void> {
+	async openStudySession(scope: StudyScope, from?: { leaf: WorkspaceLeaf; takeOver?: boolean }): Promise<void> {
 		const { workspace } = this.app;
-		const existing = workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
+		let existing: WorkspaceLeaf | undefined = workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
+		if (from?.takeOver && existing && existing !== from.leaf) {
+			// A restored placeholder opens bare, and a bare study tab steps back by itself
+			if (existing.view instanceof SequentialStudyView) await existing.view.leaveStudy();
+			else await existing.loadIfDeferred();
+			existing = undefined;
+		}
 		if (existing?.view instanceof SequentialStudyView) {
 			existing.view.startSession(scope);
 			await workspace.revealLeaf(existing);
@@ -1338,22 +1352,28 @@ export default class OsmosisPlugin extends Plugin {
 		// A study view about to open — a tab restored at startup that is still
 		// a placeholder, or a new one — takes the scope in its onOpen. Without
 		// one it would show the Decks page instead.
-		const leaf = existing ?? fromLeaf ?? workspace.getLeaf("tab");
-		this.pendingStudyScope = scope;
+		const leaf = existing ?? from?.leaf ?? workspace.getLeaf("tab");
+		// A restored study tab keeps the origin it saved; a tab taken over gets its own
+		let origin: StudyOrigin | null = null;
+		if (!existing && from) {
+			const eState: unknown = from.leaf.getEphemeralState();
+			origin = toStudyOrigin({ ...from.leaf.getViewState(), eState });
+		}
+		this.pendingStudy = { scope, origin };
 		try {
 			if (existing) await existing.loadIfDeferred();
 			else await leaf.setViewState({ type: VIEW_TYPE_STUDY, active: true });
 		} finally {
-			this.pendingStudyScope = null;
+			this.pendingStudy = null;
 		}
 		await workspace.revealLeaf(leaf);
 	}
 
-	/** For a study tab's onOpen: the scope `openStudySession` is opening it on, taken once. */
-	takePendingStudyScope(): StudyScope | null {
-		const scope = this.pendingStudyScope;
-		this.pendingStudyScope = null;
-		return scope;
+	/** For a study tab's onOpen: the scope and origin `openStudySession` is opening it on, taken once. */
+	takePendingStudy(): { scope: StudyScope; origin: StudyOrigin | null } | null {
+		const pending = this.pendingStudy;
+		this.pendingStudy = null;
+		return pending;
 	}
 
 	/**
