@@ -14,7 +14,7 @@ batch: 14
 priority:
 progress:
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T17:55:00.000Z
+date_modified: 2026-11-20T18:10:00.000Z
 date_start_scheduled: 2026-11-20T17:38:35.000Z
 date_start_actual: 2026-11-20T17:38:35.000Z
 date_end_scheduled:
@@ -127,3 +127,47 @@ Input:
   - whether an SVG `<img>` stays crisp when scaled by a transform. Chromium normally re-rasters a non-composited transformed image at the new scale; nothing sets `will-change`.
 - If Obsidian mobile opens its image viewer on a single tap of a *plain* image, the first tap of a double-tap would open it. Covered occlusion diagrams are not affected: their `img` is untouchable.
 - A double-click on a zoomed covered diagram in Note study is also two clicks on the line placeholder, so the first one reveals.
+
+### Round-2 fix F2: zoom uses the whole study area
+Code commit `65ae319`. Sawyer reported two problems. First, a zoomed image stayed clipped to its own box, which left the desktop margins and the space down to the phone's buttons empty. Second, the further you zoomed in, the further the card scrolled sideways, and the image box slid left instead of panning.
+
+**Cause of the sideways scroll (confirmed in headless Chromium).** A CSS transform still counts towards the scroll container's scrollable overflow, and the per-layer `clip-path` does not take it out. Zoom 3× in a 400px scroller pushed `scrollWidth` from 420 to 560. Zooming alone leaves `scrollLeft` at 0. But once the card overflowed sideways, any horizontal wheel or touchpad component scrolled the card, and that was the slide. `.osmosis-study-card` has `overflow-y: auto`, so its x axis is `auto` too. The overflow grew with the zoom, which is why it got worse as you zoomed in.
+
+**Fix.** Nothing clips the picture's layers any more. `--osmosis-zoom-clip` is gone. The study area is now an ancestor with `overflow: clip`. That clips the picture and also keeps it out of the scroller's overflow:
+- **Study tab:** a new `.osmosis-study-body` wraps front, divider and back, plus the waiting and complete screens. The card is now a flex column, and the body is `flex: 1 0 auto`. So the body is at least the card's content box, down to the clearance above the buttons, and it grows with long content. While it holds a zoomed picture (`:has(.osmosis-zoomed)`), it is `overflow: clip; isolation: isolate`. A revealed back normally clips its content (`overflow: hidden`, for the reveal). While it holds a zoomed picture it becomes `display: flow-root; overflow: visible`, so a back image can use the area too. `flow-root` keeps the block formatting context, so nothing in the back moves.
+- **Note study:** no element in the reading view is both as wide as the view and as tall as the note. So while it holds a zoomed picture, `.markdown-preview-view` gets `overflow-x: hidden`, which stops the sideways scroll, and `.markdown-preview-sizer` gets `overflow-y: clip; isolation: isolate`. Obsidian pads the sizer by half the view's height, so there is room below the last line.
+- A zoomed picture is `position: relative; z-index: 1`, which lifts it over the text it spills onto. The isolation keeps it under the study strip and the floating buttons. Its `img` layer is painted on `--background-primary`, so text does not show through a transparent picture.
+
+**Pan clamp.** `clampPan` now takes a `ZoomWindow`: the study area on screen, in box fractions, measured as each gesture starts. On each axis, a picture larger than the window covers it, so no gap opens; a smaller one stays inside it. The two rules meet where the picture is exactly the window's size, so nothing jumps between them. At fit the picture is its box, which is inside the window. With the window set to the box itself (`BOX`, the default), this is the old clamp exactly.
+- Study tab window: the card's content box (`contentRect(cardEl)`).
+- Note study window: the preview's content box across, with the height cut to the sizer (`readingArea`). A short note's sizer can end above the view's bottom, where the picture would be clipped.
+
+**Rating anchors (Note study).** These stay locked to the shape.
+- `top` is no longer clamped to the picture's box, because a zoomed shape can be drawn outside it. If the shape is panned out of view, its buttons go with it, clipped by the study area. Pan back or double-click to bring them back.
+- `left` is clamped to the zoomed picture's extent, `[zoom-x, zoom-x + zoom·100% − width]`, rather than to the box. At fit that is the old `[0, 100% − width]`.
+- Checked in headless Chromium: with zoom 4 at −150%/−150%, the anchor landed exactly on the shape's projected point.
+
+Decisions:
+- **Clip by an ancestor, not by `overflow-x: hidden` on the study card.** `hidden` stops the user scrolling the card sideways, but it still lets a programmatic scroll through, and it does nothing about the height the zoom adds below. Note study uses `hidden` only because Obsidian's DOM gives no better element to clip with.
+- **The clip rules apply only while a picture is zoomed (`:has`).** A wide table that overflows the card today keeps behaving as it does.
+- **The window is what is on screen, not the whole body.** On a long card the body runs far below the view. Clamping to the body would let a slightly zoomed picture be dragged off screen.
+
+| File | Change |
+|---|---|
+| `src/study/image-zoom.ts` | `ZoomWindow`, `BOX`, `ScreenRect`, `windowIn`; `clampPan`/`zoomAbout`/`panBy`/`pinchState` take a window; `zoomStyle` drops the clip |
+| `src/study/image-zoom.test.ts` | Window clamp, `windowIn`, spill/pinch-in-window tests; clip tests replaced (30 tests) |
+| `src/views/ImageZoom.ts` | Constructor takes `areaOf`; pan/pinch/wheel measure the window; `contentRect` export |
+| `src/views/SequentialStudyView.ts` | `bodyEl` (`.osmosis-study-body`) holds the card's contents; zoom area is the card's content box |
+| `src/views/LineRevealProcessor.ts` | `readingArea(host)` passed to each Note-study `ImageZoom` |
+| `styles.css` | Card is a flex column, with the body rule; the column selectors move to the body; zoom rules drop `clip-path` and gain z-index and a background; study-area clip rules; rating-anchor `left`/`top` |
+
+Fixtures (existing): `vault/tests/flashcard/occlusion-image-width.md` (Engineering › Width, occluded line and fence cards) and `vault/tests/flashcard/study-tab.md` (Testing › Study Tab, "Tall chart", a plain image card).
+
+Verified in headless Chromium against the real `styles.css`, using mock study-tab and reading-view DOM:
+- No sideways or vertical overflow while zoomed.
+- The study body fills the card.
+- The card's scroll height is unchanged from before, clearance included.
+- The strip stays on top.
+- A sideways wheel no longer scrolls Note study.
+
+Not verified: everything in Obsidian itself, on desktop and on a phone, and themes that restyle the reading view's scroller or sizer.
