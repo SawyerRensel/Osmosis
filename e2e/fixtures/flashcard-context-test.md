@@ -1,6 +1,6 @@
 ---
 osmosis-cards: true
-osmosis-deck: tests/sequential-context
+osmosis-deck: tests/flashcard-context
 ---
 
 # Coffee Brewing ^os-schd01

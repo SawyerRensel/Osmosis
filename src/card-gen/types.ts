@@ -15,7 +15,7 @@ export interface GeneratedCard {
 	typeIn: boolean;
 	/** Block ID for line cards (e.g. "os-a1b2c3"). */
 	blockId?: string;
-	/** Excluded from deck totals and sequential study (line-card opt-out). */
+	/** Excluded from deck totals and flashcard study (line-card opt-out). */
 	excludeFromDecks?: boolean;
 	/**
 	 * Suspended: fully out of study, FSRS state preserved. Set by `exclude: true`
@@ -25,7 +25,7 @@ export interface GeneratedCard {
 	disabled?: boolean;
 	/**
 	 * Line cards: contents of up to MAX_CONTEXT_LINES immediately preceding
-	 * sibling lines (document order), shown as front context in sequential study.
+	 * sibling lines (document order), shown as front context in flashcard study.
 	 */
 	contextBefore?: string[];
 	/** Occlusion cards: the image, its masks, and the group being asked. */

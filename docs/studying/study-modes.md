@@ -81,9 +81,10 @@ to the reading/edit toggle; Peek is in the ⋯ menu:
   **Study the deck in flashcard view: {Deck}**, one per deck the note's cards
   belong to (a submenu past five). Study in note view hides only the cards that are
   **due or new**, and asks them one at a time. After each reveal, a rating
-  bubble appears and must be answered before the next card unlocks. A floating
-  pill tracks progress ("4/9 rated") with a **Stop** button, and a toast
-  confirms completion. If nothing is due, the button tells you instead of
+  bubble appears and must be answered before the next card unlocks. A progress
+  bar with **new**, **learn** and **due** counts sits above the note title, as
+  in flashcard study. Click the :lucide-graduation-cap: icon in the note header
+  again to stop; a toast confirms completion. If nothing is due, the button tells you instead of
   starting a session.
 
 ![osmosis_fence_card_in_the_note](../assets/media/osmosis_fence_card_in_the_note.png)

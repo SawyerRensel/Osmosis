@@ -367,7 +367,7 @@ describe("StudySessionManager fence-write staging", () => {
 	// The bug this staging exists for: a fence keeps its schedule inside its own
 	// source, so writing one mid-session rewrites the block reading view is
 	// displaying and scrolls the reader off the card they just answered.
-	it("stages a contextual rating instead of rewriting the note being read", async () => {
+	it("stages a note rating instead of rewriting the note being read", async () => {
 		const { manager, staged, written } = makeManager("note");
 		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
 
@@ -407,7 +407,7 @@ describe("StudySessionManager fence-write staging", () => {
 
 	// An undo that wrote through would be overwritten by the staged rating it
 	// was undoing, the moment that rating flushed.
-	it("stages a contextual undo alongside the rating it reverts", async () => {
+	it("stages a note undo alongside the rating it reverts", async () => {
 		const { manager, staged, written } = makeManager("note");
 		store.addCard(makeCard({ id: "abc12345", notePath: "notes/diagrams.md" }));
 

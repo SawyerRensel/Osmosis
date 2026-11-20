@@ -6,7 +6,7 @@ export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
 
 /**
  * Sidebar dashboard showing deck tree with New/Learn/Due counts.
- * Click a deck to start sequential study. "Study all" button for full collection.
+ * Click a deck to start flashcard study. "Study all" button for full collection.
  */
 export class DashboardSidebarView extends ItemView {
 	plugin!: OsmosisPlugin;

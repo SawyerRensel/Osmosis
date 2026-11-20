@@ -91,7 +91,7 @@ describe("occlusionSteps", () => {
 	describe("when filtering by time", () => {
 		it("keeps only the groups the scheduler would ask now", () => {
 			// One due group out of three is one question, not three — the same rule
-			// spatial study applies when it splits a node.
+			// mind map study applies when it splits a node.
 			const cards = [
 				makeGroupCard("bridge-c1", "c1", { due: NOW - 1000 }),
 				makeGroupCard("bridge-c2", "c2", { due: NOW + 60_000 }),

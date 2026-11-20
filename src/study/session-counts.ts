@@ -1,5 +1,5 @@
 /**
- * Anki-style new | learn | due counts for the sequential study tab and note
+ * Anki-style new | learn | due counts for the flashcard study tab and note
  * study, kept out of `src/views/` so they can be unit-tested without Obsidian.
  *
  * Buckets match the dashboard's deck counts (`CardStore.getCardCountsByDeck`):

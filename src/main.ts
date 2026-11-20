@@ -15,7 +15,7 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
-import { SequentialStudyView, VIEW_TYPE_STUDY } from "./views/SequentialStudyView";
+import { FlashcardStudyView, VIEW_TYPE_STUDY } from "./views/FlashcardStudyView";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
 import { DecksView, VIEW_TYPE_DECKS } from "./views/DecksView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
@@ -23,7 +23,7 @@ import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
 import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
 import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
 import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
-import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { NoteStudyProcessor } from "./views/NoteStudyProcessor";
 import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
 import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
@@ -145,7 +145,7 @@ export default class OsmosisPlugin extends Plugin {
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
 	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
-	contextualStudy!: ContextualStudyProcessor;
+	noteStudy!: NoteStudyProcessor;
 	/**
 	 * Resolves once the startup vault scan has filled the card store.
 	 *
@@ -304,7 +304,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DECKS, (leaf: WorkspaceLeaf) => new DecksView(leaf, this));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
-		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new SequentialStudyView(leaf, this));
+		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new FlashcardStudyView(leaf, this));
 		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
@@ -616,9 +616,9 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
-		// ── Contextual Study Mode ───────────────────────────────
-		this.contextualStudy = new ContextualStudyProcessor(this);
-		this.contextualStudy.register();
+		// ── Note Study Mode ───────────────────────────────
+		this.noteStudy = new NoteStudyProcessor(this);
+		this.noteStudy.register();
 
 		// Progressive line-card reveal in reading view (plan §5)
 		this.lineReveal = new LineRevealProcessor(this);
@@ -952,7 +952,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
-		// ...and any fence schedules a contextual session was still holding, so
+		// ...and any fence schedules a note study session was still holding, so
 		// closing Obsidian mid-session does not lose the reviews it staged
 		void this.fenceWriter.flush();
 		// ...and any buffered review-log entries, so closing Obsidian mid-session
@@ -1323,7 +1323,7 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	/**
-	 * Start a sequential session in the study tab. There is only ever one: an
+	 * Start a flashcard session in the study tab. There is only ever one: an
 	 * open study tab is revealed and rebuilt with the new scope (ending the
 	 * session it held), rather than a second tab stacked beside it. With none
 	 * open, `from.leaf` (a Decks tab) becomes the study tab, or else a new tab.
@@ -1339,11 +1339,11 @@ export default class OsmosisPlugin extends Plugin {
 		let existing: WorkspaceLeaf | undefined = workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
 		if (from?.takeOver && existing && existing !== from.leaf) {
 			// A restored placeholder opens bare, and a bare study tab steps back by itself
-			if (existing.view instanceof SequentialStudyView) await existing.view.leaveStudy();
+			if (existing.view instanceof FlashcardStudyView) await existing.view.leaveStudy();
 			else await existing.loadIfDeferred();
 			existing = undefined;
 		}
-		if (existing?.view instanceof SequentialStudyView) {
+		if (existing?.view instanceof FlashcardStudyView) {
 			existing.view.startSession(scope);
 			await workspace.revealLeaf(existing);
 			return;

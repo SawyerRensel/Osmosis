@@ -256,7 +256,7 @@ describe("DetailAccumulator — true retention", () => {
 
 	it("takes only the first review of a card each day", () => {
 		// Why the dedup survived the maturity filter covering the lapse case:
-		// contextual and spatial study let you answer a card that is not due, so
+		// note and mind map study let you answer a card that is not due, so
 		// a mature card *passed* twice in one day has a mature prior interval on
 		// both answers and would otherwise be counted twice.
 		const stats = window(

@@ -380,7 +380,7 @@ describe("TransclusionResolver", () => {
 			expect(headingC!.type).toBe("heading");
 			expect(headingC!.isTranscluded).toBe(true);
 
-			// Each node is attributed to its immediate origin note — spatial
+			// Each node is attributed to its immediate origin note — mind map
 			// study derives card keys (and rating destinations) from sourceFile
 			expect(headingB.sourceFile).toBe("b.md");
 			expect(headingC!.sourceFile).toBe("c.md");

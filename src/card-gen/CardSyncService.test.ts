@@ -490,7 +490,7 @@ What is 2+2?
 	// A re-sync mid-session (a debounced frontmatter flush rewrites the note)
 	// would otherwise restore the pre-rating schedule from the fence text and
 	// put the card back in the day's due counts.
-	it("prefers a contextual session's staged rating over the stale fence text", async () => {
+	it("prefers a note study session's staged rating over the stale fence text", async () => {
 		const { sync, store } = syncWithStaged(new Map([
 			["abc123", {
 				stability: 12.5,

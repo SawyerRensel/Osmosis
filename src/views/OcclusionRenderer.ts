@@ -7,8 +7,8 @@ import { maskElements, needsAspect, type MaskElement, type OcclusionSide } from 
 /**
  * Draws an occluded image: the picture, with its masks painted on top.
  *
- * Shared by every study surface, so all three mask the same way — sequential
- * today, contextual and spatial in the phase that adds them.
+ * Shared by every study surface, so all three mask the same way — flashcard
+ * today, note and mind map in the phase that adds them.
  *
  * The overlay is an SVG stretched over the image with `viewBox="0 0 1 1"` and
  * `preserveAspectRatio="none"`, which is what makes normalised coordinates pay

@@ -300,13 +300,13 @@ export class StudySessionManager {
 	 * Persist a fence card's new schedule — now, or at the end of the session.
 	 *
 	 * A fence carries its schedule *inside itself*, so writing one during
-	 * contextual study rewrites the very block reading view is displaying: the
+	 * note study rewrites the very block reading view is displaying: the
 	 * section re-renders, the card is rebuilt, and the reader is scrolled off
-	 * the diagram they just answered. Contextual therefore stages the write and
+	 * the diagram they just answered. Note study therefore stages the write and
 	 * flushes it when study stops, exactly as line cards have always done
 	 * through `ScheduleStore`.
 	 *
-	 * Sequential and mind-map study keep writing eagerly. Nothing is displaying
+	 * Flashcard and mind-map study keep writing eagerly. Nothing is displaying
 	 * the note's source there, so there is nothing to disturb, and a review that
 	 * reaches disk the moment it happens is worth more than one that waits.
 	 */
@@ -321,7 +321,7 @@ export class StudySessionManager {
 
 	/**
 	 * Persist a fence card's schedule *removal* — an undone review on a card
-	 * that was new. Staged alongside the ratings in contextual study rather than
+	 * that was new. Staged alongside the ratings in note study rather than
 	 * written through: a removal that jumped the queue would be overwritten by
 	 * the staged rating it was undoing when that finally flushed.
 	 */

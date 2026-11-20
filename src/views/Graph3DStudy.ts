@@ -36,7 +36,7 @@ import { nodeCardKey, nodeStep, studyNode, studyTargets, targetNodeFor } from ".
 import { parseTrail } from "../graph3d/trail-note";
 import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, trailSteps, type RouteStop, type TrailStep } from "../graph3d/trails";
 import type OsmosisPlugin from "../main";
-import { cardIdsForSpatialKey } from "../study/spatial-study";
+import { cardIdsForMindmapKey } from "../study/mindmap-study";
 import type { StudySessionManager } from "../study/StudySessionManager";
 
 /** What the session needs from the view. */
@@ -241,8 +241,8 @@ export class Graph3DStudy {
 		const elapsedMs = Date.now() - this.revealedAt;
 		this.rated.add(key);
 		this.reviewed++;
-		// One card per key (`spatialStudyKeys` splits a node into its due cards); looked up the way 2D study does.
-		const ids = cardIdsForSpatialKey(this.allCards, key);
+		// One card per key (`mindmapStudyKeys` splits a node into its due cards); looked up the way 2D study does.
+		const ids = cardIdsForMindmapKey(this.allCards, key);
 		this.session ??= this.plugin.createSessionManager("cosmos");
 		for (const id of ids) await this.session.recordReview(id, rating, { elapsedMs });
 		if (ids.length > 0) this.plugin.refreshDashboard();
@@ -446,7 +446,7 @@ export class Graph3DStudy {
 		}
 		const row = panel.createDiv({ cls: "osmosis-graph3d-study-actions" });
 		if (step?.revealed === true) {
-			const rating = row.createDiv({ cls: "osmosis-contextual-rating osmosis-graph3d-study-rating" });
+			const rating = row.createDiv({ cls: "osmosis-rating osmosis-graph3d-study-rating" });
 			for (const { label, rating: value, cls } of RATINGS) {
 				rating.createEl("button", { text: label, cls }).addEventListener("click", () => void this.rate(value));
 			}

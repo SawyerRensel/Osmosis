@@ -119,20 +119,20 @@ export interface Card {
 	/** Block ID for line cards (e.g. "os-a1b2c3") — routes schedule writes to frontmatter. */
 	blockId?: string;
 	/**
-	 * Excluded from deck totals and the sequential study queue (line-card
+	 * Excluded from deck totals and the flashcard study queue (line-card
 	 * opt-out). The card stays in the store for in-place study modes.
 	 */
 	excludeFromDecks?: boolean;
 	/**
 	 * Disabled (line-card "exclude"): fully out of study — not hidden by peek
-	 * or study in either surface, skipped by the sequential queue, and dropped
+	 * or study in either surface, skipped by the flashcard queue, and dropped
 	 * from dashboard counts. FSRS schedule is preserved so enabling restores
 	 * history. Stored as `disabled: true` on the card's osmosis-schedule entry.
 	 */
 	disabled?: boolean;
 	/**
 	 * Line cards: contents of the immediately preceding sibling lines
-	 * (document order), rendered as front context in sequential study.
+	 * (document order), rendered as front context in flashcard study.
 	 */
 	contextBefore?: string[];
 	/** Occlusion cards: the image, its masks, and the group being asked. */

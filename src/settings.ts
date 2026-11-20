@@ -111,7 +111,7 @@ export interface OsmosisSettings {
 	learningSteps: string;
 	/** Relearning steps for lapsed cards (e.g., "10m"). */
 	relearningSteps: string;
-	/** Whether line cards count in deck totals and sequential study (default: true). */
+	/** Whether line cards count in deck totals and flashcard study (default: true). */
 	includeLineCardsInDecks: boolean;
 
 	// ── Review Log ──────────────────────────────────────────

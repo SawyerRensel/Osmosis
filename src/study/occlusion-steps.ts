@@ -7,8 +7,8 @@ import { groupNumber, occlusionGroups } from "../card-gen/occlusion";
  * Reading view has two jobs on the same diagram, and they are not the same job.
  * *Peek* is a reader looking at a picture: every group is a blank at once, no
  * group is singled out, and nothing is recorded — that is what `all-hidden` and
- * `all-revealed` are for. *Study* is a card player, exactly as sequential and
- * spatial are: it has a target, a rating, and a completion count, so it steps
+ * `all-revealed` are for. *Study* is a card player, exactly as flashcard and
+ * mind map study are: it has a target, a rating, and a completion count, so it steps
  * through the groups one at a time and each step moves one card's schedule.
  *
  * This module is the sequence, kept pure so both note surfaces derive it the
@@ -33,7 +33,7 @@ export interface OcclusionStep {
  * diagram by diagram, because group labels are allocated per carrier — a fence's
  * second diagram starts where its first left off — so group order already is
  * document order, and `c2` never precedes `c10`'s predecessor by source accident.
- * `spatialStudyKeys` orders its split node the same way.
+ * `mindmapStudyKeys` orders its split node the same way.
  *
  * `now` is epoch ms to keep only the groups the scheduler would ask, or null to
  * take every group. Study passes a time — a diagram with one due group out of

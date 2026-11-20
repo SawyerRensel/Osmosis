@@ -8,7 +8,7 @@ import type { StudySessionManager } from "../study/StudySessionManager";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
-import { dueCardsForFenceKey } from "../study/spatial-study";
+import { dueCardsForFenceKey } from "../study/mindmap-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 
 /**
@@ -29,8 +29,8 @@ interface ParsedFence {
 	occlusions?: CardOcclusion[];
 }
 
-/** An undo entry for contextual review. */
-interface ContextualUndoEntry {
+/** An undo entry for note review. */
+interface NoteUndoEntry {
 	type: "rate" | "exclude";
 	cardId: string;
 	sourcePath: string;
@@ -45,13 +45,13 @@ interface ContextualUndoEntry {
 }
 
 /**
- * Contextual study mode: renders `osmosis` code blocks in reading view
+ * Note study mode: renders `osmosis` code blocks in reading view
  * with hidden answers that can be revealed on click. Optional FSRS rating
  * when "Start studying" is active.
  *
  * Registered via registerMarkdownCodeBlockProcessor in main.ts.
  */
-export class ContextualStudyProcessor {
+export class NoteStudyProcessor {
 	private studyActive = false;
 	private reviewedCount = 0;
 	private totalCards = 0;
@@ -61,8 +61,8 @@ export class ContextualStudyProcessor {
 
 	/** Track cards whose answers have been revealed this session to survive re-renders. */
 	private readonly revealedCardIds = new Set<string>();
-	/** Undo stack for contextual review actions. */
-	private readonly undoStack: ContextualUndoEntry[] = [];
+	/** Undo stack for note review actions. */
+	private readonly undoStack: NoteUndoEntry[] = [];
 	/**
 	 * How many of its questions each fence has been asked, by fence ID — shape
 	 * groups for an occluded fence, derived cards for every other kind.
@@ -130,12 +130,12 @@ export class ContextualStudyProcessor {
 	register(): void {
 		this.renderComponent.load();
 
-		// Register Ctrl+Z for undo in contextual mode
+		// Register Ctrl+Z for undo in note study
 		this.plugin.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
 			if ((e.ctrlKey || e.metaKey) && e.key === "z" && this.undoStack.length > 0) {
 				// Only handle if we're in reading view with osmosis cards
 				const target = e.target as HTMLElement;
-				if (target.closest(".osmosis-contextual-card") || target.closest(".markdown-reading-view")) {
+				if (target.closest(".osmosis-note-card") || target.closest(".markdown-reading-view")) {
 					e.preventDefault();
 					void this.undo();
 				}
@@ -276,7 +276,7 @@ export class ContextualStudyProcessor {
 	 * **Stepping happens inside a session and nowhere else.** A fence the running
 	 * session picked out asks its cards one at a time — a cloze group, then the
 	 * next; a bidirectional pair forwards, then backwards — each with its own
-	 * reveal and its own rating, exactly as sequential and spatial ask them.
+	 * reveal and its own rating, exactly as flashcard and mind map ask them.
 	 * Every other fence renders as what its source says: both sides, in order,
 	 * exactly as live preview draws it. That covers ordinary reading, peek, a
 	 * fence nothing is due on, an excluded one, and one the store has never seen.
@@ -305,26 +305,26 @@ export class ContextualStudyProcessor {
 
 		this.totalCards += Math.max(this.fenceStepPlan(parsed, sourcePath).length, 1);
 
-		const container = el.createDiv({ cls: "osmosis-contextual-card" });
+		const container = el.createDiv({ cls: "osmosis-note-card" });
 		if (parsed.exclude) {
-			container.addClass("osmosis-contextual-excluded");
+			container.addClass("osmosis-note-excluded");
 		}
 
-		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
+		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Back: hidden placeholder + revealed content
 		const backEl = container.createDiv();
 		const hiddenEl = backEl.createDiv({
-			cls: "osmosis-contextual-hidden",
+			cls: "osmosis-note-hidden",
 			text: "░░░░░░",
 		});
-		const revealedEl = backEl.createDiv({ cls: "osmosis-contextual-revealed" });
+		const revealedEl = backEl.createDiv({ cls: "osmosis-note-revealed" });
 
 		// Bottom row: undo (far left) + step counter + rating area + exclude toggle.
 		// Rebuilt on every draw, because which of them belong there changes with the
 		// step; it holds no picture, so its height cannot move what is being read.
-		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -370,16 +370,16 @@ export class ContextualStudyProcessor {
 			bottomRow.empty();
 			this.addUndoButton(bottomRow);
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 1) {
 				// Only when there is a sequence to be somewhere in. "1/1" on a basic
 				// fence would say nothing the card does not already show.
 				bottomRow.createSpan({
-					cls: "osmosis-contextual-step",
+					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
+			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
 			if (revealed && step !== null) {
 				this.showRating(ratingSlot, step.id, parsed.cardId, sourcePath, advance);
 			}
@@ -438,7 +438,7 @@ export class ContextualStudyProcessor {
 	/** The undo affordance, present but invisible until there is something to undo. */
 	private addUndoButton(row: HTMLElement): void {
 		const undoBtn = row.createDiv({
-			cls: `osmosis-contextual-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
+			cls: `osmosis-note-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
 		});
 		setIcon(undoBtn, "undo-2");
 		undoBtn.setAttribute("aria-label", "Undo (Ctrl+Z)");
@@ -490,7 +490,7 @@ export class ContextualStudyProcessor {
 	 * to answer.
 	 *
 	 * Filtered by time, so a diagram with one due group out of three is one
-	 * question rather than three — the same rule spatial study applies to a node.
+	 * question rather than three — the same rule mind map study applies to a node.
 	 * Worked out once and kept, for the reason `occlusionPlan` explains.
 	 */
 	private stepPlan(parsed: ParsedFence, sourcePath: string): readonly OcclusionStep[] {
@@ -526,7 +526,7 @@ export class ContextualStudyProcessor {
 	 * the line surface has always done, and why it never had the jump.
 	 *
 	 * In study the fence steps through its shape groups one at a time, each with
-	 * its own reveal and its own rating, exactly as sequential and spatial do.
+	 * its own reveal and its own rating, exactly as flashcard and mind map do.
 	 * Outside study — peek, or ordinary reading — every group is blanked at once,
 	 * none is singled out, and there is no rating: the reader is looking at a
 	 * picture, not answering one of the questions it carries.
@@ -540,8 +540,8 @@ export class ContextualStudyProcessor {
 		const occlusions = parsed.occlusions ?? [];
 		this.totalCards += Math.max(this.stepPlan(parsed, sourcePath).length, 1);
 
-		const container = el.createDiv({ cls: "osmosis-contextual-card" });
-		if (parsed.exclude) container.addClass("osmosis-contextual-excluded");
+		const container = el.createDiv({ cls: "osmosis-note-card" });
+		if (parsed.exclude) container.addClass("osmosis-note-excluded");
 
 		// Drawn once and never swapped. An occluded fence's two sides are the *same*
 		// markdown — `parseFenceContent` hands the prose to both — because the
@@ -576,8 +576,8 @@ export class ContextualStudyProcessor {
 			return slot;
 		});
 
-		const hiddenEl = container.createDiv({ cls: "osmosis-contextual-hidden", text: "░░░░░░" });
-		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		const hiddenEl = container.createDiv({ cls: "osmosis-note-hidden", text: "░░░░░░" });
+		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -615,7 +615,7 @@ export class ContextualStudyProcessor {
 				} else {
 					// Another diagram's groups belong to other cards. Covering them
 					// would pose a question this card never answers, so it stays
-					// unmasked — sequential draws a card's siblings the same way.
+					// unmasked — flashcard study draws a card's siblings the same way.
 					repaintOcclusion(slot, occlusion, "none");
 				}
 			});
@@ -632,18 +632,18 @@ export class ContextualStudyProcessor {
 			// the diagram, so its height changes cannot move what is being read.
 			bottomRow.empty();
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-contextual-rated" });
+				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 0) {
 				bottomRow.createSpan({
-					cls: "osmosis-contextual-step",
+					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-contextual-rating-slot" });
+			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
 			if (revealed && step?.cardId != null) {
 				// Floated under the group just revealed, so a tall diagram does
 				// not put its answer and its rating a scroll apart; a scattered
-				// group keeps the row. Note view only: sequential keeps its fixed
+				// group keeps the row. Note view only: flashcard study keeps its fixed
 				// bar by choice.
 				const slot = slots[step.diagram];
 				const occlusion = occlusions[step.diagram];
@@ -688,7 +688,7 @@ export class ContextualStudyProcessor {
 
 	/** The eye toggle that takes a fence in or out of the deck. */
 	private addExcludeToggle(row: HTMLElement, parsed: ParsedFence, sourcePath: string): void {
-		const toggleIcon = row.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
+		const toggleIcon = row.createDiv({ cls: "osmosis-note-exclude-toggle" });
 		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
 		toggleIcon.setAttribute(
 			"aria-label",
@@ -871,7 +871,7 @@ export class ContextualStudyProcessor {
 			return;
 		}
 
-		const container = el.createDiv({ cls: "osmosis-contextual-card osmosis-contextual-draft" });
+		const container = el.createDiv({ cls: "osmosis-note-card osmosis-note-draft" });
 		void MarkdownRenderer.render(
 			this.plugin.app,
 			body,
@@ -889,27 +889,27 @@ export class ContextualStudyProcessor {
 			return;
 		}
 
-		const container = el.createDiv({ cls: "osmosis-contextual-card" });
+		const container = el.createDiv({ cls: "osmosis-note-card" });
 
 		if (parsed.exclude) {
-			container.addClass("osmosis-contextual-excluded");
+			container.addClass("osmosis-note-excluded");
 		}
 
 		// Render front
-		const frontEl = container.createDiv({ cls: "osmosis-contextual-front" });
+		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		this.renderSide(parsed, "front", frontEl, sourcePath);
 
 		// Separator
 		container.createDiv({ cls: "osmosis-study-divider" });
 
 		// Render back (fully visible, no hiding)
-		const backEl = container.createDiv({ cls: "osmosis-contextual-revealed" });
+		const backEl = container.createDiv({ cls: "osmosis-note-revealed" });
 		this.renderSide(parsed, "back", backEl, sourcePath);
 
 		// Bottom row with exclude toggle (bottom-right)
-		const bottomRow = container.createDiv({ cls: "osmosis-contextual-bottom" });
+		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
 		bottomRow.createDiv(); // spacer
-		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-contextual-exclude-toggle" });
+		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-note-exclude-toggle" });
 		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
 		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
 		toggleIcon.addEventListener("click", (e) => {
@@ -935,8 +935,8 @@ export class ContextualStudyProcessor {
 		sourcePath: string,
 		onRated?: () => void,
 	): void {
-		const ratingEl = container.createDiv({ cls: "osmosis-contextual-rating" });
-		// The answer just went on screen. A contextual card has no separate
+		const ratingEl = container.createDiv({ cls: "osmosis-rating" });
+		// The answer just went on screen. A note card has no separate
 		// "question shown" moment — it lives inline in the note — so the reveal
 		// is the anchor for the review log's elapsed time.
 		const revealedAt = Date.now();
@@ -969,7 +969,7 @@ export class ContextualStudyProcessor {
 					: null;
 
 				ratingEl.empty();
-				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-contextual-rated" });
+				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-note-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
 				// The session's progress strip lives in LineRevealProcessor, which
@@ -992,7 +992,7 @@ export class ContextualStudyProcessor {
 	}
 
 	private async recordRating(cardId: string, rating: FSRSRating, elapsedMs: number): Promise<void> {
-		// Ensure the card exists in the store (contextual cards use hash-based IDs)
+		// Ensure the card exists in the store (note cards use hash-based IDs)
 		if (!this.plugin.cardStore.getCard(cardId)) {
 			// Card not in store — skip rating (card was generated inline, not from sync)
 			return;
@@ -1019,7 +1019,7 @@ export class ContextualStudyProcessor {
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
 	}
 
-	/** Undo the last action (rating or exclude). Triggers a file re-render for contextual cards. */
+	/** Undo the last action (rating or exclude). Triggers a file re-render for note cards. */
 	private async undo(): Promise<void> {
 		const entry = this.undoStack.pop();
 		if (!entry) return;
@@ -1128,7 +1128,7 @@ export class ContextualStudyProcessor {
 
 		// Check for code cloze (osmosis-cloze inside inner code fences)
 		if (content.includes("osmosis-cloze")) {
-			const { front, back } = ContextualStudyProcessor.buildCodeClozeFrontBack(contentLines);
+			const { front, back } = NoteStudyProcessor.buildCodeClozeFrontBack(contentLines);
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`code-cloze|||${content}`);
 			return { front, back, cardId, exclude, isCloze: true };
 		}
@@ -1137,12 +1137,12 @@ export class ContextualStudyProcessor {
 		const hasInlineCloze = contentLines.some((l) => /:::(?:c\d+:)?(.+?):::/.test(l));
 		const hasInnerFence = contentLines.some((l) => /^```\w/.test(l.trim()));
 		if (hasInlineCloze && hasInnerFence) {
-			const { front, back } = ContextualStudyProcessor.buildInlineClozeFrontBack(contentLines);
+			const { front, back } = NoteStudyProcessor.buildInlineClozeFrontBack(contentLines);
 			const cardId = this.extractIdFromSource(source) ?? this.hashContent(`inline-cloze|||${content}`);
 			return { front, back, cardId, exclude, isCloze: true };
 		}
 
-		const clozeMatches = [...content.matchAll(ContextualStudyProcessor.CLOZE_REGEX)];
+		const clozeMatches = [...content.matchAll(NoteStudyProcessor.CLOZE_REGEX)];
 		if (clozeMatches.length === 0) return null;
 
 		// Front: all clozes replaced with CLOZE_BLANK.
@@ -1151,10 +1151,10 @@ export class ContextualStudyProcessor {
 		// and any `cN:` group prefix is stripped from all three forms.
 		// A coloured `==` cloze blanks, and reads back, in its colour; its emoji is
 		// not part of the answer.
-		const front = content.replace(ContextualStudyProcessor.CLOZE_REGEX, (full: string) =>
+		const front = content.replace(NoteStudyProcessor.CLOZE_REGEX, (full: string) =>
 			colourBlank(CLOZE_BLANK, full.startsWith("==") ? parseHighlightToken(full).colour : null));
 		const back = content.replace(
-			ContextualStudyProcessor.CLOZE_REGEX,
+			NoteStudyProcessor.CLOZE_REGEX,
 			(full: string, eq?: string, bold?: string, plain?: string) => {
 				if (eq !== undefined) return colourAnswer(full);
 				if (bold !== undefined) return `**${bold}**`;
@@ -1166,7 +1166,7 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Build front/back for code cloze in contextual mode.
+	 * Build front/back for code cloze in note study.
 	 * Front: all cloze regions blanked. Back: all markers stripped.
 	 * Inline cloze markers on non-blanked lines are stripped to plain text.
 	 */
@@ -1195,14 +1195,14 @@ export class ContextualStudyProcessor {
 					frontLines.push(`${indent}${CLOZE_BLANK}`);
 					multiFirstSeen = true;
 				}
-				backLines.push(ContextualStudyProcessor.stripInline(line));
+				backLines.push(NoteStudyProcessor.stripInline(line));
 			} else if (line.includes("osmosis-cloze")) {
 				// Single-line cloze
 				const indent = line.match(/^(\s*)/)?.[1] ?? "";
 				frontLines.push(`${indent}${CLOZE_BLANK}`);
-				backLines.push(ContextualStudyProcessor.stripInline(line.replace(MARKER_COMMENT, "")));
+				backLines.push(NoteStudyProcessor.stripInline(line.replace(MARKER_COMMENT, "")));
 			} else {
-				const stripped = ContextualStudyProcessor.stripInline(line);
+				const stripped = NoteStudyProcessor.stripInline(line);
 				frontLines.push(stripped);
 				backLines.push(stripped);
 			}
@@ -1212,7 +1212,7 @@ export class ContextualStudyProcessor {
 	}
 
 	/**
-	 * Build front/back for inline code cloze in contextual mode.
+	 * Build front/back for inline code cloze in note study.
 	 * Front: all :::...::: markers replaced with CLOZE_BLANK.
 	 * Back: all markers stripped to plain text.
 	 */

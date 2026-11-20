@@ -1216,7 +1216,7 @@ hr.osmosis-map-style-divider {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Sequential Study Tab (SequentialStudyView)
+   Flashcard Study Tab (FlashcardStudyView)
    ═══════════════════════════════════════════════════════════ */
 
 /* A flex column filling the leaf: the card as the only row that scrolls, with
@@ -1311,7 +1311,7 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	display: none;
 }
 
-/* In the sequential study modal, code blocks sit flush with the card so the
+/* In the flashcard study tab, code blocks sit flush with the card so the
    inline language label would otherwise overlap the first line of code.
    Reserve just enough room for the label by reducing the top padding of
    <pre> and giving the inner <code> a small top margin. */
@@ -1870,7 +1870,7 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
 	font-size: var(--font-ui-medium);
 }
 
-.osmosis-contextual-undo {
+.osmosis-note-undo {
 	padding: 4px;
 	border-radius: 4px;
 	cursor: pointer;
@@ -1879,13 +1879,13 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
 	align-items: center;
 }
 
-.osmosis-contextual-undo:hover {
+.osmosis-note-undo:hover {
 	color: var(--text-normal);
 	background: var(--background-modifier-hover);
 }
 
 /* Obsidian's own button colours, in the rating buttons' shape and type
-   (`.osmosis-contextual-rating button`). Two classes, to outrank Obsidian's
+   (`.osmosis-rating button`). Two classes, to outrank Obsidian's
    `button:not(.clickable-icon)` radius; no `display` here, or it would outrank
    `.osmosis-hidden` too. */
 .osmosis-study-actions .osmosis-study-flip {
@@ -1897,7 +1897,7 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
 	font-weight: 500;
 }
 
-/* The shared rating row (`.osmosis-contextual-rating`, as in note view, the mind
+/* The shared rating row (`.osmosis-rating`, as in note view, the mind
    map and the 3D graph) supplies the buttons' shape, type and colours. The tab
    adds the panel's height and stacks the interval each would schedule over its
    label. Two classes, to outrank the shared row's margin; no `display` here,
@@ -1942,29 +1942,29 @@ body.is-phone .osmosis-study-rating-bar {
    mind map, 3D graph, occlusion anchor) reads the same four colours. Easy takes
    the accent, so it follows the user's accent colour; Good is Obsidian's blue,
    with a fixed hsl only if a theme drops the variable. */
-.osmosis-contextual-rating {
+.osmosis-rating {
 	--osmosis-rate-again: hsl(0, 65%, 50%);
 	--osmosis-rate-hard: hsl(30, 65%, 50%);
 	--osmosis-rate-good: var(--color-blue, hsl(212, 90%, 44%));
 	--osmosis-rate-easy: var(--interactive-accent);
 }
 
-.osmosis-contextual-rating button.osmosis-rate-again {
+.osmosis-rating button.osmosis-rate-again {
 	background: var(--osmosis-rate-again);
 	color: white;
 }
 
-.osmosis-contextual-rating button.osmosis-rate-hard {
+.osmosis-rating button.osmosis-rate-hard {
 	background: var(--osmosis-rate-hard);
 	color: white;
 }
 
-.osmosis-contextual-rating button.osmosis-rate-good {
+.osmosis-rating button.osmosis-rate-good {
 	background: var(--osmosis-rate-good);
 	color: white;
 }
 
-.osmosis-contextual-rating button.osmosis-rate-easy {
+.osmosis-rating button.osmosis-rate-easy {
 	background: var(--osmosis-rate-easy);
 	color: var(--text-on-accent);
 }
@@ -2279,7 +2279,7 @@ body.is-phone .osmosis-decks-column {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Contextual Study (Reading View)
+   Note Study (Reading View)
    ═══════════════════════════════════════════════════════════ */
 
 /* A fence holding the height it last rendered to, for the frame between Obsidian
@@ -2292,35 +2292,35 @@ body.is-phone .osmosis-decks-column {
 	min-height: var(--osmosis-fence-height, 0);
 }
 
-.osmosis-contextual-card {
+.osmosis-note-card {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
 	padding: 12px;
 	margin: 8px 0;
 }
 
-.osmosis-contextual-hidden {
+.osmosis-note-hidden {
 	color: var(--text-faint);
 	letter-spacing: 2px;
 	cursor: pointer;
 	user-select: none;
 }
 
-.osmosis-contextual-hidden:hover {
+.osmosis-note-hidden:hover {
 	color: var(--text-muted);
 }
 
-.osmosis-contextual-revealed {
+.osmosis-note-revealed {
 	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-contextual-rating {
+.osmosis-rating {
 	display: flex;
 	gap: 6px;
 	margin-top: 8px;
 }
 
-.osmosis-contextual-rating button {
+.osmosis-rating button {
 	padding: 4px 10px;
 	border: none;
 	border-radius: 4px;
@@ -2329,7 +2329,7 @@ body.is-phone .osmosis-decks-column {
 	font-weight: 500;
 }
 
-.osmosis-contextual-start-btn {
+.osmosis-note-start-btn {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -2343,17 +2343,17 @@ body.is-phone .osmosis-decks-column {
 	font-size: var(--font-ui-small);
 }
 
-.osmosis-contextual-start-btn:hover {
+.osmosis-note-start-btn:hover {
 	background: var(--background-modifier-hover);
 }
 
-.osmosis-contextual-start-btn.is-active {
+.osmosis-note-start-btn.is-active {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 	border-color: var(--interactive-accent);
 }
 
-.osmosis-contextual-progress {
+.osmosis-note-progress {
 	position: fixed;
 	bottom: 16px;
 	right: 16px;
@@ -2416,16 +2416,16 @@ body.is-phone .osmosis-decks-column {
 	animation: osmosis-fade-in 0.2s;
 }
 
-/* ─── Exclude Toggle (Contextual Cards) ──────────────────── */
+/* ─── Exclude Toggle (Note Cards) ──────────────────── */
 
-.osmosis-contextual-bottom {
+.osmosis-note-bottom {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
 	margin-top: 4px;
 }
 
-.osmosis-contextual-rating-slot {
+.osmosis-note-rating-slot {
 	flex: 1;
 }
 
@@ -2435,7 +2435,7 @@ body.is-phone .osmosis-decks-column {
    left. Sits where the undo button does on an ordinary card; a stepped card has
    none, since undoing one group's rating mid-sequence has nowhere to put the
    user back. */
-.osmosis-contextual-step {
+.osmosis-note-step {
 	color: var(--text-faint);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
@@ -2443,7 +2443,7 @@ body.is-phone .osmosis-decks-column {
 	margin-right: 8px;
 }
 
-.osmosis-contextual-exclude-toggle {
+.osmosis-note-exclude-toggle {
 	cursor: pointer;
 	color: var(--text-muted);
 	opacity: 0.4;
@@ -2451,16 +2451,16 @@ body.is-phone .osmosis-decks-column {
 	flex-shrink: 0;
 }
 
-.osmosis-contextual-exclude-toggle:hover {
+.osmosis-note-exclude-toggle:hover {
 	opacity: 1;
 	color: var(--text-normal);
 }
 
-.osmosis-contextual-excluded {
+.osmosis-note-excluded {
 	opacity: 0.45;
 }
 
-.osmosis-contextual-excluded .osmosis-contextual-exclude-toggle {
+.osmosis-note-excluded .osmosis-note-exclude-toggle {
 	opacity: 0.8;
 	color: var(--text-error);
 }
@@ -2471,7 +2471,7 @@ body.is-phone .osmosis-decks-column {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Spatial Study (Mind Map)
+   Mind Map Study
    ═══════════════════════════════════════════════════════════ */
 
 /* Mind map study's progress strip (T110): the study tab's pinned bar and
@@ -2483,15 +2483,15 @@ body.is-phone .osmosis-decks-column {
 	--osmosis-study-column: none;
 }
 
-.osmosis-spatial-hidden .osmosis-node-content {
+.osmosis-mindmap-study-hidden .osmosis-node-content {
 	visibility: hidden;
 }
 
-.osmosis-spatial-hidden .osmosis-node {
+.osmosis-mindmap-study-hidden .osmosis-node {
 	opacity: 0.5;
 }
 
-.osmosis-spatial-placeholder {
+.osmosis-mindmap-study-placeholder {
 	fill: var(--text-faint);
 	font-size: 18px;
 	text-anchor: middle;
@@ -2499,17 +2499,17 @@ body.is-phone .osmosis-decks-column {
 	pointer-events: none;
 }
 
-.osmosis-spatial-revealed .osmosis-node-content {
+.osmosis-mindmap-study-revealed .osmosis-node-content {
 	animation: osmosis-fade-in 0.2s;
 }
 
 /* Rating bubble anchored below a just-revealed node. Button colors come
-   from .osmosis-contextual-rating (shared with contextual study). */
-.osmosis-spatial-rating-fo {
+   from .osmosis-rating (shared with note study). */
+.osmosis-mindmap-study-rating-fo {
 	overflow: visible;
 }
 
-.osmosis-spatial-rating {
+.osmosis-mindmap-study-rating {
 	justify-content: center;
 	margin-top: 0;
 	animation: osmosis-fade-in 0.2s;
@@ -2531,7 +2531,7 @@ body.is-phone .osmosis-decks-column {
    picture. `left` centres them on the group and clamps them inside the image;
    on an image narrower than the buttons it pins them to the image's left edge
    and lets them run past the right, which the surrounding surface has room for.
-   Button colours come from .osmosis-contextual-rating. */
+   Button colours come from .osmosis-rating. */
 .osmosis-occlusion-rating-anchor {
 	--osmosis-anchor-width: 240px;
 	position: absolute;
@@ -2561,7 +2561,7 @@ body.is-phone .osmosis-decks-column {
 	transform: translateY(-100%);
 }
 
-.osmosis-occlusion-rating-anchor > .osmosis-contextual-rating {
+.osmosis-occlusion-rating-anchor > .osmosis-rating {
 	margin: 0;
 	padding: 4px;
 	border-radius: 6px;
@@ -2570,7 +2570,7 @@ body.is-phone .osmosis-decks-column {
 	animation: osmosis-fade-in 0.2s;
 }
 
-.osmosis-occlusion-rating-anchor > .osmosis-contextual-rating button {
+.osmosis-occlusion-rating-anchor > .osmosis-rating button {
 	flex: 1;
 }
 
@@ -4229,7 +4229,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 /*
  * Relational study panel (Graph3DStudy.ts): bottom centre, clear of the corner
  * controls and of Obsidian's mobile toolbar when it is shown. Rating colours come
- * from .osmosis-contextual-rating. Its rows are flex rows of thumb-sized buttons,
+ * from .osmosis-rating. Its rows are flex rows of thumb-sized buttons,
  * so a later control (a path mode selector) is one more row.
  */
 .osmosis-graph3d-study {

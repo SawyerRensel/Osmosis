@@ -10,7 +10,7 @@
 
 import { lineCardId } from "../card-gen/line-cards";
 import type { Card } from "../database/types";
-import { dueOrNewFenceCardKeys, dueOrNewLineCardIds, spatialStudyKeys } from "../study/spatial-study";
+import { dueOrNewFenceCardKeys, dueOrNewLineCardIds, mindmapStudyKeys } from "../study/mindmap-study";
 import type { GraphNode } from "./model";
 import { nodeCardKey } from "./study";
 import type { TrailStop } from "./trail-note";
@@ -20,7 +20,7 @@ export interface RouteStop {
 	key: string;
 	/** The note the card lives in: where the camera has to land. */
 	path: string;
-	/** The due cards the node asks, in ask order (`spatialStudyKeys`). */
+	/** The due cards the node asks, in ask order (`mindmapStudyKeys`). */
 	keys: string[];
 	/** When the stop's earliest card came due; `now` for a new card, which is overdue by nothing. */
 	due: number;
@@ -44,7 +44,7 @@ export function routeStops(cards: readonly Card[], now: number): RouteStop[] {
 		const byId = new Map(noteCards.map((card) => [card.id, card]));
 		const nodeKeys = new Set([...dueOrNewLineCardIds(noteCards, now), ...dueOrNewFenceCardKeys(noteCards, now)]);
 		for (const key of nodeKeys) {
-			const keys = spatialStudyKeys(noteCards, key, now).filter((id) => byId.has(id));
+			const keys = mindmapStudyKeys(noteCards, key, now).filter((id) => byId.has(id));
 			if (keys.length === 0) continue;
 			const asked = keys.map((id) => byId.get(id)!);
 			stops.push({

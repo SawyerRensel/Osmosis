@@ -1,5 +1,5 @@
 /**
- * Pure queue arithmetic for sequential-study undo.
+ * Pure queue arithmetic for flashcard-study undo.
  *
  * Rating or excluding a card advances `currentIndex` but leaves the card in
  * `queue` at `currentIndex - 1`, so stepping back is just a decrement: the

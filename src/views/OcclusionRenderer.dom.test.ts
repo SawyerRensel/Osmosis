@@ -238,7 +238,7 @@ describe("renderOcclusion annotations", () => {
 });
 
 /**
- * The note views: contextual study, a mind-map node, peek on a line. Nobody is
+ * The note views: note study, a mind-map node, peek on a line. Nobody is
  * answering one of the diagram's questions there, so every group is a blank at
  * once and the mode has nothing to say.
  */

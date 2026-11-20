@@ -6,7 +6,7 @@ import {
 	allLineCardIds,
 	cardIdsForFenceKey,
 	cardIdsForLineKey,
-	cardIdsForSpatialKey,
+	cardIdsForMindmapKey,
 	cardsForFenceKey,
 	collectSubtreeCardKeys,
 	dueCardsForFenceKey,
@@ -16,10 +16,10 @@ import {
 	fenceKey,
 	fenceKeyFromNode,
 	occlusionForLineKey,
-	spatialSessionCards,
-	spatialStudyKeys,
-	type SpatialNodeLike,
-} from "./spatial-study";
+	mindmapSessionCards,
+	mindmapStudyKeys,
+	type MindmapNodeLike,
+} from "./mindmap-study";
 import { countNoteSession } from "./session-counts";
 import type { FSRSRating } from "../database/FSRSScheduler";
 
@@ -209,9 +209,9 @@ describe("collectSubtreeCardKeys", () => {
 
 	const node = (
 		blockId: string | undefined,
-		children: SpatialNodeLike[] = [],
+		children: MindmapNodeLike[] = [],
 		transcluded?: { sourceFile?: string },
-	): SpatialNodeLike => ({
+	): MindmapNodeLike => ({
 		source: {
 			...(blockId !== undefined ? { blockId } : {}),
 			isTranscluded: transcluded !== undefined,
@@ -281,7 +281,7 @@ describe("collectSubtreeCardKeys", () => {
 });
 
 /**
- * Fence cards as spatial targets. A fence is one node but often several cards,
+ * Fence cards as mind map targets. A fence is one node but often several cards,
  * so — exactly like a line — the node keys on the fence and the key maps back
  * to every card it derived.
  */
@@ -442,13 +442,13 @@ function occlusionFor(group: string, image = "bridge.svg") {
 	};
 }
 
-describe("spatialStudyKeys", () => {
+describe("mindmapStudyKeys", () => {
 	it("splits an occlusion fence node into one key per due shape group", () => {
 		const cards = [
 			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
 			makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
 	});
 
 	it("splits an occluded line node the same way, keyed on the line", () => {
@@ -466,7 +466,7 @@ describe("spatialStudyKeys", () => {
 				occlusion: occlusionFor("c2"),
 			}),
 		];
-		expect(spatialStudyKeys(cards, "tests/espresso.md#^os-diag01", NOW)).toEqual([
+		expect(mindmapStudyKeys(cards, "tests/espresso.md#^os-diag01", NOW)).toEqual([
 			"tests/espresso.md#^os-diag01/c1",
 			"tests/espresso.md#^os-diag01/c2",
 		]);
@@ -477,7 +477,7 @@ describe("spatialStudyKeys", () => {
 			makeCard({ id: "bridge-c10", cardType: "occlusion", occlusion: occlusionFor("c10") }),
 			makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c2", "bridge-c10"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c2", "bridge-c10"]);
 	});
 
 	it("asks only the groups the scheduler would ask now", () => {
@@ -490,15 +490,15 @@ describe("spatialStudyKeys", () => {
 				due: NOW + 1000,
 			}),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1"]);
 	});
 
-	it("splits a cloze node into one key per due group, as sequential asks them", () => {
+	it("splits a cloze node into one key per due group, as flashcard study asks them", () => {
 		const cards = [
 			makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
 			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
 	});
 
 	it("splits a bidirectional node forwards then backwards", () => {
@@ -506,7 +506,7 @@ describe("spatialStudyKeys", () => {
 			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
 			makeCard({ id: "bridge", cardType: "explicit_bidi" }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge", "bridge-r"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge", "bridge-r"]);
 	});
 
 	it("splits a fence that mixes an occluded diagram with another card", () => {
@@ -517,13 +517,13 @@ describe("spatialStudyKeys", () => {
 			makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
 			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-c1", "bridge-c2"]);
 	});
 
 	it("leaves a node carrying one card as one unit of work, keyed on the card", () => {
 		// Which for an ordinary line or a basic fence is the node key itself.
 		const cards = [makeCard({ id: "bridge", cardType: "explicit" })];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
 	});
 
 	it("asks only the due direction of a bidirectional node", () => {
@@ -531,7 +531,7 @@ describe("spatialStudyKeys", () => {
 			makeCard({ id: "bridge", cardType: "explicit_bidi", due: NOW + 1000 }),
 			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-r"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge-r"]);
 	});
 
 	it("ignores disabled cards, and falls back to the node key when all are out", () => {
@@ -543,18 +543,18 @@ describe("spatialStudyKeys", () => {
 				disabled: true,
 			}),
 		];
-		expect(spatialStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
+		expect(mindmapStudyKeys(cards, "bridge", NOW)).toEqual(["bridge"]);
 	});
 });
 
-describe("cardIdsForSpatialKey", () => {
+describe("cardIdsForMindmapKey", () => {
 	const fenceGroups = [
 		makeCard({ id: "bridge-c1", cardType: "occlusion", occlusion: occlusionFor("c1") }),
 		makeCard({ id: "bridge-c2", cardType: "occlusion", occlusion: occlusionFor("c2") }),
 	];
 
 	it("resolves one shape group of a fence to that card alone", () => {
-		expect(cardIdsForSpatialKey(fenceGroups, "bridge-c1")).toEqual(["bridge-c1"]);
+		expect(cardIdsForMindmapKey(fenceGroups, "bridge-c1")).toEqual(["bridge-c1"]);
 	});
 
 	it("resolves one shape group of a line to that card alone", () => {
@@ -568,7 +568,7 @@ describe("cardIdsForSpatialKey", () => {
 				occlusion: occlusionFor("c1"),
 			}),
 		];
-		expect(cardIdsForSpatialKey(cards, "tests/espresso.md#^os-diag01/c1"))
+		expect(cardIdsForMindmapKey(cards, "tests/espresso.md#^os-diag01/c1"))
 			.toEqual(["tests/espresso.md#^os-diag01/c1"]);
 	});
 
@@ -579,7 +579,7 @@ describe("cardIdsForSpatialKey", () => {
 			makeCard({ id: "bridge-c1", cardType: "explicit_cloze" }),
 			makeCard({ id: "bridge-c2", cardType: "explicit_cloze" }),
 		];
-		expect(cardIdsForSpatialKey(cards, "bridge-c2")).toEqual(["bridge-c2"]);
+		expect(cardIdsForMindmapKey(cards, "bridge-c2")).toEqual(["bridge-c2"]);
 	});
 
 	it("resolves the forward card of a bidirectional fence without its reverse", () => {
@@ -589,12 +589,12 @@ describe("cardIdsForSpatialKey", () => {
 			makeCard({ id: "bridge", cardType: "explicit_bidi" }),
 			makeCard({ id: "bridge-r", cardType: "explicit_bidi" }),
 		];
-		expect(cardIdsForSpatialKey(cards, "bridge")).toEqual(["bridge"]);
-		expect(cardIdsForSpatialKey(cards, "bridge-r")).toEqual(["bridge-r"]);
+		expect(cardIdsForMindmapKey(cards, "bridge")).toEqual(["bridge"]);
+		expect(cardIdsForMindmapKey(cards, "bridge-r")).toEqual(["bridge-r"]);
 	});
 
 	it("still resolves a whole fence key to every card the fence derived", () => {
-		expect(cardIdsForSpatialKey(fenceGroups, "bridge")).toEqual(["bridge-c1", "bridge-c2"]);
+		expect(cardIdsForMindmapKey(fenceGroups, "bridge")).toEqual(["bridge-c1", "bridge-c2"]);
 	});
 
 	it("still resolves a whole line key to every card the line carries", () => {
@@ -602,7 +602,7 @@ describe("cardIdsForSpatialKey", () => {
 			makeCard({ id: "tests/espresso.md#^os-diag01/c1", blockId: "os-diag01" }),
 			makeCard({ id: "tests/espresso.md#^os-diag01/c2", blockId: "os-diag01" }),
 		];
-		expect(cardIdsForSpatialKey(cards, "tests/espresso.md#^os-diag01")).toEqual([
+		expect(cardIdsForMindmapKey(cards, "tests/espresso.md#^os-diag01")).toEqual([
 			"tests/espresso.md#^os-diag01/c1",
 			"tests/espresso.md#^os-diag01/c2",
 		]);
@@ -617,12 +617,12 @@ describe("cardIdsForSpatialKey", () => {
 				disabled: true,
 			}),
 		];
-		expect(cardIdsForSpatialKey(cards, "bridge-c1")).toEqual([]);
-		expect(cardIdsForSpatialKey(cards, "bridge")).toEqual([]);
+		expect(cardIdsForMindmapKey(cards, "bridge-c1")).toEqual([]);
+		expect(cardIdsForMindmapKey(cards, "bridge")).toEqual([]);
 	});
 });
 
-describe("spatialSessionCards", () => {
+describe("mindmapSessionCards", () => {
 	const line = (block: string) => `tests/espresso.md#^${block}`;
 	const cards = [
 		makeCard({ id: line("os-new001"), blockId: "os-new001" }),
@@ -633,7 +633,7 @@ describe("spatialSessionCards", () => {
 	];
 
 	it("buckets each target's card as the dashboard does", () => {
-		expect(spatialSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")])).toEqual([
+		expect(mindmapSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")])).toEqual([
 			{ id: line("os-new001"), bucket: "new" },
 			{ id: line("os-lrn001"), bucket: "learn" },
 			{ id: line("os-due001"), bucket: "due" },
@@ -641,18 +641,18 @@ describe("spatialSessionCards", () => {
 	});
 
 	it("counts every card an unsplit node key stands for, once each", () => {
-		expect(spatialSessionCards(cards, ["bridge", "bridge-c1"])).toEqual([
+		expect(mindmapSessionCards(cards, ["bridge", "bridge-c1"])).toEqual([
 			{ id: "bridge-c1", bucket: "new" },
 			{ id: "bridge-c2", bucket: "due" },
 		]);
 	});
 
 	it("skips a key that resolves to no card", () => {
-		expect(spatialSessionCards(cards, ["galley"])).toEqual([]);
+		expect(mindmapSessionCards(cards, ["galley"])).toEqual([]);
 	});
 
 	it("feeds countNoteSession: Again moves a card to learn, Good takes it out", () => {
-		const session = spatialSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")]);
+		const session = mindmapSessionCards(cards, [line("os-new001"), line("os-lrn001"), line("os-due001")]);
 		const ratings = new Map<string, FSRSRating>();
 		expect(countNoteSession(session, ratings, [])).toEqual({ new: 1, learn: 1, due: 1, current: null });
 		expect(countNoteSession(session, ratings, [line("os-due001")]).current).toBe("due");

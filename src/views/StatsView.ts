@@ -369,7 +369,7 @@ export class StatsView extends ItemView {
 	 * Under a mode filter this narrows to cards with at least one review on that
 	 * surface, reconstructed from the log — a card carries no mode of its own.
 	 * Never-reviewed cards therefore drop out entirely, which is correct (an
-	 * unstudied card was not studied contextually) but does mean the New slice
+	 * unstudied card was not studied in note study) but does mean the New slice
 	 * of Card counts disappears under any mode filter.
 	 */
 	private scopedCards(): Card[] {

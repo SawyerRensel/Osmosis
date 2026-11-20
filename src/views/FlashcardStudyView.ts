@@ -58,7 +58,7 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 
 
 /**
- * Anki-style sequential study, as a main-area tab (one per workspace).
+ * Anki-style flashcard study, as a main-area tab (one per workspace).
  * Shows card front → flip to reveal back → rate (Again/Hard/Good/Easy).
  * Type-in cards show a text input instead of the flip button.
  *
@@ -80,7 +80,7 @@ const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
  * `syncNavbar` restores it whenever another view becomes active, and
  * `onClose` does the same.
  */
-export class SequentialStudyView extends ItemView implements NavbarHost {
+export class FlashcardStudyView extends ItemView implements NavbarHost {
 	/** The session's scope; null only before the first session, or on the way out of study. */
 	private studyScope: StudyScope | null = null;
 	/**
@@ -415,7 +415,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.studyScope = null;
 		const target = this.returnTarget();
 		// Focus stays put when a study tab in the background steps back (a note took over)
-		const active = this.app.workspace.getActiveViewOfType(SequentialStudyView) === this;
+		const active = this.app.workspace.getActiveViewOfType(FlashcardStudyView) === this;
 		const viewState: ViewState = target
 			? { type: target.type, state: target.state, active }
 			: { type: VIEW_TYPE_DECKS, active };
@@ -470,7 +470,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		checkBtn.addEventListener("click", () => this.checkTypeIn());
 
 		// The rating row every other study surface uses, for the same buttons
-		this.ratingBar = actions.createDiv({ cls: "osmosis-contextual-rating osmosis-study-rating-bar osmosis-hidden" });
+		this.ratingBar = actions.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar osmosis-hidden" });
 
 		// Each button shows the interval it would schedule above its label
 		this.intervalEls = [];

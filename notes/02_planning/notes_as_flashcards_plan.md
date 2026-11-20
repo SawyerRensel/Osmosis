@@ -310,7 +310,7 @@ from the parsed set (overlaid with pending, like schedules).
 
 ### Where "fully out" is enforced (two chokepoints)
 
-- `study/spatial-study.ts` — `isLineCard()` returns false for disabled cards,
+- `study/mindmap-study.ts` — `isLineCard()` returns false for disabled cards,
   so **all four** peek/study filter functions (note view + mind map, peek +
   due-only) drop them in one place.
 - `store/CardStore.ts` — the same guard that skips `excludeFromDecks` now also

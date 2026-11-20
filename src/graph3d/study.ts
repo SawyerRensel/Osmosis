@@ -3,8 +3,8 @@
  * `"cosmos"`). See `vault/Planner/3D Graph Phase 6 - Relational study
  * mode.md` and the parent spec's "3D study mode".
  *
- * It works like 2D spatial study: a due card's node is hidden in place, and that
- * hidden node *is* the card. Card matching is `src/study/spatial-study.ts`'s,
+ * It works like 2D mind map study: a due card's node is hidden in place, and that
+ * hidden node *is* the card. Card matching is `src/study/mindmap-study.ts`'s,
  * unchanged — its `${notePath}#^${blockId}` line keys already span several
  * notes, which is the whole 3D case — and ratings go through the shared
  * `StudySessionManager`, so the schedules are the ones every other mode uses.
@@ -16,7 +16,7 @@
 
 import type { Card } from "../database/types";
 import { lineCardId } from "../card-gen/line-cards";
-import { dueOrNewFenceCardKeys, dueOrNewLineCardIds, fenceKeyFromNode, spatialStudyKeys } from "../study/spatial-study";
+import { dueOrNewFenceCardKeys, dueOrNewLineCardIds, fenceKeyFromNode, mindmapStudyKeys } from "../study/mindmap-study";
 import type { GraphNode } from "./model";
 
 /** What a hidden line's plate and panel show. */
@@ -36,7 +36,7 @@ export function nodeCardKey(node: GraphNode): string | null {
 
 /**
  * The hidden nodes of a study pass: node ID → the keys it still has to ask,
- * one per due card in ask order (`spatialStudyKeys`).
+ * one per due card in ask order (`mindmapStudyKeys`).
  *
  * A key already rated this session is dropped, so a node that has answered
  * everything leaves the map of targets and shows its own text again, and an
@@ -51,7 +51,7 @@ export function studyTargets(nodes: readonly GraphNode[], cards: readonly Card[]
 		const nodeKey = nodeCardKey(node);
 		if (nodeKey === null || !due.has(nodeKey)) continue;
 		// The node has a due card, so every key is a due card's own ID.
-		const keys = spatialStudyKeys(cards, nodeKey, now).filter((key) => {
+		const keys = mindmapStudyKeys(cards, nodeKey, now).filter((key) => {
 			const card = byId.get(key);
 			return !rated.has(key) && card !== undefined;
 		});
@@ -83,7 +83,7 @@ export interface NodeStep {
 	revealed: boolean;
 }
 
-/** The first key a target node has not had rated, and whether it has been revealed (`MindMapView.spatialNodeStep`). */
+/** The first key a target node has not had rated, and whether it has been revealed (`MindMapView.mindmapStudyNodeStep`). */
 export function nodeStep(keys: readonly string[], revealed: ReadonlySet<string>): NodeStep | null {
 	const asking = keys[0];
 	return asking === undefined ? null : { asking, revealed: revealed.has(asking) };
@@ -101,7 +101,7 @@ function isCloze(card: Card): boolean {
  * - **An occlusion card** (a line or a fence, `card.occlusion`) says `?` on its
  *   plate only while hidden; its near-tier panel draws the diagram with the
  *   asked group covered (`masks`, side `front`), and ringed once revealed (side
- *   `back`), as 2D spatial study does (`applySpatialHidden`).
+ *   `back`), as 2D mind map study does (`applyMindmapStudyHidden`).
  * - **A fence** never blanks, as in 2D: its front is the question. Hidden, its
  *   panel shows the asked card's front; revealed, a cloze's back (the passage
  *   filled in replaces it), any other kind front, a rule, then back.

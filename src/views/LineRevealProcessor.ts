@@ -12,7 +12,7 @@ import {
 	dueCardsForFenceKey,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
-} from "../study/spatial-study";
+} from "../study/mindmap-study";
 import { decksOfNote } from "../study/note-scope";
 import { countNoteSession, noteSessionCard, type NoteSessionCard } from "../study/session-counts";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
@@ -38,7 +38,7 @@ const PLACEHOLDER_TEXT = "░░░░░░";
 const MAX_FLAT_DECK_ITEMS = 5;
 
 /**
- * Contextual reveal mode for a note.
+ * Note reveal mode for a note.
  * - "off": reading view is a normal reading surface, nothing hidden.
  * - "peek": every line-card line hidden; click reveals in any order, no ratings.
  * - "study": only due/new line-card lines hidden; top-down reveal + rating bubble.
@@ -71,7 +71,7 @@ interface NoteRevealState {
 	 *
 	 * Held beside `studyTargets` rather than merged into it because the two are
 	 * different kinds of string — a bare block ID and a fence's own `id:` — and
-	 * every line lookup here indexes by the former. `ContextualStudyProcessor`
+	 * every line lookup here indexes by the former. `NoteStudyProcessor`
 	 * owns the fences themselves and asks this set whether the one it is about
 	 * to draw is a target; the progress strip counts both.
 	 */
@@ -121,7 +121,7 @@ interface NoteRevealState {
 }
 
 /**
- * Contextual progressive-reveal study for line cards (plan §5, revised
+ * Note progressive-reveal study for line cards (plan §5, revised
  * 2026-07-14).
  *
  * Reading view stays a normal reading surface by default. Two header
@@ -484,7 +484,7 @@ export class LineRevealProcessor {
 	 * every group is a blank at once and none is singled out, so it keeps the
 	 * `all-hidden` / `all-revealed` pair. Study is a card player — a target, a
 	 * rating, a completion count — so it asks the line's groups one at a time,
-	 * exactly as sequential and spatial do, and the mode decides what happens to
+	 * exactly as flashcard and mind map do, and the mode decides what happens to
 	 * the group's siblings.
 	 *
 	 * A study session with no steps for this line (an ordinary occluded line whose
@@ -553,7 +553,7 @@ export class LineRevealProcessor {
 
 	private showRatingBubble(notePath: string, blockId: string, line: TrackedLine): void {
 		const bubble = createDiv();
-		bubble.className = "osmosis-line-rating osmosis-contextual-rating";
+		bubble.className = "osmosis-line-rating osmosis-rating";
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -638,7 +638,7 @@ export class LineRevealProcessor {
 			this.endStudy(notePath, state);
 			new Notice(`Note study complete — ${String(targets.size)} lines rated.`);
 			this.updateHeaderActions();
-			this.plugin.contextualStudy.refresh(notePath);
+			this.plugin.noteStudy.refresh(notePath);
 		}
 
 		this.applyAll(notePath);
@@ -684,7 +684,7 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
-		this.plugin.contextualStudy.refresh(notePath);
+		this.plugin.noteStudy.refresh(notePath);
 	}
 
 	private toggleStudy(notePath: string): void {
@@ -693,7 +693,7 @@ export class LineRevealProcessor {
 			this.endStudy(notePath, state);
 		} else {
 			// Only cards that are due (or never reviewed) get studied —
-			// scheduling decides, same as spatial mode (plan §5). One timestamp
+			// scheduling decides, same as mind map study (plan §5). One timestamp
 			// for both halves so a card on the boundary cannot land in one and
 			// not the other.
 			const now = Date.now();
@@ -718,7 +718,7 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
-		this.plugin.contextualStudy.refresh(notePath);
+		this.plugin.noteStudy.refresh(notePath);
 	}
 
 	/**
@@ -759,7 +759,7 @@ export class LineRevealProcessor {
 	 * not been rendered yet, and the bar would understate the session until the
 	 * reader happened to scroll past it.
 	 *
-	 * `ContextualStudyProcessor` derives the same sequence from the same store
+	 * `NoteStudyProcessor` derives the same sequence from the same store
 	 * with the same filter, so the two agree — see `fenceStepPlan`. An occluded
 	 * fence is counted the same way, one question per shape group, since the
 	 * store holds a card per group exactly as it does per cloze group.
@@ -821,7 +821,7 @@ export class LineRevealProcessor {
 		state.sessionRatings.clear();
 		void this.plugin.scheduleStore.flush();
 		// Fence cards keep their schedule inside the note's own text, so a
-		// contextual session holds those writes back rather than rewriting the
+		// note study session holds those writes back rather than rewriting the
 		// block being read after every answer. This is where they land.
 		void this.plugin.fenceWriter.flush();
 		void this.plugin.reviewLog.flush();
@@ -1167,7 +1167,7 @@ export class LineRevealProcessor {
 	/**
 	 * Whether this fence is one of the questions the running session is asking.
 	 *
-	 * Read by `ContextualStudyProcessor`, which owns fence rendering: a fence
+	 * Read by `NoteStudyProcessor`, which owns fence rendering: a fence
 	 * that is not a target renders revealed and inert during a session — it is
 	 * context, not a question — and takes no rating.
 	 */
@@ -1180,7 +1180,7 @@ export class LineRevealProcessor {
 	/**
 	 * Record that one of a fence's questions was answered, so the strip advances.
 	 *
-	 * The rating itself is written by `ContextualStudyProcessor` — this only
+	 * The rating itself is written by `NoteStudyProcessor` — this only
 	 * tells the session's progress counter that one of its questions is done,
 	 * and the counts which card and how (Again moves it to learn).
 	 * Counted rather than flagged: a fence that fans out is answered a card at a

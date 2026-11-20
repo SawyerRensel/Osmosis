@@ -1,8 +1,8 @@
 /**
- * Pure logic for spatial study (Mind Map View).
+ * Pure logic for mind map study (Mind Map View).
  *
  * Entering study mode hides only the map nodes whose line card is due or
- * new — the rest of the map stays fully expanded because spatial context
+ * new — the rest of the map stays fully expanded because the map's spatial context
  * is the point. Nodes are matched to line cards exactly via block ID.
  * See notes/02_planning/notes_as_flashcards_plan.md §5 "Spatial (Mind Map
  * View)".
@@ -25,9 +25,9 @@ import { noteSessionCard, type NoteSessionCard } from "./session-counts";
  * Structural view of a laid-out map node — matches `LayoutNode` so the
  * mind map can pass its nodes directly while tests build plain objects.
  */
-export interface SpatialNodeLike {
+export interface MindmapNodeLike {
 	source: { blockId?: string; isTranscluded: boolean; sourceFile?: string };
-	children: SpatialNodeLike[];
+	children: MindmapNodeLike[];
 }
 
 /**
@@ -57,7 +57,7 @@ function isDueOrNew(card: Card, now: number): boolean {
 /**
  * Block IDs of every line card in the set, regardless of schedule —
  * peek mode hides all tagged lines. Deck-excluded cards are included:
- * opt-out only removes cards from decks/sequential, not in-place study.
+ * opt-out only removes cards from decks/flashcard study, not in-place study.
  */
 export function allLineCardBlockIds(cards: readonly Card[]): Set<string> {
 	const ids = new Set<string>();
@@ -70,7 +70,7 @@ export function allLineCardBlockIds(cards: readonly Card[]): Set<string> {
 /**
  * Block IDs of the line cards the scheduler would study now: due, or new
  * (never reviewed). Deck-excluded cards are included: opt-out only
- * removes cards from decks/sequential, not from in-place study.
+ * removes cards from decks/flashcard study, not from in-place study.
  */
 export function dueOrNewLineCardBlockIds(cards: readonly Card[], now: number): Set<string> {
 	const ids = new Set<string>();
@@ -295,16 +295,16 @@ function nodeKeyForCard(card: Card): string {
 }
 
 /**
- * The units of work spatial *study* asks for on one node.
+ * The units of work mind map *study* asks for on one node.
  *
  * One key per **due card**, in ask order. A node that carries a single card is
  * still a single unit of work — that key is simply the card's own ID, which for
  * an ordinary line or a basic fence is the node key itself. Everything that
  * fanned out is several: an occluded diagram's shape groups, a cloze's groups,
  * the two directions of a bidirectional pair. They are separate cards with
- * separate schedules, and spatial study is a card player — it has a target, a
+ * separate schedules, and mind map study is a card player — it has a target, a
  * rating and a completion count — so it steps through them one at a time
- * exactly as sequential and the note do, and the progress bar counts cards
+ * exactly as flashcard and the note do, and the progress bar counts cards
  * rather than nodes.
  *
  * This is deliberately *not* what the note surfaces do *outside* a session.
@@ -317,13 +317,13 @@ function nodeKeyForCard(card: Card): string {
  *
  * Splitting used to be reserved for a node whose due cards were *all* occlusion
  * cards, ordered by `occlusion.target`. That left a three-group cloze node
- * asking one question where sequential asks three, never asked a bidirectional
+ * asking one question where flashcard study asks three, never asked a bidirectional
  * node its reverse, and spread the single rating it did take across every card
  * the node carried. Ordering is `askRank`'s job now, because a cloze or
  * bidirectional card has no `occlusion.target` to sort on; an occluded node's
  * cards sort identically under it, so its behaviour is unchanged.
  */
-export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: number): string[] {
+export function mindmapStudyKeys(cards: readonly Card[], nodeKey: string, now: number): string[] {
 	const due = cards.filter(
 		(card) => !card.disabled && nodeKeyForCard(card) === nodeKey && isDueOrNew(card, now),
 	);
@@ -335,10 +335,10 @@ export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: n
 }
 
 /**
- * The cards a spatial target key stands for.
+ * The cards a mind map target key stands for.
  *
  * Three key shapes reach here: a line key (`…#^block`), a fence key (`bridge`),
- * and — once `spatialStudyKeys` has split a node — a single card's own ID
+ * and — once `mindmapStudyKeys` has split a node — a single card's own ID
  * (`bridge-c1`, `bridge-r`, `…#^block/c1`). The last is checked first, because
  * both of the other lookups would find nothing for a suffixed ID and silently
  * drop the review, which is exactly how rating an occluded line came to record
@@ -346,7 +346,7 @@ export function spatialStudyKeys(cards: readonly Card[], nodeKey: string, now: n
  * bidirectional fence is named after the fence, and falling through would hand
  * its rating to the reverse card as well.
  */
-export function cardIdsForSpatialKey(cards: readonly Card[], key: string): string[] {
+export function cardIdsForMindmapKey(cards: readonly Card[], key: string): string[] {
 	const own = cards.find((card) => card.id === key && !card.disabled);
 	if (own) return [own.id];
 	return key.includes("#^") ? cardIdsForLineKey(cards, key) : cardIdsForFenceKey(cards, key);
@@ -358,12 +358,12 @@ export function cardIdsForSpatialKey(cards: readonly Card[], key: string): strin
  * but a node key that never split stands for every card it carries, and a
  * rating reaches them all, so each is counted, once.
  */
-export function spatialSessionCards(cards: readonly Card[], targets: Iterable<string>): NoteSessionCard[] {
+export function mindmapSessionCards(cards: readonly Card[], targets: Iterable<string>): NoteSessionCard[] {
 	const byId = new Map(cards.map((card) => [card.id, card]));
 	const seen = new Set<string>();
 	const session: NoteSessionCard[] = [];
 	for (const key of targets) {
-		for (const id of cardIdsForSpatialKey(cards, key)) {
+		for (const id of cardIdsForMindmapKey(cards, key)) {
 			const card = byId.get(id);
 			if (!card || seen.has(id)) continue;
 			seen.add(id);
@@ -380,9 +380,9 @@ export function spatialSessionCards(cards: readonly Card[], targets: Iterable<st
  * stay with the note that owns the line. Transcluded nodes lacking a
  * resolved `sourceFile` are skipped — a key can't be attributed.
  */
-export function collectSubtreeCardKeys(root: SpatialNodeLike, hostPath: string): Set<string> {
+export function collectSubtreeCardKeys(root: MindmapNodeLike, hostPath: string): Set<string> {
 	const keys = new Set<string>();
-	const visit = (node: SpatialNodeLike): void => {
+	const visit = (node: MindmapNodeLike): void => {
 		const { blockId, isTranscluded, sourceFile } = node.source;
 		if (blockId !== undefined) {
 			const path = isTranscluded ? sourceFile : hostPath;

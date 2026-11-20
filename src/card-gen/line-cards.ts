@@ -21,7 +21,7 @@ import { groupDisplayMarkdown } from "../line-groups";
 export const BREADCRUMB_SEPARATOR = " › ";
 
 /**
- * Maximum preceding-sibling lines stored on a card as sequential-study
+ * Maximum preceding-sibling lines stored on a card as flashcard-study
  * context. The "Line card context lines" setting (default 2) picks how
  * many of these the study modal actually shows.
  */

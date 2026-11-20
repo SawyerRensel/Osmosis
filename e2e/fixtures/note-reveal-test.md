@@ -1,6 +1,6 @@
 ---
 osmosis-cards: true
-osmosis-deck: tests/contextual-reveal
+osmosis-deck: tests/note-reveal
 ---
 
 # Coffee Brewing Methods ^os-crhd01

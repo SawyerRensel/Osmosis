@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the sequential study tab (`SequentialStudyView`), kept out
+ * Pure helpers for the flashcard study tab (`FlashcardStudyView`), kept out
  * of `src/views/` so they can be unit-tested without Obsidian.
  */
 

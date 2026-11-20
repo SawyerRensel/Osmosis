@@ -1,5 +1,5 @@
 /**
- * Pure logic for contextual progressive-reveal study (reading view).
+ * Pure logic for note progressive-reveal study (reading view).
  *
  * The reveal processor hides line-card lines in reading view and reveals
  * them top-down during a study session. These helpers map Obsidian's

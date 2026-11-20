@@ -1,6 +1,6 @@
 ---
 osmosis-cards: true
-osmosis-deck: tests/spatial-study
+osmosis-deck: tests/mindmap-study
 osmosis-schedule:
   os-sphd02:
     due: 2099-01-01T09:00:00

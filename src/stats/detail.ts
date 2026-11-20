@@ -173,7 +173,7 @@ export class DetailAccumulator {
 	 *    rejected: the maturity filter covers the lapse-then-recover case it was
 	 *    written for (a failed card drops to relearning, so the re-answer's `pi`
 	 *    is minutes) but *not* answering an already-passed mature card a second
-	 *    time the same day, which contextual and spatial study both allow and
+	 *    time the same day, which note and mind map study both allow and
 	 *    which would count the same card twice.
 	 *
 	 * "First" is the first entry the scan reaches, which within a shard is

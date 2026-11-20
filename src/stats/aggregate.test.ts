@@ -130,9 +130,9 @@ describe("entryInScope", () => {
 	});
 
 	it("narrows to one study surface", () => {
-		const spatial = scope({ mode: "mindmap" });
-		expect(entryInScope(entry({ m: "mindmap" }), spatial, resolve)).toBe(true);
-		expect(entryInScope(entry({ m: "flashcard" }), spatial, resolve)).toBe(false);
+		const mindmapScope = scope({ mode: "mindmap" });
+		expect(entryInScope(entry({ m: "mindmap" }), mindmapScope, resolve)).toBe(true);
+		expect(entryInScope(entry({ m: "flashcard" }), mindmapScope, resolve)).toBe(false);
 	});
 
 	it("drops entries before the start day and keeps the boundary day", () => {
@@ -543,7 +543,7 @@ describe("cardCounts", () => {
 	});
 
 	it("counts an excludeFromDecks card normally", () => {
-		// Out of deck totals and the sequential queue, but still studied in
+		// Out of deck totals and the flashcard queue, but still studied in
 		// place — it has not been taken out of study.
 		const counts = cardCounts([
 			card({ id: "a", state: "review", excludeFromDecks: true, ...scheduled(400) }),

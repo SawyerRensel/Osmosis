@@ -385,7 +385,7 @@ export interface CardCounts {
 	 * Osmosis's own UI uses, so the pie speaks the plugin's language.
 	 *
 	 * `excludeFromDecks` cards are *not* here. They are only out of deck totals
-	 * and the sequential queue — still actively studied in place — so filing
+	 * and the flashcard queue — still actively studied in place — so filing
 	 * them under "not studied" would be wrong.
 	 */
 	excluded: number;

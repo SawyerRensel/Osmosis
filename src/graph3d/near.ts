@@ -125,7 +125,7 @@ const AUDIO_EM = { width: 20, height: 3.5 } as const;
 const PRE_PAD = { x: 32 / 16, y: 24 / 16 } as const;
 /**
  * What an `osmosis` card fence adds around its two sides, in ems of the panel's
- * 16 px text (`.osmosis-contextual-card` and friends in `styles.css`). Across:
+ * 16 px text (`.osmosis-note-card` and friends in `styles.css`). Across:
  * 1 px border and 12 px padding a side. Down: the same border and padding, the
  * divider (1 px with 8 px margins) and the bottom row with the eye (4 px margin,
  * an icon row budgeted at 24 px). Each paragraph or code block inside a side
@@ -202,7 +202,7 @@ function contentBoxEm(lines: readonly string[], wrap: number): { width: number; 
 /**
  * The fence lines of an `osmosis` card, or `null` for anything else: the
  * content below its header, split at `***` into the sides reading view draws
- * (`ContextualStudyProcessor.parseFenceContent`). A fence without a separator
+ * (`NoteStudyProcessor.parseFenceContent`). A fence without a separator
  * (cloze) draws its content as both front and back, so both sides are it.
  */
 function cardSides(markdown: string): { front: string[]; back: string[] } | null {

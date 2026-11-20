@@ -3,8 +3,8 @@ import { describe, it, expect } from "vitest";
 import { CLOZE_BLANK } from "../card-gen/explicit";
 import type { Card } from "../database/types";
 import type OsmosisPlugin from "../main";
-import { dueOrNewFenceCardKeys } from "../study/spatial-study";
-import { ContextualStudyProcessor } from "./ContextualStudyProcessor";
+import { dueOrNewFenceCardKeys } from "../study/mindmap-study";
+import { NoteStudyProcessor } from "./NoteStudyProcessor";
 
 /**
  * What text a fence hands to the markdown renderer.
@@ -26,7 +26,7 @@ type Parsed = {
 
 /** `parseFenceContent` is private; the fence text in, card text out is the contract. */
 function parse(source: string): Parsed {
-	const processor = new ContextualStudyProcessor({} as unknown as OsmosisPlugin);
+	const processor = new NoteStudyProcessor({} as unknown as OsmosisPlugin);
 	return (processor as unknown as { parseFenceContent: (s: string) => Parsed })
 		.parseFenceContent(source);
 }
@@ -122,9 +122,9 @@ describe("parseFenceContent — embed labels", () => {
  *
  * Reading view has two jobs on the same diagram. *Peek* is a reader looking at a
  * picture — every group blanked at once, none singled out, nothing recorded.
- * *Study* is a card player, exactly as sequential and spatial are, so it steps
+ * *Study* is a card player, exactly as flashcard and mind map are, so it steps
  * through the shape groups one at a time and each step moves one card's
- * schedule. The two were the same rendering, which made contextual study a
+ * schedule. The two were the same rendering, which made note study a
  * second peek that answered three cards on one rating it then dropped: the
  * fence's own ID is not a card the store holds, so `recordRating` skipped it.
  */
@@ -213,7 +213,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 		refreshDashboard: () => { /* no dashboard in a test */ },
 	} as unknown as OsmosisPlugin;
 
-	const processor = new ContextualStudyProcessor(plugin);
+	const processor = new NoteStudyProcessor(plugin);
 	const el = document.createElement("div");
 	const render = (): void => {
 		el.replaceChildren();
@@ -237,10 +237,10 @@ function maskRoles(el: HTMLElement): string[] {
 
 /** The step counter's text, or null on a card that is not stepping. */
 function stepCount(el: HTMLElement): string | null {
-	return el.querySelector(".osmosis-contextual-step")?.textContent ?? null;
+	return el.querySelector(".osmosis-note-step")?.textContent ?? null;
 }
 
-describe("an occluded fence in contextual study", () => {
+describe("an occluded fence in note study", () => {
 	it("singles out one shape group at a time instead of blanking them all", () => {
 		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
@@ -253,7 +253,7 @@ describe("an occluded fence in contextual study", () => {
 	it("advances to the next group when the first is rated", () => {
 		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		// Revealing rings the group that was asked rather than clearing it, so the
 		// answer still says where the question was.
 		expect(maskRoles(el)).toEqual(["revealed", "hidden"]);
@@ -271,12 +271,12 @@ describe("an occluded fence in contextual study", () => {
 		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
 		for (let i = 0; i < 2; i++) {
-			el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		}
 
 		expect(reviews.map((review) => review.cardId)).toEqual(["bridge-c1", "bridge-c2"]);
-		expect(el.querySelector(".osmosis-contextual-rated")?.textContent).toBe("Rated");
+		expect(el.querySelector(".osmosis-note-rated")?.textContent).toBe("Rated");
 		// Back to what the note shows outside study: every region ringed, so the
 		// finished card still says where all the questions were.
 		expect(maskRoles(el)).toEqual(["revealed", "revealed"]);
@@ -285,7 +285,7 @@ describe("an occluded fence in contextual study", () => {
 	it("advances the pill on the fence key, not on the group that was rated", () => {
 		const { el, ratedFences } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// A session's targets are fence keys. Handing the pill `bridge-c1` matched
@@ -297,7 +297,7 @@ describe("an occluded fence in contextual study", () => {
 		const later = { ...groupCard("c2"), due: Date.now() + 60_000 };
 		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), later]);
 
-		// One due group out of two is one question, not two — the rule spatial
+		// One due group out of two is one question, not two — the rule mind map study
 		// study already applies when it splits a node.
 		expect(stepCount(el)).toBe("1/1");
 	});
@@ -318,10 +318,10 @@ describe("an occluded fence in contextual study", () => {
 
 		// The answer is already on screen, so clicking must not repaint the top
 		// diagram to match it and leave the same picture up twice.
-		el.querySelector<HTMLElement>(".osmosis-contextual-card")?.click();
+		el.querySelector<HTMLElement>(".osmosis-note-card")?.click();
 
 		expect(maskRoles(el)).toEqual(["hidden", "hidden", "revealed", "revealed"]);
-		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(el.querySelector(".osmosis-rating")).toBeNull();
 		expect(reviews).toEqual([]);
 	});
 
@@ -346,7 +346,7 @@ describe("an occluded fence in contextual study", () => {
 		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 		const img = el.querySelector("img");
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		expect(el.querySelector("img")).toBe(img);
 
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
@@ -357,7 +357,7 @@ describe("an occluded fence in contextual study", () => {
 		const cards = [groupCard("c1"), groupCard("c2")];
 		const { el, rerender } = renderFence(TWO_GROUPS, "study", cards);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		// Rating `c1` pushed it out of the due window, and flushing that schedule
 		// rewrites the note — so Obsidian rebuilds the code block.
@@ -418,13 +418,13 @@ describe("a fence whose cards the store holds", () => {
 	const C2 = clozeCard(2, `The ==Nile== drains into the ${CLOZE_BLANK}.`);
 
 	function frontText(el: HTMLElement): string {
-		return el.querySelector(".osmosis-contextual-front")?.textContent ?? "";
+		return el.querySelector(".osmosis-note-front")?.textContent ?? "";
 	}
 
 	it("records a cloze review against the group's own card, not the fence", () => {
 		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// `rivers` is not a card. Rating it recorded nothing at all, so the
@@ -435,7 +435,7 @@ describe("a fence whose cards the store holds", () => {
 	it("advances the pill on the fence key, not on the card that was rated", () => {
 		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// The session's targets are fence keys, so handing it `rivers-c1` left the
@@ -455,29 +455,29 @@ describe("a fence whose cards the store holds", () => {
 		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
 
 		expect(stepCount(el)).toBe("1/2");
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// The second group is a question in its own right, with its own schedule.
-		// Asking only the first left `c2` and `c3` reachable in sequential alone.
+		// Asking only the first left `c2` and `c3` reachable in flashcard study alone.
 		expect(stepCount(el)).toBe("2/2");
 		expect(frontText(el)).toBe(C2.front);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		expect(reviews).toEqual([
 			{ cardId: "rivers-c1", rating: 3 },
 			{ cardId: "rivers-c2", rating: 3 },
 		]);
-		expect(el.querySelector(".osmosis-contextual-rated")?.textContent).toBe("Rated");
+		expect(el.querySelector(".osmosis-note-rated")?.textContent).toBe("Rated");
 	});
 
 	it("counts each group as a question of the session, not the fence once", () => {
 		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
 
 		for (let i = 0; i < 2; i++) {
-			el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		}
 
@@ -502,12 +502,12 @@ describe("a fence whose cards the store holds", () => {
 		const { el, reviews } = renderFence(BIDI, "study", [forward, reverse]);
 
 		expect(frontText(el)).toBe("France");
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
-		// The reverse used to be reachable in sequential study and nowhere else.
+		// The reverse used to be reachable in flashcard study and nowhere else.
 		expect(frontText(el)).toBe("Paris");
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		expect(reviews).toEqual([
@@ -520,7 +520,7 @@ describe("a fence whose cards the store holds", () => {
 		const cards = [C1, C2];
 		const { el, rerender } = renderFence(CLOZE, "study", cards);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		// Rating `c1` pushed it out of the due window, and any file change rebuilds
 		// the code block's DOM.
@@ -565,10 +565,10 @@ describe("a fence whose cards the store holds", () => {
 		// and is not one of the session's questions.
 		const { el, reviews } = renderFence(CLOZE, "study", []);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-card")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-card")!.click();
 
 		expect(frontText(el)).toBe(`The ${CLOZE_BLANK} drains into the ${CLOZE_BLANK}.`);
-		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(el.querySelector(".osmosis-rating")).toBeNull();
 		expect(reviews).toEqual([]);
 	});
 
@@ -637,9 +637,9 @@ describe("a fence in plain reading mode", () => {
 	it("shows a basic card's back without being asked", () => {
 		const { el } = renderFence(BASIC, "off");
 
-		expect(visible(el, ".osmosis-contextual-front")).toBe(true);
-		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
-		expect(visible(el, ".osmosis-contextual-hidden")).toBe(false);
+		expect(visible(el, ".osmosis-note-front")).toBe(true);
+		expect(visible(el, ".osmosis-note-revealed")).toBe(true);
+		expect(visible(el, ".osmosis-note-hidden")).toBe(false);
 	});
 
 	it("stacks a cloze card's blanked and filled-in halves, as live preview does", () => {
@@ -648,17 +648,17 @@ describe("a fence in plain reading mode", () => {
 		// Not collapsed onto the answer. Collapsing is what a reader gets after
 		// *answering* a cloze — it keeps their eye on one body of text — and
 		// nothing has been answered here.
-		expect(visible(el, ".osmosis-contextual-front")).toBe(true);
+		expect(visible(el, ".osmosis-note-front")).toBe(true);
 		expect(visible(el, ".osmosis-study-divider")).toBe(true);
-		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
+		expect(visible(el, ".osmosis-note-revealed")).toBe(true);
 	});
 
 	it("offers no rating, because reading is not answering", () => {
 		const { el, reviews } = renderFence(BASIC, "off", [basicCard("basic1")]);
 
-		el.querySelector<HTMLElement>(".osmosis-contextual-card")?.click();
+		el.querySelector<HTMLElement>(".osmosis-note-card")?.click();
 
-		expect(el.querySelector(".osmosis-contextual-rating")).toBeNull();
+		expect(el.querySelector(".osmosis-rating")).toBeNull();
 		expect(reviews).toEqual([]);
 	});
 
@@ -666,8 +666,8 @@ describe("a fence in plain reading mode", () => {
 		// No `due` means never reviewed, which the scheduler counts as due now.
 		const { el } = renderFence(BASIC, "study", [basicCard("basic1")]);
 
-		expect(visible(el, ".osmosis-contextual-hidden")).toBe(true);
-		expect(visible(el, ".osmosis-contextual-revealed")).toBe(false);
+		expect(visible(el, ".osmosis-note-hidden")).toBe(true);
+		expect(visible(el, ".osmosis-note-revealed")).toBe(false);
 	});
 
 	it("leaves a card the session is not asking fully readable", () => {
@@ -676,8 +676,8 @@ describe("a fence in plain reading mode", () => {
 
 		// Context, not a question: a blank the reader could never clear is worse
 		// than no blank at all.
-		expect(visible(el, ".osmosis-contextual-hidden")).toBe(false);
-		expect(visible(el, ".osmosis-contextual-revealed")).toBe(true);
+		expect(visible(el, ".osmosis-note-hidden")).toBe(false);
+		expect(visible(el, ".osmosis-note-revealed")).toBe(true);
 	});
 
 	/**
@@ -700,7 +700,7 @@ describe("a fence in plain reading mode", () => {
 					mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
 			},
 		} as unknown as OsmosisPlugin;
-		const processor = new ContextualStudyProcessor(plugin);
+		const processor = new NoteStudyProcessor(plugin);
 		const render = (source: string): HTMLElement => {
 			const el = document.body.createDiv();
 			(processor as unknown as {
@@ -718,7 +718,7 @@ describe("a fence in plain reading mode", () => {
 		processor.refresh(NOTE);
 		document.body.appendChild(offScreen);
 
-		expect(visible(offScreen, ".osmosis-contextual-hidden")).toBe(true);
-		expect(visible(offScreen, ".osmosis-contextual-revealed")).toBe(false);
+		expect(visible(offScreen, ".osmosis-note-hidden")).toBe(true);
+		expect(visible(offScreen, ".osmosis-note-revealed")).toBe(false);
 	});
 });

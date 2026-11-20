@@ -814,7 +814,7 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		// from the card browser, so nothing could unsuspend it. Every store query
 		// that decides study and deck counts already skips disabled cards, so
 		// emitting one is behaviour-preserving; and reading view never consulted
-		// the store for this — ContextualStudyProcessor reads `exclude` straight
+		// the store for this — NoteStudyProcessor reads `exclude` straight
 		// out of the fence text.
 		const suspension = metadata.exclude ? { disabled: true } : {};
 
