@@ -143,8 +143,6 @@ export interface OsmosisSettings {
 	contextualAutoActivate: boolean;
 	/** Whether inline clozes blank out in contextual mode (default: false). */
 	contextualInlineCloze: boolean;
-	/** Whether to show the deck breadcrumb in the sequential study modal (default: false). */
-	showStudyBreadcrumb: boolean;
 	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
 	sequentialContextLines: number;
 
@@ -218,7 +216,6 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Study Mode defaults
 	contextualAutoActivate: true,
 	contextualInlineCloze: false,
-	showStudyBreadcrumb: false,
 	sequentialContextLines: 2,
 
 	// Stats dashboard defaults
@@ -507,11 +504,6 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				type: "group",
 				heading: "Study mode",
 				items: [
-					{
-						name: "Show deck breadcrumb in study tab",
-						desc: "Display the deck path under the progress bar in sequential study mode.",
-						control: { type: "toggle", key: "showStudyBreadcrumb" },
-					},
 					{
 						name: "Line card context lines",
 						desc: "How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).",

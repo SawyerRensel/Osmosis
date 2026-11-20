@@ -26,7 +26,7 @@ use the full width.
 4. Rate your recall: **Again** (++1++), **Hard** (++2++), **Good** (++3++), **Easy** (++4++)
 5. The next card appears
 
-A progress bar at the top tracks remaining cards. Optionally, turn on **Settings > Osmosis > Show deck breadcrumb in study tab** to see which deck the card on screen belongs to. Each rating button shows the interval it would schedule above its label.
+The tab is titled with what you are studying: the deck, **All decks**, or the note (its H1 if it has exactly one, otherwise its file name). A slim progress bar with the new, learn and due counts stays pinned at the top while a long card scrolls under it. Each rating button shows the interval it would schedule above its label.
 
 There is only ever one study tab: starting another session reuses it. A finished session offers **Study again** and **Close**. A study tab with no session — after a restart, or opened with the **Open study tab** command — shows a deck picker instead.
 

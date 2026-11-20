@@ -1219,11 +1219,9 @@ hr.osmosis-map-style-divider {
    Sequential Study Tab (SequentialStudyView)
    ═══════════════════════════════════════════════════════════ */
 
-/* A flex column filling the leaf: the status strip, then the card as the only
-   row that scrolls, with the buttons floating over the card's bottom edge.
-   `flex: none` on the strip means a long card scrolls itself rather than
-   pushing anything out of reach. Text sits in a centered column; images may use
-   the full width. */
+/* A flex column filling the leaf: the card as the only row that scrolls, with
+   the status strip floating over its top edge and the buttons over its bottom
+   edge. Text sits in a centered column; images may use the full width. */
 .osmosis-study-view {
 	--osmosis-study-column: 700px;
 	/* Space under the floating buttons. */
@@ -1236,6 +1234,10 @@ hr.osmosis-map-style-divider {
 	/* How far past its last line the card scrolls: the panel and the gap under
 	   it, plus a margin, so that line can come clear of the buttons. */
 	--osmosis-study-clearance: calc(var(--osmosis-study-bottom) + var(--osmosis-study-button-height) + 2 * var(--osmosis-study-panel-padding) + var(--size-4-4));
+	/* The status strip: a solid band holding the bar and counts, then a fade
+	   to transparent that the card scrolls under (T109). */
+	--osmosis-study-strip-height: 28px;
+	--osmosis-study-strip-fade: var(--size-4-2);
 	position: relative;
 	display: flex;
 	flex-direction: column;
@@ -1259,17 +1261,29 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	--osmosis-study-bottom: var(--navbar-bottom-offset, var(--size-4-2));
 }
 
-.osmosis-study-status,
 .osmosis-study-view > .osmosis-study-complete {
 	flex: none;
 }
 
-/* Note name, progress and breadcrumb, above the card. */
+/* Progress bar and counts, pinned over the top of the card. The background is
+   the view's own, solid behind the bar and counts and fading out below them,
+   so they stay readable over content scrolled under them. No title: the tab
+   has it (T109). It takes no pointer events, so a wheel, tap or selection on
+   the faded band reaches the card. */
 .osmosis-study-status {
-	width: 100%;
-	max-width: var(--osmosis-study-column);
-	margin: 0 auto;
-	padding: var(--size-4-3) var(--size-4-4) 0;
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 1;
+	height: calc(var(--osmosis-study-strip-height) + var(--osmosis-study-strip-fade));
+	padding: 0 var(--size-4-4);
+	pointer-events: none;
+	background: linear-gradient(
+		to bottom,
+		var(--background-primary) var(--osmosis-study-strip-height),
+		transparent
+	);
 }
 
 /* The readable column. Children of the card sides rather than the sides
@@ -1405,39 +1419,6 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	max-width: 100%;
 	height: auto;
 	object-fit: contain;
-}
-
-/* Names the note in a single-note session. */
-.osmosis-study-scope {
-	margin-bottom: 8px;
-	font-size: var(--font-ui-small);
-	font-weight: var(--font-semibold);
-	color: var(--text-muted);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.osmosis-study-breadcrumb {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px;
-	margin-bottom: 8px;
-	font-size: var(--font-ui-small);
-	color: var(--text-muted);
-}
-
-.osmosis-study-breadcrumb-part {
-	white-space: nowrap;
-}
-
-.osmosis-study-breadcrumb-part:last-child {
-	color: var(--text-normal);
-}
-
-.osmosis-study-breadcrumb-sep {
-	color: var(--text-faint);
 }
 
 /* Line-card front: ancestor breadcrumb ending in a "?" placeholder for the
@@ -1733,7 +1714,9 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	margin-bottom: 12px;
+	height: var(--osmosis-study-strip-height);
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
 }
 
 .osmosis-study-progress-bar {
@@ -1782,14 +1765,16 @@ body.is-phone.osmosis-hide-navbar .osmosis-study-view {
 	text-underline-offset: 3px;
 }
 
-/* The one scroll surface in the study tab, filling whatever the status strip
-   and the buttons leave. `flex: 1` with `min-height: 0` is what lets it shrink
-   below its content — a flex item's default `min-height: auto` refuses to. */
+/* The one scroll surface in the study tab, filling the leaf under the
+   floating strip and buttons. `flex: 1` with `min-height: 0` is what lets it
+   shrink below its content — a flex item's default `min-height: auto` refuses
+   to. The top padding is the whole strip, fade included, so the first line
+   starts clear of it rather than dimmed. */
 .osmosis-study-card {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	padding: var(--size-4-4) var(--size-4-4) var(--osmosis-study-clearance);
+	padding: calc(var(--osmosis-study-strip-height) + var(--osmosis-study-strip-fade)) var(--size-4-4) var(--osmosis-study-clearance);
 }
 
 .osmosis-study-front {

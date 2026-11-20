@@ -8,7 +8,7 @@ import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import { isCloseMatch } from "../study/match";
-import { formatInterval, isNavbarSwipe } from "../study/study-view";
+import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
 import { countSession, type CountBucket } from "../study/session-counts";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
@@ -118,8 +118,13 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	private navbarShown = false;
 	private touchOrigin: TouchOrigin | null = null;
 
+	/**
+	 * The tab title, the session's only title (`studyTabTitle`): the deck or
+	 * note while a session is on screen, "Study" otherwise.
+	 */
+	private tabTitle = STUDY_TAB_IDLE_TITLE;
+
 	// Settings, read when a session starts
-	private showBreadcrumb = false;
 	/** Preceding sibling lines shown as context on line-card fronts. */
 	private contextLines = 2;
 
@@ -130,15 +135,13 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 	// DOM elements
 	/**
-	 * Everything above the card: the note name, the progress bar and the deck
-	 * breadcrumb. A per-session status strip belongs here, and is refreshed
-	 * from `updateProgress`.
+	 * The slim strip pinned over the top of the card: the progress bar and the
+	 * counts, refreshed from `updateProgress`. No title — that is the tab's.
 	 */
 	private statusEl!: HTMLElement;
 	private progressFill!: HTMLElement;
 	/** The new | learn | due counts, one span per bucket (see `updateProgress`). */
 	private countEls = new Map<CountBucket, HTMLElement>();
-	private breadcrumbEl: HTMLElement | null = null;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
 	private dividerEl!: HTMLElement;
@@ -165,7 +168,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	}
 
 	getDisplayText(): string {
-		return "Osmosis study";
+		return this.tabTitle;
 	}
 
 	getIcon(): string {
@@ -236,7 +239,6 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.studyScope = scope;
 
 		const { settings } = this.plugin;
-		this.showBreadcrumb = settings.showStudyBreadcrumb;
 		this.contextLines = settings.sequentialContextLines;
 		this.sessionManager = this.plugin.createSessionManager("sequential");
 		this.queue = this.sessionManager.buildQueue(scope, {
@@ -250,9 +252,9 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.undoStack = [];
 
 		this.contentEl.empty();
-		this.breadcrumbEl = null;
 
 		if (this.queue.length === 0) {
+			this.setTitleScope(null);
 			this.renderEmpty();
 			this.updateHeaderActions();
 			return;
@@ -352,9 +354,22 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.undoAction?.toggleClass("osmosis-hidden", !this.sessionActive || this.undoStack.length === 0);
 	}
 
-	private noteTitle(notePath: string): string {
-		const name = notePath.split("/").pop() ?? notePath;
-		return name.replace(/\.md$/i, "");
+	/**
+	 * Retitle the tab for `scope`, or for no session when null. A note's title
+	 * comes from its H1s, read once here rather than on every header redraw.
+	 */
+	private setTitleScope(scope: StudyScope | null): void {
+		let h1s: string[] = [];
+		if (scope?.type === "note") {
+			const file = this.app.vault.getFileByPath(scope.notePath);
+			const headings = file ? this.app.metadataCache.getFileCache(file)?.headings : undefined;
+			h1s = (headings ?? []).filter((h) => h.level === 1).map((h) => h.heading);
+		}
+		const title = studyTabTitle(scope, h1s);
+		if (title === this.tabTitle) return;
+		this.tabTitle = title;
+		// updateHeader() refreshes the tab title; not in public typings
+		(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 	}
 
 	/**
@@ -367,6 +382,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.queue = [];
 		this.undoStack = [];
 		this.updateHeaderActions();
+		this.setTitleScope(null);
 
 		this.contentEl.empty();
 		const picker = this.contentEl.createDiv({ cls: "osmosis-study-picker osmosis-study-scroll" });
@@ -425,15 +441,6 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 
 		this.statusEl = container.createDiv({ cls: "osmosis-study-status" });
 
-		// A single-note session says which note it is, since the deck breadcrumb
-		// (opt-in) names a deck, not the note the user came from.
-		if (this.studyScope?.type === "note") {
-			this.statusEl.createDiv({
-				cls: "osmosis-study-scope",
-				text: this.noteTitle(this.studyScope.notePath),
-			});
-		}
-
 		// Progress bar
 		const progressEl = this.statusEl.createDiv({ cls: "osmosis-study-progress" });
 		const bar = progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
@@ -443,12 +450,6 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.countEls.clear();
 		for (const { bucket } of COUNT_BUCKETS) {
 			this.countEls.set(bucket, countsEl.createSpan({ cls: `osmosis-study-count osmosis-study-count-${bucket}` }));
-		}
-
-		// Deck breadcrumb container (e.g., "python › functions") — opt-in via
-		// settings. Contents are populated per-card in renderCard().
-		if (this.showBreadcrumb) {
-			this.breadcrumbEl = this.statusEl.createDiv({ cls: "osmosis-study-breadcrumb" });
 		}
 
 		// Card area — the one scroll surface in the tab
@@ -520,15 +521,14 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.isFlipped = false;
 		this.cardShownAt = Date.now();
 		this.newCardComponent();
+		// Also undo's way back from the complete screen, which retitled to "Study"
+		this.setTitleScope(this.studyScope);
 
 		// Rebuild card area if it was replaced by waiting/complete screen
 		this.rebuildCardArea();
 
 		// Update progress
 		this.updateProgress();
-
-		// Update breadcrumb to reflect this card's deck
-		this.updateBreadcrumb(studyCard.card.deck);
 
 		// Render front — line cards get a breadcrumb + preceding-line context
 		// treatment instead of plain markdown
@@ -581,15 +581,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	 * reveals the line itself as the back, as with any other card.
 	 */
 	private renderLineCardFront(card: Card): void {
-		const crumbEl = this.frontEl.createDiv({ cls: "osmosis-line-breadcrumb" });
-		for (const part of card.front.split(BREADCRUMB_SEPARATOR)) {
-			crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-part", text: part });
-			crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-sep", text: "›" });
-		}
-		crumbEl.createSpan({
-			cls: "osmosis-line-breadcrumb-part osmosis-line-breadcrumb-unknown",
-			text: "?",
-		});
+		this.renderBreadcrumb(card.front, true);
 
 		const context = this.contextLines > 0
 			? (card.contextBefore ?? []).slice(-this.contextLines)
@@ -623,11 +615,20 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 	 *
 	 * The card's own embed must come out of the markdown either way: leaving it
 	 * in would render that diagram a second time, unmasked, beside the question.
+	 *
+	 * An occluded *line* (it has a block ID) keeps the line card's shape: the
+	 * front is the ancestor breadcrumb and only the back holds the image. Both
+	 * sides draw the same thing for it — the breadcrumb as a lead-in, then the
+	 * line — so nothing moves when the answer shows (T109). Rendering `front`
+	 * as prose instead printed the note name above the picture on the question
+	 * only, and the picture jumped up on reveal.
 	 */
 	private renderOcclusionSide(card: Card, side: OcclusionSide): void {
 		if (!card.occlusion) return;
 
-		const body = side === "front" ? card.front : card.back;
+		const isLine = card.blockId !== undefined;
+		if (isLine) this.renderBreadcrumb(card.front, false);
+		const body = isLine || side === "back" ? card.back : card.front;
 		const split = splitAtEmbed(body, card.occlusion.image);
 		// A body with no embed at all — the image was renamed out from under the
 		// shape set, say. Still draw the masks; `renderOcclusion` shows its own
@@ -660,6 +661,32 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		renderProse(before, beforeEl);
 		renderOcclusion(this.app, imageEl, card.occlusion, side, card.notePath);
 		renderProse(after, afterEl);
+	}
+
+	/**
+	 * A line card's ancestor breadcrumb, less the leading segments that only
+	 * repeat the tab title (`crumbsBelowTitle`, T109): the note's name in a
+	 * session over that note or its same-named deck. A line card's front ends
+	 * it in "?" for the hidden line; an occluded line's lead-in has none, since
+	 * the masks are the question.
+	 */
+	private renderBreadcrumb(front: string, endInQuestion: boolean): void {
+		// With no H1s, `studyTabTitle` gives a note session its file name: the
+		// breadcrumb's first segment even when the tab shows the note's H1
+		const redundant = [this.tabTitle, studyTabTitle(this.studyScope)];
+		const parts = crumbsBelowTitle(front.split(BREADCRUMB_SEPARATOR), redundant);
+		if (parts.length === 0 && !endInQuestion) return;
+		const crumbEl = this.frontEl.createDiv({ cls: "osmosis-line-breadcrumb" });
+		parts.forEach((part, i) => {
+			if (i > 0) crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-sep", text: "›" });
+			crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-part", text: part });
+		});
+		if (!endInQuestion) return;
+		if (parts.length > 0) crumbEl.createSpan({ cls: "osmosis-line-breadcrumb-sep", text: "›" });
+		crumbEl.createSpan({
+			cls: "osmosis-line-breadcrumb-part osmosis-line-breadcrumb-unknown",
+			text: "?",
+		});
 	}
 
 	/**
@@ -697,21 +724,6 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 			el.setAttribute("aria-label", `${label}: ${counts[bucket]}`);
 			el.toggleClass("is-current", counts.current === bucket);
 		}
-	}
-
-	/** Repopulate the breadcrumb to reflect the given deck path. No-op if the
-	 *  breadcrumb is disabled in settings. */
-	private updateBreadcrumb(deckPath: string): void {
-		if (!this.breadcrumbEl) return;
-		this.breadcrumbEl.empty();
-		const parts = deckPath.split("/").filter((p) => p.length > 0);
-		if (parts.length === 0) return;
-		parts.forEach((part, i) => {
-			this.breadcrumbEl!.createSpan({ cls: "osmosis-study-breadcrumb-part", text: part });
-			if (i < parts.length - 1) {
-				this.breadcrumbEl!.createSpan({ cls: "osmosis-study-breadcrumb-sep", text: "›" });
-			}
-		});
 	}
 
 	private flip(): void {
@@ -1086,6 +1098,7 @@ export class SequentialStudyView extends ItemView implements NavbarHost {
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
 		this.updateHeaderActions();
+		this.setTitleScope(null);
 		this.plugin.flushStudySession();
 
 		// Update progress to 100%

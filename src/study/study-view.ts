@@ -3,6 +3,8 @@
  * of `src/views/` so they can be unit-tested without Obsidian.
  */
 
+import type { StudyScope } from "./types";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -60,4 +62,51 @@ export function isNavbarSwipe(sample: SwipeSample): boolean {
 	const up = -sample.dy;
 	if (up < SWIPE_MIN_DISTANCE) return false;
 	return up >= 2 * Math.abs(sample.dx);
+}
+
+/** The tab's title while no session is on screen: the picker, empty and complete screens. */
+export const STUDY_TAB_IDLE_TITLE = "Study";
+
+/**
+ * The study tab's title, which is the session's only title (T109): nothing in
+ * the tab's content repeats it.
+ *
+ * - no session: "Study"
+ * - all decks: "All decks"
+ * - a deck: its own name, the last segment of its path
+ * - a note: its H1 when it has exactly one, else the file name without
+ *   extension. `h1s` is the note's level-1 headings, in order.
+ */
+export function studyTabTitle(scope: StudyScope | null, h1s: readonly string[] = []): string {
+	if (scope === null) return STUDY_TAB_IDLE_TITLE;
+	switch (scope.type) {
+		case "all":
+			return "All decks";
+		case "single":
+		case "parent":
+			return lastSegment(scope.deck) || scope.deck;
+		case "note": {
+			const h1 = h1s.length === 1 ? h1s[0]!.trim() : "";
+			return h1 !== "" ? h1 : lastSegment(scope.notePath).replace(/\.md$/i, "");
+		}
+	}
+}
+
+function lastSegment(path: string): string {
+	return path.split("/").filter((p) => p.length > 0).pop() ?? "";
+}
+
+/**
+ * A line card's ancestor breadcrumb with its leading segments dropped while
+ * they only repeat what the tab already says, compared case-insensitively.
+ * The first segment is always the note's name, which in a session over that
+ * note (or its same-named deck) the tab already shows; `titles` lists every
+ * name that counts — the tab title, and a note session's file name when its
+ * H1 is the title. An empty result means the breadcrumb said nothing new.
+ */
+export function crumbsBelowTitle(crumbs: readonly string[], titles: readonly string[]): string[] {
+	const keys = new Set(titles.map((t) => t.trim().toLowerCase()));
+	let start = 0;
+	while (start < crumbs.length && keys.has(crumbs[start]!.trim().toLowerCase())) start++;
+	return crumbs.slice(start);
 }
