@@ -1930,24 +1930,35 @@ body.is-phone .osmosis-study-rating-bar {
 	display: none;
 }
 
+/* The rating palette, on the shared row so every mode (study tab, note view,
+   mind map, 3D graph, occlusion anchor) reads the same four colours. Easy takes
+   the accent, so it follows the user's accent colour; Good is Obsidian's blue,
+   with a fixed hsl only if a theme drops the variable. */
+.osmosis-contextual-rating {
+	--osmosis-rate-again: hsl(0, 65%, 50%);
+	--osmosis-rate-hard: hsl(30, 65%, 50%);
+	--osmosis-rate-good: var(--color-blue, hsl(212, 90%, 44%));
+	--osmosis-rate-easy: var(--interactive-accent);
+}
+
 .osmosis-contextual-rating button.osmosis-rate-again {
-	background: hsl(0, 65%, 50%);
+	background: var(--osmosis-rate-again);
 	color: white;
 }
 
 .osmosis-contextual-rating button.osmosis-rate-hard {
-	background: hsl(30, 65%, 50%);
+	background: var(--osmosis-rate-hard);
 	color: white;
 }
 
 .osmosis-contextual-rating button.osmosis-rate-good {
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
+	background: var(--osmosis-rate-good);
+	color: white;
 }
 
 .osmosis-contextual-rating button.osmosis-rate-easy {
-	background: hsl(140, 50%, 42%);
-	color: white;
+	background: var(--osmosis-rate-easy);
+	color: var(--text-on-accent);
 }
 
 .osmosis-study-complete {
@@ -2027,8 +2038,9 @@ body.is-phone .osmosis-study-rating-bar {
 	border-left: 3px solid hsl(0, 60%, 50%);
 }
 
+/* Not the accent: Easy is the accent, and the outline would vanish on it. */
 .osmosis-study-rating-bar button.is-suggested {
-	outline: 2px solid var(--interactive-accent);
+	outline: 2px solid var(--text-normal);
 	outline-offset: -2px;
 }
 
