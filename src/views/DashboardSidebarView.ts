@@ -1,8 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type OsmosisPlugin from "../main";
-import { buildDeckTree, pruneDeckTree } from "../study/DeckTreeBuilder";
+import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import type { DeckNode, DeckScope } from "../study/types";
-import { SequentialStudyModal } from "./SequentialStudyModal";
 import { VIEW_TYPE_STATS } from "./StatsView";
 
 export const VIEW_TYPE_DASHBOARD = "osmosis-dashboard";
@@ -56,21 +55,7 @@ export class DashboardSidebarView extends ItemView {
 		const now = Date.now();
 		const decks = this.plugin.cardStore.getAllDecks();
 		const counts = this.plugin.cardStore.getCardCountsByDeck(now);
-		const rawTree = buildDeckTree(decks, counts);
-
-		// Build the set of paths to keep: all real decks + prefix segments
-		// of explicitly-assigned decks (so their hierarchy isn't pruned).
-		const folderDerived = this.plugin.cardStore.getFolderDerivedDecks();
-		const keepPaths = new Set(decks);
-		for (const deck of decks) {
-			if (!folderDerived.has(deck)) {
-				const parts = deck.split("/");
-				for (let i = 1; i < parts.length; i++) {
-					keepPaths.add(parts.slice(0, i).join("/"));
-				}
-			}
-		}
-		const tree = pruneDeckTree(rawTree, keepPaths);
+		const tree = visibleDeckTree(decks, counts, this.plugin.cardStore.getFolderDerivedDecks());
 
 		// Total counts
 		let totalNew = 0, totalLearn = 0, totalDue = 0;
@@ -167,10 +152,7 @@ export class DashboardSidebarView extends ItemView {
 
 			// Click to study this deck
 			row.addEventListener("click", () => {
-				const deckScope: DeckScope = node.children.length > 0
-					? { type: "parent", deck: node.fullPath }
-					: { type: "single", deck: node.fullPath };
-				this.openStudy(deckScope);
+				this.openStudy(deckScopeOf(node));
 			});
 		}
 	}
@@ -186,30 +168,8 @@ export class DashboardSidebarView extends ItemView {
 		el.createSpan({ cls: `osmosis-dash-total${total === 0 ? " osmosis-dash-zero" : ""}`, text: String(total) });
 	}
 
+	/** Start a session in the study tab. Deck counts refresh when it ends (`flushStudySession`). */
 	private openStudy(scope: DeckScope): void {
-		const sessionManager = this.plugin.createSessionManager("sequential");
-		const modal = new SequentialStudyModal(
-			this.app,
-			sessionManager,
-			scope,
-			{
-				newLimit: this.plugin.settings.dailyNewCardLimit,
-				reviewLimit: this.plugin.settings.dailyReviewCardLimit,
-			},
-			this.plugin.fenceWriter,
-			(notePath: string) => this.app.vault.getFileByPath(notePath),
-			this.plugin.settings.showStudyBreadcrumb,
-			this.plugin.settings.sequentialContextLines,
-			() => {
-				// Session end: flush pending line-card schedule writes, then
-				// refresh deck counts. Passed as the modal's onSessionEnd
-				// callback — overriding modal.onClose here would replace the
-				// modal's own cleanup (learning timers, render component).
-				void this.plugin.scheduleStore.flush();
-				void this.plugin.reviewLog.flush();
-				void this.render();
-			},
-		);
-		modal.open();
+		void this.plugin.openStudySession(scope);
 	}
 }

@@ -4,7 +4,9 @@
  * View.md` ("World model").
  *
  * Every parse-tree node is a line node, held to its note's root by hierarchy
- * edges. A note's root is its core (the file-name plate), or, when the note is
+ * edges, except a note embed (`![[Note]]`, a `transclusion` node): it would
+ * only repeat the embedded note's title, so its embed edge leaves from the
+ * line above it instead. A note's root is its core (the file-name plate), or, when the note is
  * one H1 and everything under it, that H1 (`soleH1`): the core is then not
  * built, and the H1 takes its ID, its frontmatter tags and properties, and the
  * links into the note. Links, embeds, frontmatter links and tags come from Obsidian's link
@@ -194,6 +196,14 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 			for (const child of parent.children) {
 				if (parentId === null && !only?.has(child)) {
 					walk(child, null);
+					continue;
+				}
+				// A note embed gets no plate: its embed edge leaves from the line above it, straight to the embedded note's plate (T95).
+				// It stays in `lines` under that line's ID, so the link cache's embed lands there. Not when it is a partial note's root: nothing is above it.
+				if (child.type === "transclusion" && parentId !== null) {
+					index.lines.push({ node: child, id: parentId });
+					if (child.blockId !== undefined && !index.byBlockId.has(child.blockId)) index.byBlockId.set(child.blockId, parentId);
+					walk(child, parentId);
 					continue;
 				}
 				let id = child === h1 && coreId !== null ? coreId : lineNodeId(path, child, true);

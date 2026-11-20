@@ -1,15 +1,22 @@
-import { Component, Modal, MarkdownRenderer, setIcon, type App } from "obsidian";
+import { Component, ItemView, MarkdownRenderer, Platform, Scope, type Menu, type WorkspaceLeaf } from "obsidian";
+import type OsmosisPlugin from "../main";
 import type { StudySessionManager } from "../study/StudySessionManager";
-import type { StudyCard, StudyScope } from "../study/types";
+import type { DeckNode, StudyCard, StudyScope } from "../study/types";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { Card, ScheduleData } from "../database/types";
-import type { FenceWriter } from "../store/FenceWriter";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
+import { deckScopeOf, visibleDeckTree } from "../study/DeckTreeBuilder";
 import { isCloseMatch } from "../study/match";
+import { formatInterval, isNavbarSwipe } from "../study/study-view";
+import { countSession, type CountBucket } from "../study/session-counts";
+import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { renderOcclusion } from "./OcclusionRenderer";
+import { syncNavbar, type NavbarHost } from "./ToolRibbon";
+
+export const VIEW_TYPE_STUDY = "osmosis-study";
 
 /** A card waiting for its learning timer to fire. */
 interface DeferredCard {
@@ -29,25 +36,73 @@ interface UndoEntry {
 	deferredCard?: DeferredCard;
 }
 
+/** Where a touch on the study tab began, for the navigation-bar swipe. */
+interface TouchOrigin {
+	x: number;
+	y: number;
+	at: number;
+	/** The scroll surface under the finger and its position, to tell a swipe from a scroll. */
+	scrollEl: HTMLElement | null;
+	scrollTop: number;
+}
+
+const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
+	{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
+	{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
+	{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
+	{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
+];
+
+/** The counts above the card, in Anki's order and colours (see styles.css). */
+const COUNT_BUCKETS: Array<{ bucket: CountBucket; label: string }> = [
+	{ bucket: "new", label: "New" },
+	{ bucket: "learn", label: "Learn" },
+	{ bucket: "due", label: "Due" },
+];
+
 /**
- * Anki-style sequential study modal.
+ * Anki-style sequential study, as a main-area tab (one per workspace).
  * Shows card front → flip to reveal back → rate (Again/Hard/Good/Easy).
  * Type-in cards show a text input instead of the flip button.
  *
  * Cards in learning/relearning steps reappear after timer-based delays,
  * matching Anki's intra-session behavior.
+ *
+ * The tab outlives a session: with no scope (opened bare, or restored after a
+ * restart) it shows a deck picker, and a finished session leaves a completion
+ * screen. Nothing about a session is saved in the workspace — `getState` is the
+ * default empty one on purpose. Schedules are written per rating already, and
+ * the undo stack is only valid against schedules that have not moved since, so
+ * a restored tab starts from the picker rather than a stale queue.
+ *
+ * On a phone the tab hides Obsidian's navigation bar while it is the active
+ * view, so the bottom buttons are never under it; a swipe up or the ⋯ menu
+ * brings it back (`navbarShown`). `syncNavbar` restores it whenever another
+ * view becomes active, and `onClose` does the same.
  */
-export class SequentialStudyModal extends Modal {
+export class SequentialStudyView extends ItemView implements NavbarHost {
+	/** The session's scope; null while the deck picker is showing. */
+	private studyScope: StudyScope | null = null;
+	private sessionManager: StudySessionManager | null = null;
+	/** True from a non-empty session's start until it is ended; gates the flush. */
+	private sessionActive = false;
+
 	private queue: StudyCard[] = [];
 	private currentIndex = 0;
 	private reviewed = 0;
 	private isFlipped = false;
-	private readonly renderComponent = new Component();
+	/**
+	 * Owns the markdown rendered for the card on screen. One per card rather
+	 * than one per session, so a long session does not keep every card's
+	 * rendered children alive until the tab closes.
+	 */
+	private cardComponent: Component | null = null;
 
 	/** Cards waiting for their learning timer to fire. */
 	private deferredCards: DeferredCard[] = [];
-	/** True when the modal is showing the "waiting for next card" screen. */
+	/** True when the view is showing the "waiting for next card" screen. */
 	private isWaiting = false;
+	private countdownTimer: number | null = null;
 
 	/** Stack of undoable actions (ratings and excludes). */
 	private undoStack: UndoEntry[] = [];
@@ -59,10 +114,30 @@ export class SequentialStudyModal extends Modal {
 	 */
 	private cardShownAt = Date.now();
 
+	/** Phone only: the user brought the navigation bar back (swipe up or ⋯ menu). */
+	private navbarShown = false;
+	private touchOrigin: TouchOrigin | null = null;
+
+	// Settings, read when a session starts
+	private showBreadcrumb = false;
+	/** Preceding sibling lines shown as context on line-card fronts. */
+	private contextLines = 2;
+
+	// Header actions, added in onOpen (a session can be started before it runs)
+	private undoAction: HTMLElement | null = null;
+	private gotoAction: HTMLElement | null = null;
+	private excludeAction: HTMLElement | null = null;
+
 	// DOM elements
-	private progressEl!: HTMLElement;
+	/**
+	 * Everything above the card: the note name, the progress bar and the deck
+	 * breadcrumb. A per-session status strip belongs here, and is refreshed
+	 * from `updateProgress`.
+	 */
+	private statusEl!: HTMLElement;
 	private progressFill!: HTMLElement;
-	private progressText!: HTMLElement;
+	/** The new | learn | due counts, one span per bucket (see `updateProgress`). */
+	private countEls = new Map<CountBucket, HTMLElement>();
 	private breadcrumbEl: HTMLElement | null = null;
 	private cardEl!: HTMLElement;
 	private frontEl!: HTMLElement;
@@ -70,55 +145,211 @@ export class SequentialStudyModal extends Modal {
 	private backEl!: HTMLElement;
 	private flipBtn!: HTMLButtonElement;
 
-	private actionsRight!: HTMLElement;
-	private undoBtn!: HTMLButtonElement;
 	private ratingBar!: HTMLElement;
+	/** The interval label above each rating button, in rating order. */
+	private intervalEls: HTMLElement[] = [];
 	private typeInEl!: HTMLElement;
 	private typeInInput!: HTMLInputElement;
 
-	constructor(
-		app: App,
-		private readonly sessionManager: StudySessionManager,
-		private readonly deckScope: StudyScope,
-		private readonly studyOptions?: { newLimit?: number; reviewLimit?: number },
-		private readonly fenceWriter?: FenceWriter,
-		private readonly resolveFile?: (notePath: string) => import("obsidian").TFile | null,
-		private readonly showBreadcrumb: boolean = false,
-		/** Preceding sibling lines shown as context on line-card fronts. */
-		private readonly contextLines: number = 2,
-		/** Called when the session ends — flushes pending schedule writes. */
-		private readonly onSessionEnd?: () => void,
-	) {
-		super(app);
+	constructor(leaf: WorkspaceLeaf, private readonly plugin: OsmosisPlugin) {
+		super(leaf);
+		// The keys live on the view's own Scope, so they fire only while this
+		// leaf is the active one, and ahead of any global hotkey on the same key.
+		this.scope = new Scope(this.app.scope);
+		this.registerKeyboard(this.scope);
+		this.contentEl.addClass("osmosis-study-view");
 	}
 
-	onOpen(): void {
-		this.renderComponent.load();
-		this.queue = this.sessionManager.buildQueue(this.deckScope, this.studyOptions);
+	getViewType(): string {
+		return VIEW_TYPE_STUDY;
+	}
 
-		this.modalEl.addClass("osmosis-study-modal");
+	getDisplayText(): string {
+		return "Osmosis study";
+	}
+
+	getIcon(): string {
+		return "graduation-cap";
+	}
+
+	async onOpen(): Promise<void> {
+		this.excludeAction = this.addAction("eye-off", "Exclude card (e)", () => void this.excludeCard());
+		this.gotoAction = this.addAction("file-text", "Open note (g)", () => this.goToCard());
+		this.undoAction = this.addAction("undo-2", "Undo (Ctrl+Z)", () => void this.undo());
+		this.updateHeaderActions();
+
+		if (Platform.isPhone) {
+			this.registerDomEvent(this.contentEl, "touchstart", (e) => this.onTouchStart(e), { passive: true });
+			this.registerDomEvent(this.contentEl, "touchend", (e) => this.onTouchEnd(e), { passive: true });
+			this.registerDomEvent(this.contentEl, "touchcancel", () => { this.touchOrigin = null; }, { passive: true });
+		}
+
+		// Coming back to a tab left on the deck picker: the counts have
+		// probably moved since it was drawn.
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", (leaf) => {
+				if (leaf === this.leaf && this.studyScope === null) this.renderPicker();
+			}),
+		);
+
+		if (this.studyScope === null) {
+			this.renderPicker();
+			// A tab restored at startup opens before the first card sync has
+			// filled the store; draw the decks again once it has.
+			void this.plugin.cardStoreReady.then(() => {
+				if (this.studyScope === null) this.renderPicker();
+			});
+		}
+		syncNavbar(this.app);
+	}
+
+	async onClose(): Promise<void> {
+		this.endSession();
+		// This view no longer counts, even while it is still the active one
+		syncNavbar(this.app, this);
 		this.contentEl.empty();
+	}
+
+	/** For `syncNavbar`: on a phone the tab hides the navigation bar unless the user brought it back. */
+	navbarEditMode(): boolean {
+		return !this.navbarShown;
+	}
+
+	onPaneMenu(menu: Menu, source: string): void {
+		super.onPaneMenu(menu, source);
+		if (!Platform.isPhone) return;
+		menu.addItem((item) =>
+			item
+				.setTitle("Show navigation bar")
+				.setIcon("panel-bottom")
+				.setChecked(this.navbarShown)
+				.onClick(() => this.toggleNavbar()),
+		);
+	}
+
+	/**
+	 * Start a session over `scope`, replacing whatever the tab was showing. A
+	 * session already running is ended first, which flushes its writes.
+	 */
+	startSession(scope: StudyScope): void {
+		this.endSession();
+		this.studyScope = scope;
+
+		const { settings } = this.plugin;
+		this.showBreadcrumb = settings.showStudyBreadcrumb;
+		this.contextLines = settings.sequentialContextLines;
+		this.sessionManager = this.plugin.createSessionManager("sequential");
+		this.queue = this.sessionManager.buildQueue(scope, {
+			newLimit: settings.dailyNewCardLimit,
+			reviewLimit: settings.dailyReviewCardLimit,
+		});
+		this.currentIndex = 0;
+		this.reviewed = 0;
+		this.isFlipped = false;
+		this.isWaiting = false;
+		this.undoStack = [];
+
+		this.contentEl.empty();
+		this.breadcrumbEl = null;
 
 		if (this.queue.length === 0) {
 			this.renderEmpty();
+			this.updateHeaderActions();
 			return;
 		}
 
+		this.sessionActive = true;
 		this.buildLayout();
 		this.renderCard();
-		this.registerKeyboard();
 	}
 
-	onClose(): void {
-		// Clear all pending learning timers
+	/**
+	 * End the running session, if any: clear the learning timers and the
+	 * countdown, release the card's render children, and flush the schedule
+	 * and review-log writes. Safe to call twice; only an active session flushes.
+	 */
+	private endSession(): void {
 		for (const deferred of this.deferredCards) {
 			window.clearTimeout(deferred.timer);
 		}
 		this.deferredCards = [];
+		this.stopCountdown();
+		this.releaseCardComponent();
+		this.touchOrigin = null;
 
-		this.renderComponent.unload();
-		this.contentEl.empty();
-		this.onSessionEnd?.();
+		if (this.sessionActive) {
+			this.sessionActive = false;
+			this.plugin.flushStudySession();
+		}
+	}
+
+	/** A fresh render owner for the card about to be drawn; the last card's is unloaded. */
+	private newCardComponent(): Component {
+		this.releaseCardComponent();
+		this.cardComponent = this.addChild(new Component());
+		return this.cardComponent;
+	}
+
+	private releaseCardComponent(): void {
+		if (this.cardComponent) this.removeChild(this.cardComponent);
+		this.cardComponent = null;
+	}
+
+	/** The card's render owner, created if a re-render (undo, flip) finds none. */
+	private get renderComponent(): Component {
+		return this.cardComponent ?? this.newCardComponent();
+	}
+
+	private stopCountdown(): void {
+		if (this.countdownTimer !== null) window.clearInterval(this.countdownTimer);
+		this.countdownTimer = null;
+	}
+
+	private toggleNavbar(): void {
+		this.navbarShown = !this.navbarShown;
+		syncNavbar(this.app);
+	}
+
+	private onTouchStart(e: TouchEvent): void {
+		const touch = e.touches[0];
+		if (e.touches.length !== 1 || !touch) {
+			// A second finger makes it a pinch, not a swipe
+			this.touchOrigin = null;
+			return;
+		}
+		const target = e.target instanceof HTMLElement ? e.target : null;
+		const scrollEl = target?.closest<HTMLElement>(".osmosis-study-scroll") ?? null;
+		this.touchOrigin = {
+			x: touch.clientX,
+			y: touch.clientY,
+			at: Date.now(),
+			scrollEl,
+			scrollTop: scrollEl?.scrollTop ?? 0,
+		};
+	}
+
+	private onTouchEnd(e: TouchEvent): void {
+		const origin = this.touchOrigin;
+		this.touchOrigin = null;
+		const touch = e.changedTouches[0];
+		if (!origin || !touch) return;
+		const swipe = isNavbarSwipe({
+			dx: touch.clientX - origin.x,
+			dy: touch.clientY - origin.y,
+			ms: Date.now() - origin.at,
+			scrolled: origin.scrollEl !== null && origin.scrollEl.scrollTop !== origin.scrollTop,
+		});
+		if (swipe) this.toggleNavbar();
+	}
+
+	/**
+	 * Header actions follow what is on screen: Open note and Exclude need a
+	 * card, Undo needs something on the stack.
+	 */
+	private updateHeaderActions(): void {
+		this.gotoAction?.toggleClass("osmosis-hidden", !this.hasCard);
+		this.excludeAction?.toggleClass("osmosis-hidden", !this.hasCard);
+		this.undoAction?.toggleClass("osmosis-hidden", !this.sessionActive || this.undoStack.length === 0);
 	}
 
 	private noteTitle(notePath: string): string {
@@ -126,65 +357,107 @@ export class SequentialStudyModal extends Modal {
 		return name.replace(/\.md$/i, "");
 	}
 
+	/**
+	 * The empty state: every deck with its waiting count, and Study all on top.
+	 * Shown when the tab has no session, and rebuilt from the store each time.
+	 */
+	private renderPicker(): void {
+		this.endSession();
+		this.studyScope = null;
+		this.queue = [];
+		this.undoStack = [];
+		this.updateHeaderActions();
+
+		this.contentEl.empty();
+		const picker = this.contentEl.createDiv({ cls: "osmosis-study-picker osmosis-study-scroll" });
+		const column = picker.createDiv({ cls: "osmosis-study-picker-column" });
+		column.createEl("h2", { text: "Choose a deck to study" });
+
+		const { cardStore } = this.plugin;
+		const tree = visibleDeckTree(
+			cardStore.getAllDecks(),
+			cardStore.getCardCountsByDeck(Date.now()),
+			cardStore.getFolderDerivedDecks(),
+		);
+		if (tree.length === 0) {
+			column.createEl("p", {
+				cls: "osmosis-study-picker-empty",
+				text: "No decks yet. Add osmosis-cards: true to a note's frontmatter to get started.",
+			});
+			return;
+		}
+
+		const list = column.createDiv({ cls: "osmosis-study-picker-list" });
+		const total = tree.reduce((sum, n) => sum + n.newCount + n.learnCount + n.dueCount, 0);
+		this.renderPickerRow(list, "Study all", total, 0, () => this.startSession({ type: "all" }))
+			.addClass("osmosis-study-picker-all");
+		const addRows = (nodes: DeckNode[], depth: number): void => {
+			for (const node of nodes) {
+				const waiting = node.newCount + node.learnCount + node.dueCount;
+				this.renderPickerRow(list, node.name, waiting, depth, () => this.startSession(deckScopeOf(node)));
+				addRows(node.children, depth + 1);
+			}
+		};
+		addRows(tree, 0);
+	}
+
+	private renderPickerRow(
+		list: HTMLElement,
+		label: string,
+		waiting: number,
+		depth: number,
+		start: () => void,
+	): HTMLElement {
+		const row = list.createEl("button", { cls: "osmosis-study-picker-row" });
+		row.setCssProps({ "--osmosis-picker-depth": String(depth) });
+		row.createSpan({ cls: "osmosis-study-picker-name", text: label });
+		row.createSpan({
+			cls: `osmosis-study-picker-count${waiting === 0 ? " is-zero" : ""}`,
+			text: String(waiting),
+			attr: { "aria-label": `${waiting} waiting` },
+		});
+		row.addEventListener("click", start);
+		return row;
+	}
+
 	private buildLayout(): void {
 		const container = this.contentEl;
 
-		// Top bar: undo, open-note, and exclude buttons. Mounted on modalEl (not
-		// contentEl) so absolute positioning lands them in the modal's header
-		// strip alongside the × close button instead of inside the scrollable
-		// content area where they'd overlap the progress bar.
-		const topBar = this.modalEl.createDiv({ cls: "osmosis-study-top-bar" });
-		this.actionsRight = topBar.createDiv({ cls: "osmosis-study-actions-right" });
-
-		const gotoBtn = this.actionsRight.createEl("button", {
-			cls: "osmosis-study-icon-btn",
-			attr: { "aria-label": "Go to card" },
-		});
-		setIcon(gotoBtn, "file-text");
-		gotoBtn.addEventListener("click", () => this.goToCard());
-
-		const excludeBtn = this.actionsRight.createEl("button", {
-			cls: "osmosis-study-icon-btn",
-			attr: { "aria-label": "Exclude card (e)" },
-		});
-		setIcon(excludeBtn, "eye-off");
-		excludeBtn.addEventListener("click", () => void this.excludeCard());
-
-		this.undoBtn = this.actionsRight.createEl("button", {
-			cls: "osmosis-study-icon-btn osmosis-hidden",
-			attr: { "aria-label": "Undo (Ctrl+Z)" },
-		});
-		setIcon(this.undoBtn, "undo-2");
-		this.undoBtn.addEventListener("click", () => void this.undo());
+		this.statusEl = container.createDiv({ cls: "osmosis-study-status" });
 
 		// A single-note session says which note it is, since the deck breadcrumb
 		// (opt-in) names a deck, not the note the user came from.
-		if (this.deckScope.type === "note") {
-			container.createDiv({
+		if (this.studyScope?.type === "note") {
+			this.statusEl.createDiv({
 				cls: "osmosis-study-scope",
-				text: this.noteTitle(this.deckScope.notePath),
+				text: this.noteTitle(this.studyScope.notePath),
 			});
 		}
 
 		// Progress bar
-		this.progressEl = container.createDiv({ cls: "osmosis-study-progress" });
-		const bar = this.progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
+		const progressEl = this.statusEl.createDiv({ cls: "osmosis-study-progress" });
+		const bar = progressEl.createDiv({ cls: "osmosis-study-progress-bar" });
 		this.progressFill = bar.createDiv({ cls: "osmosis-study-progress-fill" });
-		this.progressText = this.progressEl.createSpan({ cls: "osmosis-study-progress-text" });
+		// Anki-style new | learn | due counts, the session's only counter
+		const countsEl = progressEl.createDiv({ cls: "osmosis-study-counts" });
+		this.countEls.clear();
+		for (const { bucket } of COUNT_BUCKETS) {
+			this.countEls.set(bucket, countsEl.createSpan({ cls: `osmosis-study-count osmosis-study-count-${bucket}` }));
+		}
 
 		// Deck breadcrumb container (e.g., "python › functions") — opt-in via
 		// settings. Contents are populated per-card in renderCard().
 		if (this.showBreadcrumb) {
-			this.breadcrumbEl = container.createDiv({ cls: "osmosis-study-breadcrumb" });
+			this.breadcrumbEl = this.statusEl.createDiv({ cls: "osmosis-study-breadcrumb" });
 		}
 
-		// Card area
-		this.cardEl = container.createDiv({ cls: "osmosis-study-card" });
+		// Card area — the one scroll surface in the tab
+		this.cardEl = container.createDiv({ cls: "osmosis-study-card osmosis-study-scroll" });
 		this.frontEl = this.cardEl.createDiv({ cls: "osmosis-study-front" });
 		this.dividerEl = this.cardEl.createDiv({ cls: "osmosis-study-divider" });
 		this.backEl = this.cardEl.createDiv({ cls: "osmosis-study-back" });
 
-		// Actions
+		// Actions, floating over the bottom of the card
 		const actions = container.createDiv({ cls: "osmosis-study-actions" });
 
 		this.flipBtn = actions.createEl("button", {
@@ -206,24 +479,32 @@ export class SequentialStudyModal extends Modal {
 		});
 		checkBtn.addEventListener("click", () => this.checkTypeIn());
 
-		this.ratingBar = actions.createDiv({ cls: "osmosis-study-rating-bar osmosis-hidden" });
+		// The rating row every other study surface uses, for the same buttons
+		this.ratingBar = actions.createDiv({ cls: "osmosis-contextual-rating osmosis-study-rating-bar osmosis-hidden" });
 
-		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-
-		for (const { label, rating, cls } of ratings) {
-			const btn = this.ratingBar.createEl("button", { text: label, cls });
+		// Each button shows the interval it would schedule above its label
+		this.intervalEls = [];
+		for (const { label, rating, cls } of RATINGS) {
+			const btn = this.ratingBar.createEl("button", { cls, attr: { "aria-label": `${label} (${rating})` } });
+			this.intervalEls.push(btn.createSpan({ cls: "osmosis-rate-interval" }));
+			btn.createSpan({ cls: "osmosis-rate-label", text: label });
 			btn.addEventListener("click", () => void this.rate(rating));
 		}
+	}
 
+	/** Fill the interval labels for the card on screen, once its answer shows. */
+	private updateRatingIntervals(card: Card): void {
+		if (!this.sessionManager) return;
+		const preview = this.sessionManager.previewIntervals(card.id);
+		RATINGS.forEach(({ rating }, i) => {
+			const el = this.intervalEls[i];
+			if (el) el.textContent = formatInterval(preview[rating]);
+		});
 	}
 
 	private renderCard(): void {
 		this.isWaiting = false;
+		this.stopCountdown();
 
 		const studyCard = this.queue[this.currentIndex];
 		if (!studyCard) {
@@ -238,6 +519,7 @@ export class SequentialStudyModal extends Modal {
 
 		this.isFlipped = false;
 		this.cardShownAt = Date.now();
+		this.newCardComponent();
 
 		// Rebuild card area if it was replaced by waiting/complete screen
 		this.rebuildCardArea();
@@ -273,12 +555,10 @@ export class SequentialStudyModal extends Modal {
 
 		// Hide rating
 		this.ratingBar.addClass("osmosis-hidden");
+		this.highlightSuggestedRating(null);
 
-		// Show action icons (visible for all cards)
-		this.actionsRight.removeClass("osmosis-hidden");
-
-		// Show undo button if there's something to undo
-		this.updateUndoButton();
+		// Header actions: a card is on screen; undo if there's something to undo
+		this.updateHeaderActions();
 
 		// Show flip or type-in based on card type
 		const isTypeIn = studyCard.card.typeIn;
@@ -286,7 +566,7 @@ export class SequentialStudyModal extends Modal {
 			this.flipBtn.addClass("osmosis-hidden");
 			this.typeInEl.removeClass("osmosis-hidden");
 			this.typeInInput.value = "";
-			// Focus input after a tick so modal is fully rendered
+			// Focus input after a tick so the view is fully rendered
 			window.setTimeout(() => this.typeInInput.focus(), 50);
 		} else {
 			this.flipBtn.removeClass("osmosis-hidden");
@@ -361,7 +641,7 @@ export class SequentialStudyModal extends Modal {
 		const beforeEl = before.trim() !== ""
 			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
 			: null;
-		const imageEl = this.frontEl.createDiv();
+		const imageEl = this.frontEl.createDiv({ cls: "osmosis-study-media" });
 		const afterEl = after.trim() !== ""
 			? this.frontEl.createDiv({ cls: "osmosis-occlusion-prose" })
 			: null;
@@ -400,7 +680,23 @@ export class SequentialStudyModal extends Modal {
 		const total = this.reviewed + remaining;
 		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
 		this.progressFill.setCssProps({ "--osmosis-progress-width": `${Math.min(pct, 100)}%` });
-		this.progressText.textContent = `${this.reviewed + 1} / ${total}`;
+		this.updateCounts();
+	}
+
+	/** Refresh the new | learn | due counts and underline the on-screen card's. */
+	private updateCounts(): void {
+		const counts = countSession(
+			this.queue,
+			this.currentIndex,
+			this.deferredCards.map((d) => d.studyCard),
+		);
+		for (const { bucket, label } of COUNT_BUCKETS) {
+			const el = this.countEls.get(bucket);
+			if (!el) continue;
+			el.textContent = String(counts[bucket]);
+			el.setAttribute("aria-label", `${label}: ${counts[bucket]}`);
+			el.toggleClass("is-current", counts.current === bucket);
+		}
 	}
 
 	/** Repopulate the breadcrumb to reflect the given deck path. No-op if the
@@ -462,6 +758,7 @@ export class SequentialStudyModal extends Modal {
 		}
 
 		// Show rating buttons, hide flip
+		this.updateRatingIntervals(studyCard.card);
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.removeClass("osmosis-hidden");
 	}
@@ -504,6 +801,7 @@ export class SequentialStudyModal extends Modal {
 		this.backEl.addClass("is-revealed");
 
 		// Hide type-in, show rating bar with suggested rating highlighted
+		this.updateRatingIntervals(studyCard.card);
 		this.typeInEl.addClass("osmosis-hidden");
 		this.ratingBar.removeClass("osmosis-hidden");
 
@@ -511,7 +809,8 @@ export class SequentialStudyModal extends Modal {
 		this.highlightSuggestedRating(suggested);
 	}
 
-	private highlightSuggestedRating(rating: FSRSRating): void {
+	/** Outline the rating a type-in answer suggests; null clears it for the next card. */
+	private highlightSuggestedRating(rating: FSRSRating | null): void {
 		const buttons = this.ratingBar.querySelectorAll("button");
 		buttons.forEach((btn, i) => {
 			if (i + 1 === rating) {
@@ -524,7 +823,7 @@ export class SequentialStudyModal extends Modal {
 
 	private async rate(rating: FSRSRating): Promise<void> {
 		const studyCard = this.queue[this.currentIndex];
-		if (!studyCard) return;
+		if (!studyCard || !this.sessionManager) return;
 
 		// Snapshot previous schedule before rating (null = card was new)
 		const card = studyCard.card;
@@ -573,18 +872,16 @@ export class SequentialStudyModal extends Modal {
 	 */
 	private async excludeCard(): Promise<void> {
 		const studyCard = this.queue[this.currentIndex];
-		if (!studyCard) return;
+		if (!studyCard || this.isWaiting || !this.sessionManager) return;
 
 		const isLineCard = studyCard.card.blockId !== undefined;
 		if (isLineCard) {
 			this.sessionManager.setLineCardDisabled(studyCard.card, true);
-		} else if (this.fenceWriter && this.resolveFile) {
-			const file = this.resolveFile(studyCard.card.notePath);
-			if (file) {
-				await this.fenceWriter.writeExclude(file, studyCard.card.id, true);
-			}
 		} else {
-			return;
+			const file = this.app.vault.getFileByPath(studyCard.card.notePath);
+			if (file) {
+				await this.plugin.fenceWriter.writeExclude(file, studyCard.card.id, true);
+			}
 		}
 
 		this.undoStack.push({
@@ -600,23 +897,24 @@ export class SequentialStudyModal extends Modal {
 
 	/** Undo the last action (rating or exclude). */
 	private async undo(): Promise<void> {
+		if (!this.sessionManager) return;
 		const entry = this.undoStack.pop();
 		if (!entry) return;
 
 		if (entry.type === "exclude") {
-			// Undo exclude: clear the flag (frontmatter or fence) and re-insert
+			// Undo exclude: clear the flag (frontmatter or fence). The card is
+			// still in the queue at currentIndex - 1; stepping back shows it.
 			if (entry.studyCard.card.blockId !== undefined) {
 				this.sessionManager.setLineCardDisabled(entry.studyCard.card, false);
-			} else if (this.fenceWriter && this.resolveFile) {
-				const file = this.resolveFile(entry.studyCard.card.notePath);
+			} else {
+				const file = this.app.vault.getFileByPath(entry.studyCard.card.notePath);
 				if (file) {
-					await this.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);
+					await this.plugin.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);
 				}
 			}
-			this.currentIndex--;
-			this.queue.splice(this.currentIndex, 0, entry.studyCard);
+			this.stepBack();
 		} else {
-			// Undo rating: revert schedule and re-insert card
+			// Undo rating: revert schedule and step back to the card
 			await this.sessionManager.revertReview(
 				entry.studyCard.card.id,
 				entry.previousSchedule ?? null,
@@ -630,34 +928,35 @@ export class SequentialStudyModal extends Modal {
 			}
 
 			this.reviewed--;
-			this.currentIndex--;
-			this.queue.splice(this.currentIndex, 0, entry.studyCard);
+			// If the timer already fired, the deferred copy is in the queue: drop it.
+			this.stepBack(entry.deferredCard?.studyCard);
 		}
 
 		this.renderCard();
 	}
 
-	/** Show or hide the undo button based on stack state. */
-	private updateUndoButton(): void {
-		if (this.undoStack.length > 0) {
-			this.undoBtn.removeClass("osmosis-hidden");
-		} else {
-			this.undoBtn.addClass("osmosis-hidden");
-		}
+	/** Step the queue back over the last advance (see `stepBackQueue`). */
+	private stepBack(firedDeferred?: StudyCard): void {
+		const next = stepBackQueue(
+			{ queue: this.queue, currentIndex: this.currentIndex },
+			firedDeferred,
+		);
+		this.queue = next.queue;
+		this.currentIndex = next.currentIndex;
 	}
 
-	/** Navigate to the current card's source note and close the modal. */
+	/**
+	 * Open the current card's source note at its line, in a new tab. The study
+	 * tab stays where it is, session and all, so the user can come back to it —
+	 * opening in this leaf would replace the view and end the session.
+	 */
 	private goToCard(): void {
 		const studyCard = this.queue[this.currentIndex];
-		if (!studyCard) return;
+		if (!studyCard || this.isWaiting) return;
 
-		const notePath = studyCard.card.notePath;
-		this.close();
-
-		// Open the note and scroll to the card's source line
-		const file = this.app.vault.getFileByPath(notePath);
+		const file = this.app.vault.getFileByPath(studyCard.card.notePath);
 		if (file) {
-			void this.app.workspace.getLeaf(false).openFile(file, {
+			void this.app.workspace.getLeaf("tab").openFile(file, {
 				eState: { line: studyCard.card.sourceLine },
 			});
 		}
@@ -727,12 +1026,12 @@ export class SequentialStudyModal extends Modal {
 	private renderWaiting(): void {
 		this.isWaiting = true;
 
+		this.releaseCardComponent();
 		this.cardEl.empty();
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
-		this.actionsRight.addClass("osmosis-hidden");
-		this.updateUndoButton();
+		this.updateHeaderActions();
 
 		// Find the soonest deferred card
 		const soonest = this.deferredCards.reduce((a, b) =>
@@ -753,49 +1052,64 @@ export class SequentialStudyModal extends Modal {
 				cls: "osmosis-study-waiting-info",
 			});
 
-			// Update countdown every second
-			const countdownInterval = window.setInterval(() => {
-				if (!this.isWaiting) {
-					window.clearInterval(countdownInterval);
-					return;
-				}
+			// Update countdown every second; stopped when a card shows or the session ends
+			this.stopCountdown();
+			this.countdownTimer = window.setInterval(() => {
 				const remaining = Math.max(0, Math.ceil((soonest.dueAt - Date.now()) / 1000));
 				countdownEl.textContent = `Next card in ${formatWaitTime(remaining)}`;
-				if (remaining <= 0) {
-					window.clearInterval(countdownInterval);
-				}
+				if (remaining <= 0) this.stopCountdown();
 			}, 1000);
 		});
 	}
 
+	/** A scope with nothing waiting: offer another deck rather than an empty session. */
 	private renderEmpty(): void {
 		const container = this.contentEl;
 		container.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "No cards due" });
 			el.createEl("p", { text: "All caught up! Check back later." });
-			const btn = el.createEl("button", { text: "Close", cls: "osmosis-study-close-btn" });
-			btn.addEventListener("click", () => this.close());
+			const buttons = el.createDiv({ cls: "osmosis-study-complete-buttons" });
+			this.completeButton(buttons, "Choose a deck", () => this.renderPicker());
+			this.completeButton(buttons, "Close", () => this.leaf.detach());
 		});
 	}
 
+	/**
+	 * The tab stays open on a finished session. Its writes are flushed now (so
+	 * the dashboard's counts move), but the session is not ended: undo can still
+	 * step back onto the last card, and the next end flushes again.
+	 */
 	private renderComplete(): void {
+		this.releaseCardComponent();
 		this.cardEl.empty();
 		this.flipBtn.addClass("osmosis-hidden");
 		this.ratingBar.addClass("osmosis-hidden");
 		this.typeInEl.addClass("osmosis-hidden");
-		this.actionsRight.addClass("osmosis-hidden");
-		this.updateUndoButton();
+		this.updateHeaderActions();
+		this.plugin.flushStudySession();
 
 		// Update progress to 100%
 		this.progressFill.setCssProps({ "--osmosis-progress-width": "100%" });
-		this.progressText.textContent = `${this.reviewed} reviewed`;
+		this.updateCounts();
 
 		this.cardEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "Session complete" });
 			el.createEl("p", { text: `You reviewed ${this.reviewed} card${this.reviewed !== 1 ? "s" : ""}.` });
-			const btn = el.createEl("button", { text: "Close", cls: "osmosis-study-close-btn" });
-			btn.addEventListener("click", () => this.close());
+			const buttons = el.createDiv({ cls: "osmosis-study-complete-buttons" });
+			const scope = this.studyScope;
+			if (scope) this.completeButton(buttons, "Study again", () => this.startSession(scope));
+			this.completeButton(buttons, "Close", () => this.leaf.detach());
 		});
+	}
+
+	private completeButton(container: HTMLElement, text: string, onClick: () => void): void {
+		const btn = container.createEl("button", { text, cls: "osmosis-study-close-btn" });
+		btn.addEventListener("click", onClick);
+	}
+
+	/** True while a card is on screen — not the picker, a waiting or a complete screen. */
+	private get hasCard(): boolean {
+		return this.queue[this.currentIndex] !== undefined && !this.isWaiting;
 	}
 
 	/** True when the type-in input is focused and should receive keystrokes. */
@@ -803,16 +1117,22 @@ export class SequentialStudyModal extends Modal {
 		return document.activeElement === this.typeInInput;
 	}
 
-	private registerKeyboard(): void {
-		this.scope.register([], " ", (e: KeyboardEvent) => {
-			if (this.isTypeInFocused) return;
+	/**
+	 * A handler that returns without `preventDefault` lets the key through, so
+	 * with no card on screen Space and Enter still press a focused button on
+	 * the picker or completion screen.
+	 */
+	private registerKeyboard(scope: Scope): void {
+		scope.register([], " ", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused || !this.hasCard) return;
 			e.preventDefault();
 			if (!this.isFlipped) {
 				this.flip();
 			}
 		});
 
-		this.scope.register([], "Enter", (e: KeyboardEvent) => {
+		scope.register([], "Enter", (e: KeyboardEvent) => {
+			if (!this.hasCard) return;
 			if (!this.isFlipped) {
 				e.preventDefault();
 				const studyCard = this.queue[this.currentIndex];
@@ -824,19 +1144,20 @@ export class SequentialStudyModal extends Modal {
 			}
 		});
 
-		this.scope.register([], "e", (e: KeyboardEvent) => {
-			if (this.isTypeInFocused) return;
+		scope.register([], "e", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused || !this.hasCard) return;
 			e.preventDefault();
 			void this.excludeCard();
 		});
 
-		this.scope.register([], "g", (e: KeyboardEvent) => {
-			if (this.isTypeInFocused) return;
+		scope.register([], "g", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused || !this.hasCard) return;
 			e.preventDefault();
 			this.goToCard();
 		});
 
-		this.scope.register(["Ctrl"], "z", (e: KeyboardEvent) => {
+		scope.register(["Ctrl"], "z", (e: KeyboardEvent) => {
+			if (!this.sessionActive || this.undoStack.length === 0) return;
 			e.preventDefault();
 			void this.undo();
 		});
@@ -849,8 +1170,8 @@ export class SequentialStudyModal extends Modal {
 		];
 
 		for (const { key, rating } of ratingKeys) {
-			this.scope.register([], key, (e: KeyboardEvent) => {
-				if (this.isTypeInFocused) return;
+			scope.register([], key, (e: KeyboardEvent) => {
+				if (this.isTypeInFocused || !this.hasCard) return;
 				e.preventDefault();
 				if (this.isFlipped) {
 					void this.rate(rating);

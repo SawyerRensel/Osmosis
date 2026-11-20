@@ -1056,189 +1056,62 @@ hr.osmosis-map-style-divider {
 	min-width: 120px;
 }
 
-/* ─── Color Picker Popover ────────────────────────────── */
+/* ─── Color Picker (Pickr) ───────────────────────────── */
 
-.osmosis-color-picker {
-	position: fixed;
-	top: var(--picker-top, 0);
-	left: var(--picker-left, 0);
+/*
+ * Vendored verbatim from @simonwep/pickr 1.10.3, dist/themes/nano.min.css
+ * (MIT). Obsidian loads one styles.css per plugin and forbids injecting
+ * <style> elements, so Pickr's theme lives here. When upgrading Pickr in
+ * package.json, re-copy that file over the next line.
+ */
+/*! Pickr 1.10.3 MIT | https://github.com/simonwep/pickr */
+.pickr{position:relative;overflow:visible;transform:translateY(0)}.pickr *{box-sizing:border-box;outline:none;border:none;-webkit-appearance:none}.pickr .pcr-button::before{position:absolute;content:"";top:0;left:0;width:100%;height:100%;background:url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path fill="white" d="M1,0H2V1H1V0ZM0,1H1V2H0V1Z"/><path fill="gray" d="M0,0H1V1H0V0ZM1,1H2V2H1V1Z"/></svg>');background-size:.5em;border-radius:.15em;z-index:-1}.pickr .pcr-button{position:relative;height:2em;width:2em;padding:.5em;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Roboto","Helvetica Neue",Arial,sans-serif;border-radius:.15em;background:url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50" stroke="%2342445A" stroke-width="5px" stroke-linecap="round"><path d="M45,45L5,5"></path><path d="M45,5L5,45"></path></svg>') no-repeat center;background-size:0;transition:all .3s}.pickr .pcr-button::before{z-index:initial}.pickr .pcr-button::after{position:absolute;content:"";top:0;left:0;height:100%;width:100%;transition:background .3s;background:var(--pcr-color);border-radius:.15em}.pickr .pcr-button.clear{background-size:70%}.pickr .pcr-button.clear::before{opacity:0}.pickr .pcr-button.clear:focus{box-shadow:0 0 0 1px hsla(0,0%,100%,.85),0 0 0 3px var(--pcr-color)}.pickr .pcr-button.disabled{cursor:not-allowed}.pickr *,.pcr-app *{box-sizing:border-box;outline:none;border:none;-webkit-appearance:none}.pickr input:focus,.pickr input.pcr-active,.pickr button:focus,.pickr button.pcr-active,.pcr-app input:focus,.pcr-app input.pcr-active,.pcr-app button:focus,.pcr-app button.pcr-active{box-shadow:0 0 0 1px hsla(0,0%,100%,.85),0 0 0 3px var(--pcr-color)}.pickr .pcr-palette,.pickr .pcr-slider,.pcr-app .pcr-palette,.pcr-app .pcr-slider{transition:box-shadow .3s}.pickr .pcr-palette:focus,.pickr .pcr-slider:focus,.pcr-app .pcr-palette:focus,.pcr-app .pcr-slider:focus{box-shadow:0 0 0 1px hsla(0,0%,100%,.85),0 0 0 3px rgba(0,0,0,.25)}.pcr-app{position:fixed;display:flex;flex-direction:column;z-index:10000;border-radius:.1em;background:#fff;opacity:0;visibility:hidden;transition:opacity .3s,visibility 0s .3s;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Roboto","Helvetica Neue",Arial,sans-serif;box-shadow:0 .15em 1.5em 0 rgba(0,0,0,.1),0 0 1em 0 rgba(0,0,0,.03);left:0;top:0}.pcr-app.visible{transition:opacity .3s;visibility:visible;opacity:1}.pcr-app .pcr-swatches{display:flex;flex-wrap:wrap;margin-top:.75em}.pcr-app .pcr-swatches.pcr-last{margin:0}@supports(display: grid){.pcr-app .pcr-swatches{display:grid;align-items:center;grid-template-columns:repeat(auto-fit, 1.75em)}}.pcr-app .pcr-swatches>button::before{position:absolute;content:"";top:0;left:0;width:100%;height:100%;background:url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path fill="white" d="M1,0H2V1H1V0ZM0,1H1V2H0V1Z"/><path fill="gray" d="M0,0H1V1H0V0ZM1,1H2V2H1V1Z"/></svg>');background-size:6px;border-radius:.15em;z-index:-1}.pcr-app .pcr-swatches>button{font-size:1em;position:relative;width:calc(1.75em - 5px);height:calc(1.75em - 5px);border-radius:.15em;cursor:pointer;margin:2.5px;flex-shrink:0;justify-self:center;transition:all .15s;overflow:hidden;background:rgba(0,0,0,0);z-index:1}.pcr-app .pcr-swatches>button::after{content:"";position:absolute;top:0;left:0;width:100%;height:100%;background:var(--pcr-color);border:1px solid rgba(0,0,0,.05);border-radius:.15em;box-sizing:border-box}.pcr-app .pcr-swatches>button:hover{filter:brightness(1.05)}.pcr-app .pcr-swatches>button:not(.pcr-active){box-shadow:none}.pcr-app .pcr-interaction{display:flex;flex-wrap:wrap;align-items:center;margin:0 -0.2em 0 -0.2em}.pcr-app .pcr-interaction>*{margin:0 .2em}.pcr-app .pcr-interaction input{letter-spacing:.07em;font-size:.75em;text-align:center;cursor:pointer;color:#75797e;background:#f1f3f4;border-radius:.15em;transition:all .15s;padding:.45em .5em;margin-top:.75em}.pcr-app .pcr-interaction input:hover{filter:brightness(0.975)}.pcr-app .pcr-interaction input:focus{box-shadow:0 0 0 1px hsla(0,0%,100%,.85),0 0 0 3px rgba(66,133,244,.75)}.pcr-app .pcr-interaction .pcr-result{color:#75797e;text-align:left;flex:1 1 8em;min-width:8em;transition:all .2s;border-radius:.15em;background:#f1f3f4;cursor:text}.pcr-app .pcr-interaction .pcr-result::selection{background:#4285f4;color:#fff}.pcr-app .pcr-interaction .pcr-type.active{color:#fff;background:#4285f4}.pcr-app .pcr-interaction .pcr-save,.pcr-app .pcr-interaction .pcr-cancel,.pcr-app .pcr-interaction .pcr-clear{color:#fff;width:auto}.pcr-app .pcr-interaction .pcr-save,.pcr-app .pcr-interaction .pcr-cancel,.pcr-app .pcr-interaction .pcr-clear{color:#fff}.pcr-app .pcr-interaction .pcr-save:hover,.pcr-app .pcr-interaction .pcr-cancel:hover,.pcr-app .pcr-interaction .pcr-clear:hover{filter:brightness(0.925)}.pcr-app .pcr-interaction .pcr-save{background:#4285f4}.pcr-app .pcr-interaction .pcr-clear,.pcr-app .pcr-interaction .pcr-cancel{background:#f44250}.pcr-app .pcr-interaction .pcr-clear:focus,.pcr-app .pcr-interaction .pcr-cancel:focus{box-shadow:0 0 0 1px hsla(0,0%,100%,.85),0 0 0 3px rgba(244,66,80,.75)}.pcr-app .pcr-selection .pcr-picker{position:absolute;height:18px;width:18px;border:2px solid #fff;border-radius:100%;user-select:none}.pcr-app .pcr-selection .pcr-color-palette,.pcr-app .pcr-selection .pcr-color-chooser,.pcr-app .pcr-selection .pcr-color-opacity{position:relative;user-select:none;display:flex;flex-direction:column;cursor:grab}.pcr-app .pcr-selection .pcr-color-palette:active,.pcr-app .pcr-selection .pcr-color-chooser:active,.pcr-app .pcr-selection .pcr-color-opacity:active{cursor:grabbing}.pcr-app[data-theme=nano]{width:14.25em;max-width:95vw}.pcr-app[data-theme=nano] .pcr-swatches{margin-top:.6em;padding:0 .6em}.pcr-app[data-theme=nano] .pcr-interaction{padding:0 .6em .6em .6em}.pcr-app[data-theme=nano] .pcr-selection{display:grid;grid-gap:.6em;grid-template-columns:1fr 4fr;grid-template-rows:5fr auto auto;align-items:center;height:10.5em;width:100%;align-self:flex-start}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-preview{grid-area:2/1/4/1;height:100%;width:100%;display:flex;flex-direction:row;justify-content:center;margin-left:.6em}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-preview .pcr-last-color{display:none}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-preview .pcr-current-color::before{position:absolute;content:"";top:0;left:0;width:100%;height:100%;background:url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path fill="white" d="M1,0H2V1H1V0ZM0,1H1V2H0V1Z"/><path fill="gray" d="M0,0H1V1H0V0ZM1,1H2V2H1V1Z"/></svg>');background-size:.5em;border-radius:.15em;z-index:-1}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-preview .pcr-current-color{position:relative;background:var(--pcr-color);width:2em;height:2em;border-radius:50em;overflow:hidden}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-palette{grid-area:1/1/2/3;width:100%;height:100%;z-index:1}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-palette .pcr-palette{border-radius:.15em}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-palette .pcr-palette::before{position:absolute;content:"";top:0;left:0;width:100%;height:100%;background:url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path fill="white" d="M1,0H2V1H1V0ZM0,1H1V2H0V1Z"/><path fill="gray" d="M0,0H1V1H0V0ZM1,1H2V2H1V1Z"/></svg>');background-size:.5em;border-radius:.15em;z-index:-1}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-palette .pcr-palette{width:100%;height:100%}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-chooser{grid-area:2/2/2/2}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-opacity{grid-area:3/2/3/2}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-chooser,.pcr-app[data-theme=nano] .pcr-selection .pcr-color-opacity{height:.5em;margin:0 .6em}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-chooser .pcr-picker,.pcr-app[data-theme=nano] .pcr-selection .pcr-color-opacity .pcr-picker{top:50%;transform:translateY(-50%)}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-chooser .pcr-slider,.pcr-app[data-theme=nano] .pcr-selection .pcr-color-opacity .pcr-slider{flex-grow:1;border-radius:50em}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-chooser .pcr-slider{background:linear-gradient(to right, hsl(0, 100%, 50%), hsl(60, 100%, 50%), hsl(120, 100%, 50%), hsl(180, 100%, 50%), hsl(240, 100%, 50%), hsl(300, 100%, 50%), hsl(0, 100%, 50%))}.pcr-app[data-theme=nano] .pcr-selection .pcr-color-opacity .pcr-slider{background:linear-gradient(to right, transparent, black),url('data:image/svg+xml;utf8, <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><path fill="white" d="M1,0H2V1H1V0ZM0,1H1V2H0V1Z"/><path fill="gray" d="M0,0H1V1H0V0ZM1,1H2V2H1V1Z"/></svg>');background-size:100%,.25em}
+
+/* Osmosis overrides: theme Pickr's popup with Obsidian's variables. */
+.pcr-app.osmosis-pickr {
 	z-index: var(--layer-popover);
-	width: 232px;
-	max-height: var(--picker-max-height, none);
-	overflow-y: auto;
-	padding: 8px;
 	background: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 8px;
+	border-radius: var(--radius-m);
 	box-shadow: var(--shadow-s);
+	font-family: var(--font-interface);
+	font-size: var(--font-ui-medium);
 }
 
-.osmosis-color-picker.is-flipped {
-	top: auto;
-	bottom: var(--picker-bottom, 0);
-}
-
-.osmosis-cp-section-label {
-	font-size: var(--font-ui-smaller);
-	font-weight: 600;
-	color: var(--text-muted);
-	margin: 6px 0 3px;
-}
-
-.osmosis-cp-section-label:first-child {
-	margin-top: 0;
-}
-
-.osmosis-cp-swatches {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 4px;
-}
-
-.osmosis-cp-swatch {
-	width: 22px;
-	height: 22px;
-	border-radius: 4px;
-	background-color: var(--swatch-color);
-	border: 1px solid var(--background-modifier-border);
-	cursor: pointer;
-	transition: transform 0.1s, box-shadow 0.1s;
-}
-
-.osmosis-cp-swatch:hover {
-	transform: scale(1.15);
-	box-shadow: 0 0 0 2px var(--interactive-accent);
-}
-
-.osmosis-cp-swatch.is-selected {
-	box-shadow: 0 0 0 2px var(--interactive-accent);
-}
-
-.osmosis-cp-add-btn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 16px;
-	font-weight: 600;
-	color: var(--text-muted);
-	background: var(--background-secondary);
-	border-style: dashed;
-}
-
-.osmosis-cp-add-btn:hover {
+.pcr-app.osmosis-pickr .pcr-interaction input {
 	color: var(--text-normal);
-}
-
-/* Freeform selector */
-
-.osmosis-cp-freeform {
-	margin-top: 4px;
-}
-
-.osmosis-cp-canvas-wrapper {
-	position: relative;
-	width: 100%;
-	height: 150px;
-	border-radius: 4px;
-	overflow: hidden;
-}
-
-.osmosis-cp-sl-canvas {
-	width: 100%;
-	height: 100%;
-	display: block;
-	cursor: crosshair;
-}
-
-.osmosis-cp-crosshair {
-	position: absolute;
-	width: 12px;
-	height: 12px;
-	border-radius: 50%;
-	border: 2px solid white;
-	box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
-	transform: translate(-50%, -50%);
-	pointer-events: none;
-}
-
-.osmosis-cp-hue-row {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin-top: 6px;
-}
-
-.osmosis-cp-label {
-	font-size: var(--font-ui-smaller);
-	font-weight: 600;
-	color: var(--text-muted);
-	width: 12px;
-	flex-shrink: 0;
-}
-
-.osmosis-cp-hue-slider {
-	flex: 1;
-	-webkit-appearance: none;
-	appearance: none;
-	height: 12px;
-	border-radius: 6px;
-	background: linear-gradient(to right,
-		hsl(0, 100%, 50%),
-		hsl(60, 100%, 50%),
-		hsl(120, 100%, 50%),
-		hsl(180, 100%, 50%),
-		hsl(240, 100%, 50%),
-		hsl(300, 100%, 50%),
-		hsl(360, 100%, 50%)
-	);
-	outline: none;
-}
-
-.osmosis-cp-hue-slider::-webkit-slider-thumb {
-	-webkit-appearance: none;
-	width: 14px;
-	height: 14px;
-	border-radius: 50%;
-	background: white;
-	border: 2px solid var(--background-modifier-border);
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-	cursor: pointer;
-}
-
-.osmosis-cp-input-row {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin-top: 6px;
-}
-
-.osmosis-cp-preview {
-	width: 28px;
-	height: 28px;
-	border-radius: 4px;
-	background-color: var(--swatch-color);
+	background: var(--background-modifier-form-field);
 	border: 1px solid var(--background-modifier-border);
-	flex-shrink: 0;
 }
 
-.osmosis-cp-hex-input {
-	flex: 1;
+.pcr-app.osmosis-pickr .pcr-interaction .pcr-result {
+	color: var(--text-normal);
+	background: var(--background-modifier-form-field);
 	font-family: var(--font-monospace);
-	font-size: var(--font-ui-small);
-	padding: 4px 6px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 4px;
-	background: var(--background-primary);
+}
+
+.pcr-app.osmosis-pickr .pcr-interaction .pcr-result::selection {
+	background: var(--text-selection);
 	color: var(--text-normal);
-	outline: none;
 }
 
-.osmosis-cp-hex-input:focus {
-	border-color: var(--interactive-accent);
+.pcr-app.osmosis-pickr .pcr-interaction .pcr-save {
+	color: var(--text-on-accent);
+	background: var(--interactive-accent);
 }
 
-.osmosis-cp-hex-input.is-invalid {
-	border-color: var(--text-error);
+.pcr-app.osmosis-pickr .pcr-interaction .pcr-save:hover {
+	background: var(--interactive-accent-hover);
+	filter: none;
+}
+
+.pcr-app.osmosis-pickr .pcr-swatches > button::after {
+	border-color: var(--background-modifier-border);
+}
+
+/* The custom palette starts on its own row, after the theme colors. */
+.pcr-app.osmosis-pickr .pcr-swatches > button.osmosis-pickr-custom-start {
+	grid-column-start: 1;
 }
 
 /* ─── Font Picker ─────────────────────────────────────── */
@@ -1343,52 +1216,151 @@ hr.osmosis-map-style-divider {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   Sequential Study Modal
+   Sequential Study Tab (SequentialStudyView)
    ═══════════════════════════════════════════════════════════ */
 
-/* A flex column capped at 85vh, with the card as the only row that scrolls.
-   `max-height` rather than a fixed height, so a one-line card still gets a
-   compact modal; the cap only binds once the content would leave the screen,
-   and then the card absorbs it instead of the modal growing a scrollbar of its
-   own. Two scrollbars — one on `.modal-content`, one on the card — is what a
-   long card with two images produced, and between them the Show answer button
-   could be scrolled out of reach. */
-.osmosis-study-modal {
+/* A flex column filling the leaf: the status strip, then the card as the only
+   row that scrolls, with the buttons floating over the card's bottom edge.
+   `flex: none` on the strip means a long card scrolls itself rather than
+   pushing anything out of reach. Text sits in a centered column; images may use
+   the full width. */
+.osmosis-study-view {
+	--osmosis-study-column: 700px;
+	/* Space under the floating buttons. */
+	--osmosis-study-bottom: var(--size-4-4);
+	/* One height for Show answer, the type-in row and the rating buttons, so the
+	   panel keeps its size as a card is answered — which is also what lets the
+	   card's bottom padding clear it without measuring anything. */
+	--osmosis-study-button-height: 40px;
+	--osmosis-study-panel-padding: var(--size-4-1);
+	/* How far past its last line the card scrolls: the panel and the gap under
+	   it, plus a margin, so that line can come clear of the buttons. */
+	--osmosis-study-clearance: calc(var(--osmosis-study-bottom) + var(--osmosis-study-button-height) + 2 * var(--osmosis-study-panel-padding) + var(--size-4-4));
+	position: relative;
 	display: flex;
 	flex-direction: column;
-	width: 600px;
-	max-width: 90vw;
-	max-height: 85vh;
-}
-
-.osmosis-study-modal .modal-content {
-	display: flex;
-	flex-direction: column;
-	flex: 1;
-	min-height: 0;
+	padding: 0;
 	overflow: hidden;
-	/* Reserve room at the top for the absolutely-positioned icon row + ×
-	   close button so the progress bar doesn't slide underneath them. */
-	padding-top: 28px;
-	padding-bottom: 8px;
 }
 
-/* `flex: none` on everything around the card, so a card taller than the modal
-   shrinks itself rather than squeezing the progress bar or pushing the flip and
-   rating buttons off the bottom. Those must stay reachable at every card
-   length — they are how the session is driven. */
-.osmosis-study-modal .osmosis-study-scope,
-.osmosis-study-modal .osmosis-study-progress,
-.osmosis-study-modal .osmosis-study-breadcrumb,
-.osmosis-study-modal .osmosis-study-actions,
-.osmosis-study-modal > .modal-content > .osmosis-study-complete {
+/* Thumb-sized on touch screens, as the 3D graph's study panel is. */
+body.is-tablet .osmosis-study-view {
+	--osmosis-study-button-height: 48px;
+}
+
+/* Phone: the navigation bar floats over the leaf, so clear it while it shows,
+   and only the bottom inset once the tab has hidden it (`syncNavbar`). */
+body.is-phone .osmosis-study-view {
+	--osmosis-study-bottom: 84px;
+	--osmosis-study-button-height: 56px;
+}
+
+body.is-phone.osmosis-hide-navbar .osmosis-study-view {
+	--osmosis-study-bottom: var(--navbar-bottom-offset, var(--size-4-2));
+}
+
+.osmosis-study-status,
+.osmosis-study-view > .osmosis-study-complete {
 	flex: none;
 }
 
-/* Mobile: leave a comfortable thumb gap between the rating/flip buttons and
-   the bottom of the modal so they don't crowd the rounded corner. */
-.is-mobile .osmosis-study-modal .modal-content {
-	padding-bottom: 24px;
+/* Note name, progress and breadcrumb, above the card. */
+.osmosis-study-status {
+	width: 100%;
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
+	padding: var(--size-4-3) var(--size-4-4) 0;
+}
+
+/* The readable column. Children of the card sides rather than the sides
+   themselves, so an image can step out of it (below). */
+.osmosis-study-front > *,
+.osmosis-study-back > *,
+.osmosis-study-card > .osmosis-study-divider,
+.osmosis-study-card > .osmosis-study-complete,
+.osmosis-study-card > .osmosis-study-waiting {
+	max-width: var(--osmosis-study-column);
+	margin-inline: auto;
+}
+
+/* Images may use the tab's full width: an occluded diagram, and a paragraph
+   that holds nothing but an image. */
+.osmosis-study-front > .osmosis-study-media,
+.osmosis-study-front > p:has(> .image-embed:only-child),
+.osmosis-study-back > p:has(> .image-embed:only-child) {
+	max-width: none;
+	text-align: center;
+}
+
+/* Empty state: a deck picker in the readable column. */
+.osmosis-study-picker {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--size-4-4);
+}
+
+.osmosis-study-picker-column {
+	max-width: var(--osmosis-study-column);
+	margin: 0 auto;
+}
+
+.osmosis-study-picker-empty {
+	color: var(--text-muted);
+}
+
+.osmosis-study-picker-list {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-2-1);
+}
+
+.osmosis-study-picker-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-2);
+	width: 100%;
+	height: auto;
+	padding: var(--size-4-2) var(--size-4-3);
+	padding-inline-start: calc(var(--size-4-3) + var(--osmosis-picker-depth, 0) * var(--size-4-5));
+	border-radius: var(--radius-s);
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-normal);
+	text-align: start;
+	cursor: pointer;
+}
+
+.osmosis-study-picker-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+.osmosis-study-picker-all {
+	margin-bottom: var(--size-4-2);
+	font-weight: var(--font-semibold);
+}
+
+.osmosis-study-picker-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.osmosis-study-picker-count {
+	flex: none;
+	color: var(--text-accent);
+	font-variant-numeric: tabular-nums;
+}
+
+.osmosis-study-picker-count.is-zero {
+	color: var(--text-faint);
+}
+
+.osmosis-study-complete-buttons {
+	display: flex;
+	justify-content: center;
+	gap: var(--size-4-2);
 }
 
 .osmosis-study-card .copy-code-button {
@@ -1426,28 +1398,13 @@ hr.osmosis-map-style-divider {
 	margin-bottom: 0;
 }
 
-/* Constrain images/video inside study cards */
+/* Constrain images/video inside study cards to the width only: a tall image
+   scrolls with the card rather than shrinking to a fraction of the screen. */
 .osmosis-study-card img,
 .osmosis-study-card video {
 	max-width: 100%;
-	max-height: 50vh;
 	height: auto;
 	object-fit: contain;
-}
-
-/* Pin the icon-button row to the modal's top-left, on the same horizontal
-   line as Obsidian's × close button. We position relative to the modal element
-   itself (not modal-content) so we land in the header strip above the content
-   padding rather than overlapping the progress bar. */
-.osmosis-study-modal .osmosis-study-top-bar {
-	position: absolute;
-	/* Match Obsidian's close-button vertical offset */
-	top: 12px;
-	left: 12px;
-	z-index: 1;
-	display: flex;
-	align-items: center;
-	gap: 4px;
 }
 
 /* Names the note in a single-note session. */
@@ -1555,16 +1512,26 @@ hr.osmosis-map-style-divider {
 	object-fit: fill;
 }
 
-/* The study modal caps its images at 50vh, and an occluded one carries `width`
-   and `height` attributes to reserve its box before it decodes. The attribute
-   width then holds while the cap shortens the height, so the box loses the
+/* Study cards cap their images (by width), and an occluded one carries `width`
+   and `height` attributes to reserve its box before it decodes. Should a cap
+   bind one side while the attribute holds the other, the box loses the
    picture's proportions: a bitmap is stretched under its masks, and an SVG
    letterboxes inside a box its masks still span. With `width: auto` the browser
    applies the cap to both sides together, keeping the ratio the attributes
-   give it; the embed's own `|300` comes back as a ceiling on the width. */
+   give it.
+
+   The embed's own `|300` comes back as a ceiling on the *wrapper*, and the
+   image fills the wrapper (its `max-width: 100%`). The ceiling cannot sit on
+   the image alone: a percentage max-width is ignored when the inline-block
+   wrapper sizes itself to its content, so the wrapper took the picture's
+   natural width while the image stopped at the ceiling — and the masks, pinned
+   to the wrapper, stretched far past the picture. */
+.osmosis-study-card .osmosis-occlusion {
+	max-width: min(100%, var(--osmosis-occlusion-width, 100%));
+}
+
 .osmosis-study-card .osmosis-occlusion .osmosis-occlusion-image {
 	width: auto;
-	max-width: min(100%, var(--osmosis-occlusion-width, 100%));
 }
 
 /* While anything on the diagram is covered, the picture must not be tappable.
@@ -1785,27 +1752,44 @@ hr.osmosis-map-style-divider {
 	transition: width 0.3s ease;
 }
 
-.osmosis-study-progress-text {
+/* Anki's new | learn | due counts. The bucket of the card on screen is
+   underlined; it counts in its own bucket, as in Anki. */
+.osmosis-study-counts {
+	display: flex;
+	gap: var(--size-4-2);
 	font-size: var(--font-ui-small);
-	color: var(--text-muted);
+	font-weight: var(--font-semibold);
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 
-/* The one scroll surface in the modal. `flex: 1` with an explicit `min-height`
-   is what lets it shrink below its content — a flex item's default
-   `min-height: auto` refuses to — and the floor keeps a short card from
-   collapsing to nothing. It replaces a `max-height: calc(85vh - 120px)`, whose
-   120px was a guess at the surrounding chrome: when the chrome was taller than
-   that, the card fitted its cap and `.modal-content` scrolled as well. */
+/* The dashboard's deck-count palette (see .osmosis-dash-new). */
+.osmosis-study-count-new {
+	color: var(--osmosis-count-new);
+}
+
+.osmosis-study-count-learn {
+	color: var(--osmosis-count-learn);
+}
+
+.osmosis-study-count-due {
+	color: var(--osmosis-count-due);
+}
+
+.osmosis-study-count.is-current {
+	text-decoration: underline;
+	text-decoration-thickness: 2px;
+	text-underline-offset: 3px;
+}
+
+/* The one scroll surface in the study tab, filling whatever the status strip
+   and the buttons leave. `flex: 1` with `min-height: 0` is what lets it shrink
+   below its content — a flex item's default `min-height: auto` refuses to. */
 .osmosis-study-card {
-	padding: 16px;
 	flex: 1;
-	min-height: 120px;
+	min-height: 0;
 	overflow-y: auto;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 8px;
-	background: var(--background-primary);
-	margin-bottom: 12px;
+	padding: var(--size-4-4) var(--size-4-4) var(--osmosis-study-clearance);
 }
 
 .osmosis-study-front {
@@ -1826,57 +1810,71 @@ hr.osmosis-map-style-divider {
 	transition: max-height 0.3s ease, opacity 0.2s ease;
 }
 
+/* `none` rather than a large number: images are no longer height-capped, so a
+   tall answer could exceed any fixed ceiling and be clipped. */
 .osmosis-study-back.is-revealed {
-	max-height: 5000px;
+	max-height: none;
 	opacity: 1;
 }
 
+/* The buttons float over the bottom of the card, the way the Osmosis bar floats
+   over the 3D graph: the same raised background, blur and shadow. The card
+   scrolls underneath, and its bottom padding (`--osmosis-study-clearance`) lets
+   its last line come clear of them.
+
+   Desktop and tablet: a compact panel of fixed width, centered, so Show answer
+   spans exactly the row of four rating buttons that replaces it. */
 .osmosis-study-actions {
-	position: relative;
+	position: absolute;
+	left: 50%;
+	bottom: var(--osmosis-study-bottom);
+	transform: translateX(-50%);
+	z-index: 1;
 	display: flex;
-	justify-content: center;
+	width: 340px;
+	max-width: calc(100% - 2 * var(--size-4-2));
+	padding: var(--osmosis-study-panel-padding);
+	border-radius: var(--radius-m);
+	background: var(--raised-background, var(--background-secondary));
+	backdrop-filter: var(--raised-blur);
+	box-shadow: var(--raised-shadow, var(--shadow-s));
 }
 
-
-.osmosis-study-actions-right {
-	display: flex;
-	gap: 4px;
+body.is-tablet .osmosis-study-actions {
+	width: 420px;
 }
 
-.osmosis-study-icon-btn {
-	width: 42px;
-	height: 42px;
-	padding: 0;
-	border: none;
-	border-radius: 50%;
-	background: transparent;
-	color: var(--text-muted);
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
+/* Nothing to press (the waiting and completion screens): no empty panel. */
+.osmosis-study-actions:not(:has(> :not(.osmosis-hidden))) {
+	display: none;
 }
 
-/* `setIcon` drops a bare <svg> into the button and leaves its size to
-   Obsidian's `--icon-size`, which resolves against the surrounding context.
-   That context is missing on iOS — the top bar is mounted on `modalEl`, outside
-   the content area that carries it — and an <svg> flex item with no resolved
-   size collapses to a dot inside a 42px circle. `--icon-m` is a fixed token, so
-   pinning it here is the size desktop already computes, just stated outright. */
-.osmosis-study-icon-btn svg {
-	width: var(--icon-m);
-	height: var(--icon-m);
-	flex-shrink: 0;
+/* Phone: the panel spans the leaf, as the 3D graph's study panel does, and its
+   buttons span the panel. */
+body.is-phone .osmosis-study-actions {
+	left: var(--size-4-2);
+	right: var(--size-4-2);
+	transform: none;
+	width: auto;
+	max-width: none;
 }
 
-.osmosis-study-icon-btn:hover {
-	color: var(--text-normal);
-	background: var(--background-modifier-hover);
+/* Every control in the panel is one height. Through `.osmosis-study-view` so
+   the rule outranks Obsidian's own `button:not(.clickable-icon)` and
+   `input[type="text"]` sizes, and ties (and, loading later, beats) its
+   `.is-tablet button:not(.clickable-icon)` padding. */
+.osmosis-study-view .osmosis-study-actions button,
+.osmosis-study-view .osmosis-study-actions input {
+	height: var(--osmosis-study-button-height);
 }
 
-.osmosis-study-icon-btn[aria-label*="Exclude"]:hover {
-	color: var(--text-error);
+.osmosis-study-view .osmosis-study-actions button {
+	padding: 0 var(--size-4-2);
+}
+
+body.is-tablet .osmosis-study-view .osmosis-study-actions button,
+body.is-phone .osmosis-study-view .osmosis-study-actions button {
+	font-size: var(--font-ui-medium);
 }
 
 .osmosis-contextual-undo {
@@ -1893,43 +1891,43 @@ hr.osmosis-map-style-divider {
 	background: var(--background-modifier-hover);
 }
 
-.osmosis-study-flip {
-	padding: 12px 18px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 9999px;
-	background: var(--background-secondary);
-	color: var(--text-normal);
+/* Obsidian's own button colours, in the rating buttons' shape and type
+   (`.osmosis-contextual-rating button`). Two classes, to outrank Obsidian's
+   `button:not(.clickable-icon)` radius; no `display` here, or it would outrank
+   `.osmosis-hidden` too. */
+.osmosis-study-actions .osmosis-study-flip {
+	flex: 1;
+	min-width: 0;
+	border-radius: 4px;
 	cursor: pointer;
-	font-size: 15px;
+	font-size: 12px;
+	font-weight: 500;
 }
 
-.osmosis-study-flip:hover {
-	background: var(--background-modifier-hover);
+/* The shared rating row (`.osmosis-contextual-rating`, as in note view, the mind
+   map and the 3D graph) supplies the buttons' shape, type and colours. The tab
+   adds the panel's height and stacks the interval each would schedule over its
+   label. Two classes, to outrank the shared row's margin; no `display` here,
+   for the reason given on the flip button. */
+.osmosis-study-actions .osmosis-study-rating-bar {
+	flex: 1;
+	min-width: 0;
+	margin-top: 0;
 }
 
-/* Desktop: match the rating buttons' taller height. The flip button has a
-   1px border that the rating buttons don't, so subtract 1px from the
-   vertical padding to keep the rendered heights identical. */
-body:not(.is-mobile) .osmosis-study-flip {
-	padding-top: 17px;
-	padding-bottom: 17px;
-}
-
-.osmosis-study-rating-bar {
-	display: flex;
-	gap: 8px;
-	justify-content: center;
-	width: 75%;
+body.is-phone .osmosis-study-rating-bar {
+	gap: var(--size-4-2);
 }
 
 .osmosis-study-rating-bar button {
-	flex: 1;
-	padding: 12px 18px;
-	border: none;
-	border-radius: 8px;
-	cursor: pointer;
-	font-size: 15px;
-	font-weight: 500;
+	flex: 1 1 0;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 2px;
+	line-height: 1.2;
 	transition: filter 0.1s;
 }
 
@@ -1937,32 +1935,31 @@ body:not(.is-mobile) .osmosis-study-flip {
 	filter: brightness(1.1);
 }
 
-/* Desktop: taller rating buttons. Mobile keeps the default 12px so the
-   thumb-target height (already comfortable) doesn't grow unnecessarily. */
-body:not(.is-mobile) .osmosis-study-rating-bar button {
-	padding-top: 18px;
-	padding-bottom: 18px;
+.osmosis-rate-interval {
+	font-size: var(--font-ui-smaller);
+	font-weight: normal;
+	opacity: 0.85;
 }
 
-.osmosis-study-rating-bar button.osmosis-rate-again,
+.osmosis-rate-interval:empty {
+	display: none;
+}
+
 .osmosis-contextual-rating button.osmosis-rate-again {
 	background: hsl(0, 65%, 50%);
 	color: white;
 }
 
-.osmosis-study-rating-bar button.osmosis-rate-hard,
 .osmosis-contextual-rating button.osmosis-rate-hard {
 	background: hsl(30, 65%, 50%);
 	color: white;
 }
 
-.osmosis-study-rating-bar button.osmosis-rate-good,
 .osmosis-contextual-rating button.osmosis-rate-good {
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
 }
 
-.osmosis-study-rating-bar button.osmosis-rate-easy,
 .osmosis-contextual-rating button.osmosis-rate-easy {
 	background: hsl(140, 50%, 42%);
 	color: white;
@@ -1990,13 +1987,16 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 /* ─── Type-in Cards ─────────────────────────────────────── */
 
 .osmosis-study-typein {
+	flex: 1;
+	min-width: 0;
 	display: flex;
-	gap: 8px;
+	gap: 6px;
 	align-items: center;
 }
 
 .osmosis-study-typein-input {
 	flex: 1;
+	min-width: 0;
 	padding: 8px 12px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 4px;
@@ -2189,6 +2189,18 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 	flex-shrink: 0;
 }
 
+/* The deck-count palette, the one source for the dashboard's count pills and
+   the study tab's new | learn | due strip, so the two cannot drift apart.
+   Declared on each surface's container rather than on body, so the accent
+   resolves where a theme might override it. A new surface that shows these
+   counts joins this selector. */
+.osmosis-dashboard,
+.osmosis-study-view {
+	--osmosis-count-new: var(--interactive-accent);
+	--osmosis-count-learn: hsl(30, 75%, 50%);
+	--osmosis-count-due: hsl(140, 50%, 42%);
+}
+
 /* Fixed width, not min-width: the columns only line up across rows if a
    three-digit count occupies the same box as a one-digit one. Kept as narrow
    as three digits allow — every pixel here comes out of the deck name, which
@@ -2207,18 +2219,18 @@ body:not(.is-mobile) .osmosis-study-rating-bar button {
 }
 
 .osmosis-dash-new {
-	color: var(--interactive-accent);
+	color: var(--osmosis-count-new);
 	background: rgba(var(--interactive-accent-rgb, 99, 135, 255), 0.12);
 }
 
 .osmosis-dash-learn {
-	color: hsl(30, 75%, 50%);
-	background: hsla(30, 75%, 50%, 0.12);
+	color: var(--osmosis-count-learn);
+	background: color-mix(in srgb, var(--osmosis-count-learn) 12%, transparent);
 }
 
 .osmosis-dash-due {
-	color: hsl(140, 50%, 42%);
-	background: hsla(140, 50%, 42%, 0.12);
+	color: var(--osmosis-count-due);
+	background: color-mix(in srgb, var(--osmosis-count-due) 12%, transparent);
 }
 
 .osmosis-dash-total {

@@ -95,7 +95,10 @@ function createImage(wrapper: HTMLElement, src: string, alt: string, width?: num
 	const img = wrapper.createEl("img", { cls: "osmosis-occlusion-image", attr });
 	// Again as a property, for a surface that has to override the attribute to
 	// keep the picture's proportions — see `.osmosis-study-card` in styles.css.
-	if (width !== undefined) img.setCssProps({ "--osmosis-occlusion-width": `${String(width)}px` });
+	// On the wrapper, not the image: the cap has to bind the box the masks are
+	// pinned to. Capping only the image leaves the wrapper at the picture's
+	// natural width, and the masks stretch across that instead.
+	if (width !== undefined) wrapper.setCssProps({ "--osmosis-occlusion-width": `${String(width)}px` });
 
 	if (known === undefined) {
 		img.addEventListener("load", () => {

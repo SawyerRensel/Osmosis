@@ -179,9 +179,9 @@ export function navbarHidden(isPhone: boolean, editMode: boolean): boolean {
 /** Body class that hides `.mobile-navbar` (styles.css), set only while a map that asks for it is the active view. */
 export const HIDE_NAVBAR_CLASS = "osmosis-hide-navbar";
 
-/** A view whose bar can hide the navigation bar: the mind map and the 3D graph. */
+/** A view that can hide the navigation bar: the mind map, the 3D graph and the study tab. */
 export interface NavbarHost {
-	/** Whether the map is in edit mode, the only mode that hides the navigation bar. */
+	/** Whether the view wants the navigation bar hidden: a map in edit mode, or the study tab unless the user brought the bar back. */
 	navbarEditMode(): boolean;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCloseMatch } from "../study/match";
+import { isCloseMatch } from "./match";
 
 describe("isCloseMatch", () => {
 	it("returns true for exact match (case insensitive)", () => {

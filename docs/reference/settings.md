@@ -52,7 +52,7 @@ search.
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
-| **Show deck breadcrumb in study modal** | Off | Show which deck the card on screen belongs to |
+| **Show deck breadcrumb in study tab** | Off | Show which deck the card on screen belongs to |
 | **Line card context lines** | 2 | How many preceding sibling lines appear as context on a line card's front in sequential study (0 = breadcrumb only) |
 
 ## Note Inclusion

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Color, type DataTexture, type InstancedBufferAttribute, type Mesh, type InstancedBufferGeometry } from "three";
-import { Graph3DPlates, type PlateSource } from "./Graph3DPlates";
+import { GLYPH_RENDER_ORDER, Graph3DPlates, type PlateSource } from "./Graph3DPlates";
 
 // Node has no canvas: every character is 24 px wide and drawing does nothing.
 vi.stubGlobal("createEl", () => ({
@@ -52,6 +52,16 @@ describe("Graph3DPlates (T78)", () => {
 		nodes[1]!.opacity = 0.5;
 		plates.write(nodes, false);
 		expect(Array.from((texture.image.data as Float32Array).slice(4, 8))).toEqual([7, 0, 0, 0.5]);
+		plates.dispose();
+	});
+
+	it("draws glyph layers before every other transparent object, so a nearer edge is not painted over by farther text (T97)", () => {
+		const plates = new Graph3DPlates(COLORS);
+		plates.write([{ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape: plates.shape("Jib", 5, 20) }], true);
+		const [background, glyphs] = meshes(plates);
+		expect(GLYPH_RENDER_ORDER).toBeLessThan(0);
+		expect(glyphs!.renderOrder).toBe(GLYPH_RENDER_ORDER);
+		expect(background!.renderOrder).toBe(0);
 		plates.dispose();
 	});
 });

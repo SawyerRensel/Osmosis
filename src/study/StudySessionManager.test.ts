@@ -463,6 +463,22 @@ describe("StudySessionManager review logging", () => {
 		return { manager, logged };
 	}
 
+	it("previews each rating's interval without recording anything", async () => {
+		const { manager, logged } = makeManager();
+		store.addCard(makeCard({ id: "os-a1" }));
+		const now = 1_754_500_000_000;
+
+		const preview = manager.previewIntervals("os-a1", now);
+		expect(preview[1]).toBeLessThan(preview[3]);
+		expect(preview[3]).toBeLessThanOrEqual(preview[4]);
+		expect(logged).toHaveLength(0);
+		expect(store.getCard("os-a1")?.due).toBeUndefined();
+
+		// The preview is what the rating then actually schedules.
+		const schedule = await manager.recordReview("os-a1", 3, { now });
+		expect(schedule.due - now).toBe(preview[3]);
+	});
+
 	it("logs exactly one entry per answer", async () => {
 		const { manager, logged } = makeManager();
 		store.addCard(makeCard({ id: "os-a1" }));

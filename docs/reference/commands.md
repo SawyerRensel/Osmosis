@@ -24,6 +24,7 @@ that reach the same things. Any command can be bound to a hotkey under
 | Command | What it does |
 |---------|--------------|
 | **Study all decks** | Starts a [sequential](../studying/study-modes.md#sequential-study) session across every deck |
+| **Open study tab** | Reveals the [study tab](../studying/study-modes.md#sequential-study) — its deck picker, or the session already running in it |
 | **Undo last card mutation** | Reverts the last [card browser](../studying/card-browser.md#undo) mutation |
 | **Redo last undone card mutation** | Replays it |
 

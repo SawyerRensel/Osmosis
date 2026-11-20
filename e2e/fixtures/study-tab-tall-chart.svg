@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="1800" viewBox="0 0 600 1800">
+<rect width="600" height="1800" fill="#f4efe2"/>
+<text x="300" y="60" font-family="sans-serif" font-size="32" text-anchor="middle" fill="#1d3557">Harbour pilotage notes</text>
+<rect x="40" y="96" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="130" font-family="sans-serif" font-size="24" fill="#1d3557">1. Harbour entrance</text>
+<rect x="40" y="164" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="198" font-family="sans-serif" font-size="24" fill="#1d3557">2. Port-hand buoy</text>
+<rect x="40" y="232" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="266" font-family="sans-serif" font-size="24" fill="#1d3557">3. Starboard-hand buoy</text>
+<rect x="40" y="300" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="334" font-family="sans-serif" font-size="24" fill="#1d3557">4. Fairway buoy</text>
+<rect x="40" y="368" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="402" font-family="sans-serif" font-size="24" fill="#1d3557">5. Leading lights</text>
+<rect x="40" y="436" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="470" font-family="sans-serif" font-size="24" fill="#1d3557">6. Breakwater head</text>
+<rect x="40" y="504" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="538" font-family="sans-serif" font-size="24" fill="#1d3557">7. Fuel pontoon</text>
+<rect x="40" y="572" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="606" font-family="sans-serif" font-size="24" fill="#1d3557">8. Visitors' berths</text>
+<rect x="40" y="640" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="674" font-family="sans-serif" font-size="24" fill="#1d3557">9. Harbourmaster</text>
+<rect x="40" y="708" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="742" font-family="sans-serif" font-size="24" fill="#1d3557">10. Slipway</text>
+<rect x="40" y="776" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="810" font-family="sans-serif" font-size="24" fill="#1d3557">11. Crane</text>
+<rect x="40" y="844" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="878" font-family="sans-serif" font-size="24" fill="#1d3557">12. Chandlery</text>
+<rect x="40" y="912" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="946" font-family="sans-serif" font-size="24" fill="#1d3557">13. Sail loft</text>
+<rect x="40" y="980" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1014" font-family="sans-serif" font-size="24" fill="#1d3557">14. Fish quay</text>
+<rect x="40" y="1048" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="1082" font-family="sans-serif" font-size="24" fill="#1d3557">15. Lifeboat station</text>
+<rect x="40" y="1116" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1150" font-family="sans-serif" font-size="24" fill="#1d3557">16. Tide gauge</text>
+<rect x="40" y="1184" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="1218" font-family="sans-serif" font-size="24" fill="#1d3557">17. Swing moorings</text>
+<rect x="40" y="1252" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1286" font-family="sans-serif" font-size="24" fill="#1d3557">18. Anchorage</text>
+<rect x="40" y="1320" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="1354" font-family="sans-serif" font-size="24" fill="#1d3557">19. Shoal patch</text>
+<rect x="40" y="1388" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1422" font-family="sans-serif" font-size="24" fill="#1d3557">20. Wreck</text>
+<rect x="40" y="1456" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="1490" font-family="sans-serif" font-size="24" fill="#1d3557">21. Isolated danger mark</text>
+<rect x="40" y="1524" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1558" font-family="sans-serif" font-size="24" fill="#1d3557">22. Cardinal mark (N)</text>
+<rect x="40" y="1592" width="520" height="52" rx="8" fill="#a8dadc"/>
+<text x="60" y="1626" font-family="sans-serif" font-size="24" fill="#1d3557">23. Cardinal mark (S)</text>
+<rect x="40" y="1660" width="520" height="52" rx="8" fill="#e9f5f2"/>
+<text x="60" y="1694" font-family="sans-serif" font-size="24" fill="#1d3557">24. Lighthouse</text>
+<text x="300" y="1770" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#457b9d">bottom of the chart</text>
+</svg>

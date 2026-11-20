@@ -12,9 +12,11 @@ import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, M
 import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
-import { ColorPicker, extractThemeColors } from "./ColorPicker";
+import { PickrColorPicker } from "./PickrColorPicker";
+import { extractThemeColors } from "../color-palette";
 import { FontPicker } from "./FontPicker";
 import { sidebarSetting } from "./sidebar-setting";
+import { bindSlider, type ShowSliderValue } from "../slider-sync";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
 
@@ -50,23 +52,23 @@ interface FormatControls {
 	nodeWidthInput: HTMLInputElement | null;
 	fillSwatch: HTMLElement | null;
 	borderColorSwatch: HTMLElement | null;
-	borderWidthSlider: HTMLInputElement | null;
+	borderWidthSlider: ShowSliderValue | null;
 	borderStyleDropdown: HTMLSelectElement | null;
 	fontPicker: FontPicker | null;
-	textSizeSlider: HTMLInputElement | null;
+	textSizeSlider: ShowSliderValue | null;
 	textWeightDropdown: HTMLSelectElement | null;
 	textColorSwatch: HTMLElement | null;
 	textAlignBtns: HTMLElement | null;
 	branchColorSwatch: HTMLElement | null;
-	branchThicknessSlider: HTMLInputElement | null;
+	branchThicknessSlider: ShowSliderValue | null;
 	branchStyleDropdown: HTMLSelectElement | null;
 	branchPatternDropdown: HTMLSelectElement | null;
 	branchTaperDropdown: HTMLSelectElement | null;
 	boundaryToggle: ToggleComponent | null;
 	boundaryFillSwatch: HTMLElement | null;
-	boundaryOpacitySlider: HTMLInputElement | null;
+	boundaryOpacitySlider: ShowSliderValue | null;
 	boundaryColorSwatch: HTMLElement | null;
-	boundaryWidthSlider: HTMLInputElement | null;
+	boundaryWidthSlider: ShowSliderValue | null;
 	boundaryStyleDropdown: HTMLSelectElement | null;
 }
 
@@ -117,25 +119,25 @@ export class PropertiesSidebarView extends ItemView {
 	private themeDropdown: HTMLSelectElement | null = null;
 	private renameThemeBtn: HTMLElement | null = null;
 	private deleteThemeBtn: HTMLElement | null = null;
-	private activePickers: ColorPicker[] = [];
+	private activePicker: PickrColorPicker | null = null;
 	// Map tab style section controls
 	private mapBackgroundSwatch: HTMLElement | null = null;
 	private mapFillSwatch: HTMLElement | null = null;
 	private mapBorderColorSwatch: HTMLElement | null = null;
-	private mapBorderWidthSlider: HTMLInputElement | null = null;
+	private mapBorderWidthSlider: ShowSliderValue | null = null;
 	private mapBorderStyleDropdown: HTMLSelectElement | null = null;
 	private mapTextFontPicker: FontPicker | null = null;
-	private mapTextSizeSlider: HTMLInputElement | null = null;
+	private mapTextSizeSlider: ShowSliderValue | null = null;
 	private mapTextWeightDropdown: HTMLSelectElement | null = null;
 	private mapTextColorSwatch: HTMLElement | null = null;
 	private mapTextAlignBtns: HTMLElement | null = null;
 	private mapBranchColorSwatch: HTMLElement | null = null;
-	private mapBranchThicknessSlider: HTMLInputElement | null = null;
+	private mapBranchThicknessSlider: ShowSliderValue | null = null;
 	// Map tab layout controls (for refreshing on theme switch)
 	private mapDirectionDropdown: HTMLSelectElement | null = null;
-	private mapCollapseSlider: HTMLInputElement | null = null;
-	private mapHSpacingSlider: HTMLInputElement | null = null;
-	private mapVSpacingSlider: HTMLInputElement | null = null;
+	private mapCollapseSlider: ShowSliderValue | null = null;
+	private mapHSpacingSlider: ShowSliderValue | null = null;
+	private mapVSpacingSlider: ShowSliderValue | null = null;
 	private mapLayoutDropdown: HTMLSelectElement | null = null;
 	private mapBalanceDropdown: HTMLSelectElement | null = null;
 	private mapSideDropdown: HTMLSelectElement | null = null;
@@ -144,7 +146,7 @@ export class PropertiesSidebarView extends ItemView {
 	private mapBranchPatternDropdown: HTMLSelectElement | null = null;
 	private mapBranchTaperDropdown: HTMLSelectElement | null = null;
 	private mapTopicShapeDropdown: HTMLSelectElement | null = null;
-	private mapMaxNodeWidthSlider: HTMLInputElement | null = null;
+	private mapMaxNodeWidthSlider: ShowSliderValue | null = null;
 	private mapNodeWidthInput: HTMLInputElement | null = null;
 	private saveThemeBtn: HTMLElement | null = null;
 	private lastActiveMindMap: MindMapView | null = null;
@@ -364,6 +366,9 @@ export class PropertiesSidebarView extends ItemView {
 			} else {
 				(fm as Record<string, unknown>)[key] = value;
 			}
+			// The view's cache is undefined until the note has `osmosis-styles`;
+			// store the object so the first write isn't dropped.
+			mindMap.setOsmosisStyleFrontmatter(fm);
 			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fm) });
 		}
 	}
@@ -1636,6 +1641,7 @@ export class PropertiesSidebarView extends ItemView {
 			const base: NodeStyle = fmCache.baseStyle ?? {};
 			mergeNodeStyle(base, update);
 			fmCache.baseStyle = base;
+			mindMap.setOsmosisStyleFrontmatter(fmCache);
 			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
 		}
 	}
@@ -1872,13 +1878,12 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Default collapse depth")
 			.setDesc("0 = expand all")
 			.addSlider((slider) => {
-				this.mapCollapseSlider = slider.sliderEl;
 				slider
 					.setLimits(0, 6, 1)
-					.setValue(settings.collapseDepth)
-					.onChange(async (value) => {
-						await this.saveSetting("collapseDepth", value);
-					});
+					.setValue(settings.collapseDepth);
+				this.mapCollapseSlider = bindSlider(slider, async (value) => {
+					await this.saveSetting("collapseDepth", value);
+				});
 			});
 
 		// Horizontal spacing
@@ -1886,13 +1891,12 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Horizontal spacing")
 			.setDesc("Space between parent and children")
 			.addSlider((slider) => {
-				this.mapHSpacingSlider = slider.sliderEl;
 				slider
 					.setLimits(20, 200, 5)
-					.setValue(settings.horizontalSpacing)
-					.onChange(async (value) => {
-						await this.saveSetting("horizontalSpacing", value);
-					});
+					.setValue(settings.horizontalSpacing);
+				this.mapHSpacingSlider = bindSlider(slider, async (value) => {
+					await this.saveSetting("horizontalSpacing", value);
+				});
 			});
 
 		// Vertical spacing
@@ -1900,13 +1904,12 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Vertical spacing")
 			.setDesc("Space between sibling nodes")
 			.addSlider((slider) => {
-				this.mapVSpacingSlider = slider.sliderEl;
 				slider
 					.setLimits(2, 40, 1)
-					.setValue(settings.verticalSpacing)
-					.onChange(async (value) => {
-						await this.saveSetting("verticalSpacing", value);
-					});
+					.setValue(settings.verticalSpacing);
+				this.mapVSpacingSlider = bindSlider(slider, async (value) => {
+					await this.saveSetting("verticalSpacing", value);
+				});
 			});
 	}
 
@@ -1946,8 +1949,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBackgroundSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
-				swatch.style.backgroundColor = color;
+			this.openColorPicker(swatch, "#ffffff", (color) => {
+				paintSwatch(swatch, color);
 				void this.saveMapScalarSetting("background", color);
 			});
 		});
@@ -2032,14 +2035,13 @@ export class PropertiesSidebarView extends ItemView {
 			.setName("Max width")
 			.setDesc("Maximum width before text wraps (px)")
 			.addSlider((slider) => {
-				this.mapMaxNodeWidthSlider = slider.sliderEl;
 				slider
 					.setLimits(100, 800, 10)
-					.setValue(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth)
-					.onChange(async (value) => {
-						const isDefault = value === this.plugin.settings.defaultMaxNodeWidth;
-						await this.saveSetting("maxNodeWidth", isDefault ? undefined : value);
-					});
+					.setValue(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth);
+				this.mapMaxNodeWidthSlider = bindSlider(slider, async (value) => {
+					const isDefault = value === this.plugin.settings.defaultMaxNodeWidth;
+					await this.saveSetting("maxNodeWidth", isDefault ? undefined : value);
+				});
 			});
 	}
 
@@ -2050,8 +2052,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapFillSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
-				swatch.style.backgroundColor = color;
+			this.openColorPicker(swatch, "#ffffff", (color) => {
+				paintSwatch(swatch, color);
 				void this.saveBaseStyleProp({ fill: color });
 			});
 		});
@@ -2064,8 +2066,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBorderColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
-				colorSwatch.style.backgroundColor = color;
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
+				paintSwatch(colorSwatch, color);
 				void this.saveBaseStyleProp({ border: { color } });
 			});
 		});
@@ -2076,12 +2078,11 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(0, 8, 1)
-					.setValue(1)
-					.onChange(async (value) => {
-						await this.saveBaseStyleProp({ border: { width: value } });
-						this.refreshMapStyleControls();
-					});
-				this.mapBorderWidthSlider = slider.sliderEl;
+					.setValue(1);
+				this.mapBorderWidthSlider = bindSlider(slider, async (value) => {
+					await this.saveBaseStyleProp({ border: { width: value } });
+					this.refreshMapStyleControls();
+				});
 			});
 
 		// Style
@@ -2126,12 +2127,11 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(8, 48, 1)
-					.setValue(14)
-					.onChange(async (value) => {
-						await this.saveBaseStyleProp({ text: { size: value } });
-						this.refreshMapStyleControls();
-					});
-				this.mapTextSizeSlider = slider.sliderEl;
+					.setValue(14);
+				this.mapTextSizeSlider = bindSlider(slider, async (value) => {
+					await this.saveBaseStyleProp({ text: { size: value } });
+					this.refreshMapStyleControls();
+				});
 			});
 
 		// Weight
@@ -2154,8 +2154,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapTextColorSwatch = textColorSwatch;
 
 		textColorSwatch.addEventListener("click", () => {
-			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
-				textColorSwatch.style.backgroundColor = color;
+			this.openColorPicker(textColorSwatch, "#000000", (color) => {
+				paintSwatch(textColorSwatch, color);
 				void this.saveBaseStyleProp({ text: { color } });
 			});
 		});
@@ -2204,8 +2204,8 @@ export class PropertiesSidebarView extends ItemView {
 		this.mapBranchColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
-				colorSwatch.style.backgroundColor = color;
+			this.openColorPicker(colorSwatch, "#888888", (color) => {
+				paintSwatch(colorSwatch, color);
 				void this.saveMapScalarSetting("branchLineColor", color);
 			});
 		});
@@ -2216,12 +2216,11 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(1, 8, 1)
-					.setValue(2)
-					.onChange(async (value) => {
-						void this.saveMapScalarSetting("branchLineThickness", value);
-						this.refreshMapStyleControls();
-					});
-				this.mapBranchThicknessSlider = slider.sliderEl;
+					.setValue(2);
+				this.mapBranchThicknessSlider = bindSlider(slider, async (value) => {
+					await this.saveMapScalarSetting("branchLineThickness", value);
+					this.refreshMapStyleControls();
+				});
 			});
 
 		// Pattern (solid, dashed, dotted)
@@ -2301,6 +2300,7 @@ export class PropertiesSidebarView extends ItemView {
 			} else {
 				(fmCache as Record<string, unknown>)[key] = value;
 			}
+			mindMap.setOsmosisStyleFrontmatter(fmCache);
 			mindMap.applyMapSettings({ ...DEFAULT_MAP_SETTINGS, ...buildMapSettingsFromFrontmatter(fmCache) });
 		}
 	}
@@ -2313,21 +2313,19 @@ export class PropertiesSidebarView extends ItemView {
 		// Background
 		if (this.mapBackgroundSwatch) {
 			const bg = settings.background ?? theme?.background ?? "";
-			this.mapBackgroundSwatch.style.backgroundColor = bg;
+			paintSwatch(this.mapBackgroundSwatch, bg);
 		}
 
 		// Fill
 		if (this.mapFillSwatch) {
-			this.mapFillSwatch.style.backgroundColor = base.fill ?? "";
+			paintSwatch(this.mapFillSwatch, base.fill ?? "");
 		}
 
 		// Border
 		if (this.mapBorderColorSwatch) {
-			this.mapBorderColorSwatch.style.backgroundColor = base.border?.color ?? "";
+			paintSwatch(this.mapBorderColorSwatch, base.border?.color ?? "");
 		}
-		if (this.mapBorderWidthSlider) {
-			this.mapBorderWidthSlider.value = String(base.border?.width ?? 1);
-		}
+		this.mapBorderWidthSlider?.(base.border?.width ?? 1);
 		if (this.mapBorderStyleDropdown) {
 			this.mapBorderStyleDropdown.value = base.border?.style ?? "solid";
 		}
@@ -2336,14 +2334,12 @@ export class PropertiesSidebarView extends ItemView {
 		if (this.mapTextFontPicker) {
 			this.mapTextFontPicker.setFont(base.text?.font ?? "");
 		}
-		if (this.mapTextSizeSlider) {
-			this.mapTextSizeSlider.value = String(base.text?.size ?? 14);
-		}
+		this.mapTextSizeSlider?.(base.text?.size ?? 14);
 		if (this.mapTextWeightDropdown) {
 			this.mapTextWeightDropdown.value = String(base.text?.weight ?? 400);
 		}
 		if (this.mapTextColorSwatch) {
-			this.mapTextColorSwatch.style.backgroundColor = base.text?.color ?? "";
+			paintSwatch(this.mapTextColorSwatch, base.text?.color ?? "");
 		}
 		if (this.mapTextAlignBtns) {
 			const active = base.text?.alignment ?? "left";
@@ -2354,14 +2350,9 @@ export class PropertiesSidebarView extends ItemView {
 
 		// Branch line
 		if (this.mapBranchColorSwatch) {
-			this.mapBranchColorSwatch.style.backgroundColor =
-				settings.branchLineColor ?? theme?.branchLine?.color ?? "";
+			paintSwatch(this.mapBranchColorSwatch, settings.branchLineColor ?? theme?.branchLine?.color ?? "");
 		}
-		if (this.mapBranchThicknessSlider) {
-			this.mapBranchThicknessSlider.value = String(
-				settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2,
-			);
-		}
+		this.mapBranchThicknessSlider?.(settings.branchLineThickness ?? theme?.branchLine?.thickness ?? 2);
 
 		// Layout controls
 		if (this.mapLayoutDropdown) {
@@ -2377,15 +2368,9 @@ export class PropertiesSidebarView extends ItemView {
 			this.mapSideDropdown.value = settings.layoutSide ?? "right";
 		}
 		this.updateSideSettingVisibility();
-		if (this.mapCollapseSlider) {
-			this.mapCollapseSlider.value = String(settings.collapseDepth);
-		}
-		if (this.mapHSpacingSlider) {
-			this.mapHSpacingSlider.value = String(settings.horizontalSpacing);
-		}
-		if (this.mapVSpacingSlider) {
-			this.mapVSpacingSlider.value = String(settings.verticalSpacing);
-		}
+		this.mapCollapseSlider?.(settings.collapseDepth);
+		this.mapHSpacingSlider?.(settings.horizontalSpacing);
+		this.mapVSpacingSlider?.(settings.verticalSpacing);
 		if (this.mapBranchStyleDropdown) {
 			this.mapBranchStyleDropdown.value = settings.branchLineStyle;
 		}
@@ -2401,9 +2386,7 @@ export class PropertiesSidebarView extends ItemView {
 		if (this.mapNodeWidthInput) {
 			this.mapNodeWidthInput.value = base.width != null ? String(base.width) : "";
 		}
-		if (this.mapMaxNodeWidthSlider) {
-			this.mapMaxNodeWidthSlider.value = String(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth);
-		}
+		this.mapMaxNodeWidthSlider?.(settings.maxNodeWidth ?? this.plugin.settings.defaultMaxNodeWidth);
 	}
 
 	// ─── Theme Management ────────────────────────────────────
@@ -2819,7 +2802,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.fillSwatch = swatch;
 
 		swatch.addEventListener("click", () => {
-			this.openColorPicker(swatch, swatch.style.backgroundColor || "#ffffff", (color) => {
+			this.openColorPicker(swatch, "#ffffff", (color) => {
 				void this.writeNodeStyle({ fill: color });
 			});
 		});
@@ -2832,7 +2815,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.borderColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ border: { color } });
 			});
 		});
@@ -2843,11 +2826,10 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(0, 8, 1)
-					.setValue(1)
-					.onChange(async (value) => {
-						await this.writeNodeStyle({ border: { width: value } });
-					});
-				this.controls.borderWidthSlider = slider.sliderEl;
+					.setValue(1);
+				this.controls.borderWidthSlider = bindSlider(slider, async (value) => {
+					await this.writeNodeStyle({ border: { width: value } });
+				});
 			});
 
 		// Style
@@ -2903,7 +2885,7 @@ export class PropertiesSidebarView extends ItemView {
 		const fillSwatch = fillSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.boundaryFillSwatch = fillSwatch;
 		fillSwatch.addEventListener("click", () => {
-			this.openColorPicker(fillSwatch, fillSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(fillSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ boundary: { enabled: true, fill: color } });
 			});
 		});
@@ -2913,18 +2895,17 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(0, 100, 5)
-					.setValue(Math.round(DEFAULT_BOUNDARY_OPACITY * 100))
-					.onChange(async (value) => {
-						await this.writeNodeStyle({ boundary: { enabled: true, opacity: value / 100 } });
-					});
-				this.controls.boundaryOpacitySlider = slider.sliderEl;
+					.setValue(Math.round(DEFAULT_BOUNDARY_OPACITY * 100));
+				this.controls.boundaryOpacitySlider = bindSlider(slider, async (value) => {
+					await this.writeNodeStyle({ boundary: { enabled: true, opacity: value / 100 } });
+				});
 			});
 
 		const colorSetting = sidebarSetting(body).setName("Border color");
 		const colorSwatch = colorSetting.controlEl.createDiv({ cls: "osmosis-color-swatch-btn" });
 		this.controls.boundaryColorSwatch = colorSwatch;
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(colorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ boundary: { enabled: true, color } });
 			});
 		});
@@ -2934,11 +2915,10 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(0, MAX_BOUNDARY_WIDTH, 0.5)
-					.setValue(DEFAULT_BOUNDARY_WIDTH)
-					.onChange(async (value) => {
-						await this.writeNodeStyle({ boundary: { enabled: true, width: value } });
-					});
-				this.controls.boundaryWidthSlider = slider.sliderEl;
+					.setValue(DEFAULT_BOUNDARY_WIDTH);
+				this.controls.boundaryWidthSlider = bindSlider(slider, async (value) => {
+					await this.writeNodeStyle({ boundary: { enabled: true, width: value } });
+				});
 			});
 
 		sidebarSetting(body)
@@ -2992,11 +2972,10 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(8, 48, 1)
-					.setValue(14)
-					.onChange(async (value) => {
-						await this.writeNodeStyle({ text: { size: value } });
-					});
-				this.controls.textSizeSlider = slider.sliderEl;
+					.setValue(14);
+				this.controls.textSizeSlider = bindSlider(slider, async (value) => {
+					await this.writeNodeStyle({ text: { size: value } });
+				});
 			});
 
 		// Weight
@@ -3023,7 +3002,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.textColorSwatch = textColorSwatch;
 
 		textColorSwatch.addEventListener("click", () => {
-			this.openColorPicker(textColorSwatch, textColorSwatch.style.backgroundColor || "#000000", (color) => {
+			this.openColorPicker(textColorSwatch, "#000000", (color) => {
 				void this.writeNodeStyle({ text: { color } });
 			});
 		});
@@ -3075,7 +3054,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.controls.branchColorSwatch = colorSwatch;
 
 		colorSwatch.addEventListener("click", () => {
-			this.openColorPicker(colorSwatch, colorSwatch.style.backgroundColor || "#888888", (color) => {
+			this.openColorPicker(colorSwatch, "#888888", (color) => {
 				void this.writeNodeStyle({ branchLine: { color } });
 			});
 		});
@@ -3086,11 +3065,10 @@ export class PropertiesSidebarView extends ItemView {
 			.addSlider((slider) => {
 				slider
 					.setLimits(1, 8, 1)
-					.setValue(2)
-					.onChange(async (value) => {
-						await this.writeNodeStyle({ branchLine: { thickness: value } });
-					});
-				this.controls.branchThicknessSlider = slider.sliderEl;
+					.setValue(2);
+				this.controls.branchThicknessSlider = bindSlider(slider, async (value) => {
+					await this.writeNodeStyle({ branchLine: { thickness: value } });
+				});
 			});
 
 		// Pattern (solid, dashed, dotted)
@@ -3138,8 +3116,16 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Color Picker Helper ─────────────────────────────────
 
-	private openColorPicker(anchor: HTMLElement, initialColor: string, onChange: (color: string) => void): void {
+	/**
+	 * Open the Pickr popup on a swatch. It opens on the swatch's stored color
+	 * (`paintSwatch` keeps it in `data-color` as written, since
+	 * `style.backgroundColor` reads back as `rgb()`), or `fallbackColor` when the
+	 * swatch has none. Clicking the swatch of the open picker closes it.
+	 */
+	private openColorPicker(anchor: HTMLElement, fallbackColor: string, onChange: (color: string) => void): void {
+		const reclick = this.activePicker?.anchor === anchor;
 		this.closeAllPickers();
+		if (reclick) return;
 		const host = this.getStyleHost();
 		const themeColors = extractThemeColors(host?.getActiveTheme());
 
@@ -3147,23 +3133,24 @@ export class PropertiesSidebarView extends ItemView {
 		// drag persists as a single undo step and can't reload the map mid-drag.
 		host?.beginLiveEdit();
 
-		const picker = new ColorPicker({
-			app: this.app,
-			plugin: this.plugin,
-			initialColor,
+		this.activePicker = new PickrColorPicker({
+			anchor,
+			initialColor: anchor.dataset.color ?? "",
+			fallbackColor,
 			themeColors,
+			customColors: this.plugin.settings.customColors,
+			saveCustomColors: () => void this.plugin.saveSettings(),
 			onChange,
-			onClose: () => host?.endLiveEdit(),
+			onClose: () => {
+				host?.endLiveEdit();
+				this.activePicker = null;
+			},
 		});
-		this.activePickers.push(picker);
-		picker.open(anchor);
 	}
 
 	private closeAllPickers(): void {
-		for (const p of this.activePickers) {
-			p.close();
-		}
-		this.activePickers = [];
+		this.activePicker?.close();
+		this.activePicker = null;
 	}
 
 	// ─── Node Style Write ────────────────────────────────────
@@ -3270,31 +3257,27 @@ export class PropertiesSidebarView extends ItemView {
 
 		// Fill
 		if (this.controls.fillSwatch) {
-			this.controls.fillSwatch.style.backgroundColor = resolved.fill ?? "";
+			paintSwatch(this.controls.fillSwatch, resolved.fill ?? "");
 		}
 
 		// Border
 		if (this.controls.borderColorSwatch) {
-			this.controls.borderColorSwatch.style.backgroundColor = resolved.border?.color ?? "";
+			paintSwatch(this.controls.borderColorSwatch, resolved.border?.color ?? "");
 		}
-		if (this.controls.borderWidthSlider) {
-			this.controls.borderWidthSlider.value = String(resolved.border?.width ?? 1);
-		}
+		this.controls.borderWidthSlider?.(resolved.border?.width ?? 1);
 		if (this.controls.borderStyleDropdown) {
 			this.controls.borderStyleDropdown.value = localStyle?.border?.style ?? "inherit";
 		}
 
 		// Text
 		this.controls.fontPicker?.setFont(resolved.text?.font ?? "");
-		if (this.controls.textSizeSlider) {
-			this.controls.textSizeSlider.value = String(resolved.text?.size ?? 14);
-		}
+		this.controls.textSizeSlider?.(resolved.text?.size ?? 14);
 		if (this.controls.textWeightDropdown) {
 			const w = localStyle?.text?.weight;
 			this.controls.textWeightDropdown.value = w != null ? String(w) : "inherit";
 		}
 		if (this.controls.textColorSwatch) {
-			this.controls.textColorSwatch.style.backgroundColor = resolved.text?.color ?? "";
+			paintSwatch(this.controls.textColorSwatch, resolved.text?.color ?? "");
 		}
 		if (this.controls.textAlignBtns) {
 			const align = resolved.text?.alignment ?? "left";
@@ -3311,11 +3294,9 @@ export class PropertiesSidebarView extends ItemView {
 			this.controls.branchStyleDropdown.value = localStyle?.branchLine?.style ?? "inherit";
 		}
 		if (this.controls.branchColorSwatch) {
-			this.controls.branchColorSwatch.style.backgroundColor = resolved.branchLine?.color ?? "";
+			paintSwatch(this.controls.branchColorSwatch, resolved.branchLine?.color ?? "");
 		}
-		if (this.controls.branchThicknessSlider) {
-			this.controls.branchThicknessSlider.value = String(resolved.branchLine?.thickness ?? 2);
-		}
+		this.controls.branchThicknessSlider?.(resolved.branchLine?.thickness ?? 2);
 		if (this.controls.branchPatternDropdown) {
 			this.controls.branchPatternDropdown.value = localStyle?.branchLine?.pattern ?? "inherit";
 		}
@@ -3327,17 +3308,13 @@ export class PropertiesSidebarView extends ItemView {
 		const boundary = resolveBoundary(resolved);
 		this.controls.boundaryToggle?.setValue(boundary !== null);
 		if (this.controls.boundaryFillSwatch) {
-			this.controls.boundaryFillSwatch.style.backgroundColor = boundary?.fill ?? "";
+			paintSwatch(this.controls.boundaryFillSwatch, boundary?.fill ?? "");
 		}
-		if (this.controls.boundaryOpacitySlider) {
-			this.controls.boundaryOpacitySlider.value = String(Math.round((boundary?.fillOpacity ?? DEFAULT_BOUNDARY_OPACITY) * 100));
-		}
+		this.controls.boundaryOpacitySlider?.(Math.round((boundary?.fillOpacity ?? DEFAULT_BOUNDARY_OPACITY) * 100));
 		if (this.controls.boundaryColorSwatch) {
-			this.controls.boundaryColorSwatch.style.backgroundColor = boundary?.stroke ?? "";
+			paintSwatch(this.controls.boundaryColorSwatch, boundary?.stroke ?? "");
 		}
-		if (this.controls.boundaryWidthSlider) {
-			this.controls.boundaryWidthSlider.value = String(boundary?.strokeWidth ?? DEFAULT_BOUNDARY_WIDTH);
-		}
+		this.controls.boundaryWidthSlider?.(boundary?.strokeWidth ?? DEFAULT_BOUNDARY_WIDTH);
 		if (this.controls.boundaryStyleDropdown) {
 			this.controls.boundaryStyleDropdown.value = localStyle?.boundary?.style ?? "inherit";
 		}
@@ -3391,10 +3368,18 @@ export class PropertiesSidebarView extends ItemView {
 		const handler = () => {
 			this.updateFormatTabState();
 		};
+		// An undo/redo restores styles without a selection change; re-read both tabs.
+		const restored = () => {
+			this.refreshMapStyleControls();
+			this.updateFormatTabState();
+		};
+		const map = mindMap instanceof MindMapView ? mindMap : null;
 
 		mindMap.onSelectionChange(handler);
+		map?.onHistoryApply(restored);
 		this.selectionCleanup = () => {
 			mindMap.offSelectionChange(handler);
+			map?.offHistoryApply(restored);
 		};
 	}
 
@@ -3404,4 +3389,13 @@ export class PropertiesSidebarView extends ItemView {
 			this.selectionCleanup = null;
 		}
 	}
+}
+
+/**
+ * Show `color` on a sidebar swatch and remember it as written, so the picker
+ * reopens on the stored value rather than the computed `rgb()` style.
+ */
+function paintSwatch(el: HTMLElement, color: string): void {
+	el.style.backgroundColor = color;
+	el.dataset.color = color;
 }
