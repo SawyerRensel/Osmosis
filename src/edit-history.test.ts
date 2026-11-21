@@ -174,9 +174,9 @@ describe("EditHistory: shared between views", () => {
 	it("undoes another view's edit to the same note", () => {
 		const { history, recorder } = setup();
 		const map2d = recorder("Harbour.md");
-		const graph3d = recorder("Harbour.md");
+		const cosmos = recorder("Harbour.md");
 		map2d.record("Harbour.md", "a", "b");
-		graph3d.record("Harbour.md", "b", "c");
+		cosmos.record("Harbour.md", "b", "c");
 		expect(history.undo("Harbour.md")).toMatchObject({ ok: true, edits: [edit("Harbour.md", "b", "c")] });
 		expect(history.undo("Harbour.md")).toMatchObject({ ok: true, edits: [edit("Harbour.md", "a", "b")] });
 	});

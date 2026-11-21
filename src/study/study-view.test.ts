@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatInterval, isNavbarSwipe, SWIPE_MAX_MS, SWIPE_MIN_DISTANCE } from "./study-view";
+import {
+	crumbsBelowTitle,
+	formatInterval,
+	isNavbarSwipe,
+	studyTabTitle,
+	SWIPE_MAX_MS,
+	SWIPE_MIN_DISTANCE,
+} from "./study-view";
 
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
@@ -52,5 +59,60 @@ describe("isNavbarSwipe", () => {
 
 	it("rejects a drag that scrolled the card", () => {
 		expect(isNavbarSwipe({ ...swipe, scrolled: true })).toBe(false);
+	});
+});
+
+describe("studyTabTitle", () => {
+	it("is \"Study\" with no session on screen", () => {
+		expect(studyTabTitle(null)).toBe("Study");
+	});
+
+	it("is \"All decks\" for the all-decks scope", () => {
+		expect(studyTabTitle({ type: "all" })).toBe("All decks");
+	});
+
+	it("names a deck by its last path segment, with no prefix", () => {
+		expect(studyTabTitle({ type: "single", deck: "Sailing" })).toBe("Sailing");
+		expect(studyTabTitle({ type: "single", deck: "sailing/knots" })).toBe("knots");
+		expect(studyTabTitle({ type: "parent", deck: "travel/europe" })).toBe("europe");
+	});
+
+	it("names a note by its only H1", () => {
+		expect(studyTabTitle({ type: "note", notePath: "cooking/Sauces.md" }, ["Mother sauces"])).toBe("Mother sauces");
+	});
+
+	it("falls back to the file name with no H1", () => {
+		expect(studyTabTitle({ type: "note", notePath: "cooking/Sauces.md" }, [])).toBe("Sauces");
+		expect(studyTabTitle({ type: "note", notePath: "Knots.md" })).toBe("Knots");
+	});
+
+	it("falls back to the file name with several H1s", () => {
+		expect(studyTabTitle({ type: "note", notePath: "cooking/Sauces.md" }, ["Hot", "Cold"])).toBe("Sauces");
+	});
+
+	it("ignores a blank H1", () => {
+		expect(studyTabTitle({ type: "note", notePath: "Knots.md" }, ["  "])).toBe("Knots");
+	});
+});
+
+describe("crumbsBelowTitle", () => {
+	it("drops a lone note name that repeats the title", () => {
+		expect(crumbsBelowTitle(["Sailing"], ["Sailing"])).toEqual([]);
+	});
+
+	it("drops every leading segment that repeats it, case-insensitively", () => {
+		expect(crumbsBelowTitle(["Sailing", "sailing", "Knots"], ["Sailing"])).toEqual(["Knots"]);
+	});
+
+	it("keeps the breadcrumb when the title is something else", () => {
+		expect(crumbsBelowTitle(["Sailing", "Knots"], ["All decks"])).toEqual(["Sailing", "Knots"]);
+	});
+
+	it("keeps a later segment that happens to match", () => {
+		expect(crumbsBelowTitle(["Travel", "Sailing"], ["Sailing"])).toEqual(["Travel", "Sailing"]);
+	});
+
+	it("drops the file name and the H1 that titles a note session", () => {
+		expect(crumbsBelowTitle(["Sauces", "Mother sauces", "Roux"], ["Mother sauces", "Sauces"])).toEqual(["Roux"]);
 	});
 });

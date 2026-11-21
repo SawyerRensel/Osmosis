@@ -84,9 +84,9 @@ Sometimes a line shouldn't be studied right now, but you don't want to lose its 
 |-------|-----|
 | Editor | ++ctrl+++++p++ > **Exclude line cards in selection from study** / **Include line cards in selection in study** |
 | Mind map | Right-click a node > **Exclude from study** / **Include in study** (:lucide-eye-off: / :lucide-eye:) |
-| Sequential study | The exclude button on the study modal |
+| Flashcard study | The exclude button in the study tab |
 
-An excluded card is out of study everywhere — it isn't hidden in peek or study on either surface, it's skipped by the sequential queue, and it's dropped from dashboard counts. Its FSRS history is preserved, so including it again resumes where it left off.
+An excluded card is out of study everywhere — it isn't hidden in peek or study on either surface, it's skipped by the flashcard queue, and it's dropped from dashboard counts. Its FSRS history is preserved, so including it again resumes where it left off.
 
 Exclusion is stored as `disabled: true` on the card's `osmosis-schedule` entry:
 
@@ -99,13 +99,13 @@ osmosis-schedule:
 Schedule and exclusion are tracked independently: rating a card never clears the flag, and including a card never wipes its schedule. A line you've excluded but never studied gets a schedule-less stub entry.
 
 !!! tip "Exclude vs. remove vs. opt out of decks"
-    **Exclude** pauses one card but keeps its history. **Remove** deletes the block ID, and with it the card. **`osmosis-line-cards: false`** keeps a note's cards out of decks and sequential study while leaving them studiable in place.
+    **Exclude** pauses one card but keeps its history. **Remove** deletes the block ID, and with it the card. **`osmosis-line-cards: false`** keeps a note's cards out of decks and flashcard study while leaving them studiable in place.
 
 ## Card Anatomy
 
 A line card asks: *given where this line sits in the note, what does it say?*
 
-- **Front** — the ancestor breadcrumb (`Coffee Brewing › Pour Over › ?`), plus up to N immediately preceding sibling lines for context in sequential study (**Settings > Osmosis > Line card context lines**, default 2).
+- **Front** — the ancestor breadcrumb (`Coffee Brewing › Pour Over › ?`), plus up to N immediately preceding sibling lines for context in flashcard study (**Settings > Osmosis > Line card context lines**, default 2).
 - **Back** — the line itself, rendered as markdown.
 - **Identity** — `note path#^blockId`, stable across edits and reorders.
 
@@ -135,15 +135,15 @@ The key is written lazily — only after the first review, not when IDs are gene
 
 Line cards work in all three [study modes](../studying/study-modes.md):
 
-- **Sequential** — drawn from decks like any other card; the front shows the breadcrumb and context lines.
-- **Contextual** — *Peek* and *Study* modes in reading view hide and reveal lines in place.
-- **Spatial** — due lines hide behind `?` placeholders on the mind map; reveal and rate without losing the map's structure.
+- **Flashcard** — drawn from decks like any other card; the front shows the breadcrumb and context lines.
+- **Note** — *Peek* and *Study* modes in reading view hide and reveal lines in place.
+- **Mind map** — due lines hide behind `?` placeholders on the mind map; reveal and rate without losing the map's structure.
 
 ## Decks & Opt-Out
 
-Line cards count toward deck totals and appear in sequential study by default. Deck assignment follows the note ([`osmosis-deck` frontmatter or folder path](decks.md)).
+Line cards count toward deck totals and appear in flashcard study by default. Deck assignment follows the note ([`osmosis-deck` frontmatter or folder path](decks.md)).
 
-To keep them out of decks while still studiable in place (peek/study/spatial):
+To keep them out of decks while still studiable in place (peek/study/mind map):
 
 - **Per note**: add `osmosis-line-cards: false` to the frontmatter.
 - **Globally**: turn off **Settings > Osmosis > Include line cards in decks**.

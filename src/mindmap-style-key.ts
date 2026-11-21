@@ -10,7 +10,7 @@
  */
 
 import { generateBlockId } from "./block-id";
-import { canStamp, findNodeById, insertAll, stampInsertion, type Insertion } from "./graph3d/edit";
+import { canStamp, findNodeById, insertAll, stampInsertion, type Insertion } from "./cosmos/edit";
 import { collectBlockIds } from "./mindmap-edit";
 import { buildPreferredSelector } from "./styles";
 import type { OsmosisNode } from "./types";

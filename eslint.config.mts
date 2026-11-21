@@ -26,7 +26,7 @@ export default tseslint.config(
 		// "3D" is an initialism; the rule's acronym list doesn't know it and
 		// would rewrite it to "3d". The other option repeats the recommended one.
 		rules: {
-			"obsidianmd/ui/sentence-case": ["warn", { enforceCamelCaseLower: true, ignoreWords: ["3D"] }],
+			"obsidianmd/ui/sentence-case": ["warn", { enforceCamelCaseLower: true, ignoreWords: ["3D", "Cosmos"] }],
 		},
 	},
 	{

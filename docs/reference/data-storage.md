@@ -156,7 +156,7 @@ Osmosis review log — pixel-10a, 2026-08. Generated file; do not edit.
 
 ```osmosis-reviews
 {"device":"pixel-10a","install":"a3f9","v":2}
-{"t":1754500000000,"c":"os-wcfb3w","r":3,"s":"review","iv":345600,"pi":86400,"st":12.3,"d":6.4,"e":4200,"m":"sequential"}
+{"t":1754500000000,"c":"os-wcfb3w","r":3,"s":"review","iv":345600,"pi":86400,"st":12.3,"d":6.4,"e":4200,"m":"flashcard"}
 ```
 ````
 
@@ -170,7 +170,7 @@ Osmosis review log — pixel-10a, 2026-08. Generated file; do not edit.
 | `pi` | Interval the card was on *before* the answer, seconds |
 | `st` / `d` | FSRS stability and difficulty after the answer |
 | `e` | Milliseconds the card was on screen |
-| `m` | Which study mode you answered in |
+| `m` | Which study mode you answered in: `flashcard`, `note`, `mindmap` or `cosmos`. Lines written before the modes were renamed say `sequential`, `contextual`, `spatial` or `relational`; Osmosis reads those as the new names and never rewrites old files |
 
 !!! note "The fence is deliberately never closed"
     An unclosed code fence runs to the end of the document, so every write is a

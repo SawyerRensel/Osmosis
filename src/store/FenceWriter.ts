@@ -19,7 +19,7 @@ export interface ScheduleFields {
  *
  * After each review, the updated schedule is persisted directly in the
  * source fence metadata so it syncs with any file sync service — except in
- * contextual study, which stages the write and flushes it when the session
+ * note study, which stages the write and flushes it when the session
  * ends (see {@link stageSchedule}).
  */
 export class FenceWriter {
@@ -118,7 +118,7 @@ export class FenceWriter {
 	 * which does not invalidate the body — and `ScheduleStore` is the staged,
 	 * overlaid model this mirrors.
 	 *
-	 * So contextual study stages its reviews and flushes them once, when the
+	 * So note study stages its reviews and flushes them once, when the
 	 * session ends, when the note is closed, or when the plugin unloads. The
 	 * other surfaces keep writing eagerly, because nothing is displaying the
 	 * source there and a review on disk immediately is worth more. Readers

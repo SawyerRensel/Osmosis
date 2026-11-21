@@ -14,7 +14,7 @@ export type DeckScope =
 	| { type: "all" };
 
 /**
- * What a sequential study session covers: a deck scope, or the cards of one
+ * What a flashcard study session covers: a deck scope, or the cards of one
  * note. Kept apart from `DeckScope` because stats, the dashboard and the deck
  * pickers only ever deal in decks and need no case for a note.
  */

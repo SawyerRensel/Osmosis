@@ -34,7 +34,7 @@ describe("exceedsDragThreshold", () => {
 });
 
 describe("nodeDragPans", () => {
-	const editing = { isReadingMode: false, spatialMode: "off" } as const;
+	const editing = { isReadingMode: false, mindmapStudyMode: "off" } as const;
 
 	it("moves the node once a finger has held the press", () => {
 		expect(
@@ -61,21 +61,21 @@ describe("nodeDragPans", () => {
 					pointerType,
 					longPressTriggered: true,
 					isReadingMode: true,
-					spatialMode: "off",
+					mindmapStudyMode: "off",
 				}),
 			).toBe(true);
 		}
 	});
 
 	it("always pans in peek and study, so a review cannot restructure the note", () => {
-		for (const spatialMode of ["peek", "study"] as const) {
+		for (const mindmapStudyMode of ["peek", "study"] as const) {
 			for (const pointerType of ["touch", "mouse"]) {
 				expect(
 					nodeDragPans({
 						pointerType,
 						longPressTriggered: true,
 						isReadingMode: false,
-						spatialMode,
+						mindmapStudyMode,
 					}),
 				).toBe(true);
 			}

@@ -83,7 +83,7 @@ export function processNote(
 	];
 
 	// Line-card deck opt-out: global setting or per-note osmosis-line-cards: false.
-	// Excluded cards stay studiable in-place but leave deck totals/sequential.
+	// Excluded cards stay studiable in-place but leave deck totals/flashcard study.
 	const excludeLineCards =
 		options.includeLineCardsInDecks === false || !frontmatter.lineCardsInDecks;
 

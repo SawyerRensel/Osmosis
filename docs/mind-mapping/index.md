@@ -34,7 +34,7 @@ Nodes render rich content — bold, italic, code, images, and LaTeX all display 
 
 Every one of these knows which note to map. The mind map header carries the way
 back — :lucide-file-text: **Note view** — plus [reading mode](#reading-mode),
-[study and peek](../studying/study-modes.md#spatial-study), a pin toggle, and
+[study and peek](../studying/study-modes.md#mind-map-study), a pin toggle, and
 the :lucide-paintbrush: [properties sidebar](styling.md).
 
 ## Reading Mode
@@ -54,13 +54,13 @@ Mind maps have a reading mode, mirroring the Markdown view's reading/editing tog
 | Pan, zoom, fit to view | Adding, deleting, and moving nodes |
 | Collapse / expand and keyboard navigation | In-place text editing (++f2++ / double-click) |
 | Selection, copy, "Study this branch" | Drag-and-drop repositioning and node resizing |
-| Spatial study and peek, including rating | Copy style / paste style from the map |
+| Mind map study and peek, including rating | Copy style / paste style from the map |
 | Line card actions on the node menu | Cut, paste, and delete |
 
 Dragging a node **pans the viewport** instead of moving the node, resize handles are hidden, and the toolbar collapses to navigation-only buttons. Node context menus keep just Copy, collapse/expand, Study this branch, and the [line card](../flashcards/line-cards.md#per-node-and-per-selection-control) actions.
 
 !!! note "Study still counts"
-    Spatial study and peek stay fully available in reading mode. Ratings are study metadata, not map edits — they never touch your note's structure.
+    Mind map study and peek stay fully available in reading mode. Ratings are study metadata, not map edits — they never touch your note's structure.
 
 The mode is remembered per pane, so one map can be open for reading while another is open for editing. To choose how maps open by default, set **Settings > Osmosis > Default mind map mode** to *Editing*, *Reading*, or *Reading on mobile only*.
 

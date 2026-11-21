@@ -10,19 +10,19 @@ your performance, so a card rated anywhere updates its schedule everywhere.
 
 | Mode | Where | Best for |
 |------|-------|----------|
-| [**Sequential**](study-modes.md#sequential-study) | A modal, from the dashboard | Focused review, clearing a backlog |
-| [**Contextual**](study-modes.md#contextual-study) | In the note itself | Studying while reading, in your own words |
-| [**Spatial**](study-modes.md#spatial-study) | On the mind map | Learning structure and relationships |
+| [**Flashcard**](study-modes.md#flashcard-study) | A modal, from the dashboard | Focused review, clearing a backlog |
+| [**Note**](study-modes.md#note-study) | In the note itself | Studying while reading, in your own words |
+| [**Mind map**](study-modes.md#mind-map-study) | On the mind map | Learning structure and relationships |
 
 ![osmosis_fence_card_on_the_map](../assets/media/osmosis_fence_card_on_the_map.png){width=66%}
 
 ## Starting a Session
 
-- **Sequential** — open the [dashboard](dashboard.md) and click a deck,
+- **Flashcard** — open the [dashboard](dashboard.md) and click a deck,
   or run **Study all decks**
-- **Contextual** — open a note with cards and click :lucide-graduation-cap:
+- **Note** — open a note with cards and click :lucide-graduation-cap:
   **Study this note** in its header
-- **Spatial** — open a mind map and click :lucide-graduation-cap: **Study mode**
+- **Mind map** — open a mind map and click :lucide-graduation-cap: **Study mode**
   in its header, or right-click a node and choose **Study this branch**
 
 Both in-place modes have a no-stakes twin: :lucide-scan-eye: **Peek** hides
@@ -34,7 +34,7 @@ every card and records nothing, wherever you are.
 
 -   [:octicons-play-24: __Study Modes__](study-modes.md)
 
-    Sequential, contextual, and spatial — three ways to study the same cards
+    Flashcard, note, and mind map — three ways to study the same cards
 
 -   [:octicons-graph-24: __Spaced Repetition__](spaced-repetition.md)
 

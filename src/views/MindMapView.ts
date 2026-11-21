@@ -34,8 +34,8 @@ import { lineAt } from "../heading-links";
 import { planHeadingRename, rewriteOwnLinks, rewriteVaultLinks, type HeadingRename } from "../heading-link-update";
 import { replaceableLine, rewriteLines, type FindItem, type LineRewrite, type ReplacePlan } from "../find-replace";
 import { OSMOSIS_FENCE_REGEX } from "../card-gen/generate-ids";
-import { ancestorsOf, findNodeById, nodeAtStart } from "../graph3d/edit";
-import { planSelectionLink, type PickedLine, type PlanNote } from "../graph3d/selection-edit";
+import { ancestorsOf, findNodeById, nodeAtStart } from "../cosmos/edit";
+import { planSelectionLink, type PickedLine, type PlanNote } from "../cosmos/selection-edit";
 import { LinkPicker, linkMenuItems } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
@@ -43,7 +43,7 @@ import type { MoveContext } from "../edit-moves";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../graph3d/liftoff";
+import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../cosmos/liftoff";
 import {
 	computeLayout,
 	LayoutNode,
@@ -103,16 +103,19 @@ import { lineCardId } from "../card-gen/line-cards";
 import {
 	allFenceCardKeys,
 	allLineCardIds,
-	cardIdsForSpatialKey,
+	cardIdsForMindmapKey,
 	collectSubtreeCardKeys,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardIds,
 	fenceKeyFromNode,
 	occlusionForLineKey,
-	spatialStudyKeys,
-} from "../study/spatial-study";
+	mindmapSessionCards,
+	mindmapStudyKeys,
+} from "../study/mindmap-study";
+import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
 import type { Card, CardOcclusion } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
+import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
@@ -294,8 +297,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private readonly edits: EditPipeline;
 	private historyKey: string | null = null;
 	private releaseHistory: (() => void) | null = null;
-	/** The 3D graph's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
-	private graph3dState: Record<string, unknown> | null = null;
+	/** Cosmos's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
+	private cosmosState: Record<string, unknown> | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
 	// draws identically afterwards — but the frontmatter block grew, which
@@ -371,7 +374,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// Sync state: when true, skip the next vault.modify reload to prevent flicker
 	suppressNextReload = false;
 
-	// Clipboard state (copy/cut/paste, copy/paste style) is shared with the 3D graph: see node-clipboard.ts.
+	// Clipboard state (copy/cut/paste, copy/paste style) is shared with Cosmos: see node-clipboard.ts.
 
 	// Drag-and-drop state
 	private dragNodeId: string | null = null;
@@ -518,7 +521,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// Pin/lock state: when pinned, active-leaf-change doesn't switch the map
 	private isPinned = false;
 
-	// Spatial peek/study state (plan §5 "Spatial (Mind Map View)").
+	// Mind map peek/study state (plan §5 "Spatial (Mind Map View)").
 	// - "peek": every line-card node hidden, reveal in any order, nothing recorded.
 	// - "study": due-or-new line-card nodes hidden, reveal + rate via FSRS.
 	// Session state is keyed by card key (`${notePath}#^${blockId}`, the
@@ -527,10 +530,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// while block IDs travel with their lines. The path half disambiguates
 	// transcluded nodes, whose block IDs belong to other notes and may
 	// collide with the host's.
-	private spatialMode: "off" | "peek" | "study" = "off";
-	private spatialStudyActionEl: HTMLElement | null = null;
+	private mindmapStudyMode: "off" | "peek" | "study" = "off";
+	private mindmapStudyActionEl: HTMLElement | null = null;
 	/** Card keys hidden this session (all line cards on the map for peek, due-or-new for study). */
-	private spatialTargets = new Set<string>();
+	private mindmapStudyTargets = new Set<string>();
 	/**
 	 * The targets each node carries, keyed by the node's own card key, in the
 	 * order study asks them.
@@ -539,17 +542,17 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * work — but anything that fanned out is several: an occluded diagram's shape
 	 * groups, a cloze's groups, the two directions of a bidirectional pair. Each
 	 * is a card with its own schedule, so the node steps through them one at a
-	 * time and appears here under several keys. That is why `spatialTargets` is
-	 * not simply the node keys on the map, and why the banner's count is honest
+	 * time and appears here under several keys. That is why `mindmapStudyTargets` is
+	 * not simply the node keys on the map, and why the progress bar is honest
 	 * about how much is left. Peek never splits: it reveals in any order and
 	 * records nothing, so stepping would invent an interaction it does not have.
 	 */
-	private spatialNodeTargets = new Map<string, string[]>();
+	private mindmapStudyNodeTargets = new Map<string, string[]>();
 	/**
 	 * The diagram each split target asks about, so a repaint can single its group
 	 * out. Only occlusion group keys appear here; an unsplit node has no target.
 	 */
-	private spatialGroupOcclusions = new Map<string, CardOcclusion>();
+	private mindmapStudyGroupOcclusions = new Map<string, CardOcclusion>();
 	/**
 	 * The card each split target asks, for every fence that is not a diagram — so
 	 * a stepping node can put the question being rated on screen instead of the
@@ -557,30 +560,35 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 *
 	 * An occluded node is absent by design: its steps differ in which masks are
 	 * filled, not in their markdown, and it is repainted through
-	 * `spatialGroupOcclusions` rather than rebuilt.
+	 * `mindmapStudyGroupOcclusions` rather than rebuilt.
 	 */
-	private spatialStepCards = new Map<string, Card>();
+	private mindmapStudyStepCards = new Map<string, Card>();
 	/** Targets already revealed (rated or awaiting a rating). */
-	private spatialRevealed = new Set<string>();
+	private mindmapStudyRevealed = new Set<string>();
 	/** Targets rated so far (study progress). */
-	private spatialRated = new Set<string>();
+	private mindmapStudyRated = new Set<string>();
 	/** Revealed-but-unrated card whose rating bubble is showing (study only). */
-	private spatialPendingRating: string | null = null;
+	private mindmapStudyPendingRating: string | null = null;
 	/**
 	 * Layout node the pending rating bubble anchors to. A note transcluded
 	 * twice puts two nodes on one card key — the bubble follows the node
 	 * the user actually clicked. Re-picked if a reload dropped the node.
 	 */
-	private spatialPendingNodeId: string | null = null;
+	private mindmapStudyPendingNodeId: string | null = null;
 	/**
 	 * When the pending card was revealed, for the review log's elapsed time.
 	 * A node sits on the map alongside everything else, so there is no separate
 	 * "question shown" moment — the reveal is the only defensible anchor.
 	 */
-	private spatialPendingRatingAt = 0;
-	/** Floating progress pill ("4/9 due reviewed" + Stop, study only). */
-	private spatialBanner: HTMLElement | null = null;
-	private spatialSessionManager: StudySessionManager | null = null;
+	private mindmapStudyPendingRatingAt = 0;
+	/** Each card the session asks, in the bucket it started in (T110). */
+	private mindmapStudyCountCards: NoteSessionCard[] = [];
+	/** The rating each of those cards got this session, for the new | learn | due counts. */
+	private mindmapStudyCardRatings = new Map<string, FSRSRating>();
+	/** Progress bar and counts pinned over the top of the map (study only, T110). */
+	private mindmapStudyStripEl: HTMLElement | null = null;
+	private mindmapStudyStrip: StudyProgressStrip | null = null;
+	private mindmapStudySessionManager: StudySessionManager | null = null;
 
 	// Reading mode: the map can be explored and studied but not mutated.
 	// Enforced by guards on the mutation methods (assertEditable/startDrag),
@@ -719,7 +727,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			replace: { onClick: () => this.openFind("replace") },
 			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
 			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
-			peek: { onClick: () => this.toggleSpatialPeek(), checked: this.spatialMode === "peek", icon: peekIcon() },
+			peek: { onClick: () => this.toggleMindmapPeek(), checked: this.mindmapStudyMode === "peek", icon: peekIcon() },
 		});
 		super.onPaneMenu(menu, source);
 	}
@@ -741,8 +749,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
 		const saved = readMapState(state);
-		// The 3D graph's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
-		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.graph3dState = state.graph3d as Record<string, unknown>;
+		// Cosmos's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
+		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.cosmosState = state.graph3d as Record<string, unknown>;
 		if (saved.readingMode !== null) {
 			this.setReadingMode(saved.readingMode);
 		}
@@ -760,7 +768,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				// The old viewport means nothing on another note's map; history
 				// and link targets re-place it through setEphemeralState.
 				if (switching) this.fitToView();
-				// The 3D graph's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
+				// Cosmos's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
 				const landing = readLanding(state.landing);
 				if (landing !== null) await this.land(landing);
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
@@ -770,8 +778,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The 2D/3D toggle (the header's pill, and its command): show this note as a 3D graph in this leaf,
-	 * lifting off from the map as it is drawn now (see `graph3d/liftoff.ts`).
+	 * The 2D/3D toggle (the header's pill, and its command): show this note as Cosmos in this leaf,
+	 * lifting off from the map as it is drawn now (see `cosmos/liftoff.ts`).
 	 * A peek or study session ends first, flushing its ratings. The note's undo
 	 * history is held across the swap. Its embedded notes' are not: nothing
 	 * holds them now, and an entry is dropped only when the last holder of one
@@ -782,7 +790,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const tree = this.currentTree;
 		const layout = this.currentLayout;
 		if (!file || !tree || !layout) return;
-		if (this.spatialMode !== "off") this.exitSpatialMode();
+		if (this.mindmapStudyMode !== "off") this.exitMindmapStudyMode();
 		const fileOf = edit.buildContainingFileMap(tree.root, file.path);
 		const dx = this.getOffsetX();
 		const dy = this.getOffsetY();
@@ -802,12 +810,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			viewport: { ...this.viewBox },
 			focus: focus && { path: focus.path, start: focus.start, root: focus.root },
 		};
-		const state = { ...this.graph3dState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
+		const state = { ...this.cosmosState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
 		await this.plugin.swapLeafView(this.leaf, "3d", state, [file.path]);
 	}
 
 	/**
-	 * Land a hand-over from the 3D graph's toggle: select the line it had
+	 * Land a hand-over from Cosmos's toggle: select the line it had
 	 * focused (expanding what hides it) and centre on it, at the zoom that
 	 * draws a line as tall as its plate was on screen. With no line, the zoom
 	 * still carries and the map centres on its root.
@@ -993,7 +1001,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		return this.currentLayout?.nodes.find((n) => n.source.id === id) ?? null;
 	}
 
-	// ── Spatial Study Mode ──────────────────────────────────
+	// ── Mind Map Study Mode ──────────────────────────────────
 
 	/**
 	 * A fence node's body — the lines between its opening and closing backticks —
@@ -1162,7 +1170,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * An occlusion fence renders once rather than twice: its two sides differ
 	 * only in whether the masks are filled, so it gets the prose, the diagrams
 	 * with every group *revealed*, and no back half at all. Study covers them by
-	 * repainting the masks in place — see `applySpatialHidden`. Drawing a second
+	 * repainting the masks in place — see `applyMindmapStudyHidden`. Drawing a second
 	 * copy of every picture for the back would double a node's height and make
 	 * the map re-request each image.
 	 */
@@ -1187,7 +1195,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const { front, back } = card;
 
 		if (card.occlusions) {
-			const el = createElement("div", "osmosis-contextual-front");
+			const el = createElement("div", "osmosis-note-front");
 			container.appendChild(el);
 			if (front !== "" && this.renderComponent) {
 				await MarkdownRenderer.render(this.app, front, el, sourcePath, this.renderComponent);
@@ -1198,7 +1206,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
-		const frontEl = createElement("div", "osmosis-contextual-front");
+		const frontEl = createElement("div", "osmosis-note-front");
 		// What each half currently shows, so a study step can swap in the card
 		// being asked and swap the source text back without re-rendering markdown
 		// that has not changed — see `updateNodeProse`.
@@ -1218,7 +1226,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const divider = createElement("div", "osmosis-study-divider");
 		container.appendChild(divider);
 
-		const backEl = createElement("div", "osmosis-contextual-revealed");
+		const backEl = createElement("div", "osmosis-note-revealed");
 		backEl.dataset["osmosisProse"] = back;
 		container.appendChild(backEl);
 
@@ -1233,19 +1241,19 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
-	private toggleSpatialStudy(): void {
-		if (this.spatialMode === "study") {
-			this.exitSpatialMode();
+	private toggleMindmapStudy(): void {
+		if (this.mindmapStudyMode === "study") {
+			this.exitMindmapStudyMode();
 		} else {
-			this.enterSpatialStudy();
+			this.enterMindmapStudy();
 		}
 	}
 
-	private toggleSpatialPeek(): void {
-		if (this.spatialMode === "peek") {
-			this.exitSpatialMode();
+	private toggleMindmapPeek(): void {
+		if (this.mindmapStudyMode === "peek") {
+			this.exitMindmapStudyMode();
 		} else {
-			this.enterSpatialPeek();
+			this.enterMindmapPeek();
 		}
 	}
 
@@ -1272,9 +1280,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		return lineCardId(path, blockId);
 	}
 
-	/** The cards a spatial target key stands for, whichever kind of key it is. */
+	/** The cards a mind map target key stands for, whichever kind of key it is. */
 	private cardsForKey(key: string): string[] {
-		return cardIdsForSpatialKey(this.mapCards(), key);
+		return cardIdsForMindmapKey(this.mapCards(), key);
 	}
 
 	/**
@@ -1418,9 +1426,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * optionally scoped to one branch ("Study this branch"). The map stays
 	 * fully expanded — only the target nodes are hidden.
 	 */
-	private enterSpatialStudy(scope?: LayoutNode): void {
-		if (this.deferUntilCardsLoaded(() => { this.enterSpatialStudy(scope); })) return;
-		if (this.spatialMode !== "off") this.exitSpatialMode();
+	private enterMindmapStudy(scope?: LayoutNode): void {
+		if (this.deferUntilCardsLoaded(() => { this.enterMindmapStudy(scope); })) return;
+		if (this.mindmapStudyMode !== "off") this.exitMindmapStudyMode();
 
 		const notePath = this.currentFile?.path;
 		const cards = this.mapCards();
@@ -1444,14 +1452,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
-		this.spatialMode = "study";
-		this.setSpatialTargets(nodeKeys, cards, now);
-		this.spatialRevealed.clear();
-		this.spatialRated.clear();
-		this.spatialPendingRating = null;
-		this.spatialPendingNodeId = null;
-		this.spatialStudyActionEl?.addClass("is-active");
-		this.applySpatialState();
+		this.mindmapStudyMode = "study";
+		this.setMindmapStudyTargets(nodeKeys, cards, now);
+		this.mindmapStudyCountCards = mindmapSessionCards(cards, this.mindmapStudyTargets);
+		this.mindmapStudyCardRatings.clear();
+		this.mindmapStudyRevealed.clear();
+		this.mindmapStudyRated.clear();
+		this.mindmapStudyPendingRating = null;
+		this.mindmapStudyPendingNodeId = null;
+		this.mindmapStudyActionEl?.addClass("is-active");
+		this.applyMindmapStudyState();
 		new Notice("Study mode: tap a hidden node to reveal and rate it");
 	}
 
@@ -1459,9 +1469,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * Casual recall check: hide every line-card node on the map, reveal in
 	 * any order, record nothing (mirrors reading view's peek mode).
 	 */
-	private enterSpatialPeek(): void {
-		if (this.deferUntilCardsLoaded(() => { this.enterSpatialPeek(); })) return;
-		if (this.spatialMode !== "off") this.exitSpatialMode();
+	private enterMindmapPeek(): void {
+		if (this.deferUntilCardsLoaded(() => { this.enterMindmapPeek(); })) return;
+		if (this.mindmapStudyMode !== "off") this.exitMindmapStudyMode();
 
 		const cards = this.mapCards();
 		const targets = this.cardKeysOnMap(
@@ -1473,19 +1483,19 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
-		this.spatialMode = "peek";
+		this.mindmapStudyMode = "peek";
 		// Peek never splits an occluded node into its groups: it reveals in any
 		// order and records nothing, so there is no question being asked and
 		// nothing for a target group to mean.
-		this.spatialTargets = targets;
-		this.spatialNodeTargets = new Map([...targets].map((key) => [key, [key]]));
-		this.spatialGroupOcclusions.clear();
-		this.spatialStepCards.clear();
-		this.spatialRevealed.clear();
-		this.spatialRated.clear();
-		this.spatialPendingRating = null;
-		this.spatialPendingNodeId = null;
-		this.applySpatialState();
+		this.mindmapStudyTargets = targets;
+		this.mindmapStudyNodeTargets = new Map([...targets].map((key) => [key, [key]]));
+		this.mindmapStudyGroupOcclusions.clear();
+		this.mindmapStudyStepCards.clear();
+		this.mindmapStudyRevealed.clear();
+		this.mindmapStudyRated.clear();
+		this.mindmapStudyPendingRating = null;
+		this.mindmapStudyPendingNodeId = null;
+		this.applyMindmapStudyState();
 	}
 
 	/**
@@ -1493,39 +1503,39 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * asks — one per due card — and remember what each one is about: the diagram
 	 * for a shape group, the card itself for every other kind.
 	 */
-	private setSpatialTargets(nodeKeys: ReadonlySet<string>, cards: readonly Card[], now: number): void {
-		this.spatialTargets = new Set<string>();
-		this.spatialNodeTargets = new Map<string, string[]>();
-		this.spatialGroupOcclusions = new Map<string, CardOcclusion>();
-		this.spatialStepCards = new Map<string, Card>();
+	private setMindmapStudyTargets(nodeKeys: ReadonlySet<string>, cards: readonly Card[], now: number): void {
+		this.mindmapStudyTargets = new Set<string>();
+		this.mindmapStudyNodeTargets = new Map<string, string[]>();
+		this.mindmapStudyGroupOcclusions = new Map<string, CardOcclusion>();
+		this.mindmapStudyStepCards = new Map<string, Card>();
 
 		for (const nodeKey of nodeKeys) {
-			const keys = spatialStudyKeys(cards, nodeKey, now);
-			this.spatialNodeTargets.set(nodeKey, keys);
-			for (const key of keys) this.spatialTargets.add(key);
+			const keys = mindmapStudyKeys(cards, nodeKey, now);
+			this.mindmapStudyNodeTargets.set(nodeKey, keys);
+			for (const key of keys) this.mindmapStudyTargets.add(key);
 		}
 		for (const card of cards) {
-			if (!this.spatialTargets.has(card.id)) continue;
-			if (card.occlusion) this.spatialGroupOcclusions.set(card.id, card.occlusion);
-			else this.spatialStepCards.set(card.id, card);
+			if (!this.mindmapStudyTargets.has(card.id)) continue;
+			if (card.occlusion) this.mindmapStudyGroupOcclusions.set(card.id, card.occlusion);
+			else this.mindmapStudyStepCards.set(card.id, card);
 		}
 	}
 
-	/** End peek/study (toggle off, Stop, completion, file switch). The map stays open. */
-	private exitSpatialMode(): void {
-		const wasStudy = this.spatialMode === "study";
-		this.spatialMode = "off";
-		this.spatialStudyActionEl?.removeClass("is-active");
+	/** End peek/study (toggle off, completion, file switch). The map stays open. */
+	private exitMindmapStudyMode(): void {
+		const wasStudy = this.mindmapStudyMode === "study";
+		this.mindmapStudyMode = "off";
+		this.mindmapStudyActionEl?.removeClass("is-active");
 
 		if (this.svg) {
-			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-hidden"))) {
-				group.classList.remove("osmosis-spatial-hidden");
-				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-mindmap-study-hidden"))) {
+				group.classList.remove("osmosis-mindmap-study-hidden");
+				group.querySelector(".osmosis-mindmap-study-placeholder")?.remove();
 			}
-			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-spatial-revealed"))) {
-				group.classList.remove("osmosis-spatial-revealed");
+			for (const group of Array.from(this.svg.querySelectorAll(".osmosis-mindmap-study-revealed"))) {
+				group.classList.remove("osmosis-mindmap-study-revealed");
 			}
-			this.svg.querySelector(".osmosis-spatial-rating-fo")?.remove();
+			this.svg.querySelector(".osmosis-mindmap-study-rating-fo")?.remove();
 			// Neither a fence node nor an occluded line ever carried the hidden
 			// class — masks and a hidden back half are how they hide — so both
 			// need putting back explicitly. A null step also puts a stepping
@@ -1536,16 +1546,19 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 			removeMaskOverlays(this.svg);
 		}
-		this.spatialBanner?.remove();
-		this.spatialBanner = null;
-		this.spatialTargets.clear();
-		this.spatialNodeTargets.clear();
-		this.spatialGroupOcclusions.clear();
-		this.spatialStepCards.clear();
-		this.spatialRevealed.clear();
-		this.spatialRated.clear();
-		this.spatialPendingRating = null;
-		this.spatialPendingNodeId = null;
+		this.mindmapStudyStripEl?.remove();
+		this.mindmapStudyStripEl = null;
+		this.mindmapStudyStrip = null;
+		this.mindmapStudyCountCards = [];
+		this.mindmapStudyCardRatings.clear();
+		this.mindmapStudyTargets.clear();
+		this.mindmapStudyNodeTargets.clear();
+		this.mindmapStudyGroupOcclusions.clear();
+		this.mindmapStudyStepCards.clear();
+		this.mindmapStudyRevealed.clear();
+		this.mindmapStudyRated.clear();
+		this.mindmapStudyPendingRating = null;
+		this.mindmapStudyPendingNodeId = null;
 
 		// Study session end: push debounced schedule writes and buffered
 		// review-log entries out now (plan §3). Peek records nothing, so there
@@ -1571,8 +1584,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * re-render), so hidden placeholders and a mid-rating bubble survive
 	 * re-renders.
 	 */
-	private applySpatialState(): void {
-		if (this.spatialMode === "off") return;
+	private applyMindmapStudyState(): void {
+		if (this.mindmapStudyMode === "off") return;
 		// Study rewrites node groups in place; none drawn so far may be kept.
 		this.drawRecords = new WeakMap();
 		// Built once per pass, not once per node. `mapCards()` walks every node
@@ -1584,41 +1597,41 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const cards = this.mapCards();
 		for (const [nodeId, node] of this.nodeMap) {
 			const nodeKey = this.nodeCardKey(node);
-			const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+			const keys = nodeKey === null ? undefined : this.mindmapStudyNodeTargets.get(nodeKey);
 			if (!keys || keys.length === 0) continue;
 
-			const { asking, answered } = this.spatialNodeStep(keys);
+			const { asking, answered } = this.mindmapStudyNodeStep(keys);
 			// Only a split node singles a group out; an ordinary one covers or
 			// uncovers itself whole.
-			const occlusion = asking === null ? null : this.spatialGroupOcclusions.get(asking) ?? null;
+			const occlusion = asking === null ? null : this.mindmapStudyGroupOcclusions.get(asking) ?? null;
 			// The card on screen while it is being asked. Null once the node has
 			// answered them all, and the node goes back to its own text.
-			const step = asking === null ? null : this.spatialStepCards.get(asking) ?? null;
+			const step = asking === null ? null : this.mindmapStudyStepCards.get(asking) ?? null;
 
 			// Looked up once and passed down, matching `applyFenceHidden`'s shape.
-			// `applySpatialHidden` used to repeat this same whole-SVG attribute
+			// `applyMindmapStudyHidden` used to repeat this same whole-SVG attribute
 			// scan for the node it had just been handed, so every target node cost
 			// two walks of the tree — per animation frame, for the whole of a pan.
 			const group = this.svg?.querySelector(`[data-node-id="${nodeId}"]`);
-			if (group) this.applySpatialHidden(group, nodeId, !answered, occlusion, step, cards);
+			if (group) this.applyMindmapStudyHidden(group, nodeId, !answered, occlusion, step, cards);
 
 			// Toggled, not just added: rating one group resets the node to ask the
 			// next, and a node that kept the revealed class would stay lit up while
 			// its next question was on screen.
-			group?.classList.toggle("osmosis-spatial-revealed", answered);
+			group?.classList.toggle("osmosis-mindmap-study-revealed", answered);
 
-			if (this.spatialMode === "study" && asking !== null && asking === this.spatialPendingRating) {
+			if (this.mindmapStudyMode === "study" && asking !== null && asking === this.mindmapStudyPendingRating) {
 				// Duplicate embeds share a card key — the bubble anchors to
 				// the clicked node, or the first survivor after a reload
-				if (this.spatialPendingNodeId === null || !this.nodeMap.has(this.spatialPendingNodeId)) {
-					this.spatialPendingNodeId = nodeId;
+				if (this.mindmapStudyPendingNodeId === null || !this.nodeMap.has(this.mindmapStudyPendingNodeId)) {
+					this.mindmapStudyPendingNodeId = nodeId;
 				}
-				if (nodeId === this.spatialPendingNodeId) {
+				if (nodeId === this.mindmapStudyPendingNodeId) {
 					this.ensureRatingBubble(nodeId, node);
 				}
 			}
 		}
-		if (this.spatialMode === "study") this.ensureSpatialBanner();
+		if (this.mindmapStudyMode === "study") this.ensureMindmapStudyStrip();
 	}
 
 	/**
@@ -1630,10 +1643,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * null, once its last group has been rated. Peek never rates, so its single
 	 * target simply stops at "revealed", which is all peek has ever meant.
 	 */
-	private spatialNodeStep(keys: readonly string[]): { asking: string | null; answered: boolean } {
+	private mindmapStudyNodeStep(keys: readonly string[]): { asking: string | null; answered: boolean } {
 		for (const key of keys) {
-			if (!this.spatialRevealed.has(key)) return { asking: key, answered: false };
-			if (!this.spatialRated.has(key)) return { asking: key, answered: true };
+			if (!this.mindmapStudyRevealed.has(key)) return { asking: key, answered: false };
+			if (!this.mindmapStudyRated.has(key)) return { asking: key, answered: true };
 		}
 		return { asking: null, answered: true };
 	}
@@ -1644,7 +1657,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * it is stepping through anything else; both are null when the node hides or
 	 * reveals as a whole.
 	 */
-	private applySpatialHidden(
+	private applyMindmapStudyHidden(
 		group: Element,
 		nodeId: string,
 		hidden: boolean,
@@ -1666,8 +1679,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (masks) {
 			const img = group.querySelector("img");
 			if (img instanceof HTMLImageElement) {
-				group.classList.remove("osmosis-spatial-hidden");
-				group.querySelector(".osmosis-spatial-placeholder")?.remove();
+				group.classList.remove("osmosis-mindmap-study-hidden");
+				group.querySelector(".osmosis-mindmap-study-placeholder")?.remove();
 				overlayMasks(img, masks, occlusion ? (hidden ? "front" : "back") : "all-hidden");
 				return;
 			}
@@ -1678,14 +1691,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		removeMaskOverlays(group);
 
 		if (hidden) {
-			group.classList.add("osmosis-spatial-hidden");
+			group.classList.add("osmosis-mindmap-study-hidden");
 			// Add "?" placeholder text
-			const existing = group.querySelector(".osmosis-spatial-placeholder");
+			const existing = group.querySelector(".osmosis-mindmap-study-placeholder");
 			if (!existing) {
 				const node = this.nodeMap.get(nodeId);
 				if (node) {
 					const placeholder = document.createElementNS(SVG_NS, "text");
-					placeholder.classList.add("osmosis-spatial-placeholder");
+					placeholder.classList.add("osmosis-mindmap-study-placeholder");
 					placeholder.setAttribute("x", String(node.rect.x + node.rect.width / 2 + this.getOffsetX()));
 					placeholder.setAttribute("y", String(node.rect.y + node.rect.height / 2 + this.getOffsetY()));
 					placeholder.textContent = "?";
@@ -1693,8 +1706,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				}
 			}
 		} else {
-			group.classList.remove("osmosis-spatial-hidden");
-			const placeholder = group.querySelector(".osmosis-spatial-placeholder");
+			group.classList.remove("osmosis-mindmap-study-hidden");
+			const placeholder = group.querySelector(".osmosis-mindmap-study-placeholder");
 			placeholder?.remove();
 		}
 	}
@@ -1731,8 +1744,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const card = node ? this.getOsmosisCardContent(node.source) : null;
 		if (!card) return false;
 
-		group.classList.remove("osmosis-spatial-hidden");
-		group.querySelector(".osmosis-spatial-placeholder")?.remove();
+		group.classList.remove("osmosis-mindmap-study-hidden");
+		group.querySelector(".osmosis-mindmap-study-placeholder")?.remove();
 
 		if (card.occlusions) {
 			// Matched on the embed target the renderer wrote to `alt`, so a fence
@@ -1748,7 +1761,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				} else {
 					// A second diagram in the same fence belongs to a different card,
 					// so it is shown unmasked — covering it would pose a question this
-					// card never answers. Sequential has always read this way.
+					// card never answers. Flashcard study has always read this way.
 					overlayMasks(img, occlusion, "none");
 				}
 			}
@@ -1757,15 +1770,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		// A fence that fanned out asks a different question per step, so while one
 		// is on screen the node shows *that card's* front and back — the same
-		// generator-rendered strings sequential and the note put up — rather than
+		// generator-rendered strings flashcard and the note put up — rather than
 		// the passage every card came from. Otherwise a three-group cloze node
 		// would put the identical all-blanked passage three times and take three
 		// ratings on it, and a bidirectional node would never ask its reverse.
 		//
 		// A null step puts the fence's own text back: the node has answered
 		// everything it was asked, or the session is over.
-		this.updateNodeProse(group.querySelector(".osmosis-contextual-front"), step?.front ?? card.front);
-		this.updateNodeProse(group.querySelector(".osmosis-contextual-revealed"), step?.back ?? card.back);
+		this.updateNodeProse(group.querySelector(".osmosis-note-front"), step?.front ?? card.front);
+		this.updateNodeProse(group.querySelector(".osmosis-note-revealed"), step?.back ?? card.back);
 
 		// A cloze card's two halves are one passage, blanked and filled in, so its
 		// answer *replaces* the question — the reader's eye stays on one body of
@@ -1776,17 +1789,17 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// tall as its passage twice over.
 		//
 		// Gated on being *in* a session, exactly as Note view gates on `hiding`:
-		// `exitSpatialMode` restores every node through this method with
+		// `exitMindmapStudyMode` restores every node through this method with
 		// `hidden: false` after clearing the mode, and a collapse that outlived the
 		// session would leave the fence showing its answer and nothing else.
-		const collapse = card.isCloze === true && !hidden && this.spatialMode !== "off";
+		const collapse = card.isCloze === true && !hidden && this.mindmapStudyMode !== "off";
 		const setHidden = (selector: string, hide: boolean): void => {
 			for (const el of Array.from(group.querySelectorAll(selector))) {
 				el.classList.toggle("osmosis-hidden", hide);
 			}
 		};
-		setHidden(".osmosis-contextual-front", collapse);
-		setHidden(".osmosis-contextual-revealed", hidden);
+		setHidden(".osmosis-note-front", collapse);
+		setHidden(".osmosis-note-revealed", hidden);
 		setHidden(".osmosis-study-divider", hidden || collapse);
 		return true;
 	}
@@ -1795,7 +1808,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * Put `markdown` on screen in one half of a fence node, skipping the work when
 	 * it is already what the element shows.
 	 *
-	 * The guard is what keeps this affordable: `applySpatialState` re-applies to
+	 * The guard is what keeps this affordable: `applyMindmapStudyState` re-applies to
 	 * every target node on every render pass, and without it each pass would blank
 	 * a node the reader is looking at and paint it again a frame later. The
 	 * attribute is seeded by `renderOsmosisCardInto`, so a node that never steps
@@ -1843,24 +1856,24 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * nothing recorded. Study: reveal opens the rating bubble, which must
 	 * be answered before the next reveal.
 	 */
-	private handleSpatialClick(nodeId: string): boolean {
-		if (this.spatialMode === "off") return false;
+	private handleMindmapStudyClick(nodeId: string): boolean {
+		if (this.mindmapStudyMode === "off") return false;
 		const node = this.nodeMap.get(nodeId);
 		const nodeKey = node ? this.nodeCardKey(node) : null;
-		const keys = nodeKey === null ? undefined : this.spatialNodeTargets.get(nodeKey);
+		const keys = nodeKey === null ? undefined : this.mindmapStudyNodeTargets.get(nodeKey);
 		if (!node || !keys) return false;
 		// The next group the node has to ask — undefined once it has asked them all.
-		const key = keys.find((k) => !this.spatialRevealed.has(k));
+		const key = keys.find((k) => !this.mindmapStudyRevealed.has(k));
 		if (key === undefined) return false;
 
 		// Study: one rating at a time — the open bubble must be answered first
-		if (this.spatialMode === "study" && this.spatialPendingRating !== null) return true;
+		if (this.mindmapStudyMode === "study" && this.mindmapStudyPendingRating !== null) return true;
 
-		this.spatialRevealed.add(key);
-		if (this.spatialMode === "study") {
-			this.spatialPendingRating = key;
-			this.spatialPendingNodeId = nodeId;
-			this.spatialPendingRatingAt = Date.now();
+		this.mindmapStudyRevealed.add(key);
+		if (this.mindmapStudyMode === "study") {
+			this.mindmapStudyPendingRating = key;
+			this.mindmapStudyPendingNodeId = nodeId;
+			this.mindmapStudyPendingRatingAt = Date.now();
 			// Keys 1–4 rate via the container's keydown handler
 			this.contentEl.focus();
 		}
@@ -1868,7 +1881,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// transcluded twice shares one card key across two nodes, and both
 		// must reveal together (once the answer is visible anywhere, keeping
 		// the twin hidden would be a fake test). Also creates the bubble.
-		this.applySpatialState();
+		this.applyMindmapStudyState();
 		return true;
 	}
 
@@ -1876,12 +1889,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private ensureRatingBubble(nodeId: string, node: LayoutNode): void {
 		if (!this.svg) return;
 		const group = this.svg.querySelector(`[data-node-id="${nodeId}"]`);
-		if (!group || group.querySelector(".osmosis-spatial-rating-fo")) return;
+		if (!group || group.querySelector(".osmosis-mindmap-study-rating-fo")) return;
 
 		// Wide enough for the four buttons even under narrow nodes
 		const width = Math.max(node.rect.width, 240);
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
-		fo.classList.add("osmosis-spatial-rating-fo");
+		fo.classList.add("osmosis-mindmap-study-rating-fo");
 		fo.setAttribute("x", String(node.rect.x + this.getOffsetX() + (node.rect.width - width) / 2));
 		fo.setAttribute("y", String(node.rect.y + node.rect.height + this.getOffsetY() + 6));
 		fo.setAttribute("width", String(width));
@@ -1889,7 +1902,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		const bubble = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
 		bubble.setAttribute("xmlns", XHTML_NS);
-		bubble.className = "osmosis-spatial-rating osmosis-contextual-rating";
+		bubble.className = "osmosis-mindmap-study-rating osmosis-rating";
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -1904,7 +1917,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			btn.className = cls;
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
-				void this.rateSpatialCard(rating);
+				void this.rateMindmapStudyCard(rating);
 			});
 			bubble.appendChild(btn);
 		}
@@ -1917,14 +1930,14 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/** Rate the pending card: record via FSRS, advance progress, maybe finish. */
-	private async rateSpatialCard(rating: FSRSRating): Promise<void> {
-		const cardId = this.spatialPendingRating;
-		if (this.spatialMode !== "study" || cardId === null) return;
-		const elapsedMs = Date.now() - this.spatialPendingRatingAt;
-		this.spatialPendingRating = null;
-		this.spatialPendingNodeId = null;
-		this.spatialRated.add(cardId);
-		this.svg?.querySelector(".osmosis-spatial-rating-fo")?.remove();
+	private async rateMindmapStudyCard(rating: FSRSRating): Promise<void> {
+		const cardId = this.mindmapStudyPendingRating;
+		if (this.mindmapStudyMode !== "study" || cardId === null) return;
+		const elapsedMs = Date.now() - this.mindmapStudyPendingRatingAt;
+		this.mindmapStudyPendingRating = null;
+		this.mindmapStudyPendingNodeId = null;
+		this.mindmapStudyRated.add(cardId);
+		this.svg?.querySelector(".osmosis-mindmap-study-rating-fo")?.remove();
 
 		// The key is either a *node* — a line or a fence, which can carry several
 		// cards a single rating must reach, one per cloze — or one shape group of
@@ -1932,46 +1945,48 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// routes its schedule write, to the source note for transcluded lines
 		// (plan §11).
 		const cardIds = this.cardsForKey(cardId);
+		for (const id of cardIds) this.mindmapStudyCardRatings.set(id, rating);
 		if (cardIds.length > 0) {
-			this.spatialSessionManager ??= this.plugin.createSessionManager("spatial");
+			this.mindmapStudySessionManager ??= this.plugin.createSessionManager("mindmap");
 			for (const id of cardIds) {
-				await this.spatialSessionManager.recordReview(id, rating, { elapsedMs });
+				await this.mindmapStudySessionManager.recordReview(id, rating, { elapsedMs });
 			}
 			this.plugin.refreshDashboard();
 		}
 
-		if (this.spatialRated.size >= this.spatialTargets.size) {
-			const total = this.spatialTargets.size;
-			this.exitSpatialMode(); // flushes schedule writes; map stays open
-			new Notice(`Spatial study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
+		if (this.mindmapStudyRated.size >= this.mindmapStudyTargets.size) {
+			const total = this.mindmapStudyTargets.size;
+			this.exitMindmapStudyMode(); // flushes schedule writes; map stays open
+			new Notice(`Mind map study complete — ${String(total)} ${total === 1 ? "card" : "cards"} reviewed.`);
 		} else {
-			// Re-apply rather than only redrawing the banner: an occluded node that
+			// Re-apply rather than only redrawing the strip: an occluded node that
 			// has more groups left must reset to ask the next one, which is the
 			// whole point of stepping through them.
-			this.applySpatialState();
+			this.applyMindmapStudyState();
 		}
 	}
 
-	/** Floating "x/N due reviewed" pill + Stop. Recreated after re-renders. */
-	private ensureSpatialBanner(): void {
-		if (this.spatialMode !== "study") return;
-		let banner = this.spatialBanner;
-		if (!banner || !banner.isConnected) {
-			banner = this.contentEl.createDiv({ cls: "osmosis-reveal-banner osmosis-spatial-banner" });
-			// Keep pill interactions away from the map's pan/select handlers
-			banner.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
-			banner.addEventListener("click", (e) => { e.stopPropagation(); });
-			this.spatialBanner = banner;
+	/**
+	 * The study tab's progress bar and new | learn | due counts, pinned over the
+	 * top of the map (T110). The bar is targets rated of targets; the counts are
+	 * cards, as the dashboard's are. The bucket underlined is the card whose
+	 * rating bubble is open — before a reveal, any hidden node may be next, so
+	 * none is. The strip takes no pointer events (`.osmosis-study-status`), so
+	 * the map pans and selects through it. Recreated after re-renders.
+	 */
+	private ensureMindmapStudyStrip(): void {
+		if (this.mindmapStudyMode !== "study") return;
+		let strip = this.mindmapStudyStrip;
+		if (!strip || !this.mindmapStudyStripEl?.isConnected) {
+			this.mindmapStudyStripEl?.remove();
+			this.mindmapStudyStripEl = this.contentEl.createDiv({ cls: "osmosis-study-status osmosis-mindmap-study-strip" });
+			strip = new StudyProgressStrip(this.mindmapStudyStripEl);
+			this.mindmapStudyStrip = strip;
 		}
-		banner.empty();
-		banner.createSpan({
-			cls: "osmosis-reveal-progress",
-			text: `${String(this.spatialRated.size)}/${String(this.spatialTargets.size)} due reviewed`,
-		});
-		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
-		stopBtn.addEventListener("click", () => {
-			this.exitSpatialMode();
-		});
+		const total = this.mindmapStudyTargets.size;
+		strip.setProgress(total > 0 ? (this.mindmapStudyRated.size / total) * 100 : 0);
+		const answering = this.mindmapStudyPendingRating === null ? [] : this.cardsForKey(this.mindmapStudyPendingRating);
+		strip.setCounts(countNoteSession(this.mindmapStudyCountCards, this.mindmapStudyCardRatings, answering));
 	}
 
 
@@ -2098,7 +2113,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
 		}));
 
-		// The header's buttons are shared with the 3D graph (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
@@ -2115,15 +2130,16 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			}
 		});
 
-		// Spatial study mode toggle
-		this.spatialStudyActionEl = this.addAction("graduation-cap", "Study mode", () => {
-			this.toggleSpatialStudy();
+		// Mind map study mode toggle
+		this.mindmapStudyActionEl = this.addAction("graduation-cap", "Study mode", () => {
+			this.toggleMindmapStudy();
 		});
+		this.mindmapStudyActionEl.addClass("osmosis-study-cap");
 
 		arrangeViewHeader(this, "2d", {
 			"note-view": noteViewActionEl,
 			reading: this.readingActionEl,
-			study: this.spatialStudyActionEl,
+			study: this.mindmapStudyActionEl,
 		}, () => void this.switchTo3D());
 
 		// Apply the global default mode; persisted per-leaf state (setState)
@@ -2278,14 +2294,17 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// looping for another.
 		this.cullQueued = false;
 
-		this.spatialMode = "off";
-		this.spatialTargets.clear();
-		this.spatialRevealed.clear();
-		this.spatialRated.clear();
-		this.spatialPendingRating = null;
-		this.spatialPendingNodeId = null;
-		this.spatialBanner = null;
-		this.spatialSessionManager = null;
+		this.mindmapStudyMode = "off";
+		this.mindmapStudyTargets.clear();
+		this.mindmapStudyRevealed.clear();
+		this.mindmapStudyRated.clear();
+		this.mindmapStudyPendingRating = null;
+		this.mindmapStudyPendingNodeId = null;
+		this.mindmapStudyStripEl = null;
+		this.mindmapStudyStrip = null;
+		this.mindmapStudyCountCards = [];
+		this.mindmapStudyCardRatings.clear();
+		this.mindmapStudySessionManager = null;
 		this.treeStale = false;
 		this.staleParsePaths.clear();
 		this.contentEl.empty();
@@ -2320,8 +2339,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		// A peek/study session is bound to one note — end it (and flush any
 		// ratings) before the map switches to another file.
-		if (this.spatialMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
-			this.exitSpatialMode();
+		if (this.mindmapStudyMode !== "off" && this.currentFile && file.path !== this.currentFile.path) {
+			this.exitMindmapStudyMode();
 		}
 		// Add link is armed on this note's nodes.
 		if (this.currentFile && file.path !== this.currentFile.path) this.cancelLinkPick();
@@ -3723,8 +3742,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.nodesGroup !== nodesGroup || this.drawGeneration !== generation) return;
 		nodesGroup.append(...Array.from(staging.childNodes));
 
-		// Re-apply spatial study state to newly rendered nodes
-		this.applySpatialState();
+		// Re-apply mind map study state to newly rendered nodes
+		this.applyMindmapStudyState();
 
 		// Deferred nodes are not drawn, so they stay out of the set and the
 		// next frame's pass picks them up.
@@ -3992,7 +4011,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 						pointerType: e.pointerType,
 						longPressTriggered: this.longPressTriggered,
 						isReadingMode: this.isReadingMode,
-						spatialMode: this.spatialMode,
+						mindmapStudyMode: this.mindmapStudyMode,
 					})
 				) {
 					this.dragNodeId = null;
@@ -4232,7 +4251,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		//
 		// Study mode is the exception: there a tap on a node is a reveal, and
 		// following the link would take the reader off the map mid-session.
-		if (this.spatialMode === "off") {
+		if (this.mindmapStudyMode === "off") {
 			const link = (e.target as Element).closest("a");
 			if (link) {
 				this.openNodeLink(link, e);
@@ -4261,8 +4280,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
-		// Spatial study mode: reveal hidden nodes on tap
-		if (this.handleSpatialClick(nodeId)) return;
+		// Mind map study mode: reveal hidden nodes on tap
+		if (this.handleMindmapStudyClick(nodeId)) return;
 
 		// In touch selection mode, taps toggle selection (like shift+click)
 		if (this.touchSelectionMode) {
@@ -4741,8 +4760,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Check if clicking a node
 		const nodeId = this.getClickedNodeId(e);
 		if (nodeId) {
-			// Spatial study mode: reveal hidden nodes on click
-			if (this.handleSpatialClick(nodeId)) return;
+			// Mind map study mode: reveal hidden nodes on click
+			if (this.handleMindmapStudyClick(nodeId)) return;
 
 			if (e.shiftKey) {
 				this.toggleNodeInSelection(nodeId);
@@ -4879,7 +4898,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			// ── Study ──
 			menu.addItem((item) =>
 				item.setTitle("Study this branch").setIcon("graduation-cap")
-					.onClick(() => { if (node) this.enterSpatialStudy(node); }),
+					.onClick(() => { if (node) this.enterMindmapStudy(node); }),
 			);
 
 			// ── Line card (add / remove / exclude) ──
@@ -5680,7 +5699,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		const content = await this.app.vault.read(destFile);
 		// The target's child slot, each item's re-levelling and the copy-vs-cut
-		// identity rule live in `pasteInto` (shared with the 3D graph).
+		// identity rule live in `pasteInto` (shared with Cosmos).
 		const updated = pasteInto(content, src);
 
 		const originPath = nodeClipboard.sourcePath;
@@ -5733,7 +5752,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// come off it, and the pre-guard node's parent belongs to the layout the
 		// freshness check may have just replaced.
 		if (this.selectedNodeIds.size > 1 && target.parent) {
-			// The shared rule (the 3D graph's Ctrl+Enter uses it too).
+			// The shared rule (Cosmos's Ctrl+Enter uses it too).
 			const wrapped = edit.selectedSiblings(target.parent.source.children, this.selectedNodeIds);
 			if (wrapped.length === 0) return;
 			if (!this.ensureSameFileEdit(wrapped)) return;
@@ -6793,15 +6812,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			return;
 		}
 
-		// Spatial study: 1–4 rate the card awaiting a rating
+		// Mind map study: 1–4 rate the card awaiting a rating
 		if (
-			this.spatialMode === "study" &&
-			this.spatialPendingRating !== null &&
+			this.mindmapStudyMode === "study" &&
+			this.mindmapStudyPendingRating !== null &&
 			!e.ctrlKey && !e.metaKey && !e.altKey &&
 			(e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4")
 		) {
 			e.preventDefault();
-			void this.rateSpatialCard(Number(e.key) as FSRSRating);
+			void this.rateMindmapStudyCard(Number(e.key) as FSRSRating);
 			return;
 		}
 
@@ -8280,8 +8299,8 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private findItems(): FindItem[] {
 		const tree = this.currentTree;
 		const file = this.currentFile;
-		// A spatial study session hides answers in place, so find has nothing to show while one runs.
-		if (!tree || !file || this.spatialMode === "study") return [];
+		// A mind map study session hides answers in place, so find has nothing to show while one runs.
+		if (!tree || !file || this.mindmapStudyMode === "study") return [];
 		const items: FindItem[] = [];
 		const walk = (node: OsmosisNode): void => {
 			for (const child of node.children) {
@@ -8382,7 +8401,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The menu the 3D graph shows, for the armed nodes and the tapped target: Add
+	 * The menu Cosmos shows, for the armed nodes and the tapped target: Add
 	 * link (`linkNodes`), Move under, Move after, or for the map's root Move to
 	 * end of note (`moveNodesTo`, the drag and drop's write). The moves are
 	 * offered only for siblings (a drag moves only those) and never into a
@@ -8445,7 +8464,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	/**
 	 * Add a link to node `targetId` at the end of each source node's line, the
-	 * same edit as the 3D graph's "Add link" (`planSelectionLink`): the target
+	 * same edit as Cosmos's "Add link" (`planSelectionLink`): the target
 	 * linked by its heading text or a block ID (stamped if it has none), the map's
 	 * root linked as its note. Each end is found again in a fresh parse of its
 	 * own file (a transcluded node's is its source file), and every file is
@@ -8877,9 +8896,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.fitToView();
 		}
 
-		// Re-apply spatial study state after re-render (render wipes the DOM,
-		// including a mid-rating bubble and the progress pill)
-		this.applySpatialState();
+		// Re-apply mind map study state after re-render (render wipes the DOM,
+		// including a mid-rating bubble and the progress strip)
+		this.applyMindmapStudyState();
 
 		// After a save-edit re-render, re-select the node at the stored position
 		if (this.pendingSelectionRangeStart !== null) {
@@ -9579,7 +9598,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const live = this.viewportHost ?? this.svg;
 		return !!this.svg && !!this.nodesGroup && live?.parentNode === container
 			&& this.nodesGroup.parentNode === this.svg
-			&& this.spatialMode === "off" && !this.svg.hasClass("osmosis-animating")
+			&& this.mindmapStudyMode === "off" && !this.svg.hasClass("osmosis-animating")
 			&& this.editingNodeId === null && this.dragGhost === null;
 	}
 

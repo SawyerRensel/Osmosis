@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Done
 batch: 14
 priority:
-progress:
+progress: 100
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T12:00:00.000Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_modified: 2026-11-21T06:37:55.000Z
+date_start_scheduled: 2026-11-20T17:20:00.000Z
+date_start_actual: 2026-11-20T17:20:00.000Z
+date_end_scheduled: 2026-11-21T06:37:55.000Z
+date_end_actual: 2026-11-21T06:37:55.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/52
 ---
 
 # Study - Rating button colours (T99)
@@ -63,3 +63,16 @@ Study one card in each mode (Flashcard tab, Note study, mind map study, 3D graph
 - Batch 14 ticket: commit `feat(T99): …`/`fix(T99): …` plus one `docs(T99)` note commit setting `status: In-Review` with a "Batch implementation notes (awaiting manual test)" section. Stage by explicit path; `git diff --cached --stat` before each commit; never `git stash`; don't push.
 - Batch 12 (T91/T92) round-2 facts: the study tab's buttons sit in one floating panel; every mode's rating row uses the shared class `osmosis-contextual-rating` (colour rules only at `.osmosis-contextual-rating button.osmosis-rate-*` in styles.css); deck-count colours come from `--osmosis-count-new/learn/due`, declared on `.osmosis-dashboard, .osmosis-study-view`.
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes in `src/study/` or similar (vitest cannot import obsidian) and gets unit tests.
+
+## What was implemented
+
+**Where it shipped:** [PR #52](https://github.com/SawyerRensel/Osmosis/pull/52) (batch 14, branch `batch/14-study-polish-renames`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed.
+
+Code commit: `3967291` on `batch/14-study-polish-renames`. CSS only.
+
+- **Palette as variables.** `.osmosis-contextual-rating` declares `--osmosis-rate-again/hard/good/easy`, and the four `button.osmosis-rate-*` rules read them. Again and Hard keep their hsl values. Good is `var(--color-blue, hsl(212, 90%, 44%))` with white text. Easy is `var(--interactive-accent)` with `--text-on-accent`, so changing the accent recolours it.
+- **Suggested outline.** `.osmosis-study-rating-bar button.is-suggested` drew its outline in the accent colour, which was invisible on Good before and would be invisible on Easy now. It now uses `--text-normal`.
+- Hover (`filter: brightness(1.1)`) and the occlusion anchor set no colours, so they need no change.
+- No TypeScript changed. Lint and build pass.

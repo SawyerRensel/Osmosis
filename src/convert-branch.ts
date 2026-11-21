@@ -1,6 +1,6 @@
 /**
  * "Convert branch to note", for any view that edits notes (the mind map and
- * the 3D graph): move a line and its subtree into a new note, leave an
+ * Cosmos): move a line and its subtree into a new note, leave an
  * `![[embed]]` in its place, carry its styles and line-card history across,
  * and point links into it at the new note.
  *
@@ -21,7 +21,7 @@ import {
 	type MovedTargets,
 } from "./branch-to-note";
 import { frontmatterValue, migrateBlockIdentity, readMovedScheduleEntries, type MoveContext } from "./edit-moves";
-import { findNodeById, locateLine } from "./graph3d/edit";
+import { findNodeById, locateLine } from "./cosmos/edit";
 import { subtreeEnd } from "./mindmap-edit";
 import { OsmosisParser } from "./parser";
 import { styleMappingFor } from "./styles";

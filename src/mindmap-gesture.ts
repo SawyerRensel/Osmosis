@@ -3,7 +3,7 @@
  * `MindMapView` so it can be unit tested — Vitest cannot import `obsidian`.
  */
 
-export type SpatialMode = "off" | "peek" | "study";
+export type MindmapStudyMode = "off" | "peek" | "study";
 
 /** Pixels a mouse travels before a press becomes a drag. */
 export const MOUSE_DRAG_THRESHOLD = 5;
@@ -41,8 +41,8 @@ export function nodeDragPans(opts: {
 	pointerType: string;
 	longPressTriggered: boolean;
 	isReadingMode: boolean;
-	spatialMode: SpatialMode;
+	mindmapStudyMode: MindmapStudyMode;
 }): boolean {
-	if (opts.isReadingMode || opts.spatialMode !== "off") return true;
+	if (opts.isReadingMode || opts.mindmapStudyMode !== "off") return true;
 	return opts.pointerType === "touch" && !opts.longPressTriggered;
 }

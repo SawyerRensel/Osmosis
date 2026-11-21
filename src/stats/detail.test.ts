@@ -19,7 +19,7 @@ const baseEntry: ReviewLogEntry = {
 	st: 12.3,
 	d: 6.4,
 	e: 4200,
-	m: "sequential",
+	m: "flashcard",
 };
 
 function entry(overrides: Partial<ReviewLogEntry>): ReviewLogEntry {
@@ -76,11 +76,11 @@ describe("DetailAccumulator — volume", () => {
 
 	it("counts reviews per study surface", () => {
 		const stats = accumulate([
-			entry({ m: "contextual" }),
-			entry({ m: "contextual" }),
-			entry({ m: "sequential" }),
+			entry({ m: "note" }),
+			entry({ m: "note" }),
+			entry({ m: "flashcard" }),
 		]);
-		expect(stats.modeTotals).toEqual({ sequential: 1, contextual: 2, spatial: 0, relational: 0 });
+		expect(stats.modeTotals).toEqual({ flashcard: 1, note: 2, mindmap: 0, cosmos: 0 });
 	});
 
 	it("collects every card it counted, for the mode-filtered card graphs", () => {
@@ -92,7 +92,7 @@ describe("DetailAccumulator — volume", () => {
 		const stats = accumulate([]);
 		expect(stats.rollup).toEqual({});
 		expect(stats.reviewedCards.size).toBe(0);
-		expect(stats.modeTotals).toEqual({ sequential: 0, contextual: 0, spatial: 0, relational: 0 });
+		expect(stats.modeTotals).toEqual({ flashcard: 0, note: 0, mindmap: 0, cosmos: 0 });
 	});
 });
 
@@ -256,7 +256,7 @@ describe("DetailAccumulator — true retention", () => {
 
 	it("takes only the first review of a card each day", () => {
 		// Why the dedup survived the maturity filter covering the lapse case:
-		// contextual and spatial study let you answer a card that is not due, so
+		// note and mind map study let you answer a card that is not due, so
 		// a mature card *passed* twice in one day has a mature prior interval on
 		// both answers and would otherwise be counted twice.
 		const stats = window(
@@ -312,14 +312,14 @@ describe("DetailAccumulator — true retention", () => {
 describe("DetailAccumulator — recall", () => {
 	it("groups by study surface", () => {
 		const stats = accumulate([
-			entry({ c: "a", t: at(3), pi: GRAD * 5, r: 3, m: "contextual" }),
-			entry({ c: "b", t: at(3), pi: GRAD * 5, r: 1, m: "spatial" }),
-			entry({ c: "c", t: at(3), pi: GRAD * 5, r: 4, m: "relational" }),
+			entry({ c: "a", t: at(3), pi: GRAD * 5, r: 3, m: "note" }),
+			entry({ c: "b", t: at(3), pi: GRAD * 5, r: 1, m: "mindmap" }),
+			entry({ c: "c", t: at(3), pi: GRAD * 5, r: 4, m: "cosmos" }),
 		]);
-		expect(stats.byMode.get("relational")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
-		expect(stats.byMode.get("contextual")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
-		expect(stats.byMode.get("spatial")).toMatchObject({ reviewed: 1, passed: 0, rate: 0 });
-		expect(stats.byMode.has("sequential")).toBe(false);
+		expect(stats.byMode.get("cosmos")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
+		expect(stats.byMode.get("note")).toMatchObject({ reviewed: 1, passed: 1, rate: 1 });
+		expect(stats.byMode.get("mindmap")).toMatchObject({ reviewed: 1, passed: 0, rate: 0 });
+		expect(stats.byMode.has("flashcard")).toBe(false);
 	});
 
 	it("ignores reviews the card had not graduated into", () => {
@@ -334,7 +334,7 @@ describe("DetailAccumulator — recall", () => {
 			entry({ c: "a", t: at(1), pi: GRAD - 1 }),
 			entry({ c: "b", t: at(1), pi: GRAD }),
 		]);
-		expect(stats.byMode.get("sequential")?.reviewed).toBe(1);
+		expect(stats.byMode.get("flashcard")?.reviewed).toBe(1);
 	});
 
 	it("takes only the first review of a card each day", () => {
@@ -342,7 +342,7 @@ describe("DetailAccumulator — recall", () => {
 			entry({ c: "a", t: at(5, 9), pi: GRAD * 5, r: 1 }),
 			entry({ c: "a", t: at(5, 10), pi: GRAD * 5, r: 3 }),
 		]);
-		expect(stats.byMode.get("sequential")).toMatchObject({ reviewed: 1, passed: 0 });
+		expect(stats.byMode.get("flashcard")).toMatchObject({ reviewed: 1, passed: 0 });
 	});
 
 	it("groups by card type and note when the card resolves", () => {
@@ -358,7 +358,7 @@ describe("DetailAccumulator — recall", () => {
 		// A review whose card is gone still happened on a surface, but it
 		// belongs to no note and no type.
 		const stats = accumulate([entry({ c: "os-gone", t: at(3), pi: GRAD * 5 })]);
-		expect(stats.byMode.get("sequential")?.reviewed).toBe(1);
+		expect(stats.byMode.get("flashcard")?.reviewed).toBe(1);
 		expect(stats.byType.size).toBe(0);
 		expect(stats.byNote.size).toBe(0);
 	});
@@ -369,7 +369,7 @@ describe("DetailAccumulator — recall", () => {
 			entry({ c: "a", t: at(3), pi: GRAD * 5, e: 2000 }),
 			entry({ c: "b", t: at(3), pi: GRAD * 5, e: 4000 }),
 		]);
-		expect(stats.byMode.get("sequential")?.meanMs).toBe(3000);
+		expect(stats.byMode.get("flashcard")?.meanMs).toBe(3000);
 	});
 
 	it("returns nothing for an empty log", () => {
@@ -388,7 +388,7 @@ describe("DetailAccumulator — order independence", () => {
 		// entries arriving in timestamp order.
 		const entries = [
 			entry({ c: "a", t: at(1), pi: MATURE * 2, r: 3 }),
-			entry({ c: "b", t: at(2), pi: GRAD * 2, r: 1, m: "spatial" }),
+			entry({ c: "b", t: at(2), pi: GRAD * 2, r: 1, m: "mindmap" }),
 			entry({ c: "a", t: at(3), pi: MATURE * 3, r: 2 }),
 			entry({ c: "c", t: at(4), pi: 0, r: 4 }),
 		];

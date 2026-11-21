@@ -64,9 +64,9 @@ this for you. You can also opt in whole folders or tags under
 3. Click a deck to start a study session — or **Study all**
 
 !!! tip "Three study modes"
-    - **Sequential** — classic card-by-card review, from the dashboard
-    - **Contextual** — study in the note, with the :lucide-graduation-cap: **Study** action in the note's header
-    - **Spatial** — study on the mind map, with the :lucide-graduation-cap: icon in the mind map header
+    - **Flashcard** — classic card-by-card review, from the dashboard
+    - **Note** — study in the note, with the :lucide-graduation-cap: **Study** action in the note's header
+    - **Mind map** — study on the mind map, with the :lucide-graduation-cap: icon in the mind map header
 
     Every card type works in every mode, and a card rated anywhere updates its
     schedule everywhere.

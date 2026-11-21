@@ -1,5 +1,6 @@
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { CardState, StudyMode } from "../database/types";
+import { LEGACY_KEY_FOR_MODE, LEGACY_STUDY_MODES } from "../study/mode-names";
 
 /**
  * Append-only review history: the record that a review *happened*, as opposed
@@ -472,7 +473,7 @@ export type Rollup = Record<string, DayRollup>;
 
 const RATINGS: readonly FSRSRating[] = [1, 2, 3, 4];
 const CARD_STATES: readonly CardState[] = ["new", "learning", "review", "relearning"];
-const STUDY_MODES: readonly StudyMode[] = ["sequential", "contextual", "spatial", "relational"];
+const STUDY_MODES: readonly StudyMode[] = ["flashcard", "note", "mindmap", "cosmos"];
 const REVIEW_CLASSES: readonly ReviewClass[] = ["learning", "young", "mature", "relearning"];
 
 /** A zeroed day bucket. */
@@ -482,7 +483,7 @@ export function emptyDayRollup(): DayRollup {
 		timeMs: 0,
 		byRating: { 1: 0, 2: 0, 3: 0, 4: 0 },
 		byState: { new: 0, learning: 0, review: 0, relearning: 0 },
-		byMode: { sequential: 0, contextual: 0, spatial: 0, relational: 0 },
+		byMode: { flashcard: 0, note: 0, mindmap: 0, cosmos: 0 },
 		byClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 		timeByClass: { learning: 0, young: 0, mature: 0, relearning: 0 },
 	};
@@ -1132,7 +1133,11 @@ function normalizeRollup(raw: unknown): Rollup {
 		}
 		const byMode = value["byMode"];
 		if (isPlainObject(byMode)) {
-			for (const m of STUDY_MODES) bucket.byMode[m] = toCount(byMode[m]);
+			// A cache written before the T105 rename keys counts by the old
+			// mode names; sum both so old caches keep counting.
+			for (const m of STUDY_MODES) {
+				bucket.byMode[m] = toCount(byMode[m]) + toCount(byMode[LEGACY_KEY_FOR_MODE[m]]);
+			}
 		}
 		const byClass = value["byClass"];
 		if (isPlainObject(byClass)) {
@@ -1174,12 +1179,18 @@ function parseCardState(value: unknown): CardState {
 }
 
 /**
- * Study mode, defaulting to sequential. Every entry Osmosis writes carries
- * `m`, so this only fires on a hand-edited or truncated line; keeping the
- * review (mis-attributed in one graph) beats dropping it from all of them.
+ * Study mode, defaulting to flashcard. Lines written before the T105 rename
+ * carry the old names (`sequential`, …) and map to the new ones; log files are
+ * never rewritten. Every entry Osmosis writes carries `m`, so the default only
+ * fires on a hand-edited or truncated line; keeping the review (mis-attributed
+ * in one graph) beats dropping it from all of them.
  */
-function parseStudyMode(value: unknown): StudyMode {
-	return STUDY_MODES.includes(value as StudyMode) ? (value as StudyMode) : "sequential";
+export function parseStudyMode(value: unknown): StudyMode {
+	if (STUDY_MODES.includes(value as StudyMode)) return value as StudyMode;
+	const legacy = typeof value === "string" && Object.prototype.hasOwnProperty.call(LEGACY_STUDY_MODES, value)
+		? LEGACY_STUDY_MODES[value]
+		: undefined;
+	return legacy ?? "flashcard";
 }
 
 function toFiniteNumber(value: unknown): number | null {

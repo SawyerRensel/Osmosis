@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "./parser";
 import { planStyleKeys, stampedStart } from "./mindmap-style-key";
 import { buildPreferredSelector } from "./styles";
-import { findNodeById, preorder } from "./graph3d/edit";
+import { findNodeById, preorder } from "./cosmos/edit";
 import type { OsmosisNode } from "./types";
 
 const parser = new OsmosisParser();

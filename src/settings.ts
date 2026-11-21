@@ -3,15 +3,15 @@ import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
-import { DEFAULT_OVERLAYS, type Graph3DOverlays } from "./graph3d/overlays";
-import type { SettingsSectionId } from "./graph3d/settings-sections";
+import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
+import type { SettingsSectionId } from "./cosmos/settings-sections";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
-/** What a desktop left-drag orbits and the wheel zooms toward in the 3D graph. */
-export type Graph3DDesktopPivot = "cursor" | "center";
-/** What a one-finger drag does in the 3D graph on a touch screen. */
-export type Graph3DTouchDrag = "point" | "center" | "look";
+/** What a desktop left-drag orbits and the wheel zooms toward in Cosmos. */
+export type CosmosDesktopPivot = "cursor" | "center";
+/** What a one-finger drag does in Cosmos on a touch screen. */
+export type CosmosTouchDrag = "point" | "center" | "look";
 
 /** Auto-suggest for vault folder paths. */
 class FolderSuggest extends AbstractInputSuggest<string> {
@@ -111,7 +111,7 @@ export interface OsmosisSettings {
 	learningSteps: string;
 	/** Relearning steps for lapsed cards (e.g., "10m"). */
 	relearningSteps: string;
-	/** Whether line cards count in deck totals and sequential study (default: true). */
+	/** Whether line cards count in deck totals and flashcard study (default: true). */
 	includeLineCardsInDecks: boolean;
 
 	// ── Review Log ──────────────────────────────────────────
@@ -139,14 +139,14 @@ export interface OsmosisSettings {
 	excludeTags: string[];
 
 	// ── Study Mode Settings ─────────────────────────────────
-	/** Whether contextual mode activates automatically in reading view (default: true). */
-	contextualAutoActivate: boolean;
-	/** Whether inline clozes blank out in contextual mode (default: false). */
-	contextualInlineCloze: boolean;
-	/** Whether to show the deck breadcrumb in the sequential study modal (default: false). */
-	showStudyBreadcrumb: boolean;
-	/** Preceding sibling lines shown as context on line-card fronts in sequential study (default: 2). */
-	sequentialContextLines: number;
+	/** Whether note study activates automatically in reading view (default: true).
+	 *  Was `contextualAutoActivate`; `migrateRenamedSettingKeys` carries it over. */
+	noteAutoActivate: boolean;
+	/** Whether inline clozes blank out in note study (default: false). Was `contextualInlineCloze`. */
+	noteInlineCloze: boolean;
+	/** Preceding sibling lines shown as context on line-card fronts in flashcard study (default: 2).
+	 *  Was `sequentialContextLines`. */
+	flashcardContextLines: number;
 
 	/** Default maximum node width before text wraps, in px. Per-map "Max width"
 	 *  in the properties sidebar overrides this (default: 230). */
@@ -174,14 +174,14 @@ export interface OsmosisSettings {
 	/** Note whose frontmatter and body are merged into every converted branch's new note; empty for none (default: ""). */
 	branchNoteTemplate: string;
 
-	// ── 3D Graph ────────────────────────────────────────────
+	// ── Cosmos ────────────────────────────────────────────
 	/** Desktop: orbit and zoom around the point under the cursor, or the view center (default: "cursor"). */
-	graph3dDesktopPivot: Graph3DDesktopPivot;
+	cosmosDesktopPivot: CosmosDesktopPivot;
 	/** Touch: a one-finger drag orbits the point under the finger or the view center, or looks around from the camera (default: "point"). */
-	graph3dOneFingerDrag: Graph3DTouchDrag;
-	/** The 3D graph's Settings (stored under the old Overlays key, so vaults keep their values), shared by every 3D graph view (see `src/graph3d/overlays.ts`). */
-	graph3dOverlays: Graph3DOverlays;
-	/** The style sidebar's 3D Settings sections that are collapsed (see `src/graph3d/settings-sections.ts`). */
+	cosmosOneFingerDrag: CosmosTouchDrag;
+	/** Cosmos's Settings (stored under the old Overlays key, so vaults keep their values), shared by every Cosmos view (see `src/cosmos/overlays.ts`). */
+	graph3dOverlays: CosmosOverlays;
+	/** The style sidebar's 3D Settings sections that are collapsed (see `src/cosmos/settings-sections.ts`). */
 	graph3dSettingsCollapsed: SettingsSectionId[];
 }
 
@@ -216,10 +216,9 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	excludeTags: [],
 
 	// Study Mode defaults
-	contextualAutoActivate: true,
-	contextualInlineCloze: false,
-	showStudyBreadcrumb: false,
-	sequentialContextLines: 2,
+	noteAutoActivate: true,
+	noteInlineCloze: false,
+	flashcardContextLines: 2,
 
 	// Stats dashboard defaults
 	statsPanelOrder: [],
@@ -232,9 +231,9 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	branchNoteFolder: "",
 	branchNoteTemplate: "",
 
-	// 3D graph defaults
-	graph3dDesktopPivot: "cursor",
-	graph3dOneFingerDrag: "point",
+	// Cosmos defaults
+	cosmosDesktopPivot: "cursor",
+	cosmosOneFingerDrag: "point",
 	graph3dOverlays: DEFAULT_OVERLAYS,
 	graph3dSettingsCollapsed: [],
 };
@@ -272,8 +271,8 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		if (key === "defaultMaxNodeWidth") {
 			this.plugin.remeasureOpenMindMaps();
 		}
-		if (key === "graph3dDesktopPivot" || key === "graph3dOneFingerDrag") {
-			this.plugin.refreshOpenGraph3DControls();
+		if (key === "cosmosDesktopPivot" || key === "cosmosOneFingerDrag") {
+			this.plugin.refreshOpenCosmosControls();
 		}
 	}
 
@@ -395,14 +394,14 @@ export class OsmosisSettingTab extends PluginSettingTab {
 			},
 			{
 				type: "group",
-				heading: "3D graph",
+				heading: "Cosmos",
 				items: [
 					{
 						name: "Mouse orbit and zoom",
 						desc: "On desktop, what dragging with the left mouse button orbits around and what the scroll wheel zooms toward. The point under the cursor is the nearest node, if there is one close by. Pressing a flight key (W, A, S, D, Q, E) during a drag looks around from the camera until you release the button, and the scroll wheel then sets the flight speed.",
 						control: {
 							type: "dropdown",
-							key: "graph3dDesktopPivot",
+							key: "cosmosDesktopPivot",
 							options: {
 								cursor: "Point under the cursor",
 								center: "View center",
@@ -414,7 +413,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						desc: "On touch screens, what dragging with one finger does. The point under your finger is the nearest node, if there is one close by. Pinch zooms toward the point between your fingers, and two-finger drag pans.",
 						control: {
 							type: "dropdown",
-							key: "graph3dOneFingerDrag",
+							key: "cosmosOneFingerDrag",
 							options: {
 								point: "Orbit the point under your finger",
 								center: "Orbit the view center",
@@ -462,7 +461,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					},
 					{
 						name: "Include line cards in decks",
-						desc: "Count line cards (block-ID-tagged lines) in deck totals and sequential study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.",
+						desc: "Count line cards (block-ID-tagged lines) in deck totals and flashcard study. Off keeps them studiable in-place only. Per-note override: osmosis-line-cards: false.",
 						control: { type: "toggle", key: "includeLineCardsInDecks" },
 					},
 				],
@@ -508,16 +507,11 @@ export class OsmosisSettingTab extends PluginSettingTab {
 				heading: "Study mode",
 				items: [
 					{
-						name: "Show deck breadcrumb in study tab",
-						desc: "Display the deck path under the progress bar in sequential study mode.",
-						control: { type: "toggle", key: "showStudyBreadcrumb" },
-					},
-					{
 						name: "Line card context lines",
-						desc: "How many immediately preceding sibling lines to show for context on a line card's front in sequential study (0 = breadcrumb only).",
+						desc: "How many immediately preceding sibling lines to show for context on a line card's front in flashcard study (0 = breadcrumb only).",
 						control: {
 							type: "slider",
-							key: "sequentialContextLines",
+							key: "flashcardContextLines",
 							min: 0,
 							max: 5,
 							step: 1,

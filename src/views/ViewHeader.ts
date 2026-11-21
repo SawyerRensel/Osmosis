@@ -3,13 +3,13 @@ import { PANE_MENU, headerItems, type HeaderItem, type HeaderView, type PaneMenu
 
 /** The 2D | 3D pill, as a header item. The active side is highlighted; the other switches the leaf to that view. */
 function createViewSwitch(active: HeaderView, onSwitch: (to: HeaderView) => void): HTMLElement {
-	const pill = createDiv({ cls: "osmosis-view-switch", attr: { role: "group", "aria-label": "Mind map or 3D graph" } });
+	const pill = createDiv({ cls: "osmosis-view-switch", attr: { role: "group", "aria-label": "Mind map or Cosmos" } });
 	for (const side of ["2d", "3d"] as const) {
 		const on = side === active;
 		const button = pill.createEl("button", {
 			cls: "osmosis-view-switch-option",
 			text: side === "2d" ? "2D" : "3D",
-			attr: { "aria-pressed": String(on), "aria-label": side === "2d" ? "Mind map view" : "3D graph view" },
+			attr: { "aria-pressed": String(on), "aria-label": side === "2d" ? "Mind map view" : "Cosmos view" },
 		});
 		button.toggleClass("is-active", on);
 		// The active side is where you already are.

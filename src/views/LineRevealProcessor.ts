@@ -12,11 +12,15 @@ import {
 	dueCardsForFenceKey,
 	dueOrNewFenceCardKeys,
 	dueOrNewLineCardBlockIds,
-} from "../study/spatial-study";
+} from "../study/mindmap-study";
 import { decksOfNote } from "../study/note-scope";
+import { countNoteSession, noteSessionCard, type NoteSessionCard } from "../study/session-counts";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
+import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
+import { contentRect, ImageZoom } from "./ImageZoom";
+import type { ScreenRect } from "../study/image-zoom";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -30,9 +34,11 @@ import {
 
 /** Placeholder shown in place of a hidden line (matches fence-card hiding). */
 const PLACEHOLDER_TEXT = "░░░░░░";
+/** Past this many decks, the study menu nests them in a submenu. */
+const MAX_FLAT_DECK_ITEMS = 5;
 
 /**
- * Contextual reveal mode for a note.
+ * Note reveal mode for a note.
  * - "off": reading view is a normal reading surface, nothing hidden.
  * - "peek": every line-card line hidden; click reveals in any order, no ratings.
  * - "study": only due/new line-card lines hidden; top-down reveal + rating bubble.
@@ -65,9 +71,9 @@ interface NoteRevealState {
 	 *
 	 * Held beside `studyTargets` rather than merged into it because the two are
 	 * different kinds of string — a bare block ID and a fence's own `id:` — and
-	 * every line lookup here indexes by the former. `ContextualStudyProcessor`
+	 * every line lookup here indexes by the former. `NoteStudyProcessor`
 	 * owns the fences themselves and asks this set whether the one it is about
-	 * to draw is a target; the pill counts both.
+	 * to draw is a target; the progress strip counts both.
 	 */
 	fenceTargets: Set<string> | null;
 	/**
@@ -78,6 +84,14 @@ interface NoteRevealState {
 	fenceSteps: Map<string, number>;
 	/** How many of them have been answered. Fences rate in the other processor. */
 	ratedFences: Map<string, number>;
+	/**
+	 * Every card the session asks — line, shape group and fence alike — with the
+	 * bucket it started in, for the strip's new | learn | due counts (T102).
+	 * Fixed when study starts, for the reason `studySteps` gives.
+	 */
+	sessionCards: NoteSessionCard[];
+	/** This session's rating of each card answered so far, by card ID. */
+	sessionRatings: Map<string, FSRSRating>;
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
 	/**
@@ -107,7 +121,7 @@ interface NoteRevealState {
 }
 
 /**
- * Contextual progressive-reveal study for line cards (plan §5, revised
+ * Note progressive-reveal study for line cards (plan §5, revised
  * 2026-07-14).
  *
  * Reading view stays a normal reading surface by default. Two header
@@ -116,13 +130,18 @@ interface NoteRevealState {
  *   to reveal it — casual, nothing recorded.
  * - Study (`graduation-cap`, same convention as Mind Map View): hides
  *   only lines whose card is due or new, enforces top-down reveal, and
- *   shows a rating bubble after each reveal. A floating pill shows
- *   progress and Stop.
+ *   shows a rating bubble after each reveal. A strip above the inline
+ *   title shows the progress bar and new | learn | due counts (T102);
+ *   pressing Study again ends the session.
  *
  * Hiding is purely visual (post-processor DOM), never a content edit.
  */
 export class LineRevealProcessor {
 	private readonly states = new Map<string, NoteRevealState>();
+	/** Each note-study strip's builder, keyed by its wrapper element. */
+	private readonly strips = new WeakMap<HTMLElement, StudyProgressStrip>();
+	/** Image zoom (T104) on each reading view in Note study, keyed by its `.markdown-reading-view`. */
+	private readonly zooms = new Map<HTMLElement, ImageZoom>();
 	private sessionManager: StudySessionManager | null = null;
 
 	constructor(private readonly plugin: OsmosisPlugin) {}
@@ -148,7 +167,7 @@ export class LineRevealProcessor {
 			this.updateHeaderActions();
 		});
 
-		// Header actions and the floating pill live on view chrome that
+		// Header actions and the progress strip live on view chrome that
 		// outlives the note they were created for — refresh on view changes
 		this.plugin.registerEvent(
 			this.plugin.app.workspace.on("file-open", () => {
@@ -181,11 +200,12 @@ export class LineRevealProcessor {
 				this.chromeRetryTimer = null;
 			}
 			this.removeAllArtifacts();
+			this.syncZooms(new Set());
 		});
 	}
 
 	/**
-	 * Called after card sync. Refreshes header buttons and pills, and
+	 * Called after card sync. Refreshes header buttons and progress strips, and
 	 * re-renders any open reading view whose sections rendered before its
 	 * line cards existed in the store (startup race: the post-processor
 	 * skips notes with no known line cards, and nothing re-runs it when
@@ -464,7 +484,7 @@ export class LineRevealProcessor {
 	 * every group is a blank at once and none is singled out, so it keeps the
 	 * `all-hidden` / `all-revealed` pair. Study is a card player — a target, a
 	 * rating, a completion count — so it asks the line's groups one at a time,
-	 * exactly as sequential and spatial do, and the mode decides what happens to
+	 * exactly as flashcard and mind map do, and the mode decides what happens to
 	 * the group's siblings.
 	 *
 	 * A study session with no steps for this line (an ordinary occluded line whose
@@ -533,7 +553,7 @@ export class LineRevealProcessor {
 
 	private showRatingBubble(notePath: string, blockId: string, line: TrackedLine): void {
 		const bubble = createDiv();
-		bubble.className = "osmosis-line-rating osmosis-contextual-rating";
+		bubble.className = "osmosis-line-rating osmosis-rating";
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -586,10 +606,11 @@ export class LineRevealProcessor {
 			)
 			: step.cardId === null ? [] : [step.cardId];
 		if (cardIds.length > 0) {
-			this.sessionManager ??= this.plugin.createSessionManager("contextual");
+			this.sessionManager ??= this.plugin.createSessionManager("note");
 			const elapsedMs = Date.now() - state.pendingRatingAt;
 			for (const cardId of cardIds) {
 				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+				state.sessionRatings.set(cardId, rating);
 			}
 			this.plugin.refreshDashboard();
 		}
@@ -615,9 +636,9 @@ export class LineRevealProcessor {
 		const targets = state.studyTargets;
 		if (targets && targets.size > 0 && [...targets].every((id) => state.rated.has(id))) {
 			this.endStudy(notePath, state);
-			new Notice(`Contextual study complete — ${String(targets.size)} lines rated.`);
+			new Notice(`Note study complete — ${String(targets.size)} lines rated.`);
 			this.updateHeaderActions();
-			this.plugin.contextualStudy.refresh(notePath);
+			this.plugin.noteStudy.refresh(notePath);
 		}
 
 		this.applyAll(notePath);
@@ -663,7 +684,7 @@ export class LineRevealProcessor {
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
-		this.plugin.contextualStudy.refresh(notePath);
+		this.plugin.noteStudy.refresh(notePath);
 	}
 
 	private toggleStudy(notePath: string): void {
@@ -672,7 +693,7 @@ export class LineRevealProcessor {
 			this.endStudy(notePath, state);
 		} else {
 			// Only cards that are due (or never reviewed) get studied —
-			// scheduling decides, same as spatial mode (plan §5). One timestamp
+			// scheduling decides, same as mind map study (plan §5). One timestamp
 			// for both halves so a card on the boundary cannot land in one and
 			// not the other.
 			const now = Date.now();
@@ -691,12 +712,13 @@ export class LineRevealProcessor {
 			state.pendingRating = null;
 			this.planOcclusionSteps(notePath, state, targets);
 			this.planFenceSteps(notePath, state, fences);
+			this.planSessionCards(notePath, state, now);
 		}
 
 		this.applyAll(notePath);
 		this.syncBanners();
 		this.updateHeaderActions();
-		this.plugin.contextualStudy.refresh(notePath);
+		this.plugin.noteStudy.refresh(notePath);
 	}
 
 	/**
@@ -734,10 +756,10 @@ export class LineRevealProcessor {
 	 *
 	 * Counted from the store here rather than reported by each fence as it draws,
 	 * because reading view builds its sections lazily: a fence below the fold has
-	 * not been rendered yet, and the pill would understate the session until the
+	 * not been rendered yet, and the bar would understate the session until the
 	 * reader happened to scroll past it.
 	 *
-	 * `ContextualStudyProcessor` derives the same sequence from the same store
+	 * `NoteStudyProcessor` derives the same sequence from the same store
 	 * with the same filter, so the two agree — see `fenceStepPlan`. An occluded
 	 * fence is counted the same way, one question per shape group, since the
 	 * store holds a card per group exactly as it does per cloze group.
@@ -759,6 +781,31 @@ export class LineRevealProcessor {
 		}
 	}
 
+	/**
+	 * Every card this session asks, bucketed as it stands now, for the strip's
+	 * counts. Called after `planOcclusionSteps` and `planFenceSteps`, and takes
+	 * the same cards they do: an occluded line's due shape groups, an ordinary
+	 * line's due-or-new cards (one rating reaches them all), a fence's due cards.
+	 */
+	private planSessionCards(notePath: string, state: NoteRevealState, now: number): void {
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const ids = new Set<string>();
+		for (const blockId of state.studyTargets ?? []) {
+			const steps = state.studySteps.get(blockId);
+			const lineIds = steps
+				? steps.map((step) => step.cardId).filter((id): id is string => id !== null)
+				: cardIdsForLineKey(cards, lineCardId(notePath, blockId));
+			for (const id of lineIds) ids.add(id);
+		}
+		for (const key of state.fenceTargets ?? []) {
+			for (const card of dueCardsForFenceKey(cards, key, now)) ids.add(card.id);
+		}
+		state.sessionCards = cards
+			.filter((card) => ids.has(card.id) && (card.due === undefined || card.due <= now))
+			.map(noteSessionCard);
+		state.sessionRatings.clear();
+	}
+
 	/** Leave study mode: drop session state and flush pending schedule writes. */
 	private endStudy(notePath: string, state: NoteRevealState): void {
 		state.mode = "off";
@@ -770,9 +817,11 @@ export class LineRevealProcessor {
 		state.fenceSteps.clear();
 		state.studySteps.clear();
 		state.stepAt.clear();
+		state.sessionCards = [];
+		state.sessionRatings.clear();
 		void this.plugin.scheduleStore.flush();
 		// Fence cards keep their schedule inside the note's own text, so a
-		// contextual session holds those writes back rather than rewriting the
+		// note study session holds those writes back rather than rewriting the
 		// block being read after every answer. This is where they land.
 		void this.plugin.fenceWriter.flush();
 		void this.plugin.reviewLog.flush();
@@ -784,7 +833,7 @@ export class LineRevealProcessor {
 	 * Holding a fence write back is only worth doing while the note is on screen
 	 * — that is the whole reason for it (see `FenceWriter.stageSchedule`). Once
 	 * the note is closed there is nothing left to disturb, and leaving reviews
-	 * unwritten risks losing them to a crash if the reader never presses Stop.
+	 * unwritten risks losing them to a crash if the reader never ends the session.
 	 */
 	private flushClosedNotes(): void {
 		const pending = this.plugin.fenceWriter.pendingPaths();
@@ -844,12 +893,12 @@ export class LineRevealProcessor {
 			}
 
 			// A running in-note session stops directly; otherwise the button opens
-			// the study menu. Only "Study here" needs reading view, so the switch
-			// happens from the menu item rather than on the tap.
+			// the study menu. Only "Study this note in note view" needs reading
+			// view, so the switch happens from the menu item rather than on the tap.
 			studyBtn ??= this.createHeaderAction(
 				"graduation-cap",
 				"Study this note",
-				"osmosis-line-study-action",
+				"osmosis-line-study-action osmosis-study-cap",
 				view,
 				(p, evt) => {
 					if (this.stateFor(p).mode === "study") {
@@ -910,8 +959,9 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * The note header's Study menu: study in place, this note's cards in the
-	 * sequential popup, or a deck the note belongs to in the popup. One deck
+	 * The note header's Study menu: study in place, or this note's cards or a
+	 * deck the note belongs to in the Flashcard study tab, which takes over
+	 * this note's tab and puts the note back when study is toggled off. One deck
 	 * starts directly; several go in a submenu (inline on mobile, where
 	 * `setSubmenu` is not relied on).
 	 */
@@ -919,7 +969,7 @@ export class LineRevealProcessor {
 		const menu = new Menu();
 		menu.addItem((item) =>
 			item
-				.setTitle("Study here")
+				.setTitle("Study this note in note view")
 				.setIcon("graduation-cap")
 				.onClick(() => {
 					void this.ensurePreview(view).then(() => {
@@ -929,31 +979,35 @@ export class LineRevealProcessor {
 		);
 		menu.addItem((item) =>
 			item
-				.setTitle("This note (popup)")
+				.setTitle("Study this note in flashcard view")
 				.setIcon("file-text")
 				.onClick(() => {
-					void this.plugin.openStudySession({ type: "note", notePath });
+					void this.plugin.openStudySession({ type: "note", notePath }, { leaf: view.leaf, takeOver: true });
 				}),
 		);
 
 		const decks = decksOfNote(this.plugin.cardStore.getCardsByNote(notePath));
 		const openDeck = (deck: string): void => {
-			void this.plugin.openStudySession({ type: "single", deck });
+			void this.plugin.openStudySession({ type: "single", deck }, { leaf: view.leaf, takeOver: true });
 		};
-		if (decks.length === 1) {
-			const deck = decks[0] as string;
+		const addDeckItem = (deck: string): void => {
 			menu.addItem((item) =>
 				item
-					.setTitle(`Deck: ${deck} (popup)`)
+					.setTitle(`Study the deck in flashcard view: ${deck}`)
 					.setIcon("layers")
 					.onClick(() => {
 						openDeck(deck);
 					}),
 			);
-		} else if (decks.length > 1) {
+		};
+		// One flat item per deck; past five, a submenu keeps the menu short.
+		// setSubmenu is not in the published typings, and mobile has none, so
+		// both fall back to the flat list.
+		if (decks.length <= MAX_FLAT_DECK_ITEMS) {
+			for (const deck of decks) addDeckItem(deck);
+		} else {
 			menu.addItem((item) => {
-				item.setTitle("Deck… (popup)").setIcon("layers");
-				// setSubmenu is not in the published typings; feature-detect it.
+				item.setTitle("Study a deck in flashcard view").setIcon("layers");
 				const sub = Platform.isMobile
 					? undefined
 					: (item as unknown as { setSubmenu?: () => Menu }).setSubmenu?.();
@@ -967,52 +1021,55 @@ export class LineRevealProcessor {
 					}
 				} else {
 					item.setDisabled(true);
-					for (const deck of decks) {
-						menu.addItem((deckItem) =>
-							deckItem
-								.setTitle(`Deck: ${deck} (popup)`)
-								.setIcon("layers")
-								.onClick(() => {
-									openDeck(deck);
-								}),
-						);
-					}
+					for (const deck of decks) addDeckItem(deck);
 				}
 			});
 		}
 		menu.showAtMouseEvent(evt);
 	}
 
-	// ── Floating pill (study progress + Stop) ─────────────────
+	// ── Progress strip (bar + new | learn | due counts) ───────
 
-	private ensureBanner(host: HTMLElement, notePath: string): void {
-		let banner = host.querySelector<HTMLElement>(":scope > .osmosis-reveal-banner");
-		if (!banner) {
-			banner = createDiv();
-			banner.className = "osmosis-reveal-banner";
-			host.appendChild(banner);
+	/**
+	 * Put the strip above the note's inline title, building it on first use, and
+	 * refresh it. With no inline title in the DOM it goes to the top of the
+	 * reading view's sizer instead.
+	 */
+	private ensureStrip(host: HTMLElement, notePath: string): void {
+		const sizer = host.querySelector<HTMLElement>(".markdown-preview-sizer");
+		if (!sizer) return;
+		let wrap = host.querySelector<HTMLElement>(".osmosis-note-study-strip");
+		let strip = wrap ? this.strips.get(wrap) : undefined;
+		if (!wrap || !strip) {
+			wrap?.remove();
+			wrap = createDiv({ cls: "osmosis-note-study-strip" });
+			strip = new StudyProgressStrip(wrap);
+			this.strips.set(wrap, strip);
 		}
-		banner.dataset["notePath"] = notePath;
-		this.renderBanner(banner, notePath);
-	}
+		mountAboveInlineTitle(sizer, wrap);
 
-	private renderBanner(banner: HTMLElement, notePath: string): void {
-		banner.empty();
 		const state = this.stateFor(notePath);
 		const { done, total } = this.studyProgress(state);
-
-		banner.createSpan({
-			cls: "osmosis-reveal-progress",
-			text: `${String(done)}/${String(total)} rated`,
-		});
-		const stopBtn = banner.createEl("button", { text: "Stop", cls: "osmosis-reveal-btn" });
-		stopBtn.addEventListener("click", () => {
-			this.toggleStudy(notePath);
-		});
+		strip.setProgress(total > 0 ? (done / total) * 100 : 0);
+		strip.setCounts(countNoteSession(state.sessionCards, state.sessionRatings, this.answeringCardIds(notePath, state)));
 	}
 
 	/**
-	 * The pill's count, in **questions rather than lines**.
+	 * The cards whose rating bubble is showing, for the underline under their
+	 * count: the shape group being asked on an occluded line, every card on an
+	 * ordinary one. A fence's question is not tracked here, so a fence being
+	 * answered underlines nothing.
+	 */
+	private answeringCardIds(notePath: string, state: NoteRevealState): string[] {
+		const blockId = state.pendingRating;
+		if (blockId === null) return [];
+		const step = this.currentStep(state, blockId);
+		if (step) return step.cardId === null ? [] : [step.cardId];
+		return cardIdsForLineKey(this.plugin.cardStore.getCardsByNote(notePath), lineCardId(notePath, blockId));
+	}
+
+	/**
+	 * The progress bar's fraction, in **questions rather than lines**.
 	 *
 	 * An occluded line asks one question per shape group, so counting lines would
 	 * report "0/1" through two of the three answers a three-group diagram takes.
@@ -1028,7 +1085,7 @@ export class LineRevealProcessor {
 		}
 		// A fence counts its questions the same way: a three-group cloze fence asks
 		// three and a bidirectional pair asks two, each rated separately, so the
-		// pill would sit still through most of a note of them if it counted fences.
+		// bar would sit still through most of a note of them if it counted fences.
 		for (const key of state.fenceTargets ?? []) {
 			const steps = state.fenceSteps.get(key) ?? 1;
 			total += steps;
@@ -1040,10 +1097,11 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Show the pill on every reading view whose note is in study mode;
+	 * Show the progress strip on every reading view whose note is in study mode;
 	 * remove it everywhere else (mode ended, leaf switched notes, edit mode).
 	 */
 	private syncBanners(): void {
+		const studyingHosts = new Set<HTMLElement>();
 		for (const leaf of this.plugin.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) continue;
@@ -1053,11 +1111,28 @@ export class LineRevealProcessor {
 			const path = view.file?.path;
 			const studying = path !== undefined && this.stateFor(path).mode === "study";
 			if (studying && view.getMode() === "preview") {
-				host.classList.add("osmosis-reveal-host");
-				this.ensureBanner(host, path);
+				this.ensureStrip(host, path);
+				studyingHosts.add(host);
 			} else {
-				host.querySelector(":scope > .osmosis-reveal-banner")?.remove();
+				host.querySelector(".osmosis-note-study-strip")?.remove();
 			}
+		}
+		this.syncZooms(studyingHosts);
+	}
+
+	/**
+	 * Image zoom on exactly the reading views in Note study. A view leaving it —
+	 * or closed, or the plugin unloading — stops listening and puts its pictures
+	 * back at fit.
+	 */
+	private syncZooms(studyingHosts: Set<HTMLElement>): void {
+		for (const [host, zoom] of this.zooms) {
+			if (studyingHosts.has(host)) continue;
+			zoom.destroy();
+			this.zooms.delete(host);
+		}
+		for (const host of studyingHosts) {
+			if (!this.zooms.has(host)) this.zooms.set(host, new ImageZoom(host, () => readingArea(host)));
 		}
 	}
 
@@ -1092,7 +1167,7 @@ export class LineRevealProcessor {
 	/**
 	 * Whether this fence is one of the questions the running session is asking.
 	 *
-	 * Read by `ContextualStudyProcessor`, which owns fence rendering: a fence
+	 * Read by `NoteStudyProcessor`, which owns fence rendering: a fence
 	 * that is not a target renders revealed and inert during a session — it is
 	 * context, not a question — and takes no rating.
 	 */
@@ -1103,18 +1178,32 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Record that one of a fence's questions was answered, so the pill advances.
+	 * Record that one of a fence's questions was answered, so the strip advances.
 	 *
-	 * The rating itself is written by `ContextualStudyProcessor` — this only
-	 * tells the session's progress counter that one of its questions is done.
+	 * The rating itself is written by `NoteStudyProcessor` — this only
+	 * tells the session's progress counter that one of its questions is done,
+	 * and the counts which card and how (Again moves it to learn).
 	 * Counted rather than flagged: a fence that fans out is answered a card at a
 	 * time, and each of those is a question the reader has finished.
 	 */
-	markFenceRated(notePath: string, fenceKey: string): void {
+	markFenceRated(notePath: string, fenceKey: string, cardId: string, rating: FSRSRating): void {
 		const state = this.states.get(notePath);
 		if (!state || state.mode !== "study") return;
 		if (!state.fenceTargets?.has(fenceKey)) return;
 		state.ratedFences.set(fenceKey, (state.ratedFences.get(fenceKey) ?? 0) + 1);
+		state.sessionRatings.set(cardId, rating);
+		this.syncBanners();
+	}
+
+	/**
+	 * Take back `markFenceRated` when that rating is undone. Only a rating this
+	 * session recorded is taken back — the undo stack outlives the session.
+	 */
+	unmarkFenceRated(notePath: string, fenceKey: string, cardId: string): void {
+		const state = this.states.get(notePath);
+		if (!state || state.mode !== "study") return;
+		if (!state.sessionRatings.delete(cardId)) return;
+		state.ratedFences.set(fenceKey, Math.max((state.ratedFences.get(fenceKey) ?? 0) - 1, 0));
 		this.syncBanners();
 	}
 
@@ -1143,6 +1232,8 @@ export class LineRevealProcessor {
 				studyTargets: null,
 				fenceTargets: null,
 				ratedFences: new Map(),
+				sessionCards: [],
+				sessionRatings: new Map(),
 				fenceSteps: new Map(),
 				pendingRating: null,
 				pendingRatingAt: 0,
@@ -1159,7 +1250,7 @@ export class LineRevealProcessor {
 	/** Undo all DOM changes (plugin unload): unhide lines, drop injected UI. */
 	private removeAllArtifacts(): void {
 		const injected = document.querySelectorAll(
-			".osmosis-reveal-banner, .osmosis-line-placeholder, .osmosis-line-rating, .osmosis-line-peek-action, .osmosis-line-study-action",
+			".osmosis-note-study-strip, .osmosis-line-placeholder, .osmosis-line-rating, .osmosis-line-peek-action, .osmosis-line-study-action",
 		);
 		for (const el of Array.from(injected)) {
 			el.remove();
@@ -1170,10 +1261,23 @@ export class LineRevealProcessor {
 		for (const back of Array.from(document.querySelectorAll(".osmosis-line-back"))) {
 			back.replaceWith(...Array.from(back.childNodes));
 		}
-		for (const host of Array.from(document.querySelectorAll(".osmosis-reveal-host"))) {
-			host.classList.remove("osmosis-reveal-host");
-		}
 	}
+}
+
+/**
+ * The study area a zoomed image in reading view `host` may fill (batch 14, F2):
+ * the scroller's content box across, and down only as far as the sizer, which
+ * is what clips a zoomed picture's height (styles.css). A short note's sizer can
+ * end above the bottom of the view.
+ */
+function readingArea(host: HTMLElement): ScreenRect {
+	const preview = host.querySelector<HTMLElement>(":scope > .markdown-preview-view");
+	if (!preview) return contentRect(host);
+	const area = contentRect(preview);
+	const sizer = preview.querySelector<HTMLElement>(":scope > .markdown-preview-sizer");
+	if (!sizer) return area;
+	const clip = sizer.getBoundingClientRect();
+	return { ...area, top: Math.max(area.top, clip.top), bottom: Math.min(area.bottom, clip.bottom) };
 }
 
 /** Nodes that stay outside the hideable wrapper. */

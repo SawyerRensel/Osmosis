@@ -1,6 +1,6 @@
 /**
  * Which node to select once lines are deleted, shared by the 2D mind map and
- * the 3D graph (no `obsidian` import, so it is unit-tested).
+ * Cosmos (no `obsidian` import, so it is unit-tested).
  */
 
 /** The part of a parse-tree node this needs; `OsmosisNode` satisfies it. */
@@ -14,7 +14,7 @@ export interface TreeNode {
  * `root`: the previous sibling of the first deleted node in document order,
  * else that node's parent. Null when that parent is `root` itself (a top-level
  * line with nothing before it): the caller picks what stands for the root (the
- * 3D graph's note core; the 2D map has no selectable root). `root` is never a
+ * Cosmos's note core; the 2D map has no selectable root). `root` is never a
  * deleted node, so an id that names it is ignored, and so is one that is not
  * in the tree; with none left, null.
  *

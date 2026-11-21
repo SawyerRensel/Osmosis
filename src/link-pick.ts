@@ -1,5 +1,5 @@
 /**
- * The toolbar's "Add link" mode, shared by the mind map and the 3D graph:
+ * The toolbar's "Add link" mode, shared by the mind map and Cosmos:
  * arm it on the selected nodes, then the next tap on a node is the link's
  * target. Only a tap counts. The views ask this only about releases that
  * already passed their own tap test (2D's `handleTouchTap`/`handleClick`, the

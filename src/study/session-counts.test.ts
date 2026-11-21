@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { Card, CardState } from "../database/types";
 import type { StudyCard } from "./types";
-import { bucketOf, countSession } from "./session-counts";
+import type { FSRSRating } from "../database/FSRSScheduler";
+import { bucketOf, countNoteSession, countSession, noteSessionCard, type NoteSessionCard } from "./session-counts";
 import { stepBackQueue } from "./undo-queue";
 
 function mk(id: string, state?: CardState): StudyCard {
@@ -122,5 +123,54 @@ describe("countSession", () => {
 	it("is all zero with nothing underlined when the session is done", () => {
 		expect(plain(countSession(session(), 5, []))).toEqual([0, 0, 0, null]);
 		expect(plain(countSession([], 0, []))).toEqual([0, 0, 0, null]);
+	});
+});
+
+describe("noteSessionCard", () => {
+	it("buckets a stored card by its schedule, as the dashboard does", () => {
+		expect(noteSessionCard(mk("a").card)).toEqual({ id: "a", bucket: "new" });
+		expect(noteSessionCard(mk("b", "learning").card)).toEqual({ id: "b", bucket: "learn" });
+		expect(noteSessionCard(mk("c", "review").card)).toEqual({ id: "c", bucket: "due" });
+	});
+});
+
+describe("countNoteSession", () => {
+	const cards: NoteSessionCard[] = [
+		{ id: "tack", bucket: "new" },
+		{ id: "jibe", bucket: "new" },
+		{ id: "reef", bucket: "learn" },
+		{ id: "heave", bucket: "due" },
+	];
+	const noteCounts = (c: ReturnType<typeof countNoteSession>) => [c.new, c.learn, c.due, c.current];
+
+	it("counts every card before anything is rated", () => {
+		expect(noteCounts(countNoteSession(cards, new Map(), []))).toEqual([2, 1, 1, null]);
+	});
+
+	it("takes a card out on Hard, Good or Easy", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 3], ["reef", 2], ["heave", 4]]);
+		expect(noteCounts(countNoteSession(cards, ratings, []))).toEqual([1, 0, 0, null]);
+	});
+
+	it("moves a card rated Again to learn", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 1], ["heave", 1], ["reef", 1]]);
+		expect(noteCounts(countNoteSession(cards, ratings, []))).toEqual([1, 3, 0, null]);
+	});
+
+	it("puts an undone card back in the bucket it started in", () => {
+		const ratings = new Map<string, FSRSRating>([["heave", 1]]);
+		expect(noteCounts(countNoteSession(cards, ratings, []))).toEqual([2, 2, 0, null]);
+		ratings.delete("heave");
+		expect(noteCounts(countNoteSession(cards, ratings, []))).toEqual([2, 1, 1, null]);
+	});
+
+	it("marks the bucket of the first unrated card being answered", () => {
+		expect(countNoteSession(cards, new Map(), ["heave", "tack"]).current).toBe("due");
+		const ratings = new Map<string, FSRSRating>([["heave", 3]]);
+		expect(countNoteSession(cards, ratings, ["heave", "tack"]).current).toBe("new");
+	});
+
+	it("marks nothing for a card outside the session", () => {
+		expect(countNoteSession(cards, new Map(), ["bowline"]).current).toBeNull();
 	});
 });

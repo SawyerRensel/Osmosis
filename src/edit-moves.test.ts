@@ -113,7 +113,7 @@ function find(root: OsmosisNode, content: string): OsmosisNode {
 	return node;
 }
 
-/** Move "Rig the fenders" (and its child) under "Visitor pontoon", as the 3D graph's "Move under" does. */
+/** Move "Rig the fenders" (and its child) under "Visitor pontoon", as Cosmos's "Move under" does. */
 async function moveFendersUnderPontoon(f: Fake): ReturnType<typeof moveAcrossFiles> {
 	const fenders = find(parser.parse(f.files["Dock.md"]!, "Dock.md").root, "Rig the fenders");
 	const pontoon = find(parser.parse(f.files["Harbour.md"]!, "Harbour.md").root, "Visitor pontoon");

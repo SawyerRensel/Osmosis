@@ -1,6 +1,6 @@
 /**
  * Keys and gestures of the inline node editor, shared by the 2D mind map and
- * the 3D graph. Pure, so a test can hold the decisions (no `obsidian` import).
+ * Cosmos. Pure, so a test can hold the decisions (no `obsidian` import).
  */
 
 /**
@@ -16,7 +16,7 @@ export function enterSavesEdit(mod: boolean, shift: boolean): boolean {
 export type DoubleClickEdit = "open" | "enable" | "none";
 
 /**
- * A double click on a line opens its editor. In the 3D graph, with edit mode
+ * A double click on a line opens its editor. In Cosmos, with edit mode
  * off, it turns edit mode on first (`enable`). Nothing for a node that is not
  * a line, or while a study session forbids editing.
  */

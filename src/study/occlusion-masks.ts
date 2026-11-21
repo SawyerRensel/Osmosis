@@ -21,18 +21,18 @@ import { rotationTransform } from "./occlusion-geometry";
  * `front` and `back` are the two sides of one card: a group is being asked, so
  * the mode decides what happens to its siblings.
  *
- * `all-hidden` and `all-revealed` are the *note* views — contextual study, a
+ * `all-hidden` and `all-revealed` are the *note* views — note study, a
  * mind-map node, peek on a line. There is no current card there: the reader is
  * looking at a diagram, not answering one of the three questions it carries. So
- * every group is a blank at once, exactly as a contextual cloze shows all of its
+ * every group is a blank at once, exactly as a note cloze shows all of its
  * blanks at once, and the mode is irrelevant — `hide-one-guess-one` describes
  * how one card relates to its siblings, and in the note there are no siblings to
  * relate to.
  *
  * `none` is a diagram in view that is not the one being asked: a second labelled
- * embed in the same fence, whose groups belong to a *different* card. Sequential
+ * embed in the same fence, whose groups belong to a *different* card. Flashcard study
  * has always shown those unmasked — covering them would pose a second question
- * the card never answers — and spatial study has to say so explicitly, because
+ * the card never answers — and mind map study has to say so explicitly, because
  * it paints its diagrams in place rather than re-rendering the card's body.
  */
 export type OcclusionSide = "front" | "back" | "all-hidden" | "all-revealed" | "none";

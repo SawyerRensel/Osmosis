@@ -2129,7 +2129,7 @@ describe("the structural type rules", () => {
 });
 
 /**
- * The mind map's same-file drop (`executeDrop`), extracted for the 3D graph's
+ * The mind map's same-file drop (`executeDrop`), extracted for Cosmos's
  * "Move under / Move after". Before the extraction, the new functions were run
  * against a verbatim copy of the old 2D code for every node and every gap of
  * every fixture with up to 120 nodes (145,714 drops): identical text. These

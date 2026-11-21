@@ -85,8 +85,8 @@ per image, set from the toolbar dropdown.
 ## Studying Occlusions
 
 Occlusion cards study in **all three [study modes](../studying/study-modes.md)**:
-in the sequential modal, in place in the note's reading view, and inside a mind
-map node in spatial study. A node or a section with three occlusion groups due
+in flashcard study, in place in the note's reading view, and inside a mind
+map node in mind map study. A node or a section with three occlusion groups due
 asks three questions and takes three ratings, wherever you study it.
 
 On reveal, the revealed group's masks are outlined so you can see which part of

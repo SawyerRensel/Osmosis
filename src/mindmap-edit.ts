@@ -919,7 +919,7 @@ export function normalizeWrite(content: string): string {
 // ─── Structural edits within one file ────────────────────
 //
 // What the mind map does for Tab, Enter, Ctrl+Enter, Delete and the Alt-arrows,
-// as pure text-in, text-out computations, so the 3D graph writes the same bytes.
+// as pure text-in, text-out computations, so Cosmos writes the same bytes.
 // Each returns the file's text *before* `normalizeWrite`, with `start`: where
 // the line the edit is about begins in that text (the new line, or the first
 // line of the block that moved). The mind map's cross-file branches (a move
@@ -1310,7 +1310,7 @@ export function insertParent(content: string, src: OsmosisNode, span: Range): Sp
 
 // ─── Drag and drop ───────────────────────────────────────
 //
-// The mind map's drop rules and its same-file move, shared with the 3D graph's
+// The mind map's drop rules and its same-file move, shared with Cosmos's
 // "Move under / Move after". A drop's destination is a (parent, index) gap;
 // `resolveInsertSite` turns it into a file and an offset.
 

@@ -1,6 +1,6 @@
 /**
  * Find and replace over a view's loaded nodes (Ctrl+F in the mind map and the
- * 3D graph). Pure: the views hand in their nodes' text as `FindItem`s and act
+ * Cosmos). Pure: the views hand in their nodes' text as `FindItem`s and act
  * on what comes back. Plain text only, case-insensitive unless asked; regex
  * characters in the query are literal. See `vault/Planner/Graph - Find and replace.md`.
  */

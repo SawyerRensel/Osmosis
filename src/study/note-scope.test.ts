@@ -61,7 +61,7 @@ describe("StudySessionManager with a note scope", () => {
 			new FSRSScheduler(),
 			{} as unknown as FenceWriter,
 			() => null,
-			"sequential",
+			"flashcard",
 		);
 	}
 

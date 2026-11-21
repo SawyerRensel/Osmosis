@@ -55,7 +55,7 @@ export interface ButtonDef {
 }
 
 /** The 2D/3D toggle's command. It has no toolbar button: the header's 2D | 3D pill (`view-header.ts`) is its button. */
-export const TOGGLE_3D_COMMAND = { id: "mindmap-toggle-3d", icon: "orbit", name: "Toggle between 2D mind map and 3D graph" };
+export const TOGGLE_3D_COMMAND = { id: "mindmap-toggle-3d", icon: "orbit", name: "Toggle between mind map and Cosmos" };
 
 /**
  * The toolbar's buttons, in display order. The groups only organise the list
@@ -122,11 +122,11 @@ export const TOOLBAR_GROUPS: ButtonDef[][] = [
 ];
 
 /**
- * The buttons the 3D graph's ribbon leaves out: it draws `TOOLBAR_GROUPS`
+ * The buttons Cosmos's ribbon leaves out: it draws `TOOLBAR_GROUPS`
  * like the mind map, minus what has no 3D equivalent yet. Fold and unfold
  * wait for the Fold idea ("3D Graph - Fold and unfold branches").
  */
-export const GRAPH3D_HIDDEN_BUTTONS: ReadonlySet<string> = new Set(["fold-all", "unfold-all"]);
+export const COSMOS_HIDDEN_BUTTONS: ReadonlySet<string> = new Set(["fold-all", "unfold-all"]);
 
 /** `groups` without the buttons of `hidden`, and without any group that leaves empty. */
 export function visibleGroups(groups: readonly ButtonDef[][], hidden: ReadonlySet<string>): ButtonDef[][] {
@@ -134,9 +134,9 @@ export function visibleGroups(groups: readonly ButtonDef[][], hidden: ReadonlySe
 }
 
 /**
- * The Osmosis bar's own toggles, after its last group: the 3D graph's walk
+ * The Osmosis bar's own toggles, after its last group: Cosmos's walk
  * and fly joysticks (3D on a touch screen, desktops with one included) and
- * the 3D graph's controls help, always the last button. They are view
+ * Cosmos's controls help, always the last button. They are view
  * settings, not map actions, so they have no commands.
  */
 export type BarToggle = "sticks" | "help";
@@ -179,7 +179,7 @@ export function navbarHidden(isPhone: boolean, editMode: boolean): boolean {
 /** Body class that hides `.mobile-navbar` (styles.css), set only while a map that asks for it is the active view. */
 export const HIDE_NAVBAR_CLASS = "osmosis-hide-navbar";
 
-/** A view that can hide the navigation bar: the mind map, the 3D graph and the study tab. */
+/** A view that can hide the navigation bar: the mind map, Cosmos and the study tab. */
 export interface NavbarHost {
 	/** Whether the view wants the navigation bar hidden: a map in edit mode, or the study tab unless the user brought the bar back. */
 	navbarEditMode(): boolean;
@@ -231,7 +231,7 @@ export class ToolRibbon {
 		private container: HTMLElement,
 		private actions: ToolbarActions,
 		/**
-		 * Buttons to leave out (the 3D graph's, see `GRAPH3D_HIDDEN_BUTTONS`), a class for the bar, and
+		 * Buttons to leave out (Cosmos's, see `COSMOS_HIDDEN_BUTTONS`), a class for the bar, and
 		 * the bar's own toggles (`barToggles`) with what each click does.
 		 */
 		options: { hidden?: ReadonlySet<string>; cls?: string; toggles?: { id: BarToggle; onClick: () => void }[] } = {},
@@ -347,7 +347,7 @@ export class ToolRibbon {
 	 * governs the button. With `checking`, only report whether it would run.
 	 */
 	trigger(def: ButtonDef, state: ToolbarState, checking: boolean): boolean {
-		// A button left off this bar (the 3D graph's fold and unfold) has no action here; a command-only one does.
+		// A button left off this bar (Cosmos's fold and unfold) has no action here; a command-only one does.
 		const btn = this.buttons.get(def.id);
 		if ((!btn && !def.noButton) || !canRunToolbarAction(def, state)) return false;
 		if (!checking) this.runAction(def, btn ?? this.el);

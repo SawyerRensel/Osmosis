@@ -43,7 +43,7 @@ On the Dashboard these nest and indent to match your vault's folder structure. I
 
 ### Line Cards
 
-[Line cards](line-cards.md) follow the note's deck (`osmosis-deck` frontmatter or folder path). They count toward deck totals by default; exclude them with `osmosis-line-cards: false` in the note's frontmatter, or globally via **Settings > Osmosis > Include line cards in decks**. Excluded line cards stay studiable in place (contextual and spatial modes) — they just don't appear in decks or sequential study.
+[Line cards](line-cards.md) follow the note's deck (`osmosis-deck` frontmatter or folder path). They count toward deck totals by default; exclude them with `osmosis-line-cards: false` in the note's frontmatter, or globally via **Settings > Osmosis > Include line cards in decks**. Excluded line cards stay studiable in place (note and mind map study) — they just don't appear in decks or flashcard study.
 
 ## Hierarchical Decks
 

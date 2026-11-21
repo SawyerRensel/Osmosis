@@ -15,7 +15,7 @@ how different kinds of learners tend to use it.
 
 **The Obsidian Power User** — You've built your second brain in Obsidian and you want mind mapping and spaced repetition without leaving the ecosystem. The card browser is a Bases view. The review log is Markdown in your vault. No proprietary formats, no external accounts, no sync issues.
 
-**The Visual Thinker** — Outlines and bullet points don't click for you. You need to see the structure. Osmosis turns any Markdown file into an interactive mind map you can edit, rearrange, and [study on](studying/study-modes.md#spatial-study) — bridging the gap between linear notes and spatial understanding.
+**The Visual Thinker** — Outlines and bullet points don't click for you. You need to see the structure. Osmosis turns any Markdown file into an interactive mind map you can edit, rearrange, and [study on](studying/study-modes.md#mind-map-study) — bridging the gap between linear notes and spatial understanding.
 
 **The Measured Reviewer** — You want to see whether the routine is holding. The [statistics dashboard](studying/statistics.md) answers the usual questions — retention, workload, when you study — and one more besides: how well the cards you studied in the note that taught them are holding up.
 
@@ -29,9 +29,9 @@ how different kinds of learners tend to use it.
 
 **AI-native by design.** Because it is only ever text, an AI assistant can read, generate, and edit your study material directly — flashcards, mind maps, and notes alike.
 
-**Spatial study mode.** Study your flashcards *on* the mind map, where each fact sits among the ideas it belongs to and you recall it with its context in view.
+**Mind map study mode.** Study your flashcards *on* the mind map, where each fact sits among the ideas it belongs to and you recall it with its context in view.
 
-**Contextual study mode.** Study cards inline in your notes, surrounded by the explanations and examples you wrote when you first understood them.
+**Note study mode.** Study cards inline in your notes, surrounded by the explanations and examples you wrote when you first understood them.
 
 **A serious SRS toolset.** FSRS scheduling, image occlusion with grouping, a full card browser with suspend/reset/re-deck/delete, and a statistics dashboard — all reading and writing the notes you already have.
 

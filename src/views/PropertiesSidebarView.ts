@@ -1,8 +1,8 @@
 import { ItemView, WorkspaceLeaf, Setting, setIcon, Modal, Notice, TFile, Scope, type ToggleComponent } from "obsidian";
 import { DEFAULT_BOUNDARY_OPACITY, DEFAULT_BOUNDARY_WIDTH, MAX_BOUNDARY_WIDTH, resolveBoundary } from "../boundary";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./MindMapView";
-import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./Graph3DView";
-import { Graph3DSettingsPanel } from "./Graph3DOverlays";
+import { CosmosView, VIEW_TYPE_COSMOS } from "./CosmosView";
+import { CosmosSettingsPanel } from "./CosmosOverlays";
 import type { NodeStyleHost } from "./style-host";
 import type OsmosisPlugin from "../main";
 import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "../settings";
@@ -150,10 +150,10 @@ export class PropertiesSidebarView extends ItemView {
 	private mapNodeWidthInput: HTMLInputElement | null = null;
 	private saveThemeBtn: HTMLElement | null = null;
 	private lastActiveMindMap: MindMapView | null = null;
-	/** The 3D graph the sidebar shows, when one was active last: its Settings, and its selection in the Node tab. Takes over from the mind map until a mind map is active again. */
-	private lastActiveGraph3D: Graph3DView | null = null;
-	/** The 3D graph whose Settings and selection are on show (`updateContext`). */
-	private currentGraph3D: Graph3DView | null = null;
+	/** The Cosmos the sidebar shows, when one was active last: its Settings, and its selection in the Node tab. Takes over from the mind map until a mind map is active again. */
+	private lastActiveCosmos: CosmosView | null = null;
+	/** The Cosmos whose Settings and selection are on show (`updateContext`). */
+	private currentCosmos: CosmosView | null = null;
 	private settingsPanelCleanup: (() => void) | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
@@ -212,11 +212,11 @@ export class PropertiesSidebarView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf) => {
 				if (leaf?.view instanceof MindMapView) {
-					this.lastActiveGraph3D = null;
+					this.lastActiveCosmos = null;
 					this.lastActiveMindMap = leaf.view;
 					this.listenForFileLoad(leaf.view);
-				} else if (leaf?.view instanceof Graph3DView) {
-					this.lastActiveGraph3D = leaf.view;
+				} else if (leaf?.view instanceof CosmosView) {
+					this.lastActiveCosmos = leaf.view;
 				}
 				this.updateContext();
 			}),
@@ -227,17 +227,17 @@ export class PropertiesSidebarView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
 				const view = this.app.workspace.getActiveViewOfType(MindMapView);
-				if (view && (view !== this.lastActiveMindMap || this.lastActiveGraph3D !== null)) {
-					this.lastActiveGraph3D = null;
+				if (view && (view !== this.lastActiveMindMap || this.lastActiveCosmos !== null)) {
+					this.lastActiveCosmos = null;
 					this.lastActiveMindMap = view;
 					this.listenForFileLoad(view);
 					this.updateContext();
 					return;
 				}
-				// The 2D/3D toggle swaps the view in the same leaf, as does a 3D graph opened in place.
-				const graph = this.app.workspace.getActiveViewOfType(Graph3DView);
-				if (graph && graph !== this.lastActiveGraph3D) {
-					this.lastActiveGraph3D = graph;
+				// The 2D/3D toggle swaps the view in the same leaf, as does Cosmos opened in place.
+				const graph = this.app.workspace.getActiveViewOfType(CosmosView);
+				if (graph && graph !== this.lastActiveCosmos) {
+					this.lastActiveCosmos = graph;
 					this.updateContext();
 				}
 			}),
@@ -247,8 +247,8 @@ export class PropertiesSidebarView extends ItemView {
 		const recent = this.app.workspace.getActiveViewOfType(MindMapView)?.leaf ?? this.app.workspace.getMostRecentLeaf();
 		if (recent?.view instanceof MindMapView) {
 			this.lastActiveMindMap = recent.view;
-		} else if (recent?.view instanceof Graph3DView) {
-			this.lastActiveGraph3D = recent.view;
+		} else if (recent?.view instanceof CosmosView) {
+			this.lastActiveCosmos = recent.view;
 		}
 		this.updateContext();
 	}
@@ -259,28 +259,28 @@ export class PropertiesSidebarView extends ItemView {
 		this.cleanupSelectionListener();
 		this.cleanupSettingsPanel();
 		this.lastActiveMindMap = null;
-		this.lastActiveGraph3D = null;
-		this.currentGraph3D = null;
+		this.lastActiveCosmos = null;
+		this.currentCosmos = null;
 		this.contentEl.empty();
 	}
 
-	/** The 3D graph the sidebar is following, if one was active last and is still open. */
-	private getActiveGraph3D(): Graph3DView | null {
-		const graph = this.lastActiveGraph3D;
+	/** The Cosmos the sidebar is following, if one was active last and is still open. */
+	private getActiveCosmos(): CosmosView | null {
+		const graph = this.lastActiveCosmos;
 		if (graph === null) return null;
-		if (this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D).some((leaf) => leaf.view === graph)) return graph;
-		this.lastActiveGraph3D = null;
+		if (this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOS).some((leaf) => leaf.view === graph)) return graph;
+		this.lastActiveCosmos = null;
 		return null;
 	}
 
-	/** The view whose selected nodes the Node tab styles: the 3D graph being followed, else the mind map. */
+	/** The view whose selected nodes the Node tab styles: Cosmos being followed, else the mind map. */
 	private getStyleHost(): NodeStyleHost | null {
-		return this.getActiveGraph3D() ?? this.getActiveMindMap();
+		return this.getActiveCosmos() ?? this.getActiveMindMap();
 	}
 
-	/** Find the most recently active MindMapView, if any (none while a 3D graph is followed: its sidebar has no Map tab). */
+	/** Find the most recently active MindMapView, if any (none while Cosmos is followed: its sidebar has no Map tab). */
 	private getActiveMindMap(): MindMapView | null {
-		if (this.getActiveGraph3D() !== null) return null;
+		if (this.getActiveCosmos() !== null) return null;
 		// Return the last active mind map if it's still attached to a leaf
 		if (this.lastActiveMindMap) {
 			const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP);
@@ -375,10 +375,10 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Update the sidebar to reflect the active mind map context. */
 	private updateContext(): void {
-		const graph = this.getActiveGraph3D();
+		const graph = this.getActiveCosmos();
 		if (graph !== null) {
-			if (graph === this.currentGraph3D && this.contentEl.hasChildNodes()) return;
-			this.currentGraph3D = graph;
+			if (graph === this.currentCosmos && this.contentEl.hasChildNodes()) return;
+			this.currentCosmos = graph;
 			this.currentMindMap = null;
 			this.currentFilePath = null;
 			this.closeAllPickers();
@@ -388,7 +388,7 @@ export class PropertiesSidebarView extends ItemView {
 			this.setupSelectionListener(graph);
 			return;
 		}
-		this.currentGraph3D = null;
+		this.currentCosmos = null;
 		this.cleanupSettingsPanel();
 		const mindMap = this.getActiveMindMap();
 		const filePath = mindMap?.getCurrentFilePath() ?? null;
@@ -428,15 +428,15 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Tab UI ──────────────────────────────────────────────
 
-	/** The Map and Node tabs; for a 3D graph (`graph`), its Settings take the Map tab's place. */
-	private renderTabbedUI(graph?: Graph3DView): void {
+	/** The Map and Node tabs; for Cosmos (`graph`), its Settings take the Map tab's place. */
+	private renderTabbedUI(graph?: CosmosView): void {
 		const container = this.contentEl.createDiv({
 			cls: "osmosis-properties-container",
 		});
 
 		// Header
 		container.createEl("h6", {
-			text: graph ? "3D graph" : "Map settings",
+			text: graph ? "Cosmos" : "Map settings",
 			cls: "osmosis-properties-filename",
 		});
 
@@ -490,14 +490,14 @@ export class PropertiesSidebarView extends ItemView {
 		}
 	}
 
-	// ─── Settings Tab (3D graph) ─────────────────────────────
+	// ─── Settings Tab (Cosmos) ─────────────────────────────
 
-	/** The 3D graph's Settings (they were its Overlays popover), kept in step with changes made elsewhere. */
-	private renderSettingsTab(container: HTMLElement, graph: Graph3DView): void {
+	/** Cosmos's Settings (they were its Overlays popover), kept in step with changes made elsewhere. */
+	private renderSettingsTab(container: HTMLElement, graph: CosmosView): void {
 		const plugin = this.plugin;
-		const panel = new Graph3DSettingsPanel(container, graph.settingsSource(), {
+		const panel = new CosmosSettingsPanel(container, graph.settingsSource(), {
 			get: () => plugin.settings.graph3dSettingsCollapsed,
-			set: (collapsed) => plugin.setGraph3DSettingsCollapsed(collapsed),
+			set: (collapsed) => plugin.setCosmosSettingsCollapsed(collapsed),
 		});
 		const refresh = () => panel.refresh();
 		graph.onSettingsChange(refresh);
@@ -764,8 +764,8 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Format Tab ──────────────────────────────────────────
 
-	/** The Node tab. For a 3D graph (`graph3d`), the style class section assigns a class but leaves managing classes to the mind map. */
-	private renderFormatTab(container: HTMLElement, graph3d = false): void {
+	/** The Node tab. For Cosmos (`cosmos`), the style class section assigns a class but leaves managing classes to the mind map. */
+	private renderFormatTab(container: HTMLElement, cosmos = false): void {
 		this.formatControlEls = [];
 		this.controls = emptyFormatControls();
 
@@ -807,7 +807,7 @@ export class PropertiesSidebarView extends ItemView {
 				cls: "osmosis-format-section-body",
 			});
 
-			this.renderFormatSection(section, body, graph3d && section === "Style class" ? undefined : header);
+			this.renderFormatSection(section, body, cosmos && section === "Style class" ? undefined : header);
 
 			// Toggle collapse
 			header.addEventListener("click", () => {

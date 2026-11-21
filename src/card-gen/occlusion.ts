@@ -151,8 +151,8 @@ export function embedWidth(embed: string): number | undefined {
  *
  * Fence content is rendered through `MarkdownRenderer`, which knows nothing
  * about the marker — so a label that survives to render time appears as
- * literal stray text beside the diagram. Every render surface (sequential,
- * contextual, spatial) has to call this, and the source file keeps its labels:
+ * literal stray text beside the diagram. Every render surface (flashcard,
+ * note, mind map) has to call this, and the source file keeps its labels:
  * only the rendered output is cleaned.
  */
 export function stripEmbedLabels(content: string): string {

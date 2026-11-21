@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: Done
 batch: 14
 priority:
-progress:
+progress: 100
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T12:00:00.000Z
-date_start_scheduled:
-date_start_actual:
-date_end_scheduled:
-date_end_actual:
+date_modified: 2026-11-21T06:37:55.000Z
+date_start_scheduled: 2026-11-20T17:42:00.000Z
+date_start_actual: 2026-11-20T17:42:00.000Z
+date_end_scheduled: 2026-11-21T06:37:55.000Z
+date_end_actual: 2026-11-21T06:37:55.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/52
 ---
 
 # Study - Note header study menu (T101)
@@ -66,3 +66,16 @@ A note with cards in one deck, and one with cards in two decks; desktop and phon
 - Batch 14 ticket: commit `feat(T101): …`/`fix(T101): …` plus one `docs(T101)` note commit setting `status: In-Review` with a "Batch implementation notes (awaiting manual test)" section. Stage by explicit path; `git diff --cached --stat` before each commit; never `git stash`; don't push.
 - Batch 12 (T91/T92) round-2 facts: the study tab's buttons sit in one floating panel; every mode's rating row uses the shared class `osmosis-contextual-rating` (colour rules only at `.osmosis-contextual-rating button.osmosis-rate-*` in styles.css); deck-count colours come from `--osmosis-count-new/learn/due`, declared on `.osmosis-dashboard, .osmosis-study-view`.
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes in `src/study/` or similar (vitest cannot import obsidian) and gets unit tests.
+
+## What was implemented
+
+**Where it shipped:** [PR #52](https://github.com/SawyerRensel/Osmosis/pull/52) (batch 14, branch `batch/14-study-polish-renames`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed.
+
+Code commit: `c790949` on `batch/14-study-polish-renames`.
+
+- `showStudyMenu` (`LineRevealProcessor.ts`) now shows "Study this note in note view" (graduation-cap, the old "Study here"), "Study this note in flashcard view" (file-text, the old "This note (popup)"), and one "Study the deck in flashcard view: {Deck}" item per deck (layers, full deck path). The actions are unchanged.
+- **Decks are flat up to five** (`MAX_FLAT_DECK_ITEMS`). Past five, the old submenu returns under "Study a deck in flashcard view", and mobile falls back to the flat list as before. The previous single/multi split is gone.
+- `docs/studying/study-modes.md` was updated to the new wording. T105 renames the "sequential" link text.
+- Lint, the vitest suite (3442) and the build all pass.

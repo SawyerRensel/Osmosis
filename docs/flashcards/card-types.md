@@ -10,9 +10,9 @@ Five card types come out of the same `osmosis` fence, plus
 
 **Every type studies in every mode.** A fence that fans out into three cloze
 cards asks three questions and takes three ratings whether you meet it in the
-[sequential modal](../studying/study-modes.md#sequential-study), in the
-[note](../studying/study-modes.md#contextual-study), or on the
-[mind map](../studying/study-modes.md#spatial-study).
+[flashcard study tab](../studying/study-modes.md#flashcard-study), in the
+[note](../studying/study-modes.md#note-study), or on the
+[mind map](../studying/study-modes.md#mind-map-study).
 
 ## Basic (Front / Back)
 

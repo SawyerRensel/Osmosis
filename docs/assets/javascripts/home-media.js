@@ -5,10 +5,10 @@
    brings its frame to the front. Markup contract:
 
      <ul data-osmosis-swap="study">
-       <li data-osmosis-swap-key="spatial"> … </li>
+       <li data-osmosis-swap-key="mindmap"> … </li>
 
      <div class="osmosis-swap" data-osmosis-swap-target="study">
-       <img data-osmosis-swap-key="spatial" …>
+       <img data-osmosis-swap-key="mindmap" …>
 
    The keys tie the two together; the group name ties a row list to its stack.
    Every frame is in the DOM with its own alt text, so the content is complete

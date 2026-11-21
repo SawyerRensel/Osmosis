@@ -1,6 +1,6 @@
 // Generates the Mind Map benchmark notes: "Perf 10k" (about 10,000 lines, for
 // desktop) and "Perf 3k" (about 3,000, for phones). Deterministic, so a rerun
-// rewrites the same bytes. Open either in the 2D Mind Map or the 3D graph and
+// rewrites the same bytes. Open either in the 2D Mind Map or Cosmos and
 // turn on the perf gauge (top-left corner).
 //
 //   node e2e/generate-perf-notes.mjs

@@ -1,5 +1,5 @@
 /**
- * The find bar (Ctrl+F) shared by the mind map and the 3D graph: a query box
+ * The find bar (Ctrl+F) shared by the mind map and Cosmos: a query box
  * with an "i of N" counter, a case toggle, previous/next, and a Replace row
  * that edits only the note the current match is in. The matching is the pure
  * `find-replace.ts`; the view says what its loaded nodes are, how to go to

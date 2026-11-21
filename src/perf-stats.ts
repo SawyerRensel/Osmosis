@@ -1,6 +1,6 @@
 /**
  * Frame statistics shared by the 2D and 3D perf gauges (`PerfGauge`,
- * `Graph3DPerf`, the Mind Map view). Pure, so vitest can test it.
+ * `CosmosPerf`, the Mind Map view). Pure, so vitest can test it.
  */
 
 /** One timed sample: when it happened and how long it took, in ms. */

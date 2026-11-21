@@ -1,4 +1,4 @@
-// Generates the 3D graph stress web: large notes linked together, for
+// Generates the Cosmos stress web: large notes linked together, for
 // measuring label and frame cost. Deterministic, so a rerun rewrites the same
 // bytes.
 //
@@ -7,7 +7,7 @@
 // Writes e2e/fixtures/graph3d-stress/ (the master copy) and copies it to
 // vault/tests/graph3d-stress/. Reload Obsidian afterwards.
 //
-// Shape, from "Stress Hub" (open the 3D graph there):
+// Shape, from "Stress Hub" (open Cosmos there):
 //   depth 1: the hub (1,000 lines) and 30 spokes of 400–3,000 lines
 //   depth 2: 10 outer notes of 300 lines each, linked only from spokes
 

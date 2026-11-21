@@ -1,6 +1,6 @@
 // Measures the near tier's per-frame script cost in Node: flat CSS2D panels
 // (Organic / Flat slices) against tilted CSS3D panels (Planets mode, P3), with
-// the same live panels over the same planet. It runs the real `Graph3DNear`
+// the same live panels over the same planet. It runs the real `CosmosNear`
 // (`update`, which chooses and tilts the panels) and three's real
 // `CSS2DRenderer` and `CSS3DRenderer` (`render`, which calls each panel's
 // `place`: depth, occlusion holes, mask, veil), both every frame as the
@@ -11,12 +11,12 @@
 //
 // What it cannot see: the browser's own share (style recalc of the written
 // transforms and masks, layout, compositing and rasterising the 3D layers).
-// That needs the perf gauge (`Graph3DPerf.ts`) in Obsidian.
+// That needs the perf gauge (`CosmosPerf.ts`) in Obsidian.
 
 import { PerspectiveCamera, Scene } from "three";
-import { Graph3DNear, type NearSource } from "../src/views/Graph3DNear";
-import { tangentFrame } from "../src/graph3d/planets";
-import type { GraphNode } from "../src/graph3d/model";
+import { CosmosNear, type NearSource } from "../src/views/CosmosNear";
+import { tangentFrame } from "../src/cosmos/planets";
+import type { GraphNode } from "../src/cosmos/model";
 
 class FakeElement {
 	ownerDocument = { defaultView: { Element: FakeElement } };
@@ -91,7 +91,7 @@ for (let i = 0; i < 40; i++) {
 }
 
 async function run(tilted: boolean, distance: number, enabled: boolean, budget: number): Promise<{ ms: number; panels: number; masked: number }> {
-	const near = new Graph3DNear(async () => {}, () => {}, Graph3DNear.emWorld(LINE_PLATE_HEIGHT), () => ({ detail: 3, budget }));
+	const near = new CosmosNear(async () => {}, () => {}, CosmosNear.emWorld(LINE_PLATE_HEIGHT), () => ({ detail: 3, budget }));
 	near.renderer.setSize(1600, 900);
 	near.renderer3d.setSize(1600, 900);
 	near.setTilted(tilted);

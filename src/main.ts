@@ -15,14 +15,15 @@ import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
-import { SequentialStudyView, VIEW_TYPE_STUDY } from "./views/SequentialStudyView";
+import { FlashcardStudyView, VIEW_TYPE_STUDY } from "./views/FlashcardStudyView";
 import { DashboardSidebarView, VIEW_TYPE_DASHBOARD } from "./views/DashboardSidebarView";
+import { DecksView, VIEW_TYPE_DECKS } from "./views/DecksView";
 import { BASES_CARD_BROWSER_VIEW_ID, createCardBrowserRegistration, type CardBrowserView } from "./views/CardBrowserView";
 import { StatsView, VIEW_TYPE_STATS } from "./views/StatsView";
-import { Graph3DView, VIEW_TYPE_GRAPH3D } from "./views/Graph3DView";
-import { normalizeOverlays, type Graph3DOverlays } from "./graph3d/overlays";
-import { normalizeCollapsed, type SettingsSectionId } from "./graph3d/settings-sections";
-import { ContextualStudyProcessor } from "./views/ContextualStudyProcessor";
+import { CosmosView, VIEW_TYPE_COSMOS } from "./views/CosmosView";
+import { normalizeOverlays, type CosmosOverlays } from "./cosmos/overlays";
+import { normalizeCollapsed, type SettingsSectionId } from "./cosmos/settings-sections";
+import { NoteStudyProcessor } from "./views/NoteStudyProcessor";
 import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
 import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
@@ -51,6 +52,9 @@ import { EditHistory, holdAcross } from "./edit-history";
 import { styleMappingFor } from "./styles";
 import type { Card, OcclusionSet, StudyMode } from "./database/types";
 import type { StudyScope } from "./study/types";
+import { toStudyOrigin, type StudyOrigin } from "./study/study-origin";
+import { migrateRenamedSettingKeys } from "./study/mode-names";
+import { LEGACY_COSMOS_VIEW_TYPE, LEGACY_STORAGE_KEYS, cosmosTabTitle, cosmosViewStateFrom, migrateStorageKeys } from "./cosmos-legacy";
 
 /**
  * Extensions the "Create image occlusion" item is offered for — Obsidian's own
@@ -133,7 +137,7 @@ export default class OsmosisPlugin extends Plugin {
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
 	mutationHistory!: MutationHistory;
-	/** Undo/redo for map edits, one history per file, shared by the mind map and the 3D graph. */
+	/** Undo/redo for map edits, one history per file, shared by the mind map and Cosmos. */
 	readonly editHistory = new EditHistory(() => ({
 		maxSteps: this.settings.undoMaxSteps,
 		maxMemoryMB: this.settings.undoMaxMemoryMB,
@@ -142,7 +146,7 @@ export default class OsmosisPlugin extends Plugin {
 	cardSync!: CardSyncService;
 	lineReveal!: LineRevealProcessor;
 	/** Reading-view fence cards, so `lineReveal` can redraw them on a mode change. */
-	contextualStudy!: ContextualStudyProcessor;
+	noteStudy!: NoteStudyProcessor;
 	/**
 	 * Resolves once the startup vault scan has filled the card store.
 	 *
@@ -159,6 +163,13 @@ export default class OsmosisPlugin extends Plugin {
 	/** True once {@link cardStoreReady} has settled, so callers can stay synchronous. */
 	isCardStoreReady = false;
 	private resolveCardStoreReady!: () => void;
+	/**
+	 * The scope a study tab that is opening right now should start on
+	 * (`openStudySession`), and what the tab showed before study took it over.
+	 * A study tab that opens without one steps back to its origin (or the Decks
+	 * page) instead, so this is how a new one tells the two apart.
+	 */
+	private pendingStudy: { scope: StudyScope; origin: StudyOrigin | null } | null = null;
 	/** The most recent right-click, so a file-menu can be traced back to a line. */
 	private lastContextMenu: MouseEvent | null = null;
 	/**
@@ -292,9 +303,18 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerView(VIEW_TYPE_MINDMAP, (leaf: WorkspaceLeaf) => new MindMapView(leaf));
 		this.registerView(VIEW_TYPE_PROPERTIES, (leaf: WorkspaceLeaf) => new PropertiesSidebarView(leaf));
 		this.registerView(VIEW_TYPE_DASHBOARD, (leaf: WorkspaceLeaf) => new DashboardSidebarView(leaf));
+		this.registerView(VIEW_TYPE_DECKS, (leaf: WorkspaceLeaf) => new DecksView(leaf, this));
 		this.registerView(VIEW_TYPE_STATS, (leaf: WorkspaceLeaf) => new StatsView(leaf));
-		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new SequentialStudyView(leaf, this));
-		this.registerView(VIEW_TYPE_GRAPH3D, (leaf: WorkspaceLeaf) => new Graph3DView(leaf));
+		this.registerView(VIEW_TYPE_STUDY, (leaf: WorkspaceLeaf) => new FlashcardStudyView(leaf, this));
+		this.registerView(VIEW_TYPE_COSMOS, (leaf: WorkspaceLeaf) => new CosmosView(leaf));
+		// Cosmos was the 3D graph, under another view type, before T107. Its
+		// per-device preferences move to their new keys before any tab reads
+		// them, and tabs saved under the old type reopen as Cosmos.
+		migrateStorageKeys({
+			load: (key) => this.app.loadLocalStorage(key) as unknown,
+			save: (key, value) => this.app.saveLocalStorage(key, value),
+		}, LEGACY_STORAGE_KEYS);
+		this.app.workspace.onLayoutReady(() => void this.reopenLegacyCosmosLeaves());
 
 		// Browse is a Bases view, not a view type of our own: Bases already owns
 		// note-level querying, sorting and `.base` persistence, and a second
@@ -306,11 +326,12 @@ export default class OsmosisPlugin extends Plugin {
 			createCardBrowserRegistration(this),
 		);
 
-		// The dashboard is the plugin's only ribbon entry. A mind map is opened
-		// from a note's header action, file menu, or the command below — all of
-		// which know which note to map, which the ribbon never did.
-		this.addRibbonIcon("brain-circuit", "Osmosis dashboard", () => {
-			void this.activateDashboard();
+		// The Decks page is the plugin's only ribbon entry; the sidebar dashboard
+		// it mirrors is opened by the `open-dashboard` command. A mind map is
+		// opened from a note's header action, file menu, or the command below —
+		// all of which know which note to map, which the ribbon never did.
+		this.addRibbonIcon("brain-circuit", "Osmosis decks", () => {
+			void this.activateDecksTab();
 		});
 
 		this.addCommand({
@@ -343,9 +364,9 @@ export default class OsmosisPlugin extends Plugin {
 				id: `mindmap-${def.id}`,
 				name: def.command,
 				icon: def.icon,
-				// The 3D graph draws the same ribbon (minus fold and unfold), so the command runs there too.
+				// Cosmos draws the same ribbon (minus fold and unfold), so the command runs there too.
 				checkCallback: (checking) => {
-					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(Graph3DView);
+					const view = this.app.workspace.getActiveViewOfType(MindMapView) ?? this.app.workspace.getActiveViewOfType(CosmosView);
 					return view ? view.runToolbarCommand(def, checking) : false;
 				},
 			});
@@ -358,7 +379,7 @@ export default class OsmosisPlugin extends Plugin {
 			icon: TOGGLE_3D_COMMAND.icon,
 			checkCallback: (checking) => {
 				const map = this.app.workspace.getActiveViewOfType(MindMapView);
-				const graph = map ? null : this.app.workspace.getActiveViewOfType(Graph3DView);
+				const graph = map ? null : this.app.workspace.getActiveViewOfType(CosmosView);
 				if (!map && !graph) return false;
 				if (!checking) void (map ? map.switchTo3D() : graph?.switchTo2D());
 				return true;
@@ -367,11 +388,11 @@ export default class OsmosisPlugin extends Plugin {
 
 		this.addCommand({
 			id: "open-graph3d",
-			name: "Open 3D graph for current note",
+			name: "Open Cosmos for current note",
 			checkCallback: (checking) => {
 				const file = this.app.workspace.getActiveFile();
 				if (file?.extension !== "md") return false;
-				if (!checking) void this.openGraph3D(file);
+				if (!checking) void this.openCosmos(file);
 				return true;
 			},
 		});
@@ -474,10 +495,10 @@ export default class OsmosisPlugin extends Plugin {
 						});
 				});
 				menu.addItem((item) => {
-					item.setTitle("3D graph")
+					item.setTitle("Cosmos")
 						.setIcon("orbit")
 						.onClick(() => {
-							void this.openGraph3D(file);
+							void this.openCosmos(file);
 						});
 				});
 				menu.addItem((item) => {
@@ -582,8 +603,8 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
-		// The study tab without starting a session: its deck picker, or the
-		// session already running in it
+		// The study tab without starting a session: the session already running
+		// in it, or else the Decks page, which a bare study tab turns into
 		this.addCommand({
 			id: "open-study",
 			name: "Open study tab",
@@ -604,9 +625,9 @@ export default class OsmosisPlugin extends Plugin {
 			},
 		});
 
-		// ── Contextual Study Mode ───────────────────────────────
-		this.contextualStudy = new ContextualStudyProcessor(this);
-		this.contextualStudy.register();
+		// ── Note Study Mode ───────────────────────────────
+		this.noteStudy = new NoteStudyProcessor(this);
+		this.noteStudy.register();
 
 		// Progressive line-card reveal in reading view (plan §5)
 		this.lineReveal = new LineRevealProcessor(this);
@@ -940,7 +961,7 @@ export default class OsmosisPlugin extends Plugin {
 		this.saveOverlays.run();
 		// Force out any pending schedule frontmatter writes
 		void this.scheduleStore.flush();
-		// ...and any fence schedules a contextual session was still holding, so
+		// ...and any fence schedules a note study session was still holding, so
 		// closing Obsidian mid-session does not lose the reviews it staged
 		void this.fenceWriter.flush();
 		// ...and any buffered review-log entries, so closing Obsidian mid-session
@@ -1015,7 +1036,7 @@ export default class OsmosisPlugin extends Plugin {
 				if (file) {
 					const to = this.lastMapView();
 					void leaf.setViewState({
-						type: to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP,
+						type: to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP,
 						state: to === "3d" ? { focus: file.path } : { file: file.path },
 						active: true,
 					});
@@ -1046,7 +1067,7 @@ export default class OsmosisPlugin extends Plugin {
 	/** Record the active leaf's map view, if it is one: covers tab clicks, the 2D | 3D pill, file-menu opens and a restored workspace. */
 	private rememberActiveMapView(): void {
 		const { workspace } = this.app;
-		if (workspace.getActiveViewOfType(Graph3DView)) this.rememberMapView("3d");
+		if (workspace.getActiveViewOfType(CosmosView)) this.rememberMapView("3d");
 		else if (workspace.getActiveViewOfType(MindMapView)) this.rememberMapView("2d");
 	}
 
@@ -1058,29 +1079,29 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** Apply the 3D graph navigation settings to every open 3D graph. */
+	/** Apply Cosmos navigation settings to every open Cosmos. */
 	/**
-	 * Take a change from the 3D Settings in the style sidebar: every open 3D graph shows
+	 * Take a change from the 3D Settings in the style sidebar: every open Cosmos shows
 	 * it at once. Saved straight to data.json, and debounced, since a slider
 	 * fires on every step; `saveSettings()` would also re-sync every card.
 	 */
-	setGraph3DOverlays(overlays: Graph3DOverlays): void {
+	setCosmosOverlays(overlays: CosmosOverlays): void {
 		this.settings.graph3dOverlays = overlays;
 		this.saveOverlays();
-		this.refreshOpenGraph3DControls();
+		this.refreshOpenCosmosControls();
 	}
 
 	/** Take the style sidebar's 3D Settings sections that are collapsed, saved like the overlays. */
-	setGraph3DSettingsCollapsed(collapsed: SettingsSectionId[]): void {
+	setCosmosSettingsCollapsed(collapsed: SettingsSectionId[]): void {
 		this.settings.graph3dSettingsCollapsed = collapsed;
 		this.saveOverlays();
 	}
 
 	private readonly saveOverlays = debounce(() => void this.saveData(this.settings), 500, true);
 
-	refreshOpenGraph3DControls(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GRAPH3D)) {
-			if (leaf.view instanceof Graph3DView) leaf.view.applyControlSettings();
+	refreshOpenCosmosControls(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOS)) {
+			if (leaf.view instanceof CosmosView) leaf.view.applyControlSettings();
 		}
 	}
 
@@ -1108,7 +1129,7 @@ export default class OsmosisPlugin extends Plugin {
 	 * across the swap (see `holdAcross`).
 	 */
 	async swapLeafView(leaf: WorkspaceLeaf, to: "2d" | "3d", state: Record<string, unknown>, keep: Iterable<string>): Promise<void> {
-		const type = to === "3d" ? VIEW_TYPE_GRAPH3D : VIEW_TYPE_MINDMAP;
+		const type = to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP;
 		try {
 			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
 			this.rememberMapView(to);
@@ -1118,10 +1139,10 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** A 3D graph opens in its own tab, centred on `file`. */
-	private async openGraph3D(file: TFile): Promise<void> {
+	/** A Cosmos opens in its own tab, centred on `file`. */
+	private async openCosmos(file: TFile): Promise<void> {
 		const leaf = this.app.workspace.getLeaf("tab");
-		await leaf.setViewState({ type: VIEW_TYPE_GRAPH3D, state: { focus: file.path }, active: true });
+		await leaf.setViewState({ type: VIEW_TYPE_COSMOS, state: { focus: file.path }, active: true });
 		void this.app.workspace.revealLeaf(leaf);
 	}
 
@@ -1211,15 +1232,28 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** Re-render any open dashboard sidebar views. */
+	/** Re-render every open deck dashboard: the sidebar and any Decks tabs. */
 	refreshDashboard(): void {
-		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD)) {
-			// Sidebar leaves are deferred placeholders until first shown —
-			// they have no render() (calling it would throw and kill the
-			// caller), and render themselves from the store in onOpen().
+		const { workspace } = this.app;
+		const leaves = [...workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD), ...workspace.getLeavesOfType(VIEW_TYPE_DECKS)];
+		for (const leaf of leaves) {
+			// Leaves are deferred placeholders until first shown — they have
+			// no render() (calling it would throw and kill the caller), and
+			// render themselves from the store in onOpen().
 			const view = leaf.view;
 			if (view instanceof DashboardSidebarView) void view.render();
+			else if (view instanceof DecksView) view.render();
 		}
+	}
+
+	/**
+	 * The ribbon's Decks page, in a main-area tab: an open one is revealed and
+	 * redrawn rather than a second stacked beside it.
+	 */
+	async activateDecksTab(): Promise<void> {
+		await this.activateMainView(VIEW_TYPE_DECKS);
+		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_DECKS)[0];
+		if (leaf?.view instanceof DecksView) leaf.view.render();
 	}
 
 	async activateDashboard(): Promise<void> {
@@ -1298,17 +1332,57 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	/**
-	 * Start a sequential session in the study tab. There is only ever one: an
+	 * Start a flashcard session in the study tab. There is only ever one: an
 	 * open study tab is revealed and rebuilt with the new scope (ending the
-	 * session it held), rather than a second tab stacked beside it.
+	 * session it held), rather than a second tab stacked beside it. With none
+	 * open, `from.leaf` (a Decks tab) becomes the study tab, or else a new tab.
+	 *
+	 * `from.takeOver` (a note's Study menu) makes the launching tab the study
+	 * tab even when one is open: that one steps back to what it held first, as
+	 * its cap would. A tab study takes over remembers what it showed, and its
+	 * cap puts that back; the takeover itself is a history entry, so the tab's
+	 * Back lands there too.
 	 */
-	async openStudySession(scope: StudyScope): Promise<void> {
-		await this.activateMainView(VIEW_TYPE_STUDY);
-		const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
-		if (!leaf) return;
-		// A tab restored at startup is a placeholder until first shown
-		await leaf.loadIfDeferred();
-		if (leaf.view instanceof SequentialStudyView) leaf.view.startSession(scope);
+	async openStudySession(scope: StudyScope, from?: { leaf: WorkspaceLeaf; takeOver?: boolean }): Promise<void> {
+		const { workspace } = this.app;
+		let existing: WorkspaceLeaf | undefined = workspace.getLeavesOfType(VIEW_TYPE_STUDY)[0];
+		if (from?.takeOver && existing && existing !== from.leaf) {
+			// A restored placeholder opens bare, and a bare study tab steps back by itself
+			if (existing.view instanceof FlashcardStudyView) await existing.view.leaveStudy();
+			else await existing.loadIfDeferred();
+			existing = undefined;
+		}
+		if (existing?.view instanceof FlashcardStudyView) {
+			existing.view.startSession(scope);
+			await workspace.revealLeaf(existing);
+			return;
+		}
+
+		// A study view about to open — a tab restored at startup that is still
+		// a placeholder, or a new one — takes the scope in its onOpen. Without
+		// one it would show the Decks page instead.
+		const leaf = existing ?? from?.leaf ?? workspace.getLeaf("tab");
+		// A restored study tab keeps the origin it saved; a tab taken over gets its own
+		let origin: StudyOrigin | null = null;
+		if (!existing && from) {
+			const eState: unknown = from.leaf.getEphemeralState();
+			origin = toStudyOrigin({ ...from.leaf.getViewState(), eState });
+		}
+		this.pendingStudy = { scope, origin };
+		try {
+			if (existing) await existing.loadIfDeferred();
+			else await leaf.setViewState({ type: VIEW_TYPE_STUDY, active: true });
+		} finally {
+			this.pendingStudy = null;
+		}
+		await workspace.revealLeaf(leaf);
+	}
+
+	/** For a study tab's onOpen: the scope and origin `openStudySession` is opening it on, taken once. */
+	takePendingStudy(): { scope: StudyScope; origin: StudyOrigin | null } | null {
+		const pending = this.pendingStudy;
+		this.pendingStudy = null;
+		return pending;
 	}
 
 	/**
@@ -1698,13 +1772,36 @@ export default class OsmosisPlugin extends Plugin {
 		);
 	}
 
+	/**
+	 * Reopen each tab saved under Cosmos's pre-T107 view type as Cosmos, with
+	 * its saved state. Obsidian keeps such a leaf as a placeholder of the
+	 * unknown type, so `getLeavesOfType` finds it and `getViewState` still
+	 * holds what the old view saved.
+	 */
+	private async reopenLegacyCosmosLeaves(): Promise<void> {
+		for (const leaf of this.app.workspace.getLeavesOfType(LEGACY_COSMOS_VIEW_TYPE)) {
+			const old = leaf.getViewState();
+			try {
+				await leaf.setViewState(cosmosViewStateFrom(old, VIEW_TYPE_COSMOS, cosmosTabTitle(old.state)));
+			} catch (error) {
+				console.error("Osmosis: could not move a tab saved under the old view type to Cosmos", error);
+			}
+		}
+	}
+
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<OsmosisSettings>);
-		// Replaced by graph3dOneFingerDrag before release, with a new default.
+		const saved = await this.loadData() as Record<string, unknown> | null;
+		// Settings renamed in T105 (sequentialContextLines →
+		// flashcardContextLines, …) and T107 (graph3dDesktopPivot →
+		// cosmosDesktopPivot, …). Migrated before the merge, or the default
+		// for the new key would shadow the user's old value.
+		if (saved) migrateRenamedSettingKeys(saved);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved as Partial<OsmosisSettings> | null);
+		// Replaced by graph3dOneFingerDrag (now cosmosOneFingerDrag) before release, with a new default.
 		// Any saveSettings() wrote the old default here, so it is dropped rather
 		// than carried over.
 		Reflect.deleteProperty(this.settings, "graph3dTouchDrag");
-		// Saved 3D graph node positions, dropped before release: a vault's
+		// Saved Cosmos node positions, dropped before release: a vault's
 		// shape keeps changing, so each session settles it afresh.
 		Reflect.deleteProperty(this.settings, "graph3dPositions");
 		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);

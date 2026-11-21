@@ -99,9 +99,9 @@ export class CardSyncService {
 			// overlay), parsed once
 			const lineSchedules = this.getLineSchedules?.(file);
 			const lineDisabled = this.getLineDisabled?.(file);
-			// Fence-card reviews a contextual session is holding in memory. The
+			// Fence-card reviews a note study session is holding in memory. The
 			// fence text just parsed is one review out of date for these, since
-			// contextual study waits until the note is off screen to rewrite it.
+			// note study waits until the note is off screen to rewrite it.
 			const stagedFences = this.fenceWriter.getPendingSchedules(file.path);
 
 			for (const genCard of this.occludeLineCards(file, result.cards)) {
@@ -124,7 +124,7 @@ export class CardSyncService {
 
 				// The schedule the plugin knows about but the file does not yet:
 				// osmosis-schedule frontmatter for a line card (already overlaid with
-				// its own pending ratings), a contextual session's staged review for a
+				// its own pending ratings), a note study session's staged review for a
 				// fence card. `null` is a staged *removal* — an undone review on a new
 				// card — and has to win outright, or the card is restored from the very
 				// fence text the removal has not been written into yet.

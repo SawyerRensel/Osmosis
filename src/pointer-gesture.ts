@@ -1,5 +1,5 @@
 /**
- * Shared pointer-gesture rules for the 3D graph and the 2D mind map: when a
+ * Shared pointer-gesture rules for Cosmos and the 2D mind map: when a
  * press that moved is a drag rather than a click, and what a mouse press means
  * in the 3D view. Pure, so it can be unit tested (Vitest cannot import
  * `obsidian`).
