@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Note study - Counts and progress bar replace the Stop pill]]"
-status: In-Review
+status: Done
 batch: 14
 priority:
-progress:
+progress: 100
 date_created: 2026-11-20T19:00:00.000Z
-date_modified: 2026-11-20T19:00:00.000Z
+date_modified: 2026-11-21T06:37:55.000Z
 date_start_scheduled: 2026-11-20T22:25:26.000Z
 date_start_actual: 2026-11-20T22:25:26.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-21T06:37:55.000Z
+date_end_actual: 2026-11-21T06:37:55.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/52
 ---
 
 # Mind map study - Counts and progress bar replace the Stop pill (T110)
@@ -87,7 +87,11 @@ pull_request:
 - T105 has already run, so use the new mode names (Mind map) in any visible text. Don't rename the existing `spatial*` identifiers; T106 does that sweep next.
 - Run lint, test and build one at a time (7 GB RAM).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #52](https://github.com/SawyerRensel/Osmosis/pull/52) (batch 14, branch `batch/14-study-polish-renames`), merged into `release/0.0.6`. Sawyer tested it by hand on 2026-11-21 and passed it on the first test of its round.
+
+The batch worker wrote this record when the code was committed.
 
 Code commit: `36e0c0a` on `batch/14-study-polish-renames`.
 

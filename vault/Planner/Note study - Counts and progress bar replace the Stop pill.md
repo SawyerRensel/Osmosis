@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 batch: 14
 priority:
-progress:
+progress: 100
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T12:00:00.000Z
+date_modified: 2026-11-21T06:37:55.000Z
 date_start_scheduled: 2026-11-20T17:25:57Z
 date_start_actual: 2026-11-20T17:25:57Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-21T06:37:55.000Z
+date_end_actual: 2026-11-21T06:37:55.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/52
 ---
 
 # Note study - Counts and progress bar replace the Stop pill (T102)
@@ -69,7 +69,11 @@ pull_request:
 - Batch 12 (T91/T92) round-2 facts: the study tab's buttons sit in one floating panel; every mode's rating row uses the shared class `osmosis-contextual-rating` (colour rules only at `.osmosis-contextual-rating button.osmosis-rate-*` in styles.css); deck-count colours come from `--osmosis-count-new/learn/due`, declared on `.osmosis-dashboard, .osmosis-study-view`.
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes in `src/study/` or similar (vitest cannot import obsidian) and gets unit tests.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #52](https://github.com/SawyerRensel/Osmosis/pull/52) (batch 14, branch `batch/14-study-polish-renames`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20.
+
+The batch worker wrote this record when the code was committed.
 
 Code commit: `43beb74` on `batch/14-study-polish-renames`.
 

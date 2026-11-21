@@ -11,16 +11,16 @@ location:
 related:
   - "[[Sequential study as a view instead of a modal]]"
   - "[[Sequential study - New, learn and due counts]]"
-status: In-Review
+status: Done
 batch: 14
 priority:
-progress:
+progress: 100
 date_created: 2026-11-20T12:00:00.000Z
-date_modified: 2026-11-20T12:00:00.000Z
+date_modified: 2026-11-21T06:37:55.000Z
 date_start_scheduled: 2026-11-20T13:31:05.000Z
 date_start_actual: 2026-11-20T13:31:05.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-21T06:37:55.000Z
+date_end_actual: 2026-11-21T06:37:55.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -36,7 +36,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/52
 ---
 
 # Study tab - One title, in the tab (T109)
@@ -100,7 +100,11 @@ The header block (title, bar, breadcrumb) takes about 110px and scrolls away wit
 - T91 round 2: the study tab's buttons sit in one floating panel. Display rules must not outrank `.osmosis-hidden.osmosis-hidden`. T92 round 2: the counts use `--osmosis-count-*`.
 - Run lint, test and build one at a time (7 GB RAM).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #52](https://github.com/SawyerRensel/Osmosis/pull/52) (batch 14, branch `batch/14-study-polish-renames`), merged into `release/0.0.6`. Sawyer tested it by hand and passed it on the first test, on 2026-11-20. Round 2 added fixes F3 (no fade under the strip) and F4 (the view header title). Both passed Sawyer's second test.
+
+The batch worker wrote this record when the code was committed.
 
 Code commit: `acafb8c` on `batch/14-study-polish-renames`. Started from the interrupted worker's `.claude/batch/14/T109-partial.patch`, reviewed and kept with the changes below.
 
