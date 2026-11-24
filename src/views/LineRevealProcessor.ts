@@ -14,6 +14,7 @@ import {
 	dueOrNewLineCardBlockIds,
 } from "../study/mindmap-study";
 import { decksOfNote } from "../study/note-scope";
+import { isBuried } from "../study/bury";
 import { countNoteSession, noteSessionCard, type NoteSessionCard } from "../study/session-counts";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
@@ -803,7 +804,7 @@ export class LineRevealProcessor {
 			for (const card of dueCardsForFenceKey(cards, key, now)) ids.add(card.id);
 		}
 		state.sessionCards = cards
-			.filter((card) => ids.has(card.id) && (card.due === undefined || card.due <= now))
+			.filter((card) => ids.has(card.id) && !isBuried(card, now) && (card.due === undefined || card.due <= now))
 			.map(noteSessionCard);
 		state.sessionRatings.clear();
 	}

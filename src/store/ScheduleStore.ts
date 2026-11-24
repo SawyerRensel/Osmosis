@@ -34,6 +34,9 @@ export function splitScheduleKey(key: string): { blockId: string; group?: string
  */
 const OCCLUDE_KEY = "occlude";
 
+/** The entry key holding a bury's end (see {@link ScheduleEntryYaml.buriedUntil}). */
+const BURIED_KEY = "buriedUntil";
+
 /**
  * One card's schedule as stored in frontmatter YAML.
  * Timestamps are ISO 8601 local datetimes (no timezone suffix) so the
@@ -51,9 +54,15 @@ export interface ScheduleEntryYaml {
 	learningSteps: number;
 	/** Line-card "exclude": card is fully out of study, schedule preserved. */
 	disabled?: boolean;
+	/**
+	 * Flashcard study's "Bury until tomorrow": the local datetime the bury ends
+	 * (the next midnight). Independent of the schedule fields like `disabled`,
+	 * but any schedule write for the card drops it.
+	 */
+	buriedUntil?: string;
 }
 
-/** The schedule-data keys written into a frontmatter entry (excludes `disabled`). */
+/** The schedule-data keys written into a frontmatter entry (excludes `disabled` and `buriedUntil`). */
 const SCHEDULE_FIELD_KEYS = [
 	"due",
 	"stability",
@@ -82,6 +91,8 @@ export class ScheduleStore {
 	private pending = new Map<string, Map<string, ScheduleData | null>>();
 	/** Staged disabled-flag writes per note path (independent of schedule). */
 	private pendingDisabled = new Map<string, Map<string, boolean>>();
+	/** Staged bury writes per note path: the bury's end, epoch ms. `null` = un-bury. */
+	private pendingBuried = new Map<string, Map<string, number | null>>();
 	/** Staged shape-set writes per note path, keyed by block ID. `null` = remove. */
 	private pendingOcclusion = new Map<string, Map<string, OcclusionSet | null>>();
 	private timers = new Map<string, number>();
@@ -125,6 +136,21 @@ export class ScheduleStore {
 	}
 
 	/**
+	 * Stage a bury (until `until`, epoch ms) or an un-bury (`null`) for a card,
+	 * debouncing the frontmatter flush. Like `disabled`, it merges onto the
+	 * entry without touching its schedule.
+	 */
+	setBuried(notePath: string, blockId: string, until: number | null, group?: string): void {
+		let entries = this.pendingBuried.get(notePath);
+		if (!entries) {
+			entries = new Map();
+			this.pendingBuried.set(notePath, entries);
+		}
+		entries.set(scheduleKey(blockId, group), until);
+		this.armTimer(notePath);
+	}
+
+	/**
 	 * Stage a shape set for an occluded line card, keyed by block ID alone — the
 	 * groups within it all share one drawing. An empty set removes the `occlude`
 	 * key, turning the line back into a plain line card.
@@ -162,6 +188,11 @@ export class ScheduleStore {
 		return this.pendingDisabled.get(notePath) ?? EMPTY_DISABLED;
 	}
 
+	/** All staged-but-unflushed bury changes for a note (empty map when none). */
+	getPendingBuried(notePath: string): ReadonlyMap<string, number | null> {
+		return this.pendingBuried.get(notePath) ?? EMPTY_BURIED;
+	}
+
 	/** Check if a path is currently being written to. */
 	isWriting(path: string): boolean {
 		return this.writingPaths.has(path);
@@ -169,7 +200,8 @@ export class ScheduleStore {
 
 	/** True when any staged entries have not been flushed yet. */
 	hasPendingWrites(): boolean {
-		return this.pending.size > 0 || this.pendingDisabled.size > 0 || this.pendingOcclusion.size > 0;
+		return this.pending.size > 0 || this.pendingDisabled.size > 0 || this.pendingBuried.size > 0
+			|| this.pendingOcclusion.size > 0;
 	}
 
 	/** Flush all pending entries immediately, cancelling debounce timers. */
@@ -177,6 +209,7 @@ export class ScheduleStore {
 		const paths = new Set([
 			...this.pending.keys(),
 			...this.pendingDisabled.keys(),
+			...this.pendingBuried.keys(),
 			...this.pendingOcclusion.keys(),
 		]);
 		await Promise.all([...paths].map((path) => this.flushPath(path)));
@@ -241,14 +274,17 @@ export class ScheduleStore {
 	private async writePath(notePath: string): Promise<void> {
 		const schedule = this.pending.get(notePath);
 		const disabled = this.pendingDisabled.get(notePath);
+		const buried = this.pendingBuried.get(notePath);
 		const occlusion = this.pendingOcclusion.get(notePath);
 		this.pending.delete(notePath);
 		this.pendingDisabled.delete(notePath);
+		this.pendingBuried.delete(notePath);
 		this.pendingOcclusion.delete(notePath);
 		const hasSchedule = schedule && schedule.size > 0;
 		const hasDisabled = disabled && disabled.size > 0;
+		const hasBuried = buried && buried.size > 0;
 		const hasOcclusion = occlusion && occlusion.size > 0;
-		if (!hasSchedule && !hasDisabled && !hasOcclusion) return;
+		if (!hasSchedule && !hasDisabled && !hasBuried && !hasOcclusion) return;
 
 		const file = this.resolveFile(notePath);
 		if (!file) return; // note deleted — drop the pending entries
@@ -261,6 +297,7 @@ export class ScheduleStore {
 					schedule ?? EMPTY_PENDING,
 					disabled ?? EMPTY_DISABLED,
 					occlusion ?? EMPTY_OCCLUSION,
+					buried ?? EMPTY_BURIED,
 				);
 			});
 		} catch (error) {
@@ -269,6 +306,7 @@ export class ScheduleStore {
 			// rating or forced flush retries (no timer — avoids retry loops).
 			if (schedule) this.restage(this.pending, notePath, schedule);
 			if (disabled) this.restage(this.pendingDisabled, notePath, disabled);
+			if (buried) this.restage(this.pendingBuried, notePath, buried);
 			if (occlusion) this.restage(this.pendingOcclusion, notePath, occlusion);
 		} finally {
 			this.writingPaths.delete(notePath);
@@ -291,6 +329,7 @@ export class ScheduleStore {
 const EMPTY_PENDING: ReadonlyMap<string, ScheduleData | null> = new Map();
 const EMPTY_DISABLED: ReadonlyMap<string, boolean> = new Map();
 const EMPTY_OCCLUSION: ReadonlyMap<string, OcclusionSet | null> = new Map();
+const EMPTY_BURIED: ReadonlyMap<string, number | null> = new Map();
 
 /**
  * Pure function: apply staged schedule and disabled changes to a frontmatter
@@ -304,17 +343,23 @@ const EMPTY_OCCLUSION: ReadonlyMap<string, OcclusionSet | null> = new Map();
  * `occlusion` is a third independent dimension, keyed by block ID alone rather
  * than by schedule key: the groups of one occluded image all share a single
  * drawing, which sits beside their per-group entries instead of inside one.
+ *
+ * `buried` is the fourth, applied after the schedule: a schedule write drops
+ * the entry's `buriedUntil` (a review or an undo ends any bury, and an expired
+ * one is cleared lazily this way), and a bury staged in the same window then
+ * sets it again.
  */
 export function applyScheduleEntries(
 	fm: Record<string, unknown>,
 	schedule: ReadonlyMap<string, ScheduleData | null>,
 	disabled: ReadonlyMap<string, boolean>,
 	occlusion: ReadonlyMap<string, OcclusionSet | null> = EMPTY_OCCLUSION,
+	buried: ReadonlyMap<string, number | null> = EMPTY_BURIED,
 ): void {
 	const raw = fm[SCHEDULE_FRONTMATTER_KEY];
 	const map: Record<string, unknown> = isPlainObject(raw) ? raw : {};
 
-	for (const key of new Set([...schedule.keys(), ...disabled.keys(), ...occlusion.keys()])) {
+	for (const key of new Set([...schedule.keys(), ...disabled.keys(), ...buried.keys(), ...occlusion.keys()])) {
 		const { blockId, group } = splitScheduleKey(key);
 		const block: Record<string, unknown> = isPlainObject(map[blockId]) ? map[blockId] : {};
 
@@ -331,12 +376,19 @@ export function applyScheduleEntries(
 		if (schedule.has(key)) {
 			const value = schedule.get(key)!;
 			for (const field of SCHEDULE_FIELD_KEYS) delete entry[field];
+			delete entry[BURIED_KEY];
 			if (value !== null) Object.assign(entry, serializeScheduleEntry(value));
 		}
 
 		if (disabled.has(key)) {
 			if (disabled.get(key)) entry["disabled"] = true;
 			else delete entry["disabled"];
+		}
+
+		if (buried.has(key)) {
+			const until = buried.get(key)!;
+			if (until === null) delete entry[BURIED_KEY];
+			else entry[BURIED_KEY] = formatLocalTimestamp(until);
 		}
 
 		if (group !== undefined) {
@@ -483,6 +535,33 @@ export function parseDisabledFrontmatter(raw: unknown): Set<string> {
 			continue;
 		}
 		if (value["disabled"] === true) result.add(blockId);
+	}
+	return result;
+}
+
+/**
+ * Bury ends (epoch ms) from the `osmosis-schedule` frontmatter, by schedule
+ * key. Read apart from the schedule, like `disabled`, so a new card's
+ * schedule-less `{ buriedUntil }` stub is still seen. Expired values are
+ * returned as they are; `isBuried` treats them as absent.
+ */
+export function parseBuriedFrontmatter(raw: unknown): Map<string, number> {
+	const result = new Map<string, number>();
+	if (!isPlainObject(raw)) return result;
+
+	const read = (key: string, entry: unknown): void => {
+		if (!isPlainObject(entry)) return;
+		const until = parseTimestamp(entry[BURIED_KEY]);
+		if (until !== null) result.set(key, until);
+	};
+	for (const [blockId, value] of Object.entries(raw)) {
+		if (isOcclusionEntry(value)) {
+			for (const [group, nested] of Object.entries(value)) {
+				if (group !== OCCLUDE_KEY) read(scheduleKey(blockId, group), nested);
+			}
+			continue;
+		}
+		read(blockId, value);
 	}
 	return result;
 }

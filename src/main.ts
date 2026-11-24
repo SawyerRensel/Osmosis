@@ -9,7 +9,7 @@ import { StudySessionManager } from "./study/StudySessionManager";
 import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
-import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter } from "./store/ScheduleStore";
+import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter, parseBuriedFrontmatter } from "./store/ScheduleStore";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
@@ -277,6 +277,17 @@ export default class OsmosisPlugin extends Plugin {
 				// frontmatter directly rather than staging through ScheduleStore.
 				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
 				return parseOcclusionFrontmatter(raw);
+			},
+			(file: TFile) => {
+				// Buried line cards: osmosis-schedule `buriedUntil` overlaid with
+				// pending unflushed buries and un-buries
+				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const buried = parseBuriedFrontmatter(raw);
+				for (const [key, until] of this.scheduleStore.getPendingBuried(file.path)) {
+					if (until === null) buried.delete(key);
+					else buried.set(key, until);
+				}
+				return buried;
 			},
 		);
 

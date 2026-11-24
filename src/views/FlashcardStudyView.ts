@@ -11,6 +11,7 @@ import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, 
 import { sessionStatus } from "../study/session-counts";
 import { studyReturnTarget, toStudyOrigin, type StudyOrigin } from "../study/study-origin";
 import { stepBackQueue } from "../study/undo-queue";
+import { nextDayStart } from "../study/bury";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
 import { VIEW_TYPE_DECKS } from "./DecksView";
@@ -28,9 +29,9 @@ interface DeferredCard {
 	timer: number;
 }
 
-/** An entry in the undo stack — can represent either a rating or an exclude. */
+/** An entry in the undo stack: a rating, an exclude or a bury. */
 interface UndoEntry {
-	type: "rate" | "exclude";
+	type: "rate" | "exclude" | "bury";
 	studyCard: StudyCard;
 	index: number;
 	/** Previous schedule data before the rating (null = card was new). Only for "rate". */
@@ -141,6 +142,7 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 	private undoAction: HTMLElement | null = null;
 	private gotoAction: HTMLElement | null = null;
 	private excludeAction: HTMLElement | null = null;
+	private buryAction: HTMLElement | null = null;
 	/** The study cap: lit while the tab holds a session; toggling it off leaves study (`leaveStudy`). */
 	private capAction: HTMLElement | null = null;
 
@@ -204,6 +206,7 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 		this.capAction = this.addAction("graduation-cap", "Flashcard study", () => void this.leaveStudy());
 		this.capAction.addClass("osmosis-study-cap");
 		this.excludeAction = this.addAction("eye-off", "Exclude card (e)", () => void this.excludeCard());
+		this.buryAction = this.addAction("archive", "Bury until tomorrow (-)", () => this.buryCard());
 		this.gotoAction = this.addAction("file-text", "Open note (g)", () => this.goToCard());
 		this.undoAction = this.addAction("undo-2", "Undo (Ctrl+Z)", () => void this.undo());
 		this.updateHeaderActions();
@@ -373,12 +376,13 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 	}
 
 	/**
-	 * Header actions follow what is on screen: Open note and Exclude need a
-	 * card, Undo needs something on the stack.
+	 * Header actions follow what is on screen: Open note, Exclude and Bury need
+	 * a card, Undo needs something on the stack.
 	 */
 	private updateHeaderActions(): void {
 		this.gotoAction?.toggleClass("osmosis-hidden", !this.hasCard);
 		this.excludeAction?.toggleClass("osmosis-hidden", !this.hasCard);
+		this.buryAction?.toggleClass("osmosis-hidden", !this.hasCard);
 		this.undoAction?.toggleClass("osmosis-hidden", !this.sessionActive || this.undoStack.length === 0);
 		this.capAction?.toggleClass("is-active", this.studyScope !== null);
 	}
@@ -889,7 +893,23 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 		this.renderCard();
 	}
 
-	/** Undo the last action (rating or exclude). */
+	/**
+	 * Bury the current card until the next local midnight (Anki's manual Bury)
+	 * and advance without recording a review. The card drops out of every
+	 * deck, count and study queue until then; its schedule is untouched.
+	 */
+	private buryCard(): void {
+		const studyCard = this.queue[this.currentIndex];
+		if (!studyCard || this.isWaiting || !this.sessionManager) return;
+
+		this.sessionManager.setBuried(studyCard.card, nextDayStart(Date.now()));
+		this.undoStack.push({ type: "bury", studyCard, index: this.currentIndex });
+
+		this.currentIndex++;
+		this.renderCard();
+	}
+
+	/** Undo the last action (rating, exclude or bury). */
 	private async undo(): Promise<void> {
 		if (!this.sessionManager) return;
 		const entry = this.undoStack.pop();
@@ -906,6 +926,10 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 					await this.plugin.fenceWriter.writeExclude(file, entry.studyCard.card.id, false);
 				}
 			}
+			this.stepBack();
+		} else if (entry.type === "bury") {
+			// Un-bury; like exclude, the card is still at currentIndex - 1.
+			this.sessionManager.setBuried(entry.studyCard.card, null);
 			this.stepBack();
 		} else {
 			// Undo rating: revert schedule and step back to the card
@@ -1145,6 +1169,12 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 			if (this.isTypeInFocused || !this.hasCard) return;
 			e.preventDefault();
 			void this.excludeCard();
+		});
+
+		scope.register([], "-", (e: KeyboardEvent) => {
+			if (this.isTypeInFocused || !this.hasCard) return;
+			e.preventDefault();
+			this.buryCard();
 		});
 
 		scope.register([], "g", (e: KeyboardEvent) => {

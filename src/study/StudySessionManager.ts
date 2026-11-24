@@ -13,6 +13,7 @@ export interface LineScheduleWriter {
 	setSchedule(notePath: string, blockId: string, schedule: ScheduleData, group?: string): void;
 	removeSchedule(notePath: string, blockId: string, group?: string): void;
 	setDisabled(notePath: string, blockId: string, disabled: boolean, group?: string): void;
+	setBuried(notePath: string, blockId: string, until: number | null, group?: string): void;
 }
 
 /** Destination for review-history entries (the append-only review log). */
@@ -71,7 +72,7 @@ export class StudySessionManager {
 		}
 
 		// Get new cards (no schedule entry)
-		let newCards = this.getNewCards(scope);
+		let newCards = this.getNewCards(scope, ts);
 		if (newLimit > 0) {
 			newCards = newCards.slice(0, newLimit);
 		}
@@ -275,12 +276,29 @@ export class StudySessionManager {
 	}
 
 	/**
+	 * Bury a card until `until` (epoch ms) or un-bury it (`null`). Updates the
+	 * store at once, so decks, counts and queues drop it, and persists
+	 * `buriedUntil` beside the card's schedule: osmosis-schedule frontmatter for
+	 * a line card, the fence header for a fence card. Not a review, so nothing
+	 * reaches the review log and the schedule is untouched.
+	 */
+	setBuried(card: Card, until: number | null): void {
+		this.store.setBuried(card.id, until);
+		if (isLineCard(card)) {
+			this.scheduleStore?.setBuried(card.notePath, card.blockId, until, card.occlusionGroup);
+			return;
+		}
+		const file = this.resolveFile(card.notePath);
+		if (file) void this.fenceWriter.writeBuried(file, card.id, until);
+	}
+
+	/**
 	 * Get counts for a deck scope.
 	 */
 	getCounts(scope: StudyScope, now?: number): DeckCounts {
 		const ts = now ?? Date.now();
 		const dueCards = this.getDueCards(scope, ts);
-		const newCards = this.getNewCards(scope);
+		const newCards = this.getNewCards(scope, ts);
 
 		// Count learning cards from due cards
 		const learnCount = dueCards.filter(
@@ -348,16 +366,16 @@ export class StudySessionManager {
 		}
 	}
 
-	private getNewCards(scope: StudyScope): Card[] {
+	private getNewCards(scope: StudyScope, now: number): Card[] {
 		switch (scope.type) {
 			case "single":
-				return this.store.getNewCards(scope.deck);
+				return this.store.getNewCards(scope.deck, now);
 			case "parent":
-				return this.store.getNewCardsByDeckPrefix(scope.deck);
+				return this.store.getNewCardsByDeckPrefix(scope.deck, now);
 			case "all":
-				return this.store.getNewCards();
+				return this.store.getNewCards(undefined, now);
 			case "note":
-				return newCardsInNote(this.store.getCardsByNote(scope.notePath));
+				return newCardsInNote(this.store.getCardsByNote(scope.notePath), now);
 		}
 	}
 }

@@ -20,6 +20,7 @@ import type { Card, CardOcclusion } from "../database/types";
 import { lineCardId } from "../card-gen/line-cards";
 import { groupNumber } from "../card-gen/occlusion";
 import { noteSessionCard, type NoteSessionCard } from "./session-counts";
+import { isBuried } from "./bury";
 
 /**
  * Structural view of a laid-out map node — matches `LayoutNode` so the
@@ -48,9 +49,10 @@ function isLineCard(card: Card): boolean {
 
 /**
  * Whether the scheduler would study this card now: due, or new (never
- * reviewed). "Due" always means due-or-new (plan §5).
+ * reviewed), and not buried. "Due" always means due-or-new (plan §5).
  */
 function isDueOrNew(card: Card, now: number): boolean {
+	if (isBuried(card, now)) return false;
 	return card.due === undefined || card.due <= now;
 }
 

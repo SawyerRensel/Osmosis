@@ -55,6 +55,11 @@ export class CardSyncService {
 		 * rather than inside `processNote`, which sees only the raw markdown.
 		 */
 		private readonly getLineOcclusions?: (file: TFile) => Map<string, OcclusionSet>,
+		/**
+		 * Bury ends (epoch ms) of buried line cards for a note, by schedule key —
+		 * osmosis-schedule `buriedUntil` overlaid with pending changes.
+		 */
+		private readonly getLineBuried?: (file: TFile) => Map<string, number>,
 	) {}
 
 	/**
@@ -99,6 +104,7 @@ export class CardSyncService {
 			// overlay), parsed once
 			const lineSchedules = this.getLineSchedules?.(file);
 			const lineDisabled = this.getLineDisabled?.(file);
+			const lineBuried = this.getLineBuried?.(file);
 			// Fence-card reviews a note study session is holding in memory. The
 			// fence text just parsed is one review out of date for these, since
 			// note study waits until the note is off screen to rewrite it.
@@ -121,6 +127,9 @@ export class CardSyncService {
 				const isDisabled = key !== undefined
 					? lineDisabled?.has(key) ?? false
 					: genCard.disabled === true;
+				// Same split for a bury: frontmatter for a line card, the fence
+				// header's `buriedUntil` for a fence card.
+				const buriedUntil = key !== undefined ? lineBuried?.get(key) : genCard.buriedUntil;
 
 				// The schedule the plugin knows about but the file does not yet:
 				// osmosis-schedule frontmatter for a line card (already overlaid with
@@ -142,6 +151,7 @@ export class CardSyncService {
 					blockId: genCard.blockId,
 					excludeFromDecks: genCard.excludeFromDecks,
 					...(isDisabled ? { disabled: true } : {}),
+					...(buriedUntil !== undefined ? { buriedUntil } : {}),
 					contextBefore: genCard.contextBefore,
 					occlusion: genCard.occlusion,
 					occlusionGroup: genCard.occlusionGroup,
@@ -300,6 +310,7 @@ const META_KEYS = new Set([
 	"id", "exclude", "bidi", "type-in", "deck", "hint",
 	"due", "stability", "difficulty", "reps", "lapses", "state",
 	"last-review", "learning-steps", "lastreview", "learningsteps",
+	"burieduntil",
 ]);
 
 /**

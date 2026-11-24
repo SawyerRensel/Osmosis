@@ -131,6 +131,14 @@ export interface Card {
 	 */
 	disabled?: boolean;
 	/**
+	 * Buried (Flashcard study's "Bury until tomorrow"): out of every deck,
+	 * count and study queue until this instant, epoch ms — the next local
+	 * midnight when it was set. A past value means not buried. Stored as
+	 * `buriedUntil` beside the card's schedule (osmosis-schedule entry or fence
+	 * header); any schedule write for the card drops it.
+	 */
+	buriedUntil?: number;
+	/**
 	 * Line cards: contents of the immediately preceding sibling lines
 	 * (document order), rendered as front context in flashcard study.
 	 */
