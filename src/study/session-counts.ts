@@ -87,3 +87,56 @@ export function countNoteSession(
 	}
 	return counts;
 }
+
+/** A card rated into learning this session, waiting for `dueAt` to come back. */
+export interface PendingStudyCard {
+	studyCard: StudyCard;
+	/** Epoch ms when the card is due again. */
+	dueAt: number;
+}
+
+export interface SessionStatus {
+	counts: SessionCounts;
+	/** How far through the session the bar reads, 0–100. */
+	percent: number;
+}
+
+/**
+ * The study tab's progress bar and counts (T117).
+ *
+ * Progress is cards finished / (finished + cards left). A card is finished once
+ * it has been answered (or excluded) and is not coming back this session; a card
+ * rated into learning is still left until it graduates, so an Again never moves
+ * the bar forward. The card on screen is left, so the first card reads 0%.
+ *
+ * With nothing left to show but learning cards on their timers (the waiting
+ * screen), the counts match the Decks tab — only cards due by `now` — and the
+ * bar reads full. A learning card that comes due counts again.
+ */
+export function sessionStatus(
+	queue: readonly StudyCard[],
+	currentIndex: number,
+	deferred: readonly PendingStudyCard[],
+	now: number,
+): SessionStatus {
+	const start = Math.max(0, currentIndex);
+	const waiting = start >= queue.length;
+	const left = waiting ? deferred.filter((d) => d.dueAt <= now) : deferred;
+	const counts = countSession(queue, start, left.map((d) => d.studyCard));
+
+	// Everything shown so far, by card: a card answered Again and then Good
+	// sits in the queue twice but finishes once.
+	const pendingIds = new Set<string>();
+	for (let i = start; i < queue.length; i++) pendingIds.add(queue[i]!.card.id);
+	for (const d of deferred) pendingIds.add(d.studyCard.card.id);
+	const finishedIds = new Set<string>();
+	for (let i = 0; i < start && i < queue.length; i++) {
+		const id = queue[i]!.card.id;
+		if (!pendingIds.has(id)) finishedIds.add(id);
+	}
+
+	const finished = finishedIds.size;
+	const remaining = (queue.length - Math.min(start, queue.length)) + left.length;
+	const percent = remaining === 0 ? 100 : (finished / (finished + remaining)) * 100;
+	return { counts, percent };
+}

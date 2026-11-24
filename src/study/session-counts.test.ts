@@ -2,7 +2,10 @@ import { describe, it, expect } from "vitest";
 import type { Card, CardState } from "../database/types";
 import type { StudyCard } from "./types";
 import type { FSRSRating } from "../database/FSRSScheduler";
-import { bucketOf, countNoteSession, countSession, noteSessionCard, type NoteSessionCard } from "./session-counts";
+import {
+	bucketOf, countNoteSession, countSession, noteSessionCard, sessionStatus,
+	type NoteSessionCard, type PendingStudyCard,
+} from "./session-counts";
 import { stepBackQueue } from "./undo-queue";
 
 function mk(id: string, state?: CardState): StudyCard {
@@ -172,5 +175,87 @@ describe("countNoteSession", () => {
 
 	it("marks nothing for a card outside the session", () => {
 		expect(countNoteSession(cards, new Map(), ["bowline"]).current).toBeNull();
+	});
+});
+
+describe("sessionStatus (T117)", () => {
+	const NOW = 1_000_000;
+	const reviews = (n: number) => Array.from({ length: n }, (_, i) => mk(`r${i}`, "review"));
+	const pending = (sc: StudyCard, dueAt: number): PendingStudyCard => ({ studyCard: learningCopy(sc), dueAt });
+
+	it("steps 10% per card through ten due cards rated Good", () => {
+		const queue = reviews(10);
+		const percents = Array.from({ length: 11 }, (_, i) => sessionStatus(queue, i, [], NOW).percent);
+		percents.forEach((pct, i) => expect(pct).toBeCloseTo(i * 10));
+	});
+
+	it("reads 0% on the first card, not 1/total", () => {
+		expect(sessionStatus(reviews(3), 0, [], NOW).percent).toBe(0);
+	});
+
+	it("does not move the bar when a card is rated Again", () => {
+		const queue = reviews(10);
+		const before = sessionStatus(queue, 4, [], NOW).percent;
+		// Card r4 rated Again: index advances, the card waits on its timer.
+		const after = sessionStatus(queue, 5, [pending(queue[4]!, NOW + 60_000)], NOW).percent;
+		expect(before).toBeCloseTo(40);
+		expect(after).toBeCloseTo(40);
+	});
+
+	it("counts a card answered Again then Good as one finished card", () => {
+		const queue = reviews(3);
+		// r0 Again, r1 Good, r2 Good; r0's copy came back and was rated Good.
+		queue.push(learningCopy(queue[0]!));
+		expect(sessionStatus(queue, 3, [], NOW).percent).toBeCloseTo(2 / 3 * 100);
+		expect(sessionStatus(queue, 4, [], NOW).percent).toBe(100);
+	});
+
+	it("keeps a pass of new cards at 0% while every one waits in learning", () => {
+		// The diagnosed bug: the old (rated+1)/(rated+left) read 3/4 here.
+		const queue = [mk("n1"), mk("n2"), mk("n3"), mk("n4")];
+		const deferred = queue.slice(0, 2).map((sc) => pending(sc, NOW + 600_000));
+		const { percent, counts } = sessionStatus(queue, 2, deferred, NOW);
+		expect(percent).toBe(0);
+		expect(plain(counts)).toEqual([2, 2, 0, "new"]);
+	});
+
+	it("matches the Decks tab while waiting: 0 0 0 and a full bar", () => {
+		const queue = reviews(3);
+		const deferred = queue.map((sc) => pending(sc, NOW + 60_000));
+		const { percent, counts } = sessionStatus(queue, 3, deferred, NOW);
+		expect(percent).toBe(100);
+		expect(plain(counts)).toEqual([0, 0, 0, null]);
+	});
+
+	it("counts a waiting learning card again once it is due", () => {
+		const queue = reviews(3);
+		const deferred = [pending(queue[0]!, NOW - 1), pending(queue[1]!, NOW + 60_000)];
+		const { percent, counts } = sessionStatus(queue, 3, deferred, NOW);
+		expect(plain(counts)).toEqual([0, 1, 0, null]);
+		// r2 finished; r0 due again; r1 not due yet, so neither finished nor left.
+		expect(percent).toBeCloseTo(50);
+	});
+
+	it("brings a fired learning card back into the bar and the counts", () => {
+		const queue = reviews(3);
+		// r0 Again; r1, r2 Good; r0's timer fired and its copy is on screen.
+		queue.push(learningCopy(queue[0]!));
+		const { percent, counts } = sessionStatus(queue, 3, [], NOW);
+		expect(plain(counts)).toEqual([0, 1, 0, "learn"]);
+		expect(percent).toBeCloseTo(2 / 3 * 100);
+	});
+
+	it("reverts with the queue on undo, since it is derived from it", () => {
+		const queue = reviews(4);
+		const rated = sessionStatus(queue, 2, [], NOW).percent;
+		const undone = stepBackQueue({ queue, currentIndex: 2 });
+		expect(rated).toBeCloseTo(50);
+		expect(sessionStatus(undone.queue, undone.currentIndex, [], NOW).percent).toBeCloseTo(25);
+	});
+
+	it("reads full with 0 0 0 when the session is complete", () => {
+		const { percent, counts } = sessionStatus(reviews(2), 2, [], NOW);
+		expect(percent).toBe(100);
+		expect(plain(counts)).toEqual([0, 0, 0, null]);
 	});
 });
