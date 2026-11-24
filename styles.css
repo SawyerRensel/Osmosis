@@ -4649,9 +4649,8 @@ body.osmosis-hide-navbar .mobile-navbar {
 	top: 0;
 	box-sizing: border-box;
 	width: max-content;
-	/* PANEL_MAX_EM in src/cosmos/near.ts: the scene spaces nodes for a panel this big. */
+	/* PANEL_MAX_EM in src/cosmos/near.ts: the scene spaces nodes for a panel this wide. No max-height (T111): a panel shows all of its content, as tall as `panelBoxEm` spaces it. */
 	max-width: 20em;
-	max-height: 30em;
 	overflow: hidden;
 	padding: 0.25em 0.4em;
 	/* Matches the plate's text colour (the fill is the lens's, the outline is set inline). */
@@ -4669,6 +4668,23 @@ body.osmosis-hide-navbar .mobile-navbar {
 .osmosis-cosmos-near-body > :last-child,
 .osmosis-cosmos-near-body > :last-child > :last-child {
 	margin-bottom: 0;
+}
+
+/* Nothing inside a panel scrolls (T111), as nothing inside a 2D node does (T88,
+   above): Obsidian's `pre` scrolls sideways, and a token wider than the panel
+   (a URL, minified code) would put a scrollbar over the block's last line.
+   `pre` already wraps (`--code-white-space: pre-wrap`); `overflow-wrap:
+   anywhere` breaks the token too, as edit mode's CodeMirror does. */
+.osmosis-cosmos-near-body pre,
+.osmosis-cosmos-near-body .callout-content,
+.osmosis-cosmos-near-body .table-wrapper,
+.osmosis-cosmos-near-body mjx-container {
+	overflow: visible;
+	max-height: none;
+}
+
+.osmosis-cosmos-near-body pre {
+	overflow-wrap: anywhere;
 }
 
 .osmosis-cosmos-near-body img,

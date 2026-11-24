@@ -9,6 +9,11 @@ function line(raw: string, content = raw): GraphNode {
 	return { id: "line:a.md#x", kind: "line", label: content, path: "a.md", source };
 }
 
+function codeblock(raw: string): GraphNode {
+	const node = line(raw);
+	return { ...node, source: { ...node.source!, type: "codeblock" } };
+}
+
 describe("unembed", () => {
 	it("turns an embedded note, heading or block into a link", () => {
 		expect(unembed("![[Rigging]]")).toBe("[[Rigging]]");
@@ -126,8 +131,8 @@ describe("panelBoxEm", () => {
 		const titled = panelBoxEm(line("- `Alpha` ![](flag-alpha.svg)", "`Alpha` ![](flag-alpha.svg)"))!;
 		const two = panelBoxEm(line("- `Alpha Bravo` ![](flag-alpha.svg) ![](flag-bravo.svg)", "`Alpha Bravo` ![](flag-alpha.svg) ![](flag-bravo.svg)"))!;
 		expect(titled.height).toBeCloseTo(one.height + 1.5);
-		// Two full-height images and a title: past the panel's cap.
-		expect(two.height).toBe(PANEL_MAX_EM.height);
+		// Two full-height images and a title.
+		expect(two.height).toBeCloseTo(titled.height + PANEL_MEDIA_MAX_EM);
 	});
 
 	it("counts an HTML image as an image", () => {
@@ -137,15 +142,37 @@ describe("panelBoxEm", () => {
 
 	it("gives a table row the height of its fullest cell's images", () => {
 		const box = panelBoxEm(line("| Hoist | Flags |\n| --- | --- |\n| AB | ![](flag-alpha.svg) ![](flag-bravo.svg) |\n| C | ![](flag-charlie.svg) |"))!;
-		// Header, a row of two stacked images and a row of one: past the panel's cap.
-		expect(box.height).toBe(PANEL_MAX_EM.height);
+		// Header, a row of two stacked images and a row of one.
+		expect(box.height).toBeCloseTo(2 + (2 + 2 * PANEL_MEDIA_MAX_EM) + (2 + PANEL_MEDIA_MAX_EM) + 0.5);
 		const single = panelBoxEm(line("| Hoist | Flag | Flag |\n| --- | --- | --- |\n| AB | ![](flag-alpha.svg) | ![](flag-bravo.svg) |"))!;
 		expect(single.height).toBeCloseTo(2 * 2 + PANEL_MEDIA_MAX_EM + 0.5);
 	});
 
-	it("never exceeds the panel's largest size", () => {
-		const box = panelBoxEm(line("```\n" + "x\n".repeat(100) + "```"))!;
-		expect(box).toEqual({ width: expect.any(Number) as number, height: PANEL_MAX_EM.height });
+	it("is as tall as every line of a long code block: no height cap (T111)", () => {
+		const hundred = panelBoxEm(line("```\n" + "x\n".repeat(100) + "```"))!;
+		expect(hundred.height).toBeCloseTo(102 * 1.4 + 1.5 + 0.5);
+		const more = panelBoxEm(line("```\n" + "x\n".repeat(120) + "```"))!;
+		expect(more.height).toBeCloseTo(hundred.height + 20 * 1.4);
+	});
+
+	it("is at least as tall as a 23-line code block renders (T111)", () => {
+		// The block in Sawyer's screenshot: 23 lines of JavaScript, at Obsidian's 14 px code
+		// text on 21 px rows, 12 px of code-block padding either side and the panel's own
+		// 4 px either side. It measures 32.2em; the old 30em cap cut its closing brace off.
+		const body = ["// galley.js", "function stowGalley() {", ...Array.from({ length: 20 }, (_, i) => `  stow('locker-${i}');`), "}"];
+		const rendered = (23 * 21 + 2 * 12 + 2 * 4) / 16;
+		const box = panelBoxEm(codeblock(["```js", ...body, "```"].join("\n")))!;
+		expect(box.height).toBeGreaterThanOrEqual(rendered);
+	});
+
+	it("fits a code block to its longest line up to the column cap, and wraps a longer line onto more rows", () => {
+		const sixty = "x".repeat(60);
+		const fits = panelBoxEm(codeblock(["```", sixty, "```"].join("\n")))!;
+		const wraps = panelBoxEm(codeblock(["```", sixty, "y".repeat(120), "```"].join("\n")))!;
+		// 100 columns (`CODE_FIT_MAX_COLUMNS`) at 0.55em, the code block's padding and the panel's.
+		expect(wraps.width).toBeCloseTo(100 * 0.55 + 2 + 0.8);
+		// The 120-column line takes two rows.
+		expect(wraps.height - fits.height).toBeCloseTo(2 * 1.4);
 	});
 });
 

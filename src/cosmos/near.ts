@@ -98,8 +98,13 @@ export function nearMarkdown(node: GraphNode): string | null {
 	return markdown === "" ? null : markdown;
 }
 
-/** Widest and tallest a panel is laid out, in ems of panel text: the widest line plate (`LINE_PLATE_MAX_EM`), and 30 lines. Mirrored by `.osmosis-cosmos-near-panel` in `styles.css`. */
-export const PANEL_MAX_EM = { width: 20, height: 30 } as const;
+/**
+ * Widest a panel is laid out, in ems of panel text: the widest line plate
+ * (`LINE_PLATE_MAX_EM`). Mirrored by `.osmosis-cosmos-near-panel` in
+ * `styles.css`. There is no tallest: a panel shows all of its content, as a
+ * 2D map node does (T111; a 30em cap cut the last lines off a long code block).
+ */
+export const PANEL_MAX_EM = { width: 20 } as const;
 /** Tallest an image or video is drawn in a panel, in ems. Mirrored in `styles.css`. */
 export const PANEL_MEDIA_MAX_EM = 15;
 
@@ -282,6 +287,9 @@ export function plateWidthEm(node: GraphNode): { textMaxEm: number; minEm: numbe
  * height (`3D Graph - Planets mode.md`, feedback fix 2). Every image on a
  * line counts a full media row, below the line's text (feedback fix 3).
  *
+ * It is never capped (T111): the panel is drawn as tall as its content, so a
+ * cap here would space a long code block tighter than it is drawn.
+ *
  * `null` for a node that never gets a panel (`nearMarkdown`).
  */
 export function panelBoxEm(node: GraphNode): { width: number; height: number } | null {
@@ -305,6 +313,6 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 	}
 	return {
 		width: rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X),
-		height: Math.min(PANEL_MAX_EM.height, height + 2 * PAD_Y),
+		height: height + 2 * PAD_Y,
 	};
 }
