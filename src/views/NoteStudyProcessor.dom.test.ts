@@ -171,6 +171,8 @@ interface Harness {
 	reviews: { cardId: string; rating: number }[];
 	/** The keys handed to the session's progress pill, which counts fences. */
 	ratedFences: string[];
+	/** The cards whose rating an undo took back, in order. */
+	reverts: string[];
 	/**
 	 * Draw the same fence again into the same element, as Obsidian does whenever
 	 * the file changes — which a rating does, since flushing a schedule rewrites
@@ -186,6 +188,7 @@ interface Harness {
 function renderFence(source: string, mode: "off" | "study", cards: Card[] = []): Harness {
 	const reviews: { cardId: string; rating: number }[] = [];
 	const ratedFences: string[] = [];
+	const reverts: string[] = [];
 	const plugin = {
 		app: {
 			metadataCache: {
@@ -205,11 +208,18 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			isFenceTarget: (_path: string, fenceId: string) =>
 				mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
 			markFenceRated: (_path: string, key: string) => ratedFences.push(key),
+			unmarkFenceRated: (_path: string, key: string) => {
+				ratedFences.splice(ratedFences.lastIndexOf(key), 1);
+			},
 		},
 		createSessionManager: () => ({
 			previewIntervals: () => ({ 1: 60_000, 2: 6 * 60_000, 3: 86_400_000, 4: 4 * 86_400_000 }),
 			recordReview: (cardId: string, rating: number) => {
 				reviews.push({ cardId, rating });
+				return Promise.resolve();
+			},
+			revertReview: (cardId: string) => {
+				reverts.push(cardId);
 				return Promise.resolve();
 			},
 		}),
@@ -235,7 +245,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 		return other;
 	};
 	render();
-	return { el, reviews, ratedFences, rerender: render, renderAnother };
+	return { el, reviews, ratedFences, reverts, rerender: render, renderAnother };
 }
 
 /** The group each painted mask belongs to, by the role class the renderer gave it. */
@@ -251,6 +261,23 @@ function maskRoles(el: HTMLElement): string[] {
 /** The step counter's text, or null on a card that is not stepping. */
 function stepCount(el: HTMLElement): string | null {
 	return el.querySelector(".osmosis-note-step")?.textContent ?? null;
+}
+
+/** Reveal the card's current question and rate it Good. */
+function answerGood(el: HTMLElement): void {
+	el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+	el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+}
+
+/** Press the card's own undo button and let the undo finish. */
+async function pressUndo(el: HTMLElement): Promise<void> {
+	el.querySelector<HTMLElement>(".osmosis-note-undo")!.click();
+	await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+/** Whether the card's undo button is showing. */
+function undoShowing(el: HTMLElement): boolean {
+	return el.querySelector(".osmosis-note-undo:not(.osmosis-hidden)") !== null;
 }
 
 describe("an occluded fence in note study", () => {
@@ -382,6 +409,22 @@ describe("an occluded fence in note study", () => {
 		// came back claiming to be finished with `c2` never asked.
 		expect(stepCount(el)).toBe("2/2");
 		expect(maskRoles(el)).toEqual(["hidden", "target"]);
+	});
+
+	it("puts the group just rated back behind Show answer on undo", async () => {
+		const { el, ratedFences, reverts } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
+		answerGood(el);
+		expect(stepCount(el)).toBe("2/2");
+		expect(undoShowing(el)).toBe(true);
+
+		await pressUndo(el);
+
+		expect(reverts).toEqual(["bridge-c1"]);
+		expect(ratedFences).toEqual([]);
+		expect(stepCount(el)).toBe("1/2");
+		expect(maskRoles(el)).toEqual(["target", "hidden"]);
+		expect(el.querySelector(".osmosis-note-show-answer")).not.toBeNull();
+		expect(undoShowing(el)).toBe(false);
 	});
 
 	it("leaves a group with no card in the store out of the sequence", () => {
@@ -545,6 +588,68 @@ describe("a fence whose cards the store holds", () => {
 		// the answer to its first question.
 		expect(frontText(el)).toBe(C2.front);
 		expect(stepCount(el)).toBe("2/2");
+	});
+
+	it("brings back Show answer on the question just rated when undo is pressed", async () => {
+		const { el, ratedFences, reverts } = renderFence(CLOZE, "study", [C1, C2]);
+		answerGood(el);
+		expect(frontText(el)).toBe(C2.front);
+
+		await pressUndo(el);
+
+		// The rating is taken back — schedule and the session's count — and the
+		// fence is on `c1` again with its answer hidden. It used to stay on `c2`:
+		// the step had moved on and nothing moved it back.
+		expect(reverts).toEqual(["rivers-c1"]);
+		expect(ratedFences).toEqual([]);
+		expect(stepCount(el)).toBe("1/2");
+		expect(frontText(el)).toBe(C1.front);
+		expect(el.querySelector(".osmosis-note-show-answer")).not.toBeNull();
+		expect(el.querySelector(".osmosis-rating")).toBeNull();
+		expect(undoShowing(el)).toBe(false);
+	});
+
+	it("undoes a finished fence back to its last question", async () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+		answerGood(el);
+		answerGood(el);
+		expect(el.querySelector(".osmosis-note-rated")?.textContent).toBe("Rated");
+
+		await pressUndo(el);
+
+		expect(stepCount(el)).toBe("2/2");
+		expect(frontText(el)).toBe(C2.front);
+		expect(el.querySelector(".osmosis-note-show-answer")).not.toBeNull();
+		// The first answer still stands, so there is still something to undo.
+		expect(undoShowing(el)).toBe(true);
+	});
+
+	it("hides a later question that was revealed before the undo", async () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+		answerGood(el);
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+
+		await pressUndo(el);
+		answerGood(el);
+
+		// Back on `c2`, asked afresh rather than opening already answered.
+		expect(frontText(el)).toBe(C2.front);
+		expect(el.querySelector(".osmosis-note-show-answer")).not.toBeNull();
+	});
+
+	it("undoes only its own card's rating, not the note's latest", async () => {
+		const lakes = clozeCard(1, `${CLOZE_BLANK} is the largest lake in Africa.`);
+		lakes.id = "lakes-c1";
+		const { el, renderAnother, reverts } = renderFence(CLOZE, "study", [C1, C2, lakes]);
+		const other = renderAnother("id: lakes\n\n==Victoria== is the largest lake in Africa.");
+
+		answerGood(el);
+		answerGood(other);
+		await pressUndo(el);
+
+		expect(reverts).toEqual(["rivers-c1"]);
+		expect(frontText(el)).toBe(C1.front);
+		expect(other.querySelector(".osmosis-note-rated")?.textContent).toBe("Rated");
 	});
 
 	it("asks with a full-width Show answer button instead of a placeholder", () => {

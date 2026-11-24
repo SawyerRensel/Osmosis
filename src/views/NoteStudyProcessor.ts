@@ -116,6 +116,8 @@ export class NoteStudyProcessor {
 		sourcePath: string;
 		fenceId: string;
 		restart: () => void;
+		/** Draw the fence again from the state held here, keeping its place — for undo. */
+		redraw: () => void;
 	}[] = [];
 	/**
 	 * The height each reading-view fence last rendered to, by its source text.
@@ -222,14 +224,20 @@ export class NoteStudyProcessor {
 	 * attached one is left alone, since that is the same note open in a second
 	 * pane. `LineRevealProcessor.trackLine` keeps its lines by the same rule.
 	 */
-	private trackFence(el: HTMLElement, sourcePath: string, fenceId: string, restart: () => void): void {
+	private trackFence(
+		el: HTMLElement,
+		sourcePath: string,
+		fenceId: string,
+		restart: () => void,
+		redraw: () => void,
+	): void {
 		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
 			const entry = this.trackedFences[i]!;
 			if (entry.sourcePath === sourcePath && entry.fenceId === fenceId && !entry.el.isConnected) {
 				this.trackedFences.splice(i, 1);
 			}
 		}
-		this.trackedFences.push({ el, sourcePath, fenceId, restart });
+		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw });
 	}
 
 	/**
@@ -376,7 +384,7 @@ export class NoteStudyProcessor {
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			this.addUndoButton(topRow);
+			this.addUndoButton(topRow, parsed.cardId, sourcePath);
 			this.addExcludeToggle(topRow, parsed, sourcePath);
 
 			actionsEl.empty();
@@ -416,7 +424,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		});
+		}, draw);
 	}
 
 	/**
@@ -435,17 +443,31 @@ export class NoteStudyProcessor {
 		this.renderProse(markdown, el, sourcePath);
 	}
 
-	/** The undo affordance, present but invisible until there is something to undo. */
-	private addUndoButton(row: HTMLElement): void {
+	/**
+	 * The undo affordance, present but invisible until this fence has something
+	 * to undo. It takes back **this fence's** latest action, not the note's: the
+	 * button sits on the card, so pressing it on one card must not rewind
+	 * another. Ctrl+Z is the one that undoes whatever came last.
+	 */
+	private addUndoButton(row: HTMLElement, fenceKey: string, sourcePath: string): void {
 		const undoBtn = row.createDiv({
-			cls: `osmosis-note-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
+			cls: `osmosis-note-undo${this.lastUndoFor(fenceKey, sourcePath) < 0 ? " osmosis-hidden" : ""}`,
 		});
 		setIcon(undoBtn, "undo-2");
 		undoBtn.setAttribute("aria-label", "Undo (Ctrl+Z)");
 		undoBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			void this.undo();
+			void this.undo(this.lastUndoFor(fenceKey, sourcePath));
 		});
+	}
+
+	/** Where in the undo stack this fence's latest action is, or -1 when it has none. */
+	private lastUndoFor(fenceKey: string, sourcePath: string): number {
+		for (let i = this.undoStack.length - 1; i >= 0; i--) {
+			const entry = this.undoStack[i]!;
+			if (entry.sourcePath === sourcePath && (entry.fenceKey ?? entry.cardId) === fenceKey) return i;
+		}
+		return -1;
 	}
 
 	/**
@@ -638,6 +660,7 @@ export class NoteStudyProcessor {
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
+			this.addUndoButton(topRow, parsed.cardId, sourcePath);
 			this.addExcludeToggle(topRow, parsed, sourcePath);
 
 			actionsEl.empty();
@@ -684,7 +707,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		});
+		}, draw);
 	}
 
 	/**
@@ -1036,9 +1059,17 @@ export class NoteStudyProcessor {
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
 	}
 
-	/** Undo the last action (rating or exclude). Triggers a file re-render for note cards. */
-	private async undo(): Promise<void> {
-		const entry = this.undoStack.pop();
+	/**
+	 * Undo an action (rating or exclude) — the one at `at` in the stack, the
+	 * latest by default. A rating puts its fence back on the question it answered.
+	 *
+	 * Taking one out of the middle is safe because each entry restores one card's
+	 * own schedule, and `revertReview` discards that card's buffered log entry by
+	 * ID rather than the newest one.
+	 */
+	private async undo(at = this.undoStack.length - 1): Promise<void> {
+		if (at < 0) return;
+		const [entry] = this.undoStack.splice(at, 1);
 		if (!entry) return;
 
 		if (entry.type === "exclude") {
@@ -1060,13 +1091,39 @@ export class NoteStudyProcessor {
 				this.plugin.lineReveal?.unmarkFenceRated(entry.sourcePath, entry.fenceKey, entry.cardId);
 			}
 			this.plugin.refreshDashboard();
+			if (entry.fenceKey !== undefined) this.rewindFence(entry.sourcePath, entry.fenceKey, entry.cardId);
+		}
+	}
 
-			// Trigger re-render by modifying the file (touch the file to force Obsidian to re-process code blocks)
-			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
-			if (file) {
-				const content = await this.plugin.app.vault.cachedRead(file);
-				await this.plugin.app.vault.modify(file, content);
-			}
+	/**
+	 * Put a fence back on the question whose rating was just undone, hidden
+	 * again behind its Show answer button.
+	 *
+	 * Rating moves the fence's step on (`advance`), and the step lives in
+	 * `stepAt`, not in the DOM — so redrawing alone would land on the next
+	 * question, or on "Rated". Undo used to rewrite the file with its own content
+	 * hoping for a re-render, which an unchanged file does not trigger, and which
+	 * would have redrawn the advanced step anyway.
+	 *
+	 * The step is found from the session's pinned plan rather than recorded with
+	 * the rating, and only rewound when the fence is still exactly one past it: an
+	 * undo stack outlives a session, and a fence restarted since then has a
+	 * sequence of its own that this rating is no part of.
+	 */
+	private rewindFence(sourcePath: string, fenceKey: string, cardId: string): void {
+		const planned = this.fencePlan.get(fenceKey)?.findIndex((card) => card.id === cardId)
+			?? this.occlusionPlan.get(fenceKey)?.findIndex((step) => step.cardId === cardId)
+			?? -1;
+		if (planned < 0 || this.stepAt.get(fenceKey) !== planned + 1) return;
+
+		this.stepAt.set(fenceKey, planned);
+		// The question is asked afresh, and so is any later one revealed in the
+		// meantime: nothing after it has been answered.
+		for (const key of [...this.revealedCardIds]) {
+			if (key.startsWith(`${fenceKey}#`)) this.revealedCardIds.delete(key);
+		}
+		for (const fence of this.trackedFences) {
+			if (fence.sourcePath === sourcePath && fence.fenceId === fenceKey) fence.redraw();
 		}
 	}
 
