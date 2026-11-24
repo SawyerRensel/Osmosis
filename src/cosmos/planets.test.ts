@@ -32,7 +32,6 @@ import {
 	surfaceArc,
 	spreadContinent,
 	surfaceStep,
-	uprightSpread,
 	tangentFrame,
 	wrapPlate,
 	wrapPoint,
@@ -861,7 +860,10 @@ describe("plates at their continent's frame", () => {
 	/** Whether two plates (centre, frame, size) overlap, separating-axis test in the first one's plane. */
 	const overlap = (a: { c: Vec3; r: Vec3; u: Vec3; w: number; h: number }, b: { c: Vec3; r: Vec3; u: Vec3; w: number; h: number }): boolean => {
 		const flat = (v: Vec3): [number, number] => [dot(v, a.r), dot(v, a.u)];
-		const rel = flat({ x: b.c.x - a.c.x, y: b.c.y - a.c.y, z: b.c.z - a.c.z });
+		const gap = { x: b.c.x - a.c.x, y: b.c.y - a.c.y, z: b.c.z - a.c.z };
+		// Farther apart than their half-diagonals: clear (two plates on opposite sides of a small planet project onto each other's plane).
+		if (len(gap) >= (Math.hypot(a.w, a.h) + Math.hypot(b.w, b.h)) / 2) return false;
+		const rel = flat(gap);
 		const [br, bu] = [flat(b.r), flat(b.u)];
 		const axes: [number, number][] = [[1, 0], [0, 1], br, bu];
 		return axes.every(([x, y]) => {
@@ -1052,22 +1054,26 @@ describe("plates spun upright by the camera's roll (T114)", () => {
 	it("finds how far apart two plates must stack to clear every roll up to the limit", () => {
 		// A centred column of 20 × 5 plates: clear at roll ρ once 5 / cos ρ apart.
 		expect(rollClearance(0, 6, 20, 5)).toBe(6);
-		expect(rollClearance(0, 5.5, 20, 5)).toBeCloseTo(5 / Math.cos(UPRIGHT_ROLL), 6);
+		expect(rollClearance(0, 5.1, 20, 5)).toBeCloseTo(5 / Math.cos(UPRIGHT_ROLL), 6);
 		// Offset sideways, a roll swings one end of the pair into the other: they need more room.
-		expect(rollClearance(15, 6, 20, 5)).toBeGreaterThan(10);
+		expect(rollClearance(15, 6, 20, 5)).toBeGreaterThan(9);
 		// A diagonal apart is clear at any roll.
 		expect(rollClearance(20, 5, 20, 5)).toBe(5);
 	});
 
-	it("stretches a tree map along its stacking axis, keeping order, and leaves a clear map alone", () => {
-		const clear = [{ id: "a", x: 0, y: 0, width: 20, height: 5 }, { id: "b", x: 0, y: 7, width: 20, height: 5 }];
-		expect(uprightSpread(clear, "y")).toBe(clear);
-		// Two cousins a row gap apart, one far to the right: a few degrees of roll overlaps them.
-		const cousins = [{ id: "a", x: 0, y: 0, width: 40, height: 5 }, { id: "b", x: 30, y: 7, width: 40, height: 5 }, { id: "c", x: 0, y: 14, width: 10, height: 5 }];
-		const spread = uprightSpread(cousins, "y");
-		expect(spread[1]!.y).toBeGreaterThan(7);
-		expect(spread[2]!.y - spread[1]!.y).toBeGreaterThanOrEqual(7);
-		expect(spread.map((p) => p.x)).toEqual([0, 30, 0]);
+	it("moves whichever plate of an overlapping pair needs the shorter push, the inner one included (fix round 1)", () => {
+		// Side by side above the head: the outer plate's bearing runs half across their offset, so it would have to slide far; the inner one clears by moving straight out.
+		const plates = [{ id: "h", x: 0, y: 0, width: 6, height: 3 }, { id: "a", x: 10, y: -40, width: 30, height: 5 }, { id: "b", x: 30, y: -40, width: 30, height: 5 }];
+		const map = { plates, reach: 60, area: 1 };
+		const siblings = spreadContinent(map, { id: "h", children: [{ id: "a", children: [] }, { id: "b", children: [] }] }, 1e6, 0.5);
+		const [a, b] = [siblings.plates[1]!, siblings.plates[2]!];
+		expect(b).toEqual(plates[2]);
+		expect(Math.hypot(a.x, a.y)).toBeGreaterThan(Math.hypot(10, 40));
+		expect(a.x / a.y).toBeCloseTo(10 / -40, 9);
+		// With a the parent of b, a may not move, so b has to: the continent grows more.
+		const nested = spreadContinent(map, { id: "h", children: [{ id: "a", children: [{ id: "b", children: [] }] }] }, 1e6, 0.5);
+		expect(nested.plates[1]).toEqual(plates[1]);
+		expect(nested.reach - map.reach).toBeGreaterThan(siblings.reach - map.reach);
 	});
 
 	// A CSS-selectors note shaped like Sawyer's screenshot: six continents, one of 47 lines five deep, with wide one-liners, two-line panels and a tall code block.
@@ -1107,19 +1113,89 @@ describe("plates spun upright by the camera's roll (T114)", () => {
 		}
 		return { pairs, diameter };
 	};
-	const rolls = Array.from({ length: 13 }, (_, i) => ((-30 + i * 5) * Math.PI) / 180);
+	// Every 2.5° either way, up to the limit.
+	const rolls = Array.from({ length: 13 }, (_, i) => ((i - 6) * UPRIGHT_ROLL) / 6);
 
-	it("leaves no plates of a deep left-right or radial continent overlapping at any roll up to the limit", () => {
-		// Diameters before T114, when 5 to 8 pairs already overlapped at 15° of roll.
+	it("leaves no plates of a deep continent overlapping at any roll up to the limit, at close to its size before T114", () => {
+		// Diameters before T114, when 5 to 8 pairs already overlapped at 15° of roll (1 for top-down).
 		const before: [ContinentStyle, number][] = [
 			[DEFAULT_CONTINENT_STYLE, 257.2],
 			[{ direction: "left-right", balance: "both-sides" }, 361.2],
 			[{ direction: "radial", balance: "one-side" }, 448.9],
+			[{ direction: "top-down", balance: "one-side" }, 574],
 		];
 		for (const [style, diameter] of before) {
 			for (const roll of rolls) expect(measure(style, roll).pairs).toBe(0);
-			// The continent spreads by no more than a quarter.
-			expect(measure(style, 0).diameter).toBeLessThan(diameter * 1.25);
+			// Fix round 1: within 15% (T114's own 30° stretch took one-side to +13% here, and code-heavy notes far past it).
+			expect(measure(style, 0).diameter).toBeLessThan(diameter * 1.15);
 		}
+	});
+
+	// A JavaScript note shaped like Sawyer's fix-round screenshots: three big continents of headings, prose lines and many tall code blocks, some beside lines with children of their own.
+	const code = (rows: number, em = 20): PlanetBranch => {
+		const id = `n${next++}`;
+		sizes.set(id, { width: Math.min(20, em + 1) * EM, height: (rows * 1.4 + 1) * EM });
+		return { id, children: [] };
+	};
+	const node = (em: number, rows = 1) => (...children: PlanetBranch[]): PlanetBranch => line(em, rows)(children);
+	const codeNote = {
+		core: "root",
+		continents: [
+			node(9)(
+				node(14)(leaf(20, 2), code(9)),
+				node(19)(leaf(16), leaf(16), node(18)(code(10)), node(18)(code(5), code(8))),
+				node(7)(leaf(20, 2), code(1, 18), node(6)(leaf(14), leaf(16), code(4), code(3))),
+				node(14)(code(4), node(20)(code(4), code(5))),
+				node(17)(code(6)),
+				node(16)(code(5), leaf(12)),
+			),
+			node(12)(node(10)(leaf(20, 2), leaf(15), code(7)), node(8)(code(12), leaf(18, 2), node(9)(leaf(11), leaf(13))), leaf(16)),
+			node(15)(leaf(20, 3), code(14), node(11)(code(6), leaf(10), leaf(12))),
+		],
+	};
+
+	it("keeps a code-heavy both-sides note close to its size before T114, and Node spacing tightens it (fix round 1)", () => {
+		const style: ContinentStyle = { direction: "left-right", balance: "both-sides" };
+		/** The widest continent (its farthest two plate centres), the mean gap from each plate to its nearest neighbour, and a continent's overlapping pairs at the worst roll within the limit. */
+		const shape = (spacing: number): { diameter: number; gap: number; pairs: number } => {
+			const places = [...layoutPlanet(codeNote, sizeOf, style, 0, undefined, spacing).places.entries()];
+			let [diameter, gaps, pairs] = [0, 0, 0];
+			for (const [ia, a] of places) {
+				let nearest = Infinity;
+				for (const [ib, b] of places) {
+					if (ia === ib || a.continent !== b.continent) continue;
+					const rel = { x: b.offset.x - a.offset.x, y: b.offset.y - a.offset.y, z: b.offset.z - a.offset.z };
+					diameter = Math.max(diameter, len(rel));
+					const [w, h] = [(sizeOf(ia).width + sizeOf(ib).width) / 2, (sizeOf(ia).height + sizeOf(ib).height) / 2];
+					nearest = Math.min(nearest, Math.hypot(Math.max(0, Math.abs(dot(rel, a.right)) - w), Math.max(0, Math.abs(dot(rel, a.up)) - h)));
+				}
+				gaps += nearest;
+			}
+			for (const roll of rolls) {
+				const [c, s] = [Math.cos(roll), Math.sin(roll)];
+				let count = 0;
+				for (let i = 0; i < places.length; i++) {
+					for (let j = i + 1; j < places.length; j++) {
+						const [[ia, a], [ib, b]] = [places[i]!, places[j]!];
+						const rel = { x: b.offset.x - a.offset.x, y: b.offset.y - a.offset.y, z: b.offset.z - a.offset.z };
+						const [w, h] = [(sizeOf(ia).width + sizeOf(ib).width) / 2, (sizeOf(ia).height + sizeOf(ib).height) / 2];
+						if (a.continent !== b.continent || len(rel) >= Math.hypot(w, h)) continue;
+						const right = { x: a.right.x * c + a.up.x * s, y: a.right.y * c + a.up.y * s, z: a.right.z * c + a.up.z * s };
+						const up = { x: a.up.x * c - a.right.x * s, y: a.up.y * c - a.right.y * s, z: a.up.z * c - a.right.z * s };
+						if (Math.abs(dot(rel, right)) < w && Math.abs(dot(rel, up)) < h) count++;
+					}
+				}
+				pairs = Math.max(pairs, count);
+			}
+			return { diameter, gap: gaps / places.length, pairs };
+		};
+		const [tight, sawyer, wide] = [shape(0.5), shape(0.65), shape(1)];
+		for (const { pairs } of [tight, sawyer, wide]) expect(pairs).toBe(0);
+		// Before T114 at Node spacing x0.65: diameter 321.7, mean nearest gap 4.69 (T114 took them to 376.3 and 9.90).
+		expect(sawyer.diameter).toBeLessThan(321.7 * 1.15);
+		expect(sawyer.gap).toBeLessThan(4.69 * 1.4);
+		// Node spacing still tightens it: T114's spread barely answered the slider (diameter 370.5 at x0.5, 376.0 at x1).
+		expect(tight.diameter).toBeLessThan(wide.diameter * 0.95);
+		expect(tight.gap).toBeLessThan(wide.gap * 0.75);
 	});
 });
