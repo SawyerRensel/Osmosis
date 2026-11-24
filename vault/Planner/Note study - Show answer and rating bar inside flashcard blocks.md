@@ -9,14 +9,14 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Review
 batch: 15
 priority:
 progress:
 date_created: 2026-11-24T00:20:16.000Z
 date_modified: 2026-11-24T00:20:16.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-24T00:58:59.000Z
+date_start_actual: 2026-11-24T00:58:59.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -88,3 +88,50 @@ Use the existing note-study fixtures under `vault/tests/` (and an HTML-elements 
 - Batch 15 ticket: commit `feat(T116): …`/`fix(T116): …` plus one `docs(T116)` note commit setting `status: In-Review` with a "Batch implementation notes (awaiting manual test)" section (approach, decisions, surface map, fixture, test steps, what was not verified). Stage by explicit path; `git diff --cached --stat` before each commit; never `git stash`; don't push.
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes outside `src/views/` (vitest cannot import obsidian) and gets unit tests.
 - Fixtures: master copy in `e2e/fixtures/`, copied to `vault/tests/`; back-date every fixture card; neutral subject domains (no biology).
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `2a0b90a` on `batch/15-plates-study-polish`.
+
+### Approach
+The back-side `░░░░░░` placeholder (`.osmosis-note-hidden`) and the bottom row (`.osmosis-note-bottom` / `.osmosis-note-rating-slot`) are gone. Each fence card in reading view now has:
+- **`.osmosis-note-top`**, a right-aligned row above the front. It holds the step counter (`i/n`) or "Rated", then undo, then the eye (exclude) toggle.
+- **`.osmosis-note-actions`**, a full-width row under the back. While the back is hidden it holds `button.osmosis-study-flip.osmosis-note-show-answer`. After a reveal in study it holds the rating bar `.osmosis-rating.osmosis-study-rating-bar`. It collapses (`:empty`) when it has nothing to show.
+
+Both rows are rebuilt on every `draw()`, as the bottom row was. Each card's reveal state is still keyed per card and step in `revealedCardIds`, so each card reveals on its own.
+
+The styling is shared through classes. The study tab's selector lists for the flip button, the rating bar, button height, padding and touch font size gained `.osmosis-note-actions` / `.osmosis-note-card .osmosis-note-actions` entries. No rules were copied.
+
+### Decisions
+- **"Rated" and `i/n` go in the top row, left of undo.** They stay visible but off the full-width rows, and they are muted small text (the same rule as `.osmosis-note-step`).
+- **Interval labels are included.** `StudySessionManager.previewIntervals` costs four FSRS evaluations per reveal, which is cheap. `showRating` fills `.osmosis-rate-interval` with `formatInterval`, as the study tab does. The session manager is now built lazily by a `session()` helper, which `recordRating` and `undo` also use.
+- **The button height is 40px on desktop and 48px on tablet and phone**, through `--osmosis-study-button-height` on `.osmosis-note-actions`. The study tab uses 56px on phone. I used 48px there because a note can hold many of these bars inline, while the tab has one bar at the bottom of the screen.
+- **Clearing `</>`:** the edit button only exists in live preview, where `renderPreviewCard` draws the card. That card's eye now sits in the same top row. In reading view the row sits in the card's corner. Inside `.cm-embed-block` it gets `margin-inline-end: 28px` to stay left of Obsidian's absolutely positioned `.edit-block-button`. The preview card's duplicated exclude-toggle code now calls `addExcludeToggle`.
+- **The top row is in normal flow, not absolutely positioned or floated.** That costs about 16px of height (it is pulled 8px into the card's padding), but it can never overlap a front that starts with a code block and its copy button. A float would have slid under a `pre` block's background.
+- **Occlusion cards** get the same Show answer row and top row. A revealed group's rating still floats under the revealed shape: that anchoring was settled in PR #44 and is not reverted. The floating bar now has the study-bar look with intervals. A scattered group falls back to the full-width row. Occlusion cards still have no undo button, as before.
+- **The cloze blanks in the front (`░` via `CLOZE_BLANK`) are unchanged**, as specified.
+- **Nothing moved out of `FlashcardStudyView.ts`.** No shared code was extracted, so T117 has no overlap.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/views/NoteStudyProcessor.ts` | `renderCard`/`renderOcclusionCard`: top row plus full-width action row in place of the placeholder and bottom row. New `addShowAnswerButton`. `showRating` builds the study-bar buttons with intervals. New `session()` helper. `renderPreviewCard` puts the eye in the top row. |
+| `styles.css` | Study-tab flip, rating-bar, height, padding and font rules extended to `.osmosis-note-actions`. New `.osmosis-note-actions` and `.osmosis-note-top` (with the `.cm-embed-block` offset). Placeholder and bottom-row rules removed. The exclude toggle gets padding to match undo. |
+| `src/views/NoteStudyProcessor.dom.test.ts` | Tests click `.osmosis-note-show-answer`. The session mock gains `previewIntervals`. The harness gains `renderAnother`. Four new tests cover Show answer replacing the placeholder, the bar with intervals, the top-row controls, and revealing one card at a time. |
+
+### Fixtures
+These existing fixtures are reused. None was modified.
+- `vault/tests/flashcard/fence-card-types.md`: basic, three-group cloze (1/3), bidirectional, and a not-due control.
+- `vault/tests/flashcard/code-cloze-study.md`: code cloze, like the screenshots.
+- `vault/tests/flashcard/occlusion-surfaces.md`: an occluded fence.
+
+### Manual test
+1. Open `fence-card-types.md` in reading view and start note study (cap icon). Every asked card shows a full-width **Show answer** under its rule, with no `░░░` placeholder. The eye sits at the top right, and the cloze fence shows `1/3` beside it.
+2. Press Show answer on one card. Only that card reveals, and a four-button bar appears across the card's width, with intervals over the labels and the study tab's colours. The other cards stay hidden.
+3. Rate. The cloze steps to `2/3` and an undo arrow appears at the top right. Undo reverts the rating. After the last group the top row reads "Rated".
+4. Toggle the eye. The card dims and the icon turns to eye-off. Toggle it back.
+5. Switch to live preview. On hover, the eye sits just left of `</>` with no overlap.
+6. Check the same at phone width, and on `code-cloze-study.md` and `occlusion-surfaces.md` (the rating floats under the shape).
+
+### Not verified
+I have not run anything in Obsidian. The `</>` clearance (28px) is estimated from Obsidian's default `.edit-block-button` size, not measured. I have not checked the phone layout, the button heights against real themes, or how the floating occlusion bar looks with intervals.
