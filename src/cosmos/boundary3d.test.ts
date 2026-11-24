@@ -95,6 +95,32 @@ describe("hullMesh", () => {
 	it("wraps a lone plate", () => {
 		expect(planes(hullMesh([plates[0]!], 2)).length).toBeGreaterThan(8);
 	});
+	// A tall code block's panel and a wide one, however the billboard has turned about world vertical.
+	it.each([
+		["tall", { x: 5, y: -4, z: 2, width: 60, height: 150 }],
+		["wide", { x: 5, y: -4, z: 2, width: 160, height: 20 }],
+	])("keeps every corner of a %s plate inside, at any turn", (_, plate) => {
+		const padding = 2.6;
+		const sides = planes(hullMesh([plate, plates[1]!], padding));
+		let min = Infinity;
+		for (let k = 0; k < 64; k++) {
+			const a = (k / 64) * Math.PI * 2;
+			for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+				const corner = [plate.x + (Math.cos(a) * sx * plate.width) / 2, plate.y + (sy * plate.height) / 2, plate.z + (Math.sin(a) * sx * plate.width) / 2];
+				for (const plane of sides) min = Math.min(min, plane.d - (plane.n[0]! * corner[0]! + plane.n[1]! * corner[1]! + plane.n[2]! * corner[2]!));
+			}
+		}
+		// Inside, and most of half the padding clear of every face (the faces between rings slant).
+		expect(min).toBeGreaterThan(padding * 0.4);
+	});
+	it("leaves a small plate's hull as it was", () => {
+		// Each ring's samples sit exactly `padding` beyond the half-width.
+		const plate = { x: 0, y: 0, z: 0, width: 20, height: 5 };
+		const mesh = hullMesh([plate], 3);
+		let widest = 0;
+		for (let i = 0; i < mesh.positions.length; i += 3) widest = Math.max(widest, Math.hypot(mesh.positions[i]!, mesh.positions[i + 2]!));
+		expect(widest).toBeCloseTo(13, 6);
+	});
 });
 
 describe("patchMesh", () => {
@@ -137,5 +163,35 @@ describe("patchMesh", () => {
 	});
 	it("is empty with no plates", () => {
 		expect(patchMesh([], centre, radius, 3, 1).index).toEqual([]);
+	});
+	it("keeps all four corners of a tall plate inside its outline, padding clear", () => {
+		const w = wrapPlate(frame, 40, 0, radius);
+		const tall: BoundaryPlate = { x: centre.x + w.offset.x, y: centre.y + w.offset.y, z: centre.z + w.offset.z, width: 16, height: 60, right: w.right, up: w.up };
+		const padding = 3;
+		const patch = patchMesh([plates[0]!, tall], centre, radius, padding, 1.5);
+		// Both outline and corners in the plate's own tangent plane, by direction from the core (central projection).
+		const toPlane = (q: { x: number; y: number; z: number }): [number, number] => {
+			const d = { x: q.x - centre.x, y: q.y - centre.y, z: q.z - centre.z };
+			const n = { x: w.offset.x / radius, y: w.offset.y / radius, z: w.offset.z / radius };
+			const s = radius / (d.x * n.x + d.y * n.y + d.z * n.z);
+			const p = { x: d.x * s - w.offset.x, y: d.y * s - w.offset.y, z: d.z * s - w.offset.z };
+			return [p.x * w.right.x + p.y * w.right.y + p.z * w.right.z, p.x * w.up.x + p.y * w.up.y + p.z * w.up.z];
+		};
+		const outline: [number, number][] = [];
+		patch.edge.forEach((e, i) => {
+			if (e === 0) outline.push(toPlane({ x: patch.positions[i * 3]!, y: patch.positions[i * 3 + 1]!, z: patch.positions[i * 3 + 2]! }));
+		});
+		for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const) {
+			const corner: [number, number] = [(sx * tall.width) / 2, (sy * tall.height) / 2];
+			// Inside: the outline winds once round the corner.
+			let turn = 0;
+			for (let i = 0; i < outline.length; i++) {
+				const [a, b] = [outline[i]!, outline[(i + 1) % outline.length]!];
+				turn += Math.atan2((a[0] - corner[0]) * (b[1] - corner[1]) - (a[1] - corner[1]) * (b[0] - corner[0]), (a[0] - corner[0]) * (b[0] - corner[0]) + (a[1] - corner[1]) * (b[1] - corner[1]));
+			}
+			expect(Math.abs(turn)).toBeCloseTo(Math.PI * 2, 3);
+			const nearest = Math.min(...outline.map((q) => Math.hypot(q[0] - corner[0], q[1] - corner[1])));
+			expect(nearest).toBeGreaterThan(padding * 0.9);
+		}
 	});
 });

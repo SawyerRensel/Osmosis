@@ -118,6 +118,17 @@ export function nodeExtent(plate: { width: number; height: number }, panelEm: { 
 }
 
 /**
+ * The rectangle a node takes up, in world units: its plate, widened and
+ * heightened to its near-tier panel (`panelBoxEm`, `emWorld` world units an
+ * em) where that is bigger. The panel is centred on the plate, so this is
+ * centred on the node. Flat branches and Planets space nodes by it, and a
+ * boundary wraps it, so a tall code block's cloud reaches round its panel.
+ */
+export function nodeFootprint(plate: { width: number; height: number }, panelEm: { width: number; height: number } | null, emWorld: number): { width: number; height: number } {
+	return { width: Math.max(plate.width, (panelEm?.width ?? 0) * emWorld), height: Math.max(plate.height, (panelEm?.height ?? 0) * emWorld) };
+}
+
+/**
  * The Overlays' spacing sliders: how far apart things sit, as multiples of
  * today's distances. `note` scales the distances between notes and tags,
  * `node` those between nodes within a note. Gaps scale, never plates.

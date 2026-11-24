@@ -114,18 +114,21 @@ const HULL_AZIMUTHS = 8;
 /**
  * The hull mesh round `plates`, each at least `padding` clear sideways and
  * above and below (a rounded cylinder about world vertical: the plate's
- * half-width plus padding across, its half-height plus padding up and down).
- * Empty for no plates.
+ * half-width plus padding across, its half-height plus padding up and down;
+ * a wide plate's reaches a little further, so its corners stay inside between
+ * the samples). Empty for no plates.
  */
 export function hullMesh(plates: readonly BoundaryPlate[], padding: number): BoundaryMesh {
 	const mesh: BoundaryMesh = { positions: [], normals: [], index: [], edge: [], arc: [] };
 	if (plates.length === 0) return mesh;
 	const points: Vector3[] = [];
 	// (up, across) of each ring, from the plate's half-height and half-width: square edges cut back, so the cylinder reads rounded.
+	// A ring's sides fall short of its samples by cos(π / HULL_AZIMUTHS), so a wide plate (a big panel's footprint) turned between two samples would poke through them: a ring reaches out until its sides lie no more than half the padding inside it. A small plate's rings are as they were.
+	const reach = (r: number): number => Math.max(r, (r - padding / 2) / Math.cos(Math.PI / HULL_AZIMUTHS));
 	const rings = (h: number, w: number): [number, number][] => [
-		[h, w + padding],
-		[h + padding * 0.7, w + padding * 0.7],
-		[h + padding, w],
+		[h, reach(w + padding)],
+		[h + padding * 0.7, reach(w + padding * 0.7)],
+		[h + padding, reach(w)],
 	];
 	for (const plate of plates) {
 		for (const [dy, r] of rings(plate.height / 2, plate.width / 2)) {

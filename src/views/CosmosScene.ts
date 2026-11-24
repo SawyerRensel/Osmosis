@@ -32,7 +32,7 @@ import { CosmosSticks } from "./CosmosSticks";
 import { CosmosPlates, type PlateShape } from "./CosmosPlates";
 import { CosmosNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./CosmosNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../cosmos/model";
-import { edgeColor, linkDistance, nodeColor, nodeExtent, noteHue, spriteLabel, type Spacing } from "../cosmos/appearance";
+import { edgeColor, linkDistance, nodeColor, nodeExtent, nodeFootprint, noteHue, spriteLabel, type Spacing } from "../cosmos/appearance";
 import { cssColor, nodeLook, type NodeLook } from "../cosmos/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
 import type { NearTierSettings } from "../cosmos/lod";
@@ -104,6 +104,8 @@ interface EngineNode extends NodeObject {
 	shape: PlateShape;
 	/** How far the node reaches for spacing: its plate or its near-tier panel, whichever is bigger (`nodeExtent`). */
 	extent: number;
+	/** The rectangle it takes up: its plate, grown to its near-tier panel (`nodeFootprint`). Flat and Planets spacing and the boundaries use it. */
+	footprint: { width: number; height: number };
 	/** In the multi-select (`CosmosScene.selection`): its plate wears the selection border. */
 	selected?: boolean;
 	/** A find bar match (`CosmosScene.found`): its plate and panel wear the find border. */
@@ -174,9 +176,12 @@ function plateLinkDistance(link: EngineLink, spacing: Spacing): number {
 	return linkDistance(link.kind, source.extent, target.extent, spacing);
 }
 
-/** A node's spacing extent, from its plate and the panel the near tier would lay out for it (at line-plate text size, as `CosmosNear` does). */
-function extentFor(node: EngineNode): number {
-	return nodeExtent(node.shape, panelBoxEm(node.graph), CosmosNear.emWorld(LINE_PLATE_HEIGHT));
+/** A node's spacing extent and footprint, from its plate and the panel the near tier would lay out for it (at line-plate text size, as `CosmosNear` does). Call after its plate or Markdown changes. */
+function sizeNode(node: EngineNode): void {
+	const panel = panelBoxEm(node.graph);
+	const em = CosmosNear.emWorld(LINE_PLATE_HEIGHT);
+	node.extent = nodeExtent(node.shape, panel, em);
+	node.footprint = nodeFootprint(node.shape, panel, em);
 }
 
 /** d3's many-body force, as much of it as the scene wraps. */
@@ -762,7 +767,7 @@ export class CosmosScene {
 				this.flatLayouts.clear();
 				plated++;
 			}
-			existing.extent = extentFor(existing);
+			sizeNode(existing);
 			if (existing.departing) {
 				existing.departing = false;
 				this.fadeTo(existing, 1, now);
@@ -835,9 +840,10 @@ export class CosmosScene {
 			departing: false,
 			shape: this.shapeFor(graph),
 			extent: 0,
+			footprint: { width: 0, height: 0 },
 			look: nodeLook(graph.style),
 		};
-		node.extent = extentFor(node);
+		sizeNode(node);
 		if (place !== undefined) {
 			node.x = place.x;
 			node.y = place.y;
@@ -959,14 +965,12 @@ export class CosmosScene {
 	/**
 	 * A node's footprint in a flat branch: its plate, or the near-tier panel it
 	 * would get if that is bigger, so panels side by side in one plane don't
-	 * cover each other (as `extentFor` spaces 3D links).
+	 * cover each other (as `sizeNode` spaces 3D links). The boundaries wrap the
+	 * same footprint.
 	 */
 	private readonly flatSize = (graph: GraphNode): { width: number; height: number } => {
 		const node = this.live.get(graph.id);
-		const plate = node?.shape ?? { width: 0, height: LINE_PLATE_HEIGHT };
-		const panel = panelBoxEm(graph);
-		const em = CosmosNear.emWorld(LINE_PLATE_HEIGHT);
-		return { width: Math.max(plate.width, (panel?.width ?? 0) * em), height: Math.max(plate.height, (panel?.height ?? 0) * em) };
+		return node?.footprint ?? nodeFootprint({ width: 0, height: LINE_PLATE_HEIGHT }, panelBoxEm(graph), CosmosNear.emWorld(LINE_PLATE_HEIGHT));
 	};
 
 	/** The simulation has cooled: pin whatever was still free where it stopped. */
@@ -986,7 +990,7 @@ export class CosmosScene {
 		this.plates.setColors(theme);
 		for (const node of this.nodes) {
 			node.shape = this.shapeFor(node.graph);
-			node.extent = extentFor(node);
+			sizeNode(node);
 		}
 		this.flatLayouts.clear();
 		this.linkForce?.distance(this.linkDistanceOf);
