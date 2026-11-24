@@ -1817,6 +1817,18 @@ img.osmosis-zoomed,
 
    Desktop and tablet: a compact panel of fixed width, centered, so Show answer
    spans exactly the row of four rating buttons that replaces it. */
+/* The panel's width is shared with note study's action row
+   (`.osmosis-note-actions`), so both cap their buttons the same. */
+.osmosis-study-actions,
+.osmosis-note-actions {
+	--osmosis-study-panel-width: 340px;
+}
+
+body.is-tablet .osmosis-study-actions,
+body.is-tablet .osmosis-note-actions {
+	--osmosis-study-panel-width: 420px;
+}
+
 .osmosis-study-actions {
 	position: absolute;
 	left: 50%;
@@ -1824,17 +1836,13 @@ img.osmosis-zoomed,
 	transform: translateX(-50%);
 	z-index: 1;
 	display: flex;
-	width: 340px;
+	width: var(--osmosis-study-panel-width);
 	max-width: calc(100% - 2 * var(--size-4-2));
 	padding: var(--osmosis-study-panel-padding);
 	border-radius: var(--radius-m);
 	background: var(--raised-background, var(--background-secondary));
 	backdrop-filter: var(--raised-blur);
 	box-shadow: var(--raised-shadow, var(--shadow-s));
-}
-
-body.is-tablet .osmosis-study-actions {
-	width: 420px;
 }
 
 /* Nothing to press (the waiting and completion screens): no empty panel. */
@@ -2309,15 +2317,22 @@ body.is-phone .osmosis-decks-column {
    tab's look: `.osmosis-study-flip` and `.osmosis-study-rating-bar` share
    their rules with the tab's panel. A touch screen gets the tablet height,
    not the tab's phone 56px: a note holds many of these inline. */
+/* Desktop and tablet: the buttons' row is the study panel's width, centred in
+   the card as the panel is centred in the tab; the phone spans the card. */
 .osmosis-note-actions {
 	--osmosis-study-button-height: 40px;
 	display: flex;
-	margin-top: 8px;
+	margin: 8px auto 0;
+	max-width: calc(var(--osmosis-study-panel-width) - 2 * var(--size-4-1));
 }
 
 body.is-tablet .osmosis-note-actions,
 body.is-phone .osmosis-note-actions {
 	--osmosis-study-button-height: 48px;
+}
+
+body.is-phone .osmosis-note-actions {
+	max-width: none;
 }
 
 .osmosis-note-actions:empty {
