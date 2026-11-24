@@ -56,6 +56,17 @@ describe("rewriteHeadingLinks", () => {
 		expect(rename("[[Rigging#Old Mast]]", "Old Mast", "Mast #2 [spare] | ^x").text).toBe("[[Rigging#Mast 2 spare x]]");
 	});
 
+	it("renames links that carry the heading's block id, keeping the id, and lets an alias of the old text follow", () => {
+		const ids = { from: "os-ab12cd", to: "os-ab12cd" };
+		const text = "[[#Old Mast os-ab12cd|Old Mast]] [[Rigging#Old Mast os-ab12cd]] [[#Old Mast os-ab12cd|the mast]] [[#Old Mast os-zz9999]]";
+		expect(rewriteHeadingLinks(text, "Old Mast", "Mast: Main", isRigging, ids)).toEqual({
+			text: "[[#Mast: Main os-ab12cd|Mast: Main]] [[Rigging#Mast: Main os-ab12cd]] [[#Mast: Main os-ab12cd|the mast]] [[#Old Mast os-zz9999]]",
+			count: 3,
+		});
+		expect(rewriteHeadingLinks("[[#Old Mast os-ab12cd]]", "Old Mast", "New Mast", isRigging, { from: "os-ab12cd", to: null }).text).toBe("[[#New Mast]]");
+		expect(rename("[[#Old Mast os-ab12cd]]").count).toBe(0);
+	});
+
 	it("rewrites links in frontmatter properties too", () => {
 		expect(rename('---\nsee: "[[Rigging#Old Mast]]"\n---\nBody\n').text).toBe('---\nsee: "[[Rigging#New Mast]]"\n---\nBody\n');
 	});
