@@ -135,3 +135,6 @@ These existing fixtures are reused. None was modified.
 
 ### Not verified
 I have not run anything in Obsidian. The `</>` clearance (28px) is estimated from Obsidian's default `.edit-block-button` size, not measured. I have not checked the phone layout, the button heights against real themes, or how the floating occlusion bar looks with intervals.
+
+### Fix round 1
+Sawyer: on desktop the Show answer button and rating bar stretched across the whole card. They are now capped at the study tab's own button width. The study tab does not use its 700px column for these: its panel (`.osmosis-study-actions`) is 340px wide on desktop and 420px on tablet, less 4px of padding each side. That width is now one variable, `--osmosis-study-panel-width`, set for both `.osmosis-study-actions` and `.osmosis-note-actions`. The note row's `max-width` is that value minus the panel padding, so the buttons match the tab's. The row is **centred** in the card, because the tab centres its panel. On the phone it spans the card, as the tab's panel does (`max-width: none`). Not verified in Obsidian.
