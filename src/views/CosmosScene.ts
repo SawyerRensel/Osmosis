@@ -2413,7 +2413,8 @@ export class CosmosScene {
 			this.options.onNodeClick(link.node, selectsOnly);
 			return;
 		}
-		const node = this.nodeNear(x, y, slop);
+		// Panel first, as every other pick: a near-tier panel can be far bigger than its plate, and all of it is the node.
+		const node = this.pickedNode(x, y, touch);
 		if (node !== null) {
 			this.select([node.id]);
 			if (selectsOnly) this.focusId = node.id;

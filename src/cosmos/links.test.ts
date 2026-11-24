@@ -76,6 +76,11 @@ describe("frontPanelAt", () => {
 		expect(frontPanelAt(50, 25, [panel("a", 0, 0, 30)], [plate("c", 50, 25, 40), plate("a", 50, 25, 30)])).toBe("a");
 	});
 
+	it("is the panel's anywhere on it, far outside its own plate", () => {
+		const big: DrawnPanel = { id: "a", rect: { left: 0, top: 0, right: 400, bottom: 600 }, depth: 30 };
+		for (const [x, y] of [[2, 2], [398, 2], [2, 598], [398, 598], [200, 300]] as const) expect(frontPanelAt(x, y, [big], [plate("a", 200, 20, 30)])).toBe("a");
+	});
+
 	it("leaves a nearer node's plate to its panel", () => {
 		const panels = [panel("far", 0, 0, 30), panel("near", 40, 20, 10)];
 		expect(frontPanelAt(50, 25, panels, [plate("near", 50, 25, 10)])).toBe("near");
