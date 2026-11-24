@@ -122,3 +122,32 @@ Code commit: c93e89c (`fix(T112)`), on `batch/15-plates-study-polish`.
 - Nothing was checked in Obsidian.
 - The rendered size of the image versus the budget (`liveBoxWorld` should re-measure once the image loads, through the ResizeObserver).
 - Whether `object-fit: contain` letterboxes a `|W` image taller than 15em. This is unchanged pre-existing CSS.
+
+## Fix round 1 (Sawyer's test, 2026-11-24): images overflow the plate
+> Images aren't fitting inside plates
+
+Screenshot `ref/screenshots/Pasted image 20261124073645.png`: in the "Object" plate, the top image (a tree diagram) runs past the panel's right edge and is cut off ("ob…"). The second image fits. "Document Object Model" also looks clipped on the right.
+
+**Hypothesis (from a code read, verify first):** Obsidian wraps an image in an inline-block `span.internal-embed.image-embed`. The near panel is `width: max-content; max-width: 20em; overflow: hidden` (`styles.css` L4680–4695). The image's `max-width: 100%` (L4724–4730) therefore resolves against the shrink-to-fit span, the span takes the picture's natural width, and it spills past the 20em panel. `styles.css` L1435–1439 documents this exact bug for study cards and fixes it by capping the wrapper.
+
+**Fix bounds:**
+- Every image and video fits inside the plate's width with its aspect ratio kept: cap the embed wrapper inside `.osmosis-cosmos-near-body`.
+- Check that the measured panel size (ResizeObserver `sizes` L227–237 in `CosmosNear.ts`) and the layout estimate (`mediaBoxEm` in `near.ts` L160–171) still agree, so neighbours don't overlap. Change only what the CSS fix requires.
+- Read: `styles.css` L1428–1445 and L4613–4740; `src/cosmos/near.ts` L105–232; `src/views/CosmosNear.ts` `createPanel` L609–645 and `fill` L851–898.
+
+**Acceptance:** wide images in a plate scale down to the plate's width, with nothing cut off at the right edge. Tall images still cap at 15em. The panel's measured box matches what is drawn.
+
+### Fix round 1 implementation (awaiting manual test)
+Code commit: 0c5fcdf (`fix(T112)`).
+
+- **Cause (reproduced, not the hypothesis above):** the wrapper is not the problem. In reading view `span.internal-embed.image-embed` is `display: inline`. Obsidian's `app.css` gives `.image-embed` a display only in the editor (`.cm-line > .image-embed`). The image's `max-width: 100%` therefore resolves against the list item, and a wrapper cap would do nothing. The actual cause is the cascade. Our cap `.osmosis-cosmos-near-body img` has specificity (0,1,1), which only ties `.markdown-rendered img`. Any stylesheet that loads after Osmosis (a theme, snippet or another plugin) and loosens image `max-width` at that weight wins. Obsidian's own `.internal-embed img:not([width])` (0,2,1) still re-caps embeds **without** a size. So only `|W` embeds escape. This matches the screenshot: the `|314` tree draws 314 px wide past the edge, and the unsized HTML tree fits.
+- **How it was measured:** headless Chromium with Obsidian's `ref/obsidian-core/app.css`, our `styles.css`, and the panel's DOM (`ul > li > span.image-embed > img`). With core CSS alone, every case fit: sized, unsized, tall, late-loading, absolute in a sized lens, and a wrapper forced to inline-block or inline-flex. Adding one later `.markdown-rendered img { max-width: none }` reproduced the screenshot exactly: the `width="314"` image was 314 px wide, its right edge at 348 px against a body edge at 314 px, and the unsized image fit. With the fix, both are 280 px.
+- **Fix:** `styles.css` now scopes the image and video caps under the panel (`.osmosis-cosmos-near-panel .osmosis-cosmos-near-body img/video`, specificity (0,2,1)). That outranks any (0,1,1) image rule. `max-height: 15em` and `object-fit: contain` move with it, so a theme can't lift the height cap either. The occlusion override (0,3,0) still wins over it.
+- **Decision: no wrapper cap.** It was measured to be inert, because the wrapper is inline. It is also not needed when the wrapper is inline-block or inline-flex: those cases already fit. **No `!important`.** A later (0,2,1)-or-heavier rule such as `.markdown-rendered img[width]` would still beat the cap. If Sawyer's override turns out to be that heavy, the next step is to name the rule (DevTools → the image → Styles) rather than escalate blindly.
+- **Layout estimate vs measured panel:** unchanged and still in agreement. The overflow was clipped by the panel's `overflow: hidden` and never widened the measured box: the reproduction measured the panel at 320 × 502 px both before and after the fix. `mediaBoxEm` budgets the `Object |314` + unsized line at 20em wide (capped) and about 32em tall (≈512 px), which is at least the measured height. `near.ts` needed no change.
+
+| File | Change |
+|---|---|
+| `styles.css` | Near-panel `img` / `video` caps scoped under `.osmosis-cosmos-near-panel` (specificity (0,2,1)), with a comment giving the reason. |
+
+**Not verified:** nothing was checked in Obsidian. The overriding rule in Sawyer's setup is inferred, not identified: the fix is the right one only if that rule weighs less than (0,2,1). Fixture: `vault/tests/graph3d/Inline Images.md`, unchanged. Its `|314` line is the regression case, but it only shows the bug in a setup that has the overriding stylesheet.
