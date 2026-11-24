@@ -122,6 +122,7 @@ import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRe
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import type { StudySessionManager } from "../study/StudySessionManager";
+import { StudyClock } from "../study/study-clock";
 
 export const VIEW_TYPE_MINDMAP = "osmosis-mindmap";
 
@@ -576,11 +577,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private mindmapStudyPendingNodeId: string | null = null;
 	/**
-	 * When the pending card was revealed, for the review log's elapsed time.
-	 * A node sits on the map alongside everything else, so there is no separate
-	 * "question shown" moment — the reveal is the only defensible anchor.
+	 * Times each card for the review log from the study session starting or the
+	 * previous rating. A node sits on the map alongside everything else, so there
+	 * is no "question shown" event, and timing from the reveal logged only the
+	 * second it took to press a rating key.
 	 */
-	private mindmapStudyPendingRatingAt = 0;
+	private mindmapStudyClock = new StudyClock();
 	/** Each card the session asks, in the bucket it started in (T110). */
 	private mindmapStudyCountCards: NoteSessionCard[] = [];
 	/** The rating each of those cards got this session, for the new | learn | due counts. */
@@ -1453,6 +1455,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 
 		this.mindmapStudyMode = "study";
+		this.mindmapStudyClock.start(now);
 		this.setMindmapStudyTargets(nodeKeys, cards, now);
 		this.mindmapStudyCountCards = mindmapSessionCards(cards, this.mindmapStudyTargets);
 		this.mindmapStudyCardRatings.clear();
@@ -1525,6 +1528,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private exitMindmapStudyMode(): void {
 		const wasStudy = this.mindmapStudyMode === "study";
 		this.mindmapStudyMode = "off";
+		this.mindmapStudyClock.stop();
 		this.mindmapStudyActionEl?.removeClass("is-active");
 
 		if (this.svg) {
@@ -1873,7 +1877,6 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (this.mindmapStudyMode === "study") {
 			this.mindmapStudyPendingRating = key;
 			this.mindmapStudyPendingNodeId = nodeId;
-			this.mindmapStudyPendingRatingAt = Date.now();
 			// Keys 1–4 rate via the container's keydown handler
 			this.contentEl.focus();
 		}
@@ -1933,7 +1936,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private async rateMindmapStudyCard(rating: FSRSRating): Promise<void> {
 		const cardId = this.mindmapStudyPendingRating;
 		if (this.mindmapStudyMode !== "study" || cardId === null) return;
-		const elapsedMs = Date.now() - this.mindmapStudyPendingRatingAt;
+		const elapsedMs = this.mindmapStudyClock.lap() ?? 0;
 		this.mindmapStudyPendingRating = null;
 		this.mindmapStudyPendingNodeId = null;
 		this.mindmapStudyRated.add(cardId);

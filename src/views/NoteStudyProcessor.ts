@@ -970,9 +970,11 @@ export class NoteStudyProcessor {
 		// The flashcard study tab's bar: four equal buttons, each with the interval
 		// it would schedule above its label.
 		const ratingEl = container.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar" });
-		// The answer just went on screen. A note card has no separate
-		// "question shown" moment — it lives inline in the note — so the reveal
-		// is the anchor for the review log's elapsed time.
+		// The answer just went on screen. A note card has no "question shown"
+		// moment — it lives inline in the note — and timing from the reveal logged
+		// only the second it took to press a button. The note's study clock times
+		// from the previous rating (or the session start) instead; the reveal is
+		// only the fallback for a rating outside a session.
 		const revealedAt = Date.now();
 		const preview = this.session().previewIntervals(cardId, revealedAt);
 
@@ -1012,7 +1014,11 @@ export class NoteStudyProcessor {
 				// The session's progress strip lives in LineRevealProcessor, which
 				// owns the mode; tell it one of its questions is answered, and how.
 				this.plugin.lineReveal?.markFenceRated(sourcePath, fenceKey, cardId, rating);
-				void this.recordRating(cardId, rating, Date.now() - revealedAt);
+				void this.recordRating(
+					cardId,
+					rating,
+					this.plugin.lineReveal?.lapStudyClock(sourcePath) ?? Date.now() - revealedAt,
+				);
 
 				this.undoStack.push({
 					type: "rate",

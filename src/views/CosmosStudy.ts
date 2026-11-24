@@ -38,6 +38,7 @@ import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, trailSteps, t
 import type OsmosisPlugin from "../main";
 import { cardIdsForMindmapKey } from "../study/mindmap-study";
 import type { StudySessionManager } from "../study/StudySessionManager";
+import { StudyClock } from "../study/study-clock";
 
 /** What the session needs from the view. */
 export interface StudyHost {
@@ -112,8 +113,11 @@ export class CosmosStudy {
 	private trailAt = -1;
 	/** The card keys the trail asks: only these are hidden, though other cards in its notes may be due. */
 	private trailKeys = new Set<string>();
-	/** When the current card's answer went up, for the review log's time on screen. */
-	private revealedAt = 0;
+	/**
+	 * Times each card for the review log from the session starting or the previous
+	 * rating, not from its reveal (which logged only the time to press a key).
+	 */
+	private readonly clock = new StudyClock();
 	private reviewed = 0;
 
 	constructor(private readonly root: HTMLElement, private readonly plugin: OsmosisPlugin, private readonly host: StudyHost) {}
@@ -133,6 +137,7 @@ export class CosmosStudy {
 			return;
 		}
 		this.panel = this.root.createDiv({ cls: "osmosis-cosmos-study" });
+		this.clock.start();
 		this.revealed.clear();
 		this.rated.clear();
 		this.current = this.currentKey = null;
@@ -150,6 +155,7 @@ export class CosmosStudy {
 		if (!this.active) return;
 		this.panel?.remove();
 		this.panel = null;
+		this.clock.stop();
 		this.targets.clear();
 		this.cards.clear();
 		this.allCards = [];
@@ -228,7 +234,6 @@ export class CosmosStudy {
 		const step = this.currentStep();
 		if (step === null || step.revealed) return false;
 		this.revealed.add(step.asking);
-		this.revealedAt = Date.now();
 		this.host.redraw();
 		return true;
 	}
@@ -238,7 +243,7 @@ export class CosmosStudy {
 		const key = this.pendingKey();
 		// A second key press while the first rating is still being written.
 		if (key === null || this.rated.has(key)) return false;
-		const elapsedMs = Date.now() - this.revealedAt;
+		const elapsedMs = this.clock.lap() ?? 0;
 		this.rated.add(key);
 		this.reviewed++;
 		// One card per key (`mindmapStudyKeys` splits a node into its due cards); looked up the way 2D study does.

@@ -6,6 +6,7 @@ import type { FenceWriter, ScheduleFields } from "../store/FenceWriter";
 import type { ReviewLogEntry } from "../store/ReviewLog";
 import type { StudyScope, StudyCard, DeckCounts } from "./types";
 import { dueCardsInNote, newCardsInNote } from "./note-scope";
+import { capElapsed } from "./study-clock";
 
 /** Destination for line-card schedule writes (osmosis-schedule frontmatter). */
 export interface LineScheduleWriter {
@@ -24,7 +25,7 @@ export interface ReviewLogWriter {
 export interface ReviewContext {
 	/** Answer time, epoch ms. Defaults to now. */
 	now?: number;
-	/** How long the card was on screen before being answered, ms. */
+	/** How long the card took to answer, ms. Capped at `MAX_CARD_MS` when logged. */
 	elapsedMs?: number;
 }
 
@@ -194,7 +195,7 @@ export class StudySessionManager {
 			pi: priorIv,
 			st: update.schedule.stability,
 			d: update.schedule.difficulty,
-			e: Math.max(0, Math.round(context?.elapsedMs ?? 0)),
+			e: Math.round(capElapsed(context?.elapsedMs ?? 0)),
 			m: this.mode,
 		});
 

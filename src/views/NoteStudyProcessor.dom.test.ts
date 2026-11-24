@@ -173,6 +173,8 @@ interface Harness {
 	ratedFences: string[];
 	/** The cards whose rating an undo took back, in order. */
 	reverts: string[];
+	/** The elapsed time each recorded review carried, in order. */
+	elapsed: number[];
 	/**
 	 * Draw the same fence again into the same element, as Obsidian does whenever
 	 * the file changes — which a rating does, since flushing a schedule rewrites
@@ -189,6 +191,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 	const reviews: { cardId: string; rating: number }[] = [];
 	const ratedFences: string[] = [];
 	const reverts: string[] = [];
+	const elapsed: number[] = [];
 	const plugin = {
 		app: {
 			metadataCache: {
@@ -208,14 +211,17 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			isFenceTarget: (_path: string, fenceId: string) =>
 				mode === "study" && dueOrNewFenceCardKeys(cards, Date.now()).has(fenceId),
 			markFenceRated: (_path: string, key: string) => ratedFences.push(key),
+			// The session's clock: 12 s since the session start or the last rating.
+			lapStudyClock: () => 12_000,
 			unmarkFenceRated: (_path: string, key: string) => {
 				ratedFences.splice(ratedFences.lastIndexOf(key), 1);
 			},
 		},
 		createSessionManager: () => ({
 			previewIntervals: () => ({ 1: 60_000, 2: 6 * 60_000, 3: 86_400_000, 4: 4 * 86_400_000 }),
-			recordReview: (cardId: string, rating: number) => {
+			recordReview: (cardId: string, rating: number, context?: { elapsedMs?: number }) => {
 				reviews.push({ cardId, rating });
+				elapsed.push(context?.elapsedMs ?? -1);
 				return Promise.resolve();
 			},
 			revertReview: (cardId: string) => {
@@ -245,7 +251,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 		return other;
 	};
 	render();
-	return { el, reviews, ratedFences, reverts, rerender: render, renderAnother };
+	return { el, reviews, ratedFences, reverts, elapsed, rerender: render, renderAnother };
 }
 
 /** The group each painted mask belongs to, by the role class the renderer gave it. */
@@ -486,6 +492,17 @@ describe("a fence whose cards the store holds", () => {
 		// `rivers` is not a card. Rating it recorded nothing at all, so the
 		// schedule never moved and the passage came back next session unanswered.
 		expect(reviews).toEqual([{ cardId: "rivers-c1", rating: 3 }]);
+	});
+
+	it("logs the time since the session's last rating, not the reveal-to-rate gap", () => {
+		const { el, elapsed } = renderFence(CLOZE, "study", [C1, C2]);
+
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// Reveal and rating happen in the same tick here; 12 s can only have come
+		// from the note's study clock.
+		expect(elapsed).toEqual([12_000]);
 	});
 
 	it("advances the pill on the fence key, not on the card that was rated", () => {
