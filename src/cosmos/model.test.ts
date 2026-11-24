@@ -326,19 +326,33 @@ describe("buildGraph: link resolution", () => {
 		expect(edgesFrom(model, lineId(model, "And [[tide tables#High Water]]"))).toEqual([{ kind: "link", target: ghostNodeId("Tide Tables") }]);
 	});
 
-	it("makes an attachment node and edge for a linked or embedded file", () => {
-		const md = "- Plan [[deck-plan.svg]]\n- ![[deck-plan.svg]]";
+	it("makes an attachment node and edge for a linked file", () => {
+		const md = "- Plan [[deck-plan.svg]]\n- Notes [[passage.pdf]]";
+		const model = buildGraph([note("Knots.md", md, (m) => ({
+			links: [ref(m, "[[deck-plan.svg]]", "deck-plan.svg"), ref(m, "[[passage.pdf]]", "passage.pdf")],
+		}))], resolverFor([...files, "passage.pdf"]));
+		const file = attachmentNodeId("deck-plan.svg");
+		expect(model.nodes.filter((n) => n.kind === "attachment").map((n) => n.id)).toEqual([file, attachmentNodeId("passage.pdf")]);
+		expect(edgesFrom(model, lineId(model, "Plan [[deck-plan.svg]]"))).toEqual([{ kind: "attachment", target: file }]);
+	});
+
+	it("gives media embedded in a line no attachment node: the line's panel draws it (T112)", () => {
+		const md = "- Plan [[deck-plan.svg]]\n- Object ![[deck-plan.svg|314]]\n\n![[deck-plan.svg]]";
 		const model = knots(md, (m) => ({
 			links: [ref(m, "[[deck-plan.svg]]", "deck-plan.svg")],
-			embeds: [ref(m, "![[deck-plan.svg]]", "deck-plan.svg")],
+			embeds: [ref(m, "![[deck-plan.svg|314]]", "deck-plan.svg"), ref(m, "![[deck-plan.svg]]", "deck-plan.svg")],
 		}));
 		const file = attachmentNodeId("deck-plan.svg");
-		expect(model.nodes.filter((n) => n.kind === "attachment")).toEqual([
-			{ id: file, kind: "attachment", label: "deck-plan.svg", path: "deck-plan.svg" },
-		]);
-		const fromLines = model.edges.filter((e) => e.target === file);
-		expect(fromLines.map((e) => e.kind)).toEqual(["attachment", "attachment"]);
-		expect(new Set(fromLines.map((e) => e.source)).size).toBe(2);
+		// Only the plain link reaches the file.
+		expect(model.edges.filter((e) => e.target === file).map((e) => e.source)).toEqual([lineId(model, "Plan [[deck-plan.svg]]")]);
+		expect(edgesFrom(model, lineId(model, "Object ![[deck-plan.svg|314]]"))).toEqual([]);
+		expect(edgesFrom(model, lineId(model, "![[deck-plan.svg]]"))).toEqual([]);
+	});
+
+	it("still makes an attachment node for an embedded PDF", () => {
+		const md = "- Chart ![[passage.pdf]]";
+		const model = buildGraph([note("Knots.md", md, (m) => ({ embeds: [ref(m, "![[passage.pdf]]", "passage.pdf")] }))], resolverFor([...files, "passage.pdf"]));
+		expect(edgesFrom(model, lineId(model, "Chart ![[passage.pdf]]"))).toEqual([{ kind: "attachment", target: attachmentNodeId("passage.pdf") }]);
 	});
 
 	it("drops a link to a note that is not loaded", () => {

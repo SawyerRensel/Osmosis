@@ -21,9 +21,14 @@ describe("unembed", () => {
 		expect(unembed("see ![[Knots#^bowline]] here")).toBe("see [[Knots#^bowline]] here");
 	});
 
-	it("turns embedded media into links too: the attachment node plays it", () => {
-		expect(unembed("![[knot-diagram.svg]]")).toBe("[[knot-diagram.svg]]");
-		expect(unembed("![[clip.mp4|300]] and ![[bell.mp3]]")).toBe("[[clip.mp4|300]] and [[bell.mp3]]");
+	it("keeps embedded images, audio and video as embeds, size and all (T112)", () => {
+		expect(unembed("![[knot-diagram.svg]]")).toBe("![[knot-diagram.svg]]");
+		expect(unembed("Object ![[Pasted image 20261123085856.png|314]]")).toBe("Object ![[Pasted image 20261123085856.png|314]]");
+		expect(unembed("![[clip.mp4|300]] and ![[bell.mp3]]")).toBe("![[clip.mp4|300]] and ![[bell.mp3]]");
+	});
+
+	it("turns an embedded PDF into a link, as everywhere in the panels", () => {
+		expect(unembed("![[chart.pdf#page=2]]")).toBe("[[chart.pdf#page=2]]");
 	});
 
 	it("leaves Markdown images alone", () => {
@@ -133,6 +138,31 @@ describe("panelBoxEm", () => {
 		expect(titled.height).toBeCloseTo(one.height + 1.5);
 		// Two full-height images and a title.
 		expect(two.height).toBeCloseTo(titled.height + PANEL_MEDIA_MAX_EM);
+	});
+
+	it("sizes a wikilinked image by its |width, and its height too with |WxH (T112)", () => {
+		const sized = panelBoxEm(line("![[boat.png|160]]"))!;
+		expect(sized.width).toBeCloseTo(160 / 16 + 0.8);
+		expect(sized.height).toBeCloseTo(PANEL_MEDIA_MAX_EM + 0.5);
+		const both = panelBoxEm(line("![[boat.png|160x80]]"))!;
+		expect(both).toEqual({ width: expect.closeTo(160 / 16 + 0.8) as number, height: expect.closeTo(80 / 16 + 0.5) as number });
+		const md = panelBoxEm(line("![deck|160x80](deck.png)"))!;
+		expect(md.height).toBeCloseTo(80 / 16 + 0.5);
+	});
+
+	it("caps a sized image at the panel, and lets an unsized one fill it", () => {
+		expect(panelBoxEm(line("![[boat.png|900x2000]]"))).toEqual({ width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 0.5 });
+		expect(panelBoxEm(line("![[boat.png]]"))).toEqual({ width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 0.5 });
+	});
+
+	it("puts a line's text above its image, and widens for the text beside a small one", () => {
+		const box = panelBoxEm(line("- Object ![[boat.png|100x50]]", "Object ![[boat.png|100x50]]"))!;
+		expect(box.height).toBeCloseTo(1.5 + 50 / 16 + 0.5);
+		expect(box.width).toBeCloseTo("Object".length * 0.5 + 100 / 16 + 0.8);
+	});
+
+	it("budgets an embedded sound as its player", () => {
+		expect(panelBoxEm(line("![[ship-bell.mp3]]"))!.height).toBeCloseTo(3.5 + 0.5);
 	});
 
 	it("counts an HTML image as an image", () => {
@@ -321,7 +351,9 @@ describe("nearMarkdown for a line group (T75)", () => {
 		expect(panelBoxEm(node)!.height).toBeGreaterThanOrEqual(PANEL_MEDIA_MAX_EM);
 	});
 
-	it("leaves a single-line media embed a link, as before", () => {
-		expect(nearMarkdown(line("![[cover.png]]"))).toBe("[[cover.png]]");
+	it("keeps a single-line media embed an embed, as a group does (T112)", () => {
+		expect(nearMarkdown(line("![[cover.png]]"))).toBe("![[cover.png]]");
+		expect(nearMarkdown(line("- Object ![[cover.png|314]] ^os-a", "Object ![[cover.png|314]]"))).toBe("- Object ![[cover.png|314]] ^os-a");
+		expect(nearMarkdown(line("- See ![[Knots]]", "See ![[Knots]]"))).toBe("- See [[Knots]]");
 	});
 });

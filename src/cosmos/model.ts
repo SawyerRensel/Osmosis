@@ -23,6 +23,7 @@ import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import type { NodeStyle } from "../styles";
 import type { OsmosisNode, OsmosisTree } from "../types";
+import { isPanelMedia } from "./near";
 import { noteStyleReader } from "./node-style";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
@@ -254,6 +255,13 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		// A heading or block that doesn't exist (yet) draws nothing: no fallback to the note, no ghost. The edge appears once it exists.
 		return ("blockId" in key ? target.byBlockId.get(key.blockId) : target.byHeading.get(key.heading)) ?? null;
 	};
+	/** Whether an embed's target is a file a panel draws inline: an image, audio or video. */
+	const embedsPanelMedia = (link: string, sourcePath: string): boolean => {
+		const hash = link.indexOf("#");
+		const linkpath = hash === -1 ? link : link.slice(0, hash);
+		const targetPath = linkpath === "" ? null : resolve(linkpath, sourcePath);
+		return targetPath !== null && isPanelMedia(targetPath);
+	};
 	const contentOnly = options.contentOnly === true;
 
 	// Pass 2: cross-note edges, from the link cache.
@@ -284,6 +292,8 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		}
 		for (const ref of cache.embeds ?? []) {
 			const source = sourceAt(ref.position.start.offset, ref.original);
+			// Media embedded in a line draws in that line's panel (`nearMarkdown`), so it gets no attachment node or edge (T112).
+			if (source !== null && nodes.get(source)?.kind === "line" && embedsPanelMedia(ref.link, index.path)) continue;
 			const target = source === null ? null : resolveTarget(ref.link, index.path);
 			if (source === null || target === null) continue;
 			const kind = nodes.get(target)?.kind === "attachment" ? "attachment" : "embed";
