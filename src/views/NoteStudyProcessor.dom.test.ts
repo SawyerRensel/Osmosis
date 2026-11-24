@@ -178,6 +178,8 @@ interface Harness {
 	 * survive that lives on it.
 	 */
 	rerender: () => void;
+	/** Draw a second fence through the same processor, as a note with two cards does. */
+	renderAnother: (source: string) => HTMLElement;
 }
 
 /** `cards` is read on every call, so a test can move a schedule mid-session. */
@@ -205,6 +207,7 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			markFenceRated: (_path: string, key: string) => ratedFences.push(key),
 		},
 		createSessionManager: () => ({
+			previewIntervals: () => ({ 1: 60_000, 2: 6 * 60_000, 3: 86_400_000, 4: 4 * 86_400_000 }),
 			recordReview: (cardId: string, rating: number) => {
 				reviews.push({ cardId, rating });
 				return Promise.resolve();
@@ -221,8 +224,18 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 			renderCard: (s: string, e: HTMLElement, p: string) => void;
 		}).renderCard(source, el, NOTE);
 	};
+	const renderInto = (target: HTMLElement, fence: string): void => {
+		(processor as unknown as {
+			renderCard: (s: string, e: HTMLElement, p: string) => void;
+		}).renderCard(fence, target, NOTE);
+	};
+	const renderAnother = (fence: string): HTMLElement => {
+		const other = document.createElement("div");
+		renderInto(other, fence);
+		return other;
+	};
 	render();
-	return { el, reviews, ratedFences, rerender: render };
+	return { el, reviews, ratedFences, rerender: render, renderAnother };
 }
 
 /** The group each painted mask belongs to, by the role class the renderer gave it. */
@@ -253,7 +266,7 @@ describe("an occluded fence in note study", () => {
 	it("advances to the next group when the first is rated", () => {
 		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		// Revealing rings the group that was asked rather than clearing it, so the
 		// answer still says where the question was.
 		expect(maskRoles(el)).toEqual(["revealed", "hidden"]);
@@ -271,7 +284,7 @@ describe("an occluded fence in note study", () => {
 		const { el, reviews } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
 		for (let i = 0; i < 2; i++) {
-			el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		}
 
@@ -285,7 +298,7 @@ describe("an occluded fence in note study", () => {
 	it("advances the pill on the fence key, not on the group that was rated", () => {
 		const { el, ratedFences } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// A session's targets are fence keys. Handing the pill `bridge-c1` matched
@@ -346,7 +359,7 @@ describe("an occluded fence in note study", () => {
 		const { el } = renderFence(TWO_GROUPS, "study", [groupCard("c1"), groupCard("c2")]);
 		const img = el.querySelector("img");
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		expect(el.querySelector("img")).toBe(img);
 
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
@@ -357,7 +370,7 @@ describe("an occluded fence in note study", () => {
 		const cards = [groupCard("c1"), groupCard("c2")];
 		const { el, rerender } = renderFence(TWO_GROUPS, "study", cards);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		// Rating `c1` pushed it out of the due window, and flushing that schedule
 		// rewrites the note — so Obsidian rebuilds the code block.
@@ -424,7 +437,7 @@ describe("a fence whose cards the store holds", () => {
 	it("records a cloze review against the group's own card, not the fence", () => {
 		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// `rivers` is not a card. Rating it recorded nothing at all, so the
@@ -435,7 +448,7 @@ describe("a fence whose cards the store holds", () => {
 	it("advances the pill on the fence key, not on the card that was rated", () => {
 		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// The session's targets are fence keys, so handing it `rivers-c1` left the
@@ -455,7 +468,7 @@ describe("a fence whose cards the store holds", () => {
 		const { el, reviews } = renderFence(CLOZE, "study", [C1, C2]);
 
 		expect(stepCount(el)).toBe("1/2");
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// The second group is a question in its own right, with its own schedule.
@@ -463,7 +476,7 @@ describe("a fence whose cards the store holds", () => {
 		expect(stepCount(el)).toBe("2/2");
 		expect(frontText(el)).toBe(C2.front);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		expect(reviews).toEqual([
@@ -477,7 +490,7 @@ describe("a fence whose cards the store holds", () => {
 		const { el, ratedFences } = renderFence(CLOZE, "study", [C1, C2]);
 
 		for (let i = 0; i < 2; i++) {
-			el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+			el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 			el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		}
 
@@ -502,12 +515,12 @@ describe("a fence whose cards the store holds", () => {
 		const { el, reviews } = renderFence(BIDI, "study", [forward, reverse]);
 
 		expect(frontText(el)).toBe("France");
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		// The reverse used to be reachable in flashcard study and nowhere else.
 		expect(frontText(el)).toBe("Paris");
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 
 		expect(reviews).toEqual([
@@ -520,7 +533,7 @@ describe("a fence whose cards the store holds", () => {
 		const cards = [C1, C2];
 		const { el, rerender } = renderFence(CLOZE, "study", cards);
 
-		el.querySelector<HTMLElement>(".osmosis-note-hidden")!.click();
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
 		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
 		// Rating `c1` pushed it out of the due window, and any file change rebuilds
 		// the code block's DOM.
@@ -532,6 +545,60 @@ describe("a fence whose cards the store holds", () => {
 		// the answer to its first question.
 		expect(frontText(el)).toBe(C2.front);
 		expect(stepCount(el)).toBe("2/2");
+	});
+
+	it("asks with a full-width Show answer button instead of a placeholder", () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+
+		// The front's own cloze blank stays; only the back's placeholder goes.
+		expect(el.querySelector(".osmosis-note-hidden")).toBeNull();
+		const actions = el.querySelector(".osmosis-note-actions")!;
+		expect(actions.querySelector(".osmosis-study-flip")?.textContent).toBe("Show answer");
+		expect(actions.querySelector(".osmosis-rating")).toBeNull();
+	});
+
+	it("swaps Show answer for the study tab's rating bar, with intervals", () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+
+		const actions = el.querySelector(".osmosis-note-actions")!;
+		expect(actions.querySelector(".osmosis-study-flip")).toBeNull();
+		const bar = actions.querySelector(".osmosis-rating.osmosis-study-rating-bar")!;
+		expect(Array.from(bar.querySelectorAll(".osmosis-rate-label"), (s) => s.textContent))
+			.toEqual(["Again", "Hard", "Good", "Easy"]);
+		expect(Array.from(bar.querySelectorAll(".osmosis-rate-interval"), (s) => s.textContent))
+			.toEqual(["1m", "6m", "1d", "4d"]);
+	});
+
+	it("keeps the counter, undo and exclude toggle in the top row", () => {
+		const { el } = renderFence(CLOZE, "study", [C1, C2]);
+		const top = (): Element => el.querySelector(".osmosis-note-top")!;
+
+		expect(top().querySelector(".osmosis-note-step")?.textContent).toBe("1/2");
+		expect(top().querySelector(".osmosis-note-exclude-toggle")).not.toBeNull();
+		expect(top().querySelector(".osmosis-note-undo.osmosis-hidden")).not.toBeNull();
+
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+		el.querySelector<HTMLElement>(".osmosis-rate-good")!.click();
+
+		// Something to undo now, and still off the full-width rows.
+		expect(top().querySelector(".osmosis-note-undo:not(.osmosis-hidden)")).not.toBeNull();
+		expect(el.querySelector(".osmosis-note-actions .osmosis-note-undo")).toBeNull();
+		expect(el.querySelector(".osmosis-note-actions .osmosis-note-exclude-toggle")).toBeNull();
+	});
+
+	it("reveals only the card whose Show answer was pressed", () => {
+		const lakes = clozeCard(1, `${CLOZE_BLANK} is the largest lake in Africa.`);
+		lakes.id = "lakes-c1";
+		const { el, renderAnother } = renderFence(CLOZE, "study", [C1, C2, lakes]);
+		const other = renderAnother("id: lakes\n\n==Victoria== is the largest lake in Africa.");
+
+		el.querySelector<HTMLElement>(".osmosis-note-show-answer")!.click();
+
+		expect(el.querySelector(".osmosis-note-show-answer")).toBeNull();
+		expect(other.querySelector(".osmosis-note-show-answer")).not.toBeNull();
+		expect(other.querySelector(".osmosis-rating")).toBeNull();
 	});
 
 	it("shows no step counter on a fence that asks a single question", () => {
@@ -639,7 +706,7 @@ describe("a fence in plain reading mode", () => {
 
 		expect(visible(el, ".osmosis-note-front")).toBe(true);
 		expect(visible(el, ".osmosis-note-revealed")).toBe(true);
-		expect(visible(el, ".osmosis-note-hidden")).toBe(false);
+		expect(visible(el, ".osmosis-note-show-answer")).toBe(false);
 	});
 
 	it("stacks a cloze card's blanked and filled-in halves, as live preview does", () => {
@@ -666,7 +733,7 @@ describe("a fence in plain reading mode", () => {
 		// No `due` means never reviewed, which the scheduler counts as due now.
 		const { el } = renderFence(BASIC, "study", [basicCard("basic1")]);
 
-		expect(visible(el, ".osmosis-note-hidden")).toBe(true);
+		expect(visible(el, ".osmosis-note-show-answer")).toBe(true);
 		expect(visible(el, ".osmosis-note-revealed")).toBe(false);
 	});
 
@@ -676,7 +743,7 @@ describe("a fence in plain reading mode", () => {
 
 		// Context, not a question: a blank the reader could never clear is worse
 		// than no blank at all.
-		expect(visible(el, ".osmosis-note-hidden")).toBe(false);
+		expect(visible(el, ".osmosis-note-show-answer")).toBe(false);
 		expect(visible(el, ".osmosis-note-revealed")).toBe(true);
 	});
 
@@ -718,7 +785,7 @@ describe("a fence in plain reading mode", () => {
 		processor.refresh(NOTE);
 		document.body.appendChild(offScreen);
 
-		expect(visible(offScreen, ".osmosis-note-hidden")).toBe(true);
+		expect(visible(offScreen, ".osmosis-note-show-answer")).toBe(true);
 		expect(visible(offScreen, ".osmosis-note-revealed")).toBe(false);
 	});
 });

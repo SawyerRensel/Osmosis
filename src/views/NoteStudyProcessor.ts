@@ -10,6 +10,7 @@ import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } 
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import { dueCardsForFenceKey } from "../study/mindmap-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+import { formatInterval } from "../study/study-view";
 
 /**
  * A fence resolved into what the two sides render.
@@ -310,21 +311,19 @@ export class NoteStudyProcessor {
 			container.addClass("osmosis-note-excluded");
 		}
 
+		// Top row: step counter or "Rated", undo and the exclude toggle, at the
+		// top right (left of live preview's `</>`), so the rows below can span the
+		// card. Rebuilt on every draw, because which of them belong there changes
+		// with the step.
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
 		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
+		const revealedEl = container.createDiv({ cls: "osmosis-note-revealed" });
 
-		// Back: hidden placeholder + revealed content
-		const backEl = container.createDiv();
-		const hiddenEl = backEl.createDiv({
-			cls: "osmosis-note-hidden",
-			text: "░░░░░░",
-		});
-		const revealedEl = backEl.createDiv({ cls: "osmosis-note-revealed" });
-
-		// Bottom row: undo (far left) + step counter + rating area + exclude toggle.
-		// Rebuilt on every draw, because which of them belong there changes with the
-		// step; it holds no picture, so its height cannot move what is being read.
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
+		// Full-width action row: Show answer while the back is hidden, then the
+		// rating bar. Rebuilt on every draw; it sits below everything being read,
+		// so its height cannot move it.
+		const actionsEl = container.createDiv({ cls: "osmosis-note-actions" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -364,26 +363,28 @@ export class NoteStudyProcessor {
 			const collapse = parsed.isCloze && hiding && revealed;
 			frontEl.toggleClass("osmosis-hidden", collapse);
 			dividerEl.toggleClass("osmosis-hidden", collapse);
-			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
 			revealedEl.toggleClass("osmosis-hidden", hiding && !revealed);
 
-			bottomRow.empty();
-			this.addUndoButton(bottomRow);
+			topRow.empty();
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
+				topRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 1) {
 				// Only when there is a sequence to be somewhere in. "1/1" on a basic
 				// fence would say nothing the card does not already show.
-				bottomRow.createSpan({
+				topRow.createSpan({
 					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
-			if (revealed && step !== null) {
-				this.showRating(ratingSlot, step.id, parsed.cardId, sourcePath, advance);
+			this.addUndoButton(topRow);
+			this.addExcludeToggle(topRow, parsed, sourcePath);
+
+			actionsEl.empty();
+			if (hiding && !revealed) {
+				this.addShowAnswerButton(actionsEl, reveal);
+			} else if (revealed && step !== null) {
+				this.showRating(actionsEl, step.id, parsed.cardId, sourcePath, advance);
 			}
-			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
 
 		// Defined after `draw` because the two call each other; both are only ever
@@ -405,7 +406,6 @@ export class NoteStudyProcessor {
 
 		draw();
 
-		hiddenEl.addEventListener("click", reveal);
 		container.addEventListener("click", (e) => {
 			if (e.target === container) reveal();
 		});
@@ -542,6 +542,7 @@ export class NoteStudyProcessor {
 
 		const container = el.createDiv({ cls: "osmosis-note-card" });
 		if (parsed.exclude) container.addClass("osmosis-note-excluded");
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
 
 		// Drawn once and never swapped. An occluded fence's two sides are the *same*
 		// markdown — `parseFenceContent` hands the prose to both — because the
@@ -576,8 +577,7 @@ export class NoteStudyProcessor {
 			return slot;
 		});
 
-		const hiddenEl = container.createDiv({ cls: "osmosis-note-hidden", text: "░░░░░░" });
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
+		const actionsEl = container.createDiv({ cls: "osmosis-note-actions" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -620,39 +620,41 @@ export class NoteStudyProcessor {
 				}
 			});
 
-			// Nothing but the placeholder and its rule goes away on reveal: the
-			// answer to an occluded card is the masks, which have just been
-			// repainted. While reading, the rule stays as the seam between the
-			// question and the answer beneath it.
+			// Nothing but Show answer and the rule goes away on reveal: the answer
+			// to an occluded card is the masks, which have just been repainted.
+			// While reading, the rule stays as the seam between the question and
+			// the answer beneath it.
 			answerSlots.forEach((slot) => { slot.toggleClass("osmosis-hidden", hiding); });
 			dividerEl.toggleClass("osmosis-hidden", hiding && revealed);
-			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
 
-			// Rebuilt rather than repainted: it holds no picture, and it sits below
-			// the diagram, so its height changes cannot move what is being read.
-			bottomRow.empty();
+			// Rebuilt rather than repainted: neither row holds a picture, and the
+			// top one is too short to move the diagram noticeably.
+			topRow.empty();
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
+				topRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 0) {
-				bottomRow.createSpan({
+				topRow.createSpan({
 					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
-			if (revealed && step?.cardId != null) {
+			this.addExcludeToggle(topRow, parsed, sourcePath);
+
+			actionsEl.empty();
+			if (hiding && !revealed) {
+				this.addShowAnswerButton(actionsEl, reveal);
+			} else if (revealed && step?.cardId != null) {
 				// Floated under the group just revealed, so a tall diagram does
 				// not put its answer and its rating a scroll apart; a scattered
-				// group keeps the row. Note view only: flashcard study keeps its fixed
-				// bar by choice.
+				// group keeps the full-width row. Note view only: flashcard study
+				// keeps its fixed bar by choice.
 				const slot = slots[step.diagram];
 				const occlusion = occlusions[step.diagram];
 				const anchored = slot && occlusion
 					? mountRatingAnchor(slot, { ...occlusion, target: step.group })
 					: null;
-				this.showRating(anchored ?? ratingSlot, step.cardId, parsed.cardId, sourcePath, advance);
+				this.showRating(anchored ?? actionsEl, step.cardId, parsed.cardId, sourcePath, advance);
 			}
-			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
 
 		// Defined after `draw` because the two call each other; both are only ever
@@ -675,7 +677,6 @@ export class NoteStudyProcessor {
 
 		draw();
 
-		hiddenEl.addEventListener("click", reveal);
 		container.addEventListener("click", (e) => {
 			if (e.target === container) reveal();
 		});
@@ -683,6 +684,21 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
+		});
+	}
+
+	/**
+	 * The full-width "Show answer" button, in the flashcard study tab's look
+	 * (`.osmosis-study-flip`). It reveals this card only.
+	 */
+	private addShowAnswerButton(row: HTMLElement, reveal: () => void): void {
+		const btn = row.createEl("button", {
+			text: "Show answer",
+			cls: "osmosis-study-flip osmosis-note-show-answer",
+		});
+		btn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			reveal();
 		});
 	}
 
@@ -895,6 +911,10 @@ export class NoteStudyProcessor {
 			container.addClass("osmosis-note-excluded");
 		}
 
+		// Exclude toggle at the top right, left of the editor's `</>` button
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
+		this.addExcludeToggle(topRow, parsed, sourcePath);
+
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		this.renderSide(parsed, "front", frontEl, sourcePath);
@@ -905,17 +925,6 @@ export class NoteStudyProcessor {
 		// Render back (fully visible, no hiding)
 		const backEl = container.createDiv({ cls: "osmosis-note-revealed" });
 		this.renderSide(parsed, "back", backEl, sourcePath);
-
-		// Bottom row with exclude toggle (bottom-right)
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
-		bottomRow.createDiv(); // spacer
-		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-note-exclude-toggle" });
-		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
-		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
-		toggleIcon.addEventListener("click", (e) => {
-			e.stopPropagation();
-			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
-		});
 	}
 
 	/**
@@ -935,11 +944,14 @@ export class NoteStudyProcessor {
 		sourcePath: string,
 		onRated?: () => void,
 	): void {
-		const ratingEl = container.createDiv({ cls: "osmosis-rating" });
+		// The flashcard study tab's bar: four equal buttons, each with the interval
+		// it would schedule above its label.
+		const ratingEl = container.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar" });
 		// The answer just went on screen. A note card has no separate
 		// "question shown" moment — it lives inline in the note — so the reveal
 		// is the anchor for the review log's elapsed time.
 		const revealedAt = Date.now();
+		const preview = this.session().previewIntervals(cardId, revealedAt);
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -949,7 +961,9 @@ export class NoteStudyProcessor {
 		];
 
 		for (const { label, rating, cls } of ratings) {
-			const btn = ratingEl.createEl("button", { text: label, cls });
+			const btn = ratingEl.createEl("button", { cls, attr: { "aria-label": label } });
+			btn.createSpan({ cls: "osmosis-rate-interval", text: formatInterval(preview[rating]) });
+			btn.createSpan({ cls: "osmosis-rate-label", text: label });
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
 
@@ -991,6 +1005,12 @@ export class NoteStudyProcessor {
 		}
 	}
 
+	/** The note surface's session manager, built on first use. */
+	private session(): StudySessionManager {
+		this.sessionManager ??= this.plugin.createSessionManager("note");
+		return this.sessionManager;
+	}
+
 	private async recordRating(cardId: string, rating: FSRSRating, elapsedMs: number): Promise<void> {
 		// Ensure the card exists in the store (note cards use hash-based IDs)
 		if (!this.plugin.cardStore.getCard(cardId)) {
@@ -998,10 +1018,7 @@ export class NoteStudyProcessor {
 			return;
 		}
 
-		if (!this.sessionManager) {
-			this.sessionManager = this.plugin.createSessionManager("note");
-		}
-		await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+		await this.session().recordReview(cardId, rating, { elapsedMs });
 		this.plugin.refreshDashboard();
 	}
 
@@ -1032,13 +1049,9 @@ export class NoteStudyProcessor {
 			}
 		} else {
 			// Undo rating: revert schedule
-			if (!this.sessionManager) {
-				this.sessionManager = this.plugin.createSessionManager("note");
-			}
-
 			const card = this.plugin.cardStore.getCard(entry.cardId);
 			if (card) {
-				await this.sessionManager.revertReview(entry.cardId, entry.previousSchedule ?? null);
+				await this.session().revertReview(entry.cardId, entry.previousSchedule ?? null);
 			}
 
 			this.reviewedCount = Math.max(0, this.reviewedCount - 1);

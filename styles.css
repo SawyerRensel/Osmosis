@@ -1857,16 +1857,20 @@ body.is-phone .osmosis-study-actions {
    `input[type="text"]` sizes, and ties (and, loading later, beats) its
    `.is-tablet button:not(.clickable-icon)` padding. */
 .osmosis-study-view .osmosis-study-actions button,
-.osmosis-study-view .osmosis-study-actions input {
+.osmosis-study-view .osmosis-study-actions input,
+.osmosis-note-card .osmosis-note-actions button {
 	height: var(--osmosis-study-button-height);
 }
 
-.osmosis-study-view .osmosis-study-actions button {
+.osmosis-study-view .osmosis-study-actions button,
+.osmosis-note-card .osmosis-note-actions button {
 	padding: 0 var(--size-4-2);
 }
 
 body.is-tablet .osmosis-study-view .osmosis-study-actions button,
-body.is-phone .osmosis-study-view .osmosis-study-actions button {
+body.is-phone .osmosis-study-view .osmosis-study-actions button,
+body.is-tablet .osmosis-note-card .osmosis-note-actions button,
+body.is-phone .osmosis-note-card .osmosis-note-actions button {
 	font-size: var(--font-ui-medium);
 }
 
@@ -1888,7 +1892,8 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
    (`.osmosis-rating button`). Two classes, to outrank Obsidian's
    `button:not(.clickable-icon)` radius; no `display` here, or it would outrank
    `.osmosis-hidden` too. */
-.osmosis-study-actions .osmosis-study-flip {
+.osmosis-study-actions .osmosis-study-flip,
+.osmosis-note-actions .osmosis-study-flip {
 	flex: 1;
 	min-width: 0;
 	border-radius: 4px;
@@ -1902,7 +1907,8 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
    adds the panel's height and stacks the interval each would schedule over its
    label. Two classes, to outrank the shared row's margin; no `display` here,
    for the reason given on the flip button. */
-.osmosis-study-actions .osmosis-study-rating-bar {
+.osmosis-study-actions .osmosis-study-rating-bar,
+.osmosis-note-actions .osmosis-study-rating-bar {
 	flex: 1;
 	min-width: 0;
 	margin-top: 0;
@@ -2299,15 +2305,38 @@ body.is-phone .osmosis-decks-column {
 	margin: 8px 0;
 }
 
-.osmosis-note-hidden {
-	color: var(--text-faint);
-	letter-spacing: 2px;
-	cursor: pointer;
-	user-select: none;
+/* Show answer, then the rating bar, spanning the card in the flashcard study
+   tab's look: `.osmosis-study-flip` and `.osmosis-study-rating-bar` share
+   their rules with the tab's panel. A touch screen gets the tablet height,
+   not the tab's phone 56px: a note holds many of these inline. */
+.osmosis-note-actions {
+	--osmosis-study-button-height: 40px;
+	display: flex;
+	margin-top: 8px;
 }
 
-.osmosis-note-hidden:hover {
-	color: var(--text-muted);
+body.is-tablet .osmosis-note-actions,
+body.is-phone .osmosis-note-actions {
+	--osmosis-study-button-height: 48px;
+}
+
+.osmosis-note-actions:empty {
+	display: none;
+}
+
+/* Step counter, "Rated", undo and the exclude toggle, at the card's top right.
+   Tucked into the card's padding; in live preview it stops short of
+   Obsidian's absolutely positioned `</>` (`.edit-block-button`). */
+.osmosis-note-top {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 4px;
+	margin: -8px -8px 0 0;
+}
+
+.cm-embed-block .osmosis-note-top {
+	margin-inline-end: 28px;
 }
 
 .osmosis-note-revealed {
@@ -2418,32 +2447,22 @@ body.is-phone .osmosis-decks-column {
 
 /* ─── Exclude Toggle (Note Cards) ──────────────────── */
 
-.osmosis-note-bottom {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-top: 4px;
-}
-
-.osmosis-note-rating-slot {
-	flex: 1;
-}
-
-/* "2/3" on an occluded fence being studied in place. Its groups are asked one at
-   a time, and without a count the only thing distinguishing the second question
-   from the first is which mask is amber — which says nothing about how many are
-   left. Sits where the undo button does on an ordinary card; a stepped card has
-   none, since undoing one group's rating mid-sequence has nowhere to put the
-   user back. */
-.osmosis-note-step {
+/* "2/3" on a fence being studied in place, or "Rated" once it is done, in the
+   top row left of undo. Its questions are asked one at a time, and without a
+   count nothing says how many are left. */
+.osmosis-note-step,
+.osmosis-note-top > .osmosis-note-rated {
 	color: var(--text-faint);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
 	flex-shrink: 0;
-	margin-right: 8px;
+	margin-right: 4px;
 }
 
 .osmosis-note-exclude-toggle {
+	display: flex;
+	padding: 4px;
+	border-radius: 4px;
 	cursor: pointer;
 	color: var(--text-muted);
 	opacity: 0.4;
