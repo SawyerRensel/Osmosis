@@ -4721,8 +4721,14 @@ body.osmosis-hide-navbar .mobile-navbar {
 	overflow-wrap: anywhere;
 }
 
-.osmosis-cosmos-near-body img,
-.osmosis-cosmos-near-body video {
+/* Scoped under the panel as well, so the caps outrank a theme's, snippet's or
+   other plugin's `.markdown-rendered img` or `img[width]` (T112 fix round 1).
+   At `.osmosis-cosmos-near-body img` they only tied those, and a later sheet
+   won: an embed sized with `|314` then drew 314 px wide past the panel's edge,
+   while an unsized one stayed capped by Obsidian's own
+   `.internal-embed img:not([width])`. */
+.osmosis-cosmos-near-panel .osmosis-cosmos-near-body img,
+.osmosis-cosmos-near-panel .osmosis-cosmos-near-body video {
 	max-width: 100%;
 	/* PANEL_MEDIA_MAX_EM in src/cosmos/near.ts; contain keeps the aspect of an embed sized with |width. */
 	max-height: 15em;
