@@ -15,11 +15,11 @@ import {
 } from "../study/mindmap-study";
 import { decksOfNote } from "../study/note-scope";
 import { isBuried } from "../study/bury";
-import { countNoteSession, noteSessionCard, type NoteSessionCard } from "../study/session-counts";
+import { noteSessionCard, noteSessionStatus, type NoteSessionCard } from "../study/session-counts";
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import type { OcclusionSide } from "../study/occlusion-masks";
 import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion } from "./OcclusionRenderer";
-import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
+import { mountAtScrollerTop, StudyProgressStrip } from "./StudyProgressStrip";
 import { contentRect, ImageZoom } from "./ImageZoom";
 import type { ScreenRect } from "../study/image-zoom";
 import { StudyClock } from "../study/study-clock";
@@ -75,17 +75,9 @@ interface NoteRevealState {
 	 * different kinds of string — a bare block ID and a fence's own `id:` — and
 	 * every line lookup here indexes by the former. `NoteStudyProcessor`
 	 * owns the fences themselves and asks this set whether the one it is about
-	 * to draw is a target; the progress strip counts both.
+	 * to draw is a target.
 	 */
 	fenceTargets: Set<string> | null;
-	/**
-	 * How many questions each fence target asks this session, fixed when study
-	 * starts — a cloze group or a direction of a bidirectional pair is its own
-	 * card, so a fence is one target but often several questions.
-	 */
-	fenceSteps: Map<string, number>;
-	/** How many of them have been answered. Fences rate in the other processor. */
-	ratedFences: Map<string, number>;
 	/**
 	 * Every card the session asks — line, shape group and fence alike — with the
 	 * bucket it started in, for the strip's new | learn | due counts (T102).
@@ -710,11 +702,9 @@ export class LineRevealProcessor {
 			state.fenceTargets = fences;
 			state.revealed.clear();
 			state.rated.clear();
-			state.ratedFences.clear();
 			state.pendingRating = null;
 			state.clock.start(now);
 			this.planOcclusionSteps(notePath, state, targets);
-			this.planFenceSteps(notePath, state, fences);
 			this.planSessionCards(notePath, state, now);
 		}
 
@@ -755,39 +745,9 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * How many questions each fence target will ask this session.
-	 *
-	 * Counted from the store here rather than reported by each fence as it draws,
-	 * because reading view builds its sections lazily: a fence below the fold has
-	 * not been rendered yet, and the bar would understate the session until the
-	 * reader happened to scroll past it.
-	 *
-	 * `NoteStudyProcessor` derives the same sequence from the same store
-	 * with the same filter, so the two agree — see `fenceStepPlan`. An occluded
-	 * fence is counted the same way, one question per shape group, since the
-	 * store holds a card per group exactly as it does per cloze group.
-	 */
-	private planFenceSteps(
-		notePath: string,
-		state: NoteRevealState,
-		targets: ReadonlySet<string>,
-	): void {
-		state.fenceSteps.clear();
-
-		const cards = this.plugin.cardStore.getCardsByNote(notePath);
-		const now = Date.now();
-		for (const key of targets) {
-			// A target with nothing countable is still one question, for the reason
-			// `planOcclusionSteps` gives: better one that cannot be answered than a
-			// session whose total is short by a fence the reader can see.
-			state.fenceSteps.set(key, Math.max(dueCardsForFenceKey(cards, key, now).length, 1));
-		}
-	}
-
-	/**
 	 * Every card this session asks, bucketed as it stands now, for the strip's
-	 * counts. Called after `planOcclusionSteps` and `planFenceSteps`, and takes
-	 * the same cards they do: an occluded line's due shape groups, an ordinary
+	 * bar and counts. Called after `planOcclusionSteps`, and takes the same
+	 * cards it does: an occluded line's due shape groups, an ordinary
 	 * line's due-or-new cards (one rating reaches them all), a fence's due cards.
 	 */
 	private planSessionCards(notePath: string, state: NoteRevealState, now: number): void {
@@ -817,8 +777,6 @@ export class LineRevealProcessor {
 		state.fenceTargets = null;
 		state.pendingRating = null;
 		state.revealed.clear();
-		state.ratedFences.clear();
-		state.fenceSteps.clear();
 		state.studySteps.clear();
 		state.stepAt.clear();
 		state.sessionCards = [];
@@ -1035,13 +993,13 @@ export class LineRevealProcessor {
 	// ── Progress strip (bar + new | learn | due counts) ───────
 
 	/**
-	 * Put the strip above the note's inline title, building it on first use, and
-	 * refresh it. With no inline title in the DOM it goes to the top of the
-	 * reading view's sizer instead.
+	 * Put the strip at the top of the reading view's scroller, building it on
+	 * first use, and refresh it. It sticks there while the note scrolls (T122,
+	 * `.osmosis-note-study-strip` in styles.css).
 	 */
 	private ensureStrip(host: HTMLElement, notePath: string): void {
-		const sizer = host.querySelector<HTMLElement>(".markdown-preview-sizer");
-		if (!sizer) return;
+		const scroller = host.querySelector<HTMLElement>(":scope > .markdown-preview-view");
+		if (!scroller) return;
 		let wrap = host.querySelector<HTMLElement>(".osmosis-note-study-strip");
 		let strip = wrap ? this.strips.get(wrap) : undefined;
 		if (!wrap || !strip) {
@@ -1050,12 +1008,16 @@ export class LineRevealProcessor {
 			strip = new StudyProgressStrip(wrap);
 			this.strips.set(wrap, strip);
 		}
-		mountAboveInlineTitle(sizer, wrap);
+		mountAtScrollerTop(scroller, wrap);
 
 		const state = this.stateFor(notePath);
-		const { done, total } = this.studyProgress(state);
-		strip.setProgress(total > 0 ? (done / total) * 100 : 0);
-		strip.setCounts(countNoteSession(state.sessionCards, state.sessionRatings, this.answeringCardIds(notePath, state)));
+		const { counts, percent } = noteSessionStatus(
+			state.sessionCards,
+			state.sessionRatings,
+			this.answeringCardIds(notePath, state),
+		);
+		strip.setProgress(percent);
+		strip.setCounts(counts);
 	}
 
 	/**
@@ -1070,34 +1032,6 @@ export class LineRevealProcessor {
 		const step = this.currentStep(state, blockId);
 		if (step) return step.cardId === null ? [] : [step.cardId];
 		return cardIdsForLineKey(this.plugin.cardStore.getCardsByNote(notePath), lineCardId(notePath, blockId));
-	}
-
-	/**
-	 * The progress bar's fraction, in **questions rather than lines**.
-	 *
-	 * An occluded line asks one question per shape group, so counting lines would
-	 * report "0/1" through two of the three answers a three-group diagram takes.
-	 * The mind map's banner counts cards for the same reason.
-	 */
-	private studyProgress(state: NoteRevealState): { done: number; total: number } {
-		let done = 0;
-		let total = 0;
-		for (const blockId of state.studyTargets ?? []) {
-			const steps = state.studySteps.get(blockId)?.length ?? 1;
-			total += steps;
-			done += state.rated.has(blockId) ? steps : (state.stepAt.get(blockId) ?? 0);
-		}
-		// A fence counts its questions the same way: a three-group cloze fence asks
-		// three and a bidirectional pair asks two, each rated separately, so the
-		// bar would sit still through most of a note of them if it counted fences.
-		for (const key of state.fenceTargets ?? []) {
-			const steps = state.fenceSteps.get(key) ?? 1;
-			total += steps;
-			// Clamped, because the count comes from another processor's ratings and a
-			// total that ran ahead of itself would be worse than one that stalls.
-			done += Math.min(state.ratedFences.get(key) ?? 0, steps);
-		}
-		return { done, total };
 	}
 
 	/**
@@ -1193,19 +1127,17 @@ export class LineRevealProcessor {
 	}
 
 	/**
-	 * Record that one of a fence's questions was answered, so the strip advances.
+	 * Record that one of a fence's cards was answered, so the strip moves.
 	 *
-	 * The rating itself is written by `NoteStudyProcessor` — this only
-	 * tells the session's progress counter that one of its questions is done,
-	 * and the counts which card and how (Again moves it to learn).
-	 * Counted rather than flagged: a fence that fans out is answered a card at a
-	 * time, and each of those is a question the reader has finished.
+	 * The rating itself is written by `NoteStudyProcessor` — this only tells the
+	 * strip which card and how, by the study tab's rule (`noteSessionStatus`):
+	 * Again moves it to learn and leaves the bar where it was. A fence that fans
+	 * out is answered a card at a time, so each of its cards moves it on its own.
 	 */
 	markFenceRated(notePath: string, fenceKey: string, cardId: string, rating: FSRSRating): void {
 		const state = this.states.get(notePath);
 		if (!state || state.mode !== "study") return;
 		if (!state.fenceTargets?.has(fenceKey)) return;
-		state.ratedFences.set(fenceKey, (state.ratedFences.get(fenceKey) ?? 0) + 1);
 		state.sessionRatings.set(cardId, rating);
 		this.syncBanners();
 	}
@@ -1220,7 +1152,6 @@ export class LineRevealProcessor {
 		if (!state.sessionRatings.delete(cardId)) return;
 		// The card is back in front of the user: time it from here.
 		state.clock.start();
-		state.ratedFences.set(fenceKey, Math.max((state.ratedFences.get(fenceKey) ?? 0) - 1, 0));
 		this.syncBanners();
 	}
 
@@ -1248,10 +1179,8 @@ export class LineRevealProcessor {
 				rated: new Set(),
 				studyTargets: null,
 				fenceTargets: null,
-				ratedFences: new Map(),
 				sessionCards: [],
 				sessionRatings: new Map(),
-				fenceSteps: new Map(),
 				pendingRating: null,
 				clock: new StudyClock(),
 				studySteps: new Map(),

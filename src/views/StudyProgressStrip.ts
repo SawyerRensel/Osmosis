@@ -46,15 +46,15 @@ export class StudyProgressStrip {
 }
 
 /**
- * Put `el` directly above the note's inline title in a reading view's sizer,
- * or at the top of the sizer when there is no inline title. A no-op when it is
- * already there, so it can run on every refresh.
+ * Put `el` at the top of a reading view's scroller (`.markdown-preview-view`),
+ * just before its `.markdown-preview-sizer`, so it reads above the inline title
+ * and can stick to the scroller's top edge (T122). A no-op when it is already
+ * there, so it can run on every refresh.
+ *
+ * Not inside the sizer: Obsidian virtualizes the sizer, resetting its children
+ * to the sections in view on every scroll (`setChildrenInPlace`), so a strip
+ * there was dropped or scrolled away with the header section it sat in.
  */
-export function mountAboveInlineTitle(sizer: HTMLElement, el: HTMLElement): void {
-	const title = sizer.querySelector(".inline-title");
-	if (title) {
-		if (el.nextSibling !== title) title.before(el);
-	} else if (sizer.firstChild !== el) {
-		sizer.prepend(el);
-	}
+export function mountAtScrollerTop(scroller: HTMLElement, el: HTMLElement): void {
+	if (scroller.firstChild !== el) scroller.prepend(el);
 }

@@ -137,6 +137,39 @@ export function sessionStatus(
 
 	const finished = finishedIds.size;
 	const remaining = (queue.length - Math.min(start, queue.length)) + left.length;
-	const percent = remaining === 0 ? 100 : (finished / (finished + remaining)) * 100;
-	return { counts, percent };
+	return { counts, percent: progressPercent(finished, remaining) };
+}
+
+/** T117's fill rule, shared by both studies: finished / (finished + left), full with nothing left. */
+function progressPercent(finished: number, remaining: number): number {
+	return remaining === 0 ? 100 : (finished / (finished + remaining)) * 100;
+}
+
+/**
+ * Note study's progress bar and counts (T122), by the study tab's rule
+ * (`sessionStatus`): the counts are `countNoteSession`'s, and the bar reads the
+ * cards finished out of finished + the cards those counts still hold.
+ *
+ * A card rated Again is not finished — it sits in learn, as in the study tab —
+ * so an Again never moves the bar forward. Note study does not ask it again,
+ * though, so once every card has a rating there is nothing left to show and the
+ * bar reads full, as the study tab's waiting screen does. A session with no
+ * cards to count reads empty rather than full.
+ */
+export function noteSessionStatus(
+	cards: readonly NoteSessionCard[],
+	ratings: ReadonlyMap<string, FSRSRating>,
+	answering: readonly string[],
+): SessionStatus {
+	const counts = countNoteSession(cards, ratings, answering);
+	if (cards.length === 0) return { counts, percent: 0 };
+	let finished = 0;
+	let unrated = 0;
+	for (const { id } of cards) {
+		const rating = ratings.get(id);
+		if (rating === undefined) unrated++;
+		else if (rating !== 1) finished++;
+	}
+	const remaining = unrated === 0 ? 0 : counts.new + counts.learn + counts.due;
+	return { counts, percent: progressPercent(finished, remaining) };
 }

@@ -2414,12 +2414,27 @@ body.is-phone .osmosis-note-actions {
 /* ─── Line-Card Progressive Reveal (Reading View) ────────── */
 
 /* Note study's progress strip (T102): the study tab's bar and counts
-   (StudyProgressStrip), above the inline title. The reading view's sizer already
-   sets the column, so the strip takes its full width. */
+   (StudyProgressStrip). It is the reading view scroller's first child, above the
+   sizer (Obsidian virtualizes the sizer's children), and sticks to the
+   scroller's top edge while the note scrolls (T122). Opaque, with padding rather
+   than margin under it, so no text shows through or below it. On a phone the
+   view header floats over the scroller, which pads its top by
+   --view-top-spacing-markdown (8px without a floating header, desktop leaves it
+   unset); the strip sticks that far down, less the plain 8px. */
 .osmosis-note-study-strip {
 	--osmosis-study-strip-height: 28px;
 	--osmosis-study-column: none;
-	margin-bottom: var(--size-4-2);
+	position: sticky;
+	top: calc(var(--view-top-spacing-markdown, var(--size-4-2)) - var(--size-4-2));
+	z-index: 5;
+	padding-bottom: var(--size-4-2);
+	background: var(--background-primary);
+}
+
+/* The sizer's column, which the strip sits outside of. */
+.markdown-preview-view.is-readable-line-width > .osmosis-note-study-strip {
+	max-width: var(--file-line-width);
+	margin-inline: auto;
 }
 
 /* Hidden line: the wrapped content collapses, the placeholder shows */

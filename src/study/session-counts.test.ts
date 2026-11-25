@@ -3,7 +3,7 @@ import type { Card, CardState } from "../database/types";
 import type { StudyCard } from "./types";
 import type { FSRSRating } from "../database/FSRSScheduler";
 import {
-	bucketOf, countNoteSession, countSession, noteSessionCard, sessionStatus,
+	bucketOf, countNoteSession, countSession, noteSessionCard, noteSessionStatus, sessionStatus,
 	type NoteSessionCard, type PendingStudyCard,
 } from "./session-counts";
 import { stepBackQueue } from "./undo-queue";
@@ -175,6 +175,53 @@ describe("countNoteSession", () => {
 
 	it("marks nothing for a card outside the session", () => {
 		expect(countNoteSession(cards, new Map(), ["bowline"]).current).toBeNull();
+	});
+});
+
+describe("noteSessionStatus (T122)", () => {
+	const cards: NoteSessionCard[] = [
+		{ id: "tack", bucket: "new" },
+		{ id: "jibe", bucket: "new" },
+		{ id: "reef", bucket: "learn" },
+		{ id: "heave", bucket: "due" },
+	];
+
+	it("reads empty before anything is rated, with every card counted", () => {
+		const { percent, counts } = noteSessionStatus(cards, new Map(), ["tack"]);
+		expect(percent).toBe(0);
+		expect([counts.new, counts.learn, counts.due, counts.current]).toEqual([2, 1, 1, "new"]);
+	});
+
+	it("moves a card's worth for each Hard, Good or Easy", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 3]]);
+		expect(noteSessionStatus(cards, ratings, []).percent).toBe(25);
+		ratings.set("heave", 2);
+		expect(noteSessionStatus(cards, ratings, []).percent).toBe(50);
+	});
+
+	it("does not move forward on Again: the card is still left, in learn", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 3], ["jibe", 1]]);
+		const { percent, counts } = noteSessionStatus(cards, ratings, []);
+		expect(percent).toBe(25);
+		expect([counts.new, counts.learn, counts.due]).toEqual([0, 2, 1]);
+	});
+
+	it("reads full once every card has a rating, Agains included", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 3], ["jibe", 1], ["reef", 4], ["heave", 1]]);
+		const { percent, counts } = noteSessionStatus(cards, ratings, []);
+		expect(percent).toBe(100);
+		expect(counts.learn).toBe(2);
+	});
+
+	it("moves back when a rating is undone", () => {
+		const ratings = new Map<string, FSRSRating>([["tack", 3], ["reef", 3]]);
+		expect(noteSessionStatus(cards, ratings, []).percent).toBe(50);
+		ratings.delete("reef");
+		expect(noteSessionStatus(cards, ratings, []).percent).toBe(25);
+	});
+
+	it("reads empty for a session with no cards to count", () => {
+		expect(noteSessionStatus([], new Map(), []).percent).toBe(0);
 	});
 });
 
