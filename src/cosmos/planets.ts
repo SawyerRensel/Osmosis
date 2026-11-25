@@ -6,14 +6,17 @@
  * `isNoteRoot`) floats at the planet's centre and every other line lies on
  * the surface. The root's children are the *continents*: each is laid out as
  * a 2D mind map (`continentMap`), wrapped onto the sphere about its centre
- * (`wrapPoint`, an azimuthal equidistant map, so distances from the centre
- * keep), and placed anywhere on the globe, poles included, by surface forces
- * that keep continents apart (`placeContinents`). Each continent has one
- * frame, taken at its centre (`tangentFrame`: world +y projected, or world −z
- * at a pole), and every plate lies tangent to the surface at its own place
- * with that frame carried there (`wrapPlate`), so a continent is as rigid as
- * its 2D map. Plates the wrap squeezes together are pushed apart, away from
- * the continent's centre (`spreadContinent`). Plates spin upright with the
+ * (a radial map by `wrapPoint`, an azimuthal equidistant map, so distances
+ * from the centre keep; a left-right or top-down map by `treeWrap`, an
+ * equirectangular map, so the tree's rows and columns keep), and placed
+ * anywhere on the globe, poles included, by surface forces that keep
+ * continents apart (`placeContinents`). Each continent has one frame, taken
+ * at its centre (`tangentFrame`: world +y projected, or world −z at a pole),
+ * and every plate lies tangent to the surface at its own place, a radial
+ * map's with that frame carried there (`wrapPlate`), a tree's along its
+ * parallel and meridian. Plates the wrap squeezes together are pushed apart:
+ * a radial map's away from the continent's centre (`spreadContinent`), a
+ * tree's along its own axes (`spreadTree`). Plates spin upright with the
  * camera, so the spread also keeps them clear at any roll up to
  * `UPRIGHT_ROLL`.
  *
@@ -119,14 +122,16 @@ export interface MapPlate {
 
 /**
  * A continent's 2D map: its plates, the head first, and how far they reach
- * from (0, 0), the point the wrap centres on: the head, or for a left-right
- * map (whose head sits at one end) the middle of its box.
+ * from (0, 0), the point the wrap centres on: the head of a radial map, or
+ * the middle of a left-right or top-down map's box.
  */
 export interface ContinentMap {
 	plates: MapPlate[];
 	reach: number;
 	/** Its footprint, width × height including a margin, for the radius rule. */
 	area: number;
+	/** A left-right or top-down map's latitude axis for `treeWrap`: the shorter side of its box. Unset for radial maps. */
+	latitude?: "x" | "y";
 }
 
 /** World units per 2D mind-map pixel: `STYLE_PX_PER_EM` px to an em of line-plate text (as T44's node widths). */
@@ -177,8 +182,8 @@ function treeMap(head: PlanetBranch, sizes: Map<string, { width: number; height:
  * A continent laid out as a 2D mind map (the 2D map's own `computeLayout`, or
  * `radialMap`), at plate sizes and the 2D map's gaps, so at ×1 it is as
  * compact as the 2D map. Plates spin upright with the camera (`upright.ts`)
- * but are laid out as they lie in the continent's frame; `spreadContinent`
- * keeps them clear at rolls up to `UPRIGHT_ROLL`, and past it wide neighbours
+ * but are laid out as they lie in the continent's frame; `spreadContinent` (or
+ * `spreadTree`) keeps them clear at rolls up to `UPRIGHT_ROLL`, and past it wide neighbours
  * can touch (accepted for compactness), so the layout never depends on the
  * camera. `nodeSpacing` (the Node spacing slider) scales the gaps between its plates, never the plates; `continentSpacing`
  * (the Continent spacing slider) scales the clear space kept round it.
@@ -190,19 +195,23 @@ export function continentMap(head: PlanetBranch, sizeOf: PlateSize, style: Conti
 		branch.children.forEach(gather);
 	};
 	gather(head);
-	let plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
+	const plates = style.direction === "radial" ? radialMap(head, sizeOf, COLUMN_GAP * nodeSpacing, ROW_GAP * nodeSpacing) : treeMap(head, sizes, style, style.direction, nodeSpacing);
 	const margin = CONTINENT_MARGIN * continentSpacing;
 	let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
 	for (const p of plates) {
 		[x0, x1] = [Math.min(x0, p.x - p.width / 2), Math.max(x1, p.x + p.width / 2)];
 		[y0, y1] = [Math.min(y0, p.y - p.height / 2), Math.max(y1, p.y + p.height / 2)];
 	}
-	if (style.direction === "left-right") {
+	const map: ContinentMap = { plates, reach: 0, area: (x1 - x0 + margin) * (y1 - y0 + margin) };
+	if (style.direction !== "radial") {
 		// Centred on its box rather than its head (which sits at one end), so the wrap squeezes its far plates half as far out.
 		const [cx, cy] = [(x0 + x1) / 2, (y0 + y1) / 2];
-		plates = plates.map((p) => ({ ...p, x: p.x - cx, y: p.y - cy }));
+		map.plates = plates.map((p) => ({ ...p, x: p.x - cx, y: p.y - cy }));
+		// Its shorter side runs north to south on the globe (`treeWrap`): never far enough to near a pole, and the wrap narrows the longer one least.
+		map.latitude = y1 - y0 <= x1 - x0 ? "y" : "x";
 	}
-	return { plates, reach: plateReach(plates) + margin / 2, area: (x1 - x0 + margin) * (y1 - y0 + margin) };
+	map.reach = plateReach(map.plates) + margin / 2;
+	return map;
 }
 
 /**
@@ -361,6 +370,57 @@ export function wrapPlate(frame: TangentFrame, x: number, y: number, radius: num
 	return { offset: scale(normal, radius), normal, right: carry(frame.right), up: carry(frame.up) };
 }
 
+/**
+ * Where the map point (`x` right, `y` down) of a left-right or top-down
+ * continent whose frame at its centre is `frame` lands on a sphere of
+ * `radius`, and the plate's frame there (T124). An equirectangular map whose
+ * pole is the tree's stack axis (up for left-right, right for top-down): the
+ * depth axis runs round the equator through the centre, so a child at its
+ * parent's row stays on its parent's parallel, beside it, and a column of
+ * siblings runs along a meridian at their exact map spacing, still centred on
+ * their parent. Only depth gaps narrow, by the cosine of the latitude, away
+ * from the centre row. A plate's right and up are its parallel and meridian
+ * (east and north for left-right), so a tree reads level across the
+ * continent. Unlike `wrapPlate` (azimuthal, for radial maps) it never
+ * squeezes siblings together, so `spreadTree` pushes only along the tree's
+ * axes, not out from the centre.
+ */
+export function treeWrap(frame: TangentFrame, x: number, y: number, radius: number, latitude: "x" | "y"): WrappedPlate {
+	const leftRight = latitude === "y";
+	// The pole (the latitude axis at the centre) and the equator's direction there.
+	const [pole, along] = leftRight ? [frame.up, frame.right] : [frame.right, scale(frame.up, -1)];
+	const [u, v] = leftRight ? [x / radius, -y / radius] : [y / radius, x / radius];
+	const [cu, su, cv, sv] = [Math.cos(u), Math.sin(u), Math.cos(v), Math.sin(v)];
+	const equator = add(scale(frame.normal, cu), along, su);
+	const normal = add(scale(equator, cv), pole, sv);
+	// Along the parallel (the depth axis) and along the meridian towards the pole (the stack axis).
+	const parallel = add(scale(frame.normal, -su), along, cu);
+	const meridian = add(scale(equator, -sv), pole, cv);
+	const offset = scale(normal, radius);
+	return leftRight ? { offset, normal, right: parallel, up: meridian } : { offset, normal, right: meridian, up: scale(parallel, -1) };
+}
+
+/**
+ * How far a plate at (`ax`, `ay`) from another (along a frame's right and up)
+ * must move along the unit direction (`ux`, `uy`) to clear it: by
+ * `clearance` on one axis of the frame, and spun upright by any camera roll
+ * up to `maxRoll` (`rollClearance`, measured along the direction). `w` and
+ * `h` are their half-widths and half-heights summed. 0 when already clear;
+ * Infinity when no move that way clears the box.
+ */
+function pushToClear(ax: number, ay: number, ux: number, uy: number, w: number, h: number, clearance: number, maxRoll: number): number {
+	const [wc, hc] = [w + clearance, h + clearance];
+	let need = 0;
+	if (Math.abs(ax) < wc && Math.abs(ay) < hc) {
+		need = Infinity;
+		if (Math.abs(ux) > 1e-6) need = Math.min(need, (wc - Math.sign(ux) * ax) / Math.abs(ux));
+		if (Math.abs(uy) > 1e-6) need = Math.min(need, (hc - Math.sign(uy) * ay) / Math.abs(uy));
+	}
+	// At roll 0 the frame's up is the direction turned by `bearing`.
+	const [apart, bearing] = [ax * ux + ay * uy, Math.atan2(ux, uy)];
+	return Math.max(need, rollClearance(ax * uy - ay * ux, apart, w, h, bearing - maxRoll, bearing + maxRoll) - apart);
+}
+
 /** How many rounds `spreadContinent` runs at most: each pushes every overlapping plate out at once. */
 export const SPREAD_ROUNDS = 32;
 
@@ -419,16 +479,7 @@ export function spreadContinent(map: ContinentMap, head: PlanetBranch, radius: n
 					if (out[k]! < 1e-6 || branchOf[k]!.includes(k === j ? i : j)) return Infinity;
 					const [ax, ay] = k === j ? [dx, dy] : [-dx, -dy];
 					// Its outward bearing in its frame (the map's x right, y down; the frame's up is map up).
-					const [ux, uy] = [plates[k]!.x / out[k]!, -plates[k]!.y / out[k]!];
-					let need = 0;
-					if (Math.abs(dx) < wc && Math.abs(dy) < hc) {
-						need = Infinity;
-						if (Math.abs(ux) > 1e-6) need = Math.min(need, (wc - Math.sign(ux) * ax) / Math.abs(ux));
-						if (Math.abs(uy) > 1e-6) need = Math.min(need, (hc - Math.sign(uy) * ay) / Math.abs(uy));
-					}
-					// Clear, too, spun upright by any camera roll up to `maxRoll`, measured along the bearing; at roll 0 the frame's up is the bearing turned by `bearing`.
-					const [apart, bearing] = [ax * ux + ay * uy, Math.atan2(ux, uy)];
-					return Math.max(need, rollClearance(ax * uy - ay * ux, apart, w, h, bearing - maxRoll, bearing + maxRoll) - apart);
+					return pushToClear(ax, ay, plates[k]!.x / out[k]!, -plates[k]!.y / out[k]!, w, h, clearance, maxRoll);
 				};
 				// The plate with the shorter push moves (the outer one on a tie). A pair stacked across their bearings clears far sooner when the plate whose bearing runs along their offset moves (T114 fix round 1: always moving the outer one slid whole branches sideways past each other).
 				const [ni, nj] = [needOf(i), needOf(j)];
@@ -457,6 +508,137 @@ export function spreadContinent(map: ContinentMap, head: PlanetBranch, radius: n
 	}
 	if (!moved) return map;
 	return { plates, reach: map.reach - plateReach(map.plates) + plateReach(plates), area: map.area };
+}
+
+/**
+ * `spreadContinent` for a left-right or top-down map wrapped by `treeWrap`
+ * (T124): plates that overlap once wrapped (closer than `clearance`, or at any
+ * camera roll up to `maxRoll`) are pushed apart along the tree's own axes, so
+ * the continent keeps the mind map's shape instead of fanning out from its
+ * centre. Of each overlapping pair, whichever move is shortest:
+ *
+ * - **Stack:** for two plates in different branches of their lowest common
+ *   ancestor, on the same side of it, the ancestor's children on either side
+ *   of the pair move apart along the stack axis, half each way, so the
+ *   ancestor stays centred on its children, as in the mind map.
+ * - **Depth:** a plate (never an ancestor of the other, never the head) moves
+ *   with its branch along the depth axis, away from its parent, so it stays on
+ *   its parent's row. The wrap narrows depth gaps by the cosine of the
+ *   latitude, so the map move is the surface move over that cosine.
+ *
+ * Per round, each ancestor takes its largest stack move and each plate its
+ * largest depth move. At most `SPREAD_ROUNDS` rounds; no randomness, so the
+ * same every time; a map nothing overlaps comes back unchanged.
+ */
+export function spreadTree(map: ContinentMap, head: PlanetBranch, radius: number, clearance: number, direction: "left-right" | "top-down", maxRoll = UPRIGHT_ROLL): ContinentMap {
+	const leftRight = direction === "left-right";
+	const plates = map.plates.map((p) => ({ ...p }));
+	const index = new Map(plates.map((p, i) => [p.id, i]));
+	const parentOf: number[] = plates.map(() => -1);
+	const childrenOf: number[][] = plates.map(() => []);
+	const branchOf: number[][] = plates.map(() => []);
+	const gather = (branch: PlanetBranch, parent: number): number[] => {
+		const own = index.get(branch.id);
+		const members = own === undefined ? [] : [own];
+		if (own !== undefined && parent >= 0) {
+			parentOf[own] = parent;
+			childrenOf[parent]!.push(own);
+		}
+		for (const child of branch.children) members.push(...gather(child, own ?? parent));
+		if (own !== undefined) branchOf[own] = members;
+		return members;
+	};
+	gather(head, -1);
+	// Map coordinates along the depth and stack axes, and those axes' map directions in a plate's frame (right, up; the map's y is down).
+	const depthOf = (k: number): number => (leftRight ? plates[k]!.x : plates[k]!.y);
+	const stackOf = (k: number): number => (leftRight ? plates[k]!.y : plates[k]!.x);
+	const [depthDir, stackDir] = leftRight ? [[1, 0], [0, -1]] : [[0, -1], [1, 0]];
+	const chain = (k: number): number[] => {
+		const out = [k];
+		while (parentOf[out[out.length - 1]!]! >= 0) out.push(parentOf[out[out.length - 1]!]!);
+		return out;
+	};
+	// The wrap narrows the longitude axis by the cosine of the latitude: a surface move along it is that much longer on the map.
+	const latitude = map.latitude ?? "y";
+	const depthIsLatitude = (latitude === "y") !== leftRight;
+	const stretch = (k: number): number => 1 / Math.max(Math.cos((latitude === "y" ? plates[k]!.y : plates[k]!.x) / radius), 0.2);
+	const frame = tangentFrame({ x: 0, y: 0, z: 1 });
+	let moved = false;
+	for (let round = 0; round < SPREAD_ROUNDS; round++) {
+		const wrapped = plates.map((p) => treeWrap(frame, p.x, p.y, radius, latitude));
+		const depthPush = new Float64Array(plates.length);
+		// Per common ancestor: its children to move, and how far, along the stack axis.
+		const stackPush = new Map<number, { amount: number; down: number[]; up: number[] }>();
+		for (let i = 0; i < plates.length; i++) {
+			for (let j = i + 1; j < plates.length; j++) {
+				const [a, b] = [plates[i]!, plates[j]!];
+				const rel = add(wrapped[j]!.offset, wrapped[i]!.offset, -1);
+				const [w, h] = [(a.width + b.width) / 2, (a.height + b.height) / 2];
+				const [wc, hc] = [w + clearance, h + clearance];
+				if (dot(rel, rel) >= wc * wc + hc * hc) continue;
+				const [dx, dy] = [dot(rel, wrapped[i]!.right), dot(rel, wrapped[i]!.up)];
+				// Depth: plate k moves away from its parent, unless it is the head or the other's ancestor.
+				const depthNeed = (k: number): number => {
+					const other = k === j ? i : j;
+					const parent = parentOf[k]!;
+					const side = parent < 0 ? 0 : Math.sign(depthOf(k) - depthOf(parent));
+					if (side === 0 || branchOf[k]!.includes(other)) return Infinity;
+					const [ax, ay] = k === j ? [dx, dy] : [-dx, -dy];
+					return pushToClear(ax, ay, depthDir[0]! * side, depthDir[1]! * side, w, h, clearance, maxRoll);
+				};
+				const [ni, nj] = [depthNeed(i), depthNeed(j)];
+				// Stack: their lowest common ancestor's children part, if both branches leave it on the same side.
+				let stack: { amount: number; down: number[]; up: number[]; at: number } | undefined;
+				const [ci, cj] = [chain(i), chain(j)];
+				const common = ci.find((k) => cj.includes(k));
+				if (common !== undefined && common !== i && common !== j) {
+					const [bi, bj] = [ci[ci.indexOf(common) - 1]!, cj[cj.indexOf(common) - 1]!];
+					const side = Math.sign(depthOf(bi) - depthOf(common));
+					if (side === Math.sign(depthOf(bj) - depthOf(common)) && stackOf(bi) !== stackOf(bj)) {
+						// j's way along the stack axis, in i's frame.
+						const sign = dx * stackDir[0]! + dy * stackDir[1]! >= 0 ? 1 : -1;
+						const amount = pushToClear(dx, dy, stackDir[0]! * sign, stackDir[1]! * sign, w, h, clearance, maxRoll);
+						// The common ancestor's children on that side part at the pair's middle: half each way, so it stays centred on them.
+						const mid = (stackOf(bi) + stackOf(bj)) / 2;
+						const sameSide = childrenOf[common]!.filter((c) => Math.sign(depthOf(c) - depthOf(common)) === side);
+						stack = { amount, at: common, up: sameSide.filter((c) => stackOf(c) > mid), down: sameSide.filter((c) => stackOf(c) <= mid) };
+					}
+				}
+				const best = Math.min(ni, nj, stack?.amount ?? Infinity);
+				if (best <= 0 || best === Infinity) continue;
+				if (stack !== undefined && stack.amount === best) {
+					const prev = stackPush.get(stack.at);
+					const amount = (best + 1e-3) * (depthIsLatitude ? Math.max(stretch(i), stretch(j)) : 1);
+					if (prev === undefined || prev.amount < amount) stackPush.set(stack.at, { amount, down: stack.down, up: stack.up });
+					continue;
+				}
+				const k = nj <= ni ? j : i;
+				depthPush[k] = Math.max(depthPush[k]!, (best + 1e-3) * (depthIsLatitude ? 1 : stretch(k)));
+			}
+		}
+		const depthShift = new Float64Array(plates.length);
+		const stackShift = new Float64Array(plates.length);
+		let any = false;
+		depthPush.forEach((amount, k) => {
+			if (amount <= 0) return;
+			any = true;
+			const side = Math.sign(depthOf(k) - depthOf(parentOf[k]!));
+			for (const m of branchOf[k]!) depthShift[m] = depthShift[m]! + side * amount;
+		});
+		for (const { amount, down, up } of stackPush.values()) {
+			any = true;
+			for (const c of up) for (const m of branchOf[c]!) stackShift[m] = stackShift[m]! + amount / 2;
+			for (const c of down) for (const m of branchOf[c]!) stackShift[m] = stackShift[m]! - amount / 2;
+		}
+		if (!any) break;
+		moved = true;
+		plates.forEach((p, m) => {
+			if (leftRight) [p.x, p.y] = [p.x + depthShift[m]!, p.y + stackShift[m]!];
+			else [p.x, p.y] = [p.x + stackShift[m]!, p.y + depthShift[m]!];
+		});
+	}
+	if (!moved) return map;
+	return { ...map, plates, reach: map.reach - plateReach(map.plates) + plateReach(plates) };
 }
 
 /** Angular distance between two unit directions. */
@@ -613,7 +795,7 @@ export function shellGrowth(
 
 /**
  * Lay a planet out: its continents' maps, the radius they need, the maps
- * spread where the wrap squeezes plates together (`spreadContinent`, and the
+ * spread where the wrap squeezes plates together (`spreadContinent`, or `spreadTree` for a tree map, and the
  * radius grown if that widened one too far), their centres on the globe, and
  * each plate wrapped onto the surface with its continent's frame.
  *
@@ -637,7 +819,9 @@ export function layoutPlanet(
 	const flat = tree.continents.map((head) => continentMap(head, sizeOf, style, nodeSpacing, continentSpacing));
 	const first = planetRadius(flat, rootWidth);
 	// Half the map's own sibling gap: closer than that, the wrap has squeezed two plates together.
-	const maps = flat.map((map, i) => spreadContinent(map, tree.continents[i]!, first, (ROW_GAP * nodeSpacing) / 2));
+	const clearance = (ROW_GAP * nodeSpacing) / 2;
+	const direction = style.direction;
+	const maps = flat.map((map, i) => (direction === "radial" ? spreadContinent(map, tree.continents[i]!, first, clearance) : spreadTree(map, tree.continents[i]!, first, clearance, direction)));
 	const surface = Math.max(first, planetRadius(maps, rootWidth));
 	const centres = placeContinents(
 		maps.map((map) => map.reach / surface),
@@ -649,7 +833,7 @@ export function layoutPlanet(
 		const head = tree.continents[i]!.id;
 		// One frame per continent, at its centre, shared by all its plates.
 		const frame = tangentFrame(centres[i]!);
-		for (const plate of map.plates) places.set(plate.id, { ...wrapPlate(frame, plate.x, plate.y, surface), continent: head });
+		for (const plate of map.plates) places.set(plate.id, { ...(map.latitude === undefined ? wrapPlate(frame, plate.x, plate.y, surface) : treeWrap(frame, plate.x, plate.y, surface, map.latitude)), continent: head });
 	});
 	let radius = surface;
 	const shellRadii: number[] = [];
