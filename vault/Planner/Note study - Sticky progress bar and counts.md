@@ -14,7 +14,7 @@ batch: 16
 priority:
 progress:
 date_created: 2026-11-24T23:17:08.000Z
-date_modified: 2026-11-25T00:20:00.000Z
+date_modified: 2026-11-25T08:23:46Z
 date_start_scheduled: 2026-11-24T23:59:32Z
 date_start_actual: 2026-11-24T23:59:32Z
 date_end_scheduled:
@@ -115,3 +115,45 @@ The counts were not the problem: they came from `countNoteSession` and were corr
 - Nothing has been run in Obsidian. I haven't checked sticky behaviour, opacity over images and callouts, or the phone floating-header offset on a device.
 - Clicking an outline heading may scroll it to just under the strip, partly hidden behind its 36px. Untested.
 - `npm run build` was not run (the orchestrator said not to). `tsc -noEmit` passes.
+
+## Fix round 1 (awaiting manual test)
+
+Code commit: `4dfac70` on `batch/16-bury-zoom-trees`.
+
+### Feedback
+On desktop the pinned strip sat about 45px below the view header ("Topics / HTML Elements", reading view). The note scrolled through that gap: lines of a code block showed between the header and the strip. Sawyer asked for the strip to sit snug against the header and be opaque, so no slice of content shows above it.
+
+### Cause
+Chromium pins a sticky box inside its scroll container's padding, not at the scroller's top edge. The reading view scroller (`.markdown-preview-view`) has `padding: var(--file-margins)`, which is 32px on top on desktop, so `top: 0` pinned the strip 32px below the header. The 45px Sawyer saw is presumably those 32 CSS px at display scaling. Nothing covered that band, so the note scrolled through it. On a phone the T122 offset made it worse: there, `top` was added on top of the padding. With a floating header, the strip pinned 55px below the header's bottom edge (measured with a 0 safe area).
+
+Measured in headless Chromium with Obsidian's `app.css` plus `styles.css`. The figure is the strip's top edge relative to the header's bottom edge, scrolled 400px.
+
+| Layout | Before | After |
+|---|---|---|
+| Desktop | 32px | 0 |
+| Phone | 8px | 0 |
+| Phone, floating header | 55px | bar row 1px under the header's bottom edge (the header's border); strip box from the scroller's top |
+
+### Fix (`styles.css` only)
+- While the strip is mounted, `.markdown-preview-view:has(> .osmosis-note-study-strip)` sets `padding-top: 0`, and the strip uses `top: 0`. The strip is then flush under the header at every scroll position, including scroll 0, and never moves.
+- To beat Obsidian's phone padding rule (6 classes), the selector repeats that rule's chain and adds the `:has()`, which makes it one class heavier. No `!important`.
+- `box-shadow: 0 0 0 100vmax var(--background-primary)` plus `clip-path: inset(0 -100vmax)` paints the strip's background across the scroller's whole width (side padding and the gutters beside the readable column), but only at the strip's height. A shadow adds no scrollable overflow; measured: `scrollWidth - clientWidth` is the same with and without the strip. A screenshot with full-width red content rows scrolled under the strip showed no red above or beside it.
+- Phone with floating header (`.is-phone.is-floating-nav`, `.is-phone.auto-full-screen`): the strip gets `padding-top: calc(var(--view-header-top-offset) + var(--view-header-height))`. It fills the area behind the transparent floating header with background and puts the bar row just under the header. The scroller gets `isolation: isolate` so the strip's `z-index: 5` cannot rise above the header (z-index 1). In the screenshot the header title stays visible over the strip.
+
+### Decisions
+- **Zero the scroller's top padding instead of `top: calc(-1 * padding)`.** A negative top has to know the padding value, which differs between desktop (`--file-margins`), sidebars (`--size-4-5`), phones (`--view-top-spacing-markdown`) and themes. Measuring it in JS goes stale when a phone rotates and its safe area changes. With the padding zeroed, the pinned position is right whatever the theme sets.
+- **At scroll 0 the strip is also at the top.** The 32px that used to sit above the strip is gone rather than moved below it, so the inline title starts 8px under the strip (its padding-bottom). This reads as a toolbar under the header. If Sawyer wants more breathing room above the title, add it below the strip as sizer margin, not above it.
+
+### Surface map
+| File | Change |
+|---|---|
+| `styles.css` | Scroller `padding-top: 0` and `isolation: isolate` while the strip is mounted; strip `top: 0` plus full-width shadow paint; floating-phone `padding-top` |
+
+### Fixture
+Same as before: `vault/tests/flashcard/note-study-sticky-strip.md`.
+
+### Not verified
+- Not tested in Obsidian or on a device. The measurements used a hand-built DOM with Obsidian's real `app.css`.
+- Phone with the floating header and in-note search open: Obsidian moves the header clearance into the search bar, so the strip's extra top padding may leave a blank band of about 56px under the search bar. That band would be cosmetic.
+- `auto-full-screen` hides the header on scroll. The strip keeps its header-height padding, so a blank band may sit where the header was.
+- Lint: 0 errors (2 existing warnings in `StatsView.ts`). Tests: 152 files and 3595 tests pass. Build was not run (the orchestrator said not to).
