@@ -216,3 +216,30 @@ export function moveKind(transform: LayerTransform): "translate" | "shrink" | "r
 	if (transform.scale === 1) return "translate";
 	return transform.scale < 1 ? "shrink" : "repaint";
 }
+
+/** Zoom per px of wheel delta for a pinch or Ctrl + wheel (ln of the factor). */
+export const PINCH_ZOOM_GAIN = 0.002;
+/**
+ * Zoom per px of plain wheel delta (ln of the factor): about 6% a 100 px mouse
+ * notch, and a full two-finger swipe of a touchpad (a thousand or so px of
+ * scroll) a little over 2x. Plain deltas are far larger than a pinch's, so the
+ * pinch's gain would jump.
+ */
+export const WHEEL_ZOOM_GAIN = 0.0006;
+/** The most one plain wheel event may count for, px: a hard flick on a touchpad can deliver hundreds in one event. */
+export const MAX_WHEEL_DELTA_PX = 300;
+
+/**
+ * What a wheel event does to the zoom, as ln of the factor (positive zooms
+ * in; scrolling up, a negative `deltaY`, zooms in). A pinch (or Ctrl + wheel)
+ * has its own finer gain; every other wheel event, a touchpad's two-finger
+ * scroll or a mouse wheel, zooms with `WHEEL_ZOOM_GAIN`. Lines and pages are
+ * taken as 16 and 100 px, as OrbitControls does.
+ */
+export function wheelLogZoom(e: { deltaY: number; deltaMode: number }, pinch: boolean): number {
+	let delta = e.deltaY;
+	if (e.deltaMode === 1) delta *= 16;
+	else if (e.deltaMode === 2) delta *= 100;
+	if (pinch) return -delta * PINCH_ZOOM_GAIN;
+	return -Math.max(-MAX_WHEEL_DELTA_PX, Math.min(MAX_WHEEL_DELTA_PX, delta)) * WHEEL_ZOOM_GAIN;
+}

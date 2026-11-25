@@ -7,6 +7,10 @@ import {
 	layerTransform,
 	layerTransformCss,
 	moveKind,
+	wheelLogZoom,
+	MAX_WHEEL_DELTA_PX,
+	WHEEL_ZOOM_GAIN,
+	PINCH_ZOOM_GAIN,
 	type ViewBox,
 	type ViewportBox,
 } from "./mindmap-viewport";
@@ -257,5 +261,39 @@ describe("layerTransformCss", () => {
 	it("omits the scale for a translation", () => {
 		expect(layerTransformCss({ tx: 3, ty: -2, scale: 1 })).toBe("translate(3px, -2px)");
 		expect(layerTransformCss({ tx: 3, ty: -2, scale: 0.5 })).toBe("translate(3px, -2px) scale(0.5)");
+	});
+});
+
+describe("wheelLogZoom", () => {
+	const px = (deltaY: number) => ({ deltaY, deltaMode: 0 });
+
+	it("zooms in on scroll up and out on scroll down, equally", () => {
+		expect(wheelLogZoom(px(-100), false)).toBeGreaterThan(0);
+		expect(wheelLogZoom(px(100), false)).toBeLessThan(0);
+		expect(wheelLogZoom(px(-100), false)).toBeCloseTo(-wheelLogZoom(px(100), false), 12);
+	});
+
+	it("is proportional to a small touchpad delta, so a slow scroll zooms smoothly", () => {
+		expect(wheelLogZoom(px(-4), false)).toBeCloseTo(4 * WHEEL_ZOOM_GAIN, 12);
+		expect(wheelLogZoom(px(-8), false)).toBeCloseTo(2 * wheelLogZoom(px(-4), false), 12);
+	});
+
+	it("caps one plain event so a hard flick cannot jump", () => {
+		expect(wheelLogZoom(px(-5000), false)).toBeCloseTo(MAX_WHEEL_DELTA_PX * WHEEL_ZOOM_GAIN, 12);
+		expect(wheelLogZoom(px(5000), false)).toBeCloseTo(-MAX_WHEEL_DELTA_PX * WHEEL_ZOOM_GAIN, 12);
+	});
+
+	it("gives a pinch its own finer gain, uncapped", () => {
+		expect(wheelLogZoom(px(-10), true)).toBeCloseTo(10 * PINCH_ZOOM_GAIN, 12);
+		expect(wheelLogZoom(px(-1000), true)).toBeCloseTo(1000 * PINCH_ZOOM_GAIN, 12);
+	});
+
+	it("reads lines and pages as 16 and 100 px", () => {
+		expect(wheelLogZoom({ deltaY: -3, deltaMode: 1 }, false)).toBeCloseTo(wheelLogZoom(px(-48), false), 12);
+		expect(wheelLogZoom({ deltaY: -1, deltaMode: 2 }, false)).toBeCloseTo(wheelLogZoom(px(-100), false), 12);
+	});
+
+	it("does nothing for a horizontal-only swipe", () => {
+		expect(Math.abs(wheelLogZoom(px(0), false))).toBe(0);
 	});
 });

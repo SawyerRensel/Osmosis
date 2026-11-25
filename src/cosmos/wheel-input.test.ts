@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { wheelLogZoom } from "./depth";
-import { GESTURE_GAP_MS, SWIPE_GAIN, SWIPE_LIFT_FRAMES, SWIPE_LIFT_MS, SwipeFeed, WheelClassifier, commonStep, wheelAction, type WheelSample, type WheelSource } from "./wheel-input";
+import { GESTURE_GAP_MS, TOUCHPAD_ZOOM_GAIN, WheelClassifier, commonStep, wheelZoomStep, type WheelSample, type WheelSource } from "./wheel-input";
 
 /** Feed `deltas` ([deltaX, deltaY]) to a fresh classifier, `every` ms apart from `start`, and return each answer. */
 function run(deltas: [number, number][], every = 8, start = 1000, deltaMode = 0, classifier = new WheelClassifier()): WheelSource[] {
@@ -108,110 +108,39 @@ describe("WheelClassifier", () => {
 	});
 });
 
-describe("wheelAction", () => {
-	const event = (deltaX: number, deltaY: number, mods: { ctrlKey?: boolean; shiftKey?: boolean; deltaMode?: number } = {}) => ({
-		deltaX,
+describe("wheelZoomStep", () => {
+	const event = (deltaY: number, mods: { ctrlKey?: boolean; deltaMode?: number } = {}) => ({
 		deltaY,
 		deltaMode: mods.deltaMode ?? 0,
 		ctrlKey: mods.ctrlKey ?? false,
-		shiftKey: mods.shiftKey ?? false,
 	});
+	const plain = (deltaY: number) => wheelLogZoom({ deltaY, deltaMode: 0, ctrlKey: false });
 
 	it("zooms for a mouse wheel, as before", () => {
-		expect(wheelAction(event(0, -100), "wheel", false)).toEqual({ kind: "zoom", logZoom: wheelLogZoom({ deltaY: -100, deltaMode: 0, ctrlKey: false }) });
+		expect(wheelZoomStep(event(-100), "wheel", false)).toBe(plain(-100));
+	});
+
+	it("zooms a swipe at the touchpad gain: scrolling up zooms in, down out", () => {
+		expect(wheelZoomStep(event(-20), "touchpad", false)).toBeCloseTo(plain(-20) * TOUCHPAD_ZOOM_GAIN, 12);
+		expect(wheelZoomStep(event(-20), "touchpad", false)).toBeGreaterThan(0);
+		expect(wheelZoomStep(event(20), "touchpad", false)).toBeLessThan(0);
+	});
+
+	it("grows smoothly with a swipe's delta, with no jump for a small one", () => {
+		expect(wheelZoomStep(event(-2), "touchpad", false)).toBeCloseTo(wheelZoomStep(event(-1), "touchpad", false) * 2, 12);
 	});
 
 	it("keeps a pinch (ctrl-wheel with Control up) at its sped-up rate, from either source", () => {
 		const pinch = wheelLogZoom({ deltaY: -4.8, deltaMode: 0, ctrlKey: true });
-		expect(wheelAction(event(0, -4.8, { ctrlKey: true }), "wheel", false)).toEqual({ kind: "zoom", logZoom: pinch });
-		expect(wheelAction(event(0, -4.8, { ctrlKey: true }), "touchpad", false)).toEqual({ kind: "zoom", logZoom: pinch });
+		expect(wheelZoomStep(event(-4.8, { ctrlKey: true }), "wheel", false)).toBe(pinch);
+		expect(wheelZoomStep(event(-4.8, { ctrlKey: true }), "touchpad", false)).toBe(pinch);
 	});
 
-	it("zooms Ctrl + mouse wheel at the plain wheel's rate (no ×10)", () => {
-		const action = wheelAction(event(0, -100, { ctrlKey: true }), "wheel", true);
-		expect(action).toEqual({ kind: "zoom", logZoom: wheelLogZoom({ deltaY: -100, deltaMode: 0, ctrlKey: false }) });
+	it("zooms Ctrl + mouse wheel at the plain wheel's rate (no x10)", () => {
+		expect(wheelZoomStep(event(-100, { ctrlKey: true }), "wheel", true)).toBe(plain(-100));
 	});
 
-	it("zooms Ctrl + swipe at the wheel's rate, the way the same scroll on a mouse wheel would", () => {
-		const down = wheelAction(event(0, 100, { ctrlKey: true }), "touchpad", true);
-		expect(down).toEqual({ kind: "zoom", logZoom: wheelLogZoom({ deltaY: 100, deltaMode: 0, ctrlKey: false }) });
-		expect(down).toEqual(wheelAction(event(0, 100), "wheel", false));
-		const up = wheelAction(event(0, -100, { ctrlKey: true }), "touchpad", true);
-		expect(up.kind === "zoom" && up.logZoom > 0).toBe(true);
-	});
-
-	it("turns the view for a swipe, moving with the fingers at the drag's scale", () => {
-		expect(wheelAction(event(3, -4), "touchpad", false)).toEqual({ kind: "rotate", dx: -3 * SWIPE_GAIN, dy: 4 * SWIPE_GAIN });
-	});
-
-	it("pans for Shift + swipe", () => {
-		expect(wheelAction(event(3, -4, { shiftKey: true }), "touchpad", false)).toEqual({ kind: "pan", dx: -3 * SWIPE_GAIN, dy: 4 * SWIPE_GAIN });
-	});
-
-	it("prefers Ctrl's zoom over Shift's pan", () => {
-		expect(wheelAction(event(0, 10, { ctrlKey: true, shiftKey: true }), "touchpad", true).kind).toBe("zoom");
-	});
-});
-
-describe("SwipeFeed", () => {
-	const FRAME = 16;
-
-	it("hands a frame's events to the drag together, once", () => {
-		const feed = new SwipeFeed();
-		expect(feed.push(2, 1, 1000)).toBe("start");
-		expect(feed.push(3, -1, 1005)).toBe("move");
-		expect(feed.frame(1008)).toEqual({ dx: 5, dy: 0, release: false, over: false });
-		expect(feed.frame(1008 + FRAME)).toMatchObject({ dx: 0, dy: 0, release: false });
-	});
-
-	it("releases once the events stop for both the time and the frames", () => {
-		const feed = new SwipeFeed();
-		feed.push(4, 0, 1000);
-		feed.frame(1001);
-		// One idle frame past the time is not enough, nor are idle frames inside it.
-		expect(feed.frame(1001 + SWIPE_LIFT_MS).release).toBe(false);
-		const fast = new SwipeFeed();
-		fast.push(4, 0, 1000);
-		fast.frame(1001);
-		for (let i = 1; i <= SWIPE_LIFT_FRAMES; i++) expect(fast.frame(1001 + i).release).toBe(false);
-		expect(feed.frame(1002 + SWIPE_LIFT_MS).release).toBe(true);
-		// Released once only.
-		expect(feed.frame(1003 + SWIPE_LIFT_MS).release).toBe(false);
-	});
-
-	it("keeps one slow frame's late events from reading as a lift", () => {
-		const feed = new SwipeFeed();
-		// 25 fps: every frame comes 40 ms on and has events in it.
-		for (let t = 1000; t < 1400; t += 40) {
-			feed.push(3, 0, t);
-			expect(feed.frame(t + 1).release).toBe(false);
-		}
-	});
-
-	it("resumes the same swipe when a paused finger moves again, and starts a new one after the gesture gap", () => {
-		const feed = new SwipeFeed();
-		feed.push(4, 0, 1000);
-		let t = 1000;
-		let released = false;
-		while (!released) released = feed.frame((t += FRAME)).release;
-		expect(feed.push(1, 0, t + 10)).toBe("resume");
-		expect(feed.push(1, 0, t + 20)).toBe("move");
-		expect(feed.push(1, 0, t + 21 + GESTURE_GAP_MS)).toBe("start");
-	});
-
-	it("is over once released and quiet past the gesture gap", () => {
-		const feed = new SwipeFeed();
-		feed.push(4, 0, 1000);
-		for (let t = 1000 + FRAME; t < 1000 + 3 * FRAME; t += FRAME) feed.frame(t);
-		expect(feed.frame(1000 + 4 * FRAME).over).toBe(false);
-		expect(feed.frame(1001 + GESTURE_GAP_MS).over).toBe(true);
-	});
-
-	it("starts afresh after cancel, dropping what was pending", () => {
-		const feed = new SwipeFeed();
-		feed.push(4, 0, 1000);
-		feed.cancel();
-		expect(feed.push(1, 1, 1002)).toBe("start");
-		expect(feed.frame(1003)).toMatchObject({ dx: 1, dy: 1 });
+	it("zooms Ctrl + swipe at the swipe's rate", () => {
+		expect(wheelZoomStep(event(100, { ctrlKey: true }), "touchpad", true)).toBeCloseTo(plain(100) * TOUCHPAD_ZOOM_GAIN, 12);
 	});
 });
