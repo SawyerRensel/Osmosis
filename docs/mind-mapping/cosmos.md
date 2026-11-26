@@ -29,12 +29,10 @@ Cosmos shows a note and the notes around it, line by line, as plates floating in
 
 | Input | Action |
 |-------|--------|
-| Two-finger swipe | Orbit, like a drag from under the cursor |
-| ++shift++ + two-finger swipe | Pan |
-| ++ctrl++ + two-finger swipe | Zoom at the wheel's rate, the way the page would scroll: scrolling down zooms out |
+| Two-finger swipe | Zoom toward the cursor, like the wheel: swiping up zooms in, down zooms out |
 | Pinch | Zoom toward the cursor |
 
-The view tells a touchpad from a mouse wheel by itself, with no setting: a swipe that moves sideways at all, or in steps finer than a wheel's notches, is a touchpad. A mouse wheel always zooms.
+The view tells a touchpad from a mouse wheel by itself, with no setting: a swipe that moves sideways at all, or in steps finer than a wheel's notches, is a touchpad. A mouse wheel always zooms, and a swipe zooms more finely than a notch does. Orbiting and panning are by drag only.
 
 ### Navigation gizmos
 

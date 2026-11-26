@@ -86,6 +86,30 @@ export class FenceWriter {
 	}
 
 	/**
+	 * Bury a fence card until `until` (epoch ms), or un-bury it with `null`, by
+	 * writing its `buriedUntil` header key. Chained per note with the staged
+	 * flushes and done through `vault.process`, so burying two cards of one
+	 * note in quick succession writes both rather than dropping the second.
+	 */
+	async writeBuried(file: TFile, cardId: string, until: number | null): Promise<void> {
+		const prev = this.inflight.get(file.path) ?? Promise.resolve();
+		const next = prev.then(async () => {
+			this.writingPaths.add(file.path);
+			try {
+				await this.vault.process(file, (content) => updateFenceBuried(content, cardId, until));
+			} finally {
+				this.writingPaths.delete(file.path);
+			}
+		});
+		this.inflight.set(file.path, next);
+		try {
+			await next;
+		} finally {
+			if (this.inflight.get(file.path) === next) this.inflight.delete(file.path);
+		}
+	}
+
+	/**
 	 * Remove all schedule metadata from a fence, returning the card to "new" state.
 	 */
 	async removeSchedule(
@@ -339,6 +363,75 @@ export function updateFenceOcclusion(
 }
 
 /**
+ * Pure function: set (`until`, epoch ms) or remove (`null`) one card's
+ * `buriedUntil` in its fence header, leaving its schedule alone.
+ *
+ * The fence's own card keeps the key flat at the top level; a derived card
+ * (`-r`, `-cN`) keeps it inside its `r:`/`c1:` block, which is created holding
+ * only the bury when that card has no schedule yet, and dropped again when
+ * un-burying leaves it empty. `buriedUntil` counts as a schedule key, so a
+ * review or schedule removal for the card drops it — that is how an expired
+ * bury is cleared.
+ */
+export function updateFenceBuried(content: string, cardId: string, until: number | null): string {
+	const located = locateFence(content, cardId);
+	if (!located) return content;
+
+	const { lines, backtickCount, metaStart, metaEnd } = located;
+	const { prefix } = parseCardIdParts(cardId);
+	const existingMeta = lines.slice(metaStart, metaEnd);
+	const value = until === null ? null : new Date(until).toISOString();
+	const isBuriedLine = (line: string): boolean => /^buriedUntil\s*:/i.test(line.trim());
+
+	let updatedMeta: string[];
+	if (prefix === "") {
+		updatedMeta = [];
+		for (let i = 0; i < existingMeta.length; i++) {
+			const line = existingMeta[i]!;
+			// Derived cards' blocks pass through whole: their bodies spell the
+			// same key for a different card.
+			if (indentedBlockKey(line.trim())) {
+				const end = blockEnd(existingMeta, i);
+				updatedMeta.push(...existingMeta.slice(i, end + 1));
+				i = end;
+				continue;
+			}
+			if (!isBuriedLine(line)) updatedMeta.push(line);
+		}
+		if (value !== null) updatedMeta.push(`buriedUntil: ${value}`);
+	} else {
+		const suffix = prefix.slice(0, -1);
+		updatedMeta = [];
+		let found = false;
+		for (let i = 0; i < existingMeta.length; i++) {
+			const line = existingMeta[i]!;
+			if (indentedBlockKey(line.trim()) !== suffix) {
+				updatedMeta.push(line);
+				continue;
+			}
+			found = true;
+			const end = blockEnd(existingMeta, i);
+			const body = existingMeta.slice(i + 1, end + 1).filter((l) => !isBuriedLine(l));
+			if (value !== null) body.push(`  buriedUntil: ${value}`);
+			if (body.length > 0) updatedMeta.push(line, ...body);
+			i = end;
+		}
+		if (!found && value !== null) updatedMeta.push(`${suffix}:`, `  buriedUntil: ${value}`);
+	}
+
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	if (nextLine !== "" && !isClosingFence && updatedMeta.length > 0) updatedMeta.push("");
+
+	return [
+		...lines.slice(0, metaStart),
+		...updatedMeta,
+		...lines.slice(metaEnd),
+	].join("\n");
+}
+
+/**
  * Pure function: update schedule metadata in fence content for a given card ID.
  * Returns the modified content string, or the original if no change.
  */
@@ -447,6 +540,7 @@ function canonicalScheduleField(key: string): string | null {
 	const lower = key.toLowerCase();
 	if (lower === "last-review" || lower === "lastreview") return "lastReview";
 	if (lower === "learning-steps" || lower === "learningsteps") return "learningSteps";
+	if (lower === "burieduntil") return "buriedUntil";
 	return SCHEDULE_KEYS.has(lower) ? lower : null;
 }
 
@@ -672,6 +766,9 @@ const SCHEDULE_KEYS = new Set([
 	"due", "stability", "difficulty", "reps", "lapses", "state",
 	"last-review", "learning-steps",
 	"lastreview", "learningsteps",
+	// A bury sits with the schedule so every schedule write and removal drops
+	// it (see `updateFenceBuried`).
+	"burieduntil",
 ]);
 
 /** Non-schedule metadata keys recognized inside an osmosis fence. */

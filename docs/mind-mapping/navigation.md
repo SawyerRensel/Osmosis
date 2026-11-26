@@ -53,8 +53,8 @@ While you edit a node's text, ++ctrl+arrow++ jumps by words as usual.
 
 | Action | Input |
 |--------|-------|
-| Pan | Scroll (up/down) or ++shift+++scroll (left/right), or Drag on empty canvas |
-| Zoom | ++ctrl+++Scroll wheel, or pinch |
+| Pan | Drag on empty canvas |
+| Zoom | Scroll wheel or two-finger trackpad scroll (around the cursor), or pinch |
 | Fit all content | Right-click canvas > "Fit to view" |
 | Center on root | Right-click canvas > "Center on root" |
 

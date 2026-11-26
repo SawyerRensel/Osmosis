@@ -43,7 +43,7 @@ import { grabPoint, gripPoint, slipRate, type Sphere, sphereOnRay, stickyTurn } 
 import { grabRadius } from "../cosmos/shells";
 import { SPIN_FRICTION, WHEEL_EASE_EPSILON, WHEEL_EASE_SECONDS, launchSpin, stepCoast, type Coast } from "../cosmos/inertia";
 import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../cosmos/depth";
-import { SwipeFeed, WheelClassifier, wheelAction } from "../cosmos/wheel-input";
+import { WheelClassifier, wheelZoomStep } from "../cosmos/wheel-input";
 import { pinchDollyDistance, rayDistanceAtDepth, zoomPivotDistance } from "../cosmos/pinch-zoom";
 import type { Placed } from "../cosmos/positions";
 import { chargeStrengths, spaceCharges } from "../cosmos/settle";
@@ -272,10 +272,10 @@ interface RotateDrag {
 	turned: Vec;
 }
 
-/** A touchpad swipe turning or panning the view like a drag (`onWheel`, moved once a frame by `stepSwipe`), or a held gizmo (`beginGizmo`). */
+/** A held rotate or pan gizmo (`beginGizmo`), driven like a drag. */
 interface Swipe {
 	pan: boolean;
-	/** A drag from where the cursor was, moved by the swipe's deltas: its pivot, grab and running pointer place. */
+	/** The drag the gizmo drives: its pivot, grab and running pointer place. */
 	drag: RotateDrag;
 	/** The view depth a pan moves at: the aimed point's, as for a pinch. */
 	depth: number;
@@ -584,10 +584,7 @@ export class CosmosScene {
 	private readonly wheelSource = new WheelClassifier();
 	/** The Control key is physically down, so a ctrl-wheel is Ctrl + scroll and not Chromium's synthetic touchpad pinch. */
 	private ctrlHeld = false;
-	private swipe: Swipe | null = null;
-	/** When the swipe's events came, collected for `stepSwipe` (`cosmos/wheel-input.ts`). */
-	private readonly swipeFeed = new SwipeFeed();
-	/** A rotate or pan gizmo held and moving (`beginGizmo`): a drag about the orbit target, ended by its release, never by `stepSwipe`. */
+	/** A rotate or pan gizmo held and moving (`beginGizmo`): a drag about the orbit target, ended by its release. */
 	private gizmoDrag: Swipe | null = null;
 	/** A mouse pan (OrbitControls' right or Ctrl drag) in progress, sampled so its release can coast. */
 	private mousePan: number | null = null;
@@ -1673,7 +1670,7 @@ export class CosmosScene {
 		controls.target.add(move);
 		controls.update();
 		// A track goes on through the user's orbit (see `reshape`): what they pressed moves with it, so they keep orbiting it.
-		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.swipe?.drag.pivot, this.swipe?.drag.grab?.point, this.gizmoDrag?.drag.pivot, this.orbitCoast?.pivot])) pivot?.add(move);
+		for (const pivot of new Set([this.drag?.pivot, this.drag?.grab?.point, this.gizmoDrag?.drag.pivot, this.orbitCoast?.pivot])) pivot?.add(move);
 	}
 
 	/**
@@ -2038,7 +2035,6 @@ export class CosmosScene {
 		}
 		// Stops every coast too.
 		this.cancelFlight();
-		this.swipe = null;
 		this.lookPending = { x: 0, y: 0 };
 		if (touch) {
 			this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -2449,15 +2445,14 @@ export class CosmosScene {
 	 * and `easeWheel` plays it out, decelerating.
 	 *
 	 * A touchpad's two-finger swipe (told apart per gesture, `WheelClassifier`)
-	 * turns the view instead, like a drag from under the cursor; with Shift it
-	 * pans, and with Ctrl it zooms at the wheel's rate. A pinch, and any wheel
-	 * event during a pointer drag or pinch, zooms as before.
+	 * zooms too, at a finer rate (`wheelZoomStep`); the view turns and pans by
+	 * drag only. A pinch, and any wheel event during a pointer drag or pinch,
+	 * zoom as before.
 	 */
 	private readonly onWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 		e.stopPropagation();
 		const pending = this.wheelZoom?.pending ?? 0;
-		const spin = this.orbitCoast?.coast.velocity ?? { x: 0, y: 0 };
 		this.cancelFlight();
 		if (this.drag?.look === true && !this.drag.touch) {
 			flightScale = Math.min(FLIGHT_SCALE_LIMIT, Math.max(1 / FLIGHT_SCALE_LIMIT, flightScale * FLIGHT_SCALE_STEP ** wheelNotches(e)));
@@ -2467,75 +2462,8 @@ export class CosmosScene {
 		const pointerBusy = this.drag !== null || this.pinch !== null || this.mousePan !== null || this.gizmoDrag !== null;
 		const pinch = e.ctrlKey && !this.ctrlHeld;
 		const source = pinch || pointerBusy ? "wheel" : this.wheelSource.classify({ deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, t: e.timeStamp });
-		const action = wheelAction(e, source, this.ctrlHeld);
-		if (action.kind === "zoom") {
-			this.swipe = null;
-			this.wheelZoom = { x: e.clientX, y: e.clientY, pending: pending + action.logZoom, depth: this.wheelZoom?.depth ?? null };
-			return;
-		}
-		this.swipeBy(action.kind === "pan", action.dx, action.dy, e.clientX, e.clientY, spin);
+		this.wheelZoom = { x: e.clientX, y: e.clientY, pending: pending + wheelZoomStep(e, source, this.ctrlHeld), depth: this.wheelZoom?.depth ?? null };
 	};
-
-	/**
-	 * Move a touchpad swipe by (`dx`, `dy`) pointer px. The first event of a
-	 * swipe starts it the way a press would start a drag at the cursor (`aim`,
-	 * so the pivot setting and a planet's surface grab apply). Its movement is
-	 * handed to the drag once a frame (`stepSwipe`), so the turn, the grab and
-	 * the release coast are the drag's own. `spin` is what a coast it stopped had left.
-	 */
-	private swipeBy(pan: boolean, dx: number, dy: number, x: number, y: number, spin: Vec): void {
-		if (this.swipe === null || this.swipe.pan !== pan) this.swipeFeed.cancel();
-		const now = performance.now();
-		const state = this.swipeFeed.push(dx, dy, now);
-		let swipe = this.swipe;
-		if (state === "start" || swipe === null) {
-			this.samples = [];
-			this.turnSamples = [];
-			this.carry = pan ? { x: 0, y: 0 } : spin;
-			const aim = this.aim(x, y, false, !pan);
-			const ray = this.rayThrough(x, y);
-			const grab = pan || aim.globe === null ? null : { point: grabPoint(ray.origin, ray.direction, aim.point, aim.globe), radius: aim.globe };
-			const drag: RotateDrag = { pointerId: -1, touch: false, x, y, pivot: aim.point, look: false, grab, turned: { x: 0, y: 0 } };
-			swipe = this.swipe = { pan, drag, depth: this.viewDepth(aim.point), startAt: now, lastAt: now };
-		} else if (state === "resume") {
-			// Taken for lifted, it may have coasted (`onWheel` stopped that), but
-			// the fingers were only paused: carry on from here, as a fresh press
-			// on the coasting view would, with the same pivot.
-			this.samples = [];
-			this.turnSamples = [];
-			this.carry = pan ? { x: 0, y: 0 } : spin;
-			swipe.startAt = now;
-			const grab = swipe.drag.grab;
-			if (grab !== null) {
-				const ray = this.rayThrough(swipe.drag.x, swipe.drag.y);
-				grab.point = gripPoint(ray.origin, ray.direction, swipe.drag.pivot, grab.radius);
-			}
-		}
-		swipe.lastAt = now;
-	}
-
-	/**
-	 * Each frame, move the swipe's drag by what its events moved since the
-	 * last frame, as a pointer drag moves once a frame. Once its events have
-	 * stopped (`SwipeFeed`), it is let go like a drag: moving fast at its last
-	 * event, it coasts. Where the OS sends momentum events after the fingers
-	 * lift, they keep the swipe going as its own coast, so it ends slowly and
-	 * coasts on only if they stop while it is still fast.
-	 */
-	private stepSwipe(): void {
-		const swipe = this.swipe;
-		if (swipe === null) return;
-		const { dx, dy, release, over } = this.swipeFeed.frame(performance.now());
-		if (dx !== 0 || dy !== 0) {
-			swipe.drag.x += dx;
-			swipe.drag.y += dy;
-			this.sample(this.samples, swipe.drag.x, swipe.drag.y);
-			if (swipe.pan) this.pan(dx, dy, swipe.depth);
-			else this.rotate(swipe.drag, dx, dy);
-		}
-		if (release) this.launchSwipe(swipe, swipe.lastAt);
-		if (over) this.swipe = null;
-	}
 
 	/**
 	 * A swipe or gizmo drag let go at time `at`: moving fast then, it coasts
@@ -2563,7 +2491,6 @@ export class CosmosScene {
 	private beginGizmo(kind: GizmoKind): void {
 		const spin = this.orbitCoast?.coast.velocity ?? { x: 0, y: 0 };
 		this.cancelFlight();
-		this.swipe = null;
 		this.lookPending = { x: 0, y: 0 };
 		if (kind === "zoom") return;
 		const camera = this.graph.camera();
@@ -3057,7 +2984,6 @@ export class CosmosScene {
 		this.easeLookPending(seconds);
 		// A flight, glide or ride has the camera: nothing coasts against it.
 		if (this.flight !== null || this.glide !== null || this.ride !== null || this.hoverFlight !== null) this.stopCoasting();
-		this.stepSwipe();
 		this.coast(Math.min(seconds * 1000, MAX_FRAME_MS));
 		this.easeWheel(seconds);
 		const controls = this.orbitControls();

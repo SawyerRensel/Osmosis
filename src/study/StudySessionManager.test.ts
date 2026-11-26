@@ -160,13 +160,14 @@ describe("FSRS integration", () => {
 });
 
 describe("StudySessionManager schedule-write routing", () => {
-	interface FenceCall { cardId: string; kind: "write" | "remove" }
+	interface FenceCall { cardId: string; kind: "write" | "remove" | "bury"; until?: number | null }
 	/** `group` is recorded only when one was passed, so plain line cards keep asserting flat. */
 	interface LineCall {
 		notePath: string;
 		blockId: string;
-		kind: "set" | "remove" | "disable" | "enable";
+		kind: "set" | "remove" | "disable" | "enable" | "bury";
 		group?: string;
+		until?: number | null;
 	}
 
 	function makeManager() {
@@ -180,6 +181,10 @@ describe("StudySessionManager schedule-write routing", () => {
 			},
 			removeSchedule: (_file: unknown, cardId: string) => {
 				fenceCalls.push({ cardId, kind: "remove" });
+				return Promise.resolve();
+			},
+			writeBuried: (_file: unknown, cardId: string, until: number | null) => {
+				fenceCalls.push({ cardId, kind: "bury", until });
 				return Promise.resolve();
 			},
 		};
@@ -197,6 +202,9 @@ describe("StudySessionManager schedule-write routing", () => {
 					kind: disabled ? "disable" : "enable",
 					...(group !== undefined && { group }),
 				});
+			},
+			setBuried: (notePath: string, blockId: string, until: number | null, group?: string) => {
+				lineCalls.push({ notePath, blockId, kind: "bury", until, ...(group !== undefined && { group }) });
 			},
 		};
 		const logged: ReviewLogEntry[] = [];
@@ -280,6 +288,48 @@ describe("StudySessionManager schedule-write routing", () => {
 		expect(manager.setLineCardDisabled(card, true)).toBe(true);
 		expect(lineCalls).toEqual([
 			{ notePath: "notes/bridges.md", blockId: "os-elev001", kind: "disable", group: "c2" },
+		]);
+	});
+
+	it("buries an occluded line card through its group entry, and nothing is logged", () => {
+		const { manager, fenceCalls, lineCalls, logged } = makeManager();
+		const card = makeCard({
+			id: "notes/harbour.md#^os-dock01-c2",
+			notePath: "notes/harbour.md",
+			cardType: "occlusion",
+			blockId: "os-dock01",
+			occlusionGroup: "c2",
+		});
+		store.addCard(card);
+		const until = Date.now() + 3_600_000;
+
+		manager.setBuried(card, until);
+
+		expect(store.getCard(card.id)?.buriedUntil).toBe(until);
+		expect(fenceCalls).toHaveLength(0);
+		expect(logged).toHaveLength(0);
+		expect(lineCalls).toEqual([
+			{ notePath: "notes/harbour.md", blockId: "os-dock01", kind: "bury", until, group: "c2" },
+		]);
+	});
+
+	it("buries a fence card through the fence writer, and un-burying clears it", () => {
+		const { manager, fenceCalls, lineCalls } = makeManager();
+		const card = makeCard({ id: "knot0001-c1", due: Date.now() - 1000, state: "review" });
+		store.addCard(card);
+		const until = Date.now() + 3_600_000;
+
+		manager.setBuried(card, until);
+		expect(manager.buildQueue({ type: "all" })).toHaveLength(0);
+		expect(manager.getCounts({ type: "all" })).toEqual({ new: 0, learn: 0, due: 0 });
+
+		manager.setBuried(card, null);
+		expect(store.getCard(card.id)?.buriedUntil).toBeUndefined();
+		expect(manager.buildQueue({ type: "all" })).toHaveLength(1);
+		expect(lineCalls).toHaveLength(0);
+		expect(fenceCalls).toEqual([
+			{ cardId: "knot0001-c1", kind: "bury", until },
+			{ cardId: "knot0001-c1", kind: "bury", until: null },
 		]);
 	});
 

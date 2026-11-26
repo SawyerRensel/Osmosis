@@ -1,4 +1,5 @@
 import type { Card, CardState } from "../database/types";
+import { isBuried } from "../study/bury";
 
 /**
  * In-memory card store. Replaces the SQLite CardDatabase.
@@ -79,7 +80,7 @@ export class CardStore {
 	getDueCards(now: number, deck?: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks || card.disabled) continue;
+			if (card.excludeFromDecks || card.disabled || isBuried(card, now)) continue;
 			if (card.due === undefined) continue; // no schedule = new card
 			if (card.due > now) continue;
 			if (deck !== undefined && card.deck !== deck) continue;
@@ -94,7 +95,7 @@ export class CardStore {
 	getDueCardsByDeckPrefix(now: number, prefix: string): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks || card.disabled) continue;
+			if (card.excludeFromDecks || card.disabled || isBuried(card, now)) continue;
 			if (card.due === undefined) continue;
 			if (card.due > now) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
@@ -104,11 +105,11 @@ export class CardStore {
 		return result;
 	}
 
-	/** Get new cards (no schedule data). */
-	getNewCards(deck?: string): Card[] {
+	/** Get new cards (no schedule data). Buried cards are left out at `now`. */
+	getNewCards(deck?: string, now: number = Date.now()): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks || card.disabled) continue;
+			if (card.excludeFromDecks || card.disabled || isBuried(card, now)) continue;
 			if (card.due !== undefined) continue; // has schedule = not new
 			if (deck !== undefined && card.deck !== deck) continue;
 			result.push(card);
@@ -116,11 +117,11 @@ export class CardStore {
 		return result;
 	}
 
-	/** Get new cards matching a deck prefix. */
-	getNewCardsByDeckPrefix(prefix: string): Card[] {
+	/** Get new cards matching a deck prefix. Buried cards are left out at `now`. */
+	getNewCardsByDeckPrefix(prefix: string, now: number = Date.now()): Card[] {
 		const result: Card[] = [];
 		for (const card of this.cards.values()) {
-			if (card.excludeFromDecks || card.disabled) continue;
+			if (card.excludeFromDecks || card.disabled || isBuried(card, now)) continue;
 			if (card.due !== undefined) continue;
 			if (!matchesDeckPrefix(card.deck, prefix)) continue;
 			result.push(card);
@@ -139,6 +140,9 @@ export class CardStore {
 				entry = { new: 0, learn: 0, due: 0 };
 				counts.set(card.deck, entry);
 			}
+			// A buried card still keeps its deck's row, as in Anki: the deck
+			// shows with that card dropped from its counts.
+			if (isBuried(card, now)) continue;
 
 			if (card.due === undefined) {
 				// New card (no schedule)
@@ -177,6 +181,8 @@ export class CardStore {
 		card.lapses = schedule.lapses;
 		card.state = schedule.state;
 		card.learningSteps = schedule.learningSteps;
+		// Any schedule write drops the bury on disk, so it does here too.
+		delete card.buriedUntil;
 	}
 
 	/**
@@ -191,6 +197,18 @@ export class CardStore {
 		else delete card.disabled;
 	}
 
+	/**
+	 * Bury a card until `until` (epoch ms), or un-bury it with `null`,
+	 * in-memory, so decks and queues drop it before the file write re-syncs.
+	 * No-op if the card is absent.
+	 */
+	setBuried(cardId: string, until: number | null): void {
+		const card = this.cards.get(cardId);
+		if (!card) return;
+		if (until === null) delete card.buriedUntil;
+		else card.buriedUntil = until;
+	}
+
 	/** Clear schedule fields on a card, returning it to "new" state. */
 	clearSchedule(cardId: string): void {
 		const card = this.cards.get(cardId);
@@ -203,6 +221,7 @@ export class CardStore {
 		delete card.lapses;
 		delete card.state;
 		delete card.learningSteps;
+		delete card.buriedUntil;
 	}
 
 	/** Get deck paths that were derived from folder structure (not explicitly set). */

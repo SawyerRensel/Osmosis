@@ -46,6 +46,8 @@ export interface GeneratedCard {
 	lapses?: number;
 	state?: CardState;
 	learningSteps?: number;
+	/** Flashcard study bury: its end, epoch ms. Absent (or past) = not buried. */
+	buriedUntil?: number;
 }
 
 /** Metadata parsed from explicit osmosis fence headers. */
@@ -66,6 +68,8 @@ export interface FenceMetadata {
 	lapses?: number;
 	state?: CardState;
 	learningSteps?: number;
+	/** Flashcard study bury: its end, epoch ms. Absent (or past) = not buried. */
+	buriedUntil?: number;
 
 	// Schedule fields for derived cards (bidi reverse, cloze deletions)
 	// Keyed by suffix: "r" for reverse, "c1"/"c2"/etc. for cloze
@@ -89,4 +93,6 @@ export interface DerivedSchedule {
 	lapses?: number;
 	state?: CardState;
 	learningSteps?: number;
+	/** Flashcard study bury: its end, epoch ms. Absent (or past) = not buried. */
+	buriedUntil?: number;
 }

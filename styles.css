@@ -2414,12 +2414,49 @@ body.is-phone .osmosis-note-actions {
 /* ─── Line-Card Progressive Reveal (Reading View) ────────── */
 
 /* Note study's progress strip (T102): the study tab's bar and counts
-   (StudyProgressStrip), above the inline title. The reading view's sizer already
-   sets the column, so the strip takes its full width. */
+   (StudyProgressStrip). It is the reading view scroller's first child, above the
+   sizer (Obsidian virtualizes the sizer's children), and sticks to the
+   scroller's top edge while the note scrolls (T122). Opaque, with padding rather
+   than margin under it, so no text shows through or below it.
+   Chromium pins a sticky box inside its scroll container's padding, so the
+   scroller's top padding (32px on desktop) left a band above the strip that the
+   note scrolled through. While the strip is mounted the scroller drops that
+   padding, so the strip sits flush under the view header at every scroll
+   position. The box-shadow paints the strip's background across the scroller's
+   side padding too (a shadow adds no scrollable overflow), and the clip-path
+   keeps that paint level with the strip. The second selector is Obsidian's
+   phone padding rule plus the :has(), one class heavier so it wins. */
+.markdown-reading-view > .markdown-preview-view:has(> .osmosis-note-study-strip),
+.is-phone .mod-root .workspace-leaf-content .view-content .markdown-reading-view > .markdown-preview-view:has(> .osmosis-note-study-strip) {
+	padding-top: 0;
+	/* Keeps the strip's z-index below the floating phone header. */
+	isolation: isolate;
+}
+
 .osmosis-note-study-strip {
 	--osmosis-study-strip-height: 28px;
 	--osmosis-study-column: none;
-	margin-bottom: var(--size-4-2);
+	position: sticky;
+	top: 0;
+	z-index: 5;
+	padding-bottom: var(--size-4-2);
+	background: var(--background-primary);
+	box-shadow: 0 0 0 100vmax var(--background-primary);
+	clip-path: inset(0 -100vmax);
+}
+
+/* A floating phone header sits over the scroller, which Obsidian clears with
+   its top padding. The strip takes that job: it fills the area behind the
+   header and puts the bar just under the header's bottom edge. */
+.is-phone.is-floating-nav .osmosis-note-study-strip,
+.is-phone.auto-full-screen .osmosis-note-study-strip {
+	padding-top: calc(var(--view-header-top-offset) + var(--view-header-height));
+}
+
+/* The sizer's column, which the strip sits outside of. */
+.markdown-preview-view.is-readable-line-width > .osmosis-note-study-strip {
+	max-width: var(--file-line-width);
+	margin-inline: auto;
 }
 
 /* Hidden line: the wrapped content collapses, the placeholder shows */

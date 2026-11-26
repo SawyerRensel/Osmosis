@@ -128,7 +128,9 @@ describe("continentMap", () => {
 	it("lays top-down maps out with children below", () => {
 		const map = continentMap(head, plate, { direction: "top-down", balance: "one-side" });
 		const at = new Map(map.plates.map((p) => [p.id, p]));
-		expect(at.get("a")!.y).toBeGreaterThan(0);
+		// Centred on its box too (T124), so the head sits above the middle.
+		expect(at.get("h")!.y).toBeLessThan(0);
+		expect(at.get("a")!.y).toBeGreaterThan(at.get("h")!.y);
 		expect(at.get("a")!.x).toBeLessThan(at.get("b")!.x);
 	});
 });
@@ -437,7 +439,7 @@ describe("spacing sliders in Planets", () => {
 		// Top-down: siblings side by side a width and the sibling gap apart, a level below their parent.
 		const down = new Map(continentMap(head, plate, { direction: "top-down", balance: "one-side" }, 0.5).plates.map((p) => [p.id, p]));
 		expect(down.get("b")!.x - down.get("a")!.x).toBeCloseTo(20 + ROW_GAP * 0.5, 9);
-		expect(down.get("a")!.y).toBeCloseTo(2.5 + COLUMN_GAP * 0.5 + 2.5, 9);
+		expect(down.get("a")!.y - down.get("h")!.y).toBeCloseTo(2.5 + COLUMN_GAP * 0.5 + 2.5, 9);
 	});
 
 	it("widens the gaps between plates with Node spacing, never the plates", () => {
@@ -891,8 +893,9 @@ describe("plates at their continent's frame", () => {
 		const fan = { core: "r", continents: [{ id: "h", children: Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, children: [] })) }] };
 		const layout = layoutPlanet(fan, plate);
 		const [a, b] = [layout.places.get("s0")!.offset, layout.places.get("s1")!.offset];
-		// On the sphere: the arc between neighbours is close to the flat 5 + ROW_GAP (the wrap only bends it).
-		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeCloseTo(5 + ROW_GAP, 0);
+		// On the sphere: no farther apart than the flat 5 + ROW_GAP, and never closer than the spread's clearance. On a planet this small the map is taller than deep, so its depth runs north to south and the wrap narrows its column (T124).
+		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeLessThan(5 + ROW_GAP + 0.05);
+		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeGreaterThan(5 + ROW_GAP / 2);
 		expect(len({ x: b.x - a.x, y: b.y - a.y, z: b.z - a.z })).toBeLessThan(Math.hypot(20, 5));
 	});
 });
@@ -1040,7 +1043,8 @@ describe("core layers", () => {
 		world.update([tree], plate, DEFAULT_CONTINENT_STYLE, () => 0, 1000, true);
 		expect(world.easing).toBe(true);
 		const after = world.place("a1")!.offset;
-		expect(angle(before, after)).toBeLessThan(1e-6);
+		// Its direction keeps. Not to 1e-6: on a planet this small the two continents nearly fill opposite halves, and the surface forces still creep about 1e-3 a re-layout (T124's tighter tree maps).
+		expect(angle(before, after)).toBeLessThan(1e-2);
 		expect(len(after)).toBeLessThan(len(before));
 		const bodies = new Map<string, PlanetBody>([["r", { x: 0, y: 0, z: 0 }], ["a1", {}]]);
 		world.placeAll((id) => bodies.get(id), 1000);
@@ -1106,6 +1110,8 @@ describe("plates spun upright by the camera's roll (T114)", () => {
 				const [[ia, a], [ib, b]] = [plates[i]!, plates[j]!];
 				const rel = { x: b.offset.x - a.offset.x, y: b.offset.y - a.offset.y, z: b.offset.z - a.offset.z };
 				diameter = Math.max(diameter, len(rel));
+				// Farther apart than their half-diagonals: clear (T124: a wide top-down map's two ends sit across the planet, and project onto each other's plane).
+				if (len(rel) >= (Math.hypot(sizeOf(ia).width, sizeOf(ia).height) + Math.hypot(sizeOf(ib).width, sizeOf(ib).height)) / 2) continue;
 				const right = { x: a.right.x * c + a.up.x * s, y: a.right.y * c + a.up.y * s, z: a.right.z * c + a.up.z * s };
 				const up = { x: a.up.x * c - a.right.x * s, y: a.up.y * c - a.right.y * s, z: a.up.z * c - a.right.z * s };
 				if (Math.abs(dot(rel, right)) < (sizeOf(ia).width + sizeOf(ib).width) / 2 && Math.abs(dot(rel, up)) < (sizeOf(ia).height + sizeOf(ib).height) / 2) pairs++;
@@ -1197,5 +1203,38 @@ describe("plates spun upright by the camera's roll (T114)", () => {
 		// Node spacing still tightens it: T114's spread barely answered the slider (diameter 370.5 at x0.5, 376.0 at x1).
 		expect(tight.diameter).toBeLessThan(wide.diameter * 0.95);
 		expect(tight.gap).toBeLessThan(wide.gap * 0.75);
+	});
+
+	it("lays continents out as mind map trees: children beside their parent, centred on it, not fanned out (T124)", () => {
+		const spacing = 0.65;
+		// Each style, and how far its children's middle sat off their parent's row before T124.
+		for (const [style, before] of [[{ direction: "left-right", balance: "both-sides" }, 11.27], [DEFAULT_CONTINENT_STYLE, 13.46], [{ direction: "top-down", balance: "one-side" }, 28.44]] as [ContinentStyle, number][]) {
+			const places = layoutPlanet(codeNote, sizeOf, style, 0, undefined, spacing).places;
+			const down = style.direction === "top-down";
+			let [centring, gaps, parents, children] = [0, 0, 0, 0];
+			const visit = (branch: PlanetBranch): void => {
+				const p = places.get(branch.id)!;
+				const offsets = branch.children.map((child) => {
+					const q = places.get(child.id)!;
+					const rel = { x: q.offset.x - p.offset.x, y: q.offset.y - p.offset.y, z: q.offset.z - p.offset.z };
+					// Along the tree axis and across it, in the parent's frame.
+					const [along, across] = down ? [-dot(rel, p.up), dot(rel, p.right)] : [dot(rel, p.right), dot(rel, p.up)];
+					const reach = down ? (sizeOf(branch.id).height + sizeOf(child.id).height) / 2 : (sizeOf(branch.id).width + sizeOf(child.id).width) / 2;
+					return { along, across, reach };
+				});
+				if (offsets.length > 0) {
+					const side = offsets.filter((o) => o.along * offsets[0]!.along > 0);
+					centring += Math.abs(side.reduce((sum, o) => sum + o.across, 0) / side.length);
+					parents++;
+					for (const o of offsets) gaps += Math.abs(o.along) - o.reach;
+					children += offsets.length;
+				}
+				branch.children.forEach(visit);
+			};
+			codeNote.continents.forEach(visit);
+			// Before T124, both sides: 11.3 off their parent's row and 21.8 out on the axis (1.9 column gaps), pushed out from the continent's centre. The 2D map's own: 6.5 and one column gap.
+			expect(centring / parents).toBeLessThan(before * 0.75);
+			expect(gaps / children).toBeLessThan(COLUMN_GAP * spacing * 1.05);
+		}
 	});
 });

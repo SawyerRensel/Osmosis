@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "obsidian";
 import { describe, it, expect } from "vitest";
-import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
+import { mountAtScrollerTop, StudyProgressStrip } from "./StudyProgressStrip";
 
 describe("StudyProgressStrip", () => {
 	it("builds the bar and the three counts, and fills them in", () => {
@@ -19,38 +19,24 @@ describe("StudyProgressStrip", () => {
 	});
 });
 
-describe("mountAboveInlineTitle", () => {
-	function sizer(withTitle: boolean): { sizer: HTMLElement; title: HTMLElement | null } {
-		const sizerEl = document.createElement("div");
+describe("mountAtScrollerTop", () => {
+	function scroller(): HTMLElement {
+		const scrollerEl = document.createElement("div");
+		scrollerEl.className = "markdown-preview-view";
+		const sizerEl = scrollerEl.appendChild(document.createElement("div"));
 		sizerEl.className = "markdown-preview-sizer";
-		sizerEl.appendChild(document.createElement("div")).className = "markdown-preview-pusher";
-		const header = sizerEl.appendChild(document.createElement("div"));
-		header.className = "mod-header";
-		let title: HTMLElement | null = null;
-		if (withTitle) {
-			title = header.appendChild(document.createElement("div"));
-			title.className = "inline-title";
-		}
-		sizerEl.appendChild(document.createElement("div")).className = "markdown-preview-section";
-		return { sizer: sizerEl, title };
+		sizerEl.appendChild(document.createElement("div")).className = "inline-title";
+		return scrollerEl;
 	}
 
-	it("goes directly above the inline title", () => {
-		const { sizer: s, title } = sizer(true);
+	it("goes above the sizer, outside the part Obsidian virtualizes", () => {
+		const s = scroller();
 		const el = document.createElement("div");
-		mountAboveInlineTitle(s, el);
-		expect(el.nextSibling).toBe(title);
-		mountAboveInlineTitle(s, el);
-		expect(s.querySelectorAll("div").length).toBe(5);
-		expect(el.nextSibling).toBe(title);
-	});
-
-	it("falls back to the top of the sizer with no inline title", () => {
-		const { sizer: s } = sizer(false);
-		const el = document.createElement("div");
-		mountAboveInlineTitle(s, el);
+		mountAtScrollerTop(s, el);
 		expect(s.firstChild).toBe(el);
-		mountAboveInlineTitle(s, el);
+		expect((el.nextSibling as HTMLElement).className).toBe("markdown-preview-sizer");
+		mountAtScrollerTop(s, el);
+		expect(s.children.length).toBe(2);
 		expect(s.firstChild).toBe(el);
 	});
 });

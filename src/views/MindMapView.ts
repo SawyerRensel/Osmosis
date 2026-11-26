@@ -61,7 +61,7 @@ import { mergeStyleOverride } from "../style-write";
 import type { NodeStyleContext, NodeStyleHost } from "./style-host";
 import { createShapeElement, getShapeInsets } from "../shapes";
 import { BOUNDARY_PADDING, boundaryShapes, resolveBoundary, roundedHullPath } from "../boundary";
-import { viewBoxTransform, clientToUser, layerTransform, layerTransformCss, moveKind, type ViewBox } from "../mindmap-viewport";
+import { viewBoxTransform, clientToUser, layerTransform, layerTransformCss, moveKind, wheelLogZoom, type ViewBox } from "../mindmap-viewport";
 import { drawWithinBudget, fitViewBox, rectInView } from "../mindmap-cull";
 import { planReuse, translateAttr, type DrawnGroup, type WantedNode } from "../mindmap-reuse";
 import { PROBE_BIG, PROBE_SMALL, measureOrder, planFirstView, probeSizes, settledWith, unsettledOf } from "../mindmap-progressive";
@@ -135,8 +135,6 @@ const CODE_BLOCK_PAD_PX = 32;
 // Viewport constants
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 5;
-const ZOOM_SENSITIVITY = 0.002;
-const SCROLL_SENSITIVITY = 1;
 const LAYOUT_PADDING = 50;
 
 // Inline editing constants
@@ -4607,33 +4605,29 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 	}
 
+	/**
+	 * Every wheel event zooms around the cursor: a pinch or Ctrl + wheel, a
+	 * touchpad's two-finger scroll and a mouse wheel alike (`wheelLogZoom` sets
+	 * the gain of each). Panning is by drag only, so a scroll never moves the
+	 * map sideways.
+	 */
 	private handleWheel = (e: WheelEvent): void => {
 		e.preventDefault();
 		this.stopInertia();
 
-		if (e.ctrlKey || e.metaKey) {
-			// Ctrl+Scroll: zoom in/out
-			const svgPoint = this.screenToSvg(e.clientX, e.clientY);
-			const delta = e.deltaY * ZOOM_SENSITIVITY;
-			const newZoom = Math.max(
-				MIN_ZOOM,
-				Math.min(MAX_ZOOM, this.zoom * (1 - delta)),
-			);
+		const svgPoint = this.screenToSvg(e.clientX, e.clientY);
+		const pinch = e.ctrlKey || e.metaKey;
+		const newZoom = Math.max(
+			MIN_ZOOM,
+			Math.min(MAX_ZOOM, this.zoom * Math.exp(wheelLogZoom(e, pinch))),
+		);
 
-			const scale = this.zoom / newZoom;
-			this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
-			this.viewBox.y = svgPoint.y - (svgPoint.y - this.viewBox.y) * scale;
-			this.viewBox.w *= scale;
-			this.viewBox.h *= scale;
-			this.zoom = newZoom;
-		} else {
-			// Scroll/trackpad: pan in both axes (supports diagonal gestures)
-			// Shift+scroll with a mouse wheel: treat deltaY as horizontal
-			const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX;
-			const dy = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY;
-			this.viewBox.x += (dx * SCROLL_SENSITIVITY) / this.zoom;
-			this.viewBox.y += (dy * SCROLL_SENSITIVITY) / this.zoom;
-		}
+		const scale = this.zoom / newZoom;
+		this.viewBox.x = svgPoint.x - (svgPoint.x - this.viewBox.x) * scale;
+		this.viewBox.y = svgPoint.y - (svgPoint.y - this.viewBox.y) * scale;
+		this.viewBox.w *= scale;
+		this.viewBox.h *= scale;
+		this.zoom = newZoom;
 
 		this.updateViewBox();
 	};

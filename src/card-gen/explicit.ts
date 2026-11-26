@@ -48,7 +48,7 @@ function isClosingFence(line: string, backtickCount: number): boolean {
 /** Schedule field names, in the canonical spelling `applyScheduleField` switches on. */
 const SCHEDULE_FIELDS = new Set([
 	"stability", "difficulty", "due", "last-review",
-	"reps", "lapses", "state", "learning-steps",
+	"reps", "lapses", "state", "learning-steps", "buried-until",
 ]);
 
 /**
@@ -71,6 +71,7 @@ function normalizeScheduleField(name: string): string | null {
 	const key = name.trim().toLowerCase();
 	if (key === "lastreview") return "last-review";
 	if (key === "learningsteps") return "learning-steps";
+	if (key === "burieduntil") return "buried-until";
 	return SCHEDULE_FIELDS.has(key) ? key : null;
 }
 
@@ -78,7 +79,7 @@ function normalizeScheduleField(name: string): string | null {
 const VALID_STATES = new Set<string>(["new", "learning", "review", "relearning"]);
 
 function applyScheduleField(
-	target: { stability?: number; difficulty?: number; due?: number; lastReview?: number; reps?: number; lapses?: number; state?: CardState; learningSteps?: number },
+	target: { stability?: number; difficulty?: number; due?: number; lastReview?: number; reps?: number; lapses?: number; state?: CardState; learningSteps?: number; buriedUntil?: number },
 	field: string,
 	value: string,
 ): void {
@@ -109,6 +110,11 @@ function applyScheduleField(
 		case "learning-steps":
 			target.learningSteps = parseInt(value, 10);
 			break;
+		case "buried-until": {
+			const until = new Date(value).getTime();
+			if (Number.isFinite(until)) target.buriedUntil = until;
+			break;
+		}
 	}
 }
 
@@ -1043,7 +1049,7 @@ function bindEmbeds(
  */
 function spreadSchedule(
 	source?: DerivedSchedule | FenceMetadata,
-): Partial<Pick<GeneratedCard, "stability" | "difficulty" | "due" | "lastReview" | "reps" | "lapses" | "state" | "learningSteps">> {
+): Partial<Pick<GeneratedCard, "stability" | "difficulty" | "due" | "lastReview" | "reps" | "lapses" | "state" | "learningSteps" | "buriedUntil">> {
 	if (!source) return {};
 	const result: Record<string, unknown> = {};
 	if (source.stability !== undefined) result.stability = source.stability;
@@ -1054,5 +1060,6 @@ function spreadSchedule(
 	if (source.lapses !== undefined) result.lapses = source.lapses;
 	if (source.state !== undefined) result.state = source.state;
 	if (source.learningSteps !== undefined) result.learningSteps = source.learningSteps;
+	if (source.buriedUntil !== undefined) result.buriedUntil = source.buriedUntil;
 	return result;
 }

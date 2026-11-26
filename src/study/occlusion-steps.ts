@@ -1,5 +1,6 @@
 import type { Card, CardOcclusion } from "../database/types";
 import { groupNumber, occlusionGroups } from "../card-gen/occlusion";
+import { isBuried } from "./bury";
 
 /**
  * The sequence of questions an occluded carrier asks in the note.
@@ -63,7 +64,8 @@ export function occlusionSteps(
 	return steps.sort((a, b) => groupNumber(a.group) - groupNumber(b.group));
 }
 
-/** Due, or new (never reviewed) — the same "due" every study surface means. */
+/** Due, or new (never reviewed), and not buried — the same "due" every study surface means. */
 function isDueOrNew(card: Card, now: number): boolean {
+	if (isBuried(card, now)) return false;
 	return card.due === undefined || card.due <= now;
 }
