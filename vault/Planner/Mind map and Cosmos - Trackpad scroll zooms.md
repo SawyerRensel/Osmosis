@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 batch: 16
 priority:
 progress:
 date_created: 2026-11-24T23:17:08.000Z
-date_modified: 2026-11-24T23:17:08.000Z
+date_modified: 2026-11-26T18:47:06.000Z
 date_start_scheduled: 2026-11-25T00:00:00.000Z
 date_start_actual: 2026-11-25T00:00:00.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-26T18:47:06.000Z
+date_end_actual: 2026-11-26T18:47:06.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/54
 ---
 
 # Mind map and Cosmos - Trackpad scroll zooms (T123)
@@ -74,36 +74,47 @@ Settled at intake:
 ## Test plan
 On a laptop trackpad, open a mind map and two-finger scroll up and down: it zooms around the pointer and does not pan. Drag: it pans. Pinch: it zooms. In Cosmos do the same: scrolling zooms, dragging orbits. Repeat with a mouse wheel. On the phone, check that two-finger gestures behave as before.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
 
-**Approach.** Every plain wheel event now zooms in both views. Nothing pans or orbits from the wheel any more.
+Shipped in [PR #54](https://github.com/SawyerRensel/Osmosis/pull/54) → `release/0.0.6` (batch 16, commit `21f8dbb`).
 
-- **Mind map:** `handleWheel` is one cursor-anchored zoom path. The step comes from a new pure `wheelLogZoom(e, pinch)` in `src/mindmap-viewport.ts`. The zoom is now `zoom * exp(logZoom)`, not the old linear `zoom * (1 - delta)`.
+### The cause
+
+Both views treated a plain wheel event as navigation. A desktop trackpad's two-finger scroll arrives as wheel events, so it panned the mind map and orbited Cosmos (through a swipe-inertia feed), where Sawyer wanted zoom. Settled at intake: it zooms in both views like a mouse wheel; pan and orbit happen only by click-drag; pinch and touch-screen gestures stay as they are.
+
+### The fix
+
+Every plain wheel event now zooms in both views; nothing pans or orbits from the wheel.
+
+- **Mind map:** `handleWheel` is one cursor-anchored zoom path. The step comes from a new pure `wheelLogZoom(e, pinch)` in `src/mindmap-viewport.ts`, and zoom is now `zoom * exp(logZoom)`, not the old linear `zoom * (1 - delta)`.
 - **Cosmos:** `wheelAction` became `wheelZoomStep`, which returns only a log zoom. A touchpad swipe feeds the existing `wheelZoom` glide (`easeWheel`), so it is cursor-anchored and eased like a wheel. `WheelClassifier` stays because it now picks the gain.
 
-**Decisions**
-- **Mind map gains.**
-  - Pinch or Ctrl/Cmd+wheel keeps 0.002 per px, as before.
-  - Plain wheel is 0.0006 per px, about 6% per 100 px mouse notch and about 2x for a full two-finger swipe (~1000 px of scroll). Plain deltas are far larger than a pinch's, so the pinch gain would jump. These numbers are my estimates and untested on hardware: tune `WHEEL_ZOOM_GAIN` first.
-  - One plain event is capped at 300 px so a hard flick cannot jump. Line and page deltas are read as 16 and 100 px.
-- **Mind map mouse wheel.** It used to pan, as there was no classifier. It now zooms, per the ticket. Shift+wheel horizontal panning is gone too. Only `deltaY` is read, so a purely horizontal swipe does nothing (`preventDefault` still stops the page scrolling).
-- **Mind map zoom maths.** Switched from linear to exponential, so large deltas can never flip the factor negative. For pinch-sized deltas the result is the same to within 1%.
-- **Cosmos touchpad gain.** `TOUCHPAD_ZOOM_GAIN = 0.6` of the wheel rate (5% per 100 px). A swipe streams many small events, and Linux Chromium inflates them about 3.5x. A mouse wheel and a pinch keep their old rates. Real Ctrl+swipe uses the touchpad rate, with no x10, as before.
-- **Cosmos orphans removed.** `SwipeFeed`, `SwipePush`, `SWIPE_GAIN`, `SWIPE_LIFT_MS`, `SWIPE_LIFT_FRAMES`, the `swipeBy` and `stepSwipe` methods, and the `swipe` and `swipeFeed` fields, with their tests. Kept: the `Swipe` interface, `launchSwipe` and `gizmoDrag`, which the on-screen rotate and pan gizmos still use. Shift+drag pan and click-drag orbit are untouched.
-- **Mind map orphans removed.** `ZOOM_SENSITIVITY` and `SCROLL_SENSITIVITY`. Inertia already stopped on any wheel event (`stopInertia`), and a zoom starts none.
-- **Not changed.** Touch-screen pinch in the mind map (`MindMapView` ~L4345) and the Cosmos touch pinch.
-- **Docs.** Updated `docs/mind-mapping/navigation.md` and `cosmos.md` (the Touchpad table and its footnote).
+### Decisions worth remembering
+
+- **Mind map gains:** pinch or Ctrl/Cmd+wheel keeps 0.002 per px, as before; plain wheel is 0.0006 per px (about 6% per 100 px mouse notch, about 2x for a full ~1000 px two-finger swipe). Plain deltas are far larger than a pinch's, so the pinch gain would jump. One plain event is capped at 300 px; line and page deltas are read as 16 and 100 px.
+- **Mind map mouse wheel used to pan** (no classifier); it now zooms, per the ticket. Shift+wheel horizontal panning is gone too, and only `deltaY` is read, so a purely horizontal swipe does nothing (`preventDefault` still stops the page scrolling).
+- **Exponential zoom maths** so large deltas can never flip the factor negative; for pinch-sized deltas the result matches the old linear form within 1%.
+- **Cosmos touchpad gain** `TOUCHPAD_ZOOM_GAIN = 0.6` of the wheel rate (5% per 100 px): a swipe streams many small events and Linux Chromium inflates them about 3.5x. A mouse wheel and a pinch keep their old rates; real Ctrl+swipe uses the touchpad rate with no x10, as before.
+- **Orphans removed.** Cosmos: `SwipeFeed`, `SwipePush`, `SWIPE_GAIN`, `SWIPE_LIFT_MS`, `SWIPE_LIFT_FRAMES`, `swipeBy`, `stepSwipe`, the `swipe` and `swipeFeed` fields, and their tests. Kept: the `Swipe` interface, `launchSwipe` and `gizmoDrag`, which the on-screen rotate and pan gizmos still use; Shift+drag pan and click-drag orbit are untouched. Mind map: `ZOOM_SENSITIVITY` and `SCROLL_SENSITIVITY`.
+- Not changed: touch-screen pinch in the mind map and the Cosmos touch pinch.
+
+### Surface map
 
 | File | Change |
 |---|---|
-| `src/mindmap-viewport.ts` / `.test.ts` | `wheelLogZoom`, the gain constants and the cap, with tests |
+| `src/mindmap-viewport.ts` | `wheelLogZoom`, the gain constants and the cap |
+| `src/mindmap-viewport.test.ts` | Tests for `wheelLogZoom`, the gains and the cap |
 | `src/views/MindMapView.ts` | `handleWheel` is zoom only; unused constants removed |
-| `src/cosmos/wheel-input.ts` / `.test.ts` | `wheelZoomStep` and `TOUCHPAD_ZOOM_GAIN` replace `wheelAction` and the swipe feed; tests rewritten |
+| `src/cosmos/wheel-input.ts` | `wheelZoomStep` and `TOUCHPAD_ZOOM_GAIN` replace `wheelAction` and the swipe feed |
+| `src/cosmos/wheel-input.test.ts` | Tests rewritten |
 | `src/views/CosmosScene.ts` | `onWheel` always zooms; swipe code removed |
-| `docs/mind-mapping/navigation.md`, `cosmos.md` | The input tables |
+| `docs/mind-mapping/navigation.md`, `docs/mind-mapping/cosmos.md` | The input tables (the Touchpad table and its footnote) |
 
-**Fixture:** none. Any mind map and the Cosmos view will do.
+### Test fixture
 
-**Test.** On a laptop trackpad, open a mind map and two-finger scroll up and down. It should zoom around the pointer, with no panning. Drag should pan, pinch should zoom, and the zoom should stop at the limits. In Cosmos, scroll should zoom and drag should orbit. Repeat both with a mouse wheel. Check that the zoom speed feels right, and report if not. On the phone, two-finger gestures should behave as before.
+None. Any mind map and the Cosmos view will do.
 
-**Could not verify.** Real trackpad or mouse feel, and the gain values. Only unit-tested, with `tsc --noEmit` clean. Build not run, as instructed.
+### Follow-ups
+
+- **The gains were tuned by feel, from estimates, not measured on hardware.** `WHEEL_ZOOM_GAIN` (mind map) is the first knob, then `TOUCHPAD_ZOOM_GAIN` (Cosmos). Sawyer's manual test passed, but speed on other trackpads and mice may differ.
+- There is no longer any way to pan the mind map or orbit Cosmos from a trackpad or wheel alone, including horizontal scrolling; it is click-drag only, by design.

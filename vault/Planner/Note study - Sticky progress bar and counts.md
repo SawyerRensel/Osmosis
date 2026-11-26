@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 batch: 16
 priority:
 progress:
 date_created: 2026-11-24T23:17:08.000Z
-date_modified: 2026-11-25T08:23:46Z
+date_modified: 2026-11-26T18:47:06.000Z
 date_start_scheduled: 2026-11-24T23:59:32Z
 date_start_actual: 2026-11-24T23:59:32Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-26T18:47:06.000Z
+date_end_actual: 2026-11-26T18:47:06.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/54
 ---
 
 # Note study - Sticky progress bar and counts (T122)
@@ -71,33 +71,34 @@ Settled at intake: same content as Flashcard study, meaning the progress bar plu
 ## Test plan
 Open a long note with many fences and lines and enter note study. The strip shows bar and counts. Scroll to the bottom: the strip stays pinned. Rate a few cards: counts and bar move. Undo one: they move back. Leave study: the strip is gone. Repeat on the phone.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
 
-Code commit: `3a4e136` on `batch/16-bury-zoom-trees`.
+Shipped in [PR #54](https://github.com/SawyerRensel/Osmosis/pull/54) → `release/0.0.6` (batch 16, commits `3a4e136` and the fix round `4dfac70`).
 
-### Why the bar and counts weren't visible
-The strip was mounted inside `.markdown-preview-sizer`, directly before `.inline-title`. Obsidian virtualizes the sizer: its `updateVirtualDisplay` (read in `ref/obsidian-core/app.js`) runs on scroll and calls `sizerEl.setChildrenInPlace([pusher, ...sections in view])`. So:
-- The strip lived inside the header section (`.mod-header`), and that section is detached once it scrolls out of the render window. In a long note the strip was gone as soon as you scrolled.
-- When there was no inline title, the fallback prepended the strip to the sizer itself, and the next virtual-display pass removed it outright.
-- `position: sticky` could not have worked in either place: in `.mod-header` it is confined to that section's height, and as a sizer child it gets removed.
+### The cause
 
-The counts were not the problem: they came from `countNoteSession` and were correct.
+**Why the strip vanished.** It was mounted inside `.markdown-preview-sizer`, directly before `.inline-title`. Obsidian virtualizes the sizer: its `updateVirtualDisplay` (read in `ref/obsidian-core/app.js`) runs on scroll and calls `sizerEl.setChildrenInPlace([pusher, ...sections in view])`. The strip lived in the header section (`.mod-header`), which is detached once it scrolls out of the render window, so in a long note it was gone as soon as you scrolled. With no inline title, the fallback prepended it to the sizer itself and the next pass removed it outright. `position: sticky` could not have worked in either place. The counts were not the problem: `countNoteSession` was correct.
 
-### Fix
-- `mountAtScrollerTop` (replaces `mountAboveInlineTitle` in `src/views/StudyProgressStrip.ts`) makes the strip the first child of the reading view's scroller (`.markdown-reading-view > .markdown-preview-view`), just before the sizer. Obsidian never resets the scroller's children. A full `rerender(true)` empties only the sizer.
-- In CSS, `.osmosis-note-study-strip` is `position: sticky`, uses `--background-primary`, has `z-index: 5`, and uses padding instead of margin below it, so no text shows in the gap. With readable line length on, it takes the sizer's column (`max-width: var(--file-line-width)`, auto margins).
-- The bar and counts come from the new `noteSessionStatus()` in `src/study/session-counts.ts`. It applies T117's rule (`finished / (finished + left)`) through a `progressPercent` helper that it shares with `sessionStatus`.
+**Why it sat too low (fix round 1).** Sawyer: on desktop the strip sat about 45px below the view header and the note scrolled through the gap. Chromium pins a sticky box inside its scroll container's padding, not at the scroller's top edge, and the reading view scroller has `padding: var(--file-margins)` (32px on top on desktop), so `top: 0` pinned it 32px down. On a phone the earlier offset stacked on top of the padding: with a floating header the strip sat 55px below the header's bottom edge (headless Chromium with Obsidian's `app.css`, scrolled 400px).
 
-### Decisions
-- **The strip is mounted outside the sizer, and sticky is kept.** The note's preferred option was sticky. The sizer rules that out, so the strip sticks within the scroller instead. I didn't mount it outside the scroller (as a sibling in `.markdown-reading-view`) for two reasons. On a phone the view header floats over the scroller, so a sibling would sit behind it. And when in-note search is open, the reading view switches to `flex-direction: column-reverse`, which would push a sibling to the bottom.
-- **Phone offset.** `top: calc(var(--view-top-spacing-markdown, 8px) - 8px)` gives 0 on desktop, where the variable is unset, and 0 on a phone without a floating header. With a floating header (`.is-phone.is-floating-nav` / `auto-full-screen`) it gives `safe-area + header height + 8px`, so the strip sticks just under the floating header with about 8px of content visible between them. I haven't seen this on a device.
-- **The bar counts cards, not questions**, following T117. Previously the bar counted questions and moved on every rating, Again included. Now an Again leaves the bar where it was, because the card sits in learn in the counts, the same as in the study tab. Note study never asks an Again card a second time, so once every card has a rating the bar reads full. That matches the study tab's waiting screen. The Again cards stay in the Learn count; I didn't filter by due time.
-- **`sessionStatus` was not changed to take a note-scoped input.** Its input is a queue with an index, and note study has neither. Instead `noteSessionStatus` sits beside it and shares the fill rule. `countNoteSession`'s buckets come from the same `bucketOf`. Mind map study still uses `countNoteSession` directly with its own bar, which I left alone because it is out of scope.
-- **Orphans removed.** `studyProgress`, `planFenceSteps` and the `fenceSteps`/`ratedFences` state fed only the old question-count bar, so I deleted them. `unmarkFenceRated` keeps its `fenceKey` parameter, which is now unused, so the `NoteStudyProcessor` call site doesn't change.
-- **Bury.** Note study has no bury action. A card buried in Flashcard study is left out when the next note session starts (`planSessionCards` already filters with `isBuried`, from T121). A bury done during a running note session doesn't change that session's counts.
-- **Not touched.** `NoteStudyProcessor.progressWidget` / `updateProgress` were already dead (never assigned) before this ticket, and this change didn't orphan them, so I left them.
+### The fix
+
+- `mountAtScrollerTop` (replaces `mountAboveInlineTitle` in `src/views/StudyProgressStrip.ts`) makes the strip the first child of the reading view's scroller (`.markdown-reading-view > .markdown-preview-view`), before the sizer. Obsidian never resets the scroller's children, and a full `rerender(true)` empties only the sizer.
+- `.osmosis-note-study-strip` is `position: sticky`, opaque (`--background-primary`), `z-index: 5`, with padding rather than margin below it so no text shows in the gap; with readable line length on it takes the sizer's column.
+- Bar and counts come from the new `noteSessionStatus()` in `src/study/session-counts.ts`, applying T117's rule (`finished / (finished + left)`) through a `progressPercent` helper shared with `sessionStatus`.
+- Round 1 (CSS only): while the strip is mounted, `.markdown-preview-view:has(> .osmosis-note-study-strip)` sets `padding-top: 0` and the strip uses `top: 0`, so it is flush under the header at every scroll position (measured offset 0 on desktop and phone). A `box-shadow: 0 0 0 100vmax` plus `clip-path: inset(0 -100vmax)` paints the strip's background across the scroller's full width at the strip's height only, adding no scrollable overflow. On a phone with a floating header the strip gets `padding-top` of the header's offset plus height, and the scroller `isolation: isolate` so `z-index: 5` cannot rise above the header.
+
+### Decisions worth remembering
+
+- **Mounted outside the sizer, sticky kept, but not as a sibling of the scroller.** On a phone the view header floats over the scroller, so a sibling would sit behind it, and with in-note search open the reading view becomes `flex-direction: column-reverse`, which would push a sibling to the bottom.
+- **Zero the scroller's top padding rather than `top: calc(-1 * padding)`.** The padding differs between desktop (`--file-margins`), sidebars, phones and themes, and measuring it in JS goes stale when a phone rotates. No `!important`: the selector repeats Obsidian's phone padding rule chain and adds `:has()`, one class heavier.
+- **At scroll 0 the strip is also at the top.** The 32px that used to sit above it is gone, so the inline title starts 8px under the strip. If Sawyer wants breathing room above the title, add it below the strip as sizer margin, not above.
+- **The bar counts cards, not questions**, following T117. An Again leaves the bar where it was (the card sits in learn), and note study never asks an Again card twice, so once every card has a rating the bar reads full, like the study tab's waiting screen. Again cards stay in Learn; the filter is not by due time.
+- **`sessionStatus` was not changed**: its input is a queue with an index, which note study lacks. `noteSessionStatus` sits beside it and shares the fill rule; `countNoteSession`'s buckets come from the same `bucketOf`.
+- **Orphans removed:** `studyProgress`, `planFenceSteps` and the `fenceSteps`/`ratedFences` state, which fed only the old question-count bar. `unmarkFenceRated` keeps its now-unused `fenceKey` parameter so its call site is unchanged. `NoteStudyProcessor.progressWidget` / `updateProgress` were already dead before this ticket and are left in place.
 
 ### Surface map
+
 | File | Change |
 |---|---|
 | `src/study/session-counts.ts` | New `noteSessionStatus`; `progressPercent` shared with `sessionStatus` |
@@ -105,55 +106,16 @@ The counts were not the problem: they came from `countNoteSession` and were corr
 | `src/views/StudyProgressStrip.ts` | `mountAboveInlineTitle` replaced by `mountAtScrollerTop` |
 | `src/views/StudyProgressStrip.dom.test.ts` | Test for the new mount |
 | `src/views/LineRevealProcessor.ts` | `ensureStrip` mounts in the scroller and uses `noteSessionStatus`; question-count bar state removed |
-| `styles.css` | `.osmosis-note-study-strip` is sticky, opaque, uses padding; readable-width column rule |
-| `e2e/fixtures/note-study-sticky-strip.md`, `vault/tests/flashcard/note-study-sticky-strip.md` | New long fixture |
+| `styles.css` | Strip is sticky, opaque, padded; readable-width column rule; round 1: scroller `padding-top: 0` and `isolation: isolate`, `top: 0`, full-width shadow paint, floating-phone padding |
+| `e2e/fixtures/note-study-sticky-strip.md` | New long fixture (copy in `vault/tests/flashcard/`) |
 
-### Fixture
-`vault/tests/flashcard/note-study-sticky-strip.md` (master copy in `e2e/fixtures/`). It is a long sailing note with 14 cards: 6 line cards (3 scheduled in `osmosis-schedule`) and 8 fences (6 scheduled). All 9 scheduled cards were due between 2026-11-05 and 2026-11-13, and 5 are new. The strip should read **5 | 0 | 9** at the start. Reload Obsidian (Ctrl+R) before testing.
+### Test fixture
 
-### Not verified
-- Nothing has been run in Obsidian. I haven't checked sticky behaviour, opacity over images and callouts, or the phone floating-header offset on a device.
-- Clicking an outline heading may scroll it to just under the strip, partly hidden behind its 36px. Untested.
-- `npm run build` was not run (the orchestrator said not to). `tsc -noEmit` passes.
+`vault/tests/flashcard/note-study-sticky-strip.md` (master `e2e/fixtures/note-study-sticky-strip.md`): a long sailing note with 14 cards, 6 line cards (3 scheduled in `osmosis-schedule`) and 8 fences (6 scheduled). The 9 scheduled cards were due between 2026-11-05 and 2026-11-13 and 5 are new, so the strip starts at **5 | 0 | 9**.
 
-## Fix round 1 (awaiting manual test)
+### Follow-ups
 
-Code commit: `4dfac70` on `batch/16-bury-zoom-trees`.
-
-### Feedback
-On desktop the pinned strip sat about 45px below the view header ("Topics / HTML Elements", reading view). The note scrolled through that gap: lines of a code block showed between the header and the strip. Sawyer asked for the strip to sit snug against the header and be opaque, so no slice of content shows above it.
-
-### Cause
-Chromium pins a sticky box inside its scroll container's padding, not at the scroller's top edge. The reading view scroller (`.markdown-preview-view`) has `padding: var(--file-margins)`, which is 32px on top on desktop, so `top: 0` pinned the strip 32px below the header. The 45px Sawyer saw is presumably those 32 CSS px at display scaling. Nothing covered that band, so the note scrolled through it. On a phone the T122 offset made it worse: there, `top` was added on top of the padding. With a floating header, the strip pinned 55px below the header's bottom edge (measured with a 0 safe area).
-
-Measured in headless Chromium with Obsidian's `app.css` plus `styles.css`. The figure is the strip's top edge relative to the header's bottom edge, scrolled 400px.
-
-| Layout | Before | After |
-|---|---|---|
-| Desktop | 32px | 0 |
-| Phone | 8px | 0 |
-| Phone, floating header | 55px | bar row 1px under the header's bottom edge (the header's border); strip box from the scroller's top |
-
-### Fix (`styles.css` only)
-- While the strip is mounted, `.markdown-preview-view:has(> .osmosis-note-study-strip)` sets `padding-top: 0`, and the strip uses `top: 0`. The strip is then flush under the header at every scroll position, including scroll 0, and never moves.
-- To beat Obsidian's phone padding rule (6 classes), the selector repeats that rule's chain and adds the `:has()`, which makes it one class heavier. No `!important`.
-- `box-shadow: 0 0 0 100vmax var(--background-primary)` plus `clip-path: inset(0 -100vmax)` paints the strip's background across the scroller's whole width (side padding and the gutters beside the readable column), but only at the strip's height. A shadow adds no scrollable overflow; measured: `scrollWidth - clientWidth` is the same with and without the strip. A screenshot with full-width red content rows scrolled under the strip showed no red above or beside it.
-- Phone with floating header (`.is-phone.is-floating-nav`, `.is-phone.auto-full-screen`): the strip gets `padding-top: calc(var(--view-header-top-offset) + var(--view-header-height))`. It fills the area behind the transparent floating header with background and puts the bar row just under the header. The scroller gets `isolation: isolate` so the strip's `z-index: 5` cannot rise above the header (z-index 1). In the screenshot the header title stays visible over the strip.
-
-### Decisions
-- **Zero the scroller's top padding instead of `top: calc(-1 * padding)`.** A negative top has to know the padding value, which differs between desktop (`--file-margins`), sidebars (`--size-4-5`), phones (`--view-top-spacing-markdown`) and themes. Measuring it in JS goes stale when a phone rotates and its safe area changes. With the padding zeroed, the pinned position is right whatever the theme sets.
-- **At scroll 0 the strip is also at the top.** The 32px that used to sit above the strip is gone rather than moved below it, so the inline title starts 8px under the strip (its padding-bottom). This reads as a toolbar under the header. If Sawyer wants more breathing room above the title, add it below the strip as sizer margin, not above it.
-
-### Surface map
-| File | Change |
-|---|---|
-| `styles.css` | Scroller `padding-top: 0` and `isolation: isolate` while the strip is mounted; strip `top: 0` plus full-width shadow paint; floating-phone `padding-top` |
-
-### Fixture
-Same as before: `vault/tests/flashcard/note-study-sticky-strip.md`.
-
-### Not verified
-- Not tested in Obsidian or on a device. The measurements used a hand-built DOM with Obsidian's real `app.css`.
-- Phone with the floating header and in-note search open: Obsidian moves the header clearance into the search bar, so the strip's extra top padding may leave a blank band of about 56px under the search bar. That band would be cosmetic.
-- `auto-full-screen` hides the header on scroll. The strip keeps its header-height padding, so a blank band may sit where the header was.
-- Lint: 0 errors (2 existing warnings in `StatsView.ts`). Tests: 152 files and 3595 tests pass. Build was not run (the orchestrator said not to).
+- **An outline-heading jump may land behind the strip.** Clicking a heading in the outline may scroll it to just under the top, partly hidden by the strip's ~36px. Never tested.
+- **Mind map study still uses its own bar** (`MindMapView.ensureMindmapStudyStrip` with `countNoteSession` directly), left alone as out of scope; it does not share `noteSessionStatus`.
+- Phone behaviour was measured on a hand-built DOM, not on a device: with the floating header plus in-note search open the extra top padding may leave a blank band of about 56px under the search bar, and `auto-full-screen` hides the header on scroll while the strip keeps its header-height padding, so a blank band may sit where the header was. Both would be cosmetic.
+- A bury done during a running note session does not change that session's counts (a note session leaves out cards buried before it starts).
