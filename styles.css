@@ -1817,6 +1817,18 @@ img.osmosis-zoomed,
 
    Desktop and tablet: a compact panel of fixed width, centered, so Show answer
    spans exactly the row of four rating buttons that replaces it. */
+/* The panel's width is shared with note study's action row
+   (`.osmosis-note-actions`), so both cap their buttons the same. */
+.osmosis-study-actions,
+.osmosis-note-actions {
+	--osmosis-study-panel-width: 340px;
+}
+
+body.is-tablet .osmosis-study-actions,
+body.is-tablet .osmosis-note-actions {
+	--osmosis-study-panel-width: 420px;
+}
+
 .osmosis-study-actions {
 	position: absolute;
 	left: 50%;
@@ -1824,17 +1836,13 @@ img.osmosis-zoomed,
 	transform: translateX(-50%);
 	z-index: 1;
 	display: flex;
-	width: 340px;
+	width: var(--osmosis-study-panel-width);
 	max-width: calc(100% - 2 * var(--size-4-2));
 	padding: var(--osmosis-study-panel-padding);
 	border-radius: var(--radius-m);
 	background: var(--raised-background, var(--background-secondary));
 	backdrop-filter: var(--raised-blur);
 	box-shadow: var(--raised-shadow, var(--shadow-s));
-}
-
-body.is-tablet .osmosis-study-actions {
-	width: 420px;
 }
 
 /* Nothing to press (the waiting and completion screens): no empty panel. */
@@ -1857,16 +1865,20 @@ body.is-phone .osmosis-study-actions {
    `input[type="text"]` sizes, and ties (and, loading later, beats) its
    `.is-tablet button:not(.clickable-icon)` padding. */
 .osmosis-study-view .osmosis-study-actions button,
-.osmosis-study-view .osmosis-study-actions input {
+.osmosis-study-view .osmosis-study-actions input,
+.osmosis-note-card .osmosis-note-actions button {
 	height: var(--osmosis-study-button-height);
 }
 
-.osmosis-study-view .osmosis-study-actions button {
+.osmosis-study-view .osmosis-study-actions button,
+.osmosis-note-card .osmosis-note-actions button {
 	padding: 0 var(--size-4-2);
 }
 
 body.is-tablet .osmosis-study-view .osmosis-study-actions button,
-body.is-phone .osmosis-study-view .osmosis-study-actions button {
+body.is-phone .osmosis-study-view .osmosis-study-actions button,
+body.is-tablet .osmosis-note-card .osmosis-note-actions button,
+body.is-phone .osmosis-note-card .osmosis-note-actions button {
 	font-size: var(--font-ui-medium);
 }
 
@@ -1888,7 +1900,8 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
    (`.osmosis-rating button`). Two classes, to outrank Obsidian's
    `button:not(.clickable-icon)` radius; no `display` here, or it would outrank
    `.osmosis-hidden` too. */
-.osmosis-study-actions .osmosis-study-flip {
+.osmosis-study-actions .osmosis-study-flip,
+.osmosis-note-actions .osmosis-study-flip {
 	flex: 1;
 	min-width: 0;
 	border-radius: 4px;
@@ -1902,7 +1915,8 @@ body.is-phone .osmosis-study-view .osmosis-study-actions button {
    adds the panel's height and stacks the interval each would schedule over its
    label. Two classes, to outrank the shared row's margin; no `display` here,
    for the reason given on the flip button. */
-.osmosis-study-actions .osmosis-study-rating-bar {
+.osmosis-study-actions .osmosis-study-rating-bar,
+.osmosis-note-actions .osmosis-study-rating-bar {
 	flex: 1;
 	min-width: 0;
 	margin-top: 0;
@@ -2299,15 +2313,45 @@ body.is-phone .osmosis-decks-column {
 	margin: 8px 0;
 }
 
-.osmosis-note-hidden {
-	color: var(--text-faint);
-	letter-spacing: 2px;
-	cursor: pointer;
-	user-select: none;
+/* Show answer, then the rating bar, spanning the card in the flashcard study
+   tab's look: `.osmosis-study-flip` and `.osmosis-study-rating-bar` share
+   their rules with the tab's panel. A touch screen gets the tablet height,
+   not the tab's phone 56px: a note holds many of these inline. */
+/* Desktop and tablet: the buttons' row is the study panel's width, centred in
+   the card as the panel is centred in the tab; the phone spans the card. */
+.osmosis-note-actions {
+	--osmosis-study-button-height: 40px;
+	display: flex;
+	margin: 8px auto 0;
+	max-width: calc(var(--osmosis-study-panel-width) - 2 * var(--size-4-1));
 }
 
-.osmosis-note-hidden:hover {
-	color: var(--text-muted);
+body.is-tablet .osmosis-note-actions,
+body.is-phone .osmosis-note-actions {
+	--osmosis-study-button-height: 48px;
+}
+
+body.is-phone .osmosis-note-actions {
+	max-width: none;
+}
+
+.osmosis-note-actions:empty {
+	display: none;
+}
+
+/* Step counter, "Rated", undo and the exclude toggle, at the card's top right.
+   Tucked into the card's padding; in live preview it stops short of
+   Obsidian's absolutely positioned `</>` (`.edit-block-button`). */
+.osmosis-note-top {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 4px;
+	margin: -8px -8px 0 0;
+}
+
+.cm-embed-block .osmosis-note-top {
+	margin-inline-end: 28px;
 }
 
 .osmosis-note-revealed {
@@ -2418,32 +2462,22 @@ body.is-phone .osmosis-decks-column {
 
 /* ─── Exclude Toggle (Note Cards) ──────────────────── */
 
-.osmosis-note-bottom {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	margin-top: 4px;
-}
-
-.osmosis-note-rating-slot {
-	flex: 1;
-}
-
-/* "2/3" on an occluded fence being studied in place. Its groups are asked one at
-   a time, and without a count the only thing distinguishing the second question
-   from the first is which mask is amber — which says nothing about how many are
-   left. Sits where the undo button does on an ordinary card; a stepped card has
-   none, since undoing one group's rating mid-sequence has nowhere to put the
-   user back. */
-.osmosis-note-step {
+/* "2/3" on a fence being studied in place, or "Rated" once it is done, in the
+   top row left of undo. Its questions are asked one at a time, and without a
+   count nothing says how many are left. */
+.osmosis-note-step,
+.osmosis-note-top > .osmosis-note-rated {
 	color: var(--text-faint);
 	font-size: var(--font-ui-smaller);
 	font-variant-numeric: tabular-nums;
 	flex-shrink: 0;
-	margin-right: 8px;
+	margin-right: 4px;
 }
 
 .osmosis-note-exclude-toggle {
+	display: flex;
+	padding: 4px;
+	border-radius: 4px;
 	cursor: pointer;
 	color: var(--text-muted);
 	opacity: 0.4;
@@ -4649,9 +4683,8 @@ body.osmosis-hide-navbar .mobile-navbar {
 	top: 0;
 	box-sizing: border-box;
 	width: max-content;
-	/* PANEL_MAX_EM in src/cosmos/near.ts: the scene spaces nodes for a panel this big. */
+	/* PANEL_MAX_EM in src/cosmos/near.ts: the scene spaces nodes for a panel this wide. No max-height (T111): a panel shows all of its content, as tall as `panelBoxEm` spaces it. */
 	max-width: 20em;
-	max-height: 30em;
 	overflow: hidden;
 	padding: 0.25em 0.4em;
 	/* Matches the plate's text colour (the fill is the lens's, the outline is set inline). */
@@ -4671,8 +4704,31 @@ body.osmosis-hide-navbar .mobile-navbar {
 	margin-bottom: 0;
 }
 
-.osmosis-cosmos-near-body img,
-.osmosis-cosmos-near-body video {
+/* Nothing inside a panel scrolls (T111), as nothing inside a 2D node does (T88,
+   above): Obsidian's `pre` scrolls sideways, and a token wider than the panel
+   (a URL, minified code) would put a scrollbar over the block's last line.
+   `pre` already wraps (`--code-white-space: pre-wrap`); `overflow-wrap:
+   anywhere` breaks the token too, as edit mode's CodeMirror does. */
+.osmosis-cosmos-near-body pre,
+.osmosis-cosmos-near-body .callout-content,
+.osmosis-cosmos-near-body .table-wrapper,
+.osmosis-cosmos-near-body mjx-container {
+	overflow: visible;
+	max-height: none;
+}
+
+.osmosis-cosmos-near-body pre {
+	overflow-wrap: anywhere;
+}
+
+/* Scoped under the panel as well, so the caps outrank a theme's, snippet's or
+   other plugin's `.markdown-rendered img` or `img[width]` (T112 fix round 1).
+   At `.osmosis-cosmos-near-body img` they only tied those, and a later sheet
+   won: an embed sized with `|314` then drew 314 px wide past the panel's edge,
+   while an unsized one stayed capped by Obsidian's own
+   `.internal-embed img:not([width])`. */
+.osmosis-cosmos-near-panel .osmosis-cosmos-near-body img,
+.osmosis-cosmos-near-panel .osmosis-cosmos-near-body video {
 	max-width: 100%;
 	/* PANEL_MEDIA_MAX_EM in src/cosmos/near.ts; contain keeps the aspect of an embed sized with |width. */
 	max-height: 15em;

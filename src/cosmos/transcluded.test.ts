@@ -99,8 +99,8 @@ describe("depth 0: collectEmbedded", () => {
 		expect(model.nodes.some((n) => n.path === "Linked.md" || n.kind === "ghost")).toBe(false);
 		expect(model.nodes.some((n) => n.id === "file:chart.pdf")).toBe(false);
 		expect(model.edges.some((e) => e.kind === "link")).toBe(false);
-		// An embedded attachment is content, and tags are in the note's own text.
-		expect(model.nodes.some((n) => n.id === "file:diagram.svg")).toBe(true);
+		// Tags are in the note's own text. An image embedded in a line draws in that line's panel, with no node of its own (T112).
+		expect(model.nodes.some((n) => n.id === "file:diagram.svg")).toBe(false);
 		expect(model.nodes.some((n) => n.id === "tag:own")).toBe(true);
 	});
 

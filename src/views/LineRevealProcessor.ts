@@ -21,6 +21,7 @@ import { mountRatingAnchor, overlayMasks, removeRatingAnchors, renderOcclusion }
 import { mountAboveInlineTitle, StudyProgressStrip } from "./StudyProgressStrip";
 import { contentRect, ImageZoom } from "./ImageZoom";
 import type { ScreenRect } from "../study/image-zoom";
+import { StudyClock } from "../study/study-clock";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -95,12 +96,13 @@ interface NoteRevealState {
 	/** Revealed-but-unrated card whose rating bubble is showing. */
 	pendingRating: string | null;
 	/**
-	 * When `pendingRating` was revealed, for the review log's elapsed time.
-	 * A line card sits in the note among ordinary content, so there is no
-	 * "question shown" moment to measure from — the reveal is the only
-	 * defensible anchor.
+	 * Times each card for the review log from the moment it became the question:
+	 * the session starting, or the previous rating (line or fence — they share
+	 * this session). A line card sits in the note among ordinary content, so
+	 * there is no "question shown" event, and timing from the reveal logged only
+	 * the second or two it took to press a rating button.
 	 */
-	pendingRatingAt: number;
+	clock: StudyClock;
 	/**
 	 * The shape groups each occluded line asks this session, fixed when study
 	 * starts so the sequence cannot change under the user as schedules move.
@@ -541,7 +543,6 @@ export class LineRevealProcessor {
 			if (blockId !== nextToReveal(order, state.revealed)) return;
 			state.revealed.add(blockId);
 			state.pendingRating = blockId;
-			state.pendingRatingAt = Date.now();
 		} else {
 			// Peek — any order, nothing recorded
 			state.revealed.add(blockId);
@@ -607,7 +608,7 @@ export class LineRevealProcessor {
 			: step.cardId === null ? [] : [step.cardId];
 		if (cardIds.length > 0) {
 			this.sessionManager ??= this.plugin.createSessionManager("note");
-			const elapsedMs = Date.now() - state.pendingRatingAt;
+			const elapsedMs = state.clock.lap() ?? 0;
 			for (const cardId of cardIds) {
 				await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
 				state.sessionRatings.set(cardId, rating);
@@ -710,6 +711,7 @@ export class LineRevealProcessor {
 			state.rated.clear();
 			state.ratedFences.clear();
 			state.pendingRating = null;
+			state.clock.start(now);
 			this.planOcclusionSteps(notePath, state, targets);
 			this.planFenceSteps(notePath, state, fences);
 			this.planSessionCards(notePath, state, now);
@@ -809,6 +811,7 @@ export class LineRevealProcessor {
 	/** Leave study mode: drop session state and flush pending schedule writes. */
 	private endStudy(notePath: string, state: NoteRevealState): void {
 		state.mode = "off";
+		state.clock.stop();
 		state.studyTargets = null;
 		state.fenceTargets = null;
 		state.pendingRating = null;
@@ -1178,6 +1181,17 @@ export class LineRevealProcessor {
 	}
 
 	/**
+	 * The time one fence card took in this note's study session: since the
+	 * session started or the previous rating, capped. `null` outside a session,
+	 * for the caller to fall back on. Moves the anchor on, so call it once per
+	 * rating.
+	 */
+	lapStudyClock(notePath: string): number | null {
+		const state = this.states.get(notePath);
+		return state?.mode === "study" ? state.clock.lap() : null;
+	}
+
+	/**
 	 * Record that one of a fence's questions was answered, so the strip advances.
 	 *
 	 * The rating itself is written by `NoteStudyProcessor` — this only
@@ -1203,6 +1217,8 @@ export class LineRevealProcessor {
 		const state = this.states.get(notePath);
 		if (!state || state.mode !== "study") return;
 		if (!state.sessionRatings.delete(cardId)) return;
+		// The card is back in front of the user: time it from here.
+		state.clock.start();
 		state.ratedFences.set(fenceKey, Math.max((state.ratedFences.get(fenceKey) ?? 0) - 1, 0));
 		this.syncBanners();
 	}
@@ -1236,7 +1252,7 @@ export class LineRevealProcessor {
 				sessionRatings: new Map(),
 				fenceSteps: new Map(),
 				pendingRating: null,
-				pendingRatingAt: 0,
+				clock: new StudyClock(),
 				studySteps: new Map(),
 				stepAt: new Map(),
 				lines: new Map(),

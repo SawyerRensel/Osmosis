@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { UNIT_SPACING, edgeDistance, linkDistance, nodeExtent, noteHue, plateExtent, spriteLabel } from "./appearance";
+import { UNIT_SPACING, edgeDistance, linkDistance, nodeExtent, nodeFootprint, noteHue, plateExtent, spriteLabel } from "./appearance";
 
 describe("spriteLabel", () => {
 	it("shows a node link's arrow label as the arrow", () => {
@@ -98,6 +98,20 @@ describe("nodeExtent", () => {
 
 	it("is the panel's half-diagonal in world units when the panel is bigger", () => {
 		expect(nodeExtent({ width: 30, height: 5 }, { width: 20, height: 15 }, 2)).toBe(25);
+	});
+});
+
+describe("nodeFootprint", () => {
+	it("is the plate when there is no panel, or a smaller one", () => {
+		const plate = { width: 30, height: 5 };
+		expect(nodeFootprint(plate, null, 3)).toEqual(plate);
+		expect(nodeFootprint(plate, { width: 4, height: 1 }, 3)).toEqual(plate);
+	});
+
+	it("grows each side to the panel's in world units, separately", () => {
+		// A tall code block: narrower than its plate, far taller.
+		expect(nodeFootprint({ width: 30, height: 5 }, { width: 8, height: 40 }, 2)).toEqual({ width: 30, height: 80 });
+		expect(nodeFootprint({ width: 30, height: 5 }, { width: 20, height: 2 }, 2)).toEqual({ width: 40, height: 5 });
 	});
 });
 

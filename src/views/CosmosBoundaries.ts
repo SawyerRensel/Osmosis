@@ -46,7 +46,8 @@ export interface BoundaryNode {
 	x?: number;
 	y?: number;
 	z?: number;
-	shape: { width: number; height: number };
+	/** The rectangle it takes up: its plate, grown to its near-tier panel (`nodeFootprint`), so a tall code block's cloud wraps its whole panel. */
+	footprint: { width: number; height: number };
 	frame?: TangentFrame;
 	color: Color;
 	opacity: number;
@@ -192,7 +193,7 @@ export class CosmosBoundaries {
 			const members = group.members.map((id) => byId.get(id)!);
 			const padding = BOUNDARY_PADDING * em * (1 + group.nest);
 			// A planet's plate is wrapped as it lies in its continent's frame (as `continentMap` lays it out), not as it spins for the camera, so the boundary needn't follow the camera.
-			const plates: BoundaryPlate[] = members.map((n) => ({ x: n.x!, y: n.y!, z: n.z!, width: n.shape.width, height: n.shape.height, right: n.frame?.right, up: n.frame?.up }));
+			const plates: BoundaryPlate[] = members.map((n) => ({ x: n.x!, y: n.y!, z: n.z!, width: n.footprint.width, height: n.footprint.height, right: n.frame?.right, up: n.frame?.up }));
 			// A patch when every plate lies on one planet's surface (one shell of it, with core layers); otherwise a hull.
 			const places = members.map(surface);
 			const first = places[0];

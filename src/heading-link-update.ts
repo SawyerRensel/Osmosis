@@ -11,12 +11,15 @@
  */
 import { Notice, TFile, type App } from "obsidian";
 import type { EditPipeline } from "./edit-pipeline";
-import { hasHeading, headingMatches, headingOfLine, headingRenameNotice, rewriteHeadingLinks, type HeadingLinkRewrite } from "./heading-links";
+import { extractTrailingBlockId } from "./block-id";
+import { hasHeading, headingMatches, headingOfLine, headingRenameNotice, rewriteHeadingLinks, type HeadingIds, type HeadingLinkRewrite } from "./heading-links";
 
 export interface HeadingRename {
 	file: TFile;
 	from: string;
 	to: string;
+	/** The heading's block ids before and after, which links written by the suggest carry (`[[#Old os-a1b2c3|Old]]`). */
+	ids: HeadingIds;
 }
 
 /** Obsidian's "Automatically update internal links" (Files and links). Off when unset, as in Obsidian. */
@@ -37,7 +40,7 @@ export function planHeadingRename(app: App, file: TFile, oldLine: string, newLin
 	const to = headingOfLine(newLine);
 	if (from === null || to === null || from === "" || to === "" || headingMatches(from, to)) return null;
 	if (hasHeading(newContent, from)) return null;
-	return { file, from, to };
+	return { file, from, to, ids: { from: extractTrailingBlockId(oldLine)?.id ?? null, to: extractTrailingBlockId(newLine)?.id ?? null } };
 }
 
 function targets(app: App, rename: HeadingRename, sourcePath: string): (linkpath: string) => boolean {
@@ -46,7 +49,7 @@ function targets(app: App, rename: HeadingRename, sourcePath: string): (linkpath
 
 /** The renamed note's own text with its links to the old heading rewritten. */
 export function rewriteOwnLinks(app: App, rename: HeadingRename, content: string): HeadingLinkRewrite {
-	return rewriteHeadingLinks(content, rename.from, rename.to, targets(app, rename, rename.file.path));
+	return rewriteHeadingLinks(content, rename.from, rename.to, targets(app, rename, rename.file.path), rename.ids);
 }
 
 /**
@@ -70,9 +73,9 @@ export async function rewriteVaultLinks(app: App, edits: EditPipeline, rename: H
 			let count = 0;
 			try {
 				// Most linking notes link elsewhere in the note: those are not written at all.
-				if (rewriteHeadingLinks(await app.vault.cachedRead(file), rename.from, rename.to, targets(app, rename, path)).count === 0) continue;
+				if (rewriteHeadingLinks(await app.vault.cachedRead(file), rename.from, rename.to, targets(app, rename, path), rename.ids).count === 0) continue;
 				await edits.process(file, (data) => {
-					const out = rewriteHeadingLinks(data, rename.from, rename.to, targets(app, rename, path));
+					const out = rewriteHeadingLinks(data, rename.from, rename.to, targets(app, rename, path), rename.ids);
 					count = out.count;
 					return out.text;
 				});

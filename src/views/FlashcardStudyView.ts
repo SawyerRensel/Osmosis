@@ -8,7 +8,7 @@ import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
 import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
-import { countSession } from "../study/session-counts";
+import { sessionStatus } from "../study/session-counts";
 import { studyReturnTarget, toStudyOrigin, type StudyOrigin } from "../study/study-origin";
 import { stepBackQueue } from "../study/undo-queue";
 import type { OcclusionSide } from "../study/occlusion-masks";
@@ -691,21 +691,16 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 		this.backEl = this.bodyEl.createDiv({ cls: "osmosis-study-back" });
 	}
 
+	/** Refresh the bar and the new | learn | due counts (see `sessionStatus`). */
 	private updateProgress(): void {
-		const remaining = (this.queue.length - this.currentIndex) + this.deferredCards.length;
-		const total = this.reviewed + remaining;
-		const pct = total > 0 ? ((this.reviewed + 1) / total) * 100 : 0;
-		this.progressStrip.setProgress(pct);
-		this.updateCounts();
-	}
-
-	/** Refresh the new | learn | due counts and underline the on-screen card's. */
-	private updateCounts(): void {
-		this.progressStrip.setCounts(countSession(
+		const { counts, percent } = sessionStatus(
 			this.queue,
 			this.currentIndex,
-			this.deferredCards.map((d) => d.studyCard),
-		));
+			this.deferredCards,
+			Date.now(),
+		);
+		this.progressStrip.setProgress(percent);
+		this.progressStrip.setCounts(counts);
 	}
 
 	private flip(): void {
@@ -1091,9 +1086,8 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 		this.setTitleScope(null);
 		this.plugin.flushStudySession();
 
-		// Update progress to 100%
-		this.progressStrip.setProgress(100);
-		this.updateCounts();
+		// Nothing left: the bar reads full and the counts 0 0 0
+		this.updateProgress();
 
 		this.bodyEl.createDiv({ cls: "osmosis-study-complete" }, (el) => {
 			el.createEl("h2", { text: "Session complete" });

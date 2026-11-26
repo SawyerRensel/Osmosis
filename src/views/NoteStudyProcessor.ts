@@ -10,6 +10,7 @@ import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } 
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import { dueCardsForFenceKey } from "../study/mindmap-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
+import { formatInterval } from "../study/study-view";
 
 /**
  * A fence resolved into what the two sides render.
@@ -115,6 +116,8 @@ export class NoteStudyProcessor {
 		sourcePath: string;
 		fenceId: string;
 		restart: () => void;
+		/** Draw the fence again from the state held here, keeping its place — for undo. */
+		redraw: () => void;
 	}[] = [];
 	/**
 	 * The height each reading-view fence last rendered to, by its source text.
@@ -221,14 +224,20 @@ export class NoteStudyProcessor {
 	 * attached one is left alone, since that is the same note open in a second
 	 * pane. `LineRevealProcessor.trackLine` keeps its lines by the same rule.
 	 */
-	private trackFence(el: HTMLElement, sourcePath: string, fenceId: string, restart: () => void): void {
+	private trackFence(
+		el: HTMLElement,
+		sourcePath: string,
+		fenceId: string,
+		restart: () => void,
+		redraw: () => void,
+	): void {
 		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
 			const entry = this.trackedFences[i]!;
 			if (entry.sourcePath === sourcePath && entry.fenceId === fenceId && !entry.el.isConnected) {
 				this.trackedFences.splice(i, 1);
 			}
 		}
-		this.trackedFences.push({ el, sourcePath, fenceId, restart });
+		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw });
 	}
 
 	/**
@@ -310,21 +319,19 @@ export class NoteStudyProcessor {
 			container.addClass("osmosis-note-excluded");
 		}
 
+		// Top row: step counter or "Rated", undo and the exclude toggle, at the
+		// top right (left of live preview's `</>`), so the rows below can span the
+		// card. Rebuilt on every draw, because which of them belong there changes
+		// with the step.
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
 		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		const dividerEl = container.createDiv({ cls: "osmosis-study-divider" });
+		const revealedEl = container.createDiv({ cls: "osmosis-note-revealed" });
 
-		// Back: hidden placeholder + revealed content
-		const backEl = container.createDiv();
-		const hiddenEl = backEl.createDiv({
-			cls: "osmosis-note-hidden",
-			text: "░░░░░░",
-		});
-		const revealedEl = backEl.createDiv({ cls: "osmosis-note-revealed" });
-
-		// Bottom row: undo (far left) + step counter + rating area + exclude toggle.
-		// Rebuilt on every draw, because which of them belong there changes with the
-		// step; it holds no picture, so its height cannot move what is being read.
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
+		// Full-width action row: Show answer while the back is hidden, then the
+		// rating bar. Rebuilt on every draw; it sits below everything being read,
+		// so its height cannot move it.
+		const actionsEl = container.createDiv({ cls: "osmosis-note-actions" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -364,26 +371,28 @@ export class NoteStudyProcessor {
 			const collapse = parsed.isCloze && hiding && revealed;
 			frontEl.toggleClass("osmosis-hidden", collapse);
 			dividerEl.toggleClass("osmosis-hidden", collapse);
-			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
 			revealedEl.toggleClass("osmosis-hidden", hiding && !revealed);
 
-			bottomRow.empty();
-			this.addUndoButton(bottomRow);
+			topRow.empty();
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
+				topRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 1) {
 				// Only when there is a sequence to be somewhere in. "1/1" on a basic
 				// fence would say nothing the card does not already show.
-				bottomRow.createSpan({
+				topRow.createSpan({
 					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
-			if (revealed && step !== null) {
-				this.showRating(ratingSlot, step.id, parsed.cardId, sourcePath, advance);
+			this.addUndoButton(topRow, parsed.cardId, sourcePath);
+			this.addExcludeToggle(topRow, parsed, sourcePath);
+
+			actionsEl.empty();
+			if (hiding && !revealed) {
+				this.addShowAnswerButton(actionsEl, reveal);
+			} else if (revealed && step !== null) {
+				this.showRating(actionsEl, step.id, parsed.cardId, sourcePath, advance);
 			}
-			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
 
 		// Defined after `draw` because the two call each other; both are only ever
@@ -405,7 +414,6 @@ export class NoteStudyProcessor {
 
 		draw();
 
-		hiddenEl.addEventListener("click", reveal);
 		container.addEventListener("click", (e) => {
 			if (e.target === container) reveal();
 		});
@@ -416,7 +424,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		});
+		}, draw);
 	}
 
 	/**
@@ -435,17 +443,31 @@ export class NoteStudyProcessor {
 		this.renderProse(markdown, el, sourcePath);
 	}
 
-	/** The undo affordance, present but invisible until there is something to undo. */
-	private addUndoButton(row: HTMLElement): void {
+	/**
+	 * The undo affordance, present but invisible until this fence has something
+	 * to undo. It takes back **this fence's** latest action, not the note's: the
+	 * button sits on the card, so pressing it on one card must not rewind
+	 * another. Ctrl+Z is the one that undoes whatever came last.
+	 */
+	private addUndoButton(row: HTMLElement, fenceKey: string, sourcePath: string): void {
 		const undoBtn = row.createDiv({
-			cls: `osmosis-note-undo${this.undoStack.length === 0 ? " osmosis-hidden" : ""}`,
+			cls: `osmosis-note-undo${this.lastUndoFor(fenceKey, sourcePath) < 0 ? " osmosis-hidden" : ""}`,
 		});
 		setIcon(undoBtn, "undo-2");
 		undoBtn.setAttribute("aria-label", "Undo (Ctrl+Z)");
 		undoBtn.addEventListener("click", (e) => {
 			e.stopPropagation();
-			void this.undo();
+			void this.undo(this.lastUndoFor(fenceKey, sourcePath));
 		});
+	}
+
+	/** Where in the undo stack this fence's latest action is, or -1 when it has none. */
+	private lastUndoFor(fenceKey: string, sourcePath: string): number {
+		for (let i = this.undoStack.length - 1; i >= 0; i--) {
+			const entry = this.undoStack[i]!;
+			if (entry.sourcePath === sourcePath && (entry.fenceKey ?? entry.cardId) === fenceKey) return i;
+		}
+		return -1;
 	}
 
 	/**
@@ -542,6 +564,7 @@ export class NoteStudyProcessor {
 
 		const container = el.createDiv({ cls: "osmosis-note-card" });
 		if (parsed.exclude) container.addClass("osmosis-note-excluded");
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
 
 		// Drawn once and never swapped. An occluded fence's two sides are the *same*
 		// markdown — `parseFenceContent` hands the prose to both — because the
@@ -576,8 +599,7 @@ export class NoteStudyProcessor {
 			return slot;
 		});
 
-		const hiddenEl = container.createDiv({ cls: "osmosis-note-hidden", text: "░░░░░░" });
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
+		const actionsEl = container.createDiv({ cls: "osmosis-note-actions" });
 
 		// Which question is showing, kept where the click handlers can read it:
 		// they are bound once and the step moves under them.
@@ -620,39 +642,42 @@ export class NoteStudyProcessor {
 				}
 			});
 
-			// Nothing but the placeholder and its rule goes away on reveal: the
-			// answer to an occluded card is the masks, which have just been
-			// repainted. While reading, the rule stays as the seam between the
-			// question and the answer beneath it.
+			// Nothing but Show answer and the rule goes away on reveal: the answer
+			// to an occluded card is the masks, which have just been repainted.
+			// While reading, the rule stays as the seam between the question and
+			// the answer beneath it.
 			answerSlots.forEach((slot) => { slot.toggleClass("osmosis-hidden", hiding); });
 			dividerEl.toggleClass("osmosis-hidden", hiding && revealed);
-			hiddenEl.toggleClass("osmosis-hidden", !hiding || revealed);
 
-			// Rebuilt rather than repainted: it holds no picture, and it sits below
-			// the diagram, so its height changes cannot move what is being read.
-			bottomRow.empty();
+			// Rebuilt rather than repainted: neither row holds a picture, and the
+			// top one is too short to move the diagram noticeably.
+			topRow.empty();
 			if (finished) {
-				bottomRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
+				topRow.createSpan({ text: "Rated", cls: "osmosis-note-rated" });
 			} else if (steps.length > 0) {
-				bottomRow.createSpan({
+				topRow.createSpan({
 					cls: "osmosis-note-step",
 					text: `${String(index + 1)}/${String(steps.length)}`,
 				});
 			}
-			const ratingSlot = bottomRow.createDiv({ cls: "osmosis-note-rating-slot" });
-			if (revealed && step?.cardId != null) {
+			this.addUndoButton(topRow, parsed.cardId, sourcePath);
+			this.addExcludeToggle(topRow, parsed, sourcePath);
+
+			actionsEl.empty();
+			if (hiding && !revealed) {
+				this.addShowAnswerButton(actionsEl, reveal);
+			} else if (revealed && step?.cardId != null) {
 				// Floated under the group just revealed, so a tall diagram does
 				// not put its answer and its rating a scroll apart; a scattered
-				// group keeps the row. Note view only: flashcard study keeps its fixed
-				// bar by choice.
+				// group keeps the full-width row. Note view only: flashcard study
+				// keeps its fixed bar by choice.
 				const slot = slots[step.diagram];
 				const occlusion = occlusions[step.diagram];
 				const anchored = slot && occlusion
 					? mountRatingAnchor(slot, { ...occlusion, target: step.group })
 					: null;
-				this.showRating(anchored ?? ratingSlot, step.cardId, parsed.cardId, sourcePath, advance);
+				this.showRating(anchored ?? actionsEl, step.cardId, parsed.cardId, sourcePath, advance);
 			}
-			this.addExcludeToggle(bottomRow, parsed, sourcePath);
 		};
 
 		// Defined after `draw` because the two call each other; both are only ever
@@ -675,7 +700,6 @@ export class NoteStudyProcessor {
 
 		draw();
 
-		hiddenEl.addEventListener("click", reveal);
 		container.addEventListener("click", (e) => {
 			if (e.target === container) reveal();
 		});
@@ -683,6 +707,21 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
+		}, draw);
+	}
+
+	/**
+	 * The full-width "Show answer" button, in the flashcard study tab's look
+	 * (`.osmosis-study-flip`). It reveals this card only.
+	 */
+	private addShowAnswerButton(row: HTMLElement, reveal: () => void): void {
+		const btn = row.createEl("button", {
+			text: "Show answer",
+			cls: "osmosis-study-flip osmosis-note-show-answer",
+		});
+		btn.addEventListener("click", (e) => {
+			e.stopPropagation();
+			reveal();
 		});
 	}
 
@@ -895,6 +934,10 @@ export class NoteStudyProcessor {
 			container.addClass("osmosis-note-excluded");
 		}
 
+		// Exclude toggle at the top right, left of the editor's `</>` button
+		const topRow = container.createDiv({ cls: "osmosis-note-top" });
+		this.addExcludeToggle(topRow, parsed, sourcePath);
+
 		// Render front
 		const frontEl = container.createDiv({ cls: "osmosis-note-front" });
 		this.renderSide(parsed, "front", frontEl, sourcePath);
@@ -905,17 +948,6 @@ export class NoteStudyProcessor {
 		// Render back (fully visible, no hiding)
 		const backEl = container.createDiv({ cls: "osmosis-note-revealed" });
 		this.renderSide(parsed, "back", backEl, sourcePath);
-
-		// Bottom row with exclude toggle (bottom-right)
-		const bottomRow = container.createDiv({ cls: "osmosis-note-bottom" });
-		bottomRow.createDiv(); // spacer
-		const toggleIcon = bottomRow.createDiv({ cls: "osmosis-note-exclude-toggle" });
-		setIcon(toggleIcon, parsed.exclude ? "eye-off" : "eye");
-		toggleIcon.setAttribute("aria-label", parsed.exclude ? "Include this card" : "Exclude this card");
-		toggleIcon.addEventListener("click", (e) => {
-			e.stopPropagation();
-			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
-		});
 	}
 
 	/**
@@ -935,11 +967,16 @@ export class NoteStudyProcessor {
 		sourcePath: string,
 		onRated?: () => void,
 	): void {
-		const ratingEl = container.createDiv({ cls: "osmosis-rating" });
-		// The answer just went on screen. A note card has no separate
-		// "question shown" moment — it lives inline in the note — so the reveal
-		// is the anchor for the review log's elapsed time.
+		// The flashcard study tab's bar: four equal buttons, each with the interval
+		// it would schedule above its label.
+		const ratingEl = container.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar" });
+		// The answer just went on screen. A note card has no "question shown"
+		// moment — it lives inline in the note — and timing from the reveal logged
+		// only the second it took to press a button. The note's study clock times
+		// from the previous rating (or the session start) instead; the reveal is
+		// only the fallback for a rating outside a session.
 		const revealedAt = Date.now();
+		const preview = this.session().previewIntervals(cardId, revealedAt);
 
 		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
 			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
@@ -949,7 +986,9 @@ export class NoteStudyProcessor {
 		];
 
 		for (const { label, rating, cls } of ratings) {
-			const btn = ratingEl.createEl("button", { text: label, cls });
+			const btn = ratingEl.createEl("button", { cls, attr: { "aria-label": label } });
+			btn.createSpan({ cls: "osmosis-rate-interval", text: formatInterval(preview[rating]) });
+			btn.createSpan({ cls: "osmosis-rate-label", text: label });
 			btn.addEventListener("click", (e) => {
 				e.stopPropagation();
 
@@ -975,7 +1014,11 @@ export class NoteStudyProcessor {
 				// The session's progress strip lives in LineRevealProcessor, which
 				// owns the mode; tell it one of its questions is answered, and how.
 				this.plugin.lineReveal?.markFenceRated(sourcePath, fenceKey, cardId, rating);
-				void this.recordRating(cardId, rating, Date.now() - revealedAt);
+				void this.recordRating(
+					cardId,
+					rating,
+					this.plugin.lineReveal?.lapStudyClock(sourcePath) ?? Date.now() - revealedAt,
+				);
 
 				this.undoStack.push({
 					type: "rate",
@@ -991,6 +1034,12 @@ export class NoteStudyProcessor {
 		}
 	}
 
+	/** The note surface's session manager, built on first use. */
+	private session(): StudySessionManager {
+		this.sessionManager ??= this.plugin.createSessionManager("note");
+		return this.sessionManager;
+	}
+
 	private async recordRating(cardId: string, rating: FSRSRating, elapsedMs: number): Promise<void> {
 		// Ensure the card exists in the store (note cards use hash-based IDs)
 		if (!this.plugin.cardStore.getCard(cardId)) {
@@ -998,10 +1047,7 @@ export class NoteStudyProcessor {
 			return;
 		}
 
-		if (!this.sessionManager) {
-			this.sessionManager = this.plugin.createSessionManager("note");
-		}
-		await this.sessionManager.recordReview(cardId, rating, { elapsedMs });
+		await this.session().recordReview(cardId, rating, { elapsedMs });
 		this.plugin.refreshDashboard();
 	}
 
@@ -1019,9 +1065,17 @@ export class NoteStudyProcessor {
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
 	}
 
-	/** Undo the last action (rating or exclude). Triggers a file re-render for note cards. */
-	private async undo(): Promise<void> {
-		const entry = this.undoStack.pop();
+	/**
+	 * Undo an action (rating or exclude) — the one at `at` in the stack, the
+	 * latest by default. A rating puts its fence back on the question it answered.
+	 *
+	 * Taking one out of the middle is safe because each entry restores one card's
+	 * own schedule, and `revertReview` discards that card's buffered log entry by
+	 * ID rather than the newest one.
+	 */
+	private async undo(at = this.undoStack.length - 1): Promise<void> {
+		if (at < 0) return;
+		const [entry] = this.undoStack.splice(at, 1);
 		if (!entry) return;
 
 		if (entry.type === "exclude") {
@@ -1032,13 +1086,9 @@ export class NoteStudyProcessor {
 			}
 		} else {
 			// Undo rating: revert schedule
-			if (!this.sessionManager) {
-				this.sessionManager = this.plugin.createSessionManager("note");
-			}
-
 			const card = this.plugin.cardStore.getCard(entry.cardId);
 			if (card) {
-				await this.sessionManager.revertReview(entry.cardId, entry.previousSchedule ?? null);
+				await this.session().revertReview(entry.cardId, entry.previousSchedule ?? null);
 			}
 
 			this.reviewedCount = Math.max(0, this.reviewedCount - 1);
@@ -1047,13 +1097,39 @@ export class NoteStudyProcessor {
 				this.plugin.lineReveal?.unmarkFenceRated(entry.sourcePath, entry.fenceKey, entry.cardId);
 			}
 			this.plugin.refreshDashboard();
+			if (entry.fenceKey !== undefined) this.rewindFence(entry.sourcePath, entry.fenceKey, entry.cardId);
+		}
+	}
 
-			// Trigger re-render by modifying the file (touch the file to force Obsidian to re-process code blocks)
-			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
-			if (file) {
-				const content = await this.plugin.app.vault.cachedRead(file);
-				await this.plugin.app.vault.modify(file, content);
-			}
+	/**
+	 * Put a fence back on the question whose rating was just undone, hidden
+	 * again behind its Show answer button.
+	 *
+	 * Rating moves the fence's step on (`advance`), and the step lives in
+	 * `stepAt`, not in the DOM — so redrawing alone would land on the next
+	 * question, or on "Rated". Undo used to rewrite the file with its own content
+	 * hoping for a re-render, which an unchanged file does not trigger, and which
+	 * would have redrawn the advanced step anyway.
+	 *
+	 * The step is found from the session's pinned plan rather than recorded with
+	 * the rating, and only rewound when the fence is still exactly one past it: an
+	 * undo stack outlives a session, and a fence restarted since then has a
+	 * sequence of its own that this rating is no part of.
+	 */
+	private rewindFence(sourcePath: string, fenceKey: string, cardId: string): void {
+		const planned = this.fencePlan.get(fenceKey)?.findIndex((card) => card.id === cardId)
+			?? this.occlusionPlan.get(fenceKey)?.findIndex((step) => step.cardId === cardId)
+			?? -1;
+		if (planned < 0 || this.stepAt.get(fenceKey) !== planned + 1) return;
+
+		this.stepAt.set(fenceKey, planned);
+		// The question is asked afresh, and so is any later one revealed in the
+		// meantime: nothing after it has been answered.
+		for (const key of [...this.revealedCardIds]) {
+			if (key.startsWith(`${fenceKey}#`)) this.revealedCardIds.delete(key);
+		}
+		for (const fence of this.trackedFences) {
+			if (fence.sourcePath === sourcePath && fence.fenceId === fenceKey) fence.redraw();
 		}
 	}
 

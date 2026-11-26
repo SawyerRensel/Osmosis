@@ -41,20 +41,22 @@ function dedent(text: string): string {
 	return prefix ? lines.map((line) => (line.startsWith(prefix) ? line.slice(prefix.length) : line.trimStart())).join("\n") : text;
 }
 
-/**
- * Embeds become plain links. Whatever a line embeds already lives once in the
- * graph, as its own node (a Decision in the spec): a note in its cluster, a
- * file as an attachment node whose panel plays it. Rendering it inline too
- * would show it twice.
- */
-export function unembed(markdown: string): string {
-	return markdown.replace(/!\[\[([^\]]*)\]\]/g, "[[$1]]");
+/** Whether a file is media a panel draws inline: an image, audio or video (not a PDF). */
+export function isPanelMedia(path: string): boolean {
+	return MEDIA_EXTENSIONS.has(extension(path));
 }
 
-/** Like `unembed`, but images, audio and video (`![[cover.png|300]]`) stay embeds. A PDF becomes a link, as everywhere in the panels. */
-function unembedNotes(markdown: string): string {
+/**
+ * Note embeds become plain links; images, audio and video (`![[cover.png|300]]`)
+ * stay embeds, drawn in the line's own panel at their `|size` (T112). An
+ * embedded note already lives once in the graph, in its own cluster, so
+ * rendering it inline too would show it twice; embedded media gets no
+ * attachment node of its own (`buildGraph`), so the line is where it shows. A
+ * PDF becomes a link, as everywhere in the panels.
+ */
+export function unembed(markdown: string): string {
 	return markdown.replace(/!\[\[([^\]]*)\]\]/g, (embed, target: string) =>
-		MEDIA_EXTENSIONS.has(extension(target.split("|")[0]!.split("#")[0]!)) ? embed : `[[${target}]]`);
+		isPanelMedia(target.split("|")[0]!.split("#")[0]!) ? embed : `[[${target}]]`);
 }
 
 /**
@@ -74,10 +76,11 @@ function groupMarkdown(raw: string, heading: boolean): string {
  * The Markdown a node's near panel renders, or `null` for a node that keeps
  * only its plate. Lines render their source with its markers (`- `, `## `,
  * `> [!note]`), so a heading reads as a heading and a callout as a callout,
- * with embeds turned into links (`unembed`). Media attachments render as their
- * embed. A line group (T75) keeps its media embeds, so a cover image shows
- * above its heading up close (the far plate shows text only, Sawyer's call);
- * its note embeds still become links. Note cores, tags and ghosts are already fully said by their plate. A
+ * with note embeds turned into links and media embeds kept (`unembed`), so
+ * `Object ![[boat.png|314]]` draws the image 314 px wide up close (T112; the far
+ * plate shows text only, Sawyer's call). A line group (T75) does the same, so a
+ * cover image shows above its heading. Media attachments render as their
+ * embed. Note cores, tags and ghosts are already fully said by their plate. A
  * line under occlusion study (`masks`) gets a stand-in for its diagram.
  */
 export function nearMarkdown(node: GraphNode): string | null {
@@ -92,14 +95,19 @@ export function nearMarkdown(node: GraphNode): string | null {
 	const source = node.source;
 	const markdown = (
 		isLineGroup(source)
-			? unembedNotes(groupMarkdown(dedent(source.raw ?? ""), source.type === "heading"))
+			? unembed(groupMarkdown(dedent(source.raw ?? ""), source.type === "heading"))
 			: unembed(dedent(source.raw ?? source.content))
 	).trim();
 	return markdown === "" ? null : markdown;
 }
 
-/** Widest and tallest a panel is laid out, in ems of panel text: the widest line plate (`LINE_PLATE_MAX_EM`), and 30 lines. Mirrored by `.osmosis-cosmos-near-panel` in `styles.css`. */
-export const PANEL_MAX_EM = { width: 20, height: 30 } as const;
+/**
+ * Widest a panel is laid out, in ems of panel text: the widest line plate
+ * (`LINE_PLATE_MAX_EM`). Mirrored by `.osmosis-cosmos-near-panel` in
+ * `styles.css`. There is no tallest: a panel shows all of its content, as a
+ * 2D map node does (T111; a 30em cap cut the last lines off a long code block).
+ */
+export const PANEL_MAX_EM = { width: 20 } as const;
 /** Tallest an image or video is drawn in a panel, in ems. Mirrored in `styles.css`. */
 export const PANEL_MEDIA_MAX_EM = 15;
 
@@ -136,9 +144,31 @@ const CARD_PAD_X = 2 * (1 + 12) / 16;
 const CARD_CHROME_Y = (2 * (1 + 12) + (1 + 2 * 8) + (4 + 24)) / 16;
 const CARD_BLOCK_GAP = 1;
 
-/** An image a panel draws: a Markdown image, an HTML `<img>`, or a line group's media embed (other `![[…]]` became links in `nearMarkdown`). */
+/** An image a panel draws: a Markdown image, an HTML `<img>`, or a media embed (note embeds became links in `nearMarkdown`). */
 const IMAGE = /!\[[^\]]*\]\([^)]*\)|!\[\[[^\]]*\]\]|<img\b[^>]*>/gi;
 const imageCount = (text: string): number => text.match(IMAGE)?.length ?? 0;
+/** Panel px per em: the panel's text is 16 px (`NEAR_FONT_PX`), and an embed's `|size` is in px. */
+const PX_PER_EM = 16;
+
+/**
+ * The box one image on a line is budgeted, in ems (T112). A `|W` or `|WxH`
+ * size (`![[boat.png|314]]`, `![deck|200x100](deck.png)`) sets its width and,
+ * with `xH`, its height; the panel's caps still apply (`max-width: 100%`,
+ * `PANEL_MEDIA_MAX_EM`). Unsized, it may fill the panel and take the media
+ * height. Audio is its player. An HTML `<img>` is budgeted as unsized.
+ */
+function mediaBoxEm(image: string): { width: number; height: number } {
+	const wiki = /^!\[\[([^\]]*)\]\]$/.exec(image);
+	const path = wiki === null ? (/\(([^)]*)\)$/.exec(image)?.[1] ?? "") : wiki[1]!.split("|")[0]!.split("#")[0]!;
+	if (AUDIO_EXTENSIONS.has(extension(path))) return { ...AUDIO_EM };
+	const label = wiki === null ? /^!\[([^\]]*)\]/.exec(image)?.[1] : wiki[1];
+	const size = /\|\s*(\d+)\s*(?:x\s*(\d+))?\s*$/.exec(label ?? "");
+	if (size === null) return { width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM };
+	return {
+		width: Math.min(PANEL_MAX_EM.width, Number(size[1]) / PX_PER_EM),
+		height: size[2] === undefined ? PANEL_MEDIA_MAX_EM : Math.min(PANEL_MEDIA_MAX_EM, Number(size[2]) / PX_PER_EM),
+	};
+}
 
 /** How big some Markdown lays out at `wrap` ems wide, before any panel padding, and how many blocks it holds. */
 function contentBoxEm(lines: readonly string[], wrap: number): { width: number; height: number; blocks: number } {
@@ -184,9 +214,12 @@ function contentBoxEm(lines: readonly string[], wrap: number): { width: number; 
 			} else if (imageCount(line) > 0) {
 				// Each image may take a row of its own (an image can be the panel's full width), under any
 				// text on the line: `` - `flex-grow` ![](a.png) ![](b.png) `` is one text row and two images.
+				// As wide as the text and the widest image side by side, which the panel's cap then trims.
 				const text = line.replace(IMAGE, "").replace(/^([-*+]|\d+[.)])\s+/, "").trim();
-				w = PANEL_MAX_EM.width;
-				row = imageCount(line) * PANEL_MEDIA_MAX_EM + (text === "" ? 0 : Math.ceil((text.length * PROSE_EM_PER_CHAR) / wrap) * PROSE_ROW);
+				const media = (line.match(IMAGE) ?? []).map(mediaBoxEm);
+				const textEm = text.length * PROSE_EM_PER_CHAR;
+				w = textEm + Math.max(...media.map((m) => m.width));
+				row = media.reduce((sum, m) => sum + m.height, 0) + (text === "" ? 0 : Math.ceil(textEm / wrap) * PROSE_ROW);
 			} else {
 				w = line.length * PROSE_EM_PER_CHAR;
 				if (/^#{1,6}\s|^\[!/.test(line)) row = HEADING_ROW;
@@ -282,6 +315,9 @@ export function plateWidthEm(node: GraphNode): { textMaxEm: number; minEm: numbe
  * height (`3D Graph - Planets mode.md`, feedback fix 2). Every image on a
  * line counts a full media row, below the line's text (feedback fix 3).
  *
+ * It is never capped (T111): the panel is drawn as tall as its content, so a
+ * cap here would space a long code block tighter than it is drawn.
+ *
  * `null` for a node that never gets a panel (`nearMarkdown`).
  */
 export function panelBoxEm(node: GraphNode): { width: number; height: number } | null {
@@ -305,6 +341,6 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 	}
 	return {
 		width: rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X),
-		height: Math.min(PANEL_MAX_EM.height, height + 2 * PAD_Y),
+		height: height + 2 * PAD_Y,
 	};
 }

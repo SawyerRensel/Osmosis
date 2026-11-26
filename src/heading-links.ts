@@ -137,12 +137,26 @@ function inRanges(ranges: readonly [number, number][], offset: number): boolean 
 	return ranges.some(([start, end]) => offset >= start && offset < end);
 }
 
-/** The subpath (`#A#B`, without the first `#`) with its last heading segment renamed, or null when it does not end at `from`. A block reference (`#^id`) never matches. */
-function renamedSubpath(subpath: string, from: string, to: string): string | null {
+/** The block ids at the end of the renamed heading's line, before and after (`os-a1b2c3`, without the caret); null where the line has none. */
+export interface HeadingIds {
+	from: string | null;
+	to: string | null;
+}
+
+/**
+ * The subpath (`#A#B`, without the first `#`) with its last heading segment
+ * renamed, or null when it does not end at `from`. A segment that also carries
+ * the heading's block id (`Old os-a1b2c3`, as Obsidian's link suggest writes
+ * it) matches too, and keeps the id in the renamed form (`withId`). A block
+ * reference (`#^id`) never matches.
+ */
+function renamedSubpath(subpath: string, from: string, to: string, ids?: HeadingIds, withId?: string): string | null {
 	const segments = subpath.split("#");
 	const last = segments[segments.length - 1]!;
-	if (last.trim().startsWith("^") || !headingMatches(last, from)) return null;
-	segments[segments.length - 1] = to;
+	if (last.trim().startsWith("^")) return null;
+	if (headingMatches(last, from)) segments[segments.length - 1] = to;
+	else if (ids?.from && withId !== undefined && headingMatches(last, `${from} ${ids.from}`)) segments[segments.length - 1] = withId;
+	else return null;
 	return segments.join("#");
 }
 
@@ -158,20 +172,24 @@ export interface HeadingLinkRewrite {
  * link's path (the part before `#`; empty for a same-note link) resolves to
  * the note whose heading was renamed. Handles `[[Note#H]]`, `[[Note#H|alias]]`,
  * `[[#H]]`, `![[Note#H]]`, nested `[[Note#A#H]]`, and markdown links
- * `[text](Note.md#H%20x)` / `[text](<Note.md#H x>)`. The alias and display
- * text are kept; block references, other headings and links in code or
- * comments are untouched.
+ * `[text](Note.md#H%20x)` / `[text](<Note.md#H x>)`. With `ids`, a link
+ * whose heading carries the block id (`[[#Old os-a1b2c3|Old]]`) is renamed
+ * too, keeping the id. A wikilink alias that is exactly the old heading text
+ * (the alias Osmosis writes to hide the id) follows the rename; other aliases
+ * and display text are kept. Block references, other headings and links in
+ * code or comments are untouched.
  */
-export function rewriteHeadingLinks(text: string, from: string, to: string, isTarget: (linkpath: string) => boolean): HeadingLinkRewrite {
+export function rewriteHeadingLinks(text: string, from: string, to: string, isTarget: (linkpath: string) => boolean, ids?: HeadingIds): HeadingLinkRewrite {
 	const skip = skippedRanges(text);
 	let count = 0;
+	const withId = ids?.from ? linkSafe(ids.to ? `${to} ^${ids.to}` : to) : undefined;
 	const wiki = /\[\[([^[\]\n|#]*)#([^[\]\n|]*)((?:\|(?:(?!\]\])[^\n])*)?)\]\]/g;
 	let out = text.replace(wiki, (match: string, path: string, subpath: string, alias: string, offset: number) => {
 		if (inRanges(skip, offset) || !isTarget(path.trim())) return match;
-		const renamed = renamedSubpath(subpath, from, linkSafe(to));
+		const renamed = renamedSubpath(subpath, from, linkSafe(to), ids, withId);
 		if (renamed === null) return match;
 		count++;
-		return `[[${path}#${renamed}${alias}]]`;
+		return `[[${path}#${renamed}${alias.slice(1).trim() === from ? `|${to}` : alias}]]`;
 	});
 	// Offsets moved with the wikilink rewrites, so skipped ranges are recomputed.
 	const skipped = skippedRanges(out);

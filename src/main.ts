@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
+import { Notice, Platform, Plugin, MarkdownView, TAbstractFile, TFile, WorkspaceLeaf, debounce, editorInfoField, setIcon, type App, type Editor, type MarkdownFileInfo, type Menu } from "obsidian";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- CodeMirror 6 ships inside Obsidian and is resolved from the host at runtime; it is a peer of the editor API, not a bundled dependency. */
 import { keymap, type EditorView } from "@codemirror/view";
 /* eslint-disable-next-line import/no-extraneous-dependencies -- Same as above: @codemirror/state is provided by Obsidian, never bundled. */
@@ -46,6 +46,7 @@ import {
 import { OcclusionEditorModal } from "./views/OcclusionEditorModal";
 import { generateBlockId } from "./block-id";
 import { planRapidCard } from "./rapid-cards";
+import { headingLinkAliasFilter } from "./heading-link-alias";
 import { MutationHistory, type HistoryResult } from "./browse/history";
 import type { MutationDeps } from "./browse/mutate";
 import { EditHistory, holdAcross } from "./edit-history";
@@ -645,6 +646,19 @@ export default class OsmosisPlugin extends Plugin {
 
 		// ── Rapid Flashcard Mode ────────────────────────────────
 		this.registerRapidFlashcardMode();
+
+		// ── Heading links: hide the block id behind an alias ────
+		// Workspace editor extensions reach the note editor and the mind map
+		// and Cosmos node editors alike (they are Obsidian markdown editors).
+		this.registerEditorExtension(
+			headingLinkAliasFilter((state, linkpath) => {
+				const source = state.field(editorInfoField, false)?.file ?? null;
+				if (!source) return null;
+				const target = linkpath === "" ? source : this.app.metadataCache.getFirstLinkpathDest(linkpath, source.path);
+				if (!target) return null;
+				return this.app.metadataCache.getFileCache(target)?.headings?.map((h) => h.heading) ?? null;
+			}),
+		);
 
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
