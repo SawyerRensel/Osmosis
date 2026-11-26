@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 batch: 15
 priority:
 progress:
 date_created: 2026-11-24T23:17:08.000Z
-date_modified: 2026-11-24T23:46:37.000Z
+date_modified: 2026-11-26T18:46:00.000Z
 date_start_scheduled: 2026-11-24T23:46:37.000Z
 date_start_actual: 2026-11-24T23:46:37.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-26T18:46:00.000Z
+date_end_actual: 2026-11-26T18:46:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/53
 ---
 
 # Stats - Note study records the time spent on each card (T120)
@@ -82,27 +82,33 @@ Flashcard study anchors at question shown (`FlashcardStudyView.renderCard` L511 
 ## Test plan
 In note study, wait about 15 s on a card, then reveal and rate it. Open Stats: Today's Time rises by about 15 s, not 1 s. Leave a card open 2 minutes, then rate it: Time rises by at most 1 minute.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
 
-### Approach
-A new pure module `src/study/study-clock.ts` holds `MAX_CARD_MS` (60 s), `capElapsed` and `StudyClock`. A `StudyClock` is anchored when a session starts and moves on at each rating (`lap()` returns the capped time since the anchor, then re-anchors). Note fences, note lines, mind-map study and Cosmos study each own one and call `lap()` where they used to subtract the reveal time. The cap itself sits in `StudySessionManager.recordReview`, so every surface that logs a review is capped.
+Shipped in [PR #53](https://github.com/SawyerRensel/Osmosis/pull/53) → `release/0.0.6` (batch 15, commit `17e082f`).
 
-### Decisions
+### The cause
+
+Note study timed each rating from when the answer was *revealed* to when it was rated, not from when the card became the question. Measured from `ref/screenshots/2026-11.mobile-android.md`: today's log runs 06:43 to 07:11 (about 27 minutes), and of 76 entries the 35 flashcard-mode reviews log `e` of 2 to 42 s, matching the gaps between timestamps, while the 41 note-mode reviews log only about 0.6 to 12 s (mostly 1 to 2 s) while being 10 to 40 s apart. The sum is the 10.2 min Stats showed. Mind map study had the same reveal-anchored bug (`mindmapStudyPendingRatingAt`). Separately, Flashcard study had no cap, so a card left open logged the whole gap.
+
+### The fix
+
+A new pure module `src/study/study-clock.ts`: `MAX_CARD_MS` (60 s), `capElapsed`, and `StudyClock`, anchored when a session starts and advanced at each rating (`lap()` returns the capped time since the anchor, then re-anchors). Note fences, note lines, mind map study and Cosmos study each own one and call `lap()` where they used to subtract the reveal time. The cap itself sits in `StudySessionManager.recordReview`, so every surface that logs a review is capped.
+
+### Decisions worth remembering
+
 - **Anchor = session start or the previous rating**, not "drawn". A fence redraws on every reveal and rating (and T119's undo redraws one fence), so a per-draw timestamp would reset on redraws. The previous-rating anchor needs no redraw handling and sums to roughly wall-clock study time.
-- **One clock per note, shared by fences and lines.** They are one session (`LineRevealProcessor` owns the mode), so a fence rating followed by a line rating times from the fence rating. The clock lives on the note's reveal state and `NoteStudyProcessor` reaches it through `lineReveal.lapStudyClock(path)`. Outside a session that returns `null` and the fence falls back to the old reveal-to-rate gap.
-- **Undo restarts the clock** (`unmarkFenceRated` calls `clock.start()`), so an undone card is timed from the undo. T119's redraw does not touch the clock, so an open bar is unaffected.
-- **60 s cap: Flashcard study had none before.** Its `cardShownAt` anchor was already right, but a card left open logged the whole gap. Capping in `recordReview` fixes it there and for every other surface in one place. Anki's cap is also 60 s by default.
-- **Mind-map study had the same bug** (reveal-anchored `mindmapStudyPendingRatingAt`), and the same fix applied: a `StudyClock` started in `enterMindmapStudy`, stopped in `exitMindmapStudyMode`.
-- **Cosmos**: `start()`/`stop()` bracket the clock; `rate()` laps it. Anchoring at `arrive()` was rejected because free exploration picks cards by clicking, and the browsing before the click is study time.
-- Past review-log entries are not rewritten.
-- Not changed: one rating that reaches several cards (a line with several cards, a Cosmos node) logs the full elapsed time on each card, so the day's Time over-counts there. That is pre-existing; splitting it is a separate decision.
-- A fence rating outside a study session is not expected (the bar only appears in study), and uses the reveal fallback if it happens.
+- **One clock per note, shared by fences and lines** (one session, owned by `LineRevealProcessor`); `NoteStudyProcessor` reaches it through `lineReveal.lapStudyClock(path)`. Outside a session that returns `null` and the fence falls back to the old reveal-to-rate gap.
+- **Undo restarts the clock** (`unmarkFenceRated` calls `clock.start()`); T119's redraw does not touch it, so an open bar is unaffected.
+- **60 s cap**, in `recordReview` so one place fixes every surface. Anki's default is also 60 s.
+- **Cosmos:** `start()`/`stop()` bracket the clock and `rate()` laps it. Anchoring at `arrive()` was rejected because free exploration picks cards by clicking, and the browsing before the click is study time.
+- **Past review-log entries are not rewritten.**
 
 ### Surface map
+
 | File | Change |
 |---|---|
 | `src/study/study-clock.ts` | New: `MAX_CARD_MS`, `capElapsed`, `StudyClock` |
-| `src/study/study-clock.test.ts` | New: unit tests for the cap and clock (anchor, lap, cap, undo restart, no session) |
+| `src/study/study-clock.test.ts` | New: cap and clock (anchor, lap, cap, undo restart, no session) |
 | `src/study/StudySessionManager.ts` | `recordReview` logs `capElapsed(elapsedMs)` |
 | `src/views/LineRevealProcessor.ts` | `pendingRatingAt` replaced by a per-note `clock`; started in `toggleStudy`, stopped in `endStudy`, restarted on a fence undo; new `lapStudyClock` |
 | `src/views/NoteStudyProcessor.ts` | Fence rating takes its elapsed time from `lapStudyClock`, reveal gap as fallback |
@@ -110,16 +116,12 @@ A new pure module `src/study/study-clock.ts` holds `MAX_CARD_MS` (60 s), `capEla
 | `src/views/CosmosStudy.ts` | `revealedAt` replaced by `clock` |
 | `src/views/NoteStudyProcessor.dom.test.ts` | Mock gains `lapStudyClock`; one test that the logged time comes from the clock |
 
-### Fixture
-None needed: any note with due cards (for example the existing fixtures under `vault/tests/`) works. A new fixture would add nothing, since the check is the Stats Time figure, not card content.
+### Test fixture
 
-### Could not verify
-Nothing was run in Obsidian. The Stats figure after a real session, and the mind-map and Cosmos paths, are covered by unit tests only for the clock and the fence path. Lint and the full vitest suite pass; no build was run (per the batch instructions for this ticket).
+None. Any note with due cards works (for example the existing fixtures under `vault/tests/`), since the check is the Stats Time figure, not card content.
 
-### Manual test
-1. Open a note with several due fence or line cards, start Note study, and note Stats' Today Time.
-2. Wait about 15 s, reveal and rate a card. Time rises by about 15 s, not 1-2 s.
-3. Rate the next card after 5 s: Time rises by about 5 s.
-4. Leave a card open for 2 minutes and rate it: Time rises by 60 s at most.
-5. Undo a fence rating, wait 10 s, reveal and rate again: that review logs about 10 s.
-6. Repeat 2 and 4 in mind-map study and Cosmos study; in Flashcard study check 4 only (it had no cap).
+### Follow-ups
+
+- **A rating that covers several cards logs the full elapsed time on each card** (a line with several cards, a Cosmos node), so the day's Time over-counts there. Pre-existing and left alone: splitting the time across cards is a separate decision.
+- The clock and the fence path have unit tests; the mind map and Cosmos paths do not, and the Stats figure after a real session was checked only by Sawyer's manual test.
+- A fence rating outside a study session is not expected (the bar only appears in study); it uses the reveal fallback if it happens.

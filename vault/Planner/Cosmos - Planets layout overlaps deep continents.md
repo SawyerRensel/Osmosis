@@ -10,16 +10,16 @@ people:
 location:
 related:
   - "[[Cosmos - Boundaries wrap the full plate of big nodes]]"
-status: In-Review
+status: Done
 batch: 15
 priority:
 progress:
 date_created: 2026-11-24T00:20:16.000Z
-date_modified: 2026-11-24T00:20:16.000Z
+date_modified: 2026-11-26T18:46:00.000Z
 date_start_scheduled: 2026-11-24T00:38:36.000Z
 date_start_actual: 2026-11-24T00:38:36.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-26T18:46:00.000Z
+date_end_actual: 2026-11-26T18:46:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -35,7 +35,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/53
 ---
 
 # Cosmos - Planets layout overlaps deep continents (T114)
@@ -76,92 +76,51 @@ Fixture: a note shaped like the screenshot's (CSS selectors): a root, ~6 contine
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes outside `src/views/` (vitest cannot import obsidian) and gets unit tests.
 - Fixtures: master copy in `e2e/fixtures/`, copied to `vault/tests/`; back-date every fixture card; neutral subject domains (no biology).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
 
-Code commit: 86c344a on `batch/15-plates-study-polish`.
+Shipped in [PR #53](https://github.com/SawyerRensel/Osmosis/pull/53) → `release/0.0.6` (batch 15, commits `86c344a` and the fix round `9f1dd01`).
 
-### Cause (measured)
-None of the four suspected causes. A unit measurement on a CSS-shaped continent (47 lines, 5 deep, panels 1 to 2 rows, one 13-row code block) found **0 overlapping pairs at a camera roll of 0** in every Continent direction. In-frame sizes, the wrap squeeze (already handled by `spreadContinent`), continent-to-continent spacing and stale sizes all came out clean. The overlap comes from the **upright spin** (`upright.ts`). The map lays plates out as unturned rectangles in the continent's frame, but each plate is drawn turned about its own centre so it reads upright on screen. Two plates a row gap apart and offset sideways (cousins of different widths or depths) swing into each other after a few degrees of roll. Any continent viewed off its frame's up gets rolled: one near a pole seen from above, or one near the limb. The old doc comment said "at an unusual roll wide neighbours can touch (accepted for compactness)", but that happens at small rolls, not only unusual ones.
+### The cause
 
-Before (left-right / one-side, the default): 8 pairs at ±15°, 12 at ±30°, 22 at ±45°; diameter 257.2. Both-sides: 7 / 15 / 16; diameter 361.2. Radial: 0 at every roll, because it spaces plates by their diagonals.
+Not any of the four causes the ticket suspected. A unit measurement on a CSS-shaped continent (47 lines, 5 deep, panels 1 to 2 rows, one 13-row code block) found **0 overlapping pairs at a camera roll of 0** in every Continent direction. The overlap comes from the **upright spin** (`upright.ts`): the map lays plates out as unturned rectangles in the continent's frame, but each plate is drawn turned about its own centre so it reads upright on screen. Two plates a row gap apart and offset sideways swing into each other after a few degrees of roll. Any continent seen off its frame's up gets rolled (one near a pole seen from above, or near the limb). The old doc comment called this "an unusual roll"; it happens at small rolls.
 
-### Approach
-- `uprightSpread` (left-right maps): a monotone stretch along y. In order down the map, each plate moves just far enough to clear every plate above it at every roll up to `UPRIGHT_ROLL` (30° either way, from `rollClearance`, sampled every 2.5°), and everything below moves with it. Order is kept, no gap shrinks, and a clear map is returned unchanged.
-- A left-right map is now **wrapped about the middle of its box**, not about its head (which sits at one end). That halves how far out the wrap squeezes, so the planet came out smaller (R 167 → 153) and the stretch survives the wrap.
-- `spreadContinent` also clears the plates at rolls up to `UPRIGHT_ROLL`, measured along each plate's outward bearing. It **never pushes an ancestor of the other plate**: with the centred wrap the head is far out, and pushing it swelled the whole continent (at Node spacing ×0.5 the diameter went from 282 to 466).
+Before: left-right / one-side had 8 overlapping pairs at ±15°, 12 at ±30°, 22 at ±45°; both-sides 7 / 15 / 16; radial 0 at every roll (it spaces by diagonals).
 
-After: left-right / one-side has **0 pairs at every roll within ±30°**, diameter 289.7 (**+12.6%**). Both-sides: 0 within ±30°, diameter 380.1 (+5.2%). Radial is unchanged (0, diameter 448.9). Past ±30° wide neighbours can still touch (left-right / one-side: 14 pairs at 45°, 27 at 90°). Clearing every roll would need diagonal spacing, about 5× taller columns.
+### The fix
 
-### Decisions
-- **The roll limit is 30°.** Going higher costs spacing fast, and 30° covers most face-on and limb views. It is the constant `UPRIGHT_ROLL` if Sawyer wants it tuned.
-- **Top-down is left exactly as before.** Measured, stretching it and making its spread roll-aware took its diameter from 574 to about 950 (+65%), past the 25% budget. Centring it made things worse. So top-down still overlaps at small rolls (1 pair at 15°, 7 at 30°). This is a follow-up if Sawyer uses top-down.
-- Left-right maps no longer have the head at (0, 0); `ContinentMap` docs updated. Only the `centres` seeds and placement read the centre, so nothing else depended on it.
-- The test "packs a continent of siblings as tightly as the 2D map" still holds: a sibling column is already clear to 42°, so it isn't stretched.
+Round 0 stretched the whole map (`uprightSpread`) to clear rolls up to 30°. Sawyer then said "now there's way too much space between nodes even when Node spacing is minimal" (Both sides, Node spacing 0.65, JavaScript notes with many code blocks). Measured cause: clearing a roll ρ between stacked, sideways-offset plates costs about `(h + offset·sin ρ) / cos ρ`, which at 30° is several plate heights for code blocks; the wrap then squeezed the stretch away and the roll-aware spread won it back by pushing whole branches out. The final design:
+
+- `uprightSpread` (the whole-map stretch) is **removed**.
+- `UPRIGHT_ROLL` is **15°**.
+- `spreadContinent` clears the plates at rolls up to `UPRIGHT_ROLL`, measured along each plate's outward bearing. Of an overlapping pair, **the plate that needs the shorter push moves** (the outer one on a tie), and an ancestor of the other plate never moves.
+- Left-right maps are **wrapped about the middle of their box**, not their head, which halves how far out the wrap squeezes (one-side diameters were +14 to 19% without it).
+- Top-down now clears the roll too, since the cheaper spread makes it affordable (+0.6% diameter on the CSS fixture, 0 pairs within 15°, was 1 to 7).
+
+Numbers on the code-heavy both-sides fixture (`codeNote` in `planets.test.ts`), Node spacing 0.65: widest continent 321.7 pre-T114, 376.3 round 0, 356.8 final; mean nearest gap 4.69, 9.90, 6.13; pairs at 0° / ≤15° / ≤30°: 0/12/18, 0/0/0, 0/0/10. Node spacing now moves the result (widest continent 347 / 357 / 376 at ×0.5 / ×0.65 / ×1), where round 0 ignored it.
+
+### Decisions worth remembering
+
+- **15° is the roll limit; `UPRIGHT_ROLL` is the one knob.** Past it wide neighbours can touch again, about as often as before T114. Sawyer's original phone screenshot looks rolled about 45°, which nothing short of diagonal spacing (about 5× taller columns) clears. Clearing to 30° with the new spread rule kept diameters within +15% but raised the nearest gap +29 to +87%, which is why it was rejected.
+- **An inner plate may now be pushed past an outer one**, so "the order out from the centre keeps" no longer holds. Bearings still keep and plates still only move out.
+- **Left-right maps no longer have the head at (0, 0)**; `ContinentMap` docs are updated. Only the `centres` seeds and placement read the centre.
+- The frame-overlap test now skips pairs farther apart than their half-diagonals: on a small planet a both-sides continent wraps almost all the way round, so plates on opposite sides projected onto each other's plane (a false positive).
 
 ### Surface map
+
 | File | Change |
 |---|---|
-| `src/cosmos/planets.ts` | `UPRIGHT_ROLL`, `rollClearance`, `uprightSpread`; `continentMap` stretches and centres left-right maps; `spreadContinent` takes `maxRoll` (top-down passes 0), checks spun overlaps, never pushes an ancestor; docs |
-| `src/cosmos/planets.test.ts` | Roll tests and the deep-continent metric (0 pairs within ±30°, diameter < 1.25× pre-T114); two tests updated for the centred head |
-| `e2e/fixtures/graph3d/Deep Continents.md` → `vault/tests/graph3d/Deep Continents.md` | CSS selectors note: 7 continents, "Specificity…" has 50+ lines 5 deep with inline code and a tall CSS block (no cards, so nothing to back-date) |
+| `src/cosmos/planets.ts` | `UPRIGHT_ROLL` (15°), `rollClearance`; `continentMap` centres left-right maps; `spreadContinent` takes `maxRoll`, checks spun overlaps, moves the plate with the shorter push, never pushes an ancestor; docs. (`uprightSpread` was added in round 0 and removed in round 1.) |
+| `src/cosmos/planets.test.ts` | Roll tests at 15°; shorter-push test; deep-continent bound 1.15× including top-down; code-heavy both-sides test (0 pairs within 15°, diameter < 1.15× and gap < 1.4× pre-T114, Node spacing tightens it); frame-overlap test skips far pairs |
+| `e2e/fixtures/graph3d/Deep Continents.md` | New fixture, CSS selectors note (copy in `vault/tests/graph3d/`) |
+| `e2e/fixtures/graph3d/Galley Scripts.md` | New fixture, code-heavy note (copy in `vault/tests/graph3d/`) |
 
-### Manual test
-1. Reload Obsidian (Ctrl+R). Open `tests/graph3d/Deep Continents.md` in Cosmos, Planets layout, Continent direction left-right / one-side.
-2. Zoom over the "Specificity determines…" continent and orbit so its plates turn moderately (look at it from somewhat above or beside). Expected: no plates overlap. At a steep roll (about 45° or more) wide neighbours may touch again, which is expected.
-3. Compare its size to the other continents. Expected: it isn't spread far, and the planet is about the same size as before or smaller.
-4. Repeat on a phone. Try both-sides and radial. Top-down is unchanged, so its overlaps remain.
+### Test fixture
 
-### Not verified
-- In Obsidian on desktop or phone: Sawyer tests.
-- Real panel sizes against the `panelBoxEm` estimates. The measurement used estimated footprints.
-- At Node spacing ×0.5 with both-sides, 2 pairs remain at 30°. At ×2 both-sides, 1 pair remains at 15° and 30°. The cause was not found within budget (more spread rounds didn't help).
+`vault/tests/graph3d/Deep Continents.md`: 7 continents, "Specificity determines…" has 50+ lines 5 deep with inline code and a tall CSS block. `vault/tests/graph3d/Galley Scripts.md`: three continents, 16 code blocks beside headings with children. Masters in `e2e/fixtures/graph3d/`. Neither has cards.
 
-### Fix round 1
-Code commit: 9f1dd01. Sawyer: "now there's way too much space between nodes even when Node spacing is minimal" (Both sides, Node spacing 0.65, JavaScript notes with many code blocks).
+### Follow-ups
 
-**Cause (measured).** The 30° roll clearance was too expensive for wide and tall plates. Two plates stacked a row gap apart, but offset sideways, need about `(h + offset·sin ρ) / cos ρ` of separation to clear a roll ρ. At 30° a code block's neighbours need several plate heights of extra room. The spread then made it worse. The wrap squeezes big continents sideways (up to 15% at their rim), which undid the stretch's 30° clearance. The roll-aware spread then won it back by pushing whole branches out along their bearings. For a pair stacked across their bearings, the push was a slide sideways past the other plate (about a plate width). Measured cost split, on a code-heavy both-sides fixture at ×0.65:
-- the spread's roll term cost most of the diameter (+20%);
-- the stretch cost about half the extra nearest-neighbour gap and barely helped once the plates were wrapped (stretch alone left 13 to 16 pairs at 30°);
-- the roll gaps are geometric, so they ignored Node spacing (T114 diameter 370 at ×0.5, 376 at ×1).
-
-**Fix.**
-- `uprightSpread` (the whole-map stretch) is removed.
-- `UPRIGHT_ROLL` is now 15°.
-- In `spreadContinent`, of an overlapping pair, **the plate that needs the shorter push moves**, the inner one included (the outer one on a tie, and never an ancestor of the other). Before, the outer one always moved.
-- Left-right maps stay centred on their box, which measurably helps (without it, one-side diameters were +14 to 19%).
-- Top-down now clears the roll too, because the cheaper spread makes it affordable: +0.6% diameter on the CSS fixture, 0 pairs within 15° (was 1 to 7).
-
-**Numbers.** Code-heavy both-sides fixture (`codeNote` in `planets.test.ts`, shaped like the screenshots), Node spacing ×0.65:
-
-| | widest continent | mean continent | mean nearest gap | planet R | pairs at 0° / ≤15° / ≤30° |
-|---|---|---|---|---|---|
-| pre-T114 | 321.7 | 239.2 | 4.69 | 163.0 | 0 / 12 / 18 |
-| T114 | 376.3 (+17%) | 296.3 (+24%) | 9.90 (+111%) | 188.9 | 0 / 0 / 0 |
-| fix | 356.8 (+11%) | 273.5 (+14%) | 6.13 (+31%) | 180.9 | 0 / 0 / 10 |
-
-- Node spacing at ×0.5 / ×0.65 / ×1 gives widest continent 347 / 357 / 376 and nearest gap 5.2 / 6.1 / 8.1. T114 gave 370 / 376 / 376 and 9.1 / 9.9 / 11.1.
-- On T114's CSS fixture: one-side diameter 241 (pre 257, T114 290), both-sides 364 (pre 361, T114 380). Both have 0 pairs within 15°, and 11 and 10 at 30° (pre 12 and 15).
-- The same trade-off with clearing to 30° and the new spread rule: diameters within +15%, but the nearest gap rose +29 to +87%. That is why the limit is 15°.
-
-**Decisions.**
-- **15° is the roll limit.** Past it, wide neighbours can touch again, about as often as before T114. Sawyer's original phone screenshot looks rolled about 45°, which nothing short of diagonal spacing clears. If he wants more, `UPRIGHT_ROLL` is the one knob, and the table above shows its price.
-- An inner plate may now be pushed past an outer one, so "the order out from the centre keeps" no longer holds. Bearings still keep and plates still only move out.
-- The existing frame-overlap test ("leaves no two plates of a continent overlapping as they lie in its frame") now skips pairs farther apart than their half-diagonals. On a small planet, a both-sides continent wraps almost all the way round, so two plates on opposite sides projected onto each other's plane: a false positive.
-
-**Surface map.**
-| File | Change |
-|---|---|
-| `src/cosmos/planets.ts` | `uprightSpread` removed; `UPRIGHT_ROLL` 30° → 15°; `spreadContinent` moves the plate with the shorter push; every direction clears the roll; docs |
-| `src/cosmos/planets.test.ts` | Stretch test replaced by a shorter-push test; roll tests at 15°; deep-continent bound 1.15×, top-down included; new code-heavy both-sides test (0 pairs within 15°, diameter < 1.15× and gap < 1.4× pre-T114, Node spacing tightens it); frame-overlap test skips far pairs |
-| `e2e/fixtures/graph3d/Galley Scripts.md` → `vault/tests/graph3d/Galley Scripts.md` | Code-heavy note (three continents, 16 code blocks beside headings with children; no cards) |
-
-**Manual test.**
-1. Reload Obsidian (Ctrl+R). Open `tests/graph3d/Galley Scripts.md` and your own JavaScript notes in Cosmos, Planets layout. Use Continent balance Both sides, Core layers 1, Hierarchy ↔ organic 0, Node spacing 0.65.
-   - Expected: plates sit noticeably closer than in round 0. Branches are shorter, and gaps between neighbours are about a plate height or less, not several.
-2. Drag Node spacing from 0.5 to 1.
-   - Expected: the continents visibly tighten and widen with it.
-3. Orbit so a continent turns a little (up to about 15°).
-   - Expected: no plates overlap. At steeper turns, wide neighbours may touch, as before T114.
-4. Repeat on `tests/graph3d/Deep Continents.md`, with one-side and top-down too.
-
-**Not verified.** In Obsidian, on desktop or phone. The real panel sizes of code blocks (the measurements use `panelBoxEm`-style estimates). Continents overlapping *each other* on crowded both-sides planets is untouched by this fix and was there before T114: 6 pairs at 0° on a 7-continent fixture before T114, 3 to 4 now. It is a follow-up if Sawyer sees it.
+- **Overlaps remain past 15° of roll.** Wide neighbours can still touch at steep rolls, including the ~45° of Sawyer's original screenshot. Fixing that needs diagonal spacing, or a different way of keeping plates upright.
+- Both-sides at Node spacing ×0.5 still has 2 pairs at 30°, and at ×2 one pair at 15° and 30°; the cause was not found within budget.
+- Continents overlapping *each other* on crowded both-sides planets is untouched and predates T114 (6 pairs at 0° on a 7-continent fixture before, 3 to 4 now).
+- Real code-block panel sizes were never compared with the `panelBoxEm` estimates the measurements used.

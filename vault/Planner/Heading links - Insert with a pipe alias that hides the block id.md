@@ -9,16 +9,16 @@ context:
 people:
 location:
 related:
-status: In-Review
+status: Done
 batch: 15
 priority:
 progress:
 date_created: 2026-11-24T00:20:16.000Z
-date_modified: 2026-11-24T00:20:16.000Z
+date_modified: 2026-11-26T18:46:00.000Z
 date_start_scheduled: 2026-11-24T00:51:04.000Z
 date_start_actual: 2026-11-24T00:51:04.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-26T18:46:00.000Z
+date_end_actual: 2026-11-26T18:46:00.000Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -34,7 +34,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/53
 ---
 
 # Heading links - Insert with a pipe alias that hides the block id (T115)
@@ -77,54 +77,48 @@ Fixture note with headings carrying `^os-` ids and one heading without. In the n
 - Lint → test → build, one at a time (7 GB RAM). Pure logic goes outside `src/views/` (vitest cannot import obsidian) and gets unit tests.
 - Fixtures: master copy in `e2e/fixtures/`, copied to `vault/tests/`; back-date every fixture card; neutral subject domains (no biology).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
 
-Code commit: `0a96df8` on `batch/15-plates-study-polish`.
+Shipped in [PR #53](https://github.com/SawyerRensel/Osmosis/pull/53) → `release/0.0.6` (batch 15, commit `0a96df8`).
 
-### Approach
-Obsidian's link suggest (`selectSuggestion` in `ref/obsidian-core/app.js`) builds the link with `AH(...)`. For a heading pick it writes the subpath as `"#" + zi(heading)`, where `zi` turns `: # | ^ \ %% [[ ]]` into spaces. The id therefore shows up as ` os-xxxxxx`, and no alias is added unless the text after the cursor already held one. The link goes in through `editor.transaction(..., "input.autocomplete")`.
+### The cause
 
-So the hook is a CM6 `EditorState.transactionFilter` (`headingLinkAliasFilter` in `src/heading-link-alias.ts`) registered once with `registerEditorExtension` in `main.ts`. Obsidian appends `workspace.editorExtensions` in its base markdown editor's extensions, which the mind map and Cosmos `EmbeddableMarkdownEditor` inherit, so the single registration covers all three editors. The filter only acts on an `input.autocomplete` transaction with exactly one change whose inserted text is a whole `[[target]]` with no `|`, whose last `#` segment ends in ` os-…`. It appends `|alias` in the same transaction, so the pick and the alias undo as one step. The target is left exactly as Obsidian wrote it, and Obsidian resolves it to the heading by normalised comparison.
+Obsidian's link suggest (`selectSuggestion` in `ref/obsidian-core/app.js`) builds a heading link with the subpath `"#" + zi(heading)`, where `zi` turns `: # | ^ \ %% [[ ]]` into spaces. The heading's `^os-` id therefore showed up as ` os-xxxxxx` in the link text, and no alias is added unless one is already after the cursor. A second, quieter problem: in the Osmosis node editors, `planHeadingRename` compared links against the heading with the id stripped, so a link carrying the id (`[[#Old os-x]]`, which the suggest has always written) never matched on rename.
 
-The alias is the target heading's cached text (`metadataCache.getFileCache(dest).headings`, resolved from `editorInfoField.file`) with the trailing id stripped. That keeps the characters `zi` dropped, so the alias of "Step 1: sweat ^os-…" reads "Step 1: sweat", colon included. If the cache cannot be reached, the alias falls back to the subpath minus its id.
+### The fix
 
-Rename: in the Osmosis node editors, `planHeadingRename` compared links against the heading with the id stripped. A link that carried the id (`[[#Old os-x]]`, which is what the suggest has always written) therefore never matched, aliased or not. `HeadingRename` now carries the old and new block ids, `rewriteHeadingLinks` also matches `Old os-x` and writes `New os-x`, and a wikilink alias that equals the old heading text exactly becomes the new text.
+- A CM6 `EditorState.transactionFilter` (`headingLinkAliasFilter`, `src/heading-link-alias.ts`), registered once with `registerEditorExtension` in `main.ts`. Obsidian puts `workspace.editorExtensions` in its base markdown editor, which the mind map and Cosmos `EmbeddableMarkdownEditor` inherit, so one registration covers the note editor, the mind map edit box and the Cosmos edit box.
+- It only acts on an `input.autocomplete` transaction with exactly one change that inserts a whole `[[target]]` with no `|`, whose last `#` segment ends in ` os-…`. It appends `|alias` in the same transaction, so pick and alias undo as one step. The target is left as Obsidian wrote it.
+- The alias is the heading's cached text (`metadataCache.getFileCache(dest).headings`, resolved from `editorInfoField.file`) with the trailing id stripped, which keeps characters `zi` dropped: `Step 1: sweat ^os-…` aliases as `Step 1: sweat`. If the cache cannot be reached the alias falls back to the subpath minus its id.
+- Rename: `HeadingRename` carries the old and new block ids; `rewriteHeadingLinks` also matches `Old os-x` and writes `New os-x`, and a wikilink alias that equals the old heading text exactly becomes the new text.
 
-### Decisions
-- **Transaction filter rather than wrapping `selectSuggestion`.** It uses public CM6 and Obsidian API (`editorInfoField`, `registerEditorExtension`, the `input.autocomplete` user event) rather than reaching into `workspace.editorSuggest.suggests`. It only ever sees text the suggest has just inserted, so links typed by hand and links already in the vault cannot be touched.
-- **The alias comes from the heading cache, not the subpath,** so punctuation survives (see above).
-- **Only `^os-` ids are aliased**, as the ticket says. A heading with a foreign id (`^my-id`), or one whose text merely ends in "os-abc123" with no caret, gets no alias.
-- **Embeds (`![[#H os-x]]`) are skipped,** because an alias does not change how a section embed renders.
-- **Tab pick:** Obsidian leaves the cursor before `]]`. The filter then selects the alias so it can be typed over, which is what Obsidian does for a link that already has an alias. Enter or click leaves the cursor after `]]`.
-- **Markdown-link mode is not handled.** With "Use [[Wikilinks]]" off, the suggest writes `[text ^os-x](#…)`. That is not a pipe link and is out of the settled scope.
-- **The alias follows a rename only when it equals the old heading text exactly,** so hand-written display text is kept. This applies only to renames in Osmosis node editors. Obsidian's own "Rename heading" command keeps aliases as they are, which is Obsidian's behaviour and is not changed here.
+### Decisions worth remembering
+
+- **Transaction filter rather than wrapping `selectSuggestion`.** It uses public CM6 and Obsidian API instead of reaching into `workspace.editorSuggest.suggests`, and it only ever sees text the suggest just inserted, so hand-typed links and links already in the vault cannot be touched. Existing links are not rewritten; rendering does not strip the id (settled with Sawyer).
+- **The alias comes from the heading cache, not the subpath**, so punctuation survives.
+- **Only `^os-` ids are aliased.** A foreign id (`^my-id`), or text that ends in "os-abc123" with no caret, gets no alias; headings without an id are unchanged.
+- **Embeds (`![[#H os-x]]`) are skipped**: an alias does not change how a section embed renders.
+- **Tab pick:** Obsidian leaves the cursor before `]]`; the filter then selects the alias so it can be typed over, as Obsidian does for a link that already has one.
+- **Markdown-link mode is not handled.** With "Use [[Wikilinks]]" off the suggest writes `[text ^os-x](#…)`, which is not a pipe link and was outside the settled scope.
+- **The alias follows a rename only when it equals the old heading text exactly**, so hand-written display text is kept. This applies only to renames in Osmosis node editors; Obsidian's own "Rename heading" command keeps aliases as they are.
 
 ### Surface map
+
 | File | Change |
 |---|---|
-| `src/heading-link-alias.ts` | New. `aliasHeadingLink` (pure link → aliased link) and `headingLinkAliasFilter` (the CM6 transaction filter) |
+| `src/heading-link-alias.ts` | New. `aliasHeadingLink` (pure) and `headingLinkAliasFilter` (CM6 transaction filter) |
 | `src/heading-link-alias.test.ts` | New. Pure cases plus the filter driven through a real `EditorState` (Enter and Tab cursor placement, typed input, embeds, id-less headings) |
 | `src/main.ts` | Registers the filter with a heading lookup through `editorInfoField` and `metadataCache` |
-| `src/heading-links.ts` | `HeadingIds`. `renamedSubpath` and `rewriteHeadingLinks` match the id-carrying form, and an alias equal to the old heading follows the rename |
+| `src/heading-links.ts` | `HeadingIds`; `renamedSubpath` and `rewriteHeadingLinks` match the id-carrying form, and an alias equal to the old heading follows the rename |
 | `src/heading-links.test.ts` | Rename cases for id-carrying links and the alias |
-| `src/heading-link-update.ts` | `HeadingRename.ids` is filled from the old and new lines and passed to every rewrite |
+| `src/heading-link-update.ts` | `HeadingRename.ids` filled from the old and new lines and passed to every rewrite |
+| `e2e/fixtures/heading-link-alias/` | New fixtures (copies in `vault/tests/mindmap/heading-link-alias/`) |
 
-### Fixture
-`e2e/fixtures/heading-link-alias/` is the master copy, copied to `vault/tests/mindmap/heading-link-alias/`. It has two notes:
-- `Alias Galley.md`: headings with ids (one in backticks, one with a colon), the heading "Plating" with no id, and a "Try it here" list with empty bullets, a block link and a typed-by-hand link.
-- `Alias Pantry.md`: a cross-note target heading with an id.
+### Test fixture
 
-The cards are new and carry no seeded schedules, so no dates needed back-dating.
+`vault/tests/mindmap/heading-link-alias/` (master `e2e/fixtures/heading-link-alias/`): `Alias Galley.md` (headings with ids, one in backticks, one with a colon; the id-less "Plating"; a "Try it here" list with empty bullets, a block link and a hand-typed link) and `Alias Pantry.md` (a cross-note target with an id). The cards carry no seeded schedules.
 
-### Test steps
-1. Reload Obsidian (Ctrl+R), then open `tests/mindmap/heading-link-alias/Alias Galley.md`.
-2. **Note editor.** On "Same note:", type `[[#` and pick "`defer` the garnish". Expect ``[[#`defer` the garnish os-t115aa|`defer` the garnish]]`` with the cursor after `]]`. Pick "Step 1: sweat the onions" and expect the alias `Step 1: sweat the onions`, colon included. Pick "Plating" and expect `[[#Plating]]` with no alias. On "Other note:", type `[[Alias Pantry#` and pick "Dry goods…". Expect `[[Alias Pantry#Dry goods rice and lentils os-t115cc|Dry goods: rice and lentils]]`. Also try Tab instead of Enter: the alias should end up selected.
-3. In reading or Live Preview, each link should show only the heading text. Clicking it should land on the heading.
-4. The block link and the typed-by-hand link must be unchanged.
-5. **Mind map and Cosmos.** Open the note as a mind map, edit a "Try it here" bullet node, and repeat step 2. Do the same in a Cosmos edit box.
-6. **Rename.** With Settings, then Files and links, then "Automatically update internal links" on, edit the "`defer` the garnish" heading node in the mind map and rename it to "`defer` the herbs". The aliased link should become ``[[#`defer` the herbs os-t115aa|`defer` the herbs]]``, and a Notice should report the update.
+### Follow-ups
 
-### Not verified
-- Nothing was tested in Obsidian. The claims that the embedded editors pick up workspace editor extensions and that `editorInfoField` there returns the owner with `file` come from reading the Obsidian 1.15 source (`buildLocalExtensions` and `Sv.init(() => this.owner)`), not from a run.
-- That the heading cache text includes the `^os-` id is inferred from the suggest's own output (`zi(heading)` contained `os-…`). If it does not, the fallback alias (the subpath minus the id) still applies, but it would lose a colon.
-- A heading rename made in Obsidian's own editor or through its "Rename heading" command is Obsidian's code and keeps the old alias.
+- Markdown-link mode and Obsidian's own heading-rename command are untouched, as noted above.
+- The claims that the embedded editors pick up workspace editor extensions, and that `editorInfoField` there returns the owner with a `file`, came from reading the Obsidian 1.15 source (`buildLocalExtensions`, `Sv.init(() => this.owner)`). That the heading cache text includes the `^os-` id is inferred from the suggest's own output; if it does not, the fallback alias still applies but would lose a colon. Sawyer's manual test passed.
