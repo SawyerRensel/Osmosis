@@ -18,6 +18,9 @@
  * - `modeOf(file)` — `"sidecar"` when a sidecar is indexed for the note, else
  *   `"note"` when the note's frontmatter holds any `SIDECAR_KEYS` key, else the
  *   `dataLocation` setting.
+ * - `ensureSidecar(file)` — the sidecar, created if needed whatever the mode
+ *   (the move commands, `DataMover`).
+ * - `notesWithSidecars()` — every indexed note path, for the vault-wide move.
  * - `sidecarOf(file)` — the indexed sidecar, or null.
  * - `isSidecar(path)` — whether a path lies in the sidecar folder. Such files
  *   are never notes: not card-sync input, not Cosmos notes.
@@ -29,12 +32,13 @@
  * Lifecycle (main.ts): `attach(plugin)` in `onload`, before the plugin's own
  * vault listeners, so a renamed note's index entry is re-keyed before anything
  * re-reads it; `rebuildIndex()` at layout-ready before `syncAll`, and again when
- * the folder setting changes.
+ * the folder setting changes (after `DataMover.moveSidecars` has moved the files).
  *
  * Following the note: a rename re-keys the index and rewrites the sidecar's
  * link (even when Obsidian's link updater already did — idempotent); deleting
  * the note trashes its sidecar with `fileManager.trashFile`, which honours the
- * user's trash setting. The sidecar itself is never renamed.
+ * user's trash setting. The sidecar itself is never renamed; it only moves
+ * when the folder setting changes.
  */
 import type { App, EventRef, TAbstractFile, TFile } from "obsidian";
 import {
@@ -102,7 +106,17 @@ export class NoteData {
 
 	async targetFor(file: TFile): Promise<TFile> {
 		if (this.modeOf(file) === "note") return file;
+		return this.ensureSidecar(file);
+	}
+
+	/** The note's sidecar, created (with its folder) if it has none, whatever its mode. */
+	async ensureSidecar(file: TFile): Promise<TFile> {
 		return this.sidecarOf(file) ?? this.createSidecar(file);
+	}
+
+	/** The path of every note with an indexed sidecar — including links naming notes that do not exist. */
+	notesWithSidecars(): string[] {
+		return [...this.index.keys()];
 	}
 
 	onChange(listener: (notePath: string) => void): () => void {
@@ -139,7 +153,7 @@ export class NoteData {
 
 	private onRename(file: TAbstractFile, oldPath: string): void {
 		if (this.isSidecar(oldPath) || this.isSidecar(file.path)) {
-			// A sidecar moved by hand (it is never moved by Osmosis).
+			// A sidecar moved by hand, or by `DataMover.moveSidecars` when the folder setting changes.
 			const note = this.noteFor(oldPath);
 			if (note !== null) this.unlink(note);
 			const moved = this.isSidecar(file.path) ? this.app.vault.getFileByPath(file.path) : null;

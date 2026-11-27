@@ -217,11 +217,17 @@ function generatedSchedule(card: GeneratedCard): ScheduleData | null {
  * parser of each. An empty object when the fence carries none (or is not in
  * `content`).
  *
- * Seeds a fence's first sidecar entry; also the note → sidecar half of a move.
+ * Seeds a fence's first sidecar entry; also the note → sidecar half of a move,
+ * which passes `cards` (`generateExplicitCards(content)`) so a note with many
+ * fences is parsed once rather than once per fence.
  */
-export function fenceEntryFromContent(content: string, fenceId: string): Entry {
+export function fenceEntryFromContent(
+	content: string,
+	fenceId: string,
+	cards: readonly GeneratedCard[] = generateExplicitCards(content),
+): Entry {
 	const entry: Entry = {};
-	for (const card of generateExplicitCards(content)) {
+	for (const card of cards) {
 		const { fenceId: base, suffix } = suffixOf(card.id);
 		if (base !== fenceId || card.blockId !== undefined) continue;
 		if (card.disabled === true) entry[EXCLUDE_KEY] = true;

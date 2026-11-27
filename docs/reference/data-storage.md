@@ -8,20 +8,25 @@ Osmosis has no database. Every card, every schedule, every map style, and every
 review you have ever recorded is text in your vault — which is what makes the
 whole thing sync, back up, diff, and outlive the plugin.
 
+A note's study data can live in the note itself or in a
+[sidecar file](#sidecar-files) of its own, which keeps the note's properties
+short. Either way it is Markdown in your vault.
+
 This page is the complete map of what gets written where.
 
 ## What Lives Where
 
-| Data | Written to |
-|------|------------|
-| Card content | The `osmosis` fence, or the note's own lines |
-| Fence card schedules | The fence header |
-| Line card schedules | `osmosis-schedule` in the note's frontmatter |
-| Occlusion masks | The fence header, or `osmosis-schedule` |
-| Map layout and node styles | `osmosis-styles` in the note's frontmatter |
-| Deck assignment | Folder path, `osmosis-deck` frontmatter, or `deck:` fence metadata |
-| Review history | Markdown shards in the review log folder |
-| Plugin settings, custom themes, panel order | `.obsidian/plugins/osmosis/data.json` |
+| Data | In the note | In a sidecar |
+|------|-------------|--------------|
+| Card content | The `osmosis` fence, or the note's own lines | *(always in the note)* |
+| Fence card schedules, buries, exclusion | The fence header | `osmosis-fences` |
+| Line card schedules | `osmosis-schedule` in the note's frontmatter | `osmosis-schedule` |
+| Occlusion masks | The fence header, or `osmosis-schedule` | `osmosis-fences`, or `osmosis-schedule` |
+| Map layout and node styles | `osmosis-styles` in the note's frontmatter | `osmosis-styles` |
+| Card IDs (`id:`, `^block-id`) | The fence header, or the end of the line | *(always in the note)* |
+| Deck assignment | Folder path, `osmosis-deck` frontmatter, or `deck:` fence metadata | *(always in the note)* |
+| Review history | Markdown shards in the review log folder | |
+| Plugin settings, custom themes, panel order | `.obsidian/plugins/osmosis/data.json` | |
 
 ## Fence Cards
 
@@ -124,8 +129,85 @@ single non-editable property, so it stays out of your way.
 
 Everything the [properties sidebar](../mind-mapping/styling.md) sets is written
 to `osmosis-styles` in the same frontmatter — layout, theme, spacing, branch
-lines, and per-node overrides keyed by block ID. Because it travels in the note,
-sending someone the note sends them the map.
+lines, and per-node overrides keyed by block ID. Kept in the note, it travels
+with it: sending someone the note sends them the map. A note in sidecar mode
+keeps it in its sidecar instead.
+
+## Sidecar Files
+
+A sidecar holds one note's study data, so the note's frontmatter stays short
+enough to read in Source view. It is a Markdown file with frontmatter only:
+
+```yaml
+---
+osmosis-note: "[[Sailing/Knots]]"
+osmosis-schedule:
+  os-a1b2c3:
+    due: 2026-07-22T10:30:00
+    stability: 4.2
+    state: review
+osmosis-fences:
+  fct-points:            # the fence's id
+    due: 2026-08-09T11:00:00
+    stability: 5.4
+    state: review
+    r:                   # nested exactly as in the fence header
+      due: 2026-08-08T11:00:00
+      state: review
+osmosis-styles:
+  theme: harbour
+---
+```
+
+- **Where:** one flat folder, `Osmosis/Schedule` by default
+  (**Settings > Osmosis > Sidecar folder**). Changing the setting moves the
+  files.
+- **Name:** a short hash of the note's path when the sidecar was made, such as
+  `a3f9c2e1.osmosis.md`, so quick switcher never offers a second file with your
+  note's name. The name never changes.
+- **The link:** `osmosis-note` is what ties the sidecar to its note. Renaming or
+  moving the note updates it; deleting the note sends its sidecar to the trash.
+- **What moves:** `osmosis-schedule`, `osmosis-styles`, and each fence header's
+  review state — schedules, buries, `exclude`, and occlusion masks — which goes
+  under `osmosis-fences`, keyed by the fence's `id`. The card itself stays in
+  the note: the fence's `id`, `deck`, `bidi`, `type-in`, and every block ID.
+
+### Note mode and sidecar mode
+
+Each note keeps its data in one place:
+
+- A note with a sidecar is in **sidecar mode**.
+- A note without one, whose frontmatter holds `osmosis-schedule`,
+  `osmosis-fences`, or `osmosis-styles`, is in **note mode**.
+- A note with neither follows **Settings > Osmosis > Data location**, which
+  decides where a note's *first* data goes. Changing that setting moves
+  nothing.
+
+If a note holds data in both places — say, styles written into the note by
+hand after it got a sidecar — Osmosis reads the sidecar first: its entry for a
+card or fence wins, and its `osmosis-styles` replaces the note's whole.
+
+### Moving data
+
+Four [commands](commands.md#data-storage) move data between the two:
+
+| Command | Does |
+|---------|------|
+| **Move data to sidecar** | The current note's data goes into its sidecar, which is created if needed. The note keeps short properties and lean fence headers. |
+| **Move data into note** | The sidecar's data goes back into the note's properties and fence headers, and the sidecar goes to the trash. |
+| **Move all data to sidecars** | The same for every note that has data, after a confirmation. |
+| **Move all data into notes** | The same for every sidecar, after a confirmation. |
+
+A move keeps exactly what Osmosis reads today, half-moved notes included, and
+checks that every card's schedule, bury, exclusion, and masks come out the
+same before it writes anything. The destination is written first, so an
+interrupted move leaves the data in both places, never in neither. Data for a
+fence that no longer exists in the note is dropped on the way back in, and the
+notice says how many.
+
+!!! tip "Keep sidecars out of search"
+    Add the sidecar folder to **Settings > Files & links > Excluded files** to
+    keep sidecars out of search, quick switcher, and the graph.
 
 ## Review History
 

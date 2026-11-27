@@ -1,7 +1,7 @@
 import type { TFile, Vault } from "obsidian";
 import type { CardState, OcclusionSet } from "../database/types";
 import { fenceOcclusions, serializeOccludeBlock } from "../card-gen/occlusion";
-import { applyFenceEdits, type FenceEdit } from "./fence-sidecar";
+import { applyFenceEdits, type FenceCardState, type FenceEdit, type FenceOverlay } from "./fence-sidecar";
 
 /** Schedule fields to write into a fence. */
 export interface ScheduleFields {
@@ -437,6 +437,125 @@ export function readFenceOcclusions(content: string, fenceId: string): Map<strin
 	const located = locateFence(content, fenceId);
 	if (!located) return new Map();
 	return fenceOcclusions(located.lines, { start: located.fenceStart, end: located.metaEnd });
+}
+
+/** Pure function: the `id` of every osmosis fence in `content`, in order, each once. */
+export function listFenceIds(content: string): string[] {
+	const lines = content.split("\n");
+	const ids = new Set<string>();
+	for (let i = 0; i < lines.length; i++) {
+		const fenceMatch = lines[i]!.replace(/\s*<!--.*?-->/g, "").trim().match(/^(`{3,})osmosis\s*$/);
+		if (!fenceMatch) continue;
+		// The same metadata scan as `findFenceForId`, so every id listed here is
+		// one the other functions in this file can locate.
+		for (let j = i + 1; j < lines.length; j++) {
+			const line = lines[j]!.trim();
+			const closeMatch = line.match(/^(`{3,})\s*$/);
+			if (line === "" || (closeMatch && closeMatch[1]!.length >= fenceMatch[1]!.length)) break;
+			const idMatch = line.match(/^id\s*:\s*(.+)$/i);
+			if (idMatch) {
+				ids.add(idMatch[1]!.trim());
+				break;
+			}
+			if (!opensIndentedBlock(lines[j]!) && !isRecognizedMetadataLine(line)) break;
+		}
+	}
+	return [...ids];
+}
+
+/**
+ * Pure function: remove a fence header's whole review state — every card's
+ * schedule and bury (flat, legacy `c1-due`, and `r:` / `cN:` blocks),
+ * `exclude`, and every `occlude*:` shape block — keeping what defines the card
+ * (`id`, `deck`, `bidi`, `type-in`, `hint`). The note → sidecar half of a move.
+ */
+export function stripFenceReviewState(content: string, fenceId: string): string {
+	const located = locateFence(content, fenceId);
+	if (!located) return content;
+
+	const { lines, metaStart, metaEnd } = located;
+	const existingMeta = lines.slice(metaStart, metaEnd);
+	const kept: string[] = [];
+	for (let i = 0; i < existingMeta.length; i++) {
+		const line = existingMeta[i]!;
+		// Blocks go whole: their bodies spell the same field names as the
+		// fence's own card.
+		if (indentedBlockKey(line.trim())) {
+			i = blockEnd(existingMeta, i);
+			continue;
+		}
+		const match = line.trim().match(/^(\w[\w-]*)\s*:\s*.+$/);
+		if (match && (isScheduleKey(match[1]!) || match[1]!.toLowerCase() === "exclude")) continue;
+		kept.push(line);
+	}
+
+	return [
+		...lines.slice(0, metaStart),
+		...kept,
+		...lines.slice(metaEnd),
+	].join("\n");
+}
+
+/** One card's schedule and bury as header lines, `indent` before each. */
+function reviewStateLines(state: FenceCardState, indent: string): string[] {
+	const out: string[] = [];
+	if (state.schedule) {
+		const { lastReview } = state.schedule;
+		const kvs = buildScheduleKVs({ ...state.schedule, lastReview: lastReview ?? 0 });
+		// A schedule seeded from a header without `lastReview` has none to write.
+		if (lastReview === null) kvs.delete("lastReview");
+		for (const [key, value] of kvs) out.push(`${indent}${key}: ${value}`);
+	}
+	if (state.buriedUntil !== undefined) out.push(`${indent}buriedUntil: ${new Date(state.buriedUntil).toISOString()}`);
+	return out;
+}
+
+/** `r` first, then `c1`, `c2`, … numerically. */
+function derivedOrder(a: string, b: string): number {
+	const rank = (key: string): number => (key === "r" ? -1 : Number(key.slice(1)));
+	return rank(a) - rank(b);
+}
+
+/**
+ * Pure function: make a fence header hold exactly `state` — whatever review
+ * state it had is replaced (see {@link stripFenceReviewState}). The sidecar →
+ * note half of a move.
+ *
+ * The layout is the one the writers above converge on: `exclude` after `id`,
+ * the fence's own card flat after the definition keys, then shape blocks, then
+ * derived cards' `r:` / `cN:` blocks. Unchanged when no fence carries the id.
+ */
+export function writeFenceReviewState(content: string, fenceId: string, state: FenceOverlay): string {
+	const stripped = stripFenceReviewState(content, fenceId);
+	const located = locateFence(stripped, fenceId);
+	if (!located) return content;
+
+	const { lines, backtickCount, metaStart, metaEnd } = located;
+	const meta = lines.slice(metaStart, metaEnd);
+	if (state.exclude) {
+		const idIdx = meta.findIndex((l) => /^id\s*:/i.test(l.trim()));
+		meta.splice(idIdx + 1, 0, "exclude: true");
+	}
+	const own = state.cards.get("");
+	if (own) meta.push(...reviewStateLines(own, ""));
+	for (const [label, set] of state.occlusions) {
+		if (set.shapes.length > 0) meta.push(...serializeOccludeBlock(label, set));
+	}
+	for (const suffix of [...state.cards.keys()].filter((key) => key !== "").sort(derivedOrder)) {
+		const body = reviewStateLines(state.cards.get(suffix)!, "  ");
+		if (body.length > 0) meta.push(`${suffix}:`, ...body);
+	}
+
+	const nextLine = lines[metaEnd]?.trim() ?? "";
+	const nextCloseMatch = nextLine.match(/^(`{3,})\s*$/);
+	const isClosingFence = nextCloseMatch && nextCloseMatch[1]!.length >= backtickCount;
+	if (nextLine !== "" && !isClosingFence) meta.push("");
+
+	return [
+		...lines.slice(0, metaStart),
+		...meta,
+		...lines.slice(metaEnd),
+	].join("\n");
 }
 
 /**

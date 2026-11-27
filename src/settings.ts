@@ -525,7 +525,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						name: "Data location",
 						desc:
 							"Where a note's flashcard schedules go when it has none yet: a sidecar file keeps the note's properties short. "
-							+ "Notes that already have data keep it where it is.",
+							+ "Notes that already have data keep it where it is: changing this moves nothing. To move data, use the \"Move data\" commands.",
 						control: {
 							type: "dropdown",
 							key: "dataLocation",
@@ -535,7 +535,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 					{
 						name: "Sidecar folder",
 						desc:
-							"Where sidecar files are kept. Changing this does not move existing sidecars: move the folder yourself. "
+							"Where sidecar files are kept. Changing it moves the existing sidecar files. "
 							+ "Add this folder to Settings → Files & links → Excluded files to keep it out of search.",
 						render: (setting) => {
 							this.buildPathInput(setting, {

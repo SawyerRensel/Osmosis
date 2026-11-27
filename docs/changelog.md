@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sidecar files.** A note's schedules, fence review data, occlusion masks and map styles can live in a sidecar file of its own, keeping the note's properties short. **Settings > Osmosis > Data location** chooses where a note's first data goes, and four commands move existing data: **Move data to sidecar**, **Move data into note**, and the vault-wide **Move all data to sidecars** and **Move all data into notes**. Changing the **Sidecar folder** setting moves the files. See [Data Storage](reference/data-storage.md#sidecar-files).
+
 ### Changed
 
 - **The 3D graph is now Cosmos.** The view, its command (**Open Cosmos for current note**), its file-menu item, its settings heading and its docs page carry the new name. Open tabs, its two control settings and its per-device preferences carry over on the first start after the update. A hotkey set on the old command keeps working, because the command ID is unchanged.

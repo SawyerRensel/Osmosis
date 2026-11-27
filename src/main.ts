@@ -11,6 +11,8 @@ import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter, parseBuriedFrontmatter } from "./store/ScheduleStore";
 import { NoteData } from "./store/NoteData";
+import { DataMover, type VaultMoveResult } from "./store/DataMover";
+import { SIDECAR_SUFFIX, hasSidecarKeys, isSidecarPath } from "./store/sidecar";
 import { FENCES_FRONTMATTER_KEY, parseFencesFrontmatter, type FenceOverlay } from "./store/fence-sidecar";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
@@ -138,6 +140,8 @@ export default class OsmosisPlugin extends Plugin {
 	scheduleStore!: ScheduleStore;
 	/** Where each note's Osmosis data lives: its frontmatter or its sidecar. Every schedule read and write goes through it. */
 	noteData!: NoteData;
+	/** The "Move data …" commands and the sidecar folder move. */
+	dataMover!: DataMover;
 	/** Explicit deps for the card browser's four mutations. */
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
@@ -219,6 +223,13 @@ export default class OsmosisPlugin extends Plugin {
 		this.scheduleStore = new ScheduleStore(
 			this.noteData,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
+		);
+
+		this.dataMover = new DataMover(
+			this.app,
+			this.noteData,
+			(file: TFile) => this.flushNoteData(file),
+			(path: string) => this.isOsmosisDataPath(path),
 		);
 
 		// Review log — append-only review history in the vault, sharded by
@@ -674,6 +685,9 @@ export default class OsmosisPlugin extends Plugin {
 		// ── Rapid Flashcard Mode ────────────────────────────────
 		this.registerRapidFlashcardMode();
 
+		// ── Moving data between notes and sidecars ──────────────
+		this.registerDataMoveCommands();
+
 		// ── Heading links: hide the block id behind an alias ────
 		// Workspace editor extensions reach the note editor and the mind map
 		// and Cosmos node editors alike (they are Obsidian markdown editors).
@@ -1087,17 +1101,132 @@ export default class OsmosisPlugin extends Plugin {
 	}
 
 	/**
-	 * Point sidecar lookup at a different folder. Moves nothing (that is the
-	 * move commands' job): notes whose sidecars stay behind read from their own
-	 * frontmatter until the folder is moved too. The full re-sync re-reads every
-	 * note's schedules through the rebuilt index.
+	 * Point sidecar lookup at a different folder, moving the sidecar files
+	 * there. Pending writes go out first, into the old folder; the setting
+	 * changes before the files move, so each is re-indexed as it lands. The
+	 * full re-sync re-reads every note's schedules through the rebuilt index.
 	 */
 	async changeSidecarFolder(folder: string): Promise<void> {
-		if (folder === this.settings.sidecarFolder) return;
+		const previous = this.settings.sidecarFolder;
+		if (folder === previous) return;
 		await this.scheduleStore.flush();
+		await this.fenceWriter.flush();
+		const files = this.app.vault.getMarkdownFiles()
+			.filter((file) => isSidecarPath(file.path, previous) && file.name.endsWith(SIDECAR_SUFFIX));
 		this.settings.sidecarFolder = folder;
+		const moved = await this.dataMover.moveSidecars(files, folder);
 		this.noteData.rebuildIndex();
 		await this.saveSettings();
+		if (files.length > 0) {
+			const failed = files.length - moved;
+			new Notice(`Moved ${plural(moved, "sidecar file")} to "${folder}".${failed > 0 ? ` ${plural(failed, "file")} could not be moved: see the console.` : ""}`);
+		}
+	}
+
+	/**
+	 * Write out everything pending for a note before its data moves: its open
+	 * editors (a move reads the file from disk) and staged schedule and fence
+	 * writes. Mind map edits are written as they are made, so there is nothing
+	 * of theirs to flush.
+	 */
+	private async flushNoteData(file: TFile): Promise<void> {
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			if (leaf.view instanceof MarkdownView && leaf.view.file?.path === file.path) await leaf.view.save();
+		}
+		await this.scheduleStore.flushPath(file.path);
+		await this.fenceWriter.flushPath(file.path);
+	}
+
+	/**
+	 * The four "Move data" commands. The one-note pair is shown only
+	 * when there may be something to move: data in the note's properties or a
+	 * fence card (whose header may hold review state), or a sidecar to empty.
+	 */
+	private registerDataMoveCommands(): void {
+		const activeNote = (): TFile | null => {
+			const file = this.app.workspace.getActiveFile();
+			return file?.extension === "md" && !this.isOsmosisDataPath(file.path) ? file : null;
+		};
+
+		this.addCommand({
+			id: "move-data-to-sidecar",
+			name: "Move data to sidecar",
+			checkCallback: (checking) => {
+				const file = activeNote();
+				if (!file) return false;
+				const inNote = hasSidecarKeys(this.app.metadataCache.getFileCache(file)?.frontmatter)
+					|| this.cardStore.getCardsByNote(file.path).some((card) => card.blockId === undefined);
+				if (!inNote) return false;
+				if (!checking) void this.runNoteMove(file, "sidecar");
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "move-data-into-note",
+			name: "Move data into note",
+			checkCallback: (checking) => {
+				const file = activeNote();
+				if (!file || !this.noteData.sidecarOf(file)) return false;
+				if (!checking) void this.runNoteMove(file, "note");
+				return true;
+			},
+		});
+
+		this.addCommand({
+			id: "move-all-data-to-sidecars",
+			name: "Move all data to sidecars",
+			callback: () => {
+				new ConfirmModal(this.app, {
+					title: "Move all data to sidecars?",
+					body: `Every note's flashcard schedules, fence review data and mind map styles move out of the note into a sidecar file in "${this.settings.sidecarFolder}". Notes without Osmosis data are not touched.`,
+					confirmText: "Move to sidecars",
+				}, () => { void this.runVaultMove("sidecar"); }).open();
+			},
+		});
+
+		this.addCommand({
+			id: "move-all-data-into-notes",
+			name: "Move all data into notes",
+			checkCallback: (checking) => {
+				if (this.noteData.notesWithSidecars().length === 0) return false;
+				if (!checking) {
+					new ConfirmModal(this.app, {
+						title: "Move all data into notes?",
+						body: "Every sidecar's data moves back into its note's properties and fence headers, and the sidecar goes to the trash.",
+						confirmText: "Move into notes",
+					}, () => { void this.runVaultMove("note"); }).open();
+				}
+				return true;
+			},
+		});
+	}
+
+	private async runNoteMove(file: TFile, to: "sidecar" | "note"): Promise<void> {
+		try {
+			const outcome = to === "sidecar" ? await this.dataMover.toSidecar(file) : await this.dataMover.intoNote(file);
+			if (outcome.kind === "nothing") {
+				new Notice(to === "sidecar" ? "This note has no flashcard data or styles to move." : "This note has no sidecar.");
+			} else if (outcome.kind === "failed") {
+				new Notice(`Could not move the data: ${outcome.reason}. Nothing was lost; try again.`);
+			} else {
+				const dropped = outcome.dropped > 0 ? ` Dropped data for ${plural(outcome.dropped, "fence")} no longer in the note.` : "";
+				new Notice(to === "sidecar" ? "Moved the data to the sidecar." : `Moved the data into the note.${dropped}`);
+			}
+		} catch (error) {
+			console.error(`Osmosis: could not move the data of ${file.path}`, error);
+			new Notice("Could not move the data; nothing was changed. See the console for details.");
+		}
+	}
+
+	private async runVaultMove(to: "sidecar" | "note"): Promise<void> {
+		new Notice(to === "sidecar" ? "Moving data to sidecars…" : "Moving data into notes…");
+		const result: VaultMoveResult = to === "sidecar" ? await this.dataMover.allToSidecars() : await this.dataMover.allIntoNotes();
+		const parts = [`Moved the data of ${plural(result.moved, "note")} ${to === "sidecar" ? "to sidecars" : "into notes"}.`];
+		if (result.dropped > 0) parts.push(`Dropped data for ${plural(result.dropped, "fence")} no longer in their notes.`);
+		if (result.orphans > 0) parts.push(`Left ${plural(result.orphans, "sidecar")} whose note no longer exists.`);
+		if (result.failed > 0) parts.push(`${plural(result.failed, "note")} could not be moved and kept their data: see the console.`);
+		new Notice(parts.join(" "), 10000);
 	}
 
 	/**
@@ -1955,4 +2084,9 @@ function generateInstallId(): string {
 	const bytes = new Uint8Array(4);
 	crypto.getRandomValues(bytes);
 	return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** "1 note", "3 notes". */
+function plural(count: number, noun: string): string {
+	return `${String(count)} ${noun}${count === 1 ? "" : "s"}`;
 }
