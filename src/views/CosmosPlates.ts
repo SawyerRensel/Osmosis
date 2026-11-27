@@ -27,8 +27,15 @@
  *   background. Layouts are cached by text and size (`ShapeCache`).
  * - **Per-node styles:** a node's `osmosis-styles` look (`NodeLook`, from
  *   `../cosmos/node-style.ts`) rides in instance attributes: fill, outline
- *   colour and thickness, corner radius, text colour. An unstyled plate keeps
- *   the theme uniforms, so styling adds no draw call.
+ *   colour and thickness, corner radius, shape and dash, text colour. An
+ *   unstyled plate keeps the theme uniforms, so styling adds no draw call.
+ * - **Shapes (T130):** a shaped plate is laid out larger, as the mind map
+ *   sizes the shape round its text (`shapeBox`), and the fragment shader draws
+ *   the shape's signed distance by id (`PLATE_SHAPE_ID`): a rounded box,
+ *   an ellipse, a circle, a polygon of up to eight corners, or four
+ *   overlapping ellipses for a cloud. Dashes run along an arc length: the
+ *   polygon's own perimeter, or an inscribed octagon's for a curved shape.
+ *   Picks and spacing keep the plate's bounding box.
  */
 
 import {
@@ -54,6 +61,8 @@ import { FAR_SIDE_DIM } from "../cosmos/far-side";
 import { UPRIGHT_GLSL } from "../cosmos/upright";
 import { FOCUS_DIM_GLSL } from "../cosmos/focus";
 import { DEFAULT_LOOK, type NodeLook } from "../cosmos/node-style";
+import { DASH_EM, DASH_ID, PLATE_SHAPE_ID, shapeBox } from "../cosmos/plate-shapes";
+import type { TopicShape } from "../styles";
 
 /** Glyphs are rasterised at this size, in rows this tall, on square pages this wide (all px). */
 const FONT_PX = 48;
@@ -87,6 +96,10 @@ interface ShapeGlyph {
 export interface PlateShape {
 	width: number;
 	height: number;
+	/** World units per em of its text: the outline and dashes are sized by it, not by a shape's larger box. */
+	em: number;
+	/** How far the text's centre sits right of the plate's (a triangle's inner box is off-centre). */
+	textX: number;
 	glyphs: ShapeGlyph[];
 	/** Its glyphs aren't built yet (`CosmosPlates.write` builds them): the plate is drawn hidden until they are. */
 	pending?: boolean;
@@ -264,14 +277,16 @@ attribute vec3 aColor;
 attribute float aOpacity;
 attribute float aSelected;
 attribute vec4 aFill;
-attribute vec2 aShape;
+attribute vec4 aShape;
+attribute float aEm;
 varying vec2 vLocal;
 varying vec2 vHalf;
 varying vec3 vColor;
 varying float vOpacity;
 varying float vSelected;
 varying vec4 vFill;
-varying vec2 vShape;
+varying vec4 vShape;
+varying float vEm;
 ${FOCUS_DIM_GLSL}
 ${ORIENT_GLSL}
 #include <fog_pars_vertex>
@@ -283,8 +298,105 @@ void main() {
 	vSelected = aSelected;
 	vFill = aFill;
 	vShape = aShape;
+	vEm = aEm;
 	vOpacity = aOpacity * (1.0 - focusDim(-mvPosition.z)) * (plateBack ? ${(1 - FAR_SIDE_DIM).toFixed(4)} : 1.0);
 	${fogVertex(false)}
+}
+`;
+
+/** A shape id in the fragment shader, as a float literal. */
+const shapeId = (shape: TopicShape): string => PLATE_SHAPE_ID[shape].toFixed(1);
+
+/**
+ * Signed distances for the plate shapes (negative inside), in the plate's own
+ * units, centred, y up. `poly` holds a polygon's corners for `polyDistance`,
+ * which also returns the arc length round it to the nearest point, for dashes.
+ */
+const SHAPE_GLSL = /* glsl */ `
+vec2 poly[8];
+int polyCount;
+float boxDistance(vec2 p, vec2 b, float r) {
+	vec2 q = abs(p) - (b - r);
+	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+// An ellipse's distance, close to the edge (Quilez's approximation).
+float ellipseDistance(vec2 p, vec2 b) {
+	float k1 = length(p / (b * b));
+	if (k1 < 1e-6) return -min(b.x, b.y);
+	float k0 = length(p / b);
+	return k0 * (k0 - 1.0) / k1;
+}
+void setRect(vec2 b) {
+	poly[0] = vec2(-b.x, b.y); poly[1] = vec2(b.x, b.y); poly[2] = vec2(b.x, -b.y); poly[3] = vec2(-b.x, -b.y);
+	polyCount = 4;
+}
+// An octagon inscribed in an ellipse: a curved shape's dashes are spaced along its perimeter.
+void setOctagon(vec2 b) {
+	for (int i = 0; i < 8; i++) {
+		float a = 1.5708 - float(i) * 0.7854;
+		poly[i] = b * vec2(cos(a), sin(a));
+	}
+	polyCount = 8;
+}
+// The mind map's polygons (shapes.ts), from its box's half size, y up.
+void setPolygon(float shape, vec2 b) {
+	float w = 2.0 * b.x;
+	float h = 2.0 * b.y;
+	if (shape < ${shapeId("hexagon")} - 0.5) {
+		poly[0] = vec2(0.0, b.y); poly[1] = vec2(b.x, 0.0); poly[2] = vec2(0.0, -b.y); poly[3] = vec2(-b.x, 0.0);
+		polyCount = 4;
+	} else if (shape < ${shapeId("octagon")} - 0.5) {
+		float inset = min(w * 0.25, h * 0.5);
+		poly[0] = vec2(-b.x + inset, b.y); poly[1] = vec2(b.x - inset, b.y); poly[2] = vec2(b.x, 0.0);
+		poly[3] = vec2(b.x - inset, -b.y); poly[4] = vec2(-b.x + inset, -b.y); poly[5] = vec2(-b.x, 0.0);
+		polyCount = 6;
+	} else if (shape < ${shapeId("triangle")} - 0.5) {
+		vec2 i = vec2(w, h) * 0.29;
+		poly[0] = vec2(-b.x + i.x, b.y); poly[1] = vec2(b.x - i.x, b.y); poly[2] = vec2(b.x, b.y - i.y); poly[3] = vec2(b.x, -b.y + i.y);
+		poly[4] = vec2(b.x - i.x, -b.y); poly[5] = vec2(-b.x + i.x, -b.y); poly[6] = vec2(-b.x, -b.y + i.y); poly[7] = vec2(-b.x, b.y - i.y);
+		polyCount = 8;
+	} else if (shape < ${shapeId("parallelogram")} - 0.5) {
+		poly[0] = vec2(-b.x, b.y); poly[1] = vec2(b.x, 0.0); poly[2] = vec2(-b.x, -b.y);
+		polyCount = 3;
+	} else if (shape < ${shapeId("trapezoid")} - 0.5) {
+		float skew = min(w * 0.2, h);
+		poly[0] = vec2(-b.x + skew, b.y); poly[1] = vec2(b.x, b.y); poly[2] = vec2(b.x - skew, -b.y); poly[3] = vec2(-b.x, -b.y);
+		polyCount = 4;
+	} else if (shape < ${shapeId("arrow-right")} - 0.5) {
+		float inset = w * 0.15;
+		poly[0] = vec2(-b.x + inset, b.y); poly[1] = vec2(b.x - inset, b.y); poly[2] = vec2(b.x, -b.y); poly[3] = vec2(-b.x, -b.y);
+		polyCount = 4;
+	} else {
+		float notch = min(w * 0.3, h);
+		poly[0] = vec2(-b.x, b.y); poly[1] = vec2(b.x - notch, b.y); poly[2] = vec2(b.x, 0.0);
+		poly[3] = vec2(b.x - notch, -b.y); poly[4] = vec2(-b.x, -b.y); poly[5] = vec2(-b.x + notch * 0.5, 0.0);
+		polyCount = 6;
+	}
+}
+// Distance to the polygon in poly (negative inside; Quilez's winding test), and the arc length from its first corner to the nearest point.
+vec2 polyDistance(vec2 p) {
+	float best = 1e20;
+	float arc = 0.0;
+	float run = 0.0;
+	float side = 1.0;
+	for (int i = 0; i < 8; i++) {
+		if (i >= polyCount) break;
+		vec2 a = poly[i];
+		vec2 e = poly[i + 1 < polyCount ? i + 1 : 0] - a;
+		vec2 w = p - a;
+		float len = length(e);
+		float t = clamp(dot(w, e) / max(dot(e, e), 1e-8), 0.0, 1.0);
+		vec2 q = w - e * t;
+		float dd = dot(q, q);
+		if (dd < best) {
+			best = dd;
+			arc = run + t * len;
+		}
+		run += len;
+		bvec3 crosses = bvec3(p.y >= a.y, p.y < a.y + e.y, e.x * w.y > e.y * w.x);
+		if (all(crosses) || all(not(crosses))) side = -side;
+	}
+	return vec2(side * sqrt(best), arc);
 }
 `;
 
@@ -301,18 +413,69 @@ varying float vOpacity;
 varying float vSelected;
 // A styled plate's fill (rgb, and 1 in a), or the theme's (a = 0).
 varying vec4 vFill;
-// The style's outline thickness (× the default) and corner radius (share of the height).
-varying vec2 vShape;
+// The style's outline thickness (× the default), corner radius (share of the height), shape id (PLATE_SHAPE_ID) and dash id (DASH_ID).
+varying vec4 vShape;
+// World units per em of the plate's text.
+varying float vEm;
+${SHAPE_GLSL}
 #include <fog_pars_fragment>
 void main() {
-	float height = vHalf.y * 2.0;
-	float radius = height * vShape.y;
-	vec2 q = abs(vLocal) - (vHalf - radius);
-	float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+	vec2 p = vLocal;
+	vec2 b = vHalf;
+	float shape = vShape.z;
+	// The selection and find borders are solid, as the mind map's are.
+	bool dashed = vShape.w > 0.5 && vSelected < 0.5;
+	float d;
+	// Distance to the drawn outline (an underline's is its bottom edge alone), and the arc length round it, for dashes.
+	float edgeD;
+	float arc = 0.0;
+	if (shape < 0.5 || shape > ${shapeId("underline")} - 0.5) {
+		d = boxDistance(p, b, shape < 0.5 ? min(b.y * 2.0 * vShape.y, min(b.x, b.y)) : 0.0);
+		edgeD = d;
+		if (shape > ${shapeId("underline")} - 0.5 && shape < ${shapeId("none")} - 0.5) {
+			edgeD = -(p.y + b.y);
+			arc = p.x + b.x;
+		} else if (dashed) {
+			setRect(b);
+			arc = polyDistance(p).y;
+		}
+	} else if (shape < ${shapeId("circle")} - 0.5) {
+		d = ellipseDistance(p, b);
+		edgeD = d;
+		if (dashed) {
+			setOctagon(b);
+			arc = polyDistance(p).y;
+		}
+	} else if (shape < ${shapeId("diamond")} - 0.5) {
+		float r = min(b.x, b.y);
+		d = length(p) - r;
+		edgeD = d;
+		arc = (atan(p.y, p.x) + 3.14159) * r;
+	} else if (shape < ${shapeId("cloud")} - 0.5) {
+		setPolygon(shape, b);
+		vec2 da = polyDistance(p);
+		d = da.x;
+		edgeD = d;
+		arc = da.y;
+	} else {
+		// Four overlapping lobes, one a quadrant: the mind map's cloud of four bumps.
+		vec2 q = abs(p);
+		vec2 c = b * vec2(0.34, 0.4);
+		vec2 r = b * vec2(0.5, 0.6);
+		d = min(ellipseDistance(q - c, r), min(ellipseDistance(q - vec2(-c.x, c.y), r), ellipseDistance(q - vec2(c.x, -c.y), r)));
+		edgeD = d;
+		if (dashed) {
+			setOctagon(b * vec2(0.84, 1.0));
+			arc = polyDistance(p).y;
+		}
+	}
 	float aa = max(fwidth(d), 1e-4);
+	// Before any branch or discard: derivatives want every pixel of a quad to take them.
+	float edgeAa = max(fwidth(edgeD), 1e-4);
+	float arcStep = max(fwidth(arc), 1e-4);
 	float coverage = clamp(0.5 - d / aa, 0.0, 1.0);
 	if (coverage <= 0.0) discard;
-	float stroke = height * ${(PLATE_STROKE_EM / PLATE_HEIGHT_EM).toFixed(4)} * vShape.x;
+	float stroke = vEm * ${PLATE_STROKE_EM.toFixed(4)} * vShape.x;
 	// A selected plate's border is the accent, and never under 2 px, as the mind map's selection is. A find match's is as thick, in the find colour.
 	float selected = step(0.5, vSelected) * (1.0 - step(1.5, vSelected));
 	float found = step(1.5, vSelected);
@@ -321,8 +484,18 @@ void main() {
 	// An outline thinner than a pixel is drawn a pixel wide and that much fainter,
 	// so a distant plate's border doesn't shimmer as it lands between pixels.
 	float band = max(stroke, aa);
-	float border = smoothstep(-band - aa * 0.5, -band + aa * 0.5, d) * (stroke / band);
+	float border = smoothstep(-band - edgeAa * 0.5, -band + edgeAa * 0.5, edgeD) * (stroke / band);
+	if (dashed) {
+		// The mind map's stroke-dasharray, in ems of text; dashes finer than about two pixels blend to their share of the line.
+		vec2 dash = vEm * (vShape.w < 1.5 ? vec2(${DASH_EM.dashed[0].toFixed(4)}, ${DASH_EM.dashed[1].toFixed(4)}) : vec2(${DASH_EM.dotted[0].toFixed(4)}, ${DASH_EM.dotted[1].toFixed(4)}));
+		float period = dash.x + dash.y;
+		float phase = mod(arc, period);
+		float on = clamp((dash.x - phase) / arcStep + 0.5, 0.0, 1.0) * clamp(phase / arcStep + 0.5, 0.0, 1.0);
+		border *= mix(on, dash.x / period, smoothstep(0.25, 0.5, arcStep / period));
+	}
 	vec3 fill = mix(uFill, vFill.rgb, vFill.a);
+	// Underline and none have no plate of their own: the scene's background, unless a none node's style fills it (inline, as in the mind map).
+	if (shape > ${shapeId("underline")} - 0.5 && (shape < ${shapeId("none")} - 0.5 || vFill.a < 0.5)) fill = uBackground;
 	gl_FragColor = vec4(mix(uBackground, mix(fill, edge, border), vOpacity), coverage);
 	#include <fog_fragment>
 	#include <colorspace_fragment>
@@ -376,7 +549,7 @@ void main() {
 `;
 
 /** Instanced attributes and their widths, for each mesh. */
-const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3, aFill: 4, aShape: 2 } as const;
+const PLATE_ATTRIBUTES = { aCenter: 3, aOpacity: 1, aSize: 2, aColor: 3, aSelected: 1, aRight: 3, aUp: 3, aFill: 4, aShape: 4, aEm: 1 } as const;
 const GLYPH_ATTRIBUTES = { aPlate: 1, aRect: 4, aUv: 4, aRight: 3, aUp: 3, aInk: 4 } as const;
 type PlateAttribute = keyof typeof PLATE_ATTRIBUTES;
 type GlyphAttribute = keyof typeof GLYPH_ATTRIBUTES;
@@ -511,13 +684,15 @@ export class CosmosPlates {
 	}
 
 	/** Lay `text` out on a plate `height` world units tall, its text cut at `maxEm` ems wide and the plate at least `minEm` wide. */
-	shape(text: string, height: number, maxEm: number, minEm = 0): PlateShape {
-		const key = shapeKey(text, height, maxEm, minEm);
+	shape(text: string, height: number, maxEm: number, minEm = 0, topicShape: TopicShape = "rounded-rect"): PlateShape {
+		const key = shapeKey(text, height, maxEm, minEm, topicShape);
 		const known = this.shapes.get(key);
 		if (known !== undefined) return known;
 		const layout = layoutPlate(text, (char) => this.atlas.advance(char), FONT_PX, maxEm * FONT_PX, minEm * FONT_PX);
 		const scale = height / layout.height;
-		const shape: PlateShape = { width: layout.width * scale, height, glyphs: [], pending: true };
+		// A shape is laid out round its text as the mind map's is: its text in the shape's inner box.
+		const box = shapeBox(topicShape, layout.width * scale, height);
+		const shape: PlateShape = { width: box.width, height: box.height, em: height / PLATE_HEIGHT_EM, textX: box.textX, glyphs: [], pending: true };
 		this.shapes.set(key, shape);
 		this.queue.push({ shape, layout, scale });
 		return shape;
@@ -534,7 +709,7 @@ export class CosmosPlates {
 			const glyph = this.atlas.glyph(char);
 			return {
 				page: glyph.page,
-				x: (x + glyph.left + glyph.width / 2) * scale,
+				x: (x + glyph.left + glyph.width / 2) * scale + shape.textX,
 				width: glyph.width * scale,
 				height: ROW_PX * scale,
 				uv: glyph.uv,
@@ -592,6 +767,7 @@ export class CosmosPlates {
 		const plateUp = this.plates.array("aUp");
 		const plateFill = this.plates.array("aFill");
 		const plateShape = this.plates.array("aShape");
+		const plateEm = this.plates.array("aEm");
 		const glyphCursor = this.glyphs.map(() => 0);
 		const glyphArrays = this.glyphs.map((layer) => ({
 			plate: layer.array("aPlate"),
@@ -641,8 +817,11 @@ export class CosmosPlates {
 				plateColor[i * 3 + 1] = outline.g;
 				plateColor[i * 3 + 2] = outline.b;
 				paint(plateFill, i, look.fill);
-				plateShape[i * 2] = look.stroke;
-				plateShape[i * 2 + 1] = look.corner;
+				plateShape[i * 4] = look.stroke;
+				plateShape[i * 4 + 1] = look.corner;
+				plateShape[i * 4 + 2] = PLATE_SHAPE_ID[look.shape];
+				plateShape[i * 4 + 3] = DASH_ID[look.dash];
+				plateEm[i] = node.shape.em;
 				plateSelected[i] = node.selected === true ? 1 : node.found === true ? 2 : 0;
 				axes(plateRight, i, node.frame?.right);
 				axes(plateUp, i, node.frame?.up);
@@ -664,7 +843,7 @@ export class CosmosPlates {
 			}
 		});
 		this.plates.touch("aCenter", "aOpacity");
-		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp", "aFill", "aShape");
+		if (layout) this.plates.touch("aSize", "aColor", "aSelected", "aRight", "aUp", "aFill", "aShape", "aEm");
 		this.plateTexture.value.needsUpdate = true;
 		if (layout) for (const layer of this.glyphs) layer.touch("aPlate", "aRect", "aUv", "aRight", "aUp", "aInk");
 		this.timing[layout ? "layout" : "tick"] = performance.now() - start;

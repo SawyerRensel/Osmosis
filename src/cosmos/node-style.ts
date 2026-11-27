@@ -22,6 +22,13 @@
  * In the other colour modes the theme is left out: the mode's colours stand in
  * for it, so a node with no style of its own looks as it always has.
  *
+ * A node with no shape of its own takes the map's default, `osmosis-styles`
+ * `topicShape`, in every colour mode, as the mind map does
+ * (`style.shape ?? mapSettings.topicShape`). The theme's `topicShape` is not
+ * read: the mind map's map settings always carry a `topicShape` (its default
+ * is `rounded-rect`), so a theme's never reaches a node there either; picking a
+ * theme in the sidebar writes its shape into the frontmatter instead.
+ *
  * Pure logic, no `obsidian` import, so it is unit-tested.
  */
 
@@ -44,6 +51,7 @@ import { isDefaultTheme } from "../themes";
 import { resolveBoundary, type ResolvedBoundary } from "../boundary";
 import type { OsmosisNode } from "../types";
 import { PLATE_RADIUS } from "./plates";
+import { isTopicShape, type BorderDash } from "./plate-shapes";
 
 /** A note's node → its resolved style, or undefined for a node with none. */
 export type StyleOf = (node: OsmosisNode) => NodeStyle | undefined;
@@ -67,7 +75,9 @@ export function noteStyleReader(
 	if (fm === undefined) return null;
 	const base = isStyle(fm.baseStyle) ? fm.baseStyle : undefined;
 	const theme = themes === undefined ? undefined : noteTheme(fm, themes);
-	if (fm.styles === undefined && fm.activeVariant === undefined && base === undefined && theme === undefined) return null;
+	// The map's default shape, for a node whose style names none. The mind map's own default (rounded-rect) is Cosmos's too.
+	const mapShape = isTopicShape(fm.topicShape) && fm.topicShape !== "rounded-rect" ? fm.topicShape : undefined;
+	if (fm.styles === undefined && fm.activeVariant === undefined && base === undefined && theme === undefined && mapShape === undefined) return null;
 	// Tree paths are the last resort of the Local lookup; built once, on first need.
 	let paths: Map<string, string> | null = null;
 	return (node) => {
@@ -75,12 +85,13 @@ export function noteStyleReader(
 		const local = valid(lookupNodeStyleByPath(fm, node.id, path, node.blockId));
 		const classStyle = valid(lookupClassStyle(fm, local?.class, globalClasses));
 		const variant = valid(lookupVariantStyle(fm, { source: node }));
-		if (local === undefined && classStyle === undefined && variant === undefined && base === undefined && theme === undefined) return undefined;
+		if (local === undefined && classStyle === undefined && variant === undefined && base === undefined && theme === undefined) return mapShape === undefined ? undefined : { shape: mapShape };
 		// The mind map's depth: a heading's level; any other line, and the root, take the theme's base alone.
 		const style = theme !== undefined
 			? resolveNodeStyle(theme, node.type === "heading" ? node.depth : undefined, local, classStyle, variant)
 			: resolveCascade({ local, class: classStyle, variant, theme: base });
-		return Object.keys(style).length > 0 ? style : undefined;
+		const shaped = style.shape === undefined && mapShape !== undefined ? { ...style, shape: mapShape } : style;
+		return Object.keys(shaped).length > 0 ? shaped : undefined;
 	};
 }
 
@@ -121,11 +132,10 @@ function valid(style: NodeStyle | undefined): NodeStyle | undefined {
 }
 
 /**
- * The shapes a 3D plate draws, each as its corner radius (a share of the
- * plate's height). Any other `TopicShape` (ellipse, diamond, cloud, underline,
- * none, …) falls back to the default rounded plate: a plate is a one-line
- * label, and those shapes either need room it doesn't have or, like `none`,
- * would leave text floating with nothing to hide what is behind it.
+ * The rectangles' corner radii, as a share of the plate's height. Every other
+ * shape is drawn by its own outline (`./plate-shapes.ts`), and keeps the
+ * default radius for what still treats it as a box (occlusion holes, the
+ * inline editor).
  */
 export const PLATE_CORNERS: Readonly<Partial<Record<TopicShape, number>>> = {
 	rect: 0,
@@ -149,6 +159,10 @@ export interface NodeLook {
 	stroke: number;
 	/** Corner radius, as a share of the plate's height (`PLATE_CORNERS`). */
 	corner: number;
+	/** The topic shape drawn: the style's, else the map's default (`noteStyleReader`), else rounded-rect. */
+	shape: TopicShape;
+	/** The border's dash; solid for none (`border.style: none` is a `stroke` of 0). */
+	dash: BorderDash;
 	/** The style's custom width, in mind-map px (`NodeStyle.width`), for the node-width ticket to draw. */
 	width: number | null;
 	/** The style's branch line, for the tapered-edges ticket to draw. */
@@ -167,6 +181,8 @@ export const DEFAULT_LOOK: Readonly<NodeLook> = Object.freeze({
 	text: null,
 	stroke: 1,
 	corner: PLATE_RADIUS,
+	shape: "rounded-rect",
+	dash: "solid",
 	width: null,
 	branchLine: null,
 	boundary: null,
@@ -178,13 +194,19 @@ export function nodeLook(style: NodeStyle | undefined): NodeLook {
 	const border = isStyle(style.border) ? style.border : undefined;
 	const text = isStyle(style.text) ? style.text : undefined;
 	const width = border?.width;
-	const stroke = border?.style === "none" ? 0 : typeof width === "number" && Number.isFinite(width) ? Math.min(Math.max(width, 0), MAX_STROKE) : 1;
+	const shape = isTopicShape(style.shape) ? style.shape : "rounded-rect";
+	const borderColor = cssColor(border?.color);
+	// The `none` shape has no outline unless the style gives it a colour, as the mind map's stylesheet draws it.
+	const hidden = border?.style === "none" || (shape === "none" && borderColor === null);
+	const stroke = hidden ? 0 : typeof width === "number" && Number.isFinite(width) ? Math.min(Math.max(width, 0), MAX_STROKE) : 1;
 	return {
 		fill: cssColor(style.fill),
-		border: cssColor(border?.color),
+		border: borderColor,
 		text: cssColor(text?.color),
 		stroke,
-		corner: (style.shape !== undefined ? PLATE_CORNERS[style.shape] : undefined) ?? PLATE_RADIUS,
+		corner: PLATE_CORNERS[shape] ?? PLATE_RADIUS,
+		shape,
+		dash: border?.style === "dashed" || border?.style === "dotted" ? border.style : "solid",
 		width: typeof style.width === "number" && style.width > 0 ? style.width : null,
 		branchLine: isStyle(style.branchLine) ? style.branchLine : null,
 		boundary: boundaryLook(style),

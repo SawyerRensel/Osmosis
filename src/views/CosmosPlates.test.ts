@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { Color, type DataTexture, type InstancedBufferAttribute, type Mesh, type InstancedBufferGeometry } from "three";
 import { GLYPH_RENDER_ORDER, CosmosPlates, type PlateSource } from "./CosmosPlates";
+import { DEFAULT_LOOK } from "../cosmos/node-style";
+import { DASH_ID, PLATE_SHAPE_ID } from "../cosmos/plate-shapes";
+import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../cosmos/plates";
 
 // Node has no canvas: every character is 24 px wide and drawing does nothing.
 vi.stubGlobal("createEl", () => ({
@@ -22,6 +25,26 @@ describe("CosmosPlates (T78)", () => {
 		const first = plates.shape("Halyard", 5, 20);
 		expect(plates.shape("Halyard", 5, 20)).toBe(first);
 		expect(plates.shape("Halyard", 12, 20)).not.toBe(first);
+		plates.dispose();
+	});
+
+	it("lays a shaped plate out round its text, as the mind map sizes the shape (T130)", () => {
+		const plates = new CosmosPlates(COLORS);
+		const plain = plates.shape("Jib", 5, 20);
+		const diamond = plates.shape("Jib", 5, 20, 0, "diamond");
+		expect(diamond).not.toBe(plain);
+		expect(diamond.width).toBeCloseTo(plain.width * 2);
+		expect(diamond.height).toBeCloseTo(10);
+		// Text keeps its size: the outline and dashes are sized by it.
+		expect(diamond.em).toBe(plain.em);
+		const triangle = plates.shape("Jib", 5, 20, 0, "triangle");
+		expect(triangle.textX).toBeLessThan(0);
+		plates.write([plain, triangle].map((shape) => ({ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape, look: { ...DEFAULT_LOOK, shape: shape === triangle ? "triangle" : "rounded-rect", dash: "dotted" } })), true);
+		// The glyphs of the triangle's text sit left, in its inner box.
+		expect(triangle.glyphs[0]!.x).toBeCloseTo(plain.glyphs[0]!.x + triangle.textX);
+		const shapes = attribute(meshes(plates)[0]!, "aShape");
+		expect(Array.from(shapes.slice(0, 8))).toEqual([1, PLATE_RADIUS, PLATE_SHAPE_ID["rounded-rect"], DASH_ID.dotted, 1, PLATE_RADIUS, PLATE_SHAPE_ID.triangle, DASH_ID.dotted].map(Math.fround));
+		expect(attribute(meshes(plates)[0]!, "aEm")[1]).toBeCloseTo(5 / PLATE_HEIGHT_EM);
 		plates.dispose();
 	});
 

@@ -120,8 +120,8 @@ export class GlyphPacker {
 }
 
 /** The cache key of a plate laid out from `text` at this height and these widths (`CosmosPlates.shape`). */
-export function shapeKey(text: string, height: number, maxEm: number, minEm: number): string {
-	return `${height}|${maxEm}|${minEm}|${text}`;
+export function shapeKey(text: string, height: number, maxEm: number, minEm: number, shape = "rounded-rect"): string {
+	return `${shape}|${height}|${maxEm}|${minEm}|${text}`;
 }
 
 /**

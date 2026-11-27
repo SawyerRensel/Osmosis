@@ -4873,6 +4873,66 @@ body.osmosis-hide-navbar .mobile-navbar {
 	box-shadow: inset 0 0 0 0.25em var(--interactive-accent) !important;
 }
 
+/*
+ * A panel in any shape but a solid rectangle (CosmosNear.outline, T130): its
+ * outline is an SVG path under the text, not the inset shadow, so it can
+ * follow the shape and take the mind map's dashes. The stroke is drawn twice
+ * as wide and its outer half clipped, as the inset shadow sits inside the box.
+ * After the selection, find and link-target rules, so this shadow rule wins.
+ */
+.osmosis-cosmos-near-panel.is-outlined {
+	box-shadow: none !important;
+	/* The SVG's z-index: -1 puts it under the text, inside the panel. */
+	isolation: isolate;
+}
+
+.osmosis-cosmos-near-shape {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	z-index: -1;
+	overflow: hidden;
+	pointer-events: none;
+}
+
+.osmosis-cosmos-near-shape > path {
+	fill: var(--osmosis-near-fill, none);
+	stroke: var(--osmosis-near-stroke, none);
+	stroke-width: var(--osmosis-near-stroke-width, 0);
+	stroke-dasharray: var(--osmosis-near-dash, none);
+}
+
+/* The selection and find borders follow the shape, solid, as the mind map's do (2px, doubled for the clip). */
+.osmosis-cosmos-near-panel.is-selected > .osmosis-cosmos-near-shape > path {
+	stroke: var(--interactive-accent);
+	stroke-width: 4px;
+	stroke-dasharray: none;
+}
+
+.osmosis-cosmos-near-panel.is-found:not(.is-selected) > .osmosis-cosmos-near-shape > path {
+	stroke: var(--color-yellow);
+	stroke-width: 4px;
+	stroke-dasharray: none;
+}
+
+.osmosis-cosmos-near-panel.is-link-target > .osmosis-cosmos-near-shape > path {
+	stroke: var(--interactive-accent);
+	stroke-width: 0.5em;
+	stroke-dasharray: none;
+}
+
+/* A shape's fill is its path's, and its text is centred in the shape's inner box (the padding is set inline). */
+.osmosis-cosmos-near-lens.is-shaped > .osmosis-cosmos-near-fill {
+	display: none;
+}
+
+.osmosis-cosmos-near-lens.is-shaped > .osmosis-cosmos-near-panel {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+}
+
 /* The rubber band of a Shift+drag box select in Cosmos (CosmosScene.box). */
 .osmosis-cosmos-box {
 	position: fixed;

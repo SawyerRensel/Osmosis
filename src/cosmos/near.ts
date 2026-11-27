@@ -9,6 +9,10 @@ import { isLineGroup } from "../line-groups";
 import { stripTrailingBlockId } from "../block-id";
 import type { GraphNode } from "./model";
 import { PLATE_PAD_X_EM } from "./plates";
+import { nodeLook } from "./node-style";
+import { shapeBox } from "./plate-shapes";
+import { getShapeInsets } from "../shapes";
+import type { TopicShape } from "../styles";
 
 /** Attachments shown live up close: images, audio and video. PDFs and the rest stay plates. */
 const MEDIA_EXTENSIONS = new Set([
@@ -339,8 +343,17 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		// An unasked back still shows its placeholder row.
 		height = CARD_CHROME_Y + sides.reduce((sum, side) => sum + Math.max(PROSE_ROW, side.height) + (side.blocks + 1) * CARD_BLOCK_GAP, 0);
 	}
-	return {
-		width: rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X),
-		height: height + 2 * PAD_Y,
-	};
+	// A shaped node's panel is its content inflated to hold it in the shape's inner box, as its plate is (`shapeBox`).
+	const box = shapeBox(nodeLook(node.style).shape, rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X), height + 2 * PAD_Y);
+	return { width: box.width, height: box.height };
+}
+
+/**
+ * A shaped panel's padding in ems (top, right, bottom, left): the
+ * stylesheet's, plus the shape's insets of its box (`panelBoxEm`), so its text
+ * sits in the shape's inner box as the mind map's does (`getShapeInsets`).
+ */
+export function shapedPanelPadEm(shape: TopicShape, box: { width: number; height: number }): [number, number, number, number] {
+	const insets = getShapeInsets(shape);
+	return [PAD_Y + insets.top * box.height, PAD_X + insets.right * box.width, PAD_Y + insets.bottom * box.height, PAD_X + insets.left * box.width];
 }

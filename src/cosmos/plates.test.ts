@@ -116,6 +116,8 @@ describe("plate layout cache and slicing (T78)", () => {
 		expect(shapeKey("Mooring", 5, 20, 0)).not.toBe(shapeKey("Mooring", 5, 30, 0));
 		expect(shapeKey("Mooring", 5, 20, 0)).not.toBe(shapeKey("Mooring", 5, 20, 8));
 		expect(shapeKey("a|b", 5, 20, 0)).not.toBe(shapeKey("b", 5, 20, 0));
+		expect(shapeKey("Mooring", 5, 20, 0)).toBe(shapeKey("Mooring", 5, 20, 0, "rounded-rect"));
+		expect(shapeKey("Mooring", 5, 20, 0, "diamond")).not.toBe(shapeKey("Mooring", 5, 20, 0));
 	});
 
 	it("keeps every cached layout until the cache outgrows its limit, then only the live ones", () => {

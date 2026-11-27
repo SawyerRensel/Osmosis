@@ -40,6 +40,30 @@ describe("noteStyleReader", () => {
 		expect(noteStyleReader({ "osmosis-styles": ["object Object"] }, root)).toBeNull();
 	});
 
+	it("gives unstyled nodes the map's default shape, and a node's own shape wins", () => {
+		const { root, byText } = lines(MD);
+		const styleOf = noteStyleReader({ "osmosis-styles": { topicShape: "hexagon", styles: { "^os-a1b2c3": { shape: "diamond" }, "^my-anchor": { fill: "#112233" } } } }, root)!;
+		expect(styleOf(byText("Halyard"))).toEqual({ shape: "diamond" });
+		expect(styleOf(byText("Sheet"))).toEqual({ fill: "#112233", shape: "hexagon" });
+		expect(styleOf(byText("Shroud"))).toEqual({ shape: "hexagon" });
+		expect(styleOf(root)).toEqual({ shape: "hexagon" });
+		// The default (rounded-rect) or a shape the mind map doesn't know styles nothing.
+		expect(noteStyleReader({ "osmosis-styles": { topicShape: "rounded-rect" } }, root)).toBeNull();
+		expect(noteStyleReader({ "osmosis-styles": { topicShape: "blob" } }, root)).toBeNull();
+	});
+
+	it("puts the map's default shape under a theme depth's shape, as the mind map does", () => {
+		const { root, byText } = lines(MD);
+		const theme: ThemeDefinition = { name: "Harbour", base: {}, depths: { "1": { shape: "pill" } }, topicShape: "cloud" };
+		const themes: ThemeLookup = (name) => (name === "Harbour" ? theme : undefined);
+		const styleOf = noteStyleReader({ "osmosis-styles": { theme: "Harbour", topicShape: "octagon" } }, root, undefined, themes)!;
+		expect(styleOf(byText("Rigging"))?.shape).toBe("pill");
+		expect(styleOf(byText("Stay"))?.shape).toBe("octagon");
+		// The theme's own topicShape never reaches a node (the mind map's map settings always carry one).
+		const noMapShape = noteStyleReader({ "osmosis-styles": { theme: "Harbour" } }, root, undefined, themes)!;
+		expect(noMapShape(byText("Stay"))?.shape).toBeUndefined();
+	});
+
 	it("finds a node by its stamped ^os- block ID and by a user's own block ID", () => {
 		const { root, byText } = lines(MD);
 		const styleOf = noteStyleReader({ "osmosis-styles": { styles: { "^os-a1b2c3": { fill: "#112233" }, "^my-anchor": { text: { color: "#ff0000" } } } } }, root)!;
@@ -173,7 +197,7 @@ describe("nodeLook", () => {
 
 	it("reads fill, border and text colours, width and branch line", () => {
 		const look = nodeLook({ fill: "#112233", border: { color: "rgb(1, 2, 3)", width: 3 }, text: { color: "navy" }, width: 320, branchLine: { color: "#444444", taper: "grow" } });
-		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, width: 320, branchLine: { color: "#444444", taper: "grow" }, boundary: null });
+		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, shape: "rounded-rect", dash: "solid", width: 320, branchLine: { color: "#444444", taper: "grow" }, boundary: null });
 	});
 
 	it("resolves the boundary, tinted by the node's fill, with colours WebGL can draw", () => {
@@ -198,13 +222,29 @@ describe("nodeLook", () => {
 		expect(nodeLook({ border: { style: "dashed" } }).stroke).toBe(1);
 	});
 
-	it("draws rect, rounded-rect and pill, and falls back to the default plate for any other shape", () => {
+	it("draws every shape, with corners for rect, rounded-rect and pill, and the default plate for an unknown one", () => {
 		expect(nodeLook({ shape: "rect" }).corner).toBe(0);
 		expect(nodeLook({ shape: "rounded-rect" }).corner).toBe(PLATE_RADIUS);
 		expect(nodeLook({ shape: "pill" }).corner).toBe(0.5);
-		for (const shape of ["ellipse", "diamond", "cloud", "underline", "none"] as const) expect(nodeLook({ shape }).corner).toBe(PLATE_RADIUS);
+		for (const shape of ["ellipse", "circle", "diamond", "hexagon", "octagon", "triangle", "parallelogram", "trapezoid", "cloud", "arrow-right", "underline"] as const) {
+			expect(nodeLook({ shape }).shape).toBe(shape);
+			expect(nodeLook({ shape }).corner).toBe(PLATE_RADIUS);
+		}
 		// An unknown string from hand-written YAML.
+		expect(nodeLook({ shape: "blob" as never }).shape).toBe("rounded-rect");
 		expect(nodeLook({ shape: "blob" as never }).corner).toBe(PLATE_RADIUS);
+	});
+
+	it("reads dashed and dotted borders; solid and none stay solid", () => {
+		expect(nodeLook({ border: { style: "dashed" } }).dash).toBe("dashed");
+		expect(nodeLook({ border: { style: "dotted", width: 2 } })).toMatchObject({ dash: "dotted", stroke: 2 });
+		expect(nodeLook({ border: { style: "solid" } }).dash).toBe("solid");
+		expect(nodeLook({ border: { style: "none" } })).toMatchObject({ dash: "solid", stroke: 0 });
+	});
+
+	it("outlines the none shape only when its style gives a border colour, as the mind map does", () => {
+		expect(nodeLook({ shape: "none" }).stroke).toBe(0);
+		expect(nodeLook({ shape: "none", border: { color: "teal", style: "dashed" } })).toMatchObject({ stroke: 1, dash: "dashed" });
 	});
 });
 

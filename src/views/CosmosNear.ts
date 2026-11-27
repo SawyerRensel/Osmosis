@@ -32,6 +32,14 @@
  *   (`../cosmos/raster.ts`). Moving the camera then moves and scales layers
  *   without repainting their text; the veil fades on its own layer, and a
  *   mask is a mask layer of its own. Only leaving the raster band repaints.
+ * - **Shapes (T130):** a panel in any shape but a solid rectangle draws its
+ *   outline (and, for a shape, its fill) as an SVG path under its text, the
+ *   mind map's geometry (`shapePath`), and a shape clips the panel to the path,
+ *   so the veil and text follow it too. An SVG stroke follows any path and
+ *   takes the mind map's `stroke-dasharray`, which neither a CSS border nor
+ *   the inset shadow can; it is drawn twice as wide and clipped to its inner
+ *   half, as the inset shadow sits inside the box. Padding holds the text in
+ *   the shape's inner box (`shapedPanelPadEm`).
  * - **Lifecycle:** each panel renders into its own `Component`, unloaded when
  *   the panel goes. Video and audio pause the moment their node leaves the
  *   tier, and release their media when the panel is removed.
@@ -47,7 +55,8 @@ import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRe
 import type { GraphNode } from "../cosmos/model";
 import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelHalfNdc, panelScale, type NearProbe, type NearTierSettings } from "../cosmos/lod";
 import { editorAnchor, type EditorPlace } from "../cosmos/edit";
-import { MIN_STYLE_WIDTH_PX, nearMarkdown, panelBoxEm, panelWidthRule, styleWidthEm } from "../cosmos/near";
+import { MIN_STYLE_WIDTH_PX, nearMarkdown, panelBoxEm, panelWidthRule, shapedPanelPadEm, styleWidthEm } from "../cosmos/near";
+import { DASH_EM, isBareShape, isRectShape, shapePath } from "../cosmos/plate-shapes";
 import { plateVisibility } from "../cosmos/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS, PLATE_STROKE_EM } from "../cosmos/plates";
 import type { NodeLook } from "../cosmos/node-style";
@@ -150,6 +159,10 @@ interface Panel {
 	raster: number;
 	/** The plate's corner radius, in px before any scale. */
 	radius: number;
+	/** The shape's outline (`shapePath`), for any panel but a solid rectangle; null for one. */
+	outline: SVGPathElement | null;
+	/** The path last written to `outline`, to skip unchanged writes. */
+	outlinePath: string;
 	/** The cross-fade opacity, lens transform and veil opacity last written, to skip unchanged writes. */
 	shownFade: number;
 	lensTransform: string;
@@ -562,23 +575,65 @@ export class CosmosNear {
 	private paint(panel: Panel): void {
 		const { look, color } = panel.node;
 		const stroke = (look?.stroke ?? 1) * PLATE_STROKE_EM;
+		const topicShape = look?.shape ?? "rounded-rect";
+		const dash = look?.dash ?? "solid";
+		const bare = isBareShape(topicShape);
+		// A shape (not a rectangle, underline or none) is drawn and clipped by its path; its text is padded into the shape's inner box.
+		const shaped = !isRectShape(topicShape) && !bare;
+		const box = shaped ? panelBoxEm(panel.node.graph) : null;
+		const pad = box === null ? null : shapedPanelPadEm(topicShape, box);
 		// A custom width is the panel's exact width; a code block fitting its lines caps it there; every other node keeps the stylesheet's 20em.
+		// A shape's padding is added to the cap, so its text wraps where an unshaped panel's would.
 		const rule = panelWidthRule(panel.node.graph);
+		const padX = pad === null ? 0 : pad[1] + pad[3] - 0.8;
 		const width: Record<string, string> =
 			panel.preview !== null
 				? { width: `${panel.preview}px`, minWidth: `${panel.preview}px`, maxWidth: `${panel.preview}px` }
-				: { width: rule.kind === "custom" ? `${rule.em}em` : "", minWidth: `${panel.node.shape.width * this.pxPerUnit}px`, maxWidth: rule.kind === "default" ? "" : `${rule.em}em` };
-		panel.radius = panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
+				: {
+					width: rule.kind === "custom" ? `${box?.width ?? rule.em}em` : "",
+					minWidth: `${panel.node.shape.width * this.pxPerUnit}px`,
+					maxWidth: rule.kind === "custom" ? `${box?.width ?? rule.em}em` : rule.kind === "default" && pad === null ? "" : `${rule.em + padX}em`,
+				};
+		panel.radius = bare ? 0 : panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
+		// A circle's box stays square, as the mind map's is.
+		const minHeight = topicShape === "circle" ? `max(${panel.node.shape.height * this.pxPerUnit}px, ${Math.max(box?.width ?? 0, box?.height ?? 0)}em)` : `${panel.node.shape.height * this.pxPerUnit}px`;
 		panel.box.setCssStyles({
 			...width,
+			...(topicShape === "circle" && panel.preview === null ? { minWidth: minHeight } : {}),
+			minHeight: shaped ? minHeight : "",
+			padding: pad === null ? "" : pad.map((em) => `${em}em`).join(" "),
 			borderRadius: `${panel.radius}px`,
 			boxShadow: stroke === 0 ? "none" : `inset 0 0 0 ${stroke}em ${look?.border ?? color.getStyle()}`,
+			clipPath: "",
 		});
-		// The fill is under the box, in the lens's own space (see `createPanel`).
-		panel.fill.setCssStyles({ backgroundColor: look?.fill ?? "" });
+		// The fill is under the box, in the lens's own space (see `createPanel`). A shape's is its path's;
+		// underline and none have none of their own (the background), unless a none node's style fills it.
+		const styleFill = look?.fill ?? null;
+		const fill = bare ? (topicShape === "none" && styleFill !== null ? styleFill : "var(--background-primary)") : styleFill ?? "";
+		panel.fill.setCssStyles({ backgroundColor: fill });
+		panel.lens.classList.toggle("is-shaped", shaped);
+		this.outline(panel, !isRectShape(topicShape) || dash !== "solid", {
+			"--osmosis-near-fill": shaped ? styleFill ?? "var(--background-secondary)" : "none",
+			"--osmosis-near-stroke": stroke === 0 ? "none" : look?.border ?? color.getStyle(),
+			"--osmosis-near-stroke-width": `${2 * stroke}em`,
+			"--osmosis-near-dash": dash === "solid" ? "none" : DASH_EM[dash].map((em) => `${em}em`).join(" "),
+		});
 		this.sizeLens(panel);
 		// On the rendered Markdown itself, as the mind map sets it.
 		panel.body.setCssStyles({ color: look?.text ?? "" });
+	}
+
+	/** Give the panel its SVG outline (`drawn`), styled by `props`, or take it away; `sizeLens` writes its path. */
+	private outline(panel: Panel, drawn: boolean, props: Record<string, string>): void {
+		panel.box.classList.toggle("is-outlined", drawn);
+		panel.outlinePath = "";
+		if (!drawn) {
+			panel.outline?.ownerSVGElement?.remove();
+			panel.outline = null;
+			return;
+		}
+		panel.outline ??= panel.box.createSvg("svg", { cls: "osmosis-cosmos-near-shape" }).createSvg("path");
+		panel.outline.setCssProps(props);
 	}
 
 	/** The view went into the background: nothing keeps playing there. */
@@ -627,7 +682,7 @@ export class CosmosNear {
 			anchor.setCssStyles({ pointerEvents: "none" });
 		}
 		const handle = box.createDiv({ cls: "osmosis-cosmos-near-handle" });
-		const panel: Panel = { object, tilted: this.tilted, lens, fill, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", raster: this.tilted ? 1 : 0, radius: 0, shownFade: 0, lensTransform: "", veilOpacity: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
+		const panel: Panel = { object, tilted: this.tilted, lens, fill, box, body, veil, component: new Component(), markdown: "", node, rendered: false, fade: 0, target: 1, width: 0, height: 0, mask: "", raster: this.tilted ? 1 : 0, radius: 0, outline: null, outlinePath: "", shownFade: 0, lensTransform: "", veilOpacity: "", diagram: "", depth: Infinity, occluders: [], handle, preview: null };
 		this.boxes.set(box, panel);
 		lens.classList.toggle("is-editing", node.id === this.editing);
 		this.markResizable(panel);
@@ -707,6 +762,15 @@ export class CosmosNear {
 			height: panel.height > 0 ? `${panel.height * raster}px` : "",
 		});
 		panel.fill.setCssStyles({ borderRadius: `${panel.radius * raster}px` });
+		const outline = panel.outline;
+		if (outline === null || panel.width <= 0 || panel.height <= 0) return;
+		const topicShape = panel.node.look?.shape ?? "rounded-rect";
+		const path = shapePath(topicShape, panel.width, panel.height, panel.radius);
+		if (path === panel.outlinePath) return;
+		panel.outlinePath = path;
+		outline.setAttribute("d", path);
+		// A shape clips its panel (text, veil and all) to its outline; a rectangle's corners already do.
+		if (panel.lens.classList.contains("is-shaped")) panel.box.setCssStyles({ clipPath: `path("${path}")` });
 	}
 
 	private setLensTransform(panel: Panel, transform: string): void {

@@ -752,7 +752,8 @@ export class CosmosScene {
 			previous.delete(graph.id);
 			const look = nodeLook(graph.style);
 			// A new width (a style, or a code block's longest line) lays the plate out again.
-			const rewidth = look.width !== (existing.look?.width ?? null) || plateWidthEm(existing.graph)?.minEm !== plateWidthEm(graph)?.minEm;
+			// So does a new shape: a shape is laid out round its text (`shapeBox`).
+			const rewidth = look.width !== (existing.look?.width ?? null) || look.shape !== (existing.look?.shape ?? "rounded-rect") || plateWidthEm(existing.graph)?.minEm !== plateWidthEm(graph)?.minEm;
 			const relabel = rewidth || this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
 			existing.graph = graph;
 			existing.color.setStyle(this.colorOf(graph));
@@ -1877,13 +1878,14 @@ export class CosmosScene {
 		this.container.empty();
 	}
 
-	/** Lay a node's label out on its plate: note titles large, every other node's first words small. */
+	/** Lay a node's label out on its plate, in its style's shape: note titles large, every other node's first words small. */
 	private shapeFor(graph: GraphNode): PlateShape {
 		const isCore = graph.kind === "note";
+		const shape = nodeLook(graph.style).shape;
 		// A line with a custom width, or a code block fitting its lines, has a plate as wide as its panel.
 		const width = graph.kind === "line" ? plateWidthEm(graph) : null;
-		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT, width.textMaxEm, width.minEm);
-		return this.plates.shape(this.labelText(graph), isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT, isCore ? CORE_PLATE_MAX_EM : LINE_PLATE_MAX_EM);
+		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT, width.textMaxEm, width.minEm, shape);
+		return this.plates.shape(this.labelText(graph), isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT, isCore ? CORE_PLATE_MAX_EM : LINE_PLATE_MAX_EM, 0, shape);
 	}
 
 	private labelText(node: GraphNode): string {

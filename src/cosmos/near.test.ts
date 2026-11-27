@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, plateWidthEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, plateWidthEm, shapedPanelPadEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
 import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
@@ -355,5 +355,27 @@ describe("nearMarkdown for a line group (T75)", () => {
 		expect(nearMarkdown(line("![[cover.png]]"))).toBe("![[cover.png]]");
 		expect(nearMarkdown(line("- Object ![[cover.png|314]] ^os-a", "Object ![[cover.png|314]]"))).toBe("- Object ![[cover.png|314]] ^os-a");
 		expect(nearMarkdown(line("- See ![[Knots]]", "See ![[Knots]]"))).toBe("- See [[Knots]]");
+	});
+});
+
+describe("shaped panels (T130)", () => {
+	it("inflates a shaped node's panel box as its plate is", () => {
+		const plain = panelBoxEm(line("- Clove hitch"))!;
+		const diamond = panelBoxEm({ ...line("- Clove hitch"), style: { shape: "diamond" } })!;
+		expect(diamond.width).toBeCloseTo(plain.width * 2);
+		expect(diamond.height).toBeCloseTo(plain.height * 2);
+		const circle = panelBoxEm({ ...line("- Clove hitch"), style: { shape: "circle" } })!;
+		expect(circle.width).toBe(circle.height);
+	});
+
+	it("pads a shaped panel's text into the shape's inner box", () => {
+		// Diamond: a quarter of the box each side, plus the stylesheet's padding.
+		const [top, right, bottom, left] = shapedPanelPadEm("diamond", { width: 20, height: 4 });
+		expect(top).toBeCloseTo(0.25 + 1);
+		expect(bottom).toBeCloseTo(top);
+		expect(left).toBeCloseTo(0.4 + 5);
+		expect(right).toBeCloseTo(left);
+		const triangle = shapedPanelPadEm("triangle", { width: 20, height: 4 });
+		expect(triangle[1]).toBeGreaterThan(triangle[3]);
 	});
 });
