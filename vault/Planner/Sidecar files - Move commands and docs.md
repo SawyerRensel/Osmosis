@@ -155,3 +155,45 @@ Code commit `bd6dba2` on `batch/17-sidecars-cosmos-styles`.
 - Whether Obsidian's `stringifyYaml` re-serializes a note's other properties differently from `processFrontMatter`. It should not, since both use the same serializer. The note's frontmatter is rewritten only when it loses or gains data keys.
 - **Mind map undo across a move:** a style edit recorded against the sidecar (`processFrontMatterTracked`) and undone after *Move data into note* has trashed that sidecar is not handled.
 - **Race:** a review written during a folder move, to a note whose sidecar has not moved yet, could create a second sidecar in the new folder (the old one then lands as `<hash>-1`). The window is the duration of the renames, after a flush.
+
+## Fix round 1: most recent copy wins (awaiting manual test)
+
+Code commit `6e9b2b4`. Sawyer passed the first test and then changed the requirement: when a note has data in both places, a move keeps the most recent copy, not the sidecar's.
+
+### Approach
+- New pure `mergeMostRecent(note, headerFences, sidecar, times)` in `src/store/sidecar-move.ts`. Both plans build the result from it, and `planToSidecar` / `planIntoNote` now take `times: FileTimes` (`{note, sidecar}` mtimes). `DataMover` passes `TFile.stat.mtime`.
+- Each entry is split into its **cards** (line card: the whole entry, or one per group block when occluded; fence: the flat own card, `r:`, `cN:`) and the **rest** (`exclude`, shape sets). Each card is taken from its winning copy. The rest comes from the copy holding the entry's latest review.
+- `check` now compares the files the move writes with the merge result, so `MoveCheckError` still means that a card would not read as its winning copy, and nothing is written.
+
+### Decisions worth remembering
+- **Cards** are compared on `lastReview`, to the second. A reviewed copy beats one that was never reviewed. A **tie**, including two copies that were never reviewed, goes to the **sidecar**, because that is what Osmosis reads today, so a tie changes nothing on screen. A card that only one copy has is kept. A schedule that has no `lastReview` counts as never reviewed.
+- **The flags `disabled` and `buriedUntil` travel with the card's winning copy**, because they belong to that card's entry. A suspend or bury leaves no timestamp, so a card's flags cannot be dated on their own.
+- **Fence `exclude` and occlusion shapes (T133) follow the copy holding the fence's latest review of any card**, not "sidecar wins". Shapes define which `cN` cards exist and are what those schedules were studied against. Taking them from the copy that was studied last keeps masks and schedules together. Shapes cannot follow one card's winner because a fence's cards can have mixed winners. Occluded line cards' `occlude` sets follow the same rule. When one copy of a line card is occluded and the other is not, the copy with the later review is taken whole.
+- **The note's copy of a fence** is its own `osmosis-fences` entry if the note has one, otherwise the header. This matches the read rule.
+- **Styles**: the whole `osmosis-styles` set comes from the file with the later mtime. A tie goes to the sidecar. If only one file has styles, that file's set is used. During a retry the mover keeps the pre-move mtime of the file it already wrote (the sidecar for *to sidecar*, the note for *into note*), so the move's own write does not count as an edit.
+- **Into note** rewrites only the headers of fences that have an entry in the sidecar or in the note's `osmosis-fences`. A header that only the note had stays byte for byte.
+
+### Reads were investigated and left as sidecar-first
+Changing `NoteData.frontmatter` / `overlayFenceCards` to most-recent-wins would be wrong while writes go to the sidecar (every note that has a sidecar is in sidecar mode):
+- Suspending, burying or resetting a card writes the sidecar copy and leaves no review date. If the note's copy had a later review, the read would keep showing the note's copy, and the toggle would look as if it did nothing.
+- Styles by mtime would flip back to the note's stale set every time the note's text was edited, which bumps the note's mtime.
+- Cost: a per-card timestamp compare on every frontmatter read, plus header-versus-entry for each fence on every sync. That is cheap, but not free on a hot path.
+
+The only time the sidecar's copy is not the newer one is when data arrives from outside Osmosis: Sync, hand edits, or a `-1` orphan matched back. Settling that at move time is the right place. A follow-up could offer a "merge" command for such notes.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/store/sidecar-move.ts` | `FileTimes`, `mergeMostRecent` (with the cut/merge helpers); both plans take `times` and check against the merge; `mergeEntries` removed |
+| `src/store/DataMover.ts` | Passes mtimes, taken before its own write for retries |
+| `src/store/sidecar-move.test.ts` | Two old sidecar-wins tests rewritten; new `mergeMostRecent` suite (newer in note, newer in sidecar, tie to the second, reviewed vs never, one-sided cards, occluded line groups, mixed fence winners with exclude and shapes, note's own entry, styles by mtime both ways) |
+| `docs/reference/data-storage.md` | Merge rule table for moves; reads stay sidecar-first |
+
+### Fixture
+`vault/tests/sidecar/merge/Tide merge.md` (master `e2e/fixtures/sidecar/merge/Tide merge.md`), deck **Testing/Sidecar merge**, with the hand-written sidecar `vault/Osmosis/Schedule/Tide merge.osmosis.md` (gitignored; master `e2e/fixtures/sidecar/merge/schedule-folder/`). Note copies carry reps 11–19, sidecar copies reps 21–29. All dates are in August 2026, except one bury that runs until 2026-12-31. Run through the real planner with js-yaml, *Move data into note* gives: l1 11, l2 22 (no `disabled`), l3 23 (tie), l4 24, bidi own 25, r 15 (still buried), the bidi `exclude` gone, cloze c1 16, c2 28, and fill `#ee5253` (sidecar newer). *To sidecar* gives the same cards, and the styles are `#2e86de` when the note is newer.
+
+### Not verified (needs Obsidian)
+- No occlusion fence in the fixture. Shapes are covered only by unit tests.
+- Real `TFile.stat.mtime` behaviour, including whether Obsidian Sync preserves mtimes.
+- **Known gap:** a reset leaves no review date, so a reset copy loses to the other copy's older review. Stale fence headers in sidecar mode (T126 leaves them) therefore bring back the pre-reset schedule when the note is moved. This is inherent in the rule.
+- Merging two sidecars (a `-1` clash file and the real one) is not handled. Only note-versus-sidecar is merged.
