@@ -194,7 +194,9 @@ Each note keeps its data in one place:
 
 If a note holds data in both places — say, styles written into the note by
 hand after it got a sidecar — Osmosis reads the sidecar first: its entry for a
-card or fence wins, and its `osmosis-styles` replaces the note's whole.
+card or fence wins, and its `osmosis-styles` replaces the note's whole. Moving
+the data settles it the other way, with the most recent copy winning (see
+below).
 
 ### Moving data
 
@@ -207,9 +209,22 @@ Four [commands](commands.md#data-storage) move data between the two:
 | **Move all data to sidecars** | The same for every note that has data, after a confirmation. |
 | **Move all data into notes** | The same for every sidecar, after a confirmation. |
 
-A move keeps exactly what Osmosis reads today, half-moved notes included, and
-checks that every card's schedule, bury, exclusion, and masks come out the
-same before it writes anything. The destination is written first, so an
+When a note has data in both places, a move keeps the most recent copy of
+each thing:
+
+| Data | Winning copy |
+|------|--------------|
+| A card (a line card, or a fence's own card, reverse `r:` or group `c1:`, `c2:` …) | The copy with the later last review, to the second. Its suspension and bury come with it. |
+| A fence's `exclude` and its occlusion masks, and an occluded line card's masks | The copy holding the fence's (or line card's) latest review of any of its cards, so masks stay with the schedules studied against them |
+| `osmosis-styles` | The whole set from the file (note or sidecar) modified last |
+
+A reviewed copy beats one that was never reviewed. A tie, including two
+copies never reviewed, goes to the sidecar. A card only one copy has is kept.
+A reset leaves no review date, so a reset copy loses to the other copy's
+older review.
+
+Before it writes anything, a move checks that every card's schedule, bury,
+exclusion, and masks read back as the winning copy's. The destination is written first, so an
 interrupted move leaves the data in both places, never in neither. Data for a
 fence that no longer exists in the note is dropped on the way back in, and the
 notice says how many.

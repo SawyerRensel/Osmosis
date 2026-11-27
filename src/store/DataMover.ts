@@ -7,14 +7,14 @@
  * **Never lose data.** Each move writes the destination first and only then
  * empties the source, and the plan behind each write checks itself (see
  * `sidecar-move.ts`). Between the two writes both files hold the data, and
- * the sidecar winning on read makes that state read exactly like the old one.
+ * a re-run merges them the same way (most recent copy wins, `sidecar-move.ts`).
  * A source that changed while the move ran is not emptied: the move re-plans
  * from the new text, a few times, then gives up with both copies in place.
  */
 import { parseYaml, stringifyYaml, type App, type TFile } from "obsidian";
 import type { NoteData } from "./NoteData";
 import { SIDECAR_KEYS, SIDECAR_SUFFIX, hasSidecarKeys } from "./sidecar";
-import { frontmatterOfText, planIntoNote, planToSidecar, type ToSidecarPlan, type YamlCodec } from "./sidecar-move";
+import { frontmatterOfText, planIntoNote, planToSidecar, type FileTimes, type ToSidecarPlan, type YamlCodec } from "./sidecar-move";
 
 const yaml: YamlCodec = { parse: parseYaml, stringify: stringifyYaml };
 
@@ -54,18 +54,21 @@ export class DataMover {
 	async toSidecar(file: TFile): Promise<MoveOutcome> {
 		const { vault, fileManager } = this.app;
 		await this.flush(file);
+		// Taken before our own write, which must not count as an edit on a retry.
+		const sidecarTime = this.noteData.sidecarOf(file)?.stat.mtime ?? 0;
 		for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
 			const text = await vault.read(file);
+			const times: FileTimes = { note: file.stat.mtime, sidecar: sidecarTime };
 			const existing = this.noteData.sidecarOf(file);
 			const current = existing ? frontmatterOfText(await vault.read(existing), yaml) : undefined;
-			if (!planToSidecar(text, current, yaml).moved) return { kind: "nothing" };
+			if (!planToSidecar(text, current, yaml, times).moved) return { kind: "nothing" };
 
 			const sidecar = existing ?? await this.noteData.ensureSidecar(file);
 			let plan: ToSidecarPlan | null = null;
 			const settled = this.cacheSettled(sidecar);
 			// Planned again on the sidecar as it is now, in case a write landed.
 			await fileManager.processFrontMatter(sidecar, (fm: Record<string, unknown>) => {
-				plan = planToSidecar(text, fm, yaml);
+				plan = planToSidecar(text, fm, yaml, times);
 				for (const key of SIDECAR_KEYS) {
 					if (plan.sidecar[key] === undefined) delete fm[key];
 					else fm[key] = plan.sidecar[key];
@@ -91,16 +94,19 @@ export class DataMover {
 		const { vault, fileManager } = this.app;
 		if (!this.noteData.sidecarOf(file)) return { kind: "nothing" };
 		await this.flush(file);
+		// Taken before our own write, which must not count as an edit on a retry.
+		const noteTime = file.stat.mtime;
 		for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
 			const sidecar = this.noteData.sidecarOf(file);
 			if (!sidecar) return { kind: "nothing" };
 			const sideText = await vault.read(sidecar);
 			const sideData = frontmatterOfText(sideText, yaml);
+			const times: FileTimes = { note: noteTime, sidecar: sidecar.stat.mtime };
 
 			let dropped = 0;
 			const settled = this.cacheSettled(file);
 			await vault.process(file, (data) => {
-				const plan = planIntoNote(data, sideData, yaml);
+				const plan = planIntoNote(data, sideData, yaml, times);
 				dropped = plan.dropped;
 				return plan.note;
 			});
