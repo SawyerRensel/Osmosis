@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import { buildGraph, noteNodeId, type GraphNode } from "./model";
-import { cssColor, DEFAULT_LOOK, nodeLook, noteStyleReader } from "./node-style";
+import { cssColor, DEFAULT_LOOK, mapBackground, nodeLook, noteStyleReader, noteTheme, type ThemeLookup } from "./node-style";
+import type { ThemeDefinition } from "../styles";
 import { PLATE_RADIUS } from "./plates";
 
 const parser = new OsmosisParser();
@@ -99,6 +100,71 @@ describe("noteStyleReader", () => {
 	});
 });
 
+const HARBOUR: ThemeDefinition = {
+	name: "Harbour",
+	base: { fill: "#101010", border: { color: "#333333", width: 1 }, text: { color: "#eeeeee" } },
+	depths: { "1": { fill: "#202020" }, "2": { fill: "#303030", text: { weight: 700 } } },
+	background: "#050505",
+};
+const themes: ThemeLookup = (name) => (name === "Harbour" ? HARBOUR : undefined);
+const THEMED_MD = ["# Rigging", "", "## Lines", "", "- Halyard ^os-a1b2c3", "- Sheet"].join("\n");
+
+describe("noteStyleReader with the mind map theme", () => {
+	const base = HARBOUR.base;
+
+	it("styles every node from the theme's base, and headings from their level's override", () => {
+		const { root, byText } = lines(THEMED_MD);
+		const styleOf = noteStyleReader({ "osmosis-styles": { theme: "Harbour" } }, root, undefined, themes)!;
+		expect(styleOf(byText("Rigging"))).toEqual({ ...base, fill: "#202020" });
+		expect(styleOf(byText("Lines"))).toEqual({ ...base, fill: "#303030", text: { color: "#eeeeee", weight: 700 } });
+		expect(styleOf(byText("Sheet"))).toEqual(base);
+		// The file-name root has no depth: the base alone, as in the mind map.
+		expect(styleOf(root)).toEqual(base);
+	});
+
+	it("lets a node's own style win over the theme, property by property", () => {
+		const { root, byText } = lines(THEMED_MD);
+		const styleOf = noteStyleReader({ "osmosis-styles": { theme: "Harbour", styles: { "^os-a1b2c3": { fill: "#ff0000", text: { weight: 300 } } } } }, root, undefined, themes)!;
+		expect(styleOf(byText("Halyard"))).toEqual({ ...base, fill: "#ff0000", text: { color: "#eeeeee", weight: 300 } });
+	});
+
+	it("merges baseStyle into the theme's base, so a depth's override still beats it", () => {
+		const { root, byText } = lines(THEMED_MD);
+		const styleOf = noteStyleReader({ "osmosis-styles": { theme: "Harbour", baseStyle: { fill: "#999999", text: { color: "#000000" } } } }, root, undefined, themes)!;
+		expect(styleOf(byText("Sheet"))).toEqual({ ...base, fill: "#999999", text: { color: "#000000" } });
+		expect(styleOf(byText("Rigging"))).toEqual({ ...base, fill: "#202020", text: { color: "#000000" } });
+	});
+
+	it("leaves the theme out without a lookup (the other colour modes), and for Default or an unknown name", () => {
+		const { root } = lines(THEMED_MD);
+		expect(noteStyleReader({ "osmosis-styles": { theme: "Harbour" } }, root)).toBeNull();
+		expect(noteStyleReader({ "osmosis-styles": { theme: "Default" } }, root, undefined, themes)).toBeNull();
+		expect(noteStyleReader({ "osmosis-styles": { theme: "Lighthouse" } }, root, undefined, themes)).toBeNull();
+	});
+
+	it("noteTheme is undefined for no theme and no baseStyle, and baseStyle alone otherwise", () => {
+		expect(noteTheme({}, themes)).toBeUndefined();
+		expect(noteTheme({ baseStyle: { fill: "#999999" } }, themes)).toEqual({ name: "Default", base: { fill: "#999999" }, depths: {} });
+		// The preset itself is never changed by the merge.
+		noteTheme({ theme: "Harbour", baseStyle: { fill: "#999999" } }, themes);
+		expect(HARBOUR.base.fill).toBe("#101010");
+	});
+});
+
+describe("mapBackground", () => {
+	it("takes the note's own background over its theme's, as the mind map does", () => {
+		expect(mapBackground({ "osmosis-styles": { theme: "Harbour" } }, themes)).toBe("#050505");
+		expect(mapBackground({ "osmosis-styles": { theme: "Harbour", background: "#123456" } }, themes)).toBe("#123456");
+		expect(mapBackground({ "osmosis-styles": { background: "#123456" } }, themes)).toBe("#123456");
+	});
+
+	it("is null with no background, or one WebGL can't draw", () => {
+		expect(mapBackground(undefined, themes)).toBeNull();
+		expect(mapBackground({ "osmosis-styles": { theme: "Default" } }, themes)).toBeNull();
+		expect(mapBackground({ "osmosis-styles": { background: "var(--background-primary)" } }, themes)).toBeNull();
+	});
+});
+
 describe("nodeLook", () => {
 	it("is the default plate for no style", () => {
 		expect(nodeLook(undefined)).toBe(DEFAULT_LOOK);
@@ -185,5 +251,13 @@ describe("buildGraph styles", () => {
 			{ globalClasses: { rope: { border: { color: "#808000" } } } },
 		);
 		expect(node(model.nodes, "Halyard")?.style).toEqual({ border: { color: "#808000" } });
+	});
+
+	it("styles a note's nodes from its mind map theme only when given the theme lookup", () => {
+		const tree = parser.parse("- Halyard", "Rigging.md");
+		const notes = [{ tree, cache: { frontmatter: { "osmosis-styles": { theme: "Harbour" } } } }];
+		expect(buildGraph(notes, () => null).nodes.every((n) => n.style === undefined)).toBe(true);
+		const themed = buildGraph(notes, () => null, { themes });
+		expect(node(themed.nodes, "Halyard")?.style).toEqual(HARBOUR.base);
 	});
 });

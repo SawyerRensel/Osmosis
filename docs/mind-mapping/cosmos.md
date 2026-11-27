@@ -112,5 +112,6 @@ there move the camera as usual and keep Add link armed.
 
 | Setting | Effect |
 |---------|--------|
+| Color by (Show) | What colors the plates. **Mind map style** (the default) draws each note's mind map theme, `baseStyle` and node styles, level by level as the mind map does, and a scene of a single note takes its map background. **Note**, **Memory strength**, **Tag** and **Node type** color the outlines instead, leaving out the themes; a node's own style still wins in every mode. A theme's colored branches are not drawn, as the mind map does not draw them either |
 | Click selects only (Camera) | A click selects a plate without moving the camera |
 | Panel detail, Live panels (Lookdev) | How much text turns into a live panel; kept per device. Panel detail runs ×¼ to ×4, Live panels 4 to 128 (default 24 on desktop, 12 on mobile) |

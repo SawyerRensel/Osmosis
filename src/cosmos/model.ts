@@ -24,7 +24,7 @@ import type { OcclusionSide } from "../study/occlusion-masks";
 import type { NodeStyle } from "../styles";
 import type { OsmosisNode, OsmosisTree } from "../types";
 import { isPanelMedia } from "./near";
-import { noteStyleReader } from "./node-style";
+import { noteStyleReader, type ThemeLookup } from "./node-style";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
 
@@ -52,7 +52,8 @@ export interface GraphNode {
 	root?: boolean;
 	/**
 	 * Note and line nodes: the node's resolved `osmosis-styles` style, as the
-	 * mind map resolves it (`noteStyleReader`). Absent for a node with none.
+	 * mind map resolves it (`noteStyleReader`), its theme included in the *Mind
+	 * map style* colour mode only. Absent for a node with none.
 	 */
 	style?: NodeStyle;
 }
@@ -96,6 +97,8 @@ export interface BuildOptions {
 	contentOnly?: boolean;
 	/** The plugin's global style classes, for nodes whose style names one (`noteStyleReader`). */
 	globalClasses?: Record<string, NodeStyle>;
+	/** The *Mind map style* colour mode only: finds each note's mind map theme, so it styles the note's nodes (`noteStyleReader`). */
+	themes?: ThemeLookup;
 }
 
 /**
@@ -183,7 +186,7 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		const coreId = only === undefined ? noteNodeId(path) : null;
 		// A sole H1 is the root under the core's ID, so it keeps its place across edits to its text.
 		const h1 = coreId === null ? null : soleH1(tree.root);
-		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses);
+		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses, options.themes);
 		const styled = (node: OsmosisNode): { style?: NodeStyle } => {
 			const style = styleOf?.(node);
 			return style === undefined ? {} : { style };

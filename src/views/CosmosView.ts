@@ -40,7 +40,9 @@ import { readMapState, writeMapState } from "../mindmap-state";
 import { readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { COSMOS_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
-import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
+import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
+import { mapBackground, type ThemeLookup } from "../cosmos/node-style";
+import { getTheme, isDefaultTheme } from "../themes";
 import { FSRSScheduler } from "../database/FSRSScheduler";
 import type OsmosisPlugin from "../main";
 import type { CosmosScene, SceneControls, SceneOverlays, SceneTheme } from "./CosmosScene";
@@ -134,6 +136,10 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private colorBy: CosmosOverlays["colorBy"] | null = null;
 	/** Which of the toggles that add or remove plates (see `modelKey`) the model shown now was built under, to reload when the menu changes one. */
 	private modelShown: string | null = null;
+	/** Whether the model shown now was built with the notes' mind map themes (the *Mind map style* colour mode), to reload when the menu turns it on or off. */
+	private modelThemed: boolean | null = null;
+	/** The single note's map background the scene shows instead of Obsidian's (*Mind map style* only, `mapBackground`); null for Obsidian's. */
+	private sceneBackground: string | null = null;
 	/** The model changed because of an Overlays toggle: once it is in the scene, the loaded nodes re-settle, plates that just arrived included (`CosmosScene.reshape`). */
 	private resettleOnLoad = false;
 	/** The model as built from the notes, before the Overlays leave plates out: tag colours read the tag hubs from it, which Tags off removes. */
@@ -585,6 +591,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.styleFrontmatter.clear();
 		this.colorBy = null;
 		this.modelShown = null;
+		this.modelThemed = null;
+		this.sceneBackground = null;
 		this.resettleOnLoad = false;
 		this.fullModel = null;
 		this.stageEl = null;
@@ -607,6 +615,9 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Attachments, Tags and Unresolved links off leave their plates out of the model, so turning one either way rebuilds it.
 		if (this.modelShown !== null && modelKey(overlays.edges) !== this.modelShown) {
 			this.resettleOnLoad = true;
+			void this.reload();
+		} else if (this.modelThemed !== null && (overlays.colorBy === "style") !== this.modelThemed) {
+			// Mind map style on or off: the notes' themes are part of each node's style, which the model carries. Nothing moves.
 			void this.reload();
 		}
 	}
@@ -2058,9 +2069,31 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		return { fm, local, depth: source.type === "heading" ? source.depth : undefined };
 	}
 
-	/** The Cosmos draws without the plugin's theme (unstyled plates look as they always have), so the Node tab shows no theme defaults. */
+	/**
+	 * The Node tab's theme defaults: in *Mind map style* mode, the mind map
+	 * theme of the primary selected line's note; in any other colour mode none,
+	 * as Cosmos then draws without the themes.
+	 */
 	getActiveTheme(): ThemeDefinition | undefined {
-		return undefined;
+		if (this.plugin().settings.graph3dOverlays.colorBy !== "style") return undefined;
+		const path = this.styledSelection()[0]?.path;
+		const file = path === undefined ? null : this.app.vault.getFileByPath(path);
+		if (path === undefined || file === null) return undefined;
+		const name = parseOsmosisStyleFrontmatter(this.styleFrontmatter.get(path) ?? this.plugin().noteData.frontmatter(file))?.theme;
+		return name === undefined || isDefaultTheme(name) ? undefined : this.themeLookup()(name);
+	}
+
+	/** Finds a mind map theme by name, the presets' or the user's own. */
+	private themeLookup(): ThemeLookup {
+		const { customThemes } = this.plugin().settings;
+		return (name) => getTheme(name, customThemes);
+	}
+
+	/** Show `color` behind the scene instead of Obsidian's background (null: Obsidian's again). The fog and the plates' fade follow it. */
+	private setSceneBackground(color: string | null): void {
+		if (color === this.sceneBackground) return;
+		this.sceneBackground = color;
+		this.scene?.setTheme(this.readTheme());
 	}
 
 	getGlobalClasses(): Record<string, NodeStyle> {
@@ -2565,6 +2598,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.model = null;
 			this.fullModel = null;
 			this.syncHolds(new Set());
+			this.setSceneBackground(null);
 			scene.setData({ nodes: [], edges: [] }, new Map());
 			return;
 		}
@@ -2611,14 +2645,16 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		// A newer reload (another hop, an edit) started while these were read.
 		if (seq !== this.loadSeq) return;
 
-		const { edges } = this.plugin().settings.graph3dOverlays;
+		const { edges, colorBy } = this.plugin().settings.graph3dOverlays;
 		this.modelShown = modelKey(edges);
-		const fullModel = buildGraph(
-			notes.filter((note): note is NoteInput => note !== null),
-			resolve,
-			{ contentOnly: this.depth === 0, globalClasses: this.plugin().settings.globalClasses },
-		);
+		const themes = colorBy === "style" ? this.themeLookup() : undefined;
+		this.modelThemed = themes !== undefined;
+		const read = notes.filter((note): note is NoteInput => note !== null);
+		const fullModel = buildGraph(read, resolve, { contentOnly: this.depth === 0, globalClasses: this.plugin().settings.globalClasses, themes });
 		const model = visibleModel(fullModel, edges);
+		// A scene of one note takes that note's map background, as its mind map does.
+		const sole = themes === undefined ? null : soleNotePath(model.nodes);
+		this.setSceneBackground(themes === undefined || sole === null ? null : mapBackground(read.find((note) => note.tree.filePath === sole)?.cache?.frontmatter, themes));
 		// An edit that added, deleted, moved or re-levelled a line makes room for its new shape; rewording one does not.
 		const reshaped = this.editLanded && this.model !== null && outlineChanged(this.model, model);
 		this.editLanded = false;
@@ -2703,12 +2739,13 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	/**
 	 * Theme colours as the engine needs them: resolved `rgb()` strings. Reading
 	 * the variables directly can yield any CSS colour syntax a theme likes, so a
-	 * probe element lets the browser resolve them.
+	 * probe element lets the browser resolve them. The background is a single
+	 * note's map background instead, when it has one (`setSceneBackground`).
 	 */
 	private readTheme(): SceneTheme {
 		const probe = this.contentEl.createDiv({ cls: "osmosis-cosmos-probe" });
 		const style = getComputedStyle(probe);
-		const theme = { background: style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor, found: style.borderLeftColor };
+		const theme = { background: this.sceneBackground ?? style.backgroundColor, text: style.color, plate: style.borderTopColor, font: style.fontFamily, accent: style.borderBottomColor, found: style.borderLeftColor };
 		probe.remove();
 		return theme;
 	}

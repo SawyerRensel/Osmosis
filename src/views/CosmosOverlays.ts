@@ -30,6 +30,7 @@ import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "../cosmos/taper";
 import { sidebarSetting } from "./sidebar-setting";
 
 const COLOR_MODES: Record<ColorMode, string> = {
+	style: "Mind map style",
 	note: "Note",
 	memory: "Memory strength",
 	tag: "Tag",

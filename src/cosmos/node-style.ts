@@ -4,18 +4,22 @@
  * near-tier panels draw from it. One styling system serves both views; see
  * `vault/Planner/3D Graph - Read node styles.md`.
  *
- * Resolution (`noteStyleReader`) is the mind map's LCVRT cascade with the
- * plugin theme left out:
+ * Resolution (`noteStyleReader`) is the mind map's LCVRT cascade:
  *
  * - **Local:** the note's `styles` entry, keyed by the line's block ID (`^id`,
  *   including a stamped `^os-`, see `planStyleKeys`), else the `_n:` stable
  *   ID, else the tree path (`lookupNodeStyleByPath`, as the mind map does).
  * - **Class:** the class the Local entry names, the note's then the global one.
  * - **Variant:** the note's active variant.
- * - **Base:** the note's map-level `baseStyle`, the weakest layer, as the mind
- *   map merges it into the theme's base.
+ * - **Theme:** only in the Overlays' *Mind map style* colour mode (a `themes`
+ *   lookup is passed): the note's mind map theme, its base with the note's
+ *   `baseStyle` merged in, then the depth's override (`noteTheme`). The depth
+ *   is the mind map's: a heading's level, none (the base only) for any other
+ *   line or the file-name root.
+ * - **Base:** without a theme, the note's map-level `baseStyle` alone is the
+ *   weakest layer, as the mind map merges it into an absent theme's base.
  *
- * The theme itself is not applied: in 3D the Overlays' colour-by modes stand in
+ * In the other colour modes the theme is left out: the mode's colours stand in
  * for it, so a node with no style of its own looks as it always has.
  *
  * Pure logic, no `obsidian` import, so it is unit-tested.
@@ -28,10 +32,15 @@ import {
 	lookupVariantStyle,
 	parseOsmosisStyleFrontmatter,
 	resolveCascade,
+	mergeNodeStyle,
+	resolveNodeStyle,
 	type BranchStyle,
 	type NodeStyle,
+	type OsmosisStyleFrontmatter,
+	type ThemeDefinition,
 	type TopicShape,
 } from "../styles";
+import { isDefaultTheme } from "../themes";
 import { resolveBoundary, type ResolvedBoundary } from "../boundary";
 import type { OsmosisNode } from "../types";
 import { PLATE_RADIUS } from "./plates";
@@ -39,20 +48,26 @@ import { PLATE_RADIUS } from "./plates";
 /** A note's node → its resolved style, or undefined for a node with none. */
 export type StyleOf = (node: OsmosisNode) => NodeStyle | undefined;
 
+/** Finds a mind map theme by name: `getTheme(name, settings.customThemes)`. */
+export type ThemeLookup = (name: string) => ThemeDefinition | undefined;
+
 /**
  * The style reader for one note: its frontmatter, the root of its parse tree,
- * and the plugin's global classes. Null when the note has no `osmosis-styles`
- * that could style a node, so an unstyled note costs nothing per line.
+ * and the plugin's global classes. With `themes` (the *Mind map style* colour
+ * mode) the note's mind map theme is the weakest layer. Null when nothing could
+ * style a node, so an unstyled note costs nothing per line.
  */
 export function noteStyleReader(
 	frontmatter: Record<string, unknown> | null | undefined,
 	root: OsmosisNode,
 	globalClasses?: Record<string, NodeStyle>,
+	themes?: ThemeLookup,
 ): StyleOf | null {
 	const fm = parseOsmosisStyleFrontmatter(frontmatter);
 	if (fm === undefined) return null;
 	const base = isStyle(fm.baseStyle) ? fm.baseStyle : undefined;
-	if (fm.styles === undefined && fm.activeVariant === undefined && base === undefined) return null;
+	const theme = themes === undefined ? undefined : noteTheme(fm, themes);
+	if (fm.styles === undefined && fm.activeVariant === undefined && base === undefined && theme === undefined) return null;
 	// Tree paths are the last resort of the Local lookup; built once, on first need.
 	let paths: Map<string, string> | null = null;
 	return (node) => {
@@ -60,10 +75,40 @@ export function noteStyleReader(
 		const local = valid(lookupNodeStyleByPath(fm, node.id, path, node.blockId));
 		const classStyle = valid(lookupClassStyle(fm, local?.class, globalClasses));
 		const variant = valid(lookupVariantStyle(fm, { source: node }));
-		if (local === undefined && classStyle === undefined && variant === undefined && base === undefined) return undefined;
-		const style = resolveCascade({ local, class: classStyle, variant, theme: base });
+		if (local === undefined && classStyle === undefined && variant === undefined && base === undefined && theme === undefined) return undefined;
+		// The mind map's depth: a heading's level; any other line, and the root, take the theme's base alone.
+		const style = theme !== undefined
+			? resolveNodeStyle(theme, node.type === "heading" ? node.depth : undefined, local, classStyle, variant)
+			: resolveCascade({ local, class: classStyle, variant, theme: base });
 		return Object.keys(style).length > 0 ? style : undefined;
 	};
+}
+
+/**
+ * A note's mind map theme as the mind map draws it (`getEffectiveTheme`): the
+ * theme its `osmosis-styles.theme` names, with the note's `baseStyle` merged
+ * into the theme's base, so a depth's override still beats `baseStyle`.
+ * Undefined for the Default theme (or an unknown name) with no `baseStyle`.
+ */
+export function noteTheme(fm: OsmosisStyleFrontmatter, themes: ThemeLookup): ThemeDefinition | undefined {
+	const named = fm.theme === undefined || isDefaultTheme(fm.theme) ? undefined : themes(fm.theme);
+	const active = named !== undefined && isStyle(named.base) && isStyle(named.depths) ? named : undefined;
+	const base = isStyle(fm.baseStyle) ? fm.baseStyle : undefined;
+	if (base === undefined) return active;
+	const effective: ThemeDefinition = { ...(active ?? { name: "Default", base: {}, depths: {} }), base: { ...(active?.base ?? {}) } };
+	mergeNodeStyle(effective.base, base);
+	return effective;
+}
+
+/**
+ * The background a single-note scene takes from its note in *Mind map style*
+ * mode, by the mind map's precedence: the note's `osmosis-styles.background`,
+ * else its theme's. Null for none, or for a colour WebGL can't draw (`cssColor`).
+ */
+export function mapBackground(frontmatter: Record<string, unknown> | null | undefined, themes: ThemeLookup): string | null {
+	const fm = parseOsmosisStyleFrontmatter(frontmatter);
+	if (fm === undefined) return null;
+	return cssColor(fm.background ?? noteTheme(fm, themes)?.background);
 }
 
 /** Whether a style (or part of one) from frontmatter is a mapping: hand-written YAML can put anything there. */

@@ -26,6 +26,7 @@ import {
 	pullChanged,
 	sliderFromMist,
 	sliderFromTravel,
+	soleNotePath,
 	travelFromSlider,
 	typeColor,
 	visibleModel,
@@ -67,6 +68,13 @@ describe("normalizeOverlays", () => {
 		expect(overlays).not.toHaveProperty("bloom");
 		expect(overlays.particles).toBe(false);
 		expect(overlays.labels).toBe("plates");
+	});
+
+	it("colours by Mind map style by default, and keeps a saved mode", () => {
+		expect(DEFAULT_OVERLAYS.colorBy).toBe("style");
+		expect(normalizeOverlays({ colorBy: "style" }).colorBy).toBe("style");
+		expect(normalizeOverlays({ colorBy: "note" }).colorBy).toBe("note");
+		expect(normalizeOverlays({ colorBy: "theme" }).colorBy).toBe("style");
 	});
 
 	it("tapers hierarchy edges by default, and clamps the taper strength", () => {
@@ -449,5 +457,28 @@ describe("core layers", () => {
 		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "planets", coreLayers: 3 })).toBe(true);
 		expect(coreLayersChanged({ coreLayers: 3 }, { layout: "planets", coreLayers: 3 })).toBe(false);
 		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "flat", coreLayers: 3 })).toBe(false);
+	});
+});
+
+describe("soleNotePath", () => {
+	const core = (path: string): GraphNode => ({ id: `note:${path}`, kind: "note", label: path, path });
+
+	it("is the note a scene of one note shows, its tags and attachments aside", () => {
+		expect(soleNotePath([core("a.md"), line("a1", "a.md"), { id: "tag:#knots", kind: "tag", label: "#knots" }, { id: "att:chart.png", kind: "attachment", label: "chart", path: "chart.png" }])).toBe("a.md");
+		// A sole-H1 note has no core: its lines alone name it.
+		expect(soleNotePath([line("a1", "a.md")])).toBe("a.md");
+	});
+
+	it("is null for several notes, or none", () => {
+		expect(soleNotePath([core("a.md"), line("b1", "b.md")])).toBeNull();
+		expect(soleNotePath([])).toBeNull();
+	});
+});
+
+describe("overlayNodeColor in Mind map style", () => {
+	it("takes the note's hue, as the Note mode does", () => {
+		const node = line("a1", "a.md");
+		const context = { tags: new Map<string, string>(), strengths: new Map<string, number | null>() };
+		expect(overlayNodeColor(node, "style", context)).toBe(nodeColor(node));
 	});
 });

@@ -11,7 +11,12 @@ import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode, type G
 import { MAX_CORE_LAYERS, type ContinentBalance, type ContinentDirection } from "./planets";
 import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "./taper";
 
-export type ColorMode = "note" | "memory" | "tag" | "type";
+/**
+ * What colours the nodes. `style` (*Mind map style*) draws each note's mind map
+ * theme through the style cascade (`noteStyleReader`); outlines and edges with
+ * no colour of their own take the note's hue, as `note` does.
+ */
+export type ColorMode = "style" | "note" | "memory" | "tag" | "type";
 
 /** Edge kinds as the menu lists them: the model's kinds, plus edges to unresolved links (ghost nodes). */
 export type OverlayEdgeKind = GraphEdgeKind | "unresolved";
@@ -66,7 +71,7 @@ export const MIST_LIMIT = 4;
 export const TRAVEL_LIMIT = 4;
 
 export const DEFAULT_OVERLAYS: CosmosOverlays = {
-	colorBy: "note",
+	colorBy: "style",
 	// Attachments are off: an attachment is already part of the note that embeds it.
 	edges: { hierarchy: true, link: true, embed: true, property: true, tag: true, attachment: false, unresolved: true },
 	forceBalance: 0.5,
@@ -88,7 +93,7 @@ export const DEFAULT_OVERLAYS: CosmosOverlays = {
 	travelSpeed: 1,
 };
 
-const COLOR_MODES: readonly ColorMode[] = ["note", "memory", "tag", "type"];
+const COLOR_MODES: readonly ColorMode[] = ["style", "note", "memory", "tag", "type"];
 const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
 const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "flat", "planets"];
 export const CONTINENT_DIRECTIONS: readonly ContinentDirection[] = ["left-right", "top-down", "radial"];
@@ -250,9 +255,25 @@ export interface ColorContext {
 const NO_VALUE = "hsl(0, 0%, 42%)";
 const NEW_CARD = "hsl(210, 70%, 62%)";
 
+/**
+ * The one note a scene shows (its note and line plates all belong to it), or
+ * null for a scene of several notes or none. Tag, attachment and unresolved
+ * plates don't count: they hang off the note rather than being another one.
+ */
+export function soleNotePath(nodes: readonly GraphNode[]): string | null {
+	let sole: string | null = null;
+	for (const node of nodes) {
+		if ((node.kind !== "note" && node.kind !== "line") || node.path === undefined) continue;
+		if (sole !== null && node.path !== sole) return null;
+		sole = node.path;
+	}
+	return sole;
+}
+
 /** A node's colour in the active colour mode. */
 export function overlayNodeColor(node: GraphNode, mode: ColorMode, context: ColorContext): string {
 	switch (mode) {
+		case "style":
 		case "note":
 			return nodeColor(node);
 		case "memory":
