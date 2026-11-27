@@ -98,7 +98,7 @@ import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { CLOZE_BLANK, splitFenceHeader } from "../card-gen/explicit";
 import { colourAnswer, colourBlank, parseHighlightToken } from "../card-gen/cloze-colour";
-import { fenceDiagrams } from "../card-gen/occlusion";
+import { fenceDiagrams, fenceId } from "../card-gen/occlusion";
 import { lineCardId } from "../card-gen/line-cards";
 import {
 	allFenceCardKeys,
@@ -113,7 +113,7 @@ import {
 	mindmapStudyKeys,
 } from "../study/mindmap-study";
 import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
-import type { Card, CardOcclusion } from "../database/types";
+import type { Card, CardOcclusion, OcclusionSet } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
@@ -426,6 +426,12 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	// Rendered HTML cache: avoids repeated MarkdownRenderer.render() calls for
 	// nodes whose content hasn't changed (keyed by display content string)
 	private nodeHtmlCache = new Map<string, HTMLElement>();
+	/**
+	 * Sidecar-mode fences' shape sets, note path → fence id → label → set, as
+	 * the map last read them. Dropped per note on `noteData.onChange`, which is
+	 * also how a changed set gets redrawn (see `reloadSidecarShapes`).
+	 */
+	private readonly sidecarShapes = new Map<string, Map<string, Map<string, OcclusionSet>>>();
 
 	// Viewport culling state
 	private renderedNodeIds = new Set<string>();
@@ -1137,7 +1143,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 */
 	private getOsmosisCardContent(node: OsmosisNode): OsmosisCardContent | null {
 		if (node.type !== "codeblock") return null;
-		return this.parseOsmosisOcclusion(node.content)
+		return this.parseOsmosisOcclusion(node.content, node.sourceFile)
 			?? this.parseOsmosisFence(node.content)
 			?? this.parseOsmosisCodeCloze(node.content)
 			?? this.parseOsmosisCloze(node.content);
@@ -1152,15 +1158,61 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * geometry as text. Front and back are the same prose here — what differs
 	 * between the sides of an occlusion card is the masks, not the markdown.
 	 */
-	private parseOsmosisOcclusion(content: string): OsmosisCardContent | null {
+	private parseOsmosisOcclusion(content: string, sourceFile: string | undefined): OsmosisCardContent | null {
 		const body = MindMapView.fenceBodyLines(content);
 		if (!body) return null;
 		const { contentStart, hasOcclusion } = splitFenceHeader(body);
-		if (!hasOcclusion) return null;
+		const sets = this.sidecarFenceShapes(body, sourceFile);
+		if (!(sets ? sets.size > 0 : hasOcclusion)) return null;
 
-		const { diagrams, prose } = fenceDiagrams(body, contentStart);
+		const { diagrams, prose } = fenceDiagrams(body, contentStart, sets);
 		if (diagrams.length === 0) return null;
 		return { front: prose, back: prose, occlusions: diagrams };
+	}
+
+	/**
+	 * A sidecar-mode fence's shape sets by embed label, or undefined when its
+	 * header's are the truth. Its sidecar entry owns the fence once it exists, so
+	 * an entry with no shapes means none (see `fence-sidecar.ts`).
+	 *
+	 * `body` is the fence body, header first. Memoised per note in
+	 * {@link sidecarShapes}, since every draw asks for every fence node.
+	 */
+	private sidecarFenceShapes(body: readonly string[], sourceFile: string | undefined): Map<string, OcclusionSet> | undefined {
+		const id = fenceId(body, { start: -1, end: body.length });
+		const path = sourceFile ?? this.currentFile?.path;
+		if (id === null || path === undefined) return undefined;
+		return this.sidecarShapesOf(path).get(id);
+	}
+
+	/** Every fence's sidecar shape sets in one note, by fence id; memoised in {@link sidecarShapes}. */
+	private sidecarShapesOf(path: string): Map<string, Map<string, OcclusionSet>> {
+		let shapes = this.sidecarShapes.get(path);
+		if (!shapes) {
+			const file = this.app.vault.getFileByPath(path);
+			const overlays = file ? this.plugin.fenceOverlays(file) : new Map<string, { occlusions: Map<string, OcclusionSet> }>();
+			shapes = new Map([...overlays].map(([id, overlay]) => [id, overlay.occlusions]));
+			this.sidecarShapes.set(path, shapes);
+		}
+		return shapes;
+	}
+
+	/**
+	 * A note's sidecar changed: if the map drew any of its fences, re-read their
+	 * shape sets and redraw when they moved. A sidecar shape write leaves the
+	 * note's text alone, so nothing else would repaint the masks. A review
+	 * changes the sidecar too and redraws nothing here.
+	 */
+	private reloadSidecarShapes(notePath: string): void {
+		const before = this.sidecarShapes.get(notePath);
+		if (!before) return;
+		this.sidecarShapes.delete(notePath);
+		const after = this.sidecarShapesOf(notePath);
+		if (JSON.stringify([...before].map(([id, sets]) => [id, [...sets]]))
+			=== JSON.stringify([...after].map(([id, sets]) => [id, [...sets]]))) return;
+		// Mid-gesture draws are the gesture's own; the next one reads the new shapes.
+		if (this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
+		void this.render(true);
 	}
 
 	/**
@@ -2239,6 +2291,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// The open note's sidecar changed under the map: redraw its styles.
 		this.register(this.plugin.noteData.onChange((notePath) => {
 			if (notePath === this.currentFile?.path) void this.reloadSidecarStyles();
+			this.reloadSidecarShapes(notePath);
 		}));
 
 		// Auto-unpin if pinned file is deleted
@@ -2272,6 +2325,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	async onClose(): Promise<void> {
 		this.closed = true;
+		this.sidecarShapes.clear();
 		syncNavbar(this.app, this);
 		this.releaseHistory?.();
 		this.releaseHistory = null;

@@ -1,5 +1,5 @@
 import type { GeneratedCard } from "./types";
-import { generateExplicitCards } from "./explicit";
+import { generateExplicitCards, type FenceOcclusionOverrides } from "./explicit";
 import { generateLineCards } from "./line-cards";
 import { parseOsmosisFrontmatter, resolveDeck } from "./frontmatter";
 
@@ -54,6 +54,7 @@ export function processNote(
 	notePath: string,
 	options: CardGenerationOptions,
 	noteTags?: string[],
+	fenceOcclusions?: FenceOcclusionOverrides,
 ): NoteProcessingResult {
 	const frontmatter = parseOsmosisFrontmatter(markdown);
 
@@ -78,7 +79,7 @@ export function processNote(
 	// Generate explicit cards (exclude: true handled inside generator),
 	// then line cards from block-ID-tagged elements
 	const cards = [
-		...generateExplicitCards(markdown),
+		...generateExplicitCards(markdown, fenceOcclusions),
 		...generateLineCards(markdown, notePath),
 	];
 

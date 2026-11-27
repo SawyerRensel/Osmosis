@@ -14,27 +14,38 @@
  *       due: …
  *     c1:                # cloze / occlusion group
  *       due: …
+ *     occlude:           # an occlusion shape set, keyed as in the header:
+ *       mode: hide-all-guess-one   # `occlude` for an unlabelled embed,
+ *       shapes:                    # `occlude-a` for the embed marked `{a}`
+ *         - group: c1
+ *           kind: rect
+ *           x: 0.1
+ *           …
+ *       annotations: …   # optional, as in the header
  * ```
  *
  * The shape is the fence header's, in the field spelling `osmosis-schedule`
  * writes (`serializeScheduleEntry`), so a fence card and a line card read alike.
- * `id`, `deck`, `bidi` and `type-in` define the card and stay in the fence;
- * occlusion shapes stay in the fence too (not yet moved).
+ * A shape set is the object an occluded line card keeps under its own `occlude:`
+ * (`occlusionSetToYamlValue`), so the two carriers hold one structure.
+ * `id`, `deck`, `bidi` and `type-in` define the card and stay in the fence.
  *
  * **An entry owns its fence.** Once a fence has an `osmosis-fences` entry, that
- * entry is the whole truth about the fence's schedules, buries and `exclude`,
- * and the header's own copies of them are ignored — even an empty entry. So the
- * first sidecar write for a fence seeds its entry from the header
- * ({@link fenceEntryFromContent}), and from then on a reset or un-suspend can
- * delete fields without a stale header value showing back through.
+ * entry is the whole truth about the fence's schedules, buries, `exclude` and
+ * shape sets, and the header's own copies of them are ignored — even an empty
+ * entry. So the first sidecar write for a fence seeds its entry from the header
+ * ({@link fenceEntryFromContent}, shapes included), and from then on a reset,
+ * un-suspend or deleted mask can drop fields without a stale header value
+ * showing back through.
  *
  * Pure: no Obsidian imports.
  */
-import type { ScheduleData } from "../database/types";
-import { generateExplicitCards } from "../card-gen/explicit";
+import type { OcclusionSet, ScheduleData } from "../database/types";
+import { generateExplicitCards, type FenceOcclusionOverrides } from "../card-gen/explicit";
+import { occlusionSetToYamlValue, parseOcclusionSet } from "../card-gen/occlusion";
 import type { GeneratedCard } from "../card-gen/types";
 import type { ScheduleFields } from "./FenceWriter";
-import { parseCardIdParts } from "./FenceWriter";
+import { parseCardIdParts, readFenceOcclusions, updateFenceOcclusion } from "./FenceWriter";
 import { formatLocalTimestamp, parseScheduleEntry, parseTimestamp, serializeScheduleEntry } from "./ScheduleStore";
 
 /** Frontmatter key holding fence cards' review data, keyed by fence id. */
@@ -51,18 +62,29 @@ export interface FenceOverlay {
 	/** By derived suffix — `""` is the fence's own card, `"r"` / `"c1"` its derived ones. */
 	cards: Map<string, FenceCardState>;
 	exclude: boolean;
+	/** Shape sets by embed label (`""` = the bare `occlude`). Replace the header's entirely. */
+	occlusions: Map<string, OcclusionSet>;
 }
 
 /** A write to one fence card's review state, by card id (`abc`, `abc-r`, `abc-c1`). */
 export type FenceEdit =
 	| { kind: "schedule"; cardId: string; schedule: ScheduleFields | null }
 	| { kind: "buried"; cardId: string; until: number | null }
-	| { kind: "exclude"; cardId: string; exclude: boolean };
+	| { kind: "exclude"; cardId: string; exclude: boolean }
+	/** One embed's shape set; `cardId` is the fence id. No shapes deletes the set. */
+	| { kind: "occlusion"; cardId: string; label: string; set: OcclusionSet };
 
 /** A derived card's block key inside an entry. Same grammar as the header's `r:` / `c1:`. */
 const DERIVED_KEY = /^(r|c\d+)$/;
 const BURIED_KEY = "buriedUntil";
 const EXCLUDE_KEY = "exclude";
+/** A shape set's key inside an entry — the header's own spelling. */
+const OCCLUDE_KEY = /^occlude(?:-([A-Za-z0-9_-]+))?$/;
+
+/** The entry key holding the shape set of the embed labelled `label` (`""` = unlabelled). */
+export function occlusionKey(label: string): string {
+	return label === "" ? "occlude" : `occlude-${label}`;
+}
 /** The keys `serializeScheduleEntry` writes — what a schedule write replaces. */
 const SCHEDULE_KEYS = ["due", "stability", "difficulty", "lastReview", "reps", "lapses", "state", "learningSteps"];
 
@@ -98,7 +120,23 @@ export function parseFenceEntry(raw: unknown): FenceOverlay | null {
 		const state = parseCardState(value);
 		if (state) cards.set(key, state);
 	}
-	return { cards, exclude: raw[EXCLUDE_KEY] === true };
+	const occlusions = new Map<string, OcclusionSet>();
+	for (const [key, value] of Object.entries(raw)) {
+		const match = key.match(OCCLUDE_KEY);
+		const set = match ? parseOcclusionSet(value) : null;
+		if (set) occlusions.set(match![1] ?? "", set);
+	}
+	return { cards, exclude: raw[EXCLUDE_KEY] === true, occlusions };
+}
+
+/**
+ * The shape sets card generation should use in place of fence headers' — every
+ * fence with an entry, since the entry owns it even when it holds no shapes.
+ */
+export function fenceOcclusionOverrides(overlays: ReadonlyMap<string, FenceOverlay>): FenceOcclusionOverrides {
+	const result = new Map<string, ReadonlyMap<string, OcclusionSet>>();
+	for (const [fenceId, overlay] of overlays) result.set(fenceId, overlay.occlusions);
+	return result;
 }
 
 /** Parse the whole `osmosis-fences` value into fence id → overlay. */
@@ -173,10 +211,11 @@ function generatedSchedule(card: GeneratedCard): ScheduleData | null {
 }
 
 /**
- * The review state a fence's header holds today — its schedules, buries and
- * `exclude` — as an `osmosis-fences` entry. Read with the card generator, so the
- * header has exactly one parser. An empty object when the fence carries none
- * (or is not in `content`).
+ * The review state a fence's header holds today — its schedules, buries,
+ * `exclude` and shape sets — as an `osmosis-fences` entry. Read with the card
+ * generator and the header's own shape parser, so the header has exactly one
+ * parser of each. An empty object when the fence carries none (or is not in
+ * `content`).
  *
  * Seeds a fence's first sidecar entry; also the note → sidecar half of a move.
  */
@@ -195,7 +234,29 @@ export function fenceEntryFromContent(content: string, fenceId: string): Entry {
 		if (suffix === "") Object.assign(entry, target);
 		else entry[suffix] = target;
 	}
+	for (const [label, set] of readFenceOcclusions(content, fenceId)) {
+		entry[occlusionKey(label)] = occlusionSetToYamlValue(set);
+	}
 	return entry;
+}
+
+/**
+ * The sidecar → note half of a move for shapes: `content` with fence
+ * `fenceId`'s header shape blocks replaced by exactly `sets` — a header set
+ * not in `sets` is removed, so an empty map strips them all. Unchanged when no
+ * fence carries the id.
+ */
+export function injectFenceOcclusions(
+	content: string,
+	fenceId: string,
+	sets: ReadonlyMap<string, OcclusionSet>,
+): string {
+	let next = content;
+	for (const [label, set] of readFenceOcclusions(content, fenceId)) {
+		if (!sets.has(label)) next = updateFenceOcclusion(next, fenceId, label, { ...set, shapes: [] });
+	}
+	for (const [label, set] of sets) next = updateFenceOcclusion(next, fenceId, label, set);
+	return next;
 }
 
 // ── Writes ─────────────────────────────────────────────
@@ -241,6 +302,14 @@ function applyEdit(entry: Entry, edit: FenceEdit): void {
 			if (edit.exclude) entry[EXCLUDE_KEY] = true;
 			else delete entry[EXCLUDE_KEY];
 			break;
+		case "occlusion": {
+			// Like the header writer: deleting every mask means the diagram is
+			// no longer an occlusion card, so the set goes rather than emptying.
+			const key = occlusionKey(edit.label);
+			if (edit.set.shapes.length === 0) delete entry[key];
+			else entry[key] = occlusionSetToYamlValue(edit.set);
+			break;
+		}
 	}
 }
 

@@ -1,6 +1,6 @@
 import type { TFile, Vault } from "obsidian";
 import type { CardState, OcclusionSet } from "../database/types";
-import { serializeOccludeBlock } from "../card-gen/occlusion";
+import { fenceOcclusions, serializeOccludeBlock } from "../card-gen/occlusion";
 import { applyFenceEdits, type FenceEdit } from "./fence-sidecar";
 
 /** Schedule fields to write into a fence. */
@@ -215,6 +215,9 @@ export class FenceWriter {
 	 * Write a shape set into a fence's header, replacing whatever set that embed
 	 * had before. An empty set removes the block — deleting every mask in the
 	 * editor means the diagram is no longer an occlusion card.
+	 *
+	 * A sidecar-mode note keeps the set in its fence's `osmosis-fences` entry
+	 * instead and its text is left alone (see `fence-sidecar.ts`).
 	 */
 	async writeOcclusion(
 		file: TFile,
@@ -222,6 +225,7 @@ export class FenceWriter {
 		label: string,
 		set: OcclusionSet,
 	): Promise<void> {
+		if (this.inSidecar(file)) return this.writeSidecar(file, [{ kind: "occlusion", cardId: fenceId, label, set }]);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -423,6 +427,16 @@ export function updateFenceOcclusion(
 		...updatedMeta,
 		...lines.slice(metaEnd),
 	].join("\n");
+}
+
+/**
+ * Pure function: the shape sets a fence's header declares, by embed label
+ * (`""` for the bare `occlude:`). Empty when no fence carries `fenceId`.
+ */
+export function readFenceOcclusions(content: string, fenceId: string): Map<string, OcclusionSet> {
+	const located = locateFence(content, fenceId);
+	if (!located) return new Map();
+	return fenceOcclusions(located.lines, { start: located.fenceStart, end: located.metaEnd });
 }
 
 /**

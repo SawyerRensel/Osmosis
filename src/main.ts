@@ -41,7 +41,7 @@ import {
 	locateOcclusionTarget,
 	pickEmbedLine,
 	rewriteFenceEmbeds,
-	usedGroupsInFence,
+	usedGroups,
 	type FenceIdentity,
 	type OcclusionTarget,
 } from "./card-gen/occlusion";
@@ -863,8 +863,14 @@ export default class OsmosisPlugin extends Plugin {
 		}
 
 		const lines = content.split("\n");
-		const existing = target.carrier === "fence"
-			? fenceOcclusions(lines, target.span!).get(target.label ?? "")
+		// A sidecar-mode fence's entry owns its shape sets once it exists; the
+		// header's are stale then (see `fence-sidecar.ts`).
+		const fenceSets = target.carrier !== "fence"
+			? undefined
+			: (target.id ? this.fenceOverlays(file).get(target.id)?.occlusions : undefined)
+				?? fenceOcclusions(lines, target.span!);
+		const existing = fenceSets
+			? fenceSets.get(target.label ?? "")
 			: parseOcclusionFrontmatter(
 				this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY],
 			).get(target.blockId ?? "");
@@ -872,8 +878,8 @@ export default class OsmosisPlugin extends Plugin {
 		// Numbering is per carrier, not per diagram: a fence's occlusion cards
 		// all derive `<fenceId>-cN`, so a second diagram starting again from c1
 		// would overwrite the first diagram's cards.
-		const reservedGroups = target.carrier === "fence"
-			? usedGroupsInFence(lines, target.span!)
+		const reservedGroups = fenceSets
+			? usedGroups(fenceSets.values())
 				.filter((group) => !(existing?.shapes ?? []).some((shape) => shape.group === group))
 			: [];
 

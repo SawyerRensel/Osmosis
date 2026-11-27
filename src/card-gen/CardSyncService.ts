@@ -8,7 +8,7 @@ import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
 import { lineCardId } from "./line-cards";
 import { occludeLineCard } from "./occlusion";
-import { overlayFenceCards, type FenceOverlay } from "../store/fence-sidecar";
+import { fenceOcclusionOverrides, overlayFenceCards, type FenceOverlay } from "../store/fence-sidecar";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -63,7 +63,7 @@ export class CardSyncService {
 		private readonly getLineBuried?: (file: TFile) => Map<string, number>,
 		/**
 		 * A sidecar-mode note's `osmosis-fences` entries, by fence id. A fence
-		 * with an entry takes its schedules, buries and `exclude` from it rather
+		 * with an entry takes its schedules, buries, `exclude` and shapes from it rather
 		 * than from its header (see `fence-sidecar.ts`).
 		 */
 		private readonly getFenceOverlays?: (file: TFile) => Map<string, FenceOverlay>,
@@ -98,7 +98,16 @@ export class CardSyncService {
 
 		const content = await this.vault.cachedRead(file);
 		const tags = this.getFileTags?.(file);
-		const result = processNote(content, file.path, this.getOptions(), tags);
+		// Read before generation, not just overlaid after it: a fence's shape sets
+		// decide which `cN` cards it has at all.
+		const fenceOverlays = this.getFenceOverlays?.(file);
+		const result = processNote(
+			content,
+			file.path,
+			this.getOptions(),
+			tags,
+			fenceOverlays ? fenceOcclusionOverrides(fenceOverlays) : undefined,
+		);
 
 		const existingCards = this.store.getCardsByNote(file.path);
 		const generatedIds = new Set<string>();
@@ -117,7 +126,6 @@ export class CardSyncService {
 			// note study waits until the note is off screen to rewrite it.
 			const stagedFences = this.fenceWriter.getPendingSchedules(file.path);
 
-			const fenceOverlays = this.getFenceOverlays?.(file);
 			const cards = fenceOverlays ? overlayFenceCards(result.cards, fenceOverlays) : result.cards;
 
 			for (const genCard of this.occludeLineCards(file, cards)) {

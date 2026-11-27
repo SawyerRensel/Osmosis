@@ -627,6 +627,9 @@ export function splitFenceHeader(lines: readonly string[]): {
 	return { contentStart, exclude, hasOcclusion };
 }
 
+/** Shape sets to use instead of a fence's header ones: fence id → embed label → set. */
+export type FenceOcclusionOverrides = ReadonlyMap<string, ReadonlyMap<string, OcclusionSet>>;
+
 /**
  * Generate explicit cards from ```osmosis code fences.
  *
@@ -655,8 +658,17 @@ export function splitFenceHeader(lines: readonly string[]): {
  *   - Line code:   # osmosis-cloze (optional -cN suffix)
  *   - Region code: # osmosis-cloze-start / -end (optional -cN suffix)
  * Occurrences sharing a cN label are blanked together as one card.
+ *
+ * `fenceOcclusions` replaces the shape sets of the fences it names (by fence
+ * `id:`, then embed label) — a sidecar-mode fence keeps its shapes in its
+ * sidecar entry, and the entry owns the fence, so its header's `occlude-*`
+ * blocks are ignored even when the replacement is empty. Passed in rather than
+ * read here so generation stays a pure function of its arguments.
  */
-export function generateExplicitCards(markdown: string): GeneratedCard[] {
+export function generateExplicitCards(
+	markdown: string,
+	fenceOcclusions?: FenceOcclusionOverrides,
+): GeneratedCard[] {
 	const lines = markdown.split("\n");
 	const cards: GeneratedCard[] = [];
 
@@ -827,6 +839,10 @@ export function generateExplicitCards(markdown: string): GeneratedCard[] {
 		const fenceId = metadata.id
 			|| idsByLine.get(fenceStartLine)
 			|| generateCardId();
+
+		const overridden = fenceOcclusions?.get(fenceId);
+		if (overridden && overridden.size > 0) metadata.occlusions = new Map(overridden);
+		else if (overridden) delete metadata.occlusions;
 
 		const separatorIdx = contentLines.findIndex(
 			(l) => l.trim() === SEPARATOR,
