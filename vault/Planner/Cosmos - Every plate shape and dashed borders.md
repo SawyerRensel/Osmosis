@@ -17,7 +17,7 @@ batch: 17
 priority:
 progress:
 date_created: 2026-11-27T01:00:00.000Z
-date_modified: 2026-11-27T09:20:00.000Z
+date_modified: 2026-11-27T14:40:00.000Z
 date_start_scheduled: 2026-11-27T08:40:03.000Z
 date_start_actual: 2026-11-27T08:40:03.000Z
 date_end_scheduled:
@@ -133,4 +133,60 @@ Code commit `1b8d5da` on `batch/17-sidecars-cosmos-styles`.
 - **Multi-line shaped panels:** the padding comes from the estimated box (`panelBoxEm`), not the measured one, so a panel whose real text is much larger than the estimate can have text in a diamond's clipped corners.
 - **The background of bare shapes** uses `var(--background-primary)` in the near tier. With T129's per-note map background in *Mind map style* mode, the panels behind underline and none nodes may not match the scene's background colour.
 - **Planets (CSS3D) panels** take the same paint path, but I haven't seen them.
+
+## Fix round 1 (awaiting manual test)
+
+Code commit `2c837ac` on `batch/17-sidecars-cosmos-styles`. Sawyer's failure (near tier, text "block of statements required to perform specific task."): Ellipse and Cloud clipped their text at the right and bottom and showed two offset outlines. Hexagon, Parallelogram and Arrow right had far too much margin across. Pill was fine.
+
+### Causes
+- **Too much margin (hexagon, parallelogram, arrow right): established from the code, with numbers.** The mind map wraps a shaped node's text narrower than its max node width (`contentMaxWidth = maxNodeWidth × (1 − insets) − padding`, `MindMapView` ~L9276/L9393), so the shape comes out at the cap. Cosmos wrapped the text at the full 20 em cap and then grew the shape round it, so a long sentence in a hexagon was 35.7 em wide, with 8.3 em of margin each side and only a 1.6 em slant. The plate labels had the same problem.
+- **Clipped text: established as a mechanism from the code, not observed.** A shaped panel's padding came from `panelBoxEm`, an estimate of its text at 0.5 em a character, not from the rendered text. Whenever the rendered text was larger than the estimate, it reached past the shape's inner box into the area the clip path cuts off. With nominal metrics, the old code keeps this sentence inside the ellipse, so whatever Sawyer's node rendered differed from the estimate (I can't see what it held).
+- **Doubled outline: established as a mechanism, not observed.** Plates are drawn under their panels, so the panel's outline has to hold the plate's whole outline. The old panel only guaranteed a box at least as big as the plate's. That is enough for an ellipse, but not for shapes whose slant depends on the height (parallelogram, arrow right, trapezoid and triangle poke out by the height difference). The far cloud was also a different cloud (four ellipses reaching 8% from the sides, where the panel's Bézier cloud reaches 10.5%), so a cloud plate as wide as its panel shows past it at both sides. **I could not tie the ellipse's doubling to a specific line**: under nominal sizes its plate is fully inside its panel. Fitting the panel to the measured text and making it hold the plate removes every way the two outlines can disagree, but the ellipse case is the one to look at first.
+
+### Fix
+- **The panel is fitted round its measured text** (`CosmosNear.fitShape`, pure `fitShapedPanel` in `src/cosmos/plate-shapes.ts`). The body now gets its own width (`max-content`, capped where the mind map wraps in that shape), and a `ResizeObserver` on it sets the box's exact size and padding: the mind map's box round the content, with the insets as padding and the text centred in the inner box. The body's width never depends on the box's, so it settles in one pass and is never a frame behind.
+- **The panel holds its plate.** `fitShapedPanel` grows the box until its outline holds the plate's (`shapeHolds`, a polygon test). It grows across first, which is what parallelograms and arrows need, and otherwise grows every way.
+- **Shapes wrap where the mind map's do** (`shapeWrapEm`): the panel's text, the spacing estimate (`panelBoxEm`) and the far plate's label cut (`shapeFor`).
+- **The cloud is one cloud.** The mind map's Bézier cloud bulges about 6.8% of its box past the top and bottom (`CLOUD_BULGE`). Cosmos now fits it into its box, bulges and all, and keeps the mind map's text box inside it. The far plate draws the same curve as a 24-point polygon (`CLOUD_POLYGON`, generated into the shader).
+
+### Margins across, per side, in ems of text (that sentence, default caps)
+| Shape | Before | After | Mind map |
+|---|---|---|---|
+| Ellipse, Cloud, Octagon | 4.69 | 3.40 | 3.27 |
+| Hexagon | 8.26 | 4.80 | 4.51 |
+| Parallelogram | 6.03 | 4.00 | 3.80 |
+| Arrow right (left / right) | 5.40 / 8.73 | 3.40 / 5.40 | 3.27 / 5.04 |
+| Diamond | 10.40 | 5.40 | 5.04 |
+| Triangle (left / right) | 2.40 / 18.40 | 1.40 / 9.40 | 1.50 / 8.58 |
+| Trapezoid | 3.56 | 2.80 | 2.74 |
+
+The box is now 20 em wide (the cap) for all of them, against 26 to 40 em before. The mind map's is 230 px, which is 17.7 of its 13 px ems. The remaining gap is Cosmos's 20 em cap and 0.4 em padding against the mind map's 17.7 em and 8 px.
+
+### Decisions worth remembering
+- **The triangle's top and bottom insets are 0.275, not the mind map's 0.2.** The mind map's inner box reaches 55% of the way across, where the triangle is only the middle 45% of its height tall, so its top corners are outside the outline. In the mind map the text spills over the outline; in Cosmos it would be clipped. Triangles come out about a third taller than the mind map's.
+- **The cloud's top and bottom insets are about 0.218**, the mind map's 0.18 measured from a box grown by the bulge. It is the same cloud with the same text box, drawn inside its box, because a plate is drawn on its box's quad and a panel clips to its box.
+- **Rectangles keep their labels.** The plate-label cut only applies to non-rectangle shapes, so pill, rect and rounded-rect plates are unchanged (pill passed).
+- **The trapezoid keeps the mind map's 0.12 insets**, though a wide three-line trapezoid's top text corners come within 0.02 em of its slope. That is below a pixel, inside a glyph's side bearing.
+- **The panel grows across before it grows up** to hold a plate, so a parallelogram or an arrow over a flatter plate is wider by the height difference, not taller.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/cosmos/plate-shapes.ts` | `shapeInsets` (cloud bulge, triangle), `shapeWrapEm`, `outlinePoints`, `shapeHolds`/`shapeHoldsRect`, `fitShapedPanel`, `CLOUD_BULGE`/`CLOUD_POLYGON`; `shapePath` and the polygons share one geometry |
+| `src/cosmos/plate-shapes.test.ts` | The text fits every shape (single line, wrapped), margins against the mind map's, plate containment, cloud geometry, wrap widths |
+| `src/cosmos/near.ts` | `PANEL_PAD_EM` exported; `panelBoxEm` wraps at the shape's wrap; `shapedPanelPadEm` removed |
+| `src/cosmos/near.test.ts` | The wrap test replaces the padding test |
+| `src/views/CosmosNear.ts` | The body is observed; `fitShape` sizes and pads shaped boxes; `paint` gives the body its wrap width |
+| `src/views/CosmosPlates.ts` | Cloud SDF = the shared polygon; the polygon buffer holds 24 points |
+| `src/views/CosmosScene.ts` | `shapeFor` cuts a shaped plate's label at the shape's wrap |
+| `styles.css` | Shaped panels centre their body across; the body doesn't flex |
+
+### Fixture
+Unchanged: `vault/tests/graph3d/Shapes.md`. Its lines are short, so to repeat Sawyer's case, give a shaped line a long sentence (or test in the note Sawyer used).
+
+### Not verified
+- **Nothing was seen in Obsidian**, and the shader is still not GPU-compiled. The cloud branch now writes 24 polygon points, and the loop runs to 24.
+- **The ellipse's doubling isn't tied to a line of the old code** (see *Causes*).
+- **Dragging a shaped panel's width** writes `styleWidthFromEm` of the outer width, but the mind map reads `width` as the content width inside the shape. A dragged shaped node is therefore wider in the mind map than in Cosmos. This predates this fix and is not changed.
+- **The inline editor** on a shaped node still opens as the plate's rectangle.
 
