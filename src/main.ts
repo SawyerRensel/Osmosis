@@ -10,6 +10,7 @@ import { CardSyncService } from "./card-gen/CardSyncService";
 import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter, parseBuriedFrontmatter } from "./store/ScheduleStore";
+import { NoteData } from "./store/NoteData";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
@@ -134,6 +135,8 @@ export default class OsmosisPlugin extends Plugin {
 	cardStore!: CardStore;
 	fenceWriter!: FenceWriter;
 	scheduleStore!: ScheduleStore;
+	/** Where each note's Osmosis data lives: its frontmatter or its sidecar. Every schedule read and write goes through it. */
+	noteData!: NoteData;
 	/** Explicit deps for the card browser's four mutations. */
 	cardMutations!: MutationDeps;
 	/** Session-only undo stack for those mutations. */
@@ -201,9 +204,18 @@ export default class OsmosisPlugin extends Plugin {
 		// Fence writer — writes schedule data back into markdown fences
 		this.fenceWriter = new FenceWriter(this.app.vault);
 
+		// Note data — the note-or-sidecar seam. Its rename/delete listeners are
+		// registered before the plugin's own below, so a renamed note's sidecar
+		// is re-keyed before anything re-reads it.
+		this.noteData = new NoteData(this.app, () => ({
+			dataLocation: this.settings.dataLocation,
+			sidecarFolder: this.settings.sidecarFolder,
+		}));
+		this.noteData.attach(this);
+
 		// Schedule store — debounced osmosis-schedule frontmatter writes for line cards
 		this.scheduleStore = new ScheduleStore(
-			this.app.fileManager,
+			this.noteData,
 			(notePath: string) => this.app.vault.getFileByPath(notePath),
 		);
 
@@ -240,7 +252,7 @@ export default class OsmosisPlugin extends Plugin {
 				excludeTags: this.settings.excludeTags,
 				includeLineCardsInDecks: this.settings.includeLineCardsInDecks,
 			}),
-			(path: string) => isReviewLogPath(path, this.settings.reviewLogFolder),
+			(path: string) => this.isOsmosisDataPath(path),
 			(file: TFile) => {
 				const cache = this.app.metadataCache.getFileCache(file);
 				const inlineTags = (cache?.tags ?? []).map((t) => t.tag.replace(/^#/, ""));
@@ -252,7 +264,7 @@ export default class OsmosisPlugin extends Plugin {
 			(file: TFile) => {
 				// Line-card schedules: osmosis-schedule frontmatter overlaid with
 				// pending ratings that haven't been flushed to disk yet
-				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const raw: unknown = this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY];
 				const schedules = parseScheduleFrontmatter(raw);
 				for (const [blockId, entry] of this.scheduleStore.getPendingEntries(file.path)) {
 					if (entry === null) schedules.delete(blockId);
@@ -263,7 +275,7 @@ export default class OsmosisPlugin extends Plugin {
 			(file: TFile) => {
 				// Disabled ("excluded") line cards: osmosis-schedule
 				// `disabled: true` overlaid with pending unflushed changes
-				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const raw: unknown = this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY];
 				const disabled = parseDisabledFrontmatter(raw);
 				for (const [blockId, flag] of this.scheduleStore.getPendingDisabled(file.path)) {
 					if (flag) disabled.add(blockId);
@@ -275,13 +287,13 @@ export default class OsmosisPlugin extends Plugin {
 				// Shape sets for occluded line cards. No pending overlay: masks
 				// change only when the editor saves them, which rewrites the
 				// frontmatter directly rather than staging through ScheduleStore.
-				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const raw: unknown = this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY];
 				return parseOcclusionFrontmatter(raw);
 			},
 			(file: TFile) => {
 				// Buried line cards: osmosis-schedule `buriedUntil` overlaid with
 				// pending unflushed buries and un-buries
-				const raw: unknown = this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY];
+				const raw: unknown = this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY];
 				const buried = parseBuriedFrontmatter(raw);
 				for (const [key, until] of this.scheduleStore.getPendingBuried(file.path)) {
 					if (until === null) buried.delete(key);
@@ -305,6 +317,7 @@ export default class OsmosisPlugin extends Plugin {
 				process: (file: TFile, fn: (data: string) => string) => this.app.vault.process(file, fn),
 				processFrontMatter: (file: TFile, fn: (frontmatter: Record<string, unknown>) => void) =>
 					this.app.fileManager.processFrontMatter(file, fn),
+				scheduleFile: (file: TFile) => this.noteData.targetFor(file),
 			},
 			resolveFile: (notePath: string) => this.app.vault.getFileByPath(notePath),
 		};
@@ -677,6 +690,8 @@ export default class OsmosisPlugin extends Plugin {
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
 
+			// Before the scan: line-card schedules in sidecars read through it
+			this.noteData.rebuildIndex();
 			this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
@@ -729,6 +744,13 @@ export default class OsmosisPlugin extends Plugin {
 			}),
 		);
 
+		// A sidecar edited, synced in, created or deleted: its note's line-card
+		// schedules changed without the note itself being touched.
+		this.register(this.noteData.onChange((notePath) => {
+			const note = this.app.vault.getFileByPath(notePath);
+			if (note && this.isNoteFile(note)) queueSync(note);
+		}));
+
 		// Registered only once layout is ready: Obsidian also fires `create` for
 		// every existing file while the vault loads, which would queue the whole
 		// vault for a second, all-at-once sync on top of `syncAll` — the startup
@@ -758,11 +780,12 @@ export default class OsmosisPlugin extends Plugin {
 					return;
 				}
 				if (!(file instanceof TFile)) return;
-				// A note moved *into* the review log folder: nothing will sync
-				// that path again, so its cards have to go now or linger forever.
+				// A note moved *into* the review log or sidecar folder: nothing
+				// will sync that path again, so its cards have to go now or
+				// linger forever.
 				if (
 					file.extension === "md"
-					&& !isReviewLogPath(oldPath, this.settings.reviewLogFolder)
+					&& !this.isOsmosisDataPath(oldPath)
 				) {
 					this.cardSync.handleDelete(oldPath);
 					this.refreshDashboard();
@@ -787,8 +810,17 @@ export default class OsmosisPlugin extends Plugin {
 		return (
 			file instanceof TFile
 			&& file.extension === "md"
-			&& !isReviewLogPath(file.path, this.settings.reviewLogFolder)
+			&& !this.isOsmosisDataPath(file.path)
 		);
+	}
+
+	/**
+	 * True for a path Osmosis keeps its own data in — a review log shard or a
+	 * sidecar. Both are Markdown, and neither is ever a note: not card-sync
+	 * input, not a deck, not a Cosmos note.
+	 */
+	isOsmosisDataPath(path: string): boolean {
+		return isReviewLogPath(path, this.settings.reviewLogFolder) || this.noteData.isSidecar(path);
 	}
 
 	/**
@@ -822,7 +854,7 @@ export default class OsmosisPlugin extends Plugin {
 		const existing = target.carrier === "fence"
 			? fenceOcclusions(lines, target.span!).get(target.label ?? "")
 			: parseOcclusionFrontmatter(
-				this.app.metadataCache.getFileCache(file)?.frontmatter?.[SCHEDULE_FRONTMATTER_KEY],
+				this.noteData.frontmatter(file)[SCHEDULE_FRONTMATTER_KEY],
 			).get(target.blockId ?? "");
 
 		// Numbering is per carrier, not per diagram: a fence's occlusion cards
@@ -1034,6 +1066,20 @@ export default class OsmosisPlugin extends Plugin {
 		await this.reviewLog.moveFolder(previous, folder);
 
 		new Notice(`Review log moved to "${folder}".`);
+	}
+
+	/**
+	 * Point sidecar lookup at a different folder. Moves nothing (that is the
+	 * move commands' job): notes whose sidecars stay behind read from their own
+	 * frontmatter until the folder is moved too. The full re-sync re-reads every
+	 * note's schedules through the rebuilt index.
+	 */
+	async changeSidecarFolder(folder: string): Promise<void> {
+		if (folder === this.settings.sidecarFolder) return;
+		await this.scheduleStore.flush();
+		this.settings.sidecarFolder = folder;
+		this.noteData.rebuildIndex();
+		await this.saveSettings();
 	}
 
 	/**

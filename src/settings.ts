@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, SettingDefinitionItem, AbstractInputSuggest, TFolder, getAllTags } from "obsidian";
 import OsmosisPlugin from "./main";
 import { normalizeLogFolder } from "./store/ReviewLog";
+import type { DataLocation } from "./store/NoteData";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
 import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
@@ -128,6 +129,16 @@ export interface OsmosisSettings {
 	 */
 	installId: string;
 
+	// ── Data storage ────────────────────────────────────────
+	/**
+	 * Where a note with no Osmosis data yet gets its line-card schedules: its
+	 * own frontmatter, or a sidecar file. A note that already has data keeps it
+	 * where it is; changing this moves nothing.
+	 */
+	dataLocation: DataLocation;
+	/** The flat folder holding sidecar files (`<hash>.osmosis.md`). */
+	sidecarFolder: string;
+
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
 	includeFolders: string[];
@@ -208,6 +219,10 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	reviewLogFolder: "Osmosis/Reviews",
 	reviewLogDeviceLabel: "",
 	installId: "",
+
+	// Data storage defaults
+	dataLocation: "sidecar",
+	sidecarFolder: "Osmosis/Schedule",
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -497,6 +512,38 @@ export class OsmosisSettingTab extends PluginSettingTab {
 								placeholder: this.plugin.resolveDeviceLabel(),
 								normalize: (raw) => raw.trim(),
 								onCommit: (label) => this.plugin.setReviewLogDeviceLabel(label),
+							});
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Data storage",
+				items: [
+					{
+						name: "Data location",
+						desc:
+							"Where a note's flashcard schedules go when it has none yet: a sidecar file keeps the note's properties short. "
+							+ "Notes that already have data keep it where it is.",
+						control: {
+							type: "dropdown",
+							key: "dataLocation",
+							options: { sidecar: "Sidecar file", note: "Note properties" },
+						},
+					},
+					{
+						name: "Sidecar folder",
+						desc:
+							"Where sidecar files are kept. Changing this does not move existing sidecars: move the folder yourself. "
+							+ "Add this folder to Settings → Files & links → Excluded files to keep it out of search.",
+						render: (setting) => {
+							this.buildPathInput(setting, {
+								value: this.plugin.settings.sidecarFolder,
+								placeholder: DEFAULT_SETTINGS.sidecarFolder,
+								createSuggest: (input) => new FolderSuggest(this.app, input),
+								normalize: (raw) => normalizeLogFolder(raw, DEFAULT_SETTINGS.sidecarFolder),
+								onCommit: (folder) => this.plugin.changeSidecarFolder(folder),
 							});
 						},
 					},

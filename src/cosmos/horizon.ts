@@ -43,9 +43,11 @@ const isNotePath = (path: string): boolean => path.endsWith(".md");
 
 /**
  * Build the note graph from `resolvedLinks` once, so each hop only walks the
- * neighbourhood instead of the whole vault.
+ * neighbourhood instead of the whole vault. `exclude` drops paths that are not
+ * notes though they are Markdown: a sidecar links to its note through its
+ * `osmosis-note` property, and would otherwise be its backlinker.
  */
-export function noteAdjacency(resolvedLinks: ResolvedLinks): NoteAdjacency {
+export function noteAdjacency(resolvedLinks: ResolvedLinks, exclude: (path: string) => boolean = () => false): NoteAdjacency {
 	const adjacency: NoteAdjacency = { forward: new Map(), backward: new Map() };
 	const add = (map: Map<string, Set<string>>, a: string, b: string): void => {
 		let set = map.get(a);
@@ -53,9 +55,9 @@ export function noteAdjacency(resolvedLinks: ResolvedLinks): NoteAdjacency {
 		set.add(b);
 	};
 	for (const [source, targets] of Object.entries(resolvedLinks)) {
-		if (!isNotePath(source)) continue;
+		if (!isNotePath(source) || exclude(source)) continue;
 		for (const target of Object.keys(targets)) {
-			if (target === source || !isNotePath(target)) continue;
+			if (target === source || !isNotePath(target) || exclude(target)) continue;
 			add(adjacency.forward, source, target);
 			add(adjacency.backward, target, source);
 		}

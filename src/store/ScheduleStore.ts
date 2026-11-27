@@ -1,4 +1,4 @@
-import type { FileManager, TFile } from "obsidian";
+import type { TFile } from "obsidian";
 import type { CardState, OcclusionSet, ScheduleData } from "../database/types";
 import { occlusionSetToYamlValue, parseOcclusionSet } from "../card-gen/occlusion";
 
@@ -79,7 +79,8 @@ const SCHEDULE_FIELD_KEYS = [
  *
  * Ratings are applied to the in-memory CardStore immediately by the
  * caller; this store coalesces them and flushes the `osmosis-schedule`
- * frontmatter key via `FileManager.processFrontMatter` after a debounce
+ * frontmatter key through `NoteData.process` (the note's own frontmatter, or
+ * its sidecar's) after a debounce
  * window, so rapid ratings during a study session cause one file write
  * instead of many. The window opens with the first staged entry and is not
  * extended by later ones (see {@link ScheduleStore.armTimer}), so a write is
@@ -101,7 +102,12 @@ export class ScheduleStore {
 	private writingPaths = new Set<string>();
 
 	constructor(
-		private readonly fileManager: Pick<FileManager, "processFrontMatter">,
+		/**
+		 * Where a note's frontmatter write lands: `NoteData`, which writes the
+		 * note's sidecar instead when the note keeps its data in one. Called with
+		 * the note, so {@link isWriting} stays keyed by the note's path.
+		 */
+		private readonly writer: { process(file: TFile, fn: (fm: Record<string, unknown>) => void): Promise<void> },
 		private readonly resolveFile: (notePath: string) => TFile | null,
 		private readonly flushDelayMs = 2000,
 	) {}
@@ -291,7 +297,7 @@ export class ScheduleStore {
 
 		this.writingPaths.add(notePath);
 		try {
-			await this.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+			await this.writer.process(file, (fm: Record<string, unknown>) => {
 				applyScheduleEntries(
 					fm,
 					schedule ?? EMPTY_PENDING,

@@ -332,6 +332,20 @@ describe("setSuspended", () => {
 		expect(outcome!.message).toBe("Suspended 1 card.");
 	});
 
+	it("snapshots the note's sidecar too, so undo restores schedules kept there", async () => {
+		const sidecar = "Osmosis/Schedule/abc.osmosis.md";
+		h.contents.set(sidecar, "before");
+		h.deps.files.scheduleFile = () => Promise.resolve({ path: sidecar } as never);
+		h.deps.lineCards.flushPath = (notePath) => {
+			h.lineWrites.push(`flush ${notePath}`);
+			if (h.lineWrites.length > 2) h.contents.set(sidecar, "after");
+			return Promise.resolve();
+		};
+		const outcome = await setSuspended(h.deps, [h.store.getCard("os-brwln01")!], true);
+
+		expect(outcome!.record.files.find((file) => file.path === sidecar)).toEqual({ path: sidecar, before: "before", after: "after" });
+	});
+
 	it("writes exclude: true for a fence card", async () => {
 		await setSuspended(h.deps, [h.store.getCard("brw-bidi01")!], true);
 

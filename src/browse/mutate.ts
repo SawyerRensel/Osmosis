@@ -61,6 +61,11 @@ export interface NoteFiles {
 	read(file: TFile): Promise<string>;
 	process(file: TFile, fn: (data: string) => string): Promise<string>;
 	processFrontMatter(file: TFile, fn: (frontmatter: Record<string, unknown>) => void): Promise<void>;
+	/**
+	 * The file a note's line-card schedules are written to: the note, or its
+	 * sidecar (created if the note has none yet). Absent means the note itself.
+	 */
+	scheduleFile?(file: TFile): Promise<TFile>;
 }
 
 export interface MutationDeps {
@@ -239,6 +244,7 @@ export async function setSuspended(
 		);
 
 		const contentBefore = await readSettled(deps, file, plan.notePath);
+		const sidecar = lineTargets.length > 0 ? await sidecarBefore(deps, file) : null;
 		for (const card of [...lineTargets, ...fenceTargets]) {
 			before.set(card.id, { ...card });
 		}
@@ -258,6 +264,7 @@ export async function setSuspended(
 		if (lineTargets.length > 0) await deps.lineCards.flushPath(plan.notePath);
 
 		files.push({ path: plan.notePath, before: contentBefore, after: await deps.files.read(file) });
+		if (sidecar) files.push({ path: sidecar.file.path, before: sidecar.before, after: await deps.files.read(sidecar.file) });
 	}
 
 	if (before.size === 0) return null;
@@ -311,6 +318,7 @@ export async function resetCards(
 		if (lineTargets.length === 0 && fenceTargets.length === 0) continue;
 
 		const contentBefore = await readSettled(deps, file, plan.notePath);
+		const sidecar = lineTargets.length > 0 ? await sidecarBefore(deps, file) : null;
 		for (const card of [...lineTargets, ...fenceTargets]) {
 			before.set(card.id, { ...card });
 		}
@@ -326,6 +334,7 @@ export async function resetCards(
 		if (lineTargets.length > 0) await deps.lineCards.flushPath(plan.notePath);
 
 		files.push({ path: plan.notePath, before: contentBefore, after: await deps.files.read(file) });
+		if (sidecar) files.push({ path: sidecar.file.path, before: sidecar.before, after: await deps.files.read(sidecar.file) });
 	}
 
 	if (before.size === 0) return null;
@@ -585,6 +594,18 @@ export async function changeDeck(
  * that review into this mutation's own change — and undoing the mutation would
  * then silently discard the review. Flushing is free when nothing is staged.
  */
+/**
+ * The sidecar a note's line-card schedules are written to, and its content
+ * before the mutation — so undo restores it alongside the note. Null when the
+ * schedules live in the note itself. Called after {@link readSettled}, so
+ * nothing staged lands between this read and the mutation's own write.
+ */
+async function sidecarBefore(deps: MutationDeps, file: TFile): Promise<{ file: TFile; before: string } | null> {
+	const target = await deps.files.scheduleFile?.(file);
+	if (!target || target.path === file.path) return null;
+	return { file: target, before: await deps.files.read(target) };
+}
+
 async function readSettled(deps: MutationDeps, file: TFile, notePath: string): Promise<string> {
 	await deps.lineCards.flushPath(notePath);
 	return deps.files.read(file);

@@ -608,6 +608,9 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		return this.app.plugins.plugins["osmosis"] as OsmosisPlugin;
 	}
 
+	/** Review log shards and sidecars: Markdown, but never notes in the graph. */
+	private readonly isDataPath = (path: string): boolean => this.plugin().isOsmosisDataPath(path);
+
 	private controlSettings(): SceneControls {
 		const { settings } = this.plugin();
 		return { desktopPivot: settings.cosmosDesktopPivot, touchDrag: settings.cosmosOneFingerDrag };
@@ -2289,7 +2292,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private routeNotes(): string[] {
 		const loaded = new Set(this.horizon?.loaded ?? []);
 		if (this.depth === 0 && this.focusPath !== null) {
-			this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+			this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks, this.isDataPath);
 			for (const path of computeHorizon(this.adjacency, this.focusPath, 1, this.backlinks).loaded) loaded.add(path);
 		}
 		return [...loaded];
@@ -2297,7 +2300,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	/** Hop distance from `path` to every note it reaches. Links count in both directions: a route is flown, not followed. */
 	private hopsFrom(path: string): ReadonlyMap<string, number> {
-		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks);
+		this.adjacency ??= noteAdjacency(this.app.metadataCache.resolvedLinks, this.isDataPath);
 		return computeHorizon(this.adjacency, path, Number.MAX_SAFE_INTEGER - 1, true).hops;
 	}
 
@@ -2555,7 +2558,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		}
 
 		const { metadataCache, vault } = this.app;
-		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks);
+		this.adjacency ??= noteAdjacency(metadataCache.resolvedLinks, this.isDataPath);
 		const resolve: LinkResolver = (linkpath, sourcePath) => metadataCache.getFirstLinkpathDest(decodeEmbedTarget(linkpath), sourcePath)?.path ?? null;
 		const readNote = async (path: string): Promise<NoteInput | null> => {
 			const file = vault.getFileByPath(path);
