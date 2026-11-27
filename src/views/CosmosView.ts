@@ -514,6 +514,13 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.registerEvent(this.app.workspace.on("css-change", () => this.scene?.setTheme(this.readTheme())));
 		// The metadata cache has caught up with a style write: read it from there again.
 		this.registerEvent(this.app.metadataCache.on("changed", (file) => this.styleFrontmatter.delete(file.path)));
+		// A note's sidecar changed (sidecar mode: its styles live there). The
+		// note's own `changed`/`resolve` never fire for it, so drop the cached
+		// styles and redraw here instead, as `resolve` does for a note edit.
+		this.register(this.plugin().noteData.onChange((notePath) => {
+			this.styleFrontmatter.delete(notePath);
+			if (this.horizon?.hops.has(notePath) === true) this.scheduleReload();
+		}));
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!this.follow || file?.extension !== "md" || file.path === this.focusPath) return;
@@ -1956,17 +1963,20 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.lastEditPath = file.path;
 		this.loadSeq++;
 		this.edits.recorder.beginGroup();
-		let after: string;
+		let growth: number;
 		try {
 			if (plan.content !== content) await this.edits.write(file, plan.content);
-			after = await this.edits.processFrontMatter(file, (fm) => writeWidthStyle(fm, selector, buildStableIdSelector(line), width));
+			const target = await this.plugin().noteData.targetFor(file);
+			const written = await this.edits.processFrontMatter(target, (fm) => writeWidthStyle(fm, selector, buildStableIdSelector(line), width));
+			// A sidecar write leaves the note's body where it was.
+			growth = target === file ? written.length - plan.content.length : 0;
 		} finally {
 			this.edits.recorder.endGroup();
 		}
 		this.cache.invalidate(file.path);
 		this.prefetched.delete(file.path);
 		// The stamp lands at the end of the line; the frontmatter write above the body shifts every offset by its growth.
-		this.edited = [{ path: file.path, start: line.range.start + (after.length - plan.content.length), from: node.id }];
+		this.edited = [{ path: file.path, start: line.range.start + growth, from: node.id }];
 		this.editLanded = true;
 		void this.reload();
 	}
@@ -2041,7 +2051,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		const source = node?.source;
 		if (node?.path === undefined || source === undefined) return null;
 		const file = this.app.vault.getFileByPath(node.path);
-		const raw = this.styleFrontmatter.get(node.path) ?? (file === null ? undefined : this.app.metadataCache.getFileCache(file)?.frontmatter);
+		const raw = this.styleFrontmatter.get(node.path) ?? (file === null ? undefined : this.plugin().noteData.frontmatter(file));
 		const fm = parseOsmosisStyleFrontmatter(raw);
 		// Tree-path selectors (a legacy fallback) need the whole parse; the block-ID and stable-ID ones cover what either view writes now.
 		const local = lookupNodeStyleByPath(fm, source.id, undefined, source.blockId);
@@ -2169,7 +2179,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 					stamped = true;
 				}
 				const body = plan?.content ?? content;
-				const after = await this.edits.processFrontMatter(file, (fm) => {
+				const target = await this.plugin().noteData.targetFor(file);
+				const after = await this.edits.processFrontMatter(target, (fm) => {
 					for (const [node, line] of lines) {
 						const selector = plan?.selectors.get(line.id) ?? buildBlockIdSelector(line) ?? buildStableIdSelector(line);
 						if (selector.startsWith("^") && line.blockId === undefined) this.styleStamps.set(`${path}\n${line.id}`, selector.slice(1));
@@ -2179,10 +2190,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 				});
 				this.cache.invalidate(path);
 				this.prefetched.delete(path);
-				// Stamps land at line ends; the frontmatter write above the body shifts every offset by its growth.
+				// Stamps land at line ends; the frontmatter write above the body shifts every offset by its growth (none for a sidecar's).
+				const growth = target === file ? after.length - body.length : 0;
 				for (const [node, line] of lines) {
 					const start = plan === null ? line.range.start : stampedStart(plan, line.range.start);
-					edited.push({ path, start: start + (after.length - body.length), from: node.id });
+					edited.push({ path, start: start + growth, from: node.id });
 				}
 			}
 		} finally {
@@ -2566,7 +2578,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			try {
 				const prefetched = this.prefetched.get(path);
 				const markdown = prefetched?.mtime === file.stat.mtime ? prefetched.text : await vault.cachedRead(file);
-				return { tree: this.cache.get(path, markdown), cache: metadataCache.getFileCache(file) };
+				const own = metadataCache.getFileCache(file);
+				// Sidecar mode: the note's styles (what the model reads from its frontmatter) are in the sidecar.
+				const { noteData } = this.plugin();
+				const cache = own !== null && noteData.sidecarOf(file) !== null ? { ...own, frontmatter: noteData.frontmatter(file) } : own;
+				return { tree: this.cache.get(path, markdown), cache };
 			} catch (error) {
 				console.error(`Osmosis: Cosmos could not read ${path}`, error);
 				return null;

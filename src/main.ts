@@ -690,11 +690,12 @@ export default class OsmosisPlugin extends Plugin {
 		// ── Card Sync ───────────────────────────────────────────
 		// Full vault scan once layout is ready (files are loaded)
 		this.app.workspace.onLayoutReady(() => {
+			// Before the scan: line-card schedules in sidecars read through it.
+			// Before the migration too, which writes where each note keeps its styles.
+			this.noteData.rebuildIndex();
+
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
-
-			// Before the scan: line-card schedules in sidecars read through it
-			this.noteData.rebuildIndex();
 			this.cardSync.syncAll().then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
@@ -1906,7 +1907,7 @@ export default class OsmosisPlugin extends Plugin {
 		});
 	}
 
-	/** Migrate per-note mapSettings from data.json into osmosis-styles frontmatter. */
+	/** Migrate per-note mapSettings from data.json into osmosis-styles frontmatter (the note's, or its sidecar's). */
 	private async migrateMapSettingsToFrontmatter(): Promise<void> {
 		const entries = Object.entries(this.settings.mapSettings);
 		if (entries.length === 0) return;
@@ -1917,7 +1918,7 @@ export default class OsmosisPlugin extends Plugin {
 			if (!(file instanceof TFile)) continue;
 
 			try {
-				await this.app.fileManager.processFrontMatter(
+				await this.noteData.process(
 					file,
 					(fm: Record<string, unknown>) => {
 						const osmosis = styleMappingFor(fm);

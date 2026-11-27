@@ -47,11 +47,12 @@ export interface MovedBlock {
 }
 
 /**
- * Read one key out of a file's YAML frontmatter block, straight from its raw
- * markdown. Used where the metadata cache can't be trusted — right after our
- * own write, it still holds the pre-write frontmatter.
+ * A file's YAML frontmatter block, parsed straight from its raw markdown;
+ * undefined when it has none, or it isn't a mapping. Used where the metadata
+ * cache can't be trusted — right after our own write, it still holds the
+ * pre-write frontmatter.
  */
-export function frontmatterValue(content: string, key: string): unknown {
+export function frontmatterOf(content: string): Record<string, unknown> | undefined {
 	const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
 	if (!match?.[1]) return undefined;
 	try {
@@ -59,10 +60,15 @@ export function frontmatterValue(content: string, key: string): unknown {
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 			return undefined;
 		}
-		return (parsed as Record<string, unknown>)[key];
+		return parsed as Record<string, unknown>;
 	} catch {
 		return undefined;
 	}
+}
+
+/** One key out of a file's frontmatter, read from its raw markdown ({@link frontmatterOf}). */
+export function frontmatterValue(content: string, key: string): unknown {
+	return frontmatterOf(content)?.[key];
 }
 
 function fileAtPath(app: App, path: string): TFile | null {

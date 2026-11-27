@@ -10,7 +10,6 @@ import {
 	Notice,
 	Menu,
 	parseLinktext,
-	parseYaml,
 	resolveSubpath,
 	setIcon,
 	type ViewStateResult,
@@ -40,6 +39,7 @@ import { LinkPicker, linkMenuItems } from "../link-pick";
 import { FindBar, type FindHost } from "./FindBar";
 import * as moves from "../edit-moves";
 import type { MoveContext } from "../edit-moves";
+import { mergeNoteData } from "../store/sidecar";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
@@ -2166,6 +2166,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				if (!(file instanceof TFile)) return;
+				// The open note's sidecar (sidecar mode): nothing in the note
+				// moved, so there is nothing to reload here — its styles come
+				// back through `noteData.onChange`. A write of ours to it still
+				// consumes the flag it set, or the flag would swallow the next
+				// real edit to the note.
+				if (this.currentFile && file === this.plugin.noteData.sidecarOf(this.currentFile)) {
+					this.suppressNextReload = false;
+					return;
+				}
 				if (file === this.currentFile) {
 					if (this.edits.recorder.live) {
 						// A live-edit session (color-picker drag) drives rendering
@@ -2226,6 +2235,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				void this.resyncFromParent();
 			}),
 		);
+
+		// The open note's sidecar changed under the map: redraw its styles.
+		this.register(this.plugin.noteData.onChange((notePath) => {
+			if (notePath === this.currentFile?.path) void this.reloadSidecarStyles();
+		}));
 
 		// Auto-unpin if pinned file is deleted
 		this.registerEvent(
@@ -2361,7 +2375,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.treeStale = false;
 		this.staleParsePaths.clear();
 		const content = await this.app.vault.read(file);
-		this.reloadFrontmatterFromContent(content);
+		this.reloadFrontmatterFromContent(content, await this.sidecarFrontmatter());
 		this.loadMapSettings();
 		this.currentTree = this.cache.get(file.path, content);
 
@@ -2531,7 +2545,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2574,7 +2588,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2614,7 +2628,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2647,7 +2661,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -2684,7 +2698,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		this.suppressNextReload = true;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -2774,7 +2788,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// waiting for Obsidian's async metadata cache to refresh.
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2852,7 +2866,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2921,7 +2935,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -2960,7 +2974,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -3024,7 +3038,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 		let writtenStyles: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = styleMappingFor(fm);
@@ -3084,7 +3098,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Also clear assignments in the current note's frontmatter
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.processFrontMatterTracked(
+			await this.processStylesTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = readStyleMapping(fm);
@@ -3137,7 +3151,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// Update node references in the current note
 		if (this.currentFile) {
 			this.suppressNextReload = true;
-			await this.processFrontMatterTracked(
+			await this.processStylesTracked(
 				this.currentFile,
 				(fm: Record<string, unknown>) => {
 					const osmosis = readStyleMapping(fm);
@@ -3211,7 +3225,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 		let writtenClasses: Record<string, NodeStyle> | undefined;
 
-		await this.processFrontMatterTracked(
+		await this.processStylesTracked(
 			this.currentFile,
 			(fm: Record<string, unknown>) => {
 				const osmosis = readStyleMapping(fm);
@@ -3281,34 +3295,69 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.mapSettings = { ...DEFAULT_MAP_SETTINGS, ...overrides };
 	}
 
-	/** Parse `osmosis-styles:` frontmatter from the current file's metadata cache. */
+	/**
+	 * Parse `osmosis-styles:` frontmatter from the metadata cache: the current
+	 * file's own, or its sidecar's in sidecar mode (`NoteData.frontmatter`).
+	 */
 	loadOsmosisStyleFrontmatter(): void {
 		if (!this.currentFile) {
 			this.osmosisStyleFrontmatter = undefined;
 			return;
 		}
-		const cache = this.app.metadataCache.getFileCache(this.currentFile);
 		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(
-			cache?.frontmatter,
+			this.plugin.noteData.frontmatter(this.currentFile),
 		);
 	}
 
-	/** Re-parse osmosis frontmatter directly from raw markdown content.
-	 *  Used after undo/redo where the metadata cache hasn't updated yet. */
-	private reloadFrontmatterFromContent(content: string): void {
-		const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-		if (!match?.[1]) {
+	/**
+	 * Re-parse osmosis frontmatter directly from raw markdown content, laying
+	 * the sidecar's (`sidecar`, from {@link sidecarFrontmatter}) over it as
+	 * `NoteData` does. Used on load and after undo/redo, where the metadata
+	 * cache can't be trusted yet.
+	 */
+	private reloadFrontmatterFromContent(content: string, sidecar?: Record<string, unknown>): void {
+		const own = moves.frontmatterOf(content);
+		if (own === undefined && sidecar === undefined) {
 			this.osmosisStyleFrontmatter = undefined;
 			return;
 		}
-		try {
-			const parsed: unknown = parseYaml(match[1]);
-			const fm = parsed as Record<string, unknown> | undefined;
-			this.reportCorruptStyles(fm);
-			this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(fm);
-		} catch {
-			this.osmosisStyleFrontmatter = undefined;
-		}
+		const fm = mergeNoteData(own, sidecar);
+		this.reportCorruptStyles(fm);
+		this.osmosisStyleFrontmatter = parseOsmosisStyleFrontmatter(fm);
+	}
+
+	/**
+	 * The current note's sidecar frontmatter, parsed from `content` when the
+	 * caller already holds it (an undo restoring it) or read fresh from disk.
+	 * Undefined in note mode.
+	 */
+	private async sidecarFrontmatter(content?: string): Promise<Record<string, unknown> | undefined> {
+		const sidecar = this.currentFile ? this.plugin.noteData.sidecarOf(this.currentFile) : null;
+		if (!sidecar) return undefined;
+		return moves.frontmatterOf(content ?? await this.app.vault.read(sidecar));
+	}
+
+	/**
+	 * The open note's sidecar changed (a hand edit, a sync, or our own write
+	 * once the metadata cache has it): re-read the styles from disk and redraw
+	 * when they differ from what the map shows. Our own writes have already
+	 * patched the in-memory copy, so they normally redraw nothing; nor does a
+	 * schedule flush, which leaves `osmosis-styles` alone. Skipped mid-gesture
+	 * (a picker drag, a grouped move, an open editor), which draw for themselves.
+	 */
+	private async reloadSidecarStyles(): Promise<void> {
+		const file = this.currentFile;
+		if (!file || this.edits.recorder.live || this.edits.recorder.grouping || this.editingNodeId) return;
+		const before = JSON.stringify(this.osmosisStyleFrontmatter ?? null);
+		const content = await this.app.vault.read(file);
+		const sidecar = await this.sidecarFrontmatter();
+		if (file !== this.currentFile) return;
+		this.reloadFrontmatterFromContent(content, sidecar);
+		if (JSON.stringify(this.osmosisStyleFrontmatter ?? null) === before) return;
+		this.loadMapSettings();
+		this.nodeSizeCache.clear();
+		await this.render(true);
+		for (const fn of this.historyApplyListeners) fn();
 	}
 
 	/**
@@ -7940,6 +7989,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	): Promise<void> {
 		const after = await this.edits.processFrontMatter(file, fn);
 
+		// A sidecar has no body the map is built from: the tree and its offsets
+		// are untouched, and its styles reload through `noteData.onChange`.
+		if (this.plugin.noteData.isSidecar(file.path)) return;
+
 		// processFrontMatter inserts or grows the frontmatter block, shifting
 		// every body offset. Rebuild currentTree from the new content so a
 		// subsequent range-based structural edit (rename, move, drag, …) does
@@ -7965,6 +8018,24 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
+	 * A style write: {@link processFrontMatterTracked} aimed at wherever `file`
+	 * keeps its `osmosis-styles` — its own frontmatter, or its sidecar when the
+	 * note is in sidecar mode (`NoteData.targetFor`). Every map style write, and
+	 * the properties sidebar's, comes through here, so undo records the file
+	 * actually written. A sidecar write leaves the note untouched, so the
+	 * `suppressNextReload` the caller set for the note's modify is dropped
+	 * rather than left to swallow the next real one.
+	 */
+	async processStylesTracked(
+		file: TFile,
+		fn: (fm: Record<string, unknown>) => void,
+	): Promise<void> {
+		const target = await this.plugin.noteData.targetFor(file);
+		if (target !== file) this.suppressNextReload = false;
+		await this.processFrontMatterTracked(target, fn);
+	}
+
+	/**
 	 * Re-render after an undo/redo (`EditPipeline.step`) has restored its files.
 	 * Re-renders from the restored content — reloading frontmatter and clearing
 	 * the size cache so both text and style changes are reflected. Handles the
@@ -7973,27 +8044,34 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private async applySnapshot(step: Promise<RestoredFile[] | null>): Promise<void> {
 		const restored = await step;
 		if (restored === null) return;
+		if (!this.currentFile) return;
+		// In sidecar mode a style undo restores the sidecar, not the note.
+		const sidecarPath = this.plugin.noteData.sidecarOf(this.currentFile)?.path;
 		let restoredCurrent: string | null = null;
+		let restoredSidecar: string | null = null;
 		for (const file of restored) {
-			if (file.path === this.currentFile?.path) restoredCurrent = file.content;
+			if (file.path === this.currentFile.path) restoredCurrent = file.content;
+			if (file.path === sidecarPath) restoredSidecar = file.content;
 		}
 
-		if (!this.currentFile) return;
-
+		let noteContent: string;
 		if (restoredCurrent !== null) {
+			noteContent = restoredCurrent;
 			this.currentTree = this.cache.get(this.currentFile.path, restoredCurrent);
-			this.reloadFrontmatterFromContent(restoredCurrent);
+		} else {
+			// Only transcluded sources (or the sidecar) changed; re-read the
+			// parent so the re-expansion below picks them up.
+			noteContent = await this.app.vault.read(this.currentFile);
+			this.cache.invalidate(this.currentFile.path);
+			this.currentTree = this.cache.get(this.currentFile.path, noteContent);
+		}
+		if (restoredCurrent !== null || restoredSidecar !== null) {
+			this.reloadFrontmatterFromContent(noteContent, await this.sidecarFrontmatter(restoredSidecar ?? undefined));
 			// Recompute derived map settings (theme/layout/background/branch line/…)
 			// from the restored frontmatter, mirroring the load flow — otherwise a
 			// map-level style undo/redo restores the file but not the live layout.
 			this.loadMapSettings();
 			this.nodeSizeCache.clear();
-		} else {
-			// Only transcluded sources changed; re-read the parent so the
-			// re-expansion below picks them up.
-			const parentContent = await this.app.vault.read(this.currentFile);
-			this.cache.invalidate(this.currentFile.path);
-			this.currentTree = this.cache.get(this.currentFile.path, parentContent);
 		}
 
 		// Re-expand transclusions so an undo/redo that carried an embed keeps it
