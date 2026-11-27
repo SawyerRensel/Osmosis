@@ -1,36 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
-	SIDECAR_SUFFIX,
 	hasSidecarKeys,
 	isSidecarPath,
 	mergeNoteData,
 	noteLink,
 	parseNoteLink,
 	sidecarContent,
-	sidecarName,
+	withExcludedFolder,
 } from "./sidecar";
 
-describe("sidecarName", () => {
-	it("is an 8-hex hash of the note path, stable across calls", () => {
-		const name = sidecarName("Sailing/Knots.md", () => false);
-		expect(name).toMatch(/^[0-9a-f]{8}\.osmosis\.md$/);
-		expect(sidecarName("Sailing/Knots.md", () => false)).toBe(name);
+describe("withExcludedFolder", () => {
+	it("adds the folder with a trailing slash to an empty list", () => {
+		expect(withExcludedFolder(null, null, "Osmosis/Schedule")).toEqual(["Osmosis/Schedule/"]);
 	});
 
-	it("differs between notes", () => {
-		expect(sidecarName("Sailing/Knots.md", () => false)).not.toBe(sidecarName("Sailing/Tides.md", () => false));
+	it("swaps the old folder's entry for the new one and keeps the user's own entries", () => {
+		expect(withExcludedFolder(["Archive/", "Osmosis/Schedule/"], "Osmosis/Schedule", "Data/Sidecars"))
+			.toEqual(["Archive/", "Data/Sidecars/"]);
 	});
 
-	it("re-salts while the name is taken, stably", () => {
-		const first = sidecarName("Cooking/Bread.md", () => false);
-		const taken = new Set([first]);
-		const second = sidecarName("Cooking/Bread.md", (name) => taken.has(name));
-		expect(second).not.toBe(first);
-		expect(second.endsWith(SIDECAR_SUFFIX)).toBe(true);
-		expect(sidecarName("Cooking/Bread.md", (name) => taken.has(name))).toBe(second);
-		taken.add(second);
-		const third = sidecarName("Cooking/Bread.md", (name) => taken.has(name));
-		expect(taken.has(third)).toBe(false);
+	it("does not add a duplicate, and leaves entries written another way alone", () => {
+		expect(withExcludedFolder(["Osmosis/Schedule/", "Osmosis/Schedule"], null, "Osmosis/Schedule"))
+			.toEqual(["Osmosis/Schedule/", "Osmosis/Schedule"]);
+	});
+
+	it("is null when nothing is left", () => {
+		expect(withExcludedFolder(["Osmosis/Schedule/"], "Osmosis/Schedule", null)).toBeNull();
 	});
 });
 

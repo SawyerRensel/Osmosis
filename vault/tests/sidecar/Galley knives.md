@@ -7,7 +7,7 @@ osmosis-deck: Testing/Sidecar
 
 This note starts with **no Osmosis data**. With *Data location* set to
 **Sidecar file** (the default), studying any card below creates one file in
-`Osmosis/Schedule/` named like `a3f9c2e1.osmosis.md`, holding
+`Osmosis/Schedule/` named `Galley knives.osmosis.md`, holding
 `osmosis-note: "[[tests/sidecar/Galley knives]]"` and `osmosis-schedule`.
 This note's properties must stay exactly as they are above.
 

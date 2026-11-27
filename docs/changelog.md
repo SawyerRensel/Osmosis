@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Sidecar files.** A note's schedules, fence review data, occlusion masks and map styles can live in a sidecar file of its own, keeping the note's properties short. **Settings > Osmosis > Data location** chooses where a note's first data goes, and four commands move existing data: **Move data to sidecar**, **Move data into note**, and the vault-wide **Move all data to sidecars** and **Move all data into notes**. Changing the **Sidecar folder** setting moves the files. See [Data Storage](reference/data-storage.md#sidecar-files).
+- **Sidecar files.** A note's schedules, fence review data, occlusion masks and map styles can live in a sidecar file of its own, keeping the note's properties short. **Settings > Osmosis > Data location** chooses where a note's first data goes, and four commands move existing data: **Move data to sidecar**, **Move data into note**, and the vault-wide **Move all data to sidecars** and **Move all data into notes**. A sidecar is named after its note (`Knots.osmosis.md`, or `Sailing.Knots.osmosis.md` when two notes share a name) and follows it through renames. Changing the **Sidecar folder** setting moves the files, and the folder is kept in Obsidian's Excluded files. See [Data Storage](reference/data-storage.md#sidecar-files).
 
 - **Cosmos draws mind map themes.** A new **Mind map style** entry in the Overlays' **Color by**, now the default, styles each note's plates with its mind map theme and map-level style, and a single-note scene takes the note's map background. A color mode chosen before keeps applying until you pick the new one.
 

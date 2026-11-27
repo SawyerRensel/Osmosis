@@ -136,8 +136,15 @@ export interface OsmosisSettings {
 	 * where it is; changing this moves nothing.
 	 */
 	dataLocation: DataLocation;
-	/** The flat folder holding sidecar files (`<hash>.osmosis.md`). */
+	/** The flat folder holding sidecar files (`<note name>.osmosis.md`). */
 	sidecarFolder: string;
+	/**
+	 * Set once Osmosis has put the sidecar folder in Obsidian's Excluded files.
+	 * Load adds it once for a folder that already exists; after that only
+	 * creating the folder or changing this setting does, so a user who takes the
+	 * entry out keeps it out.
+	 */
+	sidecarFolderExcluded: boolean;
 
 	// ── Note Inclusion Settings ────────────────────────────
 	/** Folder paths that auto-enable card generation (without osmosis-cards: true). */
@@ -223,6 +230,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	// Data storage defaults
 	dataLocation: "sidecar",
 	sidecarFolder: "Osmosis/Schedule",
+	sidecarFolderExcluded: false,
 
 	// Note inclusion defaults
 	includeFolders: [],
@@ -536,7 +544,7 @@ export class OsmosisSettingTab extends PluginSettingTab {
 						name: "Sidecar folder",
 						desc:
 							"Where sidecar files are kept. Changing it moves the existing sidecar files. "
-							+ "Add this folder to Settings → Files & links → Excluded files to keep it out of search.",
+							+ "The folder is added to Settings → Files and links → Excluded files, which keeps it out of search and the quick switcher.",
 						render: (setting) => {
 							this.buildPathInput(setting, {
 								value: this.plugin.settings.sidecarFolder,

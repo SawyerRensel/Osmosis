@@ -161,12 +161,21 @@ osmosis-styles:
 
 - **Where:** one flat folder, `Osmosis/Schedule` by default
   (**Settings > Osmosis > Sidecar folder**). Changing the setting moves the
-  files.
-- **Name:** a short hash of the note's path when the sidecar was made, such as
-  `a3f9c2e1.osmosis.md`, so quick switcher never offers a second file with your
-  note's name. The name never changes.
-- **The link:** `osmosis-note` is what ties the sidecar to its note. Renaming or
-  moving the note updates it; deleting the note sends its sidecar to the trash.
+  files. Osmosis adds the folder to **Settings > Files and links > Excluded
+  files**, so sidecars stay out of search, the quick switcher, the graph, and
+  property suggestions.
+- **Name:** the note's name, as in `Knots.osmosis.md`. When two notes share a
+  name, both sidecars add the folder the note sits in, `Sailing.Knots.osmosis.md`
+  and `Climbing.Knots.osmosis.md`, and further folders while they still match.
+  Upper and lower case count as the same name. A note at the top of the vault
+  has no folder to add, so it keeps the plain name. Osmosis renames sidecars to
+  keep up: when you rename or move a note, and when a second note with the same
+  name appears or goes away.
+- **The link:** the name is what ties the sidecar to its note. `osmosis-note` is
+  a backup: Obsidian updates it when the note moves, so a sidecar whose name no
+  longer matches any note — say, the note was renamed while Osmosis was off — is
+  matched back to its note and renamed when Osmosis next starts. Deleting the
+  note sends its sidecar to the trash.
 - **What moves:** `osmosis-schedule`, `osmosis-styles`, and each fence header's
   review state — schedules, buries, `exclude`, and occlusion masks — which goes
   under `osmosis-fences`, keyed by the fence's `id`. The card itself stays in
@@ -205,9 +214,14 @@ interrupted move leaves the data in both places, never in neither. Data for a
 fence that no longer exists in the note is dropped on the way back in, and the
 notice says how many.
 
-!!! tip "Keep sidecars out of search"
-    Add the sidecar folder to **Settings > Files & links > Excluded files** to
-    keep sidecars out of search, quick switcher, and the graph.
+A sidecar that matches no note, by name or by its `osmosis-note` link, is left
+where it is; the vault-wide commands count it in their notice.
+
+!!! note "Excluded files"
+    Osmosis adds the sidecar folder to **Excluded files** when it creates the
+    folder, once at startup for a folder that already exists, and whenever you
+    change the folder setting (the old folder's entry goes). If you remove the
+    entry, it stays removed. Excluded files are still read by Osmosis.
 
 ## Review History
 

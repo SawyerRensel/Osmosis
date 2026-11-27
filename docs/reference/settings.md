@@ -53,12 +53,7 @@ search.
 | Setting | Default | What it does |
 |---------|---------|--------------|
 | **Data location** | Sidecar file | Where a note's study data goes when it has none yet: a [sidecar file](data-storage.md#sidecar-files), or the note's own properties. Notes that already have data keep it where it is, so changing this moves nothing; the [move commands](data-storage.md#moving-data) do |
-| **Sidecar folder** | `Osmosis/Schedule` | Where sidecar files are kept. Changing it moves the existing files |
-
-!!! tip "Keep sidecars out of search results"
-    Add the sidecar folder to **Settings > Files & links > Excluded files**.
-    Sidecars are Markdown, so Obsidian indexes them like any note unless you
-    say otherwise.
+| **Sidecar folder** | `Osmosis/Schedule` | Where [sidecar files](data-storage.md#sidecar-files) are kept. Changing it moves the existing files and swaps the folder in **Settings > Files and links > Excluded files** |
 
 ## Study Mode
 

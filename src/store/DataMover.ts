@@ -120,7 +120,8 @@ export class DataMover {
 
 	/** Every note with Osmosis data in it, into its sidecar. One note failing does not stop the rest. */
 	async allToSidecars(): Promise<VaultMoveResult> {
-		const result: VaultMoveResult = { moved: 0, failed: 0, dropped: 0, orphans: 0 };
+		// Orphans first: one matched back by its link is that note's sidecar, not a second one.
+		const result: VaultMoveResult = { moved: 0, failed: 0, dropped: 0, orphans: await this.noteData.reconcile() };
 		for (const file of this.app.vault.getMarkdownFiles()) {
 			if (this.isDataPath(file.path)) continue;
 			// Cheap pre-filter from the cache; the plan decides for real.
@@ -132,15 +133,15 @@ export class DataMover {
 		return result;
 	}
 
-	/** Every sidecar's data back into its note. Sidecars whose note is gone are counted and left. */
+	/**
+	 * Every sidecar's data back into its note. Sidecars matching no note, by
+	 * name or by their `osmosis-note` link, are counted and left.
+	 */
 	async allIntoNotes(): Promise<VaultMoveResult> {
-		const result: VaultMoveResult = { moved: 0, failed: 0, dropped: 0, orphans: 0 };
+		const result: VaultMoveResult = { moved: 0, failed: 0, dropped: 0, orphans: await this.noteData.reconcile() };
 		for (const path of this.noteData.notesWithSidecars()) {
 			const file = this.app.vault.getFileByPath(path);
-			if (!file) {
-				result.orphans++;
-				continue;
-			}
+			if (!file) continue;
 			this.tally(result, file, await this.attempt(file, () => this.intoNote(file)));
 		}
 		return result;
@@ -150,7 +151,8 @@ export class DataMover {
 
 	/**
 	 * Move sidecar files into `folder`, keeping their names (a taken name gets a
-	 * `-1`, `-2` … before the suffix). Call with the folder setting already
+	 * `-1`, `-2` … before the suffix, which makes that file an orphan the next
+	 * `NoteData.reconcile` tries to match back by its link). Call with the folder setting already
 	 * pointing at `folder`, so each file is re-indexed as it lands. Returns the
 	 * number moved; a file that fails is logged and stays where it was.
 	 */

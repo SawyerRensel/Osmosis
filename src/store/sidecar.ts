@@ -3,10 +3,12 @@
  * frontmatter stays short enough to read in Source view.
  *
  * A sidecar is Markdown holding frontmatter only, in one flat folder (the
- * `sidecarFolder` setting), named by a hash of the note's path when it was
- * created — `a3f9c2e1.osmosis.md` — so Ctrl+O never offers a second file under
- * the note's own name. It is **never renamed**: the `osmosis-note` link in its
- * frontmatter is what ties it to its note, and the only thing that does.
+ * `sidecarFolder` setting), named after its note — `Pantry.osmosis.md`, or
+ * `Travel.Pantry.osmosis.md` when basenames collide (see `sidecar-names.ts`).
+ * The **name** ties it to its note. The `osmosis-note` link in its frontmatter
+ * is only a recovery hint: Obsidian's link updater keeps it pointing at the
+ * note, so a sidecar whose name matches no note (renamed while Osmosis was
+ * off, or an old hash-named one) can be matched back by it.
  *
  * ```yaml
  * ---
@@ -33,36 +35,10 @@ export const SIDECAR_KEYS = ["osmosis-schedule", "osmosis-fences", "osmosis-styl
  */
 const ENTRY_MERGED_KEYS: ReadonlySet<string> = new Set(["osmosis-schedule", "osmosis-fences"]);
 
-/** Every sidecar's file name ends with this. */
-export const SIDECAR_SUFFIX = ".osmosis.md";
+export { SIDECAR_SUFFIX } from "./sidecar-names";
 
 /** The body written into a new sidecar. No wikilinks: the frontmatter link is the only one. */
 const SIDECAR_BODY = "Osmosis keeps this note's flashcard data here. It follows the note when the note is renamed or moved.\n";
-
-/** 32-bit FNV-1a, as 8 hex characters. */
-function fnv1a(text: string): string {
-	let hash = 0x811c9dc5;
-	for (let i = 0; i < text.length; i++) {
-		hash ^= text.charCodeAt(i);
-		hash = Math.imul(hash, 0x01000193);
-	}
-	return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-/**
- * The file name for a new sidecar of `notePath`: an 8-hex hash of the path,
- * re-salted until `isTaken` says the name is free. `isTaken` should answer true
- * only for a name used by something *other* than this note's own sidecar.
- *
- * Deterministic on the path, so two devices creating a sidecar for the same
- * note at once pick the same file rather than two.
- */
-export function sidecarName(notePath: string, isTaken: (fileName: string) => boolean): string {
-	for (let salt = 0; ; salt++) {
-		const name = `${fnv1a(salt === 0 ? notePath : `${notePath}#${String(salt)}`)}${SIDECAR_SUFFIX}`;
-		if (!isTaken(name)) return name;
-	}
-}
 
 /** The `osmosis-note` value for a note: a wikilink to its full vault path, without `.md`. */
 export function noteLink(notePath: string): string {
@@ -125,4 +101,20 @@ export function mergeNoteData(
 /** The text of a brand-new sidecar for `notePath`. JSON quoting is valid YAML. */
 export function sidecarContent(notePath: string): string {
 	return `---\n${SIDECAR_LINK_KEY}: ${JSON.stringify(noteLink(notePath))}\n---\n${SIDECAR_BODY}`;
+}
+
+/**
+ * Obsidian's Excluded files list (`userIgnoreFilters`) with the sidecar folder
+ * swapped in: `previous`'s entry removed, `folder`'s added. An entry is the
+ * folder path with a trailing slash, the form Obsidian's own folder picker
+ * writes. Entries the user wrote any other way are left alone. Null for an
+ * empty list, which is how Obsidian stores "none".
+ */
+export function withExcludedFolder(filters: unknown, previous: string | null, folder: string | null): string[] | null {
+	const list = Array.isArray(filters) ? filters.filter((entry): entry is string => typeof entry === "string") : [];
+	const drop = previous === null || previous === "" ? null : `${previous}/`;
+	const add = folder === null || folder === "" ? null : `${folder}/`;
+	const next = list.filter((entry) => entry !== drop || entry === add);
+	if (add !== null && !next.includes(add)) next.push(add);
+	return next.length > 0 ? next : null;
 }

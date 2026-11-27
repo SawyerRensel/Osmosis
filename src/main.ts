@@ -212,7 +212,10 @@ export default class OsmosisPlugin extends Plugin {
 		this.noteData = new NoteData(this.app, () => ({
 			dataLocation: this.settings.dataLocation,
 			sidecarFolder: this.settings.sidecarFolder,
-		}));
+		}), (path) => isReviewLogPath(path, this.settings.reviewLogFolder), () => {
+			this.settings.sidecarFolderExcluded = true;
+			void this.saveData(this.settings);
+		});
 		this.noteData.attach(this);
 
 		// Fence writer — writes schedule data back into markdown fences, or into
@@ -707,6 +710,7 @@ export default class OsmosisPlugin extends Plugin {
 			// Before the scan: line-card schedules in sidecars read through it.
 			// Before the migration too, which writes where each note keeps its styles.
 			this.noteData.rebuildIndex();
+			void this.excludeSidecarFolderOnce();
 
 			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
 			void this.migrateMapSettingsToFrontmatter();
@@ -1116,11 +1120,26 @@ export default class OsmosisPlugin extends Plugin {
 		this.settings.sidecarFolder = folder;
 		const moved = await this.dataMover.moveSidecars(files, folder);
 		this.noteData.rebuildIndex();
+		this.noteData.excludeFolder(previous, folder);
+		this.settings.sidecarFolderExcluded = true;
 		await this.saveSettings();
 		if (files.length > 0) {
 			const failed = files.length - moved;
 			new Notice(`Moved ${plural(moved, "sidecar file")} to "${folder}".${failed > 0 ? ` ${plural(failed, "file")} could not be moved: see the console.` : ""}`);
 		}
+	}
+
+	/**
+	 * Put an already existing sidecar folder in Obsidian's Excluded files, once.
+	 * A folder Osmosis creates is excluded as it is created (`NoteData`), and a
+	 * folder change swaps the entry; the flag keeps a user's removal standing.
+	 */
+	private async excludeSidecarFolderOnce(): Promise<void> {
+		if (this.settings.sidecarFolderExcluded) return;
+		if (this.app.vault.getAbstractFileByPath(this.settings.sidecarFolder) === null) return;
+		this.noteData.excludeFolder(null, this.settings.sidecarFolder);
+		this.settings.sidecarFolderExcluded = true;
+		await this.saveData(this.settings);
 	}
 
 	/**
@@ -1224,7 +1243,7 @@ export default class OsmosisPlugin extends Plugin {
 		const result: VaultMoveResult = to === "sidecar" ? await this.dataMover.allToSidecars() : await this.dataMover.allIntoNotes();
 		const parts = [`Moved the data of ${plural(result.moved, "note")} ${to === "sidecar" ? "to sidecars" : "into notes"}.`];
 		if (result.dropped > 0) parts.push(`Dropped data for ${plural(result.dropped, "fence")} no longer in their notes.`);
-		if (result.orphans > 0) parts.push(`Left ${plural(result.orphans, "sidecar")} whose note no longer exists.`);
+		if (result.orphans > 0) parts.push(`Left ${plural(result.orphans, "sidecar")} that match no note.`);
 		if (result.failed > 0) parts.push(`${plural(result.failed, "note")} could not be moved and kept their data: see the console.`);
 		new Notice(parts.join(" "), 10000);
 	}
