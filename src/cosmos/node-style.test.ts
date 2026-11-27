@@ -197,7 +197,7 @@ describe("nodeLook", () => {
 
 	it("reads fill, border and text colours, width and branch line", () => {
 		const look = nodeLook({ fill: "#112233", border: { color: "rgb(1, 2, 3)", width: 3 }, text: { color: "navy" }, width: 320, branchLine: { color: "#444444", taper: "grow" } });
-		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, shape: "rounded-rect", dash: "solid", width: 320, branchLine: { color: "#444444", taper: "grow" }, font: DEFAULT_FONT, boundary: null });
+		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, shape: "rounded-rect", dash: "solid", width: 320, font: DEFAULT_FONT, boundary: null });
 	});
 
 	it("resolves the boundary, tinted by the node's fill, with colours WebGL can draw", () => {

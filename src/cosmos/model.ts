@@ -21,10 +21,11 @@
 import type { CachedMetadata } from "obsidian";
 import type { CardOcclusion } from "../database/types";
 import type { OcclusionSide } from "../study/occlusion-masks";
-import type { NodeStyle } from "../styles";
+import type { BranchStyle, NodeStyle } from "../styles";
 import type { OsmosisNode, OsmosisTree } from "../types";
 import { isPanelMedia } from "./near";
 import { noteMaxWidth, noteStyleReader, type ThemeLookup } from "./node-style";
+import { noteBranchLayers, resolveBranch } from "./branch-look";
 
 export type GraphNodeKind = "note" | "line" | "tag" | "attachment" | "ghost";
 
@@ -62,6 +63,12 @@ export interface GraphNode {
 	 * there (`panelWidthRule`). Absent for none.
 	 */
 	maxWidth?: number;
+	/**
+	 * Line nodes: the branch line the hierarchy edge into this node is drawn
+	 * in, its own `branchLine` over its note's theme and map-level `branchLine*`
+	 * keys (`resolveBranch`). Absent for none: a plain edge.
+	 */
+	branch?: BranchStyle;
 }
 
 /**
@@ -194,9 +201,11 @@ export function buildGraph(notes: readonly NoteInput[], resolve: LinkResolver, o
 		const h1 = coreId === null ? null : soleH1(tree.root);
 		const styleOf = noteStyleReader(cache?.frontmatter, tree.root, options.globalClasses, options.themes);
 		const maxWidth = noteMaxWidth(cache?.frontmatter);
-		const styled = (node: OsmosisNode): { style?: NodeStyle; maxWidth?: number } => {
+		const layers = noteBranchLayers(cache?.frontmatter, options.themes);
+		const styled = (node: OsmosisNode): { style?: NodeStyle; maxWidth?: number; branch?: BranchStyle } => {
 			const style = styleOf?.(node);
-			return { ...(style === undefined ? {} : { style }), ...(maxWidth === undefined ? {} : { maxWidth }) };
+			const branch = resolveBranch(style?.branchLine, layers);
+			return { ...(style === undefined ? {} : { style }), ...(maxWidth === undefined ? {} : { maxWidth }), ...(branch === undefined ? {} : { branch }) };
 		};
 		if (coreId !== null && h1 === null) nodes.set(coreId, { id: coreId, kind: "note", label: noteTitle(path), path, source: tree.root, ...styled(tree.root) });
 		const index: NoteIndex = { path, coreId, lines: [], byBlockId: new Map(), byHeading: new Map() };

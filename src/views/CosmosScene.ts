@@ -55,7 +55,8 @@ import { CosmosHints } from "./CosmosHints";
 import { CosmosRibbons } from "./CosmosRibbons";
 import { CosmosShells, type ShellInstance } from "./CosmosShells";
 import { HINT_BASE_PX, HINT_EM_RATIO, chooseHints, exitDistance, hintBox, hintFade, hintSizeFade, hintText, hintedKind, readableAngle, stackHints, type HintProbe, type HintSpan } from "../cosmos/edge-hints";
-import { branchEnds, dashOf, hierarchyDepths, type TaperEnds } from "../cosmos/taper";
+import { branchEnds, dashOf, hierarchyDepths, styledEnds, type TaperEnds } from "../cosmos/taper";
+import { branchPath, needsRibbon, onSphere } from "../cosmos/branch-look";
 import { FOCUS_DIM_GLSL, plateVisibility } from "../cosmos/focus";
 import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../cosmos/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
@@ -114,8 +115,8 @@ interface EngineNode extends NodeObject {
 	frame?: TangentFrame;
 	/**
 	 * The node's `osmosis-styles` look (`nodeLook` of `graph.style`), read by
-	 * the plates and the near tier. Also carries the style's `width` and
-	 * `branchLine` for the renderers that will draw them. Renewed by every `setData`.
+	 * the plates and the near tier. Also carries the style's `width`. The
+	 * hierarchy edge into the node is drawn from `graph.branch`. Renewed by every `setData`.
 	 */
 	look: NodeLook;
 }
@@ -385,6 +386,8 @@ const LANE_OPACITY = 0.8;
 /** Segments in a surface arc and in a lane. */
 const ARC_SEGMENTS = 6;
 const LANE_SEGMENTS = 12;
+/** The cross axis a branch line's shape is built across off a planet (`branchPath`): world up, which a flat slice's rows run down. */
+const WORLD_UP: Vec3 = Object.freeze({ x: 0, y: 1, z: 0 });
 /** Link particles: world units a second, and their size in world units (a line plate is 5 tall). */
 const PARTICLE_SPEED = 25;
 const PARTICLE_SIZE = 1.6;
@@ -2919,7 +2922,8 @@ export class CosmosScene {
 	 * and inside the mist: one the Overlays menu shows, not fading out, with both
 	 * ends placed. In Planets mode it is hit-tested through the points it is
 	 * drawn through (`planetEdge`), so a lane is picked on its bowed arc, not on
-	 * the straight line between its plates. See `pickEdge`.
+	 * the straight line between its plates; so is a branch line on its curve or
+	 * elbow (`edgePath`). See `pickEdge`.
 	 */
 	private edgeNear(x: number, y: number, slop: number): { source: EngineNode; target: EngineNode } | null {
 		const camera = this.graph.camera() as PerspectiveCamera;
@@ -2934,7 +2938,7 @@ export class CosmosScene {
 			if (source.departing || target.departing || !placed(source) || !placed(target)) continue;
 			if (!this.edgeDrawn(link.kind, source, target) || Math.min(source.opacity, target.opacity) <= 0) continue;
 			ends.push({ source, target });
-			const points = this.world.size > 0 ? this.planetEdge(link.kind, source, target).points : [source, target];
+			const points = this.edgePath(link.kind, source, target).points;
 			// A tapered edge is as wide to click as it is drawn.
 			const taper = this.taperOf(link, target);
 			edges.push(taper === null ? { points } : { points, width: { start: taper.parent, end: taper.child } });
@@ -3117,7 +3121,7 @@ export class CosmosScene {
 			const end = ends.get(id);
 			if (end === undefined) continue;
 			const { link, from, to, depth } = end;
-			const points = this.world.size > 0 ? this.planetEdge(link.kind, link.source as EngineNode & Vec3, link.target as EngineNode & Vec3).points : [link.source as Vec3, link.target as Vec3];
+			const points = this.edgePath(link.kind, link.source as EngineNode & Vec3, link.target as EngineNode & Vec3).points;
 			const next = from === link.source ? points[1]! : points[points.length - 2]!;
 			const dir = { x: next.x - from.x, y: next.y - from.y, z: next.z - from.z };
 			const length = Math.hypot(dir.x, dir.y, dir.z);
@@ -3190,7 +3194,7 @@ export class CosmosScene {
 		// Every segment drawn, for cutting out of the farther panels it crosses (`edge-cuts.ts`).
 		const cuts = this.near.edges;
 		cuts.clear();
-		// A tapered hierarchy edge is straight, or a surface arc on a planet.
+		// A ribbon is straight, a surface arc on a planet, or shaped by its branch line (`edgePath`); `CosmosRibbons` grows past this guess.
 		this.ribbons.begin(this.overlays.taper ? this.outline().edges * (this.world.size > 0 ? ARC_SEGMENTS : 1) : 0);
 		for (const link of this.links) {
 			// Links hold IDs until the engine's next digest swaps in the nodes.
@@ -3204,7 +3208,7 @@ export class CosmosScene {
 			const color = this.linkColor(link.kind, target);
 			const taper = this.taperOf(link, target);
 			if (taper !== null && placed(source) && placed(target)) {
-				const { points, scale } = this.world.size > 0 ? this.planetEdge(link.kind, source, target) : { points: [source, target], scale: 1 };
+				const { points, scale } = this.edgePath(link.kind, source, target);
 				this.ribbons.ends(source, target);
 				this.writeRibbon(points, taper, source, target, color, Math.min(1, alpha * scale), this.coreOf(source), this.coreOf(target));
 				continue;
@@ -3242,29 +3246,35 @@ export class CosmosScene {
 		this.ribbons.end();
 	}
 
-	/** One tapered edge through `points` (parent first), its width easing from `ends.parent` to `ends.child` point by point, dashed as the child's branch style says. */
+	/** One tapered edge through `points` (parent first), its width easing from `ends.parent` to `ends.child` by distance along (an elbow's short corners don't take the whole change), dashed as the child's branch line says. */
 	private writeRibbon(points: readonly Vec3[], ends: TaperEnds, parent: EngineNode, child: EngineNode, color: Color, alpha: number, cs: Vec3 | null, ct: Vec3 | null): void {
-		const dash = dashOf(child.look.branchLine?.pattern, TAPER_PX_WORLD);
-		const last = points.length - 1;
+		const dash = dashOf(child.graph.branch?.pattern, TAPER_PX_WORLD);
+		let total = 0;
+		for (let i = 1; i < points.length; i++) total += Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y, points[i]!.z - points[i - 1]!.z);
+		const width = (at: number): number => ends.parent + (total > 0 ? ((ends.child - ends.parent) * at) / total : 0);
 		let along = 0;
-		for (let i = 1; i <= last; i++) {
+		for (let i = 1; i < points.length; i++) {
 			const [a, b] = [points[i - 1]!, points[i]!];
-			const width = (k: number): number => ends.parent + ((ends.child - ends.parent) * k) / last;
-			this.ribbons.segment(a, b, width(i - 1), width(i), along, dash, color, alpha, nearerCore(a, cs, ct), nearerCore(b, cs, ct));
-			this.near.edges.push(a, b, width(i - 1), width(i), parent.id, child.id);
-			along += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+			const next = along + Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+			this.ribbons.segment(a, b, width(along), width(next), along, dash, color, alpha, nearerCore(a, cs, ct), nearerCore(b, cs, ct));
+			this.near.edges.push(a, b, width(along), width(next), parent.id, child.id);
+			along = next;
 		}
 	}
 
 	/**
-	 * A hierarchy edge's two widths when the Settings taper it (`branchEnds`:
-	 * from its parent's outline depth, or the child's branch style), else
-	 * null: it is a thin line like every other edge.
+	 * A hierarchy edge's two widths when it is drawn as a ribbon: always with
+	 * the Taper overlay on (`branchEnds`: from its parent's outline depth, or
+	 * the child's branch line), and with it off when the child's branch line
+	 * asks for one (`needsRibbon`, `styledEnds`). Else null: it is a thin line
+	 * like every other edge.
 	 */
 	private taperOf(link: EngineLink, child: EngineNode): TaperEnds | null {
-		if (link.kind !== "hierarchy" || !this.overlays.taper) return null;
+		if (link.kind !== "hierarchy") return null;
+		const branch = child.graph.branch;
+		if (!this.overlays.taper) return branch !== undefined && needsRibbon(branch) ? styledEnds(branch, TAPER_PX_WORLD) : null;
 		const depth = this.outline().depths.get(endId(link.source)) ?? 0;
-		return branchEnds(depth, child.look.branchLine, this.overlays.taperStrength, TAPER_PX_WORLD);
+		return branchEnds(depth, branch, this.overlays.taperStrength, TAPER_PX_WORLD);
 	}
 
 	/** The loaded hierarchy: each node's outline depth (`hierarchyDepths`) and how many hierarchy edges there are, counted again only when the links change. */
@@ -3278,7 +3288,7 @@ export class CosmosScene {
 
 	/** An edge's colour: a hierarchy edge's child's branch line colour, when it has one 3D can draw; otherwise its kind's. */
 	private linkColor(kind: GraphEdgeKind, child: EngineNode): Color {
-		const css = kind === "hierarchy" ? child.look.branchLine?.color : undefined;
+		const css = kind === "hierarchy" ? child.graph.branch?.color : undefined;
 		if (css === undefined) return this.edgeColor(kind);
 		let color = this.branchColors.get(css);
 		if (color === undefined) {
@@ -3355,6 +3365,30 @@ export class CosmosScene {
 		const [cs, ct] = [this.live.get(ps), this.live.get(pt)];
 		if (cs === undefined || ct === undefined || !placed(cs) || !placed(ct) || !placed(source) || !placed(target)) return null;
 		return laneBow(source, target, cs, ct);
+	}
+
+	/**
+	 * The points an edge is drawn through (parent first) and its opacity scale.
+	 * A hierarchy edge whose branch line has a shape (`branchPath`) is built
+	 * across world up, or on a planet across its parent's tangent frame (its
+	 * up, or its right for top-down continents) and laid onto the surface
+	 * (`onSphere`). Any other edge is straight, or as Planets draws it
+	 * (`planetEdge`).
+	 */
+	private edgePath(kind: GraphEdgeKind, source: EngineNode & Vec3, target: EngineNode & Vec3): { points: Vec3[]; scale: number } {
+		const shape = kind === "hierarchy" ? target.graph.branch?.style : undefined;
+		const planets = this.world.size > 0;
+		if (shape === undefined || shape === "straight") return planets ? this.planetEdge(kind, source, target) : { points: [source, target], scale: 1 };
+		if (planets) {
+			const [ps, pt] = [this.world.planetOf(source.id), this.world.planetOf(target.id)];
+			if (ps !== pt) return this.planetEdge(kind, source, target);
+			const core = ps === undefined || source.id === ps ? undefined : this.live.get(ps);
+			if (core !== undefined && placed(core) && source.frame !== undefined) {
+				const cross = this.overlays.continentDirection === "top-down" ? source.frame.right : source.frame.up;
+				return { points: onSphere(branchPath(shape, source, target, cross, TAPER_PX_WORLD), core, ARC_SEGMENTS), scale: 1 };
+			}
+		}
+		return { points: branchPath(shape, source, target, WORLD_UP, TAPER_PX_WORLD), scale: 1 };
 	}
 
 	/**

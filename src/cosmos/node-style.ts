@@ -41,7 +41,6 @@ import {
 	resolveCascade,
 	mergeNodeStyle,
 	resolveNodeStyle,
-	type BranchStyle,
 	type NodeStyle,
 	type OsmosisStyleFrontmatter,
 	type TextStyle,
@@ -250,8 +249,6 @@ export interface NodeLook {
 	dash: BorderDash;
 	/** The style's custom width, in mind-map px (`NodeStyle.width`), for the node-width ticket to draw. */
 	width: number | null;
-	/** The style's branch line, for the tapered-edges ticket to draw. */
-	branchLine: BranchStyle | null;
 	/** The text's font, size, weight, slant and alignment (T131). */
 	font: FontLook;
 	/**
@@ -271,7 +268,6 @@ export const DEFAULT_LOOK: Readonly<NodeLook> = Object.freeze({
 	shape: "rounded-rect",
 	dash: "solid",
 	width: null,
-	branchLine: null,
 	font: DEFAULT_FONT,
 	boundary: null,
 });
@@ -296,7 +292,6 @@ export function nodeLook(style: NodeStyle | undefined): NodeLook {
 		shape,
 		dash: border?.style === "dashed" || border?.style === "dotted" ? border.style : "solid",
 		width: typeof style.width === "number" && style.width > 0 ? style.width : null,
-		branchLine: isStyle(style.branchLine) ? style.branchLine : null,
 		font: fontLook(style),
 		boundary: boundaryLook(style),
 	};

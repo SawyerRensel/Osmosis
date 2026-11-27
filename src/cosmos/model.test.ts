@@ -459,6 +459,18 @@ describe("buildGraph: tags", () => {
 		]);
 	});
 
+	it("gives each line the branch line its edge is drawn in: its own over the map's", () => {
+		const md = "- Galley ^galley\n- Pantry";
+		const model = buildGraph(
+			[note("Boat.md", md, () => ({ frontmatter: { "osmosis-styles": { branchLineStyle: "curved", branchLineColor: "#224466", styles: { "^galley": { branchLine: { style: "angular", pattern: "dashed" } } } } } }))],
+			resolverFor([]),
+		);
+		const branch = (content: string): unknown => model.nodes.find((n) => n.id === lineId(model, content))?.branch;
+		expect(branch("Galley")).toEqual({ style: "angular", color: "#224466", pattern: "dashed" });
+		expect(branch("Pantry")).toEqual({ style: "curved", color: "#224466" });
+		expect(buildGraph([note("Plain.md", "- Deck")], resolverFor([])).nodes.every((n) => n.branch === undefined)).toBe(true);
+	});
+
 	it("joins frontmatter tags to the note core, in list or string form", () => {
 		const model = buildGraph(
 			[

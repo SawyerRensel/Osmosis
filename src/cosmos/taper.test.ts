@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TAPER_MIN_WIDTH, TAPER_ROOT_WIDTH, branchEnds, dashOf, depthWidth, hierarchyDepths, ribbonCorners } from "./taper";
+import { DEFAULT_BRANCH_THICKNESS, TAPER_MIN_WIDTH, TAPER_ROOT_WIDTH, branchEnds, dashOf, depthWidth, hierarchyDepths, ownThickness, ribbonCorners, styledEnds } from "./taper";
 
 const PX = 0.2;
 
@@ -52,6 +52,40 @@ describe("branchEnds", () => {
 	it("ignores a malformed thickness", () => {
 		expect(branchEnds(0, { thickness: Number.NaN }, 1, PX)).toEqual(branchEnds(0, null, 1, PX));
 		expect(branchEnds(0, { thickness: -2 }, 1, PX)).toEqual(branchEnds(0, null, 1, PX));
+	});
+
+	it("keeps the depth taper under the mind map's default thickness, which every theme sets", () => {
+		expect(branchEnds(1, { thickness: DEFAULT_BRANCH_THICKNESS }, 1, PX)).toEqual(branchEnds(1, null, 1, PX));
+	});
+});
+
+describe("ownThickness", () => {
+	it("is a positive thickness other than the mind map's default, else null", () => {
+		expect(ownThickness({ thickness: 4 })).toBe(4);
+		expect(ownThickness({ thickness: DEFAULT_BRANCH_THICKNESS })).toBeNull();
+		expect(ownThickness({ thickness: 0 })).toBeNull();
+		expect(ownThickness(null)).toBeNull();
+	});
+});
+
+describe("styledEnds", () => {
+	it("is a hairline for a branch line with no thickness or taper of its own", () => {
+		const ends = styledEnds({ thickness: DEFAULT_BRANCH_THICKNESS }, PX);
+		expect(ends.parent).toBe(ends.child);
+		expect(ends.parent).toBeLessThan(0.01);
+	});
+
+	it("keeps a thickness of its own all along", () => {
+		expect(styledEnds({ thickness: 5, taper: "none" }, PX)).toEqual({ parent: 1, child: 1 });
+	});
+
+	it("fades to a hair at the child, or grows from one, from the default thickness when none is set", () => {
+		const fade = styledEnds({ taper: "fade" }, PX);
+		expect(fade.parent).toBeCloseTo(DEFAULT_BRANCH_THICKNESS * PX);
+		expect(fade.child).toBeLessThan(fade.parent);
+		const grow = styledEnds({ thickness: 5, taper: "grow" }, PX);
+		expect(grow.child).toBeCloseTo(1);
+		expect(grow.parent).toBeLessThan(grow.child);
 	});
 });
 

@@ -28,6 +28,10 @@ export const TAPER_STRENGTH_MIN = 0.25;
 export const TAPER_STRENGTH_MAX = 2;
 /** The thin end of a branch style's fade or grow taper, in mind-map px (as the 2D map draws it). */
 const BRANCH_THIN_PX = 0.3;
+/** The mind map's branch line thickness when none is set, in mind-map px: every built-in theme sets it too. */
+export const DEFAULT_BRANCH_THICKNESS = 1.5;
+/** A hairline ribbon's width: the shader keeps it one pixel wide, as a line edge is drawn. Not 0, whose side has no sign. */
+const HAIRLINE = 1e-3;
 
 /** A ribbon's full width at its parent end and at its child end, world units. */
 export interface TaperEnds {
@@ -51,18 +55,18 @@ export function depthWidth(depth: number, strength = 1): number {
 /**
  * The two ends of the edge from a parent at outline depth `parentDepth` to
  * its child, whose branch style is `branch` (null: none). With no thickness
- * or taper in it, the edge runs from the parent's depth width to the child's
+ * of its own (`ownThickness`) or taper in it, the edge runs from the parent's depth width to the child's
  * (`depthWidth`). A branch style beats that, as in the 2D map: its
  * `thickness` (mind-map px, `pxWorld` world units each) is the parent end;
  * its taper `none` keeps that width to the child, `fade` thins to a hair at
  * the child and `grow` the other way round; a thickness with no taper keeps
  * the depth taper's ratio.
  */
-export function branchEnds(parentDepth: number, branch: Pick<BranchStyle, "thickness" | "taper"> | null, strength: number, pxWorld: number): TaperEnds {
+export function branchEnds(parentDepth: number, branch: Pick<BranchStyle, "thickness" | "taper"> | null | undefined, strength: number, pxWorld: number): TaperEnds {
 	const parent = depthWidth(parentDepth, strength);
 	const child = depthWidth(parentDepth + 1, strength);
-	const thickness = branch?.thickness;
-	const base = typeof thickness === "number" && Number.isFinite(thickness) && thickness > 0 ? thickness * pxWorld : null;
+	const thickness = ownThickness(branch);
+	const base = thickness === null ? null : thickness * pxWorld;
 	const thin = Math.min(BRANCH_THIN_PX * pxWorld, base ?? parent);
 	switch (branch?.taper) {
 		case "none":
@@ -74,6 +78,33 @@ export function branchEnds(parentDepth: number, branch: Pick<BranchStyle, "thick
 		default:
 			return base === null ? { parent, child } : { parent: base, child: (base * child) / parent };
 	}
+}
+
+/**
+ * A branch style's thickness in mind-map px when it is one of its own: a
+ * positive number other than the mind map's default (`DEFAULT_BRANCH_THICKNESS`),
+ * which every built-in theme sets and which would otherwise turn every themed
+ * edge into a ribbon and flatten the depth taper. Null for none.
+ */
+export function ownThickness(branch: Pick<BranchStyle, "thickness"> | null | undefined): number | null {
+	const thickness = branch?.thickness;
+	return typeof thickness === "number" && Number.isFinite(thickness) && thickness > 0 && thickness !== DEFAULT_BRANCH_THICKNESS ? thickness : null;
+}
+
+/**
+ * The two ends of a hierarchy edge drawn in its own branch style with the
+ * Taper overlay off (`needsRibbon`): its own thickness all along, else a
+ * hairline (today's line edge); a `fade` thins from that, or from the mind
+ * map's default thickness, to a hair at the child, `grow` the other way round.
+ */
+export function styledEnds(branch: Pick<BranchStyle, "thickness" | "taper">, pxWorld: number): TaperEnds {
+	const thickness = ownThickness(branch);
+	const base = thickness === null ? HAIRLINE : thickness * pxWorld;
+	const full = (thickness ?? DEFAULT_BRANCH_THICKNESS) * pxWorld;
+	const thin = Math.min(BRANCH_THIN_PX * pxWorld, full);
+	if (branch.taper === "fade") return { parent: full, child: thin };
+	if (branch.taper === "grow") return { parent: thin, child: full };
+	return { parent: base, child: base };
 }
 
 /**
