@@ -37,7 +37,8 @@ import { DEFAULT_FONT, cssColor, fontKey, nodeLook, textScale, type NodeLook } f
 import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
 import type { NearTierSettings } from "../cosmos/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateCapEm, plateWidthEm, styleWidthFromEm } from "../cosmos/near";
-import { LINE_PLATE_HEIGHT } from "../cosmos/plates";
+import { LINE_PLATE_HEIGHT, PLATE_PAD_X_EM } from "../cosmos/plates";
+import { isRectShape, shapeWrapEm } from "../cosmos/plate-shapes";
 import { rotateAboutPivot } from "../cosmos/pivot";
 import { grabPoint, gripPoint, slipRate, type Sphere, sphereOnRay, stickyTurn } from "../cosmos/globe";
 import { grabRadius } from "../cosmos/shells";
@@ -1898,7 +1899,10 @@ export class CosmosScene {
 		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT * font.scale, width.textMaxEm, width.minEm, shape, font);
 		// The map's `maxNodeWidth` cuts a line's label where its panel wraps.
 		const cap = isCore ? CORE_PLATE_MAX_EM : graph.kind === "line" ? plateCapEm(graph) ?? LINE_PLATE_MAX_EM : LINE_PLATE_MAX_EM;
-		return this.plates.shape(this.labelText(graph), (isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT) * font.scale, cap, 0, shape, font);
+		// A shape's label is cut shorter, as the mind map wraps a shape's text (`shapeWrapEm`): the shape round it,
+		// not the label, comes out at the cap. Rectangles (a pill too) keep theirs.
+		const shapedCap = isRectShape(shape) ? cap : shapeWrapEm(shape, cap + 2 * PLATE_PAD_X_EM, PLATE_PAD_X_EM);
+		return this.plates.shape(this.labelText(graph), (isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT) * font.scale, shapedCap, 0, shape, font);
 	}
 
 	private labelText(node: GraphNode): string {

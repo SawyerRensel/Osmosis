@@ -10,9 +10,7 @@ import { stripTrailingBlockId } from "../block-id";
 import type { GraphNode } from "./model";
 import { PLATE_PAD_X_EM } from "./plates";
 import { MAP_FONT_PX, nodeLook, textScale } from "./node-style";
-import { shapeBox } from "./plate-shapes";
-import { getShapeInsets } from "../shapes";
-import type { TopicShape } from "../styles";
+import { shapeBox, shapeWrapEm } from "./plate-shapes";
 import { DEFAULT_LAYOUT_CONFIG } from "../layout";
 
 /** Attachments shown live up close: images, audio and video. PDFs and the rest stay plates. */
@@ -118,8 +116,9 @@ export const PANEL_MEDIA_MAX_EM = 15;
 
 const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "m4a", "ogg", "flac", "3gp"]);
 /** Panel padding either side, in ems (`.osmosis-cosmos-near-panel`). */
-const PAD_X = 0.4;
-const PAD_Y = 0.25;
+export const PANEL_PAD_EM = { x: 0.4, y: 0.25 } as const;
+const PAD_X = PANEL_PAD_EM.x;
+const PAD_Y = PANEL_PAD_EM.y;
 /** A rough average advance per character, in ems: prose, and monospace code at Obsidian's smaller code size. */
 const PROSE_EM_PER_CHAR = 0.5;
 const CODE_EM_PER_CHAR = 0.55;
@@ -355,7 +354,9 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		return AUDIO_EXTENSIONS.has(extension(node.path ?? "")) ? { ...AUDIO_EM } : { width: PANEL_MAX_EM.width, height: PANEL_MEDIA_MAX_EM + 2 * PAD_Y };
 	}
 	const rule = panelWidthRule(node, markdown);
-	const wrap = rule.em - 2 * PAD_X;
+	const shape = nodeLook(node.style).shape;
+	// A shape's text wraps narrower, as the panel's does (`shapeWrapEm`), unless its width is set.
+	const wrap = rule.kind === "custom" ? rule.em - 2 * PAD_X : shapeWrapEm(shape, rule.em, PAD_X);
 	let width: number;
 	let height: number;
 	const card = cardSides(markdown);
@@ -368,16 +369,6 @@ export function panelBoxEm(node: GraphNode): { width: number; height: number } |
 		height = CARD_CHROME_Y + sides.reduce((sum, side) => sum + Math.max(PROSE_ROW, side.height) + (side.blocks + 1) * CARD_BLOCK_GAP, 0);
 	}
 	// A shaped node's panel is its content inflated to hold it in the shape's inner box, as its plate is (`shapeBox`).
-	const box = shapeBox(nodeLook(node.style).shape, rule.kind === "custom" ? rule.em : Math.min(rule.em, width + 2 * PAD_X), height + 2 * PAD_Y);
+	const box = shapeBox(shape, rule.kind === "custom" ? rule.em : Math.min(wrap, width) + 2 * PAD_X, height + 2 * PAD_Y);
 	return { width: box.width, height: box.height };
-}
-
-/**
- * A shaped panel's padding in ems (top, right, bottom, left): the
- * stylesheet's, plus the shape's insets of its box (`panelBoxEm`), so its text
- * sits in the shape's inner box as the mind map's does (`getShapeInsets`).
- */
-export function shapedPanelPadEm(shape: TopicShape, box: { width: number; height: number }): [number, number, number, number] {
-	const insets = getShapeInsets(shape);
-	return [PAD_Y + insets.top * box.height, PAD_X + insets.right * box.width, PAD_Y + insets.bottom * box.height, PAD_X + insets.left * box.width];
 }

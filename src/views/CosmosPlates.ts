@@ -32,9 +32,10 @@
  * - **Shapes (T130):** a shaped plate is laid out larger, as the mind map
  *   sizes the shape round its text (`shapeBox`), and the fragment shader draws
  *   the shape's signed distance by id (`PLATE_SHAPE_ID`): a rounded box,
- *   an ellipse, a circle, a polygon of up to eight corners, or four
- *   overlapping ellipses for a cloud. Dashes run along an arc length: the
- *   polygon's own perimeter, or an inscribed octagon's for a curved shape.
+ *   an ellipse, a circle, a polygon of up to eight corners, or for a cloud
+ *   the near panel's own cloud as a polygon (`CLOUD_POLYGON`), so the two
+ *   outlines are one. Dashes run along an arc length: the polygon's own
+ *   perimeter, or an inscribed octagon's for an ellipse.
  *   Picks and spacing keep the plate's bounding box.
  */
 
@@ -61,7 +62,7 @@ import { FAR_SIDE_DIM } from "../cosmos/far-side";
 import { UPRIGHT_GLSL } from "../cosmos/upright";
 import { FOCUS_DIM_GLSL } from "../cosmos/focus";
 import { DEFAULT_FONT, DEFAULT_LOOK, fontKey, plateAlign, type FontLook, type NodeLook } from "../cosmos/node-style";
-import { DASH_EM, DASH_ID, PLATE_SHAPE_ID, shapeBox } from "../cosmos/plate-shapes";
+import { CLOUD_POLYGON, DASH_EM, DASH_ID, PLATE_SHAPE_ID, shapeBox } from "../cosmos/plate-shapes";
 import type { TopicShape } from "../styles";
 
 /** Glyphs are rasterised at this size, in rows this tall, on square pages this wide (all px). */
@@ -367,13 +368,16 @@ void main() {
 /** A shape id in the fragment shader, as a float literal. */
 const shapeId = (shape: TopicShape): string => PLATE_SHAPE_ID[shape].toFixed(1);
 
+/** The most corners a plate polygon has: the cloud's. */
+const POLY_MAX = Math.max(8, CLOUD_POLYGON.length);
+
 /**
  * Signed distances for the plate shapes (negative inside), in the plate's own
  * units, centred, y up. `poly` holds a polygon's corners for `polyDistance`,
  * which also returns the arc length round it to the nearest point, for dashes.
  */
 const SHAPE_GLSL = /* glsl */ `
-vec2 poly[8];
+vec2 poly[${POLY_MAX}];
 int polyCount;
 float boxDistance(vec2 p, vec2 b, float r) {
 	vec2 q = abs(p) - (b - r);
@@ -426,11 +430,15 @@ void setPolygon(float shape, vec2 b) {
 		float inset = w * 0.15;
 		poly[0] = vec2(-b.x + inset, b.y); poly[1] = vec2(b.x - inset, b.y); poly[2] = vec2(b.x, -b.y); poly[3] = vec2(-b.x, -b.y);
 		polyCount = 4;
-	} else {
+	} else if (shape < ${shapeId("cloud")} - 0.5) {
 		float notch = min(w * 0.3, h);
 		poly[0] = vec2(-b.x, b.y); poly[1] = vec2(b.x - notch, b.y); poly[2] = vec2(b.x, 0.0);
 		poly[3] = vec2(b.x - notch, -b.y); poly[4] = vec2(-b.x, -b.y); poly[5] = vec2(-b.x + notch * 0.5, 0.0);
 		polyCount = 6;
+	} else {
+		// The near panel's cloud (the mind map's, fitted into its box), sampled.
+		${CLOUD_POLYGON.map(([x, y], i) => `poly[${i}] = b * vec2(${x.toFixed(4)}, ${y.toFixed(4)});`).join(" ")}
+		polyCount = ${CLOUD_POLYGON.length};
 	}
 }
 // Distance to the polygon in poly (negative inside; Quilez's winding test), and the arc length from its first corner to the nearest point.
@@ -439,7 +447,7 @@ vec2 polyDistance(vec2 p) {
 	float arc = 0.0;
 	float run = 0.0;
 	float side = 1.0;
-	for (int i = 0; i < 8; i++) {
+	for (int i = 0; i < ${POLY_MAX}; i++) {
 		if (i >= polyCount) break;
 		vec2 a = poly[i];
 		vec2 e = poly[i + 1 < polyCount ? i + 1 : 0] - a;
@@ -511,23 +519,13 @@ void main() {
 		d = length(p) - r;
 		edgeD = d;
 		arc = (atan(p.y, p.x) + 3.14159) * r;
-	} else if (shape < ${shapeId("cloud")} - 0.5) {
+	} else {
+		// The polygons, the cloud among them.
 		setPolygon(shape, b);
 		vec2 da = polyDistance(p);
 		d = da.x;
 		edgeD = d;
 		arc = da.y;
-	} else {
-		// Four overlapping lobes, one a quadrant: the mind map's cloud of four bumps.
-		vec2 q = abs(p);
-		vec2 c = b * vec2(0.34, 0.4);
-		vec2 r = b * vec2(0.5, 0.6);
-		d = min(ellipseDistance(q - c, r), min(ellipseDistance(q - vec2(-c.x, c.y), r), ellipseDistance(q - vec2(c.x, -c.y), r)));
-		edgeD = d;
-		if (dashed) {
-			setOctagon(b * vec2(0.84, 1.0));
-			arc = polyDistance(p).y;
-		}
 	}
 	float aa = max(fwidth(d), 1e-4);
 	// Before any branch or discard: derivatives want every pixel of a quad to take them.

@@ -4922,7 +4922,7 @@ body.osmosis-hide-navbar .mobile-navbar {
 	stroke-dasharray: none;
 }
 
-/* A shape's fill is its path's, and its text is centred in the shape's inner box (the padding is set inline). */
+/* A shape's fill is its path's, and its text is centred in the shape's inner box (the box's size and padding are set inline, CosmosNear.fitShape). */
 .osmosis-cosmos-near-lens.is-shaped > .osmosis-cosmos-near-fill {
 	display: none;
 }
@@ -4931,6 +4931,12 @@ body.osmosis-hide-navbar .mobile-navbar {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
+	align-items: center;
+}
+
+/* Its own width (set inline: where the shape wraps it), so the box fitted round it never feeds back into it. */
+.osmosis-cosmos-near-lens.is-shaped > .osmosis-cosmos-near-panel > .osmosis-cosmos-near-body {
+	flex: none;
 }
 
 /* The rubber band of a Shift+drag box select in Cosmos (CosmosScene.box). */

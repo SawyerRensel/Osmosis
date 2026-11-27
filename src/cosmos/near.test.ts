@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, maxWidthEm, nearMarkdown, panelBoxEm, panelWidthRule, plateCapEm, plateWidthEm, shapedPanelPadEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, maxWidthEm, nearMarkdown, panelBoxEm, panelWidthRule, plateCapEm, plateWidthEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
 import { PLATE_PAD_X_EM } from "./plates";
 import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
@@ -369,15 +369,14 @@ describe("shaped panels (T130)", () => {
 		expect(circle.width).toBe(circle.height);
 	});
 
-	it("pads a shaped panel's text into the shape's inner box", () => {
-		// Diamond: a quarter of the box each side, plus the stylesheet's padding.
-		const [top, right, bottom, left] = shapedPanelPadEm("diamond", { width: 20, height: 4 });
-		expect(top).toBeCloseTo(0.25 + 1);
-		expect(bottom).toBeCloseTo(top);
-		expect(left).toBeCloseTo(0.4 + 5);
-		expect(right).toBeCloseTo(left);
-		const triangle = shapedPanelPadEm("triangle", { width: 20, height: 4 });
-		expect(triangle[1]).toBeGreaterThan(triangle[3]);
+	it("wraps a shaped panel's long text narrower, so the shape comes out at the cap (T130 fix 1)", () => {
+		const sentence = "- " + "Reef the main before the squall reaches the anchorage ".repeat(2).trim();
+		const plain = panelBoxEm(line(sentence))!;
+		const hexagon = panelBoxEm({ ...line(sentence), style: { shape: "hexagon" } })!;
+		// Not 20 / 0.56 = 35.7 ems: the text wraps at 20 * 0.56 - 0.8 ems, and the hexagon round it is the cap.
+		expect(plain.width).toBeCloseTo(PANEL_MAX_EM.width);
+		expect(hexagon.width).toBeLessThanOrEqual(PANEL_MAX_EM.width + 1e-9);
+		expect(hexagon.height).toBeGreaterThan(plain.height);
 	});
 });
 
