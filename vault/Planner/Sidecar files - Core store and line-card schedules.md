@@ -17,7 +17,7 @@ batch: 17
 priority:
 progress:
 date_created: 2026-11-27T01:00:00.000Z
-date_modified: 2026-11-27T02:20:00.000Z
+date_modified: 2026-11-27T15:01:51.000Z
 date_start_scheduled: 2026-11-27T01:51:15.000Z
 date_start_actual: 2026-11-27T01:51:15.000Z
 date_end_scheduled:
@@ -180,3 +180,47 @@ Code commit: `d3d8685` on `batch/17-sidecars-cosmos-styles`.
 - Whether Obsidian fires `rename`/`delete` for each child file when a whole folder of notes is moved or deleted. Sidecar relinking and trashing for folder moves depend on it.
 - How the link updater and our relink interact on rename. The intended final state is our full-path link or Obsidian's shortest form; either resolves.
 - First launch on a device whose metadata cache is cold. The index fills in as `changed` events arrive.
+
+### Fix round 1 (awaiting manual test)
+
+Code commit: `3196a75`. Sawyer passed the first test but changed the naming requirement: sidecars are named after their notes, not hashed. This supersedes "File name is a hash … never renamed" under *Settled at intake* and the **Hash** decision above.
+
+**Approach.** Names are derived from the vault's note paths alone, in a new pure module `src/store/sidecar-names.ts` (`sidecarNames`, `SidecarNamer`). `NoteData` keeps a `SidecarNamer` of every note and indexes sidecars **by file name** (note path → sidecar `TFile`). Every note create, rename or delete re-derives only the names it affects and renames the sidecars whose names changed. `osmosis-note` stays and is still rewritten on rename, but only as a recovery hint.
+
+**The naming rule as built**
+- The name is `{basename}.osmosis.md`. When two or more notes share a basename, **all** of them are qualified with their parent folder, dot-joined **in path order** (`Travel/Pantry.md` → `Travel.Pantry.osmosis.md`). Further folders are prepended only for the notes whose name still collides (`Home/Travel/Pantry.md` → `Home.Travel.Pantry.osmosis.md`). In every case the name is a tail of the path, with `/` read as `.`.
+- **Root notes** keep the bare name even inside a collision: `Pantry.md` stays `Pantry` while `Travel/Pantry.md` becomes `Travel.Pantry`. The root note's whole path is `Pantry`, so the bare name is already its full name. A leading-dot name would be hidden from Obsidian, and the vault's folder name can differ between devices.
+- **Case:** names that differ only in case collide (`Knives` / `knives`). This matches the macOS and Windows file systems.
+- **Dots:** collisions are checked on the final name, not only the basename. So `Sea/Travel.Pantry.md` is qualified if its bare name would equal `Travel/Pantry.md`'s qualified name. When no folder is left to tell two names apart (a root `Travel.Pantry.md` against `Travel/Pantry.md` while another `Pantry` exists), both get `~` plus an 8-hex hash of their path. `.osmosis` inside a basename is harmless: only the final `.osmosis.md` is the marker.
+- **Speed:** two names can only be equal when their basenames end in the same dot-token, so names are partitioned by that token, and each event re-derives only its partition, usually one note.
+
+**Decisions**
+- **The name wins over the index on conflict.** A file carrying a note's exact expected name takes over from an indexed sidecar whose name is stale, for example one synced in mid-rename. The other file becomes an orphan.
+- **Orphans** are sidecars whose name matches no note. They are matched back through `osmosis-note`, if that note has no sidecar yet, and renamed. This happens in `reconcile()`: at `rebuildIndex` (load and folder change), when an unindexed sidecar is first parsed (a cold cache), and at the start of both *Move all* commands. The remaining orphan count goes into their notice, which now reads "that match no note". **Migration** of the old `<hash>.osmosis.md` files is the same path.
+- **Renames vs writes:** the index holds the `TFile` object, which Obsidian renames in place, so a write during a rename still finds its sidecar and never creates a second one. Each sidecar's `process` writes, renames, link rewrites and trash run one at a time on a per-file chain. Creating a sidecar waits for queued renames, because a collision going away may be vacating the name. A rename resolves the note's name *when it runs*, so a later event's name wins over an earlier queued one. If the target name is held by another file, the rename is skipped and logged, and the sidecar stays indexed under its old name.
+- **Folder moves:** verified in Obsidian's source (`ref/obsidian-core/app.js`, both adapters' `rename`). A folder rename fires `renamed` for the folder and then for every file inside it, so the vault fires `rename` per child file and sidecars follow.
+- **Excluded files:** `NoteData.excludeFolder(previous, folder)` swaps `<folder>/` in `userIgnoreFilters` through `vault.getConfig`/`setConfig`, using the trailing-slash form that Obsidian's own picker writes. It runs when Osmosis creates the folder, when the folder setting changes (removing the old entry), and **once at load** for a folder that already exists. A new `sidecarFolderExcluded` setting flag records that, so a user who removes the entry keeps it removed. Entries the user wrote another way are left alone.
+- **The metadata cache still indexes excluded files.** This was checked in `ref/obsidian-core/app.js`: `computeFileMetadataAsync` and `getCache` have no ignore check, and every `isUserIgnored` caller (17 of them) is a consumer such as search, the quick switcher, the graph, Bases, property lists or link suggestions. `iterateAllRefs`, which backs the link updater, is not filtered, so `osmosis-note` is still rewritten on rename.
+- Review-log shards are not notes for naming (a new `isLogPath` constructor argument), so they never force a note to be qualified.
+
+| File | Change |
+|---|---|
+| `src/store/sidecar-names.ts` (+test) | New, pure: `sidecarNames`, `SidecarNamer` (`reset`/`add`/`remove`/`update` → `NameChange[]`, `nameOf`, `noteOf`), `SIDECAR_SUFFIX` |
+| `src/store/sidecar.ts` (+test) | Drops `sidecarName` (hash). Adds `withExcludedFolder`. Re-exports `SIDECAR_SUFFIX`. Header rewritten |
+| `src/store/NoteData.ts` (+test) | Name-based index, namer, per-file op chains, sidecar renames, `reconcile()`, `excludeFolder()`, create listener, `isLogPath` and `onFolderExcluded` constructor args |
+| `src/store/DataMover.ts` | *Move all* commands count orphans via `reconcile()`. `moveSidecars` comment notes that a `-1` file is an orphan |
+| `src/main.ts` | Passes `isLogPath` and the excluded flag callback. `excludeSidecarFolderOnce` at layout-ready. `changeSidecarFolder` swaps the exclusion. Orphan notice text |
+| `src/settings.ts` | `sidecarFolderExcluded` flag. Sidecar folder description |
+| `docs/reference/data-storage.md`, `settings.md`, `docs/changelog.md` | Naming, recovery, Excluded files |
+| `e2e/fixtures/sidecar/…`, `vault/tests/sidecar/…` | `naming/` fixtures. `Galley knives.md` text no longer mentions a hash |
+
+**Fixture:** `vault/tests/sidecar/naming/` (master copy in `e2e/fixtures/sidecar/naming/`):
+- `Spice rack.md` and `Galley/Larder.md` have no data. Renaming Larder to `Spice rack` makes the two collide.
+- `Ferry timetable.md` has its data in a hash-named sidecar, `vault/Osmosis/Schedule/0badc0de.osmosis.md`. Its master is `e2e/fixtures/sidecar/naming/schedule-folder/0badc0de.osmosis.md`, and `vault/Osmosis/` is gitignored. Its one reviewed card is back-dated: last review 2026-11-18, due 2026-11-21.
+
+**Not verified (no Obsidian here)**
+- Case-only sidecar renames on macOS and Windows (`Spice rack` → `spice rack`). The adapter allows them, but `vault.rename` was not traced. A failed rename is logged and the sidecar stays indexed.
+- Two devices changing a collision at the same time over Sync can leave an orphan. It is counted by *Move all* and matched back at the next start, if its note has no sidecar.
+- Mind map undo recorded before a sidecar rename restores by the old path.
+- Whether deleting a folder fires `delete` for each note inside it. This is still open from the first round; the rename half is now verified.
+- Sidecar names longer than the file system allows (very deep collisions) are not shortened.
