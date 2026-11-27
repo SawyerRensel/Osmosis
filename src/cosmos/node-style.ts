@@ -44,13 +44,14 @@ import {
 	type BranchStyle,
 	type NodeStyle,
 	type OsmosisStyleFrontmatter,
+	type TextStyle,
 	type ThemeDefinition,
 	type TopicShape,
 } from "../styles";
 import { isDefaultTheme } from "../themes";
 import { resolveBoundary, type ResolvedBoundary } from "../boundary";
 import type { OsmosisNode } from "../types";
-import { PLATE_RADIUS } from "./plates";
+import { PLATE_RADIUS, type PlateAlign } from "./plates";
 import { isTopicShape, type BorderDash } from "./plate-shapes";
 
 /** A note's node → its resolved style, or undefined for a node with none. */
@@ -112,6 +113,18 @@ export function noteTheme(fm: OsmosisStyleFrontmatter, themes: ThemeLookup): The
 }
 
 /**
+ * The map's `osmosis-styles.maxNodeWidth`, in mind-map px: the width a node's
+ * text wraps at in the mind map (whose own default is the plugin setting,
+ * which Cosmos leaves to its own `PANEL_MAX_EM`). Undefined for none. Like the
+ * map's `topicShape`, it holds in every colour mode. The theme's is not read,
+ * as the mind map reads only the frontmatter's.
+ */
+export function noteMaxWidth(frontmatter: Record<string, unknown> | null | undefined): number | undefined {
+	const width = parseOsmosisStyleFrontmatter(frontmatter)?.maxNodeWidth;
+	return typeof width === "number" && Number.isFinite(width) && width > 0 ? width : undefined;
+}
+
+/**
  * The background a single-note scene takes from its note in *Mind map style*
  * mode, by the mind map's precedence: the note's `osmosis-styles.background`,
  * else its theme's. Null for none, or for a colour WebGL can't draw (`cssColor`).
@@ -146,6 +159,78 @@ export const PLATE_CORNERS: Readonly<Partial<Record<TopicShape, number>>> = {
 /** The thickest outline drawn, as a multiple of the default; a style can ask for more. */
 const MAX_STROKE = 8;
 
+/** The mind map's node text size, in px (`.osmosis-node-content`): a `text.size` of this draws at Cosmos's own text size. */
+export const MAP_FONT_PX = 13;
+/** The bounds of a node's text scale, so a stray `text.size` can't make a plate that swallows the scene. */
+const MIN_TEXT_SCALE = 0.25;
+const MAX_TEXT_SCALE = 8;
+
+/**
+ * How a node's text is set (`TextStyle`, but its colour): what the plates and
+ * panels draw it in. Null keeps the scene's: the theme font, normal weight,
+ * and the plate's centred text (the panel's left-aligned).
+ */
+export interface FontLook {
+	/** The style's font family, made safe to quote in a CSS font (`fontFamily`). */
+	family: string | null;
+	/** `text.size` over the mind map's `MAP_FONT_PX`: plates, panels and their spacing scale by it. */
+	scale: number;
+	/** 1–1000; null for normal (400). */
+	weight: number | null;
+	italic: boolean;
+	align: "left" | "center" | "right" | "justify" | null;
+}
+
+/** An unstyled node's text: today's. */
+export const DEFAULT_FONT: Readonly<FontLook> = Object.freeze({ family: null, scale: 1, weight: null, italic: false, align: null });
+
+/** A style's text scale: `text.size` over `MAP_FONT_PX`, bounded; 1 for none. Cheaper than `nodeLook` for what sizes a node. */
+export function textScale(style: NodeStyle | undefined): number {
+	const size = isStyle(style?.text) ? style.text.size : undefined;
+	if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return 1;
+	return Math.min(Math.max(size / MAP_FONT_PX, MIN_TEXT_SCALE), MAX_TEXT_SCALE);
+}
+
+/** A style's text as `FontLook` (`DEFAULT_FONT` for none). */
+export function fontLook(style: NodeStyle | undefined): FontLook {
+	const text: TextStyle | undefined = isStyle(style?.text) ? style.text : undefined;
+	if (text === undefined) return DEFAULT_FONT;
+	const weight = typeof text.weight === "number" && Number.isFinite(text.weight) ? Math.round(Math.min(Math.max(text.weight, 1), 1000)) : null;
+	const align = text.alignment === "left" || text.alignment === "center" || text.alignment === "right" || text.alignment === "justify" ? text.alignment : null;
+	return {
+		family: fontFamily(text.font),
+		scale: textScale(style),
+		weight: weight === 400 ? null : weight,
+		italic: text.style === "italic",
+		align,
+	};
+}
+
+/**
+ * A font family name from a style, stripped of what would break the quoted
+ * name in a CSS or canvas font (quotes, backslashes, semicolons, braces).
+ * Null for none.
+ */
+export function fontFamily(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const family = value.replace(/["'\\;{}]/g, "").trim();
+	return family === "" ? null : family;
+}
+
+/** The plate alignment of a font: a single line has no last line to justify, so justified text sits left, as CSS sets it. */
+export function plateAlign(font: FontLook): PlateAlign {
+	return font.align === "justify" ? "left" : font.align ?? "center";
+}
+
+/**
+ * What tells one plate face from another: plates are laid out, and their
+ * glyphs drawn, per key. Empty for the scene's own font.
+ */
+export function fontKey(font: FontLook): string {
+	if (font.family === null && font.weight === null && !font.italic && plateAlign(font) === "center") return "";
+	return `${font.family ?? ""}|${font.weight ?? 400}|${font.italic ? "i" : ""}|${plateAlign(font)}`;
+}
+
 /**
  * What Cosmos draws from a node's style. Null colours keep what an
  * unstyled node has: the theme's plate fill and text colour, and the colour-by
@@ -167,6 +252,8 @@ export interface NodeLook {
 	width: number | null;
 	/** The style's branch line, for the tapered-edges ticket to draw. */
 	branchLine: BranchStyle | null;
+	/** The text's font, size, weight, slant and alignment (T131). */
+	font: FontLook;
 	/**
 	 * The node's boundary (cloud) around its subtree, defaults applied; null for
 	 * none. Colours are `cssColor`-checked: null = the view's accent.
@@ -185,6 +272,7 @@ export const DEFAULT_LOOK: Readonly<NodeLook> = Object.freeze({
 	dash: "solid",
 	width: null,
 	branchLine: null,
+	font: DEFAULT_FONT,
 	boundary: null,
 });
 
@@ -209,6 +297,7 @@ export function nodeLook(style: NodeStyle | undefined): NodeLook {
 		dash: border?.style === "dashed" || border?.style === "dotted" ? border.style : "solid",
 		width: typeof style.width === "number" && style.width > 0 ? style.width : null,
 		branchLine: isStyle(style.branchLine) ? style.branchLine : null,
+		font: fontLook(style),
 		boundary: boundaryLook(style),
 	};
 }

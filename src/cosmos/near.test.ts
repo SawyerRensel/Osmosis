@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, plateWidthEm, shapedPanelPadEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, PANEL_MEDIA_MAX_EM, maxWidthEm, nearMarkdown, panelBoxEm, panelWidthRule, plateCapEm, plateWidthEm, shapedPanelPadEm, styleWidthEm, styleWidthFromEm, unembed } from "./near";
+import { PLATE_PAD_X_EM } from "./plates";
 import type { CardOcclusion } from "../database/types";
 import type { GraphNode } from "./model";
 import type { OsmosisNode } from "../types";
@@ -377,5 +378,44 @@ describe("shaped panels (T130)", () => {
 		expect(right).toBeCloseTo(left);
 		const triangle = shapedPanelPadEm("triangle", { width: 20, height: 4 });
 		expect(triangle[1]).toBeGreaterThan(triangle[3]);
+	});
+});
+
+describe("text size and maxNodeWidth (T131)", () => {
+	const big = (node: GraphNode): GraphNode => ({ ...node, style: { text: { size: 26 } } });
+
+	it("counts a width style in ems of the node's own text", () => {
+		expect(styleWidthEm(260, 2)).toBeCloseTo(styleWidthEm(130));
+		expect(styleWidthFromEm(styleWidthEm(260, 2), 2)).toBe(260);
+		const wide = { ...line("- Clove hitch"), style: { width: 260, text: { size: 26 } } };
+		expect(panelWidthRule(wide)).toEqual({ kind: "custom", em: styleWidthEm(260, 2) });
+	});
+
+	it("keeps a big node's default cap in its own ems, so its panel is that much wider", () => {
+		expect(panelWidthRule(big(line("- Clove hitch")))).toEqual({ kind: "default", em: PANEL_MAX_EM.width });
+		expect(plateCapEm(big(line("- Clove hitch")))).toBeNull();
+	});
+
+	it("wraps at the map's maxNodeWidth less the mind map's padding, fewer ems for bigger text", () => {
+		const capped = { ...line("- Clove hitch"), maxWidth: 146 };
+		expect(maxWidthEm(146)).toBeCloseTo(10 + 0.8);
+		expect(panelWidthRule(capped)).toEqual({ kind: "default", em: maxWidthEm(146) });
+		expect(panelWidthRule(big(capped)).em).toBeCloseTo(5 + 0.8);
+		expect(plateCapEm(capped)).toBeCloseTo(maxWidthEm(146) - 2 * PLATE_PAD_X_EM);
+	});
+
+	it("wraps a long line taller at a narrow maxNodeWidth", () => {
+		const text = "word ".repeat(40);
+		expect(panelBoxEm({ ...line(text), maxWidth: 120 })!.height).toBeGreaterThan(panelBoxEm(line(text))!.height);
+	});
+
+	it("lets a node's own width beat the map's maxNodeWidth", () => {
+		const node = { ...line("- Clove hitch"), maxWidth: 120, style: { width: 400 } };
+		expect(panelWidthRule(node)).toEqual({ kind: "custom", em: styleWidthEm(400) });
+		expect(plateCapEm(node)).toBeNull();
+	});
+
+	it("never narrows past the narrowest node", () => {
+		expect(maxWidthEm(10)).toBeCloseTo(styleWidthEm(MIN_STYLE_WIDTH_PX));
 	});
 });

@@ -33,10 +33,10 @@ import { CosmosPlates, type PlateShape } from "./CosmosPlates";
 import { CosmosNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRenderer, type PanelLink, type TrackedEditor } from "./CosmosNear";
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../cosmos/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, nodeFootprint, noteHue, spriteLabel, type Spacing } from "../cosmos/appearance";
-import { cssColor, nodeLook, type NodeLook } from "../cosmos/node-style";
+import { DEFAULT_FONT, cssColor, fontKey, nodeLook, textScale, type NodeLook } from "../cosmos/node-style";
 import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
 import type { NearTierSettings } from "../cosmos/lod";
-import { STYLE_PX_PER_EM, panelBoxEm, plateWidthEm, styleWidthFromEm } from "../cosmos/near";
+import { STYLE_PX_PER_EM, panelBoxEm, plateCapEm, plateWidthEm, styleWidthFromEm } from "../cosmos/near";
 import { LINE_PLATE_HEIGHT } from "../cosmos/plates";
 import { rotateAboutPivot } from "../cosmos/pivot";
 import { grabPoint, gripPoint, slipRate, type Sphere, sphereOnRay, stickyTurn } from "../cosmos/globe";
@@ -176,10 +176,10 @@ function plateLinkDistance(link: EngineLink, spacing: Spacing): number {
 	return linkDistance(link.kind, source.extent, target.extent, spacing);
 }
 
-/** A node's spacing extent and footprint, from its plate and the panel the near tier would lay out for it (at line-plate text size, as `CosmosNear` does). Call after its plate or Markdown changes. */
+/** A node's spacing extent and footprint, from its plate and the panel the near tier would lay out for it (at line-plate text size times its style's `textScale`, as `CosmosNear` does). Call after its plate or Markdown changes. */
 function sizeNode(node: EngineNode): void {
 	const panel = panelBoxEm(node.graph);
-	const em = CosmosNear.emWorld(LINE_PLATE_HEIGHT);
+	const em = CosmosNear.emWorld(LINE_PLATE_HEIGHT) * textScale(node.graph.style);
 	node.extent = nodeExtent(node.shape, panel, em);
 	node.footprint = nodeFootprint(node.shape, panel, em);
 }
@@ -753,7 +753,10 @@ export class CosmosScene {
 			const look = nodeLook(graph.style);
 			// A new width (a style, or a code block's longest line) lays the plate out again.
 			// So does a new shape: a shape is laid out round its text (`shapeBox`).
-			const rewidth = look.width !== (existing.look?.width ?? null) || look.shape !== (existing.look?.shape ?? "rounded-rect") || plateWidthEm(existing.graph)?.minEm !== plateWidthEm(graph)?.minEm;
+			// And a new face, text size or wrap width (`maxNodeWidth`): the plate is laid out in them.
+			const oldFont = existing.look?.font ?? DEFAULT_FONT;
+			const rewidth = look.width !== (existing.look?.width ?? null) || look.shape !== (existing.look?.shape ?? "rounded-rect") || plateWidthEm(existing.graph)?.minEm !== plateWidthEm(graph)?.minEm
+				|| fontKey(look.font) !== fontKey(oldFont) || look.font.scale !== oldFont.scale || existing.graph.maxWidth !== graph.maxWidth;
 			const relabel = rewidth || this.labelText(existing.graph) !== this.labelText(graph) || existing.graph.kind !== graph.kind;
 			existing.graph = graph;
 			existing.color.setStyle(this.colorOf(graph));
@@ -968,7 +971,8 @@ export class CosmosScene {
 	 */
 	private readonly flatSize = (graph: GraphNode): { width: number; height: number } => {
 		const node = this.live.get(graph.id);
-		return node?.footprint ?? nodeFootprint({ width: 0, height: LINE_PLATE_HEIGHT }, panelBoxEm(graph), CosmosNear.emWorld(LINE_PLATE_HEIGHT));
+		const scale = textScale(graph.style);
+		return node?.footprint ?? nodeFootprint({ width: 0, height: LINE_PLATE_HEIGHT * scale }, panelBoxEm(graph), CosmosNear.emWorld(LINE_PLATE_HEIGHT) * scale);
 	};
 
 	/** The simulation has cooled: pin whatever was still free where it stopped. */
@@ -1878,14 +1882,20 @@ export class CosmosScene {
 		this.container.empty();
 	}
 
-	/** Lay a node's label out on its plate, in its style's shape: note titles large, every other node's first words small. */
+	/**
+	 * Lay a node's label out on its plate, in its style's shape and font: note
+	 * titles large, every other node's first words small, each times its style's
+	 * text size (`FontLook.scale`).
+	 */
 	private shapeFor(graph: GraphNode): PlateShape {
 		const isCore = graph.kind === "note";
-		const shape = nodeLook(graph.style).shape;
+		const { shape, font } = nodeLook(graph.style);
 		// A line with a custom width, or a code block fitting its lines, has a plate as wide as its panel.
 		const width = graph.kind === "line" ? plateWidthEm(graph) : null;
-		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT, width.textMaxEm, width.minEm, shape);
-		return this.plates.shape(this.labelText(graph), isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT, isCore ? CORE_PLATE_MAX_EM : LINE_PLATE_MAX_EM, 0, shape);
+		if (width !== null) return this.plates.shape(this.labelText(graph), LINE_PLATE_HEIGHT * font.scale, width.textMaxEm, width.minEm, shape, font);
+		// The map's `maxNodeWidth` cuts a line's label where its panel wraps.
+		const cap = isCore ? CORE_PLATE_MAX_EM : graph.kind === "line" ? plateCapEm(graph) ?? LINE_PLATE_MAX_EM : LINE_PLATE_MAX_EM;
+		return this.plates.shape(this.labelText(graph), (isCore ? CORE_PLATE_HEIGHT : LINE_PLATE_HEIGHT) * font.scale, cap, 0, shape, font);
 	}
 
 	private labelText(node: GraphNode): string {
@@ -2227,7 +2237,8 @@ export class CosmosScene {
 			this.near.setPreviewWidth(resize.node.id, null);
 			return;
 		}
-		const width = styleWidthFromEm(resize.current / NEAR_FONT_PX);
+		const scale = textScale(resize.node.style);
+		const width = styleWidthFromEm(resize.current / (NEAR_FONT_PX * scale), scale);
 		this.options.onResizeNode(resize.node, width).catch((error: unknown) => {
 			console.error("Osmosis: Cosmos could not resize a node", error);
 			this.near.setPreviewWidth(resize.node.id, null);

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { OsmosisParser } from "../parser";
 import type { OsmosisNode } from "../types";
 import { buildGraph, noteNodeId, type GraphNode } from "./model";
-import { cssColor, DEFAULT_LOOK, mapBackground, nodeLook, noteStyleReader, noteTheme, type ThemeLookup } from "./node-style";
+import { cssColor, DEFAULT_FONT, DEFAULT_LOOK, fontFamily, fontKey, fontLook, mapBackground, MAP_FONT_PX, nodeLook, noteMaxWidth, noteStyleReader, noteTheme, plateAlign, textScale, type ThemeLookup } from "./node-style";
 import type { ThemeDefinition } from "../styles";
 import { PLATE_RADIUS } from "./plates";
 
@@ -197,7 +197,7 @@ describe("nodeLook", () => {
 
 	it("reads fill, border and text colours, width and branch line", () => {
 		const look = nodeLook({ fill: "#112233", border: { color: "rgb(1, 2, 3)", width: 3 }, text: { color: "navy" }, width: 320, branchLine: { color: "#444444", taper: "grow" } });
-		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, shape: "rounded-rect", dash: "solid", width: 320, branchLine: { color: "#444444", taper: "grow" }, boundary: null });
+		expect(look).toEqual({ fill: "#112233", border: "rgb(1, 2, 3)", text: "navy", stroke: 3, corner: PLATE_RADIUS, shape: "rounded-rect", dash: "solid", width: 320, branchLine: { color: "#444444", taper: "grow" }, font: DEFAULT_FONT, boundary: null });
 	});
 
 	it("resolves the boundary, tinted by the node's fill, with colours WebGL can draw", () => {
@@ -299,5 +299,84 @@ describe("buildGraph styles", () => {
 		expect(buildGraph(notes, () => null).nodes.every((n) => n.style === undefined)).toBe(true);
 		const themed = buildGraph(notes, () => null, { themes });
 		expect(node(themed.nodes, "Halyard")?.style).toEqual(HARBOUR.base);
+	});
+});
+
+describe("node text (T131)", () => {
+	it("scales by text size over the mind map's 13 px, bounded", () => {
+		expect(textScale(undefined)).toBe(1);
+		expect(textScale({ text: { size: MAP_FONT_PX } })).toBe(1);
+		expect(textScale({ text: { size: 26 } })).toBe(2);
+		expect(textScale({ text: { size: 6.5 } })).toBe(0.5);
+		expect(textScale({ text: { size: 1000 } })).toBe(8);
+		expect(textScale({ text: { size: 0 } })).toBe(1);
+		expect(textScale({ text: { size: -4 } })).toBe(1);
+		expect(textScale({ text: { size: "big" as unknown as number } })).toBe(1);
+	});
+
+	it("reads font, weight, slant and alignment", () => {
+		expect(fontLook({ text: { font: "Georgia", weight: 700, style: "italic", alignment: "right", size: 26 } })).toEqual({ family: "Georgia", scale: 2, weight: 700, italic: true, align: "right" });
+		expect(fontLook({ fill: "#112233" })).toBe(DEFAULT_FONT);
+		expect(fontLook({ text: { color: "#112233" } })).toEqual(DEFAULT_FONT);
+	});
+
+	it("treats normal weight as the default and keeps weights in CSS's range", () => {
+		expect(fontLook({ text: { weight: 400 } }).weight).toBeNull();
+		expect(fontLook({ text: { weight: 650 } }).weight).toBe(650);
+		expect(fontLook({ text: { weight: 5000 } }).weight).toBe(1000);
+		expect(fontLook({ text: { weight: Number.NaN } }).weight).toBeNull();
+	});
+
+	it("drops an alignment or slant it doesn't know", () => {
+		const odd = fontLook({ text: { alignment: "middle" as "center", style: "oblique" as "italic" } });
+		expect(odd.align).toBeNull();
+		expect(odd.italic).toBe(false);
+	});
+
+	it("strips what would break a quoted font family", () => {
+		expect(fontFamily("  Fira Code ")).toBe("Fira Code");
+		expect(fontFamily("Evil\"; color: red")).toBe("Evil color: red");
+		expect(fontFamily("'';")).toBeNull();
+		expect(fontFamily(12)).toBeNull();
+	});
+
+	it("puts a single-line plate's justified text on the left, and centres by default", () => {
+		expect(plateAlign(DEFAULT_FONT)).toBe("center");
+		expect(plateAlign({ ...DEFAULT_FONT, align: "justify" })).toBe("left");
+		expect(plateAlign({ ...DEFAULT_FONT, align: "right" })).toBe("right");
+	});
+
+	it("keys a face by family, weight, slant and alignment, but not size", () => {
+		expect(fontKey(DEFAULT_FONT)).toBe("");
+		expect(fontKey({ ...DEFAULT_FONT, scale: 2 })).toBe("");
+		expect(fontKey({ ...DEFAULT_FONT, align: "center" })).toBe("");
+		const keys = [
+			{ ...DEFAULT_FONT, family: "Georgia" },
+			{ ...DEFAULT_FONT, weight: 700 },
+			{ ...DEFAULT_FONT, italic: true },
+			{ ...DEFAULT_FONT, align: "left" as const },
+		].map(fontKey);
+		expect(new Set([...keys, ""]).size).toBe(5);
+	});
+
+	it("puts the text on the node's look", () => {
+		expect(DEFAULT_LOOK.font).toBe(DEFAULT_FONT);
+		expect(nodeLook({ text: { weight: 700 } }).font.weight).toBe(700);
+	});
+
+	it("reads the map's maxNodeWidth", () => {
+		expect(noteMaxWidth({ "osmosis-styles": { maxNodeWidth: 400 } })).toBe(400);
+		expect(noteMaxWidth({ "osmosis-styles": { maxNodeWidth: 0 } })).toBeUndefined();
+		expect(noteMaxWidth({ "osmosis-styles": { theme: "Harbour" } })).toBeUndefined();
+		expect(noteMaxWidth(null)).toBeUndefined();
+	});
+
+	it("puts the map's maxNodeWidth on the note's nodes", () => {
+		const tree = parser.parse("- Halyard\n- Shroud", "Rigging.md");
+		const model = buildGraph([{ tree, cache: { frontmatter: { "osmosis-styles": { maxNodeWidth: 300 } } } }], () => null);
+		expect(model.nodes.every((n) => n.maxWidth === 300)).toBe(true);
+		expect(model.nodes.every((n) => n.style === undefined)).toBe(true);
+		const plain = buildGraph([{ tree, cache: null }], () => null);
+		expect(plain.nodes.some((n) => "maxWidth" in n)).toBe(false);
 	});
 });

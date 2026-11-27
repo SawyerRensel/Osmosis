@@ -159,3 +159,22 @@ describe("plate layout cache and slicing (T78)", () => {
 		expect(plateTextureRows(30865)).toBe(Math.ceil(30865 / PLATE_TEXTURE_WIDTH));
 	});
 });
+
+describe("plate alignment and faces (T131)", () => {
+	const advance = (): number => 10;
+
+	it("centres text by default and sits it by alignment within the padding of a wider plate", () => {
+		const centred = layoutPlate("ab", advance, 10, 1000, 100);
+		expect(centred.glyphs[0]!.x).toBe(-10);
+		const left = layoutPlate("ab", advance, 10, 1000, 100, "left");
+		expect(left.glyphs[0]!.x).toBe(-50 + PLATE_PAD_X_EM * 10);
+		const right = layoutPlate("ab", advance, 10, 1000, 100, "right");
+		expect(right.glyphs[1]!.x + 10).toBeCloseTo(50 - PLATE_PAD_X_EM * 10);
+		expect(right.width).toBe(100);
+	});
+
+	it("keys a plate by its face", () => {
+		expect(shapeKey("Mooring", 5, 20, 0, "rounded-rect", "")).toBe(shapeKey("Mooring", 5, 20, 0));
+		expect(shapeKey("Mooring", 5, 20, 0, "rounded-rect", "Georgia|700||center")).not.toBe(shapeKey("Mooring", 5, 20, 0));
+	});
+});

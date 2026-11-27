@@ -1,15 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 import { Color, type DataTexture, type InstancedBufferAttribute, type Mesh, type InstancedBufferGeometry } from "three";
 import { GLYPH_RENDER_ORDER, CosmosPlates, type PlateSource } from "./CosmosPlates";
-import { DEFAULT_LOOK } from "../cosmos/node-style";
+import { DEFAULT_FONT, DEFAULT_LOOK } from "../cosmos/node-style";
 import { DASH_ID, PLATE_SHAPE_ID } from "../cosmos/plate-shapes";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS } from "../cosmos/plates";
 
-// Node has no canvas: every character is 24 px wide and drawing does nothing.
+// Node has no canvas: every character is 24 px wide (36 in a bold face) and drawing does nothing.
+// Like a canvas, it ignores a font it can't parse: here, one naming "Unparseable".
 vi.stubGlobal("createEl", () => ({
 	width: 0,
 	height: 0,
-	getContext: () => ({ font: "", fillStyle: "", textBaseline: "", fillText: () => undefined, measureText: (t: string) => ({ width: 24 * t.length, actualBoundingBoxLeft: 0, actualBoundingBoxRight: 24 * t.length }) }),
+	getContext: () => {
+		let font = "";
+		const per = (): number => (/\b700 /.test(font) ? 36 : 24);
+		return {
+			get font(): string {
+				return font;
+			},
+			set font(value: string) {
+				if (!value.includes("Unparseable")) font = value;
+			},
+			fillStyle: "",
+			textBaseline: "",
+			fillText: () => undefined,
+			measureText: (t: string) => ({ width: per() * t.length, actualBoundingBoxLeft: 0, actualBoundingBoxRight: per() * t.length }),
+		};
+	},
 }));
 
 const COLORS = { background: "#000", text: "#fff", plate: "#222", font: "sans-serif", accent: "#f0f", found: "#ff0" };
@@ -85,6 +101,58 @@ describe("CosmosPlates (T78)", () => {
 		expect(GLYPH_RENDER_ORDER).toBeLessThan(0);
 		expect(glyphs!.renderOrder).toBe(GLYPH_RENDER_ORDER);
 		expect(background!.renderOrder).toBe(0);
+		plates.dispose();
+	});
+});
+
+describe("CosmosPlates faces and text size (T131)", () => {
+	it("scales a plate and its glyphs with the text, but not its outline", () => {
+		const plates = new CosmosPlates(COLORS);
+		const plain = plates.shape("Jib", 5, 20);
+		const big = plates.shape("Jib", 10, 20, 0, "rounded-rect", { ...DEFAULT_FONT, scale: 2 });
+		expect(big.width).toBeCloseTo(plain.width * 2);
+		expect(big.height).toBeCloseTo(plain.height * 2);
+		expect(big.em).toBeCloseTo(plain.em);
+		// A note title is as tall, but its own size: it is not the scaled line's plate.
+		expect(plates.shape("Jib", 10, 20)).not.toBe(big);
+		plates.write([plain, big].map((shape) => ({ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape })), true);
+		expect(big.glyphs[0]!.height).toBeCloseTo(plain.glyphs[0]!.height * 2);
+		plates.dispose();
+	});
+
+	it("measures and draws a weight in its own face, in the shared pages", () => {
+		const plates = new CosmosPlates(COLORS);
+		const plain = plates.shape("Jib", 5, 20);
+		const bold = plates.shape("Jib", 5, 20, 0, "rounded-rect", { ...DEFAULT_FONT, weight: 700 });
+		expect(bold).not.toBe(plain);
+		expect(bold.width).toBeGreaterThan(plain.width);
+		expect(plates.shape("Jib", 5, 20, 0, "rounded-rect", { ...DEFAULT_FONT, weight: 700 })).toBe(bold);
+		plates.shape("Sheet", 5, 20, 0, "rounded-rect", { ...DEFAULT_FONT, weight: 700, scale: 3 });
+		plates.write([plain, bold].map((shape) => ({ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape })), true);
+		// One face per variant used, whatever the sizes; both faces' glyphs on the one page.
+		expect(plates.stats().faces).toBe(2);
+		expect(plates.stats().pages).toBe(1);
+		expect(bold.glyphs[0]!.uv).not.toEqual(plain.glyphs[0]!.uv);
+		plates.dispose();
+	});
+
+	it("falls back to the theme font for a family the canvas can't parse", () => {
+		const plates = new CosmosPlates(COLORS);
+		const plain = plates.shape("Jib", 5, 20);
+		const odd = plates.shape("Jib", 5, 20, 0, "rounded-rect", { ...DEFAULT_FONT, family: "Unparseable" });
+		expect(odd.width).toBeCloseTo(plain.width);
+		plates.write([odd].map((shape) => ({ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape })), true);
+		expect(odd.glyphs).toHaveLength(3);
+		plates.dispose();
+	});
+
+	it("sits text by its alignment on a plate wider than it", () => {
+		const plates = new CosmosPlates(COLORS);
+		const centred = plates.shape("Jib", 5, 20, 20);
+		const left = plates.shape("Jib", 5, 20, 20, "rounded-rect", { ...DEFAULT_FONT, align: "left" });
+		plates.write([centred, left].map((shape) => ({ x: 0, y: 0, z: 0, opacity: 1, color: new Color(), shape })), true);
+		expect(left.width).toBeCloseTo(centred.width);
+		expect(left.glyphs[0]!.x).toBeLessThan(centred.glyphs[0]!.x);
 		plates.dispose();
 	});
 });

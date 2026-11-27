@@ -24,6 +24,9 @@ export const PLATE_RADIUS = 0.3;
 
 const ELLIPSIS = "…";
 
+/** Where a plate's text sits when the plate is wider than it (a set width, or a code block's fit). */
+export type PlateAlign = "left" | "center" | "right";
+
 export interface PlateGlyph {
 	char: string;
 	/** Left edge of the character's advance, relative to the plate's centre. */
@@ -40,10 +43,10 @@ export interface PlateLayout {
 /**
  * Lay `text` out on a plate, with `advance` giving each character's width at
  * `fontPx`. Text wider than `maxWidth` is cut at a character and ends in an
- * ellipsis. The plate is at least `minWidth` wide (its text stays centred), for
- * a node whose style or code block sets its width.
+ * ellipsis. The plate is at least `minWidth` wide, for a node whose style or
+ * code block sets its width; its text sits by `align` within the padding.
  */
-export function layoutPlate(text: string, advance: (char: string) => number, fontPx: number, maxWidth: number, minWidth = 0): PlateLayout {
+export function layoutPlate(text: string, advance: (char: string) => number, fontPx: number, maxWidth: number, minWidth = 0, align: PlateAlign = "center"): PlateLayout {
 	let chars = Array.from(text);
 	const widths = chars.map(advance);
 	let textWidth = sum(widths);
@@ -58,13 +61,15 @@ export function layoutPlate(text: string, advance: (char: string) => number, fon
 		widths.push(advance(ELLIPSIS));
 		textWidth = width + widths[kept]!;
 	}
+	const pad = PLATE_PAD_X_EM * fontPx;
+	const width = Math.max(minWidth, textWidth + 2 * pad);
 	const glyphs: PlateGlyph[] = [];
-	let pen = -textWidth / 2;
+	let pen = align === "left" ? -width / 2 + pad : align === "right" ? width / 2 - pad - textWidth : -textWidth / 2;
 	chars.forEach((char, i) => {
 		if (char.trim() !== "") glyphs.push({ char, x: pen });
 		pen += widths[i]!;
 	});
-	return { glyphs, width: Math.max(minWidth, textWidth + 2 * PLATE_PAD_X_EM * fontPx), height: PLATE_HEIGHT_EM * fontPx };
+	return { glyphs, width, height: PLATE_HEIGHT_EM * fontPx };
 }
 
 function sum(values: readonly number[]): number {
@@ -119,9 +124,9 @@ export class GlyphPacker {
 	}
 }
 
-/** The cache key of a plate laid out from `text` at this height and these widths (`CosmosPlates.shape`). */
-export function shapeKey(text: string, height: number, maxEm: number, minEm: number, shape = "rounded-rect"): string {
-	return `${shape}|${height}|${maxEm}|${minEm}|${text}`;
+/** The cache key of a plate laid out from `text` at this height and these widths, in this shape and face (`fontKey`) (`CosmosPlates.shape`). */
+export function shapeKey(text: string, height: number, maxEm: number, minEm: number, shape = "rounded-rect", font = ""): string {
+	return `${shape}|${height}|${maxEm}|${minEm}|${font}|${text}`;
 }
 
 /**

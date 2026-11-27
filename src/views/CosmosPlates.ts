@@ -60,7 +60,7 @@ import { GlyphPacker, PLATE_STROKE_EM, PLATE_HEIGHT_EM, PLATE_TEXTURE_WIDTH, Sha
 import { FAR_SIDE_DIM } from "../cosmos/far-side";
 import { UPRIGHT_GLSL } from "../cosmos/upright";
 import { FOCUS_DIM_GLSL } from "../cosmos/focus";
-import { DEFAULT_LOOK, type NodeLook } from "../cosmos/node-style";
+import { DEFAULT_FONT, DEFAULT_LOOK, fontKey, plateAlign, type FontLook, type NodeLook } from "../cosmos/node-style";
 import { DASH_EM, DASH_ID, PLATE_SHAPE_ID, shapeBox } from "../cosmos/plate-shapes";
 import type { TopicShape } from "../styles";
 
@@ -110,6 +110,8 @@ interface QueuedShape {
 	shape: PlateShape;
 	layout: PlateLayout;
 	scale: number;
+	/** The atlas face its glyphs are drawn in. Atlases (and so faces) are replaced only with the queue cleared. */
+	face: AtlasFace;
 }
 
 /** What the plate meshes need to know about a node each time they're written. */
@@ -159,35 +161,87 @@ interface AtlasPage {
 	dirty: boolean;
 }
 
-/** The shared glyph atlas for one font: measured advances, and pages drawn as characters first appear. */
+/** One face of the scene font the atlas draws in (`fontKey`): its canvas font, and its characters' measured advances. */
+interface AtlasFace {
+	/** Prefixes its characters in the packer, so a face's "a" gets its own slot. */
+	id: number;
+	font: string;
+	advances: Map<string, number>;
+}
+
+/**
+ * The shared glyph atlas: measured advances, and pages drawn as characters
+ * first appear. Each face a style asks for (`FontLook`: family, weight,
+ * slant) draws its characters into the same pages, so a face costs only the
+ * slots its characters take, never a page of its own.
+ */
 class GlyphAtlas {
 	readonly pages: AtlasPage[] = [];
 	private readonly packer = new GlyphPacker(PAGE_PX, ROW_PX);
-	private readonly advances = new Map<string, number>();
+	private readonly faces = new Map<string, AtlasFace>();
 	private readonly glyphs = new Map<string, AtlasGlyph>();
 	private readonly measure: CanvasRenderingContext2D | null;
+	/** The face `measure` is set to, so measuring a run of one face's characters sets its font once. */
+	private measuring: AtlasFace | null = null;
+	/** The scene's own face: the theme font. */
+	readonly base: AtlasFace;
 
-	constructor(private readonly font: string) {
+	constructor(private readonly family: string) {
 		this.measure = createEl("canvas").getContext("2d");
-		if (this.measure !== null) this.measure.font = font;
+		this.base = { id: 0, font: `${FONT_PX}px ${family}`, advances: new Map() };
+		this.faces.set("", this.base);
 	}
 
-	advance(char: string): number {
-		let advance = this.advances.get(char);
-		if (advance === undefined) this.advances.set(char, (advance = this.measure?.measureText(char).width ?? FONT_PX / 2));
+	/** How many faces the plates have asked for, the scene's own included. */
+	get faceCount(): number {
+		return this.faces.size;
+	}
+
+	/**
+	 * The face `font` is drawn in, made on first use. A family the canvas can't
+	 * parse is dropped, and one that isn't installed falls through to the
+	 * theme font, which follows it in the font's family list.
+	 */
+	face(font: FontLook): AtlasFace {
+		const key = fontKey(font);
+		const known = this.faces.get(key);
+		if (known !== undefined) return known;
+		const css = (family: string | null): string => `${font.italic ? "italic " : ""}${font.weight ?? "normal"} ${FONT_PX}px ${family === null ? "" : `"${family}", `}${this.family}`;
+		let face = css(font.family);
+		if (this.measure !== null && font.family !== null) {
+			// A font the canvas rejects leaves its old one: measure with the theme's then.
+			this.measuring = null;
+			this.measure.font = "1px serif";
+			this.measure.font = face;
+			if (this.measure.font === "1px serif") face = css(null);
+		}
+		const created: AtlasFace = { id: this.faces.size, font: face, advances: new Map() };
+		this.faces.set(key, created);
+		return created;
+	}
+
+	advance(face: AtlasFace, char: string): number {
+		let advance = face.advances.get(char);
+		if (advance === undefined) {
+			this.measureIn(face);
+			face.advances.set(char, (advance = this.measure?.measureText(char).width ?? FONT_PX / 2));
+		}
 		return advance;
 	}
 
-	glyph(char: string): AtlasGlyph {
-		const known = this.glyphs.get(char);
+	glyph(face: AtlasFace, char: string): AtlasGlyph {
+		const key = `${face.id}\u0000${char}`;
+		const known = this.glyphs.get(key);
 		if (known !== undefined) return known;
+		this.measureIn(face);
 		const metrics = this.measure?.measureText(char);
 		// Ink can reach past the advance on either side (a "j" or an italic overhang).
 		const inkLeft = Math.max(0, Math.ceil(metrics?.actualBoundingBoxLeft ?? 0));
-		const inkRight = Math.max(Math.ceil(this.advance(char)), Math.ceil(metrics?.actualBoundingBoxRight ?? 0));
-		const slot = this.packer.slot(char, inkLeft + inkRight + 2 * GLYPH_PAD_PX);
+		const inkRight = Math.max(Math.ceil(this.advance(face, char)), Math.ceil(metrics?.actualBoundingBoxRight ?? 0));
+		const slot = this.packer.slot(key, inkLeft + inkRight + 2 * GLYPH_PAD_PX);
 		const page = this.page(slot.page);
 		if (page.context !== null) {
+			page.context.font = face.font;
 			page.context.fillText(char, slot.x + GLYPH_PAD_PX + inkLeft, slot.y + ROW_PX / 2);
 			page.dirty = true;
 		}
@@ -198,8 +252,14 @@ class GlyphAtlas {
 			width: slot.width,
 			uv: [slot.x / PAGE_PX, 1 - (slot.y + ROW_PX) / PAGE_PX, slot.width / PAGE_PX, ROW_PX / PAGE_PX],
 		};
-		this.glyphs.set(char, glyph);
+		this.glyphs.set(key, glyph);
 		return glyph;
+	}
+
+	private measureIn(face: AtlasFace): void {
+		if (this.measure === null || this.measuring === face) return;
+		this.measure.font = face.font;
+		this.measuring = face;
 	}
 
 	private page(index: number): AtlasPage {
@@ -207,7 +267,7 @@ class GlyphAtlas {
 			const canvas = createEl("canvas", { attr: { width: PAGE_PX, height: PAGE_PX } });
 			const context = canvas.getContext("2d");
 			if (context !== null) {
-				context.font = this.font;
+				context.font = this.base.font;
 				context.fillStyle = "#ffffff";
 				context.textBaseline = "middle";
 			}
@@ -624,6 +684,7 @@ export class CosmosPlates {
 	};
 	/** View depth of the focus, for focus dimming. The scene eases it each frame and shares it with the edges. */
 	readonly focus: IUniform<number> = { value: 0 };
+	/** The theme's font family list, every face's fallback. */
 	private font = "";
 	private labelsVisible = true;
 	/** Style colours as parsed, by their CSS text: a layout write reads them for every styled plate. */
@@ -664,11 +725,10 @@ export class CosmosPlates {
 		this.uniforms.uBackground.value.setStyle(colors.background);
 		this.uniforms.uAccent.value.setStyle(colors.accent);
 		this.uniforms.uFound.value.setStyle(colors.found);
-		const font = `${FONT_PX}px ${colors.font}`;
-		if (font === this.font) return;
-		this.font = font;
+		if (colors.font === this.font) return;
+		this.font = colors.font;
 		this.atlas.dispose();
-		this.atlas = new GlyphAtlas(font);
+		this.atlas = new GlyphAtlas(colors.font);
 		for (const layer of this.glyphs) layer.dispose();
 		this.glyphs.length = 0;
 		// Layouts measured in the old font are stale.
@@ -683,18 +743,26 @@ export class CosmosPlates {
 		for (const layer of this.glyphs) layer.mesh.visible = visible;
 	}
 
-	/** Lay `text` out on a plate `height` world units tall, its text cut at `maxEm` ems wide and the plate at least `minEm` wide. */
-	shape(text: string, height: number, maxEm: number, minEm = 0, topicShape: TopicShape = "rounded-rect"): PlateShape {
-		const key = shapeKey(text, height, maxEm, minEm, topicShape);
+	/**
+	 * Lay `text` out on a plate `height` world units tall, its text cut at
+	 * `maxEm` ems wide and the plate at least `minEm` wide, in `font`'s face
+	 * and alignment. A bigger text size (`font.scale`) is a taller plate: its
+	 * ems are the height's share, so its text and widths scale with it, its
+	 * outline doesn't.
+	 */
+	shape(text: string, height: number, maxEm: number, minEm = 0, topicShape: TopicShape = "rounded-rect", font: FontLook = DEFAULT_FONT): PlateShape {
+		const key = shapeKey(text, height, maxEm, minEm, topicShape, `${fontKey(font)}|${font.scale}`);
 		const known = this.shapes.get(key);
 		if (known !== undefined) return known;
-		const layout = layoutPlate(text, (char) => this.atlas.advance(char), FONT_PX, maxEm * FONT_PX, minEm * FONT_PX);
+		const face = this.atlas.face(font);
+		const layout = layoutPlate(text, (char) => this.atlas.advance(face, char), FONT_PX, maxEm * FONT_PX, minEm * FONT_PX, plateAlign(font));
 		const scale = height / layout.height;
 		// A shape is laid out round its text as the mind map's is: its text in the shape's inner box.
 		const box = shapeBox(topicShape, layout.width * scale, height);
-		const shape: PlateShape = { width: box.width, height: box.height, em: height / PLATE_HEIGHT_EM, textX: box.textX, glyphs: [], pending: true };
+		// The outline and dashes keep the unscaled text's em: the mind map's border is in px, whatever the text size.
+		const shape: PlateShape = { width: box.width, height: box.height, em: height / PLATE_HEIGHT_EM / font.scale, textX: box.textX, glyphs: [], pending: true };
 		this.shapes.set(key, shape);
-		this.queue.push({ shape, layout, scale });
+		this.queue.push({ shape, layout, scale, face });
 		return shape;
 	}
 
@@ -704,9 +772,9 @@ export class CosmosPlates {
 	}
 
 	/** Build a queued plate's glyphs, drawing any new characters into the atlas. */
-	private build({ shape, layout, scale }: QueuedShape): void {
+	private build({ shape, layout, scale, face }: QueuedShape): void {
 		shape.glyphs = layout.glyphs.map(({ char, x }) => {
-			const glyph = this.atlas.glyph(char);
+			const glyph = this.atlas.glyph(face, char);
 			return {
 				page: glyph.page,
 				x: (x + glyph.left + glyph.width / 2) * scale + shape.textX,
@@ -898,7 +966,7 @@ export class CosmosPlates {
 	}
 
 	/** Counts and memory, for the perf readout. */
-	stats(): { plates: number; glyphs: number; pages: number; atlasBytes: number; instanceBytes: number; queued: number; layoutMs: number; tickMs: number; glyphMs: number } {
+	stats(): { plates: number; glyphs: number; pages: number; faces: number; atlasBytes: number; instanceBytes: number; queued: number; layoutMs: number; tickMs: number; glyphMs: number } {
 		return {
 			queued: this.queued,
 			layoutMs: this.timing.layout,
@@ -907,6 +975,7 @@ export class CosmosPlates {
 			plates: this.plates.count,
 			glyphs: this.glyphs.reduce((sum, layer) => sum + layer.count, 0),
 			pages: this.atlas.pages.length,
+			faces: this.atlas.faceCount,
 			// RGBA, plus a third again for the mipmap chain.
 			atlasBytes: this.atlas.pages.length * PAGE_PX * PAGE_PX * 4 * (4 / 3),
 			instanceBytes: this.glyphs.reduce((sum, layer) => sum + layer.bytes, this.plates.bytes) + this.plateTexture.value.image.width * this.plateTexture.value.image.height * 16,

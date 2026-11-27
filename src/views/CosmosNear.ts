@@ -55,11 +55,11 @@ import { CSS3DObject, CSS3DRenderer } from "three/examples/jsm/renderers/CSS3DRe
 import type { GraphNode } from "../cosmos/model";
 import { NEAR_ENTER_SCREEN, NEAR_EXIT_RATIO, chooseNear, enterScaleFromDetail, panelHalfNdc, panelScale, type NearProbe, type NearTierSettings } from "../cosmos/lod";
 import { editorAnchor, type EditorPlace } from "../cosmos/edit";
-import { MIN_STYLE_WIDTH_PX, nearMarkdown, panelBoxEm, panelWidthRule, shapedPanelPadEm, styleWidthEm } from "../cosmos/near";
+import { MIN_STYLE_WIDTH_PX, PANEL_MAX_EM, nearMarkdown, panelBoxEm, panelWidthRule, shapedPanelPadEm, styleWidthEm } from "../cosmos/near";
 import { DASH_EM, isBareShape, isRectShape, shapePath } from "../cosmos/plate-shapes";
 import { plateVisibility } from "../cosmos/focus";
 import { PLATE_HEIGHT_EM, PLATE_RADIUS, PLATE_STROKE_EM } from "../cosmos/plates";
-import type { NodeLook } from "../cosmos/node-style";
+import { DEFAULT_FONT, textScale, type NodeLook } from "../cosmos/node-style";
 import { holeMask, panelHoles, type PanelHole, type ScreenPlate } from "../cosmos/occlusion";
 import { frontPanelAt, rectContains, type DrawnPanel, type ScreenRect } from "../cosmos/links";
 import type { TangentFrame } from "../cosmos/planets";
@@ -126,6 +126,9 @@ interface DrawnPlate extends ScreenPlate {
 
 /** Panel text size, in CSS px, before the per-frame scale. */
 export const NEAR_FONT_PX = 16;
+
+/** A node's panel text size, in CSS px before the per-frame scale: `NEAR_FONT_PX` times its style's `textScale`. */
+const fontPx = (node: NearSource): number => NEAR_FONT_PX * (node.look?.font.scale ?? textScale(node.graph.style));
 /** Seconds for a panel to cross-fade in over its plate, or out. */
 const NEAR_FADE_S = 0.25;
 /** Rendered panels kept to clone on re-entry, like the mind map's HTML cache. */
@@ -382,7 +385,8 @@ export class CosmosNear {
 	private panelPx(node: NearSource, panel: Panel | undefined): { width: number; height: number } | null {
 		if (panel !== undefined && panel.width > 0 && panel.height > 0) return { width: panel.width, height: panel.height };
 		const em = panelBoxEm(node.graph);
-		return em === null ? null : { width: em.width * NEAR_FONT_PX, height: em.height * NEAR_FONT_PX };
+		const px = fontPx(node);
+		return em === null ? null : { width: em.width * px, height: em.height * px };
 	}
 
 	/**
@@ -448,7 +452,8 @@ export class CosmosNear {
 		const plateHeight = node.shape.height * this.pxPerUnit;
 		// A node with a set width wraps its text at it (a code block at its fit), as its panel does.
 		const rule = panelWidthRule(node.graph);
-		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, ...(rule.kind === "default" ? {} : { maxWidth: Math.max(rule.em * NEAR_FONT_PX, node.shape.width * this.pxPerUnit) }), minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: NEAR_FONT_PX });
+		const px = fontPx(node);
+		editor.setPlate({ minWidth: node.shape.width * this.pxPerUnit, ...(rule.kind === "default" ? {} : { maxWidth: Math.max(rule.em * px, node.shape.width * this.pxPerUnit) }), minHeight: plateHeight, radius: plateHeight * cornerOf(node), fontSize: px });
 	}
 
 	/** Give the panels of the nodes in `ids` the selection border, and take it from the rest. */
@@ -499,7 +504,8 @@ export class CosmosNear {
 	setPreviewWidth(id: string, width: number | null): number | null {
 		const panel = this.panels.get(id);
 		if (panel === undefined) return width;
-		panel.preview = width === null ? null : Math.max(width, styleWidthEm(MIN_STYLE_WIDTH_PX) * NEAR_FONT_PX);
+		const scale = textScale(panel.node.graph.style);
+		panel.preview = width === null ? null : Math.max(width, styleWidthEm(MIN_STYLE_WIDTH_PX, scale) * NEAR_FONT_PX * scale);
 		this.paint(panel);
 		return panel.preview;
 	}
@@ -574,7 +580,8 @@ export class CosmosNear {
 	 */
 	private paint(panel: Panel): void {
 		const { look, color } = panel.node;
-		const stroke = (look?.stroke ?? 1) * PLATE_STROKE_EM;
+		// In ems of the unscaled text, as the plate's: the mind map's border is in px, whatever the text size.
+		const stroke = ((look?.stroke ?? 1) * PLATE_STROKE_EM) / (look?.font.scale ?? 1);
 		const topicShape = look?.shape ?? "rounded-rect";
 		const dash = look?.dash ?? "solid";
 		const bare = isBareShape(topicShape);
@@ -592,12 +599,15 @@ export class CosmosNear {
 				: {
 					width: rule.kind === "custom" ? `${box?.width ?? rule.em}em` : "",
 					minWidth: `${panel.node.shape.width * this.pxPerUnit}px`,
-					maxWidth: rule.kind === "custom" ? `${box?.width ?? rule.em}em` : rule.kind === "default" && pad === null ? "" : `${rule.em + padX}em`,
+					maxWidth: rule.kind === "custom" ? `${box?.width ?? rule.em}em` : rule.kind === "default" && pad === null && rule.em === PANEL_MAX_EM.width ? "" : `${rule.em + padX}em`,
 				};
 		panel.radius = bare ? 0 : panel.node.shape.height * this.pxPerUnit * cornerOf(panel.node);
 		// A circle's box stays square, as the mind map's is.
 		const minHeight = topicShape === "circle" ? `max(${panel.node.shape.height * this.pxPerUnit}px, ${Math.max(box?.width ?? 0, box?.height ?? 0)}em)` : `${panel.node.shape.height * this.pxPerUnit}px`;
+		const font = look?.font ?? DEFAULT_FONT;
 		panel.box.setCssStyles({
+			// Every em of the panel (its padding, widths and outline) is one of the node's text, so a bigger text is a bigger panel, as its plate is.
+			fontSize: `${fontPx(panel.node)}px`,
 			...width,
 			...(topicShape === "circle" && panel.preview === null ? { minWidth: minHeight } : {}),
 			minHeight: shaped ? minHeight : "",
@@ -616,11 +626,17 @@ export class CosmosNear {
 			"--osmosis-near-fill": shaped ? styleFill ?? "var(--background-secondary)" : "none",
 			"--osmosis-near-stroke": stroke === 0 ? "none" : look?.border ?? color.getStyle(),
 			"--osmosis-near-stroke-width": `${2 * stroke}em`,
-			"--osmosis-near-dash": dash === "solid" ? "none" : DASH_EM[dash].map((em) => `${em}em`).join(" "),
+			"--osmosis-near-dash": dash === "solid" ? "none" : DASH_EM[dash].map((em) => `${em / (look?.font.scale ?? 1)}em`).join(" "),
 		});
 		this.sizeLens(panel);
-		// On the rendered Markdown itself, as the mind map sets it.
-		panel.body.setCssStyles({ color: look?.text ?? "" });
+		// On the rendered Markdown itself, as the mind map sets it. A family that isn't installed falls back to the theme's.
+		panel.body.setCssStyles({
+			color: look?.text ?? "",
+			fontFamily: font.family === null ? "" : `"${font.family}", var(--font-text)`,
+			fontWeight: font.weight === null ? "" : String(font.weight),
+			fontStyle: font.italic ? "italic" : "",
+			textAlign: font.align ?? "",
+		});
 	}
 
 	/** Give the panel its SVG outline (`drawn`), styled by `props`, or take it away; `sizeLens` writes its path. */
@@ -922,7 +938,7 @@ export class CosmosNear {
 		// Never smaller than the plate under it, with the same corners, outline and colours.
 		const { shape } = panel.node;
 		panel.box.setCssStyles({
-			fontSize: `${NEAR_FONT_PX}px`,
+			fontSize: `${fontPx(panel.node)}px`,
 			minWidth: `${shape.width * this.pxPerUnit}px`,
 			minHeight: `${shape.height * this.pxPerUnit}px`,
 		});
