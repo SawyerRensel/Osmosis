@@ -244,7 +244,8 @@ export async function setSuspended(
 		);
 
 		const contentBefore = await readSettled(deps, file, plan.notePath);
-		const sidecar = lineTargets.length > 0 ? await sidecarBefore(deps, file) : null;
+		// Fence cards of a sidecar-mode note write there too (`osmosis-fences`).
+		const sidecar = await sidecarBefore(deps, file);
 		for (const card of [...lineTargets, ...fenceTargets]) {
 			before.set(card.id, { ...card });
 		}
@@ -318,7 +319,8 @@ export async function resetCards(
 		if (lineTargets.length === 0 && fenceTargets.length === 0) continue;
 
 		const contentBefore = await readSettled(deps, file, plan.notePath);
-		const sidecar = lineTargets.length > 0 ? await sidecarBefore(deps, file) : null;
+		// Fence cards of a sidecar-mode note write there too (`osmosis-fences`).
+		const sidecar = await sidecarBefore(deps, file);
 		for (const card of [...lineTargets, ...fenceTargets]) {
 			before.set(card.id, { ...card });
 		}

@@ -1,6 +1,7 @@
 import type { TFile, Vault } from "obsidian";
 import type { CardState, OcclusionSet } from "../database/types";
 import { serializeOccludeBlock } from "../card-gen/occlusion";
+import { applyFenceEdits, type FenceEdit } from "./fence-sidecar";
 
 /** Schedule fields to write into a fence. */
 export interface ScheduleFields {
@@ -12,6 +13,15 @@ export interface ScheduleFields {
 	lapses: number;
 	state: CardState;
 	learningSteps: number;
+}
+
+/**
+ * The slice of `NoteData` the writer needs: where a note's data lives, and the
+ * frontmatter write that lands in its sidecar.
+ */
+export interface FenceNoteData {
+	modeOf(file: TFile): "note" | "sidecar";
+	process(file: TFile, fn: (frontmatter: Record<string, unknown>) => void): Promise<void>;
 }
 
 /**
@@ -32,7 +42,13 @@ export class FenceWriter {
 	/** Per-path write chain, so two flushes of one note cannot interleave. */
 	private readonly inflight = new Map<string, Promise<void>>();
 
-	constructor(private readonly vault: Vault) {}
+	/**
+	 * `noteData` routes a sidecar-mode note's writes — schedules, removals,
+	 * buries, `exclude` and the staged flush — into its sidecar's
+	 * `osmosis-fences` (see `fence-sidecar.ts`), leaving the note's text alone.
+	 * Without it every note is written in place, as before sidecars.
+	 */
+	constructor(private readonly vault: Vault, private readonly noteData?: FenceNoteData) {}
 
 	/**
 	 * Write updated schedule data into the fence for a card.
@@ -48,6 +64,7 @@ export class FenceWriter {
 		schedule: ScheduleFields,
 	): Promise<void> {
 		this.discardStaged(file.path, cardId);
+		if (this.inSidecar(file)) return this.writeSidecar(file, [{ kind: "schedule", cardId, schedule }]);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -71,6 +88,7 @@ export class FenceWriter {
 		cardId: string,
 		exclude: boolean,
 	): Promise<void> {
+		if (this.inSidecar(file)) return this.writeSidecar(file, [{ kind: "exclude", cardId, exclude }]);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -92,6 +110,7 @@ export class FenceWriter {
 	 * note in quick succession writes both rather than dropping the second.
 	 */
 	async writeBuried(file: TFile, cardId: string, until: number | null): Promise<void> {
+		if (this.inSidecar(file)) return this.writeSidecar(file, [{ kind: "buried", cardId, until }]);
 		const prev = this.inflight.get(file.path) ?? Promise.resolve();
 		const next = prev.then(async () => {
 			this.writingPaths.add(file.path);
@@ -117,6 +136,7 @@ export class FenceWriter {
 		cardId: string,
 	): Promise<void> {
 		this.discardStaged(file.path, cardId);
+		if (this.inSidecar(file)) return this.writeSidecar(file, [{ kind: "schedule", cardId, schedule: null }]);
 		if (this.writingPaths.has(file.path)) return;
 
 		const content = await this.vault.cachedRead(file);
@@ -223,6 +243,38 @@ export class FenceWriter {
 
 	// ── Private Helpers ───────────────────────────────────────
 
+	private inSidecar(file: TFile): boolean {
+		return this.noteData?.modeOf(file) === "sidecar";
+	}
+
+	/**
+	 * Apply fence edits to a sidecar-mode note's `osmosis-fences`, chained per
+	 * note with the staged flushes and buries so two writes never interleave.
+	 * The note itself is only read, to seed a fence's first entry from its
+	 * header; it is never rewritten, so an open note is not re-rendered.
+	 */
+	private async writeSidecar(file: TFile, edits: readonly FenceEdit[]): Promise<void> {
+		const prev = this.inflight.get(file.path) ?? Promise.resolve();
+		const next = prev.catch(() => undefined).then(() => this.writeSidecarNow(file, edits));
+		this.inflight.set(file.path, next);
+		try {
+			await next;
+		} finally {
+			if (this.inflight.get(file.path) === next) this.inflight.delete(file.path);
+		}
+	}
+
+	/** {@link writeSidecar}'s body, for a caller already inside the note's chain. */
+	private async writeSidecarNow(file: TFile, edits: readonly FenceEdit[]): Promise<void> {
+		this.writingPaths.add(file.path);
+		try {
+			const content = await this.vault.cachedRead(file);
+			await this.noteData!.process(file, (fm) => applyFenceEdits(fm, content, edits));
+		} finally {
+			this.writingPaths.delete(file.path);
+		}
+	}
+
 	/**
 	 * Forget a card's staged schedule, because something is writing that card's
 	 * schedule through right now — a card-browser reset, say. The direct write
@@ -259,6 +311,17 @@ export class FenceWriter {
 
 		const file = this.vault.getFileByPath(notePath);
 		if (!file) return; // note deleted — drop the staged entries
+
+		if (this.inSidecar(file)) {
+			const edits = [...entries].map(([cardId, schedule]): FenceEdit => ({ kind: "schedule", cardId, schedule }));
+			try {
+				await this.writeSidecarNow(file, edits);
+			} catch (error) {
+				console.error(`Osmosis: failed to write fence schedules for ${notePath}`, error);
+				this.restage(notePath, entries);
+			}
+			return;
+		}
 
 		this.writingPaths.add(notePath);
 		try {

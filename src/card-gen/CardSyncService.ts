@@ -8,6 +8,7 @@ import type { GeneratedCard } from "./types";
 import { processNote } from "./note-processor";
 import { lineCardId } from "./line-cards";
 import { occludeLineCard } from "./occlusion";
+import { overlayFenceCards, type FenceOverlay } from "../store/fence-sidecar";
 
 /**
  * Syncs generated cards from vault notes into the in-memory CardStore.
@@ -60,6 +61,12 @@ export class CardSyncService {
 		 * osmosis-schedule `buriedUntil` overlaid with pending changes.
 		 */
 		private readonly getLineBuried?: (file: TFile) => Map<string, number>,
+		/**
+		 * A sidecar-mode note's `osmosis-fences` entries, by fence id. A fence
+		 * with an entry takes its schedules, buries and `exclude` from it rather
+		 * than from its header (see `fence-sidecar.ts`).
+		 */
+		private readonly getFenceOverlays?: (file: TFile) => Map<string, FenceOverlay>,
 	) {}
 
 	/**
@@ -110,7 +117,10 @@ export class CardSyncService {
 			// note study waits until the note is off screen to rewrite it.
 			const stagedFences = this.fenceWriter.getPendingSchedules(file.path);
 
-			for (const genCard of this.occludeLineCards(file, result.cards)) {
+			const fenceOverlays = this.getFenceOverlays?.(file);
+			const cards = fenceOverlays ? overlayFenceCards(result.cards, fenceOverlays) : result.cards;
+
+			for (const genCard of this.occludeLineCards(file, cards)) {
 				generatedIds.add(genCard.id);
 
 				// Preserve existing schedule data if the card already exists in the store

@@ -198,7 +198,11 @@ function renderFence(source: string, mode: "off" | "study", cards: Card[] = []):
 				getFirstLinkpathDest: (linkpath: string) =>
 					linkpath === "bridge.svg" ? { path: linkpath } : null,
 			},
-			vault: { getResourcePath: (file: { path: string }) => `app://vault/${file.path}` },
+			// No file behind the note: no sidecar, so fences read their own header.
+			vault: {
+				getResourcePath: (file: { path: string }) => `app://vault/${file.path}`,
+				getFileByPath: () => null,
+			},
 		},
 		cardStore: {
 			getCardsByNote: () => cards,
@@ -881,7 +885,7 @@ describe("a fence in plain reading mode", () => {
 		let mode: "off" | "study" = "off";
 		const cards = [basicCard("basic1"), basicCard("basic2")];
 		const plugin = {
-			app: {},
+			app: { vault: { getFileByPath: () => null } },
 			cardStore: { getCardsByNote: () => cards },
 			lineReveal: {
 				revealMode: () => mode,

@@ -11,6 +11,7 @@ import { CardStore } from "./store/CardStore";
 import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter, parseBuriedFrontmatter } from "./store/ScheduleStore";
 import { NoteData } from "./store/NoteData";
+import { FENCES_FRONTMATTER_KEY, parseFencesFrontmatter, type FenceOverlay } from "./store/fence-sidecar";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
 import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
@@ -201,9 +202,6 @@ export default class OsmosisPlugin extends Plugin {
 		// In-memory card store — replaces SQLite database
 		this.cardStore = new CardStore();
 
-		// Fence writer — writes schedule data back into markdown fences
-		this.fenceWriter = new FenceWriter(this.app.vault);
-
 		// Note data — the note-or-sidecar seam. Its rename/delete listeners are
 		// registered before the plugin's own below, so a renamed note's sidecar
 		// is re-keyed before anything re-reads it.
@@ -212,6 +210,10 @@ export default class OsmosisPlugin extends Plugin {
 			sidecarFolder: this.settings.sidecarFolder,
 		}));
 		this.noteData.attach(this);
+
+		// Fence writer — writes schedule data back into markdown fences, or into
+		// a sidecar-mode note's sidecar
+		this.fenceWriter = new FenceWriter(this.app.vault, this.noteData);
 
 		// Schedule store — debounced osmosis-schedule frontmatter writes for line cards
 		this.scheduleStore = new ScheduleStore(
@@ -301,6 +303,7 @@ export default class OsmosisPlugin extends Plugin {
 				}
 				return buried;
 			},
+			(file: TFile) => this.fenceOverlays(file),
 		);
 
 		// Card-browser mutations. Explicit deps rather than the plugin, so the four
@@ -821,6 +824,14 @@ export default class OsmosisPlugin extends Plugin {
 	 */
 	isOsmosisDataPath(path: string): boolean {
 		return isReviewLogPath(path, this.settings.reviewLogFolder) || this.noteData.isSidecar(path);
+	}
+
+	/**
+	 * A note's `osmosis-fences` entries, by fence id — the fence review data a
+	 * sidecar-mode note keeps out of its fence headers. Empty in note mode.
+	 */
+	fenceOverlays(file: TFile): Map<string, FenceOverlay> {
+		return parseFencesFrontmatter(this.noteData.frontmatter(file)[FENCES_FRONTMATTER_KEY]);
 	}
 
 	/**

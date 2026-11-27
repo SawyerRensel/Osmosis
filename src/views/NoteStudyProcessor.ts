@@ -118,6 +118,8 @@ export class NoteStudyProcessor {
 		restart: () => void;
 		/** Draw the fence again from the state held here, keeping its place — for undo. */
 		redraw: () => void;
+		/** What the fence was parsed into; `exclude` is updated in place by {@link showExclude}. */
+		parsed: ParsedFence;
 	}[] = [];
 	/**
 	 * The height each reading-view fence last rendered to, by its source text.
@@ -230,6 +232,7 @@ export class NoteStudyProcessor {
 		fenceId: string,
 		restart: () => void,
 		redraw: () => void,
+		parsed: ParsedFence,
 	): void {
 		for (let i = this.trackedFences.length - 1; i >= 0; i--) {
 			const entry = this.trackedFences[i]!;
@@ -237,7 +240,7 @@ export class NoteStudyProcessor {
 				this.trackedFences.splice(i, 1);
 			}
 		}
-		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw });
+		this.trackedFences.push({ el, sourcePath, fenceId, restart, redraw, parsed });
 	}
 
 	/**
@@ -303,6 +306,7 @@ export class NoteStudyProcessor {
 			this.renderDraft(source, el, sourcePath);
 			return;
 		}
+		this.applySidecarExclude(parsed, sourcePath);
 
 		// An occluded fence is drawn once and repainted, never rebuilt — see
 		// `renderOcclusionCard`. Both what it shows and how it flips differ from
@@ -424,7 +428,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		}, draw);
+		}, draw, parsed);
 	}
 
 	/**
@@ -707,7 +711,7 @@ export class NoteStudyProcessor {
 		this.trackFence(container, sourcePath, parsed.cardId, () => {
 			this.resetFenceState(parsed.cardId);
 			draw();
-		}, draw);
+		}, draw, parsed);
 	}
 
 	/**
@@ -735,8 +739,48 @@ export class NoteStudyProcessor {
 		);
 		toggleIcon.addEventListener("click", (e) => {
 			e.stopPropagation();
-			void this.toggleExclude(parsed.cardId, !parsed.exclude, sourcePath);
+			const exclude = !parsed.exclude;
+			void this.toggleExclude(parsed.cardId, exclude, sourcePath).then(() => {
+				// A sidecar write leaves the note alone, so nothing re-renders this
+				// card (the live preview's included): show the new state here.
+				if (!this.inSidecar(sourcePath)) return;
+				parsed.exclude = exclude;
+				toggleIcon.closest(".osmosis-note-card")?.toggleClass("osmosis-note-excluded", exclude);
+				setIcon(toggleIcon, exclude ? "eye-off" : "eye");
+				toggleIcon.setAttribute("aria-label", exclude ? "Include this card" : "Exclude this card");
+			});
 		});
+	}
+
+	private inSidecar(sourcePath: string): boolean {
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		return file !== null && this.plugin.noteData.modeOf(file) === "sidecar";
+	}
+
+	/**
+	 * A sidecar-mode fence keeps `exclude` in its sidecar's `osmosis-fences`
+	 * entry, which owns the fence once it exists — the header's `exclude:` is
+	 * stale then, so the entry decides.
+	 */
+	private applySidecarExclude(parsed: ParsedFence, sourcePath: string): void {
+		const file = this.plugin.app.vault.getFileByPath(sourcePath);
+		const overlay = file ? this.plugin.fenceOverlays(file).get(parsed.cardId) : undefined;
+		if (overlay) parsed.exclude = overlay.exclude;
+	}
+
+	/**
+	 * Show a fence's new `exclude` on every tracked card of it, after a sidecar
+	 * write the note will not re-render for. Note mode needs none of this: the
+	 * fence's own text changed, so Obsidian draws it again.
+	 */
+	private showExclude(sourcePath: string, fenceId: string, exclude: boolean): void {
+		if (!this.inSidecar(sourcePath)) return;
+		for (const entry of this.trackedFences) {
+			if (entry.sourcePath !== sourcePath || entry.fenceId !== fenceId) continue;
+			entry.parsed.exclude = exclude;
+			entry.el.toggleClass("osmosis-note-excluded", exclude);
+			entry.redraw();
+		}
 	}
 
 	/**
@@ -927,6 +971,7 @@ export class NoteStudyProcessor {
 			this.renderDraft(source, el, sourcePath);
 			return;
 		}
+		this.applySidecarExclude(parsed, sourcePath);
 
 		const container = el.createDiv({ cls: "osmosis-note-card" });
 
@@ -1063,6 +1108,7 @@ export class NoteStudyProcessor {
 		const file = this.plugin.app.vault.getFileByPath(sourcePath);
 		if (!file) return;
 		await this.plugin.fenceWriter.writeExclude(file, cardId, exclude);
+		this.showExclude(sourcePath, cardId, exclude);
 	}
 
 	/**
@@ -1083,6 +1129,7 @@ export class NoteStudyProcessor {
 			const file = this.plugin.app.vault.getFileByPath(entry.sourcePath);
 			if (file) {
 				await this.plugin.fenceWriter.writeExclude(file, entry.cardId, entry.previousExclude ?? false);
+				this.showExclude(entry.sourcePath, entry.cardId, entry.previousExclude ?? false);
 			}
 		} else {
 			// Undo rating: revert schedule
