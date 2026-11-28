@@ -2025,7 +2025,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.handleKeyDown(e);
 		});
 		this.registerDomEvent(container, "pointerdown", this.handlePointerDown);
-		this.registerDomEvent(container, "pointermove", this.handlePointerMove);
+		this.registerDomEvent(container, "pointermove", this.timedGesture(this.handlePointerMove));
 		this.registerDomEvent(container, "pointerup", this.handlePointerUp);
 		this.registerDomEvent(
 			container,
@@ -2037,7 +2037,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			"pointerleave",
 			this.handlePointerLeave,
 		);
-		this.registerDomEvent(container, "wheel", this.handleWheel, {
+		this.registerDomEvent(container, "wheel", this.timedGesture(this.handleWheel), {
 			passive: false,
 		});
 		this.registerDomEvent(container, "click", this.handleClick);
@@ -4527,6 +4527,15 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.zoomVelocity = 0;
 	}
 
+	/** A pan/zoom handler that the perf readout times, as `gesture` (T142). */
+	private timedGesture<E extends Event>(handler: (e: E) => void): (e: E) => void {
+		return (e) => {
+			const start = this.perf?.start() ?? 0;
+			handler(e);
+			this.perf?.gesture(start);
+		};
+	}
+
 	private stepInertia = (): void => {
 		this.inertiaRafId = null;
 		if (!this.svg) return;
@@ -4541,7 +4550,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		const zooming = this.stepZoomInertia(dt);
 		const panning = this.stepPanInertia(dt);
 
+		const start = this.perf?.start() ?? 0;
 		this.updateViewBox();
+		this.perf?.gesture(start);
 		if (zooming || panning) {
 			this.inertiaRafId = window.requestAnimationFrame(this.stepInertia);
 		}

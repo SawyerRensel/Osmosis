@@ -269,6 +269,17 @@ Uses Obsidian CSS variables for theme compatibility.
 	margin: -2px -6px 0 0;
 }
 
+/* Nor does a callout blend (T142). Obsidian gives `.callout` a
+   `mix-blend-mode` (lighten in dark themes, darken in light ones). Chromium
+   can fold a blend into the layer under it only in limited cases, so each one
+   risks a layer of its own, as T89's positioned seeds did, and every blend
+   costs an offscreen pass when the node is drawn. Inside a node the blend has
+   next to nothing to show: Obsidian's own Canvas turns it off for callouts in
+   its nodes the same way. The perf readout's click puts it back, for an A/B. */
+.osmosis-mindmap-container:not(.osmosis-perf-callout-blend) .osmosis-node-content .callout {
+	mix-blend-mode: normal;
+}
+
 /* Code block language label */
 pre.osmosis-code-block {
 	position: relative;

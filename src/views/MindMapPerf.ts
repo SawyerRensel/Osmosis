@@ -3,11 +3,25 @@
  * graph's (`PerfGauge`), hidden by default. While it is shown it runs its own
  * animation-frame clock for fps; while hidden it records nothing and every
  * hook below returns straight away.
+ *
+ * The frame is split as in Cosmos (T141, T142): `gesture` is our pan and zoom
+ * handlers (pointer, wheel, fling), including any layout their reads force;
+ * `cull` the cull passes; `after rAF` runs from the end of the readout's frame
+ * callback to a message posted from it, which is handled once the browser's
+ * own rendering of that frame (style, layout, paint, commit) is done on the
+ * main thread, less our JS that ran in between; `left` is the rest of the
+ * frame: raster, GPU, compositing, or idle waiting for vsync.
+ *
+ * Click the readout to put Obsidian's `mix-blend-mode` back on callouts in
+ * nodes (T142 turns it off in 2D), to read what the blend costs.
  */
 
 import type { ParseCache } from "../cache";
 import { Rolling, loafLine, untimedMs } from "../perf-stats";
 import { PerfGauge, PERF_REFRESH_MS, PERF_WINDOW_MS } from "./PerfGauge";
+
+/** On the map container: Obsidian's callout blend restored, for the readout's A/B (see styles.css). */
+const BLEND_CLASS = "osmosis-perf-callout-blend";
 
 /** The map's node counts, read at each refresh. */
 export interface MindMapCounts {
@@ -28,6 +42,16 @@ export class MindMapPerf {
 	/** Viewport changes that repainted the SVG for a new viewBox. */
 	private readonly repaints = new Rolling();
 	private lastRepaintReason: string | null = null;
+	/** Our gesture JS per frame, and how many gesture events ran in it. */
+	private readonly gestures = new Rolling();
+	private readonly gestureEvents = new Rolling();
+	/** Main-thread rendering per frame, after our rAF JS (see the header). */
+	private readonly afterRaf = new Rolling();
+	private gestureMs = 0;
+	private gestureCount = 0;
+	/** Our JS (cull, fling) between the posted message and its handling, taken out of `afterRaf`. */
+	private jsSincePost = 0;
+	private channel: MessageChannel | null = null;
 	private frameId: number | null = null;
 	private lastFrame = 0;
 	private lastRefresh = 0;
@@ -40,8 +64,8 @@ export class MindMapPerf {
 	private editAt = 0;
 	private readonly restoreParse: () => void;
 
-	constructor(container: HTMLElement, cache: ParseCache, private readonly counts: () => MindMapCounts) {
-		this.gauge = new PerfGauge(container, this.onToggle, undefined, true);
+	constructor(private readonly container: HTMLElement, cache: ParseCache, private readonly counts: () => MindMapCounts) {
+		this.gauge = new PerfGauge(container, this.onToggle, this.toggleBlend, true);
 		// Every parse goes through the view's cache: time each `get` that parsed. A hit hands
 		// back a tree it handed out before, and is not recorded.
 		const get = cache.get.bind(cache);
@@ -63,7 +87,19 @@ export class MindMapPerf {
 	}
 
 	cull(start: number): void {
-		if (start !== 0 && this.gauge.shown) this.culls.push(start, performance.now() - start);
+		if (start === 0 || !this.gauge.shown) return;
+		const ms = performance.now() - start;
+		this.culls.push(start, ms);
+		this.jsSincePost += ms;
+	}
+
+	/** A pan or zoom handler (pointer move, wheel, a fling step) that started at `start` returned. */
+	gesture(start: number): void {
+		if (start === 0 || !this.gauge.shown) return;
+		const ms = performance.now() - start;
+		this.gestureMs += ms;
+		this.gestureCount++;
+		this.jsSincePost += ms;
 	}
 
 	/** The viewport moved by transforming the painted layer (T87). */
@@ -127,14 +163,19 @@ export class MindMapPerf {
 
 	private readonly tick = (now: number): void => {
 		this.frameId = window.requestAnimationFrame(this.tick);
-		if (this.lastFrame !== 0) this.frames.push(now, now - this.lastFrame);
+		if (this.lastFrame !== 0) {
+			this.frames.push(now, now - this.lastFrame);
+			this.gestures.push(now, this.gestureMs);
+			this.gestureEvents.push(now, this.gestureCount);
+		}
 		this.lastFrame = now;
+		this.gestureMs = 0;
+		this.gestureCount = 0;
+		this.jsSincePost = 0;
+		this.channel?.port2.postMessage(performance.now());
 		if (now - this.lastRefresh < PERF_REFRESH_MS) return;
 		this.lastRefresh = now;
-		this.frames.prune(now, PERF_WINDOW_MS);
-		this.culls.prune(now, PERF_WINDOW_MS);
-		this.layerMoves.prune(now, PERF_WINDOW_MS);
-		this.repaints.prune(now, PERF_WINDOW_MS);
+		for (const list of this.lists()) list.prune(now, PERF_WINDOW_MS);
 		this.gauge.loaf.prune(now, PERF_WINDOW_MS);
 		this.gauge.setText(this.report());
 	};
@@ -146,6 +187,8 @@ export class MindMapPerf {
 		// Culls per frame: a pass runs at most once a frame, and only when the viewBox moved.
 		const cullPerFrame = this.frames.count === 0 ? 0 : this.culls.sum() / this.frames.count;
 		const render = this.lastRender;
+		const gestureMs = this.gestures.avg();
+		const left = untimedMs(frameAvg, [gestureMs, cullPerFrame, this.afterRaf.avg()]);
 		return [
 			`fps ${this.frames.count}  frame avg ${frameAvg.toFixed(1)} / worst ${this.frames.max().toFixed(1)} ms`,
 			`cull: ${this.culls.count} passes/s  avg ${this.culls.avg().toFixed(2)} ms (max ${this.culls.max().toFixed(1)})`,
@@ -154,7 +197,10 @@ export class MindMapPerf {
 			`last parse ${ms(this.lastParse, 2)}  render ${ms(render?.total ?? null)} (measure ${ms(render?.measure ?? null)}, layout ${ms(render?.layout ?? null)})`,
 			this.commitLine(ms),
 			`open: first view ${ms(this.lastOpen?.firstView ?? null, 0)}  all measured ${ms(this.lastOpen?.settled ?? null, 0)}`,
-			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimedMs(frameAvg, [cullPerFrame])),
+			`main: gesture ${gestureMs.toFixed(2)} ms (${this.gestureEvents.avg().toFixed(1)} events/frame, max ${this.gestures.max().toFixed(1)})  cull ${cullPerFrame.toFixed(2)} ms/frame`,
+			loafLine(this.gauge.loafSupported, this.gauge.loaf.summary(), untimedMs(frameAvg, [gestureMs, cullPerFrame])),
+			`untimed split: after rAF ${this.afterRaf.avg().toFixed(1)} ms (max ${this.afterRaf.max().toFixed(1)}) main thread  ·  left ${left.toFixed(1)} ms off it or idle`,
+			`callout blend ${this.container.hasClass(BLEND_CLASS) ? "on (Obsidian's)" : "off"}  (click the readout to switch)`,
 		].join("\n");
 	}
 
@@ -166,15 +212,42 @@ export class MindMapPerf {
 		return `last edit commit ${ms(commit.total)} (before render ${ms(commit.beforeRender)}) + paint ${ms(commit.paint)}${keptText}`;
 	}
 
+	private lists(): Rolling[] {
+		return [this.frames, this.culls, this.layerMoves, this.repaints, this.gestures, this.gestureEvents, this.afterRaf];
+	}
+
+	private readonly onAfterFrame = (e: MessageEvent<number>): void => {
+		this.afterRaf.push(performance.now(), Math.max(0, performance.now() - e.data - this.jsSincePost));
+	};
+
+	private closeChannel(): void {
+		if (this.channel === null) return;
+		this.channel.port1.onmessage = null;
+		this.channel.port1.close();
+		this.channel.port2.close();
+		this.channel = null;
+	}
+
+	/** The A/B for callouts' blend: Obsidian's `mix-blend-mode` back on, or off as T142 ships it. */
+	private readonly toggleBlend = (): void => {
+		this.container.toggleClass(BLEND_CLASS, !this.container.hasClass(BLEND_CLASS));
+		this.gauge.setText(this.report());
+	};
+
 	private readonly onToggle = (shown: boolean): void => {
-		this.frames.clear();
-		this.culls.clear();
-		this.layerMoves.clear();
-		this.repaints.clear();
+		for (const list of this.lists()) list.clear();
 		this.lastRepaintReason = null;
 		this.lastFrame = 0;
 		this.lastRefresh = 0;
 		this.editAt = 0;
+		this.gestureMs = 0;
+		this.gestureCount = 0;
+		this.jsSincePost = 0;
+		this.closeChannel();
+		if (shown) {
+			this.channel = new MessageChannel();
+			this.channel.port1.onmessage = this.onAfterFrame;
+		}
 		if (this.frameId !== null) window.cancelAnimationFrame(this.frameId);
 		this.frameId = shown ? window.requestAnimationFrame(this.tick) : null;
 	};
@@ -182,6 +255,8 @@ export class MindMapPerf {
 	destroy(): void {
 		if (this.frameId !== null) window.cancelAnimationFrame(this.frameId);
 		this.frameId = null;
+		this.closeChannel();
+		this.container.removeClass(BLEND_CLASS);
 		this.restoreParse();
 		this.gauge.destroy();
 	}
