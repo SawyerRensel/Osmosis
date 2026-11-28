@@ -11,7 +11,7 @@ location:
 related:
   - "[[Sidecar files - Core store and line-card schedules]]"
   - "[[Sidecar files - Move commands and docs]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -19,8 +19,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T02:40:00.000Z
 date_start_scheduled: 2026-11-27T02:16:50.000Z
 date_start_actual: 2026-11-27T02:16:50.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Sidecar files - Mind map styles (T127)
 
@@ -96,7 +96,15 @@ Use `grep -a` on MindMapView; see the memory `mindmap-edit-grep-blind-spot.md`.
 6. Run Branch to note on a styled branch: the new note's styles follow `dataLocation`, and the source keeps the rest.
 7. A note-mode note still styles in-note.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 57ec364. Manual test: round 1.
+
+Sawyer accepted no seeding: a note half in both modes has its in-note styles hidden whole by the first sidecar style write; the move commands resolve it.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Code commit: `57ec364` on `batch/17-sidecars-cosmos-styles`.
 

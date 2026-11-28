@@ -12,7 +12,7 @@ related:
   - "[[Cosmos - Mind map theme as a colour mode]]"
   - "[[Cosmos - Every plate shape and dashed borders]]"
   - "[[Cosmos - Node text font size and weight]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -20,8 +20,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T01:00:00.000Z
 date_start_scheduled: 2026-11-27T13:21:29.000Z
 date_start_actual: 2026-11-27T13:21:29.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Cosmos - Branch line styles (T132)
 
@@ -89,7 +89,15 @@ Part 4 of 4 of *Cosmos 1:1 with mind map styles* (T129–T132). The scope is in 
 3. Turn the taper overlay off: the styled edges keep their style, and unstyled ones go thin.
 4. Hover a curved edge partway along: it highlights.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 3d23dd0. Manual test: round 1.
+
+The frame-time criterion was dropped by Sawyer at land (edge-pass ms unmeasured; only a Node micro-benchmark of the builders). Sawyer accepted the mind map's precedence, the plugin default `curved` being ignored in Cosmos, and curves bending against world up.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Code commit: `3d23dd0` on `batch/17-sidecars-cosmos-styles`.
 

@@ -12,7 +12,7 @@ related:
   - "[[Cosmos - Mind map theme as a colour mode]]"
   - "[[Cosmos - Node text font size and weight]]"
   - "[[Cosmos - Branch line styles]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -20,8 +20,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T14:40:00.000Z
 date_start_scheduled: 2026-11-27T08:40:03.000Z
 date_start_actual: 2026-11-27T08:40:03.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Cosmos - Every plate shape and dashed borders (T130)
 
@@ -81,7 +81,15 @@ Part 2 of 4 of *Cosmos 1:1 with mind map styles* (T129–T132). The scope is in 
 3. Select a diamond node: the highlight follows the shape.
 4. Planets layout: the shapes render on the globe (CSS3D near tier).
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 1b8d5da, fix round 1 2c837ac. Manual test: failed round 1 (shape fit), fix round 1 passed round 2.
+
+The frame-time criterion was dropped by Sawyer at land (no plate-pass ms measured). Sawyer accepted: Cosmos triangles use 0.275 insets (about a third taller than the mind map's); a flatter plate widens a parallelogram/arrow panel rather than heightening it; theme topicShape not read; NodeStyle.background not drawn. Known and not ticketed: dragging a shaped panel's width saves the outer width (pre-existing); the inline editor on a shaped node is a rectangle.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below and the *Fix round 1* section.
+
+## Implementation notes
 
 Code commit `1b8d5da` on `batch/17-sidecars-cosmos-styles`.
 
@@ -134,7 +142,7 @@ Code commit `1b8d5da` on `batch/17-sidecars-cosmos-styles`.
 - **The background of bare shapes** uses `var(--background-primary)` in the near tier. With T129's per-note map background in *Mind map style* mode, the panels behind underline and none nodes may not match the scene's background colour.
 - **Planets (CSS3D) panels** take the same paint path, but I haven't seen them.
 
-## Fix round 1 (awaiting manual test)
+## Fix round 1
 
 Code commit `2c837ac` on `batch/17-sidecars-cosmos-styles`. Sawyer's failure (near tier, text "block of statements required to perform specific task."): Ellipse and Cloud clipped their text at the right and bottom and showed two offset outlines. Hexagon, Parallelogram and Arrow right had far too much margin across. Pill was fine.
 

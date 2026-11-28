@@ -12,7 +12,7 @@ related:
   - "[[Sidecar files - Core store and line-card schedules]]"
   - "[[Sidecar files - Fence schedules]]"
   - "[[Sidecar files - Mind map styles]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -20,8 +20,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T01:00:00.000Z
 date_start_scheduled: 2026-11-27T08:17:42Z
 date_start_actual: 2026-11-27T08:17:42Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -38,7 +38,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Sidecar files - Move commands and docs (T128)
 
@@ -107,7 +107,15 @@ The commands are `checkCallback`, hidden when there is nothing to move.
 4. Run *Move all Osmosis data to sidecars*: confirm, check the Notice counts, spot-check a styled mind map note.
 5. Change the sidecar folder to `Osmosis/Data`: the files move, and studying still works after Ctrl+R.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits bd6dba2, fix round 1 6e9b2b4. Manual test: round 1, fix round 1 in round 2.
+
+Fix round 1 replaced "sidecar wins" with most-recent-wins in the move commands only; reads stay sidecar-first. Sawyer accepted: styles by mtime (any text edit makes the note newer), and a reset card (no review date) losing to an older review in the other copy. Not handled: merging a real sidecar with a `-1` clash file (not ticketed).
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below and the *Fix round 1* section.
+
+## Implementation notes
 
 Code commit `bd6dba2` on `batch/17-sidecars-cosmos-styles`.
 
@@ -156,7 +164,7 @@ Code commit `bd6dba2` on `batch/17-sidecars-cosmos-styles`.
 - **Mind map undo across a move:** a style edit recorded against the sidecar (`processFrontMatterTracked`) and undone after *Move data into note* has trashed that sidecar is not handled.
 - **Race:** a review written during a folder move, to a note whose sidecar has not moved yet, could create a second sidecar in the new folder (the old one then lands as `<hash>-1`). The window is the duration of the renames, after a flush.
 
-## Fix round 1: most recent copy wins (awaiting manual test)
+## Fix round 1: most recent copy wins
 
 Code commit `6e9b2b4`. Sawyer passed the first test and then changed the requirement: when a note has data in both places, a move keeps the most recent copy, not the sidecar's.
 

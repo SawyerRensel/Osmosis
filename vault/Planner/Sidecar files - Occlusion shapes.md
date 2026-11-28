@@ -11,7 +11,7 @@ location:
 related:
   - "[[Sidecar files - Fence schedules]]"
   - "[[Sidecar files - Move commands and docs]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -19,8 +19,8 @@ date_created: 2026-11-26T12:00:00.000Z
 date_modified: 2026-11-26T12:00:00.000Z
 date_start_scheduled: 2026-11-27T02:27:34Z
 date_start_actual: 2026-11-27T02:27:34Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 
 # Sidecar files - Occlusion shapes (T133)
@@ -129,7 +129,15 @@ document the exact keys.
   note text doesn't; study the card; Ctrl+R, masks still right; mind map shows
   masks.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 21a7ac2. Manual test: round 1.
+
+Sawyer accepted: the sidecar entry always wins, so an entry without shapes hides that fence's header shapes.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Commit `21a7ac2` on `batch/17-sidecars-cosmos-styles`.
 

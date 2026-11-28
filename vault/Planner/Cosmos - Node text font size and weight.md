@@ -12,7 +12,7 @@ related:
   - "[[Cosmos - Mind map theme as a colour mode]]"
   - "[[Cosmos - Every plate shape and dashed borders]]"
   - "[[Cosmos - Branch line styles]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -20,8 +20,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T13:20:46.000Z
 date_start_scheduled: 2026-11-27T08:55:26.000Z
 date_start_actual: 2026-11-27T08:55:26.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Cosmos - Node text font size and weight (T131)
 
@@ -86,7 +86,15 @@ Part 3 of 4 of *Cosmos 1:1 with mind map styles* (T129–T132). The scope is in 
 3. Planets: big plates don't overlap their neighbours.
 4. Open a large note: there is no stutter while orbiting.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 0e55996. Manual test: round 1.
+
+The frame-time criterion was dropped by Sawyer at land (face count/frame time unmeasured). Sawyer accepted: outlines don't thicken with text size; scale is relative to 13px; no maxNodeWidth keeps Cosmos's 20em cap.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Code commit: `0e55996` on `batch/17-sidecars-cosmos-styles`.
 

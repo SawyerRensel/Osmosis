@@ -11,7 +11,7 @@ location:
 related:
   - "[[Sidecar files - Core store and line-card schedules]]"
   - "[[Sidecar files - Move commands and docs]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -19,8 +19,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T02:40:00.000Z
 date_start_scheduled: 2026-11-27T02:05:29.000Z
 date_start_actual: 2026-11-27T02:05:29.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -37,7 +37,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Sidecar files - Fence schedules (T126)
 
@@ -85,7 +85,15 @@ Fence schedules (and fence occlusion shapes) move into the sidecar with everythi
 5. Note study on the same note: rate cards, leave the note, and check that the sidecar was updated.
 6. A note-mode note with fences still writes into the fence headers.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits 7b07bcd. Manual test: round 1.
+
+Shipped as a slice: occlusion shapes split off to [[Sidecar files - Occlusion shapes]] (T133). Sawyer accepted: fence `exclude` lives in the sidecar; an entry owns its fence (an empty `{}` entry still overrides the header).
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Code commit `7b07bcd` on `batch/17-sidecars-cosmos-styles`.
 

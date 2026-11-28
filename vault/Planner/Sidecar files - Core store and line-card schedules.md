@@ -12,7 +12,7 @@ related:
   - "[[Sidecar files - Fence schedules]]"
   - "[[Sidecar files - Mind map styles]]"
   - "[[Sidecar files - Move commands and docs]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -20,8 +20,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T15:01:51.000Z
 date_start_scheduled: 2026-11-27T01:51:15.000Z
 date_start_actual: 2026-11-27T01:51:15.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -38,7 +38,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Sidecar files - Core store and line-card schedules (T125)
 
@@ -134,7 +134,15 @@ osmosis-styles: { … }             # T127, today's shape
 6. An old note with in-note `osmosis-schedule` still writes in-note.
 7. Delete the note: the sidecar goes to the trash.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits d3d8685, fix round 1 3196a75. Manual test: round 1, fix round 1 in round 2.
+
+Fix round 1 replaced the hash file names with plaintext names (`src/store/sidecar-names.ts`), so the acceptance line about `sidecarName` hash stability and collision re-salt is superseded by the naming tests in `sidecar-names.test.ts`. Sawyer accepted: default `dataLocation` is sidecar; a deleted note trashes its sidecar; root notes keep the bare name even when colliding; the Excluded-files entry is added once (`sidecarFolderExcluded`) and stays removed if the user removes it.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below and the *Fix round 1* section.
+
+## Implementation notes
 
 Code commit: `d3d8685` on `batch/17-sidecars-cosmos-styles`.
 
@@ -181,7 +189,7 @@ Code commit: `d3d8685` on `batch/17-sidecars-cosmos-styles`.
 - How the link updater and our relink interact on rename. The intended final state is our full-path link or Obsidian's shortest form; either resolves.
 - First launch on a device whose metadata cache is cold. The index fills in as `changed` events arrive.
 
-### Fix round 1 (awaiting manual test)
+### Fix round 1
 
 Code commit: `3196a75`. Sawyer passed the first test but changed the naming requirement: sidecars are named after their notes, not hashed. This supersedes "File name is a hash … never renamed" under *Settled at intake* and the **Hash** decision above.
 

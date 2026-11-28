@@ -13,7 +13,7 @@ related:
   - "[[Cosmos - Node text font size and weight]]"
   - "[[Cosmos - Branch line styles]]"
   - "[[Sidecar files - Mind map styles]]"
-status: In-Review
+status: Done
 batch: 17
 priority:
 progress:
@@ -21,8 +21,8 @@ date_created: 2026-11-27T01:00:00.000Z
 date_modified: 2026-11-27T01:00:00.000Z
 date_start_scheduled: 2026-11-27T08:33:12.000Z
 date_start_actual: 2026-11-27T08:33:12.000Z
-date_end_scheduled:
-date_end_actual:
+date_end_scheduled: 2026-11-28T02:12:42Z
+date_end_actual: 2026-11-28T02:12:42Z
 all_day: false
 repeat_frequency:
 repeat_interval:
@@ -38,7 +38,7 @@ children:
 blocked_by:
 cover:
 color:
-pull_request:
+pull_request: https://github.com/SawyerRensel/Osmosis/pull/55
 ---
 # Cosmos - Mind map theme as a colour mode (T129)
 
@@ -97,7 +97,15 @@ Part 1 of 4 of *Cosmos 1:1 with mind map styles* (T129–T132). Sawyer's ask is 
 4. Set the map background in the mind map's properties. A single-note Cosmos shows it, and opening a multi-note scene drops it.
 5. Run the vault-wide Cosmos: unthemed notes look as before.
 
-## Batch implementation notes (awaiting manual test)
+## What was implemented
+
+**Where it shipped:** [PR #55](https://github.com/SawyerRensel/Osmosis/pull/55) (batch 17) into `release/0.0.6`, from `batch/17-sidecars-cosmos-styles`. Main commits c4d7368. Manual test: round 1.
+
+Sawyer accepted: a saved `colorBy: note` wins until Mind map style is picked once; the background shows only in Mind map style and only when the scene holds one note.
+
+The cause, fix, decisions, surface map and fixtures are in *Implementation notes* below.
+
+## Implementation notes
 
 Code commit: c4d7368 on `batch/17-sidecars-cosmos-styles`.
 
