@@ -9,14 +9,14 @@ context:
 people:
 location:
 related:
-status: To-Do
+status: In-Review
 batch: 18
 priority:
 progress:
 date_created: 2026-11-28T03:39:06.000Z
 date_modified: 2026-11-28T03:39:06.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-28T03:48:26.000Z
+date_start_actual: 2026-11-28T03:48:26.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -90,3 +90,42 @@ Use cards in `vault/tests/` (back-date the fixture cards if you add any: memory 
 3. A note with line cards (`::`): reveal one. The bubble next to the line shows intervals in the dark container. Try a cloze line with two blanks.
 4. Mind map study mode: reveal a node. The bar beside it shows intervals and isn't clipped.
 5. Cosmos study: the bottom panel shows the same bar plus the reviewed line, and no "Rate it" hint.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `df8fc48` on `batch/18-one-map-layouts`.
+
+### Approach
+- `src/study/rating-bar.ts` holds the one `RATINGS` table and `renderRatingBar(parent, { onRate, intervals?, cls?, panel? })`, which returns `{ el, buttons, setIntervals }`. Each button is `span.osmosis-rate-interval` over `span.osmosis-rate-label`, with `aria-label` "Again (1)" and so on. A click calls `onRate` and stops propagation. The module has no `obsidian` import. It uses Obsidian's global `createDiv` / `createEl` helpers, as lint asks, and the test installs them through `src/test/obsidian-stub.ts`.
+- `previewCardId(cards, ids, now)` picks which card's intervals to show when one item carries several cards. The rule is study-queue order: the overdue card that has waited longest, else the first new card in the item's order, else the card due soonest.
+- All five surfaces call it. Flashcard study keeps `setIntervals` on flip. The fence card passes `intervals` up front. Line cards, mind map and Cosmos now create their session manager when the bar is built, keeping the same kind ("note", "mindmap", "cosmos"). The old lazy `??=` in each rate path is left as a harmless no-op.
+- Cosmos renders no hint row while a card is revealed. The "N reviewed · N hidden here" progress line is unchanged.
+
+### Decisions
+- **Panel ownership.** `panel: true` adds `.osmosis-rating-panel`, which uses the study tab's `.osmosis-study-actions` look. The two now share one rule for background, radius, blur and shadow. The panel is on for fence cards, line cards and the mind map. It is off for flashcard study and Cosmos, whose existing panels already contain the bar. A second dark box nested inside would look doubled.
+- **Fence card after rating.** The bar empties to "Rated: Good" and drops its panel class, so the verdict reads as plain text and not as a dark pill.
+- **Button sizing.** Every `.osmosis-rating button` is now the two-row column: `flex: 1 1 0`, `min-width: max-content`, `height: auto`, padding `4px 6px`. `max-content` keeps Cosmos's content-sized row from squeezing labels. `height: auto` overrides Obsidian's one-line button height. Flashcard and fence cards keep their fixed `--osmosis-study-button-height`, through the existing higher-specificity rules.
+- **Widths.** Line bubble and mind map bubble are 260px wide, with `max-width: 100%`. The mind map foreignObject is at least 260 wide (was 240) and 56 tall (was 40). The occlusion anchor stays 240px, and the bar fills it.
+- **Cloze on line cards.** Line cards have no cloze generator. A line key carries several cards only when the line is occluded. In study, an occluded line is stepped one group at a time, so the bar shows that group's card. The "first due" rule therefore matters mainly for mind map and Cosmos keys that were not split, and for a line rated outside stepping. The cloze case is covered by unit tests.
+
+### Surface map
+| File | Change |
+|---|---|
+| `src/study/rating-bar.ts` | New: `RATINGS`, `renderRatingBar`, `previewCardId` |
+| `src/study/rating-bar.dom.test.ts` | New: bar assembly, classes, click and propagation, `setIntervals`, preview-card rule |
+| `src/views/FlashcardStudyView.ts` | Uses the shared bar; drops its `RATINGS` and `intervalEls` |
+| `src/views/NoteStudyProcessor.ts` | `showRating` uses the shared bar with panel; drops the panel after rating |
+| `src/views/LineRevealProcessor.ts` | `showRatingBubble` uses the shared bar with intervals; new `ratingCardIds` shared with `rate()` |
+| `src/views/MindMapView.ts` | `ensureRatingBubble` uses the shared bar with intervals; foreignObject 260×56 minimum |
+| `src/views/CosmosStudy.ts` | Uses the shared bar with intervals; no hint while revealed; drops `RATINGS` |
+| `src/views/CosmosStudy.dom.test.ts` | Mock `previewIntervals`; new "rating bar" test (intervals before any rating, progress line, no hint) |
+| `src/views/NoteStudyProcessor.dom.test.ts` | Fence bar asserts `.osmosis-rating-panel` |
+| `styles.css` | Shared panel rule; button column rules moved from `.osmosis-study-rating-bar` to `.osmosis-rating`; line and mind map widths; dead anchor background and button rules removed |
+| `e2e/fixtures/study-rating-bar.md`, `vault/tests/flashcard/study-rating-bar.md` | New fixture |
+
+### Fixture
+`vault/tests/flashcard/study-rating-bar.md`, deck **Testing › Rating Bar**, should read 2 | 0 | 4. It has 3 line cards (1 due through `osmosis-schedule`, 2 new), a due basic fence and a two-group cloze fence (both groups due, with different stabilities, so their Good intervals differ: about 1.5mo vs 13d). Every card is new or back-dated.
+
+### Not verified
+- Nothing was checked visually in Obsidian. That includes the panel look in light and dark themes, the bubble fitting inside the mind map foreignObject, Cosmos on tablet and phone, and the occlusion anchor.
+- Keys 1–4 are untouched in code: the mind map, Cosmos and flashcard handlers call the rate functions directly. They have not been exercised by hand.
