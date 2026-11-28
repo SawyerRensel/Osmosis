@@ -105,6 +105,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private horizon: Horizon | null = null;
 	/** The graph last shown, for finding a link's target node. */
 	private model: GraphModel | null = null;
+	/** The one note the loaded scene shows (`soleNotePath`), or null with several. */
+	private soleNote: string | null = null;
 	private focusPath: string | null = null;
 	private depth = COSMOS_DEFAULT_DEPTH;
 	/** Whether notes linking to a loaded note count as hops; off, the graph follows outgoing links only, like the mind map. */
@@ -2043,6 +2045,29 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		};
 	}
 
+	/**
+	 * The note the style sidebar's Map tab styles: the primary selected
+	 * plate's note, else the scene's single note; null with neither.
+	 */
+	styleNotePath(): string | null {
+		const selected = (this.scene?.selectedNodes() ?? []).find((node) => (node.kind === "note" || node.kind === "line") && node.path !== undefined);
+		return selected?.path ?? this.soleNote;
+	}
+
+	/**
+	 * Write a note's map-level styles for the style sidebar's Map tab, as one
+	 * undo step here. Cosmos redraws once the metadata cache has the write.
+	 */
+	async processMapStyles(file: TFile, fn: (fm: Record<string, unknown>) => void): Promise<void> {
+		const target = await this.plugin().noteData.targetFor(file);
+		// Undo with nothing selected steps this note's history.
+		this.lastEditPath = file.path;
+		await this.edits.processFrontMatter(target, (fm) => {
+			fn(fm);
+			this.styleFrontmatter.set(file.path, structuredClone(fm));
+		});
+	}
+
 	onSettingsChange(fn: () => void): void {
 		this.settingsListeners.add(fn);
 	}
@@ -2629,6 +2654,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.horizon = null;
 			this.model = null;
 			this.fullModel = null;
+			this.soleNote = null;
 			this.syncHolds(new Set());
 			this.setSceneBackground(null);
 			scene.setData({ nodes: [], edges: [] }, new Map());
@@ -2693,6 +2719,12 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.horizon = horizon;
 		this.model = model;
 		this.fullModel = fullModel;
+		// The style sidebar's Map tab styles the scene's single note when nothing is selected: tell it when that changes.
+		const soleNote = soleNotePath(model.nodes);
+		if (soleNote !== this.soleNote) {
+			this.soleNote = soleNote;
+			this.notifySettings();
+		}
 		scene.setColoring(this.coloring(model));
 		this.syncHolds(horizon.loaded);
 		// Once, after a mind map swapped this leaf to Cosmos: land on the node it had focused.

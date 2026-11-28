@@ -9,7 +9,7 @@ import type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper }
 import { DEFAULT_MAP_SETTINGS } from "../settings";
 import type { LayoutDirection } from "../layout";
 import type { TopicShape, NodeStyle, OsmosisStyleFrontmatter, ThemeDefinition, BalanceMode, LayoutSide } from "../styles";
-import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
+import { lookupNodeStyle, lookupClassStyle, resolveNodeStyle, getClassScope, mergeNodeStyle, buildMapSettingsFromFrontmatter, parseOsmosisStyleFrontmatter, styleMappingFor, readStyleMapping } from "../styles";
 import { getTheme, getThemeNames, isPresetTheme } from "../themes";
 import { SHAPE_LABELS } from "../shapes";
 import { PickrColorPicker } from "./PickrColorPicker";
@@ -17,7 +17,8 @@ import { extractThemeColors } from "../color-palette";
 import { FontPicker } from "./FontPicker";
 import { sidebarSetting } from "./sidebar-setting";
 import { renderLayoutSection } from "./layout-section";
-import { engineFor, type NoteLayout } from "../note-layout";
+import { NoteMapStyles, type MapStyleTarget } from "./note-map-styles";
+import { engineFor, noteTitle, type NoteLayout } from "../note-layout";
 import { bindSlider, type ShowSliderValue } from "../slider-sync";
 
 export const VIEW_TYPE_PROPERTIES = "osmosis-properties";
@@ -158,6 +159,8 @@ export class PropertiesSidebarView extends ItemView {
 	/** The Cosmos whose Settings and selection are on show (`updateContext`). */
 	private currentCosmos: CosmosView | null = null;
 	private settingsPanelCleanup: (() => void) | null = null;
+	/** The note Cosmos's Map tab styles (`renderCosmosMapTab`), or null with none to style. */
+	private cosmosStyles: NoteMapStyles | null = null;
 
 	constructor(leaf: WorkspaceLeaf) {
 		super(leaf);
@@ -306,9 +309,14 @@ export class PropertiesSidebarView extends ItemView {
 		return null;
 	}
 
+	/** What the Map tab's style sections edit: the mind map, or the note Cosmos's Map tab styles. */
+	private getMapStyleTarget(): MapStyleTarget | null {
+		return this.getActiveMindMap() ?? this.cosmosStyles;
+	}
+
 	/** Resolve the effective MapSettings for the current file from frontmatter. */
 	private getEffectiveSettings(): MapSettings {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		const fm = mindMap?.getOsmosisStyleFrontmatter();
 		const overrides = buildMapSettingsFromFrontmatter(fm);
 		return { ...DEFAULT_MAP_SETTINGS, ...overrides };
@@ -323,7 +331,7 @@ export class PropertiesSidebarView extends ItemView {
 	 */
 	private async writeMapFrontMatter(
 		file: TFile,
-		mindMap: MindMapView | null,
+		mindMap: MapStyleTarget | null,
 		fn: (fm: Record<string, unknown>) => void,
 	): Promise<void> {
 		if (mindMap) {
@@ -342,7 +350,7 @@ export class PropertiesSidebarView extends ItemView {
 		const file = this.app.vault.getFileByPath(this.currentFilePath);
 		if (!(file instanceof TFile)) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (mindMap) mindMap.suppressNextReload = true;
 
 		await this.writeMapFrontMatter(
@@ -432,7 +440,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Tab UI ──────────────────────────────────────────────
 
-	/** The Map and Node tabs; for Cosmos (`graph`), its Settings take the Map tab's place. */
+	/** The Map and Node tabs; for Cosmos (`graph`), its Map tab adds its own settings (`renderCosmosMapTab`). */
 	private renderTabbedUI(graph?: CosmosView): void {
 		const container = this.contentEl.createDiv({
 			cls: "osmosis-properties-container",
@@ -448,7 +456,7 @@ export class PropertiesSidebarView extends ItemView {
 		const tabBar = container.createDiv({ cls: "osmosis-tab-bar" });
 
 		const mapBtn = tabBar.createEl("button", {
-			text: graph ? "Settings" : "Map",
+			text: "Map",
 			cls: "osmosis-tab-btn",
 		});
 		const formatBtn = tabBar.createEl("button", {
@@ -465,7 +473,7 @@ export class PropertiesSidebarView extends ItemView {
 		this.tabContents = { map: mapContent, format: formatContent };
 
 		// Render tab contents
-		if (graph) this.renderSettingsTab(mapContent, graph);
+		if (graph) this.renderCosmosMapTab(mapContent, graph);
 		else this.renderMapTab(mapContent);
 		this.renderFormatTab(formatContent, graph !== undefined);
 
@@ -494,18 +502,80 @@ export class PropertiesSidebarView extends ItemView {
 		}
 	}
 
-	// ─── Settings Tab (Cosmos) ─────────────────────────────
+	// ─── Map Tab (Cosmos) ───────────────────────────────────
 
-	/** Cosmos's Settings (they were its Overlays popover), kept in step with changes made elsewhere. */
-	private renderSettingsTab(container: HTMLElement, graph: CosmosView): void {
+	/**
+	 * Cosmos's Map tab: the mind map Map tab's sections for the note Cosmos
+	 * styles (`styleNotePath`), with Cosmos's Layout & spacing (for the focus
+	 * note) in the Layout section's place, then Cosmos's own settings (they
+	 * were its Overlays popover). Each is kept in step with changes made elsewhere.
+	 */
+	private renderCosmosMapTab(container: HTMLElement, graph: CosmosView): void {
 		const plugin = this.plugin;
-		const panel = new CosmosSettingsPanel(container, graph.settingsSource(), {
+		const themeEl = container.createDiv();
+		const layoutEl = container.createDiv();
+		const stylesEl = container.createDiv();
+		const settingsEl = container.createDiv();
+		const panel = new CosmosSettingsPanel(settingsEl, graph.settingsSource(), {
 			get: () => plugin.settings.graph3dSettingsCollapsed,
 			set: (collapsed) => plugin.setCosmosSettingsCollapsed(collapsed),
-		});
-		const refresh = () => panel.refresh();
+		}, layoutEl);
+		// The mind map's Layout section is not drawn here: Cosmos's panel has the Layout dropdown.
+		this.showNoteLayout = null;
+		const show = () => this.showCosmosStyleNote(graph, themeEl, stylesEl);
+		// Another note to style: a new selection, or the scene grown past (or shrunk to) one note.
+		const retarget = () => {
+			if (graph.styleNotePath() !== (this.cosmosStyles?.file.path ?? null)) show();
+		};
+		const refresh = () => {
+			panel.refresh();
+			retarget();
+		};
+		// The styled note's styles changed on disk (an undo, another view): show them. Not while a colour picker is open on them, nor for what this tab wrote itself.
+		const reread = (path: string) => {
+			const styles = this.cosmosStyles;
+			if (styles === null || path !== styles.file.path || this.activePicker !== null) return;
+			const now = parseOsmosisStyleFrontmatter(plugin.noteData.frontmatter(styles.file));
+			if (JSON.stringify(now) !== JSON.stringify(styles.getOsmosisStyleFrontmatter())) show();
+		};
+		const changed = this.app.metadataCache.on("changed", (file) => reread(file.path));
+		const offSidecar = plugin.noteData.onChange(reread);
 		graph.onSettingsChange(refresh);
-		this.settingsPanelCleanup = () => graph.offSettingsChange(refresh);
+		graph.onSelectionChange(retarget);
+		this.settingsPanelCleanup = () => {
+			graph.offSettingsChange(refresh);
+			graph.offSelectionChange(retarget);
+			this.app.metadataCache.offref(changed);
+			offSidecar();
+			this.cosmosStyles = null;
+		};
+		show();
+	}
+
+	/** Cosmos's Map tab: the style sections for the note Cosmos styles now, or a hint with none. */
+	private showCosmosStyleNote(graph: CosmosView, themeEl: HTMLElement, stylesEl: HTMLElement): void {
+		const anchor = this.activePicker?.anchor;
+		if (anchor !== undefined && (themeEl.contains(anchor) || stylesEl.contains(anchor))) this.closeAllPickers();
+		themeEl.empty();
+		stylesEl.empty();
+		const path = graph.styleNotePath();
+		const file = path === null ? null : this.app.vault.getFileByPath(path);
+		this.currentFilePath = file?.path ?? null;
+		this.cosmosStyles = file === null ? null : new NoteMapStyles(file, {
+			read: (note) => this.plugin.noteData.frontmatter(note),
+			write: (note, fn) => graph.processMapStyles(note, fn),
+			theme: (name) => getTheme(name, this.plugin.settings.customThemes),
+			globalClasses: () => this.plugin.settings.globalClasses ?? {},
+		});
+		if (file === null) {
+			themeEl.createDiv({ cls: "setting-item-description osmosis-cosmos-style-note", text: "Select a node to style its note." });
+			return;
+		}
+		const desc = themeEl.createDiv({ cls: "setting-item-description osmosis-cosmos-style-note" });
+		desc.appendText("Styles of ");
+		desc.createEl("em", { text: noteTitle(file.path) });
+		this.renderMapThemeSections(themeEl);
+		this.renderMapStyleSections(stylesEl);
 	}
 
 	private cleanupSettingsPanel(): void {
@@ -515,7 +585,8 @@ export class PropertiesSidebarView extends ItemView {
 
 	// ─── Map Tab ─────────────────────────────────────────────
 
-	private renderMapTab(container: HTMLElement): void {
+	/** The Map tab's Theme and Variant sections. */
+	private renderMapThemeSections(container: HTMLElement): void {
 		const settings = this.getEffectiveSettings();
 
 		// Theme — header row with label + icon buttons, dropdown below
@@ -574,7 +645,7 @@ export class PropertiesSidebarView extends ItemView {
 						const file = this.app.vault.getFileByPath(this.currentFilePath);
 						if (!(file instanceof TFile)) return;
 
-						const mindMap = this.getActiveMindMap();
+						const mindMap = this.getMapStyleTarget();
 						if (mindMap) mindMap.suppressNextReload = true;
 
 						const theme = getTheme(value, this.plugin.settings.customThemes);
@@ -699,7 +770,7 @@ export class PropertiesSidebarView extends ItemView {
 				this.variantDropdown = dropdown.selectEl;
 				this.rebuildVariantDropdown();
 				dropdown.onChange((value) => {
-					const mindMap = this.getActiveMindMap();
+					const mindMap = this.getMapStyleTarget();
 					if (mindMap) {
 						void mindMap.setActiveVariant(value || undefined);
 					}
@@ -708,6 +779,10 @@ export class PropertiesSidebarView extends ItemView {
 			});
 
 		this.updateSaveToVariantVisibility();
+	}
+
+	private renderMapTab(container: HTMLElement): void {
+		this.renderMapThemeSections(container);
 
 		// ─── Layout Section ──────────────────────────────────────
 		this.renderMapStyleSection(container, "Layout", (body) => {
@@ -724,6 +799,11 @@ export class PropertiesSidebarView extends ItemView {
 			);
 		});
 
+		this.renderMapStyleSections(container);
+	}
+
+	/** The Map tab's sections under Layout: Background to Reset all styles. */
+	private renderMapStyleSections(container: HTMLElement): void {
 		// ─── Global Style Sections ──────────────────────────────
 		container.createEl("hr", { cls: "osmosis-map-style-divider" });
 
@@ -1350,7 +1430,7 @@ export class PropertiesSidebarView extends ItemView {
 		const dd = this.variantDropdown;
 		if (!dd) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		const fm = mindMap?.getOsmosisStyleFrontmatter();
 		const variants = fm?.variants;
 		const activeVariant = fm?.activeVariant ?? "";
@@ -1381,12 +1461,13 @@ export class PropertiesSidebarView extends ItemView {
 	private updateSaveToVariantVisibility(): void {
 		if (!this.saveToVariantBtn) return;
 		const activeVariant = this.variantDropdown?.value;
-		this.saveToVariantBtn.toggleClass("is-hidden", !activeVariant);
+		// Saving a node's style to a variant keys it as the mind map does, so Cosmos's Map tab leaves it out.
+		this.saveToVariantBtn.toggleClass("is-hidden", !activeVariant || this.getActiveMindMap() === null);
 	}
 
 	/** Prompt for a new variant name. */
 	private promptNewVariant(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		const modal = new Modal(this.app);
@@ -1420,7 +1501,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private async doCreateVariant(name: string): Promise<void> {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		const fm = mindMap.getOsmosisStyleFrontmatter();
@@ -1498,7 +1579,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Prompt to rename the active variant. */
 	private promptRenameVariant(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		const oldName = this.variantDropdown?.value;
@@ -1538,7 +1619,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private async doRenameVariant(oldName: string, newName: string): Promise<void> {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		const fm = mindMap.getOsmosisStyleFrontmatter();
@@ -1558,7 +1639,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Confirm and delete the active variant. */
 	private confirmDeleteVariant(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		const variantName = this.variantDropdown?.value;
@@ -1585,7 +1666,7 @@ export class PropertiesSidebarView extends ItemView {
 	}
 
 	private async doDeleteVariant(variantName: string): Promise<void> {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) return;
 
 		await mindMap.deleteVariant(variantName);
@@ -1634,7 +1715,7 @@ export class PropertiesSidebarView extends ItemView {
 		const file = this.app.vault.getFileByPath(this.currentFilePath);
 		if (!(file instanceof TFile)) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (mindMap) mindMap.suppressNextReload = true;
 
 		await this.writeMapFrontMatter(
@@ -1666,7 +1747,7 @@ export class PropertiesSidebarView extends ItemView {
 		const file = this.app.vault.getFileByPath(this.currentFilePath);
 		if (!(file instanceof TFile)) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (mindMap) mindMap.suppressNextReload = true;
 
 		await this.writeMapFrontMatter(
@@ -1789,7 +1870,7 @@ export class PropertiesSidebarView extends ItemView {
 		const file = this.app.vault.getFileByPath(this.currentFilePath);
 		if (!(file instanceof TFile)) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (mindMap) mindMap.suppressNextReload = true;
 
 		await this.writeMapFrontMatter(
@@ -1816,7 +1897,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Get the resolved value for a map-level style property (map override ?? theme default). */
 	private getResolvedThemeBase(): { base: NodeStyle; theme: ThemeDefinition | undefined } {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		const theme = mindMap?.getActiveTheme();
 		const settings = this.getEffectiveSettings();
 		const base: NodeStyle = { ...(theme?.base ?? {}) };
@@ -1997,7 +2078,7 @@ export class PropertiesSidebarView extends ItemView {
 						if (!this.currentFilePath) return;
 						const file = this.app.vault.getFileByPath(this.currentFilePath);
 						if (!(file instanceof TFile)) return;
-						const mindMap = this.getActiveMindMap();
+						const mindMap = this.getMapStyleTarget();
 						if (mindMap) mindMap.suppressNextReload = true;
 						void this.writeMapFrontMatter(
 							file,
@@ -2275,7 +2356,7 @@ export class PropertiesSidebarView extends ItemView {
 		const file = this.app.vault.getFileByPath(this.currentFilePath);
 		if (!(file instanceof TFile)) return;
 
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (mindMap) mindMap.suppressNextReload = true;
 
 		await this.writeMapFrontMatter(
@@ -2419,10 +2500,10 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Extract the current map's resolved styling into a new ThemeDefinition. */
 	private extractThemeFromMap(name: string): ThemeDefinition {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		const activeTheme = mindMap?.getActiveTheme();
 		const fm = mindMap?.getOsmosisStyleFrontmatter();
-		const nodeMap = mindMap?.getNodeMap();
+		const nodeMap = mindMap?.getNodeMap?.();
 		const globalClasses = mindMap?.getGlobalClasses() ?? {};
 		const settings = this.getEffectiveSettings();
 
@@ -2540,7 +2621,7 @@ export class PropertiesSidebarView extends ItemView {
 
 	/** Prompt the user to name a new theme extracted from the current map. */
 	private promptExtractTheme(): void {
-		const mindMap = this.getActiveMindMap();
+		const mindMap = this.getMapStyleTarget();
 		if (!mindMap) {
 			new Notice("No active mind map");
 			return;

@@ -1008,6 +1008,11 @@ hr.osmosis-map-style-divider {
 	margin: 8px 0;
 }
 
+/* Cosmos's Map tab: which note its style sections edit, or the hint with none. */
+.osmosis-cosmos-style-note {
+	padding: 4px 0 8px;
+}
+
 /* ─── Format Tab: Color Swatch Button ────────────────── */
 
 .osmosis-color-swatch-btn {

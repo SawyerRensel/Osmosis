@@ -127,6 +127,8 @@ export class CosmosSettingsPanel {
 		private readonly el: HTMLElement,
 		private readonly source: CosmosSettingsSource,
 		private readonly collapse: CollapseStore,
+		/** Where the Layout section goes, when not with the others (the Map tab puts the note's style sections between). */
+		private readonly layoutEl: HTMLElement = el,
 	) {
 		this.current = source.overlays();
 		this.layout = source.layout();
@@ -171,12 +173,13 @@ export class CosmosSettingsPanel {
 
 	private build(): void {
 		this.el.empty();
+		this.layoutEl.empty();
 		this.rows.clear();
 		this.depthSlider = null;
 		this.backlinksToggle = null;
 		const collapsed = new Set(this.collapse.get());
 		for (const section of SETTINGS_SECTIONS) {
-			const sectionEl = this.el.createDiv({ cls: "osmosis-format-section osmosis-cosmos-settings-section" });
+			const sectionEl = (section.id === "layout" ? this.layoutEl : this.el).createDiv({ cls: "osmosis-format-section osmosis-cosmos-settings-section" });
 			sectionEl.toggleClass("is-collapsed", collapsed.has(section.id));
 			const header = sectionEl.createDiv({ cls: "osmosis-format-section-header" });
 			setIcon(header.createSpan({ cls: "osmosis-chevron-icon" }), "chevron-right");
