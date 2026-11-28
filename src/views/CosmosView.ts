@@ -8,7 +8,7 @@ import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pa
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../cosmos/model";
-import { facingPhase } from "../cosmos/flatten";
+import { facingPhase } from "../cosmos/planets";
 import { gizmosAvailable } from "../cosmos/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../cosmos/lod";
 import { collectEmbedded } from "../cosmos/transcluded";
@@ -37,7 +37,7 @@ import { selectAfterDelete } from "../select-after-delete";
 import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../cosmos/liftoff";
 import { opensFitted } from "../cosmos/fit";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { readingToggle } from "../view-header";
+import { STYLE_ACTION, readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { COSMOS_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
 import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
@@ -173,7 +173,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private opening = false;
 	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
 	private saving = 0;
-	/** The focus note just changed (or the view just opened): the next reload that shows it renews its ring phase, so its first flat slice faces the camera (`CosmosScene.faceNote`). Edits and other reloads leave it. */
+	/** The focus note just changed (or the view just opened): the next reload that shows it renews its ring phase, so its first continent faces the camera (`CosmosScene.faceNote`). Edits and other reloads leave it. */
 	private faceFocus = true;
 	/** A reload that was asked for while the editor was open or saving, run when it is done. */
 	private queuedReload: { flyToFocus: boolean; subpath: string; landOn: string | null } | null = null;
@@ -358,12 +358,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		}, 0);
 	}
 
-	/** The ⋯ menu: Find, Replace, Style, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
+	/** The ⋯ menu: Find, Replace, Follow, the joysticks (touch only, like the toolbar's 🎮) and Controls help (`PANE_MENU`), ahead of Obsidian's own entries. The style sidebar holds this graph's Settings and styles its selected lines, as it does for the mind map. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "3d", {
 			find: { onClick: () => this.openFind("query") },
 			replace: { onClick: () => this.openFind("replace") },
-			style: { onClick: () => void this.plugin().activatePropertiesSidebar() },
 			follow: { onClick: () => this.toggleFollow(), checked: this.follow },
 			...(hasTouch() ? { sticks: { onClick: () => this.toggleSticks(), checked: this.sticksShown } } : {}),
 			help: { onClick: () => this.help?.toggle(true) },
@@ -437,12 +436,14 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		root.addClass("osmosis-cosmos");
 
 		// The header's buttons are shared with the mind map (`view-header.ts`); `arrangeViewHeader` puts them in order.
+		const styleActionEl = this.addAction(STYLE_ACTION.icon, STYLE_ACTION.label, () => void this.plugin().activatePropertiesSidebar());
 		const noteViewActionEl = this.addAction("file-text", "Note view", () => void this.switchToNote());
 		this.editActionEl = this.addAction("pencil", "", () => this.toggleEditMode());
 		this.showEditAction();
 		this.studyActionEl = this.addAction("graduation-cap", "Cosmos study", () => this.toggleStudy());
 		this.studyActionEl.addClass("osmosis-study-cap");
 		arrangeViewHeader(this, "3d", {
+			style: styleActionEl,
 			"note-view": noteViewActionEl,
 			reading: this.editActionEl,
 			study: this.studyActionEl,

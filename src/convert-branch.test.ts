@@ -15,7 +15,7 @@ import type { OsmosisNode } from "./types";
  */
 
 const parser = new OsmosisParser();
-const SIDECAR_FOLDER = "Osmosis/Schedule";
+const SIDECAR_FOLDER = "Osmosis/Data";
 
 const STYLES = {
 	styles: {

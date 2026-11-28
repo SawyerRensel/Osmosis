@@ -113,11 +113,12 @@ import {
 	mindmapStudyKeys,
 } from "../study/mindmap-study";
 import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
+import { previewCardId, renderRatingBar } from "../study/rating-bar";
 import type { Card, CardOcclusion, OcclusionSet } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import { StudyProgressStrip } from "./StudyProgressStrip";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
-import { readingToggle } from "../view-header";
+import { STYLE_ACTION, readingToggle } from "../view-header";
 import { overlayMasks, removeMaskOverlays, renderOcclusion } from "./OcclusionRenderer";
 import { resolveDefaultReadingMode } from "../reading-mode";
 import type { FSRSRating } from "../database/FSRSScheduler";
@@ -726,12 +727,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		}, 0);
 	}
 
-	/** The ⋯ menu: Find, Replace, Style, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
+	/** The ⋯ menu: Find, Replace, Pin and Peek (`PANE_MENU`), ahead of Obsidian's own entries. */
 	onPaneMenu(menu: Menu, source: string): void {
 		addPaneMenuItems(menu, "2d", {
 			find: { onClick: () => this.openFind("query") },
 			replace: { onClick: () => this.openFind("replace") },
-			style: { onClick: () => void this.plugin.activatePropertiesSidebar() },
 			pin: { onClick: () => this.togglePin(), checked: this.isPinned },
 			peek: { onClick: () => this.toggleMindmapPeek(), checked: this.mindmapStudyMode === "peek", icon: peekIcon() },
 		});
@@ -1945,36 +1945,29 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (!group || group.querySelector(".osmosis-mindmap-study-rating-fo")) return;
 
 		// Wide enough for the four buttons even under narrow nodes
-		const width = Math.max(node.rect.width, 240);
+		const width = Math.max(node.rect.width, 260);
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
 		fo.classList.add("osmosis-mindmap-study-rating-fo");
 		fo.setAttribute("x", String(node.rect.x + this.getOffsetX() + (node.rect.width - width) / 2));
 		fo.setAttribute("y", String(node.rect.y + node.rect.height + this.getOffsetY() + 6));
 		fo.setAttribute("width", String(width));
-		fo.setAttribute("height", "40");
+		// Tall enough for the panel and the interval row over each label
+		fo.setAttribute("height", "56");
 
-		const bubble = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		// The intervals are those of the card the rating would move first (a node
+		// can carry one card per cloze group). The session's manager is built
+		// here, not on the first rating, so the very first bubble has them too.
+		const pending = this.mindmapStudyPendingRating;
+		const cards = this.mapCards();
+		const previewId = pending === null ? null : previewCardId(cards, cardIdsForMindmapKey(cards, pending), Date.now());
+		this.mindmapStudySessionManager ??= this.plugin.createSessionManager("mindmap");
+		const bubble = renderRatingBar(fo, {
+			cls: "osmosis-mindmap-study-rating",
+			panel: true,
+			intervals: previewId === null ? null : this.mindmapStudySessionManager.previewIntervals(previewId),
+			onRate: (rating) => void this.rateMindmapStudyCard(rating),
+		}).el;
 		bubble.setAttribute("xmlns", XHTML_NS);
-		bubble.className = "osmosis-mindmap-study-rating osmosis-rating";
-
-		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-		for (const { label, rating, cls } of ratings) {
-			const btn = document.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
-			btn.setAttribute("xmlns", XHTML_NS);
-			btn.textContent = label;
-			btn.className = cls;
-			btn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.rateMindmapStudyCard(rating);
-			});
-			bubble.appendChild(btn);
-		}
-		fo.appendChild(bubble);
 		group.appendChild(fo);
 
 		// SVG paints in document order — re-append the group so the bubble
@@ -2166,7 +2159,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			dom: this.nodesGroup?.querySelectorAll(".osmosis-node-group").length ?? 0,
 		}));
 
-		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Style, Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// The header's buttons are shared with Cosmos (`view-header.ts`); `arrangeViewHeader` puts them in order below; Pin and Peek are in the ⋯ menu (`onPaneMenu`).
+		// Style (paintbrush) opens the style sidebar; it stands leftmost.
+		const styleActionEl = this.addAction(STYLE_ACTION.icon, STYLE_ACTION.label, () => void this.plugin.activatePropertiesSidebar());
 		// Reading/editing mode toggle (icon shows the mode you'd switch to)
 		this.readingActionEl = this.addAction("book-open", "Current view: editing\nClick to read", () => {
 			this.toggleReadingMode();
@@ -2190,6 +2185,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.mindmapStudyActionEl.addClass("osmosis-study-cap");
 
 		arrangeViewHeader(this, "2d", {
+			style: styleActionEl,
 			"note-view": noteViewActionEl,
 			reading: this.readingActionEl,
 			study: this.mindmapStudyActionEl,

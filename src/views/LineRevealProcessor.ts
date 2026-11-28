@@ -23,6 +23,7 @@ import { mountAtScrollerTop, StudyProgressStrip } from "./StudyProgressStrip";
 import { contentRect, ImageZoom } from "./ImageZoom";
 import type { ScreenRect } from "../study/image-zoom";
 import { StudyClock } from "../study/study-clock";
+import { previewCardId, renderRatingBar } from "../study/rating-bar";
 import {
 	blocksInRange,
 	computeRevealOrder,
@@ -546,25 +547,19 @@ export class LineRevealProcessor {
 	}
 
 	private showRatingBubble(notePath: string, blockId: string, line: TrackedLine): void {
-		const bubble = createDiv();
-		bubble.className = "osmosis-line-rating osmosis-rating";
-
-		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-		for (const { label, rating, cls } of ratings) {
-			const btn = createEl("button");
-			btn.textContent = label;
-			btn.className = cls;
-			btn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.rate(notePath, blockId, rating);
-			});
-			bubble.appendChild(btn);
-		}
+		// The intervals are those of the card the rating would move first (an
+		// occluded line carries one card per shape group). The session's manager
+		// is built here, not on the first rating, so the very first bubble has
+		// them too.
+		const cards = this.plugin.cardStore.getCardsByNote(notePath);
+		const previewId = previewCardId(cards, this.ratingCardIds(notePath, blockId), Date.now());
+		this.sessionManager ??= this.plugin.createSessionManager("note");
+		const bubble = renderRatingBar(createDiv(), {
+			cls: "osmosis-line-rating",
+			panel: true,
+			intervals: previewId === null ? null : this.sessionManager.previewIntervals(previewId),
+			onRate: (rating) => void this.rate(notePath, blockId, rating),
+		}).el;
 
 		// An occluded line being stepped through floats the bubble under the group
 		// just revealed, as the fence card does: under the line would put it below
@@ -583,6 +578,16 @@ export class LineRevealProcessor {
 		line.container.insertBefore(bubble, back?.nextSibling ?? null);
 	}
 
+	/**
+	 * The cards one rating of this line reaches: every card an ordinary line
+	 * carries, or only the shape group an occluded line is stepping through.
+	 */
+	private ratingCardIds(notePath: string, blockId: string): string[] {
+		const step = this.currentStep(this.stateFor(notePath), blockId);
+		if (step !== null) return step.cardId === null ? [] : [step.cardId];
+		return cardIdsForLineKey(this.plugin.cardStore.getCardsByNote(notePath), lineCardId(notePath, blockId));
+	}
+
 	private async rate(notePath: string, blockId: string, rating: FSRSRating): Promise<void> {
 		const state = this.stateFor(notePath);
 		if (state.pendingRating !== blockId) return;
@@ -592,13 +597,7 @@ export class LineRevealProcessor {
 		// single card recorded nothing. An **occluded** line in study is stepping
 		// through its groups, and each group is its own card with its own
 		// schedule, so the rating reaches only the one just answered.
-		const step = this.currentStep(state, blockId);
-		const cardIds = step === null
-			? cardIdsForLineKey(
-				this.plugin.cardStore.getCardsByNote(notePath),
-				lineCardId(notePath, blockId),
-			)
-			: step.cardId === null ? [] : [step.cardId];
+		const cardIds = this.ratingCardIds(notePath, blockId);
 		if (cardIds.length > 0) {
 			this.sessionManager ??= this.plugin.createSessionManager("note");
 			const elapsedMs = state.clock.lap() ?? 0;

@@ -36,7 +36,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{
 		id: "layout",
 		name: "Layout & spacing",
-		controls: ["layout", "flatten", "continentSpacing", "continentDirection", "continentBalance", "coreLayers", "forceBalance", "noteSpacing", "nodeSpacing", "linksPull"],
+		controls: ["layout", "continentSpacing", "continentDirection", "continentBalance", "coreLayers", "forceBalance", "noteSpacing", "nodeSpacing", "linksPull"],
 	},
 	{ id: "show", name: "Show", controls: ["depth", "backlinks", "colorBy"] },
 	{ id: "edges", name: "Edges", controls: [...OVERLAY_EDGE_KINDS.map((kind): SettingsControl => `edge:${kind}`), "taper", "taperStrength"] },
@@ -48,14 +48,11 @@ const SECTION_IDS: ReadonlySet<string> = new Set(SETTINGS_SECTIONS.map((section)
 
 /**
  * Whether `control` shows with these settings: a layout's own controls show
- * only in that layout (Flatten in Flat slices; the continent controls in
- * Planets, Balance only when the direction has sides). Hidden controls keep
- * their values.
+ * only in that layout (the continent controls in Planets, Balance only when
+ * the direction has sides). Hidden controls keep their values.
  */
 export function controlShown(control: SettingsControl, overlays: Pick<CosmosOverlays, "layout" | "continentDirection">): boolean {
 	switch (control) {
-		case "flatten":
-			return overlays.layout === "flat";
 		case "continentSpacing":
 		case "continentDirection":
 		case "coreLayers":

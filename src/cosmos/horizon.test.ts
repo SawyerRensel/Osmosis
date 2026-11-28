@@ -169,8 +169,8 @@ describe("withBacklinkers (depth 0 with Backlinks on)", () => {
 describe("noteAdjacency exclude", () => {
 	it("drops excluded paths on either end, so a sidecar is no note's backlinker", () => {
 		const adjacency = noteAdjacency(
-			{ "Osmosis/Schedule/abc.osmosis.md": { "Knots.md": 1 }, "Knots.md": { "Tides.md": 1 } },
-			(path) => path.startsWith("Osmosis/Schedule/"),
+			{ "Osmosis/Data/abc.osmosis.md": { "Knots.md": 1 }, "Knots.md": { "Tides.md": 1 } },
+			(path) => path.startsWith("Osmosis/Data/"),
 		);
 		expect(adjacency.backward.get("Knots.md")).toBeUndefined();
 		expect(adjacency.forward.get("Knots.md")).toEqual(new Set(["Tides.md"]));

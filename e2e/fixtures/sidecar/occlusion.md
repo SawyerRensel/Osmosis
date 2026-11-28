@@ -8,7 +8,7 @@ osmosis-deck: Testing/Sidecar occlusion
 This note starts with **no Osmosis data** in its properties, so with *Data
 location* set to **Sidecar file** (the default) it is a sidecar-mode note.
 In sidecar mode, occlusion shapes live in the sidecar's `osmosis-fences`
-entry for the fence (in `Osmosis/Schedule/`), under `occlude` (an unlabelled
+entry for the fence (in `Osmosis/Data/`), under `occlude` (an unlabelled
 embed) or `occlude-a` / `occlude-b` (the embed marked `{a}` / `{b}`).
 
 Every card here is new, so nothing needs back-dating.

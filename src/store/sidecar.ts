@@ -37,6 +37,22 @@ const ENTRY_MERGED_KEYS: ReadonlySet<string> = new Set(["osmosis-schedule", "osm
 
 export { SIDECAR_SUFFIX } from "./sidecar-names";
 
+/** The default sidecar folder. It holds styles as well as schedules, hence "Data". */
+export const DEFAULT_SIDECAR_FOLDER = "Osmosis/Data";
+
+/** The default before it was renamed: every vault that has ever saved settings carries it. */
+const LEGACY_SIDECAR_FOLDER = "Osmosis/Schedule";
+
+/**
+ * The folder a saved `sidecarFolder` should move to on load, or null to leave
+ * it. Only the exact old default moves: a folder the user chose stays theirs.
+ * (Old builds wrote the default into data.json, so it cannot be told apart
+ * from a deliberate choice of the same name; moving that too is the intended cost.)
+ */
+export function migratedSidecarFolder(saved: unknown): string | null {
+	return saved === LEGACY_SIDECAR_FOLDER ? DEFAULT_SIDECAR_FOLDER : null;
+}
+
 /** The body written into a new sidecar. No wikilinks: the frontmatter link is the only one. */
 const SIDECAR_BODY = "Osmosis keeps this note's flashcard data here. It follows the note when the note is renamed or moved.\n";
 

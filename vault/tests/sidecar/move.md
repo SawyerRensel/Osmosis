@@ -24,7 +24,7 @@ lines are filled blue and green.
 
 Run **Move data to sidecar**. The properties shrink to `osmosis-cards` and
 `osmosis-deck`, each fence header keeps only `id`, `bidi`, `type-in` and
-`deck`, a new file appears in `Osmosis/Schedule/`, and the deck counts, the
+`deck`, a new file appears in `Osmosis/Data/`, and the deck counts, the
 mind map colours and the masks are unchanged. **Move data into note** puts
 everything back where it is now.
 

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { linkDistance } from "./appearance";
-import { notePush, type NoteBody } from "./flatten";
-import { chargeStrengths, spaceCharges, type ChargeNode } from "./settle";
+import { chargeStrengths, notePush, spaceCharges, type Body, type ChargeNode, type NoteBody } from "./settle";
 
 const note = (path: string, pinned: boolean): ChargeNode => ({ id: `note:${path}`, kind: "note", path, pinned });
 const line = (path: string, n: number, pinned: boolean): ChargeNode => ({ id: `line:${path}#${n}`, kind: "line", path, pinned });
@@ -127,3 +126,20 @@ describe("spaceCharges", () => {
 	});
 });
 
+
+describe("notePush", () => {
+	it("pushes every charged node of another note by what its core feels, and leaves the note's own lines alone", () => {
+		const coreA: Body = { x: 0, y: 0, z: 0 };
+		const coreB: Body = { x: 10, y: 0, z: 0 };
+		const ownLine: Body = { x: 5, y: 0, z: 0, vx: 0 };
+		const otherLine: Body = { x: 10, y: 50, z: 0, vx: 0, vy: 0 };
+		const cores = new Map([["A.md", { body: coreA, strength: -100 }], ["B.md", { body: coreB, strength: 0 }]]);
+		notePush(cores, [{ body: ownLine, path: "A.md" }, { body: coreB, path: "B.md" }, { body: otherLine, path: "B.md" }], 0.5);
+		expect(ownLine.vx).toBe(0);
+		// d3's law: strength × alpha / distance, away from the source.
+		expect(coreB.vx).toBeCloseTo(5);
+		// The same push as its core, so the note moves as a whole.
+		expect(otherLine.vx).toBeCloseTo(5);
+		expect(otherLine.vy).toBeCloseTo(0);
+	});
+});

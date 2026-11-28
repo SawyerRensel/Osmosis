@@ -17,6 +17,7 @@
  */
 
 import type { Spacing } from "./appearance";
+import type { Vec3 } from "./flight";
 import { isNoteRoot, type GraphNodeKind } from "./model";
 
 export interface ChargeNode {
@@ -78,4 +79,58 @@ export function spaceCharges(strengths: Map<string, number>, pathOf: (id: string
 		if (owed !== 0 && path !== undefined) clusters.set(path, (clusters.get(path) ?? 0) + strength * owed);
 	}
 	return clusters;
+}
+
+/** A charged node in `notePush`, with the note it belongs to. */
+export interface NoteBody {
+	body: Body;
+	path: string | undefined;
+}
+
+/**
+ * The many-body push each note owes as a whole (`spaceCharges`), from its
+ * core, by d3's many-body law (strength × alpha / distance). It moves a whole
+ * note at once: every charged node of another note gets the push felt at
+ * that note's core, so a note keeps its shape rather than being stretched by
+ * the difference across it; a node of no note feels it where it is. A note's
+ * own lines don't feel their own share, so a core doesn't blow its own note
+ * apart. Cost: notes × notes, plus one add for each charged node.
+ */
+export function notePush(cores: ReadonlyMap<string, { body: Body; strength: number }>, charged: readonly NoteBody[], alpha: number): void {
+	const sources = [...cores].filter(([, core]) => core.strength !== 0 && core.body.x !== undefined);
+	if (sources.length === 0) return;
+	const pushAt = (x: number, y: number, z: number, own: string | undefined): Vec3 => {
+		const push = { x: 0, y: 0, z: 0 };
+		for (const [path, { body, strength }] of sources) {
+			if (path === own) continue;
+			const [dx, dy, dz] = [x - body.x!, y - body.y!, z - body.z!];
+			const k = (-strength * alpha) / Math.max(1, dx * dx + dy * dy + dz * dz);
+			push.x += dx * k;
+			push.y += dy * k;
+			push.z += dz * k;
+		}
+		return push;
+	};
+	const byNote = new Map<string, Vec3>();
+	for (const [path, { body }] of cores) if (body.x !== undefined) byNote.set(path, pushAt(body.x, body.y!, body.z!, path));
+	for (const { body, path } of charged) {
+		const push = (path === undefined ? undefined : byNote.get(path)) ?? (body.x === undefined ? null : pushAt(body.x, body.y!, body.z!, path));
+		if (push === null) continue;
+		body.vx = (body.vx ?? 0) + push.x;
+		body.vy = (body.vy ?? 0) + push.y;
+		body.vz = (body.vz ?? 0) + push.z;
+	}
+}
+
+/** A simulated node, as d3 keeps it: position, velocity, and a pinned position when fixed. */
+export interface Body {
+	x?: number;
+	y?: number;
+	z?: number;
+	vx?: number;
+	vy?: number;
+	vz?: number;
+	fx?: number;
+	fy?: number;
+	fz?: number;
 }

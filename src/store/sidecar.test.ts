@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	DEFAULT_SIDECAR_FOLDER,
 	hasSidecarKeys,
 	isSidecarPath,
+	migratedSidecarFolder,
 	mergeNoteData,
 	noteLink,
 	parseNoteLink,
@@ -11,21 +13,21 @@ import {
 
 describe("withExcludedFolder", () => {
 	it("adds the folder with a trailing slash to an empty list", () => {
-		expect(withExcludedFolder(null, null, "Osmosis/Schedule")).toEqual(["Osmosis/Schedule/"]);
+		expect(withExcludedFolder(null, null, "Osmosis/Data")).toEqual(["Osmosis/Data/"]);
 	});
 
 	it("swaps the old folder's entry for the new one and keeps the user's own entries", () => {
-		expect(withExcludedFolder(["Archive/", "Osmosis/Schedule/"], "Osmosis/Schedule", "Data/Sidecars"))
+		expect(withExcludedFolder(["Archive/", "Osmosis/Data/"], "Osmosis/Data", "Data/Sidecars"))
 			.toEqual(["Archive/", "Data/Sidecars/"]);
 	});
 
 	it("does not add a duplicate, and leaves entries written another way alone", () => {
-		expect(withExcludedFolder(["Osmosis/Schedule/", "Osmosis/Schedule"], null, "Osmosis/Schedule"))
-			.toEqual(["Osmosis/Schedule/", "Osmosis/Schedule"]);
+		expect(withExcludedFolder(["Osmosis/Data/", "Osmosis/Data"], null, "Osmosis/Data"))
+			.toEqual(["Osmosis/Data/", "Osmosis/Data"]);
 	});
 
 	it("is null when nothing is left", () => {
-		expect(withExcludedFolder(["Osmosis/Schedule/"], "Osmosis/Schedule", null)).toBeNull();
+		expect(withExcludedFolder(["Osmosis/Data/"], "Osmosis/Data", null)).toBeNull();
 	});
 });
 
@@ -52,13 +54,13 @@ describe("noteLink / parseNoteLink", () => {
 
 describe("isSidecarPath", () => {
 	it("matches the folder and everything under it", () => {
-		expect(isSidecarPath("Osmosis/Schedule/a3f9c2e1.osmosis.md", "Osmosis/Schedule")).toBe(true);
-		expect(isSidecarPath("Osmosis/Schedule", "Osmosis/Schedule")).toBe(true);
+		expect(isSidecarPath("Osmosis/Data/a3f9c2e1.osmosis.md", "Osmosis/Data")).toBe(true);
+		expect(isSidecarPath("Osmosis/Data", "Osmosis/Data")).toBe(true);
 	});
 
 	it("does not match a sibling folder sharing a prefix, or an empty folder setting", () => {
-		expect(isSidecarPath("Osmosis/Schedules/x.md", "Osmosis/Schedule")).toBe(false);
-		expect(isSidecarPath("Osmosis/Reviews/2026-11.md", "Osmosis/Schedule")).toBe(false);
+		expect(isSidecarPath("Osmosis/Datas/x.md", "Osmosis/Data")).toBe(false);
+		expect(isSidecarPath("Osmosis/Reviews/2026-11.md", "Osmosis/Data")).toBe(false);
 		expect(isSidecarPath("Note.md", "")).toBe(false);
 	});
 });
@@ -107,5 +109,19 @@ describe("hasSidecarKeys / sidecarContent", () => {
 		const content = sidecarContent("Travel/Lisbon.md");
 		expect(content.startsWith('---\nosmosis-note: "[[Travel/Lisbon]]"\n---\n')).toBe(true);
 		expect(content.slice(content.lastIndexOf("---")).includes("[[")).toBe(false);
+	});
+});
+
+describe("migratedSidecarFolder", () => {
+	it("moves the old default to the new one", () => {
+		expect(migratedSidecarFolder("Osmosis/Schedule")).toBe(DEFAULT_SIDECAR_FOLDER);
+		expect(DEFAULT_SIDECAR_FOLDER).toBe("Osmosis/Data");
+	});
+
+	it("leaves the new default, a chosen folder, a near miss and a missing value alone", () => {
+		expect(migratedSidecarFolder("Osmosis/Data")).toBeNull();
+		expect(migratedSidecarFolder("Sidecars")).toBeNull();
+		expect(migratedSidecarFolder("Osmosis/Schedule/Old")).toBeNull();
+		expect(migratedSidecarFolder(undefined)).toBeNull();
 	});
 });

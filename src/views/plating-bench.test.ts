@@ -14,7 +14,6 @@ import { nodeColor, nodeExtent, spriteLabel } from "../cosmos/appearance";
 import { nodeLook } from "../cosmos/node-style";
 import { panelBoxEm, plateWidthEm } from "../cosmos/near";
 import { LINE_PLATE_HEIGHT, layoutPlate } from "../cosmos/plates";
-import { FlatLayouts, flatDepth } from "../cosmos/flatten";
 import { chargeStrengths } from "../cosmos/settle";
 import { buildPerfNote } from "../../e2e/generate-perf-notes.mjs";
 import { CosmosPlates, type PlateShape, type PlateSource } from "./CosmosPlates";
@@ -124,19 +123,6 @@ describe("3D plating benchmarks (reported, not asserted)", () => {
 			}));
 			report(`${nodes.length} nodes: colour`, time(() => {
 				for (const node of nodes) new Color(nodeColor(node));
-			}));
-			const shapes = new Map(nodes.map((node) => [node.id, shapeOf(plates, node)]));
-			const sizeOf = (node: GraphNode): { width: number; height: number } => {
-				const panel = panelBoxEm(node);
-				const plate = shapes.get(node.id)!;
-				return { width: Math.max(plate.width, (panel?.width ?? 0) * 1), height: Math.max(plate.height, (panel?.height ?? 0) * 1) };
-			};
-			report(`${nodes.length} nodes: flat layout, cold (an edit's new tree)`, time(() => {
-				new FlatLayouts().branches(nodes, flatDepth(0.75), sizeOf);
-			}));
-			const warm = new FlatLayouts();
-			report(`${nodes.length} nodes: flat layout, warm`, time(() => {
-				warm.branches(nodes, flatDepth(0.75), sizeOf);
 			}));
 			report(`${nodes.length} nodes: chargeStrengths`, time(() => {
 				chargeStrengths(nodes.map((node) => ({ ...node, pinned: false })), -30);

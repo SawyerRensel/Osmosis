@@ -25,23 +25,17 @@ describe("SETTINGS_SECTIONS", () => {
 });
 
 describe("controlShown", () => {
-	it("shows Flatten in Flat slices only", () => {
-		expect(controlShown("flatten", { layout: "flat", continentDirection: "left-right" })).toBe(true);
-		expect(controlShown("flatten", { layout: "planets", continentDirection: "left-right" })).toBe(false);
-		expect(controlShown("flatten", { layout: "organic", continentDirection: "left-right" })).toBe(false);
-	});
-
 	it("shows the continent controls in Planets only, Balance only with sides", () => {
 		for (const control of ["continentSpacing", "continentDirection", "continentBalance"] as const) {
 			expect(controlShown(control, { layout: "planets", continentDirection: "top-down" })).toBe(true);
-			expect(controlShown(control, { layout: "flat", continentDirection: "top-down" })).toBe(false);
+			expect(controlShown(control, { layout: "organic", continentDirection: "top-down" })).toBe(false);
 		}
 		expect(controlShown("continentBalance", { layout: "planets", continentDirection: "radial" })).toBe(false);
 		expect(controlShown("continentDirection", { layout: "planets", continentDirection: "radial" })).toBe(true);
 	});
 
 	it("shows every other control in every layout", () => {
-		for (const layout of ["organic", "flat", "planets"] as const) {
+		for (const layout of ["organic", "planets"] as const) {
 			for (const control of ["noteSpacing", "nodeSpacing", "forceBalance", "linksPull", "mist"] as const) expect(controlShown(control, { layout, continentDirection: "radial" })).toBe(true);
 		}
 	});

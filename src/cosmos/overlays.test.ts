@@ -5,7 +5,6 @@ import { nodeColor } from "./appearance";
 import { TAPER_STRENGTH_MAX } from "./taper";
 import { MAX_CORE_LAYERS } from "./planets";
 import {
-	effectiveFlatten,
 	DEFAULT_OVERLAYS,
 	edgeShown,
 	linkPulls,
@@ -86,15 +85,13 @@ describe("normalizeOverlays", () => {
 		expect(normalizeOverlays({ taperStrength: "x" }).taperStrength).toBe(1);
 	});
 
-	it("reads the Layout choice, taking an old flatten slider at Off as organic", () => {
-		expect(normalizeOverlays({}).layout).toBe("flat");
-		expect(normalizeOverlays({ flatten: 0 }).layout).toBe("organic");
-		expect(normalizeOverlays({ flatten: 0.5 }).layout).toBe("flat");
-		expect(normalizeOverlays({ layout: "planets", flatten: 0 }).layout).toBe("planets");
-		expect(normalizeOverlays({ layout: "globe" }).layout).toBe("flat");
-		expect(effectiveFlatten({ layout: "planets", flatten: 0.75 })).toBe(0);
-		expect(effectiveFlatten({ layout: "organic", flatten: 0.75 })).toBe(0);
-		expect(effectiveFlatten({ layout: "flat", flatten: 0.75 })).toBe(0.75);
+	it("reads the Layout choice, taking the removed Flat slices layout as organic", () => {
+		expect(normalizeOverlays({}).layout).toBe("organic");
+		expect(normalizeOverlays({ layout: "planets" }).layout).toBe("planets");
+		expect(normalizeOverlays({ layout: "globe" }).layout).toBe("organic");
+		const flat = normalizeOverlays({ layout: "flat", flatten: 0.75 });
+		expect(flat.layout).toBe("organic");
+		expect("flatten" in flat).toBe(false);
 	});
 
 	it("reads the continent defaults, falling back on junk", () => {
@@ -111,14 +108,7 @@ describe("normalizeOverlays", () => {
 		expect(continentStyleChanged(planets, { ...planets, continentDirection: "radial" })).toBe(true);
 		expect(continentStyleChanged(planets, { ...planets, continentBalance: "both-sides" })).toBe(true);
 		expect(continentStyleChanged(planets, planets)).toBe(false);
-		expect(continentStyleChanged(planets, { ...planets, continentDirection: "radial", layout: "flat" })).toBe(false);
-	});
-
-	it("flattens moderately by default, for new and existing users, and clamps a saved flatten", () => {
-		expect(normalizeOverlays({ forceBalance: 0.2 }).flatten).toBe(0.75);
-		expect(normalizeOverlays({ flatten: 0 }).flatten).toBe(0);
-		expect(normalizeOverlays({ flatten: 3 }).flatten).toBe(1);
-		expect(normalizeOverlays({ flatten: "flat" }).flatten).toBe(0.75);
+		expect(continentStyleChanged(planets, { ...planets, continentDirection: "radial", layout: "organic" })).toBe(false);
 	});
 
 	it("pulls links by default, for new and existing users", () => {
@@ -431,7 +421,7 @@ describe("spacing sliders", () => {
 	});
 
 	it("tells when either moved, and hands the layout both", () => {
-		const same = { noteSpacing: 1, nodeSpacing: 1, continentSpacing: 1, layout: "flat" as const };
+		const same = { noteSpacing: 1, nodeSpacing: 1, continentSpacing: 1, layout: "organic" as const };
 		expect(spacingChanged(same, { ...same })).toBe(false);
 		expect(spacingChanged(same, { ...same, noteSpacing: 1.5 })).toBe(true);
 		expect(spacingChanged(same, { ...same, nodeSpacing: 2 })).toBe(true);
@@ -456,7 +446,7 @@ describe("core layers", () => {
 	it("counts as a change only in Planets", () => {
 		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "planets", coreLayers: 3 })).toBe(true);
 		expect(coreLayersChanged({ coreLayers: 3 }, { layout: "planets", coreLayers: 3 })).toBe(false);
-		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "flat", coreLayers: 3 })).toBe(false);
+		expect(coreLayersChanged({ coreLayers: 1 }, { layout: "organic", coreLayers: 3 })).toBe(false);
 	});
 });
 

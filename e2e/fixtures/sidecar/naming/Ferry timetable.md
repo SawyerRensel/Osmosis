@@ -6,7 +6,7 @@ osmosis-deck: Testing/Sidecar
 # Ferry timetable (T125 fix round 1)
 
 This note's data sits in an **old hash-named sidecar**,
-`Osmosis/Schedule/0badc0de.osmosis.md`, the way the first sidecar build named
+`Osmosis/Data/0badc0de.osmosis.md`, the way the first sidecar build named
 them. When Osmosis starts it finds that file by its `osmosis-note` link and
 renames it `Ferry timetable.osmosis.md`. The first card keeps its review
 history (it was last reviewed 2026-11-18 and is due), the others are new.

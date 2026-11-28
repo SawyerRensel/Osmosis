@@ -159,7 +159,7 @@ osmosis-styles:
 ---
 ```
 
-- **Where:** one flat folder, `Osmosis/Schedule` by default
+- **Where:** one flat folder, `Osmosis/Data` by default
   (**Settings > Osmosis > Sidecar folder**). Changing the setting moves the
   files. Osmosis adds the folder to **Settings > Files and links > Excluded
   files**, so sidecars stay out of search, the quick switcher, the graph, and
