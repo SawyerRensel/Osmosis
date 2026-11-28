@@ -7,7 +7,8 @@ import type { Card, ScheduleData } from "../database/types";
 import { BREADCRUMB_SEPARATOR } from "../card-gen/line-cards";
 import { splitAtEmbed, stripEmbeds } from "../card-gen/occlusion";
 import { isCloseMatch } from "../study/match";
-import { crumbsBelowTitle, formatInterval, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
+import { crumbsBelowTitle, isNavbarSwipe, STUDY_TAB_IDLE_TITLE, studyTabTitle } from "../study/study-view";
+import { renderRatingBar, type RatingBar } from "../study/rating-bar";
 import { sessionStatus } from "../study/session-counts";
 import { studyReturnTarget, toStudyOrigin, type StudyOrigin } from "../study/study-origin";
 import { stepBackQueue } from "../study/undo-queue";
@@ -49,13 +50,6 @@ interface TouchOrigin {
 	scrollEl: HTMLElement | null;
 	scrollTop: number;
 }
-
-const RATINGS: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-	{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-	{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-	{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-	{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-];
 
 
 /**
@@ -165,8 +159,8 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 	private flipBtn!: HTMLButtonElement;
 
 	private ratingBar!: HTMLElement;
-	/** The interval label above each rating button, in rating order. */
-	private intervalEls: HTMLElement[] = [];
+	/** The shared rating row (`renderRatingBar`); `ratingBar` is its element. */
+	private ratingRow!: RatingBar;
 	private typeInEl!: HTMLElement;
 	private typeInInput!: HTMLInputElement;
 
@@ -473,27 +467,18 @@ export class FlashcardStudyView extends ItemView implements NavbarHost {
 		});
 		checkBtn.addEventListener("click", () => this.checkTypeIn());
 
-		// The rating row every other study surface uses, for the same buttons
-		this.ratingBar = actions.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar osmosis-hidden" });
-
-		// Each button shows the interval it would schedule above its label
-		this.intervalEls = [];
-		for (const { label, rating, cls } of RATINGS) {
-			const btn = this.ratingBar.createEl("button", { cls, attr: { "aria-label": `${label} (${rating})` } });
-			this.intervalEls.push(btn.createSpan({ cls: "osmosis-rate-interval" }));
-			btn.createSpan({ cls: "osmosis-rate-label", text: label });
-			btn.addEventListener("click", () => void this.rate(rating));
-		}
+		// The rating bar every study surface draws; the action panel is its container
+		this.ratingRow = renderRatingBar(actions, {
+			cls: "osmosis-study-rating-bar osmosis-hidden",
+			onRate: (rating) => void this.rate(rating),
+		});
+		this.ratingBar = this.ratingRow.el;
 	}
 
 	/** Fill the interval labels for the card on screen, once its answer shows. */
 	private updateRatingIntervals(card: Card): void {
 		if (!this.sessionManager) return;
-		const preview = this.sessionManager.previewIntervals(card.id);
-		RATINGS.forEach(({ rating }, i) => {
-			const el = this.intervalEls[i];
-			if (el) el.textContent = formatInterval(preview[rating]);
-		});
+		this.ratingRow.setIntervals(this.sessionManager.previewIntervals(card.id));
 	}
 
 	private renderCard(): void {

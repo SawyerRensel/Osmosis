@@ -690,7 +690,8 @@ describe("a fence whose cards the store holds", () => {
 
 		const actions = el.querySelector(".osmosis-note-actions")!;
 		expect(actions.querySelector(".osmosis-study-flip")).toBeNull();
-		const bar = actions.querySelector(".osmosis-rating.osmosis-study-rating-bar")!;
+		// In its own dark panel (T136): the card's action row has none.
+		const bar = actions.querySelector(".osmosis-rating.osmosis-rating-panel.osmosis-study-rating-bar")!;
 		expect(Array.from(bar.querySelectorAll(".osmosis-rate-label"), (s) => s.textContent))
 			.toEqual(["Again", "Hard", "Good", "Easy"]);
 		expect(Array.from(bar.querySelectorAll(".osmosis-rate-interval"), (s) => s.textContent))

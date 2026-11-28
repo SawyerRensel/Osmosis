@@ -51,10 +51,13 @@ interface Harness {
 	show: (model: GraphModel) => GraphModel;
 	panel: () => HTMLElement;
 	rated: string[];
+	/** The card IDs the rating bar asked intervals for. */
+	previewed: string[];
 }
 
 function harness(cards: Card[], loaded: string[], hops: Record<string, number>, trail?: { path: string; text: string }): Harness {
 	const rated: string[] = [];
+	const previewed: string[] = [];
 	const root = document.createElement("div");
 	document.body.appendChild(root);
 	const plugin = {
@@ -65,6 +68,10 @@ function harness(cards: Card[], loaded: string[], hops: Record<string, number>, 
 			recordReview: (id: string): Promise<void> => {
 				rated.push(id);
 				return Promise.resolve();
+			},
+			previewIntervals: (id: string) => {
+				previewed.push(id);
+				return { 1: 60_000, 2: 6 * 60_000, 3: DAY, 4: 4 * DAY };
 			},
 		}),
 		refreshDashboard: () => undefined,
@@ -96,7 +103,7 @@ function harness(cards: Card[], loaded: string[], hops: Record<string, number>, 
 	};
 	const study = new CosmosStudy(root, plugin, host);
 	const show = (model: GraphModel): GraphModel => study.decorate((shown = model));
-	return { study, host, show, panel: () => root.querySelector<HTMLElement>(".osmosis-cosmos-study")!, rated };
+	return { study, host, show, panel: () => root.querySelector<HTMLElement>(".osmosis-cosmos-study")!, rated, previewed };
 }
 
 const model = (nodes: GraphNode[]): GraphModel => ({ nodes, edges: [] });
@@ -131,6 +138,26 @@ describe("the current card through a fence rewrite", () => {
 		// Space (reveal) works at once: the node is still the current card, now asking its second blank.
 		expect(study.reveal()).toBe(true);
 		expect(host.goTos).toEqual([]);
+	});
+});
+
+describe("the rating bar", () => {
+	it("shows the first card's intervals before any rating, under the reviewed line and with no key hint", async () => {
+		const cards = [card({ id: `${HOME}#^os-tide`, blockId: "os-tide", due: NOW - DAY })];
+		const { study, show, panel, previewed } = harness(cards, [HOME], {});
+		const tide = lineNode(HOME, "os-tide");
+		study.start();
+		show(model([note(HOME), tide]));
+		study.clicked(tide);
+		study.reveal();
+		const bar = panel().querySelector(".osmosis-rating.osmosis-cosmos-study-rating")!;
+		expect(Array.from(bar.querySelectorAll(".osmosis-rate-interval"), (s) => s.textContent)).toEqual(["1m", "6m", "1d", "4d"]);
+		expect(Array.from(bar.querySelectorAll(".osmosis-rate-label"), (s) => s.textContent)).toEqual(["Again", "Hard", "Good", "Easy"]);
+		expect(previewed).toEqual([`${HOME}#^os-tide`]);
+		expect(panel().querySelector(".osmosis-cosmos-study-progress")?.textContent).toBe("0 reviewed · 1 hidden here");
+		expect(panel().querySelector(".osmosis-cosmos-study-hint")).toBeNull();
+		await study.rate(3);
+		expect(panel().querySelector(".osmosis-rating")).toBeNull();
 	});
 });
 

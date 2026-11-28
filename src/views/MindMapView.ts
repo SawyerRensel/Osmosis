@@ -113,6 +113,7 @@ import {
 	mindmapStudyKeys,
 } from "../study/mindmap-study";
 import { countNoteSession, type NoteSessionCard } from "../study/session-counts";
+import { previewCardId, renderRatingBar } from "../study/rating-bar";
 import type { Card, CardOcclusion, OcclusionSet } from "../database/types";
 import { peekIcon } from "./LineRevealProcessor";
 import { StudyProgressStrip } from "./StudyProgressStrip";
@@ -1944,36 +1945,29 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (!group || group.querySelector(".osmosis-mindmap-study-rating-fo")) return;
 
 		// Wide enough for the four buttons even under narrow nodes
-		const width = Math.max(node.rect.width, 240);
+		const width = Math.max(node.rect.width, 260);
 		const fo = document.createElementNS(SVG_NS, "foreignObject");
 		fo.classList.add("osmosis-mindmap-study-rating-fo");
 		fo.setAttribute("x", String(node.rect.x + this.getOffsetX() + (node.rect.width - width) / 2));
 		fo.setAttribute("y", String(node.rect.y + node.rect.height + this.getOffsetY() + 6));
 		fo.setAttribute("width", String(width));
-		fo.setAttribute("height", "40");
+		// Tall enough for the panel and the interval row over each label
+		fo.setAttribute("height", "56");
 
-		const bubble = document.createElementNS(XHTML_NS, "div") as HTMLDivElement;
+		// The intervals are those of the card the rating would move first (a node
+		// can carry one card per cloze group). The session's manager is built
+		// here, not on the first rating, so the very first bubble has them too.
+		const pending = this.mindmapStudyPendingRating;
+		const cards = this.mapCards();
+		const previewId = pending === null ? null : previewCardId(cards, cardIdsForMindmapKey(cards, pending), Date.now());
+		this.mindmapStudySessionManager ??= this.plugin.createSessionManager("mindmap");
+		const bubble = renderRatingBar(fo, {
+			cls: "osmosis-mindmap-study-rating",
+			panel: true,
+			intervals: previewId === null ? null : this.mindmapStudySessionManager.previewIntervals(previewId),
+			onRate: (rating) => void this.rateMindmapStudyCard(rating),
+		}).el;
 		bubble.setAttribute("xmlns", XHTML_NS);
-		bubble.className = "osmosis-mindmap-study-rating osmosis-rating";
-
-		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-		for (const { label, rating, cls } of ratings) {
-			const btn = document.createElementNS(XHTML_NS, "button") as HTMLButtonElement;
-			btn.setAttribute("xmlns", XHTML_NS);
-			btn.textContent = label;
-			btn.className = cls;
-			btn.addEventListener("click", (e) => {
-				e.stopPropagation();
-				void this.rateMindmapStudyCard(rating);
-			});
-			bubble.appendChild(btn);
-		}
-		fo.appendChild(bubble);
 		group.appendChild(fo);
 
 		// SVG paints in document order — re-append the group so the bubble

@@ -1839,10 +1839,22 @@ body.is-tablet .osmosis-note-actions {
 	width: var(--osmosis-study-panel-width);
 	max-width: calc(100% - 2 * var(--size-4-2));
 	padding: var(--osmosis-study-panel-padding);
+}
+
+/* The study tab's dark rounded panel, which the rating bar wears on every
+   surface (T136). Where the bar has no panel to sit in (note fence and line
+   cards, the mind map) `renderRatingBar` gives it its own,
+   `.osmosis-rating-panel`. Cosmos's study panel is its container there. */
+.osmosis-study-actions,
+.osmosis-rating-panel {
 	border-radius: var(--radius-m);
 	background: var(--raised-background, var(--background-secondary));
 	backdrop-filter: var(--raised-blur);
 	box-shadow: var(--raised-shadow, var(--shadow-s));
+}
+
+.osmosis-rating-panel {
+	padding: var(--size-4-1);
 }
 
 /* Nothing to press (the waiting and completion screens): no empty panel. */
@@ -1910,11 +1922,11 @@ body.is-phone .osmosis-note-card .osmosis-note-actions button {
 	font-weight: 500;
 }
 
-/* The shared rating row (`.osmosis-rating`, as in note view, the mind
-   map and Cosmos) supplies the buttons' shape, type and colours. The tab
-   adds the panel's height and stacks the interval each would schedule over its
-   label. Two classes, to outrank the shared row's margin; no `display` here,
-   for the reason given on the flip button. */
+/* The shared rating bar (`.osmosis-rating`, src/study/rating-bar.ts)
+   supplies the buttons' shape, type, colours and the interval over each label.
+   The tab and the note's fence cards fill their action row with it, at the
+   panel's height. Two classes, to outrank the shared row's margin; no
+   `display` here, for the reason given on the flip button. */
 .osmosis-study-actions .osmosis-study-rating-bar,
 .osmosis-note-actions .osmosis-study-rating-bar {
 	flex: 1;
@@ -1926,9 +1938,12 @@ body.is-phone .osmosis-study-rating-bar {
 	gap: var(--size-4-2);
 }
 
-.osmosis-study-rating-bar button {
+/* Each button stacks the interval it would schedule over its label. Equal
+   widths where the row has a width to share, and never narrower than its own
+   text where it is sized to its content (Cosmos). */
+.osmosis-rating button {
 	flex: 1 1 0;
-	min-width: 0;
+	min-width: max-content;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -1938,7 +1953,7 @@ body.is-phone .osmosis-study-rating-bar {
 	transition: filter 0.1s;
 }
 
-.osmosis-study-rating-bar button:hover {
+.osmosis-rating button:hover {
 	filter: brightness(1.1);
 }
 
@@ -2068,7 +2083,7 @@ body.is-phone .osmosis-study-rating-bar {
 	color: var(--interactive-accent);
 }
 
-.osmosis-study-rating-bar button.is-suggested {
+.osmosis-rating button.is-suggested {
 	outline: 2px solid var(--text-normal);
 	outline-offset: -2px;
 }
@@ -2365,7 +2380,9 @@ body.is-phone .osmosis-note-actions {
 }
 
 .osmosis-rating button {
-	padding: 4px 10px;
+	/* Obsidian's one-line button height would cut off the interval row. */
+	height: auto;
+	padding: 4px 6px;
 	border: none;
 	border-radius: 4px;
 	cursor: pointer;
@@ -2490,9 +2507,12 @@ body.is-phone .osmosis-note-actions {
 }
 
 /* Block-level so the bubble always sits on its own line below the card,
-   regardless of how short the revealed line is */
+   regardless of how short the revealed line is. 260px holds the four
+   buttons with their intervals, as under a mind map node. */
 .osmosis-line-rating {
 	display: flex;
+	width: 260px;
+	max-width: 100%;
 	margin: 4px 0;
 	animation: osmosis-fade-in 0.2s;
 }
@@ -2574,15 +2594,16 @@ body.is-phone .osmosis-note-actions {
 	animation: osmosis-fade-in 0.2s;
 }
 
-/* Rating bubble anchored below a just-revealed node. Button colors come
-   from .osmosis-rating (shared with note study). */
+/* Rating bubble anchored below a just-revealed node, centred under it. The
+   bar and its panel are .osmosis-rating's (shared with every study surface). */
 .osmosis-mindmap-study-rating-fo {
 	overflow: visible;
 }
 
 .osmosis-mindmap-study-rating {
-	justify-content: center;
-	margin-top: 0;
+	width: 260px;
+	max-width: 100%;
+	margin: 0 auto;
 	animation: osmosis-fade-in 0.2s;
 	/* The bubble is the one part of the map that is painted while the map is
 	   moving under it: it appears mid-session and then rides along on every
@@ -2602,7 +2623,7 @@ body.is-phone .osmosis-note-actions {
    picture. `left` centres them on the group and clamps them inside the image;
    on an image narrower than the buttons it pins them to the image's left edge
    and lets them run past the right, which the surrounding surface has room for.
-   Button colours come from .osmosis-rating. */
+   The bar and its colours are .osmosis-rating's. */
 .osmosis-occlusion-rating-anchor {
 	--osmosis-anchor-width: 240px;
 	position: absolute;
@@ -2632,17 +2653,11 @@ body.is-phone .osmosis-note-actions {
 	transform: translateY(-100%);
 }
 
+/* The bar brings its own panel (.osmosis-rating-panel) and spans the anchor. */
 .osmosis-occlusion-rating-anchor > .osmosis-rating {
+	width: auto;
 	margin: 0;
-	padding: 4px;
-	border-radius: 6px;
-	background: var(--background-primary);
-	box-shadow: var(--shadow-s);
 	animation: osmosis-fade-in 0.2s;
-}
-
-.osmosis-occlusion-rating-anchor > .osmosis-rating button {
-	flex: 1;
 }
 
 

@@ -10,7 +10,7 @@ import { CLOZE_COLOUR_PATTERN, colourAnswer, colourBlank, parseHighlightToken } 
 import { occlusionSteps, type OcclusionStep } from "../study/occlusion-steps";
 import { dueCardsForFenceKey } from "../study/mindmap-study";
 import { addCodeBlockLanguageLabels } from "./codeBlockLabels";
-import { formatInterval } from "../study/study-view";
+import { RATINGS, renderRatingBar } from "../study/rating-bar";
 
 /**
  * A fence resolved into what the two sides render.
@@ -1074,9 +1074,6 @@ export class NoteStudyProcessor {
 		sourcePath: string,
 		onRated?: () => void,
 	): void {
-		// The flashcard study tab's bar: four equal buttons, each with the interval
-		// it would schedule above its label.
-		const ratingEl = container.createDiv({ cls: "osmosis-rating osmosis-study-rating-bar" });
 		// The answer just went on screen. A note card has no "question shown"
 		// moment — it lives inline in the note — and timing from the reveal logged
 		// only the second it took to press a button. The note's study clock times
@@ -1085,20 +1082,14 @@ export class NoteStudyProcessor {
 		const revealedAt = Date.now();
 		const preview = this.session().previewIntervals(cardId, revealedAt);
 
-		const ratings: Array<{ label: string; rating: FSRSRating; cls: string }> = [
-			{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-			{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-			{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-			{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
-		];
-
-		for (const { label, rating, cls } of ratings) {
-			const btn = ratingEl.createEl("button", { cls, attr: { "aria-label": label } });
-			btn.createSpan({ cls: "osmosis-rate-interval", text: formatInterval(preview[rating]) });
-			btn.createSpan({ cls: "osmosis-rate-label", text: label });
-			btn.addEventListener("click", (e) => {
-				e.stopPropagation();
-
+		// The bar every study surface draws, in its own panel: the card's action
+		// row has none.
+		const ratingEl: HTMLElement = renderRatingBar(container, {
+			cls: "osmosis-study-rating-bar",
+			panel: true,
+			intervals: preview,
+			onRate: (rating) => {
+				const label = RATINGS.find((r) => r.rating === rating)!.label;
 				// Snapshot previous schedule before rating
 				const card = this.plugin.cardStore.getCard(cardId);
 				const previousSchedule: ScheduleData | null = card && card.due !== undefined
@@ -1114,7 +1105,9 @@ export class NoteStudyProcessor {
 					}
 					: null;
 
+				// The panel framed the buttons; the verdict reads as plain text.
 				ratingEl.empty();
+				ratingEl.removeClass("osmosis-rating-panel");
 				ratingEl.createSpan({ text: `Rated: ${label}`, cls: "osmosis-note-rated" });
 				this.reviewedCount++;
 				this.updateProgress();
@@ -1137,8 +1130,8 @@ export class NoteStudyProcessor {
 				});
 
 				onRated?.();
-			});
-		}
+			},
+		}).el;
 	}
 
 	/** The note surface's session manager, built on first use. */

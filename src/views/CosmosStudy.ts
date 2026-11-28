@@ -37,6 +37,7 @@ import { parseTrail } from "../cosmos/trail-note";
 import { cardsToGo, nextStop, routeStops, stopDone, threadNodeIds, trailSteps, type RouteStop, type TrailStep } from "../cosmos/trails";
 import type OsmosisPlugin from "../main";
 import { cardIdsForMindmapKey } from "../study/mindmap-study";
+import { previewCardId, renderRatingBar } from "../study/rating-bar";
 import type { StudySessionManager } from "../study/StudySessionManager";
 import { StudyClock } from "../study/study-clock";
 
@@ -74,13 +75,6 @@ const PATHS: readonly { path: StudyPath; label: string }[] = [
 	{ path: "free", label: "Free" },
 	{ path: "due", label: "Due-driven" },
 	{ path: "trail", label: "Trail" },
-];
-
-const RATINGS: readonly { label: string; rating: FSRSRating; cls: string }[] = [
-	{ label: "Again", rating: 1, cls: "osmosis-rate-again" },
-	{ label: "Hard", rating: 2, cls: "osmosis-rate-hard" },
-	{ label: "Good", rating: 3, cls: "osmosis-rate-good" },
-	{ label: "Easy", rating: 4, cls: "osmosis-rate-easy" },
 ];
 
 export class CosmosStudy {
@@ -451,10 +445,16 @@ export class CosmosStudy {
 		}
 		const row = panel.createDiv({ cls: "osmosis-cosmos-study-actions" });
 		if (step?.revealed === true) {
-			const rating = row.createDiv({ cls: "osmosis-rating osmosis-cosmos-study-rating" });
-			for (const { label, rating: value, cls } of RATINGS) {
-				rating.createEl("button", { text: label, cls }).addEventListener("click", () => void this.rate(value));
-			}
+			// The intervals are those of the card the rating would move first. The
+			// session's manager is built here, not on the first rating, so the very
+			// first bar has them too.
+			const previewId = previewCardId(this.allCards, cardIdsForMindmapKey(this.allCards, step.asking), Date.now());
+			this.session ??= this.plugin.createSessionManager("cosmos");
+			renderRatingBar(row, {
+				cls: "osmosis-cosmos-study-rating",
+				intervals: previewId === null ? null : this.session.previewIntervals(previewId),
+				onRate: (rating) => void this.rate(rating),
+			});
 		} else {
 			if (step !== null) row.createEl("button", { text: "Reveal", cls: "mod-cta" }).addEventListener("click", () => this.reveal());
 			const next = row.createEl("button", { text: "Next" });
@@ -465,10 +465,13 @@ export class CosmosStudy {
 						: hidden === 0 || (hidden === 1 && step !== null);
 			next.addEventListener("click", () => this.next());
 		}
-		panel.createDiv({
-			cls: "osmosis-cosmos-study-hint",
-			text: step === null ? this.idleHint(due, left, hidden) : step.revealed ? "Rate it: keys 1–4." : "Recall it, then reveal: space, or click it again.",
-		});
+		// The rating bar carries no hint, as in every other study surface.
+		if (step?.revealed !== true) {
+			panel.createDiv({
+				cls: "osmosis-cosmos-study-hint",
+				text: step === null ? this.idleHint(due, left, hidden) : "Recall it, then reveal: space, or click it again.",
+			});
+		}
 	}
 
 	/** What to say while no card is current. */
