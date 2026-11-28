@@ -12,14 +12,14 @@ related:
   - "[[Map views - Layout dropdown in the style sidebar]]"
   - "[[Cosmos - Remove Flat slices layout]]"
   - "[[3D Graph Phase 8 - 2D-3D toggle]]"
-status: To-Do
+status: In-Review
 batch: 18
 priority:
 progress:
 date_created: 2026-11-28T03:39:06.000Z
 date_modified: 2026-11-28T03:39:06.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-28T04:09:04.000Z
+date_start_actual: 2026-11-28T04:09:04.000Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -80,3 +80,50 @@ Today "2D or 3D" is a per-device toggle, and the Cosmos layout is a per-vault se
 3. Pick Mindmap there: the tab becomes the mind map with no animation, centred on the same node. Ctrl+Z undoes the last edit made before the swap.
 4. Set Default layout = Organic: a note with no layout of its own now opens in Organic.
 5. Cosmos with Follow on: click into a Mindmap note in another pane. The Cosmos tab becomes the mind map.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `b073cb8` on `batch/18-one-map-layouts`. The whole ticket is done; nothing was left as a slice.
+
+**Approach.** The pure model lives in `src/note-layout.ts`. `noteLayout(styles, defaultLayout)` reads `osmosis-styles.layout`; `engineFor` maps Mindmap to the mind map and Organic/Planets to Cosmos; `cosmosLayout` maps a Mindmap note shown in Cosmos to Organic; `writeNoteLayout` sets the key, or removes it (and an emptied `osmosis-styles`) for the default. The plugin adds `noteLayoutOf(path)`, `openNoteMap(leaf, path)` and `setNoteLayout(path, layout)`. `layout` left `CosmosOverlays`: the scene now gets `SceneOverlays = overlays + { layout }`, built by `CosmosView.sceneOverlays()` from the focus note. Each reload calls `applyLayout()`, so a hop, or an edit or undo of the layout, re-lays out the scene. The lift-off is replaced by `src/cosmos/swap-focus.ts`, a `swapFocus` hand-over (`MapFocus` plus `focusNodeId` / `focusChain`) that keeps only "centre on the focused line".
+
+**Decisions**
+- **New `layout` key, not a widened `mapLayout`.** `mapLayout` is the mind map's tree algorithm. Also, the sidebar has written `mapLayout: classic` into notes, and widening would turn those into explicit Mindmap choices that ignore the Default layout. Recorded in `docs/adr/0001-layout-replaces-2d-3d-toggle.md`. `mapLayout` and its sidebar dropdown are untouched; T139 decides their fate.
+- **"Open Cosmos for current note" and the file menu's "Cosmos" still open Cosmos** for any note. A Mindmap note opened that way draws Organic. Otherwise there would be no way into Cosmos while the default is Mindmap and T139's picker doesn't exist yet. Hops inside Cosmos never swap engines; only Follow active note does, as settled.
+- **Both follow directions are implemented.** The unpinned mind map's `active-leaf-change` swaps to Cosmos (follow forced on) for an Organic/Planets note. A following Cosmos swaps to an *unpinned* mind map for a Mindmap note. Follow swaps pass `active: false`, so the pane you clicked keeps focus.
+- **"Open mind map view" (no file) still opens a mind map**, following the active note. It swaps on the next follow move.
+- **The brain button's aria-label and the file-menu item are renamed "Mind map view" → "Map view"**, since they now open the note's layout.
+- **The "Toggle between mind map and Cosmos" command (`mindmap-toggle-3d`) is removed** along with the pill. Toggling an engine contradicts the note's layout; the ADR says don't bring it back.
+- **The Cosmos Layout dropdown (stopgap) lists Mindmap / Organic / Planets and shows the focus note's own layout**, even when Cosmos draws a Mindmap note as Organic. Picking calls `setNoteLayout`.
+- **`setNoteLayout` waits (up to 2 s) for the metadata cache to read the new layout before swapping or re-laying out.** Otherwise the incoming view reads the stale value and flashes the old layout.
+- **The old `osmosis-last-map-view` localStorage value is left in place.** Nothing cleaned it before. It is harmless and just goes unread. `cosmos-legacy.test.ts` still uses the string as an "unrelated key is left alone" sample.
+- **The old per-vault `graph3dOverlays.layout` is dropped on load** (`normalizeOverlays` rebuilds the object) and is not migrated, as settled.
+- Changing the Default layout re-lays out open Cosmos views (`refreshOpenCosmosControls`) but doesn't swap open views between engines.
+- An undo that reverts a recorded layout write re-lays out Cosmos (Organic ↔ Planets) but doesn't swap engines.
+- `CosmosScene.faceNote` lost its `phase` argument (only the lift-off used it), and `standOver`, `linePlateHeight` and `linePlatePixels` are gone.
+- Phone header padding: the `:has(> .osmosis-view-switch)` rule now keys on the leaf's `data-type` for both map views.
+
+| File | Change |
+|---|---|
+| `src/note-layout.ts` (+test) | New: the Layout model |
+| `src/cosmos/swap-focus.ts` (+test) | New: focused-node hand-over across a swap |
+| `src/cosmos/liftoff.ts`, `src/last-map-view.ts` (+tests) | Deleted |
+| `src/main.ts` | `noteLayoutOf`, `openNoteMap`, `setNoteLayout`, `untilLayoutReads`; `swapLeafView(leaf, "mindmap"\|"cosmos", state, keep, active)`; brain button / file menu open in layout; last-map-view and toggle command removed; `defaultLayout` normalised on load |
+| `src/settings.ts` | `defaultLayout` setting (first in the list) |
+| `src/cosmos/overlays.ts` (+test), `settings-sections.ts` | `layout` out of `CosmosOverlays`; helpers take `{ layout }` |
+| `src/cosmos/fit.ts` (+test) | `opensFitted` false when a `swapFocus` is handed over |
+| `src/views/CosmosView.ts` | layout from focus note, `applyLayout`, `swapToMindMap(path, followed)`, `followTo`, `focusNote`; lift-off removed |
+| `src/views/CosmosScene.ts` | `SceneOverlays` carries layout; lift-off methods removed |
+| `src/views/CosmosOverlays.ts` | Layout dropdown = note layout via `source.layout/setLayout` |
+| `src/views/MindMapView.ts` | `swapToCosmos(followed?)`, simplified `land`, follow swap |
+| `src/views/ViewHeader.ts`, `src/view-header.ts` (+test), `ToolRibbon.ts` (+test), `styles.css` | Pill, its command and CSS removed |
+| `GLOSSARY.md`, `docs/adr/0001-…`, `docs/mind-mapping/cosmos.md`, `docs/reference/{commands,settings}.md` | Layout, Default layout, ADR, user docs |
+| comments in `edit-history.ts`, `mindmap-state.ts`, `PropertiesSidebarView.ts` | No longer say "2D/3D toggle" |
+
+**Fixture:** `e2e/fixtures/layout/` → `vault/tests/layout/`: `Layout Harbour.md` (no layout), `Layout Planets Voyage.md` (`layout: planets`) and `Layout Organic Galley.md` (`theme` + `layout: organic`), linked to each other. They have no cards, so there are no dates to back-date.
+
+**Not verified** (only Sawyer can check these in Obsidian):
+- the swap itself: no flash, focus centred, undo across it;
+- that follow swaps leave the clicked pane focused;
+- the phone header padding;
+- that the sidebar's Settings panel follows a swap cleanly.
