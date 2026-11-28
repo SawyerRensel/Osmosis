@@ -91,7 +91,7 @@ function fake(initial: Record<string, Record<string, unknown>>, settings: Partia
 	let excluded = 0;
 	const noteData = new NoteData(
 		app,
-		() => ({ dataLocation: "sidecar", sidecarFolder: "Osmosis/Schedule", ...settings }),
+		() => ({ dataLocation: "sidecar", sidecarFolder: "Osmosis/Data", ...settings }),
 		(path) => path.startsWith("Osmosis/Reviews/"),
 		() => { excluded++; },
 	);
@@ -132,10 +132,10 @@ describe("NoteData.modeOf", () => {
 	});
 
 	it("is sidecar once a sidecar is indexed by name, whatever the setting", () => {
-		const f = fake({ "Sailing/Knots.md": {}, "Osmosis/Schedule/Knots.osmosis.md": {} }, { dataLocation: "note" });
+		const f = fake({ "Sailing/Knots.md": {}, "Osmosis/Data/Knots.osmosis.md": {} }, { dataLocation: "note" });
 		f.noteData.rebuildIndex();
 		expect(f.noteData.modeOf(f.file("Sailing/Knots.md"))).toBe("sidecar");
-		expect(f.noteData.sidecarOf(f.file("Sailing/Knots.md"))?.path).toBe("Osmosis/Schedule/Knots.osmosis.md");
+		expect(f.noteData.sidecarOf(f.file("Sailing/Knots.md"))?.path).toBe("Osmosis/Data/Knots.osmosis.md");
 	});
 });
 
@@ -149,11 +149,11 @@ describe("NoteData.process", () => {
 			f.noteData.process(note, (fm) => { fm["osmosis-schedule"] = { "os-bowline": SCHEDULE }; }),
 			f.noteData.process(note, (fm) => { (fm["osmosis-schedule"] as Record<string, unknown>)["os-cleat"] = SCHEDULE; }),
 		]);
-		expect(f.log.filter((line) => line.startsWith("create"))).toEqual(["create Osmosis/Schedule/Knots.osmosis.md"]);
-		expect(f.log[0]).toBe("mkdir Osmosis/Schedule");
-		expect(f.config.get("userIgnoreFilters")).toEqual(["Archive/", "Osmosis/Schedule/"]);
+		expect(f.log.filter((line) => line.startsWith("create"))).toEqual(["create Osmosis/Data/Knots.osmosis.md"]);
+		expect(f.log[0]).toBe("mkdir Osmosis/Data");
+		expect(f.config.get("userIgnoreFilters")).toEqual(["Archive/", "Osmosis/Data/"]);
 		expect(f.excluded()).toBe(1);
-		expect(f.fm.get("Osmosis/Schedule/Knots.osmosis.md")).toEqual({
+		expect(f.fm.get("Osmosis/Data/Knots.osmosis.md")).toEqual({
 			"osmosis-note": "[[Sailing/Knots]]",
 			"osmosis-schedule": { "os-bowline": SCHEDULE, "os-cleat": SCHEDULE },
 		});
@@ -174,68 +174,68 @@ describe("NoteData.process", () => {
 		await f.noteData.process(f.file("Travel/Pantry.md"), () => undefined);
 		await f.noteData.process(f.file("Knots.md"), () => undefined);
 		expect(f.log.filter((line) => line.startsWith("create"))).toEqual([
-			"create Osmosis/Schedule/Travel.Pantry.osmosis.md",
-			"create Osmosis/Schedule/Knots.osmosis.md",
+			"create Osmosis/Data/Travel.Pantry.osmosis.md",
+			"create Osmosis/Data/Knots.osmosis.md",
 		]);
 	});
 });
 
 describe("NoteData following the note", () => {
 	it("renames the sidecar and repoints its link when the note is renamed", async () => {
-		const f = fake({ "Knots.md": {}, "Osmosis/Schedule/Knots.osmosis.md": { "osmosis-note": "[[Knots]]" } });
+		const f = fake({ "Knots.md": {}, "Osmosis/Data/Knots.osmosis.md": { "osmosis-note": "[[Knots]]" } });
 		f.noteData.rebuildIndex();
 		f.rename("Knots.md", "Sailing/Hitches.md");
 		await settle();
-		const sidecar = "Osmosis/Schedule/Hitches.osmosis.md";
+		const sidecar = "Osmosis/Data/Hitches.osmosis.md";
 		expect(f.noteData.sidecarOf(f.file("Sailing/Hitches.md"))?.path).toBe(sidecar);
 		expect(f.fm.get(sidecar)?.["osmosis-note"]).toBe("[[Sailing/Hitches]]");
-		expect(f.files.has("Osmosis/Schedule/Knots.osmosis.md")).toBe(false);
+		expect(f.files.has("Osmosis/Data/Knots.osmosis.md")).toBe(false);
 	});
 
 	it("qualifies an existing sidecar when a collision appears, and unqualifies it when the collision goes", async () => {
-		const f = fake({ "Travel/Pantry.md": {}, "Osmosis/Schedule/Pantry.osmosis.md": { "osmosis-note": "[[Travel/Pantry]]" } });
+		const f = fake({ "Travel/Pantry.md": {}, "Osmosis/Data/Pantry.osmosis.md": { "osmosis-note": "[[Travel/Pantry]]" } });
 		f.noteData.rebuildIndex();
 		const note = f.file("Travel/Pantry.md");
 		f.create("Home/Pantry.md");
 		await settle();
-		expect(f.noteData.sidecarOf(note)?.path).toBe("Osmosis/Schedule/Travel.Pantry.osmosis.md");
+		expect(f.noteData.sidecarOf(note)?.path).toBe("Osmosis/Data/Travel.Pantry.osmosis.md");
 		expect(f.noteData.sidecarOf(f.file("Home/Pantry.md"))).toBeNull();
 
 		f.rename("Home/Pantry.md", "Home/Larder.md");
 		await settle();
-		expect(f.noteData.sidecarOf(note)?.path).toBe("Osmosis/Schedule/Pantry.osmosis.md");
+		expect(f.noteData.sidecarOf(note)?.path).toBe("Osmosis/Data/Pantry.osmosis.md");
 	});
 
 	it("keeps writing to the sidecar while its rename is queued, without making a second one", async () => {
-		const f = fake({ "Knots.md": {}, "Osmosis/Schedule/Knots.osmosis.md": { "osmosis-note": "[[Knots]]" } });
+		const f = fake({ "Knots.md": {}, "Osmosis/Data/Knots.osmosis.md": { "osmosis-note": "[[Knots]]" } });
 		f.noteData.rebuildIndex();
 		f.rename("Knots.md", "Hitches.md");
 		await f.noteData.process(f.file("Hitches.md"), (fm) => { fm["osmosis-schedule"] = { "os-bowline": SCHEDULE }; });
 		await settle();
 		expect(f.log.some((line) => line.startsWith("create"))).toBe(false);
-		expect(f.fm.get("Osmosis/Schedule/Hitches.osmosis.md")?.["osmosis-schedule"]).toEqual({ "os-bowline": SCHEDULE });
+		expect(f.fm.get("Osmosis/Data/Hitches.osmosis.md")?.["osmosis-schedule"]).toEqual({ "os-bowline": SCHEDULE });
 	});
 
 	it("trashes the sidecar when the note is deleted, and unqualifies the survivor", async () => {
 		const f = fake({
 			"Travel/Pantry.md": {},
 			"Home/Pantry.md": {},
-			"Osmosis/Schedule/Travel.Pantry.osmosis.md": {},
-			"Osmosis/Schedule/Home.Pantry.osmosis.md": {},
+			"Osmosis/Data/Travel.Pantry.osmosis.md": {},
+			"Osmosis/Data/Home.Pantry.osmosis.md": {},
 		});
 		f.noteData.rebuildIndex();
 		f.remove("Home/Pantry.md");
 		await settle();
-		expect(f.log).toContain("trash Osmosis/Schedule/Home.Pantry.osmosis.md");
-		expect(f.noteData.sidecarOf(f.file("Travel/Pantry.md"))?.path).toBe("Osmosis/Schedule/Pantry.osmosis.md");
+		expect(f.log).toContain("trash Osmosis/Data/Home.Pantry.osmosis.md");
+		expect(f.noteData.sidecarOf(f.file("Travel/Pantry.md"))?.path).toBe("Osmosis/Data/Pantry.osmosis.md");
 	});
 
 	it("tells listeners when a sidecar changes or goes away", () => {
-		const f = fake({ "Knots.md": {}, "Osmosis/Schedule/Knots.osmosis.md": {} });
+		const f = fake({ "Knots.md": {}, "Osmosis/Data/Knots.osmosis.md": {} });
 		f.noteData.rebuildIndex();
 		const seen: string[] = [];
 		f.noteData.onChange((path) => seen.push(path));
-		const sidecar = f.file("Osmosis/Schedule/Knots.osmosis.md");
+		const sidecar = f.file("Osmosis/Data/Knots.osmosis.md");
 		f.fire("meta:changed", sidecar);
 		f.fire("meta:changed", f.file("Knots.md"));
 		f.files.delete(sidecar.path);
@@ -247,25 +247,25 @@ describe("NoteData following the note", () => {
 
 describe("NoteData orphans", () => {
 	it("renames an old hash-named sidecar to its note's name, found by its link", async () => {
-		const f = fake({ "Sailing/Knots.md": {}, "Osmosis/Schedule/a3f9c2e1.osmosis.md": { "osmosis-note": "[[Sailing/Knots]]" } });
+		const f = fake({ "Sailing/Knots.md": {}, "Osmosis/Data/a3f9c2e1.osmosis.md": { "osmosis-note": "[[Sailing/Knots]]" } });
 		const seen: string[] = [];
 		f.noteData.onChange((path) => seen.push(path));
 		f.noteData.rebuildIndex();
 		await settle();
-		expect(f.noteData.sidecarOf(f.file("Sailing/Knots.md"))?.path).toBe("Osmosis/Schedule/Knots.osmosis.md");
+		expect(f.noteData.sidecarOf(f.file("Sailing/Knots.md"))?.path).toBe("Osmosis/Data/Knots.osmosis.md");
 		expect(seen).toEqual(["Sailing/Knots.md"]);
 	});
 
 	it("leaves an orphan whose note has its own sidecar, or whose link names no note, and counts it", async () => {
 		const f = fake({
 			"Knots.md": {},
-			"Osmosis/Schedule/Knots.osmosis.md": {},
-			"Osmosis/Schedule/a3f9c2e1.osmosis.md": { "osmosis-note": "[[Knots]]" },
-			"Osmosis/Schedule/Tides.osmosis.md": { "osmosis-note": "[[Tides]]" },
+			"Osmosis/Data/Knots.osmosis.md": {},
+			"Osmosis/Data/a3f9c2e1.osmosis.md": { "osmosis-note": "[[Knots]]" },
+			"Osmosis/Data/Tides.osmosis.md": { "osmosis-note": "[[Tides]]" },
 		});
 		f.noteData.rebuildIndex();
 		expect(await f.noteData.reconcile()).toBe(2);
-		expect(f.noteData.sidecarOf(f.file("Knots.md"))?.path).toBe("Osmosis/Schedule/Knots.osmosis.md");
+		expect(f.noteData.sidecarOf(f.file("Knots.md"))?.path).toBe("Osmosis/Data/Knots.osmosis.md");
 		expect(f.log.some((line) => line.startsWith("rename"))).toBe(false);
 	});
 });

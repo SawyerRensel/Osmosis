@@ -6,7 +6,7 @@ osmosis-deck: Testing/Sidecar
 # Larder (T125 fix round 1)
 
 Starts with **no Osmosis data**. Study one card below and its sidecar appears
-as `Osmosis/Schedule/Larder.osmosis.md`.
+as `Osmosis/Data/Larder.osmosis.md`.
 
 Then rename this note to `Spice rack`. It now shares a name with
 `naming/Spice rack`, so **both** sidecars are qualified with their folder:

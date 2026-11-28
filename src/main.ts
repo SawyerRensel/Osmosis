@@ -12,7 +12,7 @@ import { FenceWriter } from "./store/FenceWriter";
 import { ScheduleStore, SCHEDULE_FRONTMATTER_KEY, parseScheduleFrontmatter, parseDisabledFrontmatter, parseOcclusionFrontmatter, parseBuriedFrontmatter } from "./store/ScheduleStore";
 import { NoteData } from "./store/NoteData";
 import { DataMover, type VaultMoveResult } from "./store/DataMover";
-import { SIDECAR_SUFFIX, hasSidecarKeys, isSidecarPath } from "./store/sidecar";
+import { SIDECAR_SUFFIX, hasSidecarKeys, isSidecarPath, migratedSidecarFolder } from "./store/sidecar";
 import { FENCES_FRONTMATTER_KEY, parseFencesFrontmatter, type FenceOverlay } from "./store/fence-sidecar";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
@@ -710,11 +710,15 @@ export default class OsmosisPlugin extends Plugin {
 			// Before the scan: line-card schedules in sidecars read through it.
 			// Before the migration too, which writes where each note keeps its styles.
 			this.noteData.rebuildIndex();
-			void this.excludeSidecarFolderOnce();
+			// A vault on the old default folder moves first (it never rejects),
+			// so nothing below writes a sidecar into the folder being vacated.
+			void this.migrateSidecarFolderDefault().then(() => {
+				void this.excludeSidecarFolderOnce();
 
-			// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
-			void this.migrateMapSettingsToFrontmatter();
-			this.cardSync.syncAll().then(() => {
+				// Migrate per-note mapSettings from data.json → osmosis-styles frontmatter
+				void this.migrateMapSettingsToFrontmatter();
+				return this.cardSync.syncAll();
+			}).then(() => {
 				this.refreshDashboard();
 				this.lineReveal.refreshChrome();
 			}).catch((error: unknown) => {
@@ -1126,6 +1130,28 @@ export default class OsmosisPlugin extends Plugin {
 		if (files.length > 0) {
 			const failed = files.length - moved;
 			new Notice(`Moved ${plural(moved, "sidecar file")} to "${folder}".${failed > 0 ? ` ${plural(failed, "file")} could not be moved: see the console.` : ""}`);
+		}
+	}
+
+	/**
+	 * Move a vault still on the old default sidecar folder to the new one, once
+	 * the layout is ready (the move needs the vault's files and the stores).
+	 * With files on disk it goes through `changeSidecarFolder`, which also
+	 * swaps the Excluded-files entry; with no folder there is nothing to move,
+	 * so only the setting changes.
+	 */
+	private async migrateSidecarFolderDefault(): Promise<void> {
+		const target = migratedSidecarFolder(this.settings.sidecarFolder);
+		if (target === null) return;
+		try {
+			if (this.app.vault.getAbstractFileByPath(this.settings.sidecarFolder) === null) {
+				this.settings.sidecarFolder = target;
+				await this.saveData(this.settings);
+				return;
+			}
+			await this.changeSidecarFolder(target);
+		} catch (error) {
+			console.error("Osmosis: moving the sidecar folder to its new default failed", error);
 		}
 	}
 

@@ -6,6 +6,7 @@ import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
 import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
 import type { SettingsSectionId } from "./cosmos/settings-sections";
+import { DEFAULT_SIDECAR_FOLDER } from "./store/sidecar";
 export type { MapSettings, BranchLineStyle, BranchLinePattern, BranchLineTaper } from "./styles";
 export { DEFAULT_MAP_SETTINGS } from "./styles";
 
@@ -229,7 +230,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 
 	// Data storage defaults
 	dataLocation: "sidecar",
-	sidecarFolder: "Osmosis/Schedule",
+	sidecarFolder: DEFAULT_SIDECAR_FOLDER,
 	sidecarFolderExcluded: false,
 
 	// Note inclusion defaults

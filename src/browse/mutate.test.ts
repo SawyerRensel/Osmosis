@@ -333,7 +333,7 @@ describe("setSuspended", () => {
 	});
 
 	it("snapshots the note's sidecar too, so undo restores schedules kept there", async () => {
-		const sidecar = "Osmosis/Schedule/abc.osmosis.md";
+		const sidecar = "Osmosis/Data/abc.osmosis.md";
 		h.contents.set(sidecar, "before");
 		h.deps.files.scheduleFile = () => Promise.resolve({ path: sidecar } as never);
 		h.deps.lineCards.flushPath = (notePath) => {

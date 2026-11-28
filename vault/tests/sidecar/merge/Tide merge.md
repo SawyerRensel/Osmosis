@@ -38,7 +38,7 @@ osmosis-styles: {"styles": {"^smrg-l1": {"fill": "#2e86de"}}}
 # Most recent copy wins (T128 fix round 1)
 
 This note holds data **in both places**: these properties and fence headers,
-and a hand-written sidecar `Osmosis/Schedule/Tide merge.osmosis.md`. Every
+and a hand-written sidecar `Osmosis/Data/Tide merge.osmosis.md`. Every
 copy in the note has **reps 11–19**, every copy in the sidecar **reps 21–29**,
 so after a move the `reps:` value says which copy won.
 

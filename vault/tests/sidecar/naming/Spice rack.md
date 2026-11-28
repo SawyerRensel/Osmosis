@@ -6,7 +6,7 @@ osmosis-deck: Testing/Sidecar
 # Spice rack (T125 fix round 1)
 
 Starts with **no Osmosis data**. Study one card below and its sidecar appears
-as `Osmosis/Schedule/Spice rack.osmosis.md`: named after this note, because no
+as `Osmosis/Data/Spice rack.osmosis.md`: named after this note, because no
 other note in the vault is called "Spice rack".
 
 Then rename `Galley/Larder` to `Spice rack` (see `Galley/Larder.md`): the two

@@ -8,7 +8,7 @@ osmosis-deck: Testing/Sidecar fences
 This note starts with **no Osmosis data** in its properties, so with *Data
 location* set to **Sidecar file** (the default) it is a sidecar-mode note.
 Rating, burying or suspending any fence card below writes to the sidecar's
-`osmosis-fences` (in `Osmosis/Schedule/`), keyed by the fence `id`. The fence
+`osmosis-fences` (in `Osmosis/Data/`), keyed by the fence `id`. The fence
 text in this note must stay **byte-for-byte unchanged**: no `due:`, `r:`,
 `c1:`, `buriedUntil:` or `exclude:` lines ever appear in it.
 
