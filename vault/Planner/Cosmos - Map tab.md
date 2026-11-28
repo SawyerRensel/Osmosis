@@ -11,14 +11,14 @@ location:
 related:
   - "[[Map views - Layout dropdown in the style sidebar]]"
   - "[[3D Graph - Settings in the style sidebar]]"
-status: To-Do
+status: In-Review
 batch: 18
 priority:
 progress:
 date_created: 2026-11-28T03:39:06.000Z
 date_modified: 2026-11-28T03:39:06.000Z
-date_start_scheduled:
-date_start_actual:
+date_start_scheduled: 2026-11-28T08:56:47Z
+date_start_actual: 2026-11-28T08:56:47Z
 date_end_scheduled:
 date_end_actual:
 all_day: false
@@ -73,3 +73,37 @@ Carried over from batch 17. It follows T139 ([[Map views - Layout dropdown in th
 2. Change the Theme, then Default fill: the plates change. Open the same note in the mind map: it carries the same styles.
 3. Raise the link depth so the scene has several notes, and clear the selection: the hint shows. Select a node in a linked note: the sections now edit that note.
 4. Layout's description names the focus note. Pick Planets: it applies.
+
+## Batch implementation notes (awaiting manual test)
+
+Code commit: `0be0cad` on `batch/18-one-map-layouts`.
+
+**Approach.** The mind map Map tab's code reads and writes through the mind map (`getActiveMindMap()`: its in-memory `osmosis-styles` cache, `processStylesTracked`, `applyMapSettings`, the variant methods). Cosmos has no mind map of the note, so a small stand-in, `NoteMapStyles` (`src/views/note-map-styles.ts`), plays that role for one note. The sidebar now asks `getMapStyleTarget()` (the mind map, else Cosmos's `NoteMapStyles`) everywhere the Map tab's style code used `getActiveMindMap()`. `renderMapTab` is split into `renderMapThemeSections` (Theme, Variant), the mind map's Layout section, and `renderMapStyleSections` (Background to Reset all). Cosmos's `renderCosmosMapTab` stacks Theme/Variant, Cosmos's own Layout & spacing section (focus note), Background to Reset all, then Show / Edges / Camera / Look. `CosmosSettingsPanel` takes an optional `layoutEl`, so its Layout section is drawn in that slot rather than with the others.
+
+**Decisions**
+- **Cosmos's writes are undoable in Cosmos.** `CosmosView.processMapStyles` writes through `edits.processFrontMatter` (one undo step) and sets `lastEditPath`, so Ctrl+Z with nothing selected undoes the Map tab edit. The note's own text said `noteData.process`. I went with the tracked write, which matches the mind map's undoable writes.
+- **Cosmos redraws by itself.** The write lands in the note (or its sidecar), and Cosmos's existing `resolve` / `noteData.onChange` listeners reload it. `NoteMapStyles.applyMapSettings` is a no-op.
+- **The style target** is `CosmosView.styleNotePath()`: the primary selected note or line plate's note, else `soleNote`. `soleNote` is a new field set on every reload, and the sidebar is told (`notifySettings`) when it changes. The tab re-renders only when the target path changes, so selecting another line in the same note does not rebuild it.
+- **A "Styles of *Note*" line** heads the style sections, because in a scene with several notes it is otherwise unclear which note they edit. The hint "Select a node to style its note." takes its place when there is no target.
+- **"Save node style to variant" is hidden in Cosmos.** It keys styles by the mind map's node keys and selection. Variant create, rename, delete and the Active dropdown all work.
+- **Extract/save theme in Cosmos** takes the theme, `baseStyle` and the map settings, but not per-node depth overrides. The mind map folds those in from its laid-out nodes, and Cosmos has none (`getNodeMap` is optional on `MapStyleTarget`).
+- **External changes** (an undo, or the mind map editing the same note) re-render the style sections when the note's parsed `osmosis-styles` differs from what the tab holds. They are skipped while a colour picker is open, so a drag is not fought.
+- **The variant mutations are duplicated** as pure functions in `note-map-styles.ts`, not shared with `MindMapView`. I left `MindMapView` untouched so the mind map's behaviour cannot change. Sharing them is a candidate cleanup.
+- The panel's section is still named "Layout & spacing" (from T139), not "Layout".
+
+| File | Change |
+|---|---|
+| `src/views/note-map-styles.ts` | New: `MapStyleTarget` interface, `NoteMapStyles` (one note's map styles for Cosmos), pure variant writes |
+| `src/views/note-map-styles.test.ts` | New: 7 tests (cache before the metadata cache catches up, theme, variants) |
+| `src/views/PropertiesSidebarView.ts` | Tab label "Map" for Cosmos. `getMapStyleTarget()`. `renderMapTab` split. `renderCosmosMapTab` + `showCosmosStyleNote` replace `renderSettingsTab`. Save-to-variant hidden without a mind map |
+| `src/views/CosmosView.ts` | `styleNotePath()`, `processMapStyles()`, `soleNote` tracked per reload with a settings notification |
+| `src/views/CosmosOverlays.ts` | `CosmosSettingsPanel` optional `layoutEl` for its Layout section |
+| `styles.css` | `.osmosis-cosmos-style-note` padding |
+
+**Fixture:** reused `vault/tests/graph3d/Branch Lines.md` (it links `[[Rigging]]`, so raising the depth gives a two-note scene).
+
+**Not verified (no Obsidian here):** everything visual. In particular:
+- that Cosmos redraws promptly after a Theme or Default fill change. Themes show only in the *Mind map style* colour mode, the default;
+- that Background applies only in a single-note scene, as before;
+- that the hint and target switch happen on selection and on a depth change;
+- undo of a Map tab edit from Cosmos.
