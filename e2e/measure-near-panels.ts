@@ -1,5 +1,5 @@
 // Measures the near tier's per-frame script cost in Node: flat CSS2D panels
-// (Organic / Flat slices) against tilted CSS3D panels (Planets mode, P3), with
+// (Organic) against tilted CSS3D panels (Planets mode, P3), with
 // the same live panels over the same planet. It runs the real `CosmosNear`
 // (`update`, which chooses and tilts the panels) and three's real
 // `CSS2DRenderer` and `CSS3DRenderer` (`render`, which calls each panel's

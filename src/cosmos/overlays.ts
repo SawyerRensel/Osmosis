@@ -26,8 +26,8 @@ export const OVERLAY_EDGE_KINDS: readonly OverlayEdgeKind[] = ["hierarchy", "lin
 /** What carries text: plates and the near tier's live panels, plates only, or neither (blank plates). */
 export type LabelMode = "all" | "plates" | "none";
 
-/** How notes are laid out: organic 3D, flat slices (the flatten slider), or planets (`planets.ts`). */
-export type LayoutMode = "organic" | "flat" | "planets";
+/** How notes are laid out: organic 3D, or planets (`planets.ts`). */
+export type LayoutMode = "organic" | "planets";
 
 export interface CosmosOverlays {
 	colorBy: ColorMode;
@@ -42,10 +42,8 @@ export interface CosmosOverlays {
 	nodeSpacing: number;
 	/** Planets only: the Continent spacing slider, a multiple of today's clear space round each continent (`CONTINENT_MARGIN`), `SPACING_MIN` to `SPACING_MAX`. */
 	continentSpacing: number;
-	/** The Layout choice. The flatten slider applies in `flat` only. */
+	/** The Layout choice. */
 	layout: LayoutMode;
-	/** The flatten slider, 0–1: nothing flat at 0, everything under each note's title flat at 1 (`flatDepth` in `flatten.ts`). Kept while another layout is chosen. */
-	flatten: number;
 	/** Planets only: the Direction of every continent's 2D map. A note's own 2D map settings don't apply on a planet. */
 	continentDirection: ContinentDirection;
 	/** Planets only: the Balance of every continent's 2D map (unused by radial). A note's own 2D map settings don't apply on a planet. */
@@ -79,9 +77,7 @@ export const DEFAULT_OVERLAYS: CosmosOverlays = {
 	noteSpacing: 1,
 	nodeSpacing: 1,
 	continentSpacing: 1,
-	// Moderate: a note's title and the headings under it spread in 3D, deeper lines lie flat (flat depth 2).
-	layout: "flat",
-	flatten: 0.75,
+	layout: "organic",
 	continentDirection: "left-right",
 	continentBalance: "one-side",
 	coreLayers: 1,
@@ -95,7 +91,7 @@ export const DEFAULT_OVERLAYS: CosmosOverlays = {
 
 const COLOR_MODES: readonly ColorMode[] = ["style", "note", "memory", "tag", "type"];
 const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
-const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "flat", "planets"];
+const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "planets"];
 export const CONTINENT_DIRECTIONS: readonly ContinentDirection[] = ["left-right", "top-down", "radial"];
 export const CONTINENT_BALANCES: readonly ContinentBalance[] = ["one-side", "both-sides", "alternating"];
 
@@ -119,12 +115,11 @@ export function normalizeOverlays(raw: unknown): CosmosOverlays {
 		edges,
 		forceBalance: number(value.forceBalance, DEFAULT_OVERLAYS.forceBalance, 0, 1),
 		linksPull: typeof value.linksPull === "boolean" ? value.linksPull : DEFAULT_OVERLAYS.linksPull,
-		// Saved before the Layout choice: the flatten slider at Off was organic.
 		noteSpacing: number(value.noteSpacing, DEFAULT_OVERLAYS.noteSpacing, SPACING_MIN, SPACING_MAX),
 		nodeSpacing: number(value.nodeSpacing, DEFAULT_OVERLAYS.nodeSpacing, SPACING_MIN, SPACING_MAX),
 		continentSpacing: number(value.continentSpacing, DEFAULT_OVERLAYS.continentSpacing, SPACING_MIN, SPACING_MAX),
-		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : value.flatten === 0 ? "organic" : DEFAULT_OVERLAYS.layout,
-		flatten: number(value.flatten, DEFAULT_OVERLAYS.flatten, 0, 1),
+		// A saved "flat" (the Flat slices layout, removed in T137) reads as the default, Organic, and its flatten slider is dropped.
+		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : DEFAULT_OVERLAYS.layout,
 		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
 		continentBalance: CONTINENT_BALANCES.includes(value.continentBalance as ContinentBalance) ? (value.continentBalance as ContinentBalance) : DEFAULT_OVERLAYS.continentBalance,
 		coreLayers: Math.round(number(value.coreLayers, DEFAULT_OVERLAYS.coreLayers, 1, MAX_CORE_LAYERS)),
@@ -147,9 +142,6 @@ export function spacingChanged(before: SpacingSliders, after: SpacingSliders & P
 	return before.noteSpacing !== after.noteSpacing || before.nodeSpacing !== after.nodeSpacing || (after.layout === "planets" && before.continentSpacing !== after.continentSpacing);
 }
 
-/** The flatten position in effect: the slider's in the flat-slices layout, nothing flat otherwise. */
-export const effectiveFlatten = (overlays: Pick<CosmosOverlays, "layout" | "flatten">): number => (overlays.layout === "flat" ? overlays.flatten : 0);
-
 /** Whether the Overlays change from `before` to `after` changes how Planets mode lays continents out, so every planet must be laid out afresh. */
 export function continentStyleChanged(before: Pick<CosmosOverlays, "layout" | "continentDirection" | "continentBalance">, after: Pick<CosmosOverlays, "layout" | "continentDirection" | "continentBalance">): boolean {
 	return after.layout === "planets" && (before.continentDirection !== after.continentDirection || before.continentBalance !== after.continentBalance);
@@ -168,8 +160,8 @@ export function edgeShown(kind: GraphEdgeKind, toGhost: boolean, edges: Readonly
 /**
  * Whether an edge pulls. A hidden kind no longer pulls (the Hierarchy toggle
  * is the exception: it only hides the drawing, since a note's shape is its
- * hierarchy and flattening depends on it), and neither do links when "Links
- * pull" is off, ghost targets included.
+ * hierarchy), and neither do links when "Links pull" is off, ghost targets
+ * included.
  */
 export function linkPulls(kind: GraphEdgeKind, toGhost: boolean, overlays: Pick<CosmosOverlays, "edges" | "linksPull">): boolean {
 	if (kind === "hierarchy") return true;

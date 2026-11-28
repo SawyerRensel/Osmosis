@@ -34,7 +34,7 @@ import { CosmosNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRe
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../cosmos/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, nodeFootprint, noteHue, spriteLabel, type Spacing } from "../cosmos/appearance";
 import { DEFAULT_FONT, cssColor, fontKey, nodeLook, textScale, type NodeLook } from "../cosmos/node-style";
-import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, effectiveFlatten, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
+import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
 import type { NearTierSettings } from "../cosmos/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateCapEm, plateWidthEm, styleWidthFromEm } from "../cosmos/near";
 import { LINE_PLATE_HEIGHT, PLATE_PAD_X_EM } from "../cosmos/plates";
@@ -47,8 +47,7 @@ import { dollyDistance, pickNode, wheelNotches, type ScreenNode } from "../cosmo
 import { WheelClassifier, wheelZoomStep } from "../cosmos/wheel-input";
 import { pinchDollyDistance, rayDistanceAtDepth, zoomPivotDistance } from "../cosmos/pinch-zoom";
 import type { Placed } from "../cosmos/positions";
-import { chargeStrengths, spaceCharges } from "../cosmos/settle";
-import { FlatLayouts, facingPhase, flatCharges, flatDepth, flatIndex, flatLinkScale, flattenStep, notePush, type FlatBranch, type FlatPlace, type NoteBody } from "../cosmos/flatten";
+import { chargeStrengths, notePush, spaceCharges, type NoteBody } from "../cosmos/settle";
 import { FAR_SIDE_GLSL, showsText } from "../cosmos/far-side";
 import { PLATE_END_ATTRIBUTES, patchOwnPlate, writePlateEnd, type PlateEndArrays } from "../cosmos/own-plate";
 import { CosmosBoundaries, type BoundarySurface } from "./CosmosBoundaries";
@@ -59,7 +58,7 @@ import { HINT_BASE_PX, HINT_EM_RATIO, chooseHints, exitDistance, hintBox, hintFa
 import { branchEnds, dashOf, hierarchyDepths, styledEnds, type TaperEnds } from "../cosmos/taper";
 import { branchPath, needsRibbon, onSphere } from "../cosmos/branch-look";
 import { FOCUS_DIM_GLSL, plateVisibility } from "../cosmos/focus";
-import { PlanetWorld, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../cosmos/planets";
+import { PlanetWorld, facingPhase, hoverPose, type Lane, laneArc, laneBow, planetTrees, surfaceArc, type ContinentStyle, type TangentFrame } from "../cosmos/planets";
 import { gestureFor, movedPastSlop, type PointerGesture } from "../pointer-gesture";
 import { flightPose, glideEnd, glidePose, shiftGlide, startFlight, startTrip, tripPose, viewingDistance, type Flight, type Glide, type Trip, type Vec3 } from "../cosmos/flight";
 import { atPose, blendPose, hoverFlightPose, restingUp, rideBlend, startHover, type CameraState, type HoverFlight } from "../cosmos/hover";
@@ -106,7 +105,7 @@ interface EngineNode extends NodeObject {
 	shape: PlateShape;
 	/** How far the node reaches for spacing: its plate or its near-tier panel, whichever is bigger (`nodeExtent`). */
 	extent: number;
-	/** The rectangle it takes up: its plate, grown to its near-tier panel (`nodeFootprint`). Flat and Planets spacing and the boundaries use it. */
+	/** The rectangle it takes up: its plate, grown to its near-tier panel (`nodeFootprint`). Planets spacing and the boundaries use it. */
 	footprint: { width: number; height: number };
 	/** In the multi-select (`CosmosScene.selection`): its plate wears the selection border. */
 	selected?: boolean;
@@ -387,7 +386,7 @@ const LANE_OPACITY = 0.8;
 /** Segments in a surface arc and in a lane. */
 const ARC_SEGMENTS = 6;
 const LANE_SEGMENTS = 12;
-/** The cross axis a branch line's shape is built across off a planet (`branchPath`): world up, which a flat slice's rows run down. */
+/** The cross axis a branch line's shape is built across off a planet (`branchPath`): world up. */
 const WORLD_UP: Vec3 = Object.freeze({ x: 0, y: 1, z: 0 });
 /** Link particles: world units a second, and their size in world units (a line plate is 5 tall). */
 const PARTICLE_SPEED = 25;
@@ -425,25 +424,20 @@ export class CosmosScene {
 	private readonly linkForce: LinkForce | undefined;
 	/** Many-body strength per node; nodes not in it are left out of the force. */
 	private charge = new Map<string, number>();
-	/** Each note's 2D layout at plate sizes, for its flat branches (see `cosmos/flatten.ts`). */
-	private readonly flatLayouts = new FlatLayouts();
-	/** The flat branches of the loaded nodes at the flatten slider's depth, and where each of their lines sits. */
-	private flatBranches: FlatBranch[] = [];
 	/** Planets mode: each note's planet, laid out once, and its surface plates' places (`planets.ts`). Empty in other layouts. */
 	private readonly world = new PlanetWorld();
 	/** Nodes on no planet (tags, files, ghosts), which planets push out of themselves. */
 	private stars: EngineNode[] = [];
 	/** Planets mode: the pulling links between bodies (a planet, or a star), which `PlanetWorld.step` pulls rather than d3 (`buildLanes`). */
 	private lanes: Lane[] = [];
-	private flatPlaces = new Map<string, FlatPlace>();
-	/** Each loaded note's ring phase (`ringDirections`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
+	/** Each loaded note's ring phase (where Planets faces its first continent: `facingPhase`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
 	private ringPhases = new Map<string, number>();
 	/** Notes to recapture a ring phase for at the next `pushData`, with the phase to give it (null: face the camera). */
 	private pendingFaces = new Map<string, number | null>();
-	/** Each note's core with the many-body strength its flat lines left it, and the charged nodes it pushes (`notePush`). */
+	/** Each note's core with the many-body strength Note spacing owes it (`spaceCharges`), and the charged nodes it pushes (`notePush`). */
 	private noteCores = new Map<string, { body: EngineNode; strength: number }>();
 	private charged: NoteBody[] = [];
-	/** The nodes not departing, by ID, for the flatten force. */
+	/** The nodes not departing, by ID. */
 	private live = new Map<string, EngineNode>();
 	private readonly plates: CosmosPlates;
 	/** Live Markdown panels over the nearest plates. */
@@ -675,12 +669,8 @@ export class CosmosScene {
 			initialize: (nodes: EngineNode[], ...args: unknown[]) => charge.initialize(nodes.filter((n) => this.charge.has(n.id)), ...args),
 		});
 		this.graph.d3Force("charge", settleCharge as never);
-		// Flat lines leave the many-body force; their notes' cores push other notes for them.
+		// What Note spacing owes beyond the charge: each note's core pushes other notes for its lines.
 		this.graph.d3Force("notes", ((alpha: number) => notePush(this.noteCores, this.charged, alpha)) as never);
-		// Added last, so it runs after the other forces each tick: it lays flat
-		// branches out in their slices, rigidly, and hands their pull to their heads.
-		const keep = 1 - this.graph.d3VelocityDecay();
-		this.graph.d3Force("flatten", ((alpha: number) => flattenStep(this.flatBranches, (id) => this.live.get(id), keep, alpha)) as never);
 		// Planets mode, last of all: links between planets and stars pull each planet as one body (`buildLanes`), surface
 		// plates hand their pull to their planet's core, planets collide by radius, and the plates are put back on their cores.
 		// Nothing to do in other layouts.
@@ -768,8 +758,6 @@ export class CosmosScene {
 			existing.look = look;
 			if (relabel) {
 				existing.shape = this.shapeFor(graph);
-				// Flat branches are laid out at plate sizes.
-				this.flatLayouts.clear();
 				plated++;
 			}
 			sizeNode(existing);
@@ -865,7 +853,7 @@ export class CosmosScene {
 
 	/**
 	 * Give each note core a ring phase that has none, or that `faceNote` asked
-	 * to renew, so its first slice points at the camera: where the camera is
+	 * to renew, so its first continent (in Planets) points at the camera: where the camera is
 	 * now, which is on the side a flight to the note ends (`startFlight` keeps
 	 * the viewing direction). A core the engine hasn't placed yet is measured
 	 * from where the camera looks. Phases of notes no longer loaded are dropped.
@@ -895,28 +883,24 @@ export class CosmosScene {
 
 	/**
 	 * Hand the engine the current nodes and links, with the many-body force
-	 * limited to what is still settling, and the flat branches at the flatten
-	 * slider's depth (their rigid lines leave the many-body force, and their
-	 * notes' cores push other notes for them: `notePush`).
+	 * limited to what is still settling, and the push each note's core owes
+	 * other notes for Note spacing (`notePush`).
 	 */
 	private pushData(): void {
 		const live = this.nodes.filter((node) => !node.departing);
 		this.live = new Map(live.map((node) => [node.id, node]));
 		this.capturePhases(live);
-		this.flatBranches = this.flatLayouts.branches(live.map((node) => node.graph), flatDepth(effectiveFlatten(this.overlays)), this.flatSize, (core) => this.ringPhases.get(core.id) ?? 0, this.overlays.nodeSpacing);
-		this.flatPlaces = flatIndex(this.flatBranches);
 		this.updatePlanets(live);
 		// In planets mode only the planets' cores and the free-floating stars feel the many-body force.
 		const charged = this.world.size === 0 ? live : live.filter((node) => (this.world.planetOf(node.id) ?? node.id) === node.id);
 		this.charge = chargeStrengths(charged.map((node) => ({ ...node.graph, pinned: node.fx !== undefined })), CHARGE);
-		// The spacing sliders scale the charge; what notes owe Note spacing beyond that is pushed from the note as a whole, like a flat branch's share.
+		// The spacing sliders scale the charge; what notes owe Note spacing beyond that is pushed from the note as a whole.
 		const owed = spaceCharges(this.charge, (id) => this.live.get(id)?.graph.path, spacingOf(this.overlays), this.world.size > 0);
-		const shares = flatCharges(this.charge, this.flatBranches);
 		this.noteCores = new Map();
 		for (const node of live) {
-			if (isNoteRoot(node.graph) && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: (shares.get(node.id) ?? 0) + (owed.get(node.graph.path) ?? 0) });
+			if (isNoteRoot(node.graph) && node.graph.path !== undefined) this.noteCores.set(node.graph.path, { body: node, strength: owed.get(node.graph.path) ?? 0 });
 		}
-		this.charged = shares.size === 0 && owed.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
+		this.charged = owed.size === 0 ? [] : live.filter((node) => this.charge.has(node.id)).map((node) => ({ body: node, path: node.graph.path }));
 		this.degree.clear();
 		this.pulling.clear();
 		const ghosts = new Set(this.nodes.filter((node) => node.graph.kind === "ghost").map((node) => node.id));
@@ -945,10 +929,10 @@ export class CosmosScene {
 		} else {
 			const edges = this.links.map((link) => ({ kind: link.kind, source: endId(link.source), target: endId(link.target) }));
 			const trees = planetTrees(live.map((node) => node.graph), edges);
-			// Space by the full panel, not just the plate, so live panels don't cover each other (as `flatSize` does for slices).
+			// Space by the full panel, not just the plate, so live panels don't cover each other (`plateFootprint`).
 			const sizeOf = (id: string): { width: number; height: number } => {
 				const node = this.live.get(id);
-				return node === undefined ? { width: 0, height: LINE_PLATE_HEIGHT } : this.flatSize(node.graph);
+				return node === undefined ? { width: 0, height: LINE_PLATE_HEIGHT } : this.plateFootprint(node.graph);
 			};
 			const style: ContinentStyle = { direction: this.overlays.continentDirection, balance: this.overlays.continentBalance };
 			const grew = this.world.update(trees, sizeOf, style, (core) => this.ringPhases.get(core) ?? 0, performance.now(), true);
@@ -968,12 +952,12 @@ export class CosmosScene {
 	}
 
 	/**
-	 * A node's footprint in a flat branch: its plate, or the near-tier panel it
-	 * would get if that is bigger, so panels side by side in one plane don't
+	 * A node's footprint on a planet: its plate, or the near-tier panel it
+	 * would get if that is bigger, so panels side by side on one surface don't
 	 * cover each other (as `sizeNode` spaces 3D links). The boundaries wrap the
 	 * same footprint.
 	 */
-	private readonly flatSize = (graph: GraphNode): { width: number; height: number } => {
+	private readonly plateFootprint = (graph: GraphNode): { width: number; height: number } => {
 		const node = this.live.get(graph.id);
 		const scale = textScale(graph.style);
 		return node?.footprint ?? nodeFootprint({ width: 0, height: LINE_PLATE_HEIGHT * scale }, panelBoxEm(graph), CosmosNear.emWorld(LINE_PLATE_HEIGHT) * scale);
@@ -998,7 +982,6 @@ export class CosmosScene {
 			node.shape = this.shapeFor(node.graph);
 			sizeNode(node);
 		}
-		this.flatLayouts.clear();
 		this.linkForce?.distance(this.linkDistanceOf);
 		this.buildLanes();
 		this.dirty = true;
@@ -1012,16 +995,14 @@ export class CosmosScene {
 	/**
 	 * Apply the Overlays menu. A hidden edge kind no longer pulls (`linkPulls`;
 	 * the Hierarchy toggle only hides the drawing), and "Links pull" off stops
-	 * links pulling. A new force balance re-weights the links, and a new
-	 * flatten position re-cuts the flat branches, and a new Note or Node spacing
-	 * rescales the link lengths, charge and gaps. Any of these re-settles the
+	 * links pulling. A new force balance re-weights the links, and a new Note
+	 * or Node spacing rescales the link lengths, charge and gaps. Any of these re-settles the
 	 * loaded nodes (`reshape`): the one place settled nodes are let go on purpose.
 	 * In Planets, Core layers re-lays out each planet, easing its plates to
 	 * their new shells (`PlanetWorld.coreLayers`).
 	 */
 	setOverlays(overlays: SceneOverlays): void {
 		const reweigh = overlays.forceBalance !== this.overlays.forceBalance || pullChanged(this.overlays, overlays);
-		const reflatten = effectiveFlatten(overlays) !== effectiveFlatten(this.overlays);
 		// A new layout, or a new continent direction or balance in Planets, lays every note out afresh.
 		const relayout = overlays.layout !== this.overlays.layout || continentStyleChanged(this.overlays, overlays);
 		// The spacing sliders re-settle too; in Planets they (and Continent spacing) lay the planets out afresh (their gaps are layout, not forces).
@@ -1036,8 +1017,8 @@ export class CosmosScene {
 		if (relayout || (respace && this.world.size > 0)) this.world.clear();
 		if (reweigh) this.linkForce?.strength(this.linkStrength);
 		if (respace) this.linkForce?.distance(this.linkDistanceOf);
-		// pushData (in reshape) re-cuts the branches and re-reads which links pull, and the engine re-reads every link's strength.
-		if (reweigh || reflatten || relayout || respace) this.reshape(!this.focusLeaves(before, overlays));
+		// pushData (in reshape) re-reads which links pull, and the engine re-reads every link's strength.
+		if (reweigh || relayout || respace) this.reshape(!this.focusLeaves(before, overlays));
 		else if (relayer && this.world.size > 0) this.pushData();
 		this.particles.visible = overlays.particles;
 		this.plates.setLabelsVisible(overlays.labels !== "none");
@@ -1084,18 +1065,14 @@ export class CosmosScene {
 
 	/**
 	 * d3's default link strength (one over the fewer pulling links at either
-	 * end), scaled by the force balance, and none for a link that doesn't pull. An edge inside a rigid piece of a flat
-	 * branch doesn't pull, and one from a ramp line to its root eases off as
-	 * the line is pulled in (`flatLinkScale`).
+	 * end), scaled by the force balance, and none for a link that doesn't pull.
 	 */
 	private readonly linkStrength = (link: EngineLink): number => {
 		if (!this.pulling.has(link)) return 0;
 		// Inside a planet nothing pulls: its layout is geometric. Between planets, or a planet and a star, `PlanetWorld.step` pulls (`buildLanes`).
 		if (this.world.planetOf(endId(link.source)) !== undefined || this.world.planetOf(endId(link.target)) !== undefined) return 0;
-		const flat = flatLinkScale(this.flatPlaces, endId(link.source), endId(link.target));
-		if (flat === 0) return 0;
 		const fewer = Math.min(this.degree.get(endId(link.source)) ?? 1, this.degree.get(endId(link.target)) ?? 1);
-		return (flat * linkStrengthScale(link.kind, this.overlays.forceBalance)) / Math.max(1, fewer);
+		return linkStrengthScale(link.kind, this.overlays.forceBalance) / Math.max(1, fewer);
 	};
 
 	/** Whether the focused node's plate goes with this change of Overlays (a tag hub, ghost or attachment its toggle takes away). */
@@ -1105,13 +1082,13 @@ export class CosmosScene {
 	}
 
 	/**
-	 * The Hierarchy ⟷ organic slider, the flatten slider, or a toggle that
-	 * changes which links pull moved, or a structural edit changed an outline
-	 * (`edit`): let every loaded node go and re-settle under the new link
-	 * weights, flat branches or shape, so the change shows at once.
+	 * The Hierarchy ⟷ organic slider, or a toggle that changes which links
+	 * pull moved, or a structural edit changed an outline (`edit`): let every
+	 * loaded node go and re-settle under the new link weights or shape, so the
+	 * change shows at once.
 	 *
-	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), five in
-	 * all: the force slider (2026-11-01), the flatten slider (2026-11-03), the
+	 * DELIBERATE EXCEPTIONS to "settled nodes never move" (Sawyer), four in
+	 * all: the force slider (2026-11-01), the
 	 * Note and Node spacing sliders (2026-11-09; in Planets they lay the planets
 	 * out afresh, as a Layout change does), the
 	 * edge-kind and Links pull toggles (2026-11-07; the Hierarchy edge toggle is
@@ -1125,8 +1102,8 @@ export class CosmosScene {
 	 * camera rides along with the focused node until the layout cools and
 	 * `settle` pins everything again, unless `followFocus` is off (the focused
 	 * plate is leaving: the camera stays where it is). After an edit the edited
-	 * line is let go too, so it is laid out clear of its neighbours (and in its
-	 * flat slice) rather than left where it was seeded. The camera tracks the
+	 * line is let go too, so it is laid out clear of its neighbours rather than
+	 * left where it was seeded. The camera tracks the
 	 * focused node, the edited line, which the user's orbit and zoom don't
 	 * break, so it stays in view however far the re-settle carries it; an
 	 * editor that opens meanwhile moves the track onto its line (`setEditing`).

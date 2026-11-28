@@ -18,6 +18,7 @@ import {
 	branchDepths,
 	continentMap,
 	coreClearance,
+	facingPhase,
 	hoverPose,
 	laneArc,
 	layoutPlanet,
@@ -48,6 +49,24 @@ const len = (v: Vec3): number => Math.hypot(v.x, v.y, v.z);
 const dot = (a: Vec3, b: Vec3): number => a.x * b.x + a.y * b.y + a.z * b.z;
 const angle = (a: Vec3, b: Vec3): number => Math.acos(Math.min(1, Math.max(-1, dot(a, b) / (len(a) * len(b)))));
 const plate = (): { width: number; height: number } => ({ width: 20, height: 5 });
+
+describe("facingPhase", () => {
+	it("points longitude 0 at the camera's side of the pivot, level", () => {
+		const pivot = { x: 10, y: 5, z: -3 };
+		for (const camera of [{ x: 40, y: 80, z: -3 }, { x: 10, y: -2, z: 30 }, { x: -20, y: 5, z: -33 }]) {
+			const phase = facingPhase(camera, pivot);
+			const [dx, dz] = [camera.x - pivot.x, camera.z - pivot.z];
+			expect(Math.cos(phase)).toBeCloseTo(dx / Math.hypot(dx, dz));
+			expect(Math.sin(phase)).toBeCloseTo(dz / Math.hypot(dx, dz));
+		}
+	});
+
+	it("falls back to +x with the camera straight above or below the pivot", () => {
+		const pivot = { x: 4, y: 0, z: 7 };
+		expect(facingPhase({ x: 4, y: 90, z: 7 }, pivot)).toBe(0);
+		expect(facingPhase({ x: 4, y: -90, z: 7 }, pivot)).toBe(0);
+	});
+});
 
 describe("planetTrees", () => {
 	it("hangs lines from their parents, continents are the root's children, tags float free", () => {

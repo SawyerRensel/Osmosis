@@ -8,7 +8,7 @@ import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pa
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../cosmos/model";
-import { facingPhase } from "../cosmos/flatten";
+import { facingPhase } from "../cosmos/planets";
 import { gizmosAvailable } from "../cosmos/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../cosmos/lod";
 import { collectEmbedded } from "../cosmos/transcluded";
@@ -173,7 +173,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private opening = false;
 	/** Edits closed and still being written: reloads wait for these too, so a hop made while one saves (the F key, the plate menu) lands after the save. */
 	private saving = 0;
-	/** The focus note just changed (or the view just opened): the next reload that shows it renews its ring phase, so its first flat slice faces the camera (`CosmosScene.faceNote`). Edits and other reloads leave it. */
+	/** The focus note just changed (or the view just opened): the next reload that shows it renews its ring phase, so its first continent faces the camera (`CosmosScene.faceNote`). Edits and other reloads leave it. */
 	private faceFocus = true;
 	/** A reload that was asked for while the editor was open or saving, run when it is done. */
 	private queuedReload: { flyToFocus: boolean; subpath: string; landOn: string | null } | null = null;

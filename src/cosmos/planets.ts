@@ -679,6 +679,17 @@ export function surfaceStep(dirs: Vec3[], reaches: readonly number[], step = 0.5
 export const SURFACE_STEPS = 120;
 
 /**
+ * The phase (a longitude) that points a note's first continent at the
+ * camera: the angle of the horizontal part of the pivot-to-camera direction,
+ * atan2(z, x), so 0 is world +x. A camera straight above or below the pivot
+ * has no horizontal direction, and gets 0.
+ */
+export function facingPhase(camera: Vec3, pivot: Vec3): number {
+	const [dx, dz] = [camera.x - pivot.x, camera.z - pivot.z];
+	return Math.hypot(dx, dz) < 1e-6 ? 0 : Math.atan2(dz, dx);
+}
+
+/**
  * Continent centres on the unit sphere, in document order: seeded along a
  * golden-angle spiral over the whole sphere (even areas, pole to pole), the
  * first facing longitude `phase`

@@ -23,7 +23,6 @@ import {
 	type LayoutMode,
 	type OverlayEdgeKind,
 } from "../cosmos/overlays";
-import { flatDepth, flatWeight } from "../cosmos/flatten";
 import { MAX_CORE_LAYERS, type ContinentBalance, type ContinentDirection } from "../cosmos/planets";
 import { SETTINGS_SECTIONS, controlShown, toggleCollapsed, type SettingsControl, type SettingsSectionId } from "../cosmos/settings-sections";
 import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "../cosmos/taper";
@@ -49,7 +48,6 @@ const EDGE_NAMES: Record<OverlayEdgeKind, string> = {
 
 const LAYOUT_MODES: Record<LayoutMode, string> = {
 	organic: "Organic",
-	flat: "Flat slices",
 	planets: "Planets",
 };
 
@@ -228,27 +226,13 @@ export class CosmosSettingsPanel {
 			case "layout":
 				return row
 					.setName("Layout")
-					.setDesc("Organic lets forces shape each note, flat slices lay branches out like the mind map, and planets put each note on a globe. Changing it lays everything out again.")
+					.setDesc("Organic lets forces shape each note, and planets put each note on a globe. Changing it lays everything out again.")
 					.addDropdown((dropdown) =>
 						dropdown
 							.addOptions(LAYOUT_MODES)
 							.setValue(overlays.layout)
 							.onChange((value) => this.change({ layout: value as LayoutMode })),
 					);
-			case "flatten":
-				row.setName("Flatten branches").setDesc(flattenLabel(overlays.flatten));
-				return row.addSlider((slider) =>
-					slider
-						// Continuous: lines at the boundary depth are pulled part-way into their slice.
-						.setLimits(0, 1, 0.01)
-						.setValue(overlays.flatten)
-						// Sent on every step of a drag, so the graph re-settles live (see CosmosScene.reshape).
-						.setInstant(true)
-						.onChange((value) => {
-							row.setDesc(flattenLabel(value));
-							this.change({ flatten: value });
-						}),
-				);
 			case "continentSpacing":
 				return this.spacing(row, "Continent spacing", "continents on a planet", "continentSpacing");
 			case "continentDirection":
@@ -418,20 +402,6 @@ function depthLabel(depth: number): string {
 
 function travelLabel(speed: number): string {
 	return `×${speed < 1 ? speed.toFixed(2) : speed.toFixed(1)}. How fast the camera flies when you follow a link, fly to a plate, or go to a search result.`;
-}
-
-function flattenLabel(flatten: number): string {
-	const flat = flatDepth(flatten);
-	const ramp = Math.floor(flat) + 1;
-	const weight = flatWeight(ramp, flat);
-	const lead = !Number.isFinite(flat)
-		? "Off: every branch spreads in 3D."
-		: flat <= 1
-			? "Everything under each note's title lies flat."
-			: weight >= 1
-				? `Lines deeper than outline depth ${String(ramp - 1)} lie flat.`
-				: `Lines deeper than outline depth ${String(ramp)} lie flat; lines at depth ${String(ramp)} are pulled ${String(Math.round(weight * 100))}% into their slice.`;
-	return `${lead} A flat branch is drawn as the mind map draws it, in a slice through its note's core. Moving it re-settles the loaded notes as you drag.`;
 }
 
 function coreLayersLabel(layers: number): string {

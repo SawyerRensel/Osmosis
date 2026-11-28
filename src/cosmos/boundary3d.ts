@@ -4,7 +4,7 @@
  * resolved onto `NodeLook.boundary`); `CosmosBoundaries` draws every mesh in
  * one draw call.
  *
- * - **Hull** (Organic, Flat, and anything not on one planet's surface): the
+ * - **Hull** (Organic, and anything not on one planet's surface): the
  *   convex hull of the subtree's plates, each grown by the padding as a short
  *   rounded cylinder about world vertical (a billboard plate turns about it as
  *   the camera orbits). Smooth vertex normals, so the shader can draw a soft

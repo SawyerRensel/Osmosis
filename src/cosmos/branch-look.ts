@@ -20,9 +20,8 @@
  *
  * **Shapes** (`branchPath`): the mind map lays a branch out along one axis
  * (left to right) and offsets it along the other. In 3D the cross axis is
- * given (world up in Organic and Flat, where a flat slice's rows run down the
- * world; the parent's tangent frame in Planets), and the edge's own component
- * across it is the mind map's x. Curves use the mind map's control points
+ * given (world up in Organic; the parent's tangent frame in Planets), and
+ * the edge's own component across it is the mind map's x. Curves use the mind map's control points
  * (half-way along that axis), elbows its corner positions.
  *
  * Pure logic, no `obsidian` import, so it is unit-tested.
