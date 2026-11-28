@@ -44,9 +44,10 @@ describe("opensFitted", () => {
 		expect(opensFitted(undefined)).toBe(true);
 	});
 
-	it("lands on a named plate, line or lift-off instead", () => {
+	it("lands on a named plate, line, or a swap from the mind map instead", () => {
 		expect(opensFitted({ focus: "Sailing.md", node: "Sailing.md#3" })).toBe(false);
 		expect(opensFitted({ focus: "Sailing.md", subpath: "Rigging" })).toBe(false);
-		expect(opensFitted({ focus: "Sailing.md", liftOff: { boxes: [] } })).toBe(false);
+		expect(opensFitted({ focus: "Sailing.md", swapFocus: { path: "Sailing.md", start: 4, root: false } })).toBe(false);
+		expect(opensFitted({ focus: "Sailing.md", swapFocus: null })).toBe(false);
 	});
 });

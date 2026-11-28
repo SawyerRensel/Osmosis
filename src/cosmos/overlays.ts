@@ -26,8 +26,11 @@ export const OVERLAY_EDGE_KINDS: readonly OverlayEdgeKind[] = ["hierarchy", "lin
 /** What carries text: plates and the near tier's live panels, plates only, or neither (blank plates). */
 export type LabelMode = "all" | "plates" | "none";
 
-/** How notes are laid out: organic 3D, or planets (`planets.ts`). */
+/** How Cosmos lays notes out: organic 3D, or planets (`planets.ts`). Not an overlay: it is the focus note's Layout (`note-layout.ts`). */
 export type LayoutMode = "organic" | "planets";
+
+/** The layout the scene is drawing, beside the overlays that read it. */
+type WithLayout = { layout: LayoutMode };
 
 export interface CosmosOverlays {
 	colorBy: ColorMode;
@@ -42,8 +45,6 @@ export interface CosmosOverlays {
 	nodeSpacing: number;
 	/** Planets only: the Continent spacing slider, a multiple of today's clear space round each continent (`CONTINENT_MARGIN`), `SPACING_MIN` to `SPACING_MAX`. */
 	continentSpacing: number;
-	/** The Layout choice. */
-	layout: LayoutMode;
 	/** Planets only: the Direction of every continent's 2D map. A note's own 2D map settings don't apply on a planet. */
 	continentDirection: ContinentDirection;
 	/** Planets only: the Balance of every continent's 2D map (unused by radial). A note's own 2D map settings don't apply on a planet. */
@@ -77,7 +78,6 @@ export const DEFAULT_OVERLAYS: CosmosOverlays = {
 	noteSpacing: 1,
 	nodeSpacing: 1,
 	continentSpacing: 1,
-	layout: "organic",
 	continentDirection: "left-right",
 	continentBalance: "one-side",
 	coreLayers: 1,
@@ -91,7 +91,6 @@ export const DEFAULT_OVERLAYS: CosmosOverlays = {
 
 const COLOR_MODES: readonly ColorMode[] = ["style", "note", "memory", "tag", "type"];
 const LABEL_MODES: readonly LabelMode[] = ["all", "plates", "none"];
-const LAYOUT_MODES: readonly LayoutMode[] = ["organic", "planets"];
 export const CONTINENT_DIRECTIONS: readonly ContinentDirection[] = ["left-right", "top-down", "radial"];
 export const CONTINENT_BALANCES: readonly ContinentBalance[] = ["one-side", "both-sides", "alternating"];
 
@@ -118,8 +117,6 @@ export function normalizeOverlays(raw: unknown): CosmosOverlays {
 		noteSpacing: number(value.noteSpacing, DEFAULT_OVERLAYS.noteSpacing, SPACING_MIN, SPACING_MAX),
 		nodeSpacing: number(value.nodeSpacing, DEFAULT_OVERLAYS.nodeSpacing, SPACING_MIN, SPACING_MAX),
 		continentSpacing: number(value.continentSpacing, DEFAULT_OVERLAYS.continentSpacing, SPACING_MIN, SPACING_MAX),
-		// A saved "flat" (the Flat slices layout, removed in T137) reads as the default, Organic, and its flatten slider is dropped.
-		layout: LAYOUT_MODES.includes(value.layout as LayoutMode) ? (value.layout as LayoutMode) : DEFAULT_OVERLAYS.layout,
 		continentDirection: CONTINENT_DIRECTIONS.includes(value.continentDirection as ContinentDirection) ? (value.continentDirection as ContinentDirection) : DEFAULT_OVERLAYS.continentDirection,
 		continentBalance: CONTINENT_BALANCES.includes(value.continentBalance as ContinentBalance) ? (value.continentBalance as ContinentBalance) : DEFAULT_OVERLAYS.continentBalance,
 		coreLayers: Math.round(number(value.coreLayers, DEFAULT_OVERLAYS.coreLayers, 1, MAX_CORE_LAYERS)),
@@ -138,17 +135,17 @@ export const spacingOf = (overlays: Pick<CosmosOverlays, "noteSpacing" | "nodeSp
 type SpacingSliders = Pick<CosmosOverlays, "noteSpacing" | "nodeSpacing" | "continentSpacing">;
 
 /** Whether a spacing slider moved from `before` to `after` (Continent spacing only counts in Planets, the one layout it shapes), so the loaded nodes must re-settle (or, in Planets, be laid out afresh). */
-export function spacingChanged(before: SpacingSliders, after: SpacingSliders & Pick<CosmosOverlays, "layout">): boolean {
+export function spacingChanged(before: SpacingSliders, after: SpacingSliders & WithLayout): boolean {
 	return before.noteSpacing !== after.noteSpacing || before.nodeSpacing !== after.nodeSpacing || (after.layout === "planets" && before.continentSpacing !== after.continentSpacing);
 }
 
 /** Whether the Overlays change from `before` to `after` changes how Planets mode lays continents out, so every planet must be laid out afresh. */
-export function continentStyleChanged(before: Pick<CosmosOverlays, "layout" | "continentDirection" | "continentBalance">, after: Pick<CosmosOverlays, "layout" | "continentDirection" | "continentBalance">): boolean {
+export function continentStyleChanged(before: Pick<CosmosOverlays, "continentDirection" | "continentBalance">, after: WithLayout & Pick<CosmosOverlays, "continentDirection" | "continentBalance">): boolean {
 	return after.layout === "planets" && (before.continentDirection !== after.continentDirection || before.continentBalance !== after.continentBalance);
 }
 
 /** Whether the Core layers slider moved in Planets (the one layout it shapes), so the planets move their plates to the new shells. */
-export function coreLayersChanged(before: Pick<CosmosOverlays, "coreLayers">, after: Pick<CosmosOverlays, "layout" | "coreLayers">): boolean {
+export function coreLayersChanged(before: Pick<CosmosOverlays, "coreLayers">, after: WithLayout & Pick<CosmosOverlays, "coreLayers">): boolean {
 	return after.layout === "planets" && before.coreLayers !== after.coreLayers;
 }
 

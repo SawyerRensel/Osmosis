@@ -16,7 +16,7 @@ import { SIDECAR_SUFFIX, hasSidecarKeys, isSidecarPath, migratedSidecarFolder } 
 import { FENCES_FRONTMATTER_KEY, parseFencesFrontmatter, type FenceOverlay } from "./store/fence-sidecar";
 import { ReviewLog, isReviewLogPath, platformDeviceLabel, slugifyDeviceLabel, type ReviewLogCache } from "./store/ReviewLog";
 import { MindMapView, VIEW_TYPE_MINDMAP } from "./views/MindMapView";
-import { HIDE_NAVBAR_CLASS, TOGGLE_3D_COMMAND, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
+import { HIDE_NAVBAR_CLASS, TOOLBAR_GROUPS, syncNavbar } from "./views/ToolRibbon";
 import { installMarkdownViewStandIn } from "./editor/EmbeddableMarkdownEditor";
 import { PropertiesSidebarView, VIEW_TYPE_PROPERTIES } from "./views/PropertiesSidebarView";
 import { FlashcardStudyView, VIEW_TYPE_STUDY } from "./views/FlashcardStudyView";
@@ -29,7 +29,7 @@ import { normalizeOverlays, type CosmosOverlays } from "./cosmos/overlays";
 import { normalizeCollapsed, type SettingsSectionId } from "./cosmos/settings-sections";
 import { NoteStudyProcessor } from "./views/NoteStudyProcessor";
 import { LineRevealProcessor, findModeToggle, peekIcon } from "./views/LineRevealProcessor";
-import { LAST_MAP_VIEW_STORAGE_KEY, cleanLastMapView, type MapViewKind } from "./last-map-view";
+import { engineFor, isNoteLayout, noteLayout, writeNoteLayout, type MapEngine, type NoteLayout } from "./note-layout";
 import { registerReviewShardProcessor } from "./views/ReviewShardProcessor";
 import { GenerateFlashcardsModal } from "./views/GenerateFlashcardsModal";
 import { ConfirmModal } from "./views/ConfirmModal";
@@ -414,20 +414,6 @@ export default class OsmosisPlugin extends Plugin {
 			});
 		}
 
-		// The 2D/3D toggle: the header's 2D | 3D pill has no toolbar button, so its command stands alone (same id as before, so a hotkey on it survives).
-		this.addCommand({
-			id: TOGGLE_3D_COMMAND.id,
-			name: TOGGLE_3D_COMMAND.name,
-			icon: TOGGLE_3D_COMMAND.icon,
-			checkCallback: (checking) => {
-				const map = this.app.workspace.getActiveViewOfType(MindMapView);
-				const graph = map ? null : this.app.workspace.getActiveViewOfType(CosmosView);
-				if (!map && !graph) return false;
-				if (!checking) void (map ? map.switchTo3D() : graph?.switchTo2D());
-				return true;
-			},
-		});
-
 		this.addCommand({
 			id: "open-graph3d",
 			name: "Open Cosmos for current note",
@@ -522,15 +508,11 @@ export default class OsmosisPlugin extends Plugin {
 			this.app.workspace.on("file-menu", (menu, file: TAbstractFile, _source: string, leaf?: WorkspaceLeaf) => {
 				if (!(file instanceof TFile) || file.extension !== "md") return;
 				menu.addItem((item) => {
-					item.setTitle("Mind map view")
+					item.setTitle("Map view")
 						.setIcon("brain-circuit")
 						.onClick(() => {
 							if (leaf) {
-								void leaf.setViewState({
-									type: VIEW_TYPE_MINDMAP,
-									state: { file: file.path },
-									active: true,
-								});
+								void this.openNoteMap(leaf, file.path);
 							} else {
 								void this.activateMindMapView();
 							}
@@ -624,12 +606,6 @@ export default class OsmosisPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
 				this.addMindMapActionToMarkdownLeaves();
-				this.rememberActiveMapView();
-			}),
-		);
-		this.registerEvent(
-			this.app.workspace.on("active-leaf-change", () => {
-				this.rememberActiveMapView();
 			}),
 		);
 		this.app.workspace.onLayoutReady(() => {
@@ -1292,18 +1268,11 @@ export default class OsmosisPlugin extends Plugin {
 
 			const btn = createEl("a");
 			btn.className = "clickable-icon view-action osmosis-mindmap-action";
-			btn.setAttribute("aria-label", "Mind map view");
+			btn.setAttribute("aria-label", "Map view");
 			setIcon(btn, "brain-circuit");
 			btn.addEventListener("click", () => {
 				const file = (leaf.view as MarkdownView).file;
-				if (file) {
-					const to = this.lastMapView();
-					void leaf.setViewState({
-						type: to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP,
-						state: to === "3d" ? { focus: file.path } : { file: file.path },
-						active: true,
-					});
-				}
+				if (file) void this.openNoteMap(leaf, file.path);
 			});
 
 			// Directly left of Obsidian's reading/editing toggle, so 🧠, Study (which
@@ -1318,20 +1287,51 @@ export default class OsmosisPlugin extends Plugin {
 		}
 	}
 
-	/** The map view the note header's brain button opens: the last one used on this device. */
-	private lastMapView(): MapViewKind {
-		return cleanLastMapView(this.app.loadLocalStorage(LAST_MAP_VIEW_STORAGE_KEY));
+	/** The Layout `path` is drawn in: its own (from its styles, in the note or its sidecar), else the Default layout. */
+	noteLayoutOf(path: string): NoteLayout {
+		const file = this.app.vault.getFileByPath(path);
+		const styles = file === null ? undefined : this.noteData.frontmatter(file)["osmosis-styles"];
+		return noteLayout(styles, this.settings.defaultLayout);
 	}
 
-	private rememberMapView(kind: MapViewKind): void {
-		if (this.lastMapView() !== kind) this.app.saveLocalStorage(LAST_MAP_VIEW_STORAGE_KEY, kind);
+	/** Show `path` in `leaf` in its own layout: the mind map, or Cosmos centred on it. The brain button and the file menu's map entry. */
+	private async openNoteMap(leaf: WorkspaceLeaf, path: string): Promise<void> {
+		const cosmos = engineFor(this.noteLayoutOf(path)) === "cosmos";
+		await leaf.setViewState({ type: cosmos ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP, state: cosmos ? { focus: path } : { file: path }, active: true });
 	}
 
-	/** Record the active leaf's map view, if it is one: covers tab clicks, the 2D | 3D pill, file-menu opens and a restored workspace. */
-	private rememberActiveMapView(): void {
-		const { workspace } = this.app;
-		if (workspace.getActiveViewOfType(CosmosView)) this.rememberMapView("3d");
-		else if (workspace.getActiveViewOfType(MindMapView)) this.rememberMapView("2d");
+	/**
+	 * Save `layout` as the note's own Layout (the Default layout removes the
+	 * key instead, `writeNoteLayout`), then show it: every map of the note
+	 * whose view no longer draws it swaps in place (no animation, the undo
+	 * history held, the focused line centred), and a Cosmos centred on it
+	 * that still does lays it out afresh. A mind map holding the note records
+	 * the write, so its undo takes it back. The style sidebar's Layout picker
+	 * and Cosmos's Layout dropdown call this.
+	 */
+	async setNoteLayout(path: string, layout: NoteLayout): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		if (file === null) return;
+		const maps = this.app.workspace.getLeavesOfType(VIEW_TYPE_MINDMAP).map((leaf) => leaf.view).filter((view): view is MindMapView => view instanceof MindMapView && view.getCurrentFile()?.path === path);
+		const write = (fm: Record<string, unknown>) => writeNoteLayout(fm, layout, this.settings.defaultLayout);
+		try {
+			if (maps[0]) await maps[0].processStylesTracked(file, write);
+			else await this.noteData.process(file, write);
+		} catch (error) {
+			console.error(`Osmosis: could not save the layout of ${path}`, error);
+			new Notice("Osmosis: could not save the layout");
+			return;
+		}
+		// The views read the layout back from the metadata cache, which catches up with the write a moment later.
+		await this.untilLayoutReads(path, layout);
+		const engine = engineFor(layout);
+		if (engine === "cosmos") for (const map of maps) await map.swapToCosmos();
+		for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOS)) {
+			const view = leaf.view;
+			if (!(view instanceof CosmosView) || view.focusNote !== path) continue;
+			if (engine === "mindmap") await view.swapToMindMap(path);
+			else view.applyLayout();
+		}
 	}
 
 	/** Re-measure and re-render every open mind map, after a global setting
@@ -1385,19 +1385,36 @@ export default class OsmosisPlugin extends Plugin {
 		void workspace.revealLeaf(leaf);
 	}
 
+	/** Resolves once `path` reads as `layout` (`noteLayoutOf`), or after two seconds if the metadata cache never says so. */
+	private untilLayoutReads(path: string, layout: NoteLayout): Promise<void> {
+		if (this.noteLayoutOf(path) === layout) return Promise.resolve();
+		return new Promise((resolve) => {
+			const done = () => {
+				this.app.metadataCache.offref(ref);
+				window.clearTimeout(timer);
+				resolve();
+			};
+			const ref = this.app.metadataCache.on("changed", () => {
+				if (this.noteLayoutOf(path) === layout) done();
+			});
+			const timer = window.setTimeout(done, 2000);
+		});
+	}
+
 	/**
-	 * The mind map's 2D/3D toggle: show the other view in `leaf`, with `state`.
+	 * Swap the view in `leaf` to `to`'s, with `state`, when a note's layout
+	 * moves it to the other view (`setNoteLayout`, or Follow active note).
 	 * The outgoing view lets go of its notes' undo histories when it closes,
 	 * which may be before the incoming one takes them, so `keep` is held
-	 * across the swap (see `holdAcross`).
+	 * across the swap (see `holdAcross`). A swap made by following leaves the
+	 * leaf in the background (`active` false), where the user isn't looking.
 	 */
-	async swapLeafView(leaf: WorkspaceLeaf, to: "2d" | "3d", state: Record<string, unknown>, keep: Iterable<string>): Promise<void> {
-		const type = to === "3d" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP;
+	async swapLeafView(leaf: WorkspaceLeaf, to: MapEngine, state: Record<string, unknown>, keep: Iterable<string>, active = true): Promise<void> {
+		const type = to === "cosmos" ? VIEW_TYPE_COSMOS : VIEW_TYPE_MINDMAP;
 		try {
-			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active: true }));
-			this.rememberMapView(to);
+			await holdAcross(this.editHistory, keep, () => leaf.setViewState({ type, state, active }));
 		} catch (error) {
-			console.error("Osmosis: 2D/3D toggle failed", error);
+			console.error("Osmosis: could not swap the map view", error);
 			new Notice("Osmosis: could not switch views");
 		}
 	}
@@ -2069,6 +2086,7 @@ export default class OsmosisPlugin extends Plugin {
 		Reflect.deleteProperty(this.settings, "graph3dPositions");
 		this.settings.graph3dOverlays = normalizeOverlays(this.settings.graph3dOverlays);
 		this.settings.graph3dSettingsCollapsed = normalizeCollapsed(this.settings.graph3dSettingsCollapsed);
+		if (!isNoteLayout(this.settings.defaultLayout)) this.settings.defaultLayout = DEFAULT_SETTINGS.defaultLayout;
 
 		// Identifies this install in review-log shard headers, so two devices
 		// that slug to the same label are still distinguishable. Generated once

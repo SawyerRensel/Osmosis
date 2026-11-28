@@ -7,18 +7,19 @@
  * Pure logic, no `obsidian` import, so it is unit-tested.
  */
 
-import { OVERLAY_EDGE_KINDS, type CosmosOverlays, type OverlayEdgeKind } from "./overlays";
+import { OVERLAY_EDGE_KINDS, type CosmosOverlays, type LayoutMode, type OverlayEdgeKind } from "./overlays";
 
 export type SettingsSectionId = "layout" | "show" | "edges" | "camera" | "look";
 
 /**
  * One control: a `CosmosOverlays` key (an edge toggle as `edge:<kind>`), or a
- * setting kept elsewhere: the view's Depth and Backlinks, and the per-device
- * Click selects only, Panel detail and Live panels.
+ * setting kept elsewhere: the focus note's Layout, the view's Depth and
+ * Backlinks, and the per-device Click selects only, Panel detail and Live panels.
  */
 export type SettingsControl =
 	| Exclude<keyof CosmosOverlays, "edges">
 	| `edge:${OverlayEdgeKind}`
+	| "layout"
 	| "depth"
 	| "backlinks"
 	| "clickSelectsOnly"
@@ -51,7 +52,7 @@ const SECTION_IDS: ReadonlySet<string> = new Set(SETTINGS_SECTIONS.map((section)
  * only in that layout (the continent controls in Planets, Balance only when
  * the direction has sides). Hidden controls keep their values.
  */
-export function controlShown(control: SettingsControl, overlays: Pick<CosmosOverlays, "layout" | "continentDirection">): boolean {
+export function controlShown(control: SettingsControl, overlays: { layout: LayoutMode } & Pick<CosmosOverlays, "continentDirection">): boolean {
 	switch (control) {
 		case "continentSpacing":
 		case "continentDirection":

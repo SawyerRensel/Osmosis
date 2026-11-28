@@ -34,7 +34,7 @@ import { CosmosNear, NEAR_FONT_PX, type NearDiagramRenderer, type NearMarkdownRe
 import { isNoteRoot, type GraphEdgeKind, type GraphModel, type GraphNode } from "../cosmos/model";
 import { edgeColor, linkDistance, nodeColor, nodeExtent, nodeFootprint, noteHue, spriteLabel, type Spacing } from "../cosmos/appearance";
 import { DEFAULT_FONT, cssColor, fontKey, nodeLook, textScale, type NodeLook } from "../cosmos/node-style";
-import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays } from "../cosmos/overlays";
+import { DEFAULT_OVERLAYS, continentStyleChanged, coreLayersChanged, edgeShown, kindOwnedOff, linkPulls, linkStrengthScale, pullChanged, spacingChanged, spacingOf, type CosmosOverlays, type LayoutMode } from "../cosmos/overlays";
 import type { NearTierSettings } from "../cosmos/lod";
 import { STYLE_PX_PER_EM, panelBoxEm, plateCapEm, plateWidthEm, styleWidthFromEm } from "../cosmos/near";
 import { LINE_PLATE_HEIGHT, PLATE_PAD_X_EM } from "../cosmos/plates";
@@ -73,7 +73,6 @@ import { gizmoZoom, type GizmoKind } from "../cosmos/gizmos";
 import { flightAxes, stickLook, stickMove, type FlightAxes } from "../cosmos/joysticks";
 import { bandOffset, type VisibleBand } from "../cosmos/edit";
 import { boxHits, boxRect, heldInto, tapToggles, toggled, type ScreenPoint } from "../cosmos/selection";
-import { frameDistance } from "../cosmos/liftoff";
 import { arrowCandidates, pickInDirection, type Arrow, type ScreenOffset } from "../cosmos/arrow-nav";
 import { edgeHierarchy, hierarchyStep, type HierarchyStep } from "../hierarchy-nav";
 import {
@@ -210,8 +209,8 @@ export interface SceneControls {
 	touchDrag: CosmosTouchDrag;
 }
 
-/** The Overlays menu's options the engine applies; the colour mode reaches it as `setColoring`. */
-export type SceneOverlays = Omit<CosmosOverlays, "colorBy">;
+/** The Overlays menu's options the engine applies, and the layout it draws (the focus note's); the colour mode reaches it as `setColoring`. */
+export type SceneOverlays = Omit<CosmosOverlays, "colorBy"> & { layout: LayoutMode };
 
 export interface SceneOptions {
 	controls: SceneControls;
@@ -432,8 +431,8 @@ export class CosmosScene {
 	private lanes: Lane[] = [];
 	/** Each loaded note's ring phase (where Planets faces its first continent: `facingPhase`), by core ID: captured from the camera when the note is first loaded or becomes the focus note, and kept until then. */
 	private ringPhases = new Map<string, number>();
-	/** Notes to recapture a ring phase for at the next `pushData`, with the phase to give it (null: face the camera). */
-	private pendingFaces = new Map<string, number | null>();
+	/** Notes to recapture a ring phase for at the next `pushData`, facing the camera. */
+	private pendingFaces = new Set<string>();
 	/** Each note's core with the many-body strength Note spacing owes it (`spaceCharges`), and the charged nodes it pushes (`notePush`). */
 	private noteCores = new Map<string, { body: EngineNode; strength: number }>();
 	private charged: NoteBody[] = [];
@@ -463,7 +462,7 @@ export class CosmosScene {
 	private readonly edgeColors = new Map<GraphEdgeKind, Color>();
 	/** One particle per drawn edge, when the overlay is on. */
 	private readonly particles: Points<BufferGeometry, PointsMaterial>;
-	private overlays: SceneOverlays = DEFAULT_OVERLAYS;
+	private overlays: SceneOverlays = { ...DEFAULT_OVERLAYS, layout: "organic" };
 	/** Node colour in the active colour mode (the Overlays menu's "Colour by"). */
 	private colorOf: (node: GraphNode) => string = nodeColor;
 	/** Links per node, for d3's default link strength, which the force balance scales. */
@@ -862,10 +861,9 @@ export class CosmosScene {
 		const cores = live.filter((node) => isNoteRoot(node.graph));
 		const camera = this.graph.camera().position;
 		for (const core of cores) {
-			const asked = this.pendingFaces.get(core.id);
-			if (asked === undefined && this.ringPhases.has(core.id)) continue;
+			if (!this.pendingFaces.has(core.id) && this.ringPhases.has(core.id)) continue;
 			const at = core.x === undefined || core.y === undefined || core.z === undefined ? this.orbitControls().target : { x: core.x, y: core.y, z: core.z };
-			this.ringPhases.set(core.id, asked ?? facingPhase(camera, at));
+			this.ringPhases.set(core.id, facingPhase(camera, at));
 		}
 		this.pendingFaces.clear();
 		const loaded = new Set(cores.map((core) => core.id));
@@ -874,11 +872,11 @@ export class CosmosScene {
 
 	/**
 	 * The note with core `id` is becoming the focus note: renew its ring phase
-	 * at the next `setData`, from the camera as it is then, or `phase` if given
-	 * (see `capturePhases`). Other notes keep theirs.
+	 * at the next `setData`, from the camera as it is then (see
+	 * `capturePhases`). Other notes keep theirs.
 	 */
-	faceNote(id: string, phase: number | null = null): void {
-		this.pendingFaces.set(id, phase);
+	faceNote(id: string): void {
+		this.pendingFaces.add(id);
 	}
 
 	/**
@@ -1366,53 +1364,6 @@ export class CosmosScene {
 		this.applyFound();
 		this.dirty = this.layoutDirty = true;
 		this.options.onSelectionChange();
-	}
-
-	/** A line plate's height in world units, for the 2D/3D toggle's scale (`cosmos/liftoff.ts`). */
-	get linePlateHeight(): number {
-		return LINE_PLATE_HEIGHT;
-	}
-
-	/**
-	 * The 2D/3D toggle's lift-off: stand the camera square over `target`,
-	 * looking down -z with y up, back far enough to see `height` world units of
-	 * the z = 0 plane edge to edge: the view the mind map showed. No flight; the
-	 * mist is set for the new distance at once. The camera then rides along
-	 * with node `followId` while the lifting layout carries it, until it
-	 * settles, as it does after a forces change (`reshape`).
-	 */
-	standOver(target: Vec3, height: number, followId: string | null): void {
-		const camera = this.graph.camera() as PerspectiveCamera;
-		const controls = this.orbitControls();
-		const distance = frameDistance(height, camera.fov);
-		this.pendingFlight = null;
-		this.lookPending = { x: 0, y: 0 };
-		this.cancelFlight();
-		camera.up.set(0, 1, 0);
-		camera.position.set(target.x, target.y, target.z + distance);
-		controls.target.set(target.x, target.y, target.z);
-		controls.update();
-		this.lastDepth = distance;
-		this.fog.density = (MIST * this.overlays.mist) / Math.max(MIST_MIN_DISTANCE, distance);
-		const node = followId === null ? undefined : this.nodes.find((n) => n.id === followId);
-		if (node?.x !== undefined && node.y !== undefined && node.z !== undefined && node.fx === undefined) {
-			this.follow = { node, at: { x: node.x, y: node.y, z: node.z } };
-		}
-		this.dirty = true;
-	}
-
-	/**
-	 * How tall, in screen px, a line plate is drawn at node `id`'s depth (at
-	 * the orbit target's when `id` is null or gone), for the 2D/3D toggle to
-	 * land the mind map at the same scale. Null while the view has no size.
-	 */
-	linePlatePixels(id: string | null): number | null {
-		const camera = this.graph.camera() as PerspectiveCamera;
-		const height = this.container.clientHeight;
-		if (height <= 0) return null;
-		const node = id === null ? undefined : this.nodes.find((n) => n.id === id && !n.departing);
-		const at = node?.x !== undefined && node.y !== undefined && node.z !== undefined ? new Vector3(node.x, node.y, node.z) : this.orbitControls().target;
-		return (LINE_PLATE_HEIGHT * height) / (2 * this.viewDepth(at) * Math.tan((camera.fov * Math.PI) / 360));
 	}
 
 	/**

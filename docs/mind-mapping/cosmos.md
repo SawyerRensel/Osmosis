@@ -4,7 +4,16 @@ icon: lucide/orbit
 
 # Cosmos
 
-Cosmos shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open Cosmos for current note**, or **Cosmos** in a note's file menu, and switch back to the flat map with the 2D | 3D pill in the header (the mind map's header has the same pill, and the same Note view, Study and Reading/Editing buttons; Style is in the ⋯ menu, and in Cosmos so are Follow active note, the walk and fly joysticks on a touch screen, and Controls help, which also stay on the toolbar).
+Cosmos shows a note and the notes around it, line by line, as plates floating in space. Open it with the command **Open Cosmos for current note**, or **Cosmos** in a note's file menu. The header has the same Style, Note view, Study and Reading/Editing buttons as the mind map's; in Cosmos the ⋯ menu holds Follow active note, the walk and fly joysticks on a touch screen, and Controls help, which also stay on the toolbar.
+
+## Layout
+
+Each note has a **layout**: *Mindmap*, *Organic* or *Planets*. Mindmap draws the note as a mind map; Organic and Planets draw it in Cosmos, shaped by forces or with each note on a globe. A note without a layout of its own uses **Settings > Osmosis > Default layout** (Mindmap unless you change it).
+
+- The brain button in a note's header, and **Map view** in its file menu, open the note in its layout.
+- Pick a layout for the focus note in the style sidebar's **Layout** dropdown. It is saved in the note's styles, so it survives a reload and travels with the note. Picking Mindmap turns the tab into the note's mind map on the spot, centred on the line you were at; your undo history comes along.
+- Cosmos draws in its focus note's layout. Opened on a Mindmap note with **Open Cosmos for current note**, it draws Organic.
+- With **Follow active note** on, moving to a Mindmap note turns the tab into its mind map, and an unpinned mind map that moves to an Organic or Planets note turns into Cosmos.
 
 ## Controls
 

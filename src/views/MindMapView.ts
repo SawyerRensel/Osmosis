@@ -43,7 +43,8 @@ import { mergeNoteData } from "../store/sidecar";
 import { canConvertBranch, convertBranchToNote } from "../convert-branch";
 import { nodePathAt } from "../mindmap-links";
 import { readMapState, writeMapState } from "../mindmap-state";
-import { landingChain, landingZoom, readLanding, type Landing, type LiftOff, type MapBox } from "../cosmos/liftoff";
+import { focusChain, readMapFocus, type MapFocus } from "../cosmos/swap-focus";
+import { engineFor } from "../note-layout";
 import {
 	computeLayout,
 	LayoutNode,
@@ -297,7 +298,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	private readonly edits: EditPipeline;
 	private historyKey: string | null = null;
 	private releaseHistory: (() => void) | null = null;
-	/** Cosmos's state (depth, backlinks, follow) from the last toggle into this map, handed back on the next toggle to 3D. */
+	/** Cosmos's state (depth, backlinks, follow) from the last swap into this map, handed back on the next swap to Cosmos. */
 	private cosmosState: Record<string, unknown> | null = null;
 
 	// Deferred re-sync. A schedule flush writes only frontmatter, so the map
@@ -755,7 +756,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
 		const saved = readMapState(state);
-		// Cosmos's own state (depth, backlinks, follow), handed over by its 2D/3D toggle and handed back by ours. Not kept in getState.
+		// Cosmos's own state (depth, backlinks, follow), handed over when it swaps this leaf to the mind map and handed back by our swap. Not kept in getState.
 		if (typeof state?.graph3d === "object" && state.graph3d !== null) this.cosmosState = state.graph3d as Record<string, unknown>;
 		if (saved.readingMode !== null) {
 			this.setReadingMode(saved.readingMode);
@@ -774,9 +775,9 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 				// The old viewport means nothing on another note's map; history
 				// and link targets re-place it through setEphemeralState.
 				if (switching) this.fitToView();
-				// Cosmos's 2D/3D toggle names the line it had focused, and its zoom. Not kept in getState.
-				const landing = readLanding(state.landing);
-				if (landing !== null) await this.land(landing);
+				// A swap from Cosmos names the line it had focused. Not kept in getState.
+				const swapFocus = readMapFocus(state.swapFocus);
+				if (swapFocus !== null) await this.land(swapFocus);
 				(this.leaf as unknown as { updateHeader(): void }).updateHeader();
 			}
 		}
@@ -784,51 +785,38 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The 2D/3D toggle (the header's pill, and its command): show this note as Cosmos in this leaf,
-	 * lifting off from the map as it is drawn now (see `cosmos/liftoff.ts`).
-	 * A peek or study session ends first, flushing its ratings. The note's undo
-	 * history is held across the swap. Its embedded notes' are not: nothing
-	 * holds them now, and an entry is dropped only when the last holder of one
-	 * of its files lets go, so holding them for the swap could only drop them.
+	 * Show a note in Cosmos in this leaf: this note, whose layout became
+	 * Organic or Planets (`plugin.setNoteLayout`), centred on the selected
+	 * line; or `followed`, a note Follow active note moved to, with Cosmos
+	 * following on and the leaf left in the background. A peek or study session
+	 * ends first, flushing its ratings. The note's undo history is held across
+	 * the swap. Its embedded notes' are not: nothing holds them now, and an
+	 * entry is dropped only when the last holder of one of its files lets go,
+	 * so holding them for the swap could only drop them.
 	 */
-	async switchTo3D(): Promise<void> {
-		const file = this.currentFile;
-		const tree = this.currentTree;
-		const layout = this.currentLayout;
-		if (!file || !tree || !layout) return;
+	async swapToCosmos(followed?: TFile): Promise<void> {
+		const file = followed ?? this.currentFile;
+		if (!file) return;
 		if (this.mindmapStudyMode !== "off") this.exitMindmapStudyMode();
-		const fileOf = edit.buildContainingFileMap(tree.root, file.path);
-		const dx = this.getOffsetX();
-		const dy = this.getOffsetY();
-		const boxOf = (node: LayoutNode): MapBox => ({
-			path: fileOf.get(node.source.id) ?? file.path,
-			start: node.source.range.start,
-			root: node.source.type === "root",
-			x: node.rect.x + dx,
-			y: node.rect.y + dy,
-			width: node.rect.width,
-			height: node.rect.height,
-		});
-		const selected = this.selectedNodeId ? this.nodeMap.get(this.selectedNodeId) : undefined;
-		const focus = selected ? boxOf(selected) : null;
-		const liftOff: LiftOff = {
-			boxes: layout.nodes.map(boxOf),
-			viewport: { ...this.viewBox },
-			focus: focus && { path: focus.path, start: focus.start, root: focus.root },
-		};
-		const state = { ...this.cosmosState, focus: file.path, liftOff, map: writeMapState(file.path, this.isPinned, this.isReadingMode) };
-		await this.plugin.swapLeafView(this.leaf, "3d", state, [file.path]);
+		let swapFocus: MapFocus | null = null;
+		const selected = followed || !this.currentTree || !this.selectedNodeId ? undefined : this.nodeMap.get(this.selectedNodeId);
+		if (selected && this.currentTree) {
+			const root = selected.source.type === "root";
+			const path = edit.buildContainingFileMap(this.currentTree.root, file.path).get(selected.source.id) ?? file.path;
+			swapFocus = { path, start: selected.source.range.start, root };
+		}
+		const cosmos = followed ? { ...this.cosmosState, follow: true } : this.cosmosState;
+		const state = { ...cosmos, focus: file.path, swapFocus, map: writeMapState(file.path, followed ? false : this.isPinned, this.isReadingMode) };
+		await this.plugin.swapLeafView(this.leaf, "cosmos", state, [file.path], !followed);
 	}
 
 	/**
-	 * Land a hand-over from Cosmos's toggle: select the line it had
-	 * focused (expanding what hides it) and centre on it, at the zoom that
-	 * draws a line as tall as its plate was on screen. With no line, the zoom
-	 * still carries and the map centres on its root.
+	 * Land a swap from Cosmos: select the line it had focused (expanding what
+	 * hides it) and centre on it. With no line there, the map stays as opened.
 	 */
-	private async land({ focus, platePx }: Landing): Promise<void> {
+	private async land(focus: MapFocus): Promise<void> {
 		if (!this.currentTree || !this.currentFile) return;
-		const chain = landingChain(this.currentTree.root, this.currentFile.path, focus);
+		const chain = focusChain(this.currentTree.root, this.currentFile.path, focus);
 		let expanded = false;
 		for (const ancestor of chain.slice(0, -1)) {
 			expanded = this.collapsedIds.delete(ancestor.id) || expanded;
@@ -837,21 +825,11 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 		// measures the rest).
 		if (expanded || this.progressive) await this.render();
 
-		const rect = this.contentEl.getBoundingClientRect();
-		const zoomed = platePx !== null && this.currentLayout !== null && rect.width > 0 && rect.height > 0;
-		if (zoomed && this.currentLayout) {
-			const lines = this.currentLayout.nodes.filter((n) => n.source.type !== "root").map((n) => n.rect);
-			this.zoom = landingZoom(platePx, lines, MIN_ZOOM, MAX_ZOOM);
-			this.viewBox.w = rect.width / this.zoom;
-			this.viewBox.h = rect.height / this.zoom;
-		}
 		const target = chain[chain.length - 1];
 		const layoutNode = target ? this.nodeMap.get(target.id) : undefined;
 		if (target && layoutNode) {
 			this.selectNode(target.id);
 			this.centerOnNode(layoutNode);
-		} else if (zoomed) {
-			this.centerOnRoot();
 		}
 	}
 
@@ -2189,7 +2167,7 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			"note-view": noteViewActionEl,
 			reading: this.readingActionEl,
 			study: this.mindmapStudyActionEl,
-		}, () => void this.switchTo3D());
+		});
 
 		// Apply the global default mode; persisted per-leaf state (setState)
 		// arrives afterwards and overrides it.
@@ -2206,7 +2184,10 @@ export class MindMapView extends ItemView implements NodeStyleHost, NavbarHost {
 			this.app.workspace.on("active-leaf-change", (leaf) => {
 				if (this.isPinned) return;
 				if (leaf?.view instanceof MarkdownView) {
-					void this.loadFile(leaf.view.file);
+					// Following onto a note Cosmos draws (Organic or Planets): hand this leaf to Cosmos.
+					const file = leaf.view.file;
+					if (file && file !== this.currentFile && engineFor(this.plugin.noteLayoutOf(file.path)) === "cosmos") void this.swapToCosmos(file);
+					else void this.loadFile(file);
 				}
 			}),
 		);

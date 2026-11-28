@@ -234,7 +234,7 @@ export class PropertiesSidebarView extends ItemView {
 					this.updateContext();
 					return;
 				}
-				// The 2D/3D toggle swaps the view in the same leaf, as does Cosmos opened in place.
+				// A note's layout swaps the view in the same leaf (`plugin.setNoteLayout`), as does Cosmos opened in place.
 				const graph = this.app.workspace.getActiveViewOfType(CosmosView);
 				if (graph && graph !== this.lastActiveCosmos) {
 					this.lastActiveCosmos = graph;

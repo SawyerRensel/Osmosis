@@ -2,6 +2,16 @@
 
 An Obsidian plugin for studying notes as mind maps and as a 3D graph of linked lines, with spaced repetition throughout.
 
+## Map views
+
+**Layout**:
+How a note's map is drawn: Mindmap (the 2D mind map), Organic (Cosmos, shaped by forces) or Planets (Cosmos, each note on a globe). It belongs to the note and is saved in its styles; which view draws it follows from it. Cosmos draws in its focus note's layout, so a hop can change it.
+_Avoid_: 2D/3D, view mode, map layout (`mapLayout` is the mind map's own tree algorithm)
+
+**Default layout**:
+The setting that gives every note without a layout of its own its layout. It is never written into a note: picking it for a note removes the note's own.
+_Avoid_: Last map view
+
 ## 3D graph
 
 **Plate**:

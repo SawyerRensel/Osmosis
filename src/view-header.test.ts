@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { PANE_MENU, SHARED_HEADER, STYLE_ACTION, headerItems, readingToggle } from "./view-header";
 
 describe("headerItems", () => {
-	it("is Style, Note view, the 2D | 3D pill, Study, then Reading/Editing", () => {
-		expect(SHARED_HEADER).toEqual(["style", "note-view", "switch", "study", "reading"]);
+	it("is Style, Note view, Study, then Reading/Editing", () => {
+		expect(SHARED_HEADER).toEqual(["style", "note-view", "study", "reading"]);
 	});
 
 	it("puts Style leftmost, ahead of Note view", () => {

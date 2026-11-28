@@ -1,6 +1,6 @@
 /**
  * The mind map's view state: what `MindMapView.getState` saves and `setState`
- * reads back. Shared with Cosmos's 2D/3D toggle, which hands a leaf
+ * reads back. Shared with Cosmos's swap to the mind map, which hands a leaf
  * back to the mind map with the same fields the map would have saved.
  *
  * `file` is what Back/Forward and a restored workspace reload the map from;

@@ -41,7 +41,6 @@ describe("TOOLBAR_GROUPS commands", () => {
 });
 
 describe("TOOLBAR_GROUPS layout", () => {
-	// The 2D/3D toggle is not here: it is the header's 2D | 3D pill (`view-header.ts`), and its command is registered in main.ts.
 	it("keeps its buttons, groups and command names", () => {
 		expect(TOOLBAR_GROUPS.map((group) => group.map((d) => `${d.id}:${d.command ?? "-"}`))).toEqual([
 			["insert-parent:Insert parent node", "add-sibling:Add sibling node", "add-child:Add child node"],

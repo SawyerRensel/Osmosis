@@ -4,6 +4,7 @@ import { normalizeLogFolder } from "./store/ReviewLog";
 import type { DataLocation } from "./store/NoteData";
 import type { BranchLineStyle, MapSettings } from "./styles";
 import type { MindMapDefaultMode } from "./reading-mode";
+import { DEFAULT_NOTE_LAYOUT, NOTE_LAYOUTS, type NoteLayout } from "./note-layout";
 import { DEFAULT_OVERLAYS, type CosmosOverlays } from "./cosmos/overlays";
 import type { SettingsSectionId } from "./cosmos/settings-sections";
 import { DEFAULT_SIDECAR_FOLDER } from "./store/sidecar";
@@ -91,6 +92,8 @@ export interface OsmosisSettings {
 	expandTransclusions: boolean;
 	/** Which mode new mind map views open in (default: "editing"). */
 	mindMapDefaultMode: MindMapDefaultMode;
+	/** The Layout of every note without its own (`note-layout.ts`); never written into a note. */
+	defaultLayout: NoteLayout;
 	/**
 	 * Legacy per-note map settings. Superseded by `osmosis-styles` frontmatter;
 	 * retained solely so `migrateMapSettingsToFrontmatter()` can drain existing
@@ -210,6 +213,7 @@ export const DEFAULT_SETTINGS: OsmosisSettings = {
 	showTransclusionStyle: false,
 	expandTransclusions: true,
 	mindMapDefaultMode: "editing",
+	defaultLayout: DEFAULT_NOTE_LAYOUT,
 	defaultMaxNodeWidth: 230,
 	mapSettings: {},
 	customColors: [],
@@ -295,13 +299,18 @@ export class OsmosisSettingTab extends PluginSettingTab {
 		if (key === "defaultMaxNodeWidth") {
 			this.plugin.remeasureOpenMindMaps();
 		}
-		if (key === "cosmosDesktopPivot" || key === "cosmosOneFingerDrag") {
+		if (key === "cosmosDesktopPivot" || key === "cosmosOneFingerDrag" || key === "defaultLayout") {
 			this.plugin.refreshOpenCosmosControls();
 		}
 	}
 
 	getSettingDefinitions(): SettingDefinitionItem<keyof OsmosisSettings>[] {
 		return [
+			{
+				name: "Default layout",
+				desc: "How a note's map is drawn when the note has no layout of its own: as a mind map, or in Cosmos as organic or planets.",
+				control: { type: "dropdown", key: "defaultLayout", options: NOTE_LAYOUTS },
+			},
 			{
 				name: "Branch line style",
 				desc: "Style of connecting lines between nodes.",

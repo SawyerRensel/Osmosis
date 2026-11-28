@@ -85,13 +85,10 @@ describe("normalizeOverlays", () => {
 		expect(normalizeOverlays({ taperStrength: "x" }).taperStrength).toBe(1);
 	});
 
-	it("reads the Layout choice, taking the removed Flat slices layout as organic", () => {
-		expect(normalizeOverlays({}).layout).toBe("organic");
-		expect(normalizeOverlays({ layout: "planets" }).layout).toBe("planets");
-		expect(normalizeOverlays({ layout: "globe" }).layout).toBe("organic");
-		const flat = normalizeOverlays({ layout: "flat", flatten: 0.75 });
-		expect(flat.layout).toBe("organic");
-		expect("flatten" in flat).toBe(false);
+	it("drops a saved layout: it belongs to each note now, not the vault", () => {
+		const saved = normalizeOverlays({ layout: "planets", flatten: 0.75 });
+		expect("layout" in saved).toBe(false);
+		expect("flatten" in saved).toBe(false);
 	});
 
 	it("reads the continent defaults, falling back on junk", () => {

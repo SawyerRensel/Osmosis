@@ -7,11 +7,11 @@
 
 export type HeaderView = "2d" | "3d";
 
-/** A header button. `switch` is the 2D | 3D pill; the rest are icon buttons. */
-export type HeaderItem = "style" | "note-view" | "switch" | "study" | "reading";
+/** A header button. There is no 2D | 3D switch: a note's Layout picks its view (`note-layout.ts`). */
+export type HeaderItem = "style" | "note-view" | "study" | "reading";
 
 /** Both views show exactly these, in order, left to right; Obsidian's own ⋯ stands after them. */
-export const SHARED_HEADER: readonly HeaderItem[] = ["style", "note-view", "switch", "study", "reading"];
+export const SHARED_HEADER: readonly HeaderItem[] = ["style", "note-view", "study", "reading"];
 
 /** The Style button, leftmost: it opens the style sidebar. The same icon and label in both views. */
 export const STYLE_ACTION = { icon: "paintbrush", label: "Style" } as const;

@@ -20,12 +20,12 @@ import {
 	type ColorMode,
 	type CosmosOverlays,
 	type LabelMode,
-	type LayoutMode,
 	type OverlayEdgeKind,
 } from "../cosmos/overlays";
 import { MAX_CORE_LAYERS, type ContinentBalance, type ContinentDirection } from "../cosmos/planets";
 import { SETTINGS_SECTIONS, controlShown, toggleCollapsed, type SettingsControl, type SettingsSectionId } from "../cosmos/settings-sections";
 import { TAPER_STRENGTH_MAX, TAPER_STRENGTH_MIN } from "../cosmos/taper";
+import { NOTE_LAYOUTS, cosmosLayout, isNoteLayout, type NoteLayout } from "../note-layout";
 import { sidebarSetting } from "./sidebar-setting";
 
 const COLOR_MODES: Record<ColorMode, string> = {
@@ -44,11 +44,6 @@ const EDGE_NAMES: Record<OverlayEdgeKind, string> = {
 	tag: "Tags",
 	attachment: "Attachments",
 	unresolved: "Unresolved links",
-};
-
-const LAYOUT_MODES: Record<LayoutMode, string> = {
-	organic: "Organic",
-	planets: "Planets",
 };
 
 const CONTINENT_DIRECTION_NAMES: Record<ContinentDirection, string> = {
@@ -92,6 +87,10 @@ export interface CosmosSettingsSource {
 	overlays: () => CosmosOverlays;
 	/** Every change goes out whole (the plugin saves it and every open Cosmos shows it). */
 	setOverlays: (overlays: CosmosOverlays) => void;
+	/** The focus note's Layout, which the Layout dropdown shows. */
+	layout: () => NoteLayout;
+	/** Save a new Layout for the focus note (`plugin.setNoteLayout`): Mindmap swaps the leaf to the mind map. */
+	setLayout: (layout: NoteLayout) => void;
 	reach: () => GraphReach;
 	setReach: (reach: GraphReach) => void;
 	maxDepth: number;
@@ -114,6 +113,7 @@ export interface CollapseStore {
 export class CosmosSettingsPanel {
 	/** The settings as this panel last showed or sent them. */
 	private current: CosmosOverlays;
+	private layout: NoteLayout;
 	private reach: GraphReach;
 	private readonly rows = new Map<SettingsControl, Setting>();
 	private depthSlider: SliderComponent | null = null;
@@ -125,6 +125,7 @@ export class CosmosSettingsPanel {
 		private readonly collapse: CollapseStore,
 	) {
 		this.current = source.overlays();
+		this.layout = source.layout();
 		this.reach = source.reach();
 		this.build();
 	}
@@ -142,8 +143,10 @@ export class CosmosSettingsPanel {
 			this.depthSlider?.setValue(reach.depth);
 			this.backlinksToggle?.setValue(reach.backlinks);
 		}
-		if (overlays === this.current) return;
+		const layout = this.source.layout();
+		if (overlays === this.current && layout === this.layout) return;
 		this.current = overlays;
+		this.layout = layout;
 		this.build();
 	}
 
@@ -155,7 +158,8 @@ export class CosmosSettingsPanel {
 
 	/** Show only the controls the current settings call for. */
 	private showControls(): void {
-		for (const [control, row] of this.rows) row.settingEl.toggle(controlShown(control, this.current));
+		const shown = { ...this.current, layout: cosmosLayout(this.layout) };
+		for (const [control, row] of this.rows) row.settingEl.toggle(controlShown(control, shown));
 	}
 
 	private build(): void {
@@ -226,12 +230,17 @@ export class CosmosSettingsPanel {
 			case "layout":
 				return row
 					.setName("Layout")
-					.setDesc("Organic lets forces shape each note, and planets put each note on a globe. Changing it lays everything out again.")
+					.setDesc("This note's layout. Mindmap opens it as a mind map, organic lets forces shape each note, and planets put each note on a globe.")
 					.addDropdown((dropdown) =>
 						dropdown
-							.addOptions(LAYOUT_MODES)
-							.setValue(overlays.layout)
-							.onChange((value) => this.change({ layout: value as LayoutMode })),
+							.addOptions(NOTE_LAYOUTS)
+							.setValue(this.layout)
+							.onChange((value) => {
+								if (!isNoteLayout(value)) return;
+								this.layout = value;
+								this.source.setLayout(value);
+								this.showControls();
+							}),
 					);
 			case "continentSpacing":
 				return this.spacing(row, "Continent spacing", "continents on a planet", "continentSpacing");

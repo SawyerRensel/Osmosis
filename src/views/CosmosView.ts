@@ -8,7 +8,6 @@ import { clipboardItem, copyStyleOf, fillClipboard, nodeClipboard, pasteInto, pa
 import type { OsmosisNode } from "../types";
 import { decodeEmbedTarget } from "../card-gen/occlusion";
 import { attachmentNodeId, buildGraph, ghostNodeId, isNoteRoot, linkTargetNode, noteNodeId, type GraphModel, type GraphNode, type LinkResolver, type NoteInput } from "../cosmos/model";
-import { facingPhase } from "../cosmos/planets";
 import { gizmosAvailable } from "../cosmos/gizmos";
 import { cleanNearTier, type NearTierSettings } from "../cosmos/lod";
 import { collectEmbedded } from "../cosmos/transcluded";
@@ -34,13 +33,14 @@ import { deleteLines, linesMarkdown, selectionMarkdown, topmostLines, type CopyG
 import { movedOut, planSelectionLink, planSelectionMove, planSelectionRelevel, type PickedLine, type PlanNote, type SelectionEdit } from "../cosmos/selection-edit";
 import { placeNodes, type Placed } from "../cosmos/positions";
 import { selectAfterDelete } from "../select-after-delete";
-import { liftOffFocus, liftOffFrame, liftOffSeeds, readLiftOff, type Landing, type LiftOff } from "../cosmos/liftoff";
+import { focusNodeId, readMapFocus, type MapFocus } from "../cosmos/swap-focus";
+import { cosmosLayout, engineFor, type NoteLayout } from "../note-layout";
 import { opensFitted } from "../cosmos/fit";
 import { readMapState, writeMapState } from "../mindmap-state";
 import { STYLE_ACTION, readingToggle } from "../view-header";
 import { addPaneMenuItems, arrangeViewHeader } from "./ViewHeader";
 import { COSMOS_HIDDEN_BUTTONS, ToolRibbon, barToggles, syncNavbar, type BarToggle, type ButtonDef, type NavbarHost, type ToolbarActions, type ToolbarState } from "./ToolRibbon";
-import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays } from "../cosmos/overlays";
+import { memoryStrengths, nodeTags, overlayNodeColor, modelKey, soleNotePath, visibleModel, type ColorContext, type CosmosOverlays, type LayoutMode } from "../cosmos/overlays";
 import { mapBackground, type ThemeLookup } from "../cosmos/node-style";
 import { getTheme, isDefaultTheme } from "../themes";
 import { FSRSScheduler } from "../database/FSRSScheduler";
@@ -199,13 +199,15 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	private structuring = false;
 	/** Releases for the histories of the notes loaded now: a note's undo history lives while some view holds it. */
 	private readonly holds = new Map<string, () => void>();
-	/** The mind map's picture, handed over by its 2D/3D toggle: the next reload lifts off from it (see `cosmos/liftoff.ts`). */
-	private liftOff: LiftOff | null = null;
+	/** The node the mind map had focused, handed over when it swapped this leaf to Cosmos: the next reload lands on it (`cosmos/swap-focus.ts`). */
+	private swapFocus: MapFocus | null = null;
+	/** The layout the scene was last told to draw: the focus note's (`layoutMode`). */
+	private shownLayout: LayoutMode = "organic";
 	/** The view just opened on a note with nowhere named to land: its first reload frames the whole map, as Fit does (`opensFitted`). */
 	private fitOnOpen = false;
-	/** The mind map's own state (pinned, reading mode) from the toggle that opened this view, handed back on the toggle to 2D. */
+	/** The mind map's own state (pinned, reading mode) from the swap that opened this view, handed back on the swap to the mind map. */
 	private mapState: { pinned: boolean; readingMode: boolean } | null = null;
-	/** The save of the edit closed last, for the toggle to 2D to wait on. */
+	/** The save of the edit closed last, for a swap to the mind map to wait on. */
 	private saved: Promise<void> = Promise.resolve();
 	/** Text of the notes one hop past the loaded area, read ahead so the next hop waits on no I/O. */
 	private readonly prefetched = new Map<string, { mtime: number; text: string }>();
@@ -407,9 +409,9 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		if (typeof state?.depth === "number") this.depth = Math.min(MAX_DEPTH, Math.max(0, Math.round(state.depth)));
 		if (typeof state?.follow === "boolean") this.follow = state.follow;
 		if (typeof state?.backlinks === "boolean") this.backlinks = state.backlinks;
-		// From the mind map's 2D/3D toggle: its picture to lift off from, and its own state to hand back. Neither is kept in getState.
-		const liftOff = readLiftOff(state?.liftOff);
-		if (liftOff !== null) this.liftOff = liftOff;
+		// From a mind map swapping this leaf to Cosmos: the node it had focused, and its own state to hand back. Neither is kept in getState.
+		const swapFocus = readMapFocus(state?.swapFocus);
+		if (swapFocus !== null) this.swapFocus = swapFocus;
 		this.fitOnOpen = opensFitted(state);
 		if (state?.map !== undefined) {
 			const map = readMapState(state.map);
@@ -447,7 +449,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 			"note-view": noteViewActionEl,
 			reading: this.editActionEl,
 			study: this.studyActionEl,
-		}, () => void this.switchTo2D());
+		});
 
 		this.emptyEl = root.createDiv({
 			cls: "osmosis-cosmos-empty",
@@ -531,7 +533,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				if (!this.follow || file?.extension !== "md" || file.path === this.focusPath) return;
-				void this.setFocus(file.path, true);
+				void this.followTo(file.path);
 			}),
 		);
 		// `resolve` fires once a file's links are re-indexed, so the horizon
@@ -637,7 +639,18 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 
 	private sceneOverlays(): SceneOverlays {
 		const { colorBy: _colorBy, ...overlays } = this.plugin().settings.graph3dOverlays;
-		return overlays;
+		this.shownLayout = this.layoutMode();
+		return { ...overlays, layout: this.shownLayout };
+	}
+
+	/** The focus note's own Layout (or the Default layout); null with no focus note. */
+	private focusLayout(): NoteLayout | null {
+		return this.focusPath === null ? null : this.plugin().noteLayoutOf(this.focusPath);
+	}
+
+	/** The layout the scene draws: the focus note's, a Mindmap note's being Organic (`cosmosLayout`). */
+	private layoutMode(): LayoutMode {
+		return cosmosLayout(this.focusLayout() ?? "organic");
 	}
 
 	/**
@@ -693,7 +706,7 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.follow = !this.follow;
 		this.app.workspace.requestSaveLayout();
 		const file = this.app.workspace.getActiveFile();
-		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.setFocus(file.path, true);
+		if (this.follow && file?.extension === "md" && file.path !== this.focusPath) void this.followTo(file.path);
 	}
 
 	/** For `syncNavbar`: only edit mode hides the navigation bar. */
@@ -2000,6 +2013,11 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		return {
 			overlays: () => this.plugin().settings.graph3dOverlays,
 			setOverlays: (overlays) => this.plugin().setCosmosOverlays(overlays),
+			// The focus note's Layout: a stopgap here until the style sidebar has its own picker (T139).
+			layout: () => this.focusLayout() ?? this.plugin().settings.defaultLayout,
+			setLayout: (layout) => {
+				if (this.focusPath !== null) void this.plugin().setNoteLayout(this.focusPath, layout);
+			},
 			reach: () => ({ depth: this.depth, backlinks: this.backlinks }),
 			setReach: ({ depth, backlinks }) => {
 				const reloads = depth !== this.depth || backlinks !== this.backlinks;
@@ -2277,10 +2295,8 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	 * stays put instead of re-settling beside its parent. Consumes `edited`:
 	 * the changed line is also selected again.
 	 */
-	private place(scene: CosmosScene, model: GraphModel, via: ReadonlyMap<string, string>, seeds?: ReadonlyMap<string, Placed>): Map<string, Placed> {
+	private place(scene: CosmosScene, model: GraphModel, via: ReadonlyMap<string, string>): Map<string, Placed> {
 		const positions = scene.positions();
-		// The lift-off's seeds, for nodes not in the scene yet (the first load after the toggle, when none are).
-		for (const [id, seed] of seeds ?? []) if (!positions.has(id)) positions.set(id, seed);
 		const { edited } = this;
 		this.edited = [];
 		// An edited line that was selected stays selected under its new ID.
@@ -2505,28 +2521,39 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 	}
 
 	/**
-	 * The 2D/3D toggle (this view's header pill, and the toggle
-	 * command): show the focused node's note as a mind map in this leaf,
-	 * landing on the focused line at the scale its plate is drawn now (see
-	 * `cosmos/liftoff.ts`). An open edit saves first, as a blur does; a study
-	 * session ends, flushing its ratings; a link drag is dropped. The note's
-	 * undo history is held across the swap.
+	 * Show `path` as a mind map in this leaf: its layout became Mindmap
+	 * (`plugin.setNoteLayout`), or Follow active note moved to it (`followTo`).
+	 * The map centres on the line focused here, if it is in that map. A
+	 * followed note opens unpinned, so the map keeps following, and the leaf
+	 * stays in the background. An open edit saves first, as a blur does; a
+	 * study session ends, flushing its ratings; a link drag is dropped. The
+	 * note's undo history is held across the swap.
 	 */
-	async switchTo2D(): Promise<void> {
+	async swapToMindMap(path: string, followed = false): Promise<void> {
 		await this.settleForSwap();
-		const scene = this.scene;
-		const node = scene?.focusedNode() ?? null;
-		const nodePath = node !== null && (node.kind === "line" || node.kind === "note") ? node.path : undefined;
-		const path = nodePath ?? this.focusPath;
-		if (path === null) {
-			new Notice("Open a note in Cosmos first");
-			return;
-		}
-		const focus = node?.kind === "line" && nodePath !== undefined && node.source !== undefined ? { path: nodePath, start: node.source.range.start, root: false } : null;
-		const landing: Landing = { focus, platePx: scene?.linePlatePixels(node?.id ?? null) ?? null };
+		const node = this.scene?.focusedNode() ?? null;
+		const swapFocus: MapFocus | null = !followed && node?.kind === "line" && node.path !== undefined && node.source !== undefined ? { path: node.path, start: node.source.range.start, root: false } : null;
 		const map = this.mapState ?? { pinned: true, readingMode: false };
-		const state = { ...writeMapState(path, map.pinned, map.readingMode), landing, graph3d: { depth: this.depth, backlinks: this.backlinks, follow: this.follow } };
-		await this.plugin().swapLeafView(this.leaf, "2d", state, [path]);
+		const state = { ...writeMapState(path, followed ? false : map.pinned, map.readingMode), swapFocus, graph3d: { depth: this.depth, backlinks: this.backlinks, follow: this.follow } };
+		await this.plugin().swapLeafView(this.leaf, "mindmap", state, [path], !followed);
+	}
+
+	/** Follow active note: make `path` the focus note, or, when its layout is Mindmap, hand the leaf to the mind map. */
+	private followTo(path: string): Promise<void> {
+		if (engineFor(this.plugin().noteLayoutOf(path)) === "mindmap") return this.swapToMindMap(path, true);
+		return this.setFocus(path, true);
+	}
+
+	/** The note this view is centred on, if any: what `plugin.setNoteLayout` swaps. */
+	get focusNote(): string | null {
+		return this.focusPath;
+	}
+
+	/** The focus note's layout changed to one Cosmos draws: draw it now (Organic and Planets lay everything out afresh). */
+	applyLayout(): void {
+		if (this.layoutMode() === this.shownLayout) return;
+		this.scene?.setOverlays(this.sceneOverlays());
+		this.notifySettings();
 	}
 
 	/** Close what a swap of this leaf's view would cut short: a link drag, an open edit (saved), a study session (its ratings flushed). */
@@ -2664,26 +2691,24 @@ export class CosmosView extends ItemView implements NodeStyleHost, NavbarHost {
 		this.fullModel = fullModel;
 		scene.setColoring(this.coloring(model));
 		this.syncHolds(horizon.loaded);
-		// Once, after the mind map's toggle: its nodes start flat where it drew them, free, and the camera looks at them from where the map did.
-		const liftOff = this.liftOff;
-		this.liftOff = null;
+		// Once, after a mind map swapped this leaf to Cosmos: land on the node it had focused.
+		const swapFocus = this.swapFocus;
+		this.swapFocus = null;
 		const fit = this.fitOnOpen;
 		this.fitOnOpen = false;
-		const seeds = liftOff === null ? undefined : liftOffSeeds(model, liftOff, scene.linePlateHeight);
 		if (this.faceFocus) {
 			this.faceFocus = false;
-			// The lift-off camera stands over the map looking down -z, on the +z side of the notes.
-			scene.faceNote(noteNodeId(focus), liftOff === null ? null : facingPhase({ x: 0, y: 0, z: 1 }, { x: 0, y: 0, z: 0 }));
+			scene.faceNote(noteNodeId(focus));
 		}
-		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via, seeds));
+		// A new focus note (or an edit of this one's layout) may be drawn in the other layout.
+		this.applyLayout();
+		scene.setData(this.study?.decorate(model) ?? model, this.place(scene, model, horizon.via));
 		if (this.resettleOnLoad) {
 			this.resettleOnLoad = false;
 			scene.reshape(!this.focusLeft(scene, model));
 		}
-		if (liftOff !== null) {
-			const focusId = liftOffFocus(model, liftOff) ?? noteNodeId(focus);
-			scene.setFocusId(focusId);
-			scene.standOver({ x: 0, y: 0, z: 0 }, liftOffFrame(liftOff, scene.linePlateHeight), focusId);
+		if (swapFocus !== null) {
+			scene.flyTo(focusNodeId(model, swapFocus) ?? noteNodeId(focus), true);
 		} else if (landOn !== null) {
 			const ids = new Set(model.nodes.map((node) => node.id));
 			scene.flyTo(landing((id) => ids.has(id), focus, landOn), true);

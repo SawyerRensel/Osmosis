@@ -12,6 +12,7 @@ search.
 
 | Setting | Default | What it does |
 |---------|---------|--------------|
+| **Default layout** | Mindmap | How a note's map is drawn when the note has no [layout](../mind-mapping/cosmos.md#layout) of its own: Mindmap, Organic or Planets |
 | **Branch line style** | Curved | Default geometry of the lines between nodes — curved, straight, angular, or rounded elbow. Per-map [styling](../mind-mapping/styling.md) overrides it |
 | **Max node width** | 230 px | Default width at which node text wraps. A map's own **Max width** overrides it |
 | **Highlight transcluded branches** | Off | Visually distinguish nodes embedded from another file |

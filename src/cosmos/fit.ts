@@ -44,8 +44,9 @@ export function fitDistance(radius: number, fovDeg: number, aspect: number, marg
  * Whether a view state opening Cosmos frames the whole map (as Fit
  * does) rather than landing somewhere: true unless it names a plate to stand
  * at (a restored workspace, a forward step), a line to land on (`subpath`, a
- * Mod-click on a link), or a mind map picture to lift off from.
+ * Mod-click on a link), or the node a mind map had focused when it swapped
+ * the leaf to Cosmos (`swapFocus`, which may be null: then the note's core).
  */
 export function opensFitted(state: Record<string, unknown> | null | undefined): boolean {
-	return typeof state?.node !== "string" && (typeof state?.subpath !== "string" || state.subpath === "") && state?.liftOff == null;
+	return typeof state?.node !== "string" && (typeof state?.subpath !== "string" || state.subpath === "") && !("swapFocus" in (state ?? {}));
 }

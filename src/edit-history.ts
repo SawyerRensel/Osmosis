@@ -240,7 +240,7 @@ export class EditRecorder {
 
 /**
  * Hold `keys`' histories while `during` runs, then let go. A leaf swapping
- * one view for another (the mind map's 2D/3D toggle) closes the outgoing view,
+ * one view for another (a note's layout moving it between the mind map and Cosmos) closes the outgoing view,
  * which releases its holds, around the time the incoming one takes its own;
  * holding across the swap keeps the history alive whichever happens first.
  */

@@ -258,7 +258,7 @@ describe("EditHistory: shared between views", () => {
 	});
 });
 
-/** The 2D/3D toggle swaps a leaf's view: the outgoing view lets go of its notes around when the incoming one takes them. */
+/** A layout swap changes a leaf's view: the outgoing view lets go of its notes around when the incoming one takes them. */
 describe("holdAcross", () => {
 	it("keeps a history alive when the old view lets go before the new one holds", async () => {
 		const { history, recorder } = setup();

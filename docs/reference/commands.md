@@ -68,11 +68,11 @@ Not everything is a command. These are the surfaces that reach Osmosis directly:
 | Surface | Items |
 |---------|-------|
 | **Ribbon** | :lucide-brain-circuit: Osmosis dashboard |
-| **Note header** | :lucide-brain-circuit: opens the map view you used last (2D or 3D) · :lucide-graduation-cap: Study menu: study here, this note or a deck in the popup (whenever the note has cards). The ⋯ menu adds :lucide-scan-eye: Peek mode |
+| **Note header** | :lucide-brain-circuit: opens the note's map in its [layout](../mind-mapping/cosmos.md#layout) · :lucide-graduation-cap: Study menu: study here, this note or a deck in the popup (whenever the note has cards). The ⋯ menu adds :lucide-scan-eye: Peek mode |
 | **Note ⋯ menu** | Rapid flashcard mode |
-| **Mind map header** | :lucide-file-text: Note view · 2D \| 3D pill · :lucide-graduation-cap: Study mode · :lucide-book-open: / :lucide-pencil: Reading mode. The ⋯ menu adds :lucide-paintbrush: Style, :lucide-pin: Pin and :lucide-scan-eye: Peek mode |
+| **Mind map header** | :lucide-paintbrush: Style · :lucide-file-text: Note view · :lucide-graduation-cap: Study mode · :lucide-book-open: / :lucide-pencil: Reading mode. The ⋯ menu adds :lucide-pin: Pin and :lucide-scan-eye: Peek mode |
 | **Mind map toolbar** | [Every structural and viewport action](../mind-mapping/editing.md#toolbar) |
-| **File menu** (right-click a note) | Mind map view · Generate flashcards |
+| **File menu** (right-click a note) | Map view (the note's layout) · Cosmos · Generate flashcards |
 | **Editor context menu** | Add / Remove line cards · Exclude / Include line cards · Create image occlusion |
 | **Image context menu** | Create image occlusion |
 | **Node context menu** (right-click a node) | Structure and clipboard actions · Add / Remove line card · Exclude / Include in study · Study this branch |
